@@ -14,10 +14,21 @@ This document specifies Blood's multiple dispatch system, including method resol
 2. [Method Declaration](#2-method-declaration)
 3. [Dispatch Resolution Algorithm](#3-dispatch-resolution-algorithm)
 4. [Type Stability](#4-type-stability)
+   - 4.1 [Definition](#41-definition)
+   - 4.2 [Why Type Stability Matters](#42-why-type-stability-matters)
+   - 4.3 [Type Stability Checking Algorithm](#43-type-stability-checking-algorithm)
+   - 4.4 [Type Unification Algorithm](#44-type-unification-algorithm)
+   - 4.5 [Type Stability for Generic/Polymorphic Returns](#45-type-stability-for-genericpolymorphic-returns)
+   - 4.6 [Effect-Polymorphic Type Stability](#46-effect-polymorphic-type-stability)
+   - 4.7 [Stability Annotations](#47-stability-annotations)
+   - 4.8 [Union Types for Controlled Instability](#48-union-types-for-controlled-instability)
 5. [Ambiguity Detection](#5-ambiguity-detection)
 6. [Compile-Time vs Runtime Dispatch](#6-compile-time-vs-runtime-dispatch)
 7. [Dispatch and Effects](#7-dispatch-and-effects)
 8. [Performance Considerations](#8-performance-considerations)
+9. [Constraint Solver Specification](#9-constraint-solver-specification)
+10. [Cross-Reference: Formal Typing Rules](#10-cross-reference-formal-typing-rules)
+11. [Related Work](#11-related-work)
 
 ---
 
@@ -501,7 +512,425 @@ COLLECT_RETURN_TYPES(expr) → Set<Type>:
         _ → {}
 ```
 
-### 4.4 Stability Annotations
+### 4.4 Type Unification Algorithm
+
+The `UNIFY` function referenced in §4.3 is central to type stability checking. Blood uses a modified Hindley-Milner unification algorithm extended for row polymorphism and effect types.
+
+#### 4.4.1 Unification Data Structures
+
+```
+// Type representation
+Type ::=
+    | TVar(id: TypeVarId)           -- Unification variable
+    | TCon(name: Symbol)            -- Type constructor (i32, bool, etc.)
+    | TApp(con: Type, args: [Type]) -- Type application (Vec<T>, Option<i32>)
+    | TFun(params: [Type], ret: Type, effects: EffectRow)
+    | TRecord(fields: [(Symbol, Type)], row: RowVar?)
+    | TForall(vars: [TypeVarId], body: Type)
+
+// Effect row representation
+EffectRow ::=
+    | RowEmpty                      -- pure / {}
+    | RowCons(effect: Effect, tail: EffectRow)
+    | RowVar(id: RowVarId)          -- Open row variable
+
+// Substitution: maps type variables to types
+Substitution = Map<TypeVarId, Type>
+```
+
+#### 4.4.2 Core Unification Algorithm
+
+```
+UNIFY(t1: Type, t2: Type, subst: Substitution) → Result<Substitution, UnifyError>:
+    // Apply current substitution to resolve any already-bound variables
+    t1 ← APPLY_SUBST(subst, t1)
+    t2 ← APPLY_SUBST(subst, t2)
+
+    // Case 1: Identical types
+    IF t1 == t2:
+        RETURN Ok(subst)
+
+    // Case 2: Type variable on left
+    IF t1 = TVar(id):
+        RETURN UNIFY_VAR(id, t2, subst)
+
+    // Case 3: Type variable on right
+    IF t2 = TVar(id):
+        RETURN UNIFY_VAR(id, t1, subst)
+
+    // Case 4: Type constructors
+    IF t1 = TCon(name1) AND t2 = TCon(name2):
+        IF name1 == name2:
+            RETURN Ok(subst)
+        ELSE:
+            RETURN Err(UnifyError::TypeMismatch { expected: t1, found: t2 })
+
+    // Case 5: Type applications
+    IF t1 = TApp(con1, args1) AND t2 = TApp(con2, args2):
+        subst ← UNIFY(con1, con2, subst)?
+        IF len(args1) ≠ len(args2):
+            RETURN Err(UnifyError::ArityMismatch)
+        FOR i IN 0..len(args1):
+            subst ← UNIFY(args1[i], args2[i], subst)?
+        RETURN Ok(subst)
+
+    // Case 6: Function types
+    IF t1 = TFun(p1, r1, e1) AND t2 = TFun(p2, r2, e2):
+        IF len(p1) ≠ len(p2):
+            RETURN Err(UnifyError::ArityMismatch)
+        FOR i IN 0..len(p1):
+            subst ← UNIFY(p1[i], p2[i], subst)?
+        subst ← UNIFY(r1, r2, subst)?
+        subst ← UNIFY_EFFECTS(e1, e2, subst)?
+        RETURN Ok(subst)
+
+    // Case 7: Record types (row polymorphism)
+    IF t1 = TRecord(f1, r1) AND t2 = TRecord(f2, r2):
+        RETURN UNIFY_RECORDS(f1, r1, f2, r2, subst)
+
+    // Case 8: Forall types (requires instantiation)
+    IF t1 = TForall(vars1, body1) AND t2 = TForall(vars2, body2):
+        RETURN UNIFY_FORALL(vars1, body1, vars2, body2, subst)
+
+    // Case 9: Incompatible types
+    RETURN Err(UnifyError::TypeMismatch { expected: t1, found: t2 })
+
+
+UNIFY_VAR(id: TypeVarId, t: Type, subst: Substitution) → Result<Substitution, UnifyError>:
+    // Occurs check: prevent infinite types like α = List<α>
+    IF OCCURS(id, t):
+        RETURN Err(UnifyError::InfiniteType { var: id, type: t })
+
+    // Extend substitution
+    RETURN Ok(subst.extend(id, t))
+
+
+OCCURS(id: TypeVarId, t: Type) → bool:
+    MATCH t:
+        TVar(id2) → id == id2
+        TCon(_) → false
+        TApp(con, args) → OCCURS(id, con) OR any(OCCURS(id, a) FOR a IN args)
+        TFun(params, ret, _) → any(OCCURS(id, p) FOR p IN params) OR OCCURS(id, ret)
+        TRecord(fields, _) → any(OCCURS(id, f.1) FOR f IN fields)
+        TForall(_, body) → OCCURS(id, body)
+
+
+APPLY_SUBST(subst: Substitution, t: Type) → Type:
+    MATCH t:
+        TVar(id) →
+            IF id IN subst:
+                APPLY_SUBST(subst, subst[id])  // Recursive application
+            ELSE:
+                t
+        TCon(_) → t
+        TApp(con, args) →
+            TApp(APPLY_SUBST(subst, con), [APPLY_SUBST(subst, a) FOR a IN args])
+        TFun(params, ret, effects) →
+            TFun(
+                [APPLY_SUBST(subst, p) FOR p IN params],
+                APPLY_SUBST(subst, ret),
+                APPLY_SUBST_EFFECTS(subst, effects)
+            )
+        TRecord(fields, row) →
+            TRecord(
+                [(name, APPLY_SUBST(subst, ty)) FOR (name, ty) IN fields],
+                row  // Row variable substitution handled separately
+            )
+        TForall(vars, body) →
+            TForall(vars, APPLY_SUBST(subst.without(vars), body))
+```
+
+#### 4.4.3 Effect Row Unification
+
+```
+UNIFY_EFFECTS(e1: EffectRow, e2: EffectRow, subst: Substitution) → Result<Substitution, UnifyError>:
+    e1 ← APPLY_SUBST_EFFECTS(subst, e1)
+    e2 ← APPLY_SUBST_EFFECTS(subst, e2)
+
+    // Case 1: Both empty (pure)
+    IF e1 = RowEmpty AND e2 = RowEmpty:
+        RETURN Ok(subst)
+
+    // Case 2: Row variable
+    IF e1 = RowVar(id):
+        RETURN UNIFY_ROW_VAR(id, e2, subst)
+    IF e2 = RowVar(id):
+        RETURN UNIFY_ROW_VAR(id, e1, subst)
+
+    // Case 3: Both concrete rows - must contain same effects (order-independent)
+    IF e1 = RowCons(eff1, tail1) AND e2 = RowCons(eff2, tail2):
+        effects1 ← COLLECT_EFFECTS(e1)
+        effects2 ← COLLECT_EFFECTS(e2)
+
+        // Extract row variables if present
+        rowvar1 ← EXTRACT_ROW_VAR(e1)
+        rowvar2 ← EXTRACT_ROW_VAR(e2)
+
+        IF rowvar1.is_none() AND rowvar2.is_none():
+            // Both closed: must be identical sets
+            IF effects1 == effects2:
+                RETURN Ok(subst)
+            ELSE:
+                RETURN Err(UnifyError::EffectMismatch)
+
+        // One or both open: unify with row constraint
+        RETURN UNIFY_OPEN_ROWS(effects1, rowvar1, effects2, rowvar2, subst)
+
+    // Case 4: Mismatch
+    RETURN Err(UnifyError::EffectMismatch { expected: e1, found: e2 })
+
+
+COLLECT_EFFECTS(row: EffectRow) → Set<Effect>:
+    MATCH row:
+        RowEmpty → {}
+        RowVar(_) → {}
+        RowCons(eff, tail) → {eff} ∪ COLLECT_EFFECTS(tail)
+```
+
+#### 4.4.4 Record Row Unification
+
+```
+UNIFY_RECORDS(f1: [(Symbol, Type)], r1: RowVar?,
+              f2: [(Symbol, Type)], r2: RowVar?,
+              subst: Substitution) → Result<Substitution, UnifyError>:
+
+    // Convert to maps for easier manipulation
+    fields1 ← Map::from(f1)
+    fields2 ← Map::from(f2)
+
+    // Find common, left-only, and right-only fields
+    common ← fields1.keys() ∩ fields2.keys()
+    left_only ← fields1.keys() - fields2.keys()
+    right_only ← fields2.keys() - fields1.keys()
+
+    // Unify common fields
+    FOR name IN common:
+        subst ← UNIFY(fields1[name], fields2[name], subst)?
+
+    // Handle row polymorphism
+    MATCH (r1, r2, left_only.is_empty(), right_only.is_empty()):
+        // Both closed, no extra fields: OK
+        (None, None, true, true) → RETURN Ok(subst)
+
+        // Both closed, extra fields: Error
+        (None, None, _, _) →
+            RETURN Err(UnifyError::RecordFieldMismatch)
+
+        // Left open: right_only fields absorbed by r1
+        (Some(rv1), None, _, true) →
+            extra_fields ← [(name, fields1[name]) FOR name IN left_only]
+            RETURN Ok(subst.extend(rv1, TRecord(extra_fields, None)))
+
+        // Right open: left_only fields absorbed by r2
+        (None, Some(rv2), true, _) →
+            extra_fields ← [(name, fields2[name]) FOR name IN right_only]
+            RETURN Ok(subst.extend(rv2, TRecord(extra_fields, None)))
+
+        // Both open: create fresh row variable for shared tail
+        (Some(rv1), Some(rv2), _, _) →
+            fresh_rv ← fresh_row_var()
+            left_extra ← [(name, fields1[name]) FOR name IN left_only]
+            right_extra ← [(name, fields2[name]) FOR name IN right_only]
+            subst ← subst.extend(rv1, TRecord(right_extra, Some(fresh_rv)))
+            subst ← subst.extend(rv2, TRecord(left_extra, Some(fresh_rv)))
+            RETURN Ok(subst)
+```
+
+#### 4.4.5 Unification Error Types
+
+```
+enum UnifyError {
+    TypeMismatch { expected: Type, found: Type },
+    ArityMismatch { expected: usize, found: usize },
+    InfiniteType { var: TypeVarId, type: Type },
+    EffectMismatch { expected: EffectRow, found: EffectRow },
+    RecordFieldMismatch { missing: Set<Symbol>, extra: Set<Symbol> },
+    ConstraintViolation { var: TypeVarId, constraint: Constraint, actual: Type },
+}
+```
+
+### 4.5 Type Stability for Generic/Polymorphic Returns
+
+Type stability checking for generic functions requires special handling because return types may involve type parameters.
+
+#### 4.5.1 Polymorphic Stability Rules
+
+**Rule 1: Parametric Return Types Are Stable**
+
+A function returning a type parameter is type-stable because the return type is determined by the instantiation at the call site:
+
+```blood
+// Type-stable: return type T determined by argument type
+fn identity<T>(x: T) -> T { x }
+
+// Type-stable: return type Vec<T> determined by argument type
+fn singleton<T>(x: T) -> Vec<T> { [x] }
+```
+
+**Rule 2: Constrained Parameters Preserve Stability**
+
+Constraints do not affect stability—they only restrict which types can instantiate the parameter:
+
+```blood
+// Type-stable: return type T determined by argument, constrained to Numeric
+fn double<T: Numeric>(x: T) -> T { x + x }
+```
+
+**Rule 3: Associated Types Must Be Determinable**
+
+When return type involves associated types, stability requires the association to be determinable from inputs:
+
+```blood
+trait Iterator {
+    type Item
+    fn next(&mut self) -> Option<Self::Item>
+}
+
+// Type-stable: Self::Item determined by Self type
+fn first<I: Iterator>(iter: &mut I) -> Option<I::Item> {
+    iter.next()
+}
+```
+
+#### 4.5.2 Polymorphic Stability Checking Algorithm
+
+```
+CHECK_POLYMORPHIC_STABILITY(method: Method) → Result<(), StabilityError>:
+    // Step 1: Collect all type parameters
+    type_params ← method.type_params
+
+    // Step 2: Collect return type's free type variables
+    return_ftvs ← FREE_TYPE_VARS(method.return_type)
+
+    // Step 3: Collect type variables determinable from parameters
+    param_ftvs ← ∪ { FREE_TYPE_VARS(p.type) FOR p IN method.params }
+
+    // Step 4: Every return type variable must be in parameters
+    undetermined ← return_ftvs - param_ftvs
+
+    IF undetermined.is_not_empty():
+        RETURN Err(StabilityError::UndeterminedTypeVariable {
+            variables: undetermined,
+            hint: "Return type contains type variables not determined by parameters"
+        })
+
+    // Step 5: Check body for conditional type instability
+    RETURN CHECK_TYPE_STABILITY(method)  // Standard algorithm from §4.3
+
+
+FREE_TYPE_VARS(t: Type) → Set<TypeVarId>:
+    MATCH t:
+        TVar(id) → {id}
+        TCon(_) → {}
+        TApp(con, args) → FREE_TYPE_VARS(con) ∪ (∪ { FREE_TYPE_VARS(a) FOR a IN args })
+        TFun(params, ret, _) → (∪ { FREE_TYPE_VARS(p) FOR p IN params }) ∪ FREE_TYPE_VARS(ret)
+        TRecord(fields, _) → ∪ { FREE_TYPE_VARS(f.1) FOR f IN fields }
+        TForall(vars, body) → FREE_TYPE_VARS(body) - vars
+```
+
+#### 4.5.3 Examples
+
+```blood
+// ✓ STABLE: T appears in parameter, determines return
+fn wrap<T>(x: T) -> Option<T> { Some(x) }
+
+// ✓ STABLE: T and U both appear in parameters
+fn pair<T, U>(x: T, y: U) -> (T, U) { (x, y) }
+
+// ✗ UNSTABLE: U not determined by parameters
+fn phantom<T, U>(x: T) -> U { ... }  // ERROR: U undetermined
+
+// ✓ STABLE: Result type fully determined by A and E
+fn try_map<A, B, E>(x: Result<A, E>, f: fn(A) -> B) -> Result<B, E> {
+    match x {
+        Ok(a) => Ok(f(a)),
+        Err(e) => Err(e),
+    }
+}
+```
+
+### 4.6 Effect-Polymorphic Type Stability
+
+Functions with effect-polymorphic signatures require special stability rules.
+
+#### 4.6.1 Effect Polymorphism Stability Rules
+
+**Rule 1: Effect Parameters Don't Affect Return Type Stability**
+
+Effect polymorphism only affects the effect signature, not the value type:
+
+```blood
+// Type-stable: effect E doesn't affect that return is List<B>
+fn map<A, B, E>(xs: List<A>, f: fn(A) -> B / E) -> List<B> / E {
+    // ...
+}
+```
+
+**Rule 2: Effect-Dependent Return Types Are Unstable**
+
+If the return type depends on which effects are present (beyond effect rows), this is unstable:
+
+```blood
+// ✗ UNSTABLE: Would require return type to change based on effect
+// (This is a theoretical anti-pattern, not valid Blood syntax)
+```
+
+#### 4.6.2 Effect Row Stability
+
+Effect rows in return types are stable when:
+
+1. **Closed effect rows**: All effects statically known
+2. **Open effect rows with row variable from parameters**: Propagated from inputs
+3. **Inferred effect rows**: Computed from body
+
+```blood
+// ✓ STABLE: Effect row E propagated from parameter
+fn apply<A, B, E>(f: fn(A) -> B / E, x: A) -> B / E {
+    f(x)
+}
+
+// ✓ STABLE: Effect row inferred from body (closed)
+fn pure_double(x: i32) -> i32 / pure {
+    x * 2
+}
+
+// ✓ STABLE: Effect row explicitly closed
+fn read_file(path: Path) -> String / {IO, Error<IOError>} {
+    // ...
+}
+```
+
+#### 4.6.3 Effect Inference and Stability
+
+```
+CHECK_EFFECT_STABILITY(method: Method) → Result<(), StabilityError>:
+    declared_effects ← method.effect_row
+
+    // Step 1: Collect effect row variables from parameters
+    param_effect_vars ← COLLECT_EFFECT_VARS(method.params)
+
+    // Step 2: Collect effect row variables in declared effects
+    declared_effect_vars ← EFFECT_ROW_VARS(declared_effects)
+
+    // Step 3: Undeclared variables must come from parameters
+    FOR var IN declared_effect_vars:
+        IF var NOT IN param_effect_vars:
+            IF NOT is_inferred_from_body(var, method.body):
+                RETURN Err(StabilityError::UndeterminedEffectVariable {
+                    variable: var
+                })
+
+    RETURN Ok(())
+
+
+EFFECT_ROW_VARS(row: EffectRow) → Set<RowVarId>:
+    MATCH row:
+        RowEmpty → {}
+        RowVar(id) → {id}
+        RowCons(_, tail) → EFFECT_ROW_VARS(tail)
+```
+
+### 4.7 Stability Annotations
 
 ```blood
 // Explicit stability assertion (checked by compiler)
@@ -513,7 +942,7 @@ fn definitely_stable<T>(x: T) -> T { x }
 fn parse_json(input: String) -> Any / {Error<ParseError>} { ... }
 ```
 
-### 4.5 Union Types for Controlled Instability
+### 4.8 Union Types for Controlled Instability
 
 When multiple return types are genuinely needed:
 
@@ -1023,7 +1452,346 @@ fn medium(items: Vec<Item>) {
 
 ---
 
-## 9. Related Work
+## 9. Constraint Solver Specification
+
+This section specifies the constraint solver used during type inference and type stability checking.
+
+### 9.1 Constraint Language
+
+```
+Constraint ::=
+    | TypeEq(Type, Type)                    -- Type equality
+    | TypeSub(Type, Type)                   -- Subtyping: T₁ <: T₂
+    | EffectSub(EffectRow, EffectRow)       -- Effect subsumption
+    | HasField(Type, Symbol, Type)          -- Record has field
+    | HasMethod(Type, Symbol, MethodSig)    -- Type has method
+    | Implements(Type, Trait)               -- Trait implementation
+    | ConstraintConj([Constraint])          -- Conjunction
+    | ConstraintDisj([Constraint])          -- Disjunction (from match)
+```
+
+### 9.2 Constraint Generation
+
+```
+GENERATE_CONSTRAINTS(expr: Expr, expected: Type, env: TypeEnv) → (Type, [Constraint]):
+    MATCH expr:
+        Var(x) →
+            ty ← env.lookup(x)
+            RETURN (ty, [TypeSub(ty, expected)])
+
+        Literal(lit) →
+            ty ← type_of_literal(lit)
+            RETURN (ty, [TypeSub(ty, expected)])
+
+        App(func, arg) →
+            α ← fresh_type_var()
+            β ← fresh_type_var()
+            ε ← fresh_effect_var()
+
+            (t_func, c1) ← GENERATE_CONSTRAINTS(func, TFun([α], β, ε), env)
+            (t_arg, c2) ← GENERATE_CONSTRAINTS(arg, α, env)
+
+            constraints ← c1 ++ c2 ++ [TypeSub(β, expected)]
+            RETURN (β, constraints)
+
+        Lambda(param, body) →
+            α ← fresh_type_var()
+            β ← fresh_type_var()
+            ε ← fresh_effect_var()
+
+            env' ← env.extend(param.name, α)
+            (t_body, c) ← GENERATE_CONSTRAINTS(body, β, env')
+
+            ty ← TFun([α], β, ε)
+            RETURN (ty, c ++ [TypeSub(ty, expected)])
+
+        Let(name, value, body) →
+            α ← fresh_type_var()
+            (t_val, c1) ← GENERATE_CONSTRAINTS(value, α, env)
+
+            // Generalize if value is a syntactic value
+            scheme ← IF is_value(value):
+                GENERALIZE(env, α, c1)
+            ELSE:
+                MonoType(α)
+
+            env' ← env.extend(name, scheme)
+            (t_body, c2) ← GENERATE_CONSTRAINTS(body, expected, env')
+            RETURN (t_body, c1 ++ c2)
+
+        If(cond, then_branch, else_branch) →
+            (_, c1) ← GENERATE_CONSTRAINTS(cond, TBool, env)
+            (t_then, c2) ← GENERATE_CONSTRAINTS(then_branch, expected, env)
+            (t_else, c3) ← GENERATE_CONSTRAINTS(else_branch, expected, env)
+
+            RETURN (expected, c1 ++ c2 ++ c3)
+
+        MethodCall(receiver, method, args) →
+            α ← fresh_type_var()
+            (t_recv, c1) ← GENERATE_CONSTRAINTS(receiver, α, env)
+
+            arg_types ← []
+            arg_constraints ← []
+            FOR arg IN args:
+                β ← fresh_type_var()
+                (t_arg, c) ← GENERATE_CONSTRAINTS(arg, β, env)
+                arg_types.push(β)
+                arg_constraints.extend(c)
+
+            method_constraint ← HasMethod(α, method, MethodSig(arg_types, expected))
+            RETURN (expected, c1 ++ arg_constraints ++ [method_constraint])
+
+        Match(scrutinee, arms) →
+            α ← fresh_type_var()
+            (t_scr, c_scr) ← GENERATE_CONSTRAINTS(scrutinee, α, env)
+
+            arm_constraints ← []
+            FOR arm IN arms:
+                (env', c_pat) ← GENERATE_PATTERN_CONSTRAINTS(arm.pattern, α, env)
+                (_, c_body) ← GENERATE_CONSTRAINTS(arm.body, expected, env')
+                arm_constraints.extend(c_pat ++ c_body)
+
+            RETURN (expected, c_scr ++ arm_constraints)
+```
+
+### 9.3 Constraint Solving
+
+```
+SOLVE_CONSTRAINTS(constraints: [Constraint]) → Result<Substitution, TypeError>:
+    subst ← empty_substitution()
+    worklist ← constraints
+
+    WHILE worklist.is_not_empty():
+        constraint ← worklist.pop()
+        constraint ← APPLY_SUBST_CONSTRAINT(subst, constraint)
+
+        MATCH constraint:
+            TypeEq(t1, t2) →
+                subst' ← UNIFY(t1, t2, subst)?
+                subst ← COMPOSE(subst, subst')
+
+            TypeSub(t1, t2) →
+                // For now, treat subtyping as equality
+                // Full subtyping requires more sophisticated solving
+                subst' ← UNIFY(t1, t2, subst)?
+                subst ← COMPOSE(subst, subst')
+
+            EffectSub(e1, e2) →
+                subst' ← UNIFY_EFFECTS(e1, e2, subst)?
+                subst ← COMPOSE(subst, subst')
+
+            HasField(t, field, field_type) →
+                t ← APPLY_SUBST(subst, t)
+                MATCH t:
+                    TRecord(fields, row) →
+                        IF (field, ty) IN fields:
+                            worklist.push(TypeEq(ty, field_type))
+                        ELSE IF row.is_some():
+                            // Extend row with new field
+                            worklist.push(TypeEq(row, TRecord([(field, field_type)], fresh_row_var())))
+                        ELSE:
+                            RETURN Err(TypeError::MissingField { type: t, field: field })
+                    TVar(_) →
+                        // Defer constraint until type is known
+                        worklist.push_back(constraint)
+                    _ →
+                        RETURN Err(TypeError::NotARecord { type: t })
+
+            HasMethod(t, method, sig) →
+                t ← APPLY_SUBST(subst, t)
+                MATCH t:
+                    TVar(_) →
+                        // Defer until type is resolved
+                        worklist.push_back(constraint)
+                    _ →
+                        // Look up method in type's method table
+                        method_ty ← LOOKUP_METHOD(t, method)?
+                        worklist.push(TypeEq(method_ty, sig.to_fn_type()))
+
+            Implements(t, trait) →
+                t ← APPLY_SUBST(subst, t)
+                IF NOT has_implementation(t, trait):
+                    RETURN Err(TypeError::TraitNotImplemented { type: t, trait: trait })
+
+            ConstraintConj(cs) →
+                worklist.extend(cs)
+
+            ConstraintDisj(cs) →
+                // Try each alternative, return first success
+                FOR c IN cs:
+                    result ← SOLVE_CONSTRAINTS([c] ++ worklist)
+                    IF result.is_ok():
+                        RETURN result
+                RETURN Err(TypeError::NoMatchingBranch)
+
+    RETURN Ok(subst)
+```
+
+### 9.4 Constraint Simplification
+
+```
+SIMPLIFY(constraints: [Constraint]) → [Constraint]:
+    // Remove trivially satisfied constraints
+    simplified ← []
+
+    FOR c IN constraints:
+        MATCH c:
+            TypeEq(t, t) → skip  // Reflexive
+            TypeSub(t, t) → skip  // Reflexive
+            EffectSub(e, e) → skip  // Reflexive
+            TypeEq(TVar(a), TVar(b)) IF a == b → skip
+            _ → simplified.push(c)
+
+    // Merge duplicate constraints
+    RETURN deduplicate(simplified)
+```
+
+### 9.5 Let-Generalization
+
+```
+GENERALIZE(env: TypeEnv, ty: Type, constraints: [Constraint]) → TypeScheme:
+    // Solve constraints first
+    subst ← SOLVE_CONSTRAINTS(constraints)?
+    ty ← APPLY_SUBST(subst, ty)
+
+    // Find free variables not in environment
+    env_ftvs ← FREE_TYPE_VARS_ENV(env)
+    ty_ftvs ← FREE_TYPE_VARS(ty)
+    generalizable ← ty_ftvs - env_ftvs
+
+    IF generalizable.is_empty():
+        RETURN MonoType(ty)
+    ELSE:
+        RETURN ForallType(generalizable.to_list(), ty)
+
+
+INSTANTIATE(scheme: TypeScheme) → Type:
+    MATCH scheme:
+        MonoType(ty) → ty
+        ForallType(vars, body) →
+            fresh ← [fresh_type_var() FOR _ IN vars]
+            subst ← zip(vars, fresh).to_map()
+            APPLY_SUBST(subst, body)
+```
+
+### 9.6 Error Recovery
+
+When constraint solving fails, the solver attempts to provide actionable diagnostics:
+
+```
+SOLVE_WITH_RECOVERY(constraints: [Constraint]) → (Substitution, [TypeError]):
+    subst ← empty_substitution()
+    errors ← []
+    worklist ← constraints
+
+    WHILE worklist.is_not_empty():
+        constraint ← worklist.pop()
+        result ← TRY_SOLVE_ONE(constraint, subst)
+
+        MATCH result:
+            Ok(subst') → subst ← COMPOSE(subst, subst')
+            Err(err) →
+                errors.push(err)
+                // Continue with partial substitution
+                // This allows finding multiple errors in one pass
+
+    RETURN (subst, errors)
+```
+
+---
+
+## 10. Cross-Reference: Formal Typing Rules
+
+This section provides formal typing rules for dispatch that integrate with [FORMAL_SEMANTICS.md](./FORMAL_SEMANTICS.md).
+
+### 10.1 Method Call Typing
+
+```
+METHOD_CALL_TYPING:
+
+Γ ⊢ e₁ : T₁ / ε₁   ...   Γ ⊢ eₙ : Tₙ / εₙ
+resolve_dispatch(f, [T₁, ..., Tₙ]) = m : (S₁, ..., Sₙ) → R / ε_m
+∀i. Tᵢ <: Sᵢ
+────────────────────────────────────────────────────────────────
+Γ ⊢ f(e₁, ..., eₙ) : R / ε₁ ∪ ... ∪ εₙ ∪ ε_m
+```
+
+### 10.2 Method Declaration Typing
+
+```
+METHOD_DECL_TYPING:
+
+Γ, x₁:T₁, ..., xₙ:Tₙ ⊢ body : R / ε
+ε ⊆ ε_declared
+stable(R, [T₁, ..., Tₙ])   // Type stability check (§4.3)
+────────────────────────────────────────────────────────────────
+⊢ fn f(x₁: T₁, ..., xₙ: Tₙ) -> R / ε_declared { body } : Method
+```
+
+### 10.3 Dispatch Resolution in Type Checking
+
+```
+DISPATCH_TYPE_CHECK(call_site: CallSite) → Type × EffectRow:
+    method_name ← call_site.name
+    arg_types ← [infer_type(arg) FOR arg IN call_site.args]
+
+    // Resolve dispatch (from §3.4)
+    method ← RESOLVE_DISPATCH(method_name, arg_types)
+
+    // Check type stability (from §4.3)
+    CHECK_TYPE_STABILITY(method)?
+
+    // Return the method's return type and effect row
+    return (method.return_type, method.effect_row)
+```
+
+### 10.4 Effect-Aware Dispatch Typing
+
+Dispatch interacts with effect typing as specified in [FORMAL_SEMANTICS.md §5.3](./FORMAL_SEMANTICS.md#53-effect-rules):
+
+```
+EFFECT_DISPATCH_TYPING:
+
+// Method selection considers effect context
+Γ; ε_context ⊢ f(e₁, ..., eₙ)
+
+// Candidate methods must have compatible effects
+candidates ← { m | m ∈ methods(f) ∧ m.effects ⊆ ε_context }
+
+// Select most specific among compatible
+selected ← most_specific(candidates)
+
+// Final type includes selected method's effects
+Γ ⊢ f(e₁, ..., eₙ) : selected.return_type / selected.effects
+```
+
+### 10.5 Integration with Handler Typing
+
+When dispatch occurs within effect handlers ([FORMAL_SEMANTICS.md §6](./FORMAL_SEMANTICS.md#6-handler-typing)):
+
+```
+HANDLER_DISPATCH:
+
+// In handler context, effect row is restricted
+with h handle { ... f(x, y) ... }
+
+// Dispatch for f must select method with effects ⊆ handled effects ∪ ε
+// where ε is the remaining effect row after handling
+```
+
+### 10.6 Correspondence Table
+
+| DISPATCH.md | FORMAL_SEMANTICS.md | Description |
+|-------------|---------------------|-------------|
+| §3 Dispatch Resolution | §5.2 Core Rules (T-App) | Method resolution during type checking |
+| §4 Type Stability | §7 Progress/Preservation | Stability ensures type safety |
+| §7 Dispatch and Effects | §5.3 Effect Rules | Effect-aware method selection |
+| §5 Ambiguity Detection | §9 Metatheory | Ambiguity = compile error |
+| §9 Constraint Solver | §5.5 Row Polymorphism | Unification for dispatch |
+
+---
+
+## 11. Related Work
 
 Blood's multiple dispatch design draws from:
 

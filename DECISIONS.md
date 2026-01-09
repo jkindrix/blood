@@ -447,6 +447,324 @@ $ blood build --use-profile=my_program.profdata -O3
 
 ---
 
+## ADR-016: Prototype-First Validation Strategy
+
+**Status**: Accepted
+
+**Context**: Blood combines five cutting-edge innovations, several of which have novel interactions (e.g., generation snapshots + effect resume, linear types + multi-shot handlers). Implementing the full compiler without validating these novel mechanisms risks significant rework if design flaws are discovered late.
+
+**Decision**: Before proceeding past Phase 0, validate all novel mechanisms through isolated Rust prototypes (see ROADMAP.md §16).
+
+**Rationale**:
+- Novel mechanisms (generation snapshots, region suspension) have no prior art to reference
+- Early validation reduces costly rework later
+- Prototypes provide performance data for design validation
+- Safety properties can be tested with property-based testing before formal proofs
+
+**Validation Spikes**:
+
+| Spike | Priority | Validates |
+|-------|----------|-----------|
+| Generation Snapshots + Resume | P0 (Critical) | MEMORY_MODEL.md §4, FORMAL_SEMANTICS.md §4 |
+| Effects + Linear Types | P1 (High) | FORMAL_SEMANTICS.md §8 |
+| Region Suspension | P1 (High) | MEMORY_MODEL.md §6 |
+| Reserved Generation Values | P2 (Medium) | MEMORY_MODEL.md §3.4 |
+
+**Success Criteria**:
+- 100% detection of stale references in prototype
+- No linear value escapes in multi-shot scenarios
+- Performance overhead within design targets
+- Property-based tests pass (100+ random scenarios per spike)
+
+**Consequences**:
+- Phase 1 blocked until P0 spikes validate successfully
+- May require specification amendments based on prototype findings
+- Provides empirical data for MEMORY_MODEL.md performance claims
+- Creates reference implementations for full compiler
+
+---
+
+## ADR-017: Minimal Viable Language Subset (MVL)
+
+**Status**: Accepted
+
+**Context**: Blood's full specification is ambitious. Attempting to implement everything simultaneously risks never reaching a working compiler. Julia, Rust, and other successful languages started with minimal subsets and grew.
+
+**Decision**: Define and implement a Minimal Viable Language (MVL) subset that can compile and run useful programs before implementing advanced features.
+
+**MVL Subset Definition**:
+
+| Feature | MVL Status | Full Blood |
+|---------|------------|------------|
+| Primitive types (i32, f64, bool, String) | ✓ Included | ✓ |
+| Functions with explicit types | ✓ Included | ✓ |
+| Let bindings | ✓ Included | ✓ |
+| If/else expressions | ✓ Included | ✓ |
+| Match expressions (basic) | ✓ Included | ✓ |
+| Struct types | ✓ Included | ✓ |
+| Enum types | ✓ Included | ✓ |
+| Basic generics (no constraints) | ✓ Included | ✓ |
+| IO effect (hardcoded) | ✓ Included | Algebraic |
+| Error effect (Result type) | ✓ Included | Algebraic |
+| **Type inference** | Deferred | ✓ |
+| **Algebraic effects** | Deferred | ✓ |
+| **Effect handlers** | Deferred | ✓ |
+| **Generational references** | Deferred | ✓ |
+| **Multiple dispatch** | Deferred | ✓ |
+| **Content addressing** | Deferred | ✓ |
+| **Linear/affine types** | Deferred | ✓ |
+
+**MVL Milestone**: Compile and run FizzBuzz with file I/O
+
+```blood
+// MVL-compatible FizzBuzz
+fn fizzbuzz(n: i32) -> String {
+    if n % 15 == 0 { "FizzBuzz" }
+    else if n % 3 == 0 { "Fizz" }
+    else if n % 5 == 0 { "Buzz" }
+    else { n.to_string() }
+}
+
+fn main() -> Result<(), IOError> {
+    for i in 1..=100 {
+        println(fizzbuzz(i))?;
+    }
+    Ok(())
+}
+```
+
+**Rationale**:
+- Provides working compiler faster than full implementation
+- Enables real-world testing and feedback
+- Reduces risk of fundamental architecture issues
+- Creates foundation for incremental feature addition
+- Attracts early adopters and contributors
+
+**Feature Addition Order (Post-MVL)**:
+1. Algebraic effects (core differentiator)
+2. Type inference
+3. Generational references
+4. Multiple dispatch
+5. Content addressing
+6. Linear types
+
+**Consequences**:
+- Earlier usable compiler
+- Clearer implementation roadmap
+- Some features deferred
+- MVL programs remain valid in full Blood
+
+---
+
+## ADR-018: Vale Memory Model Fallback Strategy
+
+**Status**: Accepted
+
+**Context**: Blood's memory model is based on Vale's generational references, which as of January 2026 lacks production benchmarks. While theoretically sound, the approach is unproven at scale. If generational references prove impractical, Blood needs fallback options.
+
+**Decision**: Design memory model with fallback strategies while proceeding optimistically with generational references.
+
+**Primary Strategy**: Generational references (as specified in MEMORY_MODEL.md)
+- 128-bit fat pointers
+- Generation validation on dereference
+- Escape analysis optimization
+
+**Fallback Strategy A**: Compile-Time Restriction Mode
+If runtime overhead proves unacceptable:
+- Restrict reference patterns to compile-time verifiable subset
+- Similar to Rust's borrow checker but simpler (no lifetimes)
+- All references must be provably stack-valid or region-bound
+- Heap references only via Rc<T>/Arc<T>
+
+**Fallback Strategy B**: Hybrid Mode
+If pure generational proves too slow in hot paths:
+- Allow opt-in `#[unchecked]` blocks for performance-critical code
+- Require formal verification or extensive testing for unchecked regions
+- Maintain checked mode as default with clear escape hatch
+
+**Fallback Strategy C**: Alternative Generation Encoding
+If 128-bit pointers cause cache pressure:
+- Use 64-bit pointers with side table for generations
+- Trade pointer dereference speed for smaller pointers
+- Configurable via compiler flag
+
+**Validation Metrics** (from prototype spikes):
+| Metric | Target | Fallback Trigger |
+|--------|--------|------------------|
+| Gen check overhead | <3 cycles | >10 cycles |
+| Pointer size impact | <5% slowdown | >15% slowdown |
+| Escape analysis success | >80% elimination | <50% elimination |
+
+**Rationale**:
+- Optimistic about Vale approach but prepared for alternatives
+- Fallback options maintain safety guarantees
+- Early detection of issues via prototype spikes
+- Community can help validate/optimize
+
+**Consequences**:
+- Generational references remain primary design
+- Fallback code paths add implementation complexity
+- Performance benchmarks guide final decision
+- Transparent communication about validation status
+
+---
+
+## ADR-019: Early Benchmarking Strategy
+
+**Status**: Accepted
+
+**Context**: Blood's specification contains many performance claims (e.g., "~1-2 cycles per generation check") that are explicitly disclaimed as "unvalidated design targets." Without early empirical validation, these claims risk becoming misleading promises.
+
+**Decision**: Establish benchmarking infrastructure before Phase 1, not after.
+
+**Benchmark Categories**:
+
+| Category | Measures | Established When |
+|----------|----------|------------------|
+| **Lexer/Parser** | Tokens/sec, AST nodes/sec | Phase 0 (exists) |
+| **Generation Check** | Cycles per check | Prototype spike |
+| **Effect Handler** | Handler call overhead | Phase 2 |
+| **Dispatch** | Static vs dynamic overhead | Phase 3 |
+| **End-to-end** | Real program performance | Phase 4+ |
+
+**Benchmark Infrastructure**:
+
+```rust
+// bloodc/benches/ structure
+benches/
+├── lexer_bench.rs       // ✓ Exists
+├── parser_bench.rs      // ✓ Exists
+├── codegen_bench.rs     // Add in Phase 1
+├── runtime/
+│   ├── generation.rs    // Add with prototype spike
+│   ├── effects.rs       // Add in Phase 2
+│   └── dispatch.rs      // Add in Phase 3
+└── integration/
+    ├── microbench.rs    // Small program benchmarks
+    └── realworld.rs     // Larger program benchmarks
+```
+
+**Comparison Baselines**:
+- **Memory safety**: Compare to Rust (borrow checking) and Vale (generational)
+- **Effects**: Compare to Koka (algebraic effects) and OCaml (exceptions)
+- **Dispatch**: Compare to Julia (multiple dispatch) and C++ (virtual)
+
+**Reporting**:
+- Benchmark results published with each milestone
+- Clear indication of "design target vs measured"
+- Regression detection in CI
+
+**Rationale**:
+- Prevents misleading performance claims
+- Guides optimization efforts
+- Provides data for design decisions
+- Demonstrates intellectual honesty
+
+**Consequences**:
+- Some upfront infrastructure investment
+- Performance claims become verifiable
+- May reveal need for design changes
+- Attracts performance-conscious contributors
+
+---
+
+## ADR-020: Research Publication Strategy
+
+**Status**: Accepted
+
+**Context**: Blood contains genuine novel contributions (generation snapshots, effects+generational composition, effect-aware escape analysis) that merit academic publication. Publication increases credibility, attracts collaborators, and provides external peer review.
+
+**Decision**: Pursue academic publication for Blood's novel contributions.
+
+**Publication Targets**:
+
+| Contribution | Venue | Target Date |
+|--------------|-------|-------------|
+| Five Innovation Composition | OOPSLA/ECOOP workshop | After prototype validation |
+| Generation Snapshots | PLDI/ICFP | After implementation |
+| Effect-Aware Escape Analysis | CC (Compiler Construction) | After Phase 3 |
+| Full Language Design | JFP/TOPLAS | After self-hosting |
+
+**Publication Preparation**:
+1. **Formalization**: Mechanize proofs in Coq/Agda before submission
+2. **Evaluation**: Include empirical benchmarks
+3. **Comparison**: Position against related work (Vale, Koka, Unison, etc.)
+4. **Reproducibility**: Provide artifact for paper evaluation
+
+**Collaboration Opportunities**:
+- Programming language research groups (PLDI/POPL community)
+- Systems research groups (for safety-critical applications)
+- Industry partners interested in memory safety
+
+**Pre-Publication Actions**:
+- Write technical reports documenting novel mechanisms
+- Present at regional PL seminars/workshops
+- Engage with Koka, Vale, Hylo communities for feedback
+
+**Rationale**:
+- External validation of novel contributions
+- Attracts academic collaborators
+- Increases project credibility
+- Provides rigorous feedback on formal semantics
+
+**Consequences**:
+- Requires investment in mechanized proofs
+- Publication timeline adds pressure
+- May receive feedback requiring design changes
+- Increases visibility and contributor pool
+
+---
+
+## ADR-021: Community Development Strategy
+
+**Status**: Accepted
+
+**Context**: Blood is currently developed by a small team. Long-term sustainability requires community growth. However, the project's complexity (five innovations, novel mechanisms) creates a high barrier to entry.
+
+**Decision**: Implement a multi-tier contribution model with clear entry points.
+
+**Contribution Tiers**:
+
+| Tier | Barrier | Examples | Onboarding |
+|------|---------|----------|------------|
+| **Explorer** | Low | Bug reports, documentation, examples | CONTRIBUTING.md |
+| **Contributor** | Medium | Parser tests, error messages, tooling | Good First Issues |
+| **Core** | High | Type checker, effects, memory model | Mentorship required |
+| **Architect** | Very High | Novel mechanism design, formal proofs | Direct collaboration |
+
+**Community Infrastructure**:
+- **CONTRIBUTING.md**: Clear contribution guide (see separate file)
+- **Good First Issues**: Tagged issues suitable for newcomers
+- **Architecture Docs**: ROADMAP.md, DECISIONS.md (this file)
+- **Discussion Forum**: GitHub Discussions for design conversations
+- **Office Hours**: Regular video calls for contributor questions
+
+**Onboarding Path**:
+1. Read SPECIFICATION.md overview
+2. Build and run bloodc on examples
+3. Pick a Good First Issue
+4. Submit PR, receive feedback
+5. Graduate to larger contributions
+
+**Mentorship Model**:
+- Core contributors mentor new contributors
+- Code review includes teaching, not just critique
+- Design discussions welcome from all levels
+
+**Rationale**:
+- Sustainable development requires community
+- Clear tiers reduce overwhelming newcomers
+- Mentorship builds capable contributors
+- Good First Issues provide entry point
+
+**Consequences**:
+- Requires maintaining contributor infrastructure
+- Core team time allocated to mentorship
+- May slow short-term velocity for long-term sustainability
+- Creates path from user to contributor to maintainer
+
+---
+
 ## Decision Status Legend
 
 - **Proposed**: Under discussion
