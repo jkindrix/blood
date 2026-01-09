@@ -1,6 +1,6 @@
 # Blood Surface Syntax Grammar
 
-**Version**: 0.1.0-draft
+**Version**: 0.2.0-draft
 **Status**: Active Development
 **Last Updated**: 2026-01-09
 
