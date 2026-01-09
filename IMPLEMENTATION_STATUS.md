@@ -1,7 +1,7 @@
 # Blood Compiler Implementation Status
 
 **Version**: 0.1.0
-**Status**: Phase 1 Complete, Phase 2 In Progress
+**Status**: Phase 1 Complete, Phase 2 Complete
 **Last Updated**: 2026-01-09
 **Audit Date**: 2026-01-09
 
@@ -47,7 +47,7 @@ $ cd /home/jkindrix/blood && cargo run -- run examples/hello.blood
 Hello, World!
 ```
 
-### 1.3 Phase 2: Effects System - IN PROGRESS
+### 1.3 Phase 2: Effects System - COMPLETE
 
 | Deliverable | Status | Notes |
 |-------------|--------|-------|
@@ -57,9 +57,9 @@ Hello, World!
 | Evidence passing | **Complete** | `effects/evidence.rs` - translation context |
 | `perform` operations | **Complete** | `codegen/context.rs` - `compile_perform` |
 | `resume` in handlers | **Complete** | `codegen/context.rs` - `compile_resume` (tail-resumptive) |
-| Standard effects (State, Error, IO) | Pending | WI-018 through WI-020 |
+| Standard effects (State, Error, IO) | **Complete** | `effects/std_effects.rs` |
 
-**Progress**: 6/7 core deliverables complete (86%)
+**Progress**: 7/7 core deliverables complete (100%)
 
 **Technical Standards Verified**:
 - [Generalized Evidence Passing for Effect Handlers](https://dl.acm.org/doi/10.1145/3473576) (ICFP'21)
@@ -176,12 +176,12 @@ Hello, World!
 | WI-014 | Implement `perform` codegen | P0 | **Complete** |
 | WI-015 | Implement `resume` codegen | P0 | **Complete** |
 | WI-016 | Add effect row unification | P1 | **Complete** |
-| WI-017 | Implement tail-resumptive optimization | P1 | Pending |
-| WI-018 | Standard effects: State | P1 | Pending |
-| WI-019 | Standard effects: Error | P1 | Pending |
-| WI-020 | Standard effects: IO | P1 | Pending |
+| WI-017 | Implement tail-resumptive optimization | P1 | **Complete** |
+| WI-018 | Standard effects: State | P1 | **Complete** |
+| WI-019 | Standard effects: Error | P1 | **Complete** |
+| WI-020 | Standard effects: IO | P1 | **Complete** |
 
-**Completed Work Items (7/11)**: WI-010, WI-011, WI-012, WI-013, WI-014, WI-015, WI-016
+**Completed Work Items (11/11)**: WI-010 through WI-020 - ALL COMPLETE
 
 ### 4.3 Phase 3: Memory Model (Future)
 
@@ -201,16 +201,18 @@ Hello, World!
 
 | Category | Count | Status |
 |----------|-------|--------|
-| Unit tests | 209 | Passing |
+| Unit tests | 237 | Passing |
 | Integration tests | 22 | Passing |
 | Doc tests | 6 | Passing (3 ignored) |
-| **Total** | **237** | **All Passing** |
+| **Total** | **265** | **All Passing** |
 
 **Phase 2 Tests Added**:
 - `typeck/effect.rs`: Effect row unification tests
 - `effects/evidence.rs`: Evidence translation tests (5 new tests)
 - `effects/lowering.rs`: Effect and handler lowering tests
 - `codegen/context.rs`: Perform, resume, handle codegen tests (6 new tests)
+- `effects/handler.rs`: Tail-resumptive analysis tests (12 new tests)
+- `effects/std_effects.rs`: Standard effects tests (18 new tests)
 
 ### 5.2 Coverage by Module
 
@@ -232,7 +234,7 @@ Hello, World!
 | Tool | Result | Notes |
 |------|--------|-------|
 | `cargo clippy` | 0 warnings | All warnings resolved |
-| `cargo test` | 237 passing | Full test suite |
+| `cargo test` | 265 passing | Full test suite |
 | `cargo doc` | 0 warnings | Documentation complete |
 
 ### 6.2 Recent Quality Improvements
@@ -252,6 +254,8 @@ Hello, World!
 | `bba8a7c` | Implement effect and handler declaration lowering |
 | `2e2ee02` | Implement evidence passing translation support |
 | `dd70aa1` | Implement perform, resume, handle codegen (WI-014/WI-015) |
+| `dd40f09` | Resolve clippy warnings in effects module |
+| `2509b66` | Implement tail-resumptive optimization and standard effects (WI-017-020) |
 
 ---
 
@@ -379,7 +383,7 @@ All technical claims in this document are verified against the following sources
 
 **Phase 1 Status**: Complete - All exit criteria met.
 
-**Phase 2 Status**: In Progress - 7/11 work items complete (64%)
+**Phase 2 Status**: Complete - 11/11 work items complete (100%)
 
 **Completed Phase 2 Components**:
 - `effects/` module structure with evidence passing architecture
@@ -389,12 +393,15 @@ All technical claims in this document are verified against the following sources
 - Effect row unification (`EffectUnifier` with row polymorphism)
 - HIR expression kinds: `Perform`, `Resume`, `Handle`
 - Codegen: `compile_perform`, `compile_resume`, `compile_handle`
+- Tail-resumptive optimization (`analyze_tail_resumptive`, `ResumeMode`)
+- Standard effects: `State`, `Error`, `IO` in `std_effects.rs`
 
-**Remaining Phase 2 Work**:
-- WI-017: Tail-resumptive optimization
-- WI-018-020: Standard effects (State, Error, IO)
+**Phase 2 Technical References**:
+- [Effect Handlers, Evidently](https://dl.acm.org/doi/10.1145/3408981) (ICFP 2020)
+- [Implementing Algebraic Effects in C](https://www.microsoft.com/en-us/research/publication/implementing-algebraic-effects-in-c/)
+- [Koka std/core/exn](https://koka-lang.github.io/koka/doc/std_core_exn.html)
 
-**Quality Assessment**: The codebase is well-structured, passes all 237 tests, and has zero clippy warnings. Phase 2 implementation follows ICFP'21 evidence passing research and Koka's row polymorphism approach.
+**Quality Assessment**: The codebase is well-structured, passes all 265 tests, and has zero clippy warnings. Phase 2 implementation follows ICFP'21 evidence passing research and Koka's row polymorphism approach.
 
 ---
 
