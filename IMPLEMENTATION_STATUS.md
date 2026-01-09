@@ -1,7 +1,7 @@
 # Blood Compiler Implementation Status
 
 **Version**: 0.1.0
-**Status**: Phase 1 Complete, Phase 2 Pending
+**Status**: Phase 1 Complete, Phase 2 In Progress
 **Last Updated**: 2026-01-09
 **Audit Date**: 2026-01-09
 
@@ -47,16 +47,23 @@ $ cd /home/jkindrix/blood && cargo run -- run examples/hello.blood
 Hello, World!
 ```
 
-### 1.3 Phase 2: Effects System - PENDING
+### 1.3 Phase 2: Effects System - IN PROGRESS
 
 | Deliverable | Status | Notes |
 |-------------|--------|-------|
-| Effect declarations | Parsed | HIR types defined, no codegen |
-| Handler syntax | Parsed | HIR types defined, no codegen |
-| `perform` operations | Not implemented | Requires evidence passing |
-| `resume` in handlers | Not implemented | Requires continuation capture |
-| Effect polymorphism | Not implemented | Requires row unification |
-| Standard effects (State, Error, IO) | Not implemented | Phase 2 work |
+| Effect declarations | **Complete** | `effects/lowering.rs` - `EffectInfo` structure |
+| Handler syntax | **Complete** | `effects/lowering.rs` - `HandlerInfo` structure |
+| Effect row unification | **Complete** | `typeck/effect.rs` - row polymorphism support |
+| Evidence passing | **Complete** | `effects/evidence.rs` - translation context |
+| `perform` operations | Pending | WI-014: Requires codegen integration |
+| `resume` in handlers | Pending | WI-015: Requires continuation capture |
+| Standard effects (State, Error, IO) | Pending | WI-018 through WI-020 |
+
+**Progress**: 4/7 core deliverables complete (57%)
+
+**Technical Standards Verified**:
+- [Generalized Evidence Passing for Effect Handlers](https://dl.acm.org/doi/10.1145/3473576) (ICFP'21)
+- [Koka Programming Language](https://koka-lang.github.io/koka/doc/book.html) - row polymorphism approach
 
 ---
 
@@ -160,19 +167,21 @@ Hello, World!
 
 ### 4.2 Phase 2: Effects System
 
-| Item | Description | Priority |
-|------|-------------|----------|
-| WI-010 | Create `effects/` module structure | P0 |
-| WI-011 | Implement effect declaration lowering | P0 |
-| WI-012 | Implement handler lowering | P0 |
-| WI-013 | Implement evidence passing translation | P0 |
-| WI-014 | Implement `perform` codegen | P0 |
-| WI-015 | Implement `resume` codegen | P0 |
-| WI-016 | Add effect row unification | P1 |
-| WI-017 | Implement tail-resumptive optimization | P1 |
-| WI-018 | Standard effects: State | P1 |
-| WI-019 | Standard effects: Error | P1 |
-| WI-020 | Standard effects: IO | P1 |
+| Item | Description | Priority | Status |
+|------|-------------|----------|--------|
+| WI-010 | Create `effects/` module structure | P0 | **Complete** |
+| WI-011 | Implement effect declaration lowering | P0 | **Complete** |
+| WI-012 | Implement handler lowering | P0 | **Complete** |
+| WI-013 | Implement evidence passing translation | P0 | **Complete** |
+| WI-014 | Implement `perform` codegen | P0 | Pending |
+| WI-015 | Implement `resume` codegen | P0 | Pending |
+| WI-016 | Add effect row unification | P1 | **Complete** |
+| WI-017 | Implement tail-resumptive optimization | P1 | Pending |
+| WI-018 | Standard effects: State | P1 | Pending |
+| WI-019 | Standard effects: Error | P1 | Pending |
+| WI-020 | Standard effects: IO | P1 | Pending |
+
+**Completed Work Items (5/11)**: WI-010, WI-011, WI-012, WI-013, WI-016
 
 ### 4.3 Phase 3: Memory Model (Future)
 
@@ -192,10 +201,15 @@ Hello, World!
 
 | Category | Count | Status |
 |----------|-------|--------|
-| Unit tests | 176 | Passing |
+| Unit tests | 203 | Passing |
 | Integration tests | 22 | Passing |
 | Doc tests | 6 | Passing (3 ignored) |
-| **Total** | **204** | **All Passing** |
+| **Total** | **231** | **All Passing** |
+
+**Phase 2 Tests Added**:
+- `typeck/effect.rs`: Effect row unification tests
+- `effects/evidence.rs`: Evidence translation tests (5 new tests)
+- `effects/lowering.rs`: Effect and handler lowering tests
 
 ### 5.2 Coverage by Module
 
@@ -203,9 +217,10 @@ Hello, World!
 |--------|-------|----------|
 | `lexer` | 45+ | High |
 | `parser` | 60+ | High |
-| `typeck` | 50+ | High (30 unification tests added) |
+| `typeck` | 55+ | High (effect unification added) |
 | `hir` | 10+ | Medium |
 | `codegen` | 40+ | High |
+| `effects` | 15+ | Medium (Phase 2 in progress) |
 
 ---
 
@@ -216,7 +231,7 @@ Hello, World!
 | Tool | Result | Notes |
 |------|--------|-------|
 | `cargo clippy` | 0 warnings | All warnings resolved |
-| `cargo test` | 204 passing | Full test suite |
+| `cargo test` | 231 passing | Full test suite |
 | `cargo doc` | 0 warnings | Documentation complete |
 
 ### 6.2 Recent Quality Improvements
@@ -226,6 +241,15 @@ Hello, World!
 | `34a47bd` | Fix clippy warnings and errors |
 | `a933be4` | Add 30 comprehensive type unification tests |
 | `9be10c3` | Improve code quality and add error handling tests |
+
+### 6.3 Phase 2 Implementation Commits
+
+| Commit | Description |
+|--------|-------------|
+| `02f22b0` | Implement Phase 2 effects system foundation |
+| `1be5a64` | Implement effect row unification (ICFP'21 based) |
+| `bba8a7c` | Implement effect and handler declaration lowering |
+| `2e2ee02` | Implement evidence passing translation support |
 
 ---
 
@@ -288,8 +312,13 @@ bloodc/src/
 ├── lexer/         ──►    ✓ lexer.rs (single file)
 ├── parser/        ──►    ✓ parser.rs + parser/
 ├── hir/           ──►    ✓ hir/
-├── typeck/        ──►    ✓ typeck/
-├── effects/       ──►    ○ Phase 2 (not yet created)
+├── typeck/        ──►    ✓ typeck/ (effect.rs added)
+├── effects/       ──►    ✓ effects/ (Phase 2 in progress)
+│   ├── mod.rs
+│   ├── row.rs
+│   ├── evidence.rs
+│   ├── handler.rs
+│   └── lowering.rs
 ├── mir/           ──►    ○ Phase 3 (not yet created)
 ├── codegen/       ──►    ✓ codegen/
 ├── driver/        ──►    ~ main.rs (simplified)
@@ -348,9 +377,22 @@ All technical claims in this document are verified against the following sources
 
 **Phase 1 Status**: Complete - All exit criteria met.
 
-**Immediate Action**: Phase 2 (Effects System) implementation should begin.
+**Phase 2 Status**: In Progress - 5/11 work items complete (45%)
 
-**Quality Assessment**: The codebase is well-structured, passes all tests, and has zero clippy warnings. Documentation coverage is good. The implementation aligns with 2024-2026 technical standards for compiler construction.
+**Completed Phase 2 Components**:
+- `effects/` module structure with evidence passing architecture
+- Effect declaration lowering (`EffectInfo`, `OperationInfo`)
+- Handler lowering (`HandlerInfo`, `OpImplInfo`)
+- Evidence passing translation (`EvidenceContext`, `TranslatedOp`)
+- Effect row unification (`EffectUnifier` with row polymorphism)
+
+**Remaining Phase 2 Work**:
+- WI-014: `perform` codegen integration
+- WI-015: `resume` codegen with continuation capture
+- WI-017: Tail-resumptive optimization
+- WI-018-020: Standard effects (State, Error, IO)
+
+**Quality Assessment**: The codebase is well-structured, passes all 231 tests, and has zero clippy warnings. Phase 2 implementation follows ICFP'21 evidence passing research and Koka's row polymorphism approach.
 
 ---
 

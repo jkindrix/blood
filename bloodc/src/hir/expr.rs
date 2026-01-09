@@ -268,6 +268,38 @@ pub enum ExprKind {
     /// Unsafe block: `unsafe { ... }`
     Unsafe(Box<Expr>),
 
+    /// Effect operation: `perform Effect.op(args)`
+    ///
+    /// After evidence translation, this becomes a call through the evidence vector.
+    /// See: [Generalized Evidence Passing](https://dl.acm.org/doi/10.1145/3473576)
+    Perform {
+        /// The effect being performed.
+        effect_id: DefId,
+        /// The operation index within the effect.
+        op_index: u32,
+        /// Arguments to the operation.
+        args: Vec<Expr>,
+    },
+
+    /// Resume continuation in a handler: `resume(value)`
+    ///
+    /// Resumes the suspended computation with the given value.
+    /// For tail-resumptive handlers, this compiles to a direct return.
+    Resume {
+        /// The value to resume with.
+        value: Option<Box<Expr>>,
+    },
+
+    /// Handle expression: `handle { body } with { handlers }`
+    ///
+    /// Runs the body with the given effect handlers installed.
+    Handle {
+        /// The body expression to run.
+        body: Box<Expr>,
+        /// The handler definition.
+        handler_id: DefId,
+    },
+
     /// Error placeholder (for error recovery).
     Error,
 }

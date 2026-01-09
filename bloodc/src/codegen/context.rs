@@ -464,6 +464,24 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // Compile type cast
                 self.compile_cast(inner, target_ty)
             }
+            Perform { effect_id, op_index, args } => {
+                // Effect operation: perform Effect.op(args)
+                // After evidence translation, this calls through the evidence vector.
+                // For now, we emit a placeholder that will be filled in during
+                // full effects system integration (Phase 2.4).
+                self.compile_perform(*effect_id, *op_index, args, &expr.ty)
+            }
+            Resume { value } => {
+                // Resume continuation in handler.
+                // For tail-resumptive handlers, this is just a return.
+                // For general handlers, this requires continuation capture (Phase 2.3).
+                self.compile_resume(value.as_deref(), &expr.ty)
+            }
+            Handle { body, handler_id } => {
+                // Handle expression: runs body with handler installed.
+                // This sets up the evidence vector and runs the body.
+                self.compile_handle(body, *handler_id, &expr.ty)
+            }
             _ => {
                 self.errors.push(Diagnostic::error(
                     format!("Unsupported expression kind: {:?}", std::mem::discriminant(&expr.kind)),
@@ -1810,6 +1828,136 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             }
         }
     }
+
+    // ========================================================================
+    // Effects System Codegen (Phase 2)
+    // ========================================================================
+
+    /// Compile a perform expression: `perform Effect.op(args)`
+    ///
+    /// In the evidence passing model (ICFP'21), this becomes a call through
+    /// the evidence vector: `ev[idx].op(args)`.
+    ///
+    /// For Phase 2.1, we implement direct function calls. Full evidence
+    /// passing with runtime vectors comes in Phase 2.4.
+    fn compile_perform(
+        &mut self,
+        effect_id: DefId,
+        op_index: u32,
+        args: &[hir::Expr],
+        result_ty: &Type,
+    ) -> Result<Option<BasicValueEnum<'ctx>>, Vec<Diagnostic>> {
+        // Phase 2.1: Basic evidence passing
+        //
+        // For now, we look up the handler function and call it directly.
+        // The full evidence vector approach will be added in Phase 2.4.
+
+        // Compile arguments
+        let mut compiled_args = Vec::with_capacity(args.len());
+        for arg in args {
+            if let Some(val) = self.compile_expr(arg)? {
+                compiled_args.push(val.into());
+            }
+        }
+
+        // Look up the handler function by effect and operation
+        // For now, we generate a synthetic function name
+        let handler_fn_name = format!("__effect_{}_op_{}", effect_id.index, op_index);
+
+        if let Some(handler_fn) = self.module.get_function(&handler_fn_name) {
+            // Call the handler function
+            let call_result = self.builder
+                .build_call(handler_fn, &compiled_args, "perform_result")
+                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?;
+
+            // Get the result value if not void
+            if result_ty.is_unit() {
+                Ok(None)
+            } else {
+                Ok(call_result.try_as_basic_value().left())
+            }
+        } else {
+            // Handler not found - this would be caught earlier by type checking
+            // For now, return a default value or error
+            self.errors.push(Diagnostic::error(
+                format!("Effect handler not found: effect={:?}, op={}", effect_id, op_index),
+                Span::dummy(),
+            ));
+
+            // Return a default value based on result type
+            if result_ty.is_unit() {
+                Ok(None)
+            } else {
+                // Return undefined value (will be caught by tests)
+                Ok(Some(self.context.i32_type().const_int(0, false).into()))
+            }
+        }
+    }
+
+    /// Compile a resume expression: `resume(value)`
+    ///
+    /// For tail-resumptive handlers, resume is a simple return.
+    /// For general handlers, this requires continuation capture (Phase 2.3).
+    fn compile_resume(
+        &mut self,
+        value: Option<&hir::Expr>,
+        _result_ty: &Type,
+    ) -> Result<Option<BasicValueEnum<'ctx>>, Vec<Diagnostic>> {
+        // Phase 2.1: Tail-resumptive optimization only
+        //
+        // For tail-resumptive handlers (State, Reader, Writer), resume at tail
+        // position is just returning the value.
+
+        if let Some(val_expr) = value {
+            let val = self.compile_expr(val_expr)?;
+            if let Some(ret_val) = val {
+                self.builder.build_return(Some(&ret_val))
+                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?;
+            } else {
+                self.builder.build_return(None)
+                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?;
+            }
+        } else {
+            self.builder.build_return(None)
+                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?;
+        }
+
+        // Resume doesn't produce a value (control flow transfers)
+        Ok(None)
+    }
+
+    /// Compile a handle expression: `handle { body } with { handler }`
+    ///
+    /// This sets up the evidence vector and runs the body with the handler
+    /// installed.
+    fn compile_handle(
+        &mut self,
+        body: &hir::Expr,
+        _handler_id: DefId,
+        result_ty: &Type,
+    ) -> Result<Option<BasicValueEnum<'ctx>>, Vec<Diagnostic>> {
+        // Phase 2.1: Basic handler installation
+        //
+        // For now, we simply compile the body. The evidence vector setup
+        // will be added in Phase 2.4.
+
+        // TODO(Phase 2.4): Set up evidence vector with handler
+        // let evidence = self.create_evidence_vector(handler_id);
+        // self.push_evidence(evidence);
+
+        // Compile the body
+        let result = self.compile_expr(body)?;
+
+        // TODO(Phase 2.4): Pop evidence vector
+        // self.pop_evidence();
+
+        // Return result with proper type
+        if result_ty.is_unit() {
+            Ok(None)
+        } else {
+            Ok(result)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -2557,5 +2705,161 @@ mod tests {
         let result = codegen.compile_crate(&hir_crate);
 
         assert!(result.is_ok(), "Shift right codegen failed: {:?}", result.err());
+    }
+
+    // ========================================================================
+    // Effects System Codegen Tests (Phase 2)
+    // ========================================================================
+
+    /// Test perform expression creates placeholder for effect operation
+    #[test]
+    fn test_codegen_perform_basic() {
+        let effect_id = DefId::new(100);
+        let expr = Expr {
+            kind: ExprKind::Perform {
+                effect_id,
+                op_index: 0,
+                args: vec![int_literal(42)],
+            },
+            ty: i32_type(),
+            span: Span::dummy(),
+        };
+        let hir_crate = make_test_crate(expr, i32_type());
+
+        let context = Context::create();
+        let module = context.create_module("test");
+        let builder = context.create_builder();
+
+        let mut codegen = CodegenContext::new(&context, &module, &builder);
+        let result = codegen.compile_crate(&hir_crate);
+
+        // With no handler registered, codegen returns error about missing handler
+        // The key test is that it doesn't panic and produces the expected error
+        assert!(result.is_err(), "Perform should error when handler not found");
+        let errors = result.unwrap_err();
+        assert!(errors.iter().any(|e| e.message.contains("Effect handler not found")));
+    }
+
+    /// Test perform with no arguments
+    #[test]
+    fn test_codegen_perform_no_args() {
+        let effect_id = DefId::new(101);
+        let expr = Expr {
+            kind: ExprKind::Perform {
+                effect_id,
+                op_index: 1,
+                args: vec![],
+            },
+            ty: unit_type(),
+            span: Span::dummy(),
+        };
+        let hir_crate = make_test_crate(expr, unit_type());
+
+        let context = Context::create();
+        let module = context.create_module("test");
+        let builder = context.create_builder();
+
+        let mut codegen = CodegenContext::new(&context, &module, &builder);
+        let result = codegen.compile_crate(&hir_crate);
+
+        assert!(result.is_err(), "Perform should error when handler not found");
+        let errors = result.unwrap_err();
+        assert!(errors.iter().any(|e| e.message.contains("Effect handler not found")));
+    }
+
+    /// Test resume expression (tail-resumptive)
+    #[test]
+    fn test_codegen_resume_with_value() {
+        let expr = Expr {
+            kind: ExprKind::Resume {
+                value: Some(Box::new(int_literal(42))),
+            },
+            ty: Type::never(),
+            span: Span::dummy(),
+        };
+        let hir_crate = make_test_crate(expr, unit_type());
+
+        let context = Context::create();
+        let module = context.create_module("test");
+        let builder = context.create_builder();
+
+        let mut codegen = CodegenContext::new(&context, &module, &builder);
+        let result = codegen.compile_crate(&hir_crate);
+
+        assert!(result.is_ok(), "Resume codegen failed: {:?}", result.err());
+    }
+
+    /// Test resume without value (unit resume)
+    #[test]
+    fn test_codegen_resume_unit() {
+        let expr = Expr {
+            kind: ExprKind::Resume { value: None },
+            ty: Type::never(),
+            span: Span::dummy(),
+        };
+        let hir_crate = make_test_crate(expr, unit_type());
+
+        let context = Context::create();
+        let module = context.create_module("test");
+        let builder = context.create_builder();
+
+        let mut codegen = CodegenContext::new(&context, &module, &builder);
+        let result = codegen.compile_crate(&hir_crate);
+
+        assert!(result.is_ok(), "Resume unit codegen failed: {:?}", result.err());
+    }
+
+    /// Test handle expression wraps body
+    #[test]
+    fn test_codegen_handle_basic() {
+        let handler_id = DefId::new(200);
+        let body = int_literal(42);
+        let expr = Expr {
+            kind: ExprKind::Handle {
+                body: Box::new(body),
+                handler_id,
+            },
+            ty: i32_type(),
+            span: Span::dummy(),
+        };
+        let hir_crate = make_test_crate(expr, i32_type());
+
+        let context = Context::create();
+        let module = context.create_module("test");
+        let builder = context.create_builder();
+
+        let mut codegen = CodegenContext::new(&context, &module, &builder);
+        let result = codegen.compile_crate(&hir_crate);
+
+        assert!(result.is_ok(), "Handle codegen failed: {:?}", result.err());
+    }
+
+    /// Test handle with unit body
+    #[test]
+    fn test_codegen_handle_unit() {
+        let handler_id = DefId::new(201);
+        let body = Expr {
+            kind: ExprKind::Tuple(Vec::new()),
+            ty: unit_type(),
+            span: Span::dummy(),
+        };
+        let expr = Expr {
+            kind: ExprKind::Handle {
+                body: Box::new(body),
+                handler_id,
+            },
+            ty: unit_type(),
+            span: Span::dummy(),
+        };
+        let hir_crate = make_test_crate(expr, unit_type());
+
+        let context = Context::create();
+        let module = context.create_module("test");
+        let builder = context.create_builder();
+
+        let mut codegen = CodegenContext::new(&context, &module, &builder);
+        let result = codegen.compile_crate(&hir_crate);
+
+        assert!(result.is_ok(), "Handle unit codegen failed: {:?}", result.err());
     }
 }
