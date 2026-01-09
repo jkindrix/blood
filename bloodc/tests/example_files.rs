@@ -152,3 +152,120 @@ fn test_parse_performance_sanity() {
         elapsed
     );
 }
+
+// ============================================================
+// Error Handling Integration Tests
+// ============================================================
+
+/// Helper to parse source and expect errors.
+fn parse_expect_error(source: &str) -> Vec<bloodc::Diagnostic> {
+    let mut parser = Parser::new(source);
+    match parser.parse_program() {
+        Ok(_) => panic!("Expected parse error but parsing succeeded"),
+        Err(errors) => errors,
+    }
+}
+
+/// Helper to verify error contains expected message substring.
+fn assert_error_contains(errors: &[bloodc::Diagnostic], expected: &str) {
+    assert!(
+        errors.iter().any(|e| e.message.contains(expected)),
+        "Expected error containing '{}', got: {:?}",
+        expected,
+        errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_error_missing_function_body() {
+    let errors = parse_expect_error("fn foo()");
+    assert_error_contains(&errors, "expected");
+}
+
+#[test]
+fn test_error_unclosed_block() {
+    let errors = parse_expect_error("fn foo() { let x = 1;");
+    assert!(!errors.is_empty(), "Should report unclosed block error");
+}
+
+#[test]
+fn test_error_unclosed_paren() {
+    let errors = parse_expect_error("fn foo(x: i32 {}");
+    assert!(!errors.is_empty(), "Should report unclosed paren error");
+}
+
+#[test]
+fn test_error_invalid_expression() {
+    let errors = parse_expect_error("fn foo() { let x = ; }");
+    assert!(!errors.is_empty(), "Should report invalid expression error");
+}
+
+#[test]
+fn test_error_missing_type_annotation() {
+    let errors = parse_expect_error("fn foo(x) {}");
+    assert_error_contains(&errors, ":");
+}
+
+#[test]
+fn test_error_unexpected_token_in_struct() {
+    let errors = parse_expect_error("struct Foo { + }");
+    assert!(!errors.is_empty(), "Should report unexpected token error");
+}
+
+#[test]
+fn test_error_invalid_import() {
+    let errors = parse_expect_error("import ;");
+    assert!(!errors.is_empty(), "Should report invalid import error");
+}
+
+#[test]
+fn test_error_incomplete_match_arm() {
+    // Missing arrow and body in match arm
+    let errors = parse_expect_error("fn foo() { match x { 1 } }");
+    assert!(!errors.is_empty(), "Should report error for incomplete match arm");
+}
+
+#[test]
+fn test_error_recovery_continues_parsing() {
+    // Parser should recover and continue after errors
+    let source = r#"
+        fn broken( {}
+        fn valid() { 42 }
+    "#;
+    let mut parser = Parser::new(source);
+    let result = parser.parse_program();
+
+    // Should have errors from the broken function
+    assert!(result.is_err(), "Should have parse errors");
+
+    // The parser should have attempted to continue
+    let errors = result.unwrap_err();
+    assert!(!errors.is_empty(), "Should have reported errors");
+}
+
+#[test]
+fn test_error_duplicate_comma() {
+    let errors = parse_expect_error("fn foo(a: i32,, b: i32) {}");
+    assert!(!errors.is_empty(), "Should report error for duplicate comma");
+}
+
+#[test]
+fn test_error_trailing_operator() {
+    let errors = parse_expect_error("fn foo() { 1 + }");
+    assert!(!errors.is_empty(), "Should report error for trailing operator");
+}
+
+#[test]
+fn test_error_multiple_errors_reported() {
+    // Test that multiple errors are accumulated
+    let source = r#"
+        fn bad1( {}
+        fn bad2( {}
+    "#;
+    let mut parser = Parser::new(source);
+    let result = parser.parse_program();
+
+    assert!(result.is_err(), "Should have parse errors");
+    let errors = result.unwrap_err();
+    assert!(errors.len() >= 1, "Should report at least one error");
+}

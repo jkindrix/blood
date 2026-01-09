@@ -377,8 +377,11 @@ impl<'src> Parser<'src> {
         if fields.len() == 1 && rest_pos.is_none() {
             // Check if there was a trailing comma - if not, it's just paren
             // For now, treat single element as paren pattern
+            // Safe: we just checked fields.len() == 1, so pop() returns the only element
+            let field = fields.into_iter().next()
+                .expect("BUG: checked len == 1 but no element found");
             return Pattern {
-                kind: PatternKind::Paren(Box::new(fields.into_iter().next().unwrap())),
+                kind: PatternKind::Paren(Box::new(field)),
                 span: start.merge(self.previous.span),
             };
         }

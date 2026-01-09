@@ -357,7 +357,7 @@ impl<'a> DiagnosticEmitter<'a> {
         // Write to stderr
         report
             .eprint((self.filename, Source::from(self.source)))
-            .expect("Failed to write diagnostic");
+            .expect("BUG: failed to write diagnostic to stderr - terminal may be in an invalid state");
     }
 }
 

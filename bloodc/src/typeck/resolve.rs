@@ -155,15 +155,26 @@ impl<'a> Resolver<'a> {
         self.next_local_id = 0;
     }
 
+    /// Get the index of the current scope.
+    ///
+    /// # Panics
+    /// Panics if the scope stack is empty. This should never happen as
+    /// the root scope is always present (invariant established in `new()`).
+    #[inline]
+    fn current_scope_idx(&self) -> usize {
+        *self.scope_stack.last()
+            .expect("BUG: scope stack should never be empty - root scope must always be present")
+    }
+
     /// Get the current scope.
     pub fn current_scope(&self) -> &Scope {
-        let idx = *self.scope_stack.last().unwrap();
+        let idx = self.current_scope_idx();
         &self.scopes[idx]
     }
 
     /// Get the current scope mutably.
     fn current_scope_mut(&mut self) -> &mut Scope {
-        let idx = *self.scope_stack.last().unwrap();
+        let idx = self.current_scope_idx();
         &mut self.scopes[idx]
     }
 
@@ -271,7 +282,7 @@ impl<'a> Resolver<'a> {
 
     /// Look up a name in the current scope chain.
     pub fn lookup(&self, name: &str) -> Option<Binding> {
-        let mut scope_idx = Some(*self.scope_stack.last().unwrap());
+        let mut scope_idx = Some(self.current_scope_idx());
 
         while let Some(idx) = scope_idx {
             let scope = &self.scopes[idx];
@@ -291,7 +302,7 @@ impl<'a> Resolver<'a> {
             return None; // Primitives are handled specially
         }
 
-        let mut scope_idx = Some(*self.scope_stack.last().unwrap());
+        let mut scope_idx = Some(self.current_scope_idx());
 
         while let Some(idx) = scope_idx {
             let scope = &self.scopes[idx];

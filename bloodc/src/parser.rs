@@ -68,7 +68,9 @@ fn format_expected_list(items: &[&str]) -> String {
         1 => items[0].to_string(),
         2 => format!("{} or {}", items[0], items[1]),
         _ => {
-            let (last, rest) = items.split_last().unwrap();
+            // Safe: we're in the _ arm so items.len() >= 3, meaning split_last() returns Some
+            let (last, rest) = items.split_last()
+                .expect("BUG: items.len() >= 3 but split_last() returned None");
             format!("{}, or {}", rest.join(", "), last)
         }
     }
@@ -745,7 +747,9 @@ impl<'src> Parser<'src> {
                                     chars.next();
                                     break;
                                 }
-                                hex.push(chars.next().unwrap());
+                                // Safe: we just peeked Some(&c), so next() must return Some(c)
+                                hex.push(chars.next()
+                                    .expect("BUG: peek() returned Some but next() returned None"));
                             }
                             if let Ok(n) = u32::from_str_radix(&hex, 16) {
                                 if let Some(c) = char::from_u32(n) {

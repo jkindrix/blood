@@ -59,12 +59,12 @@ impl Chunk {
     /// Create a new chunk with the given capacity.
     fn new(capacity: usize) -> Self {
         let layout = Layout::from_size_align(capacity, 16)
-            .expect("Invalid layout");
+            .expect("BUG: invalid layout - capacity must be within valid bounds for 16-byte alignment");
 
         // SAFETY: Layout is valid and non-zero sized
         let data = unsafe {
             let ptr = alloc(layout);
-            NonNull::new(ptr).expect("Allocation failed")
+            NonNull::new(ptr).expect("FATAL: memory allocation failed - system out of memory")
         };
 
         Self {
@@ -171,7 +171,8 @@ impl<T> TypedArena<T> {
             return &[];
         }
 
-        let layout = Layout::array::<T>(values.len()).expect("Invalid layout");
+        let layout = Layout::array::<T>(values.len())
+            .expect("BUG: invalid array layout - array size exceeds addressable memory");
         let ptr = self.alloc_raw(layout);
 
         // SAFETY: ptr is properly aligned and sized
@@ -200,7 +201,7 @@ impl<T> TypedArena<T> {
         let chunk_size = layout.size().max(DEFAULT_CHUNK_SIZE);
         let mut new_chunk = Chunk::new(chunk_size);
         let ptr = new_chunk.try_alloc(layout)
-            .expect("Fresh chunk should have space");
+            .expect("BUG: fresh chunk must have space - allocation size exceeds chunk capacity");
         chunks.push(new_chunk);
         ptr
     }
@@ -261,7 +262,8 @@ impl StringArena {
         }
 
         // Allocate new string
-        let layout = Layout::from_size_align(s.len(), 1).expect("Invalid layout");
+        let layout = Layout::from_size_align(s.len(), 1)
+            .expect("BUG: invalid string layout - string length exceeds addressable memory");
         let ptr = self.alloc_raw(layout);
 
         // SAFETY: We just allocated this memory
@@ -291,7 +293,8 @@ impl StringArena {
 
         let chunk_size = layout.size().max(DEFAULT_CHUNK_SIZE);
         let mut new_chunk = Chunk::new(chunk_size);
-        let ptr = new_chunk.try_alloc(layout).expect("Fresh chunk should have space");
+        let ptr = new_chunk.try_alloc(layout)
+            .expect("BUG: fresh chunk must have space - allocation size exceeds chunk capacity");
         chunks.push(new_chunk);
         ptr
     }

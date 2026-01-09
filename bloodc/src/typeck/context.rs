@@ -33,8 +33,8 @@ pub struct TypeContext<'a> {
     struct_defs: HashMap<DefId, StructInfo>,
     /// Enum definitions.
     enum_defs: HashMap<DefId, EnumInfo>,
-    /// Bodies to type-check.
-    pending_bodies: Vec<(DefId, ast::Block)>,
+    /// Functions to type-check (includes full declaration for parameter names).
+    pending_bodies: Vec<(DefId, ast::FnDecl)>,
     /// The current function's return type.
     return_type: Option<Type>,
     /// Errors encountered.
@@ -136,7 +136,7 @@ impl<'a> TypeContext<'a> {
             name.to_string(),
             hir::DefKind::Fn,
             Span::dummy(),
-        ).expect("builtin registration should succeed");
+        ).expect("BUG: builtin registration failed - this indicates a name collision in builtin definitions");
 
         self.fn_sigs.insert(def_id, hir::FnSig {
             inputs,
@@ -201,9 +201,9 @@ impl<'a> TypeContext<'a> {
         let sig = hir::FnSig::new(param_types, return_type);
         self.fn_sigs.insert(def_id, sig);
 
-        // Queue body for later type-checking
-        if let Some(ref body) = func.body {
-            self.pending_bodies.push((def_id, body.clone()));
+        // Queue function for later body type-checking
+        if func.body.is_some() {
+            self.pending_bodies.push((def_id, func.clone()));
         }
 
         Ok(())
@@ -365,8 +365,8 @@ impl<'a> TypeContext<'a> {
     pub fn check_all_bodies(&mut self) -> Result<(), Vec<Diagnostic>> {
         let pending = std::mem::take(&mut self.pending_bodies);
 
-        for (def_id, body) in pending {
-            if let Err(e) = self.check_function_body(def_id, &body) {
+        for (def_id, func) in pending {
+            if let Err(e) = self.check_function_body(def_id, &func) {
                 self.errors.push(e);
             }
         }
@@ -379,11 +379,16 @@ impl<'a> TypeContext<'a> {
     }
 
     /// Type-check a function body.
-    fn check_function_body(&mut self, def_id: DefId, body: &ast::Block) -> Result<(), TypeError> {
+    fn check_function_body(&mut self, def_id: DefId, func: &ast::FnDecl) -> Result<(), TypeError> {
+        let body = func.body.as_ref().ok_or_else(|| TypeError::new(
+            TypeErrorKind::NotFound { name: format!("body for {def_id}") },
+            func.span,
+        ))?;
+
         let sig = self.fn_sigs.get(&def_id).cloned()
             .ok_or_else(|| TypeError::new(
                 TypeErrorKind::NotFound { name: format!("fn sig for {def_id}") },
-                body.span,
+                func.span,
             ))?;
 
         // Set up function scope
@@ -403,16 +408,43 @@ impl<'a> TypeContext<'a> {
         // Set return type for return statements
         self.return_type = Some(sig.output.clone());
 
-        // Add parameters as locals
-        // Note: In a real implementation, we'd get param names from the AST
-        for (i, param_ty) in sig.inputs.iter().enumerate() {
-            let local_id = self.resolver.next_local_id();
+        // Add parameters as locals with their actual names from the AST
+        for (i, param) in func.params.iter().enumerate() {
+            let param_ty = sig.inputs.get(i).cloned().unwrap_or_else(Type::error);
+
+            // Extract name and mutability from the parameter pattern
+            let (param_name, mutable) = match &param.pattern.kind {
+                ast::PatternKind::Ident { name, mutable, .. } => {
+                    (self.symbol_to_string(name.node), *mutable)
+                }
+                ast::PatternKind::Wildcard => {
+                    // Anonymous parameter - generate a unique name
+                    (format!("_param{i}"), false)
+                }
+                _ => {
+                    // Complex pattern - generate a placeholder name for now.
+                    // Phase 2+: Implement destructuring patterns in function parameters,
+                    // allowing patterns like `fn foo((x, y): (i32, i32))` to directly
+                    // bind tuple elements. This requires generating hidden temporaries
+                    // and pattern-matching code in the function prologue.
+                    (format!("param{i}"), false)
+                }
+            };
+
+            // Register the parameter in the resolver so it can be looked up by name
+            let local_id = self.resolver.define_local(
+                param_name.clone(),
+                param_ty.clone(),
+                mutable,
+                param.span,
+            )?;
+
             self.locals.push(hir::Local {
                 id: local_id,
-                ty: param_ty.clone(),
-                mutable: false,
-                name: Some(format!("param{i}")),
-                span: body.span,
+                ty: param_ty,
+                mutable,
+                name: Some(param_name),
+                span: param.span,
             });
         }
 
@@ -770,8 +802,31 @@ impl<'a> TypeContext<'a> {
             ast::BinOp::Pipe => {
                 // left |> right === right(left)
                 // right must be a function taking left as argument
-                // For now, simplified handling
-                right_expr.ty.clone()
+                // result type is the function's return type
+                match right_expr.ty.kind() {
+                    TypeKind::Fn { params, ret } => {
+                        // Verify the function takes at least one parameter
+                        if params.is_empty() {
+                            return Err(TypeError::new(
+                                TypeErrorKind::WrongArity {
+                                    expected: 1,
+                                    found: 0,
+                                },
+                                span,
+                            ));
+                        }
+                        // Verify the left operand type matches the first parameter
+                        self.unifier.unify(&left_expr.ty, &params[0], span)?;
+                        // Result is the function's return type
+                        ret.clone()
+                    }
+                    _ => {
+                        return Err(TypeError::new(
+                            TypeErrorKind::NotAFunction { ty: right_expr.ty.clone() },
+                            span,
+                        ));
+                    }
+                }
             }
         };
 
@@ -1067,7 +1122,9 @@ impl<'a> TypeContext<'a> {
         for arm in arms {
             self.resolver.push_scope(ScopeKind::MatchArm, arm.span);
 
-            // TODO: Properly type-check pattern against scrutinee type
+            // Phase 2+: Implement exhaustiveness and usefulness checking for patterns.
+            // Currently we lower the pattern but don't verify that the pattern fully
+            // covers all variants of the scrutinee type or detect unreachable arms.
             let pattern = self.lower_pattern(&arm.pattern, &scrutinee_expr.ty)?;
 
             let guard = if let Some(ref guard) = arm.guard {

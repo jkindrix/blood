@@ -178,8 +178,13 @@ impl<'src> Parser<'src> {
                         span,
                     }
                 }
-                op if token_to_compound_op(op).is_some() => {
-                    let bin_op = token_to_compound_op(op).unwrap();
+                TokenKind::PlusEq | TokenKind::MinusEq | TokenKind::StarEq |
+                TokenKind::SlashEq | TokenKind::PercentEq | TokenKind::AndEq |
+                TokenKind::OrEq | TokenKind::CaretEq | TokenKind::ShlEq |
+                TokenKind::ShrEq => {
+                    // Compound assignment operators - guaranteed to have a matching bin_op
+                    let bin_op = token_to_compound_op(op_token)
+                        .expect("BUG: matched compound op token but conversion failed");
                     let value = self.parse_expr_prec(Precedence::Assign);
                     let span = left.span.merge(value.span);
                     Expr {
