@@ -47,7 +47,7 @@ pub mod handler;
 pub mod lowering;
 pub mod row;
 
-pub use evidence::{Evidence, EvidenceVector};
+pub use evidence::{Evidence, EvidenceVector, EvidenceEntry, EvidenceContext, TranslatedOp};
 pub use handler::{Handler, HandlerKind, Continuation};
-pub use lowering::EffectLowering;
-pub use row::{EffectRow, RowVar};
+pub use lowering::{EffectLowering, EffectInfo, OperationInfo, EvidenceRequirement, HandlerInfo};
+pub use row::{EffectRow, RowVar, EffectRef};

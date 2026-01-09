@@ -10,6 +10,12 @@
 //! Instead of searching for handlers at runtime, evidence vectors are passed
 //! explicitly to effectful functions, providing O(1) handler lookup.
 //!
+//! ## Translation Process
+//!
+//! 1. **Function translation**: Add evidence parameter to effectful functions
+//! 2. **Operation translation**: Replace `perform op(args)` with `ev[idx].op(args)`
+//! 3. **Handler translation**: Create evidence vector from handler block
+//!
 //! ## Example
 //!
 //! ```text
@@ -26,6 +32,20 @@
 //!     if x < 0 { ev.error.throw("negative") }
 //!     ev.state.put(x + 1)
 //! }
+//! ```
+//!
+//! ## Tail-Resumptive Optimization
+//!
+//! When a handler operation immediately resumes (tail-resumptive), the
+//! continuation doesn't need to be captured. This is common for State,
+//! Reader, and Writer effects.
+//!
+//! ```text
+//! // Tail-resumptive (no capture needed):
+//! get => resume(state)
+//!
+//! // Non-tail-resumptive (needs capture):
+//! fork => { resume(true); resume(false) }
 //! ```
 
 use super::row::EffectRef;
@@ -136,6 +156,108 @@ impl Evidence {
             depth: self.depth + 1,
         }
     }
+
+    /// Get the evidence entry for an effect.
+    pub fn get(&self, effect_id: DefId) -> Option<&EvidenceEntry> {
+        self.vector.lookup(effect_id)
+    }
+
+    /// Get the evidence index for an effect.
+    pub fn index_of(&self, effect_id: DefId) -> Option<usize> {
+        self.vector.lookup(effect_id).map(|e| e.index)
+    }
+}
+
+// ============================================================================
+// Evidence Translation
+// ============================================================================
+
+/// Represents an evidence-translated operation call.
+///
+/// After translation, `perform Effect.op(args)` becomes `ev[idx].op(args)`.
+#[derive(Debug, Clone)]
+pub struct TranslatedOp {
+    /// The evidence index for the effect.
+    pub evidence_index: usize,
+    /// The operation index within the effect.
+    pub operation_index: usize,
+    /// The handler DefId.
+    pub handler_id: DefId,
+}
+
+impl TranslatedOp {
+    /// Create a new translated operation.
+    pub fn new(evidence_index: usize, operation_index: usize, handler_id: DefId) -> Self {
+        Self {
+            evidence_index,
+            operation_index,
+            handler_id,
+        }
+    }
+}
+
+/// Evidence translation context for a function.
+///
+/// Tracks evidence requirements and provides lookup during translation.
+#[derive(Debug, Clone)]
+pub struct EvidenceContext {
+    /// The evidence parameter name (e.g., "ev").
+    pub param_name: String,
+    /// Mapping from effect DefId to evidence index.
+    effect_indices: HashMap<DefId, usize>,
+    /// Whether this context has any evidence requirements.
+    has_evidence: bool,
+}
+
+impl EvidenceContext {
+    /// Create a new empty evidence context.
+    pub fn new() -> Self {
+        Self {
+            param_name: "ev".to_string(),
+            effect_indices: HashMap::new(),
+            has_evidence: false,
+        }
+    }
+
+    /// Create an evidence context from an evidence vector.
+    pub fn from_evidence(ev: &EvidenceVector) -> Self {
+        let mut effect_indices = HashMap::new();
+        for entry in ev.iter() {
+            effect_indices.insert(entry.effect.def_id, entry.index);
+        }
+        Self {
+            param_name: "ev".to_string(),
+            effect_indices,
+            has_evidence: !ev.is_empty(),
+        }
+    }
+
+    /// Register an effect in the context.
+    pub fn register_effect(&mut self, effect_id: DefId, index: usize) {
+        self.effect_indices.insert(effect_id, index);
+        self.has_evidence = true;
+    }
+
+    /// Look up the evidence index for an effect.
+    pub fn lookup(&self, effect_id: DefId) -> Option<usize> {
+        self.effect_indices.get(&effect_id).copied()
+    }
+
+    /// Check if this context has any evidence requirements.
+    pub fn has_evidence(&self) -> bool {
+        self.has_evidence
+    }
+
+    /// Get the number of effects in the context.
+    pub fn effect_count(&self) -> usize {
+        self.effect_indices.len()
+    }
+}
+
+impl Default for EvidenceContext {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
@@ -174,5 +296,64 @@ mod tests {
 
         assert_eq!(scoped.depth, 1);
         assert_eq!(scoped.vector.len(), 2);
+    }
+
+    #[test]
+    fn test_evidence_index_of() {
+        let mut ev = EvidenceVector::new();
+        let effect1 = EffectRef::new(DefId::new(1));
+        let effect2 = EffectRef::new(DefId::new(2));
+
+        ev.add(effect1.clone(), DefId::new(10));
+        ev.add(effect2.clone(), DefId::new(20));
+
+        let evidence = Evidence::new(ev);
+
+        assert_eq!(evidence.index_of(DefId::new(1)), Some(0));
+        assert_eq!(evidence.index_of(DefId::new(2)), Some(1));
+        assert_eq!(evidence.index_of(DefId::new(99)), None);
+    }
+
+    #[test]
+    fn test_evidence_context_new() {
+        let ctx = EvidenceContext::new();
+        assert!(!ctx.has_evidence());
+        assert_eq!(ctx.effect_count(), 0);
+    }
+
+    #[test]
+    fn test_evidence_context_register() {
+        let mut ctx = EvidenceContext::new();
+
+        ctx.register_effect(DefId::new(1), 0);
+        ctx.register_effect(DefId::new(2), 1);
+
+        assert!(ctx.has_evidence());
+        assert_eq!(ctx.effect_count(), 2);
+        assert_eq!(ctx.lookup(DefId::new(1)), Some(0));
+        assert_eq!(ctx.lookup(DefId::new(2)), Some(1));
+    }
+
+    #[test]
+    fn test_evidence_context_from_vector() {
+        let mut ev = EvidenceVector::new();
+        ev.add(EffectRef::new(DefId::new(1)), DefId::new(10));
+        ev.add(EffectRef::new(DefId::new(2)), DefId::new(20));
+
+        let ctx = EvidenceContext::from_evidence(&ev);
+
+        assert!(ctx.has_evidence());
+        assert_eq!(ctx.effect_count(), 2);
+        assert_eq!(ctx.lookup(DefId::new(1)), Some(0));
+        assert_eq!(ctx.lookup(DefId::new(2)), Some(1));
+    }
+
+    #[test]
+    fn test_translated_op() {
+        let op = TranslatedOp::new(0, 1, DefId::new(42));
+
+        assert_eq!(op.evidence_index, 0);
+        assert_eq!(op.operation_index, 1);
+        assert_eq!(op.handler_id, DefId::new(42));
     }
 }
