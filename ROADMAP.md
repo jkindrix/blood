@@ -1,6 +1,6 @@
 # Blood Implementation Roadmap
 
-**Version**: 0.1.0-draft
+**Version**: 0.2.0-draft
 **Status**: Active Development
 **Last Updated**: 2026-01-09
 
@@ -861,31 +861,158 @@ jobs:
 
 ---
 
-## 13. Open Questions
+## 13. Effect Compilation Strategy
 
-### 13.1 Technical Questions
+Blood uses **generalized evidence passing** for effect handler compilation, based on research from [Xie & Leijen (ICFP 2021)](https://dl.acm.org/doi/10.1145/3473576).
+
+### 13.1 Strategy Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│              EFFECT COMPILATION PIPELINE                             │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  Source Code        Effect Typing        Evidence Translation        │
+│       │                   │                       │                  │
+│       ▼                   ▼                       ▼                  │
+│  ┌─────────┐        ┌─────────┐            ┌─────────────┐          │
+│  │ fn f()  │ ──────►│ Type +  │ ──────────►│ fn f(ev) {  │          │
+│  │ /Effect │        │ Effect  │            │   ...       │          │
+│  └─────────┘        │ Row     │            │   ev.op()   │          │
+│                     └─────────┘            └─────────────┘          │
+│                                                  │                   │
+│                                                  ▼                   │
+│                                            ┌─────────────┐          │
+│                                            │ Tail-call   │          │
+│                                            │ Optimized   │          │
+│                                            │ Native Code │          │
+│                                            └─────────────┘          │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### 13.2 Evidence Passing Translation
+
+Effect operations are compiled to direct function calls via evidence:
+
+```blood
+// Source
+fn increment() / {State<i32>} {
+    let x = get()
+    put(x + 1)
+}
+
+// After evidence translation (conceptual)
+fn increment(ev: Evidence<State<i32>>) {
+    let x = ev.get()
+    ev.put(x + 1)
+}
+```
+
+**Key insight**: Evidence is a record of handler implementations, passed explicitly at runtime. This eliminates handler search at each operation.
+
+### 13.3 Tail-Resumptive Optimization
+
+When a handler operation immediately resumes (tail-resumptive), no continuation capture is needed:
+
+```blood
+// Tail-resumptive (optimizable)
+op get() {
+    resume(self.state)  // Tail position
+}
+
+// Compiled to direct return
+fn get_impl(ev: &Evidence) -> i32 {
+    ev.state  // No continuation capture
+}
+```
+
+This is the common case for State, Reader, and Writer effects.
+
+### 13.4 Continuation Representation
+
+For non-tail-resumptive handlers, continuations are captured:
+
+**Option A: CPS Transform** (not chosen)
+- All code in continuation-passing style
+- High overhead, complex generated code
+
+**Option B: Stack Copying** (not chosen)
+- Copy entire stack on capture
+- Simple but expensive
+
+**Option C: Segmented Stacks** (chosen)
+- Fibers use segmented/cactus stacks
+- Capture = save current segment
+- Resume = restore segment
+- Efficient for most patterns
+
+### 13.5 Performance Characteristics (Unvalidated)
+
+| Pattern | Strategy | Expected Overhead |
+|---------|----------|-------------------|
+| Tail-resumptive | Direct call | ~0 cycles |
+| Single-shot resume | Segment switch | ~50-100 cycles |
+| Multi-shot resume | Segment copy | ~100-500 cycles |
+| Deep nesting | Evidence indexing | O(1) per level |
+
+### 13.6 Implementation Phases
+
+1. **Phase 2.1**: Basic evidence passing (all handlers)
+2. **Phase 2.2**: Tail-resumptive optimization
+3. **Phase 2.3**: Segmented stack continuations
+4. **Phase 2.4**: Evidence fusion optimization
+5. **Phase 5.1**: Multi-core effect scheduling
+
+---
+
+## 14. Resolved Questions
+
+### 14.1 Technical Decisions (Resolved)
+
+| Question | Decision | Rationale |
+|----------|----------|-----------|
+| **Incremental compilation granularity** | Function-level | Matches content-addressed design |
+| **Effect compilation strategy** | Evidence passing | Best performance, proven in Koka |
+| **Fiber stack size** | Growable (8KB initial) | Balance memory vs growth cost |
+| **WASM backend priority** | Phase 7 | Focus on native first |
+| **Continuation representation** | Segmented stacks | Best multi-shot performance |
+
+### 14.2 Ecosystem Decisions (Resolved)
+
+| Question | Decision | Rationale |
+|----------|----------|-----------|
+| **Package manager** | UCM-integrated | Content-addressed code = integrated |
+| **Documentation tool** | Custom (blood-doc) | Effect-aware docs needed |
+| **Build system** | Custom (blood build) | UCM integration required |
+| **IDE support** | LSP-first | Editor-agnostic |
+
+### 14.3 Research Questions → Decisions
+
+| Question | Resolution |
+|----------|------------|
+| **Effect compilation efficiency** | Evidence passing + tail-resumptive opt (see §13) |
+| **Generation check elision** | Conservative-to-aggressive optimization levels (see MEMORY_MODEL.md §5.8) |
+| **Hot-swap mechanics** | Three strategies: Immediate/Barrier/Epoch (see CONTENT_ADDRESSED.md §8.5) |
+| **Distributed codebase** | CAS sync protocol (deferred to Phase 6+) |
+
+---
+
+## 15. Remaining Open Questions
+
+### 15.1 Implementation Details
 
 | Question | Options | Status |
 |----------|---------|--------|
-| **Incremental compilation granularity** | Function / Module / File | Under discussion |
-| **Effect compilation strategy** | CPS / Stack copying / Delimited | Under discussion |
-| **Fiber stack size** | Fixed / Growable / Segmented | Growable (decided) |
-| **WASM backend priority** | Phase 5 / Phase 7 / Never | Under discussion |
+| **JIT vs AOT** | JIT only / AOT only / Both | JIT for development, AOT for production (tentative) |
+| **Debug info format** | DWARF / CodeView / Custom | DWARF (tentative) |
+| **C++ interop** | Via C / Direct Itanium ABI | Via C (simpler) |
 
-### 13.2 Ecosystem Questions
+### 15.2 Future Research
 
-| Question | Options | Status |
-|----------|---------|--------|
-| **Package manager** | Cargo-like / UCM-integrated / Nix-style | UCM-integrated (tentative) |
-| **Documentation tool** | Custom / Rustdoc-like | Under discussion |
-| **Build system** | Custom / Cargo-like | Custom (tentative) |
-
-### 13.3 Research Needed
-
-- **Effect compilation efficiency** — How to minimize continuation allocation?
-- **Generation check elision** — How aggressive can escape analysis be?
-- **Hot-swap mechanics** — How to handle in-flight requests during swap?
-- **Distributed codebase** — How to sync codebases across machines?
+- **Effect polymorphism erasure** — Can effect rows be erased at runtime?
+- **Algebraic effect inference** — Can we infer effect signatures?
+- **Cross-codebase hot-swap** — Sync and swap across distributed systems
 
 ---
 
