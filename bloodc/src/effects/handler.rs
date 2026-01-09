@@ -28,18 +28,13 @@ use super::row::EffectRow;
 use crate::hir::{DefId, Expr, Type};
 
 /// The kind of effect handler.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HandlerKind {
     /// Deep handler - persists across resumes, can be multi-shot.
+    #[default]
     Deep,
     /// Shallow handler - consumed on resume, single-shot only.
     Shallow,
-}
-
-impl Default for HandlerKind {
-    fn default() -> Self {
-        Self::Deep
-    }
 }
 
 /// A compiled handler definition.

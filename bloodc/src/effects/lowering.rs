@@ -77,7 +77,8 @@ pub struct EffectLowering {
     evidence_reqs: HashMap<DefId, EvidenceRequirement>,
     /// Mapping from handler DefId to its compiled form.
     handlers: HashMap<DefId, HandlerInfo>,
-    /// Counter for generating fresh variable names.
+    /// Counter for generating fresh variable names (used in Phase 2.4).
+    #[allow(dead_code)]
     fresh_counter: u64,
 }
 
@@ -394,6 +395,19 @@ impl EffectLowering {
             ExprKind::Return(Some(e)) | ExprKind::Assign { value: e, .. } => {
                 self.collect_effects_recursive(e, effects);
             }
+            // Effect operations - this is where we actually collect effects
+            ExprKind::Perform { effect_id, args, .. } => {
+                effects.push(*effect_id);
+                for arg in args {
+                    self.collect_effects_recursive(arg, effects);
+                }
+            }
+            ExprKind::Handle { body, .. } => {
+                self.collect_effects_recursive(body, effects);
+            }
+            ExprKind::Resume { value: Some(e) } => {
+                self.collect_effects_recursive(e, effects);
+            }
             // Leaf expressions and others that don't contain subexpressions
             _ => {}
         }
@@ -481,7 +495,8 @@ impl EffectLowering {
         }
     }
 
-    /// Generate a fresh variable name.
+    /// Generate a fresh variable name (used in Phase 2.4).
+    #[allow(dead_code)]
     fn fresh_name(&mut self, prefix: &str) -> String {
         let id = self.fresh_counter;
         self.fresh_counter += 1;
