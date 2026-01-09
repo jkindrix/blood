@@ -1,7 +1,8 @@
 # Blood Formal Semantics
 
-**Version**: 0.1.0-draft
-**Status**: In Development
+**Version**: 0.2.0-draft
+**Status**: Active Development
+**Last Updated**: 2026-01-09
 
 This document provides the formal operational semantics for Blood, suitable for mechanized proof and compiler verification.
 
@@ -433,7 +434,256 @@ If `resume` appears in `e_op` under a `map`, `fold`, or other iteration, then:
 
 ---
 
-## Appendix: Notation Reference
+## 10. Composition Safety Analysis
+
+Blood combines five major language innovations. This section analyzes their pairwise interactions and provides safety guarantees for their composition.
+
+### 10.1 Innovation Interaction Matrix
+
+| | Effects | Gen Refs | MVS | Content Addr | Multi-Dispatch |
+|---|---|---|---|---|---|
+| **Effects** | — | §10.2 | §10.3 | §10.4 | §10.5 |
+| **Gen Refs** | | — | §10.6 | Orthogonal | Orthogonal |
+| **MVS** | | | — | Orthogonal | Orthogonal |
+| **Content Addr** | | | | — | §10.7 |
+| **Multi-Dispatch** | | | | | — |
+
+Cells marked "Orthogonal" indicate features that operate independently without semantic interaction.
+
+### 10.2 Effects × Generational References
+
+**Interaction**: Continuations captured by effect handlers may hold generational references that become stale before resume.
+
+**Safety Mechanism**: Generation Snapshots (see §4)
+
+**Theorem (Effects-Gen Safety)**:
+If `Γ; Δ ⊢ e : T / ε` and `e` is well-typed with generation snapshot semantics, then:
+1. Any `resume(κ, v)` either succeeds with valid references, or
+2. Raises `StaleReference` effect before any use-after-free occurs
+
+**Proof Sketch**:
+1. At continuation capture, record all generational references in scope as `GenSnapshot = {(addr₁, gen₁), ..., (addrₙ, genₙ)}`
+2. At resume, for each `(addr, gen)` in snapshot:
+   - Query current generation: `currentGen(addr)`
+   - If `gen ≠ currentGen(addr)`, raise `StaleReference`
+3. Only if all checks pass does execution continue
+4. Therefore, no dereference can occur with stale generation
+
+**Key Invariant**: `∀(a,g) ∈ snapshot. (g = currentGen(a)) ∨ StaleReference raised`
+
+### 10.3 Effects × Mutable Value Semantics
+
+**Interaction**: MVS performs implicit copies. Effect handlers may capture values that are semantically copied vs. referenced.
+
+**Safety Mechanism**: Copy semantics are unambiguous for values; only `Box<T>` uses generational references.
+
+**Theorem (Effects-MVS Safety)**:
+Value types in effect handler captures behave correctly because they are copied, not aliased.
+
+**Proof Sketch**:
+1. MVS types have no identity—they are pure values
+2. Copying a value creates an independent copy with no aliasing
+3. Effect handlers capturing values get independent copies
+4. No aliasing hazard exists for value types
+5. Reference types (`Box<T>`) fall under Effects-Gen safety (§10.2)
+
+### 10.4 Effects × Content-Addressed Code
+
+**Interaction**: Hot-swap updates code while handlers may be active. Handlers reference code by hash.
+
+**Safety Mechanism**: VFT atomic updates + hash stability
+
+**Theorem (Effects-Content Safety)**:
+Active effect handlers continue to reference the code version present at handler installation.
+
+**Proof Sketch**:
+1. Handler installation captures function references by hash
+2. Hash is immutable identifier—never changes for same code
+3. VFT update installs new hash → new entry point
+4. Old hash → old entry point remains valid until GC
+5. In-flight handlers complete with original code version
+6. New handlers get new code version
+
+**Corollary**: Hot-swap is safe during effect handling—no code version inconsistency.
+
+### 10.5 Effects × Multiple Dispatch
+
+**Interaction**: Effect operations may dispatch to different implementations based on argument types.
+
+**Safety Mechanism**: Type stability enforcement
+
+**Theorem (Effects-Dispatch Safety)**:
+Effect operations with multiple dispatch are type-stable and deterministic.
+
+**Proof Sketch**:
+1. Type stability is checked at compile time (see DISPATCH.md §5)
+2. Effect operations declare fixed type signatures in effect declarations
+3. Handlers implement these fixed signatures
+4. Dispatch resolution is deterministic for given types
+5. Effect handling order is determined by handler nesting, not dispatch
+
+### 10.6 Generational References × MVS
+
+**Interaction**: MVS may perform copies that include generational references.
+
+**Safety Mechanism**: Generation is copied with value; both copies share same generation expectation.
+
+**Theorem (Gen-MVS Safety)**:
+Copying a value containing generational references is safe.
+
+**Proof Sketch**:
+1. Copying value `v` containing `GenRef(addr, gen)` produces `v'` with same `GenRef(addr, gen)`
+2. Both `v` and `v'` have valid references if `gen = currentGen(addr)`
+3. If `gen ≠ currentGen(addr)`, both fail consistently
+4. No use-after-free possible: either both work or both fail
+
+### 10.7 Content-Addressed × Multiple Dispatch
+
+**Interaction**: Multiple dispatch methods are stored by hash. Method families must be consistent across hot-swaps.
+
+**Safety Mechanism**: Method family hashes include all specializations.
+
+**Theorem (Content-Dispatch Safety)**:
+Method dispatch remains consistent across hot-swaps.
+
+**Proof Sketch**:
+1. Method family is identified by family hash (hash of generic signature)
+2. Specializations are registered under family hash
+3. Hot-swap of one specialization updates that entry only
+4. Type compatibility check ensures new specialization matches signature
+5. Dispatch table remains consistent after atomic update
+
+### 10.8 Composition Soundness Conjecture
+
+**Conjecture (Full Composition Safety)**:
+A Blood program that is:
+- Well-typed with effect tracking
+- Uses generational references correctly
+- Follows MVS copy semantics
+- Uses content-addressed code identity
+- Has type-stable multiple dispatch
+
+...cannot exhibit:
+- Use-after-free (guaranteed by generational references)
+- Unhandled effects (guaranteed by effect typing)
+- Type confusion (guaranteed by type system)
+- Code version inconsistency (guaranteed by content addressing)
+- Dispatch ambiguity (guaranteed by type stability)
+
+**Status**: Conjectured. Full proof requires mechanized verification of all interaction cases.
+
+### 10.9 Known Limitations
+
+1. **Cycle collection + effects**: Concurrent cycle collection during effect handling requires careful synchronization. See MEMORY_MODEL.md §8.5.3.
+
+2. **Hot-swap + in-flight state**: If handler state references data that changes during hot-swap, application-level migration is required.
+
+3. **Cross-fiber generational references**: References crossing fiber boundaries require region isolation checks. See CONCURRENCY.md §4.
+
+---
+
+## 11. Proof Sketches for Core Theorems
+
+### 11.1 Progress Theorem
+
+**Statement**: If `∅; ∅ ⊢ e : T / ε` and `e` is not a value, then either:
+1. `e ──► e'` for some `e'`, or
+2. `e = E[perform op(v)]` for some `E`, `op`, `v` and `op` is in effect row `ε`
+
+**Proof Sketch**:
+By structural induction on the derivation of `∅; ∅ ⊢ e : T / ε`.
+
+*Case* `e = x`:
+- Empty context, so `x` cannot be typed. Contradiction.
+
+*Case* `e = v` (value):
+- Excluded by hypothesis.
+
+*Case* `e = e₁ e₂`:
+- By IH on `e₁`: either `e₁` steps, or `e₁ = v₁` (function value), or `e₁` performs.
+- If `e₁` steps: `e₁ e₂ ──► e₁' e₂` by context rule.
+- If `e₁ = v₁` and `e₂` steps: `v₁ e₂ ──► v₁ e₂'`.
+- If `e₁ = v₁ = λx.e'` and `e₂ = v₂`: `(λx.e') v₂ ──► e'[v₂/x]` by β-App.
+- If either performs: effect propagates through context.
+
+*Case* `e = with h handle e'`:
+- By IH on `e'`: either steps, is value, or performs.
+- If `e'` steps: `with h handle e' ──► with h handle e''`.
+- If `e' = v`: `with h handle v ──► h.return(v)` by Handle-Return.
+- If `e' = D[perform op(v)]`:
+  - If `op` handled by `h`: steps by Handle-Op-Deep/Shallow.
+  - Otherwise: propagates by delimited context.
+
+*Case* `e = perform op(v)`:
+- Effect `op` must be in `ε` by T-Perform.
+- Case 2 applies: `e = □[perform op(v)]` where `□` is empty context.
+
+Remaining cases follow similar structure. ∎
+
+### 11.2 Preservation Theorem
+
+**Statement**: If `Γ; Δ ⊢ e : T / ε` and `e ──► e'`, then `Γ; Δ ⊢ e' : T / ε'` where `ε' ⊆ ε`.
+
+**Proof Sketch**:
+By induction on the derivation of `e ──► e'`.
+
+*Case* β-App: `(λx:S. e) v ──► e[v/x]`
+- By T-Lam: `Γ, x:S ⊢ e : T / ε`
+- By T-App: `Γ ⊢ v : S`
+- By Substitution Lemma: `Γ ⊢ e[v/x] : T / ε` ∎
+
+*Case* Handle-Return: `with h handle v ──► h.return(v)`
+- By T-Handle: `Γ ⊢ v : T` and `h.return : T → U`
+- Result has type `U` with effects from handler implementation.
+
+*Case* Handle-Op-Deep: `with h handle D[perform op(v)] ──► e_op[v/x, κ/resume]`
+- Continuation `κ = λy. with h handle D[y]`
+- By T-Handle: continuation has appropriate type
+- Handler clause `e_op` typed correctly by handler typing rules.
+
+Effect subsumption maintained because handling removes effect from row. ∎
+
+### 11.3 Effect Safety Theorem
+
+**Statement**: If `∅; ∅ ⊢ e : T / ∅` (pure program), then `e` cannot perform any unhandled effect.
+
+**Proof Sketch**:
+1. By T-Perform, `perform op(v)` requires `op ∈ ε` in the typing context.
+2. For `ε = ∅` (pure), no effects are in scope.
+3. Therefore, `perform op(v)` cannot type-check.
+4. A well-typed pure program contains no `perform` expressions.
+5. By Progress, the program either steps or is a value—no effects. ∎
+
+### 11.4 Linear Safety Theorem
+
+**Statement**: In a well-typed program, no linear value is used more than once.
+
+**Proof Sketch**:
+1. Linearity context `Δ` tracks linear bindings with multiplicity.
+2. T-Linear-Use requires `x ∈ FV(e)` for linear `x`.
+3. Context splitting `Δ = Δ₁ ⊗ Δ₂` partitions linear bindings.
+4. Each linear binding appears in exactly one sub-derivation.
+5. Multi-shot handlers are checked at compile time (Theorem 8.1).
+6. Linear values cannot appear in multi-shot continuation captures.
+7. Therefore, linear values are used exactly once. ∎
+
+### 11.5 Generation Safety Theorem
+
+**Statement**: No generational reference dereference accesses freed memory.
+
+**Proof Sketch**:
+1. Every allocation assigns generation `g` to address `a`.
+2. Pointer stores `(a, g)` pair.
+3. Deallocation increments generation to `g+1`.
+4. Dereference compares pointer's `g` with current `currentGen(a)`.
+5. If `g ≠ currentGen(a)`, `StaleReference` raised before access.
+6. If `g = currentGen(a)`, memory has not been freed.
+7. With Generation Snapshots, continuation resume validates all captured refs.
+8. Therefore, no freed memory is accessed. ∎
+
+---
+
+## Appendix A: Notation Reference
 
 | Symbol | Meaning |
 |--------|---------|
@@ -532,6 +782,6 @@ The following theorems require formal mechanized proofs:
 When referencing Blood's formal semantics:
 
 ```
-Blood Programming Language Formal Semantics, v0.1.0-draft.
+Blood Programming Language Formal Semantics, v0.2.0-draft.
 Available at: [repository URL]
 ```
