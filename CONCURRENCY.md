@@ -1,6 +1,6 @@
 # Blood Concurrency Specification
 
-**Version**: 0.1.0-draft
+**Version**: 0.2.0-draft
 **Status**: Active Development
 **Last Updated**: 2026-01-09
 
@@ -99,13 +99,15 @@ A **fiber** is a lightweight, cooperatively-scheduled unit of execution:
 
 ### 2.2 Fiber Properties
 
-| Property | Value |
-|----------|-------|
-| **Initial Stack Size** | 8 KB (configurable) |
-| **Maximum Stack Size** | 1 MB (configurable) |
-| **Stack Growth** | On-demand, 2x growth factor |
-| **Context Switch Cost** | ~50-100 ns (register save/restore) |
-| **Memory Overhead** | ~1-2 KB per suspended fiber |
+| Property | Value | Status |
+|----------|-------|--------|
+| **Initial Stack Size** | 8 KB (configurable) | Design target |
+| **Maximum Stack Size** | 1 MB (configurable) | Design target |
+| **Stack Growth** | On-demand, 2x growth factor | Design target |
+| **Context Switch Cost** | ~50-100 ns (register save/restore) | Unvalidated¹ |
+| **Memory Overhead** | ~1-2 KB per suspended fiber | Unvalidated¹ |
+
+¹ Performance estimates based on similar fiber implementations (Go goroutines, Tokio tasks). Actual performance will be validated during implementation.
 
 ### 2.3 Fiber Structure
 

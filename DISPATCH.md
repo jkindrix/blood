@@ -1,6 +1,6 @@
 # Blood Multiple Dispatch Specification
 
-**Version**: 0.1.0-draft
+**Version**: 0.2.0-draft
 **Status**: Active Development
 **Last Updated**: 2026-01-09
 
@@ -778,16 +778,18 @@ BUILD_COLLISION_FILTER(method_table) → BloomFilter:
     RETURN filter
 ```
 
-#### 6.3.4 Performance Characteristics
+#### 6.3.4 Performance Characteristics (Unvalidated)
 
-| Scenario | Cycles | Notes |
-|----------|--------|-------|
+| Scenario | Cycles (est.) | Notes |
+|----------|---------------|-------|
 | Fingerprint hit, no collision | ~5-8 | Hash lookup + bloom check |
 | Fingerprint hit, bloom positive | ~15-25 | + Full type ID comparison |
 | Fingerprint hit, actual collision | ~30-50 | + LRU cache lookup |
 | Cache miss, full resolution | ~100-200 | Full dispatch algorithm |
 
-The bloom filter false positive rate is ~1% with the above parameters, meaning only 1% of non-colliding lookups pay the verification cost.
+> **Note**: These cycle estimates are theoretical design targets based on similar dispatch systems in Julia and Common Lisp. Actual performance will be validated during implementation.
+
+The bloom filter false positive rate is ~1% with the above parameters (based on standard bloom filter mathematics), meaning only ~1% of non-colliding lookups pay the verification cost.
 
 ### 6.4 Monomorphization
 
@@ -970,10 +972,12 @@ map(nums, |x| { print(x); x }) // E = {IO}
 
 ## 8. Performance Considerations
 
-### 8.1 Dispatch Overhead Summary
+> **Validation Status**: The performance characteristics in this section are theoretical design targets based on analysis of similar systems (Julia, Common Lisp CLOS, Dylan). Empirical validation will occur during Blood implementation.
 
-| Dispatch Type | Overhead | When Used |
-|---------------|----------|-----------|
+### 8.1 Dispatch Overhead Summary (Unvalidated)
+
+| Dispatch Type | Overhead (est.) | When Used |
+|---------------|-----------------|-----------|
 | Static (monomorphized) | 0 cycles | Types known at compile time |
 | Static (known method) | ~0 cycles | Direct call, possible inline |
 | Dynamic (fingerprint hit) | ~5-10 cycles | Hash lookup + indirect call |
