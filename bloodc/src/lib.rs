@@ -87,11 +87,13 @@
 //! - [`trivia`] - Trivia preservation for lossless syntax trees
 //! - [`typeck`] - Type checking and inference (Phase 1+)
 //! - [`codegen`] - LLVM code generation (Phase 1+)
+//! - [`effects`] - Algebraic effects system with evidence passing (Phase 2+)
 
 pub mod arena;
 pub mod ast;
 pub mod codegen;
 pub mod diagnostics;
+pub mod effects;
 pub mod hir;
 pub mod lexer;
 pub mod parser;
