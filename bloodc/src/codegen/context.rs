@@ -1960,7 +1960,7 @@ mod tests {
 
     #[test]
     fn test_codegen_float_literal() {
-        let expr = float_literal(3.14);
+        let expr = float_literal(2.5);
         let hir_crate = make_test_crate(expr, f64_type());
 
         let context = Context::create();
@@ -2124,7 +2124,7 @@ mod tests {
     #[test]
     fn test_codegen_float_compare() {
         use crate::ast::BinOp;
-        let expr = binary_expr(BinOp::Gt, float_literal(3.14), float_literal(2.71), bool_type());
+        let expr = binary_expr(BinOp::Gt, float_literal(2.5), float_literal(2.71), bool_type());
         let hir_crate = make_test_crate(expr, bool_type());
 
         let context = Context::create();
@@ -2158,7 +2158,7 @@ mod tests {
     #[test]
     fn test_codegen_float_neg() {
         use crate::ast::UnaryOp;
-        let expr = unary_expr(UnaryOp::Neg, float_literal(3.14), f64_type());
+        let expr = unary_expr(UnaryOp::Neg, float_literal(2.5), f64_type());
         let hir_crate = make_test_crate(expr, f64_type());
 
         let context = Context::create();

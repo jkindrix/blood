@@ -17,7 +17,7 @@ fn parse_file_ok(path: &str) {
         Ok(program) => {
             // Verify the program has some content
             assert!(
-                program.declarations.len() > 0 || program.imports.len() > 0,
+                !program.declarations.is_empty() || !program.imports.is_empty(),
                 "Parsed program from {path} should have declarations or imports"
             );
         }
@@ -90,7 +90,7 @@ fn test_parse_all_examples() {
         let entry = entry.expect("Failed to read directory entry");
         let path = entry.path();
 
-        if path.extension().map_or(false, |ext| ext == "blood") {
+        if path.extension().is_some_and(|ext| ext == "blood") {
             let path_str = path.to_string_lossy();
             let source = fs::read_to_string(&path).unwrap_or_else(|e| {
                 panic!("Failed to read {path_str}: {e}");
@@ -267,5 +267,5 @@ fn test_error_multiple_errors_reported() {
 
     assert!(result.is_err(), "Should have parse errors");
     let errors = result.unwrap_err();
-    assert!(errors.len() >= 1, "Should report at least one error");
+    assert!(!errors.is_empty(), "Should report at least one error");
 }
