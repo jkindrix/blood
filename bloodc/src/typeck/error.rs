@@ -156,6 +156,18 @@ impl TypeError {
                 "E1030",
                 format!("unknown field `{field}` on type `{ty}`"),
             ),
+            TypeErrorKind::EffectMismatch { expected, found } => (
+                "E1031",
+                format!("effect mismatch: expected `{expected}`, found `{found}`"),
+            ),
+            TypeErrorKind::UnhandledEffect { effect } => (
+                "E1032",
+                format!("unhandled effect `{effect}`"),
+            ),
+            TypeErrorKind::InvalidHandler { reason } => (
+                "E1033",
+                format!("invalid effect handler: {reason}"),
+            ),
         };
 
         let mut diag = Diagnostic::error(message, self.span).with_code(code);
@@ -287,6 +299,19 @@ pub enum TypeErrorKind {
     UnknownField {
         ty: Type,
         field: String,
+    },
+    /// Effect row mismatch.
+    EffectMismatch {
+        expected: String,
+        found: String,
+    },
+    /// Unhandled effect.
+    UnhandledEffect {
+        effect: String,
+    },
+    /// Invalid effect handler.
+    InvalidHandler {
+        reason: String,
     },
 }
 

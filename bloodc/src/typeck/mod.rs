@@ -26,12 +26,14 @@
 //! - Generic instantiation
 
 pub mod context;
+pub mod effect;
 pub mod error;
 pub mod infer;
 pub mod resolve;
 pub mod unify;
 
 pub use context::TypeContext;
+pub use effect::EffectUnifier;
 pub use error::{TypeError, TypeErrorKind};
 pub use infer::TypeInference;
 pub use resolve::{Resolver, Scope, ScopeKind};
