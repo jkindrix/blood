@@ -69,7 +69,33 @@ Blood identifies all definitions by a cryptographic hash of their canonicalized 
 - [ROADMAP.md](./ROADMAP.md) — Codebase manager implementation
 - [FFI.md](./FFI.md) — Hash-based symbol resolution
 
-### 1.3 Benefits
+### 1.3 Implementation Status
+
+The following table tracks implementation status of content addressing subsystems:
+
+| Component | Status | Location | Notes |
+|-----------|--------|----------|-------|
+| ContentHash (BLAKE3-256) | ✅ Implemented | `bloodc/src/content/hash.rs` | 32-byte hash type |
+| ContentHasher | ✅ Implemented | `bloodc/src/content/hash.rs` | Streaming BLAKE3 |
+| CanonicalAST | ✅ Implemented | `bloodc/src/content/canonical.rs` | De Bruijn indexed |
+| Canonicalizer | ✅ Implemented | `bloodc/src/content/canonical.rs` | AST→canonical transform |
+| Codebase storage | ✅ Implemented | `bloodc/src/content/storage.rs` | DefinitionRecord store |
+| Namespace | ✅ Implemented | `bloodc/src/content/namespace.rs` | Name→hash mappings |
+| NameRegistry | ✅ Implemented | `bloodc/src/content/namespace.rs` | Hierarchical lookup |
+| VFT structure | ✅ Implemented | `bloodc/src/content/vft.rs` | Virtual function table |
+| VFTEntry | ✅ Implemented | `bloodc/src/content/vft.rs` | Per-method dispatch |
+| DispatchTable | ✅ Implemented | `bloodc/src/content/vft.rs` | Type→methods mapping |
+| BuildCache | ✅ Implemented | `bloodc/src/content/build_cache.rs` | Compiled object cache |
+| hash_hir_item | ✅ Implemented | `bloodc/src/content/build_cache.rs` | HIR→hash computation |
+| Cache lookup in build | ✅ Integrated | `bloodc/src/main.rs` | Per-definition hashing |
+| Incremental compilation | 🔶 Partial | `bloodc/src/main.rs` | Hashes computed, caching basic |
+| Hot-swap support | 📋 Designed | — | VFT update mechanism |
+| Marrow codebase manager | 📋 Designed | — | UCM-style tooling |
+| Distributed cache | 📋 Designed | — | Future enhancement |
+
+**Legend**: ✅ Implemented | 🔶 Partial | 📋 Designed | ❌ Not Started
+
+### 1.4 Benefits
 
 | Benefit | Description |
 |---------|-------------|
@@ -80,7 +106,7 @@ Blood identifies all definitions by a cryptographic hash of their canonicalized 
 | **Distributed Caching** | Share compiled artifacts by hash globally |
 | **Reproducible Builds** | Same code always produces same hash |
 
-### 1.3 How It Works
+### 1.5 How It Works
 
 ```
 ┌─────────────┐    ┌──────────────────┐    ┌───────────────┐

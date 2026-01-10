@@ -77,7 +77,30 @@ The Synthetic Safety Model achieves:
 - [STDLIB.md](./STDLIB.md) — Box<T> and generational pointer types
 - [DIAGNOSTICS.md](./DIAGNOSTICS.md) — Memory-related error messages
 
-### 1.3 Core Mechanism
+### 1.3 Implementation Status
+
+The following table tracks implementation status of SSM (Synthetic Safety Model) components:
+
+| Component | Status | Location | Notes |
+|-----------|--------|----------|-------|
+| 128-bit BloodPtr | ✅ Implemented | `bloodc/src/mir/ptr.rs` | Byte-identical to spec |
+| PtrMetadata | ✅ Implemented | `bloodc/src/mir/ptr.rs` | Tier, flags, type_fp |
+| MemoryTier enum | ✅ Implemented | `bloodc/src/mir/ptr.rs` | Stack, Region, Persistent |
+| MIR types | ✅ Implemented | `bloodc/src/mir/types.rs` | BasicBlock, Statement, Terminator |
+| MIR lowering | ✅ Implemented | `bloodc/src/mir/lowering.rs` | HIR→MIR complete |
+| Escape analysis | ✅ Implemented | `bloodc/src/mir/escape.rs` | Inter-procedural analysis |
+| Generation snapshots | ✅ Implemented | `bloodc/src/mir/snapshot.rs` | Snapshot capture/validation |
+| blood_alloc/blood_free | ✅ Integrated | `bloodc/src/codegen/context.rs` | Runtime memory functions |
+| MIR in codegen pipeline | 🔶 Partial | `bloodc/src/main.rs` | MIR runs, codegen uses HIR directly |
+| Tier assignment from escape | 🔶 Partial | `bloodc/src/codegen/context.rs` | Analysis runs, results partially used |
+| Generation check emission | 📋 Designed | — | Awaits MIR-based codegen |
+| Snapshot validation at runtime | 📋 Designed | — | Algorithm specified |
+| Region management | ✅ Implemented | `blood-runtime/src/memory.rs` | Slot, Region types |
+| Persistent tier (Tier 3) | 📋 Designed | — | RC + cycle collection |
+
+**Legend**: ✅ Implemented | 🔶 Partial | 📋 Designed | ❌ Not Started
+
+### 1.4 Core Mechanism
 
 SSM uses **generational references**: every heap allocation carries a generation counter. Pointers store both the address and the expected generation. On dereference, these must match.
 
@@ -105,7 +128,7 @@ Dereference check: pointer.generation == slot.generation
   ✗ Mismatch → StaleReference effect raised
 ```
 
-### 1.3 Hybrid Model Clarification
+### 1.5 Hybrid Model Clarification
 
 Blood uses a **hybrid ownership model**:
 

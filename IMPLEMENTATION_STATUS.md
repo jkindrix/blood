@@ -25,12 +25,12 @@
 | Lexer & Parser | ✅ Implemented | Production-ready |
 | Type Checker | ✅ Implemented | Bidirectional + unification |
 | LLVM Codegen | ✅ Implemented | Full programs compile and run |
-| Effect Handlers | ✅ Integrated | Runtime FFI exports (blood_evidence_*, blood_perform) |
+| Effect Handlers | ✅ Integrated | Full runtime dispatch (blood_perform, blood_evidence_*) |
 | Generational Pointers | ✅ Integrated | blood_alloc/blood_free in codegen |
-| MIR Layer | 🔶 Scaffolded | Complete structure, codegen bypasses |
+| MIR Layer | 🔶 Scaffolded | Complete structure, codegen bypasses (explicit TODO) |
 | Content Addressing | 🔶 Scaffolded | Module exists, not integrated with builds |
 | Fiber Scheduler | ✅ Integrated | FFI exports (blood_scheduler_*) linked |
-| Multiple Dispatch | ✅ Integrated | Runtime dispatch table with blood_dispatch_* |
+| Multiple Dispatch | ✅ Integrated | Runtime dispatch table (blood_dispatch_*, blood_get_type_tag) |
 | Closures | ✅ Integrated | Environment capture and codegen |
 
 ---
@@ -833,14 +833,16 @@ Target:   Source → Lexer → Parser → HIR → TypeCheck → MIR → Effects 
 **The path forward is deeper integration:**
 
 1. ✅ **Wire MIR into pipeline**: MIR lowering + escape analysis now run (codegen still uses HIR)
-2. ✅ **Connect effect handlers**: `blood_perform` wired to runtime dispatch
-3. ✅ **Enable content addressing**: Content hashes computed during build (caching next)
-4. ✅ **Link runtime**: `blood-runtime` crate linked to compiled programs
+2. ✅ **Connect effect handlers**: `blood_perform` and full evidence API now implemented
+3. ✅ **Connect multiple dispatch**: `blood_dispatch_*` and `blood_get_type_tag` now implemented
+4. 🔶 **Enable content addressing**: Content hashes computed during build (caching next)
+5. ✅ **Link runtime**: `blood-runtime` crate linked to compiled programs
 
 **Remaining integration:**
 - MIR-based codegen (replace HIR→LLVM with MIR→LLVM)
 - Content-addressed incremental compilation
-- Closure type checking (codegen ready, type checker needed)
+- Escape analysis tier optimization
+- Generation snapshot validation on effect resume
 
 ### 11.5 Spec Update Recommendations
 
@@ -954,11 +956,11 @@ Minor spec clarifications identified during comparison:
 
 | Feature | Code Location | Status |
 |---------|---------------|--------|
-| Effect Handlers | `effects/`, `ffi_exports.rs` | ✅ Runtime FFI exports (blood_evidence_*, blood_perform) |
+| Effect Handlers | `effects/`, `ffi_exports.rs` | ✅ Full dispatch: blood_perform, blood_evidence_*, blood_handler_depth |
 | Generational Pointers | `mir/ptr.rs`, `codegen/` | ✅ blood_alloc/blood_free in codegen |
 | Fiber Scheduler | `blood-runtime` | ✅ FFI exports (blood_scheduler_*) |
 | Closures | `codegen/context.rs` | ✅ Environment capture and codegen |
-| Multiple Dispatch | `codegen/`, `runtime/` | ✅ Runtime dispatch table (blood_dispatch_*) |
+| Multiple Dispatch | `codegen/`, `ffi_exports.rs` | ✅ blood_dispatch_lookup, blood_dispatch_register, blood_get_type_tag |
 
 ### What's Scaffolded (Code Exists, Not Fully Integrated)
 
@@ -972,9 +974,13 @@ Minor spec clarifications identified during comparison:
 
 ### What's Missing
 
+**Integration Gaps:**
 - MIR-based codegen (codegen uses HIR directly, MIR runs but is bypassed)
 - Content-addressed incremental builds
-- Escape analysis optimization passes
+- Escape analysis optimization passes (results computed but not used for tier assignment)
+- Generation snapshot validation at runtime (snapshots computed but not validated on resume)
+
+**Future Work:**
 - Self-hosting compiler
 - Standard library in Blood syntax (blood-std doesn't compile)
 

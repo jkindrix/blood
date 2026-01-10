@@ -51,7 +51,32 @@ Blood's concurrency model provides:
 - [FFI.md](./FFI.md) — FFI interaction with fibers
 - [ROADMAP.md](./ROADMAP.md) — Runtime implementation phases
 
-### 1.3 Concurrency Philosophy
+### 1.3 Implementation Status
+
+The following table tracks implementation status of concurrency subsystems:
+
+| Component | Status | Location | Notes |
+|-----------|--------|----------|-------|
+| FiberId, FiberState | ✅ Implemented | `blood-runtime/src/fiber.rs` | Core fiber identity |
+| FiberConfig | ✅ Implemented | `blood-runtime/src/fiber.rs` | Stack size, priority |
+| FiberStack | ✅ Implemented | `blood-runtime/src/fiber.rs` | Growable stack |
+| WakeCondition | ✅ Implemented | `blood-runtime/src/fiber.rs` | Channel, timer, IO |
+| Scheduler | ✅ Implemented | `blood-runtime/src/scheduler.rs` | Work-stealing M:N |
+| Worker threads | ✅ Implemented | `blood-runtime/src/scheduler.rs` | Per-core workers |
+| blood_scheduler_* exports | ✅ Integrated | `blood-runtime/src/ffi_exports.rs` | Runtime scheduler FFI |
+| MPMC channels | ✅ Implemented | `blood-runtime/src/channel.rs` | Bounded/unbounded |
+| I/O reactor | ✅ Implemented | `blood-runtime/src/io.rs` | Platform-native async |
+| Platform: Linux epoll | ✅ Implemented | `blood-runtime/src/io.rs` | Primary platform |
+| Platform: Linux io_uring | 📋 Designed | — | Future enhancement |
+| Platform: macOS kqueue | 📋 Designed | — | Not validated |
+| Platform: Windows IOCP | 📋 Designed | — | Not validated |
+| Fiber effect syntax | 📋 Designed | — | Per §2.4 specification |
+| Structured concurrency | 📋 Designed | — | Nursery pattern |
+| Select/await syntax | 📋 Designed | — | Per §5.4 specification |
+
+**Legend**: ✅ Implemented | 🔶 Partial | 📋 Designed | ❌ Not Started
+
+### 1.4 Concurrency Philosophy
 
 | Aspect | Blood Approach |
 |--------|----------------|
@@ -61,7 +86,7 @@ Blood's concurrency model provides:
 | **Shared State** | By default: none. Opt-in via `Synchronized<T>` |
 | **Memory** | Fiber-local regions, shared via Tier 3 |
 
-### 1.3 Comparison with Other Models
+### 1.5 Comparison with Other Models
 
 | Feature | Blood | Go | Erlang | Rust async |
 |---------|-------|----|----|------------|

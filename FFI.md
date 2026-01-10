@@ -50,7 +50,29 @@ Blood's FFI is designed to:
 - [DIAGNOSTICS.md](./DIAGNOSTICS.md) — FFI-related error messages
 - [CONCURRENCY.md](./CONCURRENCY.md) — Fiber interaction with FFI
 
-### 1.3 FFI Philosophy
+### 1.3 Implementation Status
+
+The following table tracks implementation status of FFI subsystems:
+
+| Component | Status | Location | Notes |
+|-----------|--------|----------|-------|
+| DynamicLibrary loader | ✅ Implemented | `blood-runtime/src/ffi.rs` | Cross-platform via libloading |
+| LibraryRegistry | ✅ Implemented | `blood-runtime/src/ffi.rs` | Symbol resolution |
+| FfiValue types | ✅ Implemented | `blood-runtime/src/ffi.rs` | i8-i64, u8-u64, f32, f64, ptr |
+| FfiType definitions | ✅ Implemented | `blood-runtime/src/ffi.rs` | Type introspection |
+| blood_ffi_* exports | ✅ Integrated | `blood-runtime/src/ffi_exports.rs` | Runtime FFI dispatch |
+| Bridge block parsing | 📋 Designed | — | Grammar specified, not parsed |
+| Bridge block codegen | 📋 Designed | — | Awaits bridge parsing |
+| Type mapping validation | 📋 Designed | — | Per §3 specification |
+| Calling conventions | 📋 Designed | — | sysv64 only for now |
+| Platform validation (Linux) | ✅ Validated | `blood-runtime/tests/` | Primary development platform |
+| Platform validation (macOS) | ⚠️ Partial | — | Expected to work, not CI tested |
+| Platform validation (Windows) | ⚠️ Partial | — | Expected to work, not CI tested |
+| WASM FFI | 📋 Designed | — | Design target only |
+
+**Legend**: ✅ Implemented | ⚠️ Partial | 📋 Designed | ❌ Not Started
+
+### 1.4 FFI Philosophy
 
 Unlike languages that hide FFI complexity (risking hidden unsafety) or make it painful (discouraging legitimate use), Blood takes an explicit approach:
 
@@ -61,7 +83,7 @@ Unlike languages that hide FFI complexity (risking hidden unsafety) or make it p
 | **Types** | Explicit mapping between Blood and C types |
 | **Ownership** | Clear ownership transfer semantics |
 
-### 1.3 The FFI Effect
+### 1.5 The FFI Effect
 
 ```blood
 /// FFI effect captures all foreign function interactions.
