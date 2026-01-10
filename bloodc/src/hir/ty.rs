@@ -66,8 +66,13 @@ impl Type {
     }
 
     /// Check if this type is the unit type.
+    /// Unit can be represented as either empty tuple `()` or `Primitive(Unit)`.
     pub fn is_unit(&self) -> bool {
-        matches!(self.kind(), TypeKind::Tuple(tys) if tys.is_empty())
+        match self.kind() {
+            TypeKind::Tuple(tys) if tys.is_empty() => true,
+            TypeKind::Primitive(PrimitiveTy::Unit) => true,
+            _ => false,
+        }
     }
 
     /// Check if this type is the never type.
