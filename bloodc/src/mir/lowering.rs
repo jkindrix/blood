@@ -420,11 +420,8 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
                 self.lower_expr(inner)
             }
 
-            ExprKind::Perform { .. } => {
-                Err(vec![Diagnostic::error(
-                    "MIR lowering for effect perform not yet implemented".to_string(),
-                    expr.span,
-                )])
+            ExprKind::Perform { effect_id, op_index, args } => {
+                self.lower_perform(*effect_id, *op_index, args, &expr.ty, expr.span)
             }
 
             ExprKind::Resume { .. } => {
@@ -601,6 +598,48 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
 
         self.builder.switch_to(next_block);
         self.current_block = next_block;
+
+        Ok(Operand::Copy(dest_place))
+    }
+
+    /// Lower an effect perform operation.
+    ///
+    /// `perform Effect.op(args)` creates a suspension point where control
+    /// transfers to the effect handler. The handler may resume the continuation,
+    /// at which point execution continues at the target block.
+    fn lower_perform(
+        &mut self,
+        effect_id: DefId,
+        op_index: u32,
+        args: &[Expr],
+        ty: &Type,
+        span: Span,
+    ) -> Result<Operand, Vec<Diagnostic>> {
+        // Lower all arguments
+        let mut arg_ops = Vec::with_capacity(args.len());
+        for arg in args {
+            arg_ops.push(self.lower_expr(arg)?);
+        }
+
+        // Create destination for the result (what the handler resumes with)
+        let dest = self.new_temp(ty.clone(), span);
+        let dest_place = Place::local(dest);
+
+        // Create continuation block (where we resume after handler processes)
+        let resume_block = self.builder.new_block();
+
+        // Emit the Perform terminator
+        self.terminate(TerminatorKind::Perform {
+            effect_id,
+            op_index,
+            args: arg_ops,
+            destination: dest_place.clone(),
+            target: resume_block,
+        });
+
+        // Switch to the resume block
+        self.builder.switch_to(resume_block);
+        self.current_block = resume_block;
 
         Ok(Operand::Copy(dest_place))
     }
@@ -1593,6 +1632,10 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
                 self.lower_expr(inner)
             }
 
+            ExprKind::Perform { effect_id, op_index, args } => {
+                self.lower_perform(*effect_id, *op_index, args, &expr.ty, expr.span)
+            }
+
             ExprKind::Error => {
                 Err(vec![Diagnostic::error("lowering error expression".to_string(), expr.span)])
             }
@@ -1719,6 +1762,44 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
 
         self.builder.switch_to(next_block);
         self.current_block = next_block;
+
+        Ok(Operand::Copy(dest_place))
+    }
+
+    /// Lower an effect perform operation in a closure body.
+    fn lower_perform(
+        &mut self,
+        effect_id: DefId,
+        op_index: u32,
+        args: &[Expr],
+        ty: &Type,
+        span: Span,
+    ) -> Result<Operand, Vec<Diagnostic>> {
+        // Lower all arguments
+        let mut arg_ops = Vec::with_capacity(args.len());
+        for arg in args {
+            arg_ops.push(self.lower_expr(arg)?);
+        }
+
+        // Create destination for the result
+        let dest = self.new_temp(ty.clone(), span);
+        let dest_place = Place::local(dest);
+
+        // Create continuation block
+        let resume_block = self.builder.new_block();
+
+        // Emit the Perform terminator
+        self.terminate(TerminatorKind::Perform {
+            effect_id,
+            op_index,
+            args: arg_ops,
+            destination: dest_place.clone(),
+            target: resume_block,
+        });
+
+        // Switch to the resume block
+        self.builder.switch_to(resume_block);
+        self.current_block = resume_block;
 
         Ok(Operand::Copy(dest_place))
     }

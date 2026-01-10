@@ -758,7 +758,7 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     "perform_result"
                 ).map_err(|e| vec![Diagnostic::error(format!("LLVM call error: {}", e), term.span)])?;
 
-                // Store result to destination
+                // Store result to destination with type conversion
                 let dest_ptr = self.compile_mir_place(destination, body)?;
                 let result_val = result.try_as_basic_value()
                     .left()
@@ -767,7 +767,50 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                          The runtime function should return i64.",
                         term.span
                     )])?;
-                self.builder.build_store(dest_ptr, result_val)
+
+                // blood_perform returns i64, but destination may be a different type.
+                // Get the destination type and convert accordingly.
+                let dest_local = &body.locals[destination.local.index() as usize];
+                let dest_llvm_ty = self.lower_type(&dest_local.ty);
+
+                let converted_result: BasicValueEnum = if dest_llvm_ty.is_int_type() {
+                    let dest_int_ty = dest_llvm_ty.into_int_type();
+                    let result_i64 = result_val.into_int_value();
+                    let dest_bits = dest_int_ty.get_bit_width();
+
+                    if dest_bits < 64 {
+                        // Truncate i64 to smaller integer type
+                        self.builder.build_int_truncate(result_i64, dest_int_ty, "perform_trunc")
+                            .map_err(|e| vec![Diagnostic::error(
+                                format!("LLVM truncate error: {}", e), term.span
+                            )])?.into()
+                    } else if dest_bits > 64 {
+                        // Zero-extend i64 to larger integer type
+                        self.builder.build_int_z_extend(result_i64, dest_int_ty, "perform_ext")
+                            .map_err(|e| vec![Diagnostic::error(
+                                format!("LLVM extend error: {}", e), term.span
+                            )])?.into()
+                    } else {
+                        // Same size, use directly
+                        result_val
+                    }
+                } else if dest_llvm_ty.is_pointer_type() {
+                    // Convert i64 to pointer
+                    let result_i64 = result_val.into_int_value();
+                    self.builder.build_int_to_ptr(
+                        result_i64,
+                        dest_llvm_ty.into_pointer_type(),
+                        "perform_ptr"
+                    ).map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM int_to_ptr error: {}", e), term.span
+                    )])?.into()
+                } else {
+                    // For other types (struct, etc.), use the value directly
+                    // This may fail if types don't match, but that indicates a bug elsewhere
+                    result_val
+                };
+
+                self.builder.build_store(dest_ptr, converted_result)
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM store error: {}", e), term.span)])?;
 
                 // Validate snapshot on return from effect
