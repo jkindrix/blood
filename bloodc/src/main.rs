@@ -287,28 +287,55 @@ fn cmd_check(args: &FileArgs, verbosity: u8) -> ExitCode {
     let path_str = args.file.to_string_lossy();
     let emitter = DiagnosticEmitter::new(&path_str, &source);
 
-    match result {
+    let program = match result {
         Ok(program) => {
             if verbosity > 0 {
-                eprintln!(
-                    "Parsed {} declarations.",
-                    program.declarations.len()
-                );
+                eprintln!("Parsed {} declarations.", program.declarations.len());
             }
-            // Type checking not yet implemented
-            println!("info: Parsing successful.");
-            println!("info: Type checking not yet implemented (Phase 0).");
-            println!("hint: See ROADMAP.md for Phase 1 implementation plans.");
-            ExitCode::SUCCESS
+            program
         }
         Err(errors) => {
             for error in &errors {
                 emitter.emit(error);
             }
-            eprintln!("Checking failed with {} error(s).", errors.len());
-            ExitCode::from(1)
+            eprintln!("Parsing failed with {} error(s).", errors.len());
+            return ExitCode::from(1);
         }
+    };
+
+    // Get the interner for symbol resolution
+    let interner = parser.take_interner();
+
+    // Type check the program
+    let mut ctx = bloodc::typeck::TypeContext::new(&source, interner);
+
+    // Collect declarations and build type information
+    if let Err(errors) = ctx.resolve_program(&program) {
+        for error in &errors {
+            emitter.emit(error);
+        }
+        eprintln!("Type checking failed: {} error(s).", errors.len());
+        return ExitCode::from(1);
     }
+
+    // Type-check all function bodies
+    if let Err(errors) = ctx.check_all_bodies() {
+        for error in &errors {
+            emitter.emit(error);
+        }
+        eprintln!("Type checking failed: {} error(s).", errors.len());
+        return ExitCode::from(1);
+    }
+
+    // Generate HIR to verify everything is well-formed
+    let hir_crate = ctx.into_hir();
+
+    if verbosity > 0 {
+        eprintln!("Type checking passed. {} items.", hir_crate.items.len());
+    }
+
+    println!("info: Type checking successful.");
+    ExitCode::SUCCESS
 }
 
 /// Find the runtime libraries to link with.
