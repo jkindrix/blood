@@ -888,6 +888,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let get_gen_type = i32_type.fn_type(&[i64_type.into()], false);
         self.module.add_function("blood_get_generation", get_gen_type, None);
 
+        // blood_increment_generation(address: *void) -> void (increment generation for a slot)
+        let increment_gen_type = void_type.fn_type(&[i8_ptr_type.into()], false);
+        self.module.add_function("blood_increment_generation", increment_gen_type, None);
+
         // === Effect Runtime ===
 
         // blood_evidence_create() -> *void (EvidenceHandle)
@@ -3502,8 +3506,21 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             if let Some(&outer_alloca) = saved_locals.get(&cap.local_id) {
                 // Get the type of the captured variable from the outer local
                 let cap_type = outer_alloca.get_type().get_element_type();
-                let cap_basic_type: BasicTypeEnum<'ctx> = cap_type.try_into()
-                    .unwrap_or(self.context.i64_type().into());
+                let cap_basic_type: BasicTypeEnum<'ctx> = match cap_type.try_into() {
+                    Ok(ty) => ty,
+                    Err(_) => {
+                        // Captured variable has a non-basic type (function, void, etc.)
+                        // This is an ICE - closures should only capture basic types
+                        return Err(vec![Diagnostic::error(
+                            format!(
+                                "ICE: Captured variable {:?} has non-basic LLVM type. \
+                                 Closures should only capture basic types.",
+                                cap.local_id
+                            ),
+                            span,
+                        )]);
+                    }
+                };
 
                 let zero = self.context.i32_type().const_int(0, false);
                 let idx = self.context.i32_type().const_int(i as u64, false);

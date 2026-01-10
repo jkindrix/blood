@@ -317,8 +317,22 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
             StatementKind::IncrementGeneration(place) => {
                 // Increment generation counter for a slot
                 // This is used when freeing/reallocating
+                // Requires: blood_increment_generation(address: *void) runtime call
                 let ptr = self.compile_mir_place(place, body)?;
-                let _ = ptr; // TODO: Emit runtime call to increment generation
+
+                // Get or declare the runtime function
+                let increment_fn = self.module.get_function("blood_increment_generation")
+                    .ok_or_else(|| vec![Diagnostic::error(
+                        "Runtime function blood_increment_generation not found. \
+                         IncrementGeneration requires this function to be declared.",
+                        stmt.span
+                    )])?;
+
+                // Call the runtime function to increment the generation
+                self.builder.build_call(increment_fn, &[ptr.into()], "")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM call error: {}", e), stmt.span
+                    )])?;
             }
 
             StatementKind::CaptureSnapshot(local) => {
@@ -713,7 +727,11 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 let dest_ptr = self.compile_mir_place(destination, body)?;
                 let result_val = result.try_as_basic_value()
                     .left()
-                    .unwrap_or(i64_ty.const_int(0, false).into());
+                    .ok_or_else(|| vec![Diagnostic::error(
+                        "ICE: blood_perform returned void unexpectedly. \
+                         The runtime function should return i64.",
+                        term.span
+                    )])?;
                 self.builder.build_store(dest_ptr, result_val)
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM store error: {}", e), term.span)])?;
 
@@ -801,8 +819,27 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
 
             TerminatorKind::StaleReference { ptr, expected, actual } => {
                 // Stale reference detected - raise effect or panic
-                let _ = (ptr, expected, actual);
-                // TODO: Emit call to blood_stale_reference_handler
+                // Compile the place to get the pointer value (for diagnostics)
+                let _ptr_val = self.compile_mir_place(ptr, body)?;
+
+                // Get the panic function
+                let panic_fn = self.module.get_function("blood_stale_reference_panic")
+                    .ok_or_else(|| vec![Diagnostic::error(
+                        "Runtime function blood_stale_reference_panic not found", term.span
+                    )])?;
+
+                // Create constant values for expected and actual generations
+                let i32_ty = self.context.i32_type();
+                let expected_int = i32_ty.const_int(*expected as u64, false);
+                let actual_int = i32_ty.const_int(*actual as u64, false);
+
+                // Call the panic handler with expected and actual generations
+                self.builder.build_call(panic_fn, &[expected_int.into(), actual_int.into()], "")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM call error: {}", e), term.span
+                    )])?;
+
+                // After panic, code is unreachable
                 self.builder.build_unreachable()
                     .map_err(|e| vec![Diagnostic::error(
                         format!("LLVM unreachable error: {}", e), term.span
@@ -868,9 +905,18 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
             }
 
             Rvalue::Len(place) => {
-                // Array/slice length - for now return constant
-                let _ = place;
-                Ok(self.context.i64_type().const_int(0, false).into())
+                // Array/slice length computation
+                // For arrays, we need to look up the type and extract the static size
+                // For slices, we need to load the length from the fat pointer
+                let _ptr = self.compile_mir_place(place, body)?;
+
+                // Get the type of the place to determine if it's an array or slice
+                // For now, return an explicit error since length computation is not yet implemented
+                Err(vec![Diagnostic::error(
+                    "Rvalue::Len is not yet implemented. Array/slice length computation \
+                     requires type information to extract static array size or slice length.",
+                    Span::dummy()
+                )])
             }
 
             Rvalue::Aggregate { kind, operands } => {
@@ -899,18 +945,28 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
 
             Rvalue::ReadGeneration(place) => {
                 // Read generation from a generational pointer
+                // In the 128-bit BloodPtr model, generation is stored in the upper bits
+                // For now, return an explicit error since this requires 128-bit pointer support
                 let _ptr = self.compile_mir_place(place, body)?;
-                // TODO: Extract generation from 128-bit pointer
-                Ok(self.context.i32_type().const_int(1, false).into())
+                Err(vec![Diagnostic::error(
+                    "Rvalue::ReadGeneration is not yet implemented. \
+                     This requires 128-bit BloodPtr support to extract the generation field.",
+                    Span::dummy()
+                )])
             }
 
             Rvalue::MakeGenPtr { address, generation, metadata } => {
-                // Create a generational pointer
+                // Create a generational pointer (128-bit BloodPtr)
+                // BloodPtr structure: { address: u64, generation: u32, metadata: u32 }
+                // For now, return an explicit error since 128-bit pointer support is not yet implemented
                 let _addr = self.compile_mir_operand(address, body, escape_results)?;
                 let _gen = self.compile_mir_operand(generation, body, escape_results)?;
                 let _meta = self.compile_mir_operand(metadata, body, escape_results)?;
-                // TODO: Pack into 128-bit pointer structure
-                Ok(self.context.i8_type().ptr_type(AddressSpace::default()).const_null().into())
+                Err(vec![Diagnostic::error(
+                    "Rvalue::MakeGenPtr is not yet implemented. \
+                     This requires 128-bit BloodPtr support to pack address, generation, and metadata.",
+                    Span::dummy()
+                )])
             }
         }
     }
@@ -1174,20 +1230,31 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
 
         // Get current generation for the error message
         if let Some(get_gen_fn) = self.module.get_function("blood_get_generation") {
-            let actual_gen = self.builder.build_call(
+            let gen_call_result = self.builder.build_call(
                 get_gen_fn,
                 &[address.into()],
                 "actual_gen"
-            ).map_err(|e| vec![Diagnostic::error(format!("LLVM call error: {}", e), span)])?
-            .try_as_basic_value()
-            .left()
-            .map(|v| v.into_int_value())
-            .unwrap_or_else(|| i32_ty.const_int(0, false));
+            ).map_err(|e| vec![Diagnostic::error(format!("LLVM call error: {}", e), span)])?;
+
+            let actual_gen = match gen_call_result.try_as_basic_value().left() {
+                Some(val) => val.into_int_value(),
+                None => {
+                    // blood_get_generation returned void unexpectedly - this is an ICE
+                    // but we're already in a panic path, so log and continue
+                    eprintln!(
+                        "ICE: blood_get_generation returned void unexpectedly at {:?}. \
+                         Using 0 as fallback for panic message.",
+                        span
+                    );
+                    i32_ty.const_int(0, false)
+                }
+            };
 
             self.builder.build_call(panic_fn, &[expected_gen.into(), actual_gen.into()], "")
                 .map_err(|e| vec![Diagnostic::error(format!("LLVM call error: {}", e), span)])?;
         } else {
-            // Fallback: just pass expected as both args
+            // blood_get_generation not available - use expected as fallback for both args
+            // This is acceptable as we're in a panic path and need some value for the error message
             self.builder.build_call(panic_fn, &[expected_gen.into(), expected_gen.into()], "")
                 .map_err(|e| vec![Diagnostic::error(format!("LLVM call error: {}", e), span)])?;
         }

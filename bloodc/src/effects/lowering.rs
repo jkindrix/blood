@@ -160,6 +160,35 @@ pub struct LoweringResult {
     pub expr: Expr,
     /// Whether evidence is needed.
     pub needs_evidence: bool,
+    /// Error message if lowering failed.
+    pub error: Option<LoweringError>,
+}
+
+/// Error from effect lowering.
+#[derive(Debug, Clone)]
+pub struct LoweringError {
+    /// Error message.
+    pub message: String,
+    /// Whether this is an internal compiler error (should not happen with valid code).
+    pub is_ice: bool,
+}
+
+impl LoweringError {
+    /// Create a new lowering error.
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            is_ice: false,
+        }
+    }
+
+    /// Create an internal compiler error.
+    pub fn ice(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            is_ice: true,
+        }
+    }
 }
 
 impl EffectLowering {
@@ -580,22 +609,58 @@ impl EffectLowering {
         operation: &str,
         args: Vec<Expr>,
     ) -> LoweringResult {
+        // Look up the effect operations
+        let ops = match self.effect_ops.get(&effect_id) {
+            Some(ops) => ops,
+            None => {
+                // Effect not registered - this is an ICE because type checking
+                // should have validated that the effect exists
+                let error = LoweringError::ice(format!(
+                    "Effect {:?} not found during lowering. \
+                     This is an internal compiler error - type checking should have \
+                     validated the effect exists.",
+                    effect_id
+                ));
+                eprintln!("ICE: {}", error.message);
+                return LoweringResult {
+                    expr: Expr {
+                        kind: ExprKind::Error,
+                        ty: Type::error(),
+                        span: crate::span::Span::dummy(),
+                    },
+                    needs_evidence: false,
+                    error: Some(error),
+                };
+            }
+        };
+
         // Look up the operation index
-        let op_index = if let Some(ops) = self.effect_ops.get(&effect_id) {
-            ops.iter().position(|o| o.name == operation).unwrap_or(0) as u32
-        } else {
-            0
+        let (op_index, op_info) = match ops.iter().enumerate().find(|(_, o)| o.name == operation) {
+            Some((idx, op)) => (idx as u32, op),
+            None => {
+                // Operation not found in effect - this is an ICE because type checking
+                // should have validated that the operation exists
+                let error = LoweringError::ice(format!(
+                    "Operation '{}' not found in effect {:?}. \
+                     This is an internal compiler error - type checking should have \
+                     validated the operation exists.",
+                    operation, effect_id
+                ));
+                eprintln!("ICE: {}", error.message);
+                return LoweringResult {
+                    expr: Expr {
+                        kind: ExprKind::Error,
+                        ty: Type::error(),
+                        span: crate::span::Span::dummy(),
+                    },
+                    needs_evidence: false,
+                    error: Some(error),
+                };
+            }
         };
 
         // Get the return type from the operation signature
-        let return_ty = if let Some(ops) = self.effect_ops.get(&effect_id) {
-            ops.iter()
-                .find(|o| o.name == operation)
-                .map(|o| o.return_ty.clone())
-                .unwrap_or_else(Type::unit)
-        } else {
-            Type::unit()
-        };
+        let return_ty = op_info.return_ty.clone();
 
         // Create the Perform expression
         LoweringResult {
@@ -609,6 +674,7 @@ impl EffectLowering {
                 span: crate::span::Span::dummy(),
             },
             needs_evidence: true,
+            error: None,
         }
     }
 
@@ -643,6 +709,7 @@ impl EffectLowering {
                 span: crate::span::Span::dummy(),
             },
             needs_evidence: false, // Handler provides its own evidence
+            error: None,
         }
     }
 

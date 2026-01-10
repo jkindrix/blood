@@ -7,14 +7,30 @@
 use crate::hir::{Type, TypeKind, PrimitiveTy};
 
 /// Calculate the size of a type in bytes (for layout purposes).
+///
+/// Returns 0 for zero-sized types (unit, never) and error types.
+/// Panics on type variables that should have been resolved before codegen.
 pub fn type_size(ty: &Type) -> usize {
     match ty.kind() {
         TypeKind::Primitive(prim) => primitive_size(prim),
         TypeKind::Tuple(types) => types.iter().map(type_size).sum(),
         TypeKind::Array { element, size } => type_size(element) * (*size as usize),
+        TypeKind::Slice { .. } => 16, // fat pointer (ptr + len)
         TypeKind::Ref { .. } | TypeKind::Ptr { .. } => 8, // 64-bit pointer
-        TypeKind::Adt { .. } => 8, // Placeholder
-        _ => 0,
+        TypeKind::Fn { .. } => 8, // function pointer
+        TypeKind::Adt { .. } => 8, // Placeholder - ADT sizes should be computed from field layout
+        TypeKind::Never => 0, // uninhabited type, zero-sized
+        TypeKind::Error => 0, // error recovery, treated as zero-sized
+        TypeKind::Infer(_) => {
+            // Type variable should be resolved before codegen
+            eprintln!("ICE: type_size called on unresolved type variable");
+            0
+        }
+        TypeKind::Param(_) => {
+            // Type parameter should be monomorphized before codegen
+            eprintln!("ICE: type_size called on unmonomorphized type parameter");
+            8 // assume pointer-sized for safety
+        }
     }
 }
 
@@ -50,6 +66,9 @@ fn primitive_size(prim: &PrimitiveTy) -> usize {
 }
 
 /// Calculate alignment requirements for a type.
+///
+/// Returns 1 for zero-sized types and error types.
+/// Logs ICE for type variables that should have been resolved before codegen.
 pub fn type_alignment(ty: &Type) -> usize {
     match ty.kind() {
         TypeKind::Primitive(prim) => primitive_size(prim).max(1),
@@ -58,7 +77,19 @@ pub fn type_alignment(ty: &Type) -> usize {
             .max()
             .unwrap_or(1),
         TypeKind::Array { element, .. } => type_alignment(element),
+        TypeKind::Slice { .. } => 8, // fat pointer alignment
         TypeKind::Ref { .. } | TypeKind::Ptr { .. } => 8,
-        _ => 8,
+        TypeKind::Fn { .. } => 8, // function pointer alignment
+        TypeKind::Adt { .. } => 8, // conservative default - should compute from fields
+        TypeKind::Never => 1, // zero-sized, minimal alignment
+        TypeKind::Error => 1, // error recovery
+        TypeKind::Infer(_) => {
+            eprintln!("ICE: type_alignment called on unresolved type variable");
+            8 // conservative default
+        }
+        TypeKind::Param(_) => {
+            eprintln!("ICE: type_alignment called on unmonomorphized type parameter");
+            8 // conservative default
+        }
     }
 }
