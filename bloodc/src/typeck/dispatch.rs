@@ -410,4 +410,225 @@ mod tests {
         let result = resolver.resolve("add", &[Type::i32()], &candidates);
         assert!(matches!(result, DispatchResult::NoMatch(_)));
     }
+
+    #[test]
+    fn test_ambiguous_candidates() {
+        let unifier = Unifier::new();
+        let resolver = DispatchResolver::new(&unifier);
+
+        // Two methods with same signature = ambiguous
+        let candidates = vec![
+            make_candidate("foo", vec![Type::i32()], Type::i32()),
+            make_candidate("foo", vec![Type::i32()], Type::i64()),
+        ];
+
+        let result = resolver.resolve("foo", &[Type::i32()], &candidates);
+        match result {
+            DispatchResult::Ambiguous(err) => {
+                assert_eq!(err.method_name, "foo");
+                assert_eq!(err.candidates.len(), 2);
+            }
+            other => panic!("Expected Ambiguous, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_single_candidate() {
+        let unifier = Unifier::new();
+        let resolver = DispatchResolver::new(&unifier);
+
+        let candidates = vec![
+            make_candidate("single", vec![Type::i32()], Type::bool()),
+        ];
+
+        let result = resolver.resolve("single", &[Type::i32()], &candidates);
+        match result {
+            DispatchResult::Resolved(m) => {
+                assert_eq!(m.name, "single");
+            }
+            other => panic!("Expected Resolved, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_empty_candidates() {
+        let unifier = Unifier::new();
+        let resolver = DispatchResolver::new(&unifier);
+
+        let candidates: Vec<MethodCandidate> = vec![];
+        let result = resolver.resolve("missing", &[Type::i32()], &candidates);
+
+        match result {
+            DispatchResult::NoMatch(err) => {
+                assert_eq!(err.method_name, "missing");
+                assert!(err.candidates.is_empty());
+            }
+            other => panic!("Expected NoMatch, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_is_applicable_arity() {
+        let unifier = Unifier::new();
+        let resolver = DispatchResolver::new(&unifier);
+
+        let method = make_candidate("test", vec![Type::i32(), Type::i32()], Type::i32());
+
+        // Wrong arity
+        assert!(!resolver.is_applicable(&method, &[Type::i32()]));
+        assert!(!resolver.is_applicable(&method, &[Type::i32(), Type::i32(), Type::i32()]));
+
+        // Correct arity
+        assert!(resolver.is_applicable(&method, &[Type::i32(), Type::i32()]));
+    }
+
+    #[test]
+    fn test_never_type_subtyping() {
+        let unifier = Unifier::new();
+        let resolver = DispatchResolver::new(&unifier);
+
+        // Never is subtype of any type
+        let method = make_candidate("test", vec![Type::i32()], Type::i32());
+        assert!(resolver.is_applicable(&method, &[Type::never()]));
+    }
+
+    #[test]
+    fn test_is_more_specific() {
+        let unifier = Unifier::new();
+        let resolver = DispatchResolver::new(&unifier);
+
+        let m1 = make_candidate("f", vec![Type::i32()], Type::i32());
+        let m2 = make_candidate("f", vec![Type::i32()], Type::i32());
+
+        // Same signature: neither is more specific
+        assert!(!resolver.is_more_specific(&m1, &m2));
+        assert!(!resolver.is_more_specific(&m2, &m1));
+    }
+
+    #[test]
+    fn test_compare_specificity_equal() {
+        let unifier = Unifier::new();
+        let resolver = DispatchResolver::new(&unifier);
+
+        let m1 = make_candidate("f", vec![Type::i32()], Type::i32());
+        let m2 = make_candidate("f", vec![Type::i32()], Type::i32());
+
+        assert_eq!(resolver.compare_specificity(&m1, &m2), Ordering::Equal);
+    }
+
+    #[test]
+    fn test_types_equal_primitives() {
+        let unifier = Unifier::new();
+        let resolver = DispatchResolver::new(&unifier);
+
+        assert!(resolver.types_equal(&Type::i32(), &Type::i32()));
+        assert!(!resolver.types_equal(&Type::i32(), &Type::i64()));
+        assert!(resolver.types_equal(&Type::bool(), &Type::bool()));
+    }
+
+    #[test]
+    fn test_types_equal_tuples() {
+        let unifier = Unifier::new();
+        let resolver = DispatchResolver::new(&unifier);
+
+        let t1 = Type::tuple(vec![Type::i32(), Type::bool()]);
+        let t2 = Type::tuple(vec![Type::i32(), Type::bool()]);
+        let t3 = Type::tuple(vec![Type::i32(), Type::i32()]);
+        let t4 = Type::tuple(vec![Type::i32()]);
+
+        assert!(resolver.types_equal(&t1, &t2));
+        assert!(!resolver.types_equal(&t1, &t3));
+        assert!(!resolver.types_equal(&t1, &t4));
+    }
+
+    #[test]
+    fn test_multiple_args_dispatch() {
+        let unifier = Unifier::new();
+        let resolver = DispatchResolver::new(&unifier);
+
+        let candidates = vec![
+            make_candidate("process", vec![Type::i32(), Type::str()], Type::unit()),
+            make_candidate("process", vec![Type::i64(), Type::str()], Type::unit()),
+            make_candidate("process", vec![Type::i32(), Type::i32()], Type::unit()),
+        ];
+
+        // First candidate matches
+        let result = resolver.resolve("process", &[Type::i32(), Type::str()], &candidates);
+        assert!(matches!(result, DispatchResult::Resolved(m) if m.param_types.len() == 2));
+
+        // Third candidate matches
+        let result = resolver.resolve("process", &[Type::i32(), Type::i32()], &candidates);
+        assert!(matches!(result, DispatchResult::Resolved(_)));
+
+        // No match
+        let result = resolver.resolve("process", &[Type::bool(), Type::bool()], &candidates);
+        assert!(matches!(result, DispatchResult::NoMatch(_)));
+    }
+
+    #[test]
+    fn test_compare_type_param_specificity() {
+        use crate::hir::TyVarId;
+
+        // Concrete type is more specific than type variable
+        let concrete = Type::i32();
+        let param = Type::new(TypeKind::Param(TyVarId::new(42)));
+
+        let result = compare_type_param_specificity(&concrete, &param);
+        assert_eq!(result, Ordering::Less);
+
+        let result = compare_type_param_specificity(&param, &concrete);
+        assert_eq!(result, Ordering::Greater);
+
+        // Both concrete: equal
+        let result = compare_type_param_specificity(&Type::i32(), &Type::i64());
+        assert_eq!(result, Ordering::Equal);
+    }
+
+    #[test]
+    fn test_find_maximal_single() {
+        let unifier = Unifier::new();
+        let resolver = DispatchResolver::new(&unifier);
+
+        let candidates = vec![
+            make_candidate("f", vec![Type::i32()], Type::i32()),
+        ];
+
+        let maximal = resolver.find_maximal(&candidates);
+        assert_eq!(maximal.len(), 1);
+    }
+
+    #[test]
+    fn test_find_maximal_multiple_equal() {
+        let unifier = Unifier::new();
+        let resolver = DispatchResolver::new(&unifier);
+
+        // Two methods with same signature: both maximal
+        let candidates = vec![
+            make_candidate("f", vec![Type::i32()], Type::i32()),
+            make_candidate("f", vec![Type::i32()], Type::i64()),
+        ];
+
+        let maximal = resolver.find_maximal(&candidates);
+        assert_eq!(maximal.len(), 2);
+    }
+
+    #[test]
+    fn test_error_contains_all_candidates() {
+        let unifier = Unifier::new();
+        let resolver = DispatchResolver::new(&unifier);
+
+        let candidates = vec![
+            make_candidate("f", vec![Type::i32()], Type::i32()),
+            make_candidate("f", vec![Type::i64()], Type::i64()),
+        ];
+
+        let result = resolver.resolve("f", &[Type::bool()], &candidates);
+        match result {
+            DispatchResult::NoMatch(err) => {
+                assert_eq!(err.candidates.len(), 2);
+                assert_eq!(err.arg_types.len(), 1);
+            }
+            other => panic!("Expected NoMatch, got {:?}", other),
+        }
+    }
 }
