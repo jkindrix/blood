@@ -255,22 +255,35 @@ impl SnapshotAnalyzer {
 
     /// Compute live generational reference locals at a block.
     ///
-    /// This is a simplified liveness analysis - a full implementation would
-    /// use proper dataflow analysis.
+    /// Uses proper dataflow liveness analysis to determine which locals
+    /// containing generational references are actually live at the suspension
+    /// point. This optimizes snapshot size by only capturing references that
+    /// will actually be used after resumption.
+    ///
+    /// Based on [rustc_mir_dataflow](https://nnethercote.github.io/2024/12/19/streamlined-dataflow-analysis-code-in-rustc.html)
+    /// liveness analysis approach.
     fn compute_live_genrefs(&self, body: &MirBody, target_bb: super::types::BasicBlockId) -> Vec<LocalId> {
-        let mut live = HashSet::new();
+        // Perform liveness analysis on the MIR body
+        let liveness = LivenessAnalysis::analyze(body);
 
-        // Start with all genref locals (conservative)
-        for &local in &self.genref_locals {
-            live.insert(local);
-        }
+        // Get the live locals at the entry of the target block
+        // (for effect operations, we want locals live after the effect returns)
+        let live_at_target = liveness.live_out.get(&target_bb)
+            .cloned()
+            .unwrap_or_default();
 
-        // Walk backwards from target to remove dead locals
-        // (Simplified: for now, just return all genref locals)
-        let _ = target_bb;
-        let _ = body;
+        // Filter to only include locals that:
+        // 1. Are marked as containing genrefs
+        // 2. Are actually live at the suspension point
+        let mut live_genrefs: Vec<_> = self.genref_locals.iter()
+            .filter(|local| live_at_target.contains(local))
+            .cloned()
+            .collect();
 
-        live.into_iter().collect()
+        // Sort for deterministic output
+        live_genrefs.sort_by_key(|l| l.index);
+
+        live_genrefs
     }
 }
 

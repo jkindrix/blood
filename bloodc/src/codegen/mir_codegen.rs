@@ -132,6 +132,12 @@ pub trait MirCodegen<'ctx, 'a> {
         expected_gen: IntValue<'ctx>,
         span: Span,
     ) -> Result<(), Vec<Diagnostic>>;
+
+    /// Check if a type may contain generational references.
+    ///
+    /// Used to determine which locals need snapshot capture during
+    /// effect operations.
+    fn type_may_contain_genref(&self, ty: &Type) -> bool;
 }
 
 impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
@@ -301,7 +307,19 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
 
             StatementKind::CaptureSnapshot(local) => {
                 // Capture generation snapshot for effect handler
-                let _ = local; // TODO: Emit runtime call to capture snapshot
+                // This emits code to add the local's address and generation to the
+                // current effect's snapshot. The snapshot is stored in a thread-local
+                // context during effect operations.
+                //
+                // For now, this is a placeholder that logs the capture intent.
+                // Full implementation requires:
+                // 1. Access to the current effect context's snapshot handle
+                // 2. Extraction of address/generation from BloodPtr
+                // 3. Calling blood_snapshot_add_entry
+                //
+                // The Perform terminator handles the full snapshot lifecycle,
+                // so individual CaptureSnapshot statements are less critical.
+                let _ = local;
             }
 
             StatementKind::ValidateGeneration { ptr, expected_gen } => {
@@ -553,12 +571,73 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     .ok_or_else(|| vec![Diagnostic::error("snapshot_create returned void", term.span)])?
                     .into_int_value();
 
-                // For now, snapshot capture for effect-captured locals is handled by
-                // the escape analysis marking locals with is_effect_captured. Full
-                // implementation would iterate through those locals and add entries.
-                // This is left as a placeholder since 128-bit pointers aren't fully
-                // implemented yet.
-                let _ = escape_results; // Used for determining which locals to capture
+                // Add entries to snapshot for effect-captured locals
+                // These are locals that contain generational references that may be
+                // accessed after the continuation resumes.
+                let snapshot_add_entry = self.module.get_function("blood_snapshot_add_entry")
+                    .ok_or_else(|| vec![Diagnostic::error(
+                        "Runtime function blood_snapshot_add_entry not found", term.span
+                    )])?;
+
+                if let Some(escape) = escape_results {
+                    for local in &body.locals {
+                        // Check if this local is effect-captured and might contain a genref
+                        if escape.is_effect_captured(local.id) && self.type_may_contain_genref(&local.ty) {
+                            // Get the local's storage
+                            if let Some(&local_ptr) = self.locals.get(&local.id) {
+                                // For now, we assume the local stores a pointer value.
+                                // Full 128-bit pointer support would extract address and generation
+                                // from the BloodPtr structure. For now, we use the pointer address
+                                // and a placeholder generation.
+                                //
+                                // TODO: When 128-bit BloodPtr is implemented:
+                                // 1. Load the BloodPtr struct from local_ptr
+                                // 2. Extract address field (bits 0-63)
+                                // 3. Extract generation field (bits 64-95)
+                                // 4. Call blood_snapshot_add_entry(snapshot, address, generation)
+                                //
+                                // For now, use pointer-to-int conversion as address with gen=1
+                                let ptr_val = self.builder.build_load(local_ptr, &format!("cap_{}", local.id.index))
+                                    .map_err(|e| vec![Diagnostic::error(format!("LLVM load error: {}", e), term.span)])?;
+
+                                // Check if it's a pointer type (we can convert to int)
+                                if ptr_val.is_pointer_value() {
+                                    let address = self.builder.build_ptr_to_int(
+                                        ptr_val.into_pointer_value(),
+                                        i64_ty,
+                                        "addr"
+                                    ).map_err(|e| vec![Diagnostic::error(format!("LLVM ptr_to_int error: {}", e), term.span)])?;
+
+                                    // Use generation 1 (FIRST) as placeholder until 128-bit pointers
+                                    let generation = i32_ty.const_int(1, false);
+
+                                    self.builder.build_call(
+                                        snapshot_add_entry,
+                                        &[snapshot.into(), address.into(), generation.into()],
+                                        ""
+                                    ).map_err(|e| vec![Diagnostic::error(format!("LLVM call error: {}", e), term.span)])?;
+                                } else if ptr_val.is_int_value() {
+                                    // If it's already an int (could be packed pointer), use it directly
+                                    let int_val = ptr_val.into_int_value();
+                                    let address = if int_val.get_type().get_bit_width() < 64 {
+                                        self.builder.build_int_z_extend(int_val, i64_ty, "addr")
+                                            .map_err(|e| vec![Diagnostic::error(format!("LLVM extend error: {}", e), term.span)])?
+                                    } else {
+                                        int_val
+                                    };
+                                    let generation = i32_ty.const_int(1, false);
+
+                                    self.builder.build_call(
+                                        snapshot_add_entry,
+                                        &[snapshot.into(), address.into(), generation.into()],
+                                        ""
+                                    ).map_err(|e| vec![Diagnostic::error(format!("LLVM call error: {}", e), term.span)])?;
+                                }
+                                // For non-pointer types, skip (they don't contain genrefs)
+                            }
+                        }
+                    }
+                }
 
                 // Call blood_perform with effect_id, op_index, args
                 let perform_fn = self.module.get_function("blood_perform")
@@ -1075,6 +1154,37 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
         self.builder.position_at_end(valid_bb);
 
         Ok(())
+    }
+
+    fn type_may_contain_genref(&self, ty: &Type) -> bool {
+        use crate::hir::TypeKind;
+
+        match &*ty.kind {
+            // Pointer and reference types may contain generational references
+            TypeKind::Ptr { .. } | TypeKind::Ref { .. } => true,
+
+            // Arrays and slices may contain genrefs if their element type does
+            TypeKind::Array { ref element, .. } => self.type_may_contain_genref(element),
+            TypeKind::Slice { ref element } => self.type_may_contain_genref(element),
+
+            // Tuples may contain genrefs if any element does
+            TypeKind::Tuple(elems) => elems.iter().any(|e| self.type_may_contain_genref(e)),
+
+            // ADTs (structs, enums) might contain genrefs - be conservative
+            TypeKind::Adt { .. } => true,
+
+            // Functions/closures might capture genrefs
+            TypeKind::Fn { .. } => true,
+
+            // Primitives don't contain genrefs
+            TypeKind::Primitive(_) => false,
+
+            // Never and Error types don't contain genrefs
+            TypeKind::Never | TypeKind::Error => false,
+
+            // Inference and type parameters - be conservative
+            TypeKind::Infer(_) | TypeKind::Param(_) => true,
+        }
     }
 }
 
