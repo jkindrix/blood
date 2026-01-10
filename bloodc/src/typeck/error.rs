@@ -56,6 +56,10 @@ impl TypeError {
                 "E1005",
                 format!("this function takes {expected} argument(s) but {found} were supplied"),
             ),
+            TypeErrorKind::GenericArgsMismatch { expected, found } => (
+                "E1036",
+                format!("wrong number of type arguments: expected {expected}, found {found}"),
+            ),
             TypeErrorKind::NotAStruct { ty } => (
                 "E1006",
                 format!("`{ty}` is not a struct"),
@@ -214,6 +218,11 @@ pub enum TypeErrorKind {
     },
     /// Wrong number of arguments.
     WrongArity {
+        expected: usize,
+        found: usize,
+    },
+    /// Wrong number of generic type arguments.
+    GenericArgsMismatch {
         expected: usize,
         found: usize,
     },

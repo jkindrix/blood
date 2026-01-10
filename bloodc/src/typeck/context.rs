@@ -33,6 +33,8 @@ pub struct TypeContext<'a> {
     struct_defs: HashMap<DefId, StructInfo>,
     /// Enum definitions.
     enum_defs: HashMap<DefId, EnumInfo>,
+    /// Type alias definitions.
+    type_aliases: HashMap<DefId, TypeAliasInfo>,
     /// Functions to type-check (includes full declaration for parameter names).
     pending_bodies: Vec<(DefId, ast::FnDecl)>,
     /// The current function's return type.
@@ -89,6 +91,14 @@ pub struct FieldInfo {
 pub struct EnumInfo {
     pub name: String,
     pub variants: Vec<VariantInfo>,
+    pub generics: Vec<TyVarId>,
+}
+
+/// Information about a type alias.
+#[derive(Debug, Clone)]
+pub struct TypeAliasInfo {
+    pub name: String,
+    pub ty: Type,
     pub generics: Vec<TyVarId>,
 }
 
@@ -154,6 +164,7 @@ impl<'a> TypeContext<'a> {
             fn_sigs: HashMap::new(),
             struct_defs: HashMap::new(),
             enum_defs: HashMap::new(),
+            type_aliases: HashMap::new(),
             pending_bodies: Vec::new(),
             return_type: None,
             current_fn: None,
@@ -314,15 +325,7 @@ impl<'a> TypeContext<'a> {
             ast::Declaration::Static(s) => self.collect_static(s),
             ast::Declaration::Effect(e) => self.collect_effect(e),
             ast::Declaration::Handler(h) => self.collect_handler(h),
-            ast::Declaration::Type(t) => {
-                // Type aliases - Phase 2+
-                Err(TypeError::new(
-                    TypeErrorKind::UnsupportedFeature {
-                        feature: "type aliases are not yet supported".to_string(),
-                    },
-                    t.span,
-                ))
-            }
+            ast::Declaration::Type(t) => self.collect_type_alias(t),
             ast::Declaration::Impl(i) => {
                 // Impl blocks - Phase 2+
                 Err(TypeError::new(
@@ -605,6 +608,47 @@ impl<'a> TypeContext<'a> {
         self.struct_defs.insert(def_id, StructInfo {
             name,
             fields,
+            generics: generics_vec,
+        });
+
+        Ok(())
+    }
+
+    /// Collect a type alias declaration.
+    fn collect_type_alias(&mut self, type_decl: &ast::TypeDecl) -> Result<(), TypeError> {
+        let name = self.symbol_to_string(type_decl.name.node);
+        let def_id = self.resolver.define_item(
+            name.clone(),
+            hir::DefKind::TypeAlias,
+            type_decl.span,
+        )?;
+
+        // Also define as a type so it can be referenced
+        self.resolver.define_type(name.clone(), def_id, type_decl.span)?;
+
+        // Register generic type parameters before processing the aliased type
+        let saved_generic_params = std::mem::take(&mut self.generic_params);
+        let mut generics_vec = Vec::new();
+
+        if let Some(ref type_params) = type_decl.type_params {
+            for type_param in &type_params.params {
+                let param_name = self.symbol_to_string(type_param.name.node);
+                let ty_var_id = TyVarId(self.next_type_param_id);
+                self.next_type_param_id += 1;
+                self.generic_params.insert(param_name, ty_var_id);
+                generics_vec.push(ty_var_id);
+            }
+        }
+
+        // Convert the aliased type (now with generics in scope)
+        let aliased_ty = self.ast_type_to_hir_type(&type_decl.ty)?;
+
+        // Restore previous generic params scope
+        self.generic_params = saved_generic_params;
+
+        self.type_aliases.insert(def_id, TypeAliasInfo {
+            name,
+            ty: aliased_ty,
             generics: generics_vec,
         });
 
@@ -3207,6 +3251,22 @@ impl<'a> TypeContext<'a> {
 
                     // Look up user-defined types
                     if let Some(def_id) = self.resolver.lookup_type(&name) {
+                        // Check if this is a type alias
+                        if let Some(alias_info) = self.type_aliases.get(&def_id).cloned() {
+                            // For type aliases without arguments, return the aliased type directly
+                            if alias_info.generics.is_empty() {
+                                return Ok(alias_info.ty);
+                            } else {
+                                // Type alias with generics but no arguments provided - error
+                                return Err(TypeError::new(
+                                    TypeErrorKind::GenericArgsMismatch {
+                                        expected: alias_info.generics.len(),
+                                        found: 0,
+                                    },
+                                    ty.span,
+                                ));
+                            }
+                        }
                         return Ok(Type::adt(def_id, Vec::new()));
                     }
 
@@ -3243,6 +3303,27 @@ impl<'a> TypeContext<'a> {
                         } else {
                             Vec::new()
                         };
+
+                        // Check if this is a type alias with type arguments
+                        if let Some(alias_info) = self.type_aliases.get(&def_id).cloned() {
+                            if alias_info.generics.len() != type_args.len() {
+                                return Err(TypeError::new(
+                                    TypeErrorKind::GenericArgsMismatch {
+                                        expected: alias_info.generics.len(),
+                                        found: type_args.len(),
+                                    },
+                                    ty.span,
+                                ));
+                            }
+                            // Substitute type parameters with provided arguments
+                            let subst: HashMap<TyVarId, Type> = alias_info.generics
+                                .iter()
+                                .zip(type_args.iter())
+                                .map(|(&param, arg)| (param, arg.clone()))
+                                .collect();
+                            return Ok(self.substitute_type_vars(&alias_info.ty, &subst));
+                        }
+
                         return Ok(Type::adt(def_id, type_args));
                     }
                 }
