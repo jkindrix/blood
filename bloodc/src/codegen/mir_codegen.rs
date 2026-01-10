@@ -209,13 +209,14 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     self.allocate_with_blood_alloc(llvm_ty, local.id, body.span)?
                 }
                 MemoryTier::Reserved => {
-                    // Reserved tier - not yet implemented, return explicit error
-                    return Err(vec![Diagnostic::error(
-                        format!(
-                            "MemoryTier::Reserved is not yet implemented for local _{}",
-                            local.id.index
-                        ),
-                        body.span
+                    // Reserved tier should never be returned by escape analysis.
+                    // If we reach here, something is wrong with the escape analysis or
+                    // a future feature is using Reserved without implementing it.
+                    return Err(vec![ice_err!(
+                        body.span,
+                        "MemoryTier::Reserved reached during allocation";
+                        "local" => format!("_{}", local.id.index),
+                        "note" => "escape analysis should never return Reserved tier"
                     )]);
                 }
             };
@@ -582,10 +583,38 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                         format!("LLVM branch error: {}", e), term.span
                     )])?;
 
-                // Assert fail path - call panic/abort
+                // Assert fail path - call blood_panic with message
                 self.builder.position_at_end(assert_fail_bb);
-                // TODO: Call blood_panic with message
-                let _ = msg;
+
+                // Get or create the blood_panic function
+                let panic_fn = self.module.get_function("blood_panic")
+                    .unwrap_or_else(|| {
+                        let void_type = self.context.void_type();
+                        let i8_type = self.context.i8_type();
+                        let i8_ptr_type = i8_type.ptr_type(AddressSpace::default());
+                        let panic_type = void_type.fn_type(&[i8_ptr_type.into()], false);
+                        self.module.add_function("blood_panic", panic_type, None)
+                    });
+
+                // Create a global string constant for the message
+                let msg_str = if msg.is_empty() {
+                    "assertion failed"
+                } else {
+                    msg.as_str()
+                };
+                let msg_global = self.builder
+                    .build_global_string_ptr(msg_str, "assert_msg")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM global string error: {}", e), term.span
+                    )])?;
+
+                // Call blood_panic (noreturn)
+                self.builder.build_call(panic_fn, &[msg_global.as_pointer_value().into()], "")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM call error: {}", e), term.span
+                    )])?;
+
+                // Unreachable after panic (helps LLVM optimization)
                 self.builder.build_unreachable()
                     .map_err(|e| vec![Diagnostic::error(
                         format!("LLVM unreachable error: {}", e), term.span
