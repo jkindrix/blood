@@ -647,6 +647,9 @@ impl<'src> Parser<'src> {
             None
         };
 
+        // Consume the trailing semicolon if present
+        self.try_consume(TokenKind::Semi);
+
         HandlerState {
             is_mut,
             name,
