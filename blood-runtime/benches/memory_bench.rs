@@ -277,6 +277,119 @@ fn bench_pointer_metadata(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark generation checks in hot loop (per SPECIFICATION.md §11.7.2)
+fn bench_gen_check_hot(c: &mut Criterion) {
+    let mut group = c.benchmark_group("gen_check");
+
+    // Hot path: generation check in tight loop
+    group.bench_function("hot", |b| {
+        let slot = Slot::new();
+        let gen = slot.generation();
+        b.iter(|| {
+            // Simulate checking generation on every dereference
+            for _ in 0..100 {
+                let _ = black_box(slot.validate(gen));
+            }
+        });
+    });
+
+    // Compare to baseline: raw pointer check (always succeeds)
+    group.bench_function("raw_ptr_baseline", |b| {
+        let ptr: *const i32 = &42;
+        b.iter(|| {
+            for _ in 0..100 {
+                black_box(!ptr.is_null());
+            }
+        });
+    });
+
+    group.finish();
+}
+
+/// Benchmark generation checks with cache miss simulation (per SPECIFICATION.md §11.7.2)
+fn bench_gen_check_cold(c: &mut Criterion) {
+    let mut group = c.benchmark_group("gen_check_cold");
+
+    // Cold path: different slots accessed non-sequentially
+    for count in [10, 100, 1000] {
+        group.bench_with_input(
+            BenchmarkId::new("scattered_access", count),
+            &count,
+            |b, &count| {
+                let slots: Vec<Slot> = (0..count).map(|_| Slot::new()).collect();
+                let gens: Vec<_> = slots.iter().map(|s| s.generation()).collect();
+
+                // Create a shuffled access pattern to simulate cache misses
+                let mut indices: Vec<usize> = (0..count).collect();
+                // Simple deterministic shuffle
+                for i in 0..count {
+                    indices.swap(i, (i * 7 + 13) % count);
+                }
+
+                b.iter(|| {
+                    for &idx in &indices {
+                        let _ = black_box(slots[idx].validate(gens[idx]));
+                    }
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+/// Benchmark atomic operations baseline (for future RC benchmarks per SPECIFICATION.md §11.7.2)
+fn bench_atomic_operations(c: &mut Criterion) {
+    use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+
+    let mut group = c.benchmark_group("atomic_operations");
+
+    // Atomic increment (baseline for rc_increment)
+    group.bench_function("atomic_increment", |b| {
+        let counter = AtomicUsize::new(0);
+        b.iter(|| {
+            black_box(counter.fetch_add(1, Ordering::Relaxed))
+        });
+    });
+
+    // Atomic decrement (baseline for rc_decrement)
+    group.bench_function("atomic_decrement", |b| {
+        let counter = AtomicUsize::new(1000000);
+        b.iter(|| {
+            black_box(counter.fetch_sub(1, Ordering::Relaxed))
+        });
+    });
+
+    // Atomic compare-exchange (for generation updates)
+    group.bench_function("atomic_cas", |b| {
+        let counter = AtomicU32::new(0);
+        let mut expected = 0u32;
+        b.iter(|| {
+            let result = counter.compare_exchange_weak(
+                expected,
+                expected + 1,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            );
+            if let Ok(v) = result {
+                expected = v + 1;
+            }
+            black_box(result)
+        });
+    });
+
+    // Non-atomic increment (for comparison)
+    group.bench_function("non_atomic_increment", |b| {
+        let mut counter = 0usize;
+        b.iter(|| {
+            counter += 1;
+            black_box(counter)
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_blood_ptr_creation,
@@ -286,5 +399,8 @@ criterion_group!(
     bench_generation_snapshot,
     bench_memory_tier_operations,
     bench_pointer_metadata,
+    bench_gen_check_hot,
+    bench_gen_check_cold,
+    bench_atomic_operations,
 );
 criterion_main!(benches);
