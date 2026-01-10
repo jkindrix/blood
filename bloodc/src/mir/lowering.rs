@@ -399,11 +399,8 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
                 self.lower_addr_of(inner, *mutable, &expr.ty, expr.span)
             }
 
-            ExprKind::Let { .. } => {
-                Err(vec![Diagnostic::error(
-                    "MIR lowering for let-else expressions not yet implemented".to_string(),
-                    expr.span,
-                )])
+            ExprKind::Let { pattern, init } => {
+                self.lower_let(pattern, init, &expr.ty, expr.span)
             }
 
             ExprKind::Unsafe(inner) => {
@@ -793,6 +790,87 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
         );
 
         Ok(Operand::Copy(dest_place))
+    }
+
+    /// Lower a let expression (pattern binding with initialization).
+    ///
+    /// This is used for `if let` patterns and similar constructs.
+    /// For irrefutable patterns, binds variables and returns the init value.
+    /// For refutable patterns, would need decision tree compilation (not yet implemented).
+    fn lower_let(
+        &mut self,
+        pattern: &Pattern,
+        init: &Expr,
+        ty: &Type,
+        span: Span,
+    ) -> Result<Operand, Vec<Diagnostic>> {
+        // Lower the initializer expression
+        let init_val = self.lower_expr(init)?;
+
+        // Create a place for the initializer value
+        let init_place = if let Some(place) = init_val.place() {
+            place.clone()
+        } else {
+            // Need to store the value in a temporary to bind patterns
+            let temp = self.new_temp(init.ty.clone(), span);
+            self.push_assign(Place::local(temp), Rvalue::Use(init_val.clone()));
+            Place::local(temp)
+        };
+
+        // Check if the pattern is irrefutable (always matches)
+        // For now, we handle only irrefutable patterns
+        // Refutable patterns would need control flow for match/no-match branches
+        if self.is_irrefutable_pattern(pattern) {
+            // Bind pattern variables
+            self.bind_pattern(pattern, &init_place)?;
+
+            // For irrefutable let, return the initialized value
+            // The type checking determines whether this is used as a condition
+            if ty.kind() == &TypeKind::Primitive(crate::hir::ty::PrimitiveTy::Bool) {
+                // If the result type is bool, return true (pattern always matches)
+                Ok(Operand::Constant(Constant::new(
+                    ty.clone(),
+                    ConstantKind::Bool(true),
+                )))
+            } else {
+                // Otherwise return the bound value
+                Ok(Operand::Copy(init_place))
+            }
+        } else {
+            // Refutable pattern - would need decision tree compilation
+            // For now, return an error
+            Err(vec![Diagnostic::error(
+                "Refutable patterns in let expressions require match compilation \
+                 (not yet implemented). Use a match expression instead.".to_string(),
+                span,
+            )])
+        }
+    }
+
+    /// Check if a pattern is irrefutable (always matches).
+    fn is_irrefutable_pattern(&self, pattern: &Pattern) -> bool {
+        match &pattern.kind {
+            PatternKind::Wildcard => true,
+            PatternKind::Binding { subpattern, .. } => {
+                subpattern.as_ref().map_or(true, |p| self.is_irrefutable_pattern(p))
+            }
+            PatternKind::Tuple(pats) => pats.iter().all(|p| self.is_irrefutable_pattern(p)),
+            PatternKind::Ref { inner, .. } => self.is_irrefutable_pattern(inner),
+            // These patterns are refutable (may not match)
+            PatternKind::Literal(_) => false,
+            PatternKind::Or(_) => false,
+            PatternKind::Variant { .. } => false,
+            // Struct patterns are irrefutable if all field patterns are irrefutable
+            PatternKind::Struct { fields, .. } => {
+                fields.iter().all(|f| self.is_irrefutable_pattern(&f.pattern))
+            }
+            // Slice patterns with a rest element (..) are irrefutable
+            PatternKind::Slice { prefix, slice, suffix } => {
+                slice.is_some() &&
+                prefix.iter().all(|p| self.is_irrefutable_pattern(p)) &&
+                suffix.iter().all(|p| self.is_irrefutable_pattern(p))
+            }
+        }
     }
 
     /// Lower a block expression.
@@ -1807,6 +1885,10 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
                 self.lower_addr_of(inner, *mutable, &expr.ty, expr.span)
             }
 
+            ExprKind::Let { pattern, init } => {
+                self.lower_let(pattern, init, &expr.ty, expr.span)
+            }
+
             ExprKind::Error => {
                 Err(vec![Diagnostic::error("lowering error expression".to_string(), expr.span)])
             }
@@ -2092,6 +2174,131 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
         );
 
         Ok(Operand::Copy(dest_place))
+    }
+
+    /// Lower a let expression in a closure body.
+    fn lower_let(
+        &mut self,
+        pattern: &Pattern,
+        init: &Expr,
+        ty: &Type,
+        span: Span,
+    ) -> Result<Operand, Vec<Diagnostic>> {
+        let init_val = self.lower_expr(init)?;
+
+        let init_place = if let Some(place) = init_val.place() {
+            place.clone()
+        } else {
+            let temp = self.new_temp(init.ty.clone(), span);
+            self.push_assign(Place::local(temp), Rvalue::Use(init_val.clone()));
+            Place::local(temp)
+        };
+
+        if self.is_irrefutable_pattern(pattern) {
+            self.bind_pattern(pattern, &init_place)?;
+
+            if ty.kind() == &TypeKind::Primitive(crate::hir::ty::PrimitiveTy::Bool) {
+                Ok(Operand::Constant(Constant::new(
+                    ty.clone(),
+                    ConstantKind::Bool(true),
+                )))
+            } else {
+                Ok(Operand::Copy(init_place))
+            }
+        } else {
+            Err(vec![Diagnostic::error(
+                "Refutable patterns in let expressions require match compilation \
+                 (not yet implemented). Use a match expression instead.".to_string(),
+                span,
+            )])
+        }
+    }
+
+    /// Check if a pattern is irrefutable (always matches).
+    fn is_irrefutable_pattern(&self, pattern: &Pattern) -> bool {
+        match &pattern.kind {
+            PatternKind::Wildcard => true,
+            PatternKind::Binding { subpattern, .. } => {
+                subpattern.as_ref().map_or(true, |p| self.is_irrefutable_pattern(p))
+            }
+            PatternKind::Tuple(pats) => pats.iter().all(|p| self.is_irrefutable_pattern(p)),
+            PatternKind::Ref { inner, .. } => self.is_irrefutable_pattern(inner),
+            PatternKind::Literal(_) => false,
+            PatternKind::Or(_) => false,
+            PatternKind::Variant { .. } => false,
+            PatternKind::Struct { fields, .. } => {
+                fields.iter().all(|f| self.is_irrefutable_pattern(&f.pattern))
+            }
+            PatternKind::Slice { prefix, slice, suffix } => {
+                slice.is_some() &&
+                prefix.iter().all(|p| self.is_irrefutable_pattern(p)) &&
+                suffix.iter().all(|p| self.is_irrefutable_pattern(p))
+            }
+        }
+    }
+
+    /// Bind pattern variables to a place in a closure body.
+    fn bind_pattern(&mut self, pattern: &Pattern, place: &Place) -> Result<(), Vec<Diagnostic>> {
+        match &pattern.kind {
+            PatternKind::Binding { local_id, subpattern, .. } => {
+                let mir_local = self.new_temp(pattern.ty.clone(), pattern.span);
+                self.local_map.insert(*local_id, mir_local);
+                self.push_assign(Place::local(mir_local), Rvalue::Use(Operand::Copy(place.clone())));
+                if let Some(subpat) = subpattern {
+                    self.bind_pattern(subpat, &Place::local(mir_local))?;
+                }
+            }
+            PatternKind::Tuple(pats) => {
+                for (i, pat) in pats.iter().enumerate() {
+                    let field_place = place.project(PlaceElem::Field(i as u32));
+                    self.bind_pattern(pat, &field_place)?;
+                }
+            }
+            PatternKind::Struct { fields, .. } => {
+                for field in fields {
+                    let field_place = place.project(PlaceElem::Field(field.field_idx));
+                    self.bind_pattern(&field.pattern, &field_place)?;
+                }
+            }
+            PatternKind::Wildcard | PatternKind::Literal(_) => {
+                // Nothing to bind
+            }
+            PatternKind::Variant { fields, .. } => {
+                for (i, field_pat) in fields.iter().enumerate() {
+                    let field_place = place.project(PlaceElem::Field(i as u32));
+                    self.bind_pattern(field_pat, &field_place)?;
+                }
+            }
+            PatternKind::Slice { prefix, slice, suffix } => {
+                for (i, pat) in prefix.iter().enumerate() {
+                    let idx_place = place.project(PlaceElem::Index(LocalId::new(i as u32)));
+                    self.bind_pattern(pat, &idx_place)?;
+                }
+                if slice.is_some() {
+                    return Err(vec![Diagnostic::error(
+                        "MIR lowering for slice patterns with rest (..) not yet implemented".to_string(),
+                        pattern.span,
+                    )]);
+                }
+                if !suffix.is_empty() {
+                    return Err(vec![Diagnostic::error(
+                        "MIR lowering for slice suffix patterns not yet implemented".to_string(),
+                        pattern.span,
+                    )]);
+                }
+            }
+            PatternKind::Or(_) => {
+                return Err(vec![Diagnostic::error(
+                    "MIR lowering for or-patterns not yet implemented".to_string(),
+                    pattern.span,
+                )]);
+            }
+            PatternKind::Ref { inner, .. } => {
+                let deref_place = place.project(PlaceElem::Deref);
+                self.bind_pattern(inner, &deref_place)?;
+            }
+        }
+        Ok(())
     }
 
     fn lower_block(
