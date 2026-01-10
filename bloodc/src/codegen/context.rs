@@ -70,6 +70,8 @@ pub struct CodegenContext<'ctx, 'a> {
     /// When available, used to skip generation checks for non-escaping values.
     escape_analysis: HashMap<DefId, EscapeResults>,
     /// Current function's DefId for escape analysis lookup.
+    /// Note: Used for escape-analysis-based optimization when 128-bit pointers are enabled.
+    #[allow(dead_code)]
     current_fn_def_id: Option<DefId>,
     /// Effect lowering context for managing effect compilation.
     effect_lowering: EffectLowering,
@@ -126,6 +128,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     /// Get escape state for a local variable in the current function.
     ///
     /// Returns NoEscape if no escape analysis is available.
+    /// Note: Used for escape-analysis-based optimization when 128-bit pointers are enabled.
+    #[allow(dead_code)]
     fn get_escape_state(&self, local: LocalId) -> EscapeState {
         if let Some(def_id) = self.current_fn_def_id {
             if let Some(results) = self.escape_analysis.get(&def_id) {
@@ -136,6 +140,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     }
 
     /// Check if a local can be stack-allocated based on escape analysis.
+    #[allow(dead_code)]
     fn can_stack_allocate(&self, local: LocalId) -> bool {
         if let Some(def_id) = self.current_fn_def_id {
             if let Some(results) = self.escape_analysis.get(&def_id) {
@@ -146,6 +151,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     }
 
     /// Check if a local is captured by an effect operation.
+    #[allow(dead_code)]
     fn is_effect_captured(&self, local: LocalId) -> bool {
         if let Some(def_id) = self.current_fn_def_id {
             if let Some(results) = self.escape_analysis.get(&def_id) {
@@ -160,9 +166,88 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     /// Generation checks can be skipped if:
     /// - The value doesn't escape (purely local)
     /// - The value is stack-allocated
+    #[allow(dead_code)]
     fn can_skip_generation_check(&self, local: LocalId) -> bool {
         let escape_state = self.get_escape_state(local);
         escape_state == EscapeState::NoEscape && !self.is_effect_captured(local)
+    }
+
+    /// Declare types and functions from HIR without compiling bodies.
+    ///
+    /// This sets up:
+    /// - Struct and enum definitions in `struct_defs` and `enum_defs`
+    /// - Effect and handler definitions
+    /// - Function declarations (without bodies)
+    /// - Runtime function declarations
+    ///
+    /// After this, MIR bodies can be compiled using `compile_mir_body`.
+    pub fn compile_crate_declarations(&mut self, hir_crate: &hir::Crate) -> Result<(), Vec<Diagnostic>> {
+        // First pass: collect struct, enum, effect, and handler definitions
+        for (def_id, item) in &hir_crate.items {
+            match &item.kind {
+                hir::ItemKind::Struct(struct_def) => {
+                    let field_types = match &struct_def.kind {
+                        hir::StructKind::Record(fields) => {
+                            fields.iter().map(|f| f.ty.clone()).collect()
+                        }
+                        hir::StructKind::Tuple(fields) => {
+                            fields.iter().map(|f| f.ty.clone()).collect()
+                        }
+                        hir::StructKind::Unit => Vec::new(),
+                    };
+                    self.struct_defs.insert(*def_id, field_types);
+                }
+                hir::ItemKind::Enum(enum_def) => {
+                    let variants: Vec<Vec<Type>> = enum_def.variants.iter().map(|variant| {
+                        match &variant.fields {
+                            hir::StructKind::Record(fields) => {
+                                fields.iter().map(|f| f.ty.clone()).collect()
+                            }
+                            hir::StructKind::Tuple(fields) => {
+                                fields.iter().map(|f| f.ty.clone()).collect()
+                            }
+                            hir::StructKind::Unit => Vec::new(),
+                        }
+                    }).collect();
+                    self.enum_defs.insert(*def_id, variants);
+                }
+                hir::ItemKind::Effect { .. } => {
+                    if let Some(effect_info) = self.effect_lowering.lower_effect_decl(item) {
+                        self.effect_defs.insert(*def_id, effect_info);
+                    }
+                }
+                hir::ItemKind::Handler { .. } => {
+                    if let Some(handler_info) = self.effect_lowering.lower_handler_decl(item) {
+                        self.handler_defs.insert(*def_id, handler_info);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Copy closure bodies for later compilation
+        for (body_id, body) in &hir_crate.bodies {
+            self.closure_bodies.insert(*body_id, body.clone());
+        }
+
+        // Second pass: declare all functions (including handler operation functions)
+        for (def_id, item) in &hir_crate.items {
+            if let hir::ItemKind::Fn(fn_def) = &item.kind {
+                self.declare_function(*def_id, &item.name, fn_def)?;
+            }
+        }
+
+        // Declare runtime functions
+        self.declare_runtime_functions();
+
+        // Third pass: declare handler operation functions
+        self.declare_handler_operations(hir_crate)?;
+
+        if self.errors.is_empty() {
+            Ok(())
+        } else {
+            Err(std::mem::take(&mut self.errors))
+        }
     }
 
     /// Compile an entire HIR crate.
@@ -807,6 +892,32 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // blood_fiber_resume(fiber: i64, value: i64) -> void
         let fiber_resume_type = void_type.fn_type(&[i64_type.into(), i64_type.into()], false);
         self.module.add_function("blood_fiber_resume", fiber_resume_type, None);
+
+        // === Generation Snapshots ===
+
+        // blood_snapshot_create() -> SnapshotHandle (i64)
+        let snapshot_create_type = i64_type.fn_type(&[], false);
+        self.module.add_function("blood_snapshot_create", snapshot_create_type, None);
+
+        // blood_snapshot_add_entry(snapshot: i64, address: i64, generation: i32) -> void
+        let snapshot_add_type = void_type.fn_type(&[
+            i64_type.into(),
+            i64_type.into(),
+            i32_type.into(),
+        ], false);
+        self.module.add_function("blood_snapshot_add_entry", snapshot_add_type, None);
+
+        // blood_snapshot_validate(snapshot: i64) -> i64 (0 = valid, non-zero = error)
+        let snapshot_validate_type = i64_type.fn_type(&[i64_type.into()], false);
+        self.module.add_function("blood_snapshot_validate", snapshot_validate_type, None);
+
+        // blood_snapshot_len(snapshot: i64) -> i64
+        let snapshot_len_type = i64_type.fn_type(&[i64_type.into()], false);
+        self.module.add_function("blood_snapshot_len", snapshot_len_type, None);
+
+        // blood_snapshot_destroy(snapshot: i64) -> void
+        let snapshot_destroy_type = void_type.fn_type(&[i64_type.into()], false);
+        self.module.add_function("blood_snapshot_destroy", snapshot_destroy_type, None);
 
         // === Multiple Dispatch Runtime ===
 

@@ -95,6 +95,23 @@ pub mod functions {
     /// Resume a suspended fiber.
     pub const FIBER_RESUME: &str = "blood_fiber_resume";
 
+    // === Generation Snapshots ===
+
+    /// Create a generation snapshot for continuation capture.
+    pub const SNAPSHOT_CREATE: &str = "blood_snapshot_create";
+
+    /// Add an entry to a generation snapshot.
+    pub const SNAPSHOT_ADD_ENTRY: &str = "blood_snapshot_add_entry";
+
+    /// Validate all entries in a snapshot against current generations.
+    pub const SNAPSHOT_VALIDATE: &str = "blood_snapshot_validate";
+
+    /// Get the number of entries in a snapshot.
+    pub const SNAPSHOT_LEN: &str = "blood_snapshot_len";
+
+    /// Destroy a generation snapshot.
+    pub const SNAPSHOT_DESTROY: &str = "blood_snapshot_destroy";
+
     // === Runtime Lifecycle ===
 
     /// Initialize runtime.
