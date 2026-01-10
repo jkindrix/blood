@@ -47,6 +47,12 @@ pub struct TypeContext<'a> {
     next_body_id: u32,
     /// Local variables in current function.
     locals: Vec<hir::Local>,
+    /// Current generic type parameters in scope (name -> TyVarId).
+    /// This is populated when entering a generic function/struct/enum
+    /// and cleared when leaving.
+    generic_params: HashMap<String, TyVarId>,
+    /// Next type parameter ID for generating unique TyVarIds.
+    next_type_param_id: u32,
 }
 
 /// Information about a struct.
@@ -100,6 +106,8 @@ impl<'a> TypeContext<'a> {
             fn_bodies: HashMap::new(),
             next_body_id: 0,
             locals: Vec::new(),
+            generic_params: HashMap::new(),
+            next_type_param_id: 0,
         };
         ctx.register_builtins();
         ctx
@@ -108,8 +116,13 @@ impl<'a> TypeContext<'a> {
     /// Register built-in runtime functions.
     fn register_builtins(&mut self) {
         let unit_ty = Type::unit();
+        let bool_ty = Type::bool();
         let i32_ty = Type::i32();
+        let i64_ty = Type::i64();
         let str_ty = Type::str();
+        let never_ty = Type::never();
+
+        // === I/O Functions ===
 
         // print_int(i32) -> ()
         self.register_builtin_fn("print_int", vec![i32_ty.clone()], unit_ty.clone());
@@ -127,7 +140,58 @@ impl<'a> TypeContext<'a> {
         self.register_builtin_fn("print_char", vec![i32_ty.clone()], unit_ty.clone());
 
         // println() -> ()
-        self.register_builtin_fn("println", vec![], unit_ty);
+        self.register_builtin_fn("println", vec![], unit_ty.clone());
+
+        // print_bool(bool) -> ()
+        self.register_builtin_fn("print_bool", vec![bool_ty.clone()], unit_ty.clone());
+
+        // println_bool(bool) -> ()
+        self.register_builtin_fn("println_bool", vec![bool_ty.clone()], unit_ty.clone());
+
+        // === Control Flow / Assertions ===
+
+        // panic(&str) -> !
+        self.register_builtin_fn("panic", vec![str_ty.clone()], never_ty.clone());
+
+        // assert(bool) -> ()
+        self.register_builtin_fn("assert", vec![bool_ty.clone()], unit_ty.clone());
+
+        // assert_eq(i32, i32) -> ()
+        self.register_builtin_fn("assert_eq_int", vec![i32_ty.clone(), i32_ty.clone()], unit_ty.clone());
+
+        // assert_eq(bool, bool) -> ()
+        self.register_builtin_fn("assert_eq_bool", vec![bool_ty.clone(), bool_ty.clone()], unit_ty.clone());
+
+        // unreachable() -> !
+        self.register_builtin_fn("unreachable", vec![], never_ty.clone());
+
+        // todo() -> !
+        self.register_builtin_fn("todo", vec![], never_ty.clone());
+
+        // === Memory Functions ===
+
+        // size_of_i32() -> i64
+        self.register_builtin_fn("size_of_i32", vec![], i64_ty.clone());
+
+        // size_of_i64() -> i64
+        self.register_builtin_fn("size_of_i64", vec![], i64_ty.clone());
+
+        // size_of_bool() -> i64
+        self.register_builtin_fn("size_of_bool", vec![], i64_ty.clone());
+
+        // === Conversion Functions ===
+
+        // int_to_str(i32) -> str
+        self.register_builtin_fn("int_to_str", vec![i32_ty.clone()], str_ty.clone());
+
+        // bool_to_str(bool) -> str
+        self.register_builtin_fn("bool_to_str", vec![bool_ty.clone()], str_ty.clone());
+
+        // i32_to_i64(i32) -> i64
+        self.register_builtin_fn("i32_to_i64", vec![i32_ty.clone()], i64_ty.clone());
+
+        // i64_to_i32(i64) -> i32
+        self.register_builtin_fn("i64_to_i32", vec![i64_ty.clone()], i32_ty.clone());
     }
 
     /// Register a single built-in function.
@@ -144,6 +208,7 @@ impl<'a> TypeContext<'a> {
             is_const: false,
             is_async: false,
             is_unsafe: false,
+            generics: Vec::new(),
         });
     }
 
@@ -185,7 +250,22 @@ impl<'a> TypeContext<'a> {
             func.span,
         )?;
 
-        // Build function signature
+        // Register generic type parameters before processing parameter types
+        // This allows type references like `T` to be resolved in the function signature
+        let saved_generic_params = std::mem::take(&mut self.generic_params);
+        let mut generics_vec = Vec::new();
+
+        if let Some(ref type_params) = func.type_params {
+            for type_param in &type_params.params {
+                let param_name = self.symbol_to_string(type_param.name.node);
+                let ty_var_id = TyVarId(self.next_type_param_id);
+                self.next_type_param_id += 1;
+                self.generic_params.insert(param_name, ty_var_id);
+                generics_vec.push(ty_var_id);
+            }
+        }
+
+        // Build function signature (now with generics in scope)
         let mut param_types = Vec::new();
         for param in &func.params {
             let ty = self.ast_type_to_hir_type(&param.ty)?;
@@ -198,7 +278,11 @@ impl<'a> TypeContext<'a> {
             Type::unit()
         };
 
-        let sig = hir::FnSig::new(param_types, return_type);
+        // Restore previous generic params scope
+        self.generic_params = saved_generic_params;
+
+        let mut sig = hir::FnSig::new(param_types, return_type);
+        sig.generics = generics_vec;
         self.fn_sigs.insert(def_id, sig);
 
         // Queue function for later body type-checking
@@ -221,7 +305,21 @@ impl<'a> TypeContext<'a> {
         // Also define as a type
         self.resolver.define_type(name.clone(), def_id, struct_decl.span)?;
 
-        // Collect fields
+        // Register generic type parameters before processing field types
+        let saved_generic_params = std::mem::take(&mut self.generic_params);
+        let mut generics_vec = Vec::new();
+
+        if let Some(ref type_params) = struct_decl.type_params {
+            for type_param in &type_params.params {
+                let param_name = self.symbol_to_string(type_param.name.node);
+                let ty_var_id = TyVarId(self.next_type_param_id);
+                self.next_type_param_id += 1;
+                self.generic_params.insert(param_name, ty_var_id);
+                generics_vec.push(ty_var_id);
+            }
+        }
+
+        // Collect fields (now with generics in scope)
         let fields = match &struct_decl.body {
             ast::StructBody::Record(fields) => {
                 fields
@@ -255,10 +353,13 @@ impl<'a> TypeContext<'a> {
             ast::StructBody::Unit => Vec::new(),
         };
 
+        // Restore previous generic params scope
+        self.generic_params = saved_generic_params;
+
         self.struct_defs.insert(def_id, StructInfo {
             name,
             fields,
-            generics: Vec::new(), // Phase 1: no generics yet
+            generics: generics_vec,
         });
 
         Ok(())
@@ -276,7 +377,21 @@ impl<'a> TypeContext<'a> {
         // Also define as a type
         self.resolver.define_type(name.clone(), def_id, enum_decl.span)?;
 
-        // Collect variants
+        // Register generic type parameters before processing variant types
+        let saved_generic_params = std::mem::take(&mut self.generic_params);
+        let mut generics_vec = Vec::new();
+
+        if let Some(ref type_params) = enum_decl.type_params {
+            for type_param in &type_params.params {
+                let param_name = self.symbol_to_string(type_param.name.node);
+                let ty_var_id = TyVarId(self.next_type_param_id);
+                self.next_type_param_id += 1;
+                self.generic_params.insert(param_name, ty_var_id);
+                generics_vec.push(ty_var_id);
+            }
+        }
+
+        // Collect variants (now with generics in scope)
         let mut variants = Vec::new();
         for (i, variant) in enum_decl.variants.iter().enumerate() {
             let variant_name = self.symbol_to_string(variant.name.node);
@@ -329,10 +444,13 @@ impl<'a> TypeContext<'a> {
             });
         }
 
+        // Restore previous generic params scope
+        self.generic_params = saved_generic_params;
+
         self.enum_defs.insert(def_id, EnumInfo {
             name,
             variants,
-            generics: Vec::new(),
+            generics: generics_vec,
         });
 
         Ok(())
@@ -647,6 +765,9 @@ impl<'a> TypeContext<'a> {
             ast::ExprKind::While { condition, body, .. } => {
                 self.infer_while(condition, body, expr.span)
             }
+            ast::ExprKind::For { pattern, iter, body, .. } => {
+                self.infer_for(pattern, iter, body, expr.span)
+            }
             ast::ExprKind::Break { value, .. } => {
                 self.infer_break(value.as_deref(), expr.span)
             }
@@ -668,6 +789,67 @@ impl<'a> TypeContext<'a> {
             }
             ast::ExprKind::Closure { is_move, params, return_type, effects: _, body } => {
                 self.infer_closure(*is_move, params, return_type.as_ref(), body, expr.span)
+            }
+            ast::ExprKind::WithHandle { handler: _, body } => {
+                // Handle expression: runs body with an effect handler installed.
+                //
+                // Full effect handling requires:
+                // 1. Looking up the handler definition
+                // 2. Verifying the handler covers the effects used in body
+                // 3. Setting up evidence passing
+                //
+                // For now, we just type-check the body and return it directly.
+                // This allows the code to compile without full effect handling.
+                // TODO: Implement full effect handler type checking (Phase 2.3)
+                let body_block = match &body.kind {
+                    ast::ExprKind::Block(block) => block,
+                    _ => {
+                        return Err(TypeError::new(
+                            TypeErrorKind::UnsupportedFeature {
+                                feature: "Handle body must be a block".into(),
+                            },
+                            body.span,
+                        ));
+                    }
+                };
+                // Type-check the block with unknown expected type
+                // The actual return type will be inferred from the body
+                self.check_block(body_block, &Type::unit())
+            }
+            ast::ExprKind::Perform { effect: _, operation, args } => {
+                // Effect operation: performs an operation from an effect.
+                //
+                // Full effect handling requires:
+                // 1. Looking up the effect definition
+                // 2. Finding the operation
+                // 3. Type checking arguments
+                //
+                // For now, return a placeholder that compiles to a runtime error.
+                // TODO: Implement full effect perform (Phase 2.3)
+                let _op_name = self.symbol_to_string(operation.node);
+                for arg in args {
+                    let _ = self.infer_expr(arg)?;
+                }
+                Ok(hir::Expr::new(
+                    hir::ExprKind::Error,
+                    Type::error(),
+                    expr.span,
+                ))
+            }
+            ast::ExprKind::Resume(value) => {
+                // Resume continuation in a handler.
+                //
+                // This should only appear inside a handler operation body.
+                // For now, just type-check the value.
+                // TODO: Implement full resume type checking (Phase 2.3)
+                let value_expr = self.infer_expr(value)?;
+                Ok(hir::Expr::new(
+                    hir::ExprKind::Resume {
+                        value: Some(Box::new(value_expr)),
+                    },
+                    Type::unit(), // Actual type depends on handler context
+                    expr.span,
+                ))
             }
             // More expression kinds - implement as needed
             _ => {
@@ -1079,6 +1261,217 @@ impl<'a> TypeContext<'a> {
         ))
     }
 
+    /// Infer type of a for loop.
+    ///
+    /// Desugars `for i in start..end { body }` to:
+    /// ```text
+    /// {
+    ///     let mut _idx = start;
+    ///     while _idx < end {  // or <= for inclusive
+    ///         let i = _idx;
+    ///         body;
+    ///         _idx = _idx + 1;
+    ///     }
+    /// }
+    /// ```
+    fn infer_for(
+        &mut self,
+        pattern: &ast::Pattern,
+        iter: &ast::Expr,
+        body: &ast::Block,
+        span: Span,
+    ) -> Result<hir::Expr, TypeError> {
+        // Extract range bounds from the iterator expression
+        let (start, end, inclusive) = match &iter.kind {
+            ast::ExprKind::Range { start, end, inclusive } => {
+                let start = start.as_ref().ok_or_else(|| {
+                    TypeError::new(
+                        TypeErrorKind::UnsupportedFeature {
+                            feature: "For loop requires range with start bound".into(),
+                        },
+                        iter.span,
+                    )
+                })?;
+                let end = end.as_ref().ok_or_else(|| {
+                    TypeError::new(
+                        TypeErrorKind::UnsupportedFeature {
+                            feature: "For loop requires range with end bound".into(),
+                        },
+                        iter.span,
+                    )
+                })?;
+                (start, end, *inclusive)
+            }
+            _ => {
+                return Err(TypeError::new(
+                    TypeErrorKind::UnsupportedFeature {
+                        feature: "For loop currently only supports range expressions (e.g., 1..10 or 1..=10)".into(),
+                    },
+                    iter.span,
+                ));
+            }
+        };
+
+        // Get the loop variable name from the pattern
+        let var_name = match &pattern.kind {
+            ast::PatternKind::Ident { name, .. } => self.symbol_to_string(name.node),
+            _ => {
+                return Err(TypeError::new(
+                    TypeErrorKind::UnsupportedFeature {
+                        feature: "For loop currently only supports simple identifier patterns".into(),
+                    },
+                    pattern.span,
+                ));
+            }
+        };
+
+        self.resolver.push_scope(ScopeKind::Loop, span);
+
+        // Infer the start expression - this determines the loop variable type
+        let start_expr = self.infer_expr(start)?;
+        let idx_ty = start_expr.ty.clone();
+
+        // Check end expression against the same type
+        let end_expr = self.check_expr(end, &idx_ty)?;
+
+        // Create the loop index variable (_idx) - internal, not user-visible
+        let idx_local_id = self.resolver.next_local_id();
+        self.locals.push(hir::Local {
+            id: idx_local_id,
+            ty: idx_ty.clone(),
+            mutable: true,
+            name: Some("_loop_idx".to_string()),
+            span,
+        });
+
+        // Register the user's loop variable in the resolver (creates binding in scope)
+        // This creates the LocalId AND adds it to the scope
+        let var_local_id = self.resolver.define_local(
+            var_name.clone(),
+            idx_ty.clone(),
+            false,
+            pattern.span,
+        )?;
+
+        // Also add to our locals list for HIR generation
+        self.locals.push(hir::Local {
+            id: var_local_id,
+            ty: idx_ty.clone(),
+            mutable: false,
+            name: Some(var_name),
+            span: pattern.span,
+        });
+
+        // Type check the body
+        let body_expr = self.check_block(body, &Type::unit())?;
+
+        self.resolver.pop_scope();
+
+        // Build the desugared while loop structure:
+        //
+        // {
+        //     let mut _idx = start;
+        //     while _idx < end {
+        //         let i = _idx;
+        //         body
+        //         _idx = _idx + 1;
+        //     }
+        // }
+
+        // Create condition: _idx < end (or _idx <= end for inclusive)
+        let comparison_op = if inclusive { ast::BinOp::Le } else { ast::BinOp::Lt };
+        let condition = hir::Expr::new(
+            hir::ExprKind::Binary {
+                op: comparison_op,
+                left: Box::new(hir::Expr::new(
+                    hir::ExprKind::Local(idx_local_id),
+                    idx_ty.clone(),
+                    span,
+                )),
+                right: Box::new(end_expr),
+            },
+            Type::bool(),
+            span,
+        );
+
+        // Create: let i = _idx;
+        let bind_stmt = hir::Stmt::Let {
+            local_id: var_local_id,
+            init: Some(hir::Expr::new(
+                hir::ExprKind::Local(idx_local_id),
+                idx_ty.clone(),
+                span,
+            )),
+        };
+
+        // Create: _idx = _idx + 1;
+        let increment = hir::Expr::new(
+            hir::ExprKind::Assign {
+                target: Box::new(hir::Expr::new(
+                    hir::ExprKind::Local(idx_local_id),
+                    idx_ty.clone(),
+                    span,
+                )),
+                value: Box::new(hir::Expr::new(
+                    hir::ExprKind::Binary {
+                        op: ast::BinOp::Add,
+                        left: Box::new(hir::Expr::new(
+                            hir::ExprKind::Local(idx_local_id),
+                            idx_ty.clone(),
+                            span,
+                        )),
+                        right: Box::new(hir::Expr::new(
+                            hir::ExprKind::Literal(hir::LiteralValue::Int(1)),
+                            idx_ty.clone(),
+                            span,
+                        )),
+                    },
+                    idx_ty.clone(),
+                    span,
+                )),
+            },
+            Type::unit(),
+            span,
+        );
+
+        // Combine body: { let i = _idx; body; _idx = _idx + 1; }
+        let while_body = hir::Expr::new(
+            hir::ExprKind::Block {
+                stmts: vec![bind_stmt, hir::Stmt::Expr(body_expr), hir::Stmt::Expr(increment)],
+                expr: None,
+            },
+            Type::unit(),
+            span,
+        );
+
+        // Create while loop
+        let while_loop = hir::Expr::new(
+            hir::ExprKind::While {
+                condition: Box::new(condition),
+                body: Box::new(while_body),
+                label: None,
+            },
+            Type::unit(),
+            span,
+        );
+
+        // Create: let mut _idx = start;
+        let init_stmt = hir::Stmt::Let {
+            local_id: idx_local_id,
+            init: Some(start_expr),
+        };
+
+        // Wrap in block
+        Ok(hir::Expr::new(
+            hir::ExprKind::Block {
+                stmts: vec![init_stmt],
+                expr: Some(Box::new(while_loop)),
+            },
+            Type::unit(),
+            span,
+        ))
+    }
+
     /// Infer type of a break.
     fn infer_break(&mut self, value: Option<&ast::Expr>, span: Span) -> Result<hir::Expr, TypeError> {
         if !self.resolver.in_loop() {
@@ -1214,6 +1607,11 @@ impl<'a> TypeContext<'a> {
                         return Ok(Type::new(TypeKind::Primitive(prim)));
                     }
 
+                    // Check for generic type parameters in current scope
+                    if let Some(&ty_var_id) = self.generic_params.get(&name) {
+                        return Ok(Type::new(TypeKind::Param(ty_var_id)));
+                    }
+
                     // Look up user-defined types
                     if let Some(def_id) = self.resolver.lookup_type(&name) {
                         return Ok(Type::adt(def_id, Vec::new()));
@@ -1225,7 +1623,38 @@ impl<'a> TypeContext<'a> {
                     ));
                 }
 
-                // Multi-segment path or with type args - Phase 2+
+                // Handle paths with type arguments (generic instantiation)
+                if path.segments.len() == 1 {
+                    let segment = &path.segments[0];
+                    let name = self.symbol_to_string(segment.name.node);
+
+                    // Look up the base type
+                    if let Some(def_id) = self.resolver.lookup_type(&name) {
+                        // Convert type arguments if present
+                        let type_args = if let Some(ref args) = segment.args {
+                            let mut converted = Vec::new();
+                            for arg in &args.args {
+                                match arg {
+                                    ast::TypeArg::Type(arg_ty) => {
+                                        converted.push(self.ast_type_to_hir_type(arg_ty)?);
+                                    }
+                                    ast::TypeArg::Const(_) => {
+                                        // Const generics - Phase 2+
+                                    }
+                                    ast::TypeArg::Lifetime(_) => {
+                                        // Lifetime parameters - Phase 2+
+                                    }
+                                }
+                            }
+                            converted
+                        } else {
+                            Vec::new()
+                        };
+                        return Ok(Type::adt(def_id, type_args));
+                    }
+                }
+
+                // Multi-segment path - Phase 2+
                 Err(TypeError::new(
                     TypeErrorKind::TypeNotFound { name: format!("{path:?}") },
                     ty.span,
