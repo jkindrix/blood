@@ -133,6 +133,54 @@ pub unsafe extern "C" fn blood_alloc(
     0
 }
 
+/// Allocate memory with generational reference, aborting on failure.
+///
+/// This is a simpler version of `blood_alloc` that aborts on failure instead of
+/// returning an error code. This allows the compiler to call it without needing
+/// conditional branches for error handling.
+///
+/// Returns the address directly. The generation is written to `out_generation`.
+///
+/// # Panics
+///
+/// Panics if allocation fails (out of memory, invalid size, etc.).
+///
+/// # Safety
+///
+/// `out_generation` must be a valid pointer to a writable u32 location.
+#[no_mangle]
+pub unsafe extern "C" fn blood_alloc_or_abort(
+    size: usize,
+    out_generation: *mut u32,
+) -> u64 {
+    if out_generation.is_null() {
+        blood_panic(b"blood_alloc_or_abort: null out_generation pointer\0".as_ptr() as *const i8);
+    }
+
+    // Use 16-byte alignment for BloodPtr compatibility
+    let align = 16.max(std::mem::align_of::<usize>());
+    let layout = match std::alloc::Layout::from_size_align(size, align) {
+        Ok(l) => l,
+        Err(_) => {
+            blood_panic(b"blood_alloc_or_abort: invalid layout\0".as_ptr() as *const i8);
+        }
+    };
+
+    let ptr = std::alloc::alloc(layout);
+    if ptr.is_null() {
+        blood_panic(b"blood_alloc_or_abort: out of memory\0".as_ptr() as *const i8);
+    }
+
+    let address = ptr as u64;
+
+    // Register the allocation in the global slot registry
+    // This enables generation validation on dereference
+    let gen = register_allocation(address, size);
+
+    *out_generation = gen;
+    address
+}
+
 /// Free memory allocated with blood_alloc.
 ///
 /// This function unregisters the allocation from the slot registry (which
@@ -1645,5 +1693,90 @@ mod tests {
         // After free
         blood_unregister_allocation(addr);
         assert_eq!(blood_validate_generation(addr, gen), 1);
+    }
+
+    /// Test the complete use-after-free detection flow via blood_alloc_or_abort
+    ///
+    /// This test verifies the end-to-end flow that compiled Blood programs use:
+    /// 1. Allocate via blood_alloc_or_abort (stores generation)
+    /// 2. Validate generation on dereference (blood_validate_generation returns 0)
+    /// 3. Free the memory (blood_unregister_allocation)
+    /// 4. Attempt to validate stale generation (blood_validate_generation returns 1)
+    #[test]
+    fn test_use_after_free_detection_full_flow() {
+        // Step 1: Allocate memory via blood_alloc_or_abort
+        let mut generation: u32 = 0;
+        let address = unsafe { blood_alloc_or_abort(64, &mut generation) };
+
+        assert!(address != 0, "Allocation should succeed");
+        assert!(generation >= generation::FIRST, "Generation should be valid");
+
+        // Step 2: Validate - should succeed (generation matches)
+        assert_eq!(
+            blood_validate_generation(address, generation),
+            0,
+            "Validation should succeed immediately after allocation"
+        );
+
+        // Step 3: Simulate free by unregistering
+        blood_unregister_allocation(address);
+
+        // Step 4: Validate again - should FAIL (stale reference detected)
+        assert_eq!(
+            blood_validate_generation(address, generation),
+            1,
+            "Validation should fail after deallocation - USE AFTER FREE DETECTED"
+        );
+
+        // Clean up the actual memory (since blood_alloc_or_abort uses std::alloc::alloc)
+        unsafe {
+            let layout = std::alloc::Layout::from_size_align(64, 16).unwrap();
+            std::alloc::dealloc(address as *mut u8, layout);
+        }
+    }
+
+    /// Test that reallocating the same address gets a new generation
+    #[test]
+    fn test_generation_increment_on_realloc() {
+        // First allocation
+        let mut gen1: u32 = 0;
+        let addr1 = unsafe { blood_alloc_or_abort(32, &mut gen1) };
+        assert!(addr1 != 0);
+
+        // Free it
+        blood_unregister_allocation(addr1);
+
+        // Deallocate and reallocate to potentially get same address
+        unsafe {
+            let layout = std::alloc::Layout::from_size_align(32, 16).unwrap();
+            std::alloc::dealloc(addr1 as *mut u8, layout);
+        }
+
+        // Second allocation
+        let mut gen2: u32 = 0;
+        let addr2 = unsafe { blood_alloc_or_abort(32, &mut gen2) };
+        assert!(addr2 != 0);
+
+        // Even if we got the same address, generation should be different
+        // (or at least the old generation should be invalid)
+        assert_eq!(
+            blood_validate_generation(addr1, gen1),
+            1,
+            "Old generation should be invalid regardless of address reuse"
+        );
+
+        // New generation should be valid
+        assert_eq!(
+            blood_validate_generation(addr2, gen2),
+            0,
+            "New generation should be valid"
+        );
+
+        // Clean up
+        blood_unregister_allocation(addr2);
+        unsafe {
+            let layout = std::alloc::Layout::from_size_align(32, 16).unwrap();
+            std::alloc::dealloc(addr2 as *mut u8, layout);
+        }
     }
 }

@@ -14,13 +14,34 @@
 //! - [Java Escape Analysis](https://dl.acm.org/doi/10.1145/320384.320386) (OOPSLA 1999)
 //! - [ROADMAP.md §7.3](../../ROADMAP.md): Escape Analysis Algorithm
 //!
-//! ## Escape States
+//! ## Escape States and Memory Tiers
 //!
-//! | State | Description | Tier |
-//! |-------|-------------|------|
-//! | NoEscape | Value doesn't escape function | Stack (Tier 0) |
-//! | ArgEscape | Escapes via argument | Region (Tier 1) |
-//! | GlobalEscape | Escapes to global/heap | Persistent (Tier 2) |
+//! | State | Description | Memory Tier | Allocation | Generation Checks |
+//! |-------|-------------|-------------|------------|-------------------|
+//! | NoEscape | Value doesn't escape function | Stack (Tier 0) | `alloca` | NO |
+//! | ArgEscape | Escapes via argument/return | Region (Tier 1) | `blood_alloc_or_abort` | YES |
+//! | GlobalEscape | Escapes to global/heap | Region (Tier 1) | `blood_alloc_or_abort` | YES |
+//! | Effect-captured | Captured by effect operation | Region (Tier 1) | `blood_alloc_or_abort` | YES |
+//!
+//! ## Generation Check Details
+//!
+//! **Stack (Tier 0) - No Generation Checks:**
+//! - Values that don't escape their defining function are stack-allocated
+//! - Use thin pointers (no metadata overhead)
+//! - Fastest path with zero runtime overhead
+//! - Safe because stack lifetime is lexically scoped
+//!
+//! **Region/Persistent (Tier 1/2) - With Generation Checks:**
+//! - Values that escape are allocated via `blood_alloc_or_abort`
+//! - Each allocation is registered in the global slot registry with a generation
+//! - On dereference, `blood_validate_generation(address, expected_gen)` is called
+//! - Returns 0 (valid) if generation matches, 1 (stale) if use-after-free detected
+//! - Stale references trigger `blood_stale_reference_panic` and abort
+//!
+//! **Effect-Captured Values:**
+//! - Even if escape analysis says NoEscape, if captured by an effect operation
+//!   (e.g., passed to a handler), the value is promoted to Region tier
+//! - This ensures safety across effect boundaries where control flow is non-local
 //!
 //! ## Algorithm
 //!

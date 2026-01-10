@@ -86,6 +86,9 @@ pub struct CodegenContext<'ctx, 'a> {
     /// Builtin functions: DefId -> runtime function name.
     /// Used to resolve builtin function calls to LLVM runtime functions.
     pub builtin_fns: HashMap<DefId, String>,
+    /// Map from region-allocated LocalId to generation storage (stack alloca).
+    /// Used for generation validation on dereference.
+    pub local_generations: HashMap<LocalId, PointerValue<'ctx>>,
 }
 
 impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
@@ -117,6 +120,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             handler_defs: HashMap::new(),
             handler_ops: HashMap::new(),
             builtin_fns: HashMap::new(),
+            local_generations: HashMap::new(),
         }
     }
 
@@ -896,6 +900,15 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         ], false);
         self.module.add_function("blood_alloc", alloc_type, None);
 
+        // blood_alloc_or_abort(size: i64, out_generation: *i32) -> i64
+        // Simpler allocation that aborts on failure - no conditional branches needed
+        let i32_ptr_type = i32_type.ptr_type(AddressSpace::default());
+        let alloc_or_abort_type = i64_type.fn_type(&[
+            size_type.into(),
+            i32_ptr_type.into(),
+        ], false);
+        self.module.add_function("blood_alloc_or_abort", alloc_or_abort_type, None);
+
         // blood_free(addr: i64, size: i64) -> void
         let free_type = void_type.fn_type(&[i64_type.into(), i64_type.into()], false);
         self.module.add_function("blood_free", free_type, None);
@@ -1121,6 +1134,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         self.current_fn = Some(fn_value);
         self.locals.clear();
+        self.local_generations.clear();
         self.loop_stack.clear();
 
         // Create entry block

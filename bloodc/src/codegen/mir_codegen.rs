@@ -16,13 +16,43 @@
 //!          -> Terminators  -> LLVM Terminators
 //! ```
 //!
+//! # Memory Tier Allocation Strategy
+//!
+//! | Memory Tier | Escape State | Allocation Method | Generation Checks |
+//! |-------------|--------------|-------------------|-------------------|
+//! | Stack (0)   | NoEscape     | LLVM `alloca`     | NO - safe by construction |
+//! | Region (1)  | ArgEscape    | `blood_alloc_or_abort` | YES - on every dereference |
+//! | Region (1)  | GlobalEscape | `blood_alloc_or_abort` | YES - on every dereference |
+//! | Region (1)  | Effect-captured | `blood_alloc_or_abort` | YES - on every dereference |
+//!
+//! # Generation Check Flow (for Region-allocated values)
+//!
+//! ```text
+//! 1. Allocation:
+//!    address = blood_alloc_or_abort(size, &generation)
+//!    // Registers in slot registry, returns address and generation
+//!
+//! 2. On Dereference:
+//!    result = blood_validate_generation(address, expected_generation)
+//!    if result != 0:
+//!        blood_stale_reference_panic(expected_gen, actual_gen)  // aborts
+//!    // Continue with dereference
+//!
+//! 3. On Free (automatic at scope exit):
+//!    blood_unregister_allocation(address)
+//!    // Invalidates the address in slot registry
+//!    // Future validation with old generation returns 1 (stale)
+//! ```
+//!
 //! # Integration with Escape Analysis
 //!
 //! When escape analysis results are available, the MIR codegen:
 //! 1. Queries `recommended_tier(local)` for each local
 //! 2. Allocates stack storage for NoEscape locals (thin pointers)
-//! 3. Allocates region storage for ArgEscape/GlobalEscape (128-bit pointers)
-//! 4. Emits generation checks only for region-allocated values on dereference
+//! 3. Allocates region storage for ArgEscape/GlobalEscape via `blood_alloc_or_abort`
+//! 4. Stores generation in `local_generations` map for later validation
+//! 5. On dereference, emits `blood_validate_generation` call for region-allocated values
+//! 6. Branches to panic path on stale reference detection
 
 use std::collections::HashMap;
 
@@ -172,6 +202,7 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
 
         self.current_fn = Some(fn_value);
         self.locals.clear();
+        self.local_generations.clear();
 
         // Create LLVM basic blocks for all MIR blocks
         let mut llvm_blocks: HashMap<BasicBlockId, BasicBlock<'ctx>> = HashMap::new();
@@ -1316,12 +1347,93 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
         for elem in &place.projection {
             current_ptr = match elem {
                 PlaceElem::Deref => {
-                    // Load the pointer value and use it
+                    // Load the pointer value
                     let loaded = self.builder.build_load(current_ptr, "deref")
                         .map_err(|e| vec![Diagnostic::error(
                             format!("LLVM load error: {}", e), body.span
                         )])?;
-                    loaded.into_pointer_value()
+                    let ptr_val = loaded.into_pointer_value();
+
+                    // If this is a region-allocated pointer, validate generation before use
+                    if let Some(&gen_alloca) = self.local_generations.get(&place.local) {
+                        let i32_ty = self.context.i32_type();
+                        let i64_ty = self.context.i64_type();
+
+                        // Load the expected generation
+                        let expected_gen = self.builder.build_load(gen_alloca, "expected_gen")
+                            .map_err(|e| vec![Diagnostic::error(
+                                format!("LLVM load error: {}", e), body.span
+                            )])?.into_int_value();
+
+                        // Convert pointer to address for validation
+                        let address = self.builder.build_ptr_to_int(ptr_val, i64_ty, "ptr_addr")
+                            .map_err(|e| vec![Diagnostic::error(
+                                format!("LLVM ptr_to_int error: {}", e), body.span
+                            )])?;
+
+                        // Call blood_validate_generation(address, expected_gen)
+                        let validate_fn = self.module.get_function("blood_validate_generation")
+                            .ok_or_else(|| vec![Diagnostic::error(
+                                "blood_validate_generation not declared", body.span
+                            )])?;
+
+                        let result = self.builder.build_call(
+                            validate_fn,
+                            &[address.into(), expected_gen.into()],
+                            "gen_check"
+                        ).map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM call error: {}", e), body.span
+                        )])?.try_as_basic_value()
+                            .left()
+                            .ok_or_else(|| vec![Diagnostic::error(
+                                "blood_validate_generation returned void", body.span
+                            )])?.into_int_value();
+
+                        // Check if stale (result != 0)
+                        let is_stale = self.builder.build_int_compare(
+                            inkwell::IntPredicate::NE,
+                            result,
+                            i32_ty.const_int(0, false),
+                            "is_stale"
+                        ).map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM compare error: {}", e), body.span
+                        )])?;
+
+                        // Create blocks for valid and stale paths
+                        let fn_value = self.current_fn.ok_or_else(|| {
+                            vec![Diagnostic::error("No current function", body.span)]
+                        })?;
+                        let valid_bb = self.context.append_basic_block(fn_value, "gen_valid");
+                        let stale_bb = self.context.append_basic_block(fn_value, "gen_stale");
+
+                        self.builder.build_conditional_branch(is_stale, stale_bb, valid_bb)
+                            .map_err(|e| vec![Diagnostic::error(
+                                format!("LLVM branch error: {}", e), body.span
+                            )])?;
+
+                        // Stale path: abort
+                        self.builder.position_at_end(stale_bb);
+                        let panic_fn = self.module.get_function("blood_stale_reference_panic")
+                            .ok_or_else(|| vec![Diagnostic::error(
+                                "blood_stale_reference_panic not declared", body.span
+                            )])?;
+                        self.builder.build_call(
+                            panic_fn,
+                            &[expected_gen.into(), result.into()],
+                            ""
+                        ).map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM call error: {}", e), body.span
+                        )])?;
+                        self.builder.build_unreachable()
+                            .map_err(|e| vec![Diagnostic::error(
+                                format!("LLVM unreachable error: {}", e), body.span
+                            )])?;
+
+                        // Continue on valid path
+                        self.builder.position_at_end(valid_bb);
+                    }
+
+                    ptr_val
                 }
 
                 PlaceElem::Field(idx) => {
@@ -1617,31 +1729,57 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
         local_id: LocalId,
         span: Span,
     ) -> Result<PointerValue<'ctx>, Vec<Diagnostic>> {
-        // Region/Persistent tier allocation requires blood_alloc with error checking,
-        // which creates conditional branches. This conflicts with MIR codegen structure
-        // where locals are allocated before MIR blocks are compiled.
-        //
-        // Until MIR codegen is restructured to handle this properly, we fall back to
-        // stack allocation with an explicit ICE message. This is NOT a silent fallback -
-        // it's a documented limitation that should be fixed.
-        //
-        // Future fix: Either restructure local allocation to happen within MIR blocks,
-        // or add a runtime helper that aborts on allocation failure without needing
-        // LLVM conditional branches.
-        ice!("region/persistent tier allocation requires blood_alloc with conditional error handling";
-             "local" => format!("_{}", local_id.index),
-             "limitation" => "MIR codegen cannot create basic blocks during local allocation",
-             "fallback" => "using stack allocation - generation tracking will not work");
+        // Use blood_alloc_or_abort for region/persistent allocation.
+        // This function aborts on failure, so no conditional branches needed.
 
-        // Fall back to stack allocation (explicit, documented fallback)
-        let alloca = self.builder.build_alloca(
-            llvm_ty,
-            &format!("_{}_region_fallback", local_id.index)
+        let i32_ty = self.context.i32_type();
+        let i64_ty = self.context.i64_type();
+
+        // Get the blood_alloc_or_abort function
+        let alloc_fn = self.module.get_function("blood_alloc_or_abort")
+            .ok_or_else(|| vec![Diagnostic::error(
+                "Runtime function blood_alloc_or_abort not found", span
+            )])?;
+
+        // Calculate size of the type
+        let type_size = self.get_type_size_in_bytes(llvm_ty);
+        let size_val = i64_ty.const_int(type_size, false);
+
+        // Create stack alloca for the generation output parameter
+        let gen_alloca = self.builder.build_alloca(i32_ty, &format!("_{}_gen", local_id.index))
+            .map_err(|e| vec![Diagnostic::error(
+                format!("LLVM alloca error: {}", e), span
+            )])?;
+
+        // Call blood_alloc_or_abort(size, &out_generation) -> address
+        let address = self.builder.build_call(
+            alloc_fn,
+            &[size_val.into(), gen_alloca.into()],
+            &format!("_{}_addr", local_id.index)
         ).map_err(|e| vec![Diagnostic::error(
-            format!("LLVM alloca error: {}", e), span
+            format!("LLVM call error: {}", e), span
+        )])?
+            .try_as_basic_value()
+            .left()
+            .ok_or_else(|| vec![Diagnostic::error(
+                "blood_alloc_or_abort returned void", span
+            )])?
+            .into_int_value();
+
+        // Convert the address (i64) to a pointer of the appropriate type
+        let typed_ptr = self.builder.build_int_to_ptr(
+            address,
+            llvm_ty.ptr_type(AddressSpace::default()),
+            &format!("_{}_ptr", local_id.index)
+        ).map_err(|e| vec![Diagnostic::error(
+            format!("LLVM int_to_ptr error: {}", e), span
         )])?;
 
-        Ok(alloca)
+        // Store the generation in local_generations map for later validation
+        // (The generation is stored in gen_alloca and can be loaded when needed)
+        self.local_generations.insert(local_id, gen_alloca);
+
+        Ok(typed_ptr)
     }
 }
 
