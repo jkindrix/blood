@@ -158,18 +158,23 @@ impl Namespace {
         let rest = &segments[1..];
 
         if rest.is_empty() {
-            // Terminal segment
-            match self.children.get_mut(first) {
-                Some(NamespaceEntry::Namespace(ns)) => {
-                    self.children.insert(
-                        first.clone(),
-                        NamespaceEntry::Both(hash, ns.clone()),
-                    );
-                }
-                _ => {
-                    self.children
-                        .insert(first.clone(), NamespaceEntry::Definition(hash));
-                }
+            // Terminal segment - check if there's an existing namespace
+            let existing_ns = if let Some(NamespaceEntry::Namespace(ns)) = self.children.get(first) {
+                Some(ns.clone())
+            } else {
+                None
+            };
+
+            if let Some(ns) = existing_ns {
+                // Convert namespace to Both (has both definition and children)
+                self.children.insert(
+                    first.clone(),
+                    NamespaceEntry::Both(hash, ns),
+                );
+            } else {
+                // Just a definition
+                self.children
+                    .insert(first.clone(), NamespaceEntry::Definition(hash));
             }
         } else {
             // Non-terminal segment

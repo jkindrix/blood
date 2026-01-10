@@ -3,11 +3,10 @@
 //! The main language server that handles LSP requests and notifications.
 
 use dashmap::DashMap;
-use ropey::Rope;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::capabilities;
 use crate::diagnostics::DiagnosticEngine;
@@ -127,9 +126,9 @@ impl LanguageServer for BloodLanguageServer {
         let uri = &params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
 
-        debug!("Hover request at {}:{}", uri, position);
+        debug!("Hover request at {} line {} char {}", uri, position.line, position.character);
 
-        let Some(doc) = self.documents.get(uri) else {
+        let Some(_doc) = self.documents.get(uri) else {
             return Ok(None);
         };
 
@@ -146,9 +145,9 @@ impl LanguageServer for BloodLanguageServer {
         let uri = &params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
 
-        debug!("Go to definition at {}:{}", uri, position);
+        debug!("Go to definition at {} line {} char {}", uri, position.line, position.character);
 
-        let Some(doc) = self.documents.get(uri) else {
+        let Some(_doc) = self.documents.get(uri) else {
             return Ok(None);
         };
 
@@ -161,9 +160,9 @@ impl LanguageServer for BloodLanguageServer {
         let uri = &params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
 
-        debug!("Find references at {}:{}", uri, position);
+        debug!("Find references at {} line {} char {}", uri, position.line, position.character);
 
-        let Some(doc) = self.documents.get(uri) else {
+        let Some(_doc) = self.documents.get(uri) else {
             return Ok(None);
         };
 
@@ -176,9 +175,9 @@ impl LanguageServer for BloodLanguageServer {
         let uri = &params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
 
-        debug!("Completion request at {}:{}", uri, position);
+        debug!("Completion request at {} line {} char {}", uri, position.line, position.character);
 
-        let Some(doc) = self.documents.get(uri) else {
+        let Some(_doc) = self.documents.get(uri) else {
             return Ok(None);
         };
 
@@ -227,7 +226,7 @@ impl LanguageServer for BloodLanguageServer {
 
         debug!("Format request for {}", uri);
 
-        let Some(doc) = self.documents.get(uri) else {
+        let Some(_doc) = self.documents.get(uri) else {
             return Ok(None);
         };
 

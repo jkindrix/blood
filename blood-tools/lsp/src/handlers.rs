@@ -106,7 +106,7 @@ impl InlayHintProvider {
     }
 
     /// Checks function parameters for hints.
-    fn check_function_params(&self, line: &str, line_num: u32) -> Option<Vec<InlayHint>> {
+    fn check_function_params(&self, line: &str, _line_num: u32) -> Option<Vec<InlayHint>> {
         let trimmed = line.trim();
 
         // Look for function calls with arguments

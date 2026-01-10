@@ -9,7 +9,7 @@ use clap::{Parser, Subcommand};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-use blood_ucm::{Codebase, DefRef, Name, Patch};
+use blood_ucm::{Codebase, DefRef, Name};
 
 #[derive(Parser)]
 #[command(name = "blood-ucm")]
@@ -269,7 +269,7 @@ fn cmd_test(path: &PathBuf, filter: Option<&str>) -> Result<()> {
 
     println!("Running {} tests...", tests.len());
     let mut passed = 0;
-    let mut failed = 0;
+    let failed = 0;
 
     for (name, _hash) in &tests {
         // TODO: Actually run the test

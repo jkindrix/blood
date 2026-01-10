@@ -3,12 +3,12 @@
 //! Run with: `blood-fmt [OPTIONS] [FILES...]`
 
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
 
 use blood_fmt::{check_formatted_with_config, format_diff_with_config, format_source_with_config, Config};

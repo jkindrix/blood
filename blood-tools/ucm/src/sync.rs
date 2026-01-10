@@ -4,7 +4,7 @@
 
 use crate::hash::Hash;
 use crate::names::Name;
-use crate::{Codebase, DefKind, Patch, UcmResult};
+use crate::{Codebase, DefKind, UcmResult};
 
 /// A remote codebase location.
 #[derive(Debug, Clone)]
@@ -80,13 +80,13 @@ impl SyncPlan {
 
 /// Synchronization engine.
 pub struct SyncEngine<'a> {
-    local: &'a mut Codebase,
+    _local: &'a mut Codebase,
 }
 
 impl<'a> SyncEngine<'a> {
     /// Creates a new sync engine for the given codebase.
     pub fn new(local: &'a mut Codebase) -> Self {
-        Self { local }
+        Self { _local: local }
     }
 
     /// Computes the sync plan between local and remote.

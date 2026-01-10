@@ -215,8 +215,7 @@ impl Storage {
 
     /// Lists all names with optional prefix filter.
     pub fn list_names(&self, prefix: Option<&str>) -> StorageResult<Vec<(Name, Hash)>> {
-        let mut stmt = if let Some(prefix) = prefix {
-            let pattern = format!("{}%", prefix);
+        let mut stmt = if prefix.is_some() {
             self.conn.prepare(
                 "SELECT name, hash FROM names WHERE name LIKE ?1 ORDER BY name",
             )?
@@ -226,27 +225,27 @@ impl Storage {
 
         let mut results = Vec::new();
 
-        let rows = if let Some(prefix) = prefix {
-            let pattern = format!("{}%", prefix);
-            stmt.query_map(params![pattern], |row| {
-                let name_str: String = row.get(0)?;
-                let bytes: Vec<u8> = row.get(1)?;
-                let mut arr = [0u8; 32];
-                arr.copy_from_slice(&bytes);
-                Ok((Name::new(name_str), Hash::from_bytes(arr)))
-            })?
-        } else {
-            stmt.query_map([], |row| {
-                let name_str: String = row.get(0)?;
-                let bytes: Vec<u8> = row.get(1)?;
-                let mut arr = [0u8; 32];
-                arr.copy_from_slice(&bytes);
-                Ok((Name::new(name_str), Hash::from_bytes(arr)))
-            })?
+        // Define the row mapper function
+        let map_row = |row: &rusqlite::Row| -> rusqlite::Result<(Name, Hash)> {
+            let name_str: String = row.get(0)?;
+            let bytes: Vec<u8> = row.get(1)?;
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&bytes);
+            Ok((Name::new(name_str), Hash::from_bytes(arr)))
         };
 
-        for row in rows {
-            results.push(row?);
+        // Query and collect results
+        if let Some(prefix) = prefix {
+            let pattern = format!("{}%", prefix);
+            let rows = stmt.query_map(params![pattern], map_row)?;
+            for row in rows {
+                results.push(row?);
+            }
+        } else {
+            let rows = stmt.query_map([], map_row)?;
+            for row in rows {
+                results.push(row?);
+            }
         }
 
         Ok(results)

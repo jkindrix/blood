@@ -5,7 +5,7 @@
 use crate::config::Config;
 use crate::printer::Printer;
 use crate::tokens::{Token, TokenKind, Tokenizer};
-use crate::{FormatError, FormatResult};
+use crate::FormatResult;
 
 /// The Blood code formatter.
 pub struct Formatter {
@@ -288,7 +288,7 @@ impl Formatter {
     }
 
     /// Adds a space after the current token if appropriate.
-    fn maybe_space_after(&self, printer: &mut Printer, tokens: &[Token], i: usize) {
+    fn maybe_space_after(&self, _printer: &mut Printer, tokens: &[Token], i: usize) {
         if let Some(next) = tokens.get(i + 1) {
             match next.kind {
                 TokenKind::OpenParen
