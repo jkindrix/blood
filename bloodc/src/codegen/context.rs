@@ -1181,6 +1181,15 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // String slice - pointer for now
                 self.context.i8_type().ptr_type(AddressSpace::default()).into()
             }
+            PrimitiveTy::String => {
+                // Owned String - pointer to heap-allocated string for now
+                // In the future, this would be a struct { ptr, len, cap }
+                self.context.i8_type().ptr_type(AddressSpace::default()).into()
+            }
+            PrimitiveTy::Unit => {
+                // Unit type - represented as an empty struct or i8 for ABI purposes
+                self.context.struct_type(&[], false).into()
+            }
         }
     }
 
@@ -3777,6 +3786,7 @@ mod tests {
             is_const: false,
             is_async: false,
             is_unsafe: false,
+            generics: Vec::new(),
         };
 
         let fn_def = hir::FnDef {

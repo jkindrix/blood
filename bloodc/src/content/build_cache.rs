@@ -589,6 +589,8 @@ fn hash_primitive_ty(prim: &hir::PrimitiveTy, hasher: &mut ContentHasher) {
             });
         }
         hir::PrimitiveTy::Str => hasher.update_u8(0x40),
+        hir::PrimitiveTy::String => hasher.update_u8(0x41),
+        hir::PrimitiveTy::Unit => hasher.update_u8(0x42),
     }
 }
 

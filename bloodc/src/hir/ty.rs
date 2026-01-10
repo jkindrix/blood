@@ -335,6 +335,10 @@ pub enum PrimitiveTy {
     Char,
     /// String slice: `str`
     Str,
+    /// Owned String: `String`
+    String,
+    /// Unit type: `()`
+    Unit,
 }
 
 impl fmt::Display for PrimitiveTy {
@@ -346,6 +350,8 @@ impl fmt::Display for PrimitiveTy {
             PrimitiveTy::Bool => write!(f, "bool"),
             PrimitiveTy::Char => write!(f, "char"),
             PrimitiveTy::Str => write!(f, "str"),
+            PrimitiveTy::String => write!(f, "String"),
+            PrimitiveTy::Unit => write!(f, "()"),
         }
     }
 }
@@ -409,6 +415,8 @@ impl PrimitiveTy {
             "bool" => PrimitiveTy::Bool,
             "char" => PrimitiveTy::Char,
             "str" => PrimitiveTy::Str,
+            "String" => PrimitiveTy::String,
+            "unit" => PrimitiveTy::Unit,
             _ => return None,
         })
     }
@@ -444,7 +452,8 @@ impl PrimitiveTy {
             PrimitiveTy::Float(FloatTy::F64) => 64,
             PrimitiveTy::Bool => 1,
             PrimitiveTy::Char => 32,
-            PrimitiveTy::Str => return None, // Unsized
+            PrimitiveTy::Str | PrimitiveTy::String => return None, // Unsized/heap-allocated
+            PrimitiveTy::Unit => 0, // Zero-sized type
         })
     }
 }

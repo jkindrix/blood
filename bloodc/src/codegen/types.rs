@@ -44,6 +44,8 @@ fn primitive_size(prim: &PrimitiveTy) -> usize {
             crate::hir::def::FloatTy::F64 => 8,
         },
         PrimitiveTy::Str => 16, // fat pointer (ptr + len)
+        PrimitiveTy::String => 24, // ptr + len + cap
+        PrimitiveTy::Unit => 0, // zero-sized type
     }
 }
 

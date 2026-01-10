@@ -5,7 +5,7 @@
 
 use crate::ast::Visibility;
 use crate::span::Span;
-use super::{DefId, DefKind, Type, BodyId};
+use super::{DefId, DefKind, Type, BodyId, TyVarId};
 
 /// A top-level item in HIR.
 #[derive(Debug, Clone)]
@@ -118,6 +118,8 @@ pub struct FnSig {
     pub is_async: bool,
     /// Whether this is an unsafe function.
     pub is_unsafe: bool,
+    /// Generic type parameters (TyVarIds for each type parameter).
+    pub generics: Vec<TyVarId>,
 }
 
 impl FnSig {
@@ -129,6 +131,7 @@ impl FnSig {
             is_const: false,
             is_async: false,
             is_unsafe: false,
+            generics: Vec::new(),
         }
     }
 }
