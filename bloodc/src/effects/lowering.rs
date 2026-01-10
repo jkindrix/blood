@@ -138,6 +138,8 @@ pub struct HandlerInfo {
     pub op_impls: Vec<OpImplInfo>,
     /// Whether all operations are tail-resumptive.
     pub all_tail_resumptive: bool,
+    /// Return clause body ID, if present.
+    pub return_clause: Option<crate::hir::BodyId>,
 }
 
 /// Information about an operation implementation in a handler.
@@ -222,7 +224,7 @@ impl EffectLowering {
     /// Lower a handler declaration item to HandlerInfo.
     pub fn lower_handler_decl(&mut self, item: &Item) -> Option<HandlerInfo> {
         match &item.kind {
-            ItemKind::Handler { effect, operations, .. } => {
+            ItemKind::Handler { effect, operations, return_clause, .. } => {
                 let op_impls: Vec<OpImplInfo> = operations
                     .iter()
                     .map(|op| self.lower_handler_op(op))
@@ -237,6 +239,7 @@ impl EffectLowering {
                     kind: HandlerKind::Deep, // Default to deep handlers
                     op_impls,
                     all_tail_resumptive: all_tail,
+                    return_clause: return_clause.as_ref().map(|rc| rc.body_id),
                 };
 
                 self.handlers.insert(item.def_id, info.clone());
@@ -437,35 +440,73 @@ impl EffectLowering {
         }
     }
 
-    /// Transform an effectful function by adding evidence.
-    fn transform_effectful_function(&mut self, item: &Item, _req: &EvidenceRequirement) -> Item {
-        // TODO: Implement function transformation
-        // 1. Add evidence parameter
-        // 2. Transform body to use evidence
+    /// Transform an effectful function by adding evidence parameter.
+    ///
+    /// Phase 2.1: Runtime evidence passing.
+    /// The evidence parameter is implicit - the runtime manages the evidence
+    /// vector as thread-local state. Functions don't need modification.
+    ///
+    /// Phase 2.2+: Compile-time evidence passing.
+    /// For optimization, we could add an explicit evidence parameter:
+    /// ```text
+    /// fn foo() / {State<i32>} -> i32
+    /// becomes:
+    /// fn foo(ev: *Evidence) -> i32
+    /// ```
+    fn transform_effectful_function(&mut self, item: &Item, req: &EvidenceRequirement) -> Item {
+        // Phase 2.1: Runtime evidence passing - no function signature changes needed.
+        // The runtime's blood_evidence_current() provides the evidence vector.
+        //
+        // Future optimization (Phase 2.2+): Add explicit evidence parameter for
+        // zero-overhead effect handling when the handler is known at compile time.
+
+        // Store the requirement for later use in codegen
+        if let ItemKind::Fn(_) = &item.kind {
+            self.evidence_reqs.insert(item.def_id, req.clone());
+        }
+
+        // Return unchanged - runtime handles evidence implicitly
         item.clone()
     }
 
     /// Lower a `perform` operation to an evidence lookup.
+    ///
+    /// Transforms: `perform Effect.operation(args)`
+    /// To: `ExprKind::Perform { effect_id, op_index, args }`
+    ///
+    /// The codegen then translates this to a call to `blood_perform(effect_id, op_index, args)`.
     pub fn lower_perform(
         &mut self,
         effect_id: DefId,
         operation: &str,
-        _args: Vec<Expr>,
+        args: Vec<Expr>,
     ) -> LoweringResult {
-        // Look up the operation
-        if let Some(ops) = self.effect_ops.get(&effect_id) {
-            if let Some(_op) = ops.iter().find(|o| o.name == operation) {
-                // Transform to evidence lookup
-                // ev.effect.operation(args)
-                // TODO: Generate proper evidence lookup expression
-            }
-        }
+        // Look up the operation index
+        let op_index = if let Some(ops) = self.effect_ops.get(&effect_id) {
+            ops.iter().position(|o| o.name == operation).unwrap_or(0) as u32
+        } else {
+            0
+        };
 
-        // Placeholder - return an empty tuple expression (unit)
+        // Get the return type from the operation signature
+        let return_ty = if let Some(ops) = self.effect_ops.get(&effect_id) {
+            ops.iter()
+                .find(|o| o.name == operation)
+                .map(|o| o.return_ty.clone())
+                .unwrap_or_else(Type::unit)
+        } else {
+            Type::unit()
+        };
+
+        // Create the Perform expression
         LoweringResult {
             expr: Expr {
-                kind: ExprKind::Tuple(Vec::new()),
-                ty: Type::unit(),
+                kind: ExprKind::Perform {
+                    effect_id,
+                    op_index,
+                    args,
+                },
+                ty: return_ty,
                 span: crate::span::Span::dummy(),
             },
             needs_evidence: true,
@@ -473,25 +514,36 @@ impl EffectLowering {
     }
 
     /// Lower a `with...handle` block.
+    ///
+    /// Transforms: `handle { body } with HandlerName`
+    /// To: `ExprKind::Handle { body, handler_id }`
+    ///
+    /// The codegen then:
+    /// 1. Creates an evidence vector via `blood_evidence_create()`
+    /// 2. Pushes the handler via `blood_evidence_push()`
+    /// 3. Compiles the body
+    /// 4. Pops the handler via `blood_evidence_pop()`
+    /// 5. Destroys the evidence vector via `blood_evidence_destroy()`
     pub fn lower_handler_block(
         &mut self,
         _handler_kind: HandlerKind,
-        _handler_id: DefId,
-        _body: Expr,
+        handler_id: DefId,
+        body: Expr,
     ) -> LoweringResult {
-        // TODO: Implement handler block lowering
-        // 1. Create evidence for the handler
-        // 2. Push evidence scope
-        // 3. Execute body with evidence
-        // 4. Handle return clause
+        // Get the return type from the body
+        let return_ty = body.ty.clone();
 
+        // Create the Handle expression
         LoweringResult {
             expr: Expr {
-                kind: ExprKind::Tuple(Vec::new()),
-                ty: Type::unit(),
+                kind: ExprKind::Handle {
+                    body: Box::new(body),
+                    handler_id,
+                },
+                ty: return_ty,
                 span: crate::span::Span::dummy(),
             },
-            needs_evidence: false,
+            needs_evidence: false, // Handler provides its own evidence
         }
     }
 
@@ -512,16 +564,56 @@ impl EffectLowering {
     }
 
     /// Build evidence vector for a handler block.
+    ///
+    /// For each required effect, looks up registered handlers and adds them
+    /// to the evidence vector. If no handler is found, uses DefId(0) as a
+    /// placeholder (will cause runtime error if the effect is performed).
     pub fn build_evidence(&self, effects: &[DefId]) -> EvidenceVector {
         let mut ev = EvidenceVector::new();
         for &effect_id in effects {
-            // TODO: Look up actual handler implementations
+            // Look up handlers for this effect
+            let handlers_for_effect = self.handlers_for_effect(effect_id);
+
+            // Use the first matching handler, or placeholder if none found
+            let handler_id = handlers_for_effect
+                .first()
+                .map(|h| h.def_id)
+                .unwrap_or_else(|| DefId::new(0));
+
             ev.add(
                 super::row::EffectRef::new(effect_id),
-                DefId::new(0), // Placeholder
+                handler_id,
             );
         }
         ev
+    }
+
+    /// Build evidence with specific handler assignments.
+    ///
+    /// This is used when the caller knows exactly which handler to use
+    /// for each effect (e.g., from a `handle` block).
+    pub fn build_evidence_with_handlers(
+        &self,
+        effect_handler_pairs: &[(DefId, DefId)],
+    ) -> EvidenceVector {
+        let mut ev = EvidenceVector::new();
+        for &(effect_id, handler_id) in effect_handler_pairs {
+            ev.add(
+                super::row::EffectRef::new(effect_id),
+                handler_id,
+            );
+        }
+        ev
+    }
+
+    /// Get all registered effects.
+    pub fn all_effects(&self) -> impl Iterator<Item = &EffectInfo> {
+        self.effects.values()
+    }
+
+    /// Get all registered handlers.
+    pub fn all_handlers(&self) -> impl Iterator<Item = &HandlerInfo> {
+        self.handlers.values()
     }
 }
 
