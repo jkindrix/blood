@@ -221,8 +221,16 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     }
                 }
                 hir::ItemKind::Handler { .. } => {
-                    if let Some(handler_info) = self.effect_lowering.lower_handler_decl(item) {
-                        self.handler_defs.insert(*def_id, handler_info);
+                    match self.effect_lowering.lower_handler_decl(item) {
+                        Ok(handler_info) => {
+                            self.handler_defs.insert(*def_id, handler_info);
+                        }
+                        Err(err) => {
+                            return Err(vec![Diagnostic::error(
+                                format!("Effect lowering error: {}", err.message),
+                                item.span,
+                            )]);
+                        }
                     }
                 }
                 _ => {}
@@ -303,8 +311,16 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 }
                 hir::ItemKind::Handler { .. } => {
                     // Lower handler declaration to HandlerInfo
-                    if let Some(handler_info) = self.effect_lowering.lower_handler_decl(item) {
-                        self.handler_defs.insert(*def_id, handler_info);
+                    match self.effect_lowering.lower_handler_decl(item) {
+                        Ok(handler_info) => {
+                            self.handler_defs.insert(*def_id, handler_info);
+                        }
+                        Err(err) => {
+                            return Err(vec![Diagnostic::error(
+                                format!("Effect lowering error: {}", err.message),
+                                item.span,
+                            )]);
+                        }
                     }
                 }
                 _ => {}

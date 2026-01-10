@@ -251,7 +251,10 @@ impl EffectLowering {
     }
 
     /// Lower a handler declaration item to HandlerInfo.
-    pub fn lower_handler_decl(&mut self, item: &Item) -> Option<HandlerInfo> {
+    ///
+    /// Returns an error if the handler references an unresolved effect type
+    /// or if any operation cannot be resolved.
+    pub fn lower_handler_decl(&mut self, item: &Item) -> Result<HandlerInfo, LoweringError> {
         match &item.kind {
             ItemKind::Handler { effect, operations, return_clause, .. } => {
                 let effect_id = match self.resolve_effect_type(effect) {
@@ -259,18 +262,19 @@ impl EffectLowering {
                     None => {
                         // Effect type could not be resolved - this is a type checking error
                         // that should have been caught earlier
-                        eprintln!(
-                            "ICE: Handler references unresolved effect type at {:?}",
+                        return Err(LoweringError::ice(format!(
+                            "Handler references unresolved effect type at {:?}. \
+                             Type checking should have validated the effect exists.",
                             item.span
-                        );
-                        return None;
+                        )));
                     }
                 };
 
-                let op_impls: Vec<OpImplInfo> = operations
-                    .iter()
-                    .map(|op| self.lower_handler_op(op, effect_id))
-                    .collect();
+                // Collect operation implementations, propagating any errors
+                let mut op_impls = Vec::with_capacity(operations.len());
+                for op in operations {
+                    op_impls.push(self.lower_handler_op(op, effect_id)?);
+                }
 
                 // Tail-resumptive analysis: check if all ops are tail-resumptive
                 let all_tail = op_impls.iter().all(|op| op.is_tail_resumptive);
@@ -285,34 +289,51 @@ impl EffectLowering {
                 };
 
                 self.handlers.insert(item.def_id, info.clone());
-                Some(info)
+                Ok(info)
             }
-            _ => None,
+            _ => Err(LoweringError::new(format!(
+                "Expected handler item, got {:?}",
+                item.kind
+            ))),
         }
     }
 
     /// Lower a handler operation to OpImplInfo.
-    fn lower_handler_op(&self, op: &HandlerOp, effect_id: DefId) -> OpImplInfo {
-        // Look up the operation DefId from the effect's operations
-        let operation_id = self.effects.get(&effect_id)
-            .and_then(|effect_info| {
-                effect_info.operations.iter()
-                    .find(|op_info| op_info.name == op.name)
-                    .map(|op_info| op_info.def_id)
-            })
-            .unwrap_or_else(|| {
-                eprintln!(
-                    "ICE: Handler operation '{}' not found in effect {:?}",
-                    op.name, effect_id
-                );
-                DefId::new(0) // Fallback for ICE - should not happen with correct type checking
-            });
+    ///
+    /// Returns an error if the operation cannot be found in the effect definition.
+    fn lower_handler_op(&self, op: &HandlerOp, effect_id: DefId) -> Result<OpImplInfo, LoweringError> {
+        // Look up the effect info
+        let effect_info = match self.effects.get(&effect_id) {
+            Some(info) => info,
+            None => {
+                return Err(LoweringError::ice(format!(
+                    "Effect {:?} not registered during handler operation lowering. \
+                     This is an internal compiler error.",
+                    effect_id
+                )));
+            }
+        };
 
-        OpImplInfo {
+        // Look up the operation in the effect's operations
+        let operation_id = match effect_info.operations.iter()
+            .find(|op_info| op_info.name == op.name)
+            .map(|op_info| op_info.def_id)
+        {
+            Some(id) => id,
+            None => {
+                return Err(LoweringError::ice(format!(
+                    "Handler operation '{}' not found in effect {:?}. \
+                     Type checking should have validated this operation exists.",
+                    op.name, effect_id
+                )));
+            }
+        };
+
+        Ok(OpImplInfo {
             operation_id,
             is_tail_resumptive: false, // TODO: Analyze resume positions in body
             body_id: Some(op.body_id),
-        }
+        })
     }
 
     /// Resolve an effect type to its DefId.
@@ -732,8 +753,8 @@ impl EffectLowering {
     /// Build evidence vector for a handler block.
     ///
     /// For each required effect, looks up registered handlers and adds them
-    /// to the evidence vector. Returns None if any effect has no handler.
-    pub fn build_evidence(&self, effects: &[DefId]) -> Option<EvidenceVector> {
+    /// to the evidence vector. Returns an error if any effect has no handler.
+    pub fn build_evidence(&self, effects: &[DefId]) -> Result<EvidenceVector, LoweringError> {
         let mut ev = EvidenceVector::new();
         for &effect_id in effects {
             // Look up handlers for this effect
@@ -743,13 +764,12 @@ impl EffectLowering {
             let handler_id = match handlers_for_effect.first() {
                 Some(h) => h.def_id,
                 None => {
-                    // No handler found for this effect - this is an error
-                    eprintln!(
-                        "Error: No handler found for effect {:?}. \
+                    // No handler found for this effect - this is a user error
+                    return Err(LoweringError::new(format!(
+                        "No handler found for effect {:?}. \
                          Effects must be handled before they can be performed.",
                         effect_id
-                    );
-                    return None;
+                    )));
                 }
             };
 
@@ -758,7 +778,7 @@ impl EffectLowering {
                 handler_id,
             );
         }
-        Some(ev)
+        Ok(ev)
     }
 
     /// Build evidence with specific handler assignments.
@@ -840,9 +860,11 @@ mod tests {
         let lowering = EffectLowering::new();
         let effects = vec![DefId::new(1), DefId::new(2)];
 
-        // Without registered handlers, build_evidence should return None
+        // Without registered handlers, build_evidence should return Err
         let ev = lowering.build_evidence(&effects);
-        assert!(ev.is_none(), "build_evidence should return None when no handlers are registered");
+        assert!(ev.is_err(), "build_evidence should return Err when no handlers are registered");
+        let err = ev.unwrap_err();
+        assert!(!err.is_ice, "Missing handler is a user error, not an ICE");
     }
 
     #[test]
@@ -851,7 +873,7 @@ mod tests {
 
         // Empty effects list should succeed with empty evidence
         let ev = lowering.build_evidence(&[]);
-        assert!(ev.is_some());
+        assert!(ev.is_ok());
         assert_eq!(ev.unwrap().len(), 0);
     }
 }
