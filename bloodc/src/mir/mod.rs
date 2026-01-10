@@ -70,4 +70,5 @@ pub use types::{
     Operand, Rvalue,
     Constant, ConstantKind,
     SwitchTargets,
+    BinOp, UnOp, AggregateKind,
 };
