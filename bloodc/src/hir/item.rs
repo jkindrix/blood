@@ -90,6 +90,7 @@ pub enum ItemKind {
         effect: Type,
         state: Vec<HandlerState>,
         operations: Vec<HandlerOp>,
+        return_clause: Option<ReturnClause>,
     },
 }
 
@@ -342,6 +343,20 @@ pub struct HandlerOp {
     /// The name (must match an effect operation).
     pub name: String,
     /// The body.
+    pub body_id: BodyId,
+    /// Source span.
+    pub span: Span,
+}
+
+/// Return clause for transforming the final result of a handled computation.
+///
+/// The return clause is called with the result of the handled computation
+/// and can transform it before returning to the caller.
+#[derive(Debug, Clone)]
+pub struct ReturnClause {
+    /// The parameter name for the result value.
+    pub param: String,
+    /// The transformation body.
     pub body_id: BodyId,
     /// Source span.
     pub span: Span,
