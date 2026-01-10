@@ -49,8 +49,12 @@ impl Body {
     }
 
     /// Get a local by ID.
+    ///
+    /// Note: LocalIds may not be contiguous (e.g., when closures share the
+    /// outer function's local ID space), so we search by ID rather than
+    /// using the ID as a direct index.
     pub fn get_local(&self, id: LocalId) -> Option<&Local> {
-        self.locals.get(id.index as usize)
+        self.locals.iter().find(|l| l.id == id)
     }
 }
 

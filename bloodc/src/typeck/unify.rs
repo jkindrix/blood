@@ -39,7 +39,7 @@
 
 use std::collections::HashMap;
 
-use crate::hir::{Type, TypeKind, TyVarId};
+use crate::hir::{PrimitiveTy, Type, TypeKind, TyVarId};
 
 use super::error::{TypeError, TypeErrorKind};
 use crate::span::Span;
@@ -153,6 +153,15 @@ impl Unifier {
 
             // Error type unifies with anything (for error recovery)
             (TypeKind::Error, _) | (_, TypeKind::Error) => Ok(()),
+
+            // Unit type equivalence: Primitive(Unit) == Tuple([])
+            // The unit type can be represented as either:
+            // - PrimitiveTy::Unit (from parsing `unit` keyword)
+            // - Tuple([]) (from parsing `()` or Type::unit())
+            // These should unify successfully.
+            (TypeKind::Primitive(PrimitiveTy::Unit), TypeKind::Tuple(ts))
+            | (TypeKind::Tuple(ts), TypeKind::Primitive(PrimitiveTy::Unit))
+                if ts.is_empty() => Ok(()),
 
             // Inference variable - bind it
             (TypeKind::Infer(id), _) => {

@@ -18,6 +18,7 @@ pub fn type_size(ty: &Type) -> usize {
         TypeKind::Slice { .. } => 16, // fat pointer (ptr + len)
         TypeKind::Ref { .. } | TypeKind::Ptr { .. } => 8, // 64-bit pointer
         TypeKind::Fn { .. } => 8, // function pointer
+        TypeKind::Closure { .. } => 8, // closure (function pointer + captured environment)
         TypeKind::Adt { .. } => 8, // Placeholder - ADT sizes should be computed from field layout
         TypeKind::Never => 0, // uninhabited type, zero-sized
         TypeKind::Error => 0, // error recovery, treated as zero-sized
@@ -80,6 +81,7 @@ pub fn type_alignment(ty: &Type) -> usize {
         TypeKind::Slice { .. } => 8, // fat pointer alignment
         TypeKind::Ref { .. } | TypeKind::Ptr { .. } => 8,
         TypeKind::Fn { .. } => 8, // function pointer alignment
+        TypeKind::Closure { .. } => 8, // closure alignment
         TypeKind::Adt { .. } => 8, // conservative default - should compute from fields
         TypeKind::Never => 1, // zero-sized, minimal alignment
         TypeKind::Error => 1, // error recovery

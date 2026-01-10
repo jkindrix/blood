@@ -363,18 +363,32 @@ impl SnapshotLowering {
     }
 
     /// Generate statements to validate a snapshot on resume.
+    ///
+    /// This generates `ValidateGeneration` statements for each local that was
+    /// captured in a snapshot. The expected generation should match what was
+    /// captured when the snapshot was created.
+    ///
+    /// # Current Limitation
+    ///
+    /// Currently uses generation 1 (stack tier constant) as the expected value.
+    /// For full generational reference safety, this needs to:
+    /// 1. Accept the snapshot structure containing captured generations
+    /// 2. Generate statements that load expected_gen from the snapshot
+    /// 3. Compare against actual generation from slot registry
+    ///
+    /// This will be addressed when 128-bit BloodPtr representation is implemented.
     pub fn generate_validation(
         locals: &[LocalId],
     ) -> Vec<StatementKind> {
         let mut stmts = Vec::new();
 
         for &local in locals {
-            // Generate a validation check for each captured local
-            // This is a placeholder - actual implementation would generate
-            // proper ValidateGeneration statements with the saved generations
+            // Generate a validation check for each captured local.
+            // Uses stack generation (1) as expected value - this is correct for
+            // stack-allocated locals but requires proper tracking for heap.
             stmts.push(StatementKind::ValidateGeneration {
                 ptr: Place::local(local),
-                expected_gen: Operand::Constant(super::types::Constant::int(0, Type::u32())),
+                expected_gen: Operand::Constant(super::types::Constant::int(1, Type::u32())),
             });
         }
 

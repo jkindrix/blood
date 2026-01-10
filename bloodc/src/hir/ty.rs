@@ -103,6 +103,9 @@ impl Type {
             TypeKind::Fn { params, ret, .. } => {
                 params.iter().any(|t| t.has_type_vars()) || ret.has_type_vars()
             }
+            TypeKind::Closure { params, ret, .. } => {
+                params.iter().any(|t| t.has_type_vars()) || ret.has_type_vars()
+            }
             TypeKind::Adt { args, .. } => args.iter().any(|t| t.has_type_vars()),
         }
     }
@@ -251,6 +254,19 @@ pub enum TypeKind {
     /// A function type: `fn(A, B) -> C`
     Fn { params: Vec<Type>, ret: Type },
 
+    /// A closure type.
+    ///
+    /// Unlike regular function types, closures capture their environment
+    /// and have a specific DefId identifying the closure function.
+    Closure {
+        /// The DefId of the closure function.
+        def_id: DefId,
+        /// The parameter types.
+        params: Vec<Type>,
+        /// The return type.
+        ret: Type,
+    },
+
     /// An algebraic data type (struct or enum).
     Adt {
         /// The definition ID of the type.
@@ -303,6 +319,16 @@ impl fmt::Display for TypeKind {
                     write!(f, "{p}")?;
                 }
                 write!(f, ") -> {ret}")
+            }
+            TypeKind::Closure { def_id: _, params, ret } => {
+                write!(f, "|")?;
+                for (i, p) in params.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{p}")?;
+                }
+                write!(f, "| -> {ret}")
             }
             TypeKind::Adt { def_id, args } if args.is_empty() => {
                 write!(f, "{def_id}")

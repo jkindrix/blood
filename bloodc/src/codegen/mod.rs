@@ -212,7 +212,15 @@ pub fn compile_mir_to_object(
     // This sets up struct_defs, enum_defs, and function declarations
     codegen.compile_crate_declarations(hir_crate)?;
 
-    // Second pass: compile MIR function bodies
+    // Second pass: declare closure functions from MIR
+    // Closures have synthetic DefIds (>= 0xFFFF_0000) that aren't in HIR items
+    for (&def_id, mir_body) in mir_bodies {
+        if def_id.index() >= 0xFFFF_0000 {
+            codegen.declare_closure_from_mir(def_id, mir_body);
+        }
+    }
+
+    // Third pass: compile MIR function bodies
     for (&def_id, mir_body) in mir_bodies {
         let escape_results = escape_analysis.get(&def_id);
         codegen.compile_mir_body(def_id, mir_body, escape_results)?;
@@ -257,7 +265,15 @@ pub fn compile_mir_to_ir(
     // First pass: declare types and functions from HIR
     codegen.compile_crate_declarations(hir_crate)?;
 
-    // Second pass: compile MIR function bodies
+    // Second pass: declare closure functions from MIR
+    // Closures have synthetic DefIds (>= 0xFFFF_0000) that aren't in HIR items
+    for (&def_id, mir_body) in mir_bodies {
+        if def_id.index() >= 0xFFFF_0000 {
+            codegen.declare_closure_from_mir(def_id, mir_body);
+        }
+    }
+
+    // Third pass: compile MIR function bodies
     for (&def_id, mir_body) in mir_bodies {
         let escape_results = escape_analysis.get(&def_id);
         codegen.compile_mir_body(def_id, mir_body, escape_results)?;

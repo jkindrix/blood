@@ -17,7 +17,7 @@ use inkwell::AddressSpace;
 
 use crate::hir::{self, DefId, LocalId, Type, TypeKind, PrimitiveTy};
 use crate::hir::def::{IntTy, UintTy};
-use crate::mir::{EscapeResults, EscapeState};
+use crate::mir::{EscapeResults, EscapeState, MirBody};
 use crate::diagnostics::Diagnostic;
 use crate::span::Span;
 use crate::effects::{EffectLowering, EffectInfo, HandlerInfo};
@@ -822,6 +822,33 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         Ok(())
     }
 
+    /// Declare a closure function from MIR body information.
+    ///
+    /// Closures have synthetic DefIds (starting at 0xFFFF_0000) that aren't
+    /// in the HIR items list. This method declares them using the MIR body's
+    /// parameter and return type information.
+    pub fn declare_closure_from_mir(&mut self, def_id: DefId, mir_body: &MirBody) {
+        // Build parameter types from MIR body parameters
+        let param_types: Vec<_> = mir_body.params()
+            .map(|local| self.lower_type(&local.ty).into())
+            .collect();
+
+        // Get return type from MIR body
+        let ret_type = mir_body.return_type();
+
+        let fn_type = if ret_type.is_unit() {
+            self.context.void_type().fn_type(&param_types, false)
+        } else {
+            let llvm_ret_type = self.lower_type(ret_type);
+            llvm_ret_type.fn_type(&param_types, false)
+        };
+
+        // Generate a unique name for the closure
+        let name = format!("blood_closure_{}", def_id.index());
+        let fn_value = self.module.add_function(&name, fn_type, None);
+        self.functions.insert(def_id, fn_value);
+    }
+
     /// Declare runtime support functions.
     fn declare_runtime_functions(&mut self) {
         let i8_type = self.context.i8_type();
@@ -1167,9 +1194,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 let elem_type = self.lower_type(element);
                 elem_type.array_type(*size as u32).into()
             }
-            TypeKind::Ref { inner: _, .. } | TypeKind::Ptr { inner: _, .. } => {
-                // All references/pointers become opaque pointers
-                self.context.i8_type().ptr_type(AddressSpace::default()).into()
+            TypeKind::Ref { inner, .. } | TypeKind::Ptr { inner, .. } => {
+                // Lower reference types to properly-typed pointers.
+                // This preserves type information for LLVM load/store operations.
+                let inner_ty = self.lower_type(inner);
+                inner_ty.ptr_type(AddressSpace::default()).into()
             }
             TypeKind::Never => {
                 // Never type - can use any type, i8 works
@@ -1211,7 +1240,12 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 self.context.i32_type().into()
             }
             TypeKind::Fn { .. } => {
-                // Function/closure type - fat pointer struct { fn_ptr: i8*, env_ptr: i8* }
+                // Function type - function pointer
+                self.context.i8_type().ptr_type(AddressSpace::default()).into()
+            }
+            TypeKind::Closure { .. } => {
+                // Closure type - fat pointer struct { fn_ptr: i8*, env_ptr: i8* }
+                // The fn_ptr points to the closure function, env_ptr to captured values
                 let i8_ptr = self.context.i8_type().ptr_type(AddressSpace::default());
                 self.context.struct_type(&[i8_ptr.into(), i8_ptr.into()], false).into()
             }

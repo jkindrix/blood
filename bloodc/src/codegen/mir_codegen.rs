@@ -32,7 +32,7 @@ use inkwell::types::{BasicType, BasicTypeEnum};
 use inkwell::{AddressSpace, IntPredicate};
 
 use crate::diagnostics::Diagnostic;
-use crate::hir::{DefId, LocalId, Type};
+use crate::hir::{DefId, LocalId, Type, TypeKind};
 use crate::mir::body::MirBody;
 use crate::mir::types::{
     BasicBlockId, StatementKind, Statement, Terminator, TerminatorKind,
@@ -453,6 +453,15 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
 
                 let arg_metas: Vec<_> = arg_vals.iter().map(|v| (*v).into()).collect();
 
+                // Helper to extract closure DefId from a place's type
+                let get_closure_def_id = |place: &Place, body: &MirBody| -> Option<DefId> {
+                    let local = body.locals.get(place.local.index() as usize)?;
+                    match local.ty.kind() {
+                        TypeKind::Closure { def_id, .. } => Some(def_id.clone()),
+                        _ => None,
+                    }
+                };
+
                 // Handle different function operand types
                 let call_result = match func {
                     Operand::Constant(Constant { kind: ConstantKind::FnDef(def_id), .. }) => {
@@ -480,27 +489,48 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                             )]);
                         }
                     }
-                    _ => {
-                        // Indirect call through function pointer
-                        let func_val = self.compile_mir_operand(func, body, escape_results)?;
-                        let fn_ptr = if let BasicValueEnum::PointerValue(ptr) = func_val {
-                            ptr
+                    // Check for closure call: func is Copy/Move of a local with Closure type
+                    Operand::Copy(place) | Operand::Move(place) => {
+                        if let Some(closure_def_id) = get_closure_def_id(place, body) {
+                            // Closure call - call the closure function directly
+                            if let Some(&fn_value) = self.functions.get(&closure_def_id) {
+                                self.builder.build_call(fn_value, &arg_metas, "closure_call")
+                                    .map_err(|e| vec![Diagnostic::error(
+                                        format!("LLVM call error: {}", e), term.span
+                                    )])?
+                            } else {
+                                return Err(vec![Diagnostic::error(
+                                    format!("Closure function {:?} not found", closure_def_id), term.span
+                                )]);
+                            }
                         } else {
-                            return Err(vec![Diagnostic::error(
-                                "Expected function pointer for call", term.span
-                            )]);
-                        };
+                            // Indirect call through function pointer
+                            let func_val = self.compile_mir_operand(func, body, escape_results)?;
+                            let fn_ptr = if let BasicValueEnum::PointerValue(ptr) = func_val {
+                                ptr
+                            } else {
+                                return Err(vec![Diagnostic::error(
+                                    "Expected function pointer for call", term.span
+                                )]);
+                            };
 
-                        // Try to convert to CallableValue for indirect call
-                        let callable = inkwell::values::CallableValue::try_from(fn_ptr)
-                            .map_err(|_| vec![Diagnostic::error(
-                                "Invalid function pointer for call", term.span
-                            )])?;
+                            // Try to convert to CallableValue for indirect call
+                            let callable = inkwell::values::CallableValue::try_from(fn_ptr)
+                                .map_err(|_| vec![Diagnostic::error(
+                                    "Invalid function pointer for call", term.span
+                                )])?;
 
-                        self.builder.build_call(callable, &arg_metas, "call_result")
-                            .map_err(|e| vec![Diagnostic::error(
-                                format!("LLVM call error: {}", e), term.span
-                            )])?
+                            self.builder.build_call(callable, &arg_metas, "call_result")
+                                .map_err(|e| vec![Diagnostic::error(
+                                    format!("LLVM call error: {}", e), term.span
+                                )])?
+                        }
+                    }
+                    Operand::Constant(_) => {
+                        // Non-function constant used as function
+                        return Err(vec![Diagnostic::error(
+                            "Expected callable value (function, closure, or function pointer)", term.span
+                        )]);
                     }
                 };
 
@@ -1290,8 +1320,11 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
             // ADTs (structs, enums) might contain genrefs - be conservative
             TypeKind::Adt { .. } => true,
 
-            // Functions/closures might capture genrefs
+            // Functions might capture genrefs (as function pointers to closures)
             TypeKind::Fn { .. } => true,
+
+            // Closures might capture genrefs in their environment
+            TypeKind::Closure { .. } => true,
 
             // Primitives don't contain genrefs
             TypeKind::Primitive(_) => false,
@@ -1557,23 +1590,72 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 }
             }
 
-            AggregateKind::Closure { def_id: _ } => {
-                // Closure environment capture
-                if vals.is_empty() {
-                    Ok(self.context.i8_type().ptr_type(AddressSpace::default()).const_null().into())
+            AggregateKind::Closure { def_id } => {
+                // Closure type is a fat pointer struct: { fn_ptr: i8*, env_ptr: i8* }
+                // fn_ptr points to the closure function, env_ptr to captured values
+                let i8_ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
+                let closure_struct_ty = self.context.struct_type(&[i8_ptr_ty.into(), i8_ptr_ty.into()], false);
+
+                // Get the closure function pointer
+                let fn_ptr = if let Some(&fn_value) = self.functions.get(def_id) {
+                    self.builder.build_pointer_cast(
+                        fn_value.as_global_value().as_pointer_value(),
+                        i8_ptr_ty,
+                        "closure_fn_ptr"
+                    ).map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM pointer cast error: {}", e), Span::dummy()
+                    )])?
                 } else {
+                    return Err(vec![Diagnostic::error(
+                        format!("Closure function {:?} not found", def_id), Span::dummy()
+                    )]);
+                };
+
+                // Build environment pointer
+                let env_ptr = if vals.is_empty() {
+                    // No captures - null environment
+                    i8_ptr_ty.const_null()
+                } else {
+                    // Build a struct with captured values and get a pointer to it
                     let types: Vec<_> = vals.iter().map(|v| v.get_type()).collect();
-                    let struct_ty = self.context.struct_type(&types, false);
-                    let mut agg = struct_ty.get_undef();
+                    let env_struct_ty = self.context.struct_type(&types, false);
+                    let mut env_val = env_struct_ty.get_undef();
                     for (i, val) in vals.iter().enumerate() {
-                        agg = self.builder.build_insert_value(agg, *val, i as u32, &format!("capture_{}", i))
+                        env_val = self.builder.build_insert_value(env_val, *val, i as u32, &format!("capture_{}", i))
                             .map_err(|e| vec![Diagnostic::error(
                                 format!("LLVM insert error: {}", e), Span::dummy()
                             )])?
                             .into_struct_value();
                     }
-                    Ok(agg.into())
-                }
+                    // Allocate environment on stack and store captures
+                    let env_alloca = self.builder.build_alloca(env_struct_ty, "closure_env")
+                        .map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM alloca error: {}", e), Span::dummy()
+                        )])?;
+                    self.builder.build_store(env_alloca, env_val)
+                        .map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM store error: {}", e), Span::dummy()
+                        )])?;
+                    self.builder.build_pointer_cast(env_alloca, i8_ptr_ty, "env_ptr")
+                        .map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM pointer cast error: {}", e), Span::dummy()
+                        )])?
+                };
+
+                // Build the closure struct
+                let mut closure_val = closure_struct_ty.get_undef();
+                closure_val = self.builder.build_insert_value(closure_val, fn_ptr, 0, "closure_fn")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM insert error: {}", e), Span::dummy()
+                    )])?
+                    .into_struct_value();
+                closure_val = self.builder.build_insert_value(closure_val, env_ptr, 1, "closure_env")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM insert error: {}", e), Span::dummy()
+                    )])?
+                    .into_struct_value();
+
+                Ok(closure_val.into())
             }
         }
     }

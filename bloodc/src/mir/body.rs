@@ -348,6 +348,21 @@ impl MirBodyBuilder {
         self.body.new_temp(ty, span)
     }
 
+    /// Update a local's type.
+    ///
+    /// This is used when a local is assigned a value of a more specific type,
+    /// such as when a closure is assigned to a local (Closure type vs Fn type).
+    pub fn set_local_type(&mut self, local: LocalId, ty: Type) {
+        if let Some(mir_local) = self.body.locals.get_mut(local.index() as usize) {
+            mir_local.ty = ty;
+        }
+    }
+
+    /// Get a local's type.
+    pub fn get_local_type(&self, local: LocalId) -> Option<&Type> {
+        self.body.locals.get(local.index() as usize).map(|l| &l.ty)
+    }
+
     /// Create a new basic block.
     pub fn new_block(&mut self) -> BasicBlockId {
         self.body.new_block()

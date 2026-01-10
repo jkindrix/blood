@@ -196,7 +196,8 @@ void blood_free_simple(void* ptr) {
 // ============================================================================
 
 // The Blood main function - defined by compiled Blood programs
-extern void blood_main(void);
+// Returns int32_t (i32) as the exit code
+extern int32_t blood_main(void);
 
 // Rust runtime initialization (from libblood_runtime.a)
 extern int blood_runtime_init(void);
@@ -209,11 +210,11 @@ int main(int argc, char** argv) {
     // Initialize the Rust runtime
     blood_runtime_init();
 
-    // Call the Blood program's main function
-    blood_main();
+    // Call the Blood program's main function and capture return value
+    int32_t result = blood_main();
 
     // Shutdown the runtime
     blood_runtime_shutdown();
 
-    return 0;
+    return result;
 }

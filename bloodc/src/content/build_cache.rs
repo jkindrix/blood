@@ -542,6 +542,15 @@ fn hash_type(ty: &hir::Type, hasher: &mut ContentHasher) {
             }
             hash_type(ret, hasher);
         }
+        hir::TypeKind::Closure { def_id, params, ret } => {
+            hasher.update_u8(0x17); // Distinct from Fn
+            hasher.update_u32(def_id.index);
+            hasher.update_u32(params.len() as u32);
+            for param in params {
+                hash_type(param, hasher);
+            }
+            hash_type(ret, hasher);
+        }
         hir::TypeKind::Infer(id) => {
             hasher.update_u8(0x08);
             hasher.update_u32(id.0);
