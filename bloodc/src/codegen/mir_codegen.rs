@@ -341,8 +341,63 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 // For now, no-op since we allocate at function start
             }
 
-            StatementKind::StorageDead(_local) => {
-                // Same as StorageLive - future optimization point
+            StatementKind::StorageDead(local) => {
+                // If this local was region-allocated (has entry in local_generations),
+                // we must unregister it to invalidate its generation. This enables
+                // use-after-free detection: any subsequent dereference with the old
+                // generation will fail validation.
+                if let Some(&gen_alloca) = self.local_generations.get(&local) {
+                    // Get the local's pointer storage
+                    if let Some(&local_ptr) = self.locals.get(&local) {
+                        let i64_ty = self.context.i64_type();
+
+                        // Load the address from the local's storage
+                        let loaded = self.builder.build_load(local_ptr, "local_addr")
+                            .map_err(|e| vec![Diagnostic::error(
+                                format!("LLVM load error: {}", e), stmt.span
+                            )])?;
+
+                        // Convert pointer to i64 address for unregister call
+                        let address = if loaded.is_pointer_value() {
+                            self.builder.build_ptr_to_int(
+                                loaded.into_pointer_value(),
+                                i64_ty,
+                                "addr_for_unregister"
+                            ).map_err(|e| vec![Diagnostic::error(
+                                format!("LLVM ptr_to_int error: {}", e), stmt.span
+                            )])?
+                        } else if loaded.is_int_value() {
+                            // Already an integer (the address itself)
+                            loaded.into_int_value()
+                        } else {
+                            // For other types, use the pointer itself
+                            self.builder.build_ptr_to_int(
+                                local_ptr,
+                                i64_ty,
+                                "addr_for_unregister"
+                            ).map_err(|e| vec![Diagnostic::error(
+                                format!("LLVM ptr_to_int error: {}", e), stmt.span
+                            )])?
+                        };
+
+                        // Call blood_unregister_allocation to invalidate the generation
+                        let unregister_fn = self.module.get_function("blood_unregister_allocation")
+                            .ok_or_else(|| vec![Diagnostic::error(
+                                "Runtime function blood_unregister_allocation not found",
+                                stmt.span
+                            )])?;
+
+                        self.builder.build_call(unregister_fn, &[address.into()], "")
+                            .map_err(|e| vec![Diagnostic::error(
+                                format!("LLVM call error: {}", e), stmt.span
+                            )])?;
+
+                        // Remove from local_generations to prevent double-unregister
+                        // Note: We don't have &mut self here, so we rely on the local
+                        // not being used after StorageDead (which is a correctness invariant)
+                    }
+                    let _ = gen_alloca; // Suppress unused warning
+                }
             }
 
             StatementKind::Drop(place) => {
