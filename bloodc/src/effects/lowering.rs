@@ -225,18 +225,31 @@ impl EffectLowering {
     pub fn lower_handler_decl(&mut self, item: &Item) -> Option<HandlerInfo> {
         match &item.kind {
             ItemKind::Handler { effect, operations, return_clause, .. } => {
+                let effect_id = match self.resolve_effect_type(effect) {
+                    Some(id) => id,
+                    None => {
+                        // Effect type could not be resolved - this is a type checking error
+                        // that should have been caught earlier
+                        eprintln!(
+                            "ICE: Handler references unresolved effect type at {:?}",
+                            item.span
+                        );
+                        return None;
+                    }
+                };
+
                 let op_impls: Vec<OpImplInfo> = operations
                     .iter()
-                    .map(|op| self.lower_handler_op(op))
+                    .map(|op| self.lower_handler_op(op, effect_id))
                     .collect();
 
-                // Tail-resumptive analysis not yet available in HIR
-                let all_tail = false;
+                // Tail-resumptive analysis: check if all ops are tail-resumptive
+                let all_tail = op_impls.iter().all(|op| op.is_tail_resumptive);
 
                 let info = HandlerInfo {
                     def_id: item.def_id,
-                    effect_id: self.resolve_effect_type(effect),
-                    kind: HandlerKind::Deep, // Default to deep handlers
+                    effect_id,
+                    kind: HandlerKind::Deep, // TODO: Parse from HIR when handler kind is available
                     op_impls,
                     all_tail_resumptive: all_tail,
                     return_clause: return_clause.as_ref().map(|rc| rc.body_id),
@@ -250,20 +263,35 @@ impl EffectLowering {
     }
 
     /// Lower a handler operation to OpImplInfo.
-    fn lower_handler_op(&self, op: &HandlerOp) -> OpImplInfo {
+    fn lower_handler_op(&self, op: &HandlerOp, effect_id: DefId) -> OpImplInfo {
+        // Look up the operation DefId from the effect's operations
+        let operation_id = self.effects.get(&effect_id)
+            .and_then(|effect_info| {
+                effect_info.operations.iter()
+                    .find(|op_info| op_info.name == op.name)
+                    .map(|op_info| op_info.def_id)
+            })
+            .unwrap_or_else(|| {
+                eprintln!(
+                    "ICE: Handler operation '{}' not found in effect {:?}",
+                    op.name, effect_id
+                );
+                DefId::new(0) // Fallback for ICE - should not happen with correct type checking
+            });
+
         OpImplInfo {
-            operation_id: DefId::new(0), // Resolved during type checking
-            is_tail_resumptive: false,   // Analyzed during lowering pass
+            operation_id,
+            is_tail_resumptive: false, // TODO: Analyze resume positions in body
             body_id: Some(op.body_id),
         }
     }
 
     /// Resolve an effect type to its DefId.
-    fn resolve_effect_type(&self, ty: &Type) -> DefId {
-        // For now, assume effect types are ADTs with the effect DefId
+    /// Returns None if the type is not a valid effect type (not an ADT).
+    fn resolve_effect_type(&self, ty: &Type) -> Option<DefId> {
         match ty.kind() {
-            crate::hir::TypeKind::Adt { def_id, .. } => *def_id,
-            _ => DefId::new(0), // Placeholder for unresolved
+            crate::hir::TypeKind::Adt { def_id, .. } => Some(*def_id),
+            _ => None,
         }
     }
 
@@ -637,26 +665,33 @@ impl EffectLowering {
     /// Build evidence vector for a handler block.
     ///
     /// For each required effect, looks up registered handlers and adds them
-    /// to the evidence vector. If no handler is found, uses DefId(0) as a
-    /// placeholder (will cause runtime error if the effect is performed).
-    pub fn build_evidence(&self, effects: &[DefId]) -> EvidenceVector {
+    /// to the evidence vector. Returns None if any effect has no handler.
+    pub fn build_evidence(&self, effects: &[DefId]) -> Option<EvidenceVector> {
         let mut ev = EvidenceVector::new();
         for &effect_id in effects {
             // Look up handlers for this effect
             let handlers_for_effect = self.handlers_for_effect(effect_id);
 
-            // Use the first matching handler, or placeholder if none found
-            let handler_id = handlers_for_effect
-                .first()
-                .map(|h| h.def_id)
-                .unwrap_or_else(|| DefId::new(0));
+            // Require a handler for each effect
+            let handler_id = match handlers_for_effect.first() {
+                Some(h) => h.def_id,
+                None => {
+                    // No handler found for this effect - this is an error
+                    eprintln!(
+                        "Error: No handler found for effect {:?}. \
+                         Effects must be handled before they can be performed.",
+                        effect_id
+                    );
+                    return None;
+                }
+            };
 
             ev.add(
                 super::row::EffectRef::new(effect_id),
                 handler_id,
             );
         }
-        ev
+        Some(ev)
     }
 
     /// Build evidence with specific handler assignments.
@@ -734,12 +769,22 @@ mod tests {
     }
 
     #[test]
-    fn test_build_evidence() {
+    fn test_build_evidence_no_handlers() {
         let lowering = EffectLowering::new();
         let effects = vec![DefId::new(1), DefId::new(2)];
 
+        // Without registered handlers, build_evidence should return None
         let ev = lowering.build_evidence(&effects);
+        assert!(ev.is_none(), "build_evidence should return None when no handlers are registered");
+    }
 
-        assert_eq!(ev.len(), 2);
+    #[test]
+    fn test_build_evidence_empty() {
+        let lowering = EffectLowering::new();
+
+        // Empty effects list should succeed with empty evidence
+        let ev = lowering.build_evidence(&[]);
+        assert!(ev.is_some());
+        assert_eq!(ev.unwrap().len(), 0);
     }
 }

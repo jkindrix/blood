@@ -3444,27 +3444,27 @@ impl<'a> TypeContext<'a> {
                     }
                 }
                 hir::DefKind::Const => {
-                    // Constants - get type from def_info
-                    if let Some(ty) = &info.ty {
+                    // Constants - get type and body from collected info
+                    if let (Some(ty), Some(body_id)) = (&info.ty, self.fn_bodies.get(&def_id).copied()) {
                         hir::ItemKind::Const {
                             ty: ty.clone(),
-                            body_id: self.fn_bodies.get(&def_id).copied()
-                                .unwrap_or_else(|| hir::BodyId::new(0)),
+                            body_id,
                         }
                     } else {
+                        // Constants must have both type and body - skip if missing
                         continue;
                     }
                 }
                 hir::DefKind::Static => {
-                    // Statics - get type from def_info
-                    if let Some(ty) = &info.ty {
+                    // Statics - get type and body from collected info
+                    if let (Some(ty), Some(body_id)) = (&info.ty, self.fn_bodies.get(&def_id).copied()) {
                         hir::ItemKind::Static {
                             ty: ty.clone(),
                             mutable: false, // Would need to track this
-                            body_id: self.fn_bodies.get(&def_id).copied()
-                                .unwrap_or_else(|| hir::BodyId::new(0)),
+                            body_id,
                         }
                     } else {
+                        // Statics must have both type and body - skip if missing
                         continue;
                     }
                 }

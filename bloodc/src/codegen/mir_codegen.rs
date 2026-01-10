@@ -1392,7 +1392,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     Ok(agg.into())
                 } else if let Some(_variants) = self.enum_defs.get(def_id) {
                     // Enum variant - first field is tag
-                    let tag = self.context.i32_type().const_int(variant_idx.unwrap_or(0) as u64, false);
+                    let variant_index = variant_idx.ok_or_else(|| vec![Diagnostic::error(
+                        format!("ICE: Enum construction without variant index for {:?}", def_id),
+                        Span::dummy(),
+                    )])?;
+                    let tag = self.context.i32_type().const_int(variant_index as u64, false);
                     let mut all_vals = vec![tag.into()];
                     all_vals.extend(vals);
 

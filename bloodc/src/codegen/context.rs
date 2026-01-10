@@ -490,7 +490,23 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         .build_ptr_to_int(pv, i64_type, "ret_ptr_int")
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
                 }
-                _ => i64_type.const_zero(),
+                BasicValueEnum::FloatValue(fv) => {
+                    // Bitcast float to i64 for passing through uniform interface
+                    self.builder
+                        .build_bit_cast(fv, i64_type, "float_as_i64")
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                        .into_int_value()
+                }
+                other => {
+                    return Err(vec![Diagnostic::error(
+                        format!(
+                            "ICE: Unsupported return type in handler state body: {:?}. \
+                             Expected IntValue, PointerValue, or FloatValue.",
+                            other.get_type()
+                        ),
+                        span,
+                    )]);
+                }
             };
             self.builder.build_return(Some(&ret_i64))
                 .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
@@ -605,7 +621,23 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         .build_ptr_to_int(pv, i64_type, "ret_ptr_int")
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
                 }
-                _ => i64_type.const_zero(),
+                BasicValueEnum::FloatValue(fv) => {
+                    // Bitcast float to i64 for passing through uniform interface
+                    self.builder
+                        .build_bit_cast(fv, i64_type, "float_as_i64")
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                        .into_int_value()
+                }
+                other => {
+                    return Err(vec![Diagnostic::error(
+                        format!(
+                            "ICE: Unsupported return type in handler op body: {:?}. \
+                             Expected IntValue, PointerValue, or FloatValue.",
+                            other.get_type()
+                        ),
+                        span,
+                    )]);
+                }
             };
             self.builder.build_return(Some(&ret_i64))
                 .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
@@ -2674,9 +2706,18 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     )
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])
             }
-            _ => {
-                // Default to false for incompatible types
-                Ok(self.context.bool_type().const_int(0, false))
+            (a_val, b_val) => {
+                // In a properly type-checked program, we should never compare incompatible types.
+                // If we reach here, it's an internal compiler error.
+                Err(vec![Diagnostic::error(
+                    format!(
+                        "ICE: Cannot compare values of incompatible types in pattern match: {:?} vs {:?}. \
+                         This indicates a type checking bug.",
+                        a_val.get_type(),
+                        b_val.get_type()
+                    ),
+                    Span::dummy(),
+                )])
             }
         }
     }
@@ -3386,14 +3427,30 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // Create environment struct type from captures using actual types
         let i8_ptr_type = self.context.i8_type().ptr_type(AddressSpace::default());
-        let env_types: Vec<BasicTypeEnum<'ctx>> = captures.iter()
-            .filter_map(|cap| {
-                // Get the type from the outer function's local alloca
-                self.locals.get(&cap.local_id).map(|alloca| {
-                    alloca.get_type().get_element_type().try_into().unwrap_or(self.context.i64_type().into())
-                })
-            })
-            .collect();
+        let mut env_types: Vec<BasicTypeEnum<'ctx>> = Vec::with_capacity(captures.len());
+        for cap in captures {
+            if let Some(alloca) = self.locals.get(&cap.local_id) {
+                let elem_type = alloca.get_type().get_element_type();
+                match elem_type.try_into() {
+                    Ok(basic_type) => env_types.push(basic_type),
+                    Err(_) => {
+                        // If the captured variable has a non-basic type (function, void),
+                        // this is an internal compiler error - closures should only capture
+                        // values with basic types.
+                        return Err(vec![Diagnostic::error(
+                            format!(
+                                "ICE: Closure capture has non-basic type: {:?}. \
+                                 Closures can only capture values with basic types.",
+                                elem_type
+                            ),
+                            span,
+                        )]);
+                    }
+                }
+            }
+            // Note: If local_id not found, we skip it. This matches the previous
+            // filter_map behavior but could potentially be an error condition too.
+        }
 
         let env_struct_type = if env_types.is_empty() {
             self.context.struct_type(&[], false)
@@ -3602,7 +3659,16 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                             .build_ptr_to_int(pv, i64_type, "ptr_as_i64")
                             .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?
                     }
-                    _ => i64_type.const_zero(), // Unsupported type
+                    other => {
+                        return Err(vec![Diagnostic::error(
+                            format!(
+                                "ICE: Unsupported argument type in perform expression: {:?}. \
+                                 Expected IntValue, FloatValue, or PointerValue.",
+                                other.get_type()
+                            ),
+                            arg.span,
+                        )]);
+                    }
                 };
                 compiled_args.push(i64_val);
             }

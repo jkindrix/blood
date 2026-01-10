@@ -301,10 +301,73 @@ impl<'hir> FunctionLowering<'hir> {
                 Err(vec![Diagnostic::error("lowering error expression".to_string(), expr.span)])
             }
 
-            // Unimplemented for now
-            _ => {
-                let temp = self.new_temp(expr.ty.clone(), expr.span);
-                Ok(Operand::Copy(Place::local(temp)))
+            // Explicitly handle unimplemented expression kinds with proper errors
+            ExprKind::MethodCall { .. } => {
+                Err(vec![Diagnostic::error(
+                    "MIR lowering: method calls should be desugared before MIR lowering".to_string(),
+                    expr.span,
+                )])
+            }
+
+            ExprKind::Repeat { .. } => {
+                Err(vec![Diagnostic::error(
+                    "MIR lowering for array repeat expressions not yet implemented".to_string(),
+                    expr.span,
+                )])
+            }
+
+            ExprKind::Variant { .. } => {
+                Err(vec![Diagnostic::error(
+                    "MIR lowering for enum variant expressions not yet implemented".to_string(),
+                    expr.span,
+                )])
+            }
+
+            ExprKind::Closure { .. } => {
+                Err(vec![Diagnostic::error(
+                    "MIR lowering for closure expressions not yet implemented".to_string(),
+                    expr.span,
+                )])
+            }
+
+            ExprKind::AddrOf { .. } => {
+                Err(vec![Diagnostic::error(
+                    "MIR lowering for raw pointer address-of not yet implemented".to_string(),
+                    expr.span,
+                )])
+            }
+
+            ExprKind::Let { .. } => {
+                Err(vec![Diagnostic::error(
+                    "MIR lowering for let-else expressions not yet implemented".to_string(),
+                    expr.span,
+                )])
+            }
+
+            ExprKind::Unsafe(inner) => {
+                // For now, just lower the inner expression (safety is handled elsewhere)
+                self.lower_expr(inner)
+            }
+
+            ExprKind::Perform { .. } => {
+                Err(vec![Diagnostic::error(
+                    "MIR lowering for effect perform not yet implemented".to_string(),
+                    expr.span,
+                )])
+            }
+
+            ExprKind::Resume { .. } => {
+                Err(vec![Diagnostic::error(
+                    "MIR lowering for handler resume not yet implemented".to_string(),
+                    expr.span,
+                )])
+            }
+
+            ExprKind::Handle { .. } => {
+                Err(vec![Diagnostic::error(
+                    "MIR lowering for effect handlers not yet implemented".to_string(),
+                    expr.span,
+                )])
             }
         }
     }
@@ -1089,7 +1152,45 @@ impl<'hir> FunctionLowering<'hir> {
             PatternKind::Wildcard | PatternKind::Literal(_) => {
                 // Nothing to bind
             }
-            _ => {}
+            PatternKind::Variant { fields, .. } => {
+                // For enum variant patterns, bind each field pattern
+                for (i, field_pat) in fields.iter().enumerate() {
+                    let field_place = place.project(PlaceElem::Field(i as u32));
+                    self.bind_pattern(field_pat, &field_place)?;
+                }
+            }
+            PatternKind::Slice { prefix, slice, suffix } => {
+                // Bind prefix patterns
+                for (i, pat) in prefix.iter().enumerate() {
+                    let idx_place = place.project(PlaceElem::Index(LocalId::new(i as u32)));
+                    self.bind_pattern(pat, &idx_place)?;
+                }
+                // Slice binding not fully supported yet
+                if slice.is_some() {
+                    return Err(vec![Diagnostic::error(
+                        "MIR lowering for slice patterns with rest (..) not yet implemented".to_string(),
+                        pattern.span,
+                    )]);
+                }
+                // Suffix patterns would need length computation
+                if !suffix.is_empty() {
+                    return Err(vec![Diagnostic::error(
+                        "MIR lowering for slice suffix patterns not yet implemented".to_string(),
+                        pattern.span,
+                    )]);
+                }
+            }
+            PatternKind::Or(_) => {
+                return Err(vec![Diagnostic::error(
+                    "MIR lowering for or-patterns not yet implemented".to_string(),
+                    pattern.span,
+                )]);
+            }
+            PatternKind::Ref { inner, .. } => {
+                // For reference patterns, bind the inner pattern to a dereferenced place
+                let deref_place = place.project(PlaceElem::Deref);
+                self.bind_pattern(inner, &deref_place)?;
+            }
         }
         Ok(())
     }
