@@ -188,10 +188,8 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     )])?
                 }
                 MemoryTier::Region | MemoryTier::Persistent | MemoryTier::Reserved => {
-                    // Region allocation - use blood_alloc for proper generational tracking
-                    // This enables generation checks on dereference
+                    // Region allocation - ideally should use blood_alloc for generational tracking
                     //
-                    // For now, we still use stack allocation for simplicity.
                     // Full blood_alloc integration requires:
                     // 1. Computing type size at compile time
                     // 2. Storing the generation alongside the pointer
@@ -202,33 +200,17 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     // - Store BloodPtr{addr, gen, meta} in the local slot
                     // - Extract generation at dereference sites
                     //
-                    // Current implementation: stack allocate but register for tracking
-                    let alloca = self.builder.build_alloca(
+                    // Current implementation: use stack allocation without registration.
+                    // Stack addresses get reused across function calls, which breaks
+                    // generation tracking (same address gets different generations).
+                    // Until we have proper heap allocation via blood_alloc, we skip
+                    // generation tracking for these locals.
+                    self.builder.build_alloca(
                         llvm_ty,
                         &format!("_{}_{}", local.id.index, tier_name(tier))
                     ).map_err(|e| vec![Diagnostic::error(
                         format!("LLVM alloca error: {}", e), body.span
-                    )])?;
-
-                    // Register the allocation for generation tracking
-                    // This allows the runtime to validate references on effect resume
-                    if let Some(register_fn) = self.module.get_function("blood_register_allocation") {
-                        let i64_ty = self.context.i64_type();
-                        let ptr_as_int = self.builder.build_ptr_to_int(alloca, i64_ty, "addr")
-                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), body.span)])?;
-
-                        // Size is the LLVM type size - approximate with 8 for now
-                        // TODO: Use proper type size calculation
-                        let size = i64_ty.const_int(8, false);
-
-                        self.builder.build_call(
-                            register_fn,
-                            &[ptr_as_int.into(), size.into()],
-                            &format!("gen_{}", local.id.index)
-                        ).map_err(|e| vec![Diagnostic::error(format!("LLVM call error: {}", e), body.span)])?;
-                    }
-
-                    alloca
+                    )])?
                 }
             };
 
@@ -1056,20 +1038,24 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
         // local (NoEscape) and not captured by any effect operation.
         let tier = self.get_local_tier(place.local, escape_results);
 
-        if !matches!(tier, MemoryTier::Stack) && !self.should_skip_gen_check(place.local, escape_results) {
-            // Emit generation validation for region-tier references
-            //
-            // Currently we use FIRST (1) as the expected generation because:
-            // 1. Our stack-based allocations are registered with FIRST generation
-            // 2. Full 128-bit pointers would embed the generation in the pointer
-            //
-            // In the full implementation, the expected generation would be
-            // extracted from the 128-bit BloodPtr structure.
-            let i32_ty = self.context.i32_type();
-            let expected_gen = i32_ty.const_int(1, false); // generation::FIRST
-
-            self.emit_generation_check(ptr, expected_gen, body.span)?;
-        }
+        // Generation validation is temporarily disabled until full 128-bit BloodPtr support.
+        //
+        // The issue: We use stack allocation for all tiers (for simplicity), but stack
+        // addresses are reused across function calls. This causes generation mismatches
+        // because:
+        // 1. Function A allocates local at address X, registers -> generation 1
+        // 2. Function A returns, stack unwound
+        // 3. Function B called, allocates local at SAME address X, registers -> generation 2
+        // 4. Any validation expecting generation 1 now fails
+        //
+        // TODO: When we have full 128-bit BloodPtr support:
+        // - Use blood_alloc for Region tier (actual heap allocation)
+        // - Store generation in the pointer itself
+        // - Extract and validate on dereference
+        //
+        // For now, we rely on Rust-style compile-time ownership analysis (escape analysis)
+        // rather than runtime generation checks.
+        let _ = (tier, escape_results); // Suppress unused warnings
 
         // Load value from pointer
         let loaded = self.builder.build_load(ptr, "load")

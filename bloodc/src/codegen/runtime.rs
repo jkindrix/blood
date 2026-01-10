@@ -53,6 +53,37 @@ pub mod functions {
     /// Print a string with newline.
     pub const PRINTLN_STR: &str = "println_str";
 
+    /// Print a boolean (no newline).
+    pub const PRINT_BOOL: &str = "print_bool";
+
+    /// Print a boolean with newline.
+    pub const PRINTLN_BOOL: &str = "println_bool";
+
+    /// Print a newline only.
+    pub const PRINTLN: &str = "println";
+
+    /// Print a character.
+    pub const PRINT_CHAR: &str = "print_char";
+
+    // === Assertions ===
+
+    /// Assert that a condition is true.
+    pub const ASSERT: &str = "blood_assert";
+
+    /// Assert that two integers are equal.
+    pub const ASSERT_EQ_INT: &str = "blood_assert_eq_int";
+
+    /// Assert that two booleans are equal.
+    pub const ASSERT_EQ_BOOL: &str = "blood_assert_eq_bool";
+
+    // === Control Flow ===
+
+    /// Unreachable code was reached.
+    pub const UNREACHABLE: &str = "blood_unreachable";
+
+    /// TODO marker that panics.
+    pub const TODO: &str = "blood_todo";
+
     // === Memory Management ===
 
     /// Allocate memory with generational reference.
@@ -168,6 +199,60 @@ void print_str(const char* s) {
 
 void println_str(const char* s) {
     if (s) printf("%s\n", s);
+}
+
+void print_bool(int32_t b) {
+    printf("%s", b ? "true" : "false");
+    fflush(stdout);
+}
+
+void println_bool(int32_t b) {
+    printf("%s\n", b ? "true" : "false");
+}
+
+void println(void) {
+    printf("\n");
+}
+
+void print_char(int32_t c) {
+    printf("%c", (char)c);
+    fflush(stdout);
+}
+
+// ============================================================================
+// Assertions
+// ============================================================================
+
+void blood_assert(int32_t condition) {
+    if (!condition) {
+        fprintf(stderr, "BLOOD ASSERTION FAILED\n");
+        abort();
+    }
+}
+
+void blood_assert_eq_int(int32_t a, int32_t b) {
+    if (a != b) {
+        fprintf(stderr, "BLOOD ASSERTION FAILED: %d != %d\n", a, b);
+        abort();
+    }
+}
+
+void blood_assert_eq_bool(int32_t a, int32_t b) {
+    if (a != b) {
+        fprintf(stderr, "BLOOD ASSERTION FAILED: %s != %s\n",
+                a ? "true" : "false", b ? "true" : "false");
+        abort();
+    }
+}
+
+void blood_unreachable(void) {
+    fprintf(stderr, "BLOOD RUNTIME ERROR: Unreachable code was reached!\n");
+    abort();
+}
+
+void blood_todo(void) {
+    fprintf(stderr, "BLOOD RUNTIME ERROR: TODO - unimplemented!\n");
+    abort();
 }
 
 // ============================================================================
