@@ -1241,10 +1241,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 self.context.i8_type().ptr_type(AddressSpace::default()).into()
             }
             TypeKind::Closure { .. } => {
-                // Closure type - fat pointer struct { fn_ptr: i8*, env_ptr: i8* }
-                // The fn_ptr points to the closure function, env_ptr to captured values
-                let i8_ptr = self.context.i8_type().ptr_type(AddressSpace::default());
-                self.context.struct_type(&[i8_ptr.into(), i8_ptr.into()], false).into()
+                // Closure type - opaque pointer to captured environment
+                // The closure function is called directly, environment passed as first arg
+                self.context.i8_type().ptr_type(AddressSpace::default()).into()
             }
             TypeKind::Slice { .. } => {
                 // Slice type - use pointer

@@ -71,8 +71,8 @@ pub struct MirLowering<'hir> {
     diagnostics: Vec<Diagnostic>,
     /// Counter for generating synthetic closure DefIds.
     closure_counter: u32,
-    /// Pending closure bodies to be lowered (body_id -> synthetic def_id).
-    pending_closures: Vec<(hir::BodyId, DefId)>,
+    /// Pending closure bodies to be lowered (body_id, synthetic def_id, captures with types).
+    pending_closures: Vec<(hir::BodyId, DefId, Vec<(hir::Capture, Type)>)>,
 }
 
 impl<'hir> MirLowering<'hir> {
@@ -122,9 +122,9 @@ impl<'hir> MirLowering<'hir> {
         // Process iteratively since closures can contain nested closures
         while !self.pending_closures.is_empty() {
             let pending = std::mem::take(&mut self.pending_closures);
-            for (body_id, closure_def_id) in pending {
+            for (body_id, closure_def_id, captures) in pending {
                 if let Some(body) = self.hir.get_body(body_id) {
-                    let mir_body = self.lower_closure_body(closure_def_id, body)?;
+                    let mir_body = self.lower_closure_body(closure_def_id, body, &captures)?;
                     self.bodies.insert(closure_def_id, mir_body);
                 }
             }
@@ -142,10 +142,11 @@ impl<'hir> MirLowering<'hir> {
         &mut self,
         def_id: DefId,
         body: &Body,
+        captures: &[(hir::Capture, Type)],
     ) -> Result<MirBody, Vec<Diagnostic>> {
         // Closure bodies are lowered similarly to functions
         // The captures become implicit parameters accessed via the environment
-        let builder = ClosureLowering::new(def_id, body, self.hir, &mut self.pending_closures, &mut self.closure_counter);
+        let builder = ClosureLowering::new(def_id, body, captures, self.hir, &mut self.pending_closures, &mut self.closure_counter);
         builder.lower()
     }
 
@@ -190,7 +191,7 @@ struct FunctionLowering<'hir, 'ctx> {
     /// Counter for unique temporary names.
     temp_counter: u32,
     /// Pending closures to be lowered after this function.
-    pending_closures: &'ctx mut Vec<(hir::BodyId, DefId)>,
+    pending_closures: &'ctx mut Vec<(hir::BodyId, DefId, Vec<(hir::Capture, Type)>)>,
     /// Counter for generating synthetic closure DefIds.
     closure_counter: &'ctx mut u32,
 }
@@ -213,7 +214,7 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
         sig: &hir::FnSig,
         body: &'hir Body,
         hir: &'hir HirCrate,
-        pending_closures: &'ctx mut Vec<(hir::BodyId, DefId)>,
+        pending_closures: &'ctx mut Vec<(hir::BodyId, DefId, Vec<(hir::Capture, Type)>)>,
         closure_counter: &'ctx mut u32,
     ) -> Self {
         let mut builder = MirBodyBuilder::new(def_id, body.span);
@@ -1657,14 +1658,18 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
         // Generate a synthetic DefId for this closure
         let closure_def_id = self.next_closure_def_id();
 
-        // Schedule the closure body for later lowering
-        self.pending_closures.push((body_id, closure_def_id));
-
-        // Lower each captured value to an operand
+        // Lower each captured value to an operand and collect types
         let mut capture_operands = Vec::with_capacity(captures.len());
+        let mut captures_with_types = Vec::with_capacity(captures.len());
         for capture in captures {
             let mir_local = self.map_local(capture.local_id);
             let place = Place::local(mir_local);
+
+            // Get the type of the captured local from our local map
+            let capture_ty = self.body.get_local(capture.local_id)
+                .map(|l| l.ty.clone())
+                .unwrap_or_else(Type::error);
+
             // Use Move for by-move captures, Copy for by-reference
             let operand = if capture.by_move {
                 Operand::Move(place)
@@ -1672,7 +1677,11 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
                 Operand::Copy(place)
             };
             capture_operands.push(operand);
+            captures_with_types.push((capture.clone(), capture_ty));
         }
+
+        // Schedule the closure body for later lowering (with captures and types)
+        self.pending_closures.push((body_id, closure_def_id, captures_with_types));
 
         // Create a Closure type with the synthetic DefId
         // Extract params and ret from the original function type
@@ -1714,7 +1723,7 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
 ///
 /// Similar to FunctionLowering but handles closure-specific semantics:
 /// - Captured variables are accessed through the environment
-/// - The first implicit parameter is the environment pointer
+/// - The environment is passed as the first implicit parameter
 #[allow(dead_code)]
 struct ClosureLowering<'hir, 'ctx> {
     /// MIR body builder.
@@ -1725,6 +1734,12 @@ struct ClosureLowering<'hir, 'ctx> {
     hir: &'hir HirCrate,
     /// Mapping from HIR locals to MIR locals.
     local_map: HashMap<LocalId, LocalId>,
+    /// Mapping from captured HIR locals to their field index in the environment.
+    capture_map: HashMap<LocalId, usize>,
+    /// Types of captured variables (for nested closures).
+    capture_types: HashMap<LocalId, Type>,
+    /// The MIR local that holds the environment (first param after return).
+    env_local: Option<LocalId>,
     /// Current basic block.
     current_block: BasicBlockId,
     /// Loop context for break/continue.
@@ -1732,7 +1747,7 @@ struct ClosureLowering<'hir, 'ctx> {
     /// Counter for unique temporary names.
     temp_counter: u32,
     /// Pending closures to be lowered (for nested closures).
-    pending_closures: &'ctx mut Vec<(hir::BodyId, DefId)>,
+    pending_closures: &'ctx mut Vec<(hir::BodyId, DefId, Vec<(hir::Capture, Type)>)>,
     /// Counter for generating synthetic closure DefIds.
     closure_counter: &'ctx mut u32,
 }
@@ -1742,8 +1757,9 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
     fn new(
         def_id: DefId,
         body: &'hir Body,
+        captures: &[(hir::Capture, Type)],
         hir: &'hir HirCrate,
-        pending_closures: &'ctx mut Vec<(hir::BodyId, DefId)>,
+        pending_closures: &'ctx mut Vec<(hir::BodyId, DefId, Vec<(hir::Capture, Type)>)>,
         closure_counter: &'ctx mut u32,
     ) -> Self {
         let mut builder = MirBodyBuilder::new(def_id, body.span);
@@ -1751,7 +1767,32 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
         // Set return type
         builder.set_return_type(body.return_type().clone());
 
-        // Add parameters from the closure's parameter list
+        // Build the capture map and environment type from provided captures
+        let mut capture_map = HashMap::new();
+        let mut capture_types_map = HashMap::new();
+        let mut capture_type_list = Vec::new();
+        for (idx, (capture, ty)) in captures.iter().enumerate() {
+            capture_map.insert(capture.local_id, idx);
+            capture_types_map.insert(capture.local_id, ty.clone());
+            capture_type_list.push(ty.clone());
+        }
+
+        // If there are captures, add an implicit environment parameter
+        let env_local = if !captures.is_empty() {
+            // Always create a tuple type for the environment, even for single captures
+            // This ensures field projections work consistently
+            let env_ty = Type::new(TypeKind::Tuple(capture_type_list));
+            let env_local = builder.add_param(
+                Some("__env".to_string()),
+                env_ty,
+                body.span,
+            );
+            Some(env_local)
+        } else {
+            None
+        };
+
+        // Add parameters from the closure's explicit parameter list
         let mut local_map = HashMap::new();
         for param in body.params() {
             let mir_local = builder.add_param(
@@ -1771,6 +1812,9 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
             body,
             hir,
             local_map,
+            capture_map,
+            capture_types: capture_types_map,
+            env_local,
             current_block,
             loop_stack: Vec::new(),
             temp_counter: 0,
@@ -1811,8 +1855,25 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
             ExprKind::Literal(lit) => self.lower_literal(lit, &expr.ty),
 
             ExprKind::Local(local_id) => {
-                let mir_local = self.map_local(*local_id);
-                Ok(Operand::Copy(Place::local(mir_local)))
+                // Check if this local is a captured variable from the outer scope
+                if let Some(&field_idx) = self.capture_map.get(local_id) {
+                    // Captured variable: access via field projection on environment
+                    if let Some(env_local) = self.env_local {
+                        let env_place = Place::local(env_local);
+                        let capture_place = env_place.project(PlaceElem::Field(field_idx as u32));
+                        Ok(Operand::Copy(capture_place))
+                    } else {
+                        // Should not happen: capture_map has entries but no env_local
+                        Err(vec![Diagnostic::error(
+                            "internal error: captured variable but no environment".to_string(),
+                            expr.span,
+                        )])
+                    }
+                } else {
+                    // Regular local: use normal mapping
+                    let mir_local = self.map_local(*local_id);
+                    Ok(Operand::Copy(Place::local(mir_local)))
+                }
             }
 
             ExprKind::Def(def_id) => {
@@ -2644,19 +2705,63 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
         span: Span,
     ) -> Result<Operand, Vec<Diagnostic>> {
         let closure_def_id = self.next_closure_def_id();
-        self.pending_closures.push((body_id, closure_def_id));
 
+        // Collect captures with their types
         let mut capture_operands = Vec::with_capacity(captures.len());
+        let mut captures_with_types = Vec::with_capacity(captures.len());
+
         for capture in captures {
-            let mir_local = self.map_local(capture.local_id);
-            let place = Place::local(mir_local);
-            let operand = if capture.by_move {
-                Operand::Move(place)
+            // Get the type for this capture
+            let capture_ty = if let Some(ty) = self.capture_types.get(&capture.local_id) {
+                // From outer closure's captures
+                ty.clone()
+            } else if let Some(local) = self.body.get_local(capture.local_id) {
+                // From closure body scope
+                local.ty.clone()
             } else {
-                Operand::Copy(place)
+                Type::error()
             };
-            capture_operands.push(operand);
+
+            captures_with_types.push((capture.clone(), capture_ty));
+
+            // Captured variables: check if they're from our own captures first
+            if let Some(&field_idx) = self.capture_map.get(&capture.local_id) {
+                // Captured from outer closure's environment
+                if let Some(env_local) = self.env_local {
+                    let env_place = Place::local(env_local);
+                    let capture_place = env_place.project(PlaceElem::Field(field_idx as u32));
+                    let operand = if capture.by_move {
+                        Operand::Move(capture_place)
+                    } else {
+                        Operand::Copy(capture_place)
+                    };
+                    capture_operands.push(operand);
+                } else {
+                    // Should not happen
+                    let mir_local = self.map_local(capture.local_id);
+                    let place = Place::local(mir_local);
+                    let operand = if capture.by_move {
+                        Operand::Move(place)
+                    } else {
+                        Operand::Copy(place)
+                    };
+                    capture_operands.push(operand);
+                }
+            } else {
+                // Regular local from closure body scope
+                let mir_local = self.map_local(capture.local_id);
+                let place = Place::local(mir_local);
+                let operand = if capture.by_move {
+                    Operand::Move(place)
+                } else {
+                    Operand::Copy(place)
+                };
+                capture_operands.push(operand);
+            }
         }
+
+        // Schedule the closure body for later lowering
+        self.pending_closures.push((body_id, closure_def_id, captures_with_types));
 
         // Create a Closure type with the synthetic DefId
         let closure_ty = match ty.kind() {
@@ -2685,6 +2790,13 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
     fn lower_place(&mut self, expr: &Expr) -> Result<Place, Vec<Diagnostic>> {
         match &expr.kind {
             ExprKind::Local(local_id) => {
+                // Check if this local is a captured variable from the outer scope
+                if let Some(&field_idx) = self.capture_map.get(local_id) {
+                    if let Some(env_local) = self.env_local {
+                        let env_place = Place::local(env_local);
+                        return Ok(env_place.project(PlaceElem::Field(field_idx as u32)));
+                    }
+                }
                 let mir_local = self.map_local(*local_id);
                 Ok(Place::local(mir_local))
             }

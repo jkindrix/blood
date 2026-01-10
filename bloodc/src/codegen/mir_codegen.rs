@@ -27,7 +27,7 @@
 use std::collections::HashMap;
 
 use inkwell::basic_block::BasicBlock;
-use inkwell::values::{BasicValueEnum, IntValue, PointerValue};
+use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, IntValue, PointerValue};
 use inkwell::types::{BasicType, BasicTypeEnum};
 use inkwell::{AddressSpace, IntPredicate};
 
@@ -494,9 +494,38 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     // Check for closure call: func is Copy/Move of a local with Closure type
                     Operand::Copy(place) | Operand::Move(place) => {
                         if let Some(closure_def_id) = get_closure_def_id(place, body) {
-                            // Closure call - call the closure function directly
+                            // Closure call - call the closure function with environment as first arg
                             if let Some(&fn_value) = self.functions.get(&closure_def_id) {
-                                self.builder.build_call(fn_value, &arg_metas, "closure_call")
+                                // Get the closure value (i8* pointer to captures struct)
+                                let closure_ptr = self.compile_mir_operand(func, body, escape_results)?;
+                                let closure_ptr = closure_ptr.into_pointer_value();
+
+                                // Get the expected env type from the function's first parameter
+                                let env_arg = if let Some(first_param) = fn_value.get_first_param() {
+                                    // Cast i8* to the correct struct pointer type and load
+                                    let first_param_ptr_ty = first_param.get_type().ptr_type(AddressSpace::default());
+                                    let typed_ptr = self.builder.build_pointer_cast(
+                                        closure_ptr,
+                                        first_param_ptr_ty,
+                                        "env_typed_ptr"
+                                    ).map_err(|e| vec![Diagnostic::error(
+                                        format!("LLVM pointer cast error: {}", e), term.span
+                                    )])?;
+                                    self.builder.build_load(typed_ptr, "env_load")
+                                        .map_err(|e| vec![Diagnostic::error(
+                                            format!("LLVM load error: {}", e), term.span
+                                        )])?
+                                } else {
+                                    // No parameters means no captures, pass null
+                                    self.context.i8_type().ptr_type(AddressSpace::default()).const_null().into()
+                                };
+
+                                // Prepend the closure environment to the arguments
+                                let mut full_args: Vec<BasicMetadataValueEnum> = Vec::with_capacity(args.len() + 1);
+                                full_args.push(env_arg.into());
+                                full_args.extend(arg_metas.iter().cloned());
+
+                                self.builder.build_call(fn_value, &full_args, "closure_call")
                                     .map_err(|e| vec![Diagnostic::error(
                                         format!("LLVM call error: {}", e), term.span
                                     )])?
@@ -1880,72 +1909,45 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 }
             }
 
-            AggregateKind::Closure { def_id } => {
-                // Closure type is a fat pointer struct: { fn_ptr: i8*, env_ptr: i8* }
-                // fn_ptr points to the closure function, env_ptr to captured values
+            AggregateKind::Closure { def_id: _ } => {
+                // Closure is a pointer to captured environment struct
+                // The closure function is called directly and receives this pointer
                 let i8_ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
-                let closure_struct_ty = self.context.struct_type(&[i8_ptr_ty.into(), i8_ptr_ty.into()], false);
 
-                // Get the closure function pointer
-                let fn_ptr = if let Some(&fn_value) = self.functions.get(def_id) {
-                    self.builder.build_pointer_cast(
-                        fn_value.as_global_value().as_pointer_value(),
-                        i8_ptr_ty,
-                        "closure_fn_ptr"
-                    ).map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM pointer cast error: {}", e), Span::dummy()
-                    )])?
+                if vals.is_empty() {
+                    // No captures - use null pointer
+                    Ok(i8_ptr_ty.const_null().into())
                 } else {
-                    return Err(vec![Diagnostic::error(
-                        format!("Closure function {:?} not found", def_id), Span::dummy()
-                    )]);
-                };
-
-                // Build environment pointer
-                let env_ptr = if vals.is_empty() {
-                    // No captures - null environment
-                    i8_ptr_ty.const_null()
-                } else {
-                    // Build a struct with captured values and get a pointer to it
+                    // Build a struct with captured values
                     let types: Vec<_> = vals.iter().map(|v| v.get_type()).collect();
-                    let env_struct_ty = self.context.struct_type(&types, false);
-                    let mut env_val = env_struct_ty.get_undef();
+                    let captures_struct_ty = self.context.struct_type(&types, false);
+                    let mut captures_val = captures_struct_ty.get_undef();
                     for (i, val) in vals.iter().enumerate() {
-                        env_val = self.builder.build_insert_value(env_val, *val, i as u32, &format!("capture_{}", i))
+                        captures_val = self.builder.build_insert_value(captures_val, *val, i as u32, &format!("capture_{}", i))
                             .map_err(|e| vec![Diagnostic::error(
                                 format!("LLVM insert error: {}", e), Span::dummy()
                             )])?
                             .into_struct_value();
                     }
-                    // Allocate environment on stack and store captures
-                    let env_alloca = self.builder.build_alloca(env_struct_ty, "closure_env")
+
+                    // Allocate space and store the captures struct
+                    let captures_alloca = self.builder.build_alloca(captures_struct_ty, "closure_env")
                         .map_err(|e| vec![Diagnostic::error(
                             format!("LLVM alloca error: {}", e), Span::dummy()
                         )])?;
-                    self.builder.build_store(env_alloca, env_val)
+                    self.builder.build_store(captures_alloca, captures_val)
                         .map_err(|e| vec![Diagnostic::error(
                             format!("LLVM store error: {}", e), Span::dummy()
                         )])?;
-                    self.builder.build_pointer_cast(env_alloca, i8_ptr_ty, "env_ptr")
+
+                    // Cast to i8* for the closure type
+                    let env_ptr = self.builder.build_pointer_cast(captures_alloca, i8_ptr_ty, "env_ptr")
                         .map_err(|e| vec![Diagnostic::error(
                             format!("LLVM pointer cast error: {}", e), Span::dummy()
-                        )])?
-                };
+                        )])?;
 
-                // Build the closure struct
-                let mut closure_val = closure_struct_ty.get_undef();
-                closure_val = self.builder.build_insert_value(closure_val, fn_ptr, 0, "closure_fn")
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM insert error: {}", e), Span::dummy()
-                    )])?
-                    .into_struct_value();
-                closure_val = self.builder.build_insert_value(closure_val, env_ptr, 1, "closure_env")
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM insert error: {}", e), Span::dummy()
-                    )])?
-                    .into_struct_value();
-
-                Ok(closure_val.into())
+                    Ok(env_ptr.into())
+                }
             }
         }
     }
