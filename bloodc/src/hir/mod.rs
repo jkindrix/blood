@@ -40,6 +40,9 @@ pub struct Crate {
     pub bodies: HashMap<BodyId, Body>,
     /// The entry point (main function), if present.
     pub entry: Option<DefId>,
+    /// Builtin functions: DefId -> function name.
+    /// These are runtime functions with no source code.
+    pub builtin_fns: HashMap<DefId, String>,
 }
 
 impl Crate {
@@ -49,6 +52,7 @@ impl Crate {
             items: HashMap::new(),
             bodies: HashMap::new(),
             entry: None,
+            builtin_fns: HashMap::new(),
         }
     }
 

@@ -53,6 +53,9 @@ pub struct TypeContext<'a> {
     generic_params: HashMap<String, TyVarId>,
     /// Next type parameter ID for generating unique TyVarIds.
     next_type_param_id: u32,
+    /// Builtin function names (DefId -> function name).
+    /// Used by codegen to resolve runtime function calls.
+    builtin_fns: HashMap<DefId, String>,
 }
 
 /// Information about a struct.
@@ -108,6 +111,7 @@ impl<'a> TypeContext<'a> {
             locals: Vec::new(),
             generic_params: HashMap::new(),
             next_type_param_id: 0,
+            builtin_fns: HashMap::new(),
         };
         ctx.register_builtins();
         ctx
@@ -119,10 +123,16 @@ impl<'a> TypeContext<'a> {
         let bool_ty = Type::bool();
         let i32_ty = Type::i32();
         let i64_ty = Type::i64();
-        let str_ty = Type::str();
+        let string_ty = Type::string();
         let never_ty = Type::never();
 
         // === I/O Functions ===
+
+        // print(String) -> () - convenience function (maps to runtime print_str)
+        self.register_builtin_fn_aliased("print", "print_str", vec![string_ty.clone()], unit_ty.clone());
+
+        // println(String) -> () - convenience function (prints string + newline, maps to runtime println_str)
+        self.register_builtin_fn_aliased("println", "println_str", vec![string_ty.clone()], unit_ty.clone());
 
         // print_int(i32) -> ()
         self.register_builtin_fn("print_int", vec![i32_ty.clone()], unit_ty.clone());
@@ -130,17 +140,17 @@ impl<'a> TypeContext<'a> {
         // println_int(i32) -> ()
         self.register_builtin_fn("println_int", vec![i32_ty.clone()], unit_ty.clone());
 
-        // print_str(&str) -> ()
-        self.register_builtin_fn("print_str", vec![str_ty.clone()], unit_ty.clone());
+        // print_str(String) -> () - legacy name, same as print
+        self.register_builtin_fn("print_str", vec![string_ty.clone()], unit_ty.clone());
 
-        // println_str(&str) -> ()
-        self.register_builtin_fn("println_str", vec![str_ty.clone()], unit_ty.clone());
+        // println_str(String) -> () - legacy name, same as println
+        self.register_builtin_fn("println_str", vec![string_ty.clone()], unit_ty.clone());
 
         // print_char(i32) -> ()  (char as i32 for now)
         self.register_builtin_fn("print_char", vec![i32_ty.clone()], unit_ty.clone());
 
-        // println() -> ()
-        self.register_builtin_fn("println", vec![], unit_ty.clone());
+        // print_newline() -> () - prints just a newline
+        self.register_builtin_fn("print_newline", vec![], unit_ty.clone());
 
         // print_bool(bool) -> ()
         self.register_builtin_fn("print_bool", vec![bool_ty.clone()], unit_ty.clone());
@@ -150,8 +160,8 @@ impl<'a> TypeContext<'a> {
 
         // === Control Flow / Assertions ===
 
-        // panic(&str) -> !
-        self.register_builtin_fn("panic", vec![str_ty.clone()], never_ty.clone());
+        // panic(String) -> !
+        self.register_builtin_fn("panic", vec![string_ty.clone()], never_ty.clone());
 
         // assert(bool) -> ()
         self.register_builtin_fn("assert", vec![bool_ty.clone()], unit_ty.clone());
@@ -181,11 +191,11 @@ impl<'a> TypeContext<'a> {
 
         // === Conversion Functions ===
 
-        // int_to_str(i32) -> str
-        self.register_builtin_fn("int_to_str", vec![i32_ty.clone()], str_ty.clone());
+        // int_to_string(i32) -> String
+        self.register_builtin_fn("int_to_string", vec![i32_ty.clone()], string_ty.clone());
 
-        // bool_to_str(bool) -> str
-        self.register_builtin_fn("bool_to_str", vec![bool_ty.clone()], str_ty.clone());
+        // bool_to_string(bool) -> String
+        self.register_builtin_fn("bool_to_string", vec![bool_ty.clone()], string_ty.clone());
 
         // i32_to_i64(i32) -> i64
         self.register_builtin_fn("i32_to_i64", vec![i32_ty.clone()], i64_ty.clone());
@@ -196,8 +206,14 @@ impl<'a> TypeContext<'a> {
 
     /// Register a single built-in function.
     fn register_builtin_fn(&mut self, name: &str, inputs: Vec<Type>, output: Type) {
+        self.register_builtin_fn_aliased(name, name, inputs, output);
+    }
+
+    /// Register a builtin function with a user-facing name that maps to a different runtime name.
+    /// E.g., `println(String)` maps to runtime function `println_str`.
+    fn register_builtin_fn_aliased(&mut self, user_name: &str, runtime_name: &str, inputs: Vec<Type>, output: Type) {
         let def_id = self.resolver.define_item(
-            name.to_string(),
+            user_name.to_string(),
             hir::DefKind::Fn,
             Span::dummy(),
         ).expect("BUG: builtin registration failed - this indicates a name collision in builtin definitions");
@@ -210,6 +226,9 @@ impl<'a> TypeContext<'a> {
             is_unsafe: false,
             generics: Vec::new(),
         });
+
+        // Track runtime function name for codegen to resolve runtime function calls
+        self.builtin_fns.insert(def_id, runtime_name.to_string());
     }
 
     /// Resolve names in a program.
@@ -891,7 +910,7 @@ impl<'a> TypeContext<'a> {
             }
             ast::LiteralKind::Bool(b) => (hir::LiteralValue::Bool(*b), Type::bool()),
             ast::LiteralKind::Char(c) => (hir::LiteralValue::Char(*c), Type::char()),
-            ast::LiteralKind::String(s) => (hir::LiteralValue::String(s.clone()), Type::str()),
+            ast::LiteralKind::String(s) => (hir::LiteralValue::String(s.clone()), Type::string()),
         };
 
         Ok(hir::Expr::new(
@@ -1815,6 +1834,7 @@ impl<'a> TypeContext<'a> {
             items,
             bodies: self.bodies,
             entry,
+            builtin_fns: self.builtin_fns,
         }
     }
 

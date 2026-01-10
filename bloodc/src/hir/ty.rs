@@ -164,9 +164,14 @@ impl Type {
         Self::new(TypeKind::Primitive(PrimitiveTy::Char))
     }
 
-    /// Create a str type.
+    /// Create a str type (borrowed string slice).
     pub fn str() -> Self {
         Self::new(TypeKind::Primitive(PrimitiveTy::Str))
+    }
+
+    /// Create a String type (owned string).
+    pub fn string() -> Self {
+        Self::new(TypeKind::Primitive(PrimitiveTy::String))
     }
 
     /// Create an inference variable.

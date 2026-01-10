@@ -443,6 +443,18 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                                 .map_err(|e| vec![Diagnostic::error(
                                     format!("LLVM call error: {}", e), term.span
                                 )])?
+                        } else if let Some(builtin_name) = self.builtin_fns.get(def_id) {
+                            // Builtin function call - lookup runtime function by name
+                            if let Some(fn_value) = self.module.get_function(builtin_name) {
+                                self.builder.build_call(fn_value, &arg_metas, "builtin_call")
+                                    .map_err(|e| vec![Diagnostic::error(
+                                        format!("LLVM call error: {}", e), term.span
+                                    )])?
+                            } else {
+                                return Err(vec![Diagnostic::error(
+                                    format!("Runtime function '{}' not declared", builtin_name), term.span
+                                )]);
+                            }
                         } else {
                             return Err(vec![Diagnostic::error(
                                 format!("Function {:?} not found", def_id), term.span

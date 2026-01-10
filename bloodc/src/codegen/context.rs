@@ -82,6 +82,9 @@ pub struct CodegenContext<'ctx, 'a> {
     /// Handler function pointers for runtime registration.
     /// Maps (handler_id, op_index) -> LLVM function.
     handler_ops: HashMap<(DefId, usize), FunctionValue<'ctx>>,
+    /// Builtin functions: DefId -> runtime function name.
+    /// Used to resolve builtin function calls to LLVM runtime functions.
+    pub builtin_fns: HashMap<DefId, String>,
 }
 
 impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
@@ -112,6 +115,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             effect_defs: HashMap::new(),
             handler_defs: HashMap::new(),
             handler_ops: HashMap::new(),
+            builtin_fns: HashMap::new(),
         }
     }
 
@@ -230,9 +234,16 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             self.closure_bodies.insert(*body_id, body.clone());
         }
 
-        // Second pass: declare all functions (including handler operation functions)
+        // Copy builtin function mappings for resolving runtime calls
+        self.builtin_fns = hir_crate.builtin_fns.clone();
+
+        // Second pass: declare all functions (excluding builtins which are resolved by runtime name)
         for (def_id, item) in &hir_crate.items {
             if let hir::ItemKind::Fn(fn_def) = &item.kind {
+                // Skip builtin functions - they're resolved to runtime functions at call sites
+                if self.builtin_fns.contains_key(def_id) {
+                    continue;
+                }
                 self.declare_function(*def_id, &item.name, fn_def)?;
             }
         }
@@ -252,6 +263,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
     /// Compile an entire HIR crate.
     pub fn compile_crate(&mut self, hir_crate: &hir::Crate) -> Result<(), Vec<Diagnostic>> {
+        // Copy builtin function mappings for resolving runtime calls
+        self.builtin_fns = hir_crate.builtin_fns.clone();
+
         // First pass: collect struct, enum, effect, and handler definitions
         for (def_id, item) in &hir_crate.items {
             match &item.kind {
@@ -302,9 +316,13 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             self.closure_bodies.insert(*body_id, body.clone());
         }
 
-        // Second pass: declare all functions (including handler operation functions)
+        // Second pass: declare all functions (excluding builtins which are resolved by runtime name)
         for (def_id, item) in &hir_crate.items {
             if let hir::ItemKind::Fn(fn_def) = &item.kind {
+                // Skip builtin functions - they're resolved to runtime functions at call sites
+                if self.builtin_fns.contains_key(def_id) {
+                    continue;
+                }
                 self.declare_function(*def_id, &item.name, fn_def)?;
             }
         }
@@ -1635,6 +1653,30 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?;
 
                 return Ok(call.try_as_basic_value().left());
+            }
+
+            // Check if this is a builtin function call
+            if let Some(builtin_name) = self.builtin_fns.get(def_id) {
+                if let Some(fn_value) = self.module.get_function(builtin_name) {
+                    // Builtin function call - compile args and call runtime function
+                    let mut compiled_args = Vec::new();
+                    for arg in args {
+                        if let Some(val) = self.compile_expr(arg)? {
+                            compiled_args.push(val.into());
+                        }
+                    }
+
+                    let call = self.builder
+                        .build_call(fn_value, &compiled_args, "builtin_call")
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?;
+
+                    return Ok(call.try_as_basic_value().left());
+                } else {
+                    return Err(vec![Diagnostic::error(
+                        format!("Runtime function '{}' not declared", builtin_name),
+                        callee.span,
+                    )]);
+                }
             }
         }
 
@@ -3832,6 +3874,7 @@ mod tests {
             items,
             bodies,
             entry: None,
+            builtin_fns: HashMap::new(),
         }
     }
 
