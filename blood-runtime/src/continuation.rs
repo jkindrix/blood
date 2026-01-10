@@ -58,6 +58,9 @@ fn next_continuation_id() -> ContinuationId {
     ContinuationId(NEXT_CONTINUATION_ID.fetch_add(1, Ordering::Relaxed))
 }
 
+/// Type alias for the complex continuation closure signature.
+type ContinuationClosure = Box<dyn FnOnce(Box<dyn Any + Send>) -> Box<dyn Any + Send> + Send>;
+
 /// A captured continuation.
 ///
 /// This represents the "rest of the computation" after an effect is performed.
@@ -67,7 +70,7 @@ pub struct Continuation {
     id: ContinuationId,
     /// The boxed continuation closure.
     /// Takes the resume value and returns the final result.
-    closure: Option<Box<dyn FnOnce(Box<dyn Any + Send>) -> Box<dyn Any + Send> + Send>>,
+    closure: Option<ContinuationClosure>,
     /// Whether this continuation has been consumed (one-shot enforcement).
     consumed: bool,
 }
@@ -323,5 +326,88 @@ mod tests {
         assert!(ctx.is_tail_resumptive);
         assert!(ctx.continuation.is_none());
         assert!(ctx.resume_value.is_none());
+    }
+
+    #[test]
+    fn test_try_resume_success() {
+        let k = Continuation::new(|x: i32| x * 3);
+        let result: Option<i32> = k.try_resume(14);
+        assert_eq!(result, Some(42));
+    }
+
+    #[test]
+    fn test_continuation_ref_null() {
+        let null_ref = ContinuationRef::null();
+        assert!(null_ref.is_null());
+        assert_eq!(null_ref.id, 0);
+
+        let valid_ref = ContinuationRef { id: 42 };
+        assert!(!valid_ref.is_null());
+    }
+
+    #[test]
+    fn test_continuation_with_string() {
+        let k = Continuation::new(|s: String| format!("Hello, {}!", s));
+        let result: String = k.resume("World".to_string());
+        assert_eq!(result, "Hello, World!");
+    }
+
+    #[test]
+    fn test_continuation_with_complex_type() {
+        #[derive(Debug, PartialEq)]
+        struct Point {
+            x: i32,
+            y: i32,
+        }
+
+        let k = Continuation::new(|p: Point| Point {
+            x: p.x * 2,
+            y: p.y * 2,
+        });
+        let result: Point = k.resume(Point { x: 10, y: 20 });
+        assert_eq!(result, Point { x: 20, y: 40 });
+    }
+
+    #[test]
+    fn test_effect_context_with_continuation() {
+        let k = Continuation::new(|x: i32| x);
+        let k_ref = register_continuation(k);
+
+        let ctx = EffectContext::with_continuation(k_ref);
+        assert!(!ctx.is_tail_resumptive);
+        assert!(ctx.continuation.is_some());
+        assert_eq!(ctx.continuation.unwrap().id, k_ref.id);
+
+        // Clean up
+        let _ = take_continuation(k_ref);
+    }
+
+    #[test]
+    fn test_effect_context_resume_value() {
+        let mut ctx = EffectContext::tail_resumptive();
+        assert!(ctx.resume_value.is_none());
+
+        ctx.set_resume_value(42);
+        assert_eq!(ctx.resume_value, Some(42));
+    }
+
+    #[test]
+    fn test_continuation_id_uniqueness() {
+        let ids: Vec<ContinuationId> = (0..100).map(|_| next_continuation_id()).collect();
+
+        // All IDs should be unique
+        for i in 0..ids.len() {
+            for j in (i + 1)..ids.len() {
+                assert_ne!(ids[i], ids[j]);
+            }
+        }
+    }
+
+    #[test]
+    fn test_continuation_debug_format() {
+        let k = Continuation::new(|x: i32| x);
+        let debug_str = format!("{:?}", k);
+        assert!(debug_str.contains("Continuation"));
+        assert!(debug_str.contains("consumed: false"));
     }
 }
