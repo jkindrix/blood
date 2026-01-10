@@ -280,6 +280,39 @@ Hello, World!
 
 **Completed Work Items (6/6)**: WI-050 through WI-055 - ALL COMPLETE
 
+### 4.6 Phase 5 Polish & Integration
+
+| Item | Description | Priority | Status |
+|------|-------------|----------|--------|
+| WI-060 | Create benchmark suite (Criterion) | P1 | **Complete** |
+| WI-061 | Add end-to-end integration tests | P1 | **Complete** |
+| WI-062 | Verify runtime linking with compiled programs | P1 | **Complete** |
+
+**Completed Work Items (3/3)**: WI-060 through WI-062 - ALL COMPLETE
+
+**Benchmarks Added**:
+- `bloodc/benches/lexer_bench.rs`: Lexer throughput and scaling benchmarks
+- `bloodc/benches/parser_bench.rs`: Parser throughput and expression parsing benchmarks
+- `blood-runtime/benches/scheduler_bench.rs`: Fiber and scheduler benchmarks
+- `blood-runtime/benches/channel_bench.rs`: Channel operation benchmarks
+- `blood-runtime/benches/memory_bench.rs`: Memory management benchmarks
+
+**Integration Tests Added**:
+- `bloodc/tests/pipeline_integration.rs`: 21 end-to-end pipeline tests
+
+**Runtime Linking Verified**:
+- `examples/minimal.blood` compiles to executable and outputs `42`
+- C runtime (`runtime/runtime.c`) links correctly with Blood object files
+- `blood build` and `blood run` commands work end-to-end
+
+### 4.7 Phase 6: Standard Library (Future)
+
+| Item | Description | Priority | Status |
+|------|-------------|----------|--------|
+| WI-070 | Create `blood-std/` standard library structure | P0 | Pending |
+| WI-071 | Implement core Blood types in Blood syntax | P0 | Pending |
+| WI-072 | Create `blood-tools/` tooling structure | P1 | Pending |
+
 ---
 
 ## 5. Test Coverage Analysis
@@ -290,9 +323,10 @@ Hello, World!
 |----------|-------|--------|
 | bloodc unit tests | 343 | Passing |
 | blood-runtime unit tests | 64 | Passing |
-| Integration tests | 22 | Passing |
+| Example file tests | 22 | Passing |
+| Pipeline integration tests | 21 | Passing |
 | Doc tests | 6 | Passing (3 ignored) |
-| **Total** | **435** | **All Passing** |
+| **Total** | **456** | **All Passing** |
 
 **Phase 2 Tests Added**:
 - `typeck/effect.rs`: Effect row unification tests
