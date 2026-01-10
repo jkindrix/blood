@@ -10,9 +10,9 @@
 //! Commands:
 //!   lex    Tokenize source and display token stream
 //!   parse  Parse source and display AST
-//!   check  Type-check source (parsing only in Phase 0)
-//!   build  Compile to executable (not yet implemented)
-//!   run    Compile and run (not yet implemented)
+//!   check  Type-check source file
+//!   build  Compile to executable
+//!   run    Compile and run source file
 //!
 //! Options:
 //!   -v, --verbose  Increase verbosity (can be repeated)
@@ -79,18 +79,18 @@ enum Commands {
 
     /// Type-check source file
     ///
-    /// Currently only performs parsing (Phase 0). Type checking will be
-    /// implemented in Phase 1.
+    /// Performs parsing and type checking on the input file.
     Check(FileArgs),
 
     /// Compile source file to executable
     ///
-    /// Not yet implemented. Will be available in Phase 1.
+    /// Compiles the Blood source file to a native executable using
+    /// content-addressed incremental compilation with build caching.
     Build(FileArgs),
 
     /// Compile and run source file
     ///
-    /// Not yet implemented. Will be available in Phase 1.
+    /// Compiles the source file and immediately runs the resulting executable.
     Run(FileArgs),
 }
 
@@ -103,6 +103,14 @@ struct FileArgs {
     /// Dump additional debug information
     #[arg(short, long)]
     debug: bool,
+
+    /// Disable automatic standard library import
+    #[arg(long)]
+    no_std: bool,
+
+    /// Path to the standard library (defaults to built-in)
+    #[arg(long, value_name = "PATH")]
+    stdlib_path: Option<PathBuf>,
 }
 
 /// When to use colored output
@@ -665,19 +673,40 @@ fn cmd_build(args: &FileArgs, verbosity: u8) -> ExitCode {
     }
 
     // Link with runtimes (for both cached and freshly compiled objects)
-    // C runtime is required (provides main entry point)
-    // Rust runtime is optional (provides advanced features like fibers, channels)
+    // C runtime is required (provides main entry point and string utilities)
+    // Rust runtime provides all other FFI functions (memory, effects, dispatch, etc.)
     let (c_runtime, rust_runtime) = find_runtime_paths();
 
     let mut link_cmd = std::process::Command::new("cc");
     link_cmd.arg(&output_obj);
     link_cmd.arg(&c_runtime);
 
-    // Add Rust runtime if available
+    // Add Rust runtime if available (required for full functionality)
     if let Some(rust_rt) = &rust_runtime {
         link_cmd.arg(rust_rt);
         if verbosity > 0 {
             eprintln!("Linking with Rust runtime: {}", rust_rt.display());
+        }
+
+        // Add system libraries required by the Rust runtime
+        // These are needed for pthread support, dynamic loading, and math
+        #[cfg(target_os = "linux")]
+        {
+            link_cmd.arg("-lpthread");
+            link_cmd.arg("-ldl");
+            link_cmd.arg("-lm");
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            link_cmd.arg("-lpthread");
+            link_cmd.arg("-framework").arg("Security");
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            link_cmd.arg("-lws2_32");
+            link_cmd.arg("-luserenv");
         }
     }
 
@@ -712,8 +741,15 @@ fn cmd_run(args: &FileArgs, verbosity: u8) -> ExitCode {
         return build_result;
     }
 
-    // Then run
+    // Then run - use absolute path to ensure we find the executable
     let output_exe = args.file.with_extension("");
+    let output_exe = if output_exe.is_relative() {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(&output_exe))
+            .unwrap_or(output_exe)
+    } else {
+        output_exe
+    };
 
     if verbosity > 0 {
         eprintln!("Running: {}", output_exe.display());
