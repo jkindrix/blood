@@ -1065,29 +1065,151 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
             }
 
             Rvalue::ReadGeneration(place) => {
-                // Read generation from a generational pointer
-                // In the 128-bit BloodPtr model, generation is stored in the upper bits
-                // For now, return an explicit error since this requires 128-bit pointer support
-                let _ptr = self.compile_mir_place(place, body)?;
-                Err(vec![Diagnostic::error(
-                    "Rvalue::ReadGeneration is not yet implemented. \
-                     This requires 128-bit BloodPtr support to extract the generation field.",
-                    Span::dummy()
-                )])
+                // Read generation from a generational pointer (BloodPtr)
+                // BloodPtr structure: { address: i64, generation: i32, metadata: i32 }
+                // Generation is at field index 1
+                let ptr = self.compile_mir_place(place, body)?;
+
+                // Load the BloodPtr struct
+                let blood_ptr_val = self.builder.build_load(ptr, "blood_ptr")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM load error: {}", e),
+                        Span::dummy()
+                    )])?;
+
+                // Extract the generation field (index 1) from the struct
+                if blood_ptr_val.is_struct_value() {
+                    let struct_val = blood_ptr_val.into_struct_value();
+                    let gen_val = self.builder
+                        .build_extract_value(struct_val, 1, "generation")
+                        .map_err(|e| vec![Diagnostic::error(
+                            format!("Failed to extract generation field from BloodPtr: {}", e),
+                            Span::dummy()
+                        )])?;
+                    Ok(gen_val)
+                } else {
+                    // The place might be a raw pointer, not a BloodPtr struct
+                    // In that case, return generation::FIRST (1) as a fallback for stack pointers
+                    let i32_ty = self.context.i32_type();
+                    Ok(i32_ty.const_int(1, false).into())
+                }
             }
 
             Rvalue::MakeGenPtr { address, generation, metadata } => {
                 // Create a generational pointer (128-bit BloodPtr)
-                // BloodPtr structure: { address: u64, generation: u32, metadata: u32 }
-                // For now, return an explicit error since 128-bit pointer support is not yet implemented
-                let _addr = self.compile_mir_operand(address, body, escape_results)?;
-                let _gen = self.compile_mir_operand(generation, body, escape_results)?;
-                let _meta = self.compile_mir_operand(metadata, body, escape_results)?;
-                Err(vec![Diagnostic::error(
-                    "Rvalue::MakeGenPtr is not yet implemented. \
-                     This requires 128-bit BloodPtr support to pack address, generation, and metadata.",
-                    Span::dummy()
-                )])
+                // BloodPtr structure: { address: i64, generation: i32, metadata: i32 }
+                let addr_val = self.compile_mir_operand(address, body, escape_results)?;
+                let gen_val = self.compile_mir_operand(generation, body, escape_results)?;
+                let meta_val = self.compile_mir_operand(metadata, body, escape_results)?;
+
+                // Create the BloodPtr struct type: { i64, i32, i32 }
+                let i64_ty = self.context.i64_type();
+                let i32_ty = self.context.i32_type();
+                let blood_ptr_type = self.context.struct_type(
+                    &[i64_ty.into(), i32_ty.into(), i32_ty.into()],
+                    false
+                );
+
+                // Ensure operands have correct types
+                let addr_i64 = if addr_val.is_pointer_value() {
+                    // Convert pointer to i64
+                    self.builder.build_ptr_to_int(
+                        addr_val.into_pointer_value(),
+                        i64_ty,
+                        "addr_as_i64"
+                    ).map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM ptr_to_int error: {}", e),
+                        Span::dummy()
+                    )])?
+                } else if addr_val.is_int_value() {
+                    let int_val = addr_val.into_int_value();
+                    if int_val.get_type().get_bit_width() == 64 {
+                        int_val
+                    } else {
+                        // Zero-extend or truncate to i64
+                        self.builder.build_int_z_extend_or_bit_cast(
+                            int_val,
+                            i64_ty,
+                            "addr_i64"
+                        ).map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM int cast error: {}", e),
+                            Span::dummy()
+                        )])?
+                    }
+                } else {
+                    return Err(vec![Diagnostic::error(
+                        "MakeGenPtr address must be a pointer or integer".to_string(),
+                        Span::dummy()
+                    )]);
+                };
+
+                let gen_i32 = if gen_val.is_int_value() {
+                    let int_val = gen_val.into_int_value();
+                    if int_val.get_type().get_bit_width() == 32 {
+                        int_val
+                    } else {
+                        self.builder.build_int_truncate_or_bit_cast(
+                            int_val,
+                            i32_ty,
+                            "gen_i32"
+                        ).map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM int cast error: {}", e),
+                            Span::dummy()
+                        )])?
+                    }
+                } else {
+                    return Err(vec![Diagnostic::error(
+                        "MakeGenPtr generation must be an integer".to_string(),
+                        Span::dummy()
+                    )]);
+                };
+
+                let meta_i32 = if meta_val.is_int_value() {
+                    let int_val = meta_val.into_int_value();
+                    if int_val.get_type().get_bit_width() == 32 {
+                        int_val
+                    } else {
+                        self.builder.build_int_truncate_or_bit_cast(
+                            int_val,
+                            i32_ty,
+                            "meta_i32"
+                        ).map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM int cast error: {}", e),
+                            Span::dummy()
+                        )])?
+                    }
+                } else {
+                    return Err(vec![Diagnostic::error(
+                        "MakeGenPtr metadata must be an integer".to_string(),
+                        Span::dummy()
+                    )]);
+                };
+
+                // Build the BloodPtr struct value
+                let mut blood_ptr_val = blood_ptr_type.get_undef();
+                blood_ptr_val = self.builder
+                    .build_insert_value(blood_ptr_val, addr_i64, 0, "with_addr")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("Failed to insert address into BloodPtr: {}", e),
+                        Span::dummy()
+                    )])?
+                    .into_struct_value();
+                blood_ptr_val = self.builder
+                    .build_insert_value(blood_ptr_val, gen_i32, 1, "with_gen")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("Failed to insert generation into BloodPtr: {}", e),
+                        Span::dummy()
+                    )])?
+                    .into_struct_value();
+                blood_ptr_val = self.builder
+                    .build_insert_value(blood_ptr_val, meta_i32, 2, "with_meta")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("Failed to insert metadata into BloodPtr: {}", e),
+                        Span::dummy()
+                    )])?
+                    .into_struct_value();
+
+                Ok(blood_ptr_val.into())
             }
         }
     }
