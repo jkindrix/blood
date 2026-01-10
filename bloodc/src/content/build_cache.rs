@@ -431,9 +431,14 @@ fn hash_item_kind(kind: &hir::ItemKind, bodies: &HashMap<hir::BodyId, hir::Body>
                 hash_type(&op.output, hasher);
             }
         }
-        hir::ItemKind::Handler { generics, effect, state, operations, return_clause } => {
+        hir::ItemKind::Handler { generics, kind, effect, state, operations, return_clause } => {
             hasher.update_u8(0x0A);
             hash_generics(generics, hasher);
+            // Hash handler kind: 0 = Deep, 1 = Shallow
+            hasher.update_u8(match kind {
+                hir::HandlerKind::Deep => 0,
+                hir::HandlerKind::Shallow => 1,
+            });
             hash_type(effect, hasher);
             hasher.update_u32(state.len() as u32);
             hasher.update_u32(operations.len() as u32);

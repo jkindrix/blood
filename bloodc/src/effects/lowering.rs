@@ -256,7 +256,7 @@ impl EffectLowering {
     /// or if any operation cannot be resolved.
     pub fn lower_handler_decl(&mut self, item: &Item) -> Result<HandlerInfo, LoweringError> {
         match &item.kind {
-            ItemKind::Handler { effect, operations, return_clause, .. } => {
+            ItemKind::Handler { kind, effect, operations, return_clause, .. } => {
                 let effect_id = match self.resolve_effect_type(effect) {
                     Some(id) => id,
                     None => {
@@ -279,10 +279,16 @@ impl EffectLowering {
                 // Tail-resumptive analysis: check if all ops are tail-resumptive
                 let all_tail = op_impls.iter().all(|op| op.is_tail_resumptive);
 
+                // Convert hir::HandlerKind to effects::handler::HandlerKind
+                let handler_kind = match kind {
+                    crate::hir::HandlerKind::Deep => HandlerKind::Deep,
+                    crate::hir::HandlerKind::Shallow => HandlerKind::Shallow,
+                };
+
                 let info = HandlerInfo {
                     def_id: item.def_id,
                     effect_id,
-                    kind: HandlerKind::Deep, // TODO: Parse from HIR when handler kind is available
+                    kind: handler_kind,
                     op_impls,
                     all_tail_resumptive: all_tail,
                     return_clause: return_clause.as_ref().map(|rc| rc.body_id),

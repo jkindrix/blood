@@ -122,6 +122,8 @@ pub struct OperationInfo {
 #[derive(Debug, Clone)]
 pub struct HandlerInfo {
     pub name: String,
+    /// Handler kind: deep (reify continuation) or shallow (single shot).
+    pub kind: ast::HandlerKind,
     /// The effect this handler handles (DefId of the effect).
     pub effect_id: DefId,
     /// The operations implemented by this handler.
@@ -897,6 +899,7 @@ impl<'a> TypeContext<'a> {
 
         self.handler_defs.insert(def_id, HandlerInfo {
             name,
+            kind: handler.kind,
             effect_id,
             operations,
             generics: generics_vec,
@@ -3432,8 +3435,15 @@ impl<'a> TypeContext<'a> {
                             }
                         }).collect();
 
+                        // Convert ast::HandlerKind to hir::HandlerKind
+                        let hir_kind = match handler_info.kind {
+                            ast::HandlerKind::Deep => hir::HandlerKind::Deep,
+                            ast::HandlerKind::Shallow => hir::HandlerKind::Shallow,
+                        };
+
                         hir::ItemKind::Handler {
                             generics: hir::Generics::empty(),
+                            kind: hir_kind,
                             effect: Type::adt(handler_info.effect_id, Vec::new()),
                             state,
                             operations: Vec::new(), // Operations handled separately

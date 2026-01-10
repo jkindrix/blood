@@ -87,11 +87,23 @@ pub enum ItemKind {
     /// A handler definition.
     Handler {
         generics: Generics,
+        /// Handler kind: deep (reify continuation) or shallow (single shot).
+        kind: HandlerKind,
         effect: Type,
         state: Vec<HandlerState>,
         operations: Vec<HandlerOp>,
         return_clause: Option<ReturnClause>,
     },
+}
+
+/// Handler kind: determines continuation semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HandlerKind {
+    /// Deep handler: reifies the continuation, allowing multiple resumes.
+    #[default]
+    Deep,
+    /// Shallow handler: single-shot continuation, more efficient but restricted.
+    Shallow,
 }
 
 /// A function definition.

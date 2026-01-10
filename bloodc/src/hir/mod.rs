@@ -28,7 +28,7 @@ pub mod ty;
 use std::collections::HashMap;
 pub use def::{DefId, LocalId, DefKind, Res, PrimTyRes, IntTy, UintTy, FloatTy};
 pub use expr::{Expr, ExprKind, Body, Local, BodyId, Stmt, LiteralValue, MatchArm, Pattern, PatternKind, FieldPattern, LoopId, Capture, FieldExpr};
-pub use item::{Item, ItemKind, FnSig, FnDef, StructDef, StructKind, FieldDef, EnumDef, Variant, Generics, GenericParam, GenericParamKind, TraitRef, WherePredicate, TraitItem, TraitItemKind, ImplItem, ImplItemKind, EffectOp, HandlerState, HandlerOp, ReturnClause};
+pub use item::{Item, ItemKind, FnSig, FnDef, StructDef, StructKind, FieldDef, EnumDef, Variant, Generics, GenericParam, GenericParamKind, TraitRef, WherePredicate, TraitItem, TraitItemKind, ImplItem, ImplItemKind, EffectOp, HandlerState, HandlerOp, ReturnClause, HandlerKind};
 pub use ty::{Type, TypeKind, PrimitiveTy, TyVarId};
 
 /// A compilation unit (crate) in HIR form.
