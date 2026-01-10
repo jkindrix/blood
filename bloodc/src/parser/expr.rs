@@ -144,10 +144,20 @@ impl<'src> Parser<'src> {
     }
 
     /// Continue parsing an expression with an already-parsed left-hand side.
-    fn parse_expr_prec_with(&mut self, mut left: Expr, min_prec: Precedence) -> Expr {
+    fn parse_expr_prec_with(&mut self, left: Expr, min_prec: Precedence) -> Expr {
+        self.parse_expr_prec_with_inner(left, min_prec, false)
+    }
+
+    /// Continue parsing an expression with an already-parsed left-hand side, disallowing struct literals.
+    fn parse_expr_prec_with_no_struct(&mut self, left: Expr, min_prec: Precedence) -> Expr {
+        self.parse_expr_prec_with_inner(left, min_prec, true)
+    }
+
+    /// Inner implementation of parse_expr_prec_with with struct literal control.
+    fn parse_expr_prec_with_inner(&mut self, mut left: Expr, min_prec: Precedence, no_struct: bool) -> Expr {
         // Parse binary operators
         while let Some(prec) = binary_precedence(self.current.kind) {
-            if prec <= min_prec {
+            if prec < min_prec {
                 break;
             }
 
@@ -168,7 +178,11 @@ impl<'src> Parser<'src> {
                     }
                 }
                 TokenKind::Eq => {
-                    let value = self.parse_expr_prec(Precedence::Assign);
+                    let value = if no_struct {
+                        self.parse_expr_prec_no_struct(Precedence::Assign)
+                    } else {
+                        self.parse_expr_prec(Precedence::Assign)
+                    };
                     let span = left.span.merge(value.span);
                     Expr {
                         kind: ExprKind::Assign {
@@ -185,7 +199,11 @@ impl<'src> Parser<'src> {
                     // Compound assignment operators - guaranteed to have a matching bin_op
                     let bin_op = token_to_compound_op(op_token)
                         .expect("BUG: matched compound op token but conversion failed");
-                    let value = self.parse_expr_prec(Precedence::Assign);
+                    let value = if no_struct {
+                        self.parse_expr_prec_no_struct(Precedence::Assign)
+                    } else {
+                        self.parse_expr_prec(Precedence::Assign)
+                    };
                     let span = left.span.merge(value.span);
                     Expr {
                         kind: ExprKind::AssignOp {
@@ -199,7 +217,12 @@ impl<'src> Parser<'src> {
                 TokenKind::DotDot | TokenKind::DotDotEq => {
                     let inclusive = op_token == TokenKind::DotDotEq;
                     let end = if self.current.kind.can_start_expr() {
-                        Some(Box::new(self.parse_expr_prec(Precedence::Range.next())))
+                        let rhs = if no_struct {
+                            self.parse_expr_prec_no_struct(Precedence::Range.next())
+                        } else {
+                            self.parse_expr_prec(Precedence::Range.next())
+                        };
+                        Some(Box::new(rhs))
                     } else {
                         None
                     };
@@ -218,7 +241,11 @@ impl<'src> Parser<'src> {
                         // For right-associative operators, use same precedence
                         // For left-associative, use next higher
                         let next_prec = prec.next();
-                        let right = self.parse_expr_prec(next_prec);
+                        let right = if no_struct {
+                            self.parse_expr_prec_no_struct(next_prec)
+                        } else {
+                            self.parse_expr_prec(next_prec)
+                        };
                         let span = left.span.merge(right.span);
                         Expr {
                             kind: ExprKind::Binary {
@@ -775,7 +802,7 @@ impl<'src> Parser<'src> {
     /// Parse an expression with precedence, but disallow struct literals at the end.
     fn parse_expr_prec_no_struct(&mut self, min_prec: Precedence) -> Expr {
         let left = self.parse_prefix_expr_no_struct();
-        self.parse_expr_prec_with(left, min_prec)
+        self.parse_expr_prec_with_no_struct(left, min_prec)
     }
 
     /// Parse a prefix expression that doesn't allow struct literals.

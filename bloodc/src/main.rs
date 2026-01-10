@@ -31,6 +31,8 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use bloodc::diagnostics::DiagnosticEmitter;
 use bloodc::{Lexer, TokenKind};
 use bloodc::codegen;
+use bloodc::mir;
+use bloodc::content::ContentHash;
 
 /// The Blood Programming Language Compiler
 ///
@@ -300,6 +302,102 @@ fn cmd_check(args: &FileArgs, verbosity: u8) -> ExitCode {
     }
 }
 
+/// Find the runtime libraries to link with.
+///
+/// Returns (c_runtime, rust_runtime):
+/// - c_runtime: Required, provides main entry point and basic functions
+/// - rust_runtime: Optional, provides advanced features (fibers, channels, effects)
+///
+/// Environment variables:
+/// - BLOOD_RUNTIME: Override C runtime path
+/// - BLOOD_RUST_RUNTIME: Override Rust runtime path
+fn find_runtime_paths() -> (PathBuf, Option<PathBuf>) {
+    let c_runtime = find_c_runtime();
+    let rust_runtime = find_rust_runtime();
+    (c_runtime, rust_runtime)
+}
+
+/// Find the C runtime (provides main entry point).
+fn find_c_runtime() -> PathBuf {
+    // Check environment variable first
+    if let Ok(path) = std::env::var("BLOOD_RUNTIME") {
+        let p = PathBuf::from(path);
+        if p.exists() {
+            return p;
+        }
+    }
+
+    // Try relative to the executable
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            // Check in target/release/../runtime (for development)
+            let runtime_dev = exe_dir.join("../../runtime/runtime.o");
+            if runtime_dev.exists() {
+                return runtime_dev;
+            }
+            // Check alongside executable
+            let runtime_sibling = exe_dir.join("runtime.o");
+            if runtime_sibling.exists() {
+                return runtime_sibling;
+            }
+        }
+    }
+
+    // Try current directory
+    if let Ok(cwd) = std::env::current_dir() {
+        let runtime_cwd = cwd.join("runtime/runtime.o");
+        if runtime_cwd.exists() {
+            return runtime_cwd;
+        }
+    }
+
+    // Fallback - will fail at link time if not found
+    PathBuf::from("runtime/runtime.o")
+}
+
+/// Find the Rust runtime (provides fibers, channels, effects).
+fn find_rust_runtime() -> Option<PathBuf> {
+    // Check environment variable first
+    if let Ok(path) = std::env::var("BLOOD_RUST_RUNTIME") {
+        let p = PathBuf::from(path);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
+    let rust_runtime_names = [
+        "libblood_runtime.a",  // Unix static lib
+        "blood_runtime.lib",   // Windows static lib
+    ];
+
+    // Try relative to the executable (works in cargo builds)
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            // Check in target/{debug,release} directory
+            for name in &rust_runtime_names {
+                let rust_runtime = exe_dir.join(name);
+                if rust_runtime.exists() {
+                    return Some(rust_runtime);
+                }
+            }
+
+            // Check in parent target directory
+            if let Some(target_dir) = exe_dir.parent() {
+                for name in &rust_runtime_names {
+                    for profile in &["debug", "release"] {
+                        let rust_runtime = target_dir.join(profile).join(name);
+                        if rust_runtime.exists() {
+                            return Some(rust_runtime);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
 /// Build command - compile to executable
 fn cmd_build(args: &FileArgs, verbosity: u8) -> ExitCode {
     let source = match read_source(&args.file) {
@@ -360,6 +458,56 @@ fn cmd_build(args: &FileArgs, verbosity: u8) -> ExitCode {
         eprintln!("Type checking passed. {} items.", hir_crate.items.len());
     }
 
+    // Compute content hashes for definitions (Phase 4 integration point)
+    // This is a simplified implementation - full canonicalization would use
+    // de Bruijn indices and proper AST normalization.
+    if verbosity > 1 {
+        eprintln!("Computing content hashes...");
+        for (&def_id, item) in &hir_crate.items {
+            // For now, hash the debug representation of the item
+            // A proper implementation would use canonical AST serialization
+            let item_repr = format!("{:?}", item);
+            let hash = ContentHash::compute(item_repr.as_bytes());
+            eprintln!("  {:?}: {} ({})", def_id, hash.short_display(), item.name);
+        }
+    }
+
+    // Lower to MIR (Phase 3 integration point)
+    let mut mir_lowering = mir::MirLowering::new(&hir_crate);
+    match mir_lowering.lower_crate() {
+        Ok(mir_bodies) => {
+            if verbosity > 1 {
+                eprintln!("MIR lowering passed. {} function bodies.", mir_bodies.len());
+            }
+
+            // Run escape analysis on MIR bodies
+            let escape_results: std::collections::HashMap<_, _> = mir_bodies.iter()
+                .map(|(&def_id, body)| {
+                    let mut analyzer = mir::EscapeAnalyzer::new();
+                    (def_id, analyzer.analyze(body))
+                })
+                .collect();
+
+            if verbosity > 1 {
+                eprintln!("Escape analysis complete. {} functions analyzed.", escape_results.len());
+            }
+
+            // Note: MIR bodies and escape_results are computed but not yet used by codegen.
+            // Codegen still operates on HIR directly.
+            // TODO: Wire MIR-based codegen in a future iteration.
+            let _ = (mir_bodies, escape_results); // Suppress unused warnings
+        }
+        Err(errors) => {
+            // MIR lowering errors are non-fatal for now - fall back to HIR codegen
+            if verbosity > 0 {
+                for error in &errors {
+                    emitter.emit(error);
+                }
+                eprintln!("Warning: MIR lowering failed, using HIR codegen.");
+            }
+        }
+    }
+
     // Generate LLVM IR
     match codegen::compile_to_ir(&hir_crate) {
         Ok(ir) => {
@@ -384,17 +532,26 @@ fn cmd_build(args: &FileArgs, verbosity: u8) -> ExitCode {
                 eprintln!("Generated object file: {}", output_obj.display());
             }
 
-            // Link with runtime
-            let runtime_path = std::env::current_dir()
-                .map(|d| d.join("runtime/runtime.o"))
-                .unwrap_or_else(|_| PathBuf::from("runtime/runtime.o"));
+            // Link with runtimes
+            // C runtime is required (provides main entry point)
+            // Rust runtime is optional (provides advanced features like fibers, channels)
+            let (c_runtime, rust_runtime) = find_runtime_paths();
 
-            let status = std::process::Command::new("cc")
-                .arg(&output_obj)
-                .arg(&runtime_path)
-                .arg("-o")
-                .arg(&output_exe)
-                .status();
+            let mut link_cmd = std::process::Command::new("cc");
+            link_cmd.arg(&output_obj);
+            link_cmd.arg(&c_runtime);
+
+            // Add Rust runtime if available
+            if let Some(rust_rt) = &rust_runtime {
+                link_cmd.arg(rust_rt);
+                if verbosity > 0 {
+                    eprintln!("Linking with Rust runtime: {}", rust_rt.display());
+                }
+            }
+
+            link_cmd.arg("-o").arg(&output_exe);
+
+            let status = link_cmd.status();
 
             match status {
                 Ok(s) if s.success() => {

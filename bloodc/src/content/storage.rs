@@ -405,7 +405,6 @@ impl Codebase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::content::canonical::DeBruijnIndex;
 
     fn make_test_ast(value: i128) -> CanonicalAST {
         CanonicalAST::IntLit(value)

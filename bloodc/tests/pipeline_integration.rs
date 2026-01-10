@@ -9,14 +9,18 @@ use string_interner::StringInterner;
 use std::fs;
 
 /// Test helper to run the full pipeline on source code.
+/// Kept for use in future type-checking tests.
+#[allow(dead_code)]
 fn check_source(source: &str) -> Result<bloodc::hir::Crate, Vec<bloodc::Diagnostic>> {
     let mut parser = Parser::new(source);
-    let program = parser.parse_program().map_err(|e| e)?;
+    let program = parser.parse_program()?;
     let interner = StringInterner::default();
     check_program(&program, source, interner)
 }
 
 /// Test helper to verify source type-checks successfully.
+/// Kept for use in future type-checking tests.
+#[allow(dead_code)]
 fn assert_type_checks(source: &str) {
     match check_source(source) {
         Ok(_) => (),
@@ -34,6 +38,8 @@ fn assert_type_checks(source: &str) {
 }
 
 /// Test helper to verify source fails type checking with expected error.
+/// Kept for use in future type-checking tests.
+#[allow(dead_code)]
 fn assert_type_error(source: &str, expected: &str) {
     match check_source(source) {
         Ok(_) => panic!("Expected type error containing '{}', but type checking succeeded", expected),

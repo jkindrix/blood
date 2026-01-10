@@ -309,11 +309,11 @@ mod tests {
     fn test_content_hasher_f64_determinism() {
         // Verify f64 hashing is deterministic for same value
         let mut h1 = ContentHasher::new();
-        h1.update_f64(3.14159);
+        h1.update_f64(1.234567);
         let hash1 = h1.finalize();
 
         let mut h2 = ContentHasher::new();
-        h2.update_f64(3.14159);
+        h2.update_f64(1.234567);
         let hash2 = h2.finalize();
 
         assert_eq!(hash1, hash2);
