@@ -5,7 +5,6 @@
 
 use std::collections::HashMap;
 
-use crate::ast;
 use crate::hir::{DefId, DefKind, LocalId, Type, PrimitiveTy};
 // Type primitives imported if needed for future expansion
 use crate::span::Span;
@@ -85,6 +84,8 @@ pub enum ScopeKind {
     Impl,
     /// A trait definition scope.
     Trait,
+    /// An effect handler scope (with...handle block).
+    Handler,
 }
 
 /// A binding in a scope.
@@ -175,7 +176,7 @@ impl<'a> Resolver<'a> {
     }
 
     /// Get the current scope mutably.
-    fn current_scope_mut(&mut self) -> &mut Scope {
+    pub fn current_scope_mut(&mut self) -> &mut Scope {
         let idx = self.current_scope_idx();
         &mut self.scopes[idx]
     }
@@ -341,15 +342,18 @@ impl<'a> Resolver<'a> {
         false
     }
 
-    /// Get symbol name from source.
-    ///
-    /// Note: This is a placeholder. In the real implementation,
-    /// symbol resolution would use the string interner from the parser.
-    pub fn get_symbol_name(&self, _symbol: ast::Symbol) -> &str {
-        // Symbols are interned strings - we need to look them up
-        // For now, this is a placeholder - actual implementation depends on interner
-        // In the real implementation, we'd use the string interner
-        ""
+    /// Check if we're inside a handler (effect handler body).
+    pub fn in_handler(&self) -> bool {
+        for &idx in self.scope_stack.iter().rev() {
+            if self.scopes[idx].kind == ScopeKind::Handler {
+                return true;
+            }
+            // Stop at function boundary
+            if self.scopes[idx].kind == ScopeKind::Function {
+                return false;
+            }
+        }
+        false
     }
 
     /// Report an error.

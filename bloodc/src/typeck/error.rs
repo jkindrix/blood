@@ -168,6 +168,14 @@ impl TypeError {
                 "E1033",
                 format!("invalid effect handler: {reason}"),
             ),
+            TypeErrorKind::NotAnEffect { name } => (
+                "E1034",
+                format!("`{name}` is not an effect"),
+            ),
+            TypeErrorKind::InvalidEffectType { found } => (
+                "E1035",
+                format!("invalid effect type syntax: expected a named effect like `State<T>`, found {found}"),
+            ),
         };
 
         let mut diag = Diagnostic::error(message, self.span).with_code(code);
@@ -312,6 +320,14 @@ pub enum TypeErrorKind {
     /// Invalid effect handler.
     InvalidHandler {
         reason: String,
+    },
+    /// Not an effect.
+    NotAnEffect {
+        name: String,
+    },
+    /// Invalid effect type syntax (expected a named effect like `State<T>`).
+    InvalidEffectType {
+        found: String,
     },
 }
 

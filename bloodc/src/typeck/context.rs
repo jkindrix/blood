@@ -37,6 +37,10 @@ pub struct TypeContext<'a> {
     pending_bodies: Vec<(DefId, ast::FnDecl)>,
     /// The current function's return type.
     return_type: Option<Type>,
+    /// The current function's DefId (for effect checking).
+    current_fn: Option<DefId>,
+    /// Stack of currently handled effects (from enclosing with...handle blocks).
+    handled_effects: Vec<DefId>,
     /// Errors encountered.
     errors: Vec<TypeError>,
     /// Compiled bodies.
@@ -56,6 +60,12 @@ pub struct TypeContext<'a> {
     /// Builtin function names (DefId -> function name).
     /// Used by codegen to resolve runtime function calls.
     builtin_fns: HashMap<DefId, String>,
+    /// Effect definitions.
+    effect_defs: HashMap<DefId, EffectInfo>,
+    /// Handler definitions.
+    handler_defs: HashMap<DefId, HandlerInfo>,
+    /// Effect annotations for functions (DefId -> list of effects the function uses).
+    fn_effects: HashMap<DefId, Vec<EffectRef>>,
 }
 
 /// Information about a struct.
@@ -91,6 +101,46 @@ pub struct VariantInfo {
     pub def_id: DefId,
 }
 
+/// Information about an effect.
+#[derive(Debug, Clone)]
+pub struct EffectInfo {
+    pub name: String,
+    pub operations: Vec<OperationInfo>,
+    pub generics: Vec<TyVarId>,
+}
+
+/// Information about an effect operation.
+#[derive(Debug, Clone)]
+pub struct OperationInfo {
+    pub name: String,
+    pub params: Vec<Type>,
+    pub return_ty: Type,
+    pub def_id: DefId,
+}
+
+/// Information about a handler.
+#[derive(Debug, Clone)]
+pub struct HandlerInfo {
+    pub name: String,
+    /// The effect this handler handles (DefId of the effect).
+    pub effect_id: DefId,
+    /// The operations implemented by this handler.
+    pub operations: Vec<String>,
+    pub generics: Vec<TyVarId>,
+    /// State fields in the handler (used for struct-like initialization).
+    pub fields: Vec<FieldInfo>,
+}
+
+/// A reference to an effect with type arguments.
+/// For example, `State<i32>` would be EffectRef { def_id: State's DefId, type_args: [i32] }
+#[derive(Debug, Clone)]
+pub struct EffectRef {
+    /// The effect definition this refers to.
+    pub def_id: DefId,
+    /// Type arguments instantiating the effect's generics.
+    pub type_args: Vec<Type>,
+}
+
 impl<'a> TypeContext<'a> {
     /// Create a new type context.
     pub fn new(source: &'a str, interner: DefaultStringInterner) -> Self {
@@ -104,6 +154,8 @@ impl<'a> TypeContext<'a> {
             enum_defs: HashMap::new(),
             pending_bodies: Vec::new(),
             return_type: None,
+            current_fn: None,
+            handled_effects: Vec::new(),
             errors: Vec::new(),
             bodies: HashMap::new(),
             fn_bodies: HashMap::new(),
@@ -112,6 +164,9 @@ impl<'a> TypeContext<'a> {
             generic_params: HashMap::new(),
             next_type_param_id: 0,
             builtin_fns: HashMap::new(),
+            effect_defs: HashMap::new(),
+            handler_defs: HashMap::new(),
+            fn_effects: HashMap::new(),
         };
         ctx.register_builtins();
         ctx
@@ -255,8 +310,35 @@ impl<'a> TypeContext<'a> {
             ast::Declaration::Enum(e) => self.collect_enum(e),
             ast::Declaration::Const(c) => self.collect_const(c),
             ast::Declaration::Static(s) => self.collect_static(s),
-            // Type alias, trait, impl, effect, handler - Phase 2+
-            _ => Ok(()), // Skip for now
+            ast::Declaration::Effect(e) => self.collect_effect(e),
+            ast::Declaration::Handler(h) => self.collect_handler(h),
+            ast::Declaration::Type(t) => {
+                // Type aliases - Phase 2+
+                Err(TypeError::new(
+                    TypeErrorKind::UnsupportedFeature {
+                        feature: "type aliases are not yet supported".to_string(),
+                    },
+                    t.span,
+                ))
+            }
+            ast::Declaration::Impl(i) => {
+                // Impl blocks - Phase 2+
+                Err(TypeError::new(
+                    TypeErrorKind::UnsupportedFeature {
+                        feature: "impl blocks are not yet supported".to_string(),
+                    },
+                    i.span,
+                ))
+            }
+            ast::Declaration::Trait(t) => {
+                // Trait declarations - Phase 2+
+                Err(TypeError::new(
+                    TypeErrorKind::UnsupportedFeature {
+                        feature: "trait declarations are not yet supported".to_string(),
+                    },
+                    t.span,
+                ))
+            }
         }
     }
 
@@ -304,9 +386,152 @@ impl<'a> TypeContext<'a> {
         sig.generics = generics_vec;
         self.fn_sigs.insert(def_id, sig);
 
+        // Parse and store the function's effect annotation
+        if let Some(ref effect_row) = func.effects {
+            let effects = self.parse_effect_row(effect_row)?;
+            if !effects.is_empty() {
+                self.fn_effects.insert(def_id, effects);
+            }
+        }
+
         // Queue function for later body type-checking
         if func.body.is_some() {
             self.pending_bodies.push((def_id, func.clone()));
+        }
+
+        Ok(())
+    }
+
+    /// Parse an effect row annotation into a list of EffectRefs.
+    fn parse_effect_row(&mut self, effect_row: &ast::EffectRow) -> Result<Vec<EffectRef>, TypeError> {
+        match &effect_row.kind {
+            ast::EffectRowKind::Pure => Ok(Vec::new()),
+            ast::EffectRowKind::Var(_) => {
+                // Effect polymorphism - Phase 2+
+                Ok(Vec::new())
+            }
+            ast::EffectRowKind::Effects { effects, rest: _ } => {
+                let mut result = Vec::new();
+                for effect_ty in effects {
+                    if let Some(effect_ref) = self.resolve_effect_type(effect_ty)? {
+                        result.push(effect_ref);
+                    }
+                }
+                Ok(result)
+            }
+        }
+    }
+
+    /// Resolve an effect type (like `State<i32>`) to an EffectRef.
+    fn resolve_effect_type(&mut self, ty: &ast::Type) -> Result<Option<EffectRef>, TypeError> {
+        match &ty.kind {
+            ast::TypeKind::Path(path) => {
+                if path.segments.is_empty() {
+                    return Ok(None);
+                }
+
+                let effect_name = self.symbol_to_string(path.segments[0].name.node);
+
+                // IO is a built-in effect, not user-defined
+                if effect_name == "IO" {
+                    return Ok(None);
+                }
+
+                // Look up the effect by name in the global bindings
+                if let Some(binding) = self.resolver.lookup(&effect_name) {
+                    if let super::resolve::Binding::Def(def_id) = binding {
+                        // Verify it's actually an effect
+                        if self.effect_defs.contains_key(&def_id) {
+                            // Parse type arguments
+                            let type_args = if let Some(ref args) = path.segments[0].args {
+                                let mut parsed_args = Vec::new();
+                                for arg in &args.args {
+                                    if let ast::TypeArg::Type(arg_ty) = arg {
+                                        parsed_args.push(self.ast_type_to_hir_type(arg_ty)?);
+                                    }
+                                }
+                                parsed_args
+                            } else {
+                                Vec::new()
+                            };
+
+                            return Ok(Some(EffectRef { def_id, type_args }));
+                        }
+                    }
+                }
+
+                Ok(None)
+            }
+            other => {
+                // Non-path types are invalid effect types
+                let found = match other {
+                    ast::TypeKind::Reference { .. } => "reference type",
+                    ast::TypeKind::Pointer { .. } => "pointer type",
+                    ast::TypeKind::Array { .. } => "array type",
+                    ast::TypeKind::Slice { .. } => "slice type",
+                    ast::TypeKind::Tuple(_) => "tuple type",
+                    ast::TypeKind::Function { .. } => "function type",
+                    ast::TypeKind::Record { .. } => "record type",
+                    ast::TypeKind::Ownership { .. } => "ownership-qualified type",
+                    ast::TypeKind::Never => "never type",
+                    ast::TypeKind::Infer => "inferred type",
+                    ast::TypeKind::Paren(inner) => {
+                        // For parenthesized types, recurse
+                        return self.resolve_effect_type(inner);
+                    }
+                    ast::TypeKind::Path(_) => unreachable!(), // handled above
+                };
+                Err(TypeError::new(
+                    TypeErrorKind::InvalidEffectType { found: found.to_string() },
+                    ty.span,
+                ))
+            }
+        }
+    }
+
+    /// Register effect operations in the current scope based on a function's declared effects.
+    ///
+    /// This makes effect operations like `get()` and `put()` available within functions
+    /// that declare they use those effects (e.g., `fn counter() / {State<i32>}`).
+    fn register_effect_operations_in_scope(&mut self, fn_def_id: DefId) -> Result<(), TypeError> {
+        // Get the function's declared effects
+        let effects = match self.fn_effects.get(&fn_def_id) {
+            Some(effects) => effects.clone(),
+            None => return Ok(()), // No effects declared
+        };
+
+        for effect_ref in effects {
+            // Get the effect definition
+            let effect_info = match self.effect_defs.get(&effect_ref.def_id) {
+                Some(info) => info.clone(),
+                None => {
+                    // This indicates an internal compiler error - the effect was registered
+                    // in fn_effects but not found in effect_defs
+                    eprintln!(
+                        "ICE: Effect {:?} registered in fn_effects but not found in effect_defs",
+                        effect_ref.def_id
+                    );
+                    continue;
+                }
+            };
+
+            // Build a substitution map from effect's generic params to concrete types
+            let mut substitution: HashMap<TyVarId, Type> = HashMap::new();
+            for (i, &generic_var) in effect_info.generics.iter().enumerate() {
+                if let Some(concrete_ty) = effect_ref.type_args.get(i) {
+                    substitution.insert(generic_var, concrete_ty.clone());
+                }
+            }
+
+            // Register each operation in the current scope for name lookup.
+            // Note: We don't overwrite fn_sigs here - the generic signature is kept
+            // and substitution happens at the Perform expression site.
+            for op_info in &effect_info.operations {
+                // Add the operation to the current scope so it can be called by name
+                self.resolver.current_scope_mut()
+                    .bindings
+                    .insert(op_info.name.clone(), super::resolve::Binding::Def(op_info.def_id));
+            }
         }
 
         Ok(())
@@ -498,6 +723,189 @@ impl<'a> TypeContext<'a> {
         Ok(())
     }
 
+    /// Collect an effect declaration.
+    fn collect_effect(&mut self, effect: &ast::EffectDecl) -> Result<(), TypeError> {
+        let name = self.symbol_to_string(effect.name.node);
+        let def_id = self.resolver.define_item(
+            name.clone(),
+            hir::DefKind::Effect,
+            effect.span,
+        )?;
+
+        // Collect generic parameters
+        let saved_generic_params = std::mem::take(&mut self.generic_params);
+        let mut generics_vec = Vec::new();
+        if let Some(ref type_params) = effect.type_params {
+            for param in &type_params.params {
+                let param_name = self.symbol_to_string(param.name.node);
+                let ty_var = TyVarId(self.next_type_param_id);
+                self.next_type_param_id += 1;
+                self.generic_params.insert(param_name, ty_var);
+                generics_vec.push(ty_var);
+            }
+        }
+
+        // Collect operations
+        let mut operations = Vec::new();
+        for (index, op) in effect.operations.iter().enumerate() {
+            let op_name = self.symbol_to_string(op.name.node);
+
+            // Generate a DefId for the operation WITHOUT registering it globally.
+            // Effect operations are only available within functions that declare the effect.
+            // They will be registered in scope when checking function bodies.
+            let op_def_id = self.resolver.next_def_id();
+
+            // Register def_info for the operation (but NOT in any scope)
+            self.resolver.def_info.insert(op_def_id, super::resolve::DefInfo {
+                kind: hir::DefKind::Fn,
+                name: op_name.clone(),
+                span: op.span,
+                ty: None,
+                parent: Some(def_id),  // Parent is the effect
+            });
+
+            // Collect parameter types
+            let params: Vec<Type> = op.params.iter()
+                .map(|p| self.ast_type_to_hir_type(&p.ty))
+                .collect::<Result<_, _>>()?;
+
+            // Get return type
+            let return_ty = self.ast_type_to_hir_type(&op.return_type)?;
+
+            operations.push(OperationInfo {
+                name: op_name.clone(),
+                params,
+                return_ty,
+                def_id: op_def_id,
+            });
+
+            // Also register the operation signature for type checking
+            // Include the effect's type parameters as generics so they can be instantiated
+            self.fn_sigs.insert(op_def_id, hir::FnSig {
+                inputs: operations[index].params.clone(),
+                output: operations[index].return_ty.clone(),
+                is_const: false,
+                is_async: false,
+                is_unsafe: false,
+                generics: generics_vec.clone(),
+            });
+
+            // Note: Effect operations are not builtins - they will be handled
+            // by the effect handler at runtime. For now, we just register the
+            // signature. Full effect codegen is Phase 2.
+        }
+
+        // Restore generic params
+        self.generic_params = saved_generic_params;
+
+        self.effect_defs.insert(def_id, EffectInfo {
+            name,
+            operations,
+            generics: generics_vec,
+        });
+
+        Ok(())
+    }
+
+    /// Collect a handler declaration.
+    fn collect_handler(&mut self, handler: &ast::HandlerDecl) -> Result<(), TypeError> {
+        let name = self.symbol_to_string(handler.name.node);
+        let def_id = self.resolver.define_item(
+            name.clone(),
+            hir::DefKind::Handler,
+            handler.span,
+        )?;
+
+        // Collect generic parameters
+        let saved_generic_params = std::mem::take(&mut self.generic_params);
+        let mut generics_vec = Vec::new();
+        if let Some(ref type_params) = handler.type_params {
+            for param in &type_params.params {
+                let param_name = self.symbol_to_string(param.name.node);
+                let ty_var = TyVarId(self.next_type_param_id);
+                self.next_type_param_id += 1;
+                self.generic_params.insert(param_name, ty_var);
+                generics_vec.push(ty_var);
+            }
+        }
+
+        // Find the effect this handler handles
+        // The effect is a Type, we need to resolve it to a DefId
+        let effect_ref = self.resolve_effect_type(&handler.effect)?
+            .ok_or_else(|| TypeError::new(
+                TypeErrorKind::NotAnEffect { name: "unknown".to_string() },
+                handler.effect.span,
+            ))?;
+        let effect_id = effect_ref.def_id;
+
+        // Collect operation names implemented by this handler
+        let operations: Vec<String> = handler.operations.iter()
+            .map(|op| self.symbol_to_string(op.name.node))
+            .collect();
+
+        // Validate that the handler implements all required operations from the effect
+        if let Some(effect_info) = self.effect_defs.get(&effect_id) {
+            let effect_op_names: Vec<&str> = effect_info.operations.iter()
+                .map(|op| op.name.as_str())
+                .collect();
+
+            // Check for missing operations
+            for effect_op in &effect_op_names {
+                if !operations.iter().any(|op| op == *effect_op) {
+                    self.resolver.error(TypeError::new(
+                        TypeErrorKind::InvalidHandler {
+                            reason: format!(
+                                "handler `{}` missing operation `{}` from effect",
+                                name, effect_op
+                            ),
+                        },
+                        handler.span,
+                    ));
+                }
+            }
+
+            // Check for unknown operations
+            for handler_op in &operations {
+                if !effect_op_names.contains(&handler_op.as_str()) {
+                    self.resolver.error(TypeError::new(
+                        TypeErrorKind::InvalidHandler {
+                            reason: format!(
+                                "handler `{}` defines unknown operation `{}`",
+                                name, handler_op
+                            ),
+                        },
+                        handler.span,
+                    ));
+                }
+            }
+        }
+
+        // Collect state fields (while generic params are still in scope)
+        let mut fields = Vec::new();
+        for (i, state_field) in handler.state.iter().enumerate() {
+            let field_name = self.symbol_to_string(state_field.name.node);
+            let field_ty = self.ast_type_to_hir_type(&state_field.ty)?;
+            fields.push(FieldInfo {
+                name: field_name,
+                ty: field_ty,
+                index: i as u32,
+            });
+        }
+
+        // Restore generic params
+        self.generic_params = saved_generic_params;
+
+        self.handler_defs.insert(def_id, HandlerInfo {
+            name,
+            effect_id,
+            operations,
+            generics: generics_vec,
+            fields,
+        });
+
+        Ok(())
+    }
+
     /// Type-check all queued bodies.
     pub fn check_all_bodies(&mut self) -> Result<(), Vec<Diagnostic>> {
         let pending = std::mem::take(&mut self.pending_bodies);
@@ -535,6 +943,9 @@ impl<'a> TypeContext<'a> {
         let _ = self.resolver.next_local_id();
         self.locals.clear();
 
+        // Register effect operations in scope based on function's declared effects
+        self.register_effect_operations_in_scope(def_id)?;
+
         // Add return place
         self.locals.push(hir::Local {
             id: LocalId::RETURN_PLACE,
@@ -547,44 +958,110 @@ impl<'a> TypeContext<'a> {
         // Set return type for return statements
         self.return_type = Some(sig.output.clone());
 
+        // Set current function for effect checking
+        self.current_fn = Some(def_id);
+
         // Add parameters as locals with their actual names from the AST
         for (i, param) in func.params.iter().enumerate() {
-            let param_ty = sig.inputs.get(i).cloned().unwrap_or_else(Type::error);
+            let param_ty = sig.inputs.get(i).cloned().ok_or_else(|| {
+                // This indicates a bug: parameter count mismatch between AST and signature
+                TypeError::new(
+                    TypeErrorKind::WrongArity {
+                        expected: sig.inputs.len(),
+                        found: func.params.len(),
+                    },
+                    param.span,
+                )
+            })?;
 
-            // Extract name and mutability from the parameter pattern
-            let (param_name, mutable) = match &param.pattern.kind {
+            // Handle the parameter pattern
+            match &param.pattern.kind {
                 ast::PatternKind::Ident { name, mutable, .. } => {
-                    (self.symbol_to_string(name.node), *mutable)
+                    let param_name = self.symbol_to_string(name.node);
+                    let local_id = self.resolver.define_local(
+                        param_name.clone(),
+                        param_ty.clone(),
+                        *mutable,
+                        param.span,
+                    )?;
+
+                    self.locals.push(hir::Local {
+                        id: local_id,
+                        ty: param_ty,
+                        mutable: *mutable,
+                        name: Some(param_name),
+                        span: param.span,
+                    });
                 }
                 ast::PatternKind::Wildcard => {
-                    // Anonymous parameter - generate a unique name
-                    (format!("_param{i}"), false)
+                    // Anonymous parameter - generate a unique name but don't expose it
+                    let param_name = format!("_param{i}");
+                    let local_id = self.resolver.next_local_id();
+
+                    self.locals.push(hir::Local {
+                        id: local_id,
+                        ty: param_ty,
+                        mutable: false,
+                        name: Some(param_name),
+                        span: param.span,
+                    });
+                }
+                ast::PatternKind::Tuple { fields, .. } => {
+                    // Tuple destructuring in parameters: fn foo((x, y): (i32, i32))
+                    // Create a hidden parameter local, then define the pattern bindings
+                    let hidden_name = format!("__param{i}");
+                    let _hidden_local_id = self.resolver.define_local(
+                        hidden_name.clone(),
+                        param_ty.clone(),
+                        false,
+                        param.span,
+                    )?;
+
+                    // Now define the pattern bindings from the tuple type
+                    let elem_types = match param_ty.kind() {
+                        hir::TypeKind::Tuple(elems) => elems.clone(),
+                        _ => {
+                            return Err(TypeError::new(
+                                TypeErrorKind::NotATuple { ty: param_ty.clone() },
+                                param.span,
+                            ));
+                        }
+                    };
+
+                    if fields.len() != elem_types.len() {
+                        return Err(TypeError::new(
+                            TypeErrorKind::WrongArity {
+                                expected: elem_types.len(),
+                                found: fields.len(),
+                            },
+                            param.span,
+                        ));
+                    }
+
+                    // Define each element of the tuple pattern
+                    for (field_pat, elem_ty) in fields.iter().zip(elem_types.iter()) {
+                        self.define_pattern(field_pat, elem_ty.clone())?;
+                    }
+
+                    // Add a local for the whole parameter (for param_count tracking)
+                    self.locals.push(hir::Local {
+                        id: self.resolver.next_local_id(),
+                        ty: param_ty,
+                        mutable: false,
+                        name: Some(hidden_name),
+                        span: param.span,
+                    });
                 }
                 _ => {
-                    // Complex pattern - generate a placeholder name for now.
-                    // Phase 2+: Implement destructuring patterns in function parameters,
-                    // allowing patterns like `fn foo((x, y): (i32, i32))` to directly
-                    // bind tuple elements. This requires generating hidden temporaries
-                    // and pattern-matching code in the function prologue.
-                    (format!("param{i}"), false)
+                    // Other complex patterns - return an error instead of silently failing
+                    return Err(TypeError::new(
+                        TypeErrorKind::UnsupportedFeature {
+                            feature: "complex patterns in function parameters (only identifiers and tuples supported)".to_string(),
+                        },
+                        param.span,
+                    ));
                 }
-            };
-
-            // Register the parameter in the resolver so it can be looked up by name
-            let local_id = self.resolver.define_local(
-                param_name.clone(),
-                param_ty.clone(),
-                mutable,
-                param.span,
-            )?;
-
-            self.locals.push(hir::Local {
-                id: local_id,
-                ty: param_ty,
-                mutable,
-                name: Some(param_name),
-                span: param.span,
-            });
+            }
         }
 
         // Type-check the body
@@ -720,17 +1197,144 @@ impl<'a> TypeContext<'a> {
                 });
                 Ok(local_id)
             }
-            // More complex patterns - Phase 2+
-            _ => {
-                let local_id = self.resolver.next_local_id();
-                self.locals.push(hir::Local {
-                    id: local_id,
-                    ty,
-                    mutable: false,
-                    name: None,
-                    span: pattern.span,
-                });
-                Ok(local_id)
+            ast::PatternKind::Tuple { fields, .. } => {
+                // Tuple destructuring pattern: let (x, y) = ...
+                // Need to extract element types from the tuple type
+                let elem_types = match ty.kind() {
+                    hir::TypeKind::Tuple(elems) => elems.clone(),
+                    hir::TypeKind::Infer(_) => {
+                        // Type not yet known - create fresh variables for each element
+                        (0..fields.len())
+                            .map(|_| self.unifier.fresh_var())
+                            .collect::<Vec<_>>()
+                    }
+                    _ => {
+                        return Err(TypeError::new(
+                            TypeErrorKind::NotATuple { ty: ty.clone() },
+                            pattern.span,
+                        ));
+                    }
+                };
+
+                // Check arity matches
+                if fields.len() != elem_types.len() {
+                    return Err(TypeError::new(
+                        TypeErrorKind::WrongArity {
+                            expected: elem_types.len(),
+                            found: fields.len(),
+                        },
+                        pattern.span,
+                    ));
+                }
+
+                // If we inferred element types, unify with the original type
+                if matches!(ty.kind(), hir::TypeKind::Infer(_)) {
+                    let tuple_ty = Type::tuple(elem_types.clone());
+                    self.unifier.unify(&ty, &tuple_ty, pattern.span)?;
+                }
+
+                // Recursively define each element pattern
+                // Return the first local_id (for the overall pattern binding)
+                let mut first_local_id = None;
+                for (field_pat, elem_ty) in fields.iter().zip(elem_types.iter()) {
+                    let local_id = self.define_pattern(field_pat, elem_ty.clone())?;
+                    if first_local_id.is_none() {
+                        first_local_id = Some(local_id);
+                    }
+                }
+
+                // Return the first local id, or create a placeholder if no fields
+                Ok(first_local_id.unwrap_or_else(|| {
+                    let local_id = self.resolver.next_local_id();
+                    self.locals.push(hir::Local {
+                        id: local_id,
+                        ty: Type::unit(),
+                        mutable: false,
+                        name: None,
+                        span: pattern.span,
+                    });
+                    local_id
+                }))
+            }
+            ast::PatternKind::Paren(inner) => {
+                // Parenthesized pattern - just unwrap
+                self.define_pattern(inner, ty)
+            }
+            ast::PatternKind::Literal(_) => {
+                // Literal patterns in let bindings don't make sense (can't bind)
+                // But they should be allowed in match arms. For let, error out.
+                Err(TypeError::new(
+                    TypeErrorKind::UnsupportedFeature {
+                        feature: "literal patterns in let bindings (use match instead)".to_string(),
+                    },
+                    pattern.span,
+                ))
+            }
+            ast::PatternKind::Path(_) => {
+                // Path patterns (like enum variants) in let bindings - error
+                Err(TypeError::new(
+                    TypeErrorKind::UnsupportedFeature {
+                        feature: "path patterns in let bindings (use match instead)".to_string(),
+                    },
+                    pattern.span,
+                ))
+            }
+            ast::PatternKind::TupleStruct { .. } => {
+                // Tuple struct patterns in let - error (use match)
+                Err(TypeError::new(
+                    TypeErrorKind::UnsupportedFeature {
+                        feature: "tuple struct patterns in let bindings (use match instead)".to_string(),
+                    },
+                    pattern.span,
+                ))
+            }
+            ast::PatternKind::Rest => {
+                Err(TypeError::new(
+                    TypeErrorKind::UnsupportedFeature {
+                        feature: "rest patterns (..) in let bindings".to_string(),
+                    },
+                    pattern.span,
+                ))
+            }
+            ast::PatternKind::Ref { .. } => {
+                Err(TypeError::new(
+                    TypeErrorKind::UnsupportedFeature {
+                        feature: "reference patterns (&x) in let bindings".to_string(),
+                    },
+                    pattern.span,
+                ))
+            }
+            ast::PatternKind::Struct { .. } => {
+                Err(TypeError::new(
+                    TypeErrorKind::UnsupportedFeature {
+                        feature: "struct patterns in let bindings".to_string(),
+                    },
+                    pattern.span,
+                ))
+            }
+            ast::PatternKind::Slice { .. } => {
+                Err(TypeError::new(
+                    TypeErrorKind::UnsupportedFeature {
+                        feature: "slice patterns in let bindings".to_string(),
+                    },
+                    pattern.span,
+                ))
+            }
+            ast::PatternKind::Or { .. } => {
+                Err(TypeError::new(
+                    TypeErrorKind::UnsupportedFeature {
+                        feature: "or patterns (a | b) in let bindings".to_string(),
+                    },
+                    pattern.span,
+                ))
+            }
+            ast::PatternKind::Range { .. } => {
+                Err(TypeError::new(
+                    TypeErrorKind::UnsupportedFeature {
+                        feature: "range patterns in let bindings".to_string(),
+                    },
+                    pattern.span,
+                ))
             }
         }
     }
@@ -809,20 +1413,39 @@ impl<'a> TypeContext<'a> {
             ast::ExprKind::Closure { is_move, params, return_type, effects: _, body } => {
                 self.infer_closure(*is_move, params, return_type.as_ref(), body, expr.span)
             }
-            ast::ExprKind::WithHandle { handler: _, body } => {
+            ast::ExprKind::WithHandle { handler, body } => {
                 // Handle expression: runs body with an effect handler installed.
                 //
-                // Full effect handling requires:
-                // 1. Looking up the handler definition
-                // 2. Verifying the handler covers the effects used in body
-                // 3. Setting up evidence passing
-                //
-                // For now, we just type-check the body and return it directly.
-                // This allows the code to compile without full effect handling.
-                // TODO: Implement full effect handler type checking (Phase 2.3)
+                // 1. Type-check the handler expression
+                // 2. Extract the handler def_id from its type
+                // 3. Look up the handler to find which effect it handles
+                // 4. Push that effect onto handled_effects
+                // 5. Type-check the body
+                // 6. Pop the effect
+
+                // Type-check the handler expression first
+                let handler_expr = self.infer_expr(handler)?;
+
+                // Extract handler def_id from the type (handlers are ADTs)
+                let handled_effect = match handler_expr.ty.kind() {
+                    hir::TypeKind::Adt { def_id: handler_def_id, .. } => {
+                        self.handler_defs.get(handler_def_id).map(|h| h.effect_id)
+                    }
+                    _ => None,
+                };
+
+                // Push the handled effect onto the stack
+                if let Some(effect_id) = handled_effect {
+                    self.handled_effects.push(effect_id);
+                }
+
                 let body_block = match &body.kind {
                     ast::ExprKind::Block(block) => block,
                     _ => {
+                        // Pop effect if we pushed it
+                        if handled_effect.is_some() {
+                            self.handled_effects.pop();
+                        }
                         return Err(TypeError::new(
                             TypeErrorKind::UnsupportedFeature {
                                 feature: "Handle body must be a block".into(),
@@ -831,52 +1454,636 @@ impl<'a> TypeContext<'a> {
                         ));
                     }
                 };
-                // Type-check the block with unknown expected type
-                // The actual return type will be inferred from the body
-                self.check_block(body_block, &Type::unit())
+
+                // Push a handler scope and register effect operations
+                self.resolver.push_scope(ScopeKind::Handler, body.span);
+
+                // Register the handled effect's operations in this scope
+                if let Some(effect_id) = handled_effect {
+                    if let Some(effect_info) = self.effect_defs.get(&effect_id).cloned() {
+                        for op_info in &effect_info.operations {
+                            // For now, use the generic signature (without instantiation)
+                            // TODO: Properly instantiate based on handler type args
+                            self.resolver.current_scope_mut()
+                                .bindings
+                                .insert(op_info.name.clone(), super::resolve::Binding::Def(op_info.def_id));
+                        }
+                    }
+                }
+
+                // Type-check the block
+                let expected = self.unifier.fresh_var();
+                let result = self.check_block(body_block, &expected);
+
+                // Pop the handler scope
+                self.resolver.pop_scope();
+
+                // Pop the handled effect
+                if handled_effect.is_some() {
+                    self.handled_effects.pop();
+                }
+
+                result
             }
-            ast::ExprKind::Perform { effect: _, operation, args } => {
+            ast::ExprKind::Perform { effect, operation, args } => {
                 // Effect operation: performs an operation from an effect.
                 //
-                // Full effect handling requires:
-                // 1. Looking up the effect definition
-                // 2. Finding the operation
-                // 3. Type checking arguments
-                //
-                // For now, return a placeholder that compiles to a runtime error.
-                // TODO: Implement full effect perform (Phase 2.3)
-                let _op_name = self.symbol_to_string(operation.node);
-                for arg in args {
-                    let _ = self.infer_expr(arg)?;
+                // This requires:
+                // 1. Looking up the effect definition (from explicit path or scope)
+                // 2. Finding the operation within the effect
+                // 3. Type checking arguments against operation signature
+                // 4. Returning the operation's return type
+
+                let op_name = self.symbol_to_string(operation.node);
+
+                // Try to find the operation - either from explicit effect path or from scope
+                let (effect_id, op_index, op_def_id, type_args) = if let Some(effect_path) = effect {
+                    // Explicit effect specified: `perform Effect<T>.op(args)`
+                    // Extract base name (without type args)
+                    let effect_name = if let Some(first_seg) = effect_path.segments.first() {
+                        self.symbol_to_string(first_seg.name.node)
+                    } else {
+                        String::new()
+                    };
+
+                    // Extract type arguments from the first segment
+                    let type_args: Vec<Type> = if let Some(first_seg) = effect_path.segments.first() {
+                        if let Some(ref args) = first_seg.args {
+                            args.args.iter()
+                                .filter_map(|arg| {
+                                    if let ast::TypeArg::Type(ty) = arg {
+                                        self.ast_type_to_hir_type(ty).ok()
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect()
+                        } else {
+                            Vec::new()
+                        }
+                    } else {
+                        Vec::new()
+                    };
+
+                    // Look up the effect by name
+                    let effect_def_id = self.effect_defs.iter()
+                        .find(|(_, info)| info.name == effect_name)
+                        .map(|(def_id, _)| *def_id);
+
+                    match effect_def_id {
+                        Some(eff_id) => {
+                            let effect_info = self.effect_defs.get(&eff_id).cloned();
+                            match effect_info {
+                                Some(info) => {
+                                    // Find the operation by name
+                                    let op_result = info.operations.iter().enumerate()
+                                        .find(|(_, op)| op.name == op_name);
+                                    match op_result {
+                                        Some((idx, op)) => (eff_id, idx as u32, op.def_id, type_args),
+                                        None => {
+                                            self.resolver.error(TypeError::new(
+                                                TypeErrorKind::NotFound { name: format!("{}.{}", effect_name, op_name) },
+                                                operation.span,
+                                            ));
+                                            return Ok(hir::Expr::new(
+                                                hir::ExprKind::Error,
+                                                Type::error(),
+                                                expr.span,
+                                            ));
+                                        }
+                                    }
+                                }
+                                None => {
+                                    self.resolver.error(TypeError::new(
+                                        TypeErrorKind::TypeNotFound { name: effect_name },
+                                        expr.span,
+                                    ));
+                                    return Ok(hir::Expr::new(
+                                        hir::ExprKind::Error,
+                                        Type::error(),
+                                        expr.span,
+                                    ));
+                                }
+                            }
+                        }
+                        None => {
+                            self.resolver.error(TypeError::new(
+                                TypeErrorKind::TypeNotFound { name: effect_name },
+                                expr.span,
+                            ));
+                            return Ok(hir::Expr::new(
+                                hir::ExprKind::Error,
+                                Type::error(),
+                                expr.span,
+                            ));
+                        }
+                    }
+                } else {
+                    // No explicit effect - look up operation in scope
+                    // (it should be registered by register_effect_operations_in_scope)
+                    // Get type args from current function's effect declaration
+                    let binding = self.resolver.lookup(&op_name);
+                    match binding {
+                        Some(super::resolve::Binding::Def(op_def_id)) => {
+                            // Found the operation - now find its parent effect
+                            let def_info = self.resolver.def_info.get(&op_def_id);
+                            match def_info.and_then(|info| info.parent) {
+                                Some(effect_def_id) => {
+                                    // Find operation index in the effect
+                                    let effect_info = self.effect_defs.get(&effect_def_id);
+
+                                    // Get type args from current function's effect declaration
+                                    let type_args = if let Some(fn_id) = self.current_fn {
+                                        if let Some(fn_effects) = self.fn_effects.get(&fn_id) {
+                                            fn_effects.iter()
+                                                .find(|er| er.def_id == effect_def_id)
+                                                .map(|er| er.type_args.clone())
+                                                .unwrap_or_default()
+                                        } else {
+                                            Vec::new()
+                                        }
+                                    } else {
+                                        Vec::new()
+                                    };
+
+                                    match effect_info {
+                                        Some(info) => {
+                                            let op_idx = info.operations.iter()
+                                                .position(|op| op.def_id == op_def_id);
+                                            match op_idx {
+                                                Some(idx) => (effect_def_id, idx as u32, op_def_id, type_args),
+                                                None => {
+                                                    self.resolver.error(TypeError::new(
+                                                        TypeErrorKind::NotFound { name: op_name },
+                                                        operation.span,
+                                                    ));
+                                                    return Ok(hir::Expr::new(
+                                                        hir::ExprKind::Error,
+                                                        Type::error(),
+                                                        expr.span,
+                                                    ));
+                                                }
+                                            }
+                                        }
+                                        None => {
+                                            self.resolver.error(TypeError::new(
+                                                TypeErrorKind::NotFound { name: op_name },
+                                                operation.span,
+                                            ));
+                                            return Ok(hir::Expr::new(
+                                                hir::ExprKind::Error,
+                                                Type::error(),
+                                                expr.span,
+                                            ));
+                                        }
+                                    }
+                                }
+                                None => {
+                                    self.resolver.error(TypeError::new(
+                                        TypeErrorKind::NotFound { name: op_name },
+                                        operation.span,
+                                    ));
+                                    return Ok(hir::Expr::new(
+                                        hir::ExprKind::Error,
+                                        Type::error(),
+                                        expr.span,
+                                    ));
+                                }
+                            }
+                        }
+                        _ => {
+                            self.resolver.error(TypeError::new(
+                                TypeErrorKind::NotFound { name: op_name },
+                                operation.span,
+                            ));
+                            return Ok(hir::Expr::new(
+                                hir::ExprKind::Error,
+                                Type::error(),
+                                expr.span,
+                            ));
+                        }
+                    }
+                };
+
+                // Get the operation's signature for type checking
+                let fn_sig = self.fn_sigs.get(&op_def_id).cloned();
+                let (param_types, return_ty) = match fn_sig {
+                    Some(sig) => {
+                        // Substitute type arguments into the signature if provided
+                        let effect_info = self.effect_defs.get(&effect_id);
+                        if !type_args.is_empty() {
+                            if let Some(info) = effect_info {
+                                // Create substitution map from effect's generic params to provided type args
+                                let substitution: std::collections::HashMap<TyVarId, Type> = info.generics.iter()
+                                    .zip(type_args.iter())
+                                    .map(|(&var_id, ty)| (var_id, ty.clone()))
+                                    .collect();
+
+                                // Substitute in parameter types and return type
+                                let subst_params: Vec<Type> = sig.inputs.iter()
+                                    .map(|ty| self.substitute_type_vars(ty, &substitution))
+                                    .collect();
+                                let subst_return = self.substitute_type_vars(&sig.output, &substitution);
+                                (subst_params, subst_return)
+                            } else {
+                                (sig.inputs.clone(), sig.output.clone())
+                            }
+                        } else {
+                            (sig.inputs.clone(), sig.output.clone())
+                        }
+                    }
+                    None => {
+                        // Fallback: get from EffectInfo
+                        let effect_info = self.effect_defs.get(&effect_id);
+                        match effect_info.and_then(|info| info.operations.get(op_index as usize)) {
+                            Some(op_info) => (op_info.params.clone(), op_info.return_ty.clone()),
+                            None => {
+                                return Ok(hir::Expr::new(
+                                    hir::ExprKind::Error,
+                                    Type::error(),
+                                    expr.span,
+                                ));
+                            }
+                        }
+                    }
+                };
+
+                // Type-check arguments
+                if args.len() != param_types.len() {
+                    self.resolver.error(TypeError::new(
+                        TypeErrorKind::WrongArity {
+                            expected: param_types.len(),
+                            found: args.len(),
+                        },
+                        expr.span,
+                    ));
                 }
+
+                let mut hir_args = Vec::with_capacity(args.len());
+                for (i, arg) in args.iter().enumerate() {
+                    let arg_expr = self.infer_expr(arg)?;
+                    if let Some(expected_ty) = param_types.get(i) {
+                        self.unifier.unify(&arg_expr.ty, expected_ty, arg.span)?;
+                    }
+                    hir_args.push(arg_expr);
+                }
+
                 Ok(hir::Expr::new(
-                    hir::ExprKind::Error,
-                    Type::error(),
+                    hir::ExprKind::Perform {
+                        effect_id,
+                        op_index,
+                        args: hir_args,
+                    },
+                    return_ty,
                     expr.span,
                 ))
             }
             ast::ExprKind::Resume(value) => {
                 // Resume continuation in a handler.
                 //
-                // This should only appear inside a handler operation body.
-                // For now, just type-check the value.
-                // TODO: Implement full resume type checking (Phase 2.3)
+                // This should only appear inside a handler operation body (with...handle block).
+                // The resume expression passes the value back to the caller and continues
+                // the computation. The type of the resume expression itself depends on what
+                // the caller does after the operation completes.
+
+                // Validate we're inside a handler scope
+                if !self.resolver.in_handler() {
+                    self.resolver.error(TypeError::new(
+                        TypeErrorKind::InvalidHandler {
+                            reason: "`resume` can only be used inside an effect handler".to_string(),
+                        },
+                        expr.span,
+                    ));
+                    return Ok(hir::Expr::new(
+                        hir::ExprKind::Error,
+                        Type::error(),
+                        expr.span,
+                    ));
+                }
+
                 let value_expr = self.infer_expr(value)?;
+
+                // The type of the resume expression depends on the continuation's return type.
+                // For deep handlers, this is typically the handler's overall return type.
+                // For now, use a fresh type variable to allow inference.
+                let resume_ty = self.unifier.fresh_var();
+
                 Ok(hir::Expr::new(
                     hir::ExprKind::Resume {
                         value: Some(Box::new(value_expr)),
                     },
-                    Type::unit(), // Actual type depends on handler context
+                    resume_ty,
                     expr.span,
                 ))
             }
-            // More expression kinds - implement as needed
-            _ => {
-                // Placeholder for unimplemented expression kinds
+            ast::ExprKind::MethodCall { receiver, method, type_args: _, args } => {
+                // Method call: x.foo(y)
+                // Look up method on receiver's type, type-check arguments
+                self.infer_method_call(receiver, &method.node, args, expr.span)
+            }
+            ast::ExprKind::Index { base, index } => {
+                // Index expression: x[i]
+                // Check base is indexable, check index type, return element type
+                self.infer_index(base, index, expr.span)
+            }
+            ast::ExprKind::Array(array_expr) => {
+                // Array expression: [1, 2, 3] or [0; 10]
+                self.infer_array(array_expr, expr.span)
+            }
+            ast::ExprKind::Cast { expr: inner, ty } => {
+                // Cast expression: x as T
+                let inner_expr = self.infer_expr(inner)?;
+                let target_ty = self.ast_type_to_hir_type(ty)?;
+
+                // For now, allow casts between numeric types and pointer types
+                // A full implementation would validate the cast is legal
                 Ok(hir::Expr::new(
-                    hir::ExprKind::Error,
-                    Type::error(),
+                    hir::ExprKind::Cast {
+                        expr: Box::new(inner_expr),
+                        target_ty: target_ty.clone(),
+                    },
+                    target_ty,
                     expr.span,
+                ))
+            }
+            ast::ExprKind::AssignOp { op, target, value } => {
+                // Compound assignment: x += y
+                // Desugar to x = x op y
+                let target_expr = self.infer_expr(target)?;
+                let value_expr = self.infer_expr(value)?;
+
+                // For arithmetic ops, both operands must have same type
+                self.unifier.unify(&target_expr.ty, &value_expr.ty, expr.span)?;
+                let result_ty = target_expr.ty.clone();
+
+                Ok(hir::Expr::new(
+                    hir::ExprKind::Assign {
+                        target: Box::new(target_expr.clone()),
+                        value: Box::new(hir::Expr::new(
+                            hir::ExprKind::Binary {
+                                op: *op,
+                                left: Box::new(target_expr),
+                                right: Box::new(value_expr),
+                            },
+                            result_ty,
+                            expr.span,
+                        )),
+                    },
+                    Type::unit(),
+                    expr.span,
+                ))
+            }
+            ast::ExprKind::Unsafe(block) => {
+                // Unsafe block: @unsafe { ... }
+                // Type-check the block, mark it as unsafe context
+                let expected = self.unifier.fresh_var();
+                let block_expr = self.check_block(block, &expected)?;
+                let result_ty = block_expr.ty.clone();
+
+                Ok(hir::Expr::new(
+                    hir::ExprKind::Unsafe(Box::new(block_expr)),
+                    result_ty,
+                    expr.span,
+                ))
+            }
+            ast::ExprKind::Region { body, .. } => {
+                // Region block: region 'a { ... }
+                // Type-check the block (region tracking is a Phase 2+ feature)
+                // For now, just return the block's result
+                let expected = self.unifier.fresh_var();
+                self.check_block(body, &expected)
+            }
+            ast::ExprKind::Range { start, end, inclusive: _ } => {
+                // Range expressions outside of for loops are not yet supported.
+                // In for loops, the range is desugared to a while loop.
+                // For standalone ranges (e.g., for iterators), we'd need Range<T> stdlib type.
+
+                // Type-check start and end for error reporting
+                if let Some(s) = start {
+                    let _ = self.infer_expr(s)?;
+                }
+                if let Some(e) = end {
+                    let _ = self.infer_expr(e)?;
+                }
+
+                Err(TypeError::new(
+                    TypeErrorKind::UnsupportedFeature {
+                        feature: "Range expressions outside of for loops require Range<T> type (not yet implemented)".into(),
+                    },
+                    expr.span,
+                ))
+            }
+        }
+    }
+
+    /// Infer type of a method call.
+    fn infer_method_call(
+        &mut self,
+        receiver: &ast::Expr,
+        method: &ast::Symbol,
+        args: &[ast::CallArg],
+        span: Span,
+    ) -> Result<hir::Expr, TypeError> {
+        let receiver_expr = self.infer_expr(receiver)?;
+        let method_name = self.symbol_to_string(*method);
+
+        // Look up method on receiver type
+        // This would normally use trait resolution, but for now we'll check:
+        // 1. Struct impl methods
+        // 2. Built-in methods on primitive types
+
+        // Type-check arguments
+        let mut hir_args = Vec::with_capacity(args.len());
+        for arg in args {
+            let arg_expr = self.infer_expr(&arg.value)?;
+            hir_args.push(arg_expr);
+        }
+
+        // Try to find method signature
+        let (method_def_id, return_ty) = self.resolve_method(&receiver_expr.ty, &method_name, &hir_args, span)?;
+
+        Ok(hir::Expr::new(
+            hir::ExprKind::MethodCall {
+                receiver: Box::new(receiver_expr),
+                method: method_def_id,
+                args: hir_args,
+            },
+            return_ty,
+            span,
+        ))
+    }
+
+    /// Resolve a method on a type.
+    fn resolve_method(
+        &mut self,
+        receiver_ty: &Type,
+        method_name: &str,
+        _args: &[hir::Expr],
+        span: Span,
+    ) -> Result<(DefId, Type), TypeError> {
+        // For ADTs, look up method in associated functions
+        match receiver_ty.kind() {
+            TypeKind::Adt { def_id: _, .. } => {
+                // Look for method in impl blocks (Phase 2+)
+                // For now, return an error
+                Err(TypeError::new(
+                    TypeErrorKind::NoField {
+                        ty: receiver_ty.clone(),
+                        field: method_name.to_string(),
+                    },
+                    span,
+                ))
+            }
+            TypeKind::Primitive(prim) => {
+                // Built-in methods on primitives (e.g., i32::abs, str::len)
+                // For now, return an error - this requires trait resolution
+                Err(TypeError::new(
+                    TypeErrorKind::NotFound {
+                        name: format!("{}::{}", prim, method_name),
+                    },
+                    span,
+                ))
+            }
+            _ => {
+                Err(TypeError::new(
+                    TypeErrorKind::NotFound {
+                        name: format!("<type>::{}", method_name),
+                    },
+                    span,
+                ))
+            }
+        }
+    }
+
+    /// Infer type of an index expression.
+    fn infer_index(
+        &mut self,
+        base: &ast::Expr,
+        index: &ast::Expr,
+        span: Span,
+    ) -> Result<hir::Expr, TypeError> {
+        let base_expr = self.infer_expr(base)?;
+        let index_expr = self.infer_expr(index)?;
+
+        // Check that index is a usize or integer type
+        match index_expr.ty.kind() {
+            TypeKind::Primitive(PrimitiveTy::Int(_) | PrimitiveTy::Uint(_)) => {}
+            TypeKind::Infer(_) => {
+                // Inferred type - will be resolved later, just default to i32 for index
+                self.unifier.unify(&index_expr.ty, &Type::i32(), span)?;
+            }
+            _ => {
+                return Err(TypeError::new(
+                    TypeErrorKind::NotIndexable { ty: index_expr.ty.clone() },
+                    span,
+                ));
+            }
+        }
+
+        // Determine element type based on base type
+        let elem_ty = match base_expr.ty.kind() {
+            TypeKind::Array { element, .. } => element.clone(),
+            TypeKind::Slice { element } => element.clone(),
+            TypeKind::Ref { inner, .. } => {
+                // Deref and check inner type
+                match inner.kind() {
+                    TypeKind::Array { element, .. } => element.clone(),
+                    TypeKind::Slice { element } => element.clone(),
+                    _ => {
+                        return Err(TypeError::new(
+                            TypeErrorKind::NotIndexable { ty: base_expr.ty.clone() },
+                            span,
+                        ));
+                    }
+                }
+            }
+            _ => {
+                return Err(TypeError::new(
+                    TypeErrorKind::NotIndexable { ty: base_expr.ty.clone() },
+                    span,
+                ));
+            }
+        };
+
+        Ok(hir::Expr::new(
+            hir::ExprKind::Index {
+                base: Box::new(base_expr),
+                index: Box::new(index_expr),
+            },
+            elem_ty,
+            span,
+        ))
+    }
+
+    /// Infer type of an array expression.
+    fn infer_array(
+        &mut self,
+        array_expr: &ast::ArrayExpr,
+        span: Span,
+    ) -> Result<hir::Expr, TypeError> {
+        match array_expr {
+            ast::ArrayExpr::List(elements) => {
+                if elements.is_empty() {
+                    // Empty array - need type annotation
+                    let elem_ty = self.unifier.fresh_var();
+                    return Ok(hir::Expr::new(
+                        hir::ExprKind::Array(vec![]),
+                        Type::array(elem_ty, 0),
+                        span,
+                    ));
+                }
+
+                // Type-check all elements
+                let mut hir_elements = Vec::with_capacity(elements.len());
+                let first_elem = self.infer_expr(&elements[0])?;
+                let elem_ty = first_elem.ty.clone();
+                hir_elements.push(first_elem);
+
+                for elem in &elements[1..] {
+                    let elem_expr = self.infer_expr(elem)?;
+                    // Unify element types
+                    self.unifier.unify(&elem_expr.ty, &elem_ty, elem.span)?;
+                    hir_elements.push(elem_expr);
+                }
+
+                let size = hir_elements.len() as u64;
+                Ok(hir::Expr::new(
+                    hir::ExprKind::Array(hir_elements),
+                    Type::array(elem_ty, size),
+                    span,
+                ))
+            }
+            ast::ArrayExpr::Repeat { value, count } => {
+                // [value; count] - repeat value count times
+                let value_expr = self.infer_expr(value)?;
+                let count_expr = self.infer_expr(count)?;
+
+                // Verify count is an integer type
+                self.unifier.unify(&count_expr.ty, &Type::i32(), count.span)?;
+
+                // Count must be a constant integer (const eval required for non-literals)
+                let size = match &count.kind {
+                    ast::ExprKind::Literal(ast::Literal {
+                        kind: ast::LiteralKind::Int { value, .. },
+                        ..
+                    }) => *value as u64,
+                    _ => {
+                        return Err(TypeError::new(
+                            TypeErrorKind::UnsupportedFeature {
+                                feature: "array repeat count must be a literal integer (const evaluation not yet supported)".to_string(),
+                            },
+                            count.span,
+                        ));
+                    }
+                };
+
+                Ok(hir::Expr::new(
+                    hir::ExprKind::Repeat {
+                        value: Box::new(value_expr.clone()),
+                        count: size,
+                    },
+                    Type::array(value_expr.ty, size),
+                    span,
                 ))
             }
         }
@@ -936,18 +2143,35 @@ impl<'a> TypeContext<'a> {
                 }
                 Some(Binding::Def(def_id)) => {
                     // Look up the type of the definition
-                    if let Some(sig) = self.fn_sigs.get(&def_id) {
-                        let fn_ty = Type::function(sig.inputs.clone(), sig.output.clone());
+                    if let Some(sig) = self.fn_sigs.get(&def_id).cloned() {
+                        // For generic functions, instantiate fresh type variables
+                        let fn_ty = if sig.generics.is_empty() {
+                            Type::function(sig.inputs.clone(), sig.output.clone())
+                        } else {
+                            self.instantiate_fn_sig(&sig)
+                        };
                         Ok(hir::Expr::new(
                             hir::ExprKind::Def(def_id),
                             fn_ty,
                             span,
                         ))
-                    } else {
-                        // Could be a constant or other definition
+                    } else if let Some(def_info) = self.resolver.def_info.get(&def_id) {
+                        // Look up type from def_info (constants, statics, etc.)
+                        let ty = if let Some(ty) = &def_info.ty {
+                            ty.clone()
+                        } else {
+                            // Type not yet known - use fresh type variable for inference
+                            self.unifier.fresh_var()
+                        };
                         Ok(hir::Expr::new(
                             hir::ExprKind::Def(def_id),
-                            Type::error(),
+                            ty,
+                            span,
+                        ))
+                    } else {
+                        // No def_info - internal error, should not happen
+                        Err(TypeError::new(
+                            TypeErrorKind::NotFound { name },
                             span,
                         ))
                     }
@@ -1127,6 +2351,11 @@ impl<'a> TypeContext<'a> {
             ));
         }
 
+        // Check effect compatibility: callee's effects must be subset of caller's effects
+        if let hir::ExprKind::Def(callee_def_id) = &callee_expr.kind {
+            self.check_effect_compatibility(*callee_def_id, span)?;
+        }
+
         // Type-check arguments
         let mut hir_args = Vec::new();
         for (arg, param_ty) in args.iter().zip(param_types.iter()) {
@@ -1142,6 +2371,61 @@ impl<'a> TypeContext<'a> {
             return_type,
             span,
         ))
+    }
+
+    /// Check that calling a function is effect-compatible with the current context.
+    ///
+    /// A function can only call another function if the callee's effects are
+    /// a subset of the caller's effects (or are handled by an enclosing handler).
+    fn check_effect_compatibility(&self, callee_def_id: DefId, span: Span) -> Result<(), TypeError> {
+        // Get callee's effects
+        let callee_effects = self.fn_effects.get(&callee_def_id);
+
+        // If callee has no effects, it's always compatible
+        let callee_effects = match callee_effects {
+            Some(effects) if !effects.is_empty() => effects,
+            _ => return Ok(()),
+        };
+
+        // Get current function's effects
+        let current_fn = match self.current_fn {
+            Some(def_id) => def_id,
+            None => {
+                // Not inside a function - this is unexpected during effect checking
+                // This shouldn't happen but we gracefully return Ok to avoid spurious errors
+                return Ok(());
+            }
+        };
+
+        let caller_effects = self.fn_effects.get(&current_fn);
+        let caller_effect_ids: Vec<DefId> = caller_effects
+            .map(|effects| effects.iter().map(|e| e.def_id).collect())
+            .unwrap_or_default();
+
+        // Check that each of callee's effects is either:
+        // 1. In caller's declared effects, OR
+        // 2. Handled by an enclosing with...handle block
+        for effect_ref in callee_effects {
+            let effect_id = effect_ref.def_id;
+
+            let in_caller_effects = caller_effect_ids.contains(&effect_id);
+            let is_handled = self.handled_effects.contains(&effect_id);
+
+            if !in_caller_effects && !is_handled {
+                // Get effect name for error message
+                let effect_name = self.effect_defs
+                    .get(&effect_id)
+                    .map(|info| info.name.clone())
+                    .unwrap_or_else(|| format!("{:?}", effect_id));
+
+                return Err(TypeError::new(
+                    TypeErrorKind::UnhandledEffect { effect: effect_name },
+                    span,
+                ));
+            }
+        }
+
+        Ok(())
     }
 
     /// Infer type of an if expression.
@@ -1603,8 +2887,220 @@ impl<'a> TypeContext<'a> {
             ast::PatternKind::Literal(lit) => {
                 hir::PatternKind::Literal(hir::LiteralValue::from_ast(&lit.kind))
             }
-            // More pattern kinds - simplified for Phase 1
-            _ => hir::PatternKind::Wildcard,
+            ast::PatternKind::Tuple { fields, rest_pos } => {
+                // Check if the expected type is a tuple
+                match expected_ty.kind() {
+                    TypeKind::Tuple(elem_types) => {
+                        if rest_pos.is_some() {
+                            return Err(TypeError::new(
+                                TypeErrorKind::UnsupportedFeature {
+                                    feature: "rest patterns in tuples are not yet supported".to_string(),
+                                },
+                                pattern.span,
+                            ));
+                        }
+                        if fields.len() != elem_types.len() {
+                            return Err(TypeError::new(
+                                TypeErrorKind::PatternMismatch {
+                                    expected: expected_ty.clone(),
+                                    pattern: format!("tuple pattern with {} elements", fields.len()),
+                                },
+                                pattern.span,
+                            ));
+                        }
+                        let mut hir_fields = Vec::new();
+                        for (field, elem_ty) in fields.iter().zip(elem_types.iter()) {
+                            hir_fields.push(self.lower_pattern(field, elem_ty)?);
+                        }
+                        hir::PatternKind::Tuple(hir_fields)
+                    }
+                    _ => {
+                        return Err(TypeError::new(
+                            TypeErrorKind::NotATuple { ty: expected_ty.clone() },
+                            pattern.span,
+                        ));
+                    }
+                }
+            }
+            ast::PatternKind::TupleStruct { path, fields, .. } => {
+                // Resolve the path to find the variant
+                let path_str = if let Some(seg) = path.segments.first() {
+                    self.symbol_to_string(seg.name.node)
+                } else {
+                    return Err(TypeError::new(
+                        TypeErrorKind::NotFound { name: format!("{path:?}") },
+                        pattern.span,
+                    ));
+                };
+
+                // Look up the variant in scope
+                match self.resolver.lookup(&path_str) {
+                    Some(super::resolve::Binding::Def(variant_def_id)) => {
+                        // Check if it's an enum variant
+                        if let Some(info) = self.resolver.def_info.get(&variant_def_id) {
+                            if info.kind == hir::DefKind::Variant {
+                                // Get the parent enum def_id
+                                let enum_def_id = info.parent.ok_or_else(|| TypeError::new(
+                                    TypeErrorKind::NotFound { name: format!("parent of variant {}", path_str) },
+                                    pattern.span,
+                                ))?;
+
+                                // Look up the enum to find variant info
+                                let enum_info = self.enum_defs.get(&enum_def_id).ok_or_else(|| TypeError::new(
+                                    TypeErrorKind::NotFound { name: format!("enum for variant {}", path_str) },
+                                    pattern.span,
+                                ))?;
+
+                                // Find the variant in the enum
+                                let variant_info = enum_info.variants.iter()
+                                    .find(|v| v.def_id == variant_def_id)
+                                    .ok_or_else(|| TypeError::new(
+                                        TypeErrorKind::NotFound { name: format!("variant {} in enum", path_str) },
+                                        pattern.span,
+                                    ))?;
+
+                                let variant_idx = variant_info.index;
+                                // Clone field types to avoid borrow conflict
+                                let variant_field_types: Vec<Type> = variant_info.fields.iter()
+                                    .map(|f| f.ty.clone())
+                                    .collect();
+
+                                // Check field count matches
+                                if fields.len() != variant_field_types.len() {
+                                    return Err(TypeError::new(
+                                        TypeErrorKind::WrongArity {
+                                            expected: variant_field_types.len(),
+                                            found: fields.len(),
+                                        },
+                                        pattern.span,
+                                    ));
+                                }
+
+                                // Use actual variant field types
+                                let mut hir_fields = Vec::new();
+                                for (field, field_ty) in fields.iter().zip(variant_field_types.iter()) {
+                                    hir_fields.push(self.lower_pattern(field, field_ty)?);
+                                }
+
+                                hir::PatternKind::Variant {
+                                    def_id: variant_def_id,
+                                    variant_idx,
+                                    fields: hir_fields,
+                                }
+                            } else {
+                                return Err(TypeError::new(
+                                    TypeErrorKind::NotFound { name: path_str },
+                                    pattern.span,
+                                ));
+                            }
+                        } else {
+                            return Err(TypeError::new(
+                                TypeErrorKind::NotFound { name: path_str },
+                                pattern.span,
+                            ));
+                        }
+                    }
+                    _ => {
+                        return Err(TypeError::new(
+                            TypeErrorKind::NotFound { name: path_str },
+                            pattern.span,
+                        ));
+                    }
+                }
+            }
+            ast::PatternKind::Rest => {
+                return Err(TypeError::new(
+                    TypeErrorKind::UnsupportedFeature {
+                        feature: "rest patterns (..) are not yet supported".to_string(),
+                    },
+                    pattern.span,
+                ));
+            }
+            ast::PatternKind::Ref { .. } => {
+                return Err(TypeError::new(
+                    TypeErrorKind::UnsupportedFeature {
+                        feature: "reference patterns (&x) are not yet supported".to_string(),
+                    },
+                    pattern.span,
+                ));
+            }
+            ast::PatternKind::Struct { .. } => {
+                return Err(TypeError::new(
+                    TypeErrorKind::UnsupportedFeature {
+                        feature: "struct patterns are not yet supported".to_string(),
+                    },
+                    pattern.span,
+                ));
+            }
+            ast::PatternKind::Slice { .. } => {
+                return Err(TypeError::new(
+                    TypeErrorKind::UnsupportedFeature {
+                        feature: "slice patterns are not yet supported".to_string(),
+                    },
+                    pattern.span,
+                ));
+            }
+            ast::PatternKind::Or(_) => {
+                return Err(TypeError::new(
+                    TypeErrorKind::UnsupportedFeature {
+                        feature: "or patterns (A | B) are not yet supported".to_string(),
+                    },
+                    pattern.span,
+                ));
+            }
+            ast::PatternKind::Range { .. } => {
+                return Err(TypeError::new(
+                    TypeErrorKind::UnsupportedFeature {
+                        feature: "range patterns are not yet supported".to_string(),
+                    },
+                    pattern.span,
+                ));
+            }
+            ast::PatternKind::Path(path) => {
+                // Unit variant pattern like `None`
+                let path_str = if let Some(seg) = path.segments.first() {
+                    self.symbol_to_string(seg.name.node)
+                } else {
+                    return Err(TypeError::new(
+                        TypeErrorKind::NotFound { name: format!("{path:?}") },
+                        pattern.span,
+                    ));
+                };
+
+                match self.resolver.lookup(&path_str) {
+                    Some(super::resolve::Binding::Def(def_id)) => {
+                        if let Some(info) = self.resolver.def_info.get(&def_id) {
+                            if info.kind == hir::DefKind::Variant {
+                                hir::PatternKind::Variant {
+                                    def_id,
+                                    variant_idx: 0, // Simplified
+                                    fields: vec![],
+                                }
+                            } else {
+                                return Err(TypeError::new(
+                                    TypeErrorKind::NotFound { name: path_str },
+                                    pattern.span,
+                                ));
+                            }
+                        } else {
+                            return Err(TypeError::new(
+                                TypeErrorKind::NotFound { name: path_str },
+                                pattern.span,
+                            ));
+                        }
+                    }
+                    _ => {
+                        return Err(TypeError::new(
+                            TypeErrorKind::NotFound { name: path_str },
+                            pattern.span,
+                        ));
+                    }
+                }
+            }
+            ast::PatternKind::Paren(inner) => {
+                // Parenthesized pattern - just unwrap it
+                return self.lower_pattern(inner, expected_ty);
+            }
         };
 
         Ok(hir::Pattern {
@@ -1612,6 +3108,81 @@ impl<'a> TypeContext<'a> {
             ty: expected_ty.clone(),
             span: pattern.span,
         })
+    }
+
+    /// Instantiate a generic function signature with fresh type variables.
+    ///
+    /// For each generic type parameter in the signature, creates a fresh inference
+    /// variable and substitutes it throughout the input and output types.
+    fn instantiate_fn_sig(&mut self, sig: &hir::FnSig) -> Type {
+        if sig.generics.is_empty() {
+            return Type::function(sig.inputs.clone(), sig.output.clone());
+        }
+
+        // Create a mapping from old type vars to fresh ones
+        let mut substitution: HashMap<TyVarId, Type> = HashMap::new();
+        for &old_var in &sig.generics {
+            let fresh_var = self.unifier.fresh_var();
+            substitution.insert(old_var, fresh_var);
+        }
+
+        // Substitute in inputs and output
+        let inputs: Vec<Type> = sig.inputs.iter()
+            .map(|ty| self.substitute_type_vars(ty, &substitution))
+            .collect();
+        let output = self.substitute_type_vars(&sig.output, &substitution);
+
+        Type::function(inputs, output)
+    }
+
+    /// Substitute type variables in a type according to a substitution map.
+    fn substitute_type_vars(&self, ty: &Type, subst: &HashMap<TyVarId, Type>) -> Type {
+        match ty.kind() {
+            TypeKind::Param(var_id) => {
+                if let Some(replacement) = subst.get(var_id) {
+                    replacement.clone()
+                } else {
+                    ty.clone()
+                }
+            }
+            TypeKind::Fn { params, ret } => {
+                let new_params: Vec<Type> = params.iter()
+                    .map(|p| self.substitute_type_vars(p, subst))
+                    .collect();
+                let new_ret = self.substitute_type_vars(ret, subst);
+                Type::function(new_params, new_ret)
+            }
+            TypeKind::Tuple(elems) => {
+                let new_elems: Vec<Type> = elems.iter()
+                    .map(|e| self.substitute_type_vars(e, subst))
+                    .collect();
+                Type::tuple(new_elems)
+            }
+            TypeKind::Array { element, size } => {
+                let new_elem = self.substitute_type_vars(element, subst);
+                Type::array(new_elem, *size)
+            }
+            TypeKind::Slice { element } => {
+                let new_elem = self.substitute_type_vars(element, subst);
+                Type::slice(new_elem)
+            }
+            TypeKind::Ref { inner, mutable } => {
+                let new_inner = self.substitute_type_vars(inner, subst);
+                Type::reference(new_inner, *mutable)
+            }
+            TypeKind::Ptr { inner, mutable } => {
+                let new_inner = self.substitute_type_vars(inner, subst);
+                Type::new(TypeKind::Ptr { inner: new_inner, mutable: *mutable })
+            }
+            TypeKind::Adt { def_id, args } => {
+                let new_args: Vec<Type> = args.iter()
+                    .map(|a| self.substitute_type_vars(a, subst))
+                    .collect();
+                Type::adt(*def_id, new_args)
+            }
+            // Primitives, Never, Error, Infer don't need substitution
+            _ => ty.clone(),
+        }
     }
 
     /// Convert an AST type to an HIR type.
@@ -1699,13 +3270,19 @@ impl<'a> TypeContext<'a> {
             }
             ast::TypeKind::Array { element, size } => {
                 let elem_ty = self.ast_type_to_hir_type(element)?;
-                // For now, assume size is a literal integer
-                // Const evaluation is Phase 2+
+                // Array size must be a constant integer (const eval required for non-literals)
                 let size_val = match &size.kind {
                     ast::ExprKind::Literal(ast::Literal { kind: ast::LiteralKind::Int { value, .. }, .. }) => {
                         *value as u64
                     }
-                    _ => 0, // Placeholder
+                    _ => {
+                        return Err(TypeError::new(
+                            TypeErrorKind::UnsupportedFeature {
+                                feature: "array size must be a literal integer (const evaluation not yet supported)".to_string(),
+                            },
+                            size.span,
+                        ));
+                    }
                 };
                 Ok(Type::array(elem_ty, size_val))
             }
@@ -1724,9 +3301,19 @@ impl<'a> TypeContext<'a> {
             ast::TypeKind::Never => Ok(Type::never()),
             ast::TypeKind::Infer => Ok(self.unifier.fresh_var()),
             ast::TypeKind::Paren(inner) => self.ast_type_to_hir_type(inner),
-            _ => {
-                // Other type kinds - Phase 2+
-                Ok(Type::error())
+            ast::TypeKind::Record { .. } => {
+                // Record types (structural records) - Phase 2+
+                Err(TypeError::new(
+                    TypeErrorKind::UnsupportedFeature { feature: "record types".to_string() },
+                    ty.span,
+                ))
+            }
+            ast::TypeKind::Ownership { .. } => {
+                // Ownership types (linear, affine) - Phase 2+
+                Err(TypeError::new(
+                    TypeErrorKind::UnsupportedFeature { feature: "ownership types".to_string() },
+                    ty.span,
+                ))
             }
         }
     }
@@ -1813,7 +3400,90 @@ impl<'a> TypeContext<'a> {
                         continue;
                     }
                 }
-                _ => continue,
+                hir::DefKind::Effect => {
+                    if let Some(effect_info) = self.effect_defs.get(&def_id) {
+                        let operations: Vec<_> = effect_info.operations.iter().map(|op| {
+                            hir::EffectOp {
+                                name: op.name.clone(),
+                                inputs: op.params.clone(),
+                                output: op.return_ty.clone(),
+                                def_id: op.def_id,
+                                span: Span::default(),
+                            }
+                        }).collect();
+
+                        hir::ItemKind::Effect {
+                            generics: hir::Generics::empty(),
+                            operations,
+                        }
+                    } else {
+                        continue;
+                    }
+                }
+                hir::DefKind::Handler => {
+                    if let Some(handler_info) = self.handler_defs.get(&def_id) {
+                        // Convert handler state fields
+                        let state: Vec<_> = handler_info.fields.iter().map(|f| {
+                            hir::HandlerState {
+                                name: f.name.clone(),
+                                ty: f.ty.clone(),
+                                mutable: true, // Handler state is typically mutable
+                                default: None, // Default values handled at instantiation
+                            }
+                        }).collect();
+
+                        hir::ItemKind::Handler {
+                            generics: hir::Generics::empty(),
+                            effect: Type::adt(handler_info.effect_id, Vec::new()),
+                            state,
+                            operations: Vec::new(), // Operations handled separately
+                            return_clause: None,
+                        }
+                    } else {
+                        continue;
+                    }
+                }
+                hir::DefKind::Const => {
+                    // Constants - get type from def_info
+                    if let Some(ty) = &info.ty {
+                        hir::ItemKind::Const {
+                            ty: ty.clone(),
+                            body_id: self.fn_bodies.get(&def_id).copied()
+                                .unwrap_or_else(|| hir::BodyId::new(0)),
+                        }
+                    } else {
+                        continue;
+                    }
+                }
+                hir::DefKind::Static => {
+                    // Statics - get type from def_info
+                    if let Some(ty) = &info.ty {
+                        hir::ItemKind::Static {
+                            ty: ty.clone(),
+                            mutable: false, // Would need to track this
+                            body_id: self.fn_bodies.get(&def_id).copied()
+                                .unwrap_or_else(|| hir::BodyId::new(0)),
+                        }
+                    } else {
+                        continue;
+                    }
+                }
+                // Variants are part of enums, not top-level items
+                hir::DefKind::Variant => continue,
+                // Associated items in impl blocks - not standalone items
+                hir::DefKind::AssocType | hir::DefKind::AssocConst | hir::DefKind::AssocFn => continue,
+                // TypeAlias, Trait not yet implemented
+                hir::DefKind::TypeAlias | hir::DefKind::Trait => continue,
+                // Closures are inline, not top-level items
+                hir::DefKind::Closure => continue,
+                // Type/lifetime/const params are not items
+                hir::DefKind::TyParam | hir::DefKind::LifetimeParam | hir::DefKind::ConstParam => continue,
+                // Local variables are not items
+                hir::DefKind::Local => continue,
+                // Effect operations are part of effects, not standalone
+                hir::DefKind::EffectOp => continue,
+                // Fields are part of structs, not standalone
+                hir::DefKind::Field => continue,
             };
 
             items.insert(def_id, hir::Item {
@@ -1858,6 +3528,15 @@ impl<'a> TypeContext<'a> {
                             if let Some(struct_info) = self.struct_defs.get(&def_id) {
                                 let result_ty = Type::adt(def_id, Vec::new());
                                 (def_id, struct_info.clone(), result_ty)
+                            } else if let Some(handler_info) = self.handler_defs.get(&def_id) {
+                                // Handler instantiation uses struct-like syntax
+                                let struct_info = StructInfo {
+                                    name: handler_info.name.clone(),
+                                    fields: handler_info.fields.clone(),
+                                    generics: handler_info.generics.clone(),
+                                };
+                                let result_ty = Type::adt(def_id, Vec::new());
+                                (def_id, struct_info, result_ty)
                             } else {
                                 return Err(TypeError::new(
                                     TypeErrorKind::NotAStruct { ty: Type::error() },
