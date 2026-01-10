@@ -383,29 +383,20 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
                 )])
             }
 
-            ExprKind::Repeat { .. } => {
-                Err(vec![Diagnostic::error(
-                    "MIR lowering for array repeat expressions not yet implemented".to_string(),
-                    expr.span,
-                )])
+            ExprKind::Repeat { value, count } => {
+                self.lower_repeat(value, *count, &expr.ty, expr.span)
             }
 
-            ExprKind::Variant { .. } => {
-                Err(vec![Diagnostic::error(
-                    "MIR lowering for enum variant expressions not yet implemented".to_string(),
-                    expr.span,
-                )])
+            ExprKind::Variant { def_id, variant_idx, fields } => {
+                self.lower_variant(*def_id, *variant_idx, fields, &expr.ty, expr.span)
             }
 
             ExprKind::Closure { body_id, captures } => {
                 self.lower_closure(*body_id, captures, &expr.ty, expr.span)
             }
 
-            ExprKind::AddrOf { .. } => {
-                Err(vec![Diagnostic::error(
-                    "MIR lowering for raw pointer address-of not yet implemented".to_string(),
-                    expr.span,
-                )])
+            ExprKind::AddrOf { expr: inner, mutable } => {
+                self.lower_addr_of(inner, *mutable, &expr.ty, expr.span)
             }
 
             ExprKind::Let { .. } => {
@@ -700,6 +691,106 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
 
         // Store the body result
         self.push_assign(dest_place.clone(), Rvalue::Use(body_result));
+
+        Ok(Operand::Copy(dest_place))
+    }
+
+    /// Lower an array repeat expression `[value; count]`.
+    ///
+    /// Creates an array by repeating the value `count` times.
+    fn lower_repeat(
+        &mut self,
+        value: &Expr,
+        count: u64,
+        ty: &Type,
+        span: Span,
+    ) -> Result<Operand, Vec<Diagnostic>> {
+        // Lower the repeated value
+        let value_op = self.lower_expr(value)?;
+
+        // Create destination for the array
+        let dest = self.new_temp(ty.clone(), span);
+        let dest_place = Place::local(dest);
+
+        // Get the element type from the array type
+        let elem_ty = match ty.kind() {
+            TypeKind::Array { element, .. } => element.clone(),
+            _ => value.ty.clone(),
+        };
+
+        // Create an aggregate array with repeated values
+        // We expand [x; N] into [x, x, x, ..., x] with N copies
+        let operands: Vec<Operand> = (0..count).map(|_| value_op.clone()).collect();
+
+        self.push_assign(
+            dest_place.clone(),
+            Rvalue::Aggregate {
+                kind: AggregateKind::Array(elem_ty),
+                operands,
+            },
+        );
+
+        Ok(Operand::Copy(dest_place))
+    }
+
+    /// Lower an enum variant construction expression.
+    ///
+    /// Creates an enum value with the specified variant and fields.
+    fn lower_variant(
+        &mut self,
+        def_id: DefId,
+        variant_idx: u32,
+        fields: &[Expr],
+        ty: &Type,
+        span: Span,
+    ) -> Result<Operand, Vec<Diagnostic>> {
+        // Lower all field expressions
+        let mut field_ops = Vec::with_capacity(fields.len());
+        for field in fields {
+            field_ops.push(self.lower_expr(field)?);
+        }
+
+        // Create destination for the enum
+        let dest = self.new_temp(ty.clone(), span);
+        let dest_place = Place::local(dest);
+
+        // Create the aggregate value using Adt with variant_idx
+        self.push_assign(
+            dest_place.clone(),
+            Rvalue::Aggregate {
+                kind: AggregateKind::Adt {
+                    def_id,
+                    variant_idx: Some(variant_idx),
+                },
+                operands: field_ops,
+            },
+        );
+
+        Ok(Operand::Copy(dest_place))
+    }
+
+    /// Lower a raw pointer address-of expression `&raw expr` or `&raw mut expr`.
+    ///
+    /// Creates a raw pointer to the expression's place.
+    fn lower_addr_of(
+        &mut self,
+        inner: &Expr,
+        mutable: bool,
+        ty: &Type,
+        span: Span,
+    ) -> Result<Operand, Vec<Diagnostic>> {
+        // Get the place for the inner expression
+        let place = self.lower_place(inner)?;
+
+        // Create destination for the raw pointer
+        let dest = self.new_temp(ty.clone(), span);
+        let dest_place = Place::local(dest);
+
+        // Create the AddressOf rvalue
+        self.push_assign(
+            dest_place.clone(),
+            Rvalue::AddressOf { place, mutable },
+        );
 
         Ok(Operand::Copy(dest_place))
     }
@@ -1704,6 +1795,18 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
                 self.lower_handle(body, *handler_id, &expr.ty, expr.span)
             }
 
+            ExprKind::Repeat { value, count } => {
+                self.lower_repeat(value, *count, &expr.ty, expr.span)
+            }
+
+            ExprKind::Variant { def_id, variant_idx, fields } => {
+                self.lower_variant(*def_id, *variant_idx, fields, &expr.ty, expr.span)
+            }
+
+            ExprKind::AddrOf { expr: inner, mutable } => {
+                self.lower_addr_of(inner, *mutable, &expr.ty, expr.span)
+            }
+
             ExprKind::Error => {
                 Err(vec![Diagnostic::error("lowering error expression".to_string(), expr.span)])
             }
@@ -1907,6 +2010,86 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
         let dest = self.new_temp(ty.clone(), span);
         let dest_place = Place::local(dest);
         self.push_assign(dest_place.clone(), Rvalue::Use(body_result));
+
+        Ok(Operand::Copy(dest_place))
+    }
+
+    /// Lower an array repeat expression in a closure body.
+    fn lower_repeat(
+        &mut self,
+        value: &Expr,
+        count: u64,
+        ty: &Type,
+        span: Span,
+    ) -> Result<Operand, Vec<Diagnostic>> {
+        let value_op = self.lower_expr(value)?;
+        let dest = self.new_temp(ty.clone(), span);
+        let dest_place = Place::local(dest);
+
+        let elem_ty = match ty.kind() {
+            TypeKind::Array { element, .. } => element.clone(),
+            _ => value.ty.clone(),
+        };
+
+        let operands: Vec<Operand> = (0..count).map(|_| value_op.clone()).collect();
+        self.push_assign(
+            dest_place.clone(),
+            Rvalue::Aggregate {
+                kind: AggregateKind::Array(elem_ty),
+                operands,
+            },
+        );
+
+        Ok(Operand::Copy(dest_place))
+    }
+
+    /// Lower an enum variant construction expression in a closure body.
+    fn lower_variant(
+        &mut self,
+        def_id: DefId,
+        variant_idx: u32,
+        fields: &[Expr],
+        ty: &Type,
+        span: Span,
+    ) -> Result<Operand, Vec<Diagnostic>> {
+        let mut field_ops = Vec::with_capacity(fields.len());
+        for field in fields {
+            field_ops.push(self.lower_expr(field)?);
+        }
+
+        let dest = self.new_temp(ty.clone(), span);
+        let dest_place = Place::local(dest);
+
+        self.push_assign(
+            dest_place.clone(),
+            Rvalue::Aggregate {
+                kind: AggregateKind::Adt {
+                    def_id,
+                    variant_idx: Some(variant_idx),
+                },
+                operands: field_ops,
+            },
+        );
+
+        Ok(Operand::Copy(dest_place))
+    }
+
+    /// Lower a raw pointer address-of expression in a closure body.
+    fn lower_addr_of(
+        &mut self,
+        inner: &Expr,
+        mutable: bool,
+        ty: &Type,
+        span: Span,
+    ) -> Result<Operand, Vec<Diagnostic>> {
+        let place = self.lower_place(inner)?;
+        let dest = self.new_temp(ty.clone(), span);
+        let dest_place = Place::local(dest);
+
+        self.push_assign(
+            dest_place.clone(),
+            Rvalue::AddressOf { place, mutable },
+        );
 
         Ok(Operand::Copy(dest_place))
     }
