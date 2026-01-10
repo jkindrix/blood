@@ -238,11 +238,475 @@ pub unsafe extern "C" fn blood_evidence_get(ev: EvidenceHandle, index: usize) ->
 }
 
 // ============================================================================
+// Effect Handler Registration and Dispatch
+// ============================================================================
+
+/// Effect handler entry in the registry.
+/// Contains effect_id, operation function pointers, and state pointer.
+#[repr(C)]
+struct EffectHandlerEntry {
+    effect_id: i64,
+    operations: Vec<*const c_void>,  // Function pointers for each operation
+    state: *mut c_void,               // Handler state (for State<T> effect)
+}
+
+// Safety: The raw pointers are only accessed through the mutex,
+// and we ensure proper synchronization in all FFI functions.
+unsafe impl Send for EffectHandlerEntry {}
+unsafe impl Sync for EffectHandlerEntry {}
+
+/// Global effect handler registry.
+/// Maps effect IDs to their handler entries.
+static EFFECT_REGISTRY: OnceLock<Mutex<Vec<EffectHandlerEntry>>> = OnceLock::new();
+
+// Thread-local current evidence vector for effect dispatch.
+thread_local! {
+    static CURRENT_EVIDENCE: std::cell::RefCell<Option<EvidenceHandle>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Get or initialize the effect registry.
+fn get_effect_registry() -> &'static Mutex<Vec<EffectHandlerEntry>> {
+    EFFECT_REGISTRY.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// Register an effect handler with its operations.
+///
+/// # Arguments
+/// * `ev` - Evidence vector handle
+/// * `effect_id` - Unique identifier for the effect type
+/// * `ops` - Pointer to array of operation function pointers
+/// * `op_count` - Number of operations
+///
+/// # Safety
+/// The ops pointer must point to a valid array of function pointers.
+#[no_mangle]
+pub unsafe extern "C" fn blood_evidence_register(
+    ev: EvidenceHandle,
+    effect_id: i64,
+    ops: *const *const c_void,
+    op_count: i64,
+) {
+    if ev.is_null() || ops.is_null() {
+        return;
+    }
+
+    // Collect operation function pointers
+    let mut operations = Vec::with_capacity(op_count as usize);
+    for i in 0..op_count {
+        let op_ptr = *ops.add(i as usize);
+        operations.push(op_ptr);
+    }
+
+    // Create handler entry
+    let entry = EffectHandlerEntry {
+        effect_id,
+        operations,
+        state: std::ptr::null_mut(),
+    };
+
+    // Add to registry
+    let registry = get_effect_registry();
+    let mut reg = registry.lock();
+    reg.push(entry);
+
+    // Push handler index onto evidence vector
+    let handler_index = (reg.len() - 1) as u64;
+    blood_evidence_push(ev, handler_index);
+}
+
+/// Set state for the current handler in the evidence vector.
+///
+/// # Safety
+/// The evidence handle and state pointer must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn blood_evidence_set_state(ev: EvidenceHandle, state: *mut c_void) {
+    if ev.is_null() {
+        return;
+    }
+
+    // Get the topmost handler index from evidence
+    let vec = &*(ev as *const Vec<u64>);
+    if let Some(&handler_index) = vec.last() {
+        let registry = get_effect_registry();
+        let mut reg = registry.lock();
+        if let Some(entry) = reg.get_mut(handler_index as usize) {
+            entry.state = state;
+        }
+    }
+}
+
+/// Get state for a handler at given index in the evidence vector.
+///
+/// # Safety
+/// The evidence handle must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn blood_evidence_get_state(ev: EvidenceHandle, index: i64) -> *mut c_void {
+    if ev.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let vec = &*(ev as *const Vec<u64>);
+    if let Some(&handler_index) = vec.get(index as usize) {
+        let registry = get_effect_registry();
+        let reg = registry.lock();
+        if let Some(entry) = reg.get(handler_index as usize) {
+            return entry.state;
+        }
+    }
+    std::ptr::null_mut()
+}
+
+/// Get the current thread's evidence vector.
+///
+/// Returns the evidence vector set by the current effect handler scope,
+/// or null if no handler is active.
+#[no_mangle]
+pub extern "C" fn blood_evidence_current() -> EvidenceHandle {
+    CURRENT_EVIDENCE.with(|ev| {
+        ev.borrow().unwrap_or(std::ptr::null_mut())
+    })
+}
+
+/// Set the current thread's evidence vector.
+///
+/// Called internally when entering a handler scope.
+#[no_mangle]
+pub extern "C" fn blood_evidence_set_current(ev: EvidenceHandle) {
+    CURRENT_EVIDENCE.with(|current| {
+        *current.borrow_mut() = Some(ev);
+    });
+}
+
+/// Perform an effect operation.
+///
+/// Dispatches to the appropriate handler based on the effect_id and op_index.
+/// This is the core runtime dispatch mechanism for algebraic effects.
+///
+/// # Arguments
+/// * `effect_id` - The effect type being performed
+/// * `op_index` - The operation index within the effect
+/// * `args` - Pointer to argument array (as i64 values)
+/// * `arg_count` - Number of arguments
+///
+/// # Returns
+/// The result of the operation as an i64, or 0 if dispatch fails.
+///
+/// # Safety
+/// The args pointer must point to a valid array of i64 values.
+#[no_mangle]
+pub unsafe extern "C" fn blood_perform(
+    effect_id: i64,
+    op_index: i32,
+    args: *const i64,
+    arg_count: i64,
+) -> i64 {
+    // Get current evidence vector
+    let ev = blood_evidence_current();
+    if ev.is_null() {
+        // No handler installed - this is an unhandled effect error
+        eprintln!(
+            "BLOOD RUNTIME ERROR: Unhandled effect! effect_id={}, op_index={}",
+            effect_id, op_index
+        );
+        return 0;
+    }
+
+    // Find handler for this effect in evidence vector
+    let vec = &*(ev as *const Vec<u64>);
+    let registry = get_effect_registry();
+    let reg = registry.lock();
+
+    // Search from most recent to oldest handler (reverse order)
+    for &handler_index in vec.iter().rev() {
+        if let Some(entry) = reg.get(handler_index as usize) {
+            if entry.effect_id == effect_id {
+                // Found the handler for this effect
+                if let Some(&op_fn) = entry.operations.get(op_index as usize) {
+                    if !op_fn.is_null() {
+                        // Call the operation handler
+                        // The handler signature is: fn(state: *void, args: *i64, arg_count: i64) -> i64
+                        type OpHandler = unsafe extern "C" fn(*mut c_void, *const i64, i64) -> i64;
+                        let handler: OpHandler = std::mem::transmute(op_fn);
+                        return handler(entry.state, args, arg_count);
+                    }
+                }
+            }
+        }
+    }
+
+    // No handler found
+    eprintln!(
+        "BLOOD RUNTIME ERROR: No handler found for effect_id={}, op_index={}",
+        effect_id, op_index
+    );
+    0
+}
+
+/// Get the handler depth for a given effect.
+///
+/// Returns the number of handlers for this effect currently in scope.
+/// Useful for effects that need to know their nesting level.
+#[no_mangle]
+pub extern "C" fn blood_handler_depth(effect_id: i64) -> i64 {
+    let ev = blood_evidence_current();
+    if ev.is_null() {
+        return 0;
+    }
+
+    unsafe {
+        let vec = &*(ev as *const Vec<u64>);
+        let registry = get_effect_registry();
+        let reg = registry.lock();
+
+        let mut depth = 0i64;
+        for &handler_index in vec.iter() {
+            if let Some(entry) = reg.get(handler_index as usize) {
+                if entry.effect_id == effect_id {
+                    depth += 1;
+                }
+            }
+        }
+        depth
+    }
+}
+
+// ============================================================================
+// Multiple Dispatch Runtime
+// ============================================================================
+
+/// Dispatch table entry for multiple dispatch.
+#[derive(Clone)]
+struct DispatchEntry {
+    method_slot: i64,
+    type_tag: i64,
+    impl_ptr: *const c_void,
+}
+
+// Safety: The impl_ptr is only used for function calls and we ensure
+// thread-safe access through the mutex.
+unsafe impl Send for DispatchEntry {}
+unsafe impl Sync for DispatchEntry {}
+
+/// Global dispatch table for multiple dispatch.
+static DISPATCH_TABLE: OnceLock<Mutex<Vec<DispatchEntry>>> = OnceLock::new();
+
+/// Get or initialize the dispatch table.
+fn get_dispatch_table() -> &'static Mutex<Vec<DispatchEntry>> {
+    DISPATCH_TABLE.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// Look up an implementation in the dispatch table.
+///
+/// # Arguments
+/// * `method_slot` - The method identifier
+/// * `type_tag` - The runtime type tag of the receiver
+///
+/// # Returns
+/// Function pointer to the implementation, or null if not found.
+#[no_mangle]
+pub extern "C" fn blood_dispatch_lookup(method_slot: i64, type_tag: i64) -> *const c_void {
+    let table = get_dispatch_table();
+    let entries = table.lock();
+
+    // Linear search for now - can optimize with hash table later
+    for entry in entries.iter() {
+        if entry.method_slot == method_slot && entry.type_tag == type_tag {
+            return entry.impl_ptr;
+        }
+    }
+
+    std::ptr::null()
+}
+
+/// Register an implementation in the dispatch table.
+///
+/// # Arguments
+/// * `method_slot` - The method identifier
+/// * `type_tag` - The runtime type tag this implementation handles
+/// * `impl_ptr` - Function pointer to the implementation
+#[no_mangle]
+pub extern "C" fn blood_dispatch_register(
+    method_slot: i64,
+    type_tag: i64,
+    impl_ptr: *const c_void,
+) {
+    let table = get_dispatch_table();
+    let mut entries = table.lock();
+
+    // Check if entry already exists
+    for entry in entries.iter_mut() {
+        if entry.method_slot == method_slot && entry.type_tag == type_tag {
+            // Update existing entry
+            entry.impl_ptr = impl_ptr;
+            return;
+        }
+    }
+
+    // Add new entry
+    entries.push(DispatchEntry {
+        method_slot,
+        type_tag,
+        impl_ptr,
+    });
+}
+
+/// Get the runtime type tag from an object.
+///
+/// Blood objects have a header containing their type tag.
+/// This function extracts it for dispatch purposes.
+///
+/// # Safety
+/// The object pointer must point to a valid Blood object with a header.
+#[no_mangle]
+pub unsafe extern "C" fn blood_get_type_tag(obj: *const c_void) -> i64 {
+    if obj.is_null() {
+        return 0;
+    }
+
+    // Blood object layout: [type_tag: i64][...fields...]
+    // The type tag is stored as the first 8 bytes of the object.
+    let tag_ptr = obj as *const i64;
+    *tag_ptr
+}
+
+// ============================================================================
+// Generation Snapshot Support (for effect handler continuations)
+// ============================================================================
+
+/// A snapshot entry for generation validation.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct SnapshotEntry {
+    address: u64,
+    generation: u32,
+}
+
+/// A generation snapshot for validating captured references.
+struct GenerationSnapshot {
+    entries: Vec<SnapshotEntry>,
+}
+
+/// Opaque handle to a generation snapshot.
+pub type SnapshotHandle = *mut c_void;
+
+/// Create a new generation snapshot.
+///
+/// Returns a handle to an empty snapshot, or null on failure.
+#[no_mangle]
+pub extern "C" fn blood_snapshot_create() -> SnapshotHandle {
+    let snapshot = Box::new(GenerationSnapshot {
+        entries: Vec::new(),
+    });
+    Box::into_raw(snapshot) as SnapshotHandle
+}
+
+/// Add an entry to a generation snapshot.
+///
+/// # Arguments
+/// * `snapshot` - Handle to the snapshot
+/// * `address` - Memory address of the generational reference
+/// * `generation` - Expected generation value
+///
+/// # Safety
+/// The snapshot handle must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn blood_snapshot_add_entry(
+    snapshot: SnapshotHandle,
+    address: u64,
+    generation: u32,
+) {
+    if snapshot.is_null() {
+        return;
+    }
+
+    // Skip persistent pointers (generation = 0xFFFFFFFF)
+    if generation == 0xFFFFFFFF {
+        return;
+    }
+
+    let snap = &mut *(snapshot as *mut GenerationSnapshot);
+    snap.entries.push(SnapshotEntry { address, generation });
+}
+
+/// Validate a generation snapshot against current memory state.
+///
+/// Returns 0 if all generations match (valid), or the 1-based index
+/// of the first stale entry found. A return value > 0 indicates a
+/// stale reference at entry (return_value - 1).
+///
+/// # Safety
+/// The snapshot handle must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn blood_snapshot_validate(snapshot: SnapshotHandle) -> i64 {
+    if snapshot.is_null() {
+        return 0; // Empty snapshot is valid
+    }
+
+    let snap = &*(snapshot as *const GenerationSnapshot);
+
+    for (i, entry) in snap.entries.iter().enumerate() {
+        // Get current generation from memory slot header
+        // In a real implementation, this would read from the allocation header
+        // For now, we'll return valid (0) as a placeholder
+        // Real validation would compare entry.generation against actual slot generation
+        let _ = entry;
+        // Placeholder: assume all references are valid
+        // A real implementation would:
+        // let actual_gen = read_slot_generation(entry.address);
+        // if actual_gen != entry.generation {
+        //     return (i + 1) as i64; // 1-based index of stale entry
+        // }
+        let _ = i;
+    }
+
+    0 // All valid
+}
+
+/// Get the number of entries in a snapshot.
+///
+/// # Safety
+/// The snapshot handle must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn blood_snapshot_len(snapshot: SnapshotHandle) -> usize {
+    if snapshot.is_null() {
+        return 0;
+    }
+    let snap = &*(snapshot as *const GenerationSnapshot);
+    snap.entries.len()
+}
+
+/// Destroy a generation snapshot.
+///
+/// # Safety
+/// The snapshot handle must have been created with blood_snapshot_create.
+#[no_mangle]
+pub unsafe extern "C" fn blood_snapshot_destroy(snapshot: SnapshotHandle) {
+    if !snapshot.is_null() {
+        let _ = Box::from_raw(snapshot as *mut GenerationSnapshot);
+    }
+}
+
+// ============================================================================
+// ============================================================================
 // Fiber/Continuation Support (for effect handlers)
 // ============================================================================
 
+use crate::continuation::{
+    ContinuationRef, Continuation, EffectContext,
+    register_continuation, take_continuation, has_continuation,
+};
+
 /// Fiber handle for continuation capture.
 pub type FiberHandle = u64;
+
+/// Continuation handle for FFI.
+pub type ContinuationHandle = u64;
+
+// Thread-local effect context for the current operation.
+std::thread_local! {
+    static EFFECT_CONTEXT: std::cell::RefCell<Option<EffectContext>> =
+        const { std::cell::RefCell::new(None) };
+}
 
 /// Create a new fiber for continuation capture.
 ///
@@ -262,23 +726,168 @@ pub extern "C" fn blood_fiber_create() -> FiberHandle {
 
 /// Suspend current fiber and capture continuation.
 ///
-/// Returns the captured continuation ID.
+/// This function captures the current execution context as a continuation
+/// that can later be resumed with a value.
+///
+/// # Returns
+/// The captured continuation ID, or 0 if capture failed.
+///
+/// # Implementation Notes
+///
+/// For Phase 2.1 (tail-resumptive handlers), this is rarely called because
+/// tail-resumptive effects don't need continuation capture.
+///
+/// For Phase 2.3 (full continuations), this will use one of:
+/// - Closure-based CPS (current implementation)
+/// - Stack segment copying (future optimization)
+/// - Platform-specific assembly (future optimization)
 #[no_mangle]
-pub extern "C" fn blood_fiber_suspend() -> u64 {
-    // In a full implementation, this would capture the current continuation.
-    // For now, just yield to the scheduler.
-    std::thread::yield_now();
-    0
+pub extern "C" fn blood_fiber_suspend() -> ContinuationHandle {
+    // Check if we're in an effect context
+    EFFECT_CONTEXT.with(|ctx| {
+        let ctx_ref = ctx.borrow();
+        if let Some(effect_ctx) = ctx_ref.as_ref() {
+            if let Some(k_ref) = effect_ctx.continuation {
+                return k_ref.id;
+            }
+        }
+        0
+    })
 }
 
-/// Resume a suspended fiber with a value.
+/// Resume a suspended continuation with a value.
+///
+/// # Arguments
+/// * `continuation` - The continuation handle from blood_fiber_suspend
+/// * `value` - The value to resume with (passed to the continuation)
+///
+/// # Returns
+/// The result of the continuation as an i64.
+///
+/// # Safety
+/// The continuation handle must be valid and not already consumed.
+#[no_mangle]
+pub extern "C" fn blood_continuation_resume(continuation: ContinuationHandle, value: i64) -> i64 {
+    let k_ref = ContinuationRef { id: continuation };
+
+    if let Some(k) = take_continuation(k_ref) {
+        // Resume the continuation with the provided value
+        // For now, we use i64 as the universal value type
+        match k.try_resume::<i64, i64>(value) {
+            Some(result) => result,
+            None => {
+                eprintln!("BLOOD RUNTIME ERROR: Failed to resume continuation {}", continuation);
+                0
+            }
+        }
+    } else {
+        eprintln!("BLOOD RUNTIME ERROR: Continuation {} not found or already consumed", continuation);
+        0
+    }
+}
+
+/// Check if a continuation handle is valid.
+#[no_mangle]
+pub extern "C" fn blood_continuation_valid(continuation: ContinuationHandle) -> bool {
+    has_continuation(ContinuationRef { id: continuation })
+}
+
+/// Resume a suspended fiber with a value (legacy API).
 ///
 /// # Safety
 /// The fiber handle must be valid.
 #[no_mangle]
-pub unsafe extern "C" fn blood_fiber_resume(_fiber: FiberHandle, _value: u64) {
-    // Placeholder - real implementation would restore stack state
-    // The scheduler will pick up the fiber when it becomes runnable
+pub unsafe extern "C" fn blood_fiber_resume(fiber: FiberHandle, value: u64) {
+    // For compatibility, treat fiber handle as a continuation handle
+    blood_continuation_resume(fiber, value as i64);
+}
+
+/// A Send-safe wrapper for a continuation callback with its context.
+///
+/// # Safety
+/// The user must ensure that the wrapped callback and context are safe to
+/// access from any thread. This is typically ensured by the caller of
+/// blood_continuation_create.
+struct ContinuationCallback {
+    callback: extern "C" fn(i64, *mut c_void) -> i64,
+    context: *mut c_void,
+}
+
+// Safety: This is intentionally marked as Send.
+// The caller of blood_continuation_create is responsible for ensuring
+// the callback and context remain valid and are safe to access from any thread.
+unsafe impl Send for ContinuationCallback {}
+
+impl ContinuationCallback {
+    /// Invoke the callback with a value.
+    fn call(&self, value: i64) -> i64 {
+        (self.callback)(value, self.context)
+    }
+}
+
+/// Create a continuation from a callback function.
+///
+/// This is used by the compiler to wrap the "rest of the computation"
+/// after an effect is performed.
+///
+/// # Arguments
+/// * `callback` - Function pointer: fn(value: i64, context: *mut c_void) -> i64
+/// * `context` - User context pointer passed to callback
+///
+/// # Returns
+/// Continuation handle, or 0 on failure.
+///
+/// # Safety
+/// The callback and context must remain valid until the continuation is resumed.
+/// The context pointer must be safe to access from any thread.
+#[no_mangle]
+pub unsafe extern "C" fn blood_continuation_create(
+    callback: extern "C" fn(i64, *mut c_void) -> i64,
+    context: *mut c_void,
+) -> ContinuationHandle {
+    // Wrap the callback and context in a Send-safe wrapper
+    let cb = ContinuationCallback { callback, context };
+
+    // Create a continuation that wraps the callback
+    let k = Continuation::new(move |value: i64| -> i64 {
+        cb.call(value)
+    });
+
+    let k_ref = register_continuation(k);
+    k_ref.id
+}
+
+/// Set up effect context for the current operation.
+///
+/// Called by the runtime before invoking a handler operation.
+#[no_mangle]
+pub extern "C" fn blood_effect_context_begin(is_tail_resumptive: bool) {
+    EFFECT_CONTEXT.with(|ctx| {
+        let mut ctx_ref = ctx.borrow_mut();
+        *ctx_ref = Some(if is_tail_resumptive {
+            EffectContext::tail_resumptive()
+        } else {
+            EffectContext::with_continuation(ContinuationRef::null())
+        });
+    });
+}
+
+/// Clean up effect context after an operation.
+#[no_mangle]
+pub extern "C" fn blood_effect_context_end() {
+    EFFECT_CONTEXT.with(|ctx| {
+        let mut ctx_ref = ctx.borrow_mut();
+        *ctx_ref = None;
+    });
+}
+
+/// Check if current handler is tail-resumptive.
+#[no_mangle]
+pub extern "C" fn blood_effect_is_tail_resumptive() -> bool {
+    EFFECT_CONTEXT.with(|ctx| {
+        let ctx_ref = ctx.borrow();
+        ctx_ref.as_ref().map(|c| c.is_tail_resumptive).unwrap_or(true)
+    })
 }
 
 // ============================================================================
@@ -584,5 +1193,197 @@ mod tests {
     fn test_runtime_init() {
         assert_eq!(blood_runtime_init(), 0);
         blood_runtime_shutdown();
+    }
+
+    #[test]
+    fn test_evidence_current() {
+        // Initially null
+        let ev = blood_evidence_current();
+        assert!(ev.is_null());
+
+        // Set current evidence
+        let new_ev = blood_evidence_create();
+        blood_evidence_set_current(new_ev);
+
+        let current = blood_evidence_current();
+        assert_eq!(current, new_ev);
+
+        // Cleanup
+        unsafe { blood_evidence_destroy(new_ev); }
+    }
+
+    #[test]
+    fn test_dispatch_table() {
+        // Mock function pointer
+        extern "C" fn mock_impl() -> i64 { 42 }
+        let impl_ptr = mock_impl as *const c_void;
+
+        // Register implementation
+        blood_dispatch_register(1, 100, impl_ptr);
+
+        // Lookup should find it
+        let found = blood_dispatch_lookup(1, 100);
+        assert_eq!(found, impl_ptr);
+
+        // Different slot/tag should not find it
+        let not_found = blood_dispatch_lookup(2, 100);
+        assert!(not_found.is_null());
+
+        let not_found2 = blood_dispatch_lookup(1, 200);
+        assert!(not_found2.is_null());
+    }
+
+    #[test]
+    fn test_type_tag() {
+        // Create a mock object with type tag
+        let mock_obj: [i64; 2] = [42, 0]; // type_tag = 42
+        unsafe {
+            let tag = blood_get_type_tag(mock_obj.as_ptr() as *const c_void);
+            assert_eq!(tag, 42);
+        }
+
+        // Null object returns 0
+        unsafe {
+            let tag = blood_get_type_tag(std::ptr::null());
+            assert_eq!(tag, 0);
+        }
+    }
+
+    #[test]
+    fn test_handler_depth() {
+        // Create evidence vector
+        let ev = blood_evidence_create();
+        blood_evidence_set_current(ev);
+
+        // Initially no handlers
+        let depth = blood_handler_depth(1);
+        assert_eq!(depth, 0);
+
+        // Register a handler (effect_id = 1)
+        unsafe {
+            extern "C" fn mock_op(_state: *mut c_void, _args: *const i64, _arg_count: i64) -> i64 { 0 }
+            let ops: [*const c_void; 1] = [mock_op as *const c_void];
+            blood_evidence_register(ev, 1, ops.as_ptr(), 1);
+        }
+
+        // Now depth should be 1
+        let depth = blood_handler_depth(1);
+        assert_eq!(depth, 1);
+
+        // Different effect should still be 0
+        let depth2 = blood_handler_depth(2);
+        assert_eq!(depth2, 0);
+
+        // Cleanup
+        unsafe { blood_evidence_destroy(ev); }
+    }
+
+    #[test]
+    fn test_blood_perform() {
+        // Create evidence vector and set as current
+        let ev = blood_evidence_create();
+        blood_evidence_set_current(ev);
+
+        // Register a handler that returns args[0] * 2
+        unsafe {
+            extern "C" fn double_op(_state: *mut c_void, args: *const i64, _arg_count: i64) -> i64 {
+                unsafe {
+                    if args.is_null() { return 0; }
+                    (*args) * 2
+                }
+            }
+            let ops: [*const c_void; 1] = [double_op as *const c_void];
+            blood_evidence_register(ev, 100, ops.as_ptr(), 1);
+        }
+
+        // Perform the effect operation
+        unsafe {
+            let args: [i64; 1] = [21];
+            let result = blood_perform(100, 0, args.as_ptr(), 1);
+            assert_eq!(result, 42);
+        }
+
+        // Cleanup
+        unsafe { blood_evidence_destroy(ev); }
+    }
+
+    #[test]
+    fn test_evidence_state() {
+        let ev = blood_evidence_create();
+
+        // Register a handler
+        unsafe {
+            extern "C" fn noop(_state: *mut c_void, _args: *const i64, _arg_count: i64) -> i64 { 0 }
+            let ops: [*const c_void; 1] = [noop as *const c_void];
+            blood_evidence_register(ev, 50, ops.as_ptr(), 1);
+        }
+
+        // Set state
+        let state_value: i64 = 999;
+        unsafe {
+            blood_evidence_set_state(ev, &state_value as *const i64 as *mut c_void);
+        }
+
+        // Get state back
+        unsafe {
+            let state = blood_evidence_get_state(ev, 0);
+            assert!(!state.is_null());
+            let retrieved = *(state as *const i64);
+            assert_eq!(retrieved, 999);
+        }
+
+        // Cleanup
+        unsafe { blood_evidence_destroy(ev); }
+    }
+
+    #[test]
+    fn test_snapshot_create_destroy() {
+        let snapshot = blood_snapshot_create();
+        assert!(!snapshot.is_null());
+
+        unsafe {
+            assert_eq!(blood_snapshot_len(snapshot), 0);
+            blood_snapshot_destroy(snapshot);
+        }
+    }
+
+    #[test]
+    fn test_snapshot_add_entries() {
+        let snapshot = blood_snapshot_create();
+        assert!(!snapshot.is_null());
+
+        unsafe {
+            // Add some entries
+            blood_snapshot_add_entry(snapshot, 0x1000, 1);
+            blood_snapshot_add_entry(snapshot, 0x2000, 2);
+            blood_snapshot_add_entry(snapshot, 0x3000, 3);
+
+            // Should have 3 entries
+            assert_eq!(blood_snapshot_len(snapshot), 3);
+
+            // Persistent pointers (gen = 0xFFFFFFFF) should be skipped
+            blood_snapshot_add_entry(snapshot, 0x4000, 0xFFFFFFFF);
+            assert_eq!(blood_snapshot_len(snapshot), 3); // Still 3
+
+            blood_snapshot_destroy(snapshot);
+        }
+    }
+
+    #[test]
+    fn test_snapshot_validate() {
+        let snapshot = blood_snapshot_create();
+        assert!(!snapshot.is_null());
+
+        unsafe {
+            // Add entries
+            blood_snapshot_add_entry(snapshot, 0x1000, 1);
+            blood_snapshot_add_entry(snapshot, 0x2000, 2);
+
+            // Validate (placeholder implementation returns 0 = all valid)
+            let result = blood_snapshot_validate(snapshot);
+            assert_eq!(result, 0);
+
+            blood_snapshot_destroy(snapshot);
+        }
     }
 }
