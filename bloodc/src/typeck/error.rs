@@ -205,6 +205,26 @@ impl TypeError {
                 "E0401",
                 format!("cannot borrow as mutable: {reason}"),
             ),
+
+            // Method errors
+            TypeErrorKind::MethodNotFound { ty, method } => (
+                "E0231",
+                format!("no method named `{method}` found for type `{ty}` in the current scope"),
+            ),
+
+            // Trait impl errors
+            TypeErrorKind::MissingTraitMethod { trait_name, method } => (
+                "E0232",
+                format!("not all trait items implemented, missing: `{method}` from trait `{trait_name}`"),
+            ),
+            TypeErrorKind::MissingAssocType { trait_name, type_name } => (
+                "E0233",
+                format!("not all trait items implemented, missing: `type {type_name}` from trait `{trait_name}`"),
+            ),
+            TypeErrorKind::OverlappingImpls { trait_name, ty_a, ty_b } => (
+                "E0234",
+                format!("conflicting implementations of trait `{trait_name}` for type `{ty_a}` and `{ty_b}`"),
+            ),
         };
 
         let mut diag = Diagnostic::error(message, self.span).with_code(code);
@@ -377,6 +397,27 @@ pub enum TypeErrorKind {
     TraitBoundNotSatisfied {
         ty: Type,
         trait_name: String,
+    },
+    /// Method not found on type.
+    MethodNotFound {
+        ty: Type,
+        method: String,
+    },
+    /// Missing trait method in impl.
+    MissingTraitMethod {
+        trait_name: String,
+        method: String,
+    },
+    /// Missing associated type in impl.
+    MissingAssocType {
+        trait_name: String,
+        type_name: String,
+    },
+    /// Overlapping impl blocks.
+    OverlappingImpls {
+        trait_name: String,
+        ty_a: Type,
+        ty_b: Type,
     },
 }
 

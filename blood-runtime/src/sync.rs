@@ -942,9 +942,9 @@ mod tests {
         let barrier = Barrier::new(3);
         assert_eq!(barrier.parties(), 3);
 
-        let handles: Vec<_> = (0..3)
+        let _handles: Vec<_> = (0..3)
             .map(|_| {
-                let b = &barrier;
+                let _b = &barrier;
                 thread::scope(|_| {
                     // In a real test, we'd use scoped threads properly
                 })

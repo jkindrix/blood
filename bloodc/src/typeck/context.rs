@@ -1430,6 +1430,16 @@ impl<'a> TypeContext<'a> {
         // Restore generic params
         self.generic_params = saved_generic_params;
 
+        // Validate trait impl: check that all required methods are provided
+        if let Some(trait_id) = trait_ref {
+            self.validate_trait_impl(
+                trait_id,
+                &methods,
+                &assoc_types,
+                impl_block.span,
+            )?;
+        }
+
         // Store the impl block
         self.impl_blocks.push(ImplBlockInfo {
             self_ty,
@@ -1439,6 +1449,60 @@ impl<'a> TypeContext<'a> {
             assoc_types,
             assoc_consts,
         });
+
+        Ok(())
+    }
+
+    /// Validate that a trait impl provides all required methods and associated types.
+    fn validate_trait_impl(
+        &self,
+        trait_id: DefId,
+        impl_methods: &[ImplMethodInfo],
+        impl_assoc_types: &[ImplAssocTypeInfo],
+        span: Span,
+    ) -> Result<(), TypeError> {
+        let Some(trait_info) = self.trait_defs.get(&trait_id) else {
+            // Trait not found - already reported during trait resolution
+            return Ok(());
+        };
+
+        // Check for missing methods (that don't have default implementations)
+        for trait_method in &trait_info.methods {
+            if trait_method.has_default {
+                // Method has a default implementation, not required
+                continue;
+            }
+
+            let provided = impl_methods.iter().any(|m| m.name == trait_method.name);
+            if !provided {
+                return Err(TypeError::new(
+                    TypeErrorKind::MissingTraitMethod {
+                        trait_name: trait_info.name.clone(),
+                        method: trait_method.name.clone(),
+                    },
+                    span,
+                ));
+            }
+        }
+
+        // Check for missing associated types (that don't have defaults)
+        for trait_assoc_type in &trait_info.assoc_types {
+            if trait_assoc_type.default.is_some() {
+                // Has a default, not required
+                continue;
+            }
+
+            let provided = impl_assoc_types.iter().any(|t| t.name == trait_assoc_type.name);
+            if !provided {
+                return Err(TypeError::new(
+                    TypeErrorKind::MissingAssocType {
+                        trait_name: trait_info.name.clone(),
+                        type_name: trait_assoc_type.name.clone(),
+                    },
+                    span,
+                ));
+            }
+        }
 
         Ok(())
     }
@@ -1641,7 +1705,10 @@ impl<'a> TypeContext<'a> {
 
     /// Type-check all queued bodies.
     pub fn check_all_bodies(&mut self) -> Result<(), Vec<Diagnostic>> {
-        // Type-check function bodies
+        // Phase 1: Check coherence (no overlapping impls)
+        self.check_coherence();
+
+        // Phase 2: Type-check function bodies
         let pending = std::mem::take(&mut self.pending_bodies);
         for (def_id, func) in pending {
             if let Err(e) = self.check_function_body(def_id, &func) {
@@ -1649,7 +1716,7 @@ impl<'a> TypeContext<'a> {
             }
         }
 
-        // Type-check handler operation bodies
+        // Phase 3: Type-check handler operation bodies
         let pending_handlers = std::mem::take(&mut self.pending_handlers);
         for (def_id, handler) in pending_handlers {
             if let Err(e) = self.check_handler_body(def_id, &handler) {
@@ -1662,6 +1729,97 @@ impl<'a> TypeContext<'a> {
         }
 
         Ok(())
+    }
+
+    /// Check coherence: detect overlapping impl blocks.
+    ///
+    /// Two impls overlap if they could apply to the same type. For example:
+    /// - `impl Trait for i32` and `impl Trait for i32` overlap
+    /// - `impl<T> Trait for T` and `impl Trait for i32` overlap
+    fn check_coherence(&mut self) {
+        // Group impls by trait
+        let mut trait_impls: HashMap<DefId, Vec<(usize, &ImplBlockInfo)>> = HashMap::new();
+
+        for (idx, impl_block) in self.impl_blocks.iter().enumerate() {
+            if let Some(trait_id) = impl_block.trait_ref {
+                trait_impls.entry(trait_id).or_default().push((idx, impl_block));
+            }
+        }
+
+        // For each trait, check for overlapping impls
+        for (trait_id, impls) in &trait_impls {
+            // O(n^2) pairwise comparison - fine for typical crate sizes
+            for i in 0..impls.len() {
+                for j in (i + 1)..impls.len() {
+                    let (idx_a, impl_a) = &impls[i];
+                    let (idx_b, impl_b) = &impls[j];
+
+                    if self.impls_could_overlap(&impl_a.self_ty, &impl_b.self_ty) {
+                        // Get trait name for error message
+                        let trait_name = self.trait_defs.get(trait_id)
+                            .map(|t| t.name.clone())
+                            .unwrap_or_else(|| format!("trait#{}", trait_id.index()));
+
+                        self.errors.push(TypeError::new(
+                            TypeErrorKind::OverlappingImpls {
+                                trait_name,
+                                ty_a: impl_a.self_ty.clone(),
+                                ty_b: impl_b.self_ty.clone(),
+                            },
+                            Span::dummy(), // TODO: Store impl spans properly
+                        ));
+
+                        // Suppress further comparisons for this pair
+                        let _ = (idx_a, idx_b);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Check if two impl self types could potentially overlap.
+    ///
+    /// Two types overlap if there exists a concrete type that both could match.
+    fn impls_could_overlap(&self, ty_a: &Type, ty_b: &Type) -> bool {
+        match (ty_a.kind(), ty_b.kind()) {
+            // Same primitive type -> overlap
+            (TypeKind::Primitive(a), TypeKind::Primitive(b)) => a == b,
+
+            // Same ADT -> overlap
+            (
+                TypeKind::Adt { def_id: a_id, .. },
+                TypeKind::Adt { def_id: b_id, .. },
+            ) => a_id == b_id,
+
+            // Generic type parameter overlaps with anything (blanket impl)
+            (TypeKind::Param(_), _) | (_, TypeKind::Param(_)) => true,
+
+            // Reference types: check inner types and mutability
+            (
+                TypeKind::Ref { mutable: a_mut, inner: a_inner },
+                TypeKind::Ref { mutable: b_mut, inner: b_inner },
+            ) => a_mut == b_mut && self.impls_could_overlap(a_inner, b_inner),
+
+            // Tuple types: same length and overlapping elements
+            (TypeKind::Tuple(a_elems), TypeKind::Tuple(b_elems)) => {
+                a_elems.len() == b_elems.len()
+                    && a_elems.iter().zip(b_elems.iter()).all(|(a, b)| self.impls_could_overlap(a, b))
+            }
+
+            // Array types: same size and overlapping elements
+            (
+                TypeKind::Array { element: a_elem, size: a_size },
+                TypeKind::Array { element: b_elem, size: b_size },
+            ) => a_size == b_size && self.impls_could_overlap(a_elem, b_elem),
+
+            // Slice types: overlapping elements
+            (TypeKind::Slice { element: a_elem }, TypeKind::Slice { element: b_elem }) => {
+                self.impls_could_overlap(a_elem, b_elem)
+            }
+
+            // Different type kinds don't overlap
+            _ => false,
+        }
     }
 
     /// Type-check a function body.
@@ -3055,6 +3213,11 @@ impl<'a> TypeContext<'a> {
     }
 
     /// Resolve a method on a type.
+    ///
+    /// This implements the method resolution algorithm:
+    /// 1. Look for inherent methods (impl blocks without traits) on the receiver type
+    /// 2. Look for trait methods from trait impls on the receiver type
+    /// 3. Auto-deref the receiver and try again if no match
     fn resolve_method(
         &mut self,
         receiver_ty: &Type,
@@ -3062,37 +3225,131 @@ impl<'a> TypeContext<'a> {
         _args: &[hir::Expr],
         span: Span,
     ) -> Result<(DefId, Type), TypeError> {
-        // For ADTs, look up method in associated functions
-        match receiver_ty.kind() {
-            TypeKind::Adt { def_id: _, .. } => {
-                // Look for method in impl blocks (Phase 2+)
-                // For now, return an error
-                Err(TypeError::new(
-                    TypeErrorKind::NoField {
-                        ty: receiver_ty.clone(),
-                        field: method_name.to_string(),
-                    },
-                    span,
-                ))
+        // Try to find the method on the receiver type directly
+        if let Some((def_id, ret_ty)) = self.find_method_for_type(receiver_ty, method_name) {
+            return Ok((def_id, ret_ty));
+        }
+
+        // Try auto-deref: if receiver is &T or &mut T, try finding method on T
+        if let TypeKind::Ref { inner, .. } = receiver_ty.kind() {
+            if let Some((def_id, ret_ty)) = self.find_method_for_type(inner, method_name) {
+                return Ok((def_id, ret_ty));
             }
-            TypeKind::Primitive(prim) => {
-                // Built-in methods on primitives (e.g., i32::abs, str::len)
-                // For now, return an error - this requires trait resolution
-                Err(TypeError::new(
-                    TypeErrorKind::NotFound {
-                        name: format!("{}::{}", prim, method_name),
-                    },
-                    span,
-                ))
+        }
+
+        // No method found - generate appropriate error message
+        Err(TypeError::new(
+            TypeErrorKind::MethodNotFound {
+                ty: receiver_ty.clone(),
+                method: method_name.to_string(),
+            },
+            span,
+        ))
+    }
+
+    /// Find a method for a specific type by searching impl blocks.
+    ///
+    /// Returns (DefId, return_type) if found, None otherwise.
+    fn find_method_for_type(&self, ty: &Type, method_name: &str) -> Option<(DefId, Type)> {
+        // First, look for inherent impl methods (impl blocks without trait_ref)
+        for impl_block in &self.impl_blocks {
+            // Skip trait impls for now - check inherent impls first
+            if impl_block.trait_ref.is_some() {
+                continue;
             }
-            _ => {
-                Err(TypeError::new(
-                    TypeErrorKind::NotFound {
-                        name: format!("<type>::{}", method_name),
-                    },
-                    span,
-                ))
+
+            // Check if this impl block applies to our type
+            if !self.types_match_for_impl(&impl_block.self_ty, ty) {
+                continue;
             }
+
+            // Look for the method in this impl block
+            for method in &impl_block.methods {
+                if method.name == method_name {
+                    // Found the method - get its return type from fn_sigs
+                    if let Some(sig) = self.fn_sigs.get(&method.def_id) {
+                        return Some((method.def_id, sig.output.clone()));
+                    }
+                }
+            }
+        }
+
+        // Second, look for trait impl methods
+        for impl_block in &self.impl_blocks {
+            // Skip inherent impls
+            let Some(_trait_id) = impl_block.trait_ref else {
+                continue;
+            };
+
+            // Check if this impl block applies to our type
+            if !self.types_match_for_impl(&impl_block.self_ty, ty) {
+                continue;
+            }
+
+            // Look for the method in this impl block
+            for method in &impl_block.methods {
+                if method.name == method_name {
+                    // Found the method - get its return type from fn_sigs
+                    if let Some(sig) = self.fn_sigs.get(&method.def_id) {
+                        return Some((method.def_id, sig.output.clone()));
+                    }
+                }
+            }
+        }
+
+        // Third, look for methods from trait bounds on type parameters
+        if let TypeKind::Param(ty_var_id) = ty.kind() {
+            // This is a type parameter - look for trait bounds
+            // For now, we don't track bounds, so return None
+            // TODO: When trait bounds are implemented, search them here
+            let _ = ty_var_id;
+        }
+
+        None
+    }
+
+    /// Check if an impl block's self type matches a concrete type.
+    ///
+    /// This handles basic type matching including generic instantiation.
+    fn types_match_for_impl(&self, impl_self_ty: &Type, target_ty: &Type) -> bool {
+        match (impl_self_ty.kind(), target_ty.kind()) {
+            // Exact match for primitives
+            (TypeKind::Primitive(a), TypeKind::Primitive(b)) => a == b,
+
+            // ADT match by DefId
+            (
+                TypeKind::Adt { def_id: a_id, .. },
+                TypeKind::Adt { def_id: b_id, .. },
+            ) => a_id == b_id,
+
+            // Generic impl (impl<T> applies to any type)
+            (TypeKind::Param(_), _) => true,
+
+            // Reference types must match mutability and inner types
+            (
+                TypeKind::Ref { mutable: a_mut, inner: a_inner },
+                TypeKind::Ref { mutable: b_mut, inner: b_inner },
+            ) => a_mut == b_mut && self.types_match_for_impl(a_inner, b_inner),
+
+            // Tuple types
+            (TypeKind::Tuple(a_elems), TypeKind::Tuple(b_elems)) => {
+                a_elems.len() == b_elems.len()
+                    && a_elems.iter().zip(b_elems.iter()).all(|(a, b)| self.types_match_for_impl(a, b))
+            }
+
+            // Array types
+            (
+                TypeKind::Array { element: a_elem, size: a_size },
+                TypeKind::Array { element: b_elem, size: b_size },
+            ) => a_size == b_size && self.types_match_for_impl(a_elem, b_elem),
+
+            // Slice types
+            (TypeKind::Slice { element: a_elem }, TypeKind::Slice { element: b_elem }) => {
+                self.types_match_for_impl(a_elem, b_elem)
+            }
+
+            // Other cases don't match
+            _ => false,
         }
     }
 
