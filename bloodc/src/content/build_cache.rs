@@ -565,6 +565,19 @@ fn hash_type(ty: &hir::Type, hasher: &mut ContentHasher) {
             hasher.update_u8(0x09);
             hasher.update_u32(id.0);
         }
+        hir::TypeKind::Range { element, inclusive } => {
+            hasher.update_u8(0x0A); // Range type
+            hasher.update_u8(if *inclusive { 1 } else { 0 });
+            hash_type(element, hasher);
+        }
+        hir::TypeKind::DynTrait { trait_id, auto_traits } => {
+            hasher.update_u8(0x0B); // DynTrait type
+            hasher.update_u32(trait_id.index);
+            hasher.update_u32(auto_traits.len() as u32);
+            for auto_trait in auto_traits {
+                hasher.update_u32(auto_trait.index);
+            }
+        }
     }
 }
 
@@ -850,6 +863,22 @@ fn hash_expr(expr: &hir::Expr, hasher: &mut ContentHasher) {
             hash_expr(body, hasher);
             hasher.update_u32(handler_id.index);
             hash_expr(handler_instance, hasher);
+        }
+        hir::ExprKind::Range { start, end, inclusive } => {
+            hasher.update_u8(0x22);
+            hasher.update_u8(if *inclusive { 1 } else { 0 });
+            if let Some(s) = start {
+                hasher.update_u8(1);
+                hash_expr(s, hasher);
+            } else {
+                hasher.update_u8(0);
+            }
+            if let Some(e) = end {
+                hasher.update_u8(1);
+                hash_expr(e, hasher);
+            } else {
+                hasher.update_u8(0);
+            }
         }
         hir::ExprKind::Error => {
             hasher.update_u8(0xFF);

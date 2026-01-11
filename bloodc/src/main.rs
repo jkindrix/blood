@@ -32,7 +32,7 @@ use bloodc::diagnostics::DiagnosticEmitter;
 use bloodc::{Lexer, TokenKind};
 use bloodc::codegen;
 use bloodc::mir;
-use bloodc::content::{ContentHash, BuildCache, hash_hir_item};
+use bloodc::content::{ContentHash, BuildCache, hash_hir_item, VFT, VFTEntry};
 use bloodc::content::hash::ContentHasher;
 use bloodc::content::namespace::{NameRegistry, NameBinding, BindingKind};
 
@@ -577,6 +577,57 @@ fn cmd_build(args: &FileArgs, verbosity: u8) -> ExitCode {
         }
     }
 
+    // Populate Virtual Function Table (VFT) with function metadata
+    let mut vft = VFT::new();
+    {
+        use bloodc::content::vft::{CallingConvention, EffectMask};
+
+        for (&def_id, item) in &hir_crate.items {
+            if let Some(&hash) = definition_hashes.get(&def_id) {
+                match &item.kind {
+                    bloodc::hir::ItemKind::Fn(fn_def) => {
+                        // Calculate arity from parameters
+                        let arity = fn_def.sig.inputs.len().min(255) as u8;
+
+                        // Determine calling convention
+                        let convention = if fn_def.sig.is_async {
+                            CallingConvention::Effect
+                        } else {
+                            CallingConvention::Blood
+                        };
+
+                        // Build effect mask from function properties
+                        let effects = if fn_def.sig.is_async {
+                            EffectMask::ASYNC
+                        } else {
+                            EffectMask::NONE
+                        };
+
+                        // Entry point is 0 for AOT compilation (resolved at link time)
+                        let entry = VFTEntry::new(hash, 0, arity)
+                            .with_convention(convention)
+                            .with_effects(effects);
+
+                        vft.register(entry);
+                    }
+                    bloodc::hir::ItemKind::Handler { .. } => {
+                        // Handlers are callable - register with effect convention
+                        let entry = VFTEntry::new(hash, 0, 0)
+                            .with_convention(CallingConvention::Effect);
+                        vft.register(entry);
+                    }
+                    _ => {
+                        // Other item kinds don't need VFT entries
+                    }
+                }
+            }
+        }
+    }
+
+    if verbosity > 1 {
+        eprintln!("VFT populated: {} function entries", vft.len());
+    }
+
     // Lower to MIR (Phase 3 integration point)
     let mut mir_lowering = mir::MirLowering::new(&hir_crate);
     let mir_result = match mir_lowering.lower_crate() {
@@ -610,14 +661,12 @@ fn cmd_build(args: &FileArgs, verbosity: u8) -> ExitCode {
             Some((mir_bodies, escape_results))
         }
         Err(errors) => {
-            // MIR lowering errors are non-fatal for now - fall back to HIR codegen
-            if verbosity > 0 {
-                for error in &errors {
-                    emitter.emit(error);
-                }
-                eprintln!("Warning: MIR lowering failed, using HIR codegen without escape analysis.");
+            // MIR lowering is mandatory - errors are fatal
+            for error in &errors {
+                emitter.emit(error);
             }
-            None
+            eprintln!("Build failed: MIR lowering errors.");
+            return ExitCode::from(1);
         }
     };
 
@@ -671,16 +720,16 @@ fn cmd_build(args: &FileArgs, verbosity: u8) -> ExitCode {
 
     // Generate LLVM IR and compile if not using cached object
     if !used_cache {
-        // Generate LLVM IR
-        // Use MIR codegen path when MIR lowering succeeds, HIR path as fallback
-        let ir_result = if let Some((ref mir_bodies, ref escape_map)) = mir_result {
-            if verbosity > 0 {
-                eprintln!("Using MIR-based code generation (escape analysis enabled)");
-            }
-            codegen::compile_mir_to_ir(&hir_crate, mir_bodies, escape_map)
-        } else {
-            codegen::compile_to_ir(&hir_crate)
-        };
+        // MIR lowering is mandatory - unwrap the result (errors returned early above)
+        let (ref mir_bodies, ref escape_map) = mir_result
+            .expect("MIR result should be present (errors return early)");
+
+        if verbosity > 0 {
+            eprintln!("Using MIR-based code generation (escape analysis enabled)");
+        }
+
+        // Generate LLVM IR using MIR codegen
+        let ir_result = codegen::compile_mir_to_ir(&hir_crate, mir_bodies, escape_map);
 
         match ir_result {
             Ok(ir) => {
@@ -688,13 +737,10 @@ fn cmd_build(args: &FileArgs, verbosity: u8) -> ExitCode {
                     println!("{}", ir);
                 }
 
-                // Compile to object file
-                // Use MIR codegen path when MIR lowering succeeds, HIR path as fallback
-                let compile_result = if let Some((ref mir_bodies, ref escape_map)) = mir_result {
-                    codegen::compile_mir_to_object(&hir_crate, mir_bodies, escape_map, &output_obj)
-                } else {
-                    codegen::compile_to_object(&hir_crate, &output_obj)
-                };
+                // Compile to object file using MIR codegen
+                let compile_result = codegen::compile_mir_to_object(
+                    &hir_crate, mir_bodies, escape_map, &output_obj
+                );
 
                 if let Err(errors) = compile_result {
                     for error in &errors {

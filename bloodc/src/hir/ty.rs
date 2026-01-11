@@ -112,6 +112,9 @@ impl Type {
                 params.iter().any(|t| t.has_type_vars()) || ret.has_type_vars()
             }
             TypeKind::Adt { args, .. } => args.iter().any(|t| t.has_type_vars()),
+            TypeKind::Range { element, .. } => element.has_type_vars(),
+            // Trait objects don't contain type variables (only DefIds)
+            TypeKind::DynTrait { .. } => false,
         }
     }
 
@@ -221,6 +224,11 @@ impl Type {
     pub fn adt(def_id: DefId, args: Vec<Type>) -> Self {
         Self::new(TypeKind::Adt { def_id, args })
     }
+
+    /// Create a trait object type: `dyn Trait` or `dyn Trait + Send + Sync`.
+    pub fn dyn_trait(trait_id: DefId, auto_traits: Vec<DefId>) -> Self {
+        Self::new(TypeKind::DynTrait { trait_id, auto_traits })
+    }
 }
 
 impl fmt::Debug for Type {
@@ -289,8 +297,30 @@ pub enum TypeKind {
     /// The never type: `!`
     Never,
 
+    /// A range type: `Range<T>` or `RangeInclusive<T>`
+    ///
+    /// Represents the built-in range types used by `..` and `..=` syntax.
+    /// Layout: { start: T, end: T } for Range, { start: T, end: T, exhausted: bool } for RangeInclusive.
+    Range {
+        /// The element type (must support Step trait for iteration).
+        element: Type,
+        /// Whether this is an inclusive range (`..=`).
+        inclusive: bool,
+    },
+
     /// An error type (for error recovery).
     Error,
+
+    /// A trait object type: `dyn Trait` or `dyn Trait + Send + Sync`
+    ///
+    /// Represents a dynamically-dispatched trait object. Values of this type
+    /// are fat pointers containing a data pointer and a vtable pointer.
+    DynTrait {
+        /// The primary trait this object implements.
+        trait_id: DefId,
+        /// Additional auto-trait bounds (Send, Sync, etc.).
+        auto_traits: Vec<DefId>,
+    },
 }
 
 impl fmt::Display for TypeKind {
@@ -351,7 +381,16 @@ impl fmt::Display for TypeKind {
             TypeKind::Infer(id) => write!(f, "?{}", id.0),
             TypeKind::Param(id) => write!(f, "T{}", id.0),
             TypeKind::Never => write!(f, "!"),
+            TypeKind::Range { element, inclusive: false } => write!(f, "Range<{element}>"),
+            TypeKind::Range { element, inclusive: true } => write!(f, "RangeInclusive<{element}>"),
             TypeKind::Error => write!(f, "{{error}}"),
+            TypeKind::DynTrait { trait_id, auto_traits } => {
+                write!(f, "dyn {trait_id}")?;
+                for auto_trait in auto_traits {
+                    write!(f, " + {auto_trait}")?;
+                }
+                Ok(())
+            }
         }
     }
 }

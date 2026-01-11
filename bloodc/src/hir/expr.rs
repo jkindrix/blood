@@ -306,6 +306,18 @@ pub enum ExprKind {
         handler_instance: Box<Expr>,
     },
 
+    /// Range expression: `start..end` or `start..=end`
+    ///
+    /// Creates a Range or RangeInclusive value for iteration or slicing.
+    Range {
+        /// Start of range (None for `..end` ranges).
+        start: Option<Box<Expr>>,
+        /// End of range (None for `start..` ranges).
+        end: Option<Box<Expr>>,
+        /// Whether this is an inclusive range (`..=`).
+        inclusive: bool,
+    },
+
     /// Error placeholder (for error recovery).
     Error,
 }
