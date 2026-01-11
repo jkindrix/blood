@@ -180,6 +180,14 @@ impl TypeError {
                 "E1035",
                 format!("invalid effect type syntax: expected a named effect like `State<T>`, found {found}"),
             ),
+            TypeErrorKind::TraitNotFound { name } => (
+                "E1037",
+                format!("cannot find trait `{name}` in this scope"),
+            ),
+            TypeErrorKind::TypeAnnotationRequired => (
+                "E1038",
+                "type annotations needed for parameter".to_string(),
+            ),
         };
 
         let mut diag = Diagnostic::error(message, self.span).with_code(code);
@@ -338,6 +346,12 @@ pub enum TypeErrorKind {
     InvalidEffectType {
         found: String,
     },
+    /// Trait not found.
+    TraitNotFound {
+        name: String,
+    },
+    /// Type annotation required.
+    TypeAnnotationRequired,
 }
 
 impl fmt::Display for TypeError {

@@ -71,6 +71,10 @@ pub struct TypeContext<'a> {
     fn_effects: HashMap<DefId, Vec<EffectRef>>,
     /// Handlers to type-check (includes full declaration for operation bodies).
     pending_handlers: Vec<(DefId, ast::HandlerDecl)>,
+    /// Impl block definitions (keyed by a synthetic DefId for the impl block itself).
+    impl_blocks: Vec<ImplBlockInfo>,
+    /// Mapping from method DefId to its Self type (for resolving `self` in methods).
+    method_self_types: HashMap<DefId, Type>,
 }
 
 /// Information about a struct.
@@ -158,6 +162,54 @@ pub struct EffectRef {
     pub type_args: Vec<Type>,
 }
 
+/// Information about an impl block.
+#[derive(Debug, Clone)]
+pub struct ImplBlockInfo {
+    /// The type being implemented for.
+    pub self_ty: Type,
+    /// The trait being implemented, if any (DefId of the trait).
+    pub trait_ref: Option<DefId>,
+    /// Generic type parameters.
+    pub generics: Vec<TyVarId>,
+    /// Associated functions (methods).
+    pub methods: Vec<ImplMethodInfo>,
+    /// Associated types (for trait impls).
+    pub assoc_types: Vec<ImplAssocTypeInfo>,
+    /// Associated constants.
+    pub assoc_consts: Vec<ImplAssocConstInfo>,
+}
+
+/// Information about a method in an impl block.
+#[derive(Debug, Clone)]
+pub struct ImplMethodInfo {
+    /// The method's DefId.
+    pub def_id: DefId,
+    /// The method name.
+    pub name: String,
+    /// Whether this is a static method (no self parameter).
+    pub is_static: bool,
+}
+
+/// Information about an associated type in an impl block.
+#[derive(Debug, Clone)]
+pub struct ImplAssocTypeInfo {
+    /// The name of the associated type.
+    pub name: String,
+    /// The concrete type.
+    pub ty: Type,
+}
+
+/// Information about an associated constant in an impl block.
+#[derive(Debug, Clone)]
+pub struct ImplAssocConstInfo {
+    /// The constant's DefId.
+    pub def_id: DefId,
+    /// The name of the constant.
+    pub name: String,
+    /// The type of the constant.
+    pub ty: Type,
+}
+
 impl<'a> TypeContext<'a> {
     /// Create a new type context.
     pub fn new(source: &'a str, interner: DefaultStringInterner) -> Self {
@@ -186,6 +238,8 @@ impl<'a> TypeContext<'a> {
             handler_defs: HashMap::new(),
             fn_effects: HashMap::new(),
             pending_handlers: Vec::new(),
+            impl_blocks: Vec::new(),
+            method_self_types: HashMap::new(),
         };
         ctx.register_builtins();
         ctx
@@ -332,15 +386,7 @@ impl<'a> TypeContext<'a> {
             ast::Declaration::Effect(e) => self.collect_effect(e),
             ast::Declaration::Handler(h) => self.collect_handler(h),
             ast::Declaration::Type(t) => self.collect_type_alias(t),
-            ast::Declaration::Impl(i) => {
-                // Impl blocks - Phase 2+
-                Err(TypeError::new(
-                    TypeErrorKind::UnsupportedFeature {
-                        feature: "impl blocks are not yet supported".to_string(),
-                    },
-                    i.span,
-                ))
-            }
+            ast::Declaration::Impl(i) => self.collect_impl_block(i),
             ast::Declaration::Trait(t) => {
                 // Trait declarations - Phase 2+
                 Err(TypeError::new(
@@ -960,6 +1006,204 @@ impl<'a> TypeContext<'a> {
         self.pending_handlers.push((def_id, handler.clone()));
 
         Ok(())
+    }
+
+    /// Collect an impl block declaration.
+    fn collect_impl_block(&mut self, impl_block: &ast::ImplBlock) -> Result<(), TypeError> {
+        // Save current generic params
+        let saved_generic_params = std::mem::take(&mut self.generic_params);
+        let mut generics_vec = Vec::new();
+
+        // Register type parameters from the impl block
+        if let Some(ref type_params) = impl_block.type_params {
+            for param in &type_params.params {
+                let param_name = self.symbol_to_string(param.name.node);
+                let ty_var_id = TyVarId::new(self.next_type_param_id);
+                self.next_type_param_id += 1;
+                self.generic_params.insert(param_name, ty_var_id);
+                generics_vec.push(ty_var_id);
+            }
+        }
+
+        // Convert self type to HIR type
+        let self_ty = self.ast_type_to_hir_type(&impl_block.self_ty)?;
+
+        // Check if this is a trait impl and resolve the trait (if any)
+        let trait_ref = if let Some(ref trait_ty) = impl_block.trait_ty {
+            // For now, only support simple trait paths
+            match &trait_ty.kind {
+                ast::TypeKind::Path(path) => {
+                    if path.segments.is_empty() {
+                        return Err(TypeError::new(
+                            TypeErrorKind::TypeNotFound { name: "empty trait path".to_string() },
+                            impl_block.span,
+                        ));
+                    }
+                    let trait_name = self.symbol_to_string(path.segments[0].name.node);
+                    // Look up the trait by name
+                    match self.resolver.lookup(&trait_name) {
+                        Some(Binding::Def(def_id)) => {
+                            // Verify this is actually a trait
+                            if let Some(info) = self.resolver.def_info.get(&def_id) {
+                                if matches!(info.kind, hir::DefKind::Trait) {
+                                    Some(def_id)
+                                } else {
+                                    return Err(TypeError::new(
+                                        TypeErrorKind::TraitNotFound { name: trait_name },
+                                        trait_ty.span,
+                                    ));
+                                }
+                            } else {
+                                return Err(TypeError::new(
+                                    TypeErrorKind::TraitNotFound { name: trait_name },
+                                    trait_ty.span,
+                                ));
+                            }
+                        }
+                        _ => {
+                            return Err(TypeError::new(
+                                TypeErrorKind::TraitNotFound { name: trait_name },
+                                trait_ty.span,
+                            ));
+                        }
+                    }
+                }
+                _ => {
+                    return Err(TypeError::new(
+                        TypeErrorKind::Mismatch {
+                            expected: Type::unit(), // Placeholder
+                            found: Type::unit(),
+                        },
+                        trait_ty.span,
+                    ));
+                }
+            }
+        } else {
+            None
+        };
+
+        // Process impl items (methods, associated types, associated constants)
+        let mut methods = Vec::new();
+        let mut assoc_types = Vec::new();
+        let mut assoc_consts = Vec::new();
+
+        for item in &impl_block.items {
+            match item {
+                ast::ImplItem::Function(func) => {
+                    let method_name = self.symbol_to_string(func.name.node);
+
+                    // Create a qualified name for the method: Type::method_name
+                    let qualified_name = format!("{}::{}", self.type_to_string(&self_ty), method_name);
+
+                    // Register the method as an associated function
+                    let method_def_id = self.resolver.define_item(
+                        qualified_name.clone(),
+                        hir::DefKind::AssocFn,
+                        func.span,
+                    )?;
+
+                    // Check if this is a static method (no self parameter)
+                    let is_static = func.params.first().map_or(true, |p| {
+                        match &p.pattern.kind {
+                            ast::PatternKind::Ident { name, .. } => {
+                                let name_str = self.symbol_to_string(name.node);
+                                name_str != "self"
+                            }
+                            _ => true,
+                        }
+                    });
+
+                    // Store the Self type for this method
+                    self.method_self_types.insert(method_def_id, self_ty.clone());
+
+                    // Build the function signature
+                    let mut param_types = Vec::new();
+                    for (i, param) in func.params.iter().enumerate() {
+                        if i == 0 && !is_static {
+                            // This is the self parameter
+                            // The type is in param.ty - check if it's a reference type
+                            // (e.g., &Self or &mut Self)
+                            param_types.push(self.ast_type_to_hir_type(&param.ty)?);
+                        } else {
+                            // Regular parameter
+                            param_types.push(self.ast_type_to_hir_type(&param.ty)?);
+                        }
+                    }
+
+                    let return_type = match &func.return_type {
+                        Some(ty) => self.ast_type_to_hir_type(ty)?,
+                        None => Type::unit(),
+                    };
+
+                    // Create function signature
+                    let sig = hir::FnSig {
+                        inputs: param_types,
+                        output: return_type,
+                        is_const: func.qualifiers.is_const,
+                        is_async: func.qualifiers.is_async,
+                        is_unsafe: func.qualifiers.is_unsafe,
+                        generics: Vec::new(), // TODO: Handle method generics
+                    };
+
+                    self.fn_sigs.insert(method_def_id, sig);
+
+                    // Queue method body for type-checking
+                    self.pending_bodies.push((method_def_id, func.clone()));
+
+                    methods.push(ImplMethodInfo {
+                        def_id: method_def_id,
+                        name: method_name,
+                        is_static,
+                    });
+                }
+                ast::ImplItem::Type(type_decl) => {
+                    let type_name = self.symbol_to_string(type_decl.name.node);
+                    let ty = self.ast_type_to_hir_type(&type_decl.ty)?;
+                    assoc_types.push(ImplAssocTypeInfo {
+                        name: type_name,
+                        ty,
+                    });
+                }
+                ast::ImplItem::Const(const_decl) => {
+                    let const_name = self.symbol_to_string(const_decl.name.node);
+                    let qualified_name = format!("{}::{}", self.type_to_string(&self_ty), const_name);
+
+                    let const_def_id = self.resolver.define_item(
+                        qualified_name,
+                        hir::DefKind::AssocConst,
+                        const_decl.span,
+                    )?;
+
+                    let ty = self.ast_type_to_hir_type(&const_decl.ty)?;
+
+                    assoc_consts.push(ImplAssocConstInfo {
+                        def_id: const_def_id,
+                        name: const_name,
+                        ty,
+                    });
+                }
+            }
+        }
+
+        // Restore generic params
+        self.generic_params = saved_generic_params;
+
+        // Store the impl block
+        self.impl_blocks.push(ImplBlockInfo {
+            self_ty,
+            trait_ref,
+            generics: generics_vec,
+            methods,
+            assoc_types,
+            assoc_consts,
+        });
+
+        Ok(())
+    }
+
+    /// Convert a Type to a string for display.
+    fn type_to_string(&self, ty: &Type) -> String {
+        format!("{}", ty)
     }
 
     /// Type-check all queued bodies.
