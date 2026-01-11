@@ -490,6 +490,9 @@ impl LivenessAnalysis {
                     let _ = local;
                 }
                 StatementKind::Nop => {}
+                StatementKind::PushHandler { .. } | StatementKind::PopHandler => {
+                    // Effect handler statements don't use or define locals
+                }
             }
         }
 

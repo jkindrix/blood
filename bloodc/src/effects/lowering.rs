@@ -730,18 +730,20 @@ impl EffectLowering {
     /// Lower a `with...handle` block.
     ///
     /// Transforms: `handle { body } with HandlerName`
-    /// To: `ExprKind::Handle { body, handler_id }`
+    /// To: `ExprKind::Handle { body, handler_id, handler_instance }`
     ///
     /// The codegen then:
     /// 1. Creates an evidence vector via `blood_evidence_create()`
-    /// 2. Pushes the handler via `blood_evidence_push()`
-    /// 3. Compiles the body
-    /// 4. Pops the handler via `blood_evidence_pop()`
-    /// 5. Destroys the evidence vector via `blood_evidence_destroy()`
+    /// 2. Evaluates handler_instance to get state pointer
+    /// 3. Pushes the handler via `blood_evidence_push()`
+    /// 4. Compiles the body
+    /// 5. Pops the handler via `blood_evidence_pop()`
+    /// 6. Destroys the evidence vector via `blood_evidence_destroy()`
     pub fn lower_handler_block(
         &mut self,
         _handler_kind: HandlerKind,
         handler_id: DefId,
+        handler_instance: Expr,
         body: Expr,
     ) -> LoweringResult {
         // Get the return type from the body
@@ -753,6 +755,7 @@ impl EffectLowering {
                 kind: ExprKind::Handle {
                     body: Box::new(body),
                     handler_id,
+                    handler_instance: Box::new(handler_instance),
                 },
                 ty: return_ty,
                 span: crate::span::Span::dummy(),

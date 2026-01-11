@@ -845,10 +845,11 @@ fn hash_expr(expr: &hir::Expr, hasher: &mut ContentHasher) {
                 hasher.update_u8(0);
             }
         }
-        hir::ExprKind::Handle { body, handler_id } => {
+        hir::ExprKind::Handle { body, handler_id, handler_instance } => {
             hasher.update_u8(0x21);
             hash_expr(body, hasher);
             hasher.update_u32(handler_id.index);
+            hash_expr(handler_instance, hasher);
         }
         hir::ExprKind::Error => {
             hasher.update_u8(0xFF);

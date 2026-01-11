@@ -291,6 +291,10 @@ impl EscapeAnalyzer {
             StatementKind::StorageLive(_) | StatementKind::StorageDead(_) | StatementKind::Nop => {
                 false
             }
+            StatementKind::PushHandler { .. } | StatementKind::PopHandler => {
+                // Effect handler statements don't affect escape state
+                false
+            }
         }
     }
 

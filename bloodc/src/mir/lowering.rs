@@ -418,8 +418,8 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
                 self.lower_resume(value.as_deref(), expr.span)
             }
 
-            ExprKind::Handle { body, handler_id } => {
-                self.lower_handle(body, *handler_id, &expr.ty, expr.span)
+            ExprKind::Handle { body, handler_id, handler_instance } => {
+                self.lower_handle(body, *handler_id, handler_instance, &expr.ty, expr.span)
             }
         }
     }
@@ -661,28 +661,35 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
     /// effect handler installed. The handler can intercept effect operations
     /// performed by the body.
     ///
-    /// In MIR, we lower the body directly. The evidence vector setup/teardown
-    /// is handled by the codegen phase based on effect annotations.
+    /// MIR lowering emits:
+    /// 1. Lower handler_instance to get state
+    /// 2. PushHandler statement to install the handler with state
+    /// 3. Body lowering
+    /// 4. PopHandler statement to uninstall the handler
     fn lower_handle(
         &mut self,
         body: &Expr,
-        _handler_id: DefId,
+        handler_id: DefId,
+        handler_instance: &Expr,
         ty: &Type,
         span: Span,
     ) -> Result<Operand, Vec<Diagnostic>> {
-        // For now, lower handle as a transparent wrapper around the body.
-        // The effect handler installation is managed by the codegen phase.
-        //
-        // Full handler support requires:
-        // 1. Evidence vector setup (push handler)
-        // 2. Body execution with effect interception
-        // 3. Evidence vector teardown (pop handler)
-        //
-        // The MIR representation currently passes through to codegen which
-        // handles the evidence vector manipulation via runtime calls.
+        // Step 1: Lower the handler instance to get the state
+        let state_operand = self.lower_expr(handler_instance)?;
 
-        // Lower the body expression
+        // Store state in a temp local (we need a Place for the state)
+        let state_local = self.new_temp(handler_instance.ty.clone(), span);
+        let state_place = Place::local(state_local);
+        self.push_assign(state_place.clone(), Rvalue::Use(state_operand));
+
+        // Step 2: Push the handler onto the evidence vector with state
+        self.push_stmt(StatementKind::PushHandler { handler_id, state_place: state_place.clone() });
+
+        // Step 3: Lower the body expression with the handler installed
         let body_result = self.lower_expr(body)?;
+
+        // Step 4: Pop the handler from the evidence vector
+        self.push_stmt(StatementKind::PopHandler);
 
         // Create a destination for the handle result
         let dest = self.new_temp(ty.clone(), span);
@@ -1960,8 +1967,8 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
                 self.lower_resume(value.as_deref(), expr.span)
             }
 
-            ExprKind::Handle { body, handler_id } => {
-                self.lower_handle(body, *handler_id, &expr.ty, expr.span)
+            ExprKind::Handle { body, handler_id, handler_instance } => {
+                self.lower_handle(body, *handler_id, handler_instance, &expr.ty, expr.span)
             }
 
             ExprKind::Repeat { value, count } => {
@@ -2172,12 +2179,27 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
     fn lower_handle(
         &mut self,
         body: &Expr,
-        _handler_id: DefId,
+        handler_id: DefId,
+        handler_instance: &Expr,
         ty: &Type,
         span: Span,
     ) -> Result<Operand, Vec<Diagnostic>> {
-        // Lower the body (handler setup is done in codegen)
+        // Step 1: Lower the handler instance to get the state
+        let state_operand = self.lower_expr(handler_instance)?;
+
+        // Store state in a temp local (we need a Place for the state)
+        let state_local = self.new_temp(handler_instance.ty.clone(), span);
+        let state_place = Place::local(state_local);
+        self.push_assign(state_place.clone(), Rvalue::Use(state_operand));
+
+        // Step 2: Push the handler onto the evidence vector with state
+        self.push_stmt(StatementKind::PushHandler { handler_id, state_place: state_place.clone() });
+
+        // Step 3: Lower the body expression with the handler installed
         let body_result = self.lower_expr(body)?;
+
+        // Step 4: Pop the handler from the evidence vector
+        self.push_stmt(StatementKind::PopHandler);
 
         // Store the result
         let dest = self.new_temp(ty.clone(), span);

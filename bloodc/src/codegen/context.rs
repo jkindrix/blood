@@ -79,7 +79,7 @@ pub struct CodegenContext<'ctx, 'a> {
     /// Compiled effect definitions (effect DefId -> effect metadata).
     effect_defs: HashMap<DefId, EffectInfo>,
     /// Compiled handler definitions (handler DefId -> handler metadata).
-    handler_defs: HashMap<DefId, HandlerInfo>,
+    pub(crate) handler_defs: HashMap<DefId, HandlerInfo>,
     /// Handler function pointers for runtime registration.
     /// Maps (handler_id, op_index) -> LLVM function.
     handler_ops: HashMap<(DefId, usize), FunctionValue<'ctx>>,
@@ -191,7 +191,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     ///
     /// After this, MIR bodies can be compiled using `compile_mir_body`.
     pub fn compile_crate_declarations(&mut self, hir_crate: &hir::Crate) -> Result<(), Vec<Diagnostic>> {
-        // First pass: collect struct, enum, effect, and handler definitions
+        // First pass: collect struct, enum, and effect definitions
+        // Effects must be processed before handlers
         for (def_id, item) in &hir_crate.items {
             match &item.kind {
                 hir::ItemKind::Struct(struct_def) => {
@@ -225,20 +226,29 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         self.effect_defs.insert(*def_id, effect_info);
                     }
                 }
-                hir::ItemKind::Handler { .. } => {
-                    match self.effect_lowering.lower_handler_decl(item, Some(&hir_crate.bodies)) {
-                        Ok(handler_info) => {
-                            self.handler_defs.insert(*def_id, handler_info);
-                        }
-                        Err(err) => {
-                            return Err(vec![Diagnostic::error(
-                                format!("Effect lowering error: {}", err.message),
-                                item.span,
-                            )]);
-                        }
+                _ => {}
+            }
+        }
+
+        // Second pass: collect handler definitions (effects must be registered first)
+        // Also register handlers in struct_defs so they can be compiled as ADTs
+        for (def_id, item) in &hir_crate.items {
+            if let hir::ItemKind::Handler { state, .. } = &item.kind {
+                // Register handler as an ADT in struct_defs (state fields are the struct fields)
+                let field_types: Vec<Type> = state.iter().map(|s| s.ty.clone()).collect();
+                self.struct_defs.insert(*def_id, field_types);
+
+                match self.effect_lowering.lower_handler_decl(item, Some(&hir_crate.bodies)) {
+                    Ok(handler_info) => {
+                        self.handler_defs.insert(*def_id, handler_info);
+                    }
+                    Err(err) => {
+                        return Err(vec![Diagnostic::error(
+                            format!("Effect lowering error: {}", err.message),
+                            item.span,
+                        )]);
                     }
                 }
-                _ => {}
             }
         }
 
@@ -279,7 +289,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // Copy builtin function mappings for resolving runtime calls
         self.builtin_fns = hir_crate.builtin_fns.clone();
 
-        // First pass: collect struct, enum, effect, and handler definitions
+        // First pass: collect struct, enum, and effect definitions
+        // Effects must be processed before handlers
         for (def_id, item) in &hir_crate.items {
             match &item.kind {
                 hir::ItemKind::Struct(struct_def) => {
@@ -314,21 +325,29 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         self.effect_defs.insert(*def_id, effect_info);
                     }
                 }
-                hir::ItemKind::Handler { .. } => {
-                    // Lower handler declaration to HandlerInfo
-                    match self.effect_lowering.lower_handler_decl(item, Some(&hir_crate.bodies)) {
-                        Ok(handler_info) => {
-                            self.handler_defs.insert(*def_id, handler_info);
-                        }
-                        Err(err) => {
-                            return Err(vec![Diagnostic::error(
-                                format!("Effect lowering error: {}", err.message),
-                                item.span,
-                            )]);
-                        }
+                _ => {}
+            }
+        }
+
+        // Second pass: collect handler definitions (effects must be registered first)
+        // Also register handlers in struct_defs so they can be compiled as ADTs
+        for (def_id, item) in &hir_crate.items {
+            if let hir::ItemKind::Handler { state, .. } = &item.kind {
+                // Register handler as an ADT in struct_defs (state fields are the struct fields)
+                let field_types: Vec<Type> = state.iter().map(|s| s.ty.clone()).collect();
+                self.struct_defs.insert(*def_id, field_types);
+
+                match self.effect_lowering.lower_handler_decl(item, Some(&hir_crate.bodies)) {
+                    Ok(handler_info) => {
+                        self.handler_defs.insert(*def_id, handler_info);
+                    }
+                    Err(err) => {
+                        return Err(vec![Diagnostic::error(
+                            format!("Effect lowering error: {}", err.message),
+                            item.span,
+                        )]);
                     }
                 }
-                _ => {}
             }
         }
 
@@ -408,14 +427,14 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     }
 
     /// Compile handler operation bodies (Phase 2: Effect Handlers).
-    fn compile_handler_operations(&mut self, hir_crate: &hir::Crate) -> Result<(), Vec<Diagnostic>> {
+    pub fn compile_handler_operations(&mut self, hir_crate: &hir::Crate) -> Result<(), Vec<Diagnostic>> {
         for (def_id, item) in &hir_crate.items {
-            if let hir::ItemKind::Handler { operations, return_clause, .. } = &item.kind {
+            if let hir::ItemKind::Handler { operations, return_clause, state, .. } = &item.kind {
                 // Compile each operation
                 for (op_idx, handler_op) in operations.iter().enumerate() {
                     if let Some(&fn_value) = self.handler_ops.get(&(*def_id, op_idx)) {
                         if let Some(body) = hir_crate.bodies.get(&handler_op.body_id) {
-                            self.compile_handler_op_body(fn_value, body, handler_op)?;
+                            self.compile_handler_op_body(fn_value, body, handler_op, state)?;
                         }
                     }
                 }
@@ -548,6 +567,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         fn_value: FunctionValue<'ctx>,
         body: &hir::Body,
         _handler_op: &hir::HandlerOp,
+        state_fields: &[hir::HandlerState],
     ) -> Result<(), Vec<Diagnostic>> {
         let span = body.span;
 
@@ -561,107 +581,153 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         self.current_fn = Some(fn_value);
 
         // Get parameters: (state: *mut void, args: *const i64, arg_count: i64)
-        let _state_ptr = fn_value.get_nth_param(0)
+        let state_ptr = fn_value.get_nth_param(0)
             .ok_or_else(|| vec![Diagnostic::error("Missing state parameter".to_string(), span)])?;
         let args_ptr = fn_value.get_nth_param(1)
             .ok_or_else(|| vec![Diagnostic::error("Missing args parameter".to_string(), span)])?;
         let _arg_count = fn_value.get_nth_param(2)
             .ok_or_else(|| vec![Diagnostic::error("Missing arg_count parameter".to_string(), span)])?;
 
-        // Extract arguments from args array and bind to locals
         let i64_type = self.context.i64_type();
-        let i32_type = self.context.i32_type();
-        let zero = i32_type.const_zero();
 
-        // Skip first local (return place) and bind parameters
-        let param_locals: Vec<_> = body.params().collect();
-        for (i, local) in param_locals.iter().enumerate() {
-            let idx = i32_type.const_int(i as u64, false);
-            let arg_ptr = unsafe {
-                self.builder.build_gep(
-                    args_ptr.into_pointer_value(),
-                    &[zero, idx],
-                    &format!("arg_ptr_{}", i),
-                )
-            }.map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+        // Build the handler state struct type to properly access fields
+        let state_field_types: Vec<_> = state_fields.iter()
+            .map(|s| self.lower_type(&s.ty))
+            .collect();
+        let state_struct_type = self.context.struct_type(&state_field_types, false);
+        let state_struct_ptr_type = state_struct_type.ptr_type(inkwell::AddressSpace::default());
 
-            let arg_val = self.builder
-                .build_load(arg_ptr, &format!("arg_{}", i))
-                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+        // Cast the void* state_ptr to the proper struct pointer type
+        let typed_state_ptr = self.builder
+            .build_pointer_cast(
+                state_ptr.into_pointer_value(),
+                state_struct_ptr_type,
+                "typed_state_ptr"
+            )
+            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
-            // Store in local
+        // Build a map of state field names to their index in the struct
+        let state_field_indices: std::collections::HashMap<&str, u32> = state_fields.iter()
+            .enumerate()
+            .map(|(i, s)| (s.name.as_str(), i as u32))
+            .collect();
+
+        // Set up ALL locals from the body (except return place at index 0)
+        // Handler operation bodies have: [return_place, state_fields..., params..., resume]
+        for local in &body.locals {
+            // Skip return place
+            if local.id == LocalId::RETURN_PLACE {
+                continue;
+            }
+
             let local_type = self.lower_type(&local.ty);
+            let local_name = local.name.as_deref().unwrap_or("local");
+
+            // Check if this is a "resume" local - it's a function type
+            if local.name.as_deref() == Some("resume") {
+                // Resume is a placeholder - we'll handle resume calls specially
+                // Create an alloca for it but don't initialize it (it's not a real value)
+                let alloca = self.builder
+                    .build_alloca(i64_type, "resume_placeholder")
+                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+                self.locals.insert(local.id, alloca);
+                continue;
+            }
+
+            // Check if this local corresponds to a state field
+            if let Some(&field_idx) = state_field_indices.get(local_name) {
+                // This is a state field - load its value from the state struct
+                let field_ptr = self.builder
+                    .build_struct_gep(typed_state_ptr, field_idx, &format!("{}_ptr", local_name))
+                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+
+                // Create an alloca to hold the local
+                let alloca = self.builder
+                    .build_alloca(local_type, local_name)
+                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+
+                // Load the value from state and store in the local
+                let value = self.builder
+                    .build_load(field_ptr, &format!("{}_val", local_name))
+                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+                self.builder.build_store(alloca, value)
+                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+
+                self.locals.insert(local.id, alloca);
+                continue;
+            }
+
+            // For other locals (operation params, temporaries), allocate with defaults
             let alloca = self.builder
-                .build_alloca(local_type, &format!("param.{}", i))
+                .build_alloca(local_type, local_name)
                 .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
-            // Convert from i64 to the local's type
-            let converted_val = if local_type.is_int_type() {
-                let int_type = local_type.into_int_type();
-                if int_type.get_bit_width() == 64 {
-                    arg_val
-                } else {
-                    self.builder
-                        .build_int_truncate(arg_val.into_int_value(), int_type, "arg_trunc")
-                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
-                        .into()
-                }
-            } else if local_type.is_pointer_type() {
-                self.builder
-                    .build_int_to_ptr(arg_val.into_int_value(), local_type.into_pointer_type(), "arg_ptr")
-                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
-                    .into()
-            } else {
-                arg_val
-            };
+            // Initialize with zero/default
+            if local_type.is_int_type() {
+                let zero_val = local_type.into_int_type().const_zero();
+                self.builder.build_store(alloca, zero_val)
+                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+            }
 
-            self.builder.build_store(alloca, converted_val)
-                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
             self.locals.insert(local.id, alloca);
         }
+
+        // Now extract operation parameters from args_ptr (if any)
+        // params() returns locals 1..(1+param_count), but for handler ops
+        // param_count might be 0 or include state fields
+        // For now, just skip this since handler ops often have no params
+        let _args_ptr_val = args_ptr.into_pointer_value();
 
         // Compile the body expression
         let result = self.compile_expr(&body.expr)?;
 
-        // Return result as i64
-        if let Some(ret_val) = result {
-            let ret_i64 = match ret_val {
-                BasicValueEnum::IntValue(iv) => {
-                    if iv.get_type().get_bit_width() == 64 {
-                        iv
-                    } else {
+        // Check if the basic block already has a terminator (e.g., from resume)
+        // If so, don't add another return
+        let current_block = self.builder.get_insert_block()
+            .ok_or_else(|| vec![Diagnostic::error("No current block".to_string(), span)])?;
+        if current_block.get_terminator().is_some() {
+            // Block already terminated (likely by resume), don't add another return
+        } else {
+            // Return result as i64
+            if let Some(ret_val) = result {
+                let ret_i64 = match ret_val {
+                    BasicValueEnum::IntValue(iv) => {
+                        if iv.get_type().get_bit_width() == 64 {
+                            iv
+                        } else {
+                            self.builder
+                                .build_int_s_extend(iv, i64_type, "ret_ext")
+                                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                        }
+                    }
+                    BasicValueEnum::PointerValue(pv) => {
                         self.builder
-                            .build_int_s_extend(iv, i64_type, "ret_ext")
+                            .build_ptr_to_int(pv, i64_type, "ret_ptr_int")
                             .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
                     }
-                }
-                BasicValueEnum::PointerValue(pv) => {
-                    self.builder
-                        .build_ptr_to_int(pv, i64_type, "ret_ptr_int")
-                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
-                }
-                BasicValueEnum::FloatValue(fv) => {
-                    // Bitcast float to i64 for passing through uniform interface
-                    self.builder
-                        .build_bit_cast(fv, i64_type, "float_as_i64")
-                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
-                        .into_int_value()
-                }
-                other => {
-                    return Err(vec![ice_err!(
-                        span,
-                        "unsupported return type in handler op body";
-                        "type" => other.get_type(),
-                        "expected" => "IntValue, PointerValue, or FloatValue"
-                    )]);
-                }
-            };
-            self.builder.build_return(Some(&ret_i64))
-                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
-        } else {
-            // Return 0 for unit type
-            self.builder.build_return(Some(&i64_type.const_zero()))
-                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+                    BasicValueEnum::FloatValue(fv) => {
+                        // Bitcast float to i64 for passing through uniform interface
+                        self.builder
+                            .build_bit_cast(fv, i64_type, "float_as_i64")
+                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                            .into_int_value()
+                    }
+                    other => {
+                        return Err(vec![ice_err!(
+                            span,
+                            "unsupported return type in handler op body";
+                            "type" => other.get_type(),
+                            "expected" => "IntValue, PointerValue, or FloatValue"
+                        )]);
+                    }
+                };
+                self.builder.build_return(Some(&ret_i64))
+                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+            } else {
+                // Return 0 for unit type
+                self.builder.build_return(Some(&i64_type.const_zero()))
+                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+            }
         }
 
         // Restore context
@@ -675,7 +741,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     ///
     /// Generates code to call blood_evidence_register for each handler during
     /// module initialization.
-    fn register_handlers_with_runtime(&mut self) -> Result<(), Vec<Diagnostic>> {
+    pub fn register_handlers_with_runtime(&mut self) -> Result<(), Vec<Diagnostic>> {
         // Skip if no handlers to register
         if self.handler_defs.is_empty() {
             return Ok(());
@@ -969,10 +1035,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         self.module.add_function("blood_evidence_get", ev_get_type, None);
 
         // blood_evidence_register(ev: *void, effect_id: i64, ops: **void, op_count: i64) -> void
+        let void_ptr_ptr_type = void_ptr_type.ptr_type(AddressSpace::default());
         let ev_register_type = void_type.fn_type(&[
             void_ptr_type.into(),
             i64_type.into(),
-            void_ptr_type.into(),
+            void_ptr_ptr_type.into(),  // ops is **void (pointer to array of function pointers)
             i64_type.into(),
         ], false);
         self.module.add_function("blood_evidence_register", ev_register_type, None);
@@ -1446,10 +1513,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // For general handlers, this requires continuation capture (Phase 2.3).
                 self.compile_resume(value.as_deref(), &expr.ty)
             }
-            Handle { body, handler_id } => {
+            Handle { body, handler_id, handler_instance } => {
                 // Handle expression: runs body with handler installed.
                 // This sets up the evidence vector and runs the body.
-                self.compile_handle(body, *handler_id, &expr.ty)
+                self.compile_handle(body, *handler_id, handler_instance, &expr.ty)
             }
             Deref(inner) => {
                 // Dereference: *x
@@ -3865,18 +3932,65 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // For tail-resumptive handlers (State, Reader, Writer), resume at tail
         // position is just returning the value.
 
+        // Get the current function's return type to properly convert the value
+        let fn_value = self.current_fn.ok_or_else(|| vec![Diagnostic::error(
+            "resume called outside of function".to_string(), Span::dummy()
+        )])?;
+        let fn_ret_ty = fn_value.get_type().get_return_type();
+        let i64_type = self.context.i64_type();
+
         if let Some(val_expr) = value {
             let val = self.compile_expr(val_expr)?;
             if let Some(ret_val) = val {
-                self.builder.build_return(Some(&ret_val))
+                // Check if we need to convert to i64 (for handler operations)
+                let converted_ret = if fn_ret_ty == Some(i64_type.into()) {
+                    match ret_val {
+                        BasicValueEnum::IntValue(iv) => {
+                            if iv.get_type().get_bit_width() == 64 {
+                                iv.into()
+                            } else {
+                                self.builder
+                                    .build_int_s_extend(iv, i64_type, "resume_ext")
+                                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?
+                                    .into()
+                            }
+                        }
+                        BasicValueEnum::PointerValue(pv) => {
+                            self.builder
+                                .build_ptr_to_int(pv, i64_type, "resume_ptr_int")
+                                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?
+                                .into()
+                        }
+                        BasicValueEnum::StructValue(_sv) => {
+                            // For unit type (empty struct), return 0
+                            i64_type.const_zero().into()
+                        }
+                        other => other,
+                    }
+                } else {
+                    ret_val
+                };
+                self.builder.build_return(Some(&converted_ret))
+                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?;
+            } else {
+                // No value - return 0 for i64 or void
+                if fn_ret_ty == Some(i64_type.into()) {
+                    self.builder.build_return(Some(&i64_type.const_zero()))
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?;
+                } else {
+                    self.builder.build_return(None)
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?;
+                }
+            }
+        } else {
+            // No value - return 0 for i64 or void
+            if fn_ret_ty == Some(i64_type.into()) {
+                self.builder.build_return(Some(&i64_type.const_zero()))
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?;
             } else {
                 self.builder.build_return(None)
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?;
             }
-        } else {
-            self.builder.build_return(None)
-                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?;
         }
 
         // Resume doesn't produce a value (control flow transfers)
@@ -3891,9 +4005,13 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         &mut self,
         body: &hir::Expr,
         handler_id: DefId,
+        _handler_instance: &hir::Expr,
         result_ty: &Type,
     ) -> Result<Option<BasicValueEnum<'ctx>>, Vec<Diagnostic>> {
         // Phase 2.4: Evidence vector setup
+        //
+        // Note: This is the HIR codegen path. The MIR codegen path is preferred
+        // and handles handler_instance properly for state setup.
         //
         // 1. Create evidence vector (or get existing one)
         // 2. Push handler onto evidence vector
@@ -4818,10 +4936,17 @@ mod tests {
     fn test_codegen_handle_basic() {
         let handler_id = DefId::new(200);
         let body = int_literal(42);
+        // Create a placeholder handler instance (empty struct instantiation)
+        let handler_instance = Expr {
+            kind: ExprKind::Tuple(Vec::new()),
+            ty: unit_type(),
+            span: Span::dummy(),
+        };
         let expr = Expr {
             kind: ExprKind::Handle {
                 body: Box::new(body),
                 handler_id,
+                handler_instance: Box::new(handler_instance),
             },
             ty: i32_type(),
             span: Span::dummy(),
@@ -4847,10 +4972,17 @@ mod tests {
             ty: unit_type(),
             span: Span::dummy(),
         };
+        // Create a placeholder handler instance
+        let handler_instance = Expr {
+            kind: ExprKind::Tuple(Vec::new()),
+            ty: unit_type(),
+            span: Span::dummy(),
+        };
         let expr = Expr {
             kind: ExprKind::Handle {
                 body: Box::new(body),
                 handler_id,
+                handler_instance: Box::new(handler_instance),
             },
             ty: unit_type(),
             span: Span::dummy(),

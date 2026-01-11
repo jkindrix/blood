@@ -226,6 +226,13 @@ pub fn compile_mir_to_object(
         codegen.compile_mir_body(def_id, mir_body, escape_results)?;
     }
 
+    // Fourth pass: compile handler operation bodies (from HIR)
+    // Handler operations are not in MIR, so we compile them from HIR
+    codegen.compile_handler_operations(hir_crate)?;
+
+    // Fifth pass: register handlers with runtime
+    codegen.register_handlers_with_runtime()?;
+
     // Verify the module
     if let Err(err) = module.verify() {
         return Err(vec![Diagnostic::error(
@@ -278,6 +285,12 @@ pub fn compile_mir_to_ir(
         let escape_results = escape_analysis.get(&def_id);
         codegen.compile_mir_body(def_id, mir_body, escape_results)?;
     }
+
+    // Fourth pass: compile handler operation bodies (from HIR)
+    codegen.compile_handler_operations(hir_crate)?;
+
+    // Fifth pass: register handlers with runtime
+    codegen.register_handlers_with_runtime()?;
 
     Ok(module.print_to_string().to_string())
 }

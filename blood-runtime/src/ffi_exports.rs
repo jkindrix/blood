@@ -253,10 +253,22 @@ pub unsafe extern "C" fn blood_get_generation(addr: u64) -> u32 {
 /// Opaque handle to an evidence vector.
 pub type EvidenceHandle = *mut c_void;
 
+/// An entry in the evidence vector.
+///
+/// Each entry holds the registry index and the instance-specific state pointer.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+struct EvidenceEntry {
+    /// Index into the global handler registry.
+    registry_index: u64,
+    /// Instance-specific state pointer (set at handler instantiation).
+    state: *mut c_void,
+}
+
 /// Create a new evidence vector.
 #[no_mangle]
 pub extern "C" fn blood_evidence_create() -> EvidenceHandle {
-    let ev = Box::new(Vec::<u64>::new());
+    let ev = Box::new(Vec::<EvidenceEntry>::new());
     Box::into_raw(ev) as EvidenceHandle
 }
 
@@ -267,20 +279,76 @@ pub extern "C" fn blood_evidence_create() -> EvidenceHandle {
 #[no_mangle]
 pub unsafe extern "C" fn blood_evidence_destroy(ev: EvidenceHandle) {
     if !ev.is_null() {
-        let _ = Box::from_raw(ev as *mut Vec<u64>);
+        let _ = Box::from_raw(ev as *mut Vec<EvidenceEntry>);
     }
 }
 
-/// Push a handler onto the evidence vector.
+/// Push a handler onto the evidence vector (with null state).
 ///
 /// # Safety
 /// The handle must be valid.
 #[no_mangle]
-pub unsafe extern "C" fn blood_evidence_push(ev: EvidenceHandle, handler_ptr: u64) {
+pub unsafe extern "C" fn blood_evidence_push(ev: EvidenceHandle, registry_index: u64) {
     if !ev.is_null() {
-        let vec = &mut *(ev as *mut Vec<u64>);
-        vec.push(handler_ptr);
+        let vec = &mut *(ev as *mut Vec<EvidenceEntry>);
+        vec.push(EvidenceEntry {
+            registry_index,
+            state: std::ptr::null_mut(),
+        });
     }
+}
+
+/// Push a handler by effect ID onto the evidence vector (with null state).
+///
+/// This looks up the handler for the given effect_id in the global registry
+/// and pushes its index onto the evidence vector. For handlers that need state,
+/// use blood_evidence_push_with_state instead.
+///
+/// # Safety
+/// The handle must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn blood_evidence_push_by_effect(ev: EvidenceHandle, effect_id: i64) {
+    blood_evidence_push_with_state(ev, effect_id, std::ptr::null_mut());
+}
+
+/// Push a handler by effect ID onto the evidence vector with instance state.
+///
+/// This looks up the handler for the given effect_id in the global registry
+/// and pushes its index along with the instance-specific state pointer.
+///
+/// # Safety
+/// The handle and state pointer must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn blood_evidence_push_with_state(
+    ev: EvidenceHandle,
+    effect_id: i64,
+    state: *mut c_void,
+) {
+    if ev.is_null() {
+        return;
+    }
+
+    // Find the handler for this effect in the registry
+    let registry = get_effect_registry();
+    let reg = registry.lock();
+
+    for (index, entry) in reg.iter().enumerate() {
+        if entry.effect_id == effect_id {
+            // Found the handler - push entry with state
+            let vec = &mut *(ev as *mut Vec<EvidenceEntry>);
+            vec.push(EvidenceEntry {
+                registry_index: index as u64,
+                state,
+            });
+            return;
+        }
+    }
+
+    // Handler not found - this shouldn't happen if effect is properly registered
+    eprintln!(
+        "BLOOD RUNTIME WARNING: No handler found for effect_id={} during push",
+        effect_id
+    );
 }
 
 /// Pop a handler from the evidence vector.
@@ -292,11 +360,11 @@ pub unsafe extern "C" fn blood_evidence_pop(ev: EvidenceHandle) -> u64 {
     if ev.is_null() {
         return 0;
     }
-    let vec = &mut *(ev as *mut Vec<u64>);
-    vec.pop().unwrap_or(0)
+    let vec = &mut *(ev as *mut Vec<EvidenceEntry>);
+    vec.pop().map(|e| e.registry_index).unwrap_or(0)
 }
 
-/// Get handler at index from evidence vector.
+/// Get handler registry index at evidence vector index.
 ///
 /// # Safety
 /// The handle must be valid.
@@ -305,8 +373,8 @@ pub unsafe extern "C" fn blood_evidence_get(ev: EvidenceHandle, index: usize) ->
     if ev.is_null() {
         return 0;
     }
-    let vec = &*(ev as *const Vec<u64>);
-    vec.get(index).copied().unwrap_or(0)
+    let vec = &*(ev as *const Vec<EvidenceEntry>);
+    vec.get(index).map(|e| e.registry_index).unwrap_or(0)
 }
 
 // ============================================================================
@@ -358,7 +426,8 @@ pub unsafe extern "C" fn blood_evidence_register(
     ops: *const *const c_void,
     op_count: i64,
 ) {
-    if ev.is_null() || ops.is_null() {
+    // ops must be valid
+    if ops.is_null() {
         return;
     }
 
@@ -381,12 +450,15 @@ pub unsafe extern "C" fn blood_evidence_register(
     let mut reg = registry.lock();
     reg.push(entry);
 
-    // Push handler index onto evidence vector
-    let handler_index = (reg.len() - 1) as u64;
-    blood_evidence_push(ev, handler_index);
+    // Push handler index onto evidence vector (if evidence is provided)
+    // If ev is null, this is a global registration at program startup
+    if !ev.is_null() {
+        let handler_index = (reg.len() - 1) as u64;
+        blood_evidence_push(ev, handler_index);
+    }
 }
 
-/// Set state for the current handler in the evidence vector.
+/// Set state for the topmost handler in the evidence vector.
 ///
 /// # Safety
 /// The evidence handle and state pointer must be valid.
@@ -396,14 +468,10 @@ pub unsafe extern "C" fn blood_evidence_set_state(ev: EvidenceHandle, state: *mu
         return;
     }
 
-    // Get the topmost handler index from evidence
-    let vec = &*(ev as *const Vec<u64>);
-    if let Some(&handler_index) = vec.last() {
-        let registry = get_effect_registry();
-        let mut reg = registry.lock();
-        if let Some(entry) = reg.get_mut(handler_index as usize) {
-            entry.state = state;
-        }
+    // Set state on the topmost evidence entry directly
+    let vec = &mut *(ev as *mut Vec<EvidenceEntry>);
+    if let Some(entry) = vec.last_mut() {
+        entry.state = state;
     }
 }
 
@@ -417,13 +485,9 @@ pub unsafe extern "C" fn blood_evidence_get_state(ev: EvidenceHandle, index: i64
         return std::ptr::null_mut();
     }
 
-    let vec = &*(ev as *const Vec<u64>);
-    if let Some(&handler_index) = vec.get(index as usize) {
-        let registry = get_effect_registry();
-        let reg = registry.lock();
-        if let Some(entry) = reg.get(handler_index as usize) {
-            return entry.state;
-        }
+    let vec = &*(ev as *const Vec<EvidenceEntry>);
+    if let Some(entry) = vec.get(index as usize) {
+        return entry.state;
     }
     std::ptr::null_mut()
 }
@@ -484,22 +548,25 @@ pub unsafe extern "C" fn blood_perform(
     }
 
     // Find handler for this effect in evidence vector
-    let vec = &*(ev as *const Vec<u64>);
+    let vec = &*(ev as *const Vec<EvidenceEntry>);
+
     let registry = get_effect_registry();
     let reg = registry.lock();
 
     // Search from most recent to oldest handler (reverse order)
-    for &handler_index in vec.iter().rev() {
-        if let Some(entry) = reg.get(handler_index as usize) {
-            if entry.effect_id == effect_id {
+    for ev_entry in vec.iter().rev() {
+        let handler_index = ev_entry.registry_index;
+        let instance_state = ev_entry.state;
+        if let Some(registry_entry) = reg.get(handler_index as usize) {
+            if registry_entry.effect_id == effect_id {
                 // Found the handler for this effect
-                if let Some(&op_fn) = entry.operations.get(op_index as usize) {
+                if let Some(&op_fn) = registry_entry.operations.get(op_index as usize) {
                     if !op_fn.is_null() {
-                        // Call the operation handler
+                        // Call the operation handler with INSTANCE state, not registry state
                         // The handler signature is: fn(state: *void, args: *i64, arg_count: i64) -> i64
                         type OpHandler = unsafe extern "C" fn(*mut c_void, *const i64, i64) -> i64;
                         let handler: OpHandler = std::mem::transmute(op_fn);
-                        return handler(entry.state, args, arg_count);
+                        return handler(instance_state, args, arg_count);
                     }
                 }
             }
@@ -526,14 +593,14 @@ pub extern "C" fn blood_handler_depth(effect_id: i64) -> i64 {
     }
 
     unsafe {
-        let vec = &*(ev as *const Vec<u64>);
+        let vec = &*(ev as *const Vec<EvidenceEntry>);
         let registry = get_effect_registry();
         let reg = registry.lock();
 
         let mut depth = 0i64;
-        for &handler_index in vec.iter() {
-            if let Some(entry) = reg.get(handler_index as usize) {
-                if entry.effect_id == effect_id {
+        for ev_entry in vec.iter() {
+            if let Some(registry_entry) = reg.get(ev_entry.registry_index as usize) {
+                if registry_entry.effect_id == effect_id {
                     depth += 1;
                 }
             }

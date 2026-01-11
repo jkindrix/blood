@@ -165,6 +165,24 @@ pub enum StatementKind {
         expected_gen: Operand,
     },
 
+    /// Push an effect handler onto the evidence vector.
+    ///
+    /// This installs the handler for the specified effect, making it
+    /// available for `perform` operations in the enclosed computation.
+    /// The effect_id is looked up from the handler definition during codegen.
+    PushHandler {
+        /// The handler definition ID.
+        handler_id: DefId,
+        /// The handler state place (pointer to handler state struct).
+        state_place: Place,
+    },
+
+    /// Pop an effect handler from the evidence vector.
+    ///
+    /// This removes the most recently pushed handler, restoring the
+    /// previous handler state.
+    PopHandler,
+
     /// No-op (placeholder for removed statements).
     Nop,
 }

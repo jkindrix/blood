@@ -69,6 +69,8 @@ pub struct TypeContext<'a> {
     handler_defs: HashMap<DefId, HandlerInfo>,
     /// Effect annotations for functions (DefId -> list of effects the function uses).
     fn_effects: HashMap<DefId, Vec<EffectRef>>,
+    /// Handlers to type-check (includes full declaration for operation bodies).
+    pending_handlers: Vec<(DefId, ast::HandlerDecl)>,
 }
 
 /// Information about a struct.
@@ -137,11 +139,13 @@ pub struct HandlerInfo {
     pub kind: ast::HandlerKind,
     /// The effect this handler handles (DefId of the effect).
     pub effect_id: DefId,
-    /// The operations implemented by this handler.
-    pub operations: Vec<String>,
+    /// The operations implemented by this handler (name, body_id).
+    pub operations: Vec<(String, hir::BodyId)>,
     pub generics: Vec<TyVarId>,
     /// State fields in the handler (used for struct-like initialization).
     pub fields: Vec<FieldInfo>,
+    /// Return clause body ID, if present.
+    pub return_clause_body_id: Option<hir::BodyId>,
 }
 
 /// A reference to an effect with type arguments.
@@ -181,6 +185,7 @@ impl<'a> TypeContext<'a> {
             effect_defs: HashMap::new(),
             handler_defs: HashMap::new(),
             fn_effects: HashMap::new(),
+            pending_handlers: Vec::new(),
         };
         ctx.register_builtins();
         ctx
@@ -940,24 +945,37 @@ impl<'a> TypeContext<'a> {
         // Restore generic params
         self.generic_params = saved_generic_params;
 
+        // Store handler with empty operations initially - bodies will be type-checked later
         self.handler_defs.insert(def_id, HandlerInfo {
             name,
             kind: handler.kind,
             effect_id,
-            operations,
+            operations: Vec::new(), // Will be populated during body type-checking
             generics: generics_vec,
             fields,
+            return_clause_body_id: None, // Will be populated during body type-checking
         });
+
+        // Queue handler for body type-checking
+        self.pending_handlers.push((def_id, handler.clone()));
 
         Ok(())
     }
 
     /// Type-check all queued bodies.
     pub fn check_all_bodies(&mut self) -> Result<(), Vec<Diagnostic>> {
+        // Type-check function bodies
         let pending = std::mem::take(&mut self.pending_bodies);
-
         for (def_id, func) in pending {
             if let Err(e) = self.check_function_body(def_id, &func) {
+                self.errors.push(e);
+            }
+        }
+
+        // Type-check handler operation bodies
+        let pending_handlers = std::mem::take(&mut self.pending_handlers);
+        for (def_id, handler) in pending_handlers {
+            if let Err(e) = self.check_handler_body(def_id, &handler) {
                 self.errors.push(e);
             }
         }
@@ -1130,6 +1148,207 @@ impl<'a> TypeContext<'a> {
         // Clean up
         self.return_type = None;
         self.resolver.pop_scope();
+
+        Ok(())
+    }
+
+    /// Type-check a handler's operation and return clause bodies.
+    fn check_handler_body(&mut self, handler_def_id: DefId, handler: &ast::HandlerDecl) -> Result<(), TypeError> {
+        // Get the handler info to find the effect
+        let handler_info = self.handler_defs.get(&handler_def_id).cloned()
+            .ok_or_else(|| TypeError::new(
+                TypeErrorKind::NotFound { name: format!("handler info for {handler_def_id}") },
+                handler.span,
+            ))?;
+
+        let effect_id = handler_info.effect_id;
+        let effect_info = self.effect_defs.get(&effect_id).cloned()
+            .ok_or_else(|| TypeError::new(
+                TypeErrorKind::NotAnEffect { name: format!("effect {effect_id}") },
+                handler.span,
+            ))?;
+
+        // Collect operation body IDs
+        let mut operation_body_ids: Vec<(String, hir::BodyId)> = Vec::new();
+
+        // Type-check each operation body
+        for op_impl in &handler.operations {
+            let op_name = self.symbol_to_string(op_impl.name.node);
+
+            // Find the effect operation info to get the expected signature
+            let effect_op = effect_info.operations.iter()
+                .find(|op| op.name == op_name)
+                .ok_or_else(|| TypeError::new(
+                    TypeErrorKind::InvalidHandler {
+                        reason: format!("operation `{}` not found in effect", op_name),
+                    },
+                    op_impl.span,
+                ))?;
+
+            // Set up scope for operation body
+            // Use ScopeKind::Handler so that `resume` is recognized as being in a handler
+            self.resolver.push_scope(ScopeKind::Handler, op_impl.span);
+            self.resolver.reset_local_ids();
+            let _ = self.resolver.next_local_id(); // Skip LocalId(0) for return place
+            self.locals.clear();
+
+            // Add return place (unit type for operations that use resume)
+            // Note: The actual return happens through resume, not normal return
+            self.locals.push(hir::Local {
+                id: LocalId::RETURN_PLACE,
+                ty: effect_op.return_ty.clone(),
+                mutable: false,
+                name: None,
+                span: op_impl.span,
+            });
+
+            // Add handler state fields to scope
+            for (i, state_field) in handler.state.iter().enumerate() {
+                let field_name = self.symbol_to_string(state_field.name.node);
+                let field_ty = handler_info.fields[i].ty.clone();
+
+                let local_id = self.resolver.define_local(
+                    field_name.clone(),
+                    field_ty.clone(),
+                    state_field.is_mut,
+                    state_field.span,
+                )?;
+                self.locals.push(hir::Local {
+                    id: local_id,
+                    ty: field_ty,
+                    mutable: state_field.is_mut,
+                    name: Some(field_name),
+                    span: state_field.span,
+                });
+            }
+
+            // Add operation parameters to scope
+            for (param_idx, param) in op_impl.params.iter().enumerate() {
+                if let ast::PatternKind::Ident { name, mutable, .. } = &param.kind {
+                    let param_name = self.symbol_to_string(name.node);
+                    let param_ty = if param_idx < effect_op.params.len() {
+                        effect_op.params[param_idx].clone()
+                    } else {
+                        // Should not happen if effect validation passed
+                        Type::unit()
+                    };
+
+                    let local_id = self.resolver.define_local(
+                        param_name.clone(),
+                        param_ty.clone(),
+                        *mutable,
+                        param.span,
+                    )?;
+                    self.locals.push(hir::Local {
+                        id: local_id,
+                        ty: param_ty,
+                        mutable: *mutable,
+                        name: Some(param_name),
+                        span: param.span,
+                    });
+                }
+            }
+
+            // Add 'resume' to scope as a special continuation function
+            // Resume is a function that takes the return value and returns unit
+            // (the actual continuation handling happens at runtime)
+            let resume_ty = Type::function(vec![effect_op.return_ty.clone()], Type::unit());
+            let resume_local_id = self.resolver.define_local(
+                "resume".to_string(),
+                resume_ty.clone(),
+                false,
+                op_impl.span,
+            )?;
+            self.locals.push(hir::Local {
+                id: resume_local_id,
+                ty: resume_ty,
+                mutable: false,
+                name: Some("resume".to_string()),
+                span: op_impl.span,
+            });
+
+            // Type-check the body (expected type is unit since resume handles the return)
+            let body_expr = self.check_block(&op_impl.body, &Type::unit())?;
+
+            // Create body
+            let body_id = hir::BodyId::new(self.next_body_id);
+            self.next_body_id += 1;
+
+            let hir_body = hir::Body {
+                locals: std::mem::take(&mut self.locals),
+                param_count: effect_op.params.len(),
+                expr: body_expr,
+                span: op_impl.body.span,
+            };
+
+            self.bodies.insert(body_id, hir_body);
+            operation_body_ids.push((op_name, body_id));
+
+            self.resolver.pop_scope();
+        }
+
+        // Type-check return clause if present
+        let return_clause_body_id = if let Some(ret_clause) = &handler.return_clause {
+            self.resolver.push_scope(ScopeKind::Function, ret_clause.span);
+            self.resolver.reset_local_ids();
+            let _ = self.resolver.next_local_id(); // Skip LocalId(0)
+            self.locals.clear();
+
+            // Return clause takes the result and transforms it
+            // For Phase 1, use i32 as the result type (most common)
+            let result_ty = Type::i32();
+
+            // Add return place
+            self.locals.push(hir::Local {
+                id: LocalId::RETURN_PLACE,
+                ty: result_ty.clone(),
+                mutable: false,
+                name: None,
+                span: ret_clause.span,
+            });
+
+            // Add the result parameter
+            let param_name = self.symbol_to_string(ret_clause.param.node);
+            let local_id = self.resolver.define_local(
+                param_name.clone(),
+                result_ty.clone(),
+                false,
+                ret_clause.param.span,
+            )?;
+            self.locals.push(hir::Local {
+                id: local_id,
+                ty: result_ty.clone(),
+                mutable: false,
+                name: Some(param_name),
+                span: ret_clause.param.span,
+            });
+
+            // Type-check return clause body
+            let body_expr = self.check_block(&ret_clause.body, &result_ty)?;
+
+            let body_id = hir::BodyId::new(self.next_body_id);
+            self.next_body_id += 1;
+
+            let hir_body = hir::Body {
+                locals: std::mem::take(&mut self.locals),
+                param_count: 1, // Just the result parameter
+                expr: body_expr,
+                span: ret_clause.body.span,
+            };
+
+            self.bodies.insert(body_id, hir_body);
+            self.resolver.pop_scope();
+
+            Some(body_id)
+        } else {
+            None
+        };
+
+        // Update handler info with body IDs
+        if let Some(info) = self.handler_defs.get_mut(&handler_def_id) {
+            info.operations = operation_body_ids;
+            info.return_clause_body_id = return_clause_body_id;
+        }
 
         Ok(())
     }
@@ -1673,7 +1892,30 @@ impl<'a> TypeContext<'a> {
                     self.handled_effects.pop();
                 }
 
-                result
+                // Extract handler_id from handler expression type
+                let handler_id = match handler_expr.ty.kind() {
+                    hir::TypeKind::Adt { def_id, .. } => *def_id,
+                    _ => {
+                        return Err(TypeError::new(
+                            TypeErrorKind::UnsupportedFeature {
+                                feature: "Handler must be an ADT type".into(),
+                            },
+                            expr.span,
+                        ));
+                    }
+                };
+
+                // Wrap the body in a Handle expression
+                let body_expr = result?;
+                Ok(hir::Expr {
+                    kind: hir::ExprKind::Handle {
+                        body: Box::new(body_expr),
+                        handler_id,
+                        handler_instance: Box::new(handler_expr),
+                    },
+                    ty: expected.clone(),
+                    span: expr.span,
+                })
             }
             ast::ExprKind::Perform { effect, operation, args } => {
                 // Effect operation: performs an operation from an effect.
@@ -3665,13 +3907,31 @@ impl<'a> TypeContext<'a> {
                             ast::HandlerKind::Shallow => hir::HandlerKind::Shallow,
                         };
 
+                        // Build operation list from body IDs
+                        let operations: Vec<hir::HandlerOp> = handler_info.operations.iter()
+                            .map(|(name, body_id)| hir::HandlerOp {
+                                name: name.clone(),
+                                body_id: *body_id,
+                                span: info.span,
+                            })
+                            .collect();
+
+                        // Build return clause if present
+                        let return_clause = handler_info.return_clause_body_id.map(|body_id| {
+                            hir::ReturnClause {
+                                param: "x".to_string(), // Default param name
+                                body_id,
+                                span: info.span,
+                            }
+                        });
+
                         hir::ItemKind::Handler {
                             generics: hir::Generics::empty(),
                             kind: hir_kind,
                             effect: Type::adt(handler_info.effect_id, Vec::new()),
                             state,
-                            operations: Vec::new(), // Operations handled separately
-                            return_clause: None,
+                            operations,
+                            return_clause,
                         }
                     } else {
                         continue;

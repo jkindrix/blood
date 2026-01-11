@@ -454,6 +454,122 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 }
             }
 
+            StatementKind::PushHandler { handler_id, state_place } => {
+                // Push effect handler onto the evidence vector with instance state
+                // This calls blood_evidence_push_with_state with effect_id and state pointer
+                let i64_ty = self.context.i64_type();
+                let i8_ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
+
+                // Look up the handler's effect_id
+                let handler_info = self.handler_defs.get(&handler_id).ok_or_else(|| {
+                    vec![Diagnostic::error(
+                        format!("Internal error: no handler info for DefId({})", handler_id.index),
+                        stmt.span,
+                    )]
+                })?;
+                let effect_id = handler_info.effect_id;
+
+                // Get the state pointer from state_place
+                // state_place is a simple local (no projections), so we look it up directly
+                let state_ptr = *self.locals.get(&state_place.local).ok_or_else(|| {
+                    vec![Diagnostic::error(
+                        format!("Local _{} not found for handler state", state_place.local.index),
+                        stmt.span,
+                    )]
+                })?;
+
+                // Declare or get evidence functions
+                let ev_create = self.module.get_function("blood_evidence_create")
+                    .unwrap_or_else(|| {
+                        let fn_type = i8_ptr_ty.fn_type(&[], false);
+                        self.module.add_function("blood_evidence_create", fn_type, None)
+                    });
+                let ev_push_with_state = self.module.get_function("blood_evidence_push_with_state")
+                    .unwrap_or_else(|| {
+                        let fn_type = self.context.void_type().fn_type(
+                            &[i8_ptr_ty.into(), i64_ty.into(), i8_ptr_ty.into()],
+                            false
+                        );
+                        self.module.add_function("blood_evidence_push_with_state", fn_type, None)
+                    });
+                let ev_set_current = self.module.get_function("blood_evidence_set_current")
+                    .unwrap_or_else(|| {
+                        let fn_type = self.context.void_type().fn_type(&[i8_ptr_ty.into()], false);
+                        self.module.add_function("blood_evidence_set_current", fn_type, None)
+                    });
+
+                // Create evidence vector if not already set
+                let ev = self.builder.build_call(ev_create, &[], "evidence")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM call error: {}", e), stmt.span
+                    )])?
+                    .try_as_basic_value()
+                    .left()
+                    .ok_or_else(|| vec![Diagnostic::error(
+                        "blood_evidence_create returned void",
+                        stmt.span
+                    )])?;
+
+                // Push handler with effect_id and state pointer
+                let effect_id_val = i64_ty.const_int(effect_id.index as u64, false);
+                // Cast state_ptr to i8* (void*)
+                let state_void_ptr = self.builder.build_pointer_cast(
+                    state_ptr,
+                    i8_ptr_ty,
+                    "state_void_ptr"
+                ).map_err(|e| vec![Diagnostic::error(
+                    format!("LLVM error: {}", e), stmt.span
+                )])?;
+                self.builder.build_call(
+                    ev_push_with_state,
+                    &[ev.into(), effect_id_val.into(), state_void_ptr.into()],
+                    ""
+                ).map_err(|e| vec![Diagnostic::error(
+                    format!("LLVM call error: {}", e), stmt.span
+                )])?;
+
+                // Set as current evidence vector
+                self.builder.build_call(ev_set_current, &[ev.into()], "")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM call error: {}", e), stmt.span
+                    )])?;
+            }
+
+            StatementKind::PopHandler => {
+                // Pop effect handler from the evidence vector
+                let i8_ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
+
+                // Declare or get evidence functions
+                let ev_pop = self.module.get_function("blood_evidence_pop")
+                    .unwrap_or_else(|| {
+                        let fn_type = self.context.void_type().fn_type(&[i8_ptr_ty.into()], false);
+                        self.module.add_function("blood_evidence_pop", fn_type, None)
+                    });
+                let ev_current = self.module.get_function("blood_evidence_current")
+                    .unwrap_or_else(|| {
+                        let fn_type = i8_ptr_ty.fn_type(&[], false);
+                        self.module.add_function("blood_evidence_current", fn_type, None)
+                    });
+
+                // Get current evidence vector
+                let ev = self.builder.build_call(ev_current, &[], "current_ev")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM call error: {}", e), stmt.span
+                    )])?
+                    .try_as_basic_value()
+                    .left()
+                    .ok_or_else(|| vec![Diagnostic::error(
+                        "blood_evidence_current returned void",
+                        stmt.span
+                    )])?;
+
+                // Pop the handler
+                self.builder.build_call(ev_pop, &[ev.into()], "")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM call error: {}", e), stmt.span
+                    )])?;
+            }
+
             StatementKind::Nop => {
                 // No operation
             }

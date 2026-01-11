@@ -302,6 +302,8 @@ pub enum ExprKind {
         body: Box<Expr>,
         /// The handler definition.
         handler_id: DefId,
+        /// The handler instance expression (initializes handler state).
+        handler_instance: Box<Expr>,
     },
 
     /// Error placeholder (for error recovery).
