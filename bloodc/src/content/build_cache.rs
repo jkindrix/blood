@@ -1026,6 +1026,22 @@ fn hash_pattern(pattern: &hir::Pattern, hasher: &mut ContentHasher) {
             hasher.update_u8(if *mutable { 1 } else { 0 });
             hash_pattern(inner, hasher);
         }
+        hir::PatternKind::Range { start, end, inclusive } => {
+            hasher.update_u8(0x0A);
+            if let Some(s) = start {
+                hasher.update_u8(1);
+                hash_pattern(s, hasher);
+            } else {
+                hasher.update_u8(0);
+            }
+            if let Some(e) = end {
+                hasher.update_u8(1);
+                hash_pattern(e, hasher);
+            } else {
+                hasher.update_u8(0);
+            }
+            hasher.update_u8(if *inclusive { 1 } else { 0 });
+        }
     }
 }
 
