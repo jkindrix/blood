@@ -22,6 +22,9 @@ pub enum StorageError {
 
     #[error("Already exists: {0}")]
     AlreadyExists(String),
+
+    #[error("{0}")]
+    Other(String),
 }
 
 /// Storage result type.

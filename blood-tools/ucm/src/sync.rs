@@ -4,7 +4,7 @@
 
 use crate::hash::Hash;
 use crate::names::Name;
-use crate::{Codebase, DefKind, UcmResult};
+use crate::{Codebase, DefKind, UcmError, UcmResult};
 
 /// A remote codebase location.
 #[derive(Debug, Clone)]
@@ -182,22 +182,121 @@ pub enum ExportFormat {
     Binary,
 }
 
+/// Exported codebase data for sync.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ExportData {
+    /// Version of the export format
+    pub version: u32,
+    /// Definitions: (hash_hex, kind_str, source)
+    pub definitions: Vec<(String, String, String)>,
+    /// Names: (name, hash_hex)
+    pub names: Vec<(String, String)>,
+}
+
+impl ExportData {
+    /// Create a new export data container.
+    pub fn new() -> Self {
+        Self {
+            version: 1,
+            definitions: Vec::new(),
+            names: Vec::new(),
+        }
+    }
+}
+
+impl Default for ExportData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Exports a codebase to a file.
 pub fn export_codebase(
-    _codebase: &Codebase,
-    _path: &std::path::Path,
-    _format: ExportFormat,
+    codebase: &Codebase,
+    path: &std::path::Path,
+    format: ExportFormat,
 ) -> UcmResult<()> {
-    // TODO: Implement export
+    // Collect all definitions and names
+    let mut export_data = ExportData::new();
+
+    // Get all names and their hashes
+    let names = codebase.list_names(None)?;
+    for (name, hash) in &names {
+        export_data.names.push((name.to_string(), hash.to_string()));
+
+        // Get the definition for this hash
+        if let Some(info) = codebase.find(&crate::DefRef::Hash(hash.clone()))? {
+            // Check if we already have this definition
+            if !export_data.definitions.iter().any(|(h, _, _)| h == &hash.to_string()) {
+                export_data.definitions.push((
+                    hash.to_string(),
+                    info.kind.as_str().to_string(),
+                    info.source.clone(),
+                ));
+            }
+        }
+    }
+
+    // Write to file
+    let file = std::fs::File::create(path)?;
+    match format {
+        ExportFormat::Json => {
+            serde_json::to_writer_pretty(file, &export_data)
+                .map_err(|e| UcmError::Storage(crate::storage::StorageError::Other(e.to_string())))?;
+        }
+        ExportFormat::Binary => {
+            bincode::serialize_into(file, &export_data)
+                .map_err(|e| UcmError::Storage(crate::storage::StorageError::Other(e.to_string())))?;
+        }
+    }
+
     Ok(())
 }
 
 /// Imports a codebase from a file.
 pub fn import_codebase(
-    _codebase: &mut Codebase,
-    _path: &std::path::Path,
-    _format: ExportFormat,
+    codebase: &mut Codebase,
+    path: &std::path::Path,
+    format: ExportFormat,
 ) -> UcmResult<usize> {
-    // TODO: Implement import
-    Ok(0)
+    // Read from file
+    let file = std::fs::File::open(path)?;
+    let export_data: ExportData = match format {
+        ExportFormat::Json => {
+            serde_json::from_reader(file)
+                .map_err(|e| UcmError::Storage(crate::storage::StorageError::Other(e.to_string())))?
+        }
+        ExportFormat::Binary => {
+            bincode::deserialize_from(file)
+                .map_err(|e| UcmError::Storage(crate::storage::StorageError::Other(e.to_string())))?
+        }
+    };
+
+    let mut imported = 0;
+
+    // Import definitions
+    for (_hash_str, kind_str, source) in &export_data.definitions {
+        let _hash = match kind_str.as_str() {
+            "term" => codebase.add_term(source)?,
+            "type" => codebase.add_type(source)?,
+            "effect" => codebase.add_effect(source)?,
+            "handler" => codebase.add_handler(source)?,
+            "test" => codebase.add_test(source)?,
+            _ => continue, // Skip unknown kinds
+        };
+        imported += 1;
+    }
+
+    // Import names
+    for (name_str, hash_str) in &export_data.names {
+        let name = Name::new(name_str);
+        let hash: Hash = hash_str.parse()
+            .map_err(|_| UcmError::ParseError(format!("Invalid hash: {}", hash_str)))?;
+        // Only add if name doesn't already exist
+        if codebase.resolve(&name)?.is_none() {
+            codebase.add_name(name, hash)?;
+        }
+    }
+
+    Ok(imported)
 }

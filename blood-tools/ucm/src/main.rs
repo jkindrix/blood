@@ -256,10 +256,35 @@ fn cmd_view(path: &PathBuf, query: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_run(_path: &PathBuf, expr: &str) -> Result<()> {
-    // TODO: Integrate with Blood runtime
-    println!("Would run: {}", expr);
-    println!("(Runtime integration not yet implemented)");
+fn cmd_run(path: &PathBuf, expr: &str) -> Result<()> {
+    let codebase = Codebase::open(path)?;
+
+    // Check if expr is a name in the codebase
+    let source = if let Some(info) = codebase.find(&DefRef::name(expr))? {
+        info.source
+    } else {
+        // Treat as inline expression
+        expr.to_string()
+    };
+
+    // Parse using bloodc parser
+    use bloodc::Parser;
+    let mut parser = Parser::new(&source);
+
+    match parser.parse_program() {
+        Ok(program) => {
+            println!("Parsed successfully.");
+            println!("Declarations: {}", program.declarations.len());
+            // Type checking would require full module context with HIR lowering
+            println!("Type checking: (requires full module context)");
+            println!("Execution: (runtime integration pending)");
+        }
+        Err(errors) => {
+            for error in errors {
+                eprintln!("Error: {}", error.message);
+            }
+        }
+    }
     Ok(())
 }
 
@@ -282,14 +307,33 @@ fn cmd_test(path: &PathBuf, filter: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-fn cmd_sync(_path: &PathBuf, remote: &str, push: bool, pull: bool) -> Result<()> {
+fn cmd_sync(path: &PathBuf, remote: &str, push: bool, pull: bool) -> Result<()> {
+    use blood_ucm::sync::{export_codebase, import_codebase, ExportFormat};
+    use std::path::Path;
+
+    // For now, treat "remote" as a file path for file-based sync
+    let remote_path = Path::new(remote);
+
     if push {
-        println!("Pushing to {}...", remote);
+        println!("Exporting to {}...", remote);
+        let codebase = Codebase::open(path)?;
+        export_codebase(&codebase, remote_path, ExportFormat::Json)
+            .context("Failed to export codebase")?;
+        println!("Exported successfully.");
     }
+
     if pull {
-        println!("Pulling from {}...", remote);
+        println!("Importing from {}...", remote);
+        let mut codebase = Codebase::open(path)?;
+        let count = import_codebase(&mut codebase, remote_path, ExportFormat::Json)
+            .context("Failed to import codebase")?;
+        println!("Imported {} definitions.", count);
     }
-    println!("(Sync not yet implemented)");
+
+    if !push && !pull {
+        println!("Specify --push or --pull (or both) to sync.");
+    }
+
     Ok(())
 }
 
@@ -308,12 +352,118 @@ fn cmd_stats(path: &PathBuf) -> Result<()> {
 }
 
 fn cmd_repl(path: &PathBuf) -> Result<()> {
+    use std::io::{self, Write};
+
     println!("Blood UCM v{}", env!("CARGO_PKG_VERSION"));
     println!("Codebase: {}", path.display());
     println!("Type :help for help, :quit to exit");
     println!();
 
-    // TODO: Implement interactive REPL
-    println!("(REPL not yet implemented)");
+    let mut codebase = Codebase::open(path)?;
+
+    loop {
+        print!("blood> ");
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input)? == 0 {
+            // EOF
+            break;
+        }
+
+        let input = input.trim();
+        if input.is_empty() {
+            continue;
+        }
+
+        if input.starts_with(':') {
+            // REPL command
+            let parts: Vec<&str> = input[1..].split_whitespace().collect();
+            match parts.first().map(|s| *s) {
+                Some("quit") | Some("q") | Some("exit") => {
+                    println!("Goodbye!");
+                    break;
+                }
+                Some("help") | Some("h") | Some("?") => {
+                    println!("REPL Commands:");
+                    println!("  :help, :h, :?     Show this help");
+                    println!("  :quit, :q, :exit  Exit the REPL");
+                    println!("  :list [prefix]    List definitions");
+                    println!("  :find <name>      Find a definition");
+                    println!("  :view <name>      View source of a definition");
+                    println!("  :add <name>       Add a definition (enter source, then blank line)");
+                    println!("  :stats            Show codebase statistics");
+                    println!();
+                    println!("Or type an expression to evaluate.");
+                }
+                Some("list") | Some("ls") => {
+                    let prefix = parts.get(1).copied();
+                    let names = codebase.list_names(prefix)?;
+                    for (name, hash) in names {
+                        println!("  {} -> {}", name, hash);
+                    }
+                }
+                Some("find") => {
+                    if let Some(query) = parts.get(1) {
+                        match codebase.find(&DefRef::name(*query))? {
+                            Some(info) => {
+                                println!("Hash: {}", info.hash);
+                                println!("Kind: {}", info.kind.as_str());
+                            }
+                            None => println!("Not found: {}", query),
+                        }
+                    } else {
+                        println!("Usage: :find <name>");
+                    }
+                }
+                Some("view") => {
+                    if let Some(query) = parts.get(1) {
+                        match codebase.find(&DefRef::name(*query))? {
+                            Some(info) => println!("{}", info.source),
+                            None => println!("Not found: {}", query),
+                        }
+                    } else {
+                        println!("Usage: :view <name>");
+                    }
+                }
+                Some("add") => {
+                    if let Some(name) = parts.get(1) {
+                        println!("Enter source (blank line to finish):");
+                        let mut source = String::new();
+                        loop {
+                            let mut line = String::new();
+                            io::stdin().read_line(&mut line)?;
+                            if line.trim().is_empty() {
+                                break;
+                            }
+                            source.push_str(&line);
+                        }
+                        if !source.is_empty() {
+                            let hash = codebase.add_term(&source)?;
+                            codebase.add_name(Name::new(*name), hash.clone())?;
+                            println!("Added {} -> {}", name, hash);
+                        }
+                    } else {
+                        println!("Usage: :add <name>");
+                    }
+                }
+                Some("stats") => {
+                    let stats = codebase.stats()?;
+                    println!("Terms: {}, Types: {}, Effects: {}, Handlers: {}, Tests: {}",
+                        stats.terms, stats.types, stats.effects, stats.handlers, stats.tests);
+                }
+                Some(cmd) => {
+                    println!("Unknown command: :{}", cmd);
+                    println!("Type :help for available commands.");
+                }
+                None => {}
+            }
+        } else {
+            // Treat as expression to evaluate
+            println!("Evaluating: {}", input);
+            println!("(Expression evaluation not yet implemented)");
+        }
+    }
+
     Ok(())
 }
