@@ -461,9 +461,9 @@ fn test_ffi_value_types() {
     assert_eq!(i64_val.as_i64(), Some(1_000_000_000_000i64));
     assert_eq!(i64_val.as_i32(), None); // Can't fit
 
-    let f64_val = FfiValue::F64(3.14159);
+    let f64_val = FfiValue::F64(std::f64::consts::PI);
     assert_eq!(f64_val.ffi_type(), FfiType::F64);
-    assert_eq!(f64_val.as_f64(), Some(3.14159));
+    assert_eq!(f64_val.as_f64(), Some(std::f64::consts::PI));
 
     let bool_val = FfiValue::Bool(true);
     assert_eq!(bool_val.ffi_type(), FfiType::Bool);

@@ -17,7 +17,7 @@ use inkwell::AddressSpace;
 
 use crate::hir::{self, DefId, LocalId, Type, TypeKind, PrimitiveTy};
 use crate::hir::def::{IntTy, UintTy};
-use crate::mir::{EscapeResults, EscapeState, MirBody};
+use crate::mir::{EscapeResults, MirBody};
 use crate::diagnostics::Diagnostic;
 use crate::span::Span;
 use crate::effects::{EffectLowering, EffectInfo, HandlerInfo};
@@ -142,52 +142,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         self.escape_analysis = escape_analysis;
     }
 
-    /// Get escape state for a local variable in the current function.
-    ///
-    /// Returns NoEscape if no escape analysis is available.
-    /// Note: Used for escape-analysis-based optimization when 128-bit pointers are enabled.
-    #[allow(dead_code)]
-    fn get_escape_state(&self, local: LocalId) -> EscapeState {
-        if let Some(def_id) = self.current_fn_def_id {
-            if let Some(results) = self.escape_analysis.get(&def_id) {
-                return results.get(local);
-            }
-        }
-        EscapeState::NoEscape // Default - assume safe if no analysis
-    }
-
-    /// Check if a local can be stack-allocated based on escape analysis.
-    #[allow(dead_code)]
-    fn can_stack_allocate(&self, local: LocalId) -> bool {
-        if let Some(def_id) = self.current_fn_def_id {
-            if let Some(results) = self.escape_analysis.get(&def_id) {
-                return results.can_stack_allocate(local);
-            }
-        }
-        true // Default - assume stack is fine if no analysis
-    }
-
-    /// Check if a local is captured by an effect operation.
-    #[allow(dead_code)]
-    fn is_effect_captured(&self, local: LocalId) -> bool {
-        if let Some(def_id) = self.current_fn_def_id {
-            if let Some(results) = self.escape_analysis.get(&def_id) {
-                return results.is_effect_captured(local);
-            }
-        }
-        false // Default - not captured if no analysis
-    }
-
-    /// Check if generation check can be skipped for a local.
-    ///
-    /// Generation checks can be skipped if:
-    /// - The value doesn't escape (purely local)
-    /// - The value is stack-allocated
-    #[allow(dead_code)]
-    fn can_skip_generation_check(&self, local: LocalId) -> bool {
-        let escape_state = self.get_escape_state(local);
-        escape_state == EscapeState::NoEscape && !self.is_effect_captured(local)
-    }
+    // NOTE: Escape analysis helper functions were removed because the MIR codegen path
+    // has its own implementation (see mir_codegen.rs: get_local_tier, should_skip_gen_check).
+    // The deprecated HIR path does not use escape analysis.
 
     /// Declare types and functions from HIR without compiling bodies.
     ///
@@ -3585,90 +3542,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     // ========================================================================
     // Generational Pointer Support (Phase 2)
     // ========================================================================
-
-    /// Emit a generation check for a pointer access.
-    ///
-    /// This validates that a pointer's expected generation matches the actual
-    /// generation at the memory location, detecting use-after-free errors.
-    ///
-    /// Returns true (1) if valid, false (0) if stale.
-    #[allow(dead_code)]
-    fn emit_generation_check(
-        &mut self,
-        expected_gen: IntValue<'ctx>,
-        actual_gen: IntValue<'ctx>,
-        span: Span,
-    ) -> Result<IntValue<'ctx>, Vec<Diagnostic>> {
-        let check_fn = self.module.get_function("blood_check_generation")
-            .ok_or_else(|| vec![Diagnostic::error(
-                "Runtime function blood_check_generation not found".to_string(),
-                span,
-            )])?;
-
-        let result = self.builder
-            .build_call(check_fn, &[expected_gen.into(), actual_gen.into()], "gen_check")
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
-            .try_as_basic_value()
-            .left()
-            .ok_or_else(|| vec![Diagnostic::error(
-                "blood_check_generation returned void".to_string(),
-                span,
-            )])?;
-
-        Ok(result.into_int_value())
-    }
-
-    /// Emit a generation check that panics on stale reference.
-    ///
-    /// This is the standard check used for pointer dereferences. If the
-    /// generation doesn't match, it calls blood_stale_reference_panic which
-    /// aborts the program with an error message.
-    #[allow(dead_code)]
-    fn emit_generation_check_or_panic(
-        &mut self,
-        expected_gen: IntValue<'ctx>,
-        actual_gen: IntValue<'ctx>,
-        span: Span,
-    ) -> Result<(), Vec<Diagnostic>> {
-        let check_result = self.emit_generation_check(expected_gen, actual_gen, span)?;
-
-        // Create basic blocks for the check
-        let current_fn = self.current_fn.ok_or_else(|| {
-            vec![Diagnostic::error("No current function".to_string(), span)]
-        })?;
-
-        let valid_block = self.context.append_basic_block(current_fn, "gen.valid");
-        let panic_block = self.context.append_basic_block(current_fn, "gen.panic");
-
-        // Branch based on check result (0 = invalid, non-zero = valid)
-        let zero = self.context.i32_type().const_int(0, false);
-        let is_valid = self.builder
-            .build_int_compare(IntPredicate::NE, check_result, zero, "is_gen_valid")
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
-
-        self.builder.build_conditional_branch(is_valid, valid_block, panic_block)
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
-
-        // Panic block: call blood_stale_reference_panic
-        self.builder.position_at_end(panic_block);
-        let panic_fn = self.module.get_function("blood_stale_reference_panic")
-            .ok_or_else(|| vec![Diagnostic::error(
-                "Runtime function blood_stale_reference_panic not found".to_string(),
-                span,
-            )])?;
-
-        self.builder
-            .build_call(panic_fn, &[expected_gen.into(), actual_gen.into()], "")
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
-
-        self.builder.build_unreachable()
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
-
-        // Continue in valid block
-        self.builder.position_at_end(valid_block);
-
-        Ok(())
-    }
+    //
+    // NOTE: The emit_generation_check and emit_generation_check_or_panic functions
+    // were removed because the MIR codegen path has its own implementation
+    // (see mir_codegen.rs: emit_generation_check). The deprecated HIR path
+    // does not emit generation checks.
 
     /// Compile a dereference expression: `*x`
     ///
@@ -4583,12 +4461,17 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 mod tests {
     //! Legacy HIR codegen tests.
     //!
-    //! WARNING: These tests use the deprecated `compile_crate()` HIR path which does
-    //! NOT emit generation checks. For tests that verify memory safety features,
-    //! see `mir_codegen::tests` which uses the MIR path.
+    //! **DEPRECATED**: These tests use the old `compile_crate()` HIR path which does
+    //! NOT emit generation checks or use escape analysis. They are retained for
+    //! backwards compatibility but should NOT be extended.
     //!
-    //! Production code uses `compile_definition_to_object()` → `compile_mir_body()`
-    //! which properly emits generation checks.
+    //! **For production-path testing, use `mir_codegen::tests`** which tests:
+    //! - MIR lowering
+    //! - Escape analysis integration
+    //! - Generation validation on dereference
+    //! - Tier-based allocation
+    //!
+    //! Production code path: `compile_definition_to_object()` → `compile_mir_body()`
 
     use super::*;
     use crate::hir::{self, Crate, Item, ItemKind, Body, BodyId, Type, Expr, ExprKind, LiteralValue, Local, LocalId, DefId};

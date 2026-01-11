@@ -85,6 +85,9 @@ pub struct TypeContext<'a> {
     method_self_types: HashMap<DefId, Type>,
     /// Trait definitions.
     trait_defs: HashMap<DefId, TraitInfo>,
+    /// Type parameter bounds: maps TyVarId to list of trait DefIds it must implement.
+    /// Used for method lookup on generic type parameters.
+    type_param_bounds: HashMap<TyVarId, Vec<DefId>>,
 }
 
 /// Information about a struct.
@@ -187,6 +190,8 @@ pub struct ImplBlockInfo {
     pub assoc_types: Vec<ImplAssocTypeInfo>,
     /// Associated constants.
     pub assoc_consts: Vec<ImplAssocConstInfo>,
+    /// Source location of the impl block.
+    pub span: Span,
 }
 
 /// Information about a method in an impl block.
@@ -307,6 +312,7 @@ impl<'a> TypeContext<'a> {
             impl_blocks: Vec::new(),
             method_self_types: HashMap::new(),
             trait_defs: HashMap::new(),
+            type_param_bounds: HashMap::new(),
         };
         ctx.register_builtins();
         ctx
@@ -484,6 +490,50 @@ impl<'a> TypeContext<'a> {
         }
 
         false
+    }
+
+    /// Resolve a trait bound (AST type) to a trait DefId.
+    ///
+    /// Trait bounds in type parameters (e.g., `T: Display`) are represented as
+    /// AST types. This resolves them to their corresponding trait DefId.
+    fn resolve_trait_bound(&self, bound: &ast::Type) -> Option<DefId> {
+        match &bound.kind {
+            ast::TypeKind::Path(type_path) => {
+                // Get the trait name from the path
+                if let Some(segment) = type_path.segments.last() {
+                    let trait_name = self.symbol_to_string(segment.name.node);
+                    // Look up the trait by name
+                    for (&def_id, trait_info) in &self.trait_defs {
+                        if trait_info.name == trait_name {
+                            return Some(def_id);
+                        }
+                    }
+                }
+                None
+            }
+            _ => None, // Other type kinds are not valid trait bounds
+        }
+    }
+
+    /// Register type parameter bounds for method lookup.
+    ///
+    /// This processes the bounds on a type parameter and stores them
+    /// for use in method resolution on generic types.
+    fn register_type_param_bounds(&mut self, ty_var_id: TyVarId, bounds: &[ast::Type]) {
+        if bounds.is_empty() {
+            return;
+        }
+
+        let mut trait_bounds = Vec::new();
+        for bound in bounds {
+            if let Some(trait_def_id) = self.resolve_trait_bound(bound) {
+                trait_bounds.push(trait_def_id);
+            }
+        }
+
+        if !trait_bounds.is_empty() {
+            self.type_param_bounds.insert(ty_var_id, trait_bounds);
+        }
     }
 
     /// Check if a type has a built-in implementation of a well-known trait.
@@ -665,6 +715,8 @@ impl<'a> TypeContext<'a> {
                         self.next_type_param_id += 1;
                         self.generic_params.insert(param_name, ty_var_id);
                         generics_vec.push(ty_var_id);
+                        // Register trait bounds for method lookup on type parameters
+                        self.register_type_param_bounds(ty_var_id, &type_param.bounds);
                     }
                     ast::GenericParam::Lifetime(lifetime_param) => {
                         let param_name = self.symbol_to_string(lifetime_param.name.node);
@@ -880,6 +932,8 @@ impl<'a> TypeContext<'a> {
                         self.next_type_param_id += 1;
                         self.generic_params.insert(param_name, ty_var_id);
                         generics_vec.push(ty_var_id);
+                        // Register trait bounds for method lookup on type parameters
+                        self.register_type_param_bounds(ty_var_id, &type_param.bounds);
                     }
                     ast::GenericParam::Lifetime(lifetime_param) => {
                         let param_name = self.symbol_to_string(lifetime_param.name.node);
@@ -972,6 +1026,8 @@ impl<'a> TypeContext<'a> {
                         self.next_type_param_id += 1;
                         self.generic_params.insert(param_name, ty_var_id);
                         generics_vec.push(ty_var_id);
+                        // Register trait bounds for method lookup on type parameters
+                        self.register_type_param_bounds(ty_var_id, &type_param.bounds);
                     }
                     ast::GenericParam::Lifetime(lifetime_param) => {
                         let param_name = self.symbol_to_string(lifetime_param.name.node);
@@ -1033,6 +1089,8 @@ impl<'a> TypeContext<'a> {
                         self.next_type_param_id += 1;
                         self.generic_params.insert(param_name, ty_var_id);
                         generics_vec.push(ty_var_id);
+                        // Register trait bounds for method lookup on type parameters
+                        self.register_type_param_bounds(ty_var_id, &type_param.bounds);
                     }
                     ast::GenericParam::Lifetime(lifetime_param) => {
                         let param_name = self.symbol_to_string(lifetime_param.name.node);
@@ -1357,6 +1415,8 @@ impl<'a> TypeContext<'a> {
                         self.next_type_param_id += 1;
                         self.generic_params.insert(param_name, ty_var_id);
                         generics_vec.push(ty_var_id);
+                        // Register trait bounds for method lookup on type parameters
+                        self.register_type_param_bounds(ty_var_id, &type_param.bounds);
                     }
                     ast::GenericParam::Lifetime(_) => {}
                     ast::GenericParam::Const(_) => {}
@@ -1556,7 +1616,7 @@ impl<'a> TypeContext<'a> {
             )?;
         }
 
-        // Store the impl block
+        // Store the impl block with its source span for error reporting
         self.impl_blocks.push(ImplBlockInfo {
             self_ty,
             trait_ref,
@@ -1564,6 +1624,7 @@ impl<'a> TypeContext<'a> {
             methods,
             assoc_types,
             assoc_consts,
+            span: impl_block.span,
         });
 
         Ok(())
@@ -1653,6 +1714,8 @@ impl<'a> TypeContext<'a> {
                         self.next_type_param_id += 1;
                         self.generic_params.insert(param_name, ty_var_id);
                         generics_vec.push(ty_var_id);
+                        // Register trait bounds for method lookup on type parameters
+                        self.register_type_param_bounds(ty_var_id, &type_param.bounds);
                     }
                     ast::GenericParam::Lifetime(_) => {}
                     ast::GenericParam::Const(_) => {}
@@ -1894,10 +1957,11 @@ impl<'a> TypeContext<'a> {
                                 ty_a: impl_a.self_ty.clone(),
                                 ty_b: impl_b.self_ty.clone(),
                             },
-                            Span::dummy(), // TODO: Store impl spans properly
+                            impl_a.span, // Use first impl's span for error location
                         ));
 
-                        // Suppress further comparisons for this pair
+                        // Note: idx_a and idx_b could be used for secondary spans
+                        // in a more sophisticated error message format
                         let _ = (idx_a, idx_b);
                     }
                 }
@@ -3427,10 +3491,22 @@ impl<'a> TypeContext<'a> {
 
         // Third, look for methods from trait bounds on type parameters
         if let TypeKind::Param(ty_var_id) = ty.kind() {
-            // This is a type parameter - look for trait bounds
-            // For now, we don't track bounds, so return None
-            // TODO: When trait bounds are implemented, search them here
-            let _ = ty_var_id;
+            // This is a type parameter - look for methods in its trait bounds
+            if let Some(bounds) = self.type_param_bounds.get(ty_var_id) {
+                for &trait_def_id in bounds {
+                    // Look up the trait to find methods
+                    if let Some(trait_info) = self.trait_defs.get(&trait_def_id) {
+                        for method in &trait_info.methods {
+                            if method.name == method_name {
+                                // Found method in trait bound - return its signature
+                                if let Some(sig) = self.fn_sigs.get(&method.def_id) {
+                                    return Some((method.def_id, sig.output.clone()));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         None

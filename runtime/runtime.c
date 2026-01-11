@@ -158,11 +158,6 @@ void blood_unreachable(void) {
     abort();
 }
 
-void blood_todo(void) {
-    fprintf(stderr, "BLOOD RUNTIME ERROR: TODO - unimplemented!\n");
-    abort();
-}
-
 // ============================================================================
 // Backward Compatibility - Simple Allocation Functions
 // These are NOT the main memory management functions (see Rust runtime).

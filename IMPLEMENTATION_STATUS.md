@@ -3,8 +3,8 @@
 **Version**: 0.5.0
 **Status**: Phase 1-5 Scaffolded, Phase 0-1 Production-Ready
 **Stability Level**: Research Prototype (Alpha)
-**Last Updated**: 2026-01-10
-**Audit Date**: 2026-01-10
+**Last Updated**: 2026-01-11
+**Audit Date**: 2026-01-11
 
 ---
 
@@ -27,7 +27,7 @@
 | LLVM Codegen | ✅ Implemented | Full programs compile and run |
 | Effect Handlers | ✅ Integrated | Full runtime dispatch (blood_perform, blood_evidence_*) |
 | Generational Pointers | ✅ Integrated | blood_alloc/blood_free in codegen |
-| MIR Layer | 🔶 Scaffolded | Complete structure, codegen bypasses (explicit TODO) |
+| MIR Layer | ✅ Integrated | Lowering, escape analysis, generation validation in codegen |
 | Content Addressing | 🔶 Scaffolded | Module exists, not integrated with builds |
 | Fiber Scheduler | ✅ Integrated | FFI exports (blood_scheduler_*) linked |
 | Multiple Dispatch | ✅ Integrated | Runtime dispatch table (blood_dispatch_*, blood_get_type_tag) |
@@ -97,19 +97,19 @@ Hello, World!
 - [Generalized Evidence Passing for Effect Handlers](https://dl.acm.org/doi/10.1145/3473576) (ICFP'21)
 - [Koka Programming Language](https://koka-lang.github.io/koka/doc/book.html) - row polymorphism approach
 
-### 1.4 Phase 3: Memory Model - 🔶 SCAFFOLDED
+### 1.4 Phase 3: Memory Model - ✅ INTEGRATED
 
-> ⚠️ **Scaffolded**: MIR layer and generational pointer types exist, but codegen currently bypasses MIR and uses direct HIR→LLVM translation. Generation checks are not emitted.
+> ✅ **Integrated**: MIR layer is now the production codegen path. `main.rs` uses `MirLowering`, escape analysis runs on MIR bodies, and `compile_definition_to_object()` uses `compile_mir_body()` for generation validation.
 
 | Deliverable | Status | Notes |
 |-------------|--------|-------|
 | MIR module structure | **Complete** | `mir/mod.rs` - types, body, lowering |
 | MIR lowering from HIR | **Complete** | `mir/lowering.rs` - FunctionLowering |
 | 128-bit generational pointers | **Complete** | `mir/ptr.rs` - BloodPtr per MEMORY_MODEL.md |
-| Escape analysis | **Complete** | `mir/escape.rs` - EscapeAnalyzer |
-| Generation snapshots | **Complete** | `mir/snapshot.rs` - SnapshotAnalyzer |
+| Escape analysis | **Integrated** | `mir/escape.rs` - EscapeAnalyzer runs in codegen |
+| Generation snapshots | **Integrated** | `mir/snapshot.rs` - ValidateGeneration in MIR codegen |
 
-**Progress**: 5/5 core deliverables complete (100%)
+**Progress**: 5/5 core deliverables complete and integrated (100%)
 
 **Technical Standards Verified**:
 - [Rust MIR Documentation](https://rustc-dev-guide.rust-lang.org/mir/index.html) - CFG design
@@ -759,16 +759,16 @@ This section documents the alignment between Blood's specifications and implemen
 
 **The gap is NOT code quality or correctness—both specs and implementation are excellent. The gap is INTEGRATION.**
 
-Scaffolded code exists for Phases 2-5, but isn't wired into the main compilation pipeline:
+The compilation pipeline now uses MIR for codegen:
 
 ```
-Current:  Source → Lexer → Parser → HIR → TypeCheck → LLVM
-                                                      ↑
-                                             (bypasses MIR, Effects, Content)
+Current:  Source → Lexer → Parser → HIR → TypeCheck → MIR → LLVM
+                                                       ↑
+                                              (escape analysis, generation checks)
 
-Target:   Source → Lexer → Parser → HIR → TypeCheck → MIR → Effects → Content → LLVM
-                                                       ↑       ↑         ↑
-                                                  (scaffolded code exists)
+Future:   Source → Lexer → Parser → HIR → TypeCheck → MIR → Effects → Content → LLVM
+                                                               ↑         ↑
+                                                     (scaffolded, not integrated)
 ```
 
 ### 11.3 Per-Component Analysis
@@ -796,7 +796,7 @@ Target:   Source → Lexer → Parser → HIR → TypeCheck → MIR → Effects 
 | Escape analysis | `mir/escape.rs` | ✅ Matches |
 | Generation snapshots | `mir/snapshot.rs` | ✅ Matches |
 
-**Gap**: Codegen uses `HIR → LLVM` directly; MIR layer is complete but bypassed.
+**Status**: MIR is now the production codegen path with escape analysis and generation validation.
 
 #### Type System (100% Spec Match)
 

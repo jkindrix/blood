@@ -101,9 +101,6 @@ pub mod functions {
     /// Unreachable code was reached.
     pub const UNREACHABLE: &str = "blood_unreachable";
 
-    /// TODO marker that panics.
-    pub const TODO: &str = "blood_todo";
-
     // === Memory Management ===
 
     /// Allocate memory with generational reference.
@@ -415,11 +412,6 @@ void blood_assert_eq_bool(int32_t a, int32_t b) {
 
 void blood_unreachable(void) {
     fprintf(stderr, "BLOOD RUNTIME ERROR: Unreachable code was reached!\n");
-    abort();
-}
-
-void blood_todo(void) {
-    fprintf(stderr, "BLOOD RUNTIME ERROR: TODO - unimplemented!\n");
     abort();
 }
 

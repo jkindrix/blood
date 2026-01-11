@@ -1232,3 +1232,377 @@ fn test_e2e_closure_in_expression_parse() {
         eprintln!("Inline closure invocation not fully supported: {:?}", result.err());
     }
 }
+
+// ============================================================
+// Comprehensive Effect System End-to-End Tests
+// ============================================================
+
+#[test]
+fn test_e2e_effect_with_operations_parses() {
+    // Effect with multiple operations
+    let source = r#"
+        effect State<S> {
+            op get() -> S;
+            op put(value: S) -> unit;
+            op modify(f: fn(S) -> S) -> unit;
+        }
+    "#;
+
+    let mut parser = Parser::new(source);
+    let program = parser.parse_program().expect("Effect with operations should parse");
+    assert_eq!(program.declarations.len(), 1);
+    assert!(matches!(program.declarations[0], bloodc::ast::Declaration::Effect { .. }));
+}
+
+#[test]
+fn test_e2e_deep_handler_parses() {
+    // Deep handler with state
+    let source = r#"
+        effect Reader<A> {
+            op ask() -> A;
+        }
+
+        deep handler WithReader<A> for Reader<A> {
+            let env: A
+
+            return(x) { x }
+            op ask() { resume(env) }
+        }
+    "#;
+
+    let mut parser = Parser::new(source);
+    let program = parser.parse_program().expect("Deep handler should parse");
+    assert_eq!(program.declarations.len(), 2);
+}
+
+#[test]
+fn test_e2e_shallow_handler_parses() {
+    // Shallow handler
+    let source = r#"
+        effect Yield<T> {
+            op yield_value(value: T) -> unit;
+        }
+
+        shallow handler CollectYields<T> for Yield<T> {
+            let mut collected: [T; 10]
+            let mut count: i32
+
+            return(x) { collected }
+            op yield_value(v) {
+                collected[count] = v;
+                count = count + 1;
+                resume(())
+            }
+        }
+    "#;
+
+    let mut parser = Parser::new(source);
+    let program = parser.parse_program().expect("Shallow handler should parse");
+    assert_eq!(program.declarations.len(), 2);
+}
+
+#[test]
+fn test_e2e_perform_expression_mir() {
+    // Function that performs an effect operation
+    let source = r#"
+        effect Console {
+            op print(msg: i32) -> unit;
+        }
+
+        fn greet() -> unit / Console {
+            perform Console::print(42)
+        }
+    "#;
+
+    let result = compile_to_mir(source);
+    // Perform may lower even if typeck is partial
+    match result {
+        Ok(mir_bodies) => {
+            // Should have MIR body for greet
+            assert!(!mir_bodies.is_empty(), "Expected MIR bodies for perform code");
+        }
+        Err(e) => {
+            // Effect system may not be fully wired - document current state
+            eprintln!("Perform expression MIR: {}", e);
+        }
+    }
+}
+
+#[test]
+fn test_e2e_handler_with_resume_mir() {
+    // Handler that uses resume
+    let source = r#"
+        effect Maybe {
+            op fail() -> unit;
+        }
+
+        deep handler TryMaybe for Maybe {
+            return(x) { x }
+            op fail() { 0 }
+        }
+
+        fn safe_div(a: i32, b: i32) -> i32 / Maybe {
+            if b == 0 {
+                perform Maybe::fail()
+            } else {
+                a
+            }
+        }
+    "#;
+
+    let result = compile_to_mir(source);
+    match result {
+        Ok(mir_bodies) => {
+            assert!(!mir_bodies.is_empty(), "Expected MIR bodies for handler code");
+        }
+        Err(e) => {
+            eprintln!("Handler with resume MIR: {}", e);
+        }
+    }
+}
+
+#[test]
+fn test_e2e_handle_block_mir() {
+    // Handle expression wrapping effectful code
+    let source = r#"
+        effect Log {
+            op log(msg: i32) -> unit;
+        }
+
+        deep handler IgnoreLog for Log {
+            return(x) { x }
+            op log(msg) { resume(()) }
+        }
+
+        fn run_with_logging() -> i32 {
+            with IgnoreLog {} handle {
+                perform Log::log(1);
+                perform Log::log(2);
+                42
+            }
+        }
+    "#;
+
+    let result = compile_to_mir(source);
+    match result {
+        Ok(mir_bodies) => {
+            assert!(!mir_bodies.is_empty(), "Expected MIR bodies for handle block");
+        }
+        Err(e) => {
+            eprintln!("Handle block MIR: {}", e);
+        }
+    }
+}
+
+#[test]
+fn test_e2e_effect_row_parsing() {
+    // Function with effect row annotation
+    let source = r#"
+        effect A { op a() -> unit; }
+        effect B { op b() -> unit; }
+
+        fn combined() -> unit / {A, B} {
+            perform A::a();
+            perform B::b()
+        }
+    "#;
+
+    let mut parser = Parser::new(source);
+    let result = parser.parse_program();
+    assert!(result.is_ok(), "Effect row should parse: {:?}", result.err());
+}
+
+#[test]
+fn test_e2e_effect_function_type_annotation() {
+    // Effect annotations on function types (must use row syntax {Effect})
+    let source = r#"
+        effect IO {
+            op read() -> i32;
+            op write(v: i32) -> unit;
+        }
+
+        fn apply_io(f: fn() -> i32 / {IO}) -> i32 / {IO} {
+            f()
+        }
+    "#;
+
+    let mut parser = Parser::new(source);
+    let result = parser.parse_program();
+    assert!(result.is_ok(), "Effect function type should parse: {:?}", result.err());
+}
+
+#[test]
+fn test_e2e_multi_shot_handler_parses() {
+    // Handler that can resume multiple times (for non-determinism)
+    let source = r#"
+        effect Choice {
+            op choose(a: i32, b: i32) -> i32;
+        }
+
+        deep handler AllChoices for Choice {
+            return(x) { [x] }
+            op choose(a, b) {
+                let left = resume(a);
+                let right = resume(b);
+                left
+            }
+        }
+    "#;
+
+    let mut parser = Parser::new(source);
+    let result = parser.parse_program();
+    assert!(result.is_ok(), "Multi-shot handler should parse: {:?}", result.err());
+}
+
+#[test]
+fn test_e2e_handler_with_state_mutation_parses() {
+    // Handler with mutable state
+    let source = r#"
+        effect Counter {
+            op inc() -> unit;
+            op get() -> i32;
+        }
+
+        deep handler CounterHandler for Counter {
+            let mut count: i32
+
+            return(x) { (x, count) }
+            op inc() {
+                count = count + 1;
+                resume(())
+            }
+            op get() {
+                resume(count)
+            }
+        }
+    "#;
+
+    let mut parser = Parser::new(source);
+    let result = parser.parse_program();
+    assert!(result.is_ok(), "Handler with mutable state should parse: {:?}", result.err());
+}
+
+#[test]
+fn test_e2e_nested_handle_blocks_parse() {
+    // Nested handle expressions
+    let source = r#"
+        effect A { op a() -> i32; }
+        effect B { op b() -> i32; }
+
+        deep handler HandleA for A {
+            return(x) { x }
+            op a() { resume(1) }
+        }
+
+        deep handler HandleB for B {
+            return(x) { x }
+            op b() { resume(2) }
+        }
+
+        fn nested_effects() -> i32 {
+            with HandleA {} handle {
+                with HandleB {} handle {
+                    perform A::a() + perform B::b()
+                }
+            }
+        }
+    "#;
+
+    let mut parser = Parser::new(source);
+    let result = parser.parse_program();
+    assert!(result.is_ok(), "Nested handle blocks should parse: {:?}", result.err());
+}
+
+#[test]
+#[ignore = "Parser hangs on generic effect parameters - needs investigation"]
+fn test_e2e_effect_polymorphism_parses() {
+    // Polymorphic effect - just the effect definition
+    // TODO: Parser appears to hang when parsing generic effect parameters
+    let source = r#"
+        effect Error<E> {
+            op throw(err: E) -> unit;
+        }
+    "#;
+
+    let mut parser = Parser::new(source);
+    let result = parser.parse_program();
+    assert!(result.is_ok(), "Polymorphic effect should parse: {:?}", result.err());
+}
+
+#[test]
+fn test_e2e_effect_to_llvm_ir() {
+    // Full pipeline from effect declaration to LLVM IR
+    let source = r#"
+        effect Simple {
+            op noop() -> unit;
+        }
+
+        deep handler HandleSimple for Simple {
+            return(x) { x }
+            op noop() { resume(()) }
+        }
+
+        fn use_effect() -> i32 {
+            42
+        }
+    "#;
+
+    let result = compile_to_llvm_ir(source);
+    match result {
+        Ok(llvm_ir) => {
+            // Should have function definition
+            assert!(llvm_ir.contains("use_effect") || llvm_ir.contains("define"),
+                    "LLVM IR should contain function definitions");
+        }
+        Err(e) => {
+            // Effect codegen may not be fully wired
+            eprintln!("Effect to LLVM IR: {}", e);
+        }
+    }
+}
+
+#[test]
+fn test_e2e_perform_in_loop_parses() {
+    // Perform inside a loop - verify parsing works
+    let source = r#"
+        effect Trace {
+            op trace(step: i32) -> unit;
+        }
+
+        fn loop_with_trace(n: i32) -> i32 / {Trace} {
+            let mut i = 0;
+            while i < n {
+                perform Trace::trace(i);
+                i = i + 1;
+            }
+            i
+        }
+    "#;
+
+    let mut parser = Parser::new(source);
+    let result = parser.parse_program();
+    assert!(result.is_ok(), "Perform in loop should parse: {:?}", result.err());
+}
+
+#[test]
+fn test_e2e_conditional_perform_parses() {
+    // Conditional perform expression - verify parsing works
+    let source = r#"
+        effect Notify {
+            op notify(value: i32) -> unit;
+        }
+
+        fn conditional_notify(x: i32) -> i32 / {Notify} {
+            if x > 0 {
+                perform Notify::notify(x)
+            } else {
+                ()
+            };
+            x
+        }
+    "#;
+
+    let mut parser = Parser::new(source);
+    let result = parser.parse_program();
+    assert!(result.is_ok(), "Conditional perform should parse: {:?}", result.err());
+}

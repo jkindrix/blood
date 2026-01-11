@@ -89,18 +89,6 @@ impl<'hir> MirLowering<'hir> {
         }
     }
 
-    /// Generate a synthetic DefId for a closure.
-    ///
-    /// Uses a high index range (starting at 0xFFFF_0000) to avoid collisions
-    /// with real definitions.
-    #[allow(dead_code)]
-    fn next_closure_def_id(&mut self) -> DefId {
-        let id = self.closure_counter;
-        self.closure_counter += 1;
-        // Use a high index range to avoid collisions with real definitions
-        DefId::new(0xFFFF_0000 + id)
-    }
-
     /// Lower all functions in the crate.
     pub fn lower_crate(&mut self) -> Result<HashMap<DefId, MirBody>, Vec<Diagnostic>> {
         // First pass: lower all top-level functions
@@ -176,13 +164,13 @@ impl<'hir> MirLowering<'hir> {
 // ============================================================================
 
 /// Lowers a single function body to MIR.
-#[allow(dead_code)]
 struct FunctionLowering<'hir, 'ctx> {
     /// MIR body builder.
     builder: MirBodyBuilder,
     /// HIR body being lowered.
     body: &'hir Body,
-    /// HIR crate for accessing closure bodies.
+    /// HIR crate for accessing nested closure bodies (reserved for future use).
+    #[allow(dead_code)]
     hir: &'hir HirCrate,
     /// Mapping from HIR locals to MIR locals.
     local_map: HashMap<LocalId, LocalId>,
@@ -1533,15 +1521,25 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
             Place::local(temp)
         };
 
-        // Generation validation temporarily disabled to diagnose type issue.
-        // TODO: Re-enable after type mismatch is fully resolved.
-        //
+        // Generation validation for memory safety.
         // See: MEMORY_MODEL.md §4 "Generational References"
-        // let expected_gen = Operand::Constant(Constant::int(1, Type::u32()));
-        // self.push_stmt(StatementKind::ValidateGeneration {
-        //     ptr: inner_place.clone(),
-        //     expected_gen,
-        // });
+        //
+        // For generational pointers (BloodPtr), we:
+        // 1. Extract the captured generation from the pointer
+        // 2. Validate it against the current generation in the slot registry
+        // 3. Panic if stale (use-after-free detected)
+        //
+        // Note: Thin pointers (stack-allocated) skip this check at codegen time
+        // based on escape analysis results.
+        let gen_temp = self.new_temp(Type::u32(), span);
+        self.push_assign(
+            Place::local(gen_temp),
+            Rvalue::ReadGeneration(inner_place.clone()),
+        );
+        self.push_stmt(StatementKind::ValidateGeneration {
+            ptr: inner_place.clone(),
+            expected_gen: Operand::Copy(Place::local(gen_temp)),
+        });
 
         let deref_place = inner_place.project(PlaceElem::Deref);
         let temp = self.new_temp(ty.clone(), span);
@@ -1831,13 +1829,13 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
 /// Similar to FunctionLowering but handles closure-specific semantics:
 /// - Captured variables are accessed through the environment
 /// - The environment is passed as the first implicit parameter
-#[allow(dead_code)]
 struct ClosureLowering<'hir, 'ctx> {
     /// MIR body builder.
     builder: MirBodyBuilder,
     /// HIR body being lowered.
     body: &'hir Body,
-    /// HIR crate for accessing nested closure bodies.
+    /// HIR crate for accessing nested closure bodies (reserved for future use).
+    #[allow(dead_code)]
     hir: &'hir HirCrate,
     /// Mapping from HIR locals to MIR locals.
     local_map: HashMap<LocalId, LocalId>,
@@ -1849,7 +1847,8 @@ struct ClosureLowering<'hir, 'ctx> {
     env_local: Option<LocalId>,
     /// Current basic block.
     current_block: BasicBlockId,
-    /// Loop context for break/continue.
+    /// Loop context for break/continue (reserved for future use).
+    #[allow(dead_code)]
     loop_stack: Vec<LoopContext>,
     /// Counter for unique temporary names.
     temp_counter: u32,
@@ -2796,14 +2795,17 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
             Place::local(temp)
         };
 
-        // Emit generation validation check before dereferencing.
-        // Generation validation temporarily disabled.
-        // See FunctionLowering::lower_deref for documentation.
-        // let expected_gen = Operand::Constant(Constant::int(1, Type::u32()));
-        // self.push_stmt(StatementKind::ValidateGeneration {
-        //     ptr: inner_place.clone(),
-        //     expected_gen,
-        // });
+        // Generation validation for memory safety.
+        // See: MEMORY_MODEL.md §4 "Generational References"
+        let gen_temp = self.new_temp(Type::u32(), span);
+        self.push_assign(
+            Place::local(gen_temp),
+            Rvalue::ReadGeneration(inner_place.clone()),
+        );
+        self.push_stmt(StatementKind::ValidateGeneration {
+            ptr: inner_place.clone(),
+            expected_gen: Operand::Copy(Place::local(gen_temp)),
+        });
 
         let deref_place = inner_place.project(PlaceElem::Deref);
         let temp = self.new_temp(ty.clone(), span);

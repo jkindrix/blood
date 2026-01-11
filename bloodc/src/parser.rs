@@ -628,11 +628,11 @@ impl<'src> Parser<'src> {
 
         let kind = match self.current.kind {
             TokenKind::IntLit => {
-                let (value, suffix) = self.parse_int_literal(text);
+                let (value, suffix) = self.parse_int_literal(text, span);
                 LiteralKind::Int { value, suffix }
             }
             TokenKind::FloatLit => {
-                let (value, suffix) = self.parse_float_literal(text);
+                let (value, suffix) = self.parse_float_literal(text, span);
                 LiteralKind::Float { value: value.into(), suffix }
             }
             TokenKind::StringLit => {
@@ -658,7 +658,7 @@ impl<'src> Parser<'src> {
         Literal { kind, span }
     }
 
-    fn parse_int_literal(&self, text: &str) -> (u128, Option<IntSuffix>) {
+    fn parse_int_literal(&mut self, text: &str, span: Span) -> (u128, Option<IntSuffix>) {
         let text = text.replace('_', "");
 
         // Check for suffix
@@ -675,7 +675,10 @@ impl<'src> Parser<'src> {
                 "u32" => Some(IntSuffix::U32),
                 "u64" => Some(IntSuffix::U64),
                 "u128" => Some(IntSuffix::U128),
-                _ => None,
+                _ => {
+                    self.error_at(span, &format!("invalid integer suffix '{}'", s), ErrorCode::InvalidInteger);
+                    None
+                }
             };
             (n, suffix)
         } else {
@@ -683,19 +686,43 @@ impl<'src> Parser<'src> {
         };
 
         let value = if num_text.starts_with("0x") || num_text.starts_with("0X") {
-            u128::from_str_radix(&num_text[2..], 16).unwrap_or(0)
+            match u128::from_str_radix(&num_text[2..], 16) {
+                Ok(v) => v,
+                Err(_) => {
+                    self.error_at(span, "invalid hexadecimal integer literal", ErrorCode::InvalidInteger);
+                    0
+                }
+            }
         } else if num_text.starts_with("0o") || num_text.starts_with("0O") {
-            u128::from_str_radix(&num_text[2..], 8).unwrap_or(0)
+            match u128::from_str_radix(&num_text[2..], 8) {
+                Ok(v) => v,
+                Err(_) => {
+                    self.error_at(span, "invalid octal integer literal", ErrorCode::InvalidInteger);
+                    0
+                }
+            }
         } else if num_text.starts_with("0b") || num_text.starts_with("0B") {
-            u128::from_str_radix(&num_text[2..], 2).unwrap_or(0)
+            match u128::from_str_radix(&num_text[2..], 2) {
+                Ok(v) => v,
+                Err(_) => {
+                    self.error_at(span, "invalid binary integer literal", ErrorCode::InvalidInteger);
+                    0
+                }
+            }
         } else {
-            num_text.parse().unwrap_or(0)
+            match num_text.parse() {
+                Ok(v) => v,
+                Err(_) => {
+                    self.error_at(span, "invalid decimal integer literal", ErrorCode::InvalidInteger);
+                    0
+                }
+            }
         };
 
         (value, suffix)
     }
 
-    fn parse_float_literal(&self, text: &str) -> (f64, Option<FloatSuffix>) {
+    fn parse_float_literal(&mut self, text: &str, span: Span) -> (f64, Option<FloatSuffix>) {
         let text = text.replace('_', "");
 
         let (num_text, suffix) = if text.ends_with("f32") {
@@ -706,7 +733,13 @@ impl<'src> Parser<'src> {
             (text.as_str(), None)
         };
 
-        let value = num_text.parse().unwrap_or(0.0);
+        let value = match num_text.parse() {
+            Ok(v) => v,
+            Err(_) => {
+                self.error_at(span, "invalid floating-point literal", ErrorCode::InvalidFloat);
+                0.0
+            }
+        };
         (value, suffix)
     }
 
