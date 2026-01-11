@@ -26,10 +26,12 @@
 //! - Generic instantiation
 
 pub mod ambiguity;
+pub mod const_eval;
 pub mod context;
 pub mod dispatch;
 pub mod effect;
 pub mod error;
+pub mod exhaustiveness;
 pub mod infer;
 pub mod lifetime;
 pub mod methods;

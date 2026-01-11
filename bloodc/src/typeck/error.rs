@@ -225,6 +225,18 @@ impl TypeError {
                 "E0234",
                 format!("conflicting implementations of trait `{trait_name}` for type `{ty_a}` and `{ty_b}`"),
             ),
+            TypeErrorKind::ConstEvalError { reason } => (
+                "E0235",
+                format!("const evaluation failed: {reason}"),
+            ),
+            TypeErrorKind::NonExhaustivePatterns { missing } => (
+                "E0236",
+                format!("non-exhaustive patterns: {} not covered", missing.join(", ")),
+            ),
+            TypeErrorKind::UnreachablePattern => (
+                "E0237",
+                "unreachable pattern".to_string(),
+            ),
         };
 
         let mut diag = Diagnostic::error(message, self.span).with_code(code);
@@ -419,6 +431,16 @@ pub enum TypeErrorKind {
         ty_a: Type,
         ty_b: Type,
     },
+    /// Const evaluation error.
+    ConstEvalError {
+        reason: String,
+    },
+    /// Non-exhaustive pattern match.
+    NonExhaustivePatterns {
+        missing: Vec<String>,
+    },
+    /// Unreachable pattern (dead code).
+    UnreachablePattern,
 }
 
 impl fmt::Display for TypeError {
