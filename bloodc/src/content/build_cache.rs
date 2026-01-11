@@ -1020,6 +1020,352 @@ fn hash_pattern(pattern: &hir::Pattern, hasher: &mut ContentHasher) {
 }
 
 // ============================================================================
+// Dependency Extraction
+// ============================================================================
+
+use std::collections::HashSet;
+use crate::hir::DefId;
+
+/// Extract all DefId dependencies from an HIR item.
+///
+/// This walks the item's AST to find all referenced definitions,
+/// which is used for incremental compilation invalidation.
+pub fn extract_dependencies(
+    item: &hir::Item,
+    bodies: &HashMap<hir::BodyId, hir::Body>,
+) -> HashSet<DefId> {
+    let mut deps = HashSet::new();
+    extract_item_deps(&item.kind, bodies, &mut deps);
+    deps
+}
+
+/// Extract dependencies from an item kind.
+fn extract_item_deps(
+    kind: &hir::ItemKind,
+    bodies: &HashMap<hir::BodyId, hir::Body>,
+    deps: &mut HashSet<DefId>,
+) {
+    match kind {
+        hir::ItemKind::Fn(fn_def) => {
+            extract_type_deps(&fn_def.sig.output, deps);
+            for input in &fn_def.sig.inputs {
+                extract_type_deps(input, deps);
+            }
+            if let Some(body_id) = fn_def.body_id {
+                if let Some(body) = bodies.get(&body_id) {
+                    extract_body_deps(body, deps);
+                }
+            }
+        }
+        hir::ItemKind::Struct(struct_def) => {
+            extract_struct_kind_deps(&struct_def.kind, deps);
+        }
+        hir::ItemKind::Enum(enum_def) => {
+            for variant in &enum_def.variants {
+                extract_struct_kind_deps(&variant.fields, deps);
+            }
+        }
+        hir::ItemKind::TypeAlias { ty, .. } => {
+            extract_type_deps(ty, deps);
+        }
+        hir::ItemKind::Const { ty, body_id } => {
+            extract_type_deps(ty, deps);
+            if let Some(body) = bodies.get(body_id) {
+                extract_body_deps(body, deps);
+            }
+        }
+        hir::ItemKind::Static { ty, body_id, .. } => {
+            extract_type_deps(ty, deps);
+            if let Some(body) = bodies.get(body_id) {
+                extract_body_deps(body, deps);
+            }
+        }
+        hir::ItemKind::Trait { items, .. } => {
+            for item in items {
+                if let hir::TraitItemKind::Fn(sig, _body_id) = &item.kind {
+                    extract_type_deps(&sig.output, deps);
+                    for input in &sig.inputs {
+                        extract_type_deps(input, deps);
+                    }
+                }
+            }
+        }
+        hir::ItemKind::Impl { trait_ref, self_ty, items, .. } => {
+            if let Some(tr) = trait_ref {
+                deps.insert(tr.def_id);
+            }
+            extract_type_deps(self_ty, deps);
+            for impl_item in items {
+                if let hir::ImplItemKind::Fn(sig, body_id) = &impl_item.kind {
+                    extract_type_deps(&sig.output, deps);
+                    for input in &sig.inputs {
+                        extract_type_deps(input, deps);
+                    }
+                    if let Some(body) = bodies.get(body_id) {
+                        extract_body_deps(body, deps);
+                    }
+                }
+            }
+        }
+        hir::ItemKind::Effect { operations, .. } => {
+            for op in operations {
+                for input in &op.inputs {
+                    extract_type_deps(input, deps);
+                }
+                extract_type_deps(&op.output, deps);
+            }
+        }
+        hir::ItemKind::Handler { effect, operations, .. } => {
+            extract_type_deps(effect, deps);
+            for op in operations {
+                // body_id is BodyId, not Option<BodyId>
+                if let Some(body) = bodies.get(&op.body_id) {
+                    extract_body_deps(body, deps);
+                }
+            }
+        }
+    }
+}
+
+/// Extract dependencies from a struct kind.
+fn extract_struct_kind_deps(kind: &hir::StructKind, deps: &mut HashSet<DefId>) {
+    match kind {
+        hir::StructKind::Record(fields) | hir::StructKind::Tuple(fields) => {
+            for field in fields {
+                extract_type_deps(&field.ty, deps);
+            }
+        }
+        hir::StructKind::Unit => {}
+    }
+}
+
+/// Extract dependencies from a type.
+fn extract_type_deps(ty: &hir::Type, deps: &mut HashSet<DefId>) {
+    match ty.kind() {
+        hir::TypeKind::Adt { def_id, args } => {
+            deps.insert(*def_id);
+            for arg in args {
+                extract_type_deps(arg, deps);
+            }
+        }
+        hir::TypeKind::Tuple(elems) => {
+            for elem in elems {
+                extract_type_deps(elem, deps);
+            }
+        }
+        hir::TypeKind::Array { element, .. } => {
+            extract_type_deps(element, deps);
+        }
+        hir::TypeKind::Slice { element } => {
+            extract_type_deps(element, deps);
+        }
+        hir::TypeKind::Ref { inner, .. } | hir::TypeKind::Ptr { inner, .. } => {
+            extract_type_deps(inner, deps);
+        }
+        hir::TypeKind::Fn { params, ret } => {
+            for param in params {
+                extract_type_deps(param, deps);
+            }
+            extract_type_deps(ret, deps);
+        }
+        hir::TypeKind::Closure { def_id, params, ret } => {
+            deps.insert(*def_id);
+            for param in params {
+                extract_type_deps(param, deps);
+            }
+            extract_type_deps(ret, deps);
+        }
+        hir::TypeKind::DynTrait { trait_id, auto_traits } => {
+            deps.insert(*trait_id);
+            for auto_trait in auto_traits {
+                deps.insert(*auto_trait);
+            }
+        }
+        hir::TypeKind::Range { element, .. } => {
+            extract_type_deps(element, deps);
+        }
+        _ => {}
+    }
+}
+
+/// Extract dependencies from a function body.
+fn extract_body_deps(body: &hir::Body, deps: &mut HashSet<DefId>) {
+    extract_expr_deps(&body.expr, deps);
+}
+
+/// Extract dependencies from an expression.
+fn extract_expr_deps(expr: &hir::Expr, deps: &mut HashSet<DefId>) {
+    // Extract type dependencies from expression type
+    extract_type_deps(&expr.ty, deps);
+
+    match &expr.kind {
+        // Definition reference
+        hir::ExprKind::Def(def_id) => {
+            deps.insert(*def_id);
+        }
+        // Local variables don't add dependencies
+        hir::ExprKind::Local(_) => {}
+        hir::ExprKind::Call { callee, args } => {
+            extract_expr_deps(callee, deps);
+            for arg in args {
+                extract_expr_deps(arg, deps);
+            }
+        }
+        hir::ExprKind::MethodCall { receiver, method, args } => {
+            deps.insert(*method);
+            extract_expr_deps(receiver, deps);
+            for arg in args {
+                extract_expr_deps(arg, deps);
+            }
+        }
+        hir::ExprKind::Struct { def_id, fields, base } => {
+            deps.insert(*def_id);
+            for field in fields {
+                extract_expr_deps(&field.value, deps);
+            }
+            if let Some(b) = base {
+                extract_expr_deps(b, deps);
+            }
+        }
+        hir::ExprKind::Variant { def_id, fields, .. } => {
+            deps.insert(*def_id);
+            for field in fields {
+                extract_expr_deps(field, deps);
+            }
+        }
+        hir::ExprKind::Binary { left, right, .. } => {
+            extract_expr_deps(left, deps);
+            extract_expr_deps(right, deps);
+        }
+        hir::ExprKind::Unary { operand, .. } => {
+            extract_expr_deps(operand, deps);
+        }
+        hir::ExprKind::Block { stmts, expr } => {
+            for stmt in stmts {
+                extract_stmt_deps(stmt, deps);
+            }
+            if let Some(e) = expr {
+                extract_expr_deps(e, deps);
+            }
+        }
+        hir::ExprKind::If { condition, then_branch, else_branch } => {
+            extract_expr_deps(condition, deps);
+            extract_expr_deps(then_branch, deps);
+            if let Some(e) = else_branch {
+                extract_expr_deps(e, deps);
+            }
+        }
+        hir::ExprKind::Loop { body, .. } => {
+            extract_expr_deps(body, deps);
+        }
+        hir::ExprKind::While { condition, body, .. } => {
+            extract_expr_deps(condition, deps);
+            extract_expr_deps(body, deps);
+        }
+        hir::ExprKind::Match { scrutinee, arms } => {
+            extract_expr_deps(scrutinee, deps);
+            for arm in arms {
+                if let Some(guard) = &arm.guard {
+                    extract_expr_deps(guard, deps);
+                }
+                extract_expr_deps(&arm.body, deps);
+            }
+        }
+        hir::ExprKind::Return(value) => {
+            if let Some(v) = value {
+                extract_expr_deps(v, deps);
+            }
+        }
+        hir::ExprKind::Break { value, .. } => {
+            if let Some(v) = value {
+                extract_expr_deps(v, deps);
+            }
+        }
+        hir::ExprKind::Tuple(elems) | hir::ExprKind::Array(elems) => {
+            for elem in elems {
+                extract_expr_deps(elem, deps);
+            }
+        }
+        hir::ExprKind::Repeat { value, .. } => {
+            extract_expr_deps(value, deps);
+        }
+        hir::ExprKind::Index { base, index } => {
+            extract_expr_deps(base, deps);
+            extract_expr_deps(index, deps);
+        }
+        hir::ExprKind::Field { base, .. } => {
+            extract_expr_deps(base, deps);
+        }
+        hir::ExprKind::Cast { expr, target_ty } => {
+            extract_expr_deps(expr, deps);
+            extract_type_deps(target_ty, deps);
+        }
+        hir::ExprKind::Assign { target, value } => {
+            extract_expr_deps(target, deps);
+            extract_expr_deps(value, deps);
+        }
+        hir::ExprKind::Deref(inner) | hir::ExprKind::Borrow { expr: inner, .. }
+        | hir::ExprKind::AddrOf { expr: inner, .. } => {
+            extract_expr_deps(inner, deps);
+        }
+        hir::ExprKind::Closure { body_id, .. } => {
+            // Closure body dependencies would be tracked separately
+            // when the closure body is analyzed
+            let _ = body_id;
+        }
+        hir::ExprKind::Perform { effect_id, args, .. } => {
+            deps.insert(*effect_id);
+            for arg in args {
+                extract_expr_deps(arg, deps);
+            }
+        }
+        hir::ExprKind::Resume { value } => {
+            if let Some(v) = value {
+                extract_expr_deps(v, deps);
+            }
+        }
+        hir::ExprKind::Handle { body, handler_id, handler_instance } => {
+            deps.insert(*handler_id);
+            extract_expr_deps(body, deps);
+            // handler_instance is Box<Expr>, not Option
+            extract_expr_deps(handler_instance, deps);
+        }
+        hir::ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start {
+                extract_expr_deps(s, deps);
+            }
+            if let Some(e) = end {
+                extract_expr_deps(e, deps);
+            }
+        }
+        hir::ExprKind::Let { init, .. } => {
+            extract_expr_deps(init, deps);
+        }
+        hir::ExprKind::Unsafe(inner) => {
+            extract_expr_deps(inner, deps);
+        }
+        _ => {}
+    }
+}
+
+/// Extract dependencies from a statement.
+fn extract_stmt_deps(stmt: &hir::Stmt, deps: &mut HashSet<DefId>) {
+    match stmt {
+        hir::Stmt::Let { init, .. } => {
+            if let Some(e) = init {
+                extract_expr_deps(e, deps);
+            }
+        }
+        hir::Stmt::Expr(e) => {
+            extract_expr_deps(e, deps);
+        }
+        hir::Stmt::Item(def_id) => {
+            deps.insert(*def_id);
+        }
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 

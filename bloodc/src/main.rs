@@ -32,7 +32,7 @@ use bloodc::diagnostics::DiagnosticEmitter;
 use bloodc::{Lexer, TokenKind};
 use bloodc::codegen;
 use bloodc::mir;
-use bloodc::content::{ContentHash, BuildCache, hash_hir_item, VFT, VFTEntry};
+use bloodc::content::{ContentHash, BuildCache, hash_hir_item, extract_dependencies, VFT, VFTEntry};
 use bloodc::content::hash::ContentHasher;
 use bloodc::content::namespace::{NameRegistry, NameBinding, BindingKind};
 
@@ -537,6 +537,24 @@ fn cmd_build(args: &FileArgs, verbosity: u8) -> ExitCode {
             cache_hits,
             cache_misses
         );
+    }
+
+    // Extract and record dependencies for incremental invalidation
+    for (&def_id, item) in &hir_crate.items {
+        if let Some(&hash) = definition_hashes.get(&def_id) {
+            let deps_set = extract_dependencies(item, &hir_crate.bodies);
+            // Convert DefId dependencies to ContentHash dependencies
+            let dep_hashes: Vec<ContentHash> = deps_set
+                .iter()
+                .filter_map(|dep_id| definition_hashes.get(dep_id).copied())
+                .collect();
+            if !dep_hashes.is_empty() {
+                build_cache.record_dependencies(hash, dep_hashes);
+                if verbosity > 2 {
+                    eprintln!("  {} depends on {} definitions", item.name, deps_set.len());
+                }
+            }
+        }
     }
 
     // Populate namespace registry with content-addressed definitions

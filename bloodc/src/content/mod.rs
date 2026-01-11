@@ -37,7 +37,7 @@ pub mod namespace;
 pub mod storage;
 pub mod vft;
 
-pub use build_cache::{BuildCache, CacheStats, CacheError, hash_hir_item};
+pub use build_cache::{BuildCache, CacheStats, CacheError, hash_hir_item, extract_dependencies};
 pub use canonical::{CanonicalAST, Canonicalizer, DeBruijnIndex};
 pub use hash::{ContentHash, HashDisplay, FORMAT_VERSION};
 pub use namespace::{Namespace, NameBinding};
