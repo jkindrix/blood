@@ -94,18 +94,41 @@ pub struct AmbiguityError {
     pub candidates: Vec<MethodCandidate>,
 }
 
+/// A function that checks if a type implements a trait.
+pub type TraitChecker = dyn Fn(&Type, DefId) -> bool;
+
 /// Dispatch resolution context.
 pub struct DispatchResolver<'a> {
     /// Reference to the unifier for subtype checking.
     /// Currently unused but will be used for constraint-based subtyping.
     #[allow(dead_code)]
     unifier: &'a Unifier,
+    /// Optional function to check if a type implements a trait.
+    /// Required for `T <: dyn Trait` subtyping.
+    trait_checker: Option<&'a TraitChecker>,
 }
 
 impl<'a> DispatchResolver<'a> {
     /// Create a new dispatch resolver.
     pub fn new(unifier: &'a Unifier) -> Self {
-        Self { unifier }
+        Self {
+            unifier,
+            trait_checker: None,
+        }
+    }
+
+    /// Create a dispatch resolver with trait implementation checking support.
+    ///
+    /// The trait_checker function should return true if the given type
+    /// implements the trait with the given DefId.
+    pub fn with_trait_checker(
+        unifier: &'a Unifier,
+        trait_checker: &'a TraitChecker,
+    ) -> Self {
+        Self {
+            unifier,
+            trait_checker: Some(trait_checker),
+        }
     }
 
     /// Resolve dispatch for a method call.
@@ -294,10 +317,49 @@ impl<'a> DispatchResolver<'a> {
                 return self.types_equal(a_inner, b_inner);
             }
 
+            // Trait object subtyping: dyn Trait1 <: dyn Trait2 if:
+            // - Trait1 == Trait2 (same primary trait)
+            // - auto_traits of a is a superset of auto_traits of b
+            (
+                TypeKind::DynTrait { trait_id: a_trait, auto_traits: a_auto },
+                TypeKind::DynTrait { trait_id: b_trait, auto_traits: b_auto },
+            ) => {
+                // Same primary trait required
+                if a_trait != b_trait {
+                    return false;
+                }
+                // a must have all auto traits that b has (superset)
+                for b_at in b_auto {
+                    if !a_auto.contains(b_at) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+
             _ => {}
         }
 
-        // TODO: Add trait-based subtyping when trait system is complete
+        // Trait-based subtyping: T <: dyn Trait when T: Trait
+        // This requires a trait checker to be provided
+        if let TypeKind::DynTrait { trait_id, auto_traits } = b.kind.as_ref() {
+            if let Some(checker) = self.trait_checker {
+                // Check if type 'a' implements the primary trait
+                if !checker(a, *trait_id) {
+                    return false;
+                }
+                // Check if type 'a' implements all auto traits
+                for auto_trait_id in auto_traits {
+                    if !checker(a, *auto_trait_id) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            // No trait checker available - can't verify trait implementation
+            // This is a configuration error, but we conservatively return false
+            return false;
+        }
 
         false
     }
@@ -356,6 +418,15 @@ impl<'a> DispatchResolver<'a> {
             (TypeKind::Param(a_var), TypeKind::Param(b_var)) => a_var == b_var,
             (TypeKind::Never, TypeKind::Never) => true,
             (TypeKind::Error, TypeKind::Error) => true,
+            // DynTrait equality: same trait_id and same auto_traits (order independent)
+            (
+                TypeKind::DynTrait { trait_id: a_trait, auto_traits: a_auto },
+                TypeKind::DynTrait { trait_id: b_trait, auto_traits: b_auto },
+            ) => {
+                a_trait == b_trait
+                    && a_auto.len() == b_auto.len()
+                    && a_auto.iter().all(|a| b_auto.contains(a))
+            }
             _ => false,
         }
     }
@@ -821,5 +892,106 @@ mod tests {
 
         assert!(resolver.is_subtype(&arr1, &arr2));
         assert!(!resolver.is_subtype(&arr1, &arr3)); // Different size
+    }
+
+    // === DynTrait Subtyping Tests ===
+
+    #[test]
+    fn test_dyn_trait_equality() {
+        let unifier = Unifier::new();
+        let resolver = DispatchResolver::new(&unifier);
+
+        let trait_id = DefId::new(100);
+        let auto1 = DefId::new(101);
+        let auto2 = DefId::new(102);
+
+        // Same trait, no auto traits
+        let dyn1 = Type::dyn_trait(trait_id, vec![]);
+        let dyn2 = Type::dyn_trait(trait_id, vec![]);
+        assert!(resolver.types_equal(&dyn1, &dyn2));
+
+        // Same trait, same auto traits
+        let dyn3 = Type::dyn_trait(trait_id, vec![auto1, auto2]);
+        let dyn4 = Type::dyn_trait(trait_id, vec![auto1, auto2]);
+        assert!(resolver.types_equal(&dyn3, &dyn4));
+
+        // Same trait, different order of auto traits (should still be equal)
+        let dyn5 = Type::dyn_trait(trait_id, vec![auto2, auto1]);
+        assert!(resolver.types_equal(&dyn3, &dyn5));
+
+        // Different trait
+        let other_trait = DefId::new(200);
+        let dyn6 = Type::dyn_trait(other_trait, vec![]);
+        assert!(!resolver.types_equal(&dyn1, &dyn6));
+    }
+
+    #[test]
+    fn test_dyn_trait_subtyping() {
+        let unifier = Unifier::new();
+        let resolver = DispatchResolver::new(&unifier);
+
+        let trait_id = DefId::new(100);
+        let send_id = DefId::new(101);
+        let sync_id = DefId::new(102);
+
+        // dyn Trait <: dyn Trait
+        let dyn1 = Type::dyn_trait(trait_id, vec![]);
+        let dyn2 = Type::dyn_trait(trait_id, vec![]);
+        assert!(resolver.is_subtype(&dyn1, &dyn2));
+
+        // dyn Trait + Send + Sync <: dyn Trait (superset of auto traits)
+        let dyn_send_sync = Type::dyn_trait(trait_id, vec![send_id, sync_id]);
+        assert!(resolver.is_subtype(&dyn_send_sync, &dyn1));
+
+        // dyn Trait + Send <: dyn Trait
+        let dyn_send = Type::dyn_trait(trait_id, vec![send_id]);
+        assert!(resolver.is_subtype(&dyn_send, &dyn1));
+
+        // dyn Trait NOT <: dyn Trait + Send (missing auto trait)
+        assert!(!resolver.is_subtype(&dyn1, &dyn_send));
+
+        // dyn Trait + Send + Sync <: dyn Trait + Send
+        assert!(resolver.is_subtype(&dyn_send_sync, &dyn_send));
+
+        // Different primary trait: dyn TraitA NOT <: dyn TraitB
+        let other_trait = DefId::new(200);
+        let dyn_other = Type::dyn_trait(other_trait, vec![]);
+        assert!(!resolver.is_subtype(&dyn1, &dyn_other));
+        assert!(!resolver.is_subtype(&dyn_other, &dyn1));
+    }
+
+    #[test]
+    fn test_type_subtype_dyn_trait_with_checker() {
+        let unifier = Unifier::new();
+
+        let trait_id = DefId::new(100);
+
+        // Create a trait checker that says i32 implements trait 100
+        let checker: &TraitChecker = &|ty: &Type, tid: DefId| {
+            matches!(ty.kind.as_ref(), TypeKind::Primitive(PrimitiveTy::Int(crate::hir::def::IntTy::I32)))
+                && tid.index == 100
+        };
+
+        let resolver = DispatchResolver::with_trait_checker(&unifier, checker);
+
+        let dyn_trait = Type::dyn_trait(trait_id, vec![]);
+
+        // i32 <: dyn Trait (because our checker says i32 implements trait 100)
+        assert!(resolver.is_subtype(&Type::i32(), &dyn_trait));
+
+        // i64 NOT <: dyn Trait (our checker says no)
+        assert!(!resolver.is_subtype(&Type::i64(), &dyn_trait));
+    }
+
+    #[test]
+    fn test_type_subtype_dyn_trait_without_checker() {
+        let unifier = Unifier::new();
+        let resolver = DispatchResolver::new(&unifier);
+
+        let trait_id = DefId::new(100);
+        let dyn_trait = Type::dyn_trait(trait_id, vec![]);
+
+        // Without a trait checker, T <: dyn Trait should conservatively return false
+        assert!(!resolver.is_subtype(&Type::i32(), &dyn_trait));
     }
 }

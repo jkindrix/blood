@@ -148,6 +148,14 @@ impl Unifier {
                 self.unify(r1, r2, span)
             }
 
+            // Range types
+            (
+                TypeKind::Range { element: e1, inclusive: i1 },
+                TypeKind::Range { element: e2, inclusive: i2 },
+            ) if i1 == i2 => {
+                self.unify(e1, e2, span)
+            }
+
             // Never type unifies with anything
             (TypeKind::Never, _) | (_, TypeKind::Never) => Ok(()),
 
@@ -211,6 +219,7 @@ impl Unifier {
                 params.iter().any(|t| self.occurs_in(var, t)) || self.occurs_in(var, ret)
             }
             TypeKind::Adt { args, .. } => args.iter().any(|t| self.occurs_in(var, t)),
+            TypeKind::Range { element, .. } => self.occurs_in(var, element),
             _ => false,
         }
     }
@@ -249,6 +258,10 @@ impl Unifier {
                 *def_id,
                 args.iter().map(|t| self.resolve(t)).collect(),
             ),
+            TypeKind::Range { element, inclusive } => Type::new(TypeKind::Range {
+                element: self.resolve(element),
+                inclusive: *inclusive,
+            }),
             _ => ty.clone(),
         }
     }

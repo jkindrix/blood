@@ -58,8 +58,6 @@ pub struct TypeContext<'a> {
     /// This is populated when entering a generic function/struct/enum
     /// and cleared when leaving.
     generic_params: HashMap<String, TyVarId>,
-    /// Trait bounds for type parameters (TyVarId -> list of required trait DefIds).
-    type_param_bounds: HashMap<TyVarId, Vec<DefId>>,
     /// Next type parameter ID for generating unique TyVarIds.
     next_type_param_id: u32,
     /// Builtin function names (DefId -> function name).
@@ -288,7 +286,6 @@ impl<'a> TypeContext<'a> {
             next_body_id: 0,
             locals: Vec::new(),
             generic_params: HashMap::new(),
-            type_param_bounds: HashMap::new(),
             next_type_param_id: 0,
             builtin_fns: HashMap::new(),
             effect_defs: HashMap::new(),
@@ -433,85 +430,6 @@ impl<'a> TypeContext<'a> {
         Ok(())
     }
 
-    /// Register type parameters and their trait bounds.
-    ///
-    /// This saves the current generic params, registers new ones with their bounds,
-    /// and returns the TyVarIds for the registered params. The caller must restore
-    /// generic_params after processing.
-    fn register_type_params(
-        &mut self,
-        type_params: Option<&ast::TypeParams>,
-    ) -> Result<(HashMap<String, TyVarId>, Vec<TyVarId>), TypeError> {
-        let saved = std::mem::take(&mut self.generic_params);
-        let _saved_bounds = std::mem::take(&mut self.type_param_bounds);
-        let mut generics_vec = Vec::new();
-
-        if let Some(params) = type_params {
-            for type_param in &params.params {
-                let param_name = self.symbol_to_string(type_param.name.node);
-                let ty_var_id = TyVarId(self.next_type_param_id);
-                self.next_type_param_id += 1;
-                self.generic_params.insert(param_name.clone(), ty_var_id);
-                generics_vec.push(ty_var_id);
-
-                // Process trait bounds for this type parameter
-                let mut bounds = Vec::new();
-                for bound_ty in &type_param.bounds {
-                    match &bound_ty.kind {
-                        ast::TypeKind::Path(path) => {
-                            if !path.segments.is_empty() {
-                                let bound_name = self.symbol_to_string(path.segments[0].name.node);
-                                match self.resolver.lookup(&bound_name) {
-                                    Some(Binding::Def(def_id)) => {
-                                        if let Some(info) = self.resolver.def_info.get(&def_id) {
-                                            if matches!(info.kind, hir::DefKind::Trait) {
-                                                bounds.push(def_id);
-                                            } else {
-                                                return Err(TypeError::new(
-                                                    TypeErrorKind::TraitNotFound { name: bound_name },
-                                                    bound_ty.span,
-                                                ));
-                                            }
-                                        }
-                                    }
-                                    _ => {
-                                        return Err(TypeError::new(
-                                            TypeErrorKind::TraitNotFound { name: bound_name },
-                                            bound_ty.span,
-                                        ));
-                                    }
-                                }
-                            }
-                        }
-                        _ => {
-                            return Err(TypeError::new(
-                                TypeErrorKind::UnsupportedFeature {
-                                    feature: "complex trait bounds".to_string(),
-                                },
-                                bound_ty.span,
-                            ));
-                        }
-                    }
-                }
-
-                if !bounds.is_empty() {
-                    self.type_param_bounds.insert(ty_var_id, bounds);
-                }
-            }
-        }
-
-        Ok((saved, generics_vec))
-    }
-
-    /// Restore saved generic params and bounds.
-    fn restore_type_params(
-        &mut self,
-        saved_params: HashMap<String, TyVarId>,
-    ) {
-        self.generic_params = saved_params;
-        // Note: type_param_bounds are kept for later checking
-    }
-
     /// Check if a type satisfies all trait bounds required by a type parameter.
     #[allow(dead_code)]
     fn check_trait_bounds(
@@ -539,19 +457,159 @@ impl<'a> TypeContext<'a> {
 
     /// Check if a type implements a trait.
     ///
-    /// Currently checks if there's an impl block for the type that implements the trait.
+    /// Checks explicit impl blocks first, then built-in trait implementations.
     fn type_implements_trait(&self, ty: &Type, trait_def_id: DefId) -> bool {
-        // For now, we check if any impl block for this type implements the trait
+        // Check explicit impl blocks
         for impl_block in &self.impl_blocks {
             if impl_block.trait_ref == Some(trait_def_id) && impl_block.self_ty == *ty {
                 return true;
             }
         }
 
-        // TODO: Check built-in trait implementations (e.g., Copy for primitives)
-        // For now, we're lenient and return true if we can't prove it's false
-        // This is a simplification until full trait solving is implemented
+        // Check built-in trait implementations
+        if let Some(trait_info) = self.trait_defs.get(&trait_def_id) {
+            return self.type_has_builtin_impl(ty, &trait_info.name);
+        }
+
         false
+    }
+
+    /// Check if a type has a built-in implementation of a well-known trait.
+    ///
+    /// This handles traits like Copy, Clone, Sized that primitives and certain
+    /// types implement automatically without explicit impl blocks.
+    fn type_has_builtin_impl(&self, ty: &Type, trait_name: &str) -> bool {
+        match trait_name {
+            "Copy" => self.type_is_copy(ty),
+            "Clone" => self.type_is_clone(ty),
+            "Sized" => self.type_is_sized(ty),
+            "Send" => self.type_is_send(ty),
+            "Sync" => self.type_is_sync(ty),
+            _ => false,
+        }
+    }
+
+    /// Check if a type implements Copy (can be bitwise copied).
+    ///
+    /// Copy types:
+    /// - All primitives (bool, char, integers, floats, unit)
+    /// - References (&T) - shared references are always Copy
+    /// - Raw pointers (*const T, *mut T)
+    /// - Arrays [T; N] where T: Copy
+    /// - Tuples where all elements are Copy
+    /// - Function pointers
+    fn type_is_copy(&self, ty: &Type) -> bool {
+        match ty.kind() {
+            // Primitives are Copy
+            TypeKind::Primitive(_) => true,
+            // Shared references are Copy
+            TypeKind::Ref { mutable: false, .. } => true,
+            // Mutable references are NOT Copy (to preserve uniqueness)
+            TypeKind::Ref { mutable: true, .. } => false,
+            // Raw pointers are Copy
+            TypeKind::Ptr { .. } => true,
+            // Function pointers are Copy
+            TypeKind::Fn { .. } => true,
+            // Never type is Copy (vacuously)
+            TypeKind::Never => true,
+            // Arrays are Copy if element is Copy
+            TypeKind::Array { element, .. } => self.type_is_copy(element),
+            // Tuples are Copy if all elements are Copy
+            TypeKind::Tuple(elements) => elements.iter().all(|e| self.type_is_copy(e)),
+            // Range is Copy if element is Copy
+            TypeKind::Range { element, .. } => self.type_is_copy(element),
+            // Slices are NOT Copy (they're unsized)
+            TypeKind::Slice { .. } => false,
+            // Closures are NOT Copy (they capture environment)
+            TypeKind::Closure { .. } => false,
+            // ADTs require explicit Copy impl
+            TypeKind::Adt { .. } => false,
+            // Trait objects are NOT Copy (they're unsized)
+            TypeKind::DynTrait { .. } => false,
+            // Error and inference types - be conservative
+            TypeKind::Error => true,
+            TypeKind::Infer(_) => false,
+            TypeKind::Param(_) => false, // Requires trait bound
+        }
+    }
+
+    /// Check if a type implements Clone.
+    ///
+    /// Clone types: everything that is Copy, plus types with explicit Clone impls.
+    fn type_is_clone(&self, ty: &Type) -> bool {
+        // All Copy types are Clone
+        if self.type_is_copy(ty) {
+            return true;
+        }
+        // For non-Copy types, would need to check impl blocks (already done in caller)
+        false
+    }
+
+    /// Check if a type implements Sized.
+    ///
+    /// Unsized types: str, [T] (slices), dyn Trait
+    fn type_is_sized(&self, ty: &Type) -> bool {
+        match ty.kind() {
+            TypeKind::Slice { .. } => false,
+            TypeKind::Primitive(hir::PrimitiveTy::Str) => false,
+            // Trait objects are dynamically sized (DST)
+            TypeKind::DynTrait { .. } => false,
+            _ => true,
+        }
+    }
+
+    /// Check if a type implements Send (can be transferred across threads).
+    ///
+    /// Most types are Send unless they contain non-Send types.
+    fn type_is_send(&self, ty: &Type) -> bool {
+        match ty.kind() {
+            // Primitives are Send
+            TypeKind::Primitive(_) => true,
+            // References to Send types are Send
+            TypeKind::Ref { inner, .. } => self.type_is_send(inner),
+            TypeKind::Ptr { inner, .. } => self.type_is_send(inner),
+            // Arrays and tuples are Send if elements are
+            TypeKind::Array { element, .. } => self.type_is_send(element),
+            TypeKind::Tuple(elements) => elements.iter().all(|e| self.type_is_send(e)),
+            // Closures depend on captured types - conservative default
+            TypeKind::Closure { .. } => false,
+            // For ADTs, would need to check all fields - conservative default
+            TypeKind::Adt { .. } => true,
+            // Trait objects are Send only if they have + Send bound
+            TypeKind::DynTrait { auto_traits, .. } => {
+                auto_traits.iter().any(|trait_id| {
+                    self.trait_defs.get(trait_id)
+                        .map(|info| info.name == "Send")
+                        .unwrap_or(false)
+                })
+            }
+            _ => true,
+        }
+    }
+
+    /// Check if a type implements Sync (can be shared across threads via &T).
+    ///
+    /// A type is Sync if &T is Send.
+    fn type_is_sync(&self, ty: &Type) -> bool {
+        // For now, same logic as Send - primitives and simple types are Sync
+        match ty.kind() {
+            TypeKind::Primitive(_) => true,
+            TypeKind::Ref { inner, .. } => self.type_is_sync(inner),
+            TypeKind::Ptr { inner, .. } => self.type_is_sync(inner),
+            TypeKind::Array { element, .. } => self.type_is_sync(element),
+            TypeKind::Tuple(elements) => elements.iter().all(|e| self.type_is_sync(e)),
+            TypeKind::Closure { .. } => false,
+            TypeKind::Adt { .. } => true,
+            // Trait objects are Sync only if they have + Sync bound
+            TypeKind::DynTrait { auto_traits, .. } => {
+                auto_traits.iter().any(|trait_id| {
+                    self.trait_defs.get(trait_id)
+                        .map(|info| info.name == "Sync")
+                        .unwrap_or(false)
+                })
+            }
+            _ => true,
+        }
     }
 
     /// Collect a declaration.
@@ -1287,6 +1345,19 @@ impl<'a> TypeContext<'a> {
                     // Store the Self type for this method
                     self.method_self_types.insert(method_def_id, self_ty.clone());
 
+                    // Handle method-level type parameters
+                    // Note: impl-level params are already in scope from earlier
+                    let mut method_generics = Vec::new();
+                    if let Some(ref type_params) = func.type_params {
+                        for type_param in &type_params.params {
+                            let param_name = self.symbol_to_string(type_param.name.node);
+                            let ty_var_id = TyVarId(self.next_type_param_id);
+                            self.next_type_param_id += 1;
+                            self.generic_params.insert(param_name, ty_var_id);
+                            method_generics.push(ty_var_id);
+                        }
+                    }
+
                     // Build the function signature
                     let mut param_types = Vec::new();
                     for (i, param) in func.params.iter().enumerate() {
@@ -1306,14 +1377,14 @@ impl<'a> TypeContext<'a> {
                         None => Type::unit(),
                     };
 
-                    // Create function signature
+                    // Create function signature with method generics
                     let sig = hir::FnSig {
                         inputs: param_types,
                         output: return_type,
                         is_const: func.qualifiers.is_const,
                         is_async: func.qualifiers.is_async,
                         is_unsafe: func.qualifiers.is_unsafe,
-                        generics: Vec::new(), // TODO: Handle method generics
+                        generics: method_generics,
                     };
 
                     self.fn_sigs.insert(method_def_id, sig);
@@ -1460,6 +1531,18 @@ impl<'a> TypeContext<'a> {
                         func.span,
                     )?;
 
+                    // Handle method-level type parameters
+                    let mut method_generics = Vec::new();
+                    if let Some(ref type_params) = func.type_params {
+                        for type_param in &type_params.params {
+                            let param_name = self.symbol_to_string(type_param.name.node);
+                            let ty_var_id = TyVarId(self.next_type_param_id);
+                            self.next_type_param_id += 1;
+                            self.generic_params.insert(param_name, ty_var_id);
+                            method_generics.push(ty_var_id);
+                        }
+                    }
+
                     // Build parameter types
                     let mut param_types = Vec::new();
                     for param in &func.params {
@@ -1477,7 +1560,7 @@ impl<'a> TypeContext<'a> {
                         is_const: func.qualifiers.is_const,
                         is_async: func.qualifiers.is_async,
                         is_unsafe: func.qualifiers.is_unsafe,
-                        generics: Vec::new(),
+                        generics: method_generics,
                     };
 
                     self.fn_sigs.insert(method_def_id, sig.clone());
@@ -2724,6 +2807,11 @@ impl<'a> TypeContext<'a> {
                         match effect_info.and_then(|info| info.operations.get(op_index as usize)) {
                             Some(op_info) => (op_info.params.clone(), op_info.return_ty.clone()),
                             None => {
+                                // ICE: we resolved an effect/operation but can't find its signature
+                                ice!("operation signature not found during type checking";
+                                     "effect_id" => effect_id,
+                                     "op_index" => op_index,
+                                     "note" => "effect resolution succeeded but operation lookup failed");
                                 return Ok(hir::Expr::new(
                                     hir::ExprKind::Error,
                                     Type::error(),
@@ -2879,23 +2967,50 @@ impl<'a> TypeContext<'a> {
                 let expected = self.unifier.fresh_var();
                 self.check_block(body, &expected)
             }
-            ast::ExprKind::Range { start, end, inclusive: _ } => {
-                // Range expressions outside of for loops are not yet supported.
-                // In for loops, the range is desugared to a while loop.
-                // For standalone ranges (e.g., for iterators), we'd need Range<T> stdlib type.
+            ast::ExprKind::Range { start, end, inclusive } => {
+                // Range expressions create Range<T> or RangeInclusive<T> values.
+                // For now, we require at least one bound to determine the element type.
 
-                // Type-check start and end for error reporting
-                if let Some(s) = start {
-                    let _ = self.infer_expr(s)?;
-                }
-                if let Some(e) = end {
-                    let _ = self.infer_expr(e)?;
-                }
+                let (start_expr, end_expr, element_ty) = match (start, end) {
+                    (Some(s), Some(e)) => {
+                        // Both bounds present: infer type from start, check end
+                        let start_expr = self.infer_expr(s)?;
+                        let element_ty = start_expr.ty.clone();
+                        let end_expr = self.check_expr(e, &element_ty)?;
+                        (Some(Box::new(start_expr)), Some(Box::new(end_expr)), element_ty)
+                    }
+                    (Some(s), None) => {
+                        // RangeFrom: start..
+                        let start_expr = self.infer_expr(s)?;
+                        let element_ty = start_expr.ty.clone();
+                        (Some(Box::new(start_expr)), None, element_ty)
+                    }
+                    (None, Some(e)) => {
+                        // RangeTo: ..end
+                        let end_expr = self.infer_expr(e)?;
+                        let element_ty = end_expr.ty.clone();
+                        (None, Some(Box::new(end_expr)), element_ty)
+                    }
+                    (None, None) => {
+                        // RangeFull: .. - uses unit type as placeholder
+                        let element_ty = Type::unit();
+                        (None, None, element_ty)
+                    }
+                };
 
-                Err(TypeError::new(
-                    TypeErrorKind::UnsupportedFeature {
-                        feature: "Range expressions outside of for loops require Range<T> type (not yet implemented)".into(),
+                // Construct the Range type
+                let range_ty = Type::new(hir::TypeKind::Range {
+                    element: element_ty,
+                    inclusive: *inclusive,
+                });
+
+                Ok(hir::Expr::new(
+                    hir::ExprKind::Range {
+                        start: start_expr,
+                        end: end_expr,
+                        inclusive: *inclusive,
                     },
+                    range_ty,
                     expr.span,
                 ))
             }
@@ -4807,14 +4922,14 @@ impl<'a> TypeContext<'a> {
                                 (def_id, struct_info, result_ty)
                             } else {
                                 return Err(TypeError::new(
-                                    TypeErrorKind::NotAStruct { ty: Type::error() },
+                                    TypeErrorKind::NotAStructName { name },
                                     span,
                                 ));
                             }
                         }
                         Binding::Local { .. } => {
                             return Err(TypeError::new(
-                                TypeErrorKind::NotAStruct { ty: Type::error() },
+                                TypeErrorKind::NotAStructName { name },
                                 span,
                             ));
                         }
@@ -5180,6 +5295,14 @@ impl<'a> TypeContext<'a> {
             }
             hir::ExprKind::Cast { expr: inner, .. } => {
                 self.collect_captures(inner, is_move, captures, seen);
+            }
+            hir::ExprKind::Range { start, end, .. } => {
+                if let Some(s) = start {
+                    self.collect_captures(s, is_move, captures, seen);
+                }
+                if let Some(e) = end {
+                    self.collect_captures(e, is_move, captures, seen);
+                }
             }
             // These don't contain local references directly
             hir::ExprKind::Literal(_)

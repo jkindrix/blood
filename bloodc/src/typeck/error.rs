@@ -35,162 +35,175 @@ impl TypeError {
 
     /// Convert to a diagnostic.
     pub fn to_diagnostic(&self) -> Diagnostic {
+        // Error code categories per DIAGNOSTICS.md spec:
+        // - E02xx: Type errors
+        // - E03xx: Effect errors
+        // - E04xx: Ownership errors
         let (code, message) = match &self.kind {
+            // Type errors (E02xx)
             TypeErrorKind::Mismatch { expected, found } => (
-                "E1001",
+                "E0201",
                 format!("type mismatch: expected `{expected}`, found `{found}`"),
             ),
+            TypeErrorKind::CannotInfer => (
+                "E0202",
+                "type annotations needed".to_string(),
+            ),
+            TypeErrorKind::TypeNotFound { name } => (
+                "E0203",
+                format!("cannot find type `{name}` in this scope"),
+            ),
+            TypeErrorKind::GenericArgsMismatch { expected, found } => (
+                "E0204",
+                format!("wrong number of type arguments: expected {expected}, found {found}"),
+            ),
+            TypeErrorKind::RecursiveType { name } => (
+                "E0205",
+                format!("recursive type `{name}` has infinite size"),
+            ),
+            TypeErrorKind::InfiniteType => (
+                "E0205",
+                "cannot construct the infinite type".to_string(),
+            ),
+            TypeErrorKind::TraitBoundNotSatisfied { ty, trait_name } => (
+                "E0206",
+                format!("the trait bound `{ty}: {trait_name}` is not satisfied"),
+            ),
+            TypeErrorKind::TraitNotFound { name } => (
+                "E0207",
+                format!("cannot find trait `{name}` in this scope"),
+            ),
             TypeErrorKind::NotFound { name } => (
-                "E1002",
+                "E0208",
                 format!("cannot find value `{name}` in this scope"),
             ),
             TypeErrorKind::NotAType { name } => (
-                "E1003",
+                "E0209",
                 format!("`{name}` is not a type"),
             ),
             TypeErrorKind::NotAFunction { ty } => (
-                "E1004",
+                "E0210",
                 format!("expected function, found `{ty}`"),
             ),
             TypeErrorKind::WrongArity { expected, found } => (
-                "E1005",
+                "E0211",
                 format!("this function takes {expected} argument(s) but {found} were supplied"),
             ),
-            TypeErrorKind::GenericArgsMismatch { expected, found } => (
-                "E1036",
-                format!("wrong number of type arguments: expected {expected}, found {found}"),
-            ),
             TypeErrorKind::NotAStruct { ty } => (
-                "E1006",
+                "E0212",
                 format!("`{ty}` is not a struct"),
             ),
+            TypeErrorKind::NotAStructName { name } => (
+                "E0212",
+                format!("`{name}` is not a struct type"),
+            ),
             TypeErrorKind::NoField { ty, field } => (
-                "E1007",
+                "E0213",
                 format!("no field `{field}` on type `{ty}`"),
             ),
-            TypeErrorKind::CannotInfer => (
-                "E1008",
-                "type annotations needed".to_string(),
-            ),
             TypeErrorKind::DuplicateDefinition { name } => (
-                "E1009",
+                "E0214",
                 format!("the name `{name}` is defined multiple times"),
             ),
-            TypeErrorKind::MutableBorrow { reason } => (
-                "E1010",
-                format!("cannot borrow as mutable: {reason}"),
-            ),
             TypeErrorKind::CannotDeref { ty } => (
-                "E1011",
+                "E0215",
                 format!("type `{ty}` cannot be dereferenced"),
             ),
             TypeErrorKind::InvalidBinaryOp { op, left, right } => (
-                "E1012",
+                "E0216",
                 format!("cannot apply `{op}` to `{left}` and `{right}`"),
             ),
             TypeErrorKind::InvalidUnaryOp { op, ty } => (
-                "E1013",
+                "E0217",
                 format!("cannot apply `{op}` to `{ty}`"),
             ),
             TypeErrorKind::NotIndexable { ty } => (
-                "E1014",
+                "E0218",
                 format!("cannot index into a value of type `{ty}`"),
             ),
-            TypeErrorKind::TypeNotFound { name } => (
-                "E1015",
-                format!("cannot find type `{name}` in this scope"),
-            ),
-            TypeErrorKind::InfiniteType => (
-                "E1016",
-                "cannot construct the infinite type".to_string(),
-            ),
             TypeErrorKind::MainSignature => (
-                "E1017",
+                "E0219",
                 "`main` function has wrong signature".to_string(),
             ),
             TypeErrorKind::ReturnTypeMismatch { expected, found } => (
-                "E1018",
+                "E0220",
                 format!("return type mismatch: expected `{expected}`, found `{found}`"),
             ),
             TypeErrorKind::NoMainFunction => (
-                "E1019",
+                "E0221",
                 "`main` function not found".to_string(),
             ),
-            TypeErrorKind::RecursiveType { name } => (
-                "E1020",
-                format!("recursive type `{name}` has infinite size"),
-            ),
             TypeErrorKind::MismatchedTypes { expected, found } => (
-                "E1021",
+                "E0201",
                 format!("mismatched types: expected `{expected}`, found `{found}`"),
             ),
             TypeErrorKind::BreakOutsideLoop => (
-                "E1022",
+                "E0222",
                 "`break` outside of loop".to_string(),
             ),
             TypeErrorKind::ContinueOutsideLoop => (
-                "E1023",
+                "E0223",
                 "`continue` outside of loop".to_string(),
             ),
             TypeErrorKind::ReturnOutsideFunction => (
-                "E1024",
+                "E0224",
                 "`return` outside of function".to_string(),
             ),
             TypeErrorKind::MissingField { ty, field } => (
-                "E1025",
+                "E0225",
                 format!("missing field `{field}` in initializer of `{ty}`"),
             ),
             TypeErrorKind::PatternMismatch { expected, pattern } => (
-                "E1026",
+                "E0226",
                 format!("pattern `{pattern}` not covered by type `{expected}`"),
             ),
             TypeErrorKind::NotATuple { ty } => (
-                "E1027",
+                "E0227",
                 format!("`{ty}` is not a tuple"),
             ),
             TypeErrorKind::UnsupportedFeature { feature } => (
-                "E1028",
+                "E0228",
                 format!("unsupported feature: {feature}"),
             ),
             TypeErrorKind::UnresolvedName { name } => (
-                "E1029",
+                "E0229",
                 format!("cannot find `{name}` in this scope"),
             ),
             TypeErrorKind::UnknownField { ty, field } => (
-                "E1030",
+                "E0230",
                 format!("unknown field `{field}` on type `{ty}`"),
             ),
-            TypeErrorKind::EffectMismatch { expected, found } => (
-                "E1031",
-                format!("effect mismatch: expected `{expected}`, found `{found}`"),
+            TypeErrorKind::TypeAnnotationRequired => (
+                "E0202",
+                "type annotations needed for parameter".to_string(),
             ),
+
+            // Effect errors (E03xx)
             TypeErrorKind::UnhandledEffect { effect } => (
-                "E1032",
+                "E0301",
                 format!("unhandled effect `{effect}`"),
             ),
+            TypeErrorKind::EffectMismatch { expected, found } => (
+                "E0302",
+                format!("effect mismatch: expected `{expected}`, found `{found}`"),
+            ),
             TypeErrorKind::InvalidHandler { reason } => (
-                "E1033",
+                "E0305",
                 format!("invalid effect handler: {reason}"),
             ),
             TypeErrorKind::NotAnEffect { name } => (
-                "E1034",
+                "E0306",
                 format!("`{name}` is not an effect"),
             ),
             TypeErrorKind::InvalidEffectType { found } => (
-                "E1035",
+                "E0307",
                 format!("invalid effect type syntax: expected a named effect like `State<T>`, found {found}"),
             ),
-            TypeErrorKind::TraitNotFound { name } => (
-                "E1037",
-                format!("cannot find trait `{name}` in this scope"),
-            ),
-            TypeErrorKind::TypeAnnotationRequired => (
-                "E1038",
-                "type annotations needed for parameter".to_string(),
-            ),
-            TypeErrorKind::TraitBoundNotSatisfied { ty, trait_name } => (
-                "E1039",
-                format!("the trait bound `{ty}: {trait_name}` is not satisfied"),
+
+            // Ownership errors (E04xx)
+            TypeErrorKind::MutableBorrow { reason } => (
+                "E0401",
+                format!("cannot borrow as mutable: {reason}"),
             ),
         };
 
@@ -238,9 +251,13 @@ pub enum TypeErrorKind {
         expected: usize,
         found: usize,
     },
-    /// Not a struct.
+    /// Not a struct (when we have a type).
     NotAStruct {
         ty: Type,
+    },
+    /// Not a struct (when we only have a name, no resolved type).
+    NotAStructName {
+        name: String,
     },
     /// No such field.
     NoField {
