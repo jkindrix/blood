@@ -48,6 +48,7 @@ use crate::hir::{
 use crate::ast::{BinOp, UnaryOp};
 use crate::span::Span;
 use crate::diagnostics::Diagnostic;
+use crate::effects::std_effects::StandardEffects;
 use crate::ice_err;
 
 use super::body::{MirBody, MirBodyBuilder};
@@ -612,6 +613,12 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
         // Create continuation block (where we resume after handler processes)
         let resume_block = self.builder.new_block();
 
+        // Determine if this effect operation is tail-resumptive.
+        // Standard effects have known tail-resumptive status.
+        // Unknown effects default to tail-resumptive (optimistic assumption).
+        let is_tail_resumptive = StandardEffects::is_tail_resumptive(effect_id)
+            .unwrap_or(true);
+
         // Emit the Perform terminator
         self.terminate(TerminatorKind::Perform {
             effect_id,
@@ -619,6 +626,7 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
             args: arg_ops,
             destination: dest_place.clone(),
             target: resume_block,
+            is_tail_resumptive,
         });
 
         // Switch to the resume block
@@ -2139,6 +2147,10 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
         // Create continuation block
         let resume_block = self.builder.new_block();
 
+        // Determine tail-resumptiveness
+        let is_tail_resumptive = StandardEffects::is_tail_resumptive(effect_id)
+            .unwrap_or(true);
+
         // Emit the Perform terminator
         self.terminate(TerminatorKind::Perform {
             effect_id,
@@ -2146,6 +2158,7 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
             args: arg_ops,
             destination: dest_place.clone(),
             target: resume_block,
+            is_tail_resumptive,
         });
 
         // Switch to the resume block

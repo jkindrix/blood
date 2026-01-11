@@ -289,6 +289,13 @@ pub enum TerminatorKind {
         destination: Place,
         /// Block to continue to (after handler resumes).
         target: BasicBlockId,
+        /// Whether this effect operation is tail-resumptive.
+        ///
+        /// Tail-resumptive operations (like State.get, State.put) always
+        /// resume immediately, so they don't need continuation capture.
+        /// Non-tail-resumptive operations (like Error.throw) may suspend
+        /// indefinitely and require capturing the continuation.
+        is_tail_resumptive: bool,
     },
 
     /// Resume from an effect handler.

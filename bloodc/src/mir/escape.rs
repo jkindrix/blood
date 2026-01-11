@@ -602,6 +602,7 @@ mod tests {
                 args: vec![Operand::Copy(Place::local(temp))],
                 destination: Place::local(LocalId::new(0)),
                 target: target_bb,
+                is_tail_resumptive: true,
             },
             Span::dummy(),
         ));

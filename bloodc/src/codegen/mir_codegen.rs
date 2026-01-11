@@ -884,10 +884,31 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     )])?;
             }
 
-            TerminatorKind::Perform { effect_id, op_index, args, destination, target } => {
+            TerminatorKind::Perform { effect_id, op_index, args, destination, target, is_tail_resumptive } => {
                 // Effect operation - emit runtime call with snapshot capture
                 let i32_ty = self.context.i32_type();
                 let i64_ty = self.context.i64_type();
+
+                // For non-tail-resumptive effects (like Error.throw), we need to capture
+                // the continuation so the handler can suspend and resume later.
+                //
+                // Tail-resumptive effects (like State.get/put, IO.print) don't need this
+                // because they always resume immediately after the operation completes.
+                if !*is_tail_resumptive {
+                    // Non-tail-resumptive effects require continuation capture.
+                    // Currently we fall through to the synchronous path which works
+                    // as long as the handler resumes immediately (which Error.throw doesn't).
+                    //
+                    // Full continuation capture would require:
+                    // 1. Generate LLVM function for "rest of computation" from target block
+                    // 2. Pack live variables into a context struct
+                    // 3. Call blood_continuation_create(callback, context)
+                    // 4. Store continuation handle in effect context before blood_perform
+                    // 5. Handler retrieves continuation and calls blood_continuation_resume
+                    //
+                    // For now, non-tail-resumptive effects work correctly if the handler
+                    // either resumes immediately or is a final control effect (like throw).
+                }
 
                 // Compile arguments
                 let arg_vals: Vec<_> = args.iter()
