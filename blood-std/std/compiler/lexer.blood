@@ -1,0 +1,646 @@
+/// Blood Lexer - First step toward self-hosting
+///
+/// This module implements a lexer for Blood source code, written in Blood itself.
+/// Part of Phase 6: Self-Hosting.
+
+/// Token kinds that the lexer produces.
+enum TokenKind {
+    // Keywords
+    KwFn,
+    KwLet,
+    KwMut,
+    KwIf,
+    KwElse,
+    KwMatch,
+    KwFor,
+    KwWhile,
+    KwLoop,
+    KwBreak,
+    KwContinue,
+    KwReturn,
+    KwStruct,
+    KwEnum,
+    KwTrait,
+    KwImpl,
+    KwType,
+    KwEffect,
+    KwHandler,
+    KwPerform,
+    KwResume,
+    KwWith,
+    KwHandle,
+    KwDeep,
+    KwShallow,
+    KwPure,
+    KwPub,
+    KwMod,
+    KwUse,
+    KwAs,
+    KwIn,
+    KwWhere,
+    KwConst,
+    KwStatic,
+    KwUnsafe,
+    KwExtern,
+    KwRegion,
+    KwLinear,
+
+    // Literals
+    IntLit,
+    FloatLit,
+    StringLit,
+    CharLit,
+    BoolTrue,
+    BoolFalse,
+
+    // Identifiers
+    Ident,
+
+    // Operators
+    Plus,      // +
+    Minus,     // -
+    Star,      // *
+    Slash,     // /
+    Percent,   // %
+    Eq,        // =
+    EqEq,      // ==
+    BangEq,    // !=
+    Lt,        // <
+    LtEq,      // <=
+    Gt,        // >
+    GtEq,      // >=
+    AmpAmp,    // &&
+    PipePipe,  // ||
+    Bang,      // !
+    Amp,       // &
+    Pipe,      // |
+    Caret,     // ^
+    LtLt,      // <<
+    GtGt,      // >>
+    PlusEq,    // +=
+    MinusEq,   // -=
+    StarEq,    // *=
+    SlashEq,   // /=
+    PercentEq, // %=
+    AmpEq,     // &=
+    PipeEq,    // |=
+    CaretEq,   // ^=
+
+    // Delimiters
+    LParen,    // (
+    RParen,    // )
+    LBrace,    // {
+    RBrace,    // }
+    LBracket,  // [
+    RBracket,  // ]
+
+    // Punctuation
+    Comma,     // ,
+    Dot,       // .
+    DotDot,    // ..
+    DotDotEq,  // ..=
+    Colon,     // :
+    ColonColon,// ::
+    Semi,      // ;
+    Arrow,     // ->
+    FatArrow,  // =>
+    At,        // @
+    Hash,      // #
+    Question,  // ?
+
+    // Special
+    Newline,
+    Whitespace,
+    Comment,
+    DocComment,
+    Eof,
+    Error,
+}
+
+/// A token with its kind, text, and position.
+struct Token {
+    kind: TokenKind,
+    text: String,
+    line: u32,
+    column: u32,
+    offset: u32,
+}
+
+/// Lexer state for tokenizing Blood source code.
+struct Lexer {
+    source: String,
+    pos: u32,
+    line: u32,
+    column: u32,
+}
+
+impl Lexer {
+    /// Create a new lexer for the given source code.
+    fn new(source: String) -> Lexer {
+        Lexer {
+            source,
+            pos: 0,
+            line: 1,
+            column: 1,
+        }
+    }
+
+    /// Check if we've reached the end of input.
+    fn is_at_end(&self) -> bool {
+        self.pos >= self.source.len() as u32
+    }
+
+    /// Peek at the current character without consuming it.
+    fn peek(&self) -> Option<char> {
+        if self.is_at_end() {
+            None
+        } else {
+            Some(self.source.char_at(self.pos as usize))
+        }
+    }
+
+    /// Peek at the next character (one ahead).
+    fn peek_next(&self) -> Option<char> {
+        let next_pos = self.pos + 1;
+        if next_pos >= self.source.len() as u32 {
+            None
+        } else {
+            Some(self.source.char_at(next_pos as usize))
+        }
+    }
+
+    /// Advance to the next character.
+    fn advance(&mut self) -> Option<char> {
+        if self.is_at_end() {
+            return None;
+        }
+
+        let ch = self.source.char_at(self.pos as usize);
+        self.pos = self.pos + 1;
+
+        if ch == '\n' {
+            self.line = self.line + 1;
+            self.column = 1;
+        } else {
+            self.column = self.column + 1;
+        }
+
+        Some(ch)
+    }
+
+    /// Consume characters while a predicate holds.
+    fn advance_while(&mut self, predicate: fn(char) -> bool) {
+        while let Some(ch) = self.peek() {
+            if predicate(ch) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// Skip whitespace (but not newlines).
+    fn skip_whitespace(&mut self) -> bool {
+        let start = self.pos;
+        self.advance_while(|ch| ch == ' ' || ch == '\t' || ch == '\r');
+        self.pos > start
+    }
+
+    /// Make a token with the given kind.
+    fn make_token(&self, kind: TokenKind, start: u32, start_line: u32, start_column: u32) -> Token {
+        Token {
+            kind,
+            text: self.source.substring(start as usize, self.pos as usize),
+            line: start_line,
+            column: start_column,
+            offset: start,
+        }
+    }
+
+    /// Scan the next token.
+    fn next_token(&mut self) -> Token {
+        // Skip whitespace
+        if self.skip_whitespace() {
+            let start = self.pos - 1;
+            return self.make_token(TokenKind::Whitespace, start, self.line, self.column);
+        }
+
+        // Check for EOF
+        if self.is_at_end() {
+            return Token {
+                kind: TokenKind::Eof,
+                text: "".to_string(),
+                line: self.line,
+                column: self.column,
+                offset: self.pos,
+            };
+        }
+
+        let start = self.pos;
+        let start_line = self.line;
+        let start_column = self.column;
+        let ch = self.advance().unwrap();
+
+        match ch {
+            // Newline
+            '\n' => self.make_token(TokenKind::Newline, start, start_line, start_column),
+
+            // Single-character tokens
+            '(' => self.make_token(TokenKind::LParen, start, start_line, start_column),
+            ')' => self.make_token(TokenKind::RParen, start, start_line, start_column),
+            '{' => self.make_token(TokenKind::LBrace, start, start_line, start_column),
+            '}' => self.make_token(TokenKind::RBrace, start, start_line, start_column),
+            '[' => self.make_token(TokenKind::LBracket, start, start_line, start_column),
+            ']' => self.make_token(TokenKind::RBracket, start, start_line, start_column),
+            ',' => self.make_token(TokenKind::Comma, start, start_line, start_column),
+            ';' => self.make_token(TokenKind::Semi, start, start_line, start_column),
+            '@' => self.make_token(TokenKind::At, start, start_line, start_column),
+            '#' => self.make_token(TokenKind::Hash, start, start_line, start_column),
+            '?' => self.make_token(TokenKind::Question, start, start_line, start_column),
+
+            // Two-character tokens
+            '+' => {
+                if self.peek() == Some('=') {
+                    self.advance();
+                    self.make_token(TokenKind::PlusEq, start, start_line, start_column)
+                } else {
+                    self.make_token(TokenKind::Plus, start, start_line, start_column)
+                }
+            }
+            '-' => {
+                if self.peek() == Some('>') {
+                    self.advance();
+                    self.make_token(TokenKind::Arrow, start, start_line, start_column)
+                } else if self.peek() == Some('=') {
+                    self.advance();
+                    self.make_token(TokenKind::MinusEq, start, start_line, start_column)
+                } else {
+                    self.make_token(TokenKind::Minus, start, start_line, start_column)
+                }
+            }
+            '*' => {
+                if self.peek() == Some('=') {
+                    self.advance();
+                    self.make_token(TokenKind::StarEq, start, start_line, start_column)
+                } else {
+                    self.make_token(TokenKind::Star, start, start_line, start_column)
+                }
+            }
+            '/' => {
+                if self.peek() == Some('/') {
+                    // Line comment
+                    self.advance();
+                    if self.peek() == Some('/') {
+                        // Doc comment ///
+                        self.advance();
+                        self.advance_while(|c| c != '\n');
+                        self.make_token(TokenKind::DocComment, start, start_line, start_column)
+                    } else {
+                        // Regular comment //
+                        self.advance_while(|c| c != '\n');
+                        self.make_token(TokenKind::Comment, start, start_line, start_column)
+                    }
+                } else if self.peek() == Some('*') {
+                    // Block comment /* */
+                    self.advance();
+                    self.scan_block_comment();
+                    self.make_token(TokenKind::Comment, start, start_line, start_column)
+                } else if self.peek() == Some('=') {
+                    self.advance();
+                    self.make_token(TokenKind::SlashEq, start, start_line, start_column)
+                } else {
+                    self.make_token(TokenKind::Slash, start, start_line, start_column)
+                }
+            }
+            '%' => {
+                if self.peek() == Some('=') {
+                    self.advance();
+                    self.make_token(TokenKind::PercentEq, start, start_line, start_column)
+                } else {
+                    self.make_token(TokenKind::Percent, start, start_line, start_column)
+                }
+            }
+            '=' => {
+                if self.peek() == Some('=') {
+                    self.advance();
+                    self.make_token(TokenKind::EqEq, start, start_line, start_column)
+                } else if self.peek() == Some('>') {
+                    self.advance();
+                    self.make_token(TokenKind::FatArrow, start, start_line, start_column)
+                } else {
+                    self.make_token(TokenKind::Eq, start, start_line, start_column)
+                }
+            }
+            '!' => {
+                if self.peek() == Some('=') {
+                    self.advance();
+                    self.make_token(TokenKind::BangEq, start, start_line, start_column)
+                } else {
+                    self.make_token(TokenKind::Bang, start, start_line, start_column)
+                }
+            }
+            '<' => {
+                if self.peek() == Some('=') {
+                    self.advance();
+                    self.make_token(TokenKind::LtEq, start, start_line, start_column)
+                } else if self.peek() == Some('<') {
+                    self.advance();
+                    self.make_token(TokenKind::LtLt, start, start_line, start_column)
+                } else {
+                    self.make_token(TokenKind::Lt, start, start_line, start_column)
+                }
+            }
+            '>' => {
+                if self.peek() == Some('=') {
+                    self.advance();
+                    self.make_token(TokenKind::GtEq, start, start_line, start_column)
+                } else if self.peek() == Some('>') {
+                    self.advance();
+                    self.make_token(TokenKind::GtGt, start, start_line, start_column)
+                } else {
+                    self.make_token(TokenKind::Gt, start, start_line, start_column)
+                }
+            }
+            '&' => {
+                if self.peek() == Some('&') {
+                    self.advance();
+                    self.make_token(TokenKind::AmpAmp, start, start_line, start_column)
+                } else if self.peek() == Some('=') {
+                    self.advance();
+                    self.make_token(TokenKind::AmpEq, start, start_line, start_column)
+                } else {
+                    self.make_token(TokenKind::Amp, start, start_line, start_column)
+                }
+            }
+            '|' => {
+                if self.peek() == Some('|') {
+                    self.advance();
+                    self.make_token(TokenKind::PipePipe, start, start_line, start_column)
+                } else if self.peek() == Some('=') {
+                    self.advance();
+                    self.make_token(TokenKind::PipeEq, start, start_line, start_column)
+                } else {
+                    self.make_token(TokenKind::Pipe, start, start_line, start_column)
+                }
+            }
+            '^' => {
+                if self.peek() == Some('=') {
+                    self.advance();
+                    self.make_token(TokenKind::CaretEq, start, start_line, start_column)
+                } else {
+                    self.make_token(TokenKind::Caret, start, start_line, start_column)
+                }
+            }
+            '.' => {
+                if self.peek() == Some('.') {
+                    self.advance();
+                    if self.peek() == Some('=') {
+                        self.advance();
+                        self.make_token(TokenKind::DotDotEq, start, start_line, start_column)
+                    } else {
+                        self.make_token(TokenKind::DotDot, start, start_line, start_column)
+                    }
+                } else {
+                    self.make_token(TokenKind::Dot, start, start_line, start_column)
+                }
+            }
+            ':' => {
+                if self.peek() == Some(':') {
+                    self.advance();
+                    self.make_token(TokenKind::ColonColon, start, start_line, start_column)
+                } else {
+                    self.make_token(TokenKind::Colon, start, start_line, start_column)
+                }
+            }
+
+            // String literal
+            '"' => self.scan_string(start, start_line, start_column),
+
+            // Character literal
+            '\'' => self.scan_char(start, start_line, start_column),
+
+            // Number literal
+            _ if ch.is_ascii_digit() => self.scan_number(start, start_line, start_column),
+
+            // Identifier or keyword
+            _ if ch.is_alphabetic() || ch == '_' => {
+                self.scan_identifier(start, start_line, start_column)
+            }
+
+            // Unknown character
+            _ => {
+                Token {
+                    kind: TokenKind::Error,
+                    text: ch.to_string(),
+                    line: start_line,
+                    column: start_column,
+                    offset: start,
+                }
+            }
+        }
+    }
+
+    /// Scan a block comment /* ... */.
+    fn scan_block_comment(&mut self) {
+        let mut depth = 1;
+        while depth > 0 && !self.is_at_end() {
+            match (self.peek(), self.peek_next()) {
+                (Some('/'), Some('*')) => {
+                    self.advance();
+                    self.advance();
+                    depth = depth + 1;
+                }
+                (Some('*'), Some('/')) => {
+                    self.advance();
+                    self.advance();
+                    depth = depth - 1;
+                }
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+    }
+
+    /// Scan a string literal.
+    fn scan_string(&mut self, start: u32, start_line: u32, start_column: u32) -> Token {
+        while let Some(ch) = self.peek() {
+            if ch == '"' {
+                self.advance();
+                break;
+            } else if ch == '\\' {
+                // Escape sequence
+                self.advance();
+                self.advance();
+            } else if ch == '\n' {
+                // Unterminated string
+                return Token {
+                    kind: TokenKind::Error,
+                    text: self.source.substring(start as usize, self.pos as usize),
+                    line: start_line,
+                    column: start_column,
+                    offset: start,
+                };
+            } else {
+                self.advance();
+            }
+        }
+        self.make_token(TokenKind::StringLit, start, start_line, start_column)
+    }
+
+    /// Scan a character literal.
+    fn scan_char(&mut self, start: u32, start_line: u32, start_column: u32) -> Token {
+        if self.peek() == Some('\\') {
+            // Escape sequence
+            self.advance();
+            self.advance();
+        } else {
+            self.advance();
+        }
+
+        if self.peek() == Some('\'') {
+            self.advance();
+            self.make_token(TokenKind::CharLit, start, start_line, start_column)
+        } else {
+            Token {
+                kind: TokenKind::Error,
+                text: self.source.substring(start as usize, self.pos as usize),
+                line: start_line,
+                column: start_column,
+                offset: start,
+            }
+        }
+    }
+
+    /// Scan a number literal.
+    fn scan_number(&mut self, start: u32, start_line: u32, start_column: u32) -> Token {
+        // Check for hex, octal, binary prefix
+        if self.source.char_at((start) as usize) == '0' {
+            match self.peek() {
+                Some('x') | Some('X') => {
+                    self.advance();
+                    self.advance_while(|c| c.is_ascii_hexdigit() || c == '_');
+                    return self.make_token(TokenKind::IntLit, start, start_line, start_column);
+                }
+                Some('o') | Some('O') => {
+                    self.advance();
+                    self.advance_while(|c| ('0'..'8').contains(&c) || c == '_');
+                    return self.make_token(TokenKind::IntLit, start, start_line, start_column);
+                }
+                Some('b') | Some('B') => {
+                    self.advance();
+                    self.advance_while(|c| c == '0' || c == '1' || c == '_');
+                    return self.make_token(TokenKind::IntLit, start, start_line, start_column);
+                }
+                _ => {}
+            }
+        }
+
+        // Decimal digits
+        self.advance_while(|c| c.is_ascii_digit() || c == '_');
+
+        // Check for float
+        if self.peek() == Some('.') && self.peek_next().map_or(false, |c| c.is_ascii_digit()) {
+            self.advance(); // consume '.'
+            self.advance_while(|c| c.is_ascii_digit() || c == '_');
+
+            // Exponent
+            if let Some('e') | Some('E') = self.peek() {
+                self.advance();
+                if let Some('+') | Some('-') = self.peek() {
+                    self.advance();
+                }
+                self.advance_while(|c| c.is_ascii_digit());
+            }
+
+            return self.make_token(TokenKind::FloatLit, start, start_line, start_column);
+        }
+
+        // Exponent without decimal point
+        if let Some('e') | Some('E') = self.peek() {
+            self.advance();
+            if let Some('+') | Some('-') = self.peek() {
+                self.advance();
+            }
+            self.advance_while(|c| c.is_ascii_digit());
+            return self.make_token(TokenKind::FloatLit, start, start_line, start_column);
+        }
+
+        self.make_token(TokenKind::IntLit, start, start_line, start_column)
+    }
+
+    /// Scan an identifier or keyword.
+    fn scan_identifier(&mut self, start: u32, start_line: u32, start_column: u32) -> Token {
+        self.advance_while(|c| c.is_alphanumeric() || c == '_');
+
+        let text = self.source.substring(start as usize, self.pos as usize);
+        let kind = match text.as_str() {
+            "fn" => TokenKind::KwFn,
+            "let" => TokenKind::KwLet,
+            "mut" => TokenKind::KwMut,
+            "if" => TokenKind::KwIf,
+            "else" => TokenKind::KwElse,
+            "match" => TokenKind::KwMatch,
+            "for" => TokenKind::KwFor,
+            "while" => TokenKind::KwWhile,
+            "loop" => TokenKind::KwLoop,
+            "break" => TokenKind::KwBreak,
+            "continue" => TokenKind::KwContinue,
+            "return" => TokenKind::KwReturn,
+            "struct" => TokenKind::KwStruct,
+            "enum" => TokenKind::KwEnum,
+            "trait" => TokenKind::KwTrait,
+            "impl" => TokenKind::KwImpl,
+            "type" => TokenKind::KwType,
+            "effect" => TokenKind::KwEffect,
+            "handler" => TokenKind::KwHandler,
+            "perform" => TokenKind::KwPerform,
+            "resume" => TokenKind::KwResume,
+            "with" => TokenKind::KwWith,
+            "handle" => TokenKind::KwHandle,
+            "deep" => TokenKind::KwDeep,
+            "shallow" => TokenKind::KwShallow,
+            "pure" => TokenKind::KwPure,
+            "pub" => TokenKind::KwPub,
+            "mod" => TokenKind::KwMod,
+            "use" => TokenKind::KwUse,
+            "as" => TokenKind::KwAs,
+            "in" => TokenKind::KwIn,
+            "where" => TokenKind::KwWhere,
+            "const" => TokenKind::KwConst,
+            "static" => TokenKind::KwStatic,
+            "unsafe" => TokenKind::KwUnsafe,
+            "extern" => TokenKind::KwExtern,
+            "region" => TokenKind::KwRegion,
+            "linear" => TokenKind::KwLinear,
+            "true" => TokenKind::BoolTrue,
+            "false" => TokenKind::BoolFalse,
+            _ => TokenKind::Ident,
+        };
+
+        Token {
+            kind,
+            text,
+            line: start_line,
+            column: start_column,
+            offset: start,
+        }
+    }
+}
+
+/// Tokenize a Blood source string into a list of tokens.
+fn tokenize(source: String) -> [Token] {
+    let mut lexer = Lexer::new(source);
+    let mut tokens = [];
+
+    loop {
+        let token = lexer.next_token();
+        let is_eof = token.kind == TokenKind::Eof;
+        tokens.push(token);
+        if is_eof {
+            break;
+        }
+    }
+
+    tokens
+}
