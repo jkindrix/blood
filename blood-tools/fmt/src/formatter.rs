@@ -119,10 +119,10 @@ impl Formatter {
 
                 TokenKind::Comma => {
                     printer.write(",");
-                    if !self.next_is(&tokens, i, TokenKind::Newline)
-                        && !self.next_is(&tokens, i, TokenKind::CloseParen)
-                        && !self.next_is(&tokens, i, TokenKind::CloseBracket)
-                        && !self.next_is(&tokens, i, TokenKind::CloseBrace)
+                    if !self.next_is(tokens, i, TokenKind::Newline)
+                        && !self.next_is(tokens, i, TokenKind::CloseParen)
+                        && !self.next_is(tokens, i, TokenKind::CloseBracket)
+                        && !self.next_is(tokens, i, TokenKind::CloseBrace)
                     {
                         printer.write(" ");
                     }

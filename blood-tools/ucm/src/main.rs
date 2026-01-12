@@ -180,10 +180,8 @@ fn cmd_add(path: &PathBuf, name: &str, file: &PathBuf) -> Result<()> {
 fn cmd_find(path: &PathBuf, query: &str) -> Result<()> {
     let codebase = Codebase::open(path)?;
 
-    if query.starts_with('#') {
+    if let Some(hash_str) = query.strip_prefix('#') {
         // Hash query - try prefix lookup first
-        let hash_str = &query[1..];
-
         // Try to find by prefix (allows short hashes like #a7f2)
         let matches = codebase.find_by_hash_prefix(hash_str)?;
 
@@ -410,10 +408,10 @@ fn cmd_repl(path: &PathBuf) -> Result<()> {
             continue;
         }
 
-        if input.starts_with(':') {
+        if let Some(rest) = input.strip_prefix(':') {
             // REPL command
-            let parts: Vec<&str> = input[1..].split_whitespace().collect();
-            match parts.first().map(|s| *s) {
+            let parts: Vec<&str> = rest.split_whitespace().collect();
+            match parts.first().copied() {
                 Some("quit") | Some("q") | Some("exit") => {
                     println!("Goodbye!");
                     break;

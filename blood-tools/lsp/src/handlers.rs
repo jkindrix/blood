@@ -55,13 +55,8 @@ impl InlayHintProvider {
         let trimmed = line.trim();
 
         // Match "let name = " or "let mut name = " patterns
-        if trimmed.starts_with("let ") {
-            let rest = &trimmed[4..];
-            let rest = if rest.starts_with("mut ") {
-                &rest[4..]
-            } else {
-                rest
-            };
+        if let Some(after_let) = trimmed.strip_prefix("let ") {
+            let rest = after_let.strip_prefix("mut ").unwrap_or(after_let);
 
             // Find the variable name
             let name_end = rest.find(|c: char| !c.is_alphanumeric() && c != '_')?;
@@ -119,7 +114,7 @@ impl InlayHintProvider {
                 if before_paren
                     .chars()
                     .last()
-                    .map_or(false, |c| c.is_alphanumeric() || c == '_')
+                    .is_some_and(|c| c.is_alphanumeric() || c == '_')
                 {
                     // TODO: Look up function signature and provide parameter name hints
                     // This requires integration with bloodc

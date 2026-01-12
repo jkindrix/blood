@@ -458,12 +458,12 @@ impl EffectLowering {
                     // Let without init and Item statements don't contain row-polymorphic calls
                     Stmt::Let { init: None, .. } => false,
                     Stmt::Item(_) => false,
-                }) || tail.as_ref().map_or(false, |e| self.detect_row_poly_recursive(e))
+                }) || tail.as_ref().is_some_and(|e| self.detect_row_poly_recursive(e))
             }
             ExprKind::If { condition, then_branch, else_branch } => {
                 self.detect_row_poly_recursive(condition)
                     || self.detect_row_poly_recursive(then_branch)
-                    || else_branch.as_ref().map_or(false, |e| self.detect_row_poly_recursive(e))
+                    || else_branch.as_ref().is_some_and(|e| self.detect_row_poly_recursive(e))
             }
             ExprKind::Match { scrutinee, arms } => {
                 self.detect_row_poly_recursive(scrutinee)
@@ -488,7 +488,7 @@ impl EffectLowering {
             ExprKind::Return(None) => false,
             // Handle is already matched above (line 439) as inherently polymorphic
             ExprKind::Break { value, .. } => {
-                value.as_ref().map_or(false, |e| self.detect_row_poly_recursive(e))
+                value.as_ref().is_some_and(|e| self.detect_row_poly_recursive(e))
             }
             ExprKind::Field { base, .. } => self.detect_row_poly_recursive(base),
             ExprKind::Index { base, index } => {
@@ -498,7 +498,7 @@ impl EffectLowering {
             ExprKind::Repeat { value, .. } => self.detect_row_poly_recursive(value),
             ExprKind::Struct { fields, base, .. } => {
                 fields.iter().any(|f| self.detect_row_poly_recursive(&f.value))
-                    || base.as_ref().map_or(false, |e| self.detect_row_poly_recursive(e))
+                    || base.as_ref().is_some_and(|e| self.detect_row_poly_recursive(e))
             }
             ExprKind::Variant { fields, .. } => {
                 fields.iter().any(|e| self.detect_row_poly_recursive(e))
@@ -510,8 +510,8 @@ impl EffectLowering {
             ExprKind::Let { init, .. } => self.detect_row_poly_recursive(init),
             ExprKind::Unsafe(expr) => self.detect_row_poly_recursive(expr),
             ExprKind::Range { start, end, .. } => {
-                start.as_ref().map_or(false, |e| self.detect_row_poly_recursive(e))
-                    || end.as_ref().map_or(false, |e| self.detect_row_poly_recursive(e))
+                start.as_ref().is_some_and(|e| self.detect_row_poly_recursive(e))
+                    || end.as_ref().is_some_and(|e| self.detect_row_poly_recursive(e))
             }
             ExprKind::MethodCall { receiver, args, .. } => {
                 self.detect_row_poly_recursive(receiver)

@@ -30,10 +30,10 @@ effect Fiber {
 
     /// Voluntarily yield control to the scheduler.
     /// Allows other fibers to run without blocking.
-    op yield_fiber() -> unit;
+    op yield_fiber() -> ();
 
     /// Sleep for a specified duration (in milliseconds).
-    op sleep(duration_ms: i32) -> unit;
+    op sleep(duration_ms: i32) -> ();
 }
 
 // The Channel effect provides typed message passing.
@@ -44,7 +44,7 @@ effect Channel<T> {
     op create(capacity: i32) -> i32;
 
     /// Send a value to a channel. Blocks if the channel is full.
-    op send(channel_id: i32, value: T) -> unit;
+    op send(channel_id: i32, value: T) -> ();
 
     /// Receive a value from a channel. Blocks if the channel is empty.
     op recv(channel_id: i32) -> T;
@@ -62,7 +62,7 @@ effect FiberSync {
     op await_fiber(fiber_id: i32) -> i32;
 
     /// Wait for multiple fibers, returning when all complete.
-    op await_all(fiber_ids: i32) -> unit;
+    op await_all(fiber_ids: i32) -> ();
 
     /// Wait for any of the fibers, returning the first to complete.
     op await_any(fiber_ids: i32) -> i32;
@@ -75,10 +75,10 @@ effect Cancel {
 
     /// Throw an error if cancellation was requested.
     /// This is a cancellation point where the fiber checks for cancellation.
-    op check_cancelled() -> unit;
+    op check_cancelled() -> ();
 
     /// Request cancellation of a fiber.
-    op cancel(fiber_id: i32) -> unit;
+    op cancel(fiber_id: i32) -> ();
 }
 
 // ===========================================================================

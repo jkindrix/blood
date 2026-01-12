@@ -18,7 +18,7 @@ pub trait MirTypesCodegen<'ctx, 'a> {
 impl<'ctx, 'a> MirTypesCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
     fn get_type_size_in_bytes(&self, ty: BasicTypeEnum<'ctx>) -> u64 {
         match ty {
-            BasicTypeEnum::IntType(t) => (t.get_bit_width() as u64 + 7) / 8,
+            BasicTypeEnum::IntType(t) => (t.get_bit_width() as u64).div_ceil(8),
             BasicTypeEnum::FloatType(_) => 4,
             BasicTypeEnum::PointerType(_) => 8, // 64-bit pointers
             BasicTypeEnum::ArrayType(t) => {
@@ -57,7 +57,7 @@ pub(super) fn type_may_contain_genref_impl(ty: &Type) -> bool {
         TypeKind::Slice { ref element } => type_may_contain_genref_impl(element),
 
         // Tuples may contain genrefs if any element does
-        TypeKind::Tuple(elems) => elems.iter().any(|e| type_may_contain_genref_impl(e)),
+        TypeKind::Tuple(elems) => elems.iter().any(type_may_contain_genref_impl),
 
         // ADTs (structs, enums) might contain genrefs - be conservative
         TypeKind::Adt { .. } => true,

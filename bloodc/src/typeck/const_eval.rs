@@ -101,7 +101,7 @@ pub fn eval_const_expr(expr: &ast::Expr) -> Result<ConstResult, TypeError> {
 
         _ => Err(TypeError::new(
             TypeErrorKind::ConstEvalError {
-                reason: format!("expression cannot be evaluated at compile time"),
+                reason: "expression cannot be evaluated at compile time".to_string(),
             },
             expr.span,
         )),
@@ -219,7 +219,7 @@ fn eval_binary_op(
         BinOp::BitOr => Some(l | r),
         BinOp::BitXor => Some(l ^ r),
         BinOp::Shl => {
-            if r < 0 || r > 127 {
+            if !(0..=127).contains(&r) {
                 return Err(TypeError::new(
                     TypeErrorKind::ConstEvalError {
                         reason: "shift amount out of range".to_string(),
@@ -230,7 +230,7 @@ fn eval_binary_op(
             l.checked_shl(r as u32)
         }
         BinOp::Shr => {
-            if r < 0 || r > 127 {
+            if !(0..=127).contains(&r) {
                 return Err(TypeError::new(
                     TypeErrorKind::ConstEvalError {
                         reason: "shift amount out of range".to_string(),

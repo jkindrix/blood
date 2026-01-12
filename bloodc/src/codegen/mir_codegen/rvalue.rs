@@ -506,7 +506,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // Get the declaration for this specific type
         let intrinsic_fn = intrinsic
-            .get_declaration(&self.module, &[int_type.into()])
+            .get_declaration(self.module, &[int_type.into()])
             .ok_or_else(|| {
                 vec![Diagnostic::error(
                     format!("Could not get declaration for {} intrinsic", intrinsic_name),

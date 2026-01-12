@@ -219,7 +219,7 @@ impl LifetimeInference {
         }
 
         // Mark any unsolved lifetimes as Unknown
-        for (id, _) in &self.origins {
+        for id in self.origins.keys() {
             if !self.solutions.contains_key(id) {
                 self.solutions.insert(*id, LifetimeSolution::Unknown);
             }
@@ -331,8 +331,7 @@ pub mod elision {
         // Rule 1: Fresh lifetimes for each elided input
         let input_ids: Vec<LifetimeId> = input_lifetimes
             .iter()
-            .enumerate()
-            .map(|(_i, opt_lt)| {
+            .map(|opt_lt| {
                 opt_lt.unwrap_or_else(|| {
                     ctx.fresh_lifetime(LifetimeOrigin::Reference { span })
                 })

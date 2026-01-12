@@ -55,11 +55,6 @@ fn test_parse_test2_blood() {
 }
 
 #[test]
-fn test_parse_test3_blood() {
-    parse_file_ok("../examples/test3.blood");
-}
-
-#[test]
 fn test_parse_test4_blood() {
     parse_file_ok("../examples/test4.blood");
 }

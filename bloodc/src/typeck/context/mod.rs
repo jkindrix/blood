@@ -557,16 +557,12 @@ impl<'a> TypeContext<'a> {
     pub(crate) fn get_enum_variant_info(&self, ty: &Type) -> Option<exhaustiveness::EnumVariantInfo> {
         match ty.kind() {
             TypeKind::Adt { def_id, .. } => {
-                if let Some(enum_info) = self.enum_defs.get(def_id) {
-                    Some(exhaustiveness::EnumVariantInfo {
+                self.enum_defs.get(def_id).map(|enum_info| exhaustiveness::EnumVariantInfo {
                         variant_count: enum_info.variants.len() as u32,
                         variant_names: enum_info.variants.iter()
                             .map(|v| v.name.clone())
                             .collect(),
                     })
-                } else {
-                    None
-                }
             }
             _ => None,
         }

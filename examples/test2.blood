@@ -1,4 +1,19 @@
 effect State<S> {
     op get() -> S;
-    op put(s: S) -> unit;
+    op put(s: S) -> ();
+}
+
+deep handler LocalState<S> for State<S> {
+    let mut state: S
+
+    return(x) { x }
+
+    op get() {
+        resume(state)
+    }
+
+    op put(s) {
+        state = s;
+        resume(())
+    }
 }

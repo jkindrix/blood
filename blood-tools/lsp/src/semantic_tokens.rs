@@ -362,7 +362,7 @@ impl SemanticTokensProvider {
         }
 
         // Uppercase = type
-        if word.chars().next().map_or(false, |c| c.is_uppercase()) {
+        if word.chars().next().is_some_and(|c| c.is_uppercase()) {
             return (TokenType::Type as u32, 0);
         }
 

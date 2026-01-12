@@ -11,19 +11,19 @@
 
 // Simple effect with no parameters
 effect Console {
-    op print(msg: i32) -> unit;
+    op print(msg: i32) -> ();
     op read() -> i32;
 }
 
 // Generic effect with type parameter
 effect State<S> {
     op get() -> S;
-    op put(s: S) -> unit;
+    op put(s: S) -> ();
 }
 
 // Effect for error handling
 effect Error<E> {
-    op raise(err: E) -> unit;
+    op raise(err: E) -> ();
 }
 
 // Effect for non-determinism / choice
@@ -34,12 +34,12 @@ effect Choice {
 
 // Effect for generators / yielding values
 effect Yield<T> {
-    op yield_value(value: T) -> unit;
+    op yield_value(value: T) -> ();
 }
 
 // Effect for async operations (conceptual)
 effect Async {
-    op suspend() -> unit;
+    op suspend() -> ();
     op spawn(task: i32) -> i32;
 }
 
@@ -134,6 +134,11 @@ shallow handler OnceReader<S> for State<S> {
     // Only handles one get, then returns control
     op get() {
         resume(value)
+    }
+
+    // Put is a no-op for read-only handler
+    op put(s) {
+        resume(())
     }
 }
 
@@ -252,7 +257,7 @@ fn triple_increment() -> i32 / {State<i32>} {
 }
 
 // Function that uses the Console effect
-fn greet(n: i32) -> unit / {Console} {
+fn greet(n: i32) -> () / {Console} {
     perform Console.print(n);
     let input = perform Console.read();
     perform Console.print(input)
@@ -287,7 +292,7 @@ fn pick_path() -> i32 / {Choice} {
 }
 
 // Generator function that yields values
-fn generate_range(start: i32, end: i32) -> unit / {Yield<i32>} {
+fn generate_range(start: i32, end: i32) -> () / {Yield<i32>} {
     let mut i = start;
     while i < end {
         perform Yield.yield_value(i);
@@ -408,7 +413,7 @@ fn compute_fib(n: i32) -> i32 {
 }
 
 // Range generator that can be collected
-fn generate_squares(n: i32) -> unit / {Yield<i32>} {
+fn generate_squares(n: i32) -> () / {Yield<i32>} {
     let mut i = 1;
     while i <= n {
         perform Yield.yield_value(i * i);

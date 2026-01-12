@@ -109,7 +109,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // Range: { start, end } of the element type
                 // For simplicity, use { i64, i64 } for now
                 let elem_type = self.lower_type(element);
-                self.context.struct_type(&[elem_type.into(), elem_type.into()], false).into()
+                self.context.struct_type(&[elem_type, elem_type], false).into()
             }
         }
     }

@@ -209,7 +209,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let get_closure_def_id = |place: &Place, body: &MirBody| -> Option<crate::hir::DefId> {
             let local = body.locals.get(place.local.index() as usize)?;
             match local.ty.kind() {
-                crate::hir::TypeKind::Closure { def_id, .. } => Some(def_id.clone()),
+                crate::hir::TypeKind::Closure { def_id, .. } => Some(*def_id),
                 _ => None,
             }
         };

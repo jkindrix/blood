@@ -205,7 +205,7 @@ impl Document {
 
         // Split into segments
         let segments: Vec<String> = full_path
-            .split(|c| c == '.' || c == ':')
+            .split(['.', ':'])
             .filter(|s| !s.is_empty())
             .map(String::from)
             .collect();

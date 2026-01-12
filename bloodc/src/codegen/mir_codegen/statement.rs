@@ -52,9 +52,9 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 // we must unregister it to invalidate its generation. This enables
                 // use-after-free detection: any subsequent dereference with the old
                 // generation will fail validation.
-                if let Some(&gen_alloca) = self.local_generations.get(&local) {
+                if let Some(&gen_alloca) = self.local_generations.get(local) {
                     // Get the local's pointer storage
-                    if let Some(&local_ptr) = self.locals.get(&local) {
+                    if let Some(&local_ptr) = self.locals.get(local) {
                         let i64_ty = self.context.i64_type();
 
                         // Load the address from the local's storage
@@ -235,7 +235,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 let i8_ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
 
                 // Look up the handler's effect_id
-                let handler_info = self.handler_defs.get(&handler_id).ok_or_else(|| {
+                let handler_info = self.handler_defs.get(handler_id).ok_or_else(|| {
                     vec![Diagnostic::error(
                         format!("Internal error: no handler info for DefId({})", handler_id.index),
                         stmt.span,
