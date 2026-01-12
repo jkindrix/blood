@@ -455,7 +455,9 @@ impl EffectLowering {
                 stmts.iter().any(|stmt| match stmt {
                     Stmt::Expr(e) => self.detect_row_poly_recursive(e),
                     Stmt::Let { init: Some(e), .. } => self.detect_row_poly_recursive(e),
-                    _ => false,
+                    // Let without init and Item statements don't contain row-polymorphic calls
+                    Stmt::Let { init: None, .. } => false,
+                    Stmt::Item(_) => false,
                 }) || tail.as_ref().map_or(false, |e| self.detect_row_poly_recursive(e))
             }
             ExprKind::If { condition, then_branch, else_branch } => {
@@ -482,8 +484,46 @@ impl EffectLowering {
                 args.iter().any(|a| self.detect_row_poly_recursive(a))
             }
             ExprKind::Resume { value: Some(e) } => self.detect_row_poly_recursive(e),
+            ExprKind::Resume { value: None } => false,
+            ExprKind::Return(None) => false,
+            // Handle is already matched above (line 439) as inherently polymorphic
+            ExprKind::Break { value, .. } => {
+                value.as_ref().map_or(false, |e| self.detect_row_poly_recursive(e))
+            }
+            ExprKind::Field { base, .. } => self.detect_row_poly_recursive(base),
+            ExprKind::Index { base, index } => {
+                self.detect_row_poly_recursive(base) || self.detect_row_poly_recursive(index)
+            }
+            ExprKind::Array(exprs) => exprs.iter().any(|e| self.detect_row_poly_recursive(e)),
+            ExprKind::Repeat { value, .. } => self.detect_row_poly_recursive(value),
+            ExprKind::Struct { fields, base, .. } => {
+                fields.iter().any(|f| self.detect_row_poly_recursive(&f.value))
+                    || base.as_ref().map_or(false, |e| self.detect_row_poly_recursive(e))
+            }
+            ExprKind::Variant { fields, .. } => {
+                fields.iter().any(|e| self.detect_row_poly_recursive(e))
+            }
+            ExprKind::Cast { expr, .. } => self.detect_row_poly_recursive(expr),
+            ExprKind::Borrow { expr, .. } => self.detect_row_poly_recursive(expr),
+            ExprKind::Deref(expr) => self.detect_row_poly_recursive(expr),
+            ExprKind::AddrOf { expr, .. } => self.detect_row_poly_recursive(expr),
+            ExprKind::Let { init, .. } => self.detect_row_poly_recursive(init),
+            ExprKind::Unsafe(expr) => self.detect_row_poly_recursive(expr),
+            ExprKind::Range { start, end, .. } => {
+                start.as_ref().map_or(false, |e| self.detect_row_poly_recursive(e))
+                    || end.as_ref().map_or(false, |e| self.detect_row_poly_recursive(e))
+            }
+            ExprKind::MethodCall { receiver, args, .. } => {
+                self.detect_row_poly_recursive(receiver)
+                    || args.iter().any(|a| self.detect_row_poly_recursive(a))
+            }
+            ExprKind::Closure { .. } => {
+                // Closures have their own effect analysis
+                false
+            }
             // Leaf expressions are not polymorphic
-            _ => false,
+            ExprKind::Literal(_) | ExprKind::Local(_) | ExprKind::Def(_)
+            | ExprKind::Continue { .. } | ExprKind::Error => false,
         }
     }
 
@@ -530,7 +570,9 @@ impl EffectLowering {
                         Stmt::Let { init: Some(e), .. } => {
                             self.collect_effects_recursive(e, effects);
                         }
-                        _ => {}
+                        // Let without init and Item statements don't contain effect operations
+                        Stmt::Let { init: None, .. } => {}
+                        Stmt::Item(_) => {}
                     }
                 }
                 if let Some(e) = tail {
@@ -581,14 +623,86 @@ impl EffectLowering {
                     self.collect_effects_recursive(arg, effects);
                 }
             }
-            ExprKind::Handle { body, .. } => {
+            ExprKind::Handle { body, handler_instance, .. } => {
                 self.collect_effects_recursive(body, effects);
+                self.collect_effects_recursive(handler_instance, effects);
             }
             ExprKind::Resume { value: Some(e) } => {
                 self.collect_effects_recursive(e, effects);
             }
-            // Leaf expressions and others that don't contain subexpressions
-            _ => {}
+            ExprKind::Resume { value: None } => {}
+            ExprKind::Return(None) => {}
+            ExprKind::Break { value, .. } => {
+                if let Some(e) = value {
+                    self.collect_effects_recursive(e, effects);
+                }
+            }
+            ExprKind::Field { base, .. } => {
+                self.collect_effects_recursive(base, effects);
+            }
+            ExprKind::Index { base, index } => {
+                self.collect_effects_recursive(base, effects);
+                self.collect_effects_recursive(index, effects);
+            }
+            ExprKind::Array(exprs) => {
+                for e in exprs {
+                    self.collect_effects_recursive(e, effects);
+                }
+            }
+            ExprKind::Repeat { value, .. } => {
+                self.collect_effects_recursive(value, effects);
+            }
+            ExprKind::Struct { fields, base, .. } => {
+                for field in fields {
+                    self.collect_effects_recursive(&field.value, effects);
+                }
+                if let Some(b) = base {
+                    self.collect_effects_recursive(b, effects);
+                }
+            }
+            ExprKind::Variant { fields, .. } => {
+                for field in fields {
+                    self.collect_effects_recursive(field, effects);
+                }
+            }
+            ExprKind::Cast { expr, .. } => {
+                self.collect_effects_recursive(expr, effects);
+            }
+            ExprKind::Borrow { expr, .. } => {
+                self.collect_effects_recursive(expr, effects);
+            }
+            ExprKind::Deref(expr) => {
+                self.collect_effects_recursive(expr, effects);
+            }
+            ExprKind::AddrOf { expr, .. } => {
+                self.collect_effects_recursive(expr, effects);
+            }
+            ExprKind::Let { init, .. } => {
+                self.collect_effects_recursive(init, effects);
+            }
+            ExprKind::Unsafe(expr) => {
+                self.collect_effects_recursive(expr, effects);
+            }
+            ExprKind::Range { start, end, .. } => {
+                if let Some(s) = start {
+                    self.collect_effects_recursive(s, effects);
+                }
+                if let Some(e) = end {
+                    self.collect_effects_recursive(e, effects);
+                }
+            }
+            ExprKind::MethodCall { receiver, args, .. } => {
+                self.collect_effects_recursive(receiver, effects);
+                for arg in args {
+                    self.collect_effects_recursive(arg, effects);
+                }
+            }
+            ExprKind::Closure { .. } => {
+                // Closures have their own effect analysis
+            }
+            // Leaf expressions don't contain effect operations
+            ExprKind::Literal(_) | ExprKind::Local(_) | ExprKind::Def(_)
+            | ExprKind::Continue { .. } | ExprKind::Error => {}
         }
     }
 
@@ -612,7 +726,16 @@ impl EffectLowering {
                 // Pure function, no transformation needed
                 item.clone()
             }
-            _ => item.clone(),
+            // Non-function items are not transformed for evidence passing
+            ItemKind::Struct(_)
+            | ItemKind::Enum(_)
+            | ItemKind::TypeAlias { .. }
+            | ItemKind::Const { .. }
+            | ItemKind::Static { .. }
+            | ItemKind::Trait { .. }
+            | ItemKind::Impl { .. }
+            | ItemKind::Effect { .. }
+            | ItemKind::Handler { .. } => item.clone(),
         }
     }
 

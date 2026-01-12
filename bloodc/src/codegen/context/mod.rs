@@ -200,7 +200,19 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         self.effect_defs.insert(*def_id, effect_info);
                     }
                 }
-                _ => {}
+                // These item kinds are handled elsewhere or don't need declaration-phase processing:
+                // - Fn: processed in second pass for function declarations
+                // - Handler: processed in second pass after effects are registered
+                // - TypeAlias: resolved during type checking
+                // - Const/Static: compiled with function bodies
+                // - Trait/Impl: resolved during type checking
+                hir::ItemKind::Fn(_)
+                | hir::ItemKind::Handler { .. }
+                | hir::ItemKind::TypeAlias { .. }
+                | hir::ItemKind::Const { .. }
+                | hir::ItemKind::Static { .. }
+                | hir::ItemKind::Trait { .. }
+                | hir::ItemKind::Impl { .. } => {}
             }
         }
 
@@ -313,7 +325,19 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         self.effect_defs.insert(*def_id, effect_info);
                     }
                 }
-                _ => {}
+                // These item kinds are handled elsewhere or don't need declaration-phase processing:
+                // - Fn: processed in second pass for function declarations
+                // - Handler: processed in second pass after effects are registered
+                // - TypeAlias: resolved during type checking
+                // - Const/Static: compiled with function bodies
+                // - Trait/Impl: resolved during type checking
+                hir::ItemKind::Fn(_)
+                | hir::ItemKind::Handler { .. }
+                | hir::ItemKind::TypeAlias { .. }
+                | hir::ItemKind::Const { .. }
+                | hir::ItemKind::Static { .. }
+                | hir::ItemKind::Trait { .. }
+                | hir::ItemKind::Impl { .. } => {}
             }
         }
 

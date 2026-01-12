@@ -1301,7 +1301,13 @@ fn extract_type_deps(ty: &hir::Type, deps: &mut HashSet<DefId>) {
         hir::TypeKind::Range { element, .. } => {
             extract_type_deps(element, deps);
         }
-        _ => {}
+        // Primitive types, inference variables, type parameters, never, and error types
+        // don't contain dependencies on other definitions
+        hir::TypeKind::Primitive(_)
+        | hir::TypeKind::Infer(_)
+        | hir::TypeKind::Param(_)
+        | hir::TypeKind::Never
+        | hir::TypeKind::Error => {}
     }
 }
 
@@ -1461,7 +1467,11 @@ fn extract_expr_deps(expr: &hir::Expr, deps: &mut HashSet<DefId>) {
         hir::ExprKind::Unsafe(inner) => {
             extract_expr_deps(inner, deps);
         }
-        _ => {}
+        // Leaf expressions that don't contain dependencies
+        // (Local is handled above at line 1330)
+        hir::ExprKind::Literal(_)
+        | hir::ExprKind::Continue { .. }
+        | hir::ExprKind::Error => {}
     }
 }
 

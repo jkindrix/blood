@@ -209,10 +209,16 @@ impl<'a> TypeContext<'a> {
                         hir::Stmt::Let { init: Some(init), .. } => {
                             self.collect_captures(init, is_move, captures, seen);
                         }
+                        hir::Stmt::Let { init: None, .. } => {
+                            // Let without initializer - no captures to collect
+                        }
                         hir::Stmt::Expr(e) => {
                             self.collect_captures(e, is_move, captures, seen);
                         }
-                        _ => {}
+                        hir::Stmt::Item(_) => {
+                            // Item declarations don't directly capture variables
+                            // (nested functions have their own capture analysis)
+                        }
                     }
                 }
                 if let Some(tail_expr) = tail {

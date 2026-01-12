@@ -74,6 +74,61 @@ fn test_parse_test6_blood() {
     parse_file_ok("../examples/test6.blood");
 }
 
+#[test]
+fn test_parse_algebraic_effects_blood() {
+    parse_file_ok("../examples/algebraic_effects.blood");
+}
+
+/// Test that the algebraic effects example contains expected declarations.
+/// This verifies all major effect system constructs are present and parseable.
+#[test]
+fn test_algebraic_effects_declarations() {
+    use bloodc::ast::Declaration;
+
+    let source = fs::read_to_string("../examples/algebraic_effects.blood")
+        .expect("Failed to read algebraic_effects.blood");
+
+    let mut parser = Parser::new(&source);
+    let program = parser.parse_program().expect("Failed to parse algebraic_effects.blood");
+
+    // Count different declaration types
+    let effect_count = program.declarations.iter().filter(|d| matches!(d, Declaration::Effect(_))).count();
+    let handler_count = program.declarations.iter().filter(|d| matches!(d, Declaration::Handler(_))).count();
+    let fn_count = program.declarations.iter().filter(|d| matches!(d, Declaration::Function(_))).count();
+
+    // Verify we have a comprehensive example
+    assert!(
+        effect_count >= 6,
+        "Expected at least 6 effect declarations, found {effect_count}"
+    );
+    assert!(
+        handler_count >= 10,
+        "Expected at least 10 handler declarations (deep and shallow), found {handler_count}"
+    );
+    assert!(
+        fn_count >= 15,
+        "Expected at least 15 function declarations, found {fn_count}"
+    );
+
+    // Check for deep handlers
+    let deep_handler_count = program.declarations.iter().filter(|d| {
+        matches!(d, Declaration::Handler(h) if h.kind == bloodc::ast::HandlerKind::Deep)
+    }).count();
+    assert!(
+        deep_handler_count >= 7,
+        "Expected at least 7 deep handlers, found {deep_handler_count}"
+    );
+
+    // Check for shallow handlers
+    let shallow_handler_count = program.declarations.iter().filter(|d| {
+        matches!(d, Declaration::Handler(h) if h.kind == bloodc::ast::HandlerKind::Shallow)
+    }).count();
+    assert!(
+        shallow_handler_count >= 3,
+        "Expected at least 3 shallow handlers, found {shallow_handler_count}"
+    );
+}
+
 /// Test that we can parse all example files in a loop.
 /// This provides a single test that covers all files for quick validation.
 #[test]
@@ -268,4 +323,201 @@ fn test_error_multiple_errors_reported() {
     assert!(result.is_err(), "Should have parse errors");
     let errors = result.unwrap_err();
     assert!(!errors.is_empty(), "Should report at least one error");
+}
+
+// ============================================================
+// Generational Memory Example Tests
+// ============================================================
+
+#[test]
+fn test_parse_generational_memory_blood() {
+    parse_file_ok("../examples/generational_memory.blood");
+}
+
+/// Verify the generational memory example contains expected struct and function declarations.
+/// This comprehensive example demonstrates Blood's generational memory safety model.
+#[test]
+fn test_generational_memory_declarations() {
+    use bloodc::ast::Declaration;
+
+    let source = fs::read_to_string("../examples/generational_memory.blood")
+        .expect("Failed to read generational_memory.blood");
+
+    let mut parser = Parser::new(&source);
+    let program = parser.parse_program().expect("Failed to parse generational_memory.blood");
+
+    // Count different declaration types
+    let struct_count = program.declarations.iter().filter(|d| matches!(d, Declaration::Struct(_))).count();
+    let fn_count = program.declarations.iter().filter(|d| matches!(d, Declaration::Function(_))).count();
+
+    // Verify we have the expected structs:
+    // DataBlock, Point, RefHolder, SlotState, RegionStats
+    assert!(
+        struct_count >= 5,
+        "Expected at least 5 struct declarations (DataBlock, Point, RefHolder, SlotState, RegionStats), found {struct_count}"
+    );
+
+    // Verify we have all the demonstration functions:
+    // main, create_data_block, demo_basic_allocation, demo_stack_allocation,
+    // demo_generation_validation, demo_generation_lifecycle, demo_aba_prevention,
+    // demo_tier_promotion, demo_generation_snapshots, demo_regions,
+    // demo_region_suspension, demo_performance, demo_stale_reference_effect
+    assert!(
+        fn_count >= 13,
+        "Expected at least 13 function declarations (main + helper + 11 demo_*), found {fn_count}"
+    );
+
+    // Verify total declarations (5 structs + 13 functions = 18)
+    assert!(
+        program.declarations.len() >= 18,
+        "Expected at least 18 total declarations, found {}",
+        program.declarations.len()
+    );
+}
+
+// ============================================================
+// Multiple Dispatch Example Tests
+// ============================================================
+
+#[test]
+fn test_parse_multiple_dispatch_blood() {
+    parse_file_ok("../examples/multiple_dispatch.blood");
+}
+
+/// Verify the multiple dispatch example contains expected struct and function declarations.
+/// This example demonstrates Blood's multiple dispatch concepts.
+#[test]
+fn test_multiple_dispatch_declarations() {
+    use bloodc::ast::Declaration;
+
+    let source = fs::read_to_string("../examples/multiple_dispatch.blood")
+        .expect("Failed to read multiple_dispatch.blood");
+
+    let mut parser = Parser::new(&source);
+    let program = parser.parse_program().expect("Failed to parse multiple_dispatch.blood");
+
+    // Count different declaration types
+    let struct_count = program.declarations.iter().filter(|d| matches!(d, Declaration::Struct(_))).count();
+    let fn_count = program.declarations.iter().filter(|d| matches!(d, Declaration::Function(_))).count();
+
+    // Verify we have the expected structs:
+    // Rectangle, Circle, Triangle, Point2D, Point3D, Animal, Dog, Cat
+    assert!(
+        struct_count >= 8,
+        "Expected at least 8 struct declarations (shapes, points, animals), found {struct_count}"
+    );
+
+    // Verify we have all the functions:
+    // area_*, manhattan_*, distance_*, legs_*, double_*, clamp_*, abs_value,
+    // identity_*, add_*, combine_*, test_*, main
+    assert!(
+        fn_count >= 20,
+        "Expected at least 20 function declarations, found {fn_count}"
+    );
+
+    // Verify total declarations
+    assert!(
+        program.declarations.len() >= 28,
+        "Expected at least 28 total declarations (8 structs + 20+ functions), found {}",
+        program.declarations.len()
+    );
+}
+
+// ============================================================
+// Content Addressing Example Tests
+// ============================================================
+
+#[test]
+fn test_parse_content_addressing_blood() {
+    parse_file_ok("../examples/content_addressing.blood");
+}
+
+/// Verify the content addressing example contains expected struct and function declarations.
+/// This example demonstrates Blood's content-addressed code identity system.
+#[test]
+fn test_content_addressing_declarations() {
+    use bloodc::ast::Declaration;
+
+    let source = fs::read_to_string("../examples/content_addressing.blood")
+        .expect("Failed to read content_addressing.blood");
+
+    let mut parser = Parser::new(&source);
+    let program = parser.parse_program().expect("Failed to parse content_addressing.blood");
+
+    // Count different declaration types
+    let struct_count = program.declarations.iter().filter(|d| matches!(d, Declaration::Struct(_))).count();
+    let fn_count = program.declarations.iter().filter(|d| matches!(d, Declaration::Function(_))).count();
+
+    // Verify we have the expected structs:
+    // BuildStats, DependencyInfo, DefinitionRecord
+    assert!(
+        struct_count >= 3,
+        "Expected at least 3 struct declarations (BuildStats, DependencyInfo, DefinitionRecord), found {struct_count}"
+    );
+
+    // Verify we have all the demonstration functions:
+    // add_v1, add_v2, add_reversed, demo_hash_identity, outer, inner_example, multi_let,
+    // demo_debruijn_indexing, simulate_incremental_build, lookup_cache_simulated,
+    // demo_incremental_compilation, module_a_helper, module_b_square, module_c_pow2,
+    // demo_deduplication, depends_on_helper, helper_function, demo_reference_by_hash,
+    // create_definition_record, demo_codebase_structure, hash_to_display, demo_hash_display,
+    // demo_benefits_summary, demo_comparison, main
+    assert!(
+        fn_count >= 25,
+        "Expected at least 25 function declarations, found {fn_count}"
+    );
+
+    // Verify total declarations (3 structs + 25 functions = 28)
+    assert!(
+        program.declarations.len() >= 28,
+        "Expected at least 28 total declarations, found {}",
+        program.declarations.len()
+    );
+}
+
+// ============================================================
+// FFI Interop Example Tests
+// ============================================================
+
+#[test]
+fn test_parse_ffi_interop_blood() {
+    parse_file_ok("../examples/ffi_interop.blood");
+}
+
+/// Verify the FFI interop example contains expected struct and function declarations.
+/// This example demonstrates Blood's Foreign Function Interface concepts.
+#[test]
+fn test_ffi_interop_declarations() {
+    use bloodc::ast::Declaration;
+
+    let source = fs::read_to_string("../examples/ffi_interop.blood")
+        .expect("Failed to read ffi_interop.blood");
+
+    let mut parser = Parser::new(&source);
+    let program = parser.parse_program().expect("Failed to parse ffi_interop.blood");
+
+    // Count different declaration types
+    let struct_count = program.declarations.iter().filter(|d| matches!(d, Declaration::Struct(_))).count();
+    let fn_count = program.declarations.iter().filter(|d| matches!(d, Declaration::Function(_))).count();
+
+    // Verify we have the expected structs:
+    // CPoint, CRect, CSize, BufferDesc, RawPointer, FfiResult, CString, IoError, OwnedBuffer
+    assert!(
+        struct_count >= 9,
+        "Expected at least 9 struct declarations (CPoint, CRect, CSize, BufferDesc, RawPointer, FfiResult, CString, IoError, OwnedBuffer), found {struct_count}"
+    );
+
+    // Verify we have the expected functions:
+    // Constants, pointer ops, wrappers, demos, main
+    assert!(
+        fn_count >= 25,
+        "Expected at least 25 function declarations, found {fn_count}"
+    );
+
+    // Verify total declarations
+    assert!(
+        program.declarations.len() >= 34,
+        "Expected at least 34 total declarations (9 structs + 25+ functions), found {}",
+        program.declarations.len()
+    );
 }

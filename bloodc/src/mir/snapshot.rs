@@ -249,7 +249,15 @@ impl SnapshotAnalyzer {
             TypeKind::Tuple(elems) => elems.iter().any(|e| self.type_contains_genref(e)),
             TypeKind::Adt { .. } => true, // Conservative: ADTs might contain refs
             TypeKind::Fn { .. } => true, // Closures might capture refs
-            _ => false,
+            TypeKind::Closure { .. } => true, // Closures capture environment which might contain refs
+            TypeKind::Range { ref element, .. } => self.type_contains_genref(element),
+            TypeKind::DynTrait { .. } => true, // Trait objects are fat pointers
+            // Primitives, inference vars, type params, never, and error types don't contain refs
+            TypeKind::Primitive(_) => false,
+            TypeKind::Infer(_) => false,
+            TypeKind::Param(_) => false,
+            TypeKind::Never => false,
+            TypeKind::Error => false,
         }
     }
 
@@ -581,10 +589,22 @@ impl LivenessAnalysis {
             TerminatorKind::Resume { value: Some(op) } => {
                 Self::collect_operand_uses(op, uses);
             }
+            TerminatorKind::Resume { value: None } => {
+                // Resume with no value - no uses to collect
+            }
             TerminatorKind::StaleReference { ptr, .. } => {
                 uses.insert(ptr.local);
             }
-            _ => {}
+            // Terminators with no operand uses
+            TerminatorKind::Goto { .. } => {
+                // Goto has no operands, only a target block
+            }
+            TerminatorKind::Return => {
+                // Return uses the return place, but that's implicit
+            }
+            TerminatorKind::Unreachable => {
+                // Unreachable has no uses
+            }
         }
     }
 }

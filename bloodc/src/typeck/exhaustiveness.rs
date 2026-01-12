@@ -125,7 +125,17 @@ fn is_irrefutable(pattern: &Pattern) -> bool {
             fields.iter().all(|f| is_irrefutable(&f.pattern))
         }
         PatternKind::Or(alts) => alts.iter().any(is_irrefutable),
-        _ => false,
+        // Slice is irrefutable only if it has a rest pattern and all subpatterns are irrefutable
+        PatternKind::Slice { prefix, slice, suffix } => {
+            slice.is_some()
+                && prefix.iter().all(is_irrefutable)
+                && suffix.iter().all(is_irrefutable)
+                && slice.as_ref().map_or(true, |s| is_irrefutable(s))
+        }
+        // These patterns are always refutable (match specific values)
+        PatternKind::Literal(_) => false,
+        PatternKind::Variant { .. } => false,
+        PatternKind::Range { .. } => false,
     }
 }
 
@@ -136,16 +146,50 @@ fn check_bool_exhaustiveness(patterns: &[&Pattern]) -> (bool, Vec<String>) {
 
     for pat in patterns {
         match &pat.kind {
+            // Wildcard covers all values
+            PatternKind::Wildcard => {
+                has_true = true;
+                has_false = true;
+            }
+            // Binding without subpattern covers all values
+            PatternKind::Binding { subpattern: None, .. } => {
+                has_true = true;
+                has_false = true;
+            }
+            // Binding with subpattern - check the subpattern
+            PatternKind::Binding { subpattern: Some(sub), .. } => {
+                if let PatternKind::Literal(hir::LiteralValue::Bool(b)) = &sub.kind {
+                    if *b { has_true = true; } else { has_false = true; }
+                }
+            }
             PatternKind::Literal(hir::LiteralValue::Bool(true)) => has_true = true,
             PatternKind::Literal(hir::LiteralValue::Bool(false)) => has_false = true,
             PatternKind::Or(alts) => {
                 for alt in alts {
-                    if let PatternKind::Literal(hir::LiteralValue::Bool(b)) = &alt.kind {
-                        if *b { has_true = true; } else { has_false = true; }
+                    match &alt.kind {
+                        PatternKind::Wildcard => {
+                            has_true = true;
+                            has_false = true;
+                        }
+                        PatternKind::Binding { subpattern: None, .. } => {
+                            has_true = true;
+                            has_false = true;
+                        }
+                        PatternKind::Literal(hir::LiteralValue::Bool(b)) => {
+                            if *b { has_true = true; } else { has_false = true; }
+                        }
+                        _ => {}
                     }
                 }
             }
-            _ => {}
+            // Other patterns (Literal non-bool, Struct, Tuple, etc.) don't match bool
+            PatternKind::Literal(_)
+            | PatternKind::Variant { .. }
+            | PatternKind::Struct { .. }
+            | PatternKind::Tuple(_)
+            | PatternKind::Slice { .. }
+            | PatternKind::Ref { .. }
+            | PatternKind::Range { .. } => {}
         }
     }
 
@@ -164,7 +208,7 @@ fn check_enum_exhaustiveness(
     let mut covered_variants: HashSet<u32> = HashSet::new();
 
     for pat in patterns {
-        collect_variant_indices(pat, &mut covered_variants);
+        collect_variant_indices(pat, &mut covered_variants, enum_info.variant_count);
     }
 
     let mut missing = vec![];
@@ -182,20 +226,42 @@ fn check_enum_exhaustiveness(
 }
 
 /// Collect all variant indices covered by a pattern.
-fn collect_variant_indices(pattern: &Pattern, indices: &mut HashSet<u32>) {
+///
+/// `variant_count` is the total number of variants in the enum, used when
+/// a wildcard pattern is encountered to mark all variants as covered.
+fn collect_variant_indices(pattern: &Pattern, indices: &mut HashSet<u32>, variant_count: u32) {
     match &pattern.kind {
+        // Wildcard covers all variants
+        PatternKind::Wildcard => {
+            for idx in 0..variant_count {
+                indices.insert(idx);
+            }
+        }
+        // Binding without subpattern covers all variants
+        PatternKind::Binding { subpattern: None, .. } => {
+            for idx in 0..variant_count {
+                indices.insert(idx);
+            }
+        }
+        // Binding with subpattern - check the subpattern
+        PatternKind::Binding { subpattern: Some(sub), .. } => {
+            collect_variant_indices(sub, indices, variant_count);
+        }
         PatternKind::Variant { variant_idx, .. } => {
             indices.insert(*variant_idx);
         }
         PatternKind::Or(alts) => {
             for alt in alts {
-                collect_variant_indices(alt, indices);
+                collect_variant_indices(alt, indices, variant_count);
             }
         }
-        PatternKind::Binding { subpattern: Some(sub), .. } => {
-            collect_variant_indices(sub, indices);
-        }
-        _ => {}
+        // Other patterns don't match enum variants
+        PatternKind::Literal(_)
+        | PatternKind::Struct { .. }
+        | PatternKind::Tuple(_)
+        | PatternKind::Slice { .. }
+        | PatternKind::Ref { .. }
+        | PatternKind::Range { .. } => {}
     }
 }
 

@@ -418,6 +418,22 @@ impl<'a> DispatchResolver<'a> {
             (TypeKind::Param(a_var), TypeKind::Param(b_var)) => a_var == b_var,
             (TypeKind::Never, TypeKind::Never) => true,
             (TypeKind::Error, TypeKind::Error) => true,
+            (
+                TypeKind::Closure { def_id: a_def, params: a_params, ret: a_ret },
+                TypeKind::Closure { def_id: b_def, params: b_params, ret: b_ret },
+            ) => {
+                a_def == b_def
+                    && a_params.len() == b_params.len()
+                    && a_params
+                        .iter()
+                        .zip(b_params)
+                        .all(|(a, b)| self.types_equal(a, b))
+                    && self.types_equal(a_ret, b_ret)
+            }
+            (
+                TypeKind::Range { element: a_elem, inclusive: a_incl },
+                TypeKind::Range { element: b_elem, inclusive: b_incl },
+            ) => a_incl == b_incl && self.types_equal(a_elem, b_elem),
             // DynTrait equality: same trait_id and same auto_traits (order independent)
             (
                 TypeKind::DynTrait { trait_id: a_trait, auto_traits: a_auto },

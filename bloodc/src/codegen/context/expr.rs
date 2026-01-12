@@ -274,7 +274,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         .map(|v| v.into())
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())]);
                 }
-                _ => {}
+                // Comparison, logical, and bitwise ops are handled in the second match below
+                Eq | Ne | Lt | Le | Gt | Ge | And | Or | BitAnd | BitOr | BitXor | Shl | Shr | Pipe => {
+                    // Fall through to comparison/error handling below
+                }
             }
 
             // Handle comparison operations (return IntValue - i1)

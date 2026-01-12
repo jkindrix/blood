@@ -433,7 +433,12 @@ impl From<ParseError> for Diagnostic {
             ParseError::UnclosedBlockComment { .. } => {
                 diagnostic = diagnostic.with_suggestion("add `*/` to close the block comment");
             }
-            _ => {}
+            // These error types don't have specific suggestions beyond the error message
+            ParseError::UnexpectedEof { .. }
+            | ParseError::InvalidInteger { .. }
+            | ParseError::InvalidFloat { .. }
+            | ParseError::InvalidEscape { .. }
+            | ParseError::Custom { .. } => {}
         }
 
         diagnostic

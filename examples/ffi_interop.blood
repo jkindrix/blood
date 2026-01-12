@@ -1,0 +1,764 @@
+// Foreign Function Interface (FFI) Interop in Blood
+// =====================================================
+//
+// This example demonstrates Blood's FFI capabilities for calling C library
+// functions and interoperating with external code. Blood takes an explicit
+// approach to FFI safety: all foreign calls require @unsafe blocks while
+// safe wrappers encapsulate the unsafe operations.
+//
+// Key Concepts:
+// 1. The FFI effect tracks foreign function calls in the type system
+// 2. Raw pointers (*const T, *mut T) are used for C interop
+// 3. @unsafe blocks mark regions where safety is the programmer's responsibility
+// 4. Safe wrappers convert between Blood and C conventions
+//
+// Note: Bridge block syntax (bridge "C" libc { ... }) is designed but not yet
+// implemented in the parser. This example demonstrates the concepts using
+// currently supported syntax, with bridge blocks shown in comments.
+
+// ===========================================================================
+// Part 1: FFI-Compatible Data Structures
+// ===========================================================================
+
+// C-compatible point structure (repr(C) ensures C layout)
+// In Blood, #[repr(C)] would ensure this matches C struct layout:
+//   struct Point { int32_t x; int32_t y; };
+struct CPoint {
+    x: i32,
+    y: i32,
+}
+
+// C-compatible rectangle
+// Corresponds to: struct Rect { int x, y, width, height; };
+struct CRect {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+}
+
+// Size structure for memory operations
+struct CSize {
+    bytes: i32,
+    alignment: i32,
+}
+
+// Buffer descriptor for FFI data transfer
+struct BufferDesc {
+    data_ptr: i32,     // Simulated pointer (would be *mut u8 in real FFI)
+    length: i32,       // Buffer length in bytes
+    capacity: i32,     // Total allocated capacity
+    is_owned: bool,    // Whether Blood owns this memory
+}
+
+// ===========================================================================
+// Part 2: Raw Pointer Concepts
+// ===========================================================================
+
+// Blood uses raw pointers for FFI, not references (which carry generation metadata).
+// Raw pointer types:
+//   *const T  - immutable pointer, maps to const T* in C
+//   *mut T    - mutable pointer, maps to T* in C
+//
+// CRITICAL: Blood's &T and &mut T are NOT FFI-safe! They carry generation
+// metadata for memory safety. Always use raw pointers at FFI boundaries.
+
+// Simulating a raw pointer as an integer for demonstration
+// (Real Blood would use actual *mut u8 / *const u8 types)
+struct RawPointer {
+    address: i32,      // The memory address (would be usize in real code)
+    is_null: bool,     // NULL pointer check
+}
+
+fn ptr_null() -> RawPointer {
+    RawPointer { address: 0, is_null: true }
+}
+
+fn ptr_new(addr: i32) -> RawPointer {
+    RawPointer { address: addr, is_null: addr == 0 }
+}
+
+fn ptr_is_valid(p: RawPointer) -> bool {
+    !p.is_null && p.address > 0
+}
+
+// ===========================================================================
+// Part 3: The FFI Effect
+// ===========================================================================
+
+// The FFI effect marks functions that call foreign code.
+// FFI extends IO because foreign code can have arbitrary side effects.
+//
+// effect FFI extends IO {
+//     op call_foreign(symbol: Symbol, args: ForeignArgs) -> ForeignResult;
+// }
+//
+// Any function calling C code must declare the FFI effect:
+//   fn call_libc() / {FFI} { ... }
+
+// Simulate FFI call result
+struct FfiResult {
+    success: bool,
+    error_code: i32,
+    return_value: i32,
+}
+
+fn ffi_success(value: i32) -> FfiResult {
+    FfiResult { success: true, error_code: 0, return_value: value }
+}
+
+fn ffi_error(code: i32) -> FfiResult {
+    FfiResult { success: false, error_code: code, return_value: 0 }
+}
+
+// ===========================================================================
+// Part 4: Bridge Block Concept (Future Syntax)
+// ===========================================================================
+
+// Bridge blocks declare foreign interfaces. The syntax is designed as:
+//
+// bridge "C" libc {
+//     #[link(name = "c")]
+//
+//     // Function declarations
+//     fn malloc(size: usize) -> *mut u8;
+//     fn free(ptr: *mut u8);
+//     fn memcpy(dest: *mut u8, src: *const u8, n: usize) -> *mut u8;
+//     fn strlen(s: *const u8) -> usize;
+//
+//     // Constants
+//     const STDIN_FILENO: i32 = 0;
+//     const STDOUT_FILENO: i32 = 1;
+//
+//     // Opaque types (size unknown to Blood)
+//     type FILE;
+// }
+//
+// Until bridge blocks are implemented, we simulate with regular functions.
+
+// Simulated C library constants
+fn c_stdin() -> i32 { 0 }
+fn c_stdout() -> i32 { 1 }
+fn c_stderr() -> i32 { 2 }
+
+fn c_success() -> i32 { 0 }
+fn c_failure() -> i32 { -1 }
+
+fn c_null_ptr() -> i32 { 0 }
+
+// ===========================================================================
+// Part 5: @unsafe Blocks and Safety Boundaries
+// ===========================================================================
+
+// Blood's FFI safety model has clear boundaries:
+//
+// +-------------------------------------------------+
+// |              SAFE BLOOD CODE                    |
+// |  - Type safety guaranteed                       |
+// |  - Memory safety via generations                |
+// |  - Effect tracking                              |
+// +-------------------------------------------------+
+// |              SAFE WRAPPER LAYER                 |
+// |  - Validates inputs before FFI                  |
+// |  - Validates outputs after FFI                  |
+// |  - Converts Blood <-> C types                   |
+// +-------------------------------------------------+
+// |              @unsafe BOUNDARY                   |
+// |  - Explicit @unsafe blocks                      |
+// |  - Programmer asserts correctness               |
+// +-------------------------------------------------+
+// |              FOREIGN (C) CODE                   |
+// |  - May have arbitrary behavior                  |
+// +-------------------------------------------------+
+
+// Unsafe function for raw memory operations (simulation)
+// In real Blood: @unsafe fn raw_write(ptr: *mut i32, value: i32)
+fn unsafe_write_simulated(ptr: RawPointer, value: i32) -> FfiResult {
+    // In real code, this would be:
+    // @unsafe {
+    //     *ptr = value;
+    // }
+
+    // Simulation: validate pointer first
+    if !ptr_is_valid(ptr) {
+        ffi_error(1)  // Error: invalid pointer
+    } else {
+        println_str("  [UNSAFE] Writing value to memory address");
+        print_str("    Address: ");
+        println_int(ptr.address);
+        print_str("    Value: ");
+        println_int(value);
+        ffi_success(0)
+    }
+}
+
+// Unsafe function for raw memory read (simulation)
+fn unsafe_read_simulated(ptr: RawPointer) -> FfiResult {
+    // In real code: @unsafe { *ptr }
+
+    if !ptr_is_valid(ptr) {
+        ffi_error(1)
+    } else {
+        println_str("  [UNSAFE] Reading value from memory address");
+        print_str("    Address: ");
+        println_int(ptr.address);
+        // Simulated return value
+        ffi_success(42)
+    }
+}
+
+// ===========================================================================
+// Part 6: Safe Wrapper Pattern
+// ===========================================================================
+
+// Safe wrappers encapsulate @unsafe operations and provide:
+// 1. Input validation before FFI calls
+// 2. Output validation after FFI calls
+// 3. Type conversion between Blood and C
+// 4. Proper error handling
+
+// Simulated memory allocator wrapper
+fn safe_alloc(size: i32) -> BufferDesc {
+    println_str("safe_alloc: Allocating memory safely");
+    print_str("  Requested size: ");
+    println_int(size);
+
+    // Input validation
+    if size <= 0 {
+        println_str("  ERROR: Invalid size (must be > 0)");
+        BufferDesc {
+            data_ptr: c_null_ptr(),
+            length: 0,
+            capacity: 0,
+            is_owned: false,
+        }
+    } else if size > 1073741824 {  // 1GB limit
+        println_str("  ERROR: Size too large (max 1GB)");
+        BufferDesc {
+            data_ptr: c_null_ptr(),
+            length: 0,
+            capacity: 0,
+            is_owned: false,
+        }
+    } else {
+        // In real code:
+        // @unsafe {
+        //     let ptr = libc::malloc(size as usize);
+        //     if ptr.is_null() {
+        //         panic!("malloc failed");
+        //     }
+        //     ptr
+        // }
+
+        // Simulation: pretend we got address 0x1000
+        let simulated_addr: i32 = 4096 + size;  // Fake address based on size
+        println_str("  SUCCESS: Memory allocated");
+        print_str("    Simulated address: ");
+        println_int(simulated_addr);
+
+        BufferDesc {
+            data_ptr: simulated_addr,
+            length: 0,
+            capacity: size,
+            is_owned: true,
+        }
+    }
+}
+
+// Safe free wrapper
+fn safe_free(buf: BufferDesc) -> FfiResult {
+    println_str("safe_free: Freeing memory safely");
+
+    // Validate ownership
+    if !buf.is_owned {
+        println_str("  ERROR: Buffer not owned by Blood (cannot free)");
+        ffi_error(2)
+    } else if buf.data_ptr == c_null_ptr() {
+        println_str("  WARNING: NULL pointer (no-op)");
+        ffi_success(0)
+    } else {
+        // In real code:
+        // @unsafe {
+        //     libc::free(ptr);
+        // }
+
+        print_str("  Freeing address: ");
+        println_int(buf.data_ptr);
+        println_str("  SUCCESS: Memory freed");
+        ffi_success(0)
+    }
+}
+
+// ===========================================================================
+// Part 7: Type Marshalling
+// ===========================================================================
+
+// Type mapping between Blood and C:
+//
+// | Blood Type    | C Type           | Size    |
+// |---------------|------------------|---------|
+// | i8            | int8_t           | 1 byte  |
+// | i16           | int16_t          | 2 bytes |
+// | i32           | int32_t          | 4 bytes |
+// | i64           | int64_t          | 8 bytes |
+// | u8            | uint8_t          | 1 byte  |
+// | u16           | uint16_t         | 2 bytes |
+// | u32           | uint32_t         | 4 bytes |
+// | u64           | uint64_t         | 8 bytes |
+// | f32           | float            | 4 bytes |
+// | f64           | double           | 8 bytes |
+// | bool          | _Bool            | 1 byte  |
+// | *const T      | const T*         | ptr     |
+// | *mut T        | T*               | ptr     |
+// | usize         | size_t           | ptr     |
+
+// Simulate C string handling
+struct CString {
+    data_ptr: i32,     // Pointer to null-terminated bytes
+    length: i32,       // Length (not including null terminator)
+}
+
+fn cstring_from_blood(s: i32) -> CString {
+    // In real Blood:
+    // fn new(s: &str) -> CString / {Allocate} {
+    //     // Check for interior null bytes
+    //     if s.bytes().any(|b| b == 0) {
+    //         panic!("String contains interior null byte");
+    //     }
+    //     let len = s.len();
+    //     @unsafe {
+    //         let ptr = libc::malloc(len + 1);
+    //         libc::memcpy(ptr, s.as_ptr(), len);
+    //         *(ptr.add(len)) = 0;  // Null terminator
+    //         CString { ptr, len }
+    //     }
+    // }
+
+    println_str("cstring_from_blood: Converting Blood string to C string");
+    print_str("  Input (simulated): ");
+    println_int(s);
+
+    // Simulated: pretend we allocated and copied
+    let fake_len: i32 = 5;  // Simulated length
+    let fake_ptr: i32 = 8192 + s;  // Simulated address
+
+    CString { data_ptr: fake_ptr, length: fake_len }
+}
+
+fn cstring_as_ptr(cs: CString) -> i32 {
+    cs.data_ptr
+}
+
+fn cstring_len(cs: CString) -> i32 {
+    cs.length
+}
+
+// ===========================================================================
+// Part 8: Error Handling Patterns
+// ===========================================================================
+
+// C code typically signals errors via:
+// 1. Return codes (0 = success, negative = error)
+// 2. errno global variable
+// 3. NULL pointers
+
+// Error conversion
+struct IoError {
+    code: i32,
+    is_not_found: bool,
+    is_permission_denied: bool,
+    is_already_exists: bool,
+}
+
+fn io_error_from_errno(errno: i32) -> IoError {
+    // Common errno values:
+    // ENOENT = 2 (No such file)
+    // EACCES = 13 (Permission denied)
+    // EEXIST = 17 (File exists)
+
+    if errno == 2 {
+        IoError { code: errno, is_not_found: true, is_permission_denied: false, is_already_exists: false }
+    } else if errno == 13 {
+        IoError { code: errno, is_not_found: false, is_permission_denied: true, is_already_exists: false }
+    } else if errno == 17 {
+        IoError { code: errno, is_not_found: false, is_permission_denied: false, is_already_exists: true }
+    } else {
+        IoError { code: errno, is_not_found: false, is_permission_denied: false, is_already_exists: false }
+    }
+}
+
+fn print_io_error(err: IoError) {
+    print_str("  IO Error code: ");
+    println_int(err.code);
+
+    if err.is_not_found {
+        println_str("    Type: Not Found (ENOENT)");
+    } else if err.is_permission_denied {
+        println_str("    Type: Permission Denied (EACCES)");
+    } else if err.is_already_exists {
+        println_str("    Type: Already Exists (EEXIST)");
+    } else {
+        println_str("    Type: Other");
+    }
+}
+
+// Safe file open wrapper (simulated)
+fn safe_open(path: i32, mode: i32) -> FfiResult {
+    println_str("safe_open: Opening file safely");
+    print_str("  Path (simulated id): ");
+    println_int(path);
+    print_str("  Mode: ");
+    println_int(mode);
+
+    // Simulate possible errors
+    if path == 0 {
+        println_str("  ERROR: Invalid path (simulated ENOENT)");
+        let err: IoError = io_error_from_errno(2);
+        print_io_error(err);
+        ffi_error(2)
+    } else if mode == 0 {
+        println_str("  ERROR: Invalid mode (simulated EACCES)");
+        let err: IoError = io_error_from_errno(13);
+        print_io_error(err);
+        ffi_error(13)
+    } else {
+        // In real code:
+        // @unsafe {
+        //     let fd = libc::open(cpath.as_ptr(), flags);
+        //     if fd < 0 {
+        //         Err(IoError::from_errno())
+        //     } else {
+        //         Ok(Fd(fd))
+        //     }
+        // }
+
+        let fake_fd: i32 = 100 + path;
+        println_str("  SUCCESS: File opened");
+        print_str("    File descriptor: ");
+        println_int(fake_fd);
+        ffi_success(fake_fd)
+    }
+}
+
+// ===========================================================================
+// Part 9: Ownership Transfer Semantics
+// ===========================================================================
+
+// FFI ownership patterns:
+// 1. Borrow: Blood lends pointer, C must not free or store
+// 2. Transfer Out: Blood gives ownership to C
+// 3. Transfer In: C gives ownership to Blood
+// 4. Shared: Reference counted
+
+// Ownership annotation (conceptual)
+// In bridge blocks:
+// fn process_data(#[borrow] data: *const u8, len: usize) -> i32;
+// fn take_buffer(#[transfer] buffer: *mut u8, len: usize);
+// fn create_buffer(len: usize) -> #[acquire] *mut u8;
+
+struct OwnedBuffer {
+    ptr: i32,
+    len: i32,
+    is_blood_owned: bool,
+}
+
+// Borrow pattern: Blood owns, C borrows temporarily
+fn process_borrowed(data: OwnedBuffer) -> i32 {
+    println_str("process_borrowed: C borrows Blood's data");
+    print_str("  Buffer ptr: ");
+    println_int(data.ptr);
+    print_str("  Buffer len: ");
+    println_int(data.len);
+
+    // C processes the data but doesn't store or free the pointer
+    // After this call, Blood still owns the memory
+
+    println_str("  C processed data (did not take ownership)");
+    0  // Success
+}
+
+// Transfer out: Blood gives ownership to C
+fn transfer_to_c(data: OwnedBuffer) -> i32 {
+    println_str("transfer_to_c: Transferring ownership to C");
+
+    if !data.is_blood_owned {
+        println_str("  ERROR: Blood doesn't own this buffer");
+        c_failure()
+    } else {
+        print_str("  Transferring buffer at: ");
+        println_int(data.ptr);
+
+        // In real code:
+        // @unsafe {
+        //     c_library::take_buffer(data.ptr, data.len);
+        //     std::mem::forget(data);  // Don't run Blood's destructor
+        // }
+
+        println_str("  SUCCESS: C now owns the memory");
+        println_str("  WARNING: Blood must NOT use or free this buffer");
+        c_success()
+    }
+}
+
+// Transfer in: C gives ownership to Blood
+fn receive_from_c(ptr: i32, len: i32) -> OwnedBuffer {
+    println_str("receive_from_c: Taking ownership from C");
+    print_str("  Receiving buffer at: ");
+    println_int(ptr);
+    print_str("  Length: ");
+    println_int(len);
+
+    // In real code:
+    // @unsafe {
+    //     Vec::from_raw_parts(ptr, len, len)
+    // }
+
+    println_str("  SUCCESS: Blood now owns the memory");
+    println_str("  Blood's destructor will free it");
+
+    OwnedBuffer {
+        ptr: ptr,
+        len: len,
+        is_blood_owned: true,
+    }
+}
+
+// ===========================================================================
+// Part 10: Callback Functions
+// ===========================================================================
+
+// C often uses callbacks. Blood functions can be passed to C:
+//
+// bridge "C" libc {
+//     callback Comparator = fn(*const u8, *const u8) -> i32;
+//     fn qsort(base: *mut u8, num: usize, size: usize, compare: Comparator);
+// }
+//
+// // Blood callback (must be pure or #[no_unwind])
+// fn my_compare(a: *const u8, b: *const u8) -> i32 / pure {
+//     @unsafe {
+//         let a_val = *(a as *const i32);
+//         let b_val = *(b as *const i32);
+//         a_val - b_val
+//     }
+// }
+
+// Simulated callback registration
+fn register_callback(id: i32, callback_id: i32) -> FfiResult {
+    println_str("register_callback: Registering Blood function as C callback");
+    print_str("  Event ID: ");
+    println_int(id);
+    print_str("  Callback ID: ");
+    println_int(callback_id);
+
+    // Critical: Blood callbacks must not panic across C frames
+    // Use #[no_unwind] attribute or catch panics internally
+
+    println_str("  WARNING: Callbacks must not panic into C code!");
+    println_str("  Use @[no_unwind] or internal panic handling");
+
+    ffi_success(0)
+}
+
+// ===========================================================================
+// Part 11: Demonstration Functions
+// ===========================================================================
+
+fn demo_memory_operations() {
+    println_str("=== Demo: Memory Operations ===");
+    println_str("");
+
+    // Allocate
+    let buf1: BufferDesc = safe_alloc(1024);
+    print_str("Allocated buffer, capacity: ");
+    println_int(buf1.capacity);
+    println_str("");
+
+    // Allocate with validation failure
+    let buf2: BufferDesc = safe_alloc(-10);
+    print_str("Invalid allocation result (ptr): ");
+    println_int(buf2.data_ptr);
+    println_str("");
+
+    // Free
+    let free_result: FfiResult = safe_free(buf1);
+    if free_result.success {
+        println_str("Free succeeded");
+    } else {
+        println_str("Free failed");
+    }
+    println_str("");
+}
+
+fn demo_pointer_operations() {
+    println_str("=== Demo: Pointer Operations ===");
+    println_str("");
+
+    // Valid pointer
+    let p1: RawPointer = ptr_new(4096);
+    print_str("Created pointer at address: ");
+    println_int(p1.address);
+    print_str("Is valid: ");
+    if ptr_is_valid(p1) { println_str("yes"); } else { println_str("no"); }
+    println_str("");
+
+    // NULL pointer
+    let p2: RawPointer = ptr_null();
+    print_str("NULL pointer address: ");
+    println_int(p2.address);
+    print_str("Is valid: ");
+    if ptr_is_valid(p2) { println_str("yes"); } else { println_str("no"); }
+    println_str("");
+
+    // Unsafe operations
+    let write_result: FfiResult = unsafe_write_simulated(p1, 42);
+    if write_result.success {
+        println_str("Write succeeded");
+    }
+    println_str("");
+
+    let read_result: FfiResult = unsafe_read_simulated(p1);
+    if read_result.success {
+        print_str("Read value: ");
+        println_int(read_result.return_value);
+    }
+    println_str("");
+}
+
+fn demo_string_marshalling() {
+    println_str("=== Demo: String Marshalling ===");
+    println_str("");
+
+    // Convert Blood string to C string
+    let cs: CString = cstring_from_blood(12345);
+    print_str("C string pointer: ");
+    println_int(cstring_as_ptr(cs));
+    print_str("C string length: ");
+    println_int(cstring_len(cs));
+    println_str("");
+
+    println_str("NOTE: Real C strings are null-terminated");
+    println_str("Blood strings are length-prefixed and may contain nulls");
+    println_str("Conversion MUST validate no interior null bytes");
+    println_str("");
+}
+
+fn demo_error_handling() {
+    println_str("=== Demo: Error Handling ===");
+    println_str("");
+
+    // Successful open
+    let result1: FfiResult = safe_open(42, 1);
+    print_str("Open result 1 - success: ");
+    if result1.success { println_str("yes"); } else { println_str("no"); }
+    println_str("");
+
+    // Failed open (path = 0)
+    let result2: FfiResult = safe_open(0, 1);
+    print_str("Open result 2 - success: ");
+    if result2.success { println_str("yes"); } else { println_str("no"); }
+    println_str("");
+
+    // Failed open (mode = 0)
+    let result3: FfiResult = safe_open(42, 0);
+    print_str("Open result 3 - success: ");
+    if result3.success { println_str("yes"); } else { println_str("no"); }
+    println_str("");
+}
+
+fn demo_ownership_transfer() {
+    println_str("=== Demo: Ownership Transfer ===");
+    println_str("");
+
+    // Create Blood-owned buffer
+    let blood_buffer: OwnedBuffer = OwnedBuffer {
+        ptr: 8192,
+        len: 256,
+        is_blood_owned: true,
+    };
+
+    // Borrow pattern
+    let borrow_result: i32 = process_borrowed(blood_buffer);
+    print_str("Borrow result: ");
+    println_int(borrow_result);
+    println_str("");
+
+    // Receive from C
+    let c_buffer: OwnedBuffer = receive_from_c(16384, 512);
+    print_str("Received buffer, now Blood owns: ");
+    if c_buffer.is_blood_owned { println_str("yes"); } else { println_str("no"); }
+    println_str("");
+
+    // Transfer to C (after this, Blood must not use it)
+    let transfer_result: i32 = transfer_to_c(c_buffer);
+    print_str("Transfer result: ");
+    println_int(transfer_result);
+    println_str("");
+}
+
+fn demo_callback_registration() {
+    println_str("=== Demo: Callback Registration ===");
+    println_str("");
+
+    let result: FfiResult = register_callback(1, 42);
+    print_str("Registration result - success: ");
+    if result.success { println_str("yes"); } else { println_str("no"); }
+    println_str("");
+}
+
+// ===========================================================================
+// Part 12: Safety Summary
+// ===========================================================================
+
+fn print_safety_summary() {
+    println_str("=== FFI Safety Summary ===");
+    println_str("");
+
+    println_str("1. ALWAYS use raw pointers (*const T, *mut T) at FFI boundaries");
+    println_str("   Blood references (&T) carry generation metadata - NOT FFI safe!");
+    println_str("");
+
+    println_str("2. ALWAYS wrap FFI calls in @unsafe blocks");
+    println_str("   The @unsafe marker makes the programmer responsible for safety");
+    println_str("");
+
+    println_str("3. ALWAYS provide safe wrappers for FFI functions");
+    println_str("   Validate inputs, check outputs, convert types");
+    println_str("");
+
+    println_str("4. ALWAYS be explicit about ownership transfer");
+    println_str("   Use #[borrow], #[transfer], #[acquire] annotations");
+    println_str("");
+
+    println_str("5. NEVER let panics unwind through C frames");
+    println_str("   Use #[no_unwind] or catch panics at boundaries");
+    println_str("");
+
+    println_str("6. REMEMBER the FFI effect tracks foreign calls");
+    println_str("   Functions with / {FFI} can call C code");
+    println_str("");
+}
+
+// ===========================================================================
+// Main Entry Point
+// ===========================================================================
+
+fn main() {
+    println_str("================================================================");
+    println_str("     Blood FFI (Foreign Function Interface) Demonstration");
+    println_str("     Safe Interoperability with C Libraries");
+    println_str("================================================================");
+    println_str("");
+
+    demo_memory_operations();
+    demo_pointer_operations();
+    demo_string_marshalling();
+    demo_error_handling();
+    demo_ownership_transfer();
+    demo_callback_registration();
+    print_safety_summary();
+
+    println_str("================================================================");
+    println_str("     FFI Demonstration Complete");
+    println_str("================================================================");
+}

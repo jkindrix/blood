@@ -31,7 +31,7 @@ jobs:
       - name: Clippy (blood-std)
         run: cargo clippy -p blood-std -- -D warnings
 
-  # Tests that need LLVM
+  # Tests that need LLVM - Linux and macOS
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -39,7 +39,6 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        # Windows excluded for now - LLVM setup is complex
 
     steps:
       - uses: actions/checkout@v4
@@ -75,6 +74,32 @@ jobs:
       - name: Run integration tests
         run: cargo test --test example_files --test pipeline_integration
 
+  # Windows tests - separate job due to complex LLVM setup
+  test-windows:
+    name: Test (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install LLVM
+        run: |
+          choco install llvm --version=${{ env.LLVM_VERSION }}.0.6 -y
+          echo "LLVM_SYS_170_PREFIX=C:\Program Files\LLVM" >> $env:GITHUB_ENV
+
+      - name: Build workspace
+        run: cargo build --workspace
+
+      - name: Run tests (blood-runtime)
+        run: cargo test -p blood-runtime
+
+      - name: Run tests (blood-std)
+        run: cargo test -p blood-std
+
+      - name: Run tests (bloodc)
+        run: cargo test -p bloodc
+
   # Property-based tests (longer running)
   property-tests:
     name: Property Tests
@@ -89,9 +114,9 @@ jobs:
         env:
           PROPTEST_CASES: 256
 
-  # Benchmarks (compile only, don't run)
-  bench-check:
-    name: Benchmark Check
+  # Benchmarks (compile check + regression detection)
+  benchmarks:
+    name: Benchmarks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -100,3 +125,14 @@ jobs:
 
       - name: Check benchmarks compile
         run: cargo build -p blood-runtime --benches
+
+      - name: Run benchmarks
+        run: cargo bench -p blood-runtime -- --noplot --save-baseline pr
+        continue-on-error: true
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: target/criterion
+          retention-days: 30

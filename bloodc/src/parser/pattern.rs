@@ -74,7 +74,12 @@ impl<'src> Parser<'src> {
                         LiteralKind::Float { value, .. } => {
                             *value = (-value.0).into();
                         }
-                        _ => {}
+                        // Only Int and Float literals can be preceded by minus.
+                        // We already checked for IntLit/FloatLit token, so other variants
+                        // should never occur here.
+                        LiteralKind::String(_) | LiteralKind::Char(_) | LiteralKind::Bool(_) => {
+                            // Unreachable: we check for IntLit/FloatLit before calling parse_literal
+                        }
                     }
                     lit.span = start.merge(lit.span);
                     Pattern {
