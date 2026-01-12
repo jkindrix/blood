@@ -108,6 +108,10 @@ pub struct TypeContext<'a> {
     /// Expected type for `resume(value)` in the current handler operation body.
     /// Set when entering a handler operation scope, used for E0303 error checking.
     pub(crate) current_resume_type: Option<Type>,
+    /// The result type of `resume()` in the current handler operation body.
+    /// For deep handlers, this is a type variable representing the continuation's return value.
+    /// For shallow handlers, this is unit (resume must be in tail position).
+    pub(crate) current_resume_result_type: Option<Type>,
     /// FFI bridge block definitions.
     pub(crate) bridge_defs: Vec<BridgeInfo>,
     /// Current impl block's Self type during collection phase.
@@ -563,6 +567,7 @@ impl<'a> TypeContext<'a> {
             trait_defs: HashMap::new(),
             type_param_bounds: HashMap::new(),
             current_resume_type: None,
+            current_resume_result_type: None,
             bridge_defs: Vec::new(),
             current_impl_self_ty: None,
         };
@@ -583,6 +588,336 @@ impl<'a> TypeContext<'a> {
     /// Convert a Type to a string for display.
     pub(crate) fn type_to_string(&self, ty: &Type) -> String {
         format!("{}", ty)
+    }
+
+    // Static zonk functions that take a Unifier reference
+    // These are used to resolve type variables before codegen
+
+    /// Zonk all types in a body, using the given unifier for type resolution.
+    fn zonk_body_with_unifier(unifier: &Unifier, body: hir::Body) -> hir::Body {
+        let zonked_locals = body.locals.into_iter().map(|local| {
+            hir::Local {
+                id: local.id,
+                ty: Self::zonk_type_with_unifier(unifier, &local.ty),
+                mutable: local.mutable,
+                name: local.name,
+                span: local.span,
+            }
+        }).collect();
+        let zonked_expr = Self::zonk_expr_with_unifier(unifier, body.expr);
+        hir::Body {
+            locals: zonked_locals,
+            param_count: body.param_count,
+            expr: zonked_expr,
+            span: body.span,
+        }
+    }
+
+    /// Resolve all type variables in a type using the given unifier's substitutions.
+    fn zonk_type_with_unifier(unifier: &Unifier, ty: &Type) -> Type {
+        let resolved = unifier.resolve(ty);
+        match resolved.kind() {
+            TypeKind::Fn { params, ret } => {
+                let zonked_params: Vec<_> = params.iter().map(|p| Self::zonk_type_with_unifier(unifier, p)).collect();
+                let zonked_ret = Self::zonk_type_with_unifier(unifier, ret);
+                Type::function(zonked_params, zonked_ret)
+            }
+            TypeKind::Tuple(elems) => {
+                let zonked: Vec<_> = elems.iter().map(|e| Self::zonk_type_with_unifier(unifier, e)).collect();
+                Type::tuple(zonked)
+            }
+            TypeKind::Array { element, size } => {
+                let zonked_elem = Self::zonk_type_with_unifier(unifier, element);
+                Type::array(zonked_elem, *size)
+            }
+            TypeKind::Slice { element } => {
+                let zonked_elem = Self::zonk_type_with_unifier(unifier, element);
+                Type::slice(zonked_elem)
+            }
+            TypeKind::Ref { inner, mutable } => {
+                let zonked_inner = Self::zonk_type_with_unifier(unifier, inner);
+                Type::reference(zonked_inner, *mutable)
+            }
+            TypeKind::Ptr { inner, mutable } => {
+                let zonked_inner = Self::zonk_type_with_unifier(unifier, inner);
+                Type::new(TypeKind::Ptr { inner: zonked_inner, mutable: *mutable })
+            }
+            TypeKind::Adt { def_id, args } => {
+                let zonked_args: Vec<_> = args.iter().map(|a| Self::zonk_type_with_unifier(unifier, a)).collect();
+                Type::adt(*def_id, zonked_args)
+            }
+            TypeKind::Range { element, inclusive } => {
+                let zonked_elem = Self::zonk_type_with_unifier(unifier, element);
+                Type::new(TypeKind::Range { element: zonked_elem, inclusive: *inclusive })
+            }
+            _ => resolved,
+        }
+    }
+
+    /// Zonk all types in an expression tree using the given unifier.
+    fn zonk_expr_with_unifier(unifier: &Unifier, expr: hir::Expr) -> hir::Expr {
+        let zonked_ty = Self::zonk_type_with_unifier(unifier, &expr.ty);
+        let zonked_kind = match expr.kind {
+            hir::ExprKind::Binary { op, left, right } => {
+                hir::ExprKind::Binary {
+                    op,
+                    left: Box::new(Self::zonk_expr_with_unifier(unifier, *left)),
+                    right: Box::new(Self::zonk_expr_with_unifier(unifier, *right)),
+                }
+            }
+            hir::ExprKind::Unary { op, operand } => {
+                hir::ExprKind::Unary {
+                    op,
+                    operand: Box::new(Self::zonk_expr_with_unifier(unifier, *operand)),
+                }
+            }
+            hir::ExprKind::Call { callee, args } => {
+                hir::ExprKind::Call {
+                    callee: Box::new(Self::zonk_expr_with_unifier(unifier, *callee)),
+                    args: args.into_iter().map(|a| Self::zonk_expr_with_unifier(unifier, a)).collect(),
+                }
+            }
+            hir::ExprKind::Block { stmts, expr } => {
+                let zonked_stmts = stmts.into_iter().map(|s| Self::zonk_stmt_with_unifier(unifier, s)).collect();
+                let zonked_expr = expr.map(|e| Box::new(Self::zonk_expr_with_unifier(unifier, *e)));
+                hir::ExprKind::Block { stmts: zonked_stmts, expr: zonked_expr }
+            }
+            hir::ExprKind::If { condition, then_branch, else_branch } => {
+                hir::ExprKind::If {
+                    condition: Box::new(Self::zonk_expr_with_unifier(unifier, *condition)),
+                    then_branch: Box::new(Self::zonk_expr_with_unifier(unifier, *then_branch)),
+                    else_branch: else_branch.map(|e| Box::new(Self::zonk_expr_with_unifier(unifier, *e))),
+                }
+            }
+            hir::ExprKind::Match { scrutinee, arms } => {
+                hir::ExprKind::Match {
+                    scrutinee: Box::new(Self::zonk_expr_with_unifier(unifier, *scrutinee)),
+                    arms: arms.into_iter().map(|arm| hir::MatchArm {
+                        pattern: Self::zonk_pattern_with_unifier(unifier, arm.pattern),
+                        guard: arm.guard.map(|g| Self::zonk_expr_with_unifier(unifier, g)),
+                        body: Self::zonk_expr_with_unifier(unifier, arm.body),
+                    }).collect(),
+                }
+            }
+            hir::ExprKind::Loop { body, label } => {
+                hir::ExprKind::Loop {
+                    body: Box::new(Self::zonk_expr_with_unifier(unifier, *body)),
+                    label,
+                }
+            }
+            hir::ExprKind::While { condition, body, label } => {
+                hir::ExprKind::While {
+                    condition: Box::new(Self::zonk_expr_with_unifier(unifier, *condition)),
+                    body: Box::new(Self::zonk_expr_with_unifier(unifier, *body)),
+                    label,
+                }
+            }
+            hir::ExprKind::Return(val) => {
+                hir::ExprKind::Return(val.map(|v| Box::new(Self::zonk_expr_with_unifier(unifier, *v))))
+            }
+            hir::ExprKind::Break { value, label } => {
+                hir::ExprKind::Break {
+                    value: value.map(|v| Box::new(Self::zonk_expr_with_unifier(unifier, *v))),
+                    label,
+                }
+            }
+            hir::ExprKind::Assign { target, value } => {
+                hir::ExprKind::Assign {
+                    target: Box::new(Self::zonk_expr_with_unifier(unifier, *target)),
+                    value: Box::new(Self::zonk_expr_with_unifier(unifier, *value)),
+                }
+            }
+            hir::ExprKind::Field { base, field_idx } => {
+                hir::ExprKind::Field {
+                    base: Box::new(Self::zonk_expr_with_unifier(unifier, *base)),
+                    field_idx,
+                }
+            }
+            hir::ExprKind::Index { base, index } => {
+                hir::ExprKind::Index {
+                    base: Box::new(Self::zonk_expr_with_unifier(unifier, *base)),
+                    index: Box::new(Self::zonk_expr_with_unifier(unifier, *index)),
+                }
+            }
+            hir::ExprKind::Range { start, end, inclusive } => {
+                hir::ExprKind::Range {
+                    start: start.map(|s| Box::new(Self::zonk_expr_with_unifier(unifier, *s))),
+                    end: end.map(|e| Box::new(Self::zonk_expr_with_unifier(unifier, *e))),
+                    inclusive,
+                }
+            }
+            hir::ExprKind::Cast { expr: inner, target_ty } => {
+                hir::ExprKind::Cast {
+                    expr: Box::new(Self::zonk_expr_with_unifier(unifier, *inner)),
+                    target_ty: Self::zonk_type_with_unifier(unifier, &target_ty),
+                }
+            }
+            hir::ExprKind::Tuple(elems) => {
+                hir::ExprKind::Tuple(elems.into_iter().map(|e| Self::zonk_expr_with_unifier(unifier, e)).collect())
+            }
+            hir::ExprKind::Array(elems) => {
+                hir::ExprKind::Array(elems.into_iter().map(|e| Self::zonk_expr_with_unifier(unifier, e)).collect())
+            }
+            hir::ExprKind::Repeat { value, count } => {
+                hir::ExprKind::Repeat {
+                    value: Box::new(Self::zonk_expr_with_unifier(unifier, *value)),
+                    count,
+                }
+            }
+            hir::ExprKind::Struct { def_id, fields, base } => {
+                hir::ExprKind::Struct {
+                    def_id,
+                    fields: fields.into_iter().map(|f| hir::FieldExpr {
+                        field_idx: f.field_idx,
+                        value: Self::zonk_expr_with_unifier(unifier, f.value),
+                    }).collect(),
+                    base: base.map(|b| Box::new(Self::zonk_expr_with_unifier(unifier, *b))),
+                }
+            }
+            hir::ExprKind::Variant { def_id, variant_idx, fields } => {
+                hir::ExprKind::Variant {
+                    def_id,
+                    variant_idx,
+                    fields: fields.into_iter().map(|e| Self::zonk_expr_with_unifier(unifier, e)).collect(),
+                }
+            }
+            hir::ExprKind::Closure { body_id, captures } => {
+                hir::ExprKind::Closure { body_id, captures }
+            }
+            hir::ExprKind::Perform { effect_id, op_index, args } => {
+                hir::ExprKind::Perform {
+                    effect_id,
+                    op_index,
+                    args: args.into_iter().map(|a| Self::zonk_expr_with_unifier(unifier, a)).collect(),
+                }
+            }
+            hir::ExprKind::Resume { value } => {
+                hir::ExprKind::Resume {
+                    value: value.map(|v| Box::new(Self::zonk_expr_with_unifier(unifier, *v))),
+                }
+            }
+            hir::ExprKind::Handle { body, handler_id, handler_instance } => {
+                hir::ExprKind::Handle {
+                    body: Box::new(Self::zonk_expr_with_unifier(unifier, *body)),
+                    handler_id,
+                    handler_instance: Box::new(Self::zonk_expr_with_unifier(unifier, *handler_instance)),
+                }
+            }
+            hir::ExprKind::Deref(inner) => {
+                hir::ExprKind::Deref(Box::new(Self::zonk_expr_with_unifier(unifier, *inner)))
+            }
+            hir::ExprKind::Borrow { expr: inner, mutable } => {
+                hir::ExprKind::Borrow {
+                    expr: Box::new(Self::zonk_expr_with_unifier(unifier, *inner)),
+                    mutable,
+                }
+            }
+            hir::ExprKind::AddrOf { expr: inner, mutable } => {
+                hir::ExprKind::AddrOf {
+                    expr: Box::new(Self::zonk_expr_with_unifier(unifier, *inner)),
+                    mutable,
+                }
+            }
+            hir::ExprKind::MethodCall { receiver, method, args } => {
+                hir::ExprKind::MethodCall {
+                    receiver: Box::new(Self::zonk_expr_with_unifier(unifier, *receiver)),
+                    method,
+                    args: args.into_iter().map(|a| Self::zonk_expr_with_unifier(unifier, a)).collect(),
+                }
+            }
+            hir::ExprKind::Let { pattern, init } => {
+                hir::ExprKind::Let {
+                    pattern: Self::zonk_pattern_with_unifier(unifier, pattern),
+                    init: Box::new(Self::zonk_expr_with_unifier(unifier, *init)),
+                }
+            }
+            hir::ExprKind::Unsafe(inner) => {
+                hir::ExprKind::Unsafe(Box::new(Self::zonk_expr_with_unifier(unifier, *inner)))
+            }
+            kind @ (hir::ExprKind::Literal(_)
+                | hir::ExprKind::Local(_)
+                | hir::ExprKind::Def(_)
+                | hir::ExprKind::Continue { .. }
+                | hir::ExprKind::Error) => kind,
+        };
+        hir::Expr::new(zonked_kind, zonked_ty, expr.span)
+    }
+
+    /// Zonk all types in a pattern using the given unifier.
+    fn zonk_pattern_with_unifier(unifier: &Unifier, pattern: hir::Pattern) -> hir::Pattern {
+        let zonked_ty = Self::zonk_type_with_unifier(unifier, &pattern.ty);
+        let zonked_kind = match pattern.kind {
+            hir::PatternKind::Struct { def_id, fields } => {
+                hir::PatternKind::Struct {
+                    def_id,
+                    fields: fields.into_iter().map(|f| hir::FieldPattern {
+                        field_idx: f.field_idx,
+                        pattern: Self::zonk_pattern_with_unifier(unifier, f.pattern),
+                    }).collect(),
+                }
+            }
+            hir::PatternKind::Variant { def_id, variant_idx, fields } => {
+                hir::PatternKind::Variant {
+                    def_id,
+                    variant_idx,
+                    fields: fields.into_iter().map(|p| Self::zonk_pattern_with_unifier(unifier, p)).collect(),
+                }
+            }
+            hir::PatternKind::Tuple(fields) => {
+                hir::PatternKind::Tuple(fields.into_iter().map(|p| Self::zonk_pattern_with_unifier(unifier, p)).collect())
+            }
+            hir::PatternKind::Slice { prefix, slice, suffix } => {
+                hir::PatternKind::Slice {
+                    prefix: prefix.into_iter().map(|p| Self::zonk_pattern_with_unifier(unifier, p)).collect(),
+                    slice: slice.map(|p| Box::new(Self::zonk_pattern_with_unifier(unifier, *p))),
+                    suffix: suffix.into_iter().map(|p| Self::zonk_pattern_with_unifier(unifier, p)).collect(),
+                }
+            }
+            hir::PatternKind::Or(alts) => {
+                hir::PatternKind::Or(alts.into_iter().map(|p| Self::zonk_pattern_with_unifier(unifier, p)).collect())
+            }
+            hir::PatternKind::Ref { mutable, inner } => {
+                hir::PatternKind::Ref {
+                    mutable,
+                    inner: Box::new(Self::zonk_pattern_with_unifier(unifier, *inner)),
+                }
+            }
+            hir::PatternKind::Range { start, end, inclusive } => {
+                hir::PatternKind::Range {
+                    start: start.map(|p| Box::new(Self::zonk_pattern_with_unifier(unifier, *p))),
+                    end: end.map(|p| Box::new(Self::zonk_pattern_with_unifier(unifier, *p))),
+                    inclusive,
+                }
+            }
+            hir::PatternKind::Binding { local_id, mutable, subpattern } => {
+                hir::PatternKind::Binding {
+                    local_id,
+                    mutable,
+                    subpattern: subpattern.map(|p| Box::new(Self::zonk_pattern_with_unifier(unifier, *p))),
+                }
+            }
+            kind @ (hir::PatternKind::Wildcard
+                | hir::PatternKind::Literal(_)) => kind,
+        };
+        hir::Pattern {
+            kind: zonked_kind,
+            ty: zonked_ty,
+            span: pattern.span,
+        }
+    }
+
+    /// Zonk all types in a statement using the given unifier.
+    fn zonk_stmt_with_unifier(unifier: &Unifier, stmt: hir::Stmt) -> hir::Stmt {
+        match stmt {
+            hir::Stmt::Let { local_id, init } => {
+                hir::Stmt::Let {
+                    local_id,
+                    init: init.map(|e| Self::zonk_expr_with_unifier(unifier, e)),
+                }
+            }
+            hir::Stmt::Expr(expr) => hir::Stmt::Expr(Self::zonk_expr_with_unifier(unifier, expr)),
+            hir::Stmt::Item(def_id) => hir::Stmt::Item(def_id),
+        }
     }
 
     /// Convert to HIR crate.
@@ -926,9 +1261,17 @@ impl<'a> TypeContext<'a> {
             .find(|(_, item)| item.name == "main" || item.name.ends_with("_main"))
             .map(|(id, _)| *id);
 
+        // Zonk all bodies to resolve type variables
+        // We need to clone the unifier to avoid partial move issues
+        let unifier = self.unifier.clone();
+        let mut zonked_bodies = HashMap::new();
+        for (id, body) in self.bodies {
+            zonked_bodies.insert(id, Self::zonk_body_with_unifier(&unifier, body));
+        }
+
         hir::Crate {
             items,
-            bodies: self.bodies,
+            bodies: zonked_bodies,
             entry,
             builtin_fns: self.builtin_fns,
         }

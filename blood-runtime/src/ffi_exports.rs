@@ -539,6 +539,7 @@ pub extern "C" fn blood_evidence_set_current(ev: EvidenceHandle) {
 /// * `op_index` - The operation index within the effect
 /// * `args` - Pointer to argument array (as i64 values)
 /// * `arg_count` - Number of arguments
+/// * `continuation` - Continuation handle for non-tail-resumptive handlers (0 for tail-resumptive)
 ///
 /// # Returns
 /// The result of the operation as an i64, or 0 if dispatch fails.
@@ -551,6 +552,7 @@ pub unsafe extern "C" fn blood_perform(
     op_index: i32,
     args: *const i64,
     arg_count: i64,
+    continuation: i64,
 ) -> i64 {
     // Get current evidence vector
     let ev = blood_evidence_current();
@@ -579,10 +581,10 @@ pub unsafe extern "C" fn blood_perform(
                 if let Some(&op_fn) = registry_entry.operations.get(op_index as usize) {
                     if !op_fn.is_null() {
                         // Call the operation handler with INSTANCE state, not registry state
-                        // The handler signature is: fn(state: *void, args: *i64, arg_count: i64) -> i64
-                        type OpHandler = unsafe extern "C" fn(*mut c_void, *const i64, i64) -> i64;
+                        // The handler signature is: fn(state: *void, args: *i64, arg_count: i64, continuation: i64) -> i64
+                        type OpHandler = unsafe extern "C" fn(*mut c_void, *const i64, i64, i64) -> i64;
                         let handler: OpHandler = std::mem::transmute(op_fn);
-                        return handler(instance_state, args, arg_count);
+                        return handler(instance_state, args, arg_count, continuation);
                     }
                 }
             }
@@ -1728,6 +1730,7 @@ pub extern "C" fn blood_stale_reference_panic(expected: u32, actual: u32) -> ! {
                 STALE_REFERENCE_OP_STALE_ERROR,
                 args.as_ptr(),
                 2,
+                0, // No continuation for panic handler
             );
             // If we get here, the handler resumed (which is wrong for stale_error -> !)
             // but we handle it gracefully by aborting anyway
@@ -1936,7 +1939,7 @@ mod tests {
 
         // Register a handler (effect_id = 1)
         unsafe {
-            extern "C" fn mock_op(_state: *mut c_void, _args: *const i64, _arg_count: i64) -> i64 { 0 }
+            extern "C" fn mock_op(_state: *mut c_void, _args: *const i64, _arg_count: i64, _continuation: i64) -> i64 { 0 }
             let ops: [*const c_void; 1] = [mock_op as *const c_void];
             blood_evidence_register(ev, 1, ops.as_ptr(), 1);
         }
@@ -1960,8 +1963,9 @@ mod tests {
         blood_evidence_set_current(ev);
 
         // Register a handler that returns args[0] * 2
+        // Handler signature: fn(state, args, arg_count, continuation) -> i64
         unsafe {
-            extern "C" fn double_op(_state: *mut c_void, args: *const i64, _arg_count: i64) -> i64 {
+            extern "C" fn double_op(_state: *mut c_void, args: *const i64, _arg_count: i64, _continuation: i64) -> i64 {
                 unsafe {
                     if args.is_null() { return 0; }
                     (*args) * 2
@@ -1974,7 +1978,7 @@ mod tests {
         // Perform the effect operation
         unsafe {
             let args: [i64; 1] = [21];
-            let result = blood_perform(100, 0, args.as_ptr(), 1);
+            let result = blood_perform(100, 0, args.as_ptr(), 1, 0);
             assert_eq!(result, 42);
         }
 
@@ -1988,7 +1992,7 @@ mod tests {
 
         // Register a handler
         unsafe {
-            extern "C" fn noop(_state: *mut c_void, _args: *const i64, _arg_count: i64) -> i64 { 0 }
+            extern "C" fn noop(_state: *mut c_void, _args: *const i64, _arg_count: i64, _continuation: i64) -> i64 { 0 }
             let ops: [*const c_void; 1] = [noop as *const c_void];
             blood_evidence_register(ev, 50, ops.as_ptr(), 1);
         }

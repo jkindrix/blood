@@ -1873,7 +1873,8 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
         let index_local = if let Operand::Copy(p) | Operand::Move(p) = &index_op {
             p.local
         } else {
-            let temp = self.new_temp(Type::u64(), span);
+            // Use the actual type of the index expression, not hardcoded u64
+            let temp = self.new_temp(index.ty.clone(), span);
             self.push_assign(Place::local(temp), Rvalue::Use(index_op));
             temp
         };
@@ -1986,7 +1987,8 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
                 let index_local = if let Operand::Copy(p) | Operand::Move(p) = &index_op {
                     p.local
                 } else {
-                    let temp = self.new_temp(Type::u64(), expr.span);
+                    // Use the actual type of the index expression, not hardcoded u64
+                    let temp = self.new_temp(index.ty.clone(), expr.span);
                     self.push_assign(Place::local(temp), Rvalue::Use(index_op));
                     temp
                 };

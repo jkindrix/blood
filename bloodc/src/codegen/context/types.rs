@@ -40,11 +40,15 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 let inner_type = self.lower_type(inner);
                 inner_type.ptr_type(AddressSpace::default()).into()
             }
-            TypeKind::Adt { def_id, .. } => {
+            TypeKind::Adt { def_id, args } => {
                 // Look up struct or enum definition
                 if let Some(fields) = self.struct_defs.get(def_id) {
+                    // Substitute type parameters with concrete type arguments
                     let field_types: Vec<BasicTypeEnum> = fields.iter()
-                        .map(|f| self.lower_type(f))
+                        .map(|f| {
+                            let substituted = self.substitute_type_params(f, args);
+                            self.lower_type(&substituted)
+                        })
                         .collect();
                     if field_types.is_empty() {
                         // Unit struct - use i8 placeholder
@@ -167,6 +171,63 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         } else {
             let ret_type = self.lower_type(&sig.output);
             ret_type.fn_type(&param_types, false)
+        }
+    }
+
+    /// Substitute type parameters in a type with concrete type arguments.
+    ///
+    /// This is used for monomorphizing generic types during codegen.
+    /// Type parameters are indexed positionally, so `Param(0)` gets args[0], etc.
+    pub(super) fn substitute_type_params(&self, ty: &Type, args: &[Type]) -> Type {
+        match ty.kind() {
+            TypeKind::Param(idx) => {
+                // Substitute type parameter with concrete argument
+                // TyVarId.0 gives the u32 index
+                if let Some(arg) = args.get(idx.0 as usize) {
+                    arg.clone()
+                } else {
+                    // No substitution available, return as-is
+                    ty.clone()
+                }
+            }
+            TypeKind::Tuple(fields) => {
+                let substituted: Vec<Type> = fields.iter()
+                    .map(|f| self.substitute_type_params(f, args))
+                    .collect();
+                Type::tuple(substituted)
+            }
+            TypeKind::Array { element, size } => {
+                let substituted = self.substitute_type_params(element, args);
+                Type::array(substituted, *size)
+            }
+            TypeKind::Slice { element } => {
+                let substituted = self.substitute_type_params(element, args);
+                Type::slice(substituted)
+            }
+            TypeKind::Ref { inner, mutable } => {
+                let substituted = self.substitute_type_params(inner, args);
+                Type::reference(substituted, *mutable)
+            }
+            TypeKind::Ptr { inner, mutable } => {
+                let substituted = self.substitute_type_params(inner, args);
+                Type::new(TypeKind::Ptr { inner: substituted, mutable: *mutable })
+            }
+            TypeKind::Adt { def_id, args: inner_args } => {
+                // Recursively substitute in the ADT's own type arguments
+                let substituted_args: Vec<Type> = inner_args.iter()
+                    .map(|a| self.substitute_type_params(a, args))
+                    .collect();
+                Type::adt(*def_id, substituted_args)
+            }
+            TypeKind::Fn { params, ret } => {
+                let substituted_params: Vec<Type> = params.iter()
+                    .map(|p| self.substitute_type_params(p, args))
+                    .collect();
+                let substituted_ret = self.substitute_type_params(ret, args);
+                Type::function(substituted_params, substituted_ret)
+            }
+            // Primitive types and other non-generic types return as-is
+            _ => ty.clone(),
         }
     }
 }

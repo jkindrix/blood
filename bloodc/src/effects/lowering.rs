@@ -150,6 +150,9 @@ pub struct OpImplInfo {
     pub operation_id: DefId,
     /// Whether this implementation is tail-resumptive.
     pub is_tail_resumptive: bool,
+    /// Number of resume calls in the implementation.
+    /// 0 = abort handler, 1 = single-shot, >1 = multi-shot
+    pub resume_count: usize,
     /// Body expression ID (for lowering).
     pub body_id: Option<crate::hir::BodyId>,
 }
@@ -350,15 +353,20 @@ impl EffectLowering {
             }
         };
 
-        // Analyze if this operation is tail-resumptive
-        let is_tail_resumptive = bodies
+        // Analyze if this operation is tail-resumptive and count resumes
+        let (is_tail_resumptive, resume_count) = bodies
             .and_then(|b| b.get(&op.body_id))
-            .map(|body| super::handler::analyze_tail_resumptive(&body.expr))
-            .unwrap_or(false);
+            .map(|body| {
+                let is_tail = super::handler::analyze_tail_resumptive(&body.expr);
+                let count = super::handler::count_resumes_in_expr(&body.expr);
+                (is_tail, count)
+            })
+            .unwrap_or((false, 0));
 
         Ok(OpImplInfo {
             operation_id,
             is_tail_resumptive,
+            resume_count,
             body_id: Some(op.body_id),
         })
     }

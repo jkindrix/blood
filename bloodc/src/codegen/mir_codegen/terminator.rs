@@ -623,9 +623,13 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             ).map_err(|e| vec![Diagnostic::error(format!("LLVM cast error: {}", e), span)])?
         };
 
+        // For now, pass 0 as continuation (tail-resumptive mode)
+        // TODO: Implement CPS transformation to create continuations for non-tail perform
+        let continuation_val = i64_ty.const_zero();
+
         let result = self.builder.build_call(
             perform_fn,
-            &[effect_id_val.into(), op_index_val.into(), args_ptr.into(), arg_count.into()],
+            &[effect_id_val.into(), op_index_val.into(), args_ptr.into(), arg_count.into(), continuation_val.into()],
             "perform_result"
         ).map_err(|e| vec![Diagnostic::error(format!("LLVM call error: {}", e), span)])?;
 

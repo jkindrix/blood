@@ -9,7 +9,6 @@ use inkwell::AddressSpace;
 use crate::hir::{self, DefId, LocalId};
 use crate::diagnostics::Diagnostic;
 use crate::span::Span;
-use crate::ice_err;
 
 use super::CodegenContext;
 
@@ -17,16 +16,19 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     /// Declare handler operation functions (Phase 2: Effect Handlers).
     ///
     /// Each handler operation is compiled to a function with signature:
-    /// `fn(state: *mut void, args: *const i64, arg_count: i64) -> i64`
+    /// `fn(state: *mut void, args: *const i64, arg_count: i64, continuation: i64) -> i64`
+    ///
+    /// The continuation parameter is used for non-tail-resumptive handlers (deep handlers).
+    /// For tail-resumptive handlers (shallow), the continuation is 0 (unused).
     pub fn declare_handler_operations(&mut self, hir_crate: &hir::Crate) -> Result<(), Vec<Diagnostic>> {
         let i64_type = self.context.i64_type();
         let i8_ptr_type = self.context.i8_type().ptr_type(AddressSpace::default());
         let i64_ptr_type = i64_type.ptr_type(AddressSpace::default());
 
         // Handler operation function signature:
-        // fn(state: *mut void, args: *const i64, arg_count: i64) -> i64
+        // fn(state: *mut void, args: *const i64, arg_count: i64, continuation: i64) -> i64
         let handler_op_type = i64_type.fn_type(
-            &[i8_ptr_type.into(), i64_ptr_type.into(), i64_type.into()],
+            &[i8_ptr_type.into(), i64_ptr_type.into(), i64_type.into(), i64_type.into()],
             false,
         );
 
@@ -53,6 +55,38 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         hir_crate: &hir::Crate,
     ) -> Result<(), Vec<Diagnostic>> {
         if let hir::ItemKind::Handler { operations, return_clause, state, .. } = &item.kind {
+            // Validate that handler doesn't use non-tail-resumptive patterns
+            // We support tail-resumptive (resume in tail position) and abort (no resume)
+            if let Some(handler_info) = self.handler_defs.get(&def_id) {
+                let problematic_ops: Vec<&str> = operations.iter()
+                    .zip(handler_info.op_impls.iter())
+                    .filter(|(_, op_info)| {
+                        // Non-tail-resumptive with resume calls needs continuation capture
+                        !op_info.is_tail_resumptive && op_info.resume_count > 0
+                    })
+                    .map(|(op, _)| op.name.as_str())
+                    .collect();
+
+                if !problematic_ops.is_empty() {
+                    return Err(vec![Diagnostic::error(
+                        format!(
+                            "Handler '{}' uses `resume` in non-tail position (operations: {}).\n\
+                             Non-tail-resumptive handlers require continuation capture which is not yet implemented.\n\
+                             Please refactor the handler so that `resume(...)` is the last expression in each operation body,\n\
+                             or remove the `resume` call entirely for abort handlers.\n\n\
+                             Example of tail-resumptive (supported):\n\
+                             op foo(x) => resume(x + 1)\n\n\
+                             Example of abort handler (supported):\n\
+                             op raise(err) => {{ error_value = err; () }}\n\n\
+                             Example of non-tail-resumptive (not yet supported):\n\
+                             op foo(x) => {{ let r = resume(x); r + 1 }}",
+                            item.name, problematic_ops.join(", ")
+                        ),
+                        item.span,
+                    )]);
+                }
+            }
+
             // Compile each operation
             for (op_idx, handler_op) in operations.iter().enumerate() {
                 if let Some(&fn_value) = self.handler_ops.get(&(def_id, op_idx)) {
@@ -65,7 +99,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             // Compile return clause if present
             if let Some(ret_clause) = return_clause {
                 if let Some(body) = hir_crate.bodies.get(&ret_clause.body_id) {
-                    self.compile_return_clause(def_id, &item.name, body, ret_clause)?;
+                    self.compile_return_clause(def_id, &item.name, body, ret_clause, state)?;
                 }
             }
         }
@@ -74,6 +108,54 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
     /// Compile handler operation bodies (Phase 2: Effect Handlers).
     pub fn compile_handler_operations(&mut self, hir_crate: &hir::Crate) -> Result<(), Vec<Diagnostic>> {
+        // First pass: validate handler operations
+        // We support:
+        // - Tail-resumptive handlers (resume is the last expression)
+        // - Abort handlers (no resume at all - early exit)
+        // We do NOT yet support:
+        // - Non-tail-resumptive handlers (resume followed by more computation)
+        let mut errors = Vec::new();
+        for (def_id, item) in &hir_crate.items {
+            if let hir::ItemKind::Handler { operations, .. } = &item.kind {
+                if let Some(handler_info) = self.handler_defs.get(def_id) {
+                    // Find operations that need continuation capture:
+                    // resume_count > 0 AND NOT tail-resumptive
+                    let problematic_ops: Vec<&str> = operations.iter()
+                        .zip(handler_info.op_impls.iter())
+                        .filter(|(_, op_info)| {
+                            // Non-tail-resumptive with resume calls needs continuation capture
+                            !op_info.is_tail_resumptive && op_info.resume_count > 0
+                        })
+                        .map(|(op, _)| op.name.as_str())
+                        .collect();
+
+                    if !problematic_ops.is_empty() {
+                        errors.push(Diagnostic::error(
+                            format!(
+                                "Handler '{}' uses `resume` in non-tail position (operations: {}).\n\
+                                 Non-tail-resumptive handlers require continuation capture which is not yet implemented.\n\
+                                 Please refactor the handler so that `resume(...)` is the last expression in each operation body,\n\
+                                 or remove the `resume` call entirely for abort handlers.\n\n\
+                                 Example of tail-resumptive (supported):\n\
+                                 op foo(x) => resume(x + 1)\n\n\
+                                 Example of abort handler (supported):\n\
+                                 op raise(err) => {{ error_value = err; () }}\n\n\
+                                 Example of non-tail-resumptive (not yet supported):\n\
+                                 op foo(x) => {{ let r = resume(x); r + 1 }}",
+                                item.name, problematic_ops.join(", ")
+                            ),
+                            item.span,
+                        ));
+                    }
+                }
+            }
+        }
+
+        if !errors.is_empty() {
+            return Err(errors);
+        }
+
+        // Second pass: compile handler operations
         for (def_id, item) in &hir_crate.items {
             if let hir::ItemKind::Handler { operations, return_clause, state, .. } = &item.kind {
                 // Compile each operation
@@ -88,7 +170,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // Compile return clause if present
                 if let Some(ret_clause) = return_clause {
                     if let Some(body) = hir_crate.bodies.get(&ret_clause.body_id) {
-                        self.compile_return_clause(*def_id, &item.name, body, ret_clause)?;
+                        self.compile_return_clause(*def_id, &item.name, body, ret_clause, state)?;
                     }
                 }
             }
@@ -99,19 +181,21 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     /// Compile a handler's return clause.
     ///
     /// The return clause transforms the final result of the handled computation.
-    /// Signature: fn(result: i64) -> i64
+    /// Signature: fn(result: i64, state_ptr: *mut void) -> i64
     pub(super) fn compile_return_clause(
         &mut self,
         _handler_id: DefId,
         handler_name: &str,
         body: &hir::Body,
         _return_clause: &hir::ReturnClause,
+        state_fields: &[hir::HandlerState],
     ) -> Result<(), Vec<Diagnostic>> {
         let span = body.span;
         let i64_type = self.context.i64_type();
+        let i8_ptr_type = self.context.i8_type().ptr_type(AddressSpace::default());
 
-        // Return clause function signature: fn(result: i64) -> i64
-        let ret_clause_type = i64_type.fn_type(&[i64_type.into()], false);
+        // Return clause function signature: fn(result: i64, state_ptr: *void) -> i64
+        let ret_clause_type = i64_type.fn_type(&[i64_type.into(), i8_ptr_type.into()], false);
         let fn_name = format!("{}_return", handler_name);
         let fn_value = self.module.add_function(&fn_name, ret_clause_type, None);
 
@@ -128,32 +212,101 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let result_param = fn_value.get_nth_param(0)
             .ok_or_else(|| vec![Diagnostic::error("Missing result parameter".to_string(), span)])?;
 
-        // Bind the result parameter to the first parameter local
-        let param_locals: Vec<_> = body.params().collect();
-        if let Some(param_local) = param_locals.first() {
-            let local_type = self.lower_type(&param_local.ty);
+        // Get the state pointer parameter
+        let state_ptr = fn_value.get_nth_param(1)
+            .ok_or_else(|| vec![Diagnostic::error("Missing state pointer parameter".to_string(), span)])?;
+
+        // Build the handler state struct type to properly access fields
+        let state_field_types: Vec<_> = state_fields.iter()
+            .map(|s| self.lower_type(&s.ty))
+            .collect();
+        let state_struct_type = self.context.struct_type(&state_field_types, false);
+        let state_struct_ptr_type = state_struct_type.ptr_type(inkwell::AddressSpace::default());
+
+        // Cast the void* state_ptr to the proper struct pointer type
+        let typed_state_ptr = self.builder
+            .build_pointer_cast(
+                state_ptr.into_pointer_value(),
+                state_struct_ptr_type,
+                "typed_state_ptr"
+            )
+            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+
+        // Build a map of state field names to their index in the struct
+        let state_field_indices: std::collections::HashMap<&str, u32> = state_fields.iter()
+            .enumerate()
+            .map(|(i, s)| (s.name.as_str(), i as u32))
+            .collect();
+
+        // Set up ALL locals from the body (except return place at index 0)
+        // Return clause bodies have: [return_place, param(x), state_fields...]
+        for local in &body.locals {
+            // Skip return place
+            if local.id == LocalId::RETURN_PLACE {
+                continue;
+            }
+
+            let local_type = self.lower_type(&local.ty);
+            let local_name = local.name.as_deref().unwrap_or("local");
+
+            // Check if this local corresponds to a state field
+            if let Some(&field_idx) = state_field_indices.get(local_name) {
+                // This is a state field - load its value from the state struct
+                let field_ptr = self.builder
+                    .build_struct_gep(typed_state_ptr, field_idx, &format!("{}_ptr", local_name))
+                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+
+                // Create an alloca to hold the local
+                let alloca = self.builder
+                    .build_alloca(local_type, local_name)
+                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+
+                // Load the value from state and store in the local
+                let value = self.builder
+                    .build_load(field_ptr, &format!("{}_val", local_name))
+                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+                self.builder.build_store(alloca, value)
+                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+
+                self.locals.insert(local.id, alloca);
+                continue;
+            }
+
+            // For the result param local, bind to the result parameter
             let alloca = self.builder
-                .build_alloca(local_type, "ret_param")
+                .build_alloca(local_type, local_name)
                 .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
-            // Convert from i64 if needed
-            let converted_val = if local_type.is_int_type() {
-                let int_type = local_type.into_int_type();
-                if int_type.get_bit_width() == 64 {
-                    result_param
+            // Check if this is the result parameter (first param local)
+            let param_locals: Vec<_> = body.params().collect();
+            if param_locals.first().map(|p| p.id) == Some(local.id) {
+                // Convert from i64 if needed
+                let converted_val = if local_type.is_int_type() {
+                    let int_type = local_type.into_int_type();
+                    if int_type.get_bit_width() == 64 {
+                        result_param
+                    } else {
+                        self.builder
+                            .build_int_truncate(result_param.into_int_value(), int_type, "ret_trunc")
+                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                            .into()
+                    }
                 } else {
-                    self.builder
-                        .build_int_truncate(result_param.into_int_value(), int_type, "ret_trunc")
-                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
-                        .into()
-                }
-            } else {
-                result_param
-            };
+                    result_param
+                };
 
-            self.builder.build_store(alloca, converted_val)
-                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
-            self.locals.insert(param_local.id, alloca);
+                self.builder.build_store(alloca, converted_val)
+                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+            } else {
+                // Initialize with zero/default for other locals
+                if local_type.is_int_type() {
+                    let zero_val = local_type.into_int_type().const_zero();
+                    self.builder.build_store(alloca, zero_val)
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+                }
+            }
+
+            self.locals.insert(local.id, alloca);
         }
 
         // Compile the return clause body
@@ -183,12 +336,37 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
                         .into_int_value()
                 }
-                other => {
-                    return Err(vec![ice_err!(
+                BasicValueEnum::StructValue(sv) => {
+                    // Tuple/struct return: allocate on stack and return pointer as i64
+                    // Note: For proper effects implementation, this should use a region allocator
+                    // or the caller should pre-allocate space for the return value.
+                    let struct_type = sv.get_type();
+                    let alloca = self.builder
+                        .build_alloca(struct_type, "ret_tuple")
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+                    self.builder.build_store(alloca, sv)
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+                    self.builder
+                        .build_ptr_to_int(alloca, i64_type, "ret_tuple_ptr")
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                }
+                BasicValueEnum::ArrayValue(av) => {
+                    // Array return: allocate on stack and return pointer as i64
+                    let array_type = av.get_type();
+                    let alloca = self.builder
+                        .build_alloca(array_type, "ret_array")
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+                    self.builder.build_store(alloca, av)
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+                    self.builder
+                        .build_ptr_to_int(alloca, i64_type, "ret_array_ptr")
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                }
+                BasicValueEnum::VectorValue(_) => {
+                    // SIMD vectors are not expected in normal handler returns
+                    return Err(vec![Diagnostic::error(
+                        "Vector return types not supported in handler return clauses".to_string(),
                         span,
-                        "unsupported return type in handler state body";
-                        "type" => other.get_type(),
-                        "expected" => "IntValue, PointerValue, or FloatValue"
                     )]);
                 }
             };
@@ -224,17 +402,28 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // Save and set context
         let saved_fn = self.current_fn;
         let saved_locals = std::mem::take(&mut self.locals);
+        let saved_continuation = self.current_continuation.take();
         self.current_fn = Some(fn_value);
 
-        // Get parameters: (state: *mut void, args: *const i64, arg_count: i64)
+        // Get parameters: (state: *mut void, args: *const i64, arg_count: i64, continuation: i64)
         let state_ptr = fn_value.get_nth_param(0)
             .ok_or_else(|| vec![Diagnostic::error("Missing state parameter".to_string(), span)])?;
         let args_ptr = fn_value.get_nth_param(1)
             .ok_or_else(|| vec![Diagnostic::error("Missing args parameter".to_string(), span)])?;
         let _arg_count = fn_value.get_nth_param(2)
             .ok_or_else(|| vec![Diagnostic::error("Missing arg_count parameter".to_string(), span)])?;
+        let continuation_param = fn_value.get_nth_param(3)
+            .ok_or_else(|| vec![Diagnostic::error("Missing continuation parameter".to_string(), span)])?;
 
         let i64_type = self.context.i64_type();
+
+        // Store continuation parameter for use by compile_resume
+        let cont_alloca = self.builder
+            .build_alloca(i64_type, "continuation")
+            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+        self.builder.build_store(cont_alloca, continuation_param)
+            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+        self.current_continuation = Some(cont_alloca);
 
         // Build the handler state struct type to properly access fields
         let state_field_types: Vec<_> = state_fields.iter()
@@ -358,12 +547,34 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                             .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
                             .into_int_value()
                     }
-                    other => {
-                        return Err(vec![ice_err!(
+                    BasicValueEnum::StructValue(sv) => {
+                        // Tuple/struct return: allocate on stack and return pointer as i64
+                        let struct_type = sv.get_type();
+                        let alloca = self.builder
+                            .build_alloca(struct_type, "ret_tuple")
+                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+                        self.builder.build_store(alloca, sv)
+                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+                        self.builder
+                            .build_ptr_to_int(alloca, i64_type, "ret_tuple_ptr")
+                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                    }
+                    BasicValueEnum::ArrayValue(av) => {
+                        // Array return: allocate on stack and return pointer as i64
+                        let array_type = av.get_type();
+                        let alloca = self.builder
+                            .build_alloca(array_type, "ret_array")
+                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+                        self.builder.build_store(alloca, av)
+                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+                        self.builder
+                            .build_ptr_to_int(alloca, i64_type, "ret_array_ptr")
+                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                    }
+                    BasicValueEnum::VectorValue(_) => {
+                        return Err(vec![Diagnostic::error(
+                            "Vector return types not supported in handler operations".to_string(),
                             span,
-                            "unsupported return type in handler op body";
-                            "type" => other.get_type(),
-                            "expected" => "IntValue, PointerValue, or FloatValue"
                         )]);
                     }
                 };
@@ -379,6 +590,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // Restore context
         self.current_fn = saved_fn;
         self.locals = saved_locals;
+        self.current_continuation = saved_continuation;
 
         Ok(())
     }

@@ -629,20 +629,27 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
             AggregateKind::Adt { def_id, variant_idx } => {
                 // Look up struct/enum definition
-                if let Some(field_types) = self.struct_defs.get(def_id) {
-                    let llvm_fields: Vec<_> = field_types.iter()
-                        .map(|t| self.lower_type(t))
-                        .collect();
-                    let struct_ty = self.context.struct_type(&llvm_fields, false);
-                    let mut agg = struct_ty.get_undef();
-                    for (i, val) in vals.iter().enumerate() {
-                        agg = self.builder.build_insert_value(agg, *val, i as u32, &format!("field_{}", i))
-                            .map_err(|e| vec![Diagnostic::error(
-                                format!("LLVM insert error: {}", e), Span::dummy()
-                            )])?
-                            .into_struct_value();
+                if self.struct_defs.contains_key(def_id) {
+                    // Use the concrete types of the operand values directly.
+                    // This handles generic handlers correctly - the operands have already
+                    // been compiled with the concrete type arguments, so their LLVM types
+                    // are correct. We don't need to look up and substitute generic field types.
+                    if vals.is_empty() {
+                        // Unit struct - use i8 placeholder
+                        Ok(self.context.i8_type().const_int(0, false).into())
+                    } else {
+                        let types: Vec<_> = vals.iter().map(|v| v.get_type()).collect();
+                        let struct_ty = self.context.struct_type(&types, false);
+                        let mut agg = struct_ty.get_undef();
+                        for (i, val) in vals.iter().enumerate() {
+                            agg = self.builder.build_insert_value(agg, *val, i as u32, &format!("field_{}", i))
+                                .map_err(|e| vec![Diagnostic::error(
+                                    format!("LLVM insert error: {}", e), Span::dummy()
+                                )])?
+                                .into_struct_value();
+                        }
+                        Ok(agg.into())
                     }
-                    Ok(agg.into())
                 } else if let Some(_variants) = self.enum_defs.get(def_id) {
                     // Enum variant - first field is tag
                     let variant_index = variant_idx.ok_or_else(|| vec![ice_err!(

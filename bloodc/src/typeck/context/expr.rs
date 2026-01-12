@@ -574,8 +574,12 @@ impl<'a> TypeContext<'a> {
             }
         }
 
-        // The type of the resume expression depends on the continuation's return type
-        let resume_ty = self.unifier.fresh_var();
+        // The type of the resume expression depends on the continuation's return type.
+        // For deep handlers, this is the continuation result type set by the handler.
+        // For shallow handlers (or if not tracked), default to a fresh variable.
+        let resume_ty = self.current_resume_result_type
+            .clone()
+            .unwrap_or_else(|| self.unifier.fresh_var());
 
         Ok(hir::Expr::new(
             hir::ExprKind::Resume {

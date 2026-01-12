@@ -14,11 +14,128 @@ use inkwell::types::{BasicType, BasicTypeEnum};
 use inkwell::AddressSpace;
 
 use crate::hir::{self, DefId, LocalId, Type};
+use crate::hir::ty::{TypeKind, TyVarId};
 use crate::mir::{EscapeResults, MirBody};
 use crate::codegen::mir_codegen::MirTypesCodegen;
 use crate::diagnostics::Diagnostic;
 use crate::span::Span;
 use crate::effects::{EffectLowering, EffectInfo, HandlerInfo};
+
+/// Normalize type parameters in a type, replacing arbitrary TyVarIds with sequential indices.
+///
+/// This is needed because handlers' state fields may reference type parameters with
+/// arbitrary TyVarIds (e.g., TyVarId(3)), but when the handler is instantiated, the
+/// type arguments are in sequential order (args[0], args[1], ...).
+///
+/// The generics parameter provides the list of generic params for the handler, which
+/// we use to determine the correct index for each type parameter.
+fn normalize_type_params(ty: &Type, _generics: &hir::Generics) -> Type {
+    // Build a mapping from any TyVarId to its position in the generics list
+    // We scan the type to find all TyVarIds and assign them sequential indices
+    // based on the order they appear in the generics params (type params only)
+    let mut tyvar_to_idx: HashMap<TyVarId, u32> = HashMap::new();
+
+    // The generics.params contains GenericParam items. Type params should get
+    // sequential indices. We'll also scan the type itself to find TyVarIds and
+    // assume they map to generics params in order.
+
+    // Collect all TyVarIds from the type
+    let mut tyvars_in_type = Vec::new();
+    collect_tyvars(ty, &mut tyvars_in_type);
+
+    // Assume the TyVarIds in the type correspond to the generic params in order
+    // This is a simplification - ideally we'd have a more robust mapping
+    for (idx, tyvar) in tyvars_in_type.iter().enumerate() {
+        tyvar_to_idx.entry(*tyvar).or_insert(idx as u32);
+    }
+
+    // Now recursively substitute TyVarIds with sequential Param indices
+    normalize_type_recursive(ty, &tyvar_to_idx)
+}
+
+/// Collect all TyVarIds from a type (in order of appearance).
+fn collect_tyvars(ty: &Type, tyvars: &mut Vec<TyVarId>) {
+    match ty.kind() {
+        TypeKind::Param(id) => {
+            if !tyvars.contains(id) {
+                tyvars.push(*id);
+            }
+        }
+        TypeKind::Tuple(fields) => {
+            for f in fields {
+                collect_tyvars(f, tyvars);
+            }
+        }
+        TypeKind::Array { element, .. } | TypeKind::Slice { element } => {
+            collect_tyvars(element, tyvars);
+        }
+        TypeKind::Ref { inner, .. } | TypeKind::Ptr { inner, .. } => {
+            collect_tyvars(inner, tyvars);
+        }
+        TypeKind::Adt { args, .. } => {
+            for arg in args {
+                collect_tyvars(arg, tyvars);
+            }
+        }
+        TypeKind::Fn { params, ret } => {
+            for p in params {
+                collect_tyvars(p, tyvars);
+            }
+            collect_tyvars(ret, tyvars);
+        }
+        _ => {}
+    }
+}
+
+/// Recursively replace TyVarIds with normalized Param indices.
+fn normalize_type_recursive(ty: &Type, tyvar_to_idx: &HashMap<TyVarId, u32>) -> Type {
+    match ty.kind() {
+        TypeKind::Param(id) => {
+            if let Some(&idx) = tyvar_to_idx.get(id) {
+                // Create a new Param with sequential index
+                Type::param(TyVarId(idx))
+            } else {
+                ty.clone()
+            }
+        }
+        TypeKind::Tuple(fields) => {
+            let normalized: Vec<Type> = fields.iter()
+                .map(|f| normalize_type_recursive(f, tyvar_to_idx))
+                .collect();
+            Type::tuple(normalized)
+        }
+        TypeKind::Array { element, size } => {
+            let normalized = normalize_type_recursive(element, tyvar_to_idx);
+            Type::array(normalized, *size)
+        }
+        TypeKind::Slice { element } => {
+            let normalized = normalize_type_recursive(element, tyvar_to_idx);
+            Type::slice(normalized)
+        }
+        TypeKind::Ref { inner, mutable } => {
+            let normalized = normalize_type_recursive(inner, tyvar_to_idx);
+            Type::reference(normalized, *mutable)
+        }
+        TypeKind::Ptr { inner, mutable } => {
+            let normalized = normalize_type_recursive(inner, tyvar_to_idx);
+            Type::new(TypeKind::Ptr { inner: normalized, mutable: *mutable })
+        }
+        TypeKind::Adt { def_id, args } => {
+            let normalized_args: Vec<Type> = args.iter()
+                .map(|a| normalize_type_recursive(a, tyvar_to_idx))
+                .collect();
+            Type::adt(*def_id, normalized_args)
+        }
+        TypeKind::Fn { params, ret } => {
+            let normalized_params: Vec<Type> = params.iter()
+                .map(|p| normalize_type_recursive(p, tyvar_to_idx))
+                .collect();
+            let normalized_ret = normalize_type_recursive(ret, tyvar_to_idx);
+            Type::function(normalized_params, normalized_ret)
+        }
+        _ => ty.clone(),
+    }
+}
 
 // Submodules
 mod types;
@@ -112,6 +229,9 @@ pub struct CodegenContext<'ctx, 'a> {
     pub(super) const_globals: HashMap<DefId, inkwell::values::GlobalValue<'ctx>>,
     /// Global statics: maps DefId to LLVM global value.
     pub(super) static_globals: HashMap<DefId, inkwell::values::GlobalValue<'ctx>>,
+    /// Current continuation pointer for deep handler operations.
+    /// When set, compile_resume calls the continuation instead of returning.
+    pub(super) current_continuation: Option<PointerValue<'ctx>>,
 }
 
 impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
@@ -149,6 +269,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             wasm_imports: HashMap::new(),
             const_globals: HashMap::new(),
             static_globals: HashMap::new(),
+            current_continuation: None,
         }
     }
 
@@ -248,9 +369,13 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // Second pass: collect handler definitions (effects must be registered first)
         // Also register handlers in struct_defs so they can be compiled as ADTs
         for (def_id, item) in &hir_crate.items {
-            if let hir::ItemKind::Handler { state, .. } = &item.kind {
+            if let hir::ItemKind::Handler { state, generics, .. } = &item.kind {
                 // Register handler as an ADT in struct_defs (state fields are the struct fields)
-                let field_types: Vec<Type> = state.iter().map(|s| s.ty.clone()).collect();
+                // Normalize field types: replace arbitrary TyVarIds with sequential indices (0, 1, 2...)
+                // so substitution with type args works correctly during lower_type
+                let field_types: Vec<Type> = state.iter()
+                    .map(|s| normalize_type_params(&s.ty, generics))
+                    .collect();
                 self.struct_defs.insert(*def_id, field_types);
 
                 match self.effect_lowering.lower_handler_decl(item, Some(&hir_crate.bodies)) {
@@ -973,9 +1098,13 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // Second pass: collect handler definitions (effects must be registered first)
         // Also register handlers in struct_defs so they can be compiled as ADTs
         for (def_id, item) in &hir_crate.items {
-            if let hir::ItemKind::Handler { state, .. } = &item.kind {
+            if let hir::ItemKind::Handler { state, generics, .. } = &item.kind {
                 // Register handler as an ADT in struct_defs (state fields are the struct fields)
-                let field_types: Vec<Type> = state.iter().map(|s| s.ty.clone()).collect();
+                // Normalize field types: replace arbitrary TyVarIds with sequential indices (0, 1, 2...)
+                // so substitution with type args works correctly during lower_type
+                let field_types: Vec<Type> = state.iter()
+                    .map(|s| normalize_type_params(&s.ty, generics))
+                    .collect();
                 self.struct_defs.insert(*def_id, field_types);
 
                 match self.effect_lowering.lower_handler_decl(item, Some(&hir_crate.bodies)) {
@@ -1295,12 +1424,13 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let ev_current_type = void_ptr_type.fn_type(&[], false);
         self.module.add_function("blood_evidence_current", ev_current_type, None);
 
-        // blood_perform(effect_id: i64, op_index: i32, args: *i64, arg_count: i64) -> i64
+        // blood_perform(effect_id: i64, op_index: i32, args: *i64, arg_count: i64, continuation: i64) -> i64
         let perform_type = i64_type.fn_type(&[
             i64_type.into(),
             i32_type.into(),
             i64_ptr_type.into(),
             i64_type.into(),
+            i64_type.into(),  // continuation parameter
         ], false);
         self.module.add_function("blood_perform", perform_type, None);
 

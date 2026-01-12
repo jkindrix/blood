@@ -475,11 +475,26 @@ impl<'a> TypeContext<'a> {
             }
 
             // Add 'resume' to scope as a special continuation function
-            // Resume is a function that takes the return value and returns unit
-            // (the actual continuation handling happens at runtime)
             // Use the substituted return type for consistency with handler's type args
             let resume_return_ty = self.substitute_type_vars(&effect_op.return_ty, &effect_subst);
-            let resume_ty = Type::function(vec![resume_return_ty.clone()], Type::unit());
+
+            // For deep handlers, resume returns the result of the continuation
+            // (a type variable that will be unified at the handle site).
+            // For shallow handlers, resume is tail-position only and returns unit.
+            let (resume_result_ty, op_body_expected_ty) = match handler_info.kind {
+                ast::HandlerKind::Deep => {
+                    // Deep handler: resume returns a fresh type variable
+                    // This represents the result of running the continuation
+                    let continuation_result_ty = self.unifier.fresh_var();
+                    (continuation_result_ty.clone(), continuation_result_ty)
+                }
+                ast::HandlerKind::Shallow => {
+                    // Shallow handler: resume is tail-resumptive only, returns unit
+                    (Type::unit(), Type::unit())
+                }
+            };
+
+            let resume_ty = Type::function(vec![resume_return_ty.clone()], resume_result_ty.clone());
             let resume_local_id = self.resolver.define_local(
                 "resume".to_string(),
                 resume_ty.clone(),
@@ -496,9 +511,13 @@ impl<'a> TypeContext<'a> {
 
             // Set the expected resume type for E0303 checking
             self.current_resume_type = Some(resume_return_ty);
+            // Set the resume result type for infer_resume
+            self.current_resume_result_type = Some(resume_result_ty.clone());
 
-            // Type-check the body (expected type is unit since resume handles the return)
-            let body_expr = self.check_block(&op_impl.body, &Type::unit())?;
+            // Type-check the body
+            // For deep handlers: body can return a value (same type as continuation result)
+            // For shallow handlers: body expected type is unit (resume must be in tail position)
+            let body_expr = self.check_block(&op_impl.body, &op_body_expected_ty)?;
 
             // Create body
             let body_id = hir::BodyId::new(self.next_body_id);
@@ -516,6 +535,7 @@ impl<'a> TypeContext<'a> {
 
             self.resolver.pop_scope();
             self.current_resume_type = None;
+            self.current_resume_result_type = None;
         }
 
         // Type-check return clause if present

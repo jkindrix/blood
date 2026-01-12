@@ -171,6 +171,9 @@ impl Unifier {
             | (TypeKind::Tuple(ts), TypeKind::Primitive(PrimitiveTy::Unit))
                 if ts.is_empty() => Ok(()),
 
+            // Same inference variable - trivially equal
+            (TypeKind::Infer(id1), TypeKind::Infer(id2)) if id1 == id2 => Ok(()),
+
             // Inference variable - bind it
             (TypeKind::Infer(id), _) => {
                 self.bind(*id, t2.clone(), span)

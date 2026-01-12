@@ -219,6 +219,13 @@ fn contains_multiple_resumes(expr: &Expr) -> bool {
 }
 
 /// Count the number of resume expressions in a tree.
+///
+/// Public wrapper for use in effect lowering.
+pub fn count_resumes_in_expr(expr: &Expr) -> usize {
+    count_resumes(expr)
+}
+
+/// Count the number of resume expressions in a tree.
 fn count_resumes(expr: &Expr) -> usize {
     use crate::hir::ExprKind;
 
