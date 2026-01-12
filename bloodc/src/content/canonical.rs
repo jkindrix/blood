@@ -899,4 +899,224 @@ mod tests {
         // Should not panic
         let _ = ast.compute_hash();
     }
+
+    #[test]
+    fn test_canonical_ast_deterministic_hashing() {
+        // Test that identical ASTs produce identical hashes across multiple computations
+        fn build_complex_ast() -> CanonicalAST {
+            CanonicalAST::Lambda {
+                param_count: 2,
+                body: Box::new(CanonicalAST::BinOp {
+                    op: CanonicalBinOp::Add,
+                    lhs: Box::new(CanonicalAST::LocalVar(DeBruijnIndex(0))),
+                    rhs: Box::new(CanonicalAST::LocalVar(DeBruijnIndex(1))),
+                }),
+            }
+        }
+
+        let ast1 = build_complex_ast();
+        let ast2 = build_complex_ast();
+        let ast3 = build_complex_ast();
+
+        let hash1 = ast1.compute_hash();
+        let hash2 = ast2.compute_hash();
+        let hash3 = ast3.compute_hash();
+
+        assert_eq!(hash1, hash2, "Identical ASTs should produce same hash");
+        assert_eq!(hash2, hash3, "Hash computation should be deterministic");
+    }
+
+    #[test]
+    fn test_debruijn_renaming_produces_same_hash() {
+        // The key property: alpha-equivalent terms have the same hash
+        // fn(x) { x + 1 } and fn(y) { y + 1 } should hash the same
+        // because they both canonicalize to fn(#0) { #0 + 1 }
+
+        let ast1 = CanonicalAST::Lambda {
+            param_count: 1,
+            body: Box::new(CanonicalAST::BinOp {
+                op: CanonicalBinOp::Add,
+                lhs: Box::new(CanonicalAST::LocalVar(DeBruijnIndex(0))),
+                rhs: Box::new(CanonicalAST::IntLit(1)),
+            }),
+        };
+
+        // Same structure, different "conceptual" variable name but same de Bruijn index
+        let ast2 = CanonicalAST::Lambda {
+            param_count: 1,
+            body: Box::new(CanonicalAST::BinOp {
+                op: CanonicalBinOp::Add,
+                lhs: Box::new(CanonicalAST::LocalVar(DeBruijnIndex(0))),
+                rhs: Box::new(CanonicalAST::IntLit(1)),
+            }),
+        };
+
+        assert_eq!(ast1.compute_hash(), ast2.compute_hash());
+    }
+
+    #[test]
+    fn test_all_ast_node_types_deterministic() {
+        // Test each AST node type produces deterministic hashes
+
+        // Literals
+        assert_eq!(
+            CanonicalAST::IntLit(42).compute_hash(),
+            CanonicalAST::IntLit(42).compute_hash()
+        );
+        assert_eq!(
+            CanonicalAST::FloatLit(3.14).compute_hash(),
+            CanonicalAST::FloatLit(3.14).compute_hash()
+        );
+        assert_eq!(
+            CanonicalAST::StringLit(b"test".to_vec()).compute_hash(),
+            CanonicalAST::StringLit(b"test".to_vec()).compute_hash()
+        );
+        assert_eq!(
+            CanonicalAST::BoolLit(true).compute_hash(),
+            CanonicalAST::BoolLit(true).compute_hash()
+        );
+        assert_eq!(
+            CanonicalAST::Unit.compute_hash(),
+            CanonicalAST::Unit.compute_hash()
+        );
+
+        // Variables
+        assert_eq!(
+            CanonicalAST::LocalVar(DeBruijnIndex(5)).compute_hash(),
+            CanonicalAST::LocalVar(DeBruijnIndex(5)).compute_hash()
+        );
+        assert_eq!(
+            CanonicalAST::TypeVar(3).compute_hash(),
+            CanonicalAST::TypeVar(3).compute_hash()
+        );
+
+        // References
+        let hash = ContentHash::compute(b"test ref");
+        assert_eq!(
+            CanonicalAST::DefRef(hash).compute_hash(),
+            CanonicalAST::DefRef(hash).compute_hash()
+        );
+        assert_eq!(
+            CanonicalAST::BuiltinRef(BuiltinId::INT_ADD).compute_hash(),
+            CanonicalAST::BuiltinRef(BuiltinId::INT_ADD).compute_hash()
+        );
+
+        // Control flow
+        assert_eq!(
+            CanonicalAST::Return(None).compute_hash(),
+            CanonicalAST::Return(None).compute_hash()
+        );
+        assert_eq!(
+            CanonicalAST::Break(None).compute_hash(),
+            CanonicalAST::Break(None).compute_hash()
+        );
+        assert_eq!(
+            CanonicalAST::Continue.compute_hash(),
+            CanonicalAST::Continue.compute_hash()
+        );
+
+        // Collections
+        assert_eq!(
+            CanonicalAST::Tuple(vec![CanonicalAST::IntLit(1), CanonicalAST::IntLit(2)]).compute_hash(),
+            CanonicalAST::Tuple(vec![CanonicalAST::IntLit(1), CanonicalAST::IntLit(2)]).compute_hash()
+        );
+        assert_eq!(
+            CanonicalAST::Array(vec![CanonicalAST::IntLit(3)]).compute_hash(),
+            CanonicalAST::Array(vec![CanonicalAST::IntLit(3)]).compute_hash()
+        );
+    }
+
+    #[test]
+    fn test_effect_row_deterministic() {
+        let h1 = ContentHash::compute(b"IO");
+        let h2 = ContentHash::compute(b"State");
+
+        // Same effects should produce same row regardless of initial order
+        let row1 = CanonicalEffectRow::with_effects(vec![h1, h2], false);
+        let row2 = CanonicalEffectRow::with_effects(vec![h2, h1], false);
+
+        // After sorting, they should be equal
+        assert_eq!(row1.effects, row2.effects);
+
+        // Hash the rows via type arrow
+        let type1 = CanonicalAST::TypeArrow {
+            params: vec![CanonicalAST::IntLit(0)],
+            ret: Box::new(CanonicalAST::IntLit(0)),
+            effects: row1,
+        };
+        let type2 = CanonicalAST::TypeArrow {
+            params: vec![CanonicalAST::IntLit(0)],
+            ret: Box::new(CanonicalAST::IntLit(0)),
+            effects: row2,
+        };
+
+        assert_eq!(type1.compute_hash(), type2.compute_hash());
+    }
+
+    #[test]
+    fn test_handler_deterministic() {
+        let effect_hash = ContentHash::compute(b"TestEffect");
+
+        fn build_handler(effect: ContentHash) -> CanonicalHandler {
+            CanonicalHandler {
+                effect,
+                operations: vec![
+                    CanonicalOpImpl {
+                        op_index: 0,
+                        param_count: 1,
+                        body: Box::new(CanonicalAST::IntLit(42)),
+                    },
+                ],
+                return_clause: Some(Box::new(CanonicalAST::LocalVar(DeBruijnIndex(0)))),
+            }
+        }
+
+        let handler1 = build_handler(effect_hash);
+        let handler2 = build_handler(effect_hash);
+
+        let ast1 = CanonicalAST::Handle {
+            body: Box::new(CanonicalAST::IntLit(0)),
+            handler: handler1,
+        };
+        let ast2 = CanonicalAST::Handle {
+            body: Box::new(CanonicalAST::IntLit(0)),
+            handler: handler2,
+        };
+
+        assert_eq!(ast1.compute_hash(), ast2.compute_hash());
+    }
+
+    #[test]
+    fn test_pattern_deterministic() {
+        // Wildcard
+        assert_eq!(
+            CanonicalPattern::Wildcard.serialize_and_hash(),
+            CanonicalPattern::Wildcard.serialize_and_hash()
+        );
+
+        // Binding
+        assert_eq!(
+            CanonicalPattern::Binding(DeBruijnIndex(0)).serialize_and_hash(),
+            CanonicalPattern::Binding(DeBruijnIndex(0)).serialize_and_hash()
+        );
+
+        // Tuple
+        let tuple_pat = CanonicalPattern::Tuple(vec![
+            CanonicalPattern::Wildcard,
+            CanonicalPattern::Binding(DeBruijnIndex(0)),
+        ]);
+        assert_eq!(
+            tuple_pat.serialize_and_hash(),
+            tuple_pat.clone().serialize_and_hash()
+        );
+    }
+}
+
+impl CanonicalPattern {
+    #[cfg(test)]
+    fn serialize_and_hash(&self) -> ContentHash {
+        let mut hasher = ContentHasher::new();
+        self.serialize(&mut hasher);
+        hasher.finalize()
+    }
 }

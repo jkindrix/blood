@@ -357,4 +357,136 @@ mod tests {
         let hash = ContentHash::from_bytes(bytes);
         assert_eq!(hash.as_bytes(), &bytes);
     }
+
+    #[test]
+    fn test_deterministic_hash_across_runs() {
+        // Test that the same input always produces the same hash.
+        // This is critical for content-addressing.
+
+        // Test 1: Simple byte data
+        let input = b"fn add(x: i32, y: i32) -> i32 { x + y }";
+        let hash1 = ContentHash::compute(input);
+        let hash2 = ContentHash::compute(input);
+        let hash3 = ContentHash::compute(input);
+        assert_eq!(hash1, hash2, "Same input should produce same hash");
+        assert_eq!(hash2, hash3, "Hash should be deterministic across calls");
+
+        // Verify the actual bytes are identical
+        assert_eq!(hash1.as_bytes(), hash2.as_bytes());
+
+        // Test 2: Empty input
+        let empty_hash1 = ContentHash::compute(b"");
+        let empty_hash2 = ContentHash::compute(b"");
+        assert_eq!(empty_hash1, empty_hash2);
+
+        // Test 3: Unicode input
+        let unicode_input = "fn greet(name: String) -> String { format!(\"Hello, {}!\", name) }".as_bytes();
+        let unicode_hash1 = ContentHash::compute(unicode_input);
+        let unicode_hash2 = ContentHash::compute(unicode_input);
+        assert_eq!(unicode_hash1, unicode_hash2);
+    }
+
+    #[test]
+    fn test_deterministic_hasher_across_runs() {
+        // Test ContentHasher produces deterministic results
+        fn build_hash() -> ContentHash {
+            let mut hasher = ContentHasher::new();
+            hasher.update_u8(0xFF);
+            hasher.update_u16(1234);
+            hasher.update_u32(567890);
+            hasher.update_u64(123456789012345);
+            hasher.update_i64(-42);
+            hasher.update_i128(-999999999999999999);
+            hasher.update_f64(3.14159265358979);
+            hasher.update_str("deterministic test string");
+            hasher.update(b"raw bytes data");
+            hasher.finalize()
+        }
+
+        let hash1 = build_hash();
+        let hash2 = build_hash();
+        let hash3 = build_hash();
+
+        assert_eq!(hash1, hash2, "ContentHasher should be deterministic");
+        assert_eq!(hash2, hash3, "Multiple runs should produce same hash");
+    }
+
+    #[test]
+    fn test_hash_serialization_determinism() {
+        // Test that serialization round-trips produce same hash
+        let original = ContentHash::compute(b"test input for serialization");
+
+        // Convert to string and back multiple times
+        let serialized1: String = original.into();
+        let deserialized1 = ContentHash::try_from(serialized1.clone()).unwrap();
+
+        let serialized2: String = deserialized1.into();
+        let deserialized2 = ContentHash::try_from(serialized2.clone()).unwrap();
+
+        // All should be equal
+        assert_eq!(serialized1, serialized2, "Serialized form should be deterministic");
+        assert_eq!(deserialized1, deserialized2, "Round-trip should preserve hash");
+    }
+
+    #[test]
+    fn test_hash_with_hash_input_determinism() {
+        // Test that hashing a hash produces deterministic results
+        let base_hash = ContentHash::compute(b"base content");
+
+        let mut hasher1 = ContentHasher::new();
+        hasher1.update_hash(&base_hash);
+        hasher1.update_str("additional data");
+        let compound1 = hasher1.finalize();
+
+        let mut hasher2 = ContentHasher::new();
+        hasher2.update_hash(&base_hash);
+        hasher2.update_str("additional data");
+        let compound2 = hasher2.finalize();
+
+        assert_eq!(compound1, compound2, "Hashing a hash should be deterministic");
+    }
+
+    #[test]
+    fn test_versioned_hash_determinism() {
+        // Test that versioned hashing is deterministic
+        let input = b"versioned content test";
+
+        let hash1 = ContentHash::compute_versioned(input);
+        let hash2 = ContentHash::compute_versioned(input);
+        let hash3 = ContentHash::compute_versioned(input);
+
+        assert_eq!(hash1, hash2);
+        assert_eq!(hash2, hash3);
+
+        // Versioned and non-versioned should be different
+        let non_versioned = ContentHash::compute(input);
+        assert_ne!(hash1, non_versioned);
+    }
+
+    #[test]
+    fn test_builtin_hash_determinism() {
+        // Test that builtin hashes are stable
+        let builtins = [
+            "Int.add", "Int.sub", "Int.mul", "Int.div",
+            "Bool.and", "Bool.or", "Bool.not",
+            "String.concat", "Array.length",
+        ];
+
+        for name in builtins {
+            let hash1 = ContentHash::builtin(name);
+            let hash2 = ContentHash::builtin(name);
+            let hash3 = ContentHash::builtin(name);
+            assert_eq!(hash1, hash2, "Builtin '{}' should be deterministic", name);
+            assert_eq!(hash2, hash3);
+        }
+
+        // Different builtins should have different hashes
+        for i in 0..builtins.len() {
+            for j in (i + 1)..builtins.len() {
+                let hash_i = ContentHash::builtin(builtins[i]);
+                let hash_j = ContentHash::builtin(builtins[j]);
+                assert_ne!(hash_i, hash_j, "Different builtins should have different hashes");
+            }
+        }
+    }
 }

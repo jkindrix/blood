@@ -74,6 +74,21 @@ pub enum InstantiationResult {
         /// Found number of arguments.
         found: usize,
     },
+    /// A type parameter constraint was not satisfied.
+    ConstraintNotSatisfied(ConstraintError),
+}
+
+/// Error indicating a constraint was not satisfied during generic instantiation.
+#[derive(Debug, Clone)]
+pub struct ConstraintError {
+    /// The type parameter whose constraint was violated.
+    pub param_name: String,
+    /// The type parameter's ID.
+    pub param_id: TyVarId,
+    /// The concrete type that was inferred for this parameter.
+    pub concrete_type: Type,
+    /// The constraint that was not satisfied.
+    pub constraint: Constraint,
 }
 
 /// A constraint on a type parameter.
@@ -345,6 +360,7 @@ impl<'a> DispatchResolver<'a> {
                 }
                 InstantiationResult::TypeMismatch { .. } => return false,
                 InstantiationResult::ArityMismatch { .. } => return false,
+                InstantiationResult::ConstraintNotSatisfied(_) => return false,
             }
         }
 
@@ -448,11 +464,26 @@ impl<'a> DispatchResolver<'a> {
     ///    argument type, accumulating type parameter substitutions.
     /// 2. If a type parameter is encountered multiple times, verify that all
     ///    inferred types are consistent (equal).
-    /// 3. Apply substitutions to create the instantiated method candidate.
+    /// 3. Check that all type parameter constraints are satisfied by the
+    ///    inferred concrete types.
+    /// 4. Apply substitutions to create the instantiated method candidate.
     pub fn instantiate_generic(
         &self,
         method: &MethodCandidate,
         arg_types: &[Type],
+    ) -> InstantiationResult {
+        self.instantiate_generic_with_constraint_checker(method, arg_types, None)
+    }
+
+    /// Attempt to instantiate a generic method with a custom constraint checker.
+    ///
+    /// This is the same as `instantiate_generic` but allows providing a custom
+    /// constraint checker for trait implementation checking.
+    pub fn instantiate_generic_with_constraint_checker(
+        &self,
+        method: &MethodCandidate,
+        arg_types: &[Type],
+        constraint_checker: Option<&ConstraintChecker<'_>>,
     ) -> InstantiationResult {
         // Check arity first
         if method.param_types.len() != arg_types.len() {
@@ -474,6 +505,16 @@ impl<'a> DispatchResolver<'a> {
             match self.try_match_type_param(param_type, arg_type, &valid_params, &mut substitutions) {
                 Ok(()) => continue,
                 Err(mismatch) => return mismatch,
+            }
+        }
+
+        // Check type parameter constraints if any type params have constraints
+        let has_constraints = method.type_params.iter().any(|p| !p.constraints.is_empty());
+        if has_constraints {
+            let default_checker = ConstraintChecker::new();
+            let checker = constraint_checker.unwrap_or(&default_checker);
+            if let Err(constraint_error) = checker.check_constraints(&method.type_params, &substitutions) {
+                return InstantiationResult::ConstraintNotSatisfied(constraint_error);
             }
         }
 
@@ -1524,6 +1565,344 @@ impl<'a> TypeStabilityChecker<'a> {
         )
     }
 }
+
+// ============================================================
+// Constraint Checking for Generic Dispatch
+// ============================================================
+//
+// When a generic method has constraints on its type parameters
+// (e.g., `fn sort<T: Ord>(list: Vec<T>) -> Vec<T>`), we must
+// verify that the concrete types inferred for each parameter
+// actually satisfy those constraints.
+//
+// See DISPATCH.md Section 9 for full specification.
+
+/// A function that checks if a type satisfies a named trait constraint.
+///
+/// This callback allows the constraint checker to query whether a concrete
+/// type implements a trait. The function takes:
+/// - The concrete type to check
+/// - The trait name (from the constraint)
+///
+/// Returns `true` if the type satisfies the constraint.
+pub type TraitConstraintChecker = dyn Fn(&Type, &str) -> bool;
+
+/// Checker for type parameter constraints during generic instantiation.
+///
+/// When a generic method is instantiated with concrete types, this checker
+/// verifies that all type parameter constraints are satisfied.
+///
+/// # Example
+///
+/// For `fn sort<T: Ord>(list: Vec<T>)` called with `Vec<i32>`:
+/// - T is instantiated to i32
+/// - The constraint `T: Ord` requires i32 to implement Ord
+/// - The constraint checker verifies this holds
+///
+/// # Algorithm
+///
+/// For each type parameter with constraints:
+/// 1. Look up the concrete type from the substitution map
+/// 2. For each constraint on the parameter, check if the concrete type satisfies it
+/// 3. Return an error for the first unsatisfied constraint
+pub struct ConstraintChecker<'a> {
+    /// Optional callback for checking trait implementations.
+    ///
+    /// If provided, this is used to check if a type implements a trait.
+    /// If not provided, built-in constraints (Copy, Clone, Sized, Send, Sync, Ord, Eq, etc.)
+    /// are checked using heuristics.
+    trait_checker: Option<&'a TraitConstraintChecker>,
+}
+
+impl<'a> ConstraintChecker<'a> {
+    /// Create a new constraint checker without trait implementation checking.
+    ///
+    /// Uses built-in heuristics for well-known traits.
+    pub fn new() -> Self {
+        Self {
+            trait_checker: None,
+        }
+    }
+
+    /// Create a constraint checker with a custom trait implementation checker.
+    ///
+    /// The trait_checker function is called to determine if a type implements
+    /// a given trait by name.
+    pub fn with_trait_checker(trait_checker: &'a TraitConstraintChecker) -> Self {
+        Self {
+            trait_checker: Some(trait_checker),
+        }
+    }
+
+    /// Check if all type parameter constraints are satisfied by the given substitutions.
+    ///
+    /// Takes:
+    /// - `type_params`: The type parameters with their constraints
+    /// - `substitutions`: Map from type parameter ID to concrete type
+    ///
+    /// Returns:
+    /// - `Ok(())` if all constraints are satisfied
+    /// - `Err(ConstraintError)` for the first unsatisfied constraint
+    pub fn check_constraints(
+        &self,
+        type_params: &[TypeParam],
+        substitutions: &HashMap<TyVarId, Type>,
+    ) -> Result<(), ConstraintError> {
+        for param in type_params {
+            // Skip parameters with no constraints
+            if param.constraints.is_empty() {
+                continue;
+            }
+
+            // Get the concrete type for this parameter
+            let Some(concrete_type) = substitutions.get(&param.id) else {
+                // No substitution for this parameter - skip checking
+                // (this shouldn't happen in a well-formed instantiation)
+                continue;
+            };
+
+            // Check each constraint
+            for constraint in &param.constraints {
+                if !self.type_satisfies_constraint(concrete_type, constraint) {
+                    return Err(ConstraintError {
+                        param_name: param.name.clone(),
+                        param_id: param.id,
+                        concrete_type: concrete_type.clone(),
+                        constraint: constraint.clone(),
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Check if a concrete type satisfies a constraint.
+    ///
+    /// Checks if the given type implements the trait specified by the constraint.
+    fn type_satisfies_constraint(&self, ty: &Type, constraint: &Constraint) -> bool {
+        // If we have a custom trait checker, use it
+        if let Some(checker) = self.trait_checker {
+            return checker(ty, &constraint.trait_name);
+        }
+
+        // Otherwise, use built-in heuristics for well-known traits
+        self.builtin_constraint_check(ty, &constraint.trait_name)
+    }
+
+    /// Check constraints using built-in heuristics for well-known traits.
+    ///
+    /// This provides a reasonable default for common traits without requiring
+    /// full trait resolution infrastructure.
+    fn builtin_constraint_check(&self, ty: &Type, trait_name: &str) -> bool {
+        match trait_name {
+            // Copy: primitives, shared refs, raw pointers, small tuples, arrays of Copy
+            "Copy" => self.type_is_copy(ty),
+
+            // Clone: everything that is Copy, plus more
+            "Clone" => self.type_is_clone(ty),
+
+            // Sized: almost everything except [T], str, dyn Trait
+            "Sized" => self.type_is_sized(ty),
+
+            // Send: most types can be sent across threads
+            "Send" => self.type_is_send(ty),
+
+            // Sync: most types can be shared via references
+            "Sync" => self.type_is_sync(ty),
+
+            // Ord: types that have a total ordering (primitives, tuples of Ord, etc.)
+            "Ord" | "PartialOrd" => self.type_is_ord(ty),
+
+            // Eq: types that have equality (primitives, tuples of Eq, etc.)
+            "Eq" | "PartialEq" => self.type_is_eq(ty),
+
+            // Hash: types that can be hashed
+            "Hash" => self.type_is_hash(ty),
+
+            // Default: types that have a default value
+            "Default" => self.type_is_default(ty),
+
+            // Debug, Display: for now, assume primitives satisfy these
+            "Debug" | "Display" => self.type_is_debug(ty),
+
+            // Unknown trait - conservatively return false
+            _ => false,
+        }
+    }
+
+    /// Check if a type implements Copy.
+    fn type_is_copy(&self, ty: &Type) -> bool {
+        match ty.kind.as_ref() {
+            TypeKind::Primitive(_) => true,
+            TypeKind::Ref { mutable: false, .. } => true,
+            TypeKind::Ref { mutable: true, .. } => false, // &mut T is not Copy
+            TypeKind::Ptr { .. } => true,
+            TypeKind::Fn { .. } => true,
+            TypeKind::Never => true,
+            TypeKind::Array { element, .. } => self.type_is_copy(element),
+            TypeKind::Tuple(elements) => elements.iter().all(|e| self.type_is_copy(e)),
+            TypeKind::Range { element, .. } => self.type_is_copy(element),
+            TypeKind::Slice { .. } => false, // Unsized
+            TypeKind::Closure { .. } => false,
+            TypeKind::Adt { .. } => false, // Requires explicit impl
+            TypeKind::DynTrait { .. } => false, // Unsized
+            TypeKind::Error => true, // Be permissive for error recovery
+            TypeKind::Infer(_) | TypeKind::Param(_) => false,
+        }
+    }
+
+    /// Check if a type implements Clone.
+    fn type_is_clone(&self, ty: &Type) -> bool {
+        // All Copy types are Clone
+        if self.type_is_copy(ty) {
+            return true;
+        }
+        // For non-Copy types, we'd need full trait resolution
+        // For now, be conservative
+        false
+    }
+
+    /// Check if a type is Sized.
+    fn type_is_sized(&self, ty: &Type) -> bool {
+        match ty.kind.as_ref() {
+            TypeKind::Slice { .. } => false,
+            TypeKind::Primitive(PrimitiveTy::Str) => false,
+            TypeKind::DynTrait { .. } => false,
+            _ => true,
+        }
+    }
+
+    /// Check if a type implements Send.
+    fn type_is_send(&self, ty: &Type) -> bool {
+        match ty.kind.as_ref() {
+            TypeKind::Primitive(_) => true,
+            TypeKind::Ref { inner, .. } => self.type_is_send(inner),
+            TypeKind::Ptr { inner, .. } => self.type_is_send(inner),
+            TypeKind::Array { element, .. } => self.type_is_send(element),
+            TypeKind::Tuple(elements) => elements.iter().all(|e| self.type_is_send(e)),
+            TypeKind::Closure { .. } => false, // Conservative
+            TypeKind::Adt { .. } => true, // Optimistic default
+            _ => true,
+        }
+    }
+
+    /// Check if a type implements Sync.
+    fn type_is_sync(&self, ty: &Type) -> bool {
+        // Similar to Send
+        self.type_is_send(ty)
+    }
+
+    /// Check if a type implements Ord (total ordering).
+    fn type_is_ord(&self, ty: &Type) -> bool {
+        match ty.kind.as_ref() {
+            // Numeric primitives have total ordering
+            TypeKind::Primitive(prim) => match prim {
+                PrimitiveTy::Bool => true,
+                PrimitiveTy::Char => true,
+                PrimitiveTy::Int(_) => true,
+                PrimitiveTy::Uint(_) => true,
+                PrimitiveTy::Float(_) => false, // Floats only have PartialOrd due to NaN
+                PrimitiveTy::Str => true,
+                PrimitiveTy::String => true,
+                PrimitiveTy::Unit => true,
+            },
+            // Tuples are Ord if all elements are Ord
+            TypeKind::Tuple(elements) => elements.iter().all(|e| self.type_is_ord(e)),
+            // Arrays are Ord if element is Ord
+            TypeKind::Array { element, .. } => self.type_is_ord(element),
+            // Slices are Ord if element is Ord
+            TypeKind::Slice { element } => self.type_is_ord(element),
+            // References inherit Ord from inner type
+            TypeKind::Ref { inner, .. } => self.type_is_ord(inner),
+            // Other types conservatively don't have Ord
+            _ => false,
+        }
+    }
+
+    /// Check if a type implements Eq.
+    fn type_is_eq(&self, ty: &Type) -> bool {
+        match ty.kind.as_ref() {
+            TypeKind::Primitive(prim) => match prim {
+                PrimitiveTy::Bool => true,
+                PrimitiveTy::Char => true,
+                PrimitiveTy::Int(_) => true,
+                PrimitiveTy::Uint(_) => true,
+                PrimitiveTy::Float(_) => false, // Floats only have PartialEq due to NaN
+                PrimitiveTy::Str => true,
+                PrimitiveTy::String => true,
+                PrimitiveTy::Unit => true,
+            },
+            TypeKind::Tuple(elements) => elements.iter().all(|e| self.type_is_eq(e)),
+            TypeKind::Array { element, .. } => self.type_is_eq(element),
+            TypeKind::Slice { element } => self.type_is_eq(element),
+            TypeKind::Ref { inner, .. } => self.type_is_eq(inner),
+            _ => false,
+        }
+    }
+
+    /// Check if a type implements Hash.
+    fn type_is_hash(&self, ty: &Type) -> bool {
+        // Most Eq types can be hashed
+        match ty.kind.as_ref() {
+            TypeKind::Primitive(prim) => match prim {
+                PrimitiveTy::Bool => true,
+                PrimitiveTy::Char => true,
+                PrimitiveTy::Int(_) => true,
+                PrimitiveTy::Uint(_) => true,
+                PrimitiveTy::Float(_) => false, // Floats don't implement Hash
+                PrimitiveTy::Str => true,
+                PrimitiveTy::String => true,
+                PrimitiveTy::Unit => true,
+            },
+            TypeKind::Tuple(elements) => elements.iter().all(|e| self.type_is_hash(e)),
+            TypeKind::Array { element, .. } => self.type_is_hash(element),
+            TypeKind::Slice { element } => self.type_is_hash(element),
+            TypeKind::Ref { inner, .. } => self.type_is_hash(inner),
+            _ => false,
+        }
+    }
+
+    /// Check if a type implements Default.
+    fn type_is_default(&self, ty: &Type) -> bool {
+        match ty.kind.as_ref() {
+            TypeKind::Primitive(prim) => match prim {
+                PrimitiveTy::Bool => true, // false
+                PrimitiveTy::Int(_) => true, // 0
+                PrimitiveTy::Uint(_) => true, // 0
+                PrimitiveTy::Float(_) => true, // 0.0
+                PrimitiveTy::Char => true, // '\0'
+                PrimitiveTy::Unit => true, // ()
+                PrimitiveTy::Str => false, // &str doesn't have Default
+                PrimitiveTy::String => true, // String::new()
+            },
+            TypeKind::Tuple(elements) => elements.iter().all(|e| self.type_is_default(e)),
+            TypeKind::Array { element, .. } => self.type_is_default(element),
+            _ => false,
+        }
+    }
+
+    /// Check if a type implements Debug.
+    fn type_is_debug(&self, ty: &Type) -> bool {
+        // Most primitives implement Debug
+        match ty.kind.as_ref() {
+            TypeKind::Primitive(_) => true,
+            TypeKind::Tuple(elements) => elements.iter().all(|e| self.type_is_debug(e)),
+            TypeKind::Array { element, .. } => self.type_is_debug(element),
+            TypeKind::Slice { element } => self.type_is_debug(element),
+            TypeKind::Ref { inner, .. } => self.type_is_debug(inner),
+            TypeKind::Never => true,
+            _ => false,
+        }
+    }
+}
+
+impl Default for ConstraintChecker<'_> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2821,5 +3200,434 @@ mod tests {
         // Different input types - no overlap possible
         let error = checker.check_type_stability("test", &m1, &m2);
         assert!(error.is_none());
+    }
+
+    // ============================================================
+    // Constraint Checking Tests
+    // ============================================================
+
+    fn make_constrained_generic_candidate(
+        name: &str,
+        type_params: Vec<TypeParam>,
+        params: Vec<Type>,
+        ret: Type,
+    ) -> MethodCandidate {
+        MethodCandidate {
+            def_id: DefId::new(0),
+            name: name.to_string(),
+            param_types: params,
+            return_type: ret,
+            type_params,
+            effects: None,
+        }
+    }
+
+    #[test]
+    fn test_constraint_checker_ord_satisfied_by_i32() {
+        // Generic method: fn sort<T: Ord>(x: T) -> T
+        let t_id = TyVarId::new(1);
+        let t_param = TypeParam {
+            name: "T".to_string(),
+            id: t_id,
+            constraints: vec![Constraint { trait_name: "Ord".to_string() }],
+        };
+        let t_type = Type::param(t_id);
+
+        let method = make_constrained_generic_candidate(
+            "sort",
+            vec![t_param],
+            vec![t_type.clone()],
+            t_type,
+        );
+
+        let unifier = Unifier::new();
+        let resolver = DispatchResolver::new(&unifier);
+
+        // Call with i32 - should satisfy Ord constraint
+        let result = resolver.instantiate_generic(&method, &[Type::i32()]);
+        match result {
+            InstantiationResult::Success { substitutions, candidate } => {
+                assert_eq!(substitutions.get(&t_id), Some(&Type::i32()));
+                assert!(resolver.types_equal(&candidate.param_types[0], &Type::i32()));
+                assert!(resolver.types_equal(&candidate.return_type, &Type::i32()));
+            }
+            other => panic!("Expected Success, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_constraint_checker_ord_not_satisfied_by_adt() {
+        // Generic method: fn sort<T: Ord>(x: T) -> T
+        let t_id = TyVarId::new(1);
+        let t_param = TypeParam {
+            name: "T".to_string(),
+            id: t_id,
+            constraints: vec![Constraint { trait_name: "Ord".to_string() }],
+        };
+        let t_type = Type::param(t_id);
+
+        let method = make_constrained_generic_candidate(
+            "sort",
+            vec![t_param],
+            vec![t_type.clone()],
+            t_type,
+        );
+
+        let unifier = Unifier::new();
+        let resolver = DispatchResolver::new(&unifier);
+
+        // Call with an ADT (custom struct) - should NOT satisfy Ord constraint
+        // ADTs don't implement Ord by default
+        let custom_struct = Type::adt(DefId::new(999), vec![]);
+        let result = resolver.instantiate_generic(&method, &[custom_struct.clone()]);
+        match result {
+            InstantiationResult::ConstraintNotSatisfied(err) => {
+                assert_eq!(err.param_name, "T");
+                assert_eq!(err.param_id, t_id);
+                assert_eq!(err.constraint.trait_name, "Ord");
+                assert!(resolver.types_equal(&err.concrete_type, &custom_struct));
+            }
+            other => panic!("Expected ConstraintNotSatisfied, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_constraint_checker_multiple_constraints() {
+        // Generic method: fn process<T: Ord + Hash>(x: T) -> T
+        let t_id = TyVarId::new(1);
+        let t_param = TypeParam {
+            name: "T".to_string(),
+            id: t_id,
+            constraints: vec![
+                Constraint { trait_name: "Ord".to_string() },
+                Constraint { trait_name: "Hash".to_string() },
+            ],
+        };
+        let t_type = Type::param(t_id);
+
+        let method = make_constrained_generic_candidate(
+            "process",
+            vec![t_param],
+            vec![t_type.clone()],
+            t_type,
+        );
+
+        let unifier = Unifier::new();
+        let resolver = DispatchResolver::new(&unifier);
+
+        // Call with i32 - should satisfy both Ord and Hash constraints
+        let result = resolver.instantiate_generic(&method, &[Type::i32()]);
+        match result {
+            InstantiationResult::Success { substitutions, .. } => {
+                assert_eq!(substitutions.get(&t_id), Some(&Type::i32()));
+            }
+            other => panic!("Expected Success for i32, got {:?}", other),
+        }
+
+        // Call with f64 - should fail because floats don't implement Ord/Hash
+        let result = resolver.instantiate_generic(&method, &[Type::f64()]);
+        match result {
+            InstantiationResult::ConstraintNotSatisfied(err) => {
+                assert_eq!(err.param_name, "T");
+                // Should fail on first unsatisfied constraint (Ord)
+                assert_eq!(err.constraint.trait_name, "Ord");
+            }
+            other => panic!("Expected ConstraintNotSatisfied for f64, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_constraint_checker_copy_constraint() {
+        // Generic method: fn copy_val<T: Copy>(x: T) -> T
+        let t_id = TyVarId::new(1);
+        let t_param = TypeParam {
+            name: "T".to_string(),
+            id: t_id,
+            constraints: vec![Constraint { trait_name: "Copy".to_string() }],
+        };
+        let t_type = Type::param(t_id);
+
+        let method = make_constrained_generic_candidate(
+            "copy_val",
+            vec![t_param],
+            vec![t_type.clone()],
+            t_type,
+        );
+
+        let unifier = Unifier::new();
+        let resolver = DispatchResolver::new(&unifier);
+
+        // i32 is Copy
+        let result = resolver.instantiate_generic(&method, &[Type::i32()]);
+        assert!(matches!(result, InstantiationResult::Success { .. }));
+
+        // Tuple of Copy types is Copy
+        let tuple = Type::tuple(vec![Type::i32(), Type::bool()]);
+        let result = resolver.instantiate_generic(&method, &[tuple]);
+        assert!(matches!(result, InstantiationResult::Success { .. }));
+
+        // ADTs are not Copy by default
+        let adt = Type::adt(DefId::new(100), vec![]);
+        let result = resolver.instantiate_generic(&method, &[adt]);
+        assert!(matches!(result, InstantiationResult::ConstraintNotSatisfied(_)));
+    }
+
+    #[test]
+    fn test_constraint_checker_sized_constraint() {
+        // Generic method: fn sized_val<T: Sized>(x: T) -> T
+        let t_id = TyVarId::new(1);
+        let t_param = TypeParam {
+            name: "T".to_string(),
+            id: t_id,
+            constraints: vec![Constraint { trait_name: "Sized".to_string() }],
+        };
+        let t_type = Type::param(t_id);
+
+        let method = make_constrained_generic_candidate(
+            "sized_val",
+            vec![t_param],
+            vec![t_type.clone()],
+            t_type,
+        );
+
+        let unifier = Unifier::new();
+        let resolver = DispatchResolver::new(&unifier);
+
+        // i32 is Sized
+        let result = resolver.instantiate_generic(&method, &[Type::i32()]);
+        assert!(matches!(result, InstantiationResult::Success { .. }));
+
+        // str is NOT Sized
+        let result = resolver.instantiate_generic(&method, &[Type::str()]);
+        assert!(matches!(result, InstantiationResult::ConstraintNotSatisfied(_)));
+
+        // Slices are NOT Sized
+        let slice = Type::slice(Type::i32());
+        let result = resolver.instantiate_generic(&method, &[slice]);
+        assert!(matches!(result, InstantiationResult::ConstraintNotSatisfied(_)));
+    }
+
+    #[test]
+    fn test_constraint_checker_default_constraint() {
+        // Generic method: fn make_default<T: Default>() -> T
+        // (For testing, we use a parameter to infer T)
+        let t_id = TyVarId::new(1);
+        let t_param = TypeParam {
+            name: "T".to_string(),
+            id: t_id,
+            constraints: vec![Constraint { trait_name: "Default".to_string() }],
+        };
+        let t_type = Type::param(t_id);
+
+        let method = make_constrained_generic_candidate(
+            "make_default",
+            vec![t_param],
+            vec![t_type.clone()],
+            t_type,
+        );
+
+        let unifier = Unifier::new();
+        let resolver = DispatchResolver::new(&unifier);
+
+        // i32 has Default (0)
+        let result = resolver.instantiate_generic(&method, &[Type::i32()]);
+        assert!(matches!(result, InstantiationResult::Success { .. }));
+
+        // bool has Default (false)
+        let result = resolver.instantiate_generic(&method, &[Type::bool()]);
+        assert!(matches!(result, InstantiationResult::Success { .. }));
+
+        // str does NOT have Default
+        let result = resolver.instantiate_generic(&method, &[Type::str()]);
+        assert!(matches!(result, InstantiationResult::ConstraintNotSatisfied(_)));
+    }
+
+    #[test]
+    fn test_constraint_checker_with_custom_trait_checker() {
+        // Generic method: fn custom<T: MyTrait>(x: T) -> T
+        let t_id = TyVarId::new(1);
+        let t_param = TypeParam {
+            name: "T".to_string(),
+            id: t_id,
+            constraints: vec![Constraint { trait_name: "MyTrait".to_string() }],
+        };
+        let t_type = Type::param(t_id);
+
+        let method = make_constrained_generic_candidate(
+            "custom",
+            vec![t_param],
+            vec![t_type.clone()],
+            t_type,
+        );
+
+        // Custom trait checker: only i32 implements MyTrait
+        let custom_checker: &TraitConstraintChecker = &|ty: &Type, trait_name: &str| {
+            trait_name == "MyTrait"
+                && matches!(ty.kind.as_ref(), TypeKind::Primitive(PrimitiveTy::Int(crate::hir::def::IntTy::I32)))
+        };
+        let constraint_checker = ConstraintChecker::with_trait_checker(custom_checker);
+
+        let unifier = Unifier::new();
+        let resolver = DispatchResolver::new(&unifier);
+
+        // i32 implements MyTrait
+        let result = resolver.instantiate_generic_with_constraint_checker(
+            &method, &[Type::i32()], Some(&constraint_checker)
+        );
+        assert!(matches!(result, InstantiationResult::Success { .. }));
+
+        // i64 does NOT implement MyTrait
+        let result = resolver.instantiate_generic_with_constraint_checker(
+            &method, &[Type::i64()], Some(&constraint_checker)
+        );
+        match result {
+            InstantiationResult::ConstraintNotSatisfied(err) => {
+                assert_eq!(err.constraint.trait_name, "MyTrait");
+            }
+            other => panic!("Expected ConstraintNotSatisfied, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_constraint_checker_no_constraints_succeeds() {
+        // Generic method without constraints: fn identity<T>(x: T) -> T
+        let t_id = TyVarId::new(1);
+        let t_param = TypeParam {
+            name: "T".to_string(),
+            id: t_id,
+            constraints: vec![], // No constraints
+        };
+        let t_type = Type::param(t_id);
+
+        let method = make_constrained_generic_candidate(
+            "identity",
+            vec![t_param],
+            vec![t_type.clone()],
+            t_type,
+        );
+
+        let unifier = Unifier::new();
+        let resolver = DispatchResolver::new(&unifier);
+
+        // Should succeed for any type
+        let result = resolver.instantiate_generic(&method, &[Type::i32()]);
+        assert!(matches!(result, InstantiationResult::Success { .. }));
+
+        let adt = Type::adt(DefId::new(100), vec![]);
+        let result = resolver.instantiate_generic(&method, &[adt]);
+        assert!(matches!(result, InstantiationResult::Success { .. }));
+    }
+
+    #[test]
+    fn test_constraint_checker_multiple_type_params() {
+        // Generic method: fn pair<T: Ord, U: Copy>(x: T, y: U) -> (T, U)
+        let t_id = TyVarId::new(1);
+        let u_id = TyVarId::new(2);
+        let t_param = TypeParam {
+            name: "T".to_string(),
+            id: t_id,
+            constraints: vec![Constraint { trait_name: "Ord".to_string() }],
+        };
+        let u_param = TypeParam {
+            name: "U".to_string(),
+            id: u_id,
+            constraints: vec![Constraint { trait_name: "Copy".to_string() }],
+        };
+        let t_type = Type::param(t_id);
+        let u_type = Type::param(u_id);
+        let ret_type = Type::tuple(vec![t_type.clone(), u_type.clone()]);
+
+        let method = make_constrained_generic_candidate(
+            "pair",
+            vec![t_param, u_param],
+            vec![t_type, u_type],
+            ret_type,
+        );
+
+        let unifier = Unifier::new();
+        let resolver = DispatchResolver::new(&unifier);
+
+        // Both i32 (satisfies both Ord and Copy)
+        let result = resolver.instantiate_generic(&method, &[Type::i32(), Type::bool()]);
+        assert!(matches!(result, InstantiationResult::Success { .. }));
+
+        // T=f64 fails (f64 doesn't satisfy Ord)
+        let result = resolver.instantiate_generic(&method, &[Type::f64(), Type::i32()]);
+        match result {
+            InstantiationResult::ConstraintNotSatisfied(err) => {
+                assert_eq!(err.param_name, "T");
+                assert_eq!(err.constraint.trait_name, "Ord");
+            }
+            other => panic!("Expected ConstraintNotSatisfied for T, got {:?}", other),
+        }
+
+        // U=ADT fails (ADT doesn't satisfy Copy)
+        let adt = Type::adt(DefId::new(100), vec![]);
+        let result = resolver.instantiate_generic(&method, &[Type::i32(), adt]);
+        match result {
+            InstantiationResult::ConstraintNotSatisfied(err) => {
+                assert_eq!(err.param_name, "U");
+                assert_eq!(err.constraint.trait_name, "Copy");
+            }
+            other => panic!("Expected ConstraintNotSatisfied for U, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_constraint_checker_dispatch_filters_by_constraints() {
+        // Two generic methods with different constraints:
+        // fn process<T: Ord>(x: T) -> T       // More specific (requires Ord)
+        // fn process<T>(x: T) -> T            // Less specific (no constraints)
+
+        let t_id_constrained = TyVarId::new(1);
+        let t_id_unconstrained = TyVarId::new(2);
+
+        // Constrained version: T: Ord
+        let constrained_method = make_constrained_generic_candidate(
+            "process",
+            vec![TypeParam {
+                name: "T".to_string(),
+                id: t_id_constrained,
+                constraints: vec![Constraint { trait_name: "Ord".to_string() }],
+            }],
+            vec![Type::param(t_id_constrained)],
+            Type::param(t_id_constrained),
+        );
+
+        // Unconstrained version
+        let unconstrained_method = make_constrained_generic_candidate(
+            "process",
+            vec![TypeParam {
+                name: "T".to_string(),
+                id: t_id_unconstrained,
+                constraints: vec![],
+            }],
+            vec![Type::param(t_id_unconstrained)],
+            Type::param(t_id_unconstrained),
+        );
+
+        let unifier = Unifier::new();
+        let resolver = DispatchResolver::new(&unifier);
+
+        // For i32, constrained version should be applicable (i32: Ord)
+        assert!(resolver.is_applicable(&constrained_method, &[Type::i32()]));
+
+        // For ADT, constrained version should NOT be applicable (ADT: !Ord)
+        let adt = Type::adt(DefId::new(100), vec![]);
+        assert!(!resolver.is_applicable(&constrained_method, &[adt.clone()]));
+
+        // But unconstrained version should be applicable for ADT
+        assert!(resolver.is_applicable(&unconstrained_method, &[adt]));
+    }
+
+    #[test]
+    fn test_constraint_checker_default_impl() {
+        // Test Default implementation
+        let checker = ConstraintChecker::default();
+        let substitutions: HashMap<TyVarId, Type> = HashMap::new();
+        let type_params: Vec<TypeParam> = vec![];
+
+        // Empty params should succeed
+        assert!(checker.check_constraints(&type_params, &substitutions).is_ok());
     }
 }

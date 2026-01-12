@@ -1663,4 +1663,154 @@ mod tests {
         let deserialized = ContentHash::try_from(serialized).unwrap();
         assert_eq!(original, deserialized);
     }
+
+    #[test]
+    fn test_incremental_compilation_simulation() {
+        // Simulates an incremental compilation scenario:
+        // 1. First build: compile all items, cache them
+        // 2. Second build: detect cached items, skip recompilation
+
+        let temp_dir = TempDir::new().unwrap();
+
+        // Define some "source code" that produces deterministic hashes
+        let fn_add_source = b"fn add(x, y) { x + y }";
+        let fn_mul_source = b"fn mul(x, y) { x * y }";
+        let fn_compute_source = b"fn compute(a, b) { add(a, mul(a, b)) }";
+
+        // Compiled "object code" (simulated)
+        let fn_add_obj = b"add_compiled_object_code";
+        let fn_mul_obj = b"mul_compiled_object_code";
+        let fn_compute_obj = b"compute_compiled_object_code";
+
+        // First build: everything is new
+        let (hash_add, hash_mul, hash_compute) = {
+            let mut cache = BuildCache::with_dir(temp_dir.path().to_path_buf());
+            cache.init().unwrap();
+
+            let hash_add = ContentHash::compute(fn_add_source);
+            let hash_mul = ContentHash::compute(fn_mul_source);
+            let hash_compute = ContentHash::compute(fn_compute_source);
+
+            // Nothing should be cached yet
+            assert!(!cache.has_object(&hash_add));
+            assert!(!cache.has_object(&hash_mul));
+            assert!(!cache.has_object(&hash_compute));
+
+            // "Compile" and store
+            cache.store_object(hash_add, fn_add_obj).unwrap();
+            cache.store_object(hash_mul, fn_mul_obj).unwrap();
+            cache.store_object(hash_compute, fn_compute_obj).unwrap();
+
+            // Record dependencies: compute depends on add and mul
+            cache.record_dependencies(hash_compute, vec![hash_add, hash_mul]);
+
+            // Save index for next build
+            cache.save_index().unwrap();
+
+            (hash_add, hash_mul, hash_compute)
+        };
+
+        // Second build: everything should be cached
+        {
+            let mut cache = BuildCache::with_dir(temp_dir.path().to_path_buf());
+            cache.init_and_load().unwrap();
+
+            // All items should be cached
+            assert!(cache.has_object(&hash_add));
+            assert!(cache.has_object(&hash_mul));
+            assert!(cache.has_object(&hash_compute));
+
+            // Verify cached content is correct
+            let cached_add = cache.get_object(&hash_add).unwrap().unwrap();
+            assert_eq!(&cached_add[..], fn_add_obj);
+
+            // Dependencies should be restored
+            let deps = cache.get_dependencies(&hash_compute).unwrap();
+            assert!(deps.contains(&hash_add));
+            assert!(deps.contains(&hash_mul));
+        }
+
+        // Third build: change `add` function
+        let new_fn_add_source = b"fn add(x, y) { x + y + 0 }"; // Changed!
+        let new_hash_add = ContentHash::compute(new_fn_add_source);
+        assert_ne!(hash_add, new_hash_add); // Hash should be different
+
+        {
+            let mut cache = BuildCache::with_dir(temp_dir.path().to_path_buf());
+            cache.init_and_load().unwrap();
+
+            // Old add is cached, new add is not
+            assert!(cache.has_object(&hash_add));
+            assert!(!cache.has_object(&new_hash_add));
+
+            // Invalidate old add - this should invalidate compute too
+            let invalidated = cache.invalidate(&hash_add).unwrap();
+            assert!(invalidated.contains(&hash_compute), "compute should be invalidated");
+
+            // mul is not affected
+            assert!(cache.has_object(&hash_mul));
+        }
+    }
+
+    #[test]
+    fn test_ir_storage() {
+        let temp_dir = TempDir::new().unwrap();
+        let cache = BuildCache::with_dir(temp_dir.path().to_path_buf());
+        cache.init().unwrap();
+
+        let hash = ContentHash::compute(b"some function");
+        let ir = "; ModuleID = 'test'\ndefine i32 @main() { ret i32 0 }";
+
+        let path = cache.store_ir(&hash, ir).unwrap();
+        assert!(path.exists());
+
+        let stored_ir = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(stored_ir, ir);
+    }
+
+    #[test]
+    fn test_get_object_path() {
+        let temp_dir = TempDir::new().unwrap();
+        let cache = BuildCache::with_dir(temp_dir.path().to_path_buf());
+
+        let hash = ContentHash::compute(b"test");
+
+        // Enabled cache should return a path
+        let path = cache.get_object_path(&hash);
+        assert!(path.is_some());
+
+        // Path should contain the hash
+        let path_str = path.unwrap().to_string_lossy().to_string();
+        let hash_str = format!("{}", hash.full_display());
+        assert!(path_str.contains(&hash_str[2..]), "path should contain hash suffix");
+
+        // Disabled cache should return None
+        let disabled = BuildCache::disabled();
+        assert!(disabled.get_object_path(&hash).is_none());
+    }
+
+    #[test]
+    fn test_cache_stats() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut cache = BuildCache::with_dir(temp_dir.path().to_path_buf());
+        cache.init().unwrap();
+
+        // Initially empty
+        let stats = cache.stats().unwrap();
+        assert_eq!(stats.cached_count, 0);
+        assert_eq!(stats.cached_size, 0);
+
+        // Add some objects
+        let hash1 = ContentHash::compute(b"obj1");
+        let hash2 = ContentHash::compute(b"obj2");
+        let data1 = vec![0u8; 100];
+        let data2 = vec![0u8; 200];
+
+        cache.store_object(hash1, &data1).unwrap();
+        cache.store_object(hash2, &data2).unwrap();
+
+        let stats = cache.stats().unwrap();
+        assert_eq!(stats.cached_count, 2);
+        assert_eq!(stats.cached_size, 300);
+    }
 }
