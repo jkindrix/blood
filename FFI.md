@@ -4,7 +4,7 @@
 **Status**: Partially Implemented (see table in §1.3)
 **Last Updated**: 2026-01-10
 
-**Implementation Status**: Runtime FFI code (DynamicLibrary, FfiValue, FfiType, symbol resolution) is implemented in `blood-runtime/src/ffi.rs` and validated on x86-64 Linux. Bridge block parsing/codegen is designed but not yet implemented in the compiler frontend.
+**Implementation Status**: Runtime FFI code (DynamicLibrary, FfiValue, FfiType, symbol resolution) is implemented in `blood-runtime/src/ffi.rs` and validated on x86-64 Linux. Bridge block parsing is implemented in `bloodc/src/parser/item.rs` and AST in `bloodc/src/ast.rs`. Codegen is designed but not yet implemented.
 
 **Revision 0.3.0 Changes**:
 - Added validation status box and implementation status link
@@ -60,8 +60,8 @@ The following table tracks implementation status of FFI subsystems:
 | FfiValue types | ✅ Implemented | `blood-runtime/src/ffi.rs` | i8-i64, u8-u64, f32, f64, ptr |
 | FfiType definitions | ✅ Implemented | `blood-runtime/src/ffi.rs` | Type introspection |
 | blood_ffi_* exports | ✅ Integrated | `blood-runtime/src/ffi_exports.rs` | Runtime FFI dispatch |
-| Bridge block parsing | 📋 Designed | — | Grammar specified, not parsed |
-| Bridge block codegen | 📋 Designed | — | Awaits bridge parsing |
+| Bridge block parsing | ✅ Implemented | `bloodc/src/parser/item.rs` | AST in `ast.rs`, type collection added |
+| Bridge block codegen | 📋 Designed | — | Awaits bridge codegen impl |
 | Type mapping validation | 📋 Designed | — | Per §3 specification |
 | Calling conventions | 📋 Designed | — | sysv64 (Linux x86-64 primary target) |
 | Platform validation (Linux) | ✅ Validated | `.github/workflows/ci.yml` | CI tested on ubuntu-latest |

@@ -87,7 +87,7 @@ The following table tracks implementation status of dispatch subsystems:
 | Generic instantiation | ✅ Implemented | `bloodc/src/typeck/dispatch.rs` | `instantiate_generic()` |
 | Constraint resolution | ✅ Implemented | `bloodc/src/typeck/dispatch.rs` | `ConstraintChecker` struct |
 | Effect-aware dispatch | ✅ Implemented | `bloodc/src/typeck/dispatch.rs` | `EffectRow` integration |
-| Diamond resolution | 📋 Designed | — | Requires trait system completion |
+| Diamond resolution | ✅ Implemented | `bloodc/src/typeck/dispatch.rs` | `AmbiguityError::is_diamond_conflict()` |
 | Type stability check | ✅ Implemented | `bloodc/src/typeck/dispatch.rs` | `check_type_stability()` |
 | Dynamic dispatch codegen | ✅ Implemented | `bloodc/src/codegen/context/dispatch.rs` | `compile_dynamic_dispatch()` |
 | VFT generation | ✅ Implemented | `bloodc/src/content/vft.rs` | `VFT`, `DispatchTable` structs |

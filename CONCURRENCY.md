@@ -70,9 +70,9 @@ The following table tracks implementation status of concurrency subsystems:
 | Platform: Linux io_uring | ✅ Implemented | `blood-runtime/src/io.rs` | Primary Linux driver |
 | Platform: macOS kqueue | ✅ Implemented | `blood-runtime/src/io.rs` | Primary macOS driver |
 | Platform: Windows IOCP | ✅ Implemented | `blood-runtime/src/io.rs` | Primary Windows driver |
-| Fiber effect syntax | 📋 Designed | — | Per §2.4 specification |
-| Structured concurrency | 📋 Designed | — | Nursery pattern |
-| Select/await syntax | 📋 Designed | — | Per §5.4 specification |
+| Fiber effect syntax | ✅ Implemented | `blood-std/std/effects/fiber.blood` | Per §2.4 specification |
+| Structured concurrency | ✅ Implemented | `blood-std/std/effects/fiber.blood` | Nursery, FiberScope, par_map, etc. |
+| Select/await syntax | ✅ Implemented | `blood-std/std/effects/fiber.blood` | SelectBuilder, await_first, select_timeout |
 
 **Legend**: ✅ Implemented | 🔶 Partial | 📋 Designed | ❌ Not Started
 

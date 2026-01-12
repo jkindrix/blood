@@ -89,9 +89,9 @@ The following table tracks implementation status of content addressing subsystem
 | hash_hir_item | ✅ Implemented | `bloodc/src/content/build_cache.rs` | HIR→hash computation |
 | Cache lookup in build | ✅ Integrated | `bloodc/src/main.rs` | Per-definition hashing |
 | Incremental compilation | 🔶 Partial | `bloodc/src/main.rs` | Hashes computed, caching basic |
-| Hot-swap support | 📋 Designed | — | VFT update mechanism |
-| Marrow codebase manager | 📋 Designed | — | UCM-style tooling |
-| Distributed cache | 📋 Designed | — | Future enhancement |
+| Hot-swap support | ✅ Implemented | `bloodc/src/content/vft.rs` | VFT update mechanism |
+| Marrow codebase manager | ✅ Implemented | `blood-tools/ucm/` | UCM-style tooling |
+| Distributed cache | ✅ Implemented | `bloodc/src/content/distributed_cache.rs` | Remote artifact sharing |
 
 **Legend**: ✅ Implemented | 🔶 Partial | 📋 Designed | ❌ Not Started
 
