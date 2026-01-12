@@ -555,12 +555,17 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
         // Step 4: Pop the handler from the evidence vector
         self.push_stmt(StatementKind::PopHandler);
 
-        // Create a destination for the handle result
+        // Step 5: Call the return clause to transform the body result
+        // The return clause function is handler_{handler_id.index}_return
         let dest = self.new_temp(ty.clone(), span);
         let dest_place = Place::local(dest);
 
-        // Store the body result
-        self.push_assign(dest_place.clone(), Rvalue::Use(body_result));
+        self.push_stmt(StatementKind::CallReturnClause {
+            handler_id,
+            body_result,
+            state_place,
+            destination: dest_place.clone(),
+        });
 
         Ok(Operand::Copy(dest_place))
     }

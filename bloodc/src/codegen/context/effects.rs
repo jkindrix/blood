@@ -220,8 +220,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // Signature: extern "C" fn(value: i64, context: *mut void) -> i64
         let identity_cont_fn = self.get_or_create_identity_continuation()?;
 
-        // Get blood_continuation_create function
-        let cont_create_fn = self.module.get_function("blood_continuation_create")
+        // Get blood_continuation_create_multishot function
+        // We use multi-shot creation so handlers can clone the continuation if needed
+        let cont_create_fn = self.module.get_function("blood_continuation_create_multishot")
             .unwrap_or_else(|| {
                 // Declare: fn(callback: fn(i64, *void) -> i64, context: *void) -> i64
                 let callback_type = i64_type.fn_type(
@@ -233,7 +234,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     &[callback_ptr_type.into(), i8_ptr_type.into()],
                     false,
                 );
-                self.module.add_function("blood_continuation_create", fn_type, None)
+                self.module.add_function("blood_continuation_create_multishot", fn_type, None)
             });
 
         // Call blood_continuation_create(identity_cont_fn, null)
@@ -557,6 +558,33 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
             // Continuation path: call blood_continuation_resume
             self.builder.position_at_end(cont_block);
+
+            // For multi-shot handlers, clone the continuation before resuming
+            // This allows subsequent resume calls to use the original continuation
+            let resume_cont_handle = if self.is_multishot_handler {
+                // Get blood_continuation_clone function
+                let cont_clone_fn = self.module.get_function("blood_continuation_clone")
+                    .unwrap_or_else(|| {
+                        // Declare blood_continuation_clone: (handle: i64) -> i64
+                        let fn_type = i64_type.fn_type(&[i64_type.into()], false);
+                        self.module.add_function("blood_continuation_clone", fn_type, None)
+                    });
+
+                // Clone the continuation
+                let clone_result = self.builder
+                    .build_call(cont_clone_fn, &[cont_handle.into()], "cont_clone")
+                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error cloning continuation: {}", e), Span::dummy())])?;
+
+                clone_result.try_as_basic_value().left()
+                    .ok_or_else(|| vec![Diagnostic::error(
+                        "blood_continuation_clone returned void".to_string(),
+                        Span::dummy(),
+                    )])?
+                    .into_int_value()
+            } else {
+                cont_handle
+            };
+
             let cont_resume_fn = self.module.get_function("blood_continuation_resume")
                 .unwrap_or_else(|| {
                     // Declare blood_continuation_resume: (handle: i64, value: i64) -> i64
@@ -564,9 +592,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     self.module.add_function("blood_continuation_resume", fn_type, None)
                 });
 
-            // Call blood_continuation_resume(cont_handle, resume_value)
+            // Call blood_continuation_resume(resume_cont_handle, resume_value)
             let call_result = self.builder
-                .build_call(cont_resume_fn, &[cont_handle.into(), resume_value.into()], "cont_result")
+                .build_call(cont_resume_fn, &[resume_cont_handle.into(), resume_value.into()], "cont_result")
                 .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?;
 
             let cont_result = call_result.try_as_basic_value().left()
@@ -647,6 +675,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         handler_instance: &hir::Expr,
         result_ty: &Type,
     ) -> Result<Option<BasicValueEnum<'ctx>>, Vec<Diagnostic>> {
+        eprintln!("DEBUG compile_handle CALLED: handler_id={:?}", handler_id);
         // Phase 2.4: Evidence vector setup
         //
         // 1. Save current evidence vector
@@ -747,7 +776,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?;
 
         // Compile the body
-        let result = self.compile_expr(body)?;
+        let body_result = self.compile_expr(body)?;
 
         // Pop handler from evidence vector
         self.builder.build_call(ev_pop, &[ev.into()], "")
@@ -757,6 +786,70 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         self.builder.build_call(ev_set_current, &[saved_ev.into()], "")
             .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?;
 
+        // Call the return clause to transform the result
+        // The return clause function is named handler_{handler_id.index}_return
+        // It may be in a separate compilation unit (handler registration), so we declare it if needed
+        let return_fn_name = format!("handler_{}_return", handler_id.index);
+        eprintln!("DEBUG compile_handle: handler_id={:?}, return_fn_name={}", handler_id, return_fn_name);
+        let return_fn = self.module.get_function(&return_fn_name).unwrap_or_else(|| {
+            // Declare the return clause function as external
+            // Signature: fn(result: i64, state_ptr: *void) -> i64
+            let fn_type = i64_type.fn_type(&[i64_type.into(), i8_ptr_type.into()], false);
+            self.module.add_function(&return_fn_name, fn_type, None)
+        });
+        let final_result = {
+            // Convert body result to i64 for the return clause
+            let result_i64 = if let Some(val) = body_result {
+                match val {
+                    BasicValueEnum::IntValue(iv) => {
+                        if iv.get_type().get_bit_width() == 64 {
+                            iv
+                        } else {
+                            self.builder
+                                .build_int_s_extend(iv, i64_type, "result_ext")
+                                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?
+                        }
+                    }
+                    BasicValueEnum::PointerValue(pv) => {
+                        self.builder
+                            .build_ptr_to_int(pv, i64_type, "result_ptr_int")
+                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?
+                    }
+                    _ => i64_type.const_zero(),
+                }
+            } else {
+                i64_type.const_zero()
+            };
+
+            // Call return clause: fn(result: i64, state_ptr: *void) -> i64
+            let return_result = self.builder
+                .build_call(return_fn, &[result_i64.into(), state_ptr], "return_clause_result")
+                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?
+                .try_as_basic_value()
+                .left();
+
+            // Convert return clause result to expected type
+            if let Some(ret_val) = return_result {
+                let ret_i64 = ret_val.into_int_value();
+                let result_llvm_type = self.lower_type(result_ty);
+                if result_llvm_type.is_int_type() {
+                    let result_int_type = result_llvm_type.into_int_type();
+                    if result_int_type.get_bit_width() == 64 {
+                        Some(ret_val)
+                    } else {
+                        Some(self.builder
+                            .build_int_truncate(ret_i64, result_int_type, "ret_trunc")
+                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?
+                            .into())
+                    }
+                } else {
+                    Some(ret_val)
+                }
+            } else {
+                body_result
+            }
+        };
+
         // Destroy evidence vector
         self.builder.build_call(ev_destroy, &[ev.into()], "")
             .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?;
@@ -765,7 +858,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         if result_ty.is_unit() {
             Ok(None)
         } else {
-            Ok(result)
+            Ok(final_result)
         }
     }
 }

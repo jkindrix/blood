@@ -183,6 +183,21 @@ pub enum StatementKind {
     /// previous handler state.
     PopHandler,
 
+    /// Call a handler's return clause to transform the body result.
+    ///
+    /// This calls the handler's return clause function: `handler_{id}_return(result, state)`.
+    /// The result is stored in the destination place.
+    CallReturnClause {
+        /// The handler DefId (used to generate the return clause function name).
+        handler_id: DefId,
+        /// The body result value to pass to the return clause.
+        body_result: Operand,
+        /// The handler state place (pointer to state struct).
+        state_place: Place,
+        /// Where to store the return clause result.
+        destination: Place,
+    },
+
     /// No-op (placeholder for removed statements).
     Nop,
 }

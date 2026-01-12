@@ -156,6 +156,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             Handle { body, handler_id, handler_instance } => {
                 // Handle expression: runs body with handler installed.
                 // This sets up the evidence vector and runs the body.
+                eprintln!("DEBUG compile_expr: Handle expression, handler_id={:?}", handler_id);
                 self.compile_handle(body, *handler_id, handler_instance, &expr.ty)
             }
             Deref(inner) => {

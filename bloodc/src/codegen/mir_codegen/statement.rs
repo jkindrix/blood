@@ -3,6 +3,7 @@
 //! This module handles compilation of MIR statements to LLVM IR.
 
 use inkwell::types::BasicType;
+use inkwell::values::BasicValueEnum;
 use inkwell::AddressSpace;
 
 use crate::diagnostics::Diagnostic;
@@ -253,6 +254,11 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 })?;
 
                 // Declare or get evidence functions
+                let ev_current = self.module.get_function("blood_evidence_current")
+                    .unwrap_or_else(|| {
+                        let fn_type = i8_ptr_ty.fn_type(&[], false);
+                        self.module.add_function("blood_evidence_current", fn_type, None)
+                    });
                 let ev_create = self.module.get_function("blood_evidence_create")
                     .unwrap_or_else(|| {
                         let fn_type = i8_ptr_ty.fn_type(&[], false);
@@ -272,8 +278,43 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                         self.module.add_function("blood_evidence_set_current", fn_type, None)
                     });
 
-                // Create evidence vector if not already set
-                let ev = self.builder.build_call(ev_create, &[], "evidence")
+                // Get current evidence vector, or create one if none exists
+                let current_ev = self.builder.build_call(ev_current, &[], "current_ev")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM call error: {}", e), stmt.span
+                    )])?
+                    .try_as_basic_value()
+                    .left()
+                    .ok_or_else(|| vec![Diagnostic::error(
+                        "blood_evidence_current returned void",
+                        stmt.span
+                    )])?;
+
+                // Check if current evidence is null
+                let is_null = self.builder.build_is_null(
+                    current_ev.into_pointer_value(),
+                    "ev_is_null"
+                ).map_err(|e| vec![Diagnostic::error(
+                    format!("LLVM error: {}", e), stmt.span
+                )])?;
+
+                // Create blocks for the conditional
+                let current_fn = self.current_fn.ok_or_else(|| {
+                    vec![Diagnostic::error("No current function", stmt.span)]
+                })?;
+                let create_block = self.context.append_basic_block(current_fn, "create_ev");
+                let use_block = self.context.append_basic_block(current_fn, "use_ev");
+                let merge_block = self.context.append_basic_block(current_fn, "merge_ev");
+
+                // Branch based on null check
+                self.builder.build_conditional_branch(is_null, create_block, use_block)
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM error: {}", e), stmt.span
+                    )])?;
+
+                // Create block: evidence is null, create new one
+                self.builder.position_at_end(create_block);
+                let new_ev = self.builder.build_call(ev_create, &[], "new_evidence")
                     .map_err(|e| vec![Diagnostic::error(
                         format!("LLVM call error: {}", e), stmt.span
                     )])?
@@ -283,6 +324,31 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                         "blood_evidence_create returned void",
                         stmt.span
                     )])?;
+                self.builder.build_unconditional_branch(merge_block)
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM error: {}", e), stmt.span
+                    )])?;
+                let create_block_end = self.builder.get_insert_block().unwrap();
+
+                // Use block: evidence exists, use it directly
+                self.builder.position_at_end(use_block);
+                self.builder.build_unconditional_branch(merge_block)
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM error: {}", e), stmt.span
+                    )])?;
+                let use_block_end = self.builder.get_insert_block().unwrap();
+
+                // Merge block: phi to select the evidence pointer
+                self.builder.position_at_end(merge_block);
+                let ev_phi = self.builder.build_phi(i8_ptr_ty, "evidence")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM error: {}", e), stmt.span
+                    )])?;
+                ev_phi.add_incoming(&[
+                    (&new_ev, create_block_end),
+                    (&current_ev, use_block_end),
+                ]);
+                let ev = ev_phi.as_basic_value();
 
                 // Push handler with effect_id and state pointer
                 let effect_id_val = i64_ty.const_int(effect_id.index as u64, false);
@@ -302,7 +368,8 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     format!("LLVM call error: {}", e), stmt.span
                 )])?;
 
-                // Set as current evidence vector
+                // Set as current evidence vector (only needed if we created a new one,
+                // but setting it unconditionally is harmless and simpler)
                 self.builder.build_call(ev_set_current, &[ev.into()], "")
                     .map_err(|e| vec![Diagnostic::error(
                         format!("LLVM call error: {}", e), stmt.span
@@ -341,6 +408,116 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 self.builder.build_call(ev_pop, &[ev.into()], "")
                     .map_err(|e| vec![Diagnostic::error(
                         format!("LLVM call error: {}", e), stmt.span
+                    )])?;
+            }
+
+            StatementKind::CallReturnClause { handler_id, body_result, state_place, destination } => {
+                // Call the handler's return clause to transform the body result
+                let i64_ty = self.context.i64_type();
+                let i8_ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
+
+                // Generate return clause function name
+                let return_fn_name = format!("handler_{}_return", handler_id.index);
+
+                // Declare or get the return clause function
+                let return_fn = self.module.get_function(&return_fn_name)
+                    .unwrap_or_else(|| {
+                        // Signature: fn(result: i64, state_ptr: *void) -> i64
+                        let fn_type = i64_ty.fn_type(&[i64_ty.into(), i8_ptr_ty.into()], false);
+                        self.module.add_function(&return_fn_name, fn_type, None)
+                    });
+
+                // Compile the body result operand
+                let body_result_val = self.compile_mir_operand(body_result, body, escape_results)?;
+
+                // Convert body result to i64
+                let result_i64 = match body_result_val {
+                    BasicValueEnum::IntValue(iv) => {
+                        if iv.get_type().get_bit_width() == 64 {
+                            iv
+                        } else {
+                            self.builder.build_int_s_extend(iv, i64_ty, "result_ext")
+                                .map_err(|e| vec![Diagnostic::error(
+                                    format!("LLVM extend error: {}", e), stmt.span
+                                )])?
+                        }
+                    }
+                    BasicValueEnum::PointerValue(pv) => {
+                        self.builder.build_ptr_to_int(pv, i64_ty, "result_ptr_int")
+                            .map_err(|e| vec![Diagnostic::error(
+                                format!("LLVM ptr_to_int error: {}", e), stmt.span
+                            )])?
+                    }
+                    _ => i64_ty.const_zero(),
+                };
+
+                // Get state pointer from state_place
+                let state_ptr = self.compile_mir_place(state_place, body)?;
+                let state_void_ptr = self.builder.build_pointer_cast(state_ptr, i8_ptr_ty, "state_void_ptr")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM cast error: {}", e), stmt.span
+                    )])?;
+
+                // Call return clause: fn(result: i64, state_ptr: *void) -> i64
+                let call_result = self.builder.build_call(
+                    return_fn,
+                    &[result_i64.into(), state_void_ptr.into()],
+                    "return_clause_result"
+                ).map_err(|e| vec![Diagnostic::error(
+                    format!("LLVM call error: {}", e), stmt.span
+                )])?
+                    .try_as_basic_value()
+                    .left()
+                    .ok_or_else(|| vec![Diagnostic::error(
+                        "Return clause returned void", stmt.span
+                    )])?;
+
+                // Store result in destination
+                let dest_ptr = self.compile_mir_place(destination, body)?;
+
+                // Get destination type and convert i64 result if needed
+                let dest_ty = &body.locals[destination.local.index as usize].ty;
+                let dest_llvm_ty = self.lower_type(dest_ty);
+
+                let converted_result = if dest_llvm_ty.is_int_type() {
+                    let dest_int_ty = dest_llvm_ty.into_int_type();
+                    let result_i64 = call_result.into_int_value();
+
+                    if dest_int_ty.get_bit_width() == 64 {
+                        call_result
+                    } else if dest_int_ty.get_bit_width() < 64 {
+                        // Truncate i64 to destination type
+                        self.builder.build_int_truncate(result_i64, dest_int_ty, "ret_trunc")
+                            .map_err(|e| vec![Diagnostic::error(
+                                format!("LLVM truncate error: {}", e), stmt.span
+                            )])?
+                            .into()
+                    } else {
+                        // Extend to larger type (rare)
+                        self.builder.build_int_s_extend(result_i64, dest_int_ty, "ret_ext")
+                            .map_err(|e| vec![Diagnostic::error(
+                                format!("LLVM extend error: {}", e), stmt.span
+                            )])?
+                            .into()
+                    }
+                } else if dest_llvm_ty.is_pointer_type() {
+                    // Convert i64 to pointer
+                    self.builder.build_int_to_ptr(
+                        call_result.into_int_value(),
+                        dest_llvm_ty.into_pointer_type(),
+                        "ret_ptr"
+                    ).map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM int_to_ptr error: {}", e), stmt.span
+                    )])?
+                    .into()
+                } else {
+                    // For other types, use as-is
+                    call_result
+                };
+
+                self.builder.build_store(dest_ptr, converted_result)
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM store error: {}", e), stmt.span
                     )])?;
             }
 

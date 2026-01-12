@@ -232,6 +232,9 @@ pub struct CodegenContext<'ctx, 'a> {
     /// Current continuation pointer for deep handler operations.
     /// When set, compile_resume calls the continuation instead of returning.
     pub(super) current_continuation: Option<PointerValue<'ctx>>,
+    /// Whether the current handler operation is multi-shot.
+    /// When true, compile_resume clones the continuation before resuming.
+    pub(super) is_multishot_handler: bool,
 }
 
 impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
@@ -270,6 +273,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             const_globals: HashMap::new(),
             static_globals: HashMap::new(),
             current_continuation: None,
+            is_multishot_handler: false,
         }
     }
 

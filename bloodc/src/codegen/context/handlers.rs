@@ -122,7 +122,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // Return clause function signature: fn(result: i64, state_ptr: *void) -> i64
         let ret_clause_type = i64_type.fn_type(&[i64_type.into(), i8_ptr_type.into()], false);
-        let fn_name = format!("{}_return", handler_name);
+        // Use handler_id index for consistent naming with compile_handle lookup
+        let fn_name = format!("handler_{}_return", _handler_id.index);
         let fn_value = self.module.add_function(&fn_name, ret_clause_type, None);
 
         // Create entry block
@@ -321,6 +322,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     ) -> Result<(), Vec<Diagnostic>> {
         let span = body.span;
 
+        // Detect if this is a multi-shot handler (has multiple resume calls)
+        let resume_count = crate::effects::handler::count_resumes_in_expr(&body.expr);
+        let is_multishot = resume_count > 1;
+
         // Create entry block
         let entry_block = self.context.append_basic_block(fn_value, "entry");
         self.builder.position_at_end(entry_block);
@@ -329,14 +334,16 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let saved_fn = self.current_fn;
         let saved_locals = std::mem::take(&mut self.locals);
         let saved_continuation = self.current_continuation.take();
+        let saved_is_multishot = self.is_multishot_handler;
         self.current_fn = Some(fn_value);
+        self.is_multishot_handler = is_multishot;
 
         // Get parameters: (state: *mut void, args: *const i64, arg_count: i64, continuation: i64)
         let state_ptr = fn_value.get_nth_param(0)
             .ok_or_else(|| vec![Diagnostic::error("Missing state parameter".to_string(), span)])?;
         let args_ptr = fn_value.get_nth_param(1)
             .ok_or_else(|| vec![Diagnostic::error("Missing args parameter".to_string(), span)])?;
-        let _arg_count = fn_value.get_nth_param(2)
+        let arg_count_param = fn_value.get_nth_param(2)
             .ok_or_else(|| vec![Diagnostic::error("Missing arg_count parameter".to_string(), span)])?;
         let continuation_param = fn_value.get_nth_param(3)
             .ok_or_else(|| vec![Diagnostic::error("Missing continuation parameter".to_string(), span)])?;
@@ -433,14 +440,115 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             self.locals.insert(local.id, alloca);
         }
 
-        // Now extract operation parameters from args_ptr (if any)
-        // params() returns locals 1..(1+param_count), but for handler ops
-        // param_count might be 0 or include state fields
-        // For now, just skip this since handler ops often have no params
-        let _args_ptr_val = args_ptr.into_pointer_value();
+        // Extract operation parameters from args_ptr
+        // The effect operation's parameters are passed as an array of i64 values
+        // We need to identify which locals are operation params (not state fields, not resume)
+        let args_ptr_val = args_ptr.into_pointer_value();
+        let i32_type = self.context.i32_type();
+        let zero_i32 = i32_type.const_zero();
+
+        // Find operation parameters: params that are NOT state fields and NOT resume
+        // NOTE: We iterate through all locals (except return place) and identify op params.
+        // The locals order is: [return, state_fields..., op_params..., resume, body_locals...]
+        // body.param_count is the number of operation parameters.
+        // We need to process exactly param_count non-state-field, non-resume locals.
+        let mut arg_index: u32 = 0;
+        let op_param_count = body.param_count;
+        for local in body.locals.iter().skip(1) {  // Skip return place at index 0
+            // Stop once we've processed all operation parameters
+            if arg_index as usize >= op_param_count {
+                break;
+            }
+
+            let param_name = local.name.as_deref().unwrap_or("");
+
+            // Skip state fields and resume - they're not operation parameters
+            if state_field_indices.contains_key(param_name) || param_name == "resume" {
+                continue;
+            }
+
+            // This is an operation parameter - load it from args_ptr
+            if let Some(&alloca) = self.locals.get(&local.id) {
+                // Get pointer to args[arg_index]
+                // args_ptr is a pointer to i64 values, so we only need one index
+                let idx = i64_type.const_int(arg_index as u64, false);
+                let arg_ptr = unsafe {
+                    self.builder.build_gep(args_ptr_val, &[idx], &format!("arg_{}_ptr", arg_index))
+                }.map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+
+                // Load the argument value (as i64)
+                let arg_val = self.builder
+                    .build_load(arg_ptr, &format!("arg_{}", arg_index))
+                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+
+                // Convert to match the parameter type
+                let param_type = self.lower_type(&local.ty);
+                let arg_int = arg_val.into_int_value();
+                let final_val: BasicValueEnum = if param_type.is_int_type() {
+                    let target_int_type = param_type.into_int_type();
+                    if target_int_type.get_bit_width() < 64 {
+                        self.builder
+                            .build_int_truncate(arg_int, target_int_type, "arg_trunc")
+                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                            .into()
+                    } else if target_int_type.get_bit_width() > 64 {
+                        self.builder
+                            .build_int_s_extend(arg_int, target_int_type, "arg_ext")
+                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                            .into()
+                    } else {
+                        arg_int.into()
+                    }
+                } else if param_type.is_pointer_type() {
+                    // Convert i64 to pointer type
+                    self.builder
+                        .build_int_to_ptr(arg_int, param_type.into_pointer_type(), "arg_ptr")
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                        .into()
+                } else {
+                    // For other types (float, struct), use the raw i64
+                    arg_int.into()
+                };
+
+                // Store in the parameter's alloca
+                self.builder.build_store(alloca, final_val)
+                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+
+                arg_index += 1;
+            }
+        }
 
         // Compile the body expression
         let result = self.compile_expr(&body.expr)?;
+
+        // Write back mutable state fields to the state struct
+        // This ensures mutations during the handler op are visible to subsequent code
+        for state_field in state_fields.iter() {
+            if state_field.mutable {
+                let field_name = state_field.name.as_str();
+                if let Some(&field_idx) = state_field_indices.get(field_name) {
+                    // Find the local that corresponds to this state field
+                    let local = body.locals.iter().find(|l| l.name.as_deref() == Some(field_name));
+                    if let Some(local) = local {
+                        if let Some(&local_alloca) = self.locals.get(&local.id) {
+                            // Get pointer to the state field
+                            let field_ptr = self.builder
+                                .build_struct_gep(typed_state_ptr, field_idx, &format!("{}_writeback_ptr", field_name))
+                                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+
+                            // Load current value from local
+                            let current_val = self.builder
+                                .build_load(local_alloca, &format!("{}_writeback_val", field_name))
+                                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+
+                            // Write back to state
+                            self.builder.build_store(field_ptr, current_val)
+                                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+                        }
+                    }
+                }
+            }
+        }
 
         // Check if the basic block already has a terminator (e.g., from resume)
         // If so, don't add another return
@@ -517,6 +625,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         self.current_fn = saved_fn;
         self.locals = saved_locals;
         self.current_continuation = saved_continuation;
+        self.is_multishot_handler = saved_is_multishot;
 
         Ok(())
     }

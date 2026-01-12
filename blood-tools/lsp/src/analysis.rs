@@ -537,6 +537,21 @@ impl SemanticAnalyzer {
                     }
                 }
             }
+            ExprKind::IfLet { pattern, scrutinee, then_branch, else_branch } => {
+                self.collect_pattern_symbols(pattern, interner, symbols, symbol_at_offset);
+                self.collect_expr_symbols(scrutinee, interner, symbols, symbol_at_offset);
+                self.collect_block_symbols(then_branch, interner, symbols, symbol_at_offset);
+                if let Some(else_branch) = else_branch {
+                    match else_branch {
+                        ast::ElseBranch::Block(block) => {
+                            self.collect_block_symbols(block, interner, symbols, symbol_at_offset);
+                        }
+                        ast::ElseBranch::If(if_expr) => {
+                            self.collect_expr_symbols(if_expr, interner, symbols, symbol_at_offset);
+                        }
+                    }
+                }
+            }
             ExprKind::Match { scrutinee, arms } => {
                 self.collect_expr_symbols(scrutinee, interner, symbols, symbol_at_offset);
                 for arm in arms {
@@ -549,6 +564,11 @@ impl SemanticAnalyzer {
             }
             ExprKind::While { condition, body, .. } => {
                 self.collect_expr_symbols(condition, interner, symbols, symbol_at_offset);
+                self.collect_block_symbols(body, interner, symbols, symbol_at_offset);
+            }
+            ExprKind::WhileLet { pattern, scrutinee, body, .. } => {
+                self.collect_pattern_symbols(pattern, interner, symbols, symbol_at_offset);
+                self.collect_expr_symbols(scrutinee, interner, symbols, symbol_at_offset);
                 self.collect_block_symbols(body, interner, symbols, symbol_at_offset);
             }
             ExprKind::For { pattern, iter, body, .. } => {

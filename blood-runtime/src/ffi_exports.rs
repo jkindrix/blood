@@ -282,9 +282,20 @@ struct EvidenceEntry {
 }
 
 /// Create a new evidence vector.
+///
+/// If there is a current evidence vector, this clones it so that nested handlers
+/// inherit outer handlers. Otherwise creates an empty vector.
 #[no_mangle]
 pub extern "C" fn blood_evidence_create() -> EvidenceHandle {
-    let ev = Box::new(Vec::<EvidenceEntry>::new());
+    // Check if there's a current evidence vector to inherit from
+    let current = blood_evidence_current();
+    let ev = if current.is_null() {
+        Box::new(Vec::<EvidenceEntry>::new())
+    } else {
+        // Clone the current evidence vector so nested handlers inherit outer handlers
+        let current_vec = unsafe { &*(current as *const Vec<EvidenceEntry>) };
+        Box::new(current_vec.clone())
+    };
     Box::into_raw(ev) as EvidenceHandle
 }
 
@@ -1365,6 +1376,7 @@ pub unsafe extern "C" fn blood_fiber_resume(fiber: FiberHandle, value: u64) {
 /// The user must ensure that the wrapped callback and context are safe to
 /// access from any thread. This is typically ensured by the caller of
 /// blood_continuation_create.
+#[derive(Clone, Copy)]
 struct ContinuationCallback {
     callback: extern "C" fn(i64, *mut c_void) -> i64,
     context: *mut c_void,
@@ -1380,6 +1392,110 @@ impl ContinuationCallback {
     fn call(&self, value: i64) -> i64 {
         (self.callback)(value, self.context)
     }
+}
+
+// ============================================================================
+// Multi-Shot Continuation Support
+// ============================================================================
+
+/// Registry for multi-shot continuation callbacks.
+///
+/// This stores the original callback/context so continuations can be cloned.
+/// For single-shot continuations, the callback is consumed on resume.
+/// For multi-shot continuations, we keep the callback here for cloning.
+static MULTISHOT_CALLBACKS: std::sync::OnceLock<parking_lot::Mutex<std::collections::HashMap<u64, ContinuationCallback>>> = std::sync::OnceLock::new();
+
+fn get_multishot_registry() -> &'static parking_lot::Mutex<std::collections::HashMap<u64, ContinuationCallback>> {
+    MULTISHOT_CALLBACKS.get_or_init(|| parking_lot::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// Create a multi-shot continuation from a callback function.
+///
+/// Unlike `blood_continuation_create`, this continuation can be cloned
+/// multiple times using `blood_continuation_clone`.
+///
+/// # Arguments
+/// * `callback` - Function pointer: fn(value: i64, context: *mut c_void) -> i64
+/// * `context` - User context pointer passed to callback
+///
+/// # Returns
+/// Continuation handle, or 0 on failure.
+///
+/// # Safety
+/// The callback and context must remain valid until all clones are resumed.
+#[no_mangle]
+pub unsafe extern "C" fn blood_continuation_create_multishot(
+    callback: extern "C" fn(i64, *mut c_void) -> i64,
+    context: *mut c_void,
+) -> ContinuationHandle {
+    let cb = ContinuationCallback { callback, context };
+
+    // Create the continuation
+    let cb_clone = cb;
+    let k = Continuation::new(move |value: i64| -> i64 {
+        cb_clone.call(value)
+    });
+
+    let id = k.id().as_u64();
+
+    // Store callback in multi-shot registry for cloning
+    get_multishot_registry().lock().insert(id, cb);
+
+    // Register the continuation
+    let k_ref = register_continuation(k);
+    k_ref.id
+}
+
+/// Clone a multi-shot continuation.
+///
+/// Creates a new continuation with a new ID but the same callback/context.
+/// The original continuation remains valid and can also be resumed.
+///
+/// # Arguments
+/// * `handle` - Handle of the continuation to clone
+///
+/// # Returns
+/// New continuation handle, or 0 if the original was not found or not multi-shot.
+///
+/// # Safety
+/// The original continuation must have been created with `blood_continuation_create_multishot`.
+#[no_mangle]
+pub unsafe extern "C" fn blood_continuation_clone(handle: ContinuationHandle) -> ContinuationHandle {
+    // Look up the callback in the multi-shot registry
+    let cb = {
+        let registry = get_multishot_registry().lock();
+        registry.get(&handle).copied()
+    };
+
+    let Some(cb) = cb else {
+        eprintln!("BLOOD RUNTIME ERROR: Cannot clone continuation {} - not found in multi-shot registry", handle);
+        return 0;
+    };
+
+    // Create a new continuation with the same callback
+    let k = Continuation::new(move |value: i64| -> i64 {
+        cb.call(value)
+    });
+
+    let new_id = k.id().as_u64();
+
+    // Also register the clone in the multi-shot registry
+    get_multishot_registry().lock().insert(new_id, cb);
+
+    // Register and return
+    let k_ref = register_continuation(k);
+    k_ref.id
+}
+
+/// Clean up a multi-shot continuation's registry entry.
+///
+/// Should be called when a multi-shot continuation is no longer needed.
+/// This removes the callback from the multi-shot registry.
+#[no_mangle]
+pub extern "C" fn blood_continuation_drop_multishot(handle: ContinuationHandle) {
+    get_multishot_registry().lock().remove(&handle);
+    // Also remove from continuation registry if present
+    let _ = take_continuation(ContinuationRef { id: handle });
 }
 
 /// Create a continuation from a callback function.
