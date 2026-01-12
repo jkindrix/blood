@@ -294,22 +294,43 @@ fn test_pipeline_hello_blood() {
     let mut parser = Parser::new(&source);
     let program = parser.parse_program().expect("Failed to parse hello.blood");
 
+    // hello.blood is a simple example - verify basic structures
+    assert!(
+        program.declarations.len() >= 4,
+        "Expected at least 4 declarations in hello.blood (struct + functions)"
+    );
+
+    // Check for function declarations
+    let has_function = program.declarations.iter().any(|d| {
+        matches!(d, bloodc::ast::Declaration::Function(_))
+    });
+    assert!(has_function, "hello.blood should contain function declarations");
+}
+
+#[test]
+fn test_pipeline_effects_blood() {
+    let source = fs::read_to_string("../examples/algebraic_effects.blood")
+        .expect("Failed to read algebraic_effects.blood");
+
+    let mut parser = Parser::new(&source);
+    let program = parser.parse_program().expect("Failed to parse algebraic_effects.blood");
+
     // Verify key structures are present
     assert!(
         program.declarations.len() >= 5,
-        "Expected at least 5 declarations in hello.blood"
+        "Expected at least 5 declarations in algebraic_effects.blood"
     );
 
     // Check for effect and handler declarations
     let has_effect = program.declarations.iter().any(|d| {
         matches!(d, bloodc::ast::Declaration::Effect { .. })
     });
-    assert!(has_effect, "hello.blood should contain effect declarations");
+    assert!(has_effect, "algebraic_effects.blood should contain effect declarations");
 
     let has_handler = program.declarations.iter().any(|d| {
         matches!(d, bloodc::ast::Declaration::Handler { .. })
     });
-    assert!(has_handler, "hello.blood should contain handler declarations");
+    assert!(has_handler, "algebraic_effects.blood should contain handler declarations");
 }
 
 #[test]

@@ -747,6 +747,7 @@ impl<'a> TypeContext<'a> {
                                 ty.span,
                             ));
                         }
+                        // Non-primitive type names: fall through to user-defined type lookup
                         _ => {}
                     }
 

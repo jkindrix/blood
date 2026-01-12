@@ -302,6 +302,7 @@ impl<'src> Parser<'src> {
                 | TokenKind::Pub
                 | TokenKind::Use
                 | TokenKind::Module => return,
+                // Intentionally empty: continue advancing until a sync point is found
                 _ => {}
             }
 
@@ -357,6 +358,7 @@ impl<'src> Parser<'src> {
                 | TokenKind::Match => {
                     return;
                 }
+                // Intentionally empty: continue advancing until a sync point is found
                 _ => {}
             }
             self.advance();

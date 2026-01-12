@@ -926,6 +926,7 @@ impl<'a> DispatchResolver<'a> {
                 return true;
             }
 
+            // Other type combinations: fall through to trait-based subtyping check below
             _ => {}
         }
 

@@ -66,10 +66,10 @@ The following table tracks implementation status of concurrency subsystems:
 | blood_scheduler_* exports | ✅ Integrated | `blood-runtime/src/ffi_exports.rs` | Runtime scheduler FFI |
 | MPMC channels | ✅ Implemented | `blood-runtime/src/channel.rs` | Bounded/unbounded |
 | I/O reactor | ✅ Implemented | `blood-runtime/src/io.rs` | Platform-native async |
-| Platform: Linux epoll | ✅ Implemented | `blood-runtime/src/io.rs` | Primary platform |
-| Platform: Linux io_uring | 📋 Designed | — | Future enhancement |
-| Platform: macOS kqueue | 📋 Designed | — | Not validated |
-| Platform: Windows IOCP | 📋 Designed | — | Not validated |
+| Platform: Linux epoll | ✅ Implemented | `blood-runtime/src/io.rs` | Fallback driver |
+| Platform: Linux io_uring | ✅ Implemented | `blood-runtime/src/io.rs` | Primary Linux driver |
+| Platform: macOS kqueue | ✅ Implemented | `blood-runtime/src/io.rs` | Primary macOS driver |
+| Platform: Windows IOCP | ✅ Implemented | `blood-runtime/src/io.rs` | Primary Windows driver |
 | Fiber effect syntax | 📋 Designed | — | Per §2.4 specification |
 | Structured concurrency | 📋 Designed | — | Nursery pattern |
 | Select/await syntax | 📋 Designed | — | Per §5.4 specification |

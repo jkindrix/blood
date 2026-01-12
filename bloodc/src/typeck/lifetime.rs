@@ -193,6 +193,7 @@ impl LifetimeInference {
                                 self.solutions.insert(right, sol);
                                 changed = true;
                             }
+                            // (Some, Some) or (None, None): no propagation needed
                             _ => {}
                         }
                     }

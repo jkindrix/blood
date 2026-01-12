@@ -64,9 +64,9 @@ The following table tracks implementation status of FFI subsystems:
 | Bridge block codegen | 📋 Designed | — | Awaits bridge parsing |
 | Type mapping validation | 📋 Designed | — | Per §3 specification |
 | Calling conventions | 📋 Designed | — | sysv64 (Linux x86-64 primary target) |
-| Platform validation (Linux) | ✅ Validated | `blood-runtime/tests/` | Primary development platform |
-| Platform validation (macOS) | ⚠️ Partial | — | Expected to work, not CI tested |
-| Platform validation (Windows) | ⚠️ Partial | — | Expected to work, not CI tested |
+| Platform validation (Linux) | ✅ Validated | `.github/workflows/ci.yml` | CI tested on ubuntu-latest |
+| Platform validation (macOS) | ✅ Validated | `.github/workflows/ci.yml` | CI tested on macos-latest |
+| Platform validation (Windows) | ✅ Validated | `.github/workflows/ci.yml` | CI tested on windows-latest |
 | WASM FFI | 📋 Designed | — | Design target only |
 
 **Legend**: ✅ Implemented | ⚠️ Partial | 📋 Designed | ❌ Not Started
