@@ -86,6 +86,8 @@ pub struct Parser<'src> {
     interner: DefaultStringInterner,
     /// Current token.
     current: Token,
+    /// Next token (for one-token lookahead).
+    next: Token,
     /// Previous token.
     previous: Token,
     /// Accumulated errors.
@@ -99,12 +101,14 @@ impl<'src> Parser<'src> {
     pub fn new(source: &'src str) -> Self {
         let mut lexer = Lexer::new(source);
         let current = lexer.next().unwrap_or(Token::dummy(TokenKind::Error));
+        let next = lexer.next().unwrap_or(Token::dummy(TokenKind::Eof));
 
         Self {
             lexer,
             source,
             interner: DefaultStringInterner::new(),
             current,
+            next,
             previous: Token::dummy(TokenKind::Error),
             errors: Vec::new(),
             panic_mode: false,
@@ -172,8 +176,11 @@ impl<'src> Parser<'src> {
             return self.previous.clone();
         }
 
+        // Shift: current <- next, next <- lexer.next()
+        self.current = self.next.clone();
+
         loop {
-            self.current = self.lexer.next().unwrap_or_else(|| {
+            self.next = self.lexer.next().unwrap_or_else(|| {
                 Token::new(
                     TokenKind::Eof,
                     Span::new(self.source.len(), self.source.len(), 0, 0),
@@ -181,7 +188,7 @@ impl<'src> Parser<'src> {
             });
 
             // Accept any non-error token, or EOF
-            if self.current.kind != TokenKind::Error || self.current.kind == TokenKind::Eof {
+            if self.next.kind != TokenKind::Error || self.next.kind == TokenKind::Eof {
                 break;
             }
 
@@ -189,6 +196,11 @@ impl<'src> Parser<'src> {
             self.error_at_current("unexpected character", ErrorCode::UnexpectedCharacter);
         }
         self.previous.clone()
+    }
+
+    /// Check if the next token (lookahead) matches the given kind.
+    fn check_next(&self, kind: TokenKind) -> bool {
+        self.next.kind == kind
     }
 
     /// Consume a token of the expected kind, or error.

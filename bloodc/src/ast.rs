@@ -974,6 +974,14 @@ pub enum ExprKind {
         else_branch: Option<ElseBranch>,
     },
 
+    /// If-let: `if let PATTERN = EXPR { } else { }`
+    IfLet {
+        pattern: Pattern,
+        scrutinee: Box<Expr>,
+        then_branch: Block,
+        else_branch: Option<ElseBranch>,
+    },
+
     /// Match: `match x { ... }`
     Match {
         scrutinee: Box<Expr>,
@@ -990,6 +998,14 @@ pub enum ExprKind {
     While {
         label: Option<Spanned<Symbol>>,
         condition: Box<Expr>,
+        body: Block,
+    },
+
+    /// While-let: `while let PATTERN = EXPR { }`
+    WhileLet {
+        label: Option<Spanned<Symbol>>,
+        pattern: Pattern,
+        scrutinee: Box<Expr>,
         body: Block,
     },
 

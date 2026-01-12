@@ -409,12 +409,34 @@ impl<'src> Parser<'src> {
         self.parse_postfix_continuation(expr)
     }
 
+    /// Check if an expression is "block-like" (ends with `}` and can't be called).
+    /// Block expressions like `{}`, `if`, `match`, `loop`, `while`, `for`, etc.
+    /// cannot be followed by `(...)` to form a function call.
+    fn is_block_like_expr(expr: &Expr) -> bool {
+        matches!(
+            expr.kind,
+            ExprKind::Block(_)
+                | ExprKind::If { .. }
+                | ExprKind::IfLet { .. }
+                | ExprKind::Match { .. }
+                | ExprKind::Loop { .. }
+                | ExprKind::While { .. }
+                | ExprKind::WhileLet { .. }
+                | ExprKind::For { .. }
+                | ExprKind::Unsafe(_)
+                | ExprKind::Region { .. }
+                | ExprKind::WithHandle { .. }
+        )
+    }
+
     /// Continue parsing postfix operators on an already-parsed expression.
     fn parse_postfix_continuation(&mut self, mut expr: Expr) -> Expr {
         loop {
             match self.current.kind {
-                // Function call
-                TokenKind::LParen => {
+                // Function call - but NOT after block-like expressions
+                // In `match x { ... } (y)`, the `(y)` is NOT a function call to the match result;
+                // it's the start of a new expression (e.g., a pattern in the next match arm).
+                TokenKind::LParen if !Self::is_block_like_expr(&expr) => {
                     self.advance();
                     let args = self.parse_call_args();
                     self.expect(TokenKind::RParen);
@@ -1046,6 +1068,35 @@ impl<'src> Parser<'src> {
         let start = self.current.span;
         self.advance(); // consume 'if'
 
+        // Check for if-let: `if let PATTERN = EXPR { } else { }`
+        if self.try_consume(TokenKind::Let) {
+            let pattern = self.parse_pattern();
+            self.expect(TokenKind::Eq);
+            let scrutinee = self.parse_expr_no_struct();
+            let then_branch = self.parse_block();
+
+            let else_branch = if self.try_consume(TokenKind::Else) {
+                if self.check(TokenKind::If) {
+                    Some(ElseBranch::If(Box::new(self.parse_if_expr())))
+                } else {
+                    Some(ElseBranch::Block(self.parse_block()))
+                }
+            } else {
+                None
+            };
+
+            return Expr {
+                kind: ExprKind::IfLet {
+                    pattern,
+                    scrutinee: Box::new(scrutinee),
+                    then_branch,
+                    else_branch,
+                },
+                span: start.merge(self.previous.span),
+            };
+        }
+
+        // Regular if: `if cond { } else { }`
         // Use parse_expr_no_struct to avoid ambiguity with struct literals
         let condition = self.parse_expr_no_struct();
         let then_branch = self.parse_block();
@@ -1137,6 +1188,27 @@ impl<'src> Parser<'src> {
         let start = self.current.span;
         let label = self.parse_optional_label();
         self.advance(); // consume 'while'
+
+        // Check for while-let: `while let PATTERN = EXPR { }`
+        if self.try_consume(TokenKind::Let) {
+            let pattern = self.parse_pattern();
+            self.expect(TokenKind::Eq);
+            // Use parse_expr_no_struct to avoid ambiguity with struct literals
+            let scrutinee = self.parse_expr_no_struct();
+            let body = self.parse_block();
+
+            return Expr {
+                kind: ExprKind::WhileLet {
+                    label,
+                    pattern,
+                    scrutinee: Box::new(scrutinee),
+                    body,
+                },
+                span: start.merge(self.previous.span),
+            };
+        }
+
+        // Regular while: `while cond { }`
         // Use parse_expr_no_struct to avoid ambiguity with struct literals
         let condition = self.parse_expr_no_struct();
         let body = self.parse_block();
