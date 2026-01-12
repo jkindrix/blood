@@ -362,6 +362,31 @@ impl SemanticAnalyzer {
                     }
                 }
             }
+            Declaration::Bridge(bridge_decl) => {
+                // Collect FFI function symbols from bridge block
+                let bridge_name = self.resolve_symbol(&bridge_decl.name.node, interner);
+                for item in &bridge_decl.items {
+                    if let ast::BridgeItem::Function(fn_decl) = item {
+                        let name = self.resolve_symbol(&fn_decl.name.node, interner);
+                        let description = format!("extern \"{}\" fn {} (from bridge {})",
+                            bridge_decl.language.node, name, bridge_name);
+
+                        let idx = symbols.len();
+                        symbols.push(SymbolInfo {
+                            name,
+                            kind: SymbolKind::FUNCTION,
+                            def_span: fn_decl.name.span,
+                            description,
+                            doc: None,
+                            references: Vec::new(),
+                        });
+
+                        for offset in fn_decl.name.span.start..fn_decl.name.span.end {
+                            symbol_at_offset.insert(offset, idx);
+                        }
+                    }
+                }
+            }
         }
     }
 
