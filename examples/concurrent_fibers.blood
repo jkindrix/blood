@@ -56,16 +56,16 @@ effect Channel<T> {
     op try_recv(channel_id: i32) -> T;
 }
 
-// The Async effect handles fiber synchronization.
-effect Async {
+// The FiberSync effect handles fiber synchronization.
+effect FiberSync {
     /// Wait for a spawned fiber to complete and get its result.
-    op await_fiber(handle: i32) -> i32;
+    op await_fiber(fiber_id: i32) -> i32;
 
     /// Wait for multiple fibers, returning when all complete.
-    op await_all(handles: i32) -> unit;
+    op await_all(fiber_ids: i32) -> unit;
 
     /// Wait for any of the fibers, returning the first to complete.
-    op await_any(handles: i32) -> i32;
+    op await_any(fiber_ids: i32) -> i32;
 }
 
 // The Cancel effect supports cooperative cancellation.
@@ -78,7 +78,7 @@ effect Cancel {
     op check_cancelled() -> unit;
 
     /// Request cancellation of a fiber.
-    op cancel(handle: i32) -> unit;
+    op cancel(fiber_id: i32) -> unit;
 }
 
 // ===========================================================================
@@ -117,7 +117,7 @@ fn demo_fiber_creation() {
     println_str("  1. Use 'perform Fiber.spawn(task_id)' to create a new fiber");
     println_str("  2. Each fiber gets its own stack (growable, starts at 8KB)");
     println_str("  3. Fibers are scheduled on worker threads (M:N model)");
-    println_str("  4. Returns a handle for later synchronization");
+    println_str("  4. Returns a fiber ID for later synchronization");
     println_str("");
 
     println_str("Fiber properties:");
@@ -184,7 +184,7 @@ fn demo_cooperative_scheduling() {
     println_str("");
     println_str("Automatic yield points:");
     println_str("  - perform Fiber.yield_fiber()  : Explicit yield");
-    println_str("  - perform Async.await_fiber(h) : Wait for fiber");
+    println_str("  - perform FiberSync.await_fiber(id): Wait for fiber");
     println_str("  - channel.send() when full     : Block on channel");
     println_str("  - channel.recv() when empty    : Block on channel");
     println_str("  - perform Fiber.sleep(ms)      : Timer-based yield");
@@ -822,8 +822,8 @@ fn demo_effect_handlers() {
     println_str("Runtime handler example:");
     println_str("  deep handler FiberRuntime for Fiber {");
     println_str("      op spawn(task_id) {");
-    println_str("          let handle = scheduler.spawn(task_id);");
-    println_str("          resume(handle)");
+    println_str("          let fid = scheduler.spawn(task_id);");
+    println_str("          resume(fid)");
     println_str("      }");
     println_str("      op yield_fiber() {");
     println_str("          scheduler.yield_current();");

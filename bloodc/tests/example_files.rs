@@ -521,3 +521,73 @@ fn test_ffi_interop_declarations() {
         program.declarations.len()
     );
 }
+
+// ============================================================
+// Concurrent Fibers Example Tests
+// ============================================================
+
+#[test]
+fn test_parse_concurrent_fibers_blood() {
+    parse_file_ok("../examples/concurrent_fibers.blood");
+}
+
+/// Verify the concurrent fibers example contains expected declarations.
+/// This example demonstrates Blood's fiber-based concurrency model.
+#[test]
+fn test_concurrent_fibers_declarations() {
+    use bloodc::ast::Declaration;
+
+    let source = fs::read_to_string("../examples/concurrent_fibers.blood")
+        .expect("Failed to read concurrent_fibers.blood");
+
+    let mut parser = Parser::new(&source);
+    let program = parser.parse_program().expect("Failed to parse concurrent_fibers.blood");
+
+    // Count different declaration types
+    let effect_count = program.declarations.iter().filter(|d| matches!(d, Declaration::Effect(_))).count();
+    let handler_count = program.declarations.iter().filter(|d| matches!(d, Declaration::Handler(_))).count();
+    let struct_count = program.declarations.iter().filter(|d| matches!(d, Declaration::Struct(_))).count();
+    let fn_count = program.declarations.iter().filter(|d| matches!(d, Declaration::Function(_))).count();
+
+    // Verify we have the expected effects:
+    // Fiber, Channel<T>, FiberSync, Cancel
+    assert!(
+        effect_count >= 4,
+        "Expected at least 4 effect declarations (Fiber, Channel<T>, FiberSync, Cancel), found {effect_count}"
+    );
+
+    // Verify we have effect handlers:
+    // FiberRuntime, ChannelRuntime<T>
+    assert!(
+        handler_count >= 2,
+        "Expected at least 2 handler declarations (FiberRuntime, ChannelRuntime), found {handler_count}"
+    );
+
+    // Verify we have the expected structs:
+    // WorkItem, ComputeResult, Message, ChannelState, Worker, ParMapResult,
+    // Nursery, CancellableTask, MutexState, BarrierState
+    assert!(
+        struct_count >= 10,
+        "Expected at least 10 struct declarations (WorkItem, ComputeResult, Message, etc.), found {struct_count}"
+    );
+
+    // Verify we have all the demonstration functions:
+    // work_item_new, result_new, demo_fiber_creation, long_computation,
+    // demo_cooperative_scheduling, message_new, channel_state_new, channel_send,
+    // demo_channel_communication, worker_new, worker_process, demo_parallel_workloads,
+    // nursery_new, nursery_spawn, nursery_complete, demo_structured_concurrency,
+    // cancellable_task_new, task_step, task_cancel, demo_cancellation,
+    // mutex_new, mutex_acquire, mutex_release, barrier_new, barrier_wait,
+    // demo_synchronization, demo_effect_handlers, demo_memory_safety, main
+    assert!(
+        fn_count >= 25,
+        "Expected at least 25 function declarations, found {fn_count}"
+    );
+
+    // Verify total declarations (4 effects + 2 handlers + 10 structs + 25+ functions = 41+)
+    assert!(
+        program.declarations.len() >= 40,
+        "Expected at least 40 total declarations (4 effects + 2 handlers + 10 structs + 25+ functions), found {}",
+        program.declarations.len()
+    );
+}
