@@ -50,8 +50,9 @@ pub struct TypeContext<'a> {
     pub(crate) return_type: Option<Type>,
     /// The current function's DefId (for effect checking).
     pub(crate) current_fn: Option<DefId>,
-    /// Stack of currently handled effects (from enclosing with...handle blocks).
-    pub(crate) handled_effects: Vec<DefId>,
+    /// Stack of currently handled effects with their type arguments (from enclosing with...handle blocks).
+    /// Each entry is (effect_id, effect_type_args).
+    pub(crate) handled_effects: Vec<(DefId, Vec<Type>)>,
     /// Errors encountered.
     pub(crate) errors: Vec<TypeError>,
     /// Compiled bodies.

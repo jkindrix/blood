@@ -20,8 +20,8 @@ impl<'a> TypeContext<'a> {
     pub(crate) fn check_expr(&mut self, expr: &ast::Expr, expected: &Type) -> Result<hir::Expr, TypeError> {
         let inferred = self.infer_expr(expr)?;
 
-        // Unify inferred type with expected
-        self.unifier.unify(&inferred.ty, expected, expr.span)?;
+        // Unify expected type with inferred - order matters for error messages
+        self.unifier.unify(expected, &inferred.ty, expr.span)?;
 
         Ok(inferred)
     }
@@ -132,24 +132,53 @@ impl<'a> TypeContext<'a> {
         // Type-check the handler expression first
         let handler_expr = self.infer_expr(handler)?;
 
-        // Extract handler def_id from the type (handlers are ADTs)
-        let handled_effect = match handler_expr.ty.kind() {
-            hir::TypeKind::Adt { def_id: handler_def_id, .. } => {
-                self.handler_defs.get(handler_def_id).map(|h| h.effect_id)
+        // Extract handler def_id and effect info from the type (handlers are ADTs)
+        let handled_effect_info = match handler_expr.ty.kind() {
+            hir::TypeKind::Adt { def_id: handler_def_id, args } => {
+                if let Some(handler_info) = self.handler_defs.get(handler_def_id) {
+                    // Get the effect type args by substituting the handler's resolved type args
+                    // into the effect's type parameter positions.
+                    //
+                    // Example: handler LocalState<S> for State<S>
+                    // - handler_info.generics = [TyVarId for S]
+                    // - handler_info.effect_type_args = [Type::Param(S)]
+                    // - args (from instantiation) = [i32]  (resolved from LocalState { state: 0 })
+                    // - We need to substitute S -> i32 to get effect_type_args = [i32]
+
+                    let resolved_args: Vec<Type> = args.iter()
+                        .map(|ty| self.unifier.resolve(ty))
+                        .collect();
+
+                    // Create substitution from handler's generic params to resolved args
+                    let handler_subst: std::collections::HashMap<TyVarId, Type> =
+                        handler_info.generics.iter()
+                            .zip(resolved_args.iter())
+                            .map(|(&ty_var, ty)| (ty_var, ty.clone()))
+                            .collect();
+
+                    // Substitute to get concrete effect type args
+                    let effect_type_args: Vec<Type> = handler_info.effect_type_args.iter()
+                        .map(|ty| self.substitute_type_vars(ty, &handler_subst))
+                        .collect();
+
+                    Some((handler_info.effect_id, effect_type_args))
+                } else {
+                    None
+                }
             }
             _ => None,
         };
 
-        // Push the handled effect onto the stack
-        if let Some(effect_id) = handled_effect {
-            self.handled_effects.push(effect_id);
+        // Push the handled effect with its type args onto the stack
+        if let Some((effect_id, effect_type_args)) = &handled_effect_info {
+            self.handled_effects.push((*effect_id, effect_type_args.clone()));
         }
 
         let body_block = match &body.kind {
             ast::ExprKind::Block(block) => block,
             _ => {
                 // Pop effect if we pushed it
-                if handled_effect.is_some() {
+                if handled_effect_info.is_some() {
                     self.handled_effects.pop();
                 }
                 return Err(TypeError::new(
@@ -165,8 +194,8 @@ impl<'a> TypeContext<'a> {
         self.resolver.push_scope(ScopeKind::Handler, body.span);
 
         // Register the handled effect's operations in this scope
-        if let Some(effect_id) = handled_effect {
-            if let Some(effect_info) = self.effect_defs.get(&effect_id).cloned() {
+        if let Some((effect_id, _)) = &handled_effect_info {
+            if let Some(effect_info) = self.effect_defs.get(effect_id).cloned() {
                 for op_info in &effect_info.operations {
                     self.resolver.current_scope_mut()
                         .bindings
@@ -183,7 +212,7 @@ impl<'a> TypeContext<'a> {
         self.resolver.pop_scope();
 
         // Pop the handled effect
-        if handled_effect.is_some() {
+        if handled_effect_info.is_some() {
             self.handled_effects.pop();
         }
 
@@ -260,6 +289,34 @@ impl<'a> TypeContext<'a> {
 
             match effect_def_id {
                 Some(eff_id) => {
+                    // If no explicit type args were provided, try to get them from:
+                    // 1. Enclosing with...handle blocks (handled_effects stack)
+                    // 2. Current function's effect declaration (fn_effects)
+                    let type_args = if type_args.is_empty() {
+                        // First try handled_effects (from enclosing with...handle blocks)
+                        let from_handled = self.handled_effects.iter().rev()
+                            .find(|(effect_id, _)| *effect_id == eff_id)
+                            .map(|(_, args)| args.clone());
+
+                        if let Some(args) = from_handled {
+                            args
+                        } else if let Some(fn_id) = self.current_fn {
+                            // Fall back to function's effect declaration
+                            if let Some(fn_effects) = self.fn_effects.get(&fn_id) {
+                                fn_effects.iter()
+                                    .find(|er| er.def_id == eff_id)
+                                    .map(|er| er.type_args.clone())
+                                    .unwrap_or_default()
+                            } else {
+                                Vec::new()
+                            }
+                        } else {
+                            Vec::new()
+                        }
+                    } else {
+                        type_args
+                    };
+
                     let effect_info = self.effect_defs.get(&eff_id).cloned();
                     match effect_info {
                         Some(info) => {
@@ -318,8 +375,14 @@ impl<'a> TypeContext<'a> {
                             // Find operation index in the effect
                             let effect_info = self.effect_defs.get(&effect_def_id);
 
-                            // Get type args from current function's effect declaration
-                            let type_args = if let Some(fn_id) = self.current_fn {
+                            // Get type args - first from handled_effects, then from fn_effects
+                            let from_handled = self.handled_effects.iter().rev()
+                                .find(|(effect_id, _)| *effect_id == effect_def_id)
+                                .map(|(_, args)| args.clone());
+
+                            let type_args = if let Some(args) = from_handled {
+                                args
+                            } else if let Some(fn_id) = self.current_fn {
                                 if let Some(fn_effects) = self.fn_effects.get(&fn_id) {
                                     fn_effects.iter()
                                         .find(|er| er.def_id == effect_def_id)
@@ -1740,6 +1803,15 @@ impl<'a> TypeContext<'a> {
                             if let Some(struct_info) = self.struct_defs.get(&def_id) {
                                 let result_ty = Type::adt(def_id, Vec::new());
                                 (def_id, struct_info.clone(), result_ty)
+                            } else if let Some(handler_info) = self.handler_defs.get(&def_id) {
+                                // Handlers with state fields are instantiable like structs
+                                let struct_info = super::StructInfo {
+                                    name: handler_info.name.clone(),
+                                    fields: handler_info.fields.clone(),
+                                    generics: handler_info.generics.clone(),
+                                };
+                                let result_ty = Type::adt(def_id, Vec::new());
+                                (def_id, struct_info, result_ty)
                             } else {
                                 return Err(TypeError::new(
                                     TypeErrorKind::NotAStruct { ty: Type::adt(def_id, Vec::new()) },
@@ -1771,7 +1843,21 @@ impl<'a> TypeContext<'a> {
             ));
         };
 
-        // Type-check fields
+        // For structs/handlers with generics, create fresh type vars for the generics
+        // and collect them so unification can determine concrete types from field values
+        let type_args: Vec<Type> = if !struct_info.generics.is_empty() {
+            struct_info.generics.iter().map(|_| self.unifier.fresh_var()).collect()
+        } else {
+            Vec::new()
+        };
+
+        // Create a substitution map from generic type param ids to fresh type vars
+        let subst: std::collections::HashMap<TyVarId, Type> = struct_info.generics.iter()
+            .zip(type_args.iter())
+            .map(|(ty_var_id, ty)| (*ty_var_id, ty.clone()))
+            .collect();
+
+        // Type-check fields, substituting generics with fresh type vars
         let mut hir_fields = Vec::new();
         for field in fields {
             let field_name = self.symbol_to_string(field.name.node);
@@ -1781,9 +1867,23 @@ impl<'a> TypeContext<'a> {
                 None => return Err(self.error_unknown_field(&result_ty, &field_name, field.span)),
             };
 
+            // Apply substitution to field type (replace generics with fresh vars)
+            let expected_ty = self.substitute_type_vars(&field_info.ty, &subst);
+
             // Handle shorthand syntax: `{ x }` is equivalent to `{ x: x }`
             let value_expr = if let Some(value) = &field.value {
-                self.check_expr(value, &field_info.ty)?
+                // Infer the value type first, then unify with expected
+                let inferred = self.infer_expr(value)?;
+                self.unifier.unify(&inferred.ty, &expected_ty, value.span).map_err(|_| {
+                    TypeError::new(
+                        TypeErrorKind::Mismatch {
+                            expected: self.unifier.resolve(&expected_ty),
+                            found: self.unifier.resolve(&inferred.ty),
+                        },
+                        value.span,
+                    )
+                })?;
+                inferred
             } else {
                 // Shorthand: look up the field name as a variable
                 let path = ast::ExprPath {
@@ -1797,7 +1897,17 @@ impl<'a> TypeContext<'a> {
                     kind: ast::ExprKind::Path(path),
                     span: field.span,
                 };
-                self.check_expr(&expr, &field_info.ty)?
+                let inferred = self.infer_expr(&expr)?;
+                self.unifier.unify(&inferred.ty, &expected_ty, field.span).map_err(|_| {
+                    TypeError::new(
+                        TypeErrorKind::Mismatch {
+                            expected: self.unifier.resolve(&expected_ty),
+                            found: self.unifier.resolve(&inferred.ty),
+                        },
+                        field.span,
+                    )
+                })?;
+                inferred
             };
 
             hir_fields.push(hir::FieldExpr {
@@ -1805,6 +1915,12 @@ impl<'a> TypeContext<'a> {
                 value: value_expr,
             });
         }
+
+        // Build result type with resolved type args
+        let resolved_type_args: Vec<Type> = type_args.iter()
+            .map(|ty| self.unifier.resolve(ty))
+            .collect();
+        let result_ty = Type::adt(def_id, resolved_type_args);
 
         Ok(hir::Expr::new(
             hir::ExprKind::Struct {

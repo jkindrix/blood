@@ -371,37 +371,61 @@ impl<'a> TypeContext<'a> {
             let _ = self.resolver.next_local_id(); // Skip LocalId(0)
             self.locals.clear();
 
-            // Return clause takes the result and transforms it
-            // For Phase 1, use i32 as the result type (most common)
-            let result_ty = Type::i32();
+            // Return clause input parameter type: the type of the handled computation's result.
+            // Since handlers can be used with any compatible computation, we use a fresh type var.
+            // This will be constrained when the handler is applied to a specific expression.
+            let input_ty = self.unifier.fresh_var();
 
-            // Add return place
+            // Add return place with inferred type (will be determined by body)
+            let return_ty = self.unifier.fresh_var();
             self.locals.push(hir::Local {
                 id: LocalId::RETURN_PLACE,
-                ty: result_ty.clone(),
+                ty: return_ty.clone(),
                 mutable: false,
                 name: None,
                 span: ret_clause.span,
             });
 
-            // Add the result parameter
+            // Add the result parameter (the input to the return clause)
             let param_name = self.symbol_to_string(ret_clause.param.node);
             let local_id = self.resolver.define_local(
                 param_name.clone(),
-                result_ty.clone(),
+                input_ty.clone(),
                 false,
                 ret_clause.param.span,
             )?;
             self.locals.push(hir::Local {
                 id: local_id,
-                ty: result_ty.clone(),
+                ty: input_ty,
                 mutable: false,
                 name: Some(param_name),
                 span: ret_clause.param.span,
             });
 
-            // Type-check return clause body
-            let body_expr = self.check_block(&ret_clause.body, &result_ty)?;
+            // Add handler state fields to scope (same as in operation bodies)
+            for (i, state_field) in handler.state.iter().enumerate() {
+                let field_name = self.symbol_to_string(state_field.name.node);
+                let field_ty = handler_info.fields[i].ty.clone();
+
+                let local_id = self.resolver.define_local(
+                    field_name.clone(),
+                    field_ty.clone(),
+                    state_field.is_mut,
+                    state_field.span,
+                )?;
+                self.locals.push(hir::Local {
+                    id: local_id,
+                    ty: field_ty,
+                    mutable: state_field.is_mut,
+                    name: Some(field_name),
+                    span: state_field.span,
+                });
+            }
+
+            // Infer the return clause body type (instead of checking against hardcoded type)
+            // Use a fresh type var which will unify with the actual body type
+            let expected_body_ty = self.unifier.fresh_var();
+            let body_expr = self.check_block(&ret_clause.body, &expected_body_ty)?;
 
             let body_id = hir::BodyId::new(self.next_body_id);
             self.next_body_id += 1;
@@ -522,7 +546,7 @@ impl<'a> TypeContext<'a> {
             let effect_id = effect_ref.def_id;
 
             // Check if handled by an enclosing handler
-            if self.handled_effects.contains(&effect_id) {
+            if self.handled_effects.iter().any(|(id, _)| *id == effect_id) {
                 continue;
             }
 
