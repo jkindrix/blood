@@ -1691,6 +1691,850 @@ pub fn persistent_is_alive(id: u64) -> bool {
 }
 
 // ============================================================================
+// Tier 2: Reference-Counted Allocator (SSM Tier 2 / Persistent)
+// ============================================================================
+
+/// Slot identifier for Tier 2 allocations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Tier2SlotId(pub u64);
+
+impl Tier2SlotId {
+    /// Get the raw ID value.
+    pub fn as_u64(&self) -> u64 {
+        self.0
+    }
+
+    /// Create from raw value.
+    pub fn from_u64(id: u64) -> Self {
+        Self(id)
+    }
+}
+
+/// A Tier 2 slot with reference counting.
+///
+/// This implements the SSM Tier 2 (Persistent) allocation as specified in
+/// MEMORY_MODEL.md Section 3.4 and Section 8.
+///
+/// Key properties:
+/// - Atomic reference counting for thread safety
+/// - Weak reference support
+/// - Preserves original generation for stale detection during promotion
+pub struct Tier2Slot {
+    /// Pointer to the actual value data.
+    value: UnsafeCell<*mut u8>,
+    /// Size of the value in bytes.
+    size: AtomicUsize,
+    /// Strong reference count (atomic for thread safety).
+    refcount: AtomicU64,
+    /// Weak reference count (atomic for thread safety).
+    weak_count: AtomicU32,
+    /// Original generation when promoted from Tier 1 (for stale detection).
+    original_generation: AtomicU32,
+    /// Type fingerprint for RTTI.
+    type_fp: AtomicU32,
+    /// Slot metadata flags.
+    flags: AtomicU32,
+    /// Layout for deallocation.
+    layout: UnsafeCell<Option<Layout>>,
+}
+
+impl Tier2Slot {
+    /// Flag indicating the value is deeply immutable (frozen).
+    pub const FLAG_FROZEN: u32 = 1 << 0;
+    /// Flag indicating weak references exist.
+    pub const FLAG_HAS_WEAK: u32 = 1 << 1;
+    /// Flag indicating the slot is pending drop.
+    pub const FLAG_PENDING_DROP: u32 = 1 << 2;
+    /// Flag indicating this slot was promoted from Tier 1.
+    pub const FLAG_PROMOTED: u32 = 1 << 3;
+
+    /// Create a new Tier 2 slot.
+    ///
+    /// # Arguments
+    /// * `value_ptr` - Pointer to the allocated memory
+    /// * `size` - Size of the allocation in bytes
+    /// * `layout` - Memory layout for deallocation
+    /// * `type_fp` - Type fingerprint
+    /// * `original_generation` - Generation from Tier 1 if promoted
+    pub fn new(
+        value_ptr: *mut u8,
+        size: usize,
+        layout: Layout,
+        type_fp: u32,
+        original_generation: Generation,
+    ) -> Self {
+        Self {
+            value: UnsafeCell::new(value_ptr),
+            size: AtomicUsize::new(size),
+            refcount: AtomicU64::new(1),
+            weak_count: AtomicU32::new(0),
+            original_generation: AtomicU32::new(original_generation),
+            type_fp: AtomicU32::new(type_fp),
+            flags: AtomicU32::new(0),
+            layout: UnsafeCell::new(Some(layout)),
+        }
+    }
+
+    /// Create a new slot for a value promoted from Tier 1.
+    pub fn promoted(
+        value_ptr: *mut u8,
+        size: usize,
+        layout: Layout,
+        type_fp: u32,
+        original_generation: Generation,
+    ) -> Self {
+        let slot = Self::new(value_ptr, size, layout, type_fp, original_generation);
+        slot.flags.fetch_or(Self::FLAG_PROMOTED, Ordering::Release);
+        slot
+    }
+
+    /// Get the current strong reference count.
+    pub fn refcount(&self) -> u64 {
+        self.refcount.load(Ordering::Acquire)
+    }
+
+    /// Get the current weak reference count.
+    pub fn weak_count(&self) -> u32 {
+        self.weak_count.load(Ordering::Acquire)
+    }
+
+    /// Check if the slot is still alive (refcount > 0).
+    pub fn is_alive(&self) -> bool {
+        self.refcount.load(Ordering::Acquire) > 0
+    }
+
+    /// Get the value pointer.
+    ///
+    /// # Safety
+    /// The slot must be alive (refcount > 0).
+    pub unsafe fn value_ptr(&self) -> *mut u8 {
+        *self.value.get()
+    }
+
+    /// Get the value size.
+    pub fn size(&self) -> usize {
+        self.size.load(Ordering::Acquire)
+    }
+
+    /// Get the original generation (from Tier 1 promotion).
+    pub fn original_generation(&self) -> Generation {
+        self.original_generation.load(Ordering::Acquire)
+    }
+
+    /// Get the type fingerprint.
+    pub fn type_fp(&self) -> u32 {
+        self.type_fp.load(Ordering::Acquire)
+    }
+
+    /// Check if this slot was promoted from Tier 1.
+    pub fn is_promoted(&self) -> bool {
+        self.flags.load(Ordering::Acquire) & Self::FLAG_PROMOTED != 0
+    }
+
+    /// Check if this slot is frozen (deeply immutable).
+    pub fn is_frozen(&self) -> bool {
+        self.flags.load(Ordering::Acquire) & Self::FLAG_FROZEN != 0
+    }
+
+    /// Set the frozen flag.
+    pub fn set_frozen(&self) {
+        self.flags.fetch_or(Self::FLAG_FROZEN, Ordering::Release);
+    }
+
+    /// Check if pending drop.
+    pub fn is_pending_drop(&self) -> bool {
+        self.flags.load(Ordering::Acquire) & Self::FLAG_PENDING_DROP != 0
+    }
+
+    /// Mark as pending drop.
+    pub fn mark_pending_drop(&self) {
+        self.flags.fetch_or(Self::FLAG_PENDING_DROP, Ordering::Release);
+    }
+
+    /// Increment the strong reference count.
+    ///
+    /// # Panics
+    /// Panics if the refcount was zero (incrementing dead slot).
+    pub fn increment(&self) {
+        let old = self.refcount.fetch_add(1, Ordering::Relaxed);
+        if old == 0 {
+            panic!("Tier2Slot: increment of zero refcount");
+        }
+        // Overflow check - u64 is large enough this shouldn't happen in practice
+        if old == u64::MAX {
+            panic!("Tier2Slot: refcount overflow");
+        }
+    }
+
+    /// Decrement the strong reference count.
+    ///
+    /// Returns `true` if this was the last reference (refcount became 0).
+    pub fn decrement(&self) -> bool {
+        let old = self.refcount.fetch_sub(1, Ordering::Release);
+        if old == 1 {
+            // Last reference dropped - acquire fence to synchronize with other decrements
+            std::sync::atomic::fence(Ordering::Acquire);
+            true
+        } else if old == 0 {
+            panic!("Tier2Slot: decrement of zero refcount");
+        } else {
+            false
+        }
+    }
+
+    /// Increment the weak reference count.
+    pub fn increment_weak(&self) {
+        let old = self.weak_count.fetch_add(1, Ordering::Relaxed);
+        if old == 0 {
+            self.flags.fetch_or(Self::FLAG_HAS_WEAK, Ordering::Release);
+        }
+    }
+
+    /// Decrement the weak reference count.
+    ///
+    /// Returns `true` if this was the last weak reference AND refcount is also 0.
+    pub fn decrement_weak(&self) -> bool {
+        let old = self.weak_count.fetch_sub(1, Ordering::Release);
+        if old == 0 {
+            panic!("Tier2Slot: decrement of zero weak_count");
+        }
+        old == 1 && self.refcount.load(Ordering::Acquire) == 0
+    }
+
+    /// Try to upgrade a weak reference to a strong reference.
+    ///
+    /// Returns `true` if upgrade succeeded, `false` if the slot is dead.
+    pub fn try_upgrade_weak(&self) -> bool {
+        loop {
+            let current = self.refcount.load(Ordering::Acquire);
+            if current == 0 {
+                return false;
+            }
+            match self.refcount.compare_exchange_weak(
+                current,
+                current + 1,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return true,
+                Err(_) => continue, // Retry CAS
+            }
+        }
+    }
+
+    /// Deallocate the slot's value.
+    ///
+    /// # Safety
+    /// Must only be called when refcount and weak_count are both 0.
+    pub unsafe fn deallocate_value(&self) {
+        let ptr = *self.value.get();
+        if !ptr.is_null() {
+            if let Some(layout) = (*self.layout.get()).take() {
+                alloc::dealloc(ptr, layout);
+            }
+            *self.value.get() = std::ptr::null_mut();
+        }
+    }
+
+    /// Extract child slot IDs from this slot's value.
+    ///
+    /// Uses the type registry to determine which offsets contain slot IDs.
+    /// Returns an empty vector if the type is not registered.
+    ///
+    /// # Safety
+    /// The slot must be alive (refcount > 0).
+    pub unsafe fn child_slots(&self) -> Vec<u64> {
+        let type_fp = self.type_fp();
+        let layout = match type_registry().get(type_fp) {
+            Some(layout) => layout,
+            None => return Vec::new(),
+        };
+
+        let value_ptr = self.value_ptr();
+        if value_ptr.is_null() {
+            return Vec::new();
+        }
+
+        let value_size = self.size();
+        let mut children = Vec::with_capacity(layout.slot_offsets.len());
+
+        for &offset in &layout.slot_offsets {
+            if offset + std::mem::size_of::<u64>() <= value_size {
+                let slot_id_ptr = value_ptr.add(offset) as *const u64;
+                let slot_id = *slot_id_ptr;
+                if slot_id != 0 {
+                    children.push(slot_id);
+                }
+            }
+        }
+
+        children
+    }
+}
+
+impl fmt::Debug for Tier2Slot {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Tier2Slot")
+            .field("refcount", &self.refcount())
+            .field("weak_count", &self.weak_count())
+            .field("size", &self.size())
+            .field("original_generation", &self.original_generation())
+            .field("is_promoted", &self.is_promoted())
+            .field("is_frozen", &self.is_frozen())
+            .finish()
+    }
+}
+
+// Safety: Tier2Slot uses atomic operations for all mutable state.
+unsafe impl Send for Tier2Slot {}
+unsafe impl Sync for Tier2Slot {}
+
+/// Statistics for the Tier 2 allocator.
+#[derive(Debug, Default)]
+pub struct Tier2Stats {
+    /// Total allocations performed.
+    pub allocations: AtomicU64,
+    /// Total deallocations performed.
+    pub deallocations: AtomicU64,
+    /// Current number of live slots.
+    pub live_slots: AtomicU64,
+    /// Number of promotions from Tier 1.
+    pub promotions: AtomicU64,
+    /// Number of weak reference upgrades.
+    pub weak_upgrades: AtomicU64,
+    /// Number of failed weak upgrades (target was dead).
+    pub weak_upgrade_failures: AtomicU64,
+}
+
+/// Allocator for Tier 2 (Persistent/Reference-Counted) memory.
+///
+/// This implements the SSM Tier 2 allocator as specified in MEMORY_MODEL.md.
+/// It manages reference-counted allocations with support for:
+/// - Thread-safe atomic reference counting
+/// - Weak references
+/// - Promotion from Tier 1 with generation preservation
+pub struct Tier2Allocator {
+    /// All active Tier 2 slots.
+    slots: RwLock<HashMap<u64, Box<Tier2Slot>>>,
+    /// Next slot ID.
+    next_id: AtomicU64,
+    /// Allocator statistics.
+    stats: Tier2Stats,
+}
+
+impl Tier2Allocator {
+    /// Create a new Tier 2 allocator.
+    pub fn new() -> Self {
+        Self {
+            slots: RwLock::new(HashMap::new()),
+            next_id: AtomicU64::new(1),
+            stats: Tier2Stats::default(),
+        }
+    }
+
+    /// Allocate a new Tier 2 slot.
+    ///
+    /// # Arguments
+    /// * `size` - Size of the allocation in bytes
+    /// * `align` - Alignment requirement
+    /// * `type_fp` - Type fingerprint for RTTI
+    ///
+    /// # Returns
+    /// The slot ID if allocation succeeded, None if allocation failed.
+    pub fn allocate(&self, size: usize, align: usize, type_fp: u32) -> Option<Tier2SlotId> {
+        let layout = Layout::from_size_align(size, align).ok()?;
+        let ptr = unsafe { alloc::alloc(layout) };
+        if ptr.is_null() {
+            return None;
+        }
+
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let slot = Box::new(Tier2Slot::new(ptr, size, layout, type_fp, generation::FIRST));
+
+        self.slots.write().insert(id, slot);
+        self.stats.allocations.fetch_add(1, Ordering::Relaxed);
+        self.stats.live_slots.fetch_add(1, Ordering::Relaxed);
+
+        Some(Tier2SlotId(id))
+    }
+
+    /// Promote a Tier 1 allocation to Tier 2.
+    ///
+    /// This is called when:
+    /// - A Tier 1 value escapes its region
+    /// - Generation counter overflow
+    /// - Explicit `persist(value)` annotation
+    ///
+    /// # Arguments
+    /// * `value_ptr` - Pointer to the value (will be owned by Tier 2)
+    /// * `size` - Size of the value
+    /// * `align` - Alignment of the value
+    /// * `type_fp` - Type fingerprint
+    /// * `original_generation` - Generation from the Tier 1 slot
+    ///
+    /// # Returns
+    /// The new Tier 2 slot ID.
+    pub fn promote_from_tier1(
+        &self,
+        value_ptr: *mut u8,
+        size: usize,
+        align: usize,
+        type_fp: u32,
+        original_generation: Generation,
+    ) -> Option<Tier2SlotId> {
+        if value_ptr.is_null() {
+            return None;
+        }
+
+        let layout = Layout::from_size_align(size, align).ok()?;
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let slot = Box::new(Tier2Slot::promoted(
+            value_ptr,
+            size,
+            layout,
+            type_fp,
+            original_generation,
+        ));
+
+        self.slots.write().insert(id, slot);
+        self.stats.allocations.fetch_add(1, Ordering::Relaxed);
+        self.stats.live_slots.fetch_add(1, Ordering::Relaxed);
+        self.stats.promotions.fetch_add(1, Ordering::Relaxed);
+
+        Some(Tier2SlotId(id))
+    }
+
+    /// Get a slot by ID.
+    pub fn get(&self, id: Tier2SlotId) -> Option<*const Tier2Slot> {
+        self.slots.read().get(&id.0).map(|s| s.as_ref() as *const _)
+    }
+
+    /// Increment the reference count for a slot.
+    ///
+    /// Returns `true` if the increment succeeded, `false` if the slot doesn't exist.
+    pub fn increment(&self, id: Tier2SlotId) -> bool {
+        if let Some(slot) = self.slots.read().get(&id.0) {
+            slot.increment();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Decrement the reference count for a slot.
+    ///
+    /// If this was the last reference, the slot is queued for deferred cleanup.
+    pub fn decrement(&self, id: Tier2SlotId) {
+        let slot_ptr = {
+            let slots = self.slots.read();
+            slots.get(&id.0).map(|s| s.as_ref() as *const _)
+        };
+
+        if let Some(ptr) = slot_ptr {
+            let slot: &Tier2Slot = unsafe { &*ptr };
+            if slot.decrement() {
+                // Last reference - queue for deferred processing
+                unsafe { deferred_queue().enqueue(ptr as *const PersistentSlot) };
+                self.stats.deallocations.fetch_add(1, Ordering::Relaxed);
+                self.stats.live_slots.fetch_sub(1, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// Increment the weak reference count for a slot.
+    pub fn increment_weak(&self, id: Tier2SlotId) -> bool {
+        if let Some(slot) = self.slots.read().get(&id.0) {
+            slot.increment_weak();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Decrement the weak reference count for a slot.
+    pub fn decrement_weak(&self, id: Tier2SlotId) {
+        let should_remove = {
+            let slots = self.slots.read();
+            if let Some(slot) = slots.get(&id.0) {
+                slot.decrement_weak()
+            } else {
+                false
+            }
+        };
+
+        if should_remove {
+            // Both refcount and weak_count are 0 - remove the slot
+            if let Some(slot) = self.slots.write().remove(&id.0) {
+                unsafe { slot.deallocate_value() };
+            }
+        }
+    }
+
+    /// Try to upgrade a weak reference to a strong reference.
+    ///
+    /// Returns `true` if upgrade succeeded, `false` if the slot is dead or doesn't exist.
+    pub fn try_upgrade_weak(&self, id: Tier2SlotId) -> bool {
+        if let Some(slot) = self.slots.read().get(&id.0) {
+            let result = slot.try_upgrade_weak();
+            if result {
+                self.stats.weak_upgrades.fetch_add(1, Ordering::Relaxed);
+            } else {
+                self.stats.weak_upgrade_failures.fetch_add(1, Ordering::Relaxed);
+            }
+            result
+        } else {
+            false
+        }
+    }
+
+    /// Remove a slot from the allocator.
+    ///
+    /// # Safety
+    /// Only call when the slot has been fully processed (refcount and weak_count are 0).
+    pub unsafe fn remove(&self, id: Tier2SlotId) {
+        self.slots.write().remove(&id.0);
+    }
+
+    /// Get allocator statistics.
+    pub fn stats(&self) -> &Tier2Stats {
+        &self.stats
+    }
+
+    /// Get the number of live slots.
+    pub fn live_count(&self) -> usize {
+        self.slots.read().len()
+    }
+
+    /// Get the reference count for a slot.
+    pub fn refcount(&self, id: Tier2SlotId) -> Option<u64> {
+        self.slots.read().get(&id.0).map(|s| s.refcount())
+    }
+
+    /// Get the weak reference count for a slot.
+    pub fn weak_count(&self, id: Tier2SlotId) -> Option<u32> {
+        self.slots.read().get(&id.0).map(|s| s.weak_count())
+    }
+
+    /// Check if a slot is alive.
+    pub fn is_alive(&self, id: Tier2SlotId) -> bool {
+        self.slots.read().get(&id.0).map(|s| s.is_alive()).unwrap_or(false)
+    }
+
+    /// Check if a slot was promoted from Tier 1.
+    pub fn is_promoted(&self, id: Tier2SlotId) -> bool {
+        self.slots.read().get(&id.0).map(|s| s.is_promoted()).unwrap_or(false)
+    }
+
+    /// Get the original generation of a promoted slot.
+    pub fn original_generation(&self, id: Tier2SlotId) -> Option<Generation> {
+        self.slots.read().get(&id.0).map(|s| s.original_generation())
+    }
+
+    /// Get the value pointer for a slot.
+    ///
+    /// # Safety
+    /// The slot must be alive.
+    pub unsafe fn value_ptr(&self, id: Tier2SlotId) -> Option<*mut u8> {
+        self.slots.read().get(&id.0).map(|s| s.value_ptr())
+    }
+}
+
+impl Default for Tier2Allocator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Global Tier 2 allocator.
+static TIER2_ALLOCATOR: OnceLock<Tier2Allocator> = OnceLock::new();
+
+/// Get the global Tier 2 allocator.
+pub fn tier2_allocator() -> &'static Tier2Allocator {
+    TIER2_ALLOCATOR.get_or_init(Tier2Allocator::new)
+}
+
+// ============================================================================
+// PersistentPtr: Smart Pointer for Tier 2 Allocations
+// ============================================================================
+
+/// A reference-counted smart pointer for Tier 2 allocations.
+///
+/// This implements automatic reference counting for Tier 2 (Persistent) allocations.
+/// - Clone increments the reference count
+/// - Drop decrements the reference count (frees when zero)
+///
+/// # Thread Safety
+/// `PersistentPtr` is `Send` and `Sync` - it can be shared across threads safely.
+/// The underlying reference counts use atomic operations.
+///
+/// # Example
+/// ```ignore
+/// let ptr = PersistentPtr::<i32>::new(42)?;
+/// let ptr2 = ptr.clone(); // refcount = 2
+/// drop(ptr);              // refcount = 1
+/// drop(ptr2);             // refcount = 0, memory freed
+/// ```
+pub struct PersistentPtr<T> {
+    /// Slot ID in the Tier 2 allocator.
+    slot_id: Tier2SlotId,
+    /// Phantom data for type safety.
+    _marker: std::marker::PhantomData<T>,
+}
+
+impl<T> PersistentPtr<T> {
+    /// Create a new PersistentPtr by allocating and initializing a value.
+    pub fn new(value: T) -> Option<Self> {
+        let size = std::mem::size_of::<T>();
+        let align = std::mem::align_of::<T>();
+        let type_fp = type_fingerprint::<T>();
+
+        let slot_id = tier2_allocator().allocate(size, align, type_fp)?;
+
+        // Write the value to the allocated memory
+        unsafe {
+            let ptr = tier2_allocator().value_ptr(slot_id)?;
+            std::ptr::write(ptr as *mut T, value);
+        }
+
+        Some(Self {
+            slot_id,
+            _marker: std::marker::PhantomData,
+        })
+    }
+
+    /// Create a PersistentPtr from an existing Tier 2 slot.
+    ///
+    /// # Safety
+    /// The slot must contain a valid value of type T.
+    pub unsafe fn from_slot_id(slot_id: Tier2SlotId) -> Option<Self> {
+        if tier2_allocator().is_alive(slot_id) {
+            tier2_allocator().increment(slot_id);
+            Some(Self {
+                slot_id,
+                _marker: std::marker::PhantomData,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Get the slot ID.
+    pub fn slot_id(&self) -> Tier2SlotId {
+        self.slot_id
+    }
+
+    /// Get a reference to the value.
+    ///
+    /// # Safety
+    /// The pointer must be valid (not dropped).
+    pub fn get(&self) -> &T {
+        unsafe {
+            let ptr = tier2_allocator().value_ptr(self.slot_id)
+                .expect("PersistentPtr: slot not found");
+            &*(ptr as *const T)
+        }
+    }
+
+    /// Get a mutable reference to the value.
+    ///
+    /// # Safety
+    /// The pointer must be valid and there must be no other references.
+    pub fn get_mut(&mut self) -> &mut T {
+        unsafe {
+            let ptr = tier2_allocator().value_ptr(self.slot_id)
+                .expect("PersistentPtr: slot not found");
+            &mut *(ptr as *mut T)
+        }
+    }
+
+    /// Get the current reference count.
+    pub fn refcount(&self) -> u64 {
+        tier2_allocator().refcount(self.slot_id).unwrap_or(0)
+    }
+
+    /// Check if this is the only reference.
+    pub fn is_unique(&self) -> bool {
+        self.refcount() == 1
+    }
+
+    /// Create a weak reference to this pointer.
+    pub fn downgrade(&self) -> WeakPersistentPtr<T> {
+        tier2_allocator().increment_weak(self.slot_id);
+        WeakPersistentPtr {
+            slot_id: self.slot_id,
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<T> Clone for PersistentPtr<T> {
+    fn clone(&self) -> Self {
+        tier2_allocator().increment(self.slot_id);
+        Self {
+            slot_id: self.slot_id,
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<T> Drop for PersistentPtr<T> {
+    fn drop(&mut self) {
+        tier2_allocator().decrement(self.slot_id);
+    }
+}
+
+impl<T: fmt::Debug> fmt::Debug for PersistentPtr<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PersistentPtr")
+            .field("slot_id", &self.slot_id)
+            .field("refcount", &self.refcount())
+            .field("value", self.get())
+            .finish()
+    }
+}
+
+// Safety: PersistentPtr uses atomic refcounting and is thread-safe.
+unsafe impl<T: Send> Send for PersistentPtr<T> {}
+unsafe impl<T: Sync> Sync for PersistentPtr<T> {}
+
+/// A weak reference to a Tier 2 allocation.
+///
+/// Weak references do not prevent deallocation. They must be upgraded
+/// to a strong reference (`PersistentPtr`) before use.
+pub struct WeakPersistentPtr<T> {
+    /// Slot ID in the Tier 2 allocator.
+    slot_id: Tier2SlotId,
+    /// Phantom data for type safety.
+    _marker: std::marker::PhantomData<T>,
+}
+
+impl<T> WeakPersistentPtr<T> {
+    /// Try to upgrade to a strong reference.
+    ///
+    /// Returns `Some(PersistentPtr)` if the value is still alive,
+    /// `None` if the value has been deallocated.
+    pub fn upgrade(&self) -> Option<PersistentPtr<T>> {
+        if tier2_allocator().try_upgrade_weak(self.slot_id) {
+            Some(PersistentPtr {
+                slot_id: self.slot_id,
+                _marker: std::marker::PhantomData,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Get the slot ID.
+    pub fn slot_id(&self) -> Tier2SlotId {
+        self.slot_id
+    }
+
+    /// Check if the referenced value is still alive.
+    pub fn is_alive(&self) -> bool {
+        tier2_allocator().is_alive(self.slot_id)
+    }
+
+    /// Get the current strong reference count.
+    pub fn strong_count(&self) -> u64 {
+        tier2_allocator().refcount(self.slot_id).unwrap_or(0)
+    }
+
+    /// Get the current weak reference count.
+    pub fn weak_count(&self) -> u32 {
+        tier2_allocator().weak_count(self.slot_id).unwrap_or(0)
+    }
+}
+
+impl<T> Clone for WeakPersistentPtr<T> {
+    fn clone(&self) -> Self {
+        tier2_allocator().increment_weak(self.slot_id);
+        Self {
+            slot_id: self.slot_id,
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<T> Drop for WeakPersistentPtr<T> {
+    fn drop(&mut self) {
+        tier2_allocator().decrement_weak(self.slot_id);
+    }
+}
+
+impl<T> fmt::Debug for WeakPersistentPtr<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("WeakPersistentPtr")
+            .field("slot_id", &self.slot_id)
+            .field("is_alive", &self.is_alive())
+            .field("strong_count", &self.strong_count())
+            .field("weak_count", &self.weak_count())
+            .finish()
+    }
+}
+
+// Safety: WeakPersistentPtr uses atomic operations and is thread-safe.
+unsafe impl<T: Send> Send for WeakPersistentPtr<T> {}
+unsafe impl<T: Sync> Sync for WeakPersistentPtr<T> {}
+
+/// Compute a type fingerprint for a type.
+///
+/// This is a simple hash of the type name for now.
+fn type_fingerprint<T>() -> u32 {
+    let name = std::any::type_name::<T>();
+    let mut hash: u32 = 0;
+    for byte in name.bytes() {
+        hash = hash.wrapping_mul(31).wrapping_add(byte as u32);
+    }
+    hash
+}
+
+// ============================================================================
+// Tier 2 Public API
+// ============================================================================
+
+/// Allocate a Tier 2 value.
+///
+/// Returns the slot ID and a pointer to the allocated memory.
+pub fn tier2_alloc(size: usize, align: usize, type_fp: u32) -> Option<(Tier2SlotId, *mut u8)> {
+    let id = tier2_allocator().allocate(size, align, type_fp)?;
+    let ptr = unsafe { tier2_allocator().value_ptr(id)? };
+    Some((id, ptr))
+}
+
+/// Promote a Tier 1 value to Tier 2.
+///
+/// This preserves the original generation for stale detection.
+pub fn tier2_promote(
+    value_ptr: *mut u8,
+    size: usize,
+    align: usize,
+    type_fp: u32,
+    original_generation: Generation,
+) -> Option<Tier2SlotId> {
+    tier2_allocator().promote_from_tier1(value_ptr, size, align, type_fp, original_generation)
+}
+
+/// Increment the reference count for a Tier 2 slot.
+pub fn tier2_increment(id: Tier2SlotId) -> bool {
+    tier2_allocator().increment(id)
+}
+
+/// Decrement the reference count for a Tier 2 slot.
+pub fn tier2_decrement(id: Tier2SlotId) {
+    tier2_allocator().decrement(id)
+}
+
+/// Get the reference count for a Tier 2 slot.
+pub fn tier2_refcount(id: Tier2SlotId) -> Option<u64> {
+    tier2_allocator().refcount(id)
+}
+
+/// Check if a Tier 2 slot is alive.
+pub fn tier2_is_alive(id: Tier2SlotId) -> bool {
+    tier2_allocator().is_alive(id)
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -2120,5 +2964,487 @@ mod tests {
         assert_ne!(MemoryTier::Stack, MemoryTier::Region);
         assert_ne!(MemoryTier::Region, MemoryTier::Heap);
         assert_ne!(MemoryTier::Heap, MemoryTier::Persistent);
+    }
+
+    // =========================================================================
+    // Tier 2: Reference-Counted Allocator Tests
+    // =========================================================================
+
+    #[test]
+    fn test_tier2_slot_id() {
+        let id = Tier2SlotId(42);
+        assert_eq!(id.as_u64(), 42);
+        assert_eq!(Tier2SlotId::from_u64(42), id);
+    }
+
+    #[test]
+    fn test_tier2_slot_basic() {
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        let ptr = unsafe { alloc::alloc(layout) };
+        assert!(!ptr.is_null());
+
+        let slot = Tier2Slot::new(ptr, 64, layout, 0x1234, generation::FIRST);
+        assert_eq!(slot.refcount(), 1);
+        assert_eq!(slot.weak_count(), 0);
+        assert!(slot.is_alive());
+        assert_eq!(slot.size(), 64);
+        assert_eq!(slot.type_fp(), 0x1234);
+        assert_eq!(slot.original_generation(), generation::FIRST);
+        assert!(!slot.is_promoted());
+        assert!(!slot.is_frozen());
+
+        unsafe { slot.deallocate_value() };
+    }
+
+    #[test]
+    fn test_tier2_slot_promoted() {
+        let layout = Layout::from_size_align(32, 8).unwrap();
+        let ptr = unsafe { alloc::alloc(layout) };
+        assert!(!ptr.is_null());
+
+        let original_gen = 42u32;
+        let slot = Tier2Slot::promoted(ptr, 32, layout, 0xABCD, original_gen);
+
+        assert_eq!(slot.refcount(), 1);
+        assert!(slot.is_alive());
+        assert!(slot.is_promoted());
+        assert_eq!(slot.original_generation(), original_gen);
+        assert_eq!(slot.type_fp(), 0xABCD);
+
+        unsafe { slot.deallocate_value() };
+    }
+
+    #[test]
+    fn test_tier2_slot_refcount_operations() {
+        let layout = Layout::from_size_align(16, 8).unwrap();
+        let ptr = unsafe { alloc::alloc(layout) };
+        assert!(!ptr.is_null());
+
+        let slot = Tier2Slot::new(ptr, 16, layout, 0, generation::FIRST);
+        assert_eq!(slot.refcount(), 1);
+
+        // Increment
+        slot.increment();
+        assert_eq!(slot.refcount(), 2);
+
+        slot.increment();
+        assert_eq!(slot.refcount(), 3);
+
+        // Decrement (not last)
+        assert!(!slot.decrement());
+        assert_eq!(slot.refcount(), 2);
+
+        assert!(!slot.decrement());
+        assert_eq!(slot.refcount(), 1);
+
+        // Decrement (last)
+        assert!(slot.decrement());
+        assert_eq!(slot.refcount(), 0);
+        assert!(!slot.is_alive());
+
+        unsafe { slot.deallocate_value() };
+    }
+
+    #[test]
+    fn test_tier2_slot_weak_references() {
+        let layout = Layout::from_size_align(16, 8).unwrap();
+        let ptr = unsafe { alloc::alloc(layout) };
+        assert!(!ptr.is_null());
+
+        let slot = Tier2Slot::new(ptr, 16, layout, 0, generation::FIRST);
+        assert_eq!(slot.weak_count(), 0);
+
+        // Add weak references
+        slot.increment_weak();
+        assert_eq!(slot.weak_count(), 1);
+
+        slot.increment_weak();
+        assert_eq!(slot.weak_count(), 2);
+
+        // Upgrade weak to strong (while alive)
+        assert!(slot.try_upgrade_weak());
+        assert_eq!(slot.refcount(), 2);
+
+        // Decrement weak (not last)
+        assert!(!slot.decrement_weak());
+        assert_eq!(slot.weak_count(), 1);
+
+        // Drop strong refs
+        slot.decrement(); // refcount = 1
+        slot.decrement(); // refcount = 0
+
+        // Try upgrade after dead - should fail
+        assert!(!slot.try_upgrade_weak());
+
+        // Decrement last weak - should return true (both weak and strong are 0)
+        assert!(slot.decrement_weak());
+
+        unsafe { slot.deallocate_value() };
+    }
+
+    #[test]
+    fn test_tier2_slot_frozen() {
+        let layout = Layout::from_size_align(8, 8).unwrap();
+        let ptr = unsafe { alloc::alloc(layout) };
+        assert!(!ptr.is_null());
+
+        let slot = Tier2Slot::new(ptr, 8, layout, 0, generation::FIRST);
+        assert!(!slot.is_frozen());
+
+        slot.set_frozen();
+        assert!(slot.is_frozen());
+
+        // Clean up
+        slot.decrement();
+        unsafe { slot.deallocate_value() };
+    }
+
+    #[test]
+    fn test_tier2_allocator_basic() {
+        let allocator = Tier2Allocator::new();
+        assert_eq!(allocator.live_count(), 0);
+
+        // Allocate
+        let id = allocator.allocate(64, 8, 0x1234).unwrap();
+        assert!(allocator.is_alive(id));
+        assert_eq!(allocator.refcount(id), Some(1));
+        assert_eq!(allocator.live_count(), 1);
+
+        // Increment
+        assert!(allocator.increment(id));
+        assert_eq!(allocator.refcount(id), Some(2));
+
+        // Decrement (not last)
+        allocator.decrement(id);
+        assert_eq!(allocator.refcount(id), Some(1));
+
+        // Decrement (last) - slot queued for cleanup
+        allocator.decrement(id);
+    }
+
+    #[test]
+    fn test_tier2_allocator_promotion() {
+        let allocator = Tier2Allocator::new();
+
+        // Allocate Tier 1 style memory
+        let layout = Layout::from_size_align(32, 8).unwrap();
+        let ptr = unsafe { alloc::alloc(layout) };
+        assert!(!ptr.is_null());
+
+        let original_gen = 100u32;
+        let id = allocator.promote_from_tier1(ptr, 32, 8, 0xABCD, original_gen).unwrap();
+
+        assert!(allocator.is_alive(id));
+        assert!(allocator.is_promoted(id));
+        assert_eq!(allocator.original_generation(id), Some(original_gen));
+        assert_eq!(allocator.stats().promotions.load(Ordering::Relaxed), 1);
+
+        // Clean up
+        allocator.decrement(id);
+    }
+
+    #[test]
+    fn test_tier2_allocator_weak_references() {
+        let allocator = Tier2Allocator::new();
+
+        let id = allocator.allocate(16, 8, 0).unwrap();
+        assert_eq!(allocator.weak_count(id), Some(0));
+
+        // Add weak reference
+        assert!(allocator.increment_weak(id));
+        assert_eq!(allocator.weak_count(id), Some(1));
+
+        // Upgrade weak to strong
+        assert!(allocator.try_upgrade_weak(id));
+        assert_eq!(allocator.refcount(id), Some(2));
+        assert_eq!(allocator.stats().weak_upgrades.load(Ordering::Relaxed), 1);
+
+        // Clean up
+        allocator.decrement(id);
+        allocator.decrement(id);
+        allocator.decrement_weak(id);
+    }
+
+    #[test]
+    fn test_tier2_allocator_null_promotion() {
+        let allocator = Tier2Allocator::new();
+
+        // Promoting null should fail
+        let result = allocator.promote_from_tier1(std::ptr::null_mut(), 32, 8, 0, generation::FIRST);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_tier2_public_api() {
+        // Test tier2_alloc
+        let result = tier2_alloc(128, 8, 0xDEAD);
+        assert!(result.is_some());
+        let (id, ptr) = result.unwrap();
+        assert!(!ptr.is_null());
+        assert!(tier2_is_alive(id));
+        assert_eq!(tier2_refcount(id), Some(1));
+
+        // Test tier2_increment
+        assert!(tier2_increment(id));
+        assert_eq!(tier2_refcount(id), Some(2));
+
+        // Test tier2_decrement
+        tier2_decrement(id);
+        assert_eq!(tier2_refcount(id), Some(1));
+
+        tier2_decrement(id);
+    }
+
+    #[test]
+    fn test_tier2_promote_api() {
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        let ptr = unsafe { alloc::alloc(layout) };
+        assert!(!ptr.is_null());
+
+        let original_gen = 50u32;
+        let result = tier2_promote(ptr, 64, 8, 0xBEEF, original_gen);
+        assert!(result.is_some());
+
+        let id = result.unwrap();
+        assert!(tier2_is_alive(id));
+        assert!(tier2_allocator().is_promoted(id));
+        assert_eq!(tier2_allocator().original_generation(id), Some(original_gen));
+
+        tier2_decrement(id);
+    }
+
+    // =========================================================================
+    // PersistentPtr Tests
+    // =========================================================================
+
+    #[test]
+    fn test_persistent_ptr_new() {
+        let ptr = PersistentPtr::new(42i32).unwrap();
+        assert_eq!(*ptr.get(), 42);
+        assert_eq!(ptr.refcount(), 1);
+        assert!(ptr.is_unique());
+    }
+
+    #[test]
+    fn test_persistent_ptr_clone() {
+        let ptr1 = PersistentPtr::new(100i32).unwrap();
+        assert_eq!(ptr1.refcount(), 1);
+
+        let ptr2 = ptr1.clone();
+        assert_eq!(ptr1.refcount(), 2);
+        assert_eq!(ptr2.refcount(), 2);
+        assert!(!ptr1.is_unique());
+        assert!(!ptr2.is_unique());
+
+        assert_eq!(*ptr1.get(), 100);
+        assert_eq!(*ptr2.get(), 100);
+    }
+
+    #[test]
+    fn test_persistent_ptr_drop() {
+        let ptr1 = PersistentPtr::new(200i32).unwrap();
+        let slot_id = ptr1.slot_id();
+
+        {
+            let ptr2 = ptr1.clone();
+            assert_eq!(tier2_refcount(slot_id), Some(2));
+            drop(ptr2);
+        }
+
+        assert_eq!(tier2_refcount(slot_id), Some(1));
+        drop(ptr1);
+        // After drop, slot may be queued for cleanup
+    }
+
+    #[test]
+    fn test_persistent_ptr_get_mut() {
+        let mut ptr = PersistentPtr::new(10i32).unwrap();
+        assert_eq!(*ptr.get(), 10);
+
+        *ptr.get_mut() = 20;
+        assert_eq!(*ptr.get(), 20);
+    }
+
+    #[test]
+    fn test_persistent_ptr_slot_id() {
+        let ptr = PersistentPtr::new(0i32).unwrap();
+        let slot_id = ptr.slot_id();
+        assert!(tier2_is_alive(slot_id));
+    }
+
+    #[test]
+    fn test_persistent_ptr_with_struct() {
+        #[derive(Debug, PartialEq)]
+        struct Point {
+            x: i32,
+            y: i32,
+        }
+
+        let ptr = PersistentPtr::new(Point { x: 10, y: 20 }).unwrap();
+        assert_eq!(ptr.get().x, 10);
+        assert_eq!(ptr.get().y, 20);
+    }
+
+    // =========================================================================
+    // WeakPersistentPtr Tests
+    // =========================================================================
+
+    #[test]
+    fn test_weak_persistent_ptr_downgrade() {
+        let ptr = PersistentPtr::new(42i32).unwrap();
+        let weak = ptr.downgrade();
+
+        assert!(weak.is_alive());
+        assert_eq!(weak.strong_count(), 1);
+        assert_eq!(weak.weak_count(), 1);
+    }
+
+    #[test]
+    fn test_weak_persistent_ptr_upgrade() {
+        let ptr = PersistentPtr::new(100i32).unwrap();
+        let weak = ptr.downgrade();
+
+        // Upgrade while strong ref exists
+        let upgraded = weak.upgrade().unwrap();
+        assert_eq!(*upgraded.get(), 100);
+        assert_eq!(upgraded.refcount(), 2);
+    }
+
+    #[test]
+    fn test_weak_persistent_ptr_upgrade_after_drop() {
+        let weak = {
+            let ptr = PersistentPtr::new(50i32).unwrap();
+            ptr.downgrade()
+        };
+
+        // Strong ref dropped, upgrade should fail
+        assert!(!weak.is_alive());
+        assert!(weak.upgrade().is_none());
+    }
+
+    #[test]
+    fn test_weak_persistent_ptr_clone() {
+        let ptr = PersistentPtr::new(0i32).unwrap();
+        let weak1 = ptr.downgrade();
+        let weak2 = weak1.clone();
+
+        assert_eq!(weak1.weak_count(), 2);
+        assert_eq!(weak2.weak_count(), 2);
+        assert_eq!(weak1.slot_id(), weak2.slot_id());
+    }
+
+    // =========================================================================
+    // Thread Safety Tests
+    // =========================================================================
+
+    #[test]
+    fn test_tier2_slot_thread_safe_refcount() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        let ptr = unsafe { alloc::alloc(layout) };
+        let slot = Arc::new(Tier2Slot::new(ptr, 64, layout, 0, generation::FIRST));
+
+        // Increment in initial thread
+        slot.increment();
+        slot.increment();
+        assert_eq!(slot.refcount(), 3);
+
+        let handles: Vec<_> = (0..4).map(|_| {
+            let slot_clone = Arc::clone(&slot);
+            thread::spawn(move || {
+                for _ in 0..100 {
+                    slot_clone.increment();
+                    slot_clone.decrement();
+                }
+            })
+        }).collect();
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        // Should still have original refcount
+        assert_eq!(slot.refcount(), 3);
+
+        // Clean up
+        slot.decrement();
+        slot.decrement();
+        slot.decrement();
+        unsafe { slot.deallocate_value() };
+    }
+
+    #[test]
+    fn test_persistent_ptr_send_sync() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let ptr = Arc::new(PersistentPtr::new(42i32).unwrap());
+
+        let handles: Vec<_> = (0..4).map(|_| {
+            let ptr_clone = Arc::clone(&ptr);
+            thread::spawn(move || {
+                // Read value from different threads
+                assert_eq!(*ptr_clone.get(), 42);
+            })
+        }).collect();
+
+        for h in handles {
+            h.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn test_tier2_allocator_concurrent_access() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let allocator = Arc::new(Tier2Allocator::new());
+
+        let handles: Vec<_> = (0..4).map(|i| {
+            let alloc = Arc::clone(&allocator);
+            thread::spawn(move || {
+                // Each thread allocates and deallocates its own slots
+                for j in 0..10 {
+                    let id = alloc.allocate(16, 8, (i * 100 + j) as u32).unwrap();
+                    assert!(alloc.is_alive(id));
+                    alloc.decrement(id);
+                }
+            })
+        }).collect();
+
+        for h in handles {
+            h.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn test_type_fingerprint() {
+        // Different types should have different fingerprints
+        let fp_i32 = type_fingerprint::<i32>();
+        let fp_i64 = type_fingerprint::<i64>();
+        let fp_string = type_fingerprint::<String>();
+
+        assert_ne!(fp_i32, fp_i64);
+        assert_ne!(fp_i32, fp_string);
+        assert_ne!(fp_i64, fp_string);
+
+        // Same type should have same fingerprint
+        assert_eq!(type_fingerprint::<i32>(), type_fingerprint::<i32>());
+    }
+
+    #[test]
+    fn test_tier2_stats() {
+        let allocator = Tier2Allocator::new();
+
+        assert_eq!(allocator.stats().allocations.load(Ordering::Relaxed), 0);
+
+        let id = allocator.allocate(32, 8, 0).unwrap();
+        assert_eq!(allocator.stats().allocations.load(Ordering::Relaxed), 1);
+        assert_eq!(allocator.stats().live_slots.load(Ordering::Relaxed), 1);
+
+        allocator.decrement(id);
+        assert_eq!(allocator.stats().deallocations.load(Ordering::Relaxed), 1);
     }
 }

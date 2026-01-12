@@ -158,6 +158,16 @@ impl IoInterest {
     /// Interested in both.
     pub const BOTH: Self = Self(0b11);
 
+    /// Create from raw bits.
+    pub const fn from_bits(bits: u8) -> Self {
+        Self(bits)
+    }
+
+    /// Get raw bits.
+    pub const fn bits(&self) -> u8 {
+        self.0
+    }
+
     /// Check if readable interest is set.
     pub fn is_readable(&self) -> bool {
         self.0 & 0b01 != 0
