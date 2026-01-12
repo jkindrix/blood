@@ -111,7 +111,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     pub(super) fn compile_return_clause(
         &mut self,
         _handler_id: DefId,
-        handler_name: &str,
+        _handler_name: &str,
         body: &hir::Body,
         _return_clause: &hir::ReturnClause,
         state_fields: &[hir::HandlerState],
@@ -343,7 +343,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             .ok_or_else(|| vec![Diagnostic::error("Missing state parameter".to_string(), span)])?;
         let args_ptr = fn_value.get_nth_param(1)
             .ok_or_else(|| vec![Diagnostic::error("Missing args parameter".to_string(), span)])?;
-        let arg_count_param = fn_value.get_nth_param(2)
+        let _arg_count_param = fn_value.get_nth_param(2)
             .ok_or_else(|| vec![Diagnostic::error("Missing arg_count parameter".to_string(), span)])?;
         let continuation_param = fn_value.get_nth_param(3)
             .ok_or_else(|| vec![Diagnostic::error("Missing continuation parameter".to_string(), span)])?;
@@ -445,7 +445,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // We need to identify which locals are operation params (not state fields, not resume)
         let args_ptr_val = args_ptr.into_pointer_value();
         let i32_type = self.context.i32_type();
-        let zero_i32 = i32_type.const_zero();
+        let _zero_i32 = i32_type.const_zero();
 
         // Find operation parameters: params that are NOT state fields and NOT resume
         // NOTE: We iterate through all locals (except return place) and identify op params.
