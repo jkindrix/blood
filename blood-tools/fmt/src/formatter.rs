@@ -258,8 +258,6 @@ impl Formatter {
                 printer.write(op);
                 printer.write(" ");
             }
-        } else if op == "!" {
-            printer.write(op);
         } else {
             printer.write(op);
         }
