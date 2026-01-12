@@ -31,10 +31,12 @@ impl<'src> Parser<'src> {
             TokenKind::Impl => Some(Declaration::Impl(self.parse_impl_block(attrs))),
             TokenKind::Type => Some(Declaration::Type(self.parse_type_decl(attrs, vis))),
             TokenKind::Static => Some(Declaration::Static(self.parse_static_decl(attrs, vis))),
+            TokenKind::Bridge => Some(Declaration::Bridge(self.parse_bridge_decl(attrs))),
             _ => {
                 self.error_expected_one_of(&[
                     "`fn`", "`struct`", "`enum`", "`trait`", "`impl`",
                     "`effect`", "`handler`", "`type`", "`const`", "`static`",
+                    "`bridge`",
                 ]);
                 self.synchronize();
                 None
@@ -973,6 +975,497 @@ impl<'src> Parser<'src> {
             name,
             ty,
             value,
+            span: start.merge(self.previous.span),
+        }
+    }
+
+    // ============================================================
+    // Bridge Declaration (FFI)
+    // ============================================================
+
+    fn parse_bridge_decl(&mut self, attrs: Vec<Attribute>) -> BridgeDecl {
+        let start = self.current.span;
+        self.advance(); // consume 'bridge'
+
+        // Parse language specifier: "C", "C++", "wasm"
+        let language = if self.check(TokenKind::StringLit) {
+            let span = self.current.span;
+            let text = self.current_text();
+            // Strip quotes
+            let inner = text.trim_start_matches('"').trim_end_matches('"');
+            self.advance();
+            Spanned::new(inner.to_string(), span)
+        } else {
+            self.error_expected("language string (e.g., \"C\")");
+            Spanned::new(String::new(), self.current.span)
+        };
+
+        // Parse bridge name
+        let name = if self.check(TokenKind::Ident) || self.check(TokenKind::TypeIdent) {
+            self.advance();
+            self.spanned_symbol()
+        } else {
+            self.error_expected("bridge name");
+            Spanned::new(self.intern(""), self.current.span)
+        };
+
+        // Parse bridge body
+        self.expect(TokenKind::LBrace);
+
+        let mut items = Vec::new();
+        while !self.check(TokenKind::RBrace) && !self.is_at_end() {
+            if let Some(item) = self.parse_bridge_item() {
+                items.push(item);
+            }
+        }
+
+        self.expect(TokenKind::RBrace);
+
+        BridgeDecl {
+            attrs,
+            language,
+            name,
+            items,
+            span: start.merge(self.previous.span),
+        }
+    }
+
+    fn parse_bridge_item(&mut self) -> Option<BridgeItem> {
+        let attrs = self.parse_attributes();
+
+        // Check for link directive in attributes
+        if self.is_link_attribute(&attrs) {
+            if let Some(link) = self.extract_link_spec(&attrs) {
+                return Some(BridgeItem::Link(link));
+            }
+        }
+
+        // Check for contextual keyword `callback` (parsed as identifier)
+        if self.check(TokenKind::Ident) && self.current_text() == "callback" {
+            return Some(BridgeItem::Callback(self.parse_bridge_callback()));
+        }
+
+        match self.current.kind {
+            TokenKind::Fn => Some(BridgeItem::Function(self.parse_bridge_fn(attrs))),
+            TokenKind::Const => Some(BridgeItem::Const(self.parse_bridge_const())),
+            TokenKind::Type => Some(self.parse_bridge_type(attrs)),
+            TokenKind::Struct => Some(BridgeItem::Struct(self.parse_bridge_struct(attrs))),
+            TokenKind::Enum => Some(BridgeItem::Enum(self.parse_bridge_enum(attrs))),
+            TokenKind::Union => Some(BridgeItem::Union(self.parse_bridge_union(attrs))),
+            _ => {
+                self.error_expected_one_of(&[
+                    "`fn`", "`const`", "`type`", "`struct`", "`enum`",
+                    "`union`", "`callback`", "`#[link(...)]`",
+                ]);
+                self.synchronize();
+                None
+            }
+        }
+    }
+
+    fn is_link_attribute(&self, attrs: &[Attribute]) -> bool {
+        attrs.iter().any(|a| {
+            a.path.len() == 1 && {
+                let name = self.interner_symbol_str(a.path[0].node);
+                name == "link"
+            }
+        })
+    }
+
+    fn extract_link_spec(&self, attrs: &[Attribute]) -> Option<LinkSpec> {
+        for attr in attrs {
+            if attr.path.len() == 1 {
+                let name = self.interner_symbol_str(attr.path[0].node);
+                if name == "link" {
+                    // Extract link arguments
+                    if let Some(AttributeArgs::List(args)) = &attr.args {
+                        let mut lib_name = String::new();
+                        let mut kind = None;
+                        let mut wasm_module = None;
+
+                        for arg in args {
+                            if let AttributeArg::KeyValue(key, value) = arg {
+                                let key_str = self.interner_symbol_str(key.node);
+                                if key_str == "name" {
+                                    if let LiteralKind::String(s) = &value.kind {
+                                        lib_name = s.clone();
+                                    }
+                                } else if key_str == "kind" {
+                                    if let LiteralKind::String(s) = &value.kind {
+                                        kind = match s.as_str() {
+                                            "dylib" => Some(LinkKind::Dylib),
+                                            "static" => Some(LinkKind::Static),
+                                            "framework" => Some(LinkKind::Framework),
+                                            _ => None,
+                                        };
+                                    }
+                                } else if key_str == "wasm_import_module" {
+                                    if let LiteralKind::String(s) = &value.kind {
+                                        wasm_module = Some(s.clone());
+                                    }
+                                }
+                            }
+                        }
+
+                        return Some(LinkSpec {
+                            name: lib_name,
+                            kind,
+                            wasm_import_module: wasm_module,
+                            span: attr.span,
+                        });
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn parse_bridge_fn(&mut self, attrs: Vec<Attribute>) -> BridgeFn {
+        let start = self.current.span;
+        self.advance(); // consume 'fn'
+
+        let name = if self.check(TokenKind::Ident) {
+            self.advance();
+            self.spanned_symbol()
+        } else {
+            self.error_expected("function name");
+            Spanned::new(self.intern(""), self.current.span)
+        };
+
+        self.expect(TokenKind::LParen);
+        let (params, is_variadic) = self.parse_bridge_params();
+        self.expect(TokenKind::RParen);
+
+        let return_type = if self.try_consume(TokenKind::Arrow) {
+            Some(self.parse_type())
+        } else {
+            None
+        };
+
+        self.expect(TokenKind::Semi);
+
+        BridgeFn {
+            attrs,
+            name,
+            params,
+            is_variadic,
+            return_type,
+            span: start.merge(self.previous.span),
+        }
+    }
+
+    fn parse_bridge_params(&mut self) -> (Vec<BridgeParam>, bool) {
+        let mut params = Vec::new();
+        let mut is_variadic = false;
+
+        while !self.check(TokenKind::RParen) && !self.is_at_end() {
+            // Check for variadic ...
+            if self.try_consume(TokenKind::DotDot) {
+                if self.try_consume(TokenKind::Dot) {
+                    // This is ... (variadic)
+                    is_variadic = true;
+                    break;
+                } else {
+                    self.error_expected("`...` for variadic");
+                    break;
+                }
+            }
+
+            params.push(self.parse_bridge_param());
+
+            if !self.try_consume(TokenKind::Comma) {
+                break;
+            }
+        }
+
+        (params, is_variadic)
+    }
+
+    fn parse_bridge_param(&mut self) -> BridgeParam {
+        let start = self.current.span;
+        let attrs = self.parse_attributes();
+
+        // Extract ownership annotation from attributes
+        let ownership = self.extract_ownership(&attrs);
+
+        let name = if self.check(TokenKind::Ident) {
+            self.advance();
+            self.spanned_symbol()
+        } else {
+            self.error_expected("parameter name");
+            Spanned::new(self.intern(""), self.current.span)
+        };
+
+        self.expect(TokenKind::Colon);
+        let ty = self.parse_type();
+
+        BridgeParam {
+            name,
+            ty,
+            ownership,
+            span: start.merge(self.previous.span),
+        }
+    }
+
+    fn extract_ownership(&self, attrs: &[Attribute]) -> Option<BridgeOwnership> {
+        for attr in attrs {
+            if attr.path.len() == 1 {
+                let name = self.interner_symbol_str(attr.path[0].node);
+                match name {
+                    "borrow" => return Some(BridgeOwnership::Borrow),
+                    "transfer" => return Some(BridgeOwnership::Transfer),
+                    "acquire" => return Some(BridgeOwnership::Acquire),
+                    _ => {}
+                }
+            }
+        }
+        None
+    }
+
+    fn parse_bridge_const(&mut self) -> BridgeConst {
+        let start = self.current.span;
+        self.advance(); // consume 'const'
+
+        let name = if self.check(TokenKind::Ident) || self.check(TokenKind::TypeIdent) {
+            self.advance();
+            self.spanned_symbol()
+        } else {
+            self.error_expected("constant name");
+            Spanned::new(self.intern(""), self.current.span)
+        };
+
+        self.expect(TokenKind::Colon);
+        let ty = self.parse_type();
+
+        self.expect(TokenKind::Eq);
+        let value = self.parse_literal();
+
+        self.expect(TokenKind::Semi);
+
+        BridgeConst {
+            name,
+            ty,
+            value,
+            span: start.merge(self.previous.span),
+        }
+    }
+
+    fn parse_bridge_type(&mut self, _attrs: Vec<Attribute>) -> BridgeItem {
+        let start = self.current.span;
+        self.advance(); // consume 'type'
+
+        let name = if self.check(TokenKind::TypeIdent) {
+            self.advance();
+            self.spanned_symbol()
+        } else {
+            self.error_expected("type name");
+            Spanned::new(self.intern(""), self.current.span)
+        };
+
+        // Check for alias: type Foo = Bar;
+        // vs opaque: type Foo;
+        if self.try_consume(TokenKind::Eq) {
+            let ty = self.parse_type();
+            self.expect(TokenKind::Semi);
+
+            BridgeItem::TypeAlias(BridgeTypeAlias {
+                name,
+                ty,
+                span: start.merge(self.previous.span),
+            })
+        } else {
+            self.expect(TokenKind::Semi);
+
+            BridgeItem::OpaqueType(BridgeOpaqueType {
+                name,
+                span: start.merge(self.previous.span),
+            })
+        }
+    }
+
+    fn parse_bridge_struct(&mut self, attrs: Vec<Attribute>) -> BridgeStruct {
+        let start = self.current.span;
+        self.advance(); // consume 'struct'
+
+        let name = if self.check(TokenKind::TypeIdent) {
+            self.advance();
+            self.spanned_symbol()
+        } else {
+            self.error_expected("struct name");
+            Spanned::new(self.intern(""), self.current.span)
+        };
+
+        self.expect(TokenKind::LBrace);
+        let fields = self.parse_bridge_fields();
+        self.expect(TokenKind::RBrace);
+
+        BridgeStruct {
+            attrs,
+            name,
+            fields,
+            span: start.merge(self.previous.span),
+        }
+    }
+
+    fn parse_bridge_fields(&mut self) -> Vec<BridgeField> {
+        let mut fields = Vec::new();
+
+        while !self.check(TokenKind::RBrace) && !self.is_at_end() {
+            fields.push(self.parse_bridge_field());
+
+            if !self.try_consume(TokenKind::Comma) {
+                break;
+            }
+        }
+
+        fields
+    }
+
+    fn parse_bridge_field(&mut self) -> BridgeField {
+        let start = self.current.span;
+
+        let name = if self.check(TokenKind::Ident) {
+            self.advance();
+            self.spanned_symbol()
+        } else {
+            self.error_expected("field name");
+            Spanned::new(self.intern(""), self.current.span)
+        };
+
+        self.expect(TokenKind::Colon);
+        let ty = self.parse_type();
+
+        BridgeField {
+            name,
+            ty,
+            span: start.merge(self.previous.span),
+        }
+    }
+
+    fn parse_bridge_enum(&mut self, attrs: Vec<Attribute>) -> BridgeEnum {
+        let start = self.current.span;
+        self.advance(); // consume 'enum'
+
+        let name = if self.check(TokenKind::TypeIdent) {
+            self.advance();
+            self.spanned_symbol()
+        } else {
+            self.error_expected("enum name");
+            Spanned::new(self.intern(""), self.current.span)
+        };
+
+        self.expect(TokenKind::LBrace);
+        let variants = self.parse_bridge_enum_variants();
+        self.expect(TokenKind::RBrace);
+
+        BridgeEnum {
+            attrs,
+            name,
+            variants,
+            span: start.merge(self.previous.span),
+        }
+    }
+
+    fn parse_bridge_enum_variants(&mut self) -> Vec<BridgeEnumVariant> {
+        let mut variants = Vec::new();
+
+        while !self.check(TokenKind::RBrace) && !self.is_at_end() {
+            variants.push(self.parse_bridge_enum_variant());
+
+            if !self.try_consume(TokenKind::Comma) {
+                break;
+            }
+        }
+
+        variants
+    }
+
+    fn parse_bridge_enum_variant(&mut self) -> BridgeEnumVariant {
+        let start = self.current.span;
+
+        let name = if self.check(TokenKind::TypeIdent) || self.check(TokenKind::Ident) {
+            self.advance();
+            self.spanned_symbol()
+        } else {
+            self.error_expected("variant name");
+            Spanned::new(self.intern(""), self.current.span)
+        };
+
+        let discriminant = if self.try_consume(TokenKind::Eq) {
+            Some(self.parse_literal())
+        } else {
+            None
+        };
+
+        BridgeEnumVariant {
+            name,
+            discriminant,
+            span: start.merge(self.previous.span),
+        }
+    }
+
+    fn parse_bridge_union(&mut self, attrs: Vec<Attribute>) -> BridgeUnion {
+        let start = self.current.span;
+        self.advance(); // consume 'union'
+
+        let name = if self.check(TokenKind::TypeIdent) {
+            self.advance();
+            self.spanned_symbol()
+        } else {
+            self.error_expected("union name");
+            Spanned::new(self.intern(""), self.current.span)
+        };
+
+        self.expect(TokenKind::LBrace);
+        let fields = self.parse_bridge_fields();
+        self.expect(TokenKind::RBrace);
+
+        BridgeUnion {
+            attrs,
+            name,
+            fields,
+            span: start.merge(self.previous.span),
+        }
+    }
+
+    fn parse_bridge_callback(&mut self) -> BridgeCallback {
+        let start = self.current.span;
+        self.advance(); // consume 'callback'
+
+        let name = if self.check(TokenKind::TypeIdent) {
+            self.advance();
+            self.spanned_symbol()
+        } else {
+            self.error_expected("callback name");
+            Spanned::new(self.intern(""), self.current.span)
+        };
+
+        self.expect(TokenKind::Eq);
+        self.expect(TokenKind::Fn);
+
+        self.expect(TokenKind::LParen);
+        let mut params = Vec::new();
+        while !self.check(TokenKind::RParen) && !self.is_at_end() {
+            params.push(self.parse_type());
+
+            if !self.try_consume(TokenKind::Comma) {
+                break;
+            }
+        }
+        self.expect(TokenKind::RParen);
+
+        let return_type = if self.try_consume(TokenKind::Arrow) {
+            Some(self.parse_type())
+        } else {
+            None
+        };
+
+        self.expect(TokenKind::Semi);
+
+        BridgeCallback {
+            name,
+            params,
+            return_type,
             span: start.merge(self.previous.span),
         }
     }

@@ -36,6 +36,8 @@ impl Item {
             ItemKind::Impl { .. } => DefKind::AssocFn, // Simplification
             ItemKind::Effect { .. } => DefKind::Effect,
             ItemKind::Handler { .. } => DefKind::Handler,
+            ItemKind::ExternFn(_) => DefKind::Fn, // External functions are still functions
+            ItemKind::Bridge(_) => DefKind::Struct, // Bridge as a module-like namespace
         }
     }
 }
@@ -94,6 +96,10 @@ pub enum ItemKind {
         operations: Vec<HandlerOp>,
         return_clause: Option<ReturnClause>,
     },
+    /// An external (FFI) function.
+    ExternFn(ExternFnDef),
+    /// An FFI bridge block.
+    Bridge(BridgeDef),
 }
 
 /// Handler kind: determines continuation semantics.
@@ -373,6 +379,209 @@ pub struct ReturnClause {
     pub param: String,
     /// The transformation body.
     pub body_id: BodyId,
+    /// Source span.
+    pub span: Span,
+}
+
+// ============================================================
+// FFI Definitions
+// ============================================================
+
+/// An external (foreign) function definition.
+#[derive(Debug, Clone)]
+pub struct ExternFnDef {
+    /// The function signature.
+    pub sig: FnSig,
+    /// The ABI/language (e.g., "C", "C++", "wasm").
+    pub abi: String,
+    /// The symbol name to link against (may differ from Rust name).
+    pub link_name: Option<String>,
+    /// Whether this function is variadic.
+    pub is_variadic: bool,
+}
+
+/// A bridge block definition containing multiple FFI items.
+#[derive(Debug, Clone)]
+pub struct BridgeDef {
+    /// The ABI/language for this bridge (e.g., "C", "C++", "wasm").
+    pub abi: String,
+    /// Link specifications for this bridge.
+    pub link_specs: Vec<LinkSpec>,
+    /// External functions in this bridge.
+    pub extern_fns: Vec<ExternFnItem>,
+    /// Opaque types (forward declarations).
+    pub opaque_types: Vec<OpaqueType>,
+    /// Type aliases.
+    pub type_aliases: Vec<BridgeTypeAlias>,
+    /// FFI structs.
+    pub structs: Vec<FfiStruct>,
+    /// FFI enums.
+    pub enums: Vec<FfiEnum>,
+    /// FFI unions.
+    pub unions: Vec<FfiUnion>,
+    /// FFI constants.
+    pub consts: Vec<FfiConst>,
+    /// Callback type definitions.
+    pub callbacks: Vec<FfiCallback>,
+}
+
+/// Link specification for an FFI bridge.
+#[derive(Debug, Clone)]
+pub struct LinkSpec {
+    /// The library name to link.
+    pub name: String,
+    /// The link kind (dylib, static, framework).
+    pub kind: LinkKind,
+    /// WASM import module name.
+    pub wasm_import_module: Option<String>,
+}
+
+/// The kind of library linking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LinkKind {
+    /// Dynamic library (default).
+    #[default]
+    Dylib,
+    /// Static library.
+    Static,
+    /// macOS framework.
+    Framework,
+}
+
+/// An external function item within a bridge.
+#[derive(Debug, Clone)]
+pub struct ExternFnItem {
+    /// The DefId for this function.
+    pub def_id: DefId,
+    /// The function name.
+    pub name: String,
+    /// The function signature.
+    pub sig: FnSig,
+    /// Optional link name (if different from `name`).
+    pub link_name: Option<String>,
+    /// Whether this function is variadic.
+    pub is_variadic: bool,
+    /// Source span.
+    pub span: Span,
+}
+
+/// An opaque type (forward declaration).
+#[derive(Debug, Clone)]
+pub struct OpaqueType {
+    /// The DefId for this type.
+    pub def_id: DefId,
+    /// The type name.
+    pub name: String,
+    /// Source span.
+    pub span: Span,
+}
+
+/// A type alias in a bridge.
+#[derive(Debug, Clone)]
+pub struct BridgeTypeAlias {
+    /// The DefId for this type.
+    pub def_id: DefId,
+    /// The type name.
+    pub name: String,
+    /// The aliased type.
+    pub ty: Type,
+    /// Source span.
+    pub span: Span,
+}
+
+/// An FFI struct (C-compatible layout).
+#[derive(Debug, Clone)]
+pub struct FfiStruct {
+    /// The DefId for this struct.
+    pub def_id: DefId,
+    /// The struct name.
+    pub name: String,
+    /// The fields.
+    pub fields: Vec<FfiField>,
+    /// Whether this is packed.
+    pub is_packed: bool,
+    /// Explicit alignment (if specified).
+    pub align: Option<u32>,
+    /// Source span.
+    pub span: Span,
+}
+
+/// A field in an FFI struct or union.
+#[derive(Debug, Clone)]
+pub struct FfiField {
+    /// The field name.
+    pub name: String,
+    /// The field type.
+    pub ty: Type,
+    /// Source span.
+    pub span: Span,
+}
+
+/// An FFI enum (C-compatible).
+#[derive(Debug, Clone)]
+pub struct FfiEnum {
+    /// The DefId for this enum.
+    pub def_id: DefId,
+    /// The enum name.
+    pub name: String,
+    /// The representation type.
+    pub repr: Type,
+    /// The variants.
+    pub variants: Vec<FfiEnumVariant>,
+    /// Source span.
+    pub span: Span,
+}
+
+/// A variant in an FFI enum.
+#[derive(Debug, Clone)]
+pub struct FfiEnumVariant {
+    /// The variant name.
+    pub name: String,
+    /// The discriminant value.
+    pub value: i64,
+    /// Source span.
+    pub span: Span,
+}
+
+/// An FFI union (C-compatible).
+#[derive(Debug, Clone)]
+pub struct FfiUnion {
+    /// The DefId for this union.
+    pub def_id: DefId,
+    /// The union name.
+    pub name: String,
+    /// The fields (all at the same offset).
+    pub fields: Vec<FfiField>,
+    /// Source span.
+    pub span: Span,
+}
+
+/// An FFI constant.
+#[derive(Debug, Clone)]
+pub struct FfiConst {
+    /// The DefId for this constant.
+    pub def_id: DefId,
+    /// The constant name.
+    pub name: String,
+    /// The constant type.
+    pub ty: Type,
+    /// The constant value (as i64 for simplicity).
+    pub value: i64,
+    /// Source span.
+    pub span: Span,
+}
+
+/// A callback type definition.
+#[derive(Debug, Clone)]
+pub struct FfiCallback {
+    /// The DefId for this callback type.
+    pub def_id: DefId,
+    /// The callback name.
+    pub name: String,
+    /// Parameter types.
+    pub params: Vec<Type>,
+    /// Return type.
+    pub return_type: Type,
     /// Source span.
     pub span: Span,
 }

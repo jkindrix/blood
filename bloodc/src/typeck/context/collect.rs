@@ -49,6 +49,289 @@ impl<'a> TypeContext<'a> {
             ast::Declaration::Type(t) => self.collect_type_alias(t),
             ast::Declaration::Impl(i) => self.collect_impl_block(i),
             ast::Declaration::Trait(t) => self.collect_trait(t),
+            ast::Declaration::Bridge(b) => self.collect_bridge(b),
+        }
+    }
+
+    /// Collect a bridge declaration (FFI).
+    pub(crate) fn collect_bridge(&mut self, bridge: &ast::BridgeDecl) -> Result<(), TypeError> {
+        use super::{
+            BridgeInfo, BridgeLinkSpec, BridgeLinkKind, BridgeFnInfo, BridgeOpaqueInfo,
+            BridgeTypeAliasInfo, BridgeStructInfo, BridgeFieldInfo, BridgeEnumInfo,
+            BridgeEnumVariantInfo, BridgeUnionInfo, BridgeConstInfo, BridgeCallbackInfo,
+        };
+
+        let bridge_name = self.symbol_to_string(bridge.name.node);
+        let abi = bridge.language.node.clone();
+
+        let mut link_specs = Vec::new();
+        let mut extern_fns = Vec::new();
+        let mut opaque_types = Vec::new();
+        let mut type_aliases = Vec::new();
+        let mut structs = Vec::new();
+        let mut enums = Vec::new();
+        let mut unions = Vec::new();
+        let mut consts = Vec::new();
+        let mut callbacks = Vec::new();
+
+        for item in &bridge.items {
+            match item {
+                ast::BridgeItem::Link(link) => {
+                    let kind = match link.kind {
+                        Some(ast::LinkKind::Dylib) => BridgeLinkKind::Dylib,
+                        Some(ast::LinkKind::Static) => BridgeLinkKind::Static,
+                        Some(ast::LinkKind::Framework) => BridgeLinkKind::Framework,
+                        None => BridgeLinkKind::Dylib, // Default to dylib
+                    };
+                    link_specs.push(BridgeLinkSpec {
+                        name: link.name.clone(),
+                        kind,
+                        wasm_import_module: link.wasm_import_module.clone(),
+                    });
+                }
+                ast::BridgeItem::Function(func) => {
+                    let name = self.symbol_to_string(func.name.node);
+                    let def_id = self.resolver.define_item(
+                        name.clone(),
+                        hir::DefKind::Fn,
+                        func.span,
+                    )?;
+
+                    // Convert parameter types
+                    let params: Vec<_> = func.params.iter()
+                        .map(|p| self.ast_type_to_hir_type(&p.ty))
+                        .collect::<Result<_, _>>()?;
+
+                    let return_ty = match &func.return_type {
+                        Some(ty) => self.ast_type_to_hir_type(ty)?,
+                        None => hir::Type::unit(),
+                    };
+
+                    // Store function signature for type checking
+                    self.fn_sigs.insert(def_id, hir::FnSig::new(params.clone(), return_ty.clone()));
+
+                    // Extract link_name from attributes if present
+                    let link_name = Self::extract_link_name_from_attrs(&func.attrs);
+
+                    extern_fns.push(BridgeFnInfo {
+                        def_id,
+                        name,
+                        params,
+                        return_ty,
+                        link_name,
+                        is_variadic: func.is_variadic,
+                        span: func.span,
+                    });
+                }
+                ast::BridgeItem::OpaqueType(opaque) => {
+                    let name = self.symbol_to_string(opaque.name.node);
+                    let def_id = self.resolver.define_item(
+                        name.clone(),
+                        hir::DefKind::Struct,
+                        opaque.span,
+                    )?;
+                    opaque_types.push(BridgeOpaqueInfo {
+                        def_id,
+                        name,
+                        span: opaque.span,
+                    });
+                }
+                ast::BridgeItem::TypeAlias(alias) => {
+                    let name = self.symbol_to_string(alias.name.node);
+                    let def_id = self.resolver.define_item(
+                        name.clone(),
+                        hir::DefKind::TypeAlias,
+                        alias.span,
+                    )?;
+                    let ty = self.ast_type_to_hir_type(&alias.ty)?;
+                    type_aliases.push(BridgeTypeAliasInfo {
+                        def_id,
+                        name,
+                        ty,
+                        span: alias.span,
+                    });
+                }
+                ast::BridgeItem::Struct(s) => {
+                    let name = self.symbol_to_string(s.name.node);
+                    let def_id = self.resolver.define_item(
+                        name.clone(),
+                        hir::DefKind::Struct,
+                        s.span,
+                    )?;
+                    let fields: Vec<_> = s.fields.iter()
+                        .map(|f| {
+                            let field_name = self.symbol_to_string(f.name.node);
+                            let ty = self.ast_type_to_hir_type(&f.ty)?;
+                            Ok(BridgeFieldInfo {
+                                name: field_name,
+                                ty,
+                                span: f.span,
+                            })
+                        })
+                        .collect::<Result<_, TypeError>>()?;
+
+                    // Extract packed and align from attributes
+                    let (is_packed, align) = Self::extract_struct_attrs(&s.attrs);
+
+                    structs.push(BridgeStructInfo {
+                        def_id,
+                        name,
+                        fields,
+                        is_packed,
+                        align,
+                        span: s.span,
+                    });
+                }
+                ast::BridgeItem::Enum(e) => {
+                    let name = self.symbol_to_string(e.name.node);
+                    let def_id = self.resolver.define_item(
+                        name.clone(),
+                        hir::DefKind::Enum,
+                        e.span,
+                    )?;
+
+                    // Extract repr type from attributes, default to i32
+                    let repr = Self::extract_repr_from_attrs(&e.attrs)
+                        .unwrap_or_else(hir::Type::i32);
+
+                    let variants: Vec<_> = e.variants.iter()
+                        .enumerate()
+                        .map(|(i, v)| {
+                            let var_name = self.symbol_to_string(v.name.node);
+                            // If discriminant is specified, try to parse it, otherwise use index
+                            let value = v.discriminant.as_ref()
+                                .and_then(Self::literal_to_i64)
+                                .unwrap_or(i as i64);
+                            BridgeEnumVariantInfo {
+                                name: var_name,
+                                value,
+                                span: v.span,
+                            }
+                        })
+                        .collect();
+                    enums.push(BridgeEnumInfo {
+                        def_id,
+                        name,
+                        repr,
+                        variants,
+                        span: e.span,
+                    });
+                }
+                ast::BridgeItem::Union(u) => {
+                    let name = self.symbol_to_string(u.name.node);
+                    let def_id = self.resolver.define_item(
+                        name.clone(),
+                        hir::DefKind::Struct, // Unions are similar to structs in DefKind
+                        u.span,
+                    )?;
+                    let fields: Vec<_> = u.fields.iter()
+                        .map(|f| {
+                            let field_name = self.symbol_to_string(f.name.node);
+                            let ty = self.ast_type_to_hir_type(&f.ty)?;
+                            Ok(BridgeFieldInfo {
+                                name: field_name,
+                                ty,
+                                span: f.span,
+                            })
+                        })
+                        .collect::<Result<_, TypeError>>()?;
+                    unions.push(BridgeUnionInfo {
+                        def_id,
+                        name,
+                        fields,
+                        span: u.span,
+                    });
+                }
+                ast::BridgeItem::Callback(cb) => {
+                    let name = self.symbol_to_string(cb.name.node);
+                    let def_id = self.resolver.define_item(
+                        name.clone(),
+                        hir::DefKind::TypeAlias,
+                        cb.span,
+                    )?;
+                    let params: Vec<_> = cb.params.iter()
+                        .map(|ty| self.ast_type_to_hir_type(ty))
+                        .collect::<Result<_, _>>()?;
+                    let return_ty = match &cb.return_type {
+                        Some(ty) => self.ast_type_to_hir_type(ty)?,
+                        None => hir::Type::unit(),
+                    };
+                    callbacks.push(BridgeCallbackInfo {
+                        def_id,
+                        name,
+                        params,
+                        return_ty,
+                        span: cb.span,
+                    });
+                }
+                ast::BridgeItem::Const(c) => {
+                    let name = self.symbol_to_string(c.name.node);
+                    let def_id = self.resolver.define_item(
+                        name.clone(),
+                        hir::DefKind::Const,
+                        c.span,
+                    )?;
+                    let ty = self.ast_type_to_hir_type(&c.ty)?;
+                    // Convert literal to i64
+                    let value = Self::literal_to_i64(&c.value).unwrap_or(0);
+                    consts.push(BridgeConstInfo {
+                        def_id,
+                        name,
+                        ty,
+                        value,
+                        span: c.span,
+                    });
+                }
+            }
+        }
+
+        self.bridge_defs.push(BridgeInfo {
+            name: bridge_name,
+            abi,
+            link_specs,
+            extern_fns,
+            opaque_types,
+            type_aliases,
+            structs,
+            enums,
+            unions,
+            consts,
+            callbacks,
+            span: bridge.span,
+        });
+
+        Ok(())
+    }
+
+    /// Extract link_name attribute from a list of attributes.
+    fn extract_link_name_from_attrs(_attrs: &[ast::Attribute]) -> Option<String> {
+        // For now, return None. Full implementation would parse:
+        // #[link_name = "..."]
+        None
+    }
+
+    /// Extract is_packed and align from struct attributes.
+    fn extract_struct_attrs(_attrs: &[ast::Attribute]) -> (bool, Option<u32>) {
+        // For now, return defaults. Full implementation would parse:
+        // #[repr(packed)] -> is_packed = true
+        // #[repr(align(N))] -> align = Some(N)
+        (false, None)
+    }
+
+    /// Extract repr type from enum attributes.
+    fn extract_repr_from_attrs(_attrs: &[ast::Attribute]) -> Option<hir::Type> {
+        // For now, return None. Full implementation would parse:
+        // #[repr(i32)] -> Some(Type::int(32))
+        // #[repr(u8)] -> Some(Type::uint(8))
+        None
+    }
+
+    /// Convert a literal to i64 if possible.
+    fn literal_to_i64(lit: &ast::Literal) -> Option<i64> {
+        match &lit.kind {
+            ast::LiteralKind::Int { value, .. } => Some(*value as i64),
+            ast::LiteralKind::Bool(b) => Some(if *b { 1 } else { 0 }),
+            _ => None,
         }
     }
 
@@ -1111,25 +1394,23 @@ impl<'a> TypeContext<'a> {
                 }
 
                 // Look up the effect by name in the global bindings
-                if let Some(binding) = self.resolver.lookup(&effect_name) {
-                    if let Binding::Def(def_id) = binding {
-                        // Verify it's actually an effect
-                        if self.effect_defs.contains_key(&def_id) {
-                            // Parse type arguments
-                            let type_args = if let Some(ref args) = path.segments[0].args {
-                                let mut parsed_args = Vec::new();
-                                for arg in &args.args {
-                                    if let ast::TypeArg::Type(arg_ty) = arg {
-                                        parsed_args.push(self.ast_type_to_hir_type(arg_ty)?);
-                                    }
+                if let Some(Binding::Def(def_id)) = self.resolver.lookup(&effect_name) {
+                    // Verify it's actually an effect
+                    if self.effect_defs.contains_key(&def_id) {
+                        // Parse type arguments
+                        let type_args = if let Some(ref args) = path.segments[0].args {
+                            let mut parsed_args = Vec::new();
+                            for arg in &args.args {
+                                if let ast::TypeArg::Type(arg_ty) = arg {
+                                    parsed_args.push(self.ast_type_to_hir_type(arg_ty)?);
                                 }
-                                parsed_args
-                            } else {
-                                Vec::new()
-                            };
+                            }
+                            parsed_args
+                        } else {
+                            Vec::new()
+                        };
 
-                            return Ok(Some(EffectRef { def_id, type_args }));
-                        }
+                        return Ok(Some(EffectRef { def_id, type_args }));
                     }
                 }
 

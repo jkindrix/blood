@@ -100,6 +100,8 @@ pub struct TypeContext<'a> {
     /// Expected type for `resume(value)` in the current handler operation body.
     /// Set when entering a handler operation scope, used for E0303 error checking.
     pub(crate) current_resume_type: Option<Type>,
+    /// FFI bridge block definitions.
+    pub(crate) bridge_defs: Vec<BridgeInfo>,
 }
 
 /// Information about a struct.
@@ -292,6 +294,195 @@ pub struct TraitAssocConstInfo {
     pub has_default: bool,
 }
 
+/// Information about an FFI bridge block.
+#[derive(Debug, Clone)]
+pub struct BridgeInfo {
+    /// The bridge name.
+    pub name: String,
+    /// The ABI/language (e.g., "C", "C++", "wasm").
+    pub abi: String,
+    /// Link specifications.
+    pub link_specs: Vec<BridgeLinkSpec>,
+    /// External functions in this bridge.
+    pub extern_fns: Vec<BridgeFnInfo>,
+    /// Opaque types.
+    pub opaque_types: Vec<BridgeOpaqueInfo>,
+    /// Type aliases.
+    pub type_aliases: Vec<BridgeTypeAliasInfo>,
+    /// FFI structs.
+    pub structs: Vec<BridgeStructInfo>,
+    /// FFI enums.
+    pub enums: Vec<BridgeEnumInfo>,
+    /// FFI unions.
+    pub unions: Vec<BridgeUnionInfo>,
+    /// FFI constants.
+    pub consts: Vec<BridgeConstInfo>,
+    /// Callback types.
+    pub callbacks: Vec<BridgeCallbackInfo>,
+    /// Source span.
+    pub span: Span,
+}
+
+/// Link specification for an FFI bridge.
+#[derive(Debug, Clone)]
+pub struct BridgeLinkSpec {
+    /// Library name to link.
+    pub name: String,
+    /// Link kind.
+    pub kind: BridgeLinkKind,
+    /// WASM import module name.
+    pub wasm_import_module: Option<String>,
+}
+
+/// Link kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BridgeLinkKind {
+    #[default]
+    Dylib,
+    Static,
+    Framework,
+}
+
+/// External function info.
+#[derive(Debug, Clone)]
+pub struct BridgeFnInfo {
+    /// DefId for this function.
+    pub def_id: DefId,
+    /// Function name.
+    pub name: String,
+    /// Parameter types.
+    pub params: Vec<Type>,
+    /// Return type.
+    pub return_ty: Type,
+    /// Link name (if different from name).
+    pub link_name: Option<String>,
+    /// Whether variadic.
+    pub is_variadic: bool,
+    /// Source span.
+    pub span: Span,
+}
+
+/// Opaque type info.
+#[derive(Debug, Clone)]
+pub struct BridgeOpaqueInfo {
+    /// DefId for this type.
+    pub def_id: DefId,
+    /// Type name.
+    pub name: String,
+    /// Source span.
+    pub span: Span,
+}
+
+/// Bridge type alias info.
+#[derive(Debug, Clone)]
+pub struct BridgeTypeAliasInfo {
+    /// DefId for this type.
+    pub def_id: DefId,
+    /// Type name.
+    pub name: String,
+    /// Aliased type.
+    pub ty: Type,
+    /// Source span.
+    pub span: Span,
+}
+
+/// FFI struct info.
+#[derive(Debug, Clone)]
+pub struct BridgeStructInfo {
+    /// DefId for this struct.
+    pub def_id: DefId,
+    /// Struct name.
+    pub name: String,
+    /// Fields.
+    pub fields: Vec<BridgeFieldInfo>,
+    /// Whether packed.
+    pub is_packed: bool,
+    /// Explicit alignment.
+    pub align: Option<u32>,
+    /// Source span.
+    pub span: Span,
+}
+
+/// FFI field info.
+#[derive(Debug, Clone)]
+pub struct BridgeFieldInfo {
+    /// Field name.
+    pub name: String,
+    /// Field type.
+    pub ty: Type,
+    /// Source span.
+    pub span: Span,
+}
+
+/// FFI enum info.
+#[derive(Debug, Clone)]
+pub struct BridgeEnumInfo {
+    /// DefId for this enum.
+    pub def_id: DefId,
+    /// Enum name.
+    pub name: String,
+    /// Representation type.
+    pub repr: Type,
+    /// Variants.
+    pub variants: Vec<BridgeEnumVariantInfo>,
+    /// Source span.
+    pub span: Span,
+}
+
+/// FFI enum variant info.
+#[derive(Debug, Clone)]
+pub struct BridgeEnumVariantInfo {
+    /// Variant name.
+    pub name: String,
+    /// Discriminant value.
+    pub value: i64,
+    /// Source span.
+    pub span: Span,
+}
+
+/// FFI union info.
+#[derive(Debug, Clone)]
+pub struct BridgeUnionInfo {
+    /// DefId for this union.
+    pub def_id: DefId,
+    /// Union name.
+    pub name: String,
+    /// Fields.
+    pub fields: Vec<BridgeFieldInfo>,
+    /// Source span.
+    pub span: Span,
+}
+
+/// FFI constant info.
+#[derive(Debug, Clone)]
+pub struct BridgeConstInfo {
+    /// DefId for this constant.
+    pub def_id: DefId,
+    /// Constant name.
+    pub name: String,
+    /// Constant type.
+    pub ty: Type,
+    /// Constant value.
+    pub value: i64,
+    /// Source span.
+    pub span: Span,
+}
+
+/// Callback type info.
+#[derive(Debug, Clone)]
+pub struct BridgeCallbackInfo {
+    /// DefId for this callback type.
+    pub def_id: DefId,
+    /// Callback name.
+    pub name: String,
+    /// Parameter types.
+    pub params: Vec<Type>,
+    /// Return type.
+    pub return_ty: Type,
+    /// Source span.
+    pub span: Span,
+}
+
 impl<'a> TypeContext<'a> {
     /// Create a new type context.
     pub fn new(source: &'a str, interner: DefaultStringInterner) -> Self {
@@ -329,6 +520,7 @@ impl<'a> TypeContext<'a> {
             trait_defs: HashMap::new(),
             type_param_bounds: HashMap::new(),
             current_resume_type: None,
+            bridge_defs: Vec::new(),
         };
         ctx.register_builtins();
         ctx
@@ -538,6 +730,150 @@ impl<'a> TypeContext<'a> {
                 vis: ast::Visibility::Public,
                 name: info.name,
                 span: info.span,
+            });
+        }
+
+        // Convert bridge definitions to HIR Bridge items
+        for bridge_info in &self.bridge_defs {
+            // Create a synthetic DefId for the bridge block
+            let bridge_def_id = DefId::new(items.len() as u32 + 0x8000_0000);
+
+            // Convert link specs
+            let link_specs: Vec<hir::LinkSpec> = bridge_info.link_specs.iter()
+                .map(|ls| hir::LinkSpec {
+                    name: ls.name.clone(),
+                    kind: match ls.kind {
+                        BridgeLinkKind::Dylib => hir::LinkKind::Dylib,
+                        BridgeLinkKind::Static => hir::LinkKind::Static,
+                        BridgeLinkKind::Framework => hir::LinkKind::Framework,
+                    },
+                    wasm_import_module: ls.wasm_import_module.clone(),
+                })
+                .collect();
+
+            // Convert extern functions
+            let extern_fns: Vec<hir::ExternFnItem> = bridge_info.extern_fns.iter()
+                .map(|ef| hir::ExternFnItem {
+                    def_id: ef.def_id,
+                    name: ef.name.clone(),
+                    sig: hir::FnSig::new(ef.params.clone(), ef.return_ty.clone()),
+                    link_name: ef.link_name.clone(),
+                    is_variadic: ef.is_variadic,
+                    span: ef.span,
+                })
+                .collect();
+
+            // Convert opaque types
+            let opaque_types: Vec<hir::OpaqueType> = bridge_info.opaque_types.iter()
+                .map(|ot| hir::OpaqueType {
+                    def_id: ot.def_id,
+                    name: ot.name.clone(),
+                    span: ot.span,
+                })
+                .collect();
+
+            // Convert type aliases
+            let type_aliases: Vec<hir::BridgeTypeAlias> = bridge_info.type_aliases.iter()
+                .map(|ta| hir::BridgeTypeAlias {
+                    def_id: ta.def_id,
+                    name: ta.name.clone(),
+                    ty: ta.ty.clone(),
+                    span: ta.span,
+                })
+                .collect();
+
+            // Convert structs
+            let structs: Vec<hir::FfiStruct> = bridge_info.structs.iter()
+                .map(|s| hir::FfiStruct {
+                    def_id: s.def_id,
+                    name: s.name.clone(),
+                    fields: s.fields.iter()
+                        .map(|f| hir::FfiField {
+                            name: f.name.clone(),
+                            ty: f.ty.clone(),
+                            span: f.span,
+                        })
+                        .collect(),
+                    is_packed: s.is_packed,
+                    align: s.align,
+                    span: s.span,
+                })
+                .collect();
+
+            // Convert enums
+            let enums: Vec<hir::FfiEnum> = bridge_info.enums.iter()
+                .map(|e| hir::FfiEnum {
+                    def_id: e.def_id,
+                    name: e.name.clone(),
+                    repr: e.repr.clone(),
+                    variants: e.variants.iter()
+                        .map(|v| hir::FfiEnumVariant {
+                            name: v.name.clone(),
+                            value: v.value,
+                            span: v.span,
+                        })
+                        .collect(),
+                    span: e.span,
+                })
+                .collect();
+
+            // Convert unions
+            let unions: Vec<hir::FfiUnion> = bridge_info.unions.iter()
+                .map(|u| hir::FfiUnion {
+                    def_id: u.def_id,
+                    name: u.name.clone(),
+                    fields: u.fields.iter()
+                        .map(|f| hir::FfiField {
+                            name: f.name.clone(),
+                            ty: f.ty.clone(),
+                            span: f.span,
+                        })
+                        .collect(),
+                    span: u.span,
+                })
+                .collect();
+
+            // Convert constants
+            let consts: Vec<hir::FfiConst> = bridge_info.consts.iter()
+                .map(|c| hir::FfiConst {
+                    def_id: c.def_id,
+                    name: c.name.clone(),
+                    ty: c.ty.clone(),
+                    value: c.value,
+                    span: c.span,
+                })
+                .collect();
+
+            // Convert callbacks
+            let callbacks: Vec<hir::FfiCallback> = bridge_info.callbacks.iter()
+                .map(|cb| hir::FfiCallback {
+                    def_id: cb.def_id,
+                    name: cb.name.clone(),
+                    params: cb.params.clone(),
+                    return_type: cb.return_ty.clone(),
+                    span: cb.span,
+                })
+                .collect();
+
+            let bridge_def = hir::BridgeDef {
+                abi: bridge_info.abi.clone(),
+                link_specs,
+                extern_fns,
+                opaque_types,
+                type_aliases,
+                structs,
+                enums,
+                unions,
+                consts,
+                callbacks,
+            };
+
+            items.insert(bridge_def_id, hir::Item {
+                def_id: bridge_def_id,
+                kind: hir::ItemKind::Bridge(bridge_def),
+                vis: ast::Visibility::Public,
+                name: bridge_info.name.clone(),
+                span: bridge_info.span,
             });
         }
 

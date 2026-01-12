@@ -154,6 +154,7 @@ pub enum Declaration {
     Static(StaticDecl),
     Impl(ImplBlock),
     Trait(TraitDecl),
+    Bridge(BridgeDecl),
 }
 
 impl Declaration {
@@ -169,6 +170,7 @@ impl Declaration {
             Declaration::Static(d) => d.span,
             Declaration::Impl(d) => d.span,
             Declaration::Trait(d) => d.span,
+            Declaration::Bridge(d) => d.span,
         }
     }
 }
@@ -448,6 +450,221 @@ pub struct StaticDecl {
     pub name: Spanned<Symbol>,
     pub ty: Type,
     pub value: Expr,
+    pub span: Span,
+}
+
+// ============================================================
+// Bridge Declaration (FFI)
+// ============================================================
+
+/// Foreign function interface bridge declaration.
+/// `bridge "C" libc { ... }`
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BridgeDecl {
+    /// Attributes on the bridge
+    pub attrs: Vec<Attribute>,
+    /// The language/ABI specifier ("C", "C++", "wasm")
+    pub language: Spanned<String>,
+    /// The bridge name (e.g., "libc")
+    pub name: Spanned<Symbol>,
+    /// Items within the bridge
+    pub items: Vec<BridgeItem>,
+    /// Full span
+    pub span: Span,
+}
+
+/// An item within a bridge block
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BridgeItem {
+    /// Link specification: `#[link(name = "c")]`
+    Link(LinkSpec),
+    /// Foreign function: `fn malloc(size: usize) -> *mut u8;`
+    Function(BridgeFn),
+    /// Constant: `const STDIN_FILENO: i32 = 0;`
+    Const(BridgeConst),
+    /// Opaque type: `type FILE;`
+    OpaqueType(BridgeOpaqueType),
+    /// Type alias: `type MyInt = i32;`
+    TypeAlias(BridgeTypeAlias),
+    /// Struct with C layout: `#[repr(C)] struct Point { x: f64, y: f64 }`
+    Struct(BridgeStruct),
+    /// Enum with C layout: `#[repr(C)] enum Status { Ok = 0, Error = 1 }`
+    Enum(BridgeEnum),
+    /// Union with C layout: `#[repr(C)] union Value { i: i32, f: f32 }`
+    Union(BridgeUnion),
+    /// Callback type: `callback Comparator = fn(*const u8, *const u8) -> i32;`
+    Callback(BridgeCallback),
+}
+
+/// Link specification for a bridge
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkSpec {
+    /// Library name to link
+    pub name: String,
+    /// Link kind: dylib, static, framework
+    pub kind: Option<LinkKind>,
+    /// WASM import module name
+    pub wasm_import_module: Option<String>,
+    /// Full span
+    pub span: Span,
+}
+
+/// Kind of library linking
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkKind {
+    /// Dynamic library (default)
+    Dylib,
+    /// Static library
+    Static,
+    /// macOS framework
+    Framework,
+}
+
+/// Foreign function declaration
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BridgeFn {
+    /// Attributes (e.g., calling_convention, mangle)
+    pub attrs: Vec<Attribute>,
+    /// Function name
+    pub name: Spanned<Symbol>,
+    /// Parameters
+    pub params: Vec<BridgeParam>,
+    /// Is variadic (...)
+    pub is_variadic: bool,
+    /// Return type
+    pub return_type: Option<Type>,
+    /// Full span
+    pub span: Span,
+}
+
+/// Parameter in a bridge function
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BridgeParam {
+    /// Parameter name
+    pub name: Spanned<Symbol>,
+    /// Parameter type
+    pub ty: Type,
+    /// Ownership annotation (#[borrow], #[transfer], #[acquire])
+    pub ownership: Option<BridgeOwnership>,
+    /// Full span
+    pub span: Span,
+}
+
+/// Ownership annotation for bridge parameters
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BridgeOwnership {
+    /// Caller retains ownership, callee borrows
+    Borrow,
+    /// Caller transfers ownership to callee
+    Transfer,
+    /// Callee returns ownership to caller
+    Acquire,
+}
+
+/// Constant declaration in bridge
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BridgeConst {
+    /// Constant name
+    pub name: Spanned<Symbol>,
+    /// Constant type
+    pub ty: Type,
+    /// Constant value
+    pub value: Literal,
+    /// Full span
+    pub span: Span,
+}
+
+/// Opaque type declaration (type FILE;)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BridgeOpaqueType {
+    /// Type name
+    pub name: Spanned<Symbol>,
+    /// Full span
+    pub span: Span,
+}
+
+/// Type alias declaration (type MyInt = i32;)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BridgeTypeAlias {
+    /// Type name
+    pub name: Spanned<Symbol>,
+    /// The aliased type
+    pub ty: Type,
+    /// Full span
+    pub span: Span,
+}
+
+/// C-compatible struct
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BridgeStruct {
+    /// Attributes (repr, packed, align)
+    pub attrs: Vec<Attribute>,
+    /// Struct name
+    pub name: Spanned<Symbol>,
+    /// Fields
+    pub fields: Vec<BridgeField>,
+    /// Full span
+    pub span: Span,
+}
+
+/// Field in a bridge struct/union
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BridgeField {
+    /// Field name
+    pub name: Spanned<Symbol>,
+    /// Field type
+    pub ty: Type,
+    /// Full span
+    pub span: Span,
+}
+
+/// C-compatible enum
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BridgeEnum {
+    /// Attributes (repr)
+    pub attrs: Vec<Attribute>,
+    /// Enum name
+    pub name: Spanned<Symbol>,
+    /// Variants
+    pub variants: Vec<BridgeEnumVariant>,
+    /// Full span
+    pub span: Span,
+}
+
+/// Enum variant in bridge
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BridgeEnumVariant {
+    /// Variant name
+    pub name: Spanned<Symbol>,
+    /// Discriminant value (if specified)
+    pub discriminant: Option<Literal>,
+    /// Full span
+    pub span: Span,
+}
+
+/// C-compatible union
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BridgeUnion {
+    /// Attributes (repr)
+    pub attrs: Vec<Attribute>,
+    /// Union name
+    pub name: Spanned<Symbol>,
+    /// Fields
+    pub fields: Vec<BridgeField>,
+    /// Full span
+    pub span: Span,
+}
+
+/// Callback type definition
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BridgeCallback {
+    /// Callback name
+    pub name: Spanned<Symbol>,
+    /// Parameters
+    pub params: Vec<Type>,
+    /// Return type
+    pub return_type: Option<Type>,
+    /// Full span
     pub span: Span,
 }
 

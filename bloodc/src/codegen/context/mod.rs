@@ -104,6 +104,9 @@ pub struct CodegenContext<'ctx, 'a> {
     /// Vtable slot mappings: trait_id -> Vec<(method_name, slot_index)>.
     /// Each trait has a fixed layout of method slots in its vtable.
     pub(super) vtable_layouts: HashMap<DefId, Vec<(String, usize)>>,
+    /// WASM imports: maps function link name to WASM import module.
+    /// Used for setting WASM import attributes during post-processing.
+    pub(super) wasm_imports: HashMap<String, String>,
 }
 
 impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
@@ -138,6 +141,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             local_generations: HashMap::new(),
             vtables: HashMap::new(),
             vtable_layouts: HashMap::new(),
+            wasm_imports: HashMap::new(),
         }
     }
 
@@ -149,6 +153,21 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     /// - Apply tier-appropriate allocation strategies
     pub fn set_escape_analysis(&mut self, escape_analysis: HashMap<DefId, EscapeResults>) {
         self.escape_analysis = escape_analysis;
+    }
+
+    /// Get WASM import mappings.
+    ///
+    /// Returns a map from function link names to their WASM import module names.
+    /// This can be used for post-processing the generated LLVM IR or WASM binary
+    /// to set the proper import module attributes.
+    ///
+    /// # Example WASM import post-processing
+    ///
+    /// When targeting WASM, the LLVM IR needs to have `wasm-import-module` and
+    /// `wasm-import-name` attributes set on imported functions. This map provides
+    /// the module names so that a post-processing tool can add these attributes.
+    pub fn get_wasm_imports(&self) -> &HashMap<String, String> {
+        &self.wasm_imports
     }
 
     // NOTE: Escape analysis helper functions were removed because the MIR codegen path
@@ -206,13 +225,16 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // - TypeAlias: resolved during type checking
                 // - Const/Static: compiled with function bodies
                 // - Trait/Impl: resolved during type checking
+                // - ExternFn/Bridge: processed in fourth pass for FFI declarations
                 hir::ItemKind::Fn(_)
                 | hir::ItemKind::Handler { .. }
                 | hir::ItemKind::TypeAlias { .. }
                 | hir::ItemKind::Const { .. }
                 | hir::ItemKind::Static { .. }
                 | hir::ItemKind::Trait { .. }
-                | hir::ItemKind::Impl { .. } => {}
+                | hir::ItemKind::Impl { .. }
+                | hir::ItemKind::ExternFn(_)
+                | hir::ItemKind::Bridge(_) => {}
             }
         }
 
@@ -263,11 +285,133 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // Third pass: declare handler operation functions
         self.declare_handler_operations(hir_crate)?;
 
+        // Fourth pass: declare FFI external functions from bridge blocks
+        self.declare_ffi_functions(hir_crate)?;
+
         if self.errors.is_empty() {
             Ok(())
         } else {
             Err(std::mem::take(&mut self.errors))
         }
+    }
+
+    /// Declare FFI external functions from bridge blocks.
+    fn declare_ffi_functions(&mut self, hir_crate: &hir::Crate) -> Result<(), Vec<Diagnostic>> {
+        for item in hir_crate.items.values() {
+            match &item.kind {
+                hir::ItemKind::ExternFn(extern_fn) => {
+                    self.declare_extern_function(&item.name, extern_fn, None)?;
+                }
+                hir::ItemKind::Bridge(bridge_def) => {
+                    // Get the wasm import module from link specs if present
+                    let wasm_import_module = bridge_def.link_specs.iter()
+                        .find_map(|ls| ls.wasm_import_module.clone());
+
+                    // Declare all external functions in the bridge
+                    for extern_fn in &bridge_def.extern_fns {
+                        let extern_fn_def = hir::ExternFnDef {
+                            sig: extern_fn.sig.clone(),
+                            abi: bridge_def.abi.clone(),
+                            link_name: extern_fn.link_name.clone(),
+                            is_variadic: extern_fn.is_variadic,
+                        };
+                        self.declare_extern_function(
+                            &extern_fn.name,
+                            &extern_fn_def,
+                            wasm_import_module.as_deref(),
+                        )?;
+                        // Also register in functions map for call resolution
+                        if let Some(fn_value) = self.module.get_function(
+                            extern_fn.link_name.as_ref().unwrap_or(&extern_fn.name)
+                        ) {
+                            self.functions.insert(extern_fn.def_id, fn_value);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// Declare an external (FFI) function.
+    ///
+    /// # Arguments
+    /// * `name` - The function name in Blood code
+    /// * `extern_fn` - The external function definition
+    /// * `wasm_import_module` - Optional WASM import module name
+    fn declare_extern_function(
+        &mut self,
+        name: &str,
+        extern_fn: &hir::ExternFnDef,
+        wasm_import_module: Option<&str>,
+    ) -> Result<(), Vec<Diagnostic>> {
+        use inkwell::module::Linkage;
+
+        // Build parameter types
+        let param_types: Vec<_> = extern_fn.sig.inputs.iter()
+            .map(|ty| self.lower_type(ty).into())
+            .collect();
+
+        // Build function type
+        let fn_type = if extern_fn.sig.output.is_unit() {
+            self.context.void_type().fn_type(&param_types, extern_fn.is_variadic)
+        } else {
+            let ret_type = self.lower_type(&extern_fn.sig.output);
+            ret_type.fn_type(&param_types, extern_fn.is_variadic)
+        };
+
+        // Use link_name if specified, otherwise use the function name
+        let name_owned = name.to_string();
+        let link_name = extern_fn.link_name.as_ref().unwrap_or(&name_owned);
+
+        // Add the function with external linkage
+        let fn_value = self.module.add_function(link_name, fn_type, Some(Linkage::External));
+
+        // Set calling convention based on ABI
+        match extern_fn.abi.as_str() {
+            "C" | "c" => {
+                // C calling convention (default)
+            }
+            "stdcall" => {
+                // Windows stdcall
+                fn_value.set_call_conventions(64); // X86StdcallCallConv
+            }
+            "fastcall" => {
+                // Windows fastcall
+                fn_value.set_call_conventions(65); // X86FastcallCallConv
+            }
+            "wasm" | "WASM" | "WebAssembly" => {
+                // WASM uses C-compatible calling convention
+                // The import module is handled via LLVM attributes/metadata
+                //
+                // For WASM targets, we need to set the import module and name.
+                // LLVM uses these attributes:
+                //   - "wasm-import-module" = import module name (e.g., "env", "wasi_snapshot_preview1")
+                //   - "wasm-import-name" = import name (the function name in the WASM module)
+                //
+                // Note: Inkwell currently doesn't have a direct API for setting string
+                // attributes on functions. For full WASM support, this would require:
+                // 1. Using inkwell's add_attribute with a custom StringAttribute, or
+                // 2. Post-processing the LLVM IR/bitcode to add attributes, or
+                // 3. Using wasm-tools to modify the final WASM binary
+                //
+                // For now, we set up the function correctly and store the import module
+                // for future use when we add full attribute support.
+                if let Some(module) = wasm_import_module {
+                    // Store for later attribute setting when inkwell support is available
+                    // or for post-processing
+                    self.wasm_imports.insert(link_name.to_string(), module.to_string());
+                }
+            }
+            _ => {
+                // Default to C calling convention
+            }
+        }
+
+        // Note: fn_value is registered in functions map by the caller if needed
+        let _ = fn_value;
+        Ok(())
     }
 
     /// Compile an entire HIR crate.
@@ -331,13 +475,16 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // - TypeAlias: resolved during type checking
                 // - Const/Static: compiled with function bodies
                 // - Trait/Impl: resolved during type checking
+                // - ExternFn/Bridge: processed in FFI pass
                 hir::ItemKind::Fn(_)
                 | hir::ItemKind::Handler { .. }
                 | hir::ItemKind::TypeAlias { .. }
                 | hir::ItemKind::Const { .. }
                 | hir::ItemKind::Static { .. }
                 | hir::ItemKind::Trait { .. }
-                | hir::ItemKind::Impl { .. } => {}
+                | hir::ItemKind::Impl { .. }
+                | hir::ItemKind::ExternFn(_)
+                | hir::ItemKind::Bridge(_) => {}
             }
         }
 
@@ -384,6 +531,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // Third pass: declare handler operation functions
         self.declare_handler_operations(hir_crate)?;
+
+        // FFI pass: declare external functions from bridge blocks
+        self.declare_ffi_functions(hir_crate)?;
 
         // Fourth pass: compile function bodies
         for (def_id, item) in &hir_crate.items {

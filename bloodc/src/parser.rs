@@ -216,9 +216,19 @@ impl<'src> Parser<'src> {
         &self.source[span.start..span.end]
     }
 
+    /// Get the text of the current token.
+    fn current_text(&self) -> &'src str {
+        self.text(&self.current.span)
+    }
+
     /// Intern a string and return its symbol.
     fn intern(&mut self, s: &str) -> Symbol {
         self.interner.get_or_intern(s)
+    }
+
+    /// Resolve a symbol to its string.
+    fn interner_symbol_str(&self, symbol: Symbol) -> &str {
+        self.interner.resolve(symbol).unwrap_or("")
     }
 
     /// Take ownership of the string interner.

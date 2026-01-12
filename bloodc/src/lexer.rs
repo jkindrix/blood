@@ -141,6 +141,10 @@ pub enum TokenKind {
     Handle,
     #[token("affine")]
     Affine,
+    #[token("bridge")]
+    Bridge,
+    // Note: `callback` is a contextual keyword, only valid inside bridge blocks
+    // It is parsed as an identifier and checked contextually in the bridge parser
 
     // Reserved for future use
     #[token("abstract")]
@@ -481,6 +485,7 @@ impl TokenKind {
             TokenKind::With => Some("with"),
             TokenKind::Handle => Some("handle"),
             TokenKind::Affine => Some("affine"),
+            TokenKind::Bridge => Some("bridge"),
             _ => None,
         }
     }
@@ -540,6 +545,7 @@ impl TokenKind {
             TokenKind::With => "keyword `with`",
             TokenKind::Handle => "keyword `handle`",
             TokenKind::Affine => "keyword `affine`",
+            TokenKind::Bridge => "keyword `bridge`",
             TokenKind::Abstract => "reserved keyword `abstract`",
             TokenKind::Become => "reserved keyword `become`",
             TokenKind::Box => "reserved keyword `box`",
