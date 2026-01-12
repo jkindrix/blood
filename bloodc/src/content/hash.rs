@@ -397,7 +397,7 @@ mod tests {
             hasher.update_u64(123456789012345);
             hasher.update_i64(-42);
             hasher.update_i128(-999999999999999999);
-            hasher.update_f64(3.14159265358979);
+            hasher.update_f64(1.23456789012345);
             hasher.update_str("deterministic test string");
             hasher.update(b"raw bytes data");
             hasher.finalize()

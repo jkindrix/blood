@@ -136,6 +136,55 @@ pub enum SwapMode {
     Epoch,
 }
 
+/// Result of a hot-swap operation.
+#[derive(Debug, Clone)]
+pub enum HotSwapResult {
+    /// Swap completed successfully.
+    Success {
+        /// The old hash that was replaced.
+        old_hash: ContentHash,
+        /// The new hash now active.
+        new_hash: ContentHash,
+        /// New generation number.
+        generation: u64,
+    },
+    /// Swap was scheduled for later (Epoch mode).
+    Scheduled {
+        /// Target epoch for the swap.
+        target_epoch: u64,
+    },
+    /// Swap failed with an error.
+    Error(HotSwapError),
+}
+
+/// Errors that can occur during hot-swap.
+#[derive(Debug, Clone)]
+pub enum HotSwapError {
+    /// Old hash not found in VFT.
+    OldHashNotFound,
+    /// New hash not registered yet.
+    NewHashNotRegistered,
+    /// Arity mismatch between old and new.
+    ArityMismatch {
+        old_arity: u8,
+        new_arity: u8,
+    },
+    /// Effect mismatch (new effects not subset of old).
+    EffectMismatch {
+        old_effects: EffectMask,
+        new_effects: EffectMask,
+    },
+    /// Calling convention mismatch.
+    ConventionMismatch {
+        old: CallingConvention,
+        new: CallingConvention,
+    },
+    /// In-flight calls blocking barrier swap.
+    InFlightCallsBlocking {
+        count: u64,
+    },
+}
+
 /// A pending VFT update.
 #[derive(Debug, Clone)]
 pub struct VFTUpdate {
@@ -260,6 +309,129 @@ impl VFT {
                 }
             }
         }
+    }
+
+    /// Validate compatibility between old and new entries for hot-swap.
+    ///
+    /// Returns `Ok(())` if the swap is compatible, or an error describing the mismatch.
+    pub fn validate_swap_compatibility(
+        &self,
+        old_hash: ContentHash,
+        new_hash: ContentHash,
+    ) -> Result<(), HotSwapError> {
+        // Get both entries
+        let old_entry = self.entries.get(&old_hash)
+            .ok_or(HotSwapError::OldHashNotFound)?;
+        let new_entry = self.entries.get(&new_hash)
+            .ok_or(HotSwapError::NewHashNotRegistered)?;
+
+        // Check arity (must match exactly for compatibility)
+        if old_entry.arity != new_entry.arity {
+            return Err(HotSwapError::ArityMismatch {
+                old_arity: old_entry.arity,
+                new_arity: new_entry.arity,
+            });
+        }
+
+        // Check effects: new effects must be subset of old (can remove effects, not add)
+        // This ensures callers that expected certain effects won't be surprised
+        let old_effects = old_entry.effects.0;
+        let new_effects = new_entry.effects.0;
+        if new_effects & !old_effects != 0 {
+            // New effects has bits not in old effects
+            return Err(HotSwapError::EffectMismatch {
+                old_effects: old_entry.effects,
+                new_effects: new_entry.effects,
+            });
+        }
+
+        // Check calling convention (must match for safe interop)
+        if old_entry.calling_convention != new_entry.calling_convention {
+            return Err(HotSwapError::ConventionMismatch {
+                old: old_entry.calling_convention,
+                new: new_entry.calling_convention,
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Perform a validated hot-swap with compatibility checking.
+    ///
+    /// This is the primary API for safe hot-swapping. It validates compatibility
+    /// before performing the swap.
+    pub fn hot_swap(
+        &mut self,
+        old_hash: ContentHash,
+        new_hash: ContentHash,
+        mode: SwapMode,
+    ) -> HotSwapResult {
+        // Validate compatibility first
+        if let Err(e) = self.validate_swap_compatibility(old_hash, new_hash) {
+            return HotSwapResult::Error(e);
+        }
+
+        match mode {
+            SwapMode::Immediate => {
+                self.immediate_swap(old_hash, new_hash);
+                let generation = self.version.load(Ordering::SeqCst);
+                HotSwapResult::Success {
+                    old_hash,
+                    new_hash,
+                    generation,
+                }
+            }
+            SwapMode::Barrier => {
+                // In a full implementation, this would:
+                // 1. Mark the entry as "draining"
+                // 2. Wait for in-flight calls to complete
+                // 3. Then swap
+                // For now, we implement it as immediate
+                self.immediate_swap(old_hash, new_hash);
+                let generation = self.version.load(Ordering::SeqCst);
+                HotSwapResult::Success {
+                    old_hash,
+                    new_hash,
+                    generation,
+                }
+            }
+            SwapMode::Epoch => {
+                // Schedule for next epoch
+                let target_epoch = self.version.load(Ordering::SeqCst) + 1;
+                self.pending_updates.push(VFTUpdate {
+                    old_hash,
+                    new_hash,
+                    mode: SwapMode::Epoch,
+                    target_epoch: Some(target_epoch),
+                });
+                HotSwapResult::Scheduled { target_epoch }
+            }
+        }
+    }
+
+    /// Advance to the next epoch, executing any scheduled updates.
+    pub fn advance_epoch(&mut self) {
+        let current_epoch = self.version.load(Ordering::SeqCst);
+        let next_epoch = current_epoch + 1;
+
+        // Execute updates scheduled for this epoch
+        let (to_execute, remaining): (Vec<_>, Vec<_>) = std::mem::take(&mut self.pending_updates)
+            .into_iter()
+            .partition(|u| u.target_epoch == Some(next_epoch));
+
+        self.pending_updates = remaining;
+
+        for update in to_execute {
+            self.immediate_swap(update.old_hash, update.new_hash);
+        }
+
+        // Bump the epoch even if no updates (for epoch tracking)
+        self.version.store(next_epoch, Ordering::SeqCst);
+    }
+
+    /// Get the current epoch.
+    pub fn current_epoch(&self) -> u64 {
+        self.version.load(Ordering::SeqCst)
     }
 
     /// Unregister an entry.
@@ -573,5 +745,265 @@ mod tests {
 
         let impure_entry = pure_entry.with_effects(EffectMask::IO);
         assert!(!impure_entry.is_pure());
+    }
+
+    // ========================================================================
+    // Hot-swap validation tests
+    // ========================================================================
+
+    #[test]
+    fn test_validate_swap_compatibility_success() {
+        let mut vft = VFT::new();
+
+        let old = test_hash("fn_v1");
+        let new = test_hash("fn_v2");
+
+        // Same arity, same effects, same convention
+        vft.register(VFTEntry::new(old, 0x1000, 2).with_effects(EffectMask::IO));
+        vft.register(VFTEntry::new(new, 0x2000, 2).with_effects(EffectMask::NONE));
+
+        // New has fewer effects (subset), should be OK
+        assert!(vft.validate_swap_compatibility(old, new).is_ok());
+    }
+
+    #[test]
+    fn test_validate_swap_arity_mismatch() {
+        let mut vft = VFT::new();
+
+        let old = test_hash("fn_v1");
+        let new = test_hash("fn_v2");
+
+        vft.register(VFTEntry::new(old, 0x1000, 2));
+        vft.register(VFTEntry::new(new, 0x2000, 3)); // Different arity
+
+        let result = vft.validate_swap_compatibility(old, new);
+        assert!(matches!(
+            result,
+            Err(HotSwapError::ArityMismatch { old_arity: 2, new_arity: 3 })
+        ));
+    }
+
+    #[test]
+    fn test_validate_swap_effect_mismatch() {
+        let mut vft = VFT::new();
+
+        let old = test_hash("fn_v1");
+        let new = test_hash("fn_v2");
+
+        // Old has no effects, new has IO (adding effects is not allowed)
+        vft.register(VFTEntry::new(old, 0x1000, 1).with_effects(EffectMask::NONE));
+        vft.register(VFTEntry::new(new, 0x2000, 1).with_effects(EffectMask::IO));
+
+        let result = vft.validate_swap_compatibility(old, new);
+        assert!(matches!(result, Err(HotSwapError::EffectMismatch { .. })));
+    }
+
+    #[test]
+    fn test_validate_swap_convention_mismatch() {
+        let mut vft = VFT::new();
+
+        let old = test_hash("fn_v1");
+        let new = test_hash("fn_v2");
+
+        vft.register(VFTEntry::new(old, 0x1000, 1).with_convention(CallingConvention::Blood));
+        vft.register(VFTEntry::new(new, 0x2000, 1).with_convention(CallingConvention::Tail));
+
+        let result = vft.validate_swap_compatibility(old, new);
+        assert!(matches!(
+            result,
+            Err(HotSwapError::ConventionMismatch {
+                old: CallingConvention::Blood,
+                new: CallingConvention::Tail
+            })
+        ));
+    }
+
+    #[test]
+    fn test_validate_swap_old_not_found() {
+        let mut vft = VFT::new();
+
+        let old = test_hash("missing");
+        let new = test_hash("fn_v2");
+
+        vft.register(VFTEntry::new(new, 0x2000, 1));
+
+        let result = vft.validate_swap_compatibility(old, new);
+        assert!(matches!(result, Err(HotSwapError::OldHashNotFound)));
+    }
+
+    #[test]
+    fn test_validate_swap_new_not_registered() {
+        let mut vft = VFT::new();
+
+        let old = test_hash("fn_v1");
+        let new = test_hash("missing");
+
+        vft.register(VFTEntry::new(old, 0x1000, 1));
+
+        let result = vft.validate_swap_compatibility(old, new);
+        assert!(matches!(result, Err(HotSwapError::NewHashNotRegistered)));
+    }
+
+    // ========================================================================
+    // Hot-swap execution tests
+    // ========================================================================
+
+    #[test]
+    fn test_hot_swap_immediate_success() {
+        let mut vft = VFT::new();
+
+        let old = test_hash("fn_v1");
+        let new = test_hash("fn_v2");
+
+        vft.register(VFTEntry::new(old, 0x1000, 1));
+        vft.register(VFTEntry::new(new, 0x2000, 1));
+
+        let result = vft.hot_swap(old, new, SwapMode::Immediate);
+
+        match result {
+            HotSwapResult::Success { old_hash, new_hash, generation } => {
+                assert_eq!(old_hash, old);
+                assert_eq!(new_hash, new);
+                assert!(generation > 0);
+            }
+            _ => panic!("Expected HotSwapResult::Success"),
+        }
+
+        // Verify redirect works
+        let entry = vft.lookup(old).unwrap();
+        assert_eq!(entry.hash, new);
+    }
+
+    #[test]
+    fn test_hot_swap_barrier_success() {
+        let mut vft = VFT::new();
+
+        let old = test_hash("fn_v1");
+        let new = test_hash("fn_v2");
+
+        vft.register(VFTEntry::new(old, 0x1000, 1));
+        vft.register(VFTEntry::new(new, 0x2000, 1));
+
+        let result = vft.hot_swap(old, new, SwapMode::Barrier);
+
+        assert!(matches!(result, HotSwapResult::Success { .. }));
+    }
+
+    #[test]
+    fn test_hot_swap_epoch_scheduled() {
+        let mut vft = VFT::new();
+
+        let old = test_hash("fn_v1");
+        let new = test_hash("fn_v2");
+
+        vft.register(VFTEntry::new(old, 0x1000, 1));
+        vft.register(VFTEntry::new(new, 0x2000, 1));
+
+        let current = vft.current_epoch();
+        let result = vft.hot_swap(old, new, SwapMode::Epoch);
+
+        match result {
+            HotSwapResult::Scheduled { target_epoch } => {
+                assert_eq!(target_epoch, current + 1);
+            }
+            _ => panic!("Expected HotSwapResult::Scheduled"),
+        }
+
+        // Swap not yet applied
+        let entry = vft.lookup(old).unwrap();
+        assert_eq!(entry.hash, old);
+
+        // Advance epoch
+        vft.advance_epoch();
+
+        // Now swap should be applied
+        let entry = vft.lookup(old).unwrap();
+        assert_eq!(entry.hash, new);
+    }
+
+    #[test]
+    fn test_hot_swap_validation_error() {
+        let mut vft = VFT::new();
+
+        let old = test_hash("fn_v1");
+        let new = test_hash("fn_v2");
+
+        // Different arities - should fail validation
+        vft.register(VFTEntry::new(old, 0x1000, 1));
+        vft.register(VFTEntry::new(new, 0x2000, 2));
+
+        let result = vft.hot_swap(old, new, SwapMode::Immediate);
+
+        assert!(matches!(result, HotSwapResult::Error(HotSwapError::ArityMismatch { .. })));
+    }
+
+    // ========================================================================
+    // Epoch management tests
+    // ========================================================================
+
+    #[test]
+    fn test_advance_epoch_no_updates() {
+        let mut vft = VFT::new();
+
+        let initial = vft.current_epoch();
+        vft.advance_epoch();
+        assert_eq!(vft.current_epoch(), initial + 1);
+    }
+
+    #[test]
+    fn test_advance_epoch_with_multiple_updates() {
+        let mut vft = VFT::new();
+
+        let old1 = test_hash("fn1_v1");
+        let new1 = test_hash("fn1_v2");
+        let old2 = test_hash("fn2_v1");
+        let new2 = test_hash("fn2_v2");
+
+        vft.register(VFTEntry::new(old1, 0x1000, 1));
+        vft.register(VFTEntry::new(new1, 0x2000, 1));
+        vft.register(VFTEntry::new(old2, 0x3000, 2));
+        vft.register(VFTEntry::new(new2, 0x4000, 2));
+
+        // Schedule both for epoch swap
+        assert!(matches!(
+            vft.hot_swap(old1, new1, SwapMode::Epoch),
+            HotSwapResult::Scheduled { .. }
+        ));
+        assert!(matches!(
+            vft.hot_swap(old2, new2, SwapMode::Epoch),
+            HotSwapResult::Scheduled { .. }
+        ));
+
+        assert_eq!(vft.pending_count(), 2);
+
+        // Advance epoch
+        vft.advance_epoch();
+
+        assert_eq!(vft.pending_count(), 0);
+
+        // Both swaps applied
+        assert_eq!(vft.lookup(old1).unwrap().hash, new1);
+        assert_eq!(vft.lookup(old2).unwrap().hash, new2);
+    }
+
+    #[test]
+    fn test_cleanup_redirects() {
+        let mut vft = VFT::new();
+
+        let old = test_hash("fn_v1");
+        let new = test_hash("fn_v2");
+
+        vft.register(VFTEntry::new(old, 0x1000, 1));
+        vft.register(VFTEntry::new(new, 0x2000, 1));
+
+        vft.immediate_swap(old, new);
+        assert_eq!(vft.redirect_count(), 1);
+
+        // Remove the target entry
+        vft.unregister(new);
+
+        // Cleanup stale redirects
+        vft.cleanup_redirects();
+        assert_eq!(vft.redirect_count(), 0);
     }
 }

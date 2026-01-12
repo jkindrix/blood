@@ -767,6 +767,15 @@ impl Default for Canonicalizer {
     }
 }
 
+impl CanonicalPattern {
+    #[cfg(test)]
+    fn serialize_and_hash(&self) -> ContentHash {
+        let mut hasher = ContentHasher::new();
+        self.serialize(&mut hasher);
+        hasher.finalize()
+    }
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -964,8 +973,8 @@ mod tests {
             CanonicalAST::IntLit(42).compute_hash()
         );
         assert_eq!(
-            CanonicalAST::FloatLit(3.14).compute_hash(),
-            CanonicalAST::FloatLit(3.14).compute_hash()
+            CanonicalAST::FloatLit(1.23456789).compute_hash(),
+            CanonicalAST::FloatLit(1.23456789).compute_hash()
         );
         assert_eq!(
             CanonicalAST::StringLit(b"test".to_vec()).compute_hash(),
@@ -1109,14 +1118,5 @@ mod tests {
             tuple_pat.serialize_and_hash(),
             tuple_pat.clone().serialize_and_hash()
         );
-    }
-}
-
-impl CanonicalPattern {
-    #[cfg(test)]
-    fn serialize_and_hash(&self) -> ContentHash {
-        let mut hasher = ContentHasher::new();
-        self.serialize(&mut hasher);
-        hasher.finalize()
     }
 }
