@@ -225,6 +225,8 @@ impl<'src> Parser<'src> {
 
             _ => {
                 self.error_expected_one_of(&["identifier", "literal", "`_`", "`(`", "`[`", "`..`"]);
+                // Advance to prevent infinite loop during error recovery
+                self.advance();
                 Pattern {
                     kind: PatternKind::Wildcard,
                     span: start,

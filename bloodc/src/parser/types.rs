@@ -224,6 +224,8 @@ impl<'src> Parser<'src> {
 
             _ => {
                 self.error_expected_one_of(&["type name", "`&`", "`*`", "`[`", "`(`", "`fn`", "`!`"]);
+                // Advance to prevent infinite loop during error recovery
+                self.advance();
                 Type {
                     kind: TypeKind::Never,
                     span: start,
