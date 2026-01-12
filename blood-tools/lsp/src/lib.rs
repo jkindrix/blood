@@ -24,6 +24,7 @@
 //! └─────────┘    └──────────────┘    └─────────┘
 //! ```
 
+pub mod analysis;
 pub mod backend;
 pub mod capabilities;
 pub mod diagnostics;

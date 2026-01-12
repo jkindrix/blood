@@ -8,6 +8,7 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 use tracing::{debug, info};
 
+use crate::analysis::{DefinitionProvider, HoverProvider};
 use crate::capabilities;
 use crate::diagnostics::DiagnosticEngine;
 use crate::document::Document;
@@ -23,6 +24,10 @@ pub struct BloodLanguageServer {
     diagnostics: DiagnosticEngine,
     /// Semantic tokens provider.
     semantic_tokens: SemanticTokensProvider,
+    /// Hover information provider.
+    hover_provider: HoverProvider,
+    /// Go-to-definition provider.
+    definition_provider: DefinitionProvider,
 }
 
 impl BloodLanguageServer {
@@ -33,6 +38,8 @@ impl BloodLanguageServer {
             documents: DashMap::new(),
             diagnostics: DiagnosticEngine::new(),
             semantic_tokens: SemanticTokensProvider::new(),
+            hover_provider: HoverProvider::new(),
+            definition_provider: DefinitionProvider::new(),
         }
     }
 
@@ -128,14 +135,12 @@ impl LanguageServer for BloodLanguageServer {
 
         debug!("Hover request at {} line {} char {}", uri, position.line, position.character);
 
-        let Some(_doc) = self.documents.get(uri) else {
+        let Some(doc) = self.documents.get(uri) else {
             return Ok(None);
         };
 
-        // TODO: Integrate with bloodc for actual hover info
-        // For now, return a placeholder
-
-        Ok(None)
+        // Use the hover provider for real type information
+        Ok(self.hover_provider.hover(&doc, position))
     }
 
     async fn goto_definition(
@@ -147,13 +152,16 @@ impl LanguageServer for BloodLanguageServer {
 
         debug!("Go to definition at {} line {} char {}", uri, position.line, position.character);
 
-        let Some(_doc) = self.documents.get(uri) else {
+        let Some(doc) = self.documents.get(uri) else {
             return Ok(None);
         };
 
-        // TODO: Integrate with bloodc for actual definition lookup
-
-        Ok(None)
+        // Use the definition provider for real symbol navigation
+        if let Some(location) = self.definition_provider.definition(&doc, position) {
+            Ok(Some(GotoDefinitionResponse::Scalar(location)))
+        } else {
+            Ok(None)
+        }
     }
 
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {

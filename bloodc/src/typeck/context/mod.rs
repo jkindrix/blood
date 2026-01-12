@@ -24,6 +24,7 @@ mod check;
 mod expr;
 mod patterns;
 mod closure;
+mod suggestions;
 
 /// The main type checking context.
 pub struct TypeContext<'a> {

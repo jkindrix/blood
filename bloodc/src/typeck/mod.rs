@@ -36,6 +36,7 @@ pub mod infer;
 pub mod lifetime;
 pub mod methods;
 pub mod resolve;
+pub mod suggestion;
 pub mod unify;
 
 pub use ambiguity::{Ambiguity, AmbiguityChecker, AmbiguityCheckResult};

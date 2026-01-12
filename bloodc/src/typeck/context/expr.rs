@@ -568,13 +568,7 @@ impl<'a> TypeContext<'a> {
         }
 
         // No method found
-        Err(TypeError::new(
-            TypeErrorKind::MethodNotFound {
-                ty: receiver_ty.clone(),
-                method: method_name.to_string(),
-            },
-            span,
-        ))
+        Err(self.error_method_not_found(receiver_ty, method_name, span))
     }
 
     /// Find a method for a specific type by searching impl blocks.
@@ -785,10 +779,7 @@ impl<'a> TypeContext<'a> {
                         return Ok(Type::adt(def_id, type_args));
                     }
 
-                    Err(TypeError::new(
-                        TypeErrorKind::TypeNotFound { name },
-                        ty.span,
-                    ))
+                    Err(self.error_type_not_found(&name, ty.span))
                 } else if path.segments.len() == 2 {
                     // Two-segment path: Module::Type
                     let _module_name = self.symbol_to_string(path.segments[0].name.node);
@@ -812,10 +803,7 @@ impl<'a> TypeContext<'a> {
                         return Ok(Type::adt(def_id, type_args));
                     }
 
-                    Err(TypeError::new(
-                        TypeErrorKind::TypeNotFound { name: type_name },
-                        ty.span,
-                    ))
+                    Err(self.error_type_not_found(&type_name, ty.span))
                 } else {
                     // More than two segments - not yet supported
                     let path_str = path.segments.iter()
@@ -1087,17 +1075,11 @@ impl<'a> TypeContext<'a> {
                             span,
                         ))
                     } else {
-                        Err(TypeError::new(
-                            TypeErrorKind::NotFound { name },
-                            span,
-                        ))
+                        Err(self.error_name_not_found(&name, span))
                     }
                 }
                 None => {
-                    Err(TypeError::new(
-                        TypeErrorKind::NotFound { name },
-                        span,
-                    ))
+                    Err(self.error_name_not_found(&name, span))
                 }
             }
         } else if path.segments.len() == 2 {
@@ -1765,17 +1747,11 @@ impl<'a> TypeContext<'a> {
                             }
                         }
                         _ => {
-                            return Err(TypeError::new(
-                                TypeErrorKind::TypeNotFound { name },
-                                span,
-                            ));
+                            return Err(self.error_type_not_found(&name, span));
                         }
                     }
                 } else {
-                    return Err(TypeError::new(
-                        TypeErrorKind::TypeNotFound { name },
-                        span,
-                    ));
+                    return Err(self.error_type_not_found(&name, span));
                 }
             } else {
                 return Err(TypeError::new(
@@ -1799,15 +1775,10 @@ impl<'a> TypeContext<'a> {
         for field in fields {
             let field_name = self.symbol_to_string(field.name.node);
 
-            let field_info = struct_info.fields.iter()
-                .find(|f| f.name == field_name)
-                .ok_or_else(|| TypeError::new(
-                    TypeErrorKind::UnknownField {
-                        ty: result_ty.clone(),
-                        field: field_name.clone(),
-                    },
-                    field.span,
-                ))?;
+            let field_info = match struct_info.fields.iter().find(|f| f.name == field_name) {
+                Some(info) => info,
+                None => return Err(self.error_unknown_field(&result_ty, &field_name, field.span)),
+            };
 
             // Handle shorthand syntax: `{ x }` is equivalent to `{ x: x }`
             let value_expr = if let Some(value) = &field.value {
@@ -1871,13 +1842,7 @@ impl<'a> TypeContext<'a> {
                                 span,
                             ));
                         } else {
-                            return Err(TypeError::new(
-                                TypeErrorKind::UnknownField {
-                                    ty: base_ty,
-                                    field: field_name,
-                                },
-                                span,
-                            ));
+                            return Err(self.error_unknown_field(&base_ty, &field_name, span));
                         }
                     }
                 }

@@ -1,7 +1,9 @@
 //! Diagnostic Engine
 //!
-//! Provides error and warning diagnostics for Blood source files.
+//! Provides error and warning diagnostics for Blood source files by integrating
+//! with the bloodc compiler for parsing and type checking.
 
+use bloodc::{Parser, Span};
 use tower_lsp::lsp_types::*;
 
 use crate::document::Document;
@@ -23,12 +25,10 @@ impl DiagnosticEngine {
         let mut diagnostics = Vec::new();
         let text = doc.text();
 
-        // TODO: Integrate with bloodc for real parsing and type checking
-        // For now, provide basic syntactic checks
+        // Use bloodc parser for real diagnostics
+        self.check_with_bloodc(&text, &mut diagnostics);
 
-        self.check_balanced_delimiters(&text, &mut diagnostics);
-        self.check_basic_syntax(&text, &mut diagnostics);
-
+        // Add lint checks
         if self.enable_lints {
             self.check_lints(&text, &mut diagnostics);
         }
@@ -36,216 +36,101 @@ impl DiagnosticEngine {
         diagnostics
     }
 
-    /// Checks for balanced delimiters (braces, parens, brackets).
-    fn check_balanced_delimiters(&self, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-        let mut stack: Vec<(char, usize, usize)> = Vec::new(); // (char, line, col)
-        let mut line = 0u32;
-        let mut col = 0u32;
-        let mut in_string = false;
-        let mut in_char = false;
-        let mut in_line_comment = false;
-        let mut in_block_comment = false;
-        let mut prev_char = '\0';
+    /// Parse and type-check using bloodc.
+    fn check_with_bloodc(&self, text: &str, diagnostics: &mut Vec<Diagnostic>) {
+        let mut parser = Parser::new(text);
 
-        for c in text.chars() {
-            // Handle newlines
-            if c == '\n' {
-                line += 1;
-                col = 0;
-                in_line_comment = false;
-                prev_char = c;
-                continue;
-            }
-
-            // Handle comments
-            if !in_string && !in_char {
-                if prev_char == '/' && c == '/' {
-                    in_line_comment = true;
-                    col += 1;
-                    prev_char = c;
-                    continue;
-                }
-                if prev_char == '/' && c == '*' {
-                    in_block_comment = true;
-                    col += 1;
-                    prev_char = c;
-                    continue;
-                }
-                if prev_char == '*' && c == '/' && in_block_comment {
-                    in_block_comment = false;
-                    col += 1;
-                    prev_char = c;
-                    continue;
-                }
-            }
-
-            if in_line_comment || in_block_comment {
-                col += 1;
-                prev_char = c;
-                continue;
-            }
-
-            // Handle strings
-            if c == '"' && prev_char != '\\' && !in_char {
-                in_string = !in_string;
-            }
-            if c == '\'' && prev_char != '\\' && !in_string {
-                in_char = !in_char;
-            }
-
-            if !in_string && !in_char {
-                match c {
-                    '(' | '[' | '{' => {
-                        stack.push((c, line as usize, col as usize));
+        match parser.parse_program() {
+            Ok(program) => {
+                // Parsing succeeded, try type checking
+                let interner = parser.take_interner();
+                if let Err(type_errors) = bloodc::typeck::check_program(&program, text, interner) {
+                    for error in type_errors {
+                        diagnostics.push(self.bloodc_diagnostic_to_lsp(&error, text));
                     }
-                    ')' | ']' | '}' => {
-                        let expected = match c {
-                            ')' => '(',
-                            ']' => '[',
-                            '}' => '{',
-                            _ => unreachable!(),
-                        };
-                        match stack.pop() {
-                            Some((open, _, _)) if open == expected => {}
-                            Some((open, open_line, open_col)) => {
-                                diagnostics.push(Diagnostic {
-                                    range: Range {
-                                        start: Position {
-                                            line,
-                                            character: col,
-                                        },
-                                        end: Position {
-                                            line,
-                                            character: col + 1,
-                                        },
-                                    },
-                                    severity: Some(DiagnosticSeverity::ERROR),
-                                    code: Some(NumberOrString::String("E0001".to_string())),
-                                    source: Some("blood".to_string()),
-                                    message: format!(
-                                        "Mismatched delimiter: expected '{}' to close '{}' at {}:{}",
-                                        match open {
-                                            '(' => ')',
-                                            '[' => ']',
-                                            '{' => '}',
-                                            _ => '?',
-                                        },
-                                        open,
-                                        open_line + 1,
-                                        open_col + 1
-                                    ),
-                                    ..Default::default()
-                                });
-                            }
-                            None => {
-                                diagnostics.push(Diagnostic {
-                                    range: Range {
-                                        start: Position {
-                                            line,
-                                            character: col,
-                                        },
-                                        end: Position {
-                                            line,
-                                            character: col + 1,
-                                        },
-                                    },
-                                    severity: Some(DiagnosticSeverity::ERROR),
-                                    code: Some(NumberOrString::String("E0002".to_string())),
-                                    source: Some("blood".to_string()),
-                                    message: format!("Unmatched closing delimiter '{}'", c),
-                                    ..Default::default()
-                                });
-                            }
-                        }
-                    }
-                    _ => {}
                 }
             }
-
-            col += 1;
-            prev_char = c;
-        }
-
-        // Report unclosed delimiters
-        for (open, open_line, open_col) in stack {
-            diagnostics.push(Diagnostic {
-                range: Range {
-                    start: Position {
-                        line: open_line as u32,
-                        character: open_col as u32,
-                    },
-                    end: Position {
-                        line: open_line as u32,
-                        character: open_col as u32 + 1,
-                    },
-                },
-                severity: Some(DiagnosticSeverity::ERROR),
-                code: Some(NumberOrString::String("E0003".to_string())),
-                source: Some("blood".to_string()),
-                message: format!("Unclosed delimiter '{}'", open),
-                ..Default::default()
-            });
+            Err(parse_errors) => {
+                // Report parse errors
+                for error in parse_errors {
+                    diagnostics.push(self.bloodc_diagnostic_to_lsp(&error, text));
+                }
+            }
         }
     }
 
-    /// Performs basic syntax checks.
-    fn check_basic_syntax(&self, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-        for (line_num, line) in text.lines().enumerate() {
-            let trimmed = line.trim();
+    /// Convert a bloodc Diagnostic to an LSP Diagnostic.
+    fn bloodc_diagnostic_to_lsp(
+        &self,
+        diag: &bloodc::Diagnostic,
+        text: &str,
+    ) -> Diagnostic {
+        let range = self.span_to_range(&diag.span, text);
 
-            // Check for common typos in keywords
-            let typos = [
-                ("funciton", "fn"),
-                ("fucntion", "fn"),
-                ("funtion", "fn"),
-                ("stuct", "struct"),
-                ("strcut", "struct"),
-                ("imlp", "impl"),
-                ("implment", "impl"),
-                ("hadnler", "handler"),
-                ("hander", "handler"),
-                ("efect", "effect"),
-                ("peform", "perform"),
-                ("preform", "perform"),
-                ("reusme", "resume"),
-                ("resum", "resume"),
-            ];
+        let severity = match diag.kind {
+            bloodc::DiagnosticKind::Error => DiagnosticSeverity::ERROR,
+            bloodc::DiagnosticKind::Warning => DiagnosticSeverity::WARNING,
+            bloodc::DiagnosticKind::Note => DiagnosticSeverity::INFORMATION,
+            bloodc::DiagnosticKind::Help => DiagnosticSeverity::HINT,
+        };
 
-            for (typo, correct) in typos {
-                if let Some(col) = trimmed.find(typo) {
-                    // Make sure it's a word boundary
-                    let before_ok = col == 0
-                        || !trimmed.chars().nth(col - 1).unwrap_or(' ').is_alphanumeric();
-                    let after_ok = col + typo.len() >= trimmed.len()
-                        || !trimmed
-                            .chars()
-                            .nth(col + typo.len())
-                            .unwrap_or(' ')
-                            .is_alphanumeric();
+        let code = diag.code.clone().map(NumberOrString::String);
 
-                    if before_ok && after_ok {
-                        let actual_col = line.find(typo).unwrap_or(0);
-                        diagnostics.push(Diagnostic {
-                            range: Range {
-                                start: Position {
-                                    line: line_num as u32,
-                                    character: actual_col as u32,
-                                },
-                                end: Position {
-                                    line: line_num as u32,
-                                    character: (actual_col + typo.len()) as u32,
-                                },
-                            },
-                            severity: Some(DiagnosticSeverity::ERROR),
-                            code: Some(NumberOrString::String("E0010".to_string())),
-                            source: Some("blood".to_string()),
-                            message: format!("Unknown keyword '{}', did you mean '{}'?", typo, correct),
-                            ..Default::default()
-                        });
-                    }
-                }
-            }
+        let related_information = if diag.labels.is_empty() {
+            None
+        } else {
+            Some(
+                diag.labels
+                    .iter()
+                    .map(|label| DiagnosticRelatedInformation {
+                        location: Location {
+                            uri: Url::parse("file:///unknown").unwrap(),
+                            range: self.span_to_range(&label.span, text),
+                        },
+                        message: label.message.clone(),
+                    })
+                    .collect(),
+            )
+        };
+
+        Diagnostic {
+            range,
+            severity: Some(severity),
+            code,
+            source: Some("blood".to_string()),
+            message: diag.message.clone(),
+            related_information,
+            ..Default::default()
         }
+    }
+
+    /// Convert a bloodc Span to an LSP Range.
+    fn span_to_range(&self, span: &Span, text: &str) -> Range {
+        let start = self.offset_to_position(span.start, text);
+        let end = self.offset_to_position(span.end, text);
+        Range { start, end }
+    }
+
+    /// Convert a byte offset to an LSP Position.
+    fn offset_to_position(&self, offset: usize, text: &str) -> Position {
+        let mut line = 0u32;
+        let mut col = 0u32;
+        let mut current = 0;
+
+        for ch in text.chars() {
+            if current >= offset {
+                break;
+            }
+            if ch == '\n' {
+                line += 1;
+                col = 0;
+            } else {
+                col += 1;
+            }
+            current += ch.len_utf8();
+        }
+
+        Position { line, character: col }
     }
 
     /// Performs lint checks.

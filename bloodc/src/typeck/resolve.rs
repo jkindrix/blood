@@ -365,6 +365,58 @@ impl<'a> Resolver<'a> {
     pub fn into_diagnostics(self) -> Vec<Diagnostic> {
         self.errors.into_iter().map(|e| e.to_diagnostic()).collect()
     }
+
+    /// Collect all visible value names in the current scope chain.
+    ///
+    /// This is used for generating "did you mean?" suggestions.
+    pub fn collect_visible_names(&self) -> Vec<String> {
+        let mut names = Vec::new();
+        let mut scope_idx = Some(self.current_scope_idx());
+
+        while let Some(idx) = scope_idx {
+            let scope = &self.scopes[idx];
+            for name in scope.bindings.keys() {
+                if !names.contains(name) {
+                    names.push(name.clone());
+                }
+            }
+            scope_idx = scope.parent;
+        }
+
+        names
+    }
+
+    /// Collect all visible type names in the current scope chain.
+    ///
+    /// This is used for generating "did you mean?" suggestions for types.
+    pub fn collect_visible_type_names(&self) -> Vec<String> {
+        let mut names = Vec::new();
+        let mut scope_idx = Some(self.current_scope_idx());
+
+        while let Some(idx) = scope_idx {
+            let scope = &self.scopes[idx];
+            for name in scope.type_bindings.keys() {
+                if !names.contains(name) {
+                    names.push(name.clone());
+                }
+            }
+            scope_idx = scope.parent;
+        }
+
+        // Also add primitive type names
+        let primitives = [
+            "i8", "i16", "i32", "i64", "i128",
+            "u8", "u16", "u32", "u64", "u128",
+            "f32", "f64", "bool", "char", "str", "String",
+        ];
+        for prim in primitives {
+            if !names.contains(&prim.to_string()) {
+                names.push(prim.to_string());
+            }
+        }
+
+        names
+    }
 }
 
 impl Scope {
