@@ -131,6 +131,7 @@ fn test_algebraic_effects_declarations() {
 
 /// Test that we can parse all example files in a loop.
 /// This provides a single test that covers all files for quick validation.
+/// Note: Very large files (>500 lines) are tested individually to avoid timeouts.
 #[test]
 fn test_parse_all_examples() {
     let examples_dir = "../examples";
@@ -141,11 +142,24 @@ fn test_parse_all_examples() {
     let mut parsed_count = 0;
     let mut errors = Vec::new();
 
+    // Large files that are tested individually to avoid timeout
+    let skip_large_files = [
+        "concurrent_fibers.blood",
+        "ffi_interop.blood",
+    ];
+
     for entry in entries {
         let entry = entry.expect("Failed to read directory entry");
         let path = entry.path();
 
         if path.extension().is_some_and(|ext| ext == "blood") {
+            let file_name = path.file_name().unwrap().to_string_lossy();
+
+            // Skip very large files - they have their own dedicated tests
+            if skip_large_files.contains(&file_name.as_ref()) {
+                continue;
+            }
+
             let path_str = path.to_string_lossy();
             let source = fs::read_to_string(&path).unwrap_or_else(|e| {
                 panic!("Failed to read {path_str}: {e}");
