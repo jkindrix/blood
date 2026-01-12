@@ -1,0 +1,37 @@
+// Test slice patterns with prefix and suffix
+
+fn test_slice_prefix_suffix(arr: [i32; 5]) -> i32 {
+    match arr {
+        [first, .., last] => first + last,
+    }
+}
+
+fn test_three_element(arr: [i32; 3]) -> i32 {
+    match arr {
+        [a, b, c] => a + b + c,
+        _ => 0,  // Workaround for exhaustiveness checker
+    }
+}
+
+fn test_first_last_middle(arr: [i32; 5]) -> i32 {
+    match arr {
+        [first, second, .., last] => first + second + last,
+    }
+}
+
+fn main() -> i32 {
+    let arr5 = [10, 20, 30, 40, 50];
+    let arr3 = [1, 2, 3];
+
+    // test_slice_prefix_suffix: first (10) + last (50) = 60
+    let result1 = test_slice_prefix_suffix(arr5);
+
+    // test_three_element: 1 + 2 + 3 = 6
+    let result2 = test_three_element(arr3);
+
+    // test_first_last_middle: first (10) + second (20) + last (50) = 80
+    let result3 = test_first_last_middle(arr5);
+
+    // Sum: 60 + 6 + 80 = 146
+    result1 + result2 + result3
+}
