@@ -626,17 +626,17 @@ impl<'a> TypeContext<'a> {
 
                 let (prefix_pats, rest_pattern, suffix_pats) = if let Some(rest_idx) = rest_pos {
                     let rest_idx = *rest_idx;
+                    // Parser stores elements WITHOUT the Rest pattern itself.
+                    // rest_idx is the index where rest pattern appears (before suffix elements).
+                    // So prefix = elements[..rest_idx], suffix = elements[rest_idx..]
                     let prefix: Vec<_> = elements.iter().take(rest_idx).cloned().collect();
-                    let suffix: Vec<_> = elements.iter().skip(rest_idx + 1).cloned().collect();
-                    let rest_pat = if rest_idx < elements.len() {
-                        Some(Box::new(hir::Pattern {
-                            kind: hir::PatternKind::Wildcard,
-                            ty: Type::slice(elem_ty.clone()),
-                            span: pattern.span,
-                        }))
-                    } else {
-                        None
-                    };
+                    let suffix: Vec<_> = elements.iter().skip(rest_idx).cloned().collect();
+                    // Rest pattern always exists when rest_pos is Some
+                    let rest_pat = Some(Box::new(hir::Pattern {
+                        kind: hir::PatternKind::Wildcard,
+                        ty: Type::slice(elem_ty.clone()),
+                        span: pattern.span,
+                    }));
                     (prefix, rest_pat, suffix)
                 } else {
                     (elements.clone(), None, Vec::new())
