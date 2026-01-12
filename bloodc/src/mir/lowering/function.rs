@@ -130,7 +130,18 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
             }
 
             ExprKind::Def(def_id) => {
-                let constant = Constant::new(expr.ty.clone(), ConstantKind::FnDef(*def_id));
+                // Determine the kind of constant based on the item type
+                let constant_kind = if let Some(item) = self.hir.get_item(*def_id) {
+                    match &item.kind {
+                        hir::ItemKind::Const { .. } => ConstantKind::ConstDef(*def_id),
+                        hir::ItemKind::Static { .. } => ConstantKind::StaticDef(*def_id),
+                        _ => ConstantKind::FnDef(*def_id),
+                    }
+                } else {
+                    // Default to FnDef for unknown items (e.g., builtins)
+                    ConstantKind::FnDef(*def_id)
+                };
+                let constant = Constant::new(expr.ty.clone(), constant_kind);
                 Ok(Operand::Constant(constant))
             }
 
@@ -1031,12 +1042,18 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
             return Ok(());
         }
 
+        // Save the original block - this is where the first test must go
+        let original_block = self.current_block;
+
         // Create intermediate blocks for each pattern test
         let mut next_block = final_match;
         for (i, pat) in pats.iter().enumerate().rev() {
             let field_place = place.project(PlaceElem::Field(i as u32));
             if i == 0 {
-                // First pattern test - use current block
+                // First pattern test - must use the ORIGINAL block, not the current one
+                // (current_block may have been changed by previous iterations)
+                self.builder.switch_to(original_block);
+                self.current_block = original_block;
                 self.test_pattern(pat, &field_place, next_block, on_no_match, span)?;
             } else {
                 // Create a new block for this test
@@ -1064,14 +1081,16 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
             return Ok(());
         }
 
+        // Save the original block - this is where the first test must go
+        let original_block = self.current_block;
+
         let mut current_target = final_match;
         for (i, pat) in pats.iter().enumerate().rev() {
             let field_place = place.project(PlaceElem::Field(i as u32));
-            if i == pats.len() - 1 && i == 0 {
-                // Only one pattern - test directly
-                self.test_pattern(pat, &field_place, current_target, on_no_match, span)?;
-            } else if i == 0 {
-                // First pattern in sequence - use current block
+            if i == 0 {
+                // First pattern in sequence - must use the ORIGINAL block
+                self.builder.switch_to(original_block);
+                self.current_block = original_block;
                 self.test_pattern(pat, &field_place, current_target, on_no_match, span)?;
             } else {
                 let next_block = self.builder.new_block();
@@ -1098,10 +1117,16 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
             return Ok(());
         }
 
+        // Save the original block - this is where the first test must go
+        let original_block = self.current_block;
+
         let mut current_target = final_match;
         for (i, (field_idx, pat)) in fields.iter().enumerate().rev() {
             let field_place = place.project(PlaceElem::Field(*field_idx));
             if i == 0 {
+                // First pattern in sequence - must use the ORIGINAL block
+                self.builder.switch_to(original_block);
+                self.current_block = original_block;
                 self.test_pattern(pat, &field_place, current_target, on_no_match, span)?;
             } else {
                 let next_block = self.builder.new_block();
@@ -1208,6 +1233,10 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
         } else {
             // Test prefix patterns
             let mut current_target = on_match;
+
+            // Save blocks for first pattern tests
+            let prefix_start_block = elements_block;
+
             for (i, pat) in prefix.iter().enumerate().rev() {
                 let idx_place = place.project(PlaceElem::ConstantIndex {
                     offset: i as u64,
@@ -1215,9 +1244,14 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
                     from_end: false,
                 });
                 if i == 0 && suffix.is_empty() {
+                    // First pattern test - must use the ORIGINAL elements block
+                    self.builder.switch_to(prefix_start_block);
+                    self.current_block = prefix_start_block;
                     self.test_pattern(pat, &idx_place, current_target, on_no_match, span)?;
                 } else if i == 0 {
-                    // Continue to suffix testing
+                    // Continue to suffix testing - use the ORIGINAL elements block
+                    self.builder.switch_to(prefix_start_block);
+                    self.current_block = prefix_start_block;
                     let suffix_block = self.builder.new_block();
                     self.test_pattern(pat, &idx_place, suffix_block, on_no_match, span)?;
                     self.builder.switch_to(suffix_block);
@@ -1232,7 +1266,9 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
                 }
             }
 
-            // Test suffix patterns
+            // Test suffix patterns - save the starting block for suffix iteration
+            let suffix_start_block = self.current_block;
+
             for (i, pat) in suffix.iter().enumerate().rev() {
                 let offset_from_end = (suffix.len() - 1 - i) as u64;
                 let idx_place = place.project(PlaceElem::ConstantIndex {
@@ -1241,6 +1277,9 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
                     from_end: true,
                 });
                 if i == 0 {
+                    // First pattern in suffix - must use the saved starting block
+                    self.builder.switch_to(suffix_start_block);
+                    self.current_block = suffix_start_block;
                     self.test_pattern(pat, &idx_place, current_target, on_no_match, span)?;
                 } else {
                     let next_block = self.builder.new_block();

@@ -186,7 +186,18 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
             }
 
             ExprKind::Def(def_id) => {
-                let constant = Constant::new(expr.ty.clone(), ConstantKind::FnDef(*def_id));
+                // Determine the kind of constant based on the item type
+                let constant_kind = if let Some(item) = self.hir.get_item(*def_id) {
+                    match &item.kind {
+                        hir::ItemKind::Const { .. } => ConstantKind::ConstDef(*def_id),
+                        hir::ItemKind::Static { .. } => ConstantKind::StaticDef(*def_id),
+                        _ => ConstantKind::FnDef(*def_id),
+                    }
+                } else {
+                    // Default to FnDef for unknown items (e.g., builtins)
+                    ConstantKind::FnDef(*def_id)
+                };
+                let constant = Constant::new(expr.ty.clone(), constant_kind);
                 Ok(Operand::Constant(constant))
             }
 

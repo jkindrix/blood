@@ -707,6 +707,10 @@ pub enum ConstantKind {
     Unit,
     /// Function reference.
     FnDef(DefId),
+    /// Const item reference.
+    ConstDef(DefId),
+    /// Static item reference.
+    StaticDef(DefId),
     /// Zero-sized type value.
     ZeroSized,
 }
