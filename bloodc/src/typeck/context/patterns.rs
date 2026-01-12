@@ -680,20 +680,7 @@ impl<'a> TypeContext<'a> {
                 use crate::hir::ty::PrimitiveTy;
 
                 match expected_ty.kind() {
-                    TypeKind::Primitive(prim) => {
-                        match prim {
-                            PrimitiveTy::Int(_) | PrimitiveTy::Uint(_) | PrimitiveTy::Char => {}
-                            _ => {
-                                return Err(TypeError::new(
-                                    TypeErrorKind::PatternMismatch {
-                                        expected: expected_ty.clone(),
-                                        pattern: "range pattern (requires integer or char type)".to_string(),
-                                    },
-                                    pattern.span,
-                                ));
-                            }
-                        }
-                    }
+                    TypeKind::Primitive(PrimitiveTy::Int(_) | PrimitiveTy::Uint(_) | PrimitiveTy::Char) => {}
                     _ => {
                         return Err(TypeError::new(
                             TypeErrorKind::PatternMismatch {

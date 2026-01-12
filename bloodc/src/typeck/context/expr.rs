@@ -1797,31 +1797,24 @@ impl<'a> TypeContext<'a> {
             if path.segments.len() == 1 {
                 let name = self.symbol_to_string(path.segments[0].name.node);
 
-                if let Some(binding) = self.resolver.lookup(&name) {
-                    match binding {
-                        Binding::Def(def_id) => {
-                            if let Some(struct_info) = self.struct_defs.get(&def_id) {
-                                let result_ty = Type::adt(def_id, Vec::new());
-                                (def_id, struct_info.clone(), result_ty)
-                            } else if let Some(handler_info) = self.handler_defs.get(&def_id) {
-                                // Handlers with state fields are instantiable like structs
-                                let struct_info = super::StructInfo {
-                                    name: handler_info.name.clone(),
-                                    fields: handler_info.fields.clone(),
-                                    generics: handler_info.generics.clone(),
-                                };
-                                let result_ty = Type::adt(def_id, Vec::new());
-                                (def_id, struct_info, result_ty)
-                            } else {
-                                return Err(TypeError::new(
-                                    TypeErrorKind::NotAStruct { ty: Type::adt(def_id, Vec::new()) },
-                                    span,
-                                ));
-                            }
-                        }
-                        _ => {
-                            return Err(self.error_type_not_found(&name, span));
-                        }
+                if let Some(Binding::Def(def_id)) = self.resolver.lookup(&name) {
+                    if let Some(struct_info) = self.struct_defs.get(&def_id) {
+                        let result_ty = Type::adt(def_id, Vec::new());
+                        (def_id, struct_info.clone(), result_ty)
+                    } else if let Some(handler_info) = self.handler_defs.get(&def_id) {
+                        // Handlers with state fields are instantiable like structs
+                        let struct_info = super::StructInfo {
+                            name: handler_info.name.clone(),
+                            fields: handler_info.fields.clone(),
+                            generics: handler_info.generics.clone(),
+                        };
+                        let result_ty = Type::adt(def_id, Vec::new());
+                        (def_id, struct_info, result_ty)
+                    } else {
+                        return Err(TypeError::new(
+                            TypeErrorKind::NotAStruct { ty: Type::adt(def_id, Vec::new()) },
+                            span,
+                        ));
                     }
                 } else {
                     return Err(self.error_type_not_found(&name, span));

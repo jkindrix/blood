@@ -735,7 +735,9 @@ impl EffectLowering {
             | ItemKind::Trait { .. }
             | ItemKind::Impl { .. }
             | ItemKind::Effect { .. }
-            | ItemKind::Handler { .. } => item.clone(),
+            | ItemKind::Handler { .. }
+            | ItemKind::ExternFn(_)
+            | ItemKind::Bridge(_) => item.clone(),
         }
     }
 
