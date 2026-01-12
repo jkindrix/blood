@@ -438,4 +438,69 @@ impl Storage {
 
         Ok(results)
     }
+
+    /// Finds unreferenced definitions (garbage).
+    ///
+    /// Returns definitions that:
+    /// - Have no names pointing to them
+    /// - Are not dependencies of any other definition
+    ///
+    /// These are candidates for garbage collection.
+    pub fn find_unreferenced(&self) -> StorageResult<Vec<Hash>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT d.hash FROM definitions d
+            WHERE NOT EXISTS (SELECT 1 FROM names n WHERE n.hash = d.hash)
+              AND NOT EXISTS (SELECT 1 FROM dependencies dep WHERE dep.to_hash = d.hash)
+            "#
+        )?;
+
+        let mut results = Vec::new();
+        let rows = stmt.query_map([], |row| {
+            let bytes: Vec<u8> = row.get(0)?;
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&bytes);
+            Ok(Hash::from_bytes(arr))
+        })?;
+
+        for row in rows {
+            results.push(row?);
+        }
+
+        Ok(results)
+    }
+
+    /// Deletes a definition by hash.
+    ///
+    /// This also removes any dependencies from this definition.
+    /// Use with caution - only for garbage collection of unreferenced definitions.
+    pub fn delete_definition(&self, hash: &Hash) -> StorageResult<()> {
+        // First remove any dependencies from this definition
+        self.conn.execute(
+            "DELETE FROM dependencies WHERE from_hash = ?1",
+            params![hash.as_bytes().as_slice()],
+        )?;
+
+        // Then remove the definition itself
+        self.conn.execute(
+            "DELETE FROM definitions WHERE hash = ?1",
+            params![hash.as_bytes().as_slice()],
+        )?;
+
+        Ok(())
+    }
+
+    /// Garbage collects unreferenced definitions.
+    ///
+    /// Returns the number of definitions removed.
+    pub fn garbage_collect(&self) -> StorageResult<usize> {
+        let unreferenced = self.find_unreferenced()?;
+        let count = unreferenced.len();
+
+        for hash in unreferenced {
+            self.delete_definition(&hash)?;
+        }
+
+        Ok(count)
+    }
 }

@@ -51,7 +51,7 @@ pub mod names;
 pub mod storage;
 pub mod sync;
 
-pub use codebase::Codebase;
+pub use codebase::{Codebase, DiffResult, Difference};
 pub use hash::Hash;
 pub use names::Name;
 

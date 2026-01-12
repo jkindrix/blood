@@ -120,6 +120,22 @@ enum Commands {
     /// Show codebase statistics
     Stats,
 
+    /// Garbage collect unreferenced definitions
+    Gc {
+        /// Show what would be collected without actually deleting
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Compare two definitions
+    Diff {
+        /// First hash (or name)
+        query1: String,
+
+        /// Second hash (or name)
+        query2: String,
+    },
+
     /// Interactive REPL
     Repl,
 }
@@ -154,6 +170,8 @@ fn main() -> Result<()> {
         Commands::Test { filter } => cmd_test(&codebase_path, filter.as_deref()),
         Commands::Sync { remote, push, pull } => cmd_sync(&codebase_path, &remote, push, pull),
         Commands::Stats => cmd_stats(&codebase_path),
+        Commands::Gc { dry_run } => cmd_gc(&codebase_path, dry_run),
+        Commands::Diff { query1, query2 } => cmd_diff(&codebase_path, &query1, &query2),
         Commands::Repl => cmd_repl(&codebase_path),
     }
 }
@@ -381,6 +399,86 @@ fn cmd_stats(path: &PathBuf) -> Result<()> {
     println!("  Tests:    {}", stats.tests);
     println!("  Names:    {}", stats.names);
     Ok(())
+}
+
+fn cmd_gc(path: &PathBuf, dry_run: bool) -> Result<()> {
+    let codebase = Codebase::open(path)?;
+    let garbage = codebase.find_garbage()?;
+
+    if garbage.is_empty() {
+        println!("No unreferenced definitions found.");
+        return Ok(());
+    }
+
+    println!("Found {} unreferenced definition(s):", garbage.len());
+    for hash in &garbage {
+        println!("  {}", hash);
+    }
+
+    if dry_run {
+        println!("\nDry run - no definitions were deleted.");
+        println!("Run without --dry-run to actually delete.");
+    } else {
+        let count = codebase.garbage_collect()?;
+        println!("\nDeleted {} definition(s).", count);
+    }
+
+    Ok(())
+}
+
+fn cmd_diff(path: &PathBuf, query1: &str, query2: &str) -> Result<()> {
+    use blood_ucm::Difference;
+
+    let codebase = Codebase::open(path)?;
+
+    // Resolve both queries to hashes
+    let hash1 = resolve_query(&codebase, query1)?;
+    let hash2 = resolve_query(&codebase, query2)?;
+
+    let result = codebase.diff(&hash1, &hash2)?;
+
+    if result.is_identical() {
+        println!("Definitions are identical.");
+        return Ok(());
+    }
+
+    println!("Comparing {} vs {}", hash1, hash2);
+    println!();
+
+    for diff in &result.differences {
+        match diff {
+            Difference::KindChange { old, new } => {
+                println!("Kind changed: {} -> {}", old.as_str(), new.as_str());
+            }
+            Difference::LineAdded { line_num, content } => {
+                println!("\x1b[32m+ {:>4}: {}\x1b[0m", line_num, content);
+            }
+            Difference::LineRemoved { line_num, content } => {
+                println!("\x1b[31m- {:>4}: {}\x1b[0m", line_num, content);
+            }
+            Difference::LineChanged { line_num, old, new } => {
+                println!("\x1b[31m- {:>4}: {}\x1b[0m", line_num, old);
+                println!("\x1b[32m+ {:>4}: {}\x1b[0m", line_num, new);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Resolves a query (name or hash) to a hash.
+fn resolve_query(codebase: &Codebase, query: &str) -> Result<blood_ucm::Hash> {
+    if let Some(hash_str) = query.strip_prefix('#') {
+        // Hash query
+        codebase
+            .resolve_hash_prefix(hash_str)?
+            .ok_or_else(|| anyhow::anyhow!("Hash not found: {}", query))
+    } else {
+        // Name query
+        codebase
+            .resolve(&Name::new(query))?
+            .ok_or_else(|| anyhow::anyhow!("Name not found: {}", query))
+    }
 }
 
 fn cmd_repl(path: &PathBuf) -> Result<()> {

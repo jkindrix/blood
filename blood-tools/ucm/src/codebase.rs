@@ -314,6 +314,154 @@ impl Codebase {
     pub fn has_definition(&self, hash: &Hash) -> UcmResult<bool> {
         Ok(self.storage.has_definition(hash)?)
     }
+
+    /// Finds unreferenced definitions that can be garbage collected.
+    pub fn find_garbage(&self) -> UcmResult<Vec<Hash>> {
+        Ok(self.storage.find_unreferenced()?)
+    }
+
+    /// Garbage collects unreferenced definitions.
+    ///
+    /// Returns the number of definitions removed.
+    pub fn garbage_collect(&self) -> UcmResult<usize> {
+        Ok(self.storage.garbage_collect()?)
+    }
+
+    /// Compares two definitions and returns a structural diff.
+    ///
+    /// Returns a list of differences between the two definitions.
+    pub fn diff(&self, hash1: &Hash, hash2: &Hash) -> UcmResult<DiffResult> {
+        let def1 = self.storage.get_definition(hash1)?
+            .ok_or_else(|| UcmError::HashNotFound(hash1.to_string()))?;
+        let def2 = self.storage.get_definition(hash2)?
+            .ok_or_else(|| UcmError::HashNotFound(hash2.to_string()))?;
+
+        let (kind1, source1) = def1;
+        let (kind2, source2) = def2;
+
+        let mut differences = Vec::new();
+
+        // Compare kinds
+        if kind1 != kind2 {
+            differences.push(Difference::KindChange {
+                old: kind1,
+                new: kind2,
+            });
+        }
+
+        // Compare source using line-by-line diff
+        let lines1: Vec<&str> = source1.lines().collect();
+        let lines2: Vec<&str> = source2.lines().collect();
+
+        let mut i = 0;
+        let mut j = 0;
+
+        while i < lines1.len() || j < lines2.len() {
+            if i >= lines1.len() {
+                // Additions at end
+                differences.push(Difference::LineAdded {
+                    line_num: j + 1,
+                    content: lines2[j].to_string(),
+                });
+                j += 1;
+            } else if j >= lines2.len() {
+                // Deletions at end
+                differences.push(Difference::LineRemoved {
+                    line_num: i + 1,
+                    content: lines1[i].to_string(),
+                });
+                i += 1;
+            } else if lines1[i] == lines2[j] {
+                // Same line
+                i += 1;
+                j += 1;
+            } else {
+                // Different - check if it's a modification or add/remove
+                // Simple heuristic: look ahead for matches
+                let mut found_in_new = false;
+                for (k, line) in lines2[j..].iter().enumerate().take(5) {
+                    if lines1[i] == *line {
+                        // Old line found later in new, so lines before were added
+                        for l in j..(j + k) {
+                            differences.push(Difference::LineAdded {
+                                line_num: l + 1,
+                                content: lines2[l].to_string(),
+                            });
+                        }
+                        j += k;
+                        found_in_new = true;
+                        break;
+                    }
+                }
+
+                if !found_in_new {
+                    let mut found_in_old = false;
+                    for (k, line) in lines1[i..].iter().enumerate().take(5) {
+                        if lines2[j] == *line {
+                            // New line found later in old, so lines before were removed
+                            for l in i..(i + k) {
+                                differences.push(Difference::LineRemoved {
+                                    line_num: l + 1,
+                                    content: lines1[l].to_string(),
+                                });
+                            }
+                            i += k;
+                            found_in_old = true;
+                            break;
+                        }
+                    }
+
+                    if !found_in_old {
+                        // Simple modification
+                        differences.push(Difference::LineChanged {
+                            line_num: i + 1,
+                            old: lines1[i].to_string(),
+                            new: lines2[j].to_string(),
+                        });
+                        i += 1;
+                        j += 1;
+                    }
+                }
+            }
+        }
+
+        Ok(DiffResult {
+            hash1: hash1.clone(),
+            hash2: hash2.clone(),
+            differences,
+        })
+    }
+}
+
+/// Result of comparing two definitions.
+#[derive(Debug, Clone)]
+pub struct DiffResult {
+    /// First hash.
+    pub hash1: Hash,
+    /// Second hash.
+    pub hash2: Hash,
+    /// List of differences.
+    pub differences: Vec<Difference>,
+}
+
+impl DiffResult {
+    /// Returns true if the definitions are identical.
+    pub fn is_identical(&self) -> bool {
+        self.differences.is_empty()
+    }
+}
+
+/// A single difference between two definitions.
+#[derive(Debug, Clone)]
+pub enum Difference {
+    /// The definition kind changed.
+    KindChange { old: DefKind, new: DefKind },
+    /// A line was added.
+    LineAdded { line_num: usize, content: String },
+    /// A line was removed.
+    LineRemoved { line_num: usize, content: String },
+    /// A line was changed.
+    LineChanged { line_num: usize, old: String, new: String },
 }
 
 #[cfg(test)]
