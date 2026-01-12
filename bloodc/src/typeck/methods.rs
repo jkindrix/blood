@@ -17,7 +17,7 @@
 
 use std::collections::HashMap;
 
-use crate::hir::{DefId, Type, FnSig};
+use crate::hir::{DefId, Type, FnSig, TyVarId};
 use super::dispatch::{MethodCandidate, TypeParam, Constraint, EffectRow};
 
 /// A method family is a collection of methods with the same name.
@@ -164,6 +164,8 @@ pub struct MethodBuilder {
     type_params: Vec<TypeParam>,
     /// Constraints on type parameters.
     constraints: HashMap<String, Vec<Constraint>>,
+    /// Next type parameter ID.
+    next_type_param_id: u32,
 }
 
 impl MethodBuilder {
@@ -172,13 +174,17 @@ impl MethodBuilder {
         Self {
             type_params: Vec::new(),
             constraints: HashMap::new(),
+            next_type_param_id: 0,
         }
     }
 
     /// Add a type parameter.
     pub fn add_type_param(&mut self, name: String) -> &mut Self {
+        let id = TyVarId::new(self.next_type_param_id);
+        self.next_type_param_id += 1;
         self.type_params.push(TypeParam {
             name,
+            id,
             constraints: vec![],
         });
         self

@@ -461,6 +461,7 @@ mod tests {
             return_type: Type::unit(),
             type_params: vec![TypeParam {
                 name: "T".to_string(),
+                id: crate::hir::TyVarId::new(0),
                 constraints: vec![super::super::dispatch::Constraint {
                     trait_name: "Serialize".to_string(),
                 }],
@@ -475,6 +476,7 @@ mod tests {
             return_type: Type::unit(),
             type_params: vec![TypeParam {
                 name: "T".to_string(),
+                id: crate::hir::TyVarId::new(1),
                 constraints: vec![super::super::dispatch::Constraint {
                     trait_name: "Hash".to_string(),
                 }],
