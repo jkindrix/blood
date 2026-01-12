@@ -623,9 +623,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             ).map_err(|e| vec![Diagnostic::error(format!("LLVM cast error: {}", e), span)])?
         };
 
-        // For now, pass 0 as continuation (tail-resumptive mode)
-        // TODO: Implement CPS transformation to create continuations for non-tail perform
-        let continuation_val = i64_ty.const_zero();
+        // Create continuation for the handler to resume to.
+        // For tail-resumptive handlers, this is ignored (handler just returns).
+        // For non-tail-resumptive handlers, this allows the handler to continue
+        // executing code after resume() returns.
+        let continuation_val = self.create_perform_continuation()?;
 
         let result = self.builder.build_call(
             perform_fn,

@@ -204,6 +204,111 @@ fn check_expr_tail_resumptive(expr: &hir::Expr, in_tail_position: bool) -> bool 
 }
 
 impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
+    /// Create a continuation for a perform expression.
+    ///
+    /// This creates a continuation that represents "the rest of the computation"
+    /// after the handler resumes. The continuation is called by the handler's
+    /// `resume(value)` expression via `blood_continuation_resume`.
+    ///
+    /// For simple performs (where the perform result is used directly), this is
+    /// an identity continuation that just returns its argument.
+    pub(crate) fn create_perform_continuation(&mut self) -> Result<inkwell::values::IntValue<'ctx>, Vec<Diagnostic>> {
+        let i64_type = self.context.i64_type();
+        let i8_ptr_type = self.context.i8_type().ptr_type(inkwell::AddressSpace::default());
+
+        // Get or create the identity continuation function
+        // Signature: extern "C" fn(value: i64, context: *mut void) -> i64
+        let identity_cont_fn = self.get_or_create_identity_continuation()?;
+
+        // Get blood_continuation_create function
+        let cont_create_fn = self.module.get_function("blood_continuation_create")
+            .unwrap_or_else(|| {
+                // Declare: fn(callback: fn(i64, *void) -> i64, context: *void) -> i64
+                let callback_type = i64_type.fn_type(
+                    &[i64_type.into(), i8_ptr_type.into()],
+                    false,
+                );
+                let callback_ptr_type = callback_type.ptr_type(inkwell::AddressSpace::default());
+                let fn_type = i64_type.fn_type(
+                    &[callback_ptr_type.into(), i8_ptr_type.into()],
+                    false,
+                );
+                self.module.add_function("blood_continuation_create", fn_type, None)
+            });
+
+        // Call blood_continuation_create(identity_cont_fn, null)
+        let callback_ptr = identity_cont_fn.as_global_value().as_pointer_value();
+        let null_context = i8_ptr_type.const_null();
+
+        let call_result = self.builder
+            .build_call(
+                cont_create_fn,
+                &[callback_ptr.into(), null_context.into()],
+                "continuation",
+            )
+            .map_err(|e| vec![Diagnostic::error(format!("LLVM error creating continuation: {}", e), Span::dummy())])?;
+
+        let cont_handle = call_result.try_as_basic_value().left()
+            .ok_or_else(|| vec![Diagnostic::error(
+                "blood_continuation_create returned void".to_string(),
+                Span::dummy(),
+            )])?
+            .into_int_value();
+
+        Ok(cont_handle)
+    }
+
+    /// Get or create the identity continuation function.
+    ///
+    /// This function simply returns its first argument (the resume value).
+    /// It's used for simple performs where no additional computation is needed
+    /// after the handler resumes.
+    pub(crate) fn get_or_create_identity_continuation(&mut self) -> Result<inkwell::values::FunctionValue<'ctx>, Vec<Diagnostic>> {
+        let fn_name = "__blood_identity_continuation";
+
+        // Check if already created
+        if let Some(fn_val) = self.module.get_function(fn_name) {
+            return Ok(fn_val);
+        }
+
+        let i64_type = self.context.i64_type();
+        let i8_ptr_type = self.context.i8_type().ptr_type(inkwell::AddressSpace::default());
+
+        // Create the function: extern "C" fn(value: i64, context: *mut void) -> i64
+        let fn_type = i64_type.fn_type(&[i64_type.into(), i8_ptr_type.into()], false);
+        let fn_val = self.module.add_function(fn_name, fn_type, None);
+
+        // Mark as internal linkage (not exported)
+        fn_val.set_linkage(inkwell::module::Linkage::Internal);
+
+        // Create entry block
+        let entry = self.context.append_basic_block(fn_val, "entry");
+
+        // Save current builder position
+        let saved_block = self.builder.get_insert_block();
+
+        // Build the function body
+        self.builder.position_at_end(entry);
+
+        // Get the value parameter (first argument) and return it
+        let value_param = fn_val.get_nth_param(0)
+            .ok_or_else(|| vec![Diagnostic::error(
+                "Identity continuation missing value parameter".to_string(),
+                Span::dummy(),
+            )])?
+            .into_int_value();
+
+        self.builder.build_return(Some(&value_param))
+            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?;
+
+        // Restore builder position
+        if let Some(block) = saved_block {
+            self.builder.position_at_end(block);
+        }
+
+        Ok(fn_val)
+    }
+
     /// Compile a perform expression: `perform Effect.op(args)`
     ///
     /// In the evidence passing model (ICFP'21), this becomes a call through
@@ -307,9 +412,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let effect_id_val = i64_type.const_int(effect_id.index as u64, false);
         let op_index_val = i32_type.const_int(op_index as u64, false);
         let arg_count_val = i64_type.const_int(arg_count as u64, false);
-        // For now, pass 0 as continuation (tail-resumptive mode)
-        // TODO: Implement CPS transformation to create continuations for non-tail perform
-        let continuation_val = i64_type.const_zero();
+
+        // Create continuation for non-tail-resumptive handlers
+        // The continuation represents "what to do after the handler resumes us"
+        // For simple cases (perform as final expression), this is just identity
+        let continuation_val = self.create_perform_continuation()?;
 
         let call_result = self.builder
             .build_call(

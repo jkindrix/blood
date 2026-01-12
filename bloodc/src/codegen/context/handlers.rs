@@ -55,39 +55,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         hir_crate: &hir::Crate,
     ) -> Result<(), Vec<Diagnostic>> {
         if let hir::ItemKind::Handler { operations, return_clause, state, .. } = &item.kind {
-            // Validate that handler doesn't use non-tail-resumptive patterns
-            // We support tail-resumptive (resume in tail position) and abort (no resume)
-            if let Some(handler_info) = self.handler_defs.get(&def_id) {
-                let problematic_ops: Vec<&str> = operations.iter()
-                    .zip(handler_info.op_impls.iter())
-                    .filter(|(_, op_info)| {
-                        // Non-tail-resumptive with resume calls needs continuation capture
-                        !op_info.is_tail_resumptive && op_info.resume_count > 0
-                    })
-                    .map(|(op, _)| op.name.as_str())
-                    .collect();
-
-                if !problematic_ops.is_empty() {
-                    return Err(vec![Diagnostic::error(
-                        format!(
-                            "Handler '{}' uses `resume` in non-tail position (operations: {}).\n\
-                             Non-tail-resumptive handlers require continuation capture which is not yet implemented.\n\
-                             Please refactor the handler so that `resume(...)` is the last expression in each operation body,\n\
-                             or remove the `resume` call entirely for abort handlers.\n\n\
-                             Example of tail-resumptive (supported):\n\
-                             op foo(x) => resume(x + 1)\n\n\
-                             Example of abort handler (supported):\n\
-                             op raise(err) => {{ error_value = err; () }}\n\n\
-                             Example of non-tail-resumptive (not yet supported):\n\
-                             op foo(x) => {{ let r = resume(x); r + 1 }}",
-                            item.name, problematic_ops.join(", ")
-                        ),
-                        item.span,
-                    )]);
-                }
-            }
-
-            // Compile each operation
+            // Compile each operation (both tail-resumptive and non-tail-resumptive)
+            // Non-tail-resumptive handlers use continuation capture via blood_continuation_resume
             for (op_idx, handler_op) in operations.iter().enumerate() {
                 if let Some(&fn_value) = self.handler_ops.get(&(def_id, op_idx)) {
                     if let Some(body) = hir_crate.bodies.get(&handler_op.body_id) {
@@ -107,55 +76,12 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     }
 
     /// Compile handler operation bodies (Phase 2: Effect Handlers).
+    ///
+    /// Both tail-resumptive and non-tail-resumptive handlers are supported:
+    /// - Tail-resumptive: resume is a simple return
+    /// - Non-tail-resumptive: resume calls blood_continuation_resume
     pub fn compile_handler_operations(&mut self, hir_crate: &hir::Crate) -> Result<(), Vec<Diagnostic>> {
-        // First pass: validate handler operations
-        // We support:
-        // - Tail-resumptive handlers (resume is the last expression)
-        // - Abort handlers (no resume at all - early exit)
-        // We do NOT yet support:
-        // - Non-tail-resumptive handlers (resume followed by more computation)
-        let mut errors = Vec::new();
-        for (def_id, item) in &hir_crate.items {
-            if let hir::ItemKind::Handler { operations, .. } = &item.kind {
-                if let Some(handler_info) = self.handler_defs.get(def_id) {
-                    // Find operations that need continuation capture:
-                    // resume_count > 0 AND NOT tail-resumptive
-                    let problematic_ops: Vec<&str> = operations.iter()
-                        .zip(handler_info.op_impls.iter())
-                        .filter(|(_, op_info)| {
-                            // Non-tail-resumptive with resume calls needs continuation capture
-                            !op_info.is_tail_resumptive && op_info.resume_count > 0
-                        })
-                        .map(|(op, _)| op.name.as_str())
-                        .collect();
-
-                    if !problematic_ops.is_empty() {
-                        errors.push(Diagnostic::error(
-                            format!(
-                                "Handler '{}' uses `resume` in non-tail position (operations: {}).\n\
-                                 Non-tail-resumptive handlers require continuation capture which is not yet implemented.\n\
-                                 Please refactor the handler so that `resume(...)` is the last expression in each operation body,\n\
-                                 or remove the `resume` call entirely for abort handlers.\n\n\
-                                 Example of tail-resumptive (supported):\n\
-                                 op foo(x) => resume(x + 1)\n\n\
-                                 Example of abort handler (supported):\n\
-                                 op raise(err) => {{ error_value = err; () }}\n\n\
-                                 Example of non-tail-resumptive (not yet supported):\n\
-                                 op foo(x) => {{ let r = resume(x); r + 1 }}",
-                                item.name, problematic_ops.join(", ")
-                            ),
-                            item.span,
-                        ));
-                    }
-                }
-            }
-        }
-
-        if !errors.is_empty() {
-            return Err(errors);
-        }
-
-        // Second pass: compile handler operations
+        // Compile all handler operations
         for (def_id, item) in &hir_crate.items {
             if let hir::ItemKind::Handler { operations, return_clause, state, .. } = &item.kind {
                 // Compile each operation
