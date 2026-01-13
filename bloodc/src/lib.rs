@@ -82,6 +82,7 @@
 //! - [`hir`] - High-level Intermediate Representation (Phase 1+)
 //! - [`lexer`] - Tokenization (lexical analysis)
 //! - [`parser`] - Parsing (syntax analysis)
+//! - [`project`] - Project management (Blood.toml, module resolution, dependency graph)
 //! - [`span`] - Source location tracking
 //! - [`syntax_kind`] - Syntax kinds for future CST support
 //! - [`trivia`] - Trivia preservation for lossless syntax trees
@@ -101,6 +102,7 @@ pub mod hir;
 pub mod lexer;
 pub mod mir;
 pub mod parser;
+pub mod project;
 pub mod span;
 pub mod syntax_kind;
 pub mod trivia;

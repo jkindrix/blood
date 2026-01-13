@@ -8,9 +8,11 @@
 //! blood [OPTIONS] <COMMAND>
 //!
 //! Commands:
+//!   new    Create a new Blood project
+//!   init   Initialize Blood project in current directory
 //!   lex    Tokenize source and display token stream
 //!   parse  Parse source and display AST
-//!   check  Type-check source file
+//!   check  Type-check source file or project
 //!   build  Compile to executable
 //!   run    Compile and run source file
 //!
@@ -33,6 +35,7 @@ use bloodc::{Lexer, TokenKind};
 use bloodc::codegen;
 use bloodc::expand;
 use bloodc::mir;
+use bloodc::project::{self, Manifest};
 use bloodc::content::{ContentHash, BuildCache, hash_hir_item, extract_dependencies, VFT, VFTEntry};
 use bloodc::content::hash::ContentHasher;
 use bloodc::content::namespace::{NameRegistry, NameBinding, BindingKind};
@@ -68,6 +71,16 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Create a new Blood project
+    ///
+    /// Creates a new directory with Blood.toml and a basic src/main.blood file.
+    New(NewArgs),
+
+    /// Initialize Blood project in current directory
+    ///
+    /// Creates a Blood.toml file in the current directory.
+    Init(InitArgs),
+
     /// Tokenize source file and display token stream
     ///
     /// Runs the lexer on the input file and prints each token with its
@@ -80,16 +93,18 @@ enum Commands {
     /// in Rust debug format. Useful for debugging parser issues.
     Parse(FileArgs),
 
-    /// Type-check source file
+    /// Type-check source file or project
     ///
-    /// Performs parsing and type checking on the input file.
-    Check(FileArgs),
+    /// Performs parsing and type checking. If no file is specified and
+    /// a Blood.toml exists, type-checks the entire project.
+    Check(BuildArgs),
 
-    /// Compile source file to executable
+    /// Compile source file or project to executable
     ///
-    /// Compiles the Blood source file to a native executable using
-    /// content-addressed incremental compilation with build caching.
-    Build(FileArgs),
+    /// Compiles to a native executable using content-addressed incremental
+    /// compilation with build caching. If no file is specified and a
+    /// Blood.toml exists, builds the entire project.
+    Build(BuildArgs),
 
     /// Compile and run source file
     ///
@@ -114,6 +129,47 @@ struct FileArgs {
     /// Path to the standard library (defaults to built-in)
     #[arg(long, value_name = "PATH")]
     stdlib_path: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct NewArgs {
+    /// Name of the project to create
+    #[arg(value_name = "NAME")]
+    name: String,
+
+    /// Create a library project instead of a binary
+    #[arg(long)]
+    lib: bool,
+}
+
+#[derive(Args)]
+struct InitArgs {
+    /// Create a library project instead of a binary
+    #[arg(long)]
+    lib: bool,
+}
+
+#[derive(Args)]
+struct BuildArgs {
+    /// Source file to process (optional - if not provided, looks for Blood.toml)
+    #[arg(value_name = "FILE")]
+    file: Option<PathBuf>,
+
+    /// Dump additional debug information
+    #[arg(short, long)]
+    debug: bool,
+
+    /// Disable automatic standard library import
+    #[arg(long)]
+    no_std: bool,
+
+    /// Path to the standard library (defaults to built-in)
+    #[arg(long, value_name = "PATH")]
+    stdlib_path: Option<PathBuf>,
+
+    /// Build in release mode with optimizations
+    #[arg(long)]
+    release: bool,
 }
 
 /// When to use colored output
@@ -153,10 +209,12 @@ fn main() -> ExitCode {
     let verbosity = if cli.quiet { 0 } else { cli.verbose + 1 };
 
     match cli.command {
+        Commands::New(args) => cmd_new(&args, verbosity),
+        Commands::Init(args) => cmd_init(&args, verbosity),
         Commands::Lex(args) => cmd_lex(&args, verbosity),
         Commands::Parse(args) => cmd_parse(&args, verbosity),
-        Commands::Check(args) => cmd_check(&args, verbosity),
-        Commands::Build(args) => cmd_build(&args, verbosity),
+        Commands::Check(args) => cmd_check_project(&args, verbosity),
+        Commands::Build(args) => cmd_build_project(&args, verbosity),
         Commands::Run(args) => cmd_run(&args, verbosity),
     }
 }
@@ -168,6 +226,288 @@ fn read_source(path: &PathBuf) -> Result<String, ExitCode> {
         Err(e) => {
             eprintln!("Error reading file '{}': {}", path.display(), e);
             Err(ExitCode::from(1))
+        }
+    }
+}
+
+/// New command - create a new project
+fn cmd_new(args: &NewArgs, verbosity: u8) -> ExitCode {
+    let project_dir = PathBuf::from(&args.name);
+
+    // Check if directory already exists
+    if project_dir.exists() {
+        eprintln!("Error: directory '{}' already exists", args.name);
+        return ExitCode::from(1);
+    }
+
+    if verbosity > 0 {
+        eprintln!("Creating new Blood project: {}", args.name);
+    }
+
+    // Create project directory
+    if let Err(e) = fs::create_dir_all(&project_dir) {
+        eprintln!("Error creating directory: {}", e);
+        return ExitCode::from(1);
+    }
+
+    // Create src directory
+    let src_dir = project_dir.join("src");
+    if let Err(e) = fs::create_dir(&src_dir) {
+        eprintln!("Error creating src directory: {}", e);
+        return ExitCode::from(1);
+    }
+
+    // Create Blood.toml
+    let manifest = Manifest::new(&args.name, "0.1.0");
+    let toml_content = match manifest.to_toml() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Error generating Blood.toml: {}", e);
+            return ExitCode::from(1);
+        }
+    };
+
+    if let Err(e) = fs::write(project_dir.join("Blood.toml"), &toml_content) {
+        eprintln!("Error writing Blood.toml: {}", e);
+        return ExitCode::from(1);
+    }
+
+    // Create main entry file
+    let entry_file = if args.lib {
+        src_dir.join("lib.blood")
+    } else {
+        src_dir.join("main.blood")
+    };
+
+    let entry_content = if args.lib {
+        "// Library entry point\n\npub fn hello() -> str {\n    \"Hello from Blood!\"\n}\n"
+    } else {
+        "// Blood application entry point\n\nfn main() {\n    println!(\"Hello, Blood!\");\n}\n"
+    };
+
+    if let Err(e) = fs::write(&entry_file, entry_content) {
+        eprintln!("Error writing entry file: {}", e);
+        return ExitCode::from(1);
+    }
+
+    println!("Created Blood project '{}' in {}", args.name, project_dir.display());
+    if verbosity > 0 {
+        eprintln!("  Blood.toml");
+        eprintln!("  src/{}", if args.lib { "lib.blood" } else { "main.blood" });
+    }
+
+    ExitCode::SUCCESS
+}
+
+/// Init command - initialize project in current directory
+fn cmd_init(args: &InitArgs, verbosity: u8) -> ExitCode {
+    let cwd = match std::env::current_dir() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("Error getting current directory: {}", e);
+            return ExitCode::from(1);
+        }
+    };
+
+    let manifest_path = cwd.join("Blood.toml");
+
+    // Check if Blood.toml already exists
+    if manifest_path.exists() {
+        eprintln!("Error: Blood.toml already exists in this directory");
+        return ExitCode::from(1);
+    }
+
+    // Use directory name as project name
+    let project_name = cwd.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("blood_project")
+        .to_string();
+
+    if verbosity > 0 {
+        eprintln!("Initializing Blood project: {}", project_name);
+    }
+
+    // Create Blood.toml
+    let manifest = Manifest::new(&project_name, "0.1.0");
+    let toml_content = match manifest.to_toml() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Error generating Blood.toml: {}", e);
+            return ExitCode::from(1);
+        }
+    };
+
+    if let Err(e) = fs::write(&manifest_path, &toml_content) {
+        eprintln!("Error writing Blood.toml: {}", e);
+        return ExitCode::from(1);
+    }
+
+    // Create src directory if it doesn't exist
+    let src_dir = cwd.join("src");
+    if !src_dir.exists() {
+        if let Err(e) = fs::create_dir(&src_dir) {
+            eprintln!("Error creating src directory: {}", e);
+            return ExitCode::from(1);
+        }
+    }
+
+    // Create entry file if it doesn't exist
+    let entry_file = if args.lib {
+        src_dir.join("lib.blood")
+    } else {
+        src_dir.join("main.blood")
+    };
+
+    if !entry_file.exists() {
+        let entry_content = if args.lib {
+            "// Library entry point\n\npub fn hello() -> str {\n    \"Hello from Blood!\"\n}\n"
+        } else {
+            "// Blood application entry point\n\nfn main() {\n    println!(\"Hello, Blood!\");\n}\n"
+        };
+
+        if let Err(e) = fs::write(&entry_file, entry_content) {
+            eprintln!("Error writing entry file: {}", e);
+            return ExitCode::from(1);
+        }
+    }
+
+    println!("Initialized Blood project '{}' in {}", project_name, cwd.display());
+    ExitCode::SUCCESS
+}
+
+/// Check command with project support - type-check source or project
+fn cmd_check_project(args: &BuildArgs, verbosity: u8) -> ExitCode {
+    // If a file is specified, use single-file mode
+    if let Some(ref file) = args.file {
+        let file_args = FileArgs {
+            file: file.clone(),
+            debug: args.debug,
+            no_std: args.no_std,
+            stdlib_path: args.stdlib_path.clone(),
+        };
+        return cmd_check(&file_args, verbosity);
+    }
+
+    // Otherwise, try to find a project
+    let cwd = match std::env::current_dir() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("Error getting current directory: {}", e);
+            return ExitCode::from(1);
+        }
+    };
+
+    match project::discover_project_root(&cwd) {
+        Some(project_root) => {
+            // Load manifest
+            let manifest = match project::load_manifest(&project_root) {
+                Ok(m) => m.with_defaults(&project_root),
+                Err(e) => {
+                    eprintln!("Error loading Blood.toml: {}", e);
+                    return ExitCode::from(1);
+                }
+            };
+
+            if verbosity > 0 {
+                eprintln!("Checking project: {} v{}", manifest.package.name, manifest.package.version);
+            }
+
+            // Find the entry point to check
+            let entry_file = if let Some(ref lib) = manifest.lib {
+                project_root.join(&lib.path)
+            } else if !manifest.bin.is_empty() {
+                project_root.join(&manifest.bin[0].path)
+            } else {
+                eprintln!("Error: no lib or bin targets in Blood.toml");
+                return ExitCode::from(1);
+            };
+
+            let file_args = FileArgs {
+                file: entry_file,
+                debug: args.debug,
+                no_std: args.no_std,
+                stdlib_path: args.stdlib_path.clone(),
+            };
+            cmd_check(&file_args, verbosity)
+        }
+        None => {
+            eprintln!("Error: no Blood.toml found. Specify a file or run from a project directory.");
+            ExitCode::from(1)
+        }
+    }
+}
+
+/// Build command with project support - compile source or project
+fn cmd_build_project(args: &BuildArgs, verbosity: u8) -> ExitCode {
+    // If a file is specified, use single-file mode
+    if let Some(ref file) = args.file {
+        let file_args = FileArgs {
+            file: file.clone(),
+            debug: args.debug,
+            no_std: args.no_std,
+            stdlib_path: args.stdlib_path.clone(),
+        };
+        return cmd_build(&file_args, verbosity);
+    }
+
+    // Otherwise, try to find a project
+    let cwd = match std::env::current_dir() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("Error getting current directory: {}", e);
+            return ExitCode::from(1);
+        }
+    };
+
+    match project::discover_project_root(&cwd) {
+        Some(project_root) => {
+            // Load manifest
+            let manifest = match project::load_manifest(&project_root) {
+                Ok(m) => m.with_defaults(&project_root),
+                Err(e) => {
+                    eprintln!("Error loading Blood.toml: {}", e);
+                    return ExitCode::from(1);
+                }
+            };
+
+            if verbosity > 0 {
+                eprintln!("Building project: {} v{}", manifest.package.name, manifest.package.version);
+                if args.release {
+                    eprintln!("  Mode: release");
+                }
+            }
+
+            // Build all binary targets
+            let mut success = true;
+            for (bin_name, bin_path) in manifest.resolved_bins() {
+                let entry_file = project_root.join(bin_path);
+
+                if verbosity > 0 {
+                    eprintln!("Building binary: {}", bin_name);
+                }
+
+                let file_args = FileArgs {
+                    file: entry_file,
+                    debug: args.debug,
+                    no_std: args.no_std,
+                    stdlib_path: args.stdlib_path.clone(),
+                };
+
+                let result = cmd_build(&file_args, verbosity);
+                if result != ExitCode::SUCCESS {
+                    success = false;
+                }
+            }
+
+            if success {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(1)
+            }
+        }
+        None => {
+            eprintln!("Error: no Blood.toml found. Specify a file or run from a project directory.");
+            ExitCode::from(1)
         }
     }
 }
