@@ -34,10 +34,20 @@ io-uring = { version = "0.6", optional = true }
 nix = { version = "0.28", features = ["event", "fs", "net"] }
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.54", features = ["Win32_Foundation", "Win32_System_IO"] }
+windows = { version = "0.54", features = [
+    "Win32_Foundation",
+    "Win32_System_IO",
+    "Win32_Networking_WinSock",
+    "Win32_Storage_FileSystem",
+] }
 
 [features]
 default = []
+# Enable io_uring for high-performance async I/O on Linux 5.6+.
+# This provides better performance than epoll for many workloads but requires:
+#   - Linux kernel 5.6 or later (5.11+ recommended for full feature support)
+#   - liburing development headers (install via: apt install liburing-dev)
+# Enable with: cargo build --features io_uring
 io_uring = ["io-uring"]
 
 [dev-dependencies]

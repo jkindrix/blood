@@ -318,12 +318,32 @@ bloodc --export-format=ldra src/
 - [ ] Static analysis results
 - [ ] Code review records
 
+## Timing Analysis and Real-Time Guarantees
+
+Blood provides comprehensive WCET (Worst-Case Execution Time) analysis for real-time systems. See [WCET_REALTIME.md](../spec/WCET_REALTIME.md) for:
+
+- **Bounded operation timing** - All runtime operations have known WCET bounds
+- **Real-time profiles** - `rt-hard`, `rt-soft` configurations
+- **WCET annotations** - Function-level timing constraints
+- **Loop bound verification** - Required for timing analysis
+- **Generation check overhead** - ~3-4 cycles per validation
+
+### Quick Reference: Measured Timings
+
+| Operation | Measured | WCET Bound |
+|-----------|----------|------------|
+| Generation check | ~3-4 cycles | 10 cycles |
+| Snapshot capture | ~6.6ns/ref | 20ns/ref |
+| Continuation resume | 13-18ns | 50ns |
+| Channel send/recv | ~17ns | 50ns |
+
 ## Future Certification Features
 
 Planned enhancements for certification:
 
 - **Formal verification backend** - Z3/SMT integration
-- **Timing analysis** - WCET estimation
+- **Cache-aware WCET** - Data and instruction cache modeling
 - **Memory analysis** - Static allocation bounds
 - **Certification profiles** - Pre-configured settings per standard
 - **Tool qualification** - Blood compiler qualification kit
+- **Hardware timing database** - Per-platform cycle counts

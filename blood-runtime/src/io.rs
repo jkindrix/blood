@@ -1731,17 +1731,32 @@ pub mod macos {
 #[cfg(target_os = "windows")]
 pub mod windows {
     //! Windows-specific I/O driver using IOCP (I/O Completion Ports).
+    //!
+    //! This module provides:
+    //! - AcceptEx for asynchronous socket accept operations
+    //! - WSAPoll for socket polling
+    //! - Standard overlapped I/O for reads/writes
 
     use super::*;
     use std::collections::HashMap;
     use std::os::windows::io::AsRawHandle;
     use std::time::Duration;
-    use windows::Win32::Foundation::{HANDLE, ERROR_IO_PENDING, GetLastError};
+    use windows::Win32::Foundation::{HANDLE, ERROR_IO_PENDING, GetLastError, BOOL};
     use windows::Win32::Storage::FileSystem::{ReadFile, WriteFile};
     use windows::Win32::System::IO::{
         CreateIoCompletionPort, GetQueuedCompletionStatus, PostQueuedCompletionStatus,
         OVERLAPPED,
     };
+    use windows::Win32::Networking::WinSock::{
+        SOCKET, AF_INET, SOCK_STREAM, IPPROTO_TCP, WSASocketW, WSAGetLastError,
+        WSA_FLAG_OVERLAPPED, SOCKET_ERROR, INVALID_SOCKET, closesocket,
+        WSAPOLLFD, POLLRDNORM, POLLWRNORM, WSAPoll,
+        AcceptEx, GetAcceptExSockaddrs, setsockopt, SOL_SOCKET,
+        SO_UPDATE_ACCEPT_CONTEXT, SOCKADDR, SOCKADDR_IN,
+    };
+
+    /// Size of address buffer for AcceptEx (IPv4 address + 16 bytes padding)
+    const ACCEPT_ADDR_SIZE: u32 = std::mem::size_of::<SOCKADDR_IN>() as u32 + 16;
 
     /// Check if IOCP is available (always true on Windows).
     pub fn iocp_available() -> bool {
@@ -1758,6 +1773,10 @@ pub mod windows {
         op_id: u64,
         /// Buffer for read operations (owned to ensure lifetime)
         buffer: Option<Vec<u8>>,
+        /// Accept socket for AcceptEx operations (pre-created socket)
+        accept_socket: Option<SOCKET>,
+        /// Listen socket for AcceptEx operations
+        listen_socket: Option<SOCKET>,
     }
 
     impl OverlappedContext {
@@ -1766,6 +1785,8 @@ pub mod windows {
                 overlapped: OVERLAPPED::default(),
                 op_id: op_id.as_u64(),
                 buffer: None,
+                accept_socket: None,
+                listen_socket: None,
             })
         }
 
@@ -1774,7 +1795,34 @@ pub mod windows {
                 overlapped: OVERLAPPED::default(),
                 op_id: op_id.as_u64(),
                 buffer: Some(vec![0u8; size]),
+                accept_socket: None,
+                listen_socket: None,
             })
+        }
+
+        /// Create context for AcceptEx operation with pre-allocated accept socket and address buffer.
+        fn for_accept(op_id: IoOpId, listen_socket: SOCKET, accept_socket: SOCKET) -> Box<Self> {
+            // AcceptEx requires buffer for: [received data] + [local addr] + [remote addr]
+            // We don't want received data, so buffer is just address space
+            let buffer_size = (ACCEPT_ADDR_SIZE * 2) as usize;
+            Box::new(Self {
+                overlapped: OVERLAPPED::default(),
+                op_id: op_id.as_u64(),
+                buffer: Some(vec![0u8; buffer_size]),
+                accept_socket: Some(accept_socket),
+                listen_socket: Some(listen_socket),
+            })
+        }
+    }
+
+    impl Drop for OverlappedContext {
+        fn drop(&mut self) {
+            // Close accept socket if it was created but not transferred
+            if let Some(sock) = self.accept_socket.take() {
+                if sock != INVALID_SOCKET {
+                    unsafe { closesocket(sock); }
+                }
+            }
         }
     }
 
@@ -1905,6 +1953,128 @@ pub mod windows {
 
             Ok(context)
         }
+
+        /// Start an overlapped AcceptEx operation.
+        ///
+        /// AcceptEx requires:
+        /// 1. A pre-created socket for the accepted connection
+        /// 2. A buffer for local and remote addresses (min 16 bytes padding each)
+        /// 3. The listening socket to be associated with IOCP
+        fn start_accept(&self, op_id: IoOpId, listen_fd: RawFd) -> io::Result<Box<OverlappedContext>> {
+            let listen_socket = SOCKET(listen_fd as usize);
+
+            // Associate listen socket with IOCP
+            let handle = HANDLE(listen_fd as isize as *mut std::ffi::c_void);
+            self.associate_handle(handle, op_id.as_u64() as usize)?;
+
+            // Create a new socket for the accepted connection
+            // Must match the address family of the listening socket (AF_INET for IPv4)
+            let accept_socket = unsafe {
+                WSASocketW(
+                    AF_INET.0 as i32,
+                    SOCK_STREAM.0 as i32,
+                    IPPROTO_TCP.0 as i32,
+                    None,
+                    0,
+                    WSA_FLAG_OVERLAPPED,
+                )
+            };
+
+            if accept_socket == INVALID_SOCKET {
+                let err = unsafe { WSAGetLastError() };
+                return Err(io::Error::from_raw_os_error(err.0 as i32));
+            }
+
+            // Create overlapped context for AcceptEx
+            let mut context = OverlappedContext::for_accept(op_id, listen_socket, accept_socket);
+            let overlapped_ptr = &mut context.overlapped as *mut OVERLAPPED;
+            let buffer = context.buffer.as_mut().unwrap();
+
+            let mut bytes_received: u32 = 0;
+
+            // Call AcceptEx
+            // dwReceiveDataLength = 0: we don't want to receive data before accept completes
+            // dwLocalAddressLength = ACCEPT_ADDR_SIZE
+            // dwRemoteAddressLength = ACCEPT_ADDR_SIZE
+            let result = unsafe {
+                AcceptEx(
+                    listen_socket,
+                    accept_socket,
+                    buffer.as_mut_ptr() as *mut std::ffi::c_void,
+                    0, // Don't receive initial data
+                    ACCEPT_ADDR_SIZE,
+                    ACCEPT_ADDR_SIZE,
+                    &mut bytes_received,
+                    overlapped_ptr,
+                )
+            };
+
+            // AcceptEx returns FALSE with ERROR_IO_PENDING for async operation
+            if result == BOOL(0) {
+                let error = unsafe { WSAGetLastError() };
+                // WSA_IO_PENDING (997) is expected for overlapped I/O
+                if error.0 != 997 {
+                    // Close the accept socket on error
+                    unsafe { closesocket(accept_socket); }
+                    return Err(io::Error::from_raw_os_error(error.0 as i32));
+                }
+            }
+
+            // Don't close accept_socket in context drop - it's being transferred
+            // We need to clear it from context so Drop doesn't close it
+            // Actually, we keep it in context for now - on completion we'll transfer it
+            Ok(context)
+        }
+
+        /// Perform synchronous poll operation using WSAPoll.
+        ///
+        /// Unlike AcceptEx, WSAPoll is synchronous so we run it in a thread
+        /// and post completion when done.
+        fn start_poll(&self, op_id: IoOpId, fd: RawFd, events: u32) -> io::Result<()> {
+            let handle = self.iocp_handle;
+            let socket = SOCKET(fd as usize);
+
+            std::thread::spawn(move || {
+                // Map generic events to Windows poll events
+                let mut poll_events: i16 = 0;
+                if events & 1 != 0 { // Read
+                    poll_events |= POLLRDNORM.0 as i16;
+                }
+                if events & 2 != 0 { // Write
+                    poll_events |= POLLWRNORM.0 as i16;
+                }
+
+                let mut fds = [WSAPOLLFD {
+                    fd: socket,
+                    events: poll_events,
+                    revents: 0,
+                }];
+
+                // Poll with 5 second timeout (reasonable default)
+                let result = unsafe { WSAPoll(fds.as_mut_ptr(), 1, 5000) };
+
+                // Post completion regardless of result
+                // The result will be encoded in bytes_transferred
+                let bytes = if result == SOCKET_ERROR {
+                    0xFFFFFFFF_u32 // Error indicator
+                } else if result == 0 {
+                    0 // Timeout
+                } else {
+                    fds[0].revents as u32 // Return events
+                };
+
+                unsafe {
+                    let _ = PostQueuedCompletionStatus(
+                        handle,
+                        bytes,
+                        op_id.as_u64() as usize,
+                        None,
+                    );
+                }
+            });
+
+            Ok(())
+        }
     }
 
     impl Default for IocpDriver {
@@ -1970,20 +2140,16 @@ pub mod windows {
                     let context = self.start_write(op_id, *fd, data)?;
                     self.pending.lock().insert(op_id, PendingOp { op: op.clone(), context: Some(context) });
                 }
-                IoOp::Accept { .. } => {
-                    // Accept requires AcceptEx which needs more setup (listening socket, etc.)
-                    // For now, return unsupported - a full implementation would use AcceptEx
-                    return Err(io::Error::new(
-                        io::ErrorKind::Unsupported,
-                        "IocpDriver: Accept requires AcceptEx setup (not yet implemented)",
-                    ));
+                IoOp::Accept { fd } => {
+                    // Start AcceptEx operation with pre-created accept socket
+                    let context = self.start_accept(op_id, *fd)?;
+                    self.pending.lock().insert(op_id, PendingOp { op: op.clone(), context: Some(context) });
                 }
-                IoOp::Poll { .. } => {
-                    // Poll on Windows would typically use WSAPoll or associate with IOCP differently
-                    return Err(io::Error::new(
-                        io::ErrorKind::Unsupported,
-                        "IocpDriver: Poll requires WSAPoll setup (not yet implemented)",
-                    ));
+                IoOp::Poll { fd, events } => {
+                    // Store pending op without context (WSAPoll runs in thread)
+                    self.pending.lock().insert(op_id, PendingOp { op: op.clone(), context: None });
+                    // Start WSAPoll in background thread
+                    self.start_poll(op_id, *fd, *events)?;
                 }
             }
 
@@ -2015,11 +2181,13 @@ pub mod windows {
 
                 if let Some(pending_op) = pending.remove(&op_id) {
                     let io_result = match &pending_op.op {
-                        IoOp::Read { buf, .. } => {
+                        IoOp::Read { buf, len } => {
                             // Copy data from context buffer to user buffer if successful
+                            let mut data = Vec::new();
                             if let Some(ref context) = pending_op.context {
                                 if let Some(ref read_buf) = context.buffer {
                                     let copy_len = (bytes_transferred as usize).min(read_buf.len());
+                                    // Copy to user buffer
                                     unsafe {
                                         std::ptr::copy_nonoverlapping(
                                             read_buf.as_ptr(),
@@ -2027,20 +2195,60 @@ pub mod windows {
                                             copy_len,
                                         );
                                     }
+                                    // Also return the data in the result
+                                    data = read_buf[..copy_len].to_vec();
                                 }
                             }
-                            IoResult::Read(bytes_transferred as i64)
+                            IoResult::Read(data)
                         }
                         IoOp::Write { .. } => {
-                            IoResult::Written(bytes_transferred as i64)
+                            IoResult::Write(bytes_transferred as usize)
                         }
-                        IoOp::Accept { .. } => {
-                            // AcceptEx not yet implemented
-                            IoResult::Error(IoError::new(-1, "accept not implemented"))
+                        IoOp::Accept { fd: _listen_fd } => {
+                            // AcceptEx completed - extract the accepted socket
+                            if let Some(mut context) = pending_op.context {
+                                if let Some(accept_socket) = context.accept_socket.take() {
+                                    // Update the accept socket's context to inherit from listen socket
+                                    // This is required by AcceptEx for proper functionality
+                                    if let Some(listen_socket) = context.listen_socket {
+                                        unsafe {
+                                            let listen_ptr = &listen_socket as *const SOCKET as *const i8;
+                                            let _ = setsockopt(
+                                                accept_socket,
+                                                SOL_SOCKET as i32,
+                                                SO_UPDATE_ACCEPT_CONTEXT as i32,
+                                                Some(std::slice::from_raw_parts(
+                                                    listen_ptr as *const u8,
+                                                    std::mem::size_of::<SOCKET>(),
+                                                )),
+                                            );
+                                        }
+                                    }
+
+                                    // Return the accepted socket as a file descriptor
+                                    IoResult::Accept(accept_socket.0 as i32)
+                                } else {
+                                    IoResult::Error(IoError::new(-1, "AcceptEx completed but no socket available"))
+                                }
+                            } else {
+                                IoResult::Error(IoError::new(-1, "AcceptEx completed but no context"))
+                            }
                         }
                         IoOp::Poll { .. } => {
-                            // WSAPoll not yet implemented
-                            IoResult::Error(IoError::new(-1, "poll not implemented"))
+                            // WSAPoll completed - bytes_transferred contains the revents
+                            if bytes_transferred == 0xFFFFFFFF {
+                                IoResult::Error(IoError::new(-1, "WSAPoll failed"))
+                            } else {
+                                // Convert Windows poll events to Interest
+                                let mut interest = Interest(0);
+                                if bytes_transferred as i16 & POLLRDNORM.0 as i16 != 0 {
+                                    interest = interest.union(Interest::READABLE);
+                                }
+                                if bytes_transferred as i16 & POLLWRNORM.0 as i16 != 0 {
+                                    interest = interest.union(Interest::WRITABLE);
+                                }
+                                IoResult::Ready(interest)
+                            }
                         }
                         IoOp::Connect { .. } => IoResult::Connected,
                         IoOp::Close { .. } => IoResult::Closed,
