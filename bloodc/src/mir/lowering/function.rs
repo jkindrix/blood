@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use crate::hir::{
-    self, Body, Crate as HirCrate, DefId, Expr, ExprKind,
+    self, Body, Crate as HirCrate, DefId, Expr, ExprKind, RecordFieldExpr,
     LocalId, LiteralValue, MatchArm, Pattern, PatternKind, Stmt, Type, TypeKind,
 };
 use crate::ast::{BinOp, UnaryOp};
@@ -291,6 +291,10 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
                     ),
                     expr.span,
                 )])
+            }
+
+            ExprKind::Record { fields } => {
+                self.lower_record(fields, &expr.ty, expr.span)
             }
         }
     }
@@ -1799,6 +1803,30 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
         Ok(Operand::Copy(Place::local(temp)))
     }
 
+    /// Lower an anonymous record expression.
+    fn lower_record(
+        &mut self,
+        fields: &[RecordFieldExpr],
+        ty: &Type,
+        span: Span,
+    ) -> Result<Operand, Vec<Diagnostic>> {
+        let mut operands = Vec::with_capacity(fields.len());
+        for field in fields {
+            operands.push(self.lower_expr(&field.value)?);
+        }
+
+        let temp = self.new_temp(ty.clone(), span);
+        self.push_assign(
+            Place::local(temp),
+            Rvalue::Aggregate {
+                kind: AggregateKind::Record,
+                operands,
+            },
+        );
+
+        Ok(Operand::Copy(Place::local(temp)))
+    }
+
     /// Lower an array expression.
     fn lower_array(
         &mut self,
@@ -2039,10 +2067,30 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
     /// Bind pattern variables to a place.
     fn bind_pattern(&mut self, pattern: &Pattern, place: &Place) -> Result<(), Vec<Diagnostic>> {
         match &pattern.kind {
-            PatternKind::Binding { local_id, subpattern, .. } => {
+            PatternKind::Binding { local_id, mutable, subpattern } => {
                 let mir_local = self.new_temp(pattern.ty.clone(), pattern.span);
                 self.local_map.insert(*local_id, mir_local);
-                self.push_assign(Place::local(mir_local), Rvalue::Use(Operand::Copy(place.clone())));
+
+                // Check if this is a ref binding (pattern type is a reference)
+                // In that case, we need to create a reference to the place instead of copying
+                if pattern.ty.is_ref() {
+                    // This is a ref binding (e.g., ref x or ref rest @ ..)
+                    // Create a reference to the place
+                    self.push_assign(
+                        Place::local(mir_local),
+                        Rvalue::Ref {
+                            place: place.clone(),
+                            mutable: *mutable,
+                        },
+                    );
+                } else {
+                    // Regular binding - copy the value
+                    self.push_assign(
+                        Place::local(mir_local),
+                        Rvalue::Use(Operand::Copy(place.clone())),
+                    );
+                }
+
                 if let Some(subpat) = subpattern {
                     self.bind_pattern(subpat, &Place::local(mir_local))?;
                 }

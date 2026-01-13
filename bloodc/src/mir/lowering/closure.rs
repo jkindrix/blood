@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 
 use crate::hir::{
-    self, Body, Crate as HirCrate, DefId, Expr, ExprKind,
-    LocalId, LiteralValue, Pattern, PatternKind, Type, TypeKind,
+    self, Body, Crate as HirCrate, DefId, Expr, ExprKind, FieldExpr, LoopId, MatchArm,
+    LocalId, LiteralValue, Pattern, PatternKind, RecordFieldExpr, Type, TypeKind,
 };
 use crate::ast::{BinOp, UnaryOp};
 use crate::span::Span;
@@ -20,7 +20,6 @@ use crate::mir::types::{
     BinOp as MirBinOp, UnOp as MirUnOp, AggregateKind, SwitchTargets,
 };
 
-use super::LoopContext;
 use super::util::convert_binop;
 
 // ============================================================================
@@ -50,9 +49,10 @@ pub struct ClosureLowering<'hir, 'ctx> {
     env_local: Option<LocalId>,
     /// Current basic block.
     current_block: BasicBlockId,
-    /// Loop context for break/continue (reserved for future use).
-    #[allow(dead_code)]
-    loop_stack: Vec<LoopContext>,
+    /// Loop context stack for break/continue (for labeled loops).
+    loop_contexts: HashMap<LoopId, (BasicBlockId, BasicBlockId, Option<Place>)>,
+    /// Current loop context (break_block, continue_block, result_place).
+    current_loop: Option<(BasicBlockId, BasicBlockId, Option<Place>)>,
     /// Counter for unique temporary names.
     temp_counter: u32,
     /// Pending closures to be lowered (for nested closures).
@@ -125,7 +125,8 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
             capture_types: capture_types_map,
             env_local,
             current_block,
-            loop_stack: Vec::new(),
+            loop_contexts: HashMap::new(),
+            current_loop: None,
             temp_counter: 0,
             pending_closures,
             closure_counter,
@@ -293,17 +294,55 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
                 self.lower_let(pattern, init, &expr.ty, expr.span)
             }
 
-            ExprKind::Error => {
-                Err(vec![Diagnostic::error("lowering error expression".to_string(), expr.span)])
+            ExprKind::Match { scrutinee, arms } => {
+                self.lower_match(scrutinee, arms, &expr.ty, expr.span)
             }
 
-            // Remaining expression kinds that need implementation
-            _ => {
+            ExprKind::Loop { body, label } => {
+                self.lower_loop(body, *label, &expr.ty, expr.span)
+            }
+
+            ExprKind::While { condition, body, label } => {
+                self.lower_while(condition, body, *label, &expr.ty, expr.span)
+            }
+
+            ExprKind::Break { label, value } => {
+                self.lower_break(*label, value.as_deref(), expr.span)
+            }
+
+            ExprKind::Continue { label } => {
+                self.lower_continue(*label, expr.span)
+            }
+
+            ExprKind::Struct { def_id, fields, base } => {
+                self.lower_struct(*def_id, fields, base.as_deref(), &expr.ty, expr.span)
+            }
+
+            ExprKind::Record { fields } => {
+                self.lower_record(fields, &expr.ty, expr.span)
+            }
+
+            ExprKind::MethodCall { .. } => {
                 Err(vec![Diagnostic::error(
-                    format!("MIR lowering for {:?} in closure not yet implemented",
-                            std::mem::discriminant(&expr.kind)),
+                    "method calls should be desugared before MIR lowering".to_string(),
                     expr.span,
                 )])
+            }
+
+            ExprKind::Range { start, end, inclusive } => {
+                self.lower_range(start.as_deref(), end.as_deref(), *inclusive, &expr.ty, expr.span)
+            }
+
+            ExprKind::MethodFamily { name, candidates } => {
+                // Method families should be resolved during type checking
+                Err(vec![Diagnostic::error(
+                    format!("unresolved method family '{}' with {} candidates", name, candidates.len()),
+                    expr.span,
+                )])
+            }
+
+            ExprKind::Error => {
+                Err(vec![Diagnostic::error("lowering error expression".to_string(), expr.span)])
             }
         }
     }
@@ -667,6 +706,377 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
 
             Ok(Operand::Copy(Place::local(result)))
         }
+    }
+
+    /// Lower a match expression.
+    fn lower_match(
+        &mut self,
+        scrutinee: &Expr,
+        arms: &[MatchArm],
+        ty: &Type,
+        span: Span,
+    ) -> Result<Operand, Vec<Diagnostic>> {
+        let scrut = self.lower_expr(scrutinee)?;
+
+        // Create a place for the scrutinee if needed
+        let scrut_place = if let Some(place) = scrut.place() {
+            place.clone()
+        } else {
+            let temp = self.new_temp(scrutinee.ty.clone(), span);
+            self.push_assign(Place::local(temp), Rvalue::Use(scrut));
+            Place::local(temp)
+        };
+
+        // Result temporary
+        let result = self.new_temp(ty.clone(), span);
+        let join_block = self.builder.new_block();
+
+        // Create unreachable block for exhaustiveness failure
+        let unreachable_block = self.builder.new_block();
+
+        // For each arm, create body blocks
+        let arm_body_blocks: Vec<_> = arms.iter().map(|_| self.builder.new_block()).collect();
+
+        // Test each arm's pattern sequentially
+        for (i, arm) in arms.iter().enumerate() {
+            let next_arm_test = if i + 1 < arms.len() {
+                self.builder.new_block()
+            } else {
+                unreachable_block
+            };
+
+            self.test_pattern(&arm.pattern, &scrut_place, arm_body_blocks[i], next_arm_test, span)?;
+
+            if i + 1 < arms.len() {
+                self.builder.switch_to(next_arm_test);
+                self.current_block = next_arm_test;
+            }
+        }
+
+        // Build unreachable block
+        self.builder.switch_to(unreachable_block);
+        self.current_block = unreachable_block;
+        self.terminate(TerminatorKind::Unreachable);
+
+        // Lower each arm's body
+        for (i, arm) in arms.iter().enumerate() {
+            self.builder.switch_to(arm_body_blocks[i]);
+            self.current_block = arm_body_blocks[i];
+
+            // Bind pattern variables
+            self.bind_pattern(&arm.pattern, &scrut_place)?;
+
+            // Check guard if present
+            if let Some(guard) = &arm.guard {
+                let guard_pass = self.builder.new_block();
+                let guard_fail = if i + 1 < arms.len() {
+                    arm_body_blocks[i + 1]
+                } else {
+                    unreachable_block
+                };
+
+                let guard_result = self.lower_expr(guard)?;
+                self.terminate(TerminatorKind::SwitchInt {
+                    discr: guard_result,
+                    targets: SwitchTargets::new(vec![(1, guard_pass)], guard_fail),
+                });
+
+                self.builder.switch_to(guard_pass);
+                self.current_block = guard_pass;
+            }
+
+            let arm_val = self.lower_expr(&arm.body)?;
+            self.push_assign(Place::local(result), Rvalue::Use(arm_val));
+            self.terminate(TerminatorKind::Goto { target: join_block });
+        }
+
+        self.builder.switch_to(join_block);
+        self.current_block = join_block;
+
+        Ok(Operand::Copy(Place::local(result)))
+    }
+
+    /// Lower a loop expression.
+    fn lower_loop(
+        &mut self,
+        body: &Expr,
+        label: Option<LoopId>,
+        ty: &Type,
+        span: Span,
+    ) -> Result<Operand, Vec<Diagnostic>> {
+        let loop_block = self.builder.new_block();
+        let exit_block = self.builder.new_block();
+
+        // Result for break values
+        let result = self.new_temp(ty.clone(), span);
+
+        // Save and set loop context (exit_block, continue_block, result_place)
+        let loop_ctx = (exit_block, loop_block, Some(Place::local(result)));
+        let old_loop = self.current_loop.take();
+        self.current_loop = Some(loop_ctx.clone());
+        if let Some(label) = label {
+            self.loop_contexts.insert(label, loop_ctx);
+        }
+
+        // Jump to loop
+        self.terminate(TerminatorKind::Goto { target: loop_block });
+
+        // Loop body
+        self.builder.switch_to(loop_block);
+        self.current_block = loop_block;
+        let _ = self.lower_expr(body)?;
+
+        // Loop back (only if block isn't already terminated)
+        if !self.builder.is_current_terminated() {
+            self.terminate(TerminatorKind::Goto { target: loop_block });
+        }
+
+        // Restore loop context
+        if let Some(label) = label {
+            self.loop_contexts.remove(&label);
+        }
+        self.current_loop = old_loop;
+
+        // Continue at exit
+        self.builder.switch_to(exit_block);
+        self.current_block = exit_block;
+
+        Ok(Operand::Copy(Place::local(result)))
+    }
+
+    /// Lower a while loop.
+    fn lower_while(
+        &mut self,
+        condition: &Expr,
+        body: &Expr,
+        label: Option<LoopId>,
+        ty: &Type,
+        span: Span,
+    ) -> Result<Operand, Vec<Diagnostic>> {
+        let cond_block = self.builder.new_block();
+        let body_block = self.builder.new_block();
+        let exit_block = self.builder.new_block();
+
+        let result = self.new_temp(ty.clone(), span);
+
+        // Save and set loop context (exit_block, continue_block, result_place)
+        let loop_ctx = (exit_block, cond_block, Some(Place::local(result)));
+        let old_loop = self.current_loop.take();
+        self.current_loop = Some(loop_ctx.clone());
+        if let Some(label) = label {
+            self.loop_contexts.insert(label, loop_ctx);
+        }
+
+        // Jump to condition
+        self.terminate(TerminatorKind::Goto { target: cond_block });
+
+        // Condition block
+        self.builder.switch_to(cond_block);
+        self.current_block = cond_block;
+        let cond = self.lower_expr(condition)?;
+        self.terminate(TerminatorKind::SwitchInt {
+            discr: cond,
+            targets: SwitchTargets::new(vec![(1, body_block)], exit_block),
+        });
+
+        // Body block
+        self.builder.switch_to(body_block);
+        self.current_block = body_block;
+        let _ = self.lower_expr(body)?;
+        if !self.builder.is_current_terminated() {
+            self.terminate(TerminatorKind::Goto { target: cond_block });
+        }
+
+        // Restore loop context
+        if let Some(label) = label {
+            self.loop_contexts.remove(&label);
+        }
+        self.current_loop = old_loop;
+
+        // Exit
+        self.builder.switch_to(exit_block);
+        self.current_block = exit_block;
+
+        Ok(Operand::Copy(Place::local(result)))
+    }
+
+    /// Lower a break expression.
+    fn lower_break(
+        &mut self,
+        label: Option<LoopId>,
+        value: Option<&Expr>,
+        span: Span,
+    ) -> Result<Operand, Vec<Diagnostic>> {
+        // Get loop context (exit_block, continue_block, result_place)
+        let ctx = if let Some(label) = label {
+            self.loop_contexts.get(&label).cloned()
+        } else {
+            self.current_loop.clone()
+        };
+
+        if let Some((exit_block, _continue_block, result_place)) = ctx {
+            if let Some(value) = value {
+                let val = self.lower_expr(value)?;
+                if let Some(rp) = &result_place {
+                    self.push_assign(rp.clone(), Rvalue::Use(val));
+                }
+            }
+            self.terminate(TerminatorKind::Goto { target: exit_block });
+        } else {
+            return Err(vec![Diagnostic::error("break outside of loop".to_string(), span)]);
+        }
+
+        // Unreachable after break
+        let next = self.builder.new_block();
+        self.builder.switch_to(next);
+        self.current_block = next;
+
+        Ok(Operand::Constant(Constant::unit()))
+    }
+
+    /// Lower a continue expression.
+    fn lower_continue(
+        &mut self,
+        label: Option<LoopId>,
+        span: Span,
+    ) -> Result<Operand, Vec<Diagnostic>> {
+        // Get loop context (exit_block, continue_block, result_place)
+        let ctx = if let Some(label) = label {
+            self.loop_contexts.get(&label).cloned()
+        } else {
+            self.current_loop.clone()
+        };
+
+        if let Some((_exit_block, continue_block, _result_place)) = ctx {
+            self.terminate(TerminatorKind::Goto { target: continue_block });
+        } else {
+            return Err(vec![Diagnostic::error("continue outside of loop".to_string(), span)]);
+        }
+
+        let next = self.builder.new_block();
+        self.builder.switch_to(next);
+        self.current_block = next;
+
+        Ok(Operand::Constant(Constant::unit()))
+    }
+
+    /// Lower a struct expression.
+    fn lower_struct(
+        &mut self,
+        def_id: DefId,
+        fields: &[FieldExpr],
+        _base: Option<&Expr>,
+        ty: &Type,
+        span: Span,
+    ) -> Result<Operand, Vec<Diagnostic>> {
+        let mut operands = Vec::with_capacity(fields.len());
+        for field in fields {
+            operands.push(self.lower_expr(&field.value)?);
+        }
+
+        let temp = self.new_temp(ty.clone(), span);
+        self.push_assign(
+            Place::local(temp),
+            Rvalue::Aggregate {
+                kind: AggregateKind::Adt { def_id, variant_idx: None },
+                operands,
+            },
+        );
+
+        Ok(Operand::Copy(Place::local(temp)))
+    }
+
+    /// Lower an anonymous record expression.
+    fn lower_record(
+        &mut self,
+        fields: &[RecordFieldExpr],
+        ty: &Type,
+        span: Span,
+    ) -> Result<Operand, Vec<Diagnostic>> {
+        let mut operands = Vec::with_capacity(fields.len());
+        for field in fields {
+            operands.push(self.lower_expr(&field.value)?);
+        }
+
+        let temp = self.new_temp(ty.clone(), span);
+        self.push_assign(
+            Place::local(temp),
+            Rvalue::Aggregate {
+                kind: AggregateKind::Record,
+                operands,
+            },
+        );
+
+        Ok(Operand::Copy(Place::local(temp)))
+    }
+
+    /// Lower a range expression.
+    fn lower_range(
+        &mut self,
+        start: Option<&Expr>,
+        end: Option<&Expr>,
+        inclusive: bool,
+        ty: &Type,
+        span: Span,
+    ) -> Result<Operand, Vec<Diagnostic>> {
+        let dest = self.new_temp(ty.clone(), span);
+        let dest_place = Place::local(dest);
+
+        // Get the element type from the Range type
+        let elem_ty = match ty.kind() {
+            TypeKind::Range { element, .. } => element.clone(),
+            _ => {
+                if let Some(s) = start {
+                    s.ty.clone()
+                } else if let Some(e) = end {
+                    e.ty.clone()
+                } else {
+                    Type::unit()
+                }
+            }
+        };
+
+        let mut operands = Vec::new();
+
+        // Lower start
+        if let Some(s) = start {
+            let start_op = self.lower_expr(s)?;
+            operands.push(start_op);
+        } else {
+            operands.push(Operand::Constant(Constant::new(
+                elem_ty.clone(),
+                ConstantKind::Int(0),
+            )));
+        }
+
+        // Lower end
+        if let Some(e) = end {
+            let end_op = self.lower_expr(e)?;
+            operands.push(end_op);
+        } else {
+            operands.push(Operand::Constant(Constant::new(
+                elem_ty.clone(),
+                ConstantKind::Int(i64::MAX as i128),
+            )));
+        }
+
+        // For inclusive ranges, add exhausted field
+        if inclusive {
+            operands.push(Operand::Constant(Constant::new(
+                Type::bool(),
+                ConstantKind::Bool(false),
+            )));
+        }
+
+        self.push_assign(
+            dest_place.clone(),
+            Rvalue::Aggregate {
+                kind: AggregateKind::Range { element: elem_ty, inclusive },
+                operands,
+            },
+        );
+
+        Ok(Operand::Copy(dest_place))
     }
 
     /// Generate MIR to test if a pattern matches a value (closure variant).
@@ -1096,10 +1506,30 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
     /// Bind pattern variables to a place in a closure body.
     fn bind_pattern(&mut self, pattern: &Pattern, place: &Place) -> Result<(), Vec<Diagnostic>> {
         match &pattern.kind {
-            PatternKind::Binding { local_id, subpattern, .. } => {
+            PatternKind::Binding { local_id, mutable, subpattern } => {
                 let mir_local = self.new_temp(pattern.ty.clone(), pattern.span);
                 self.local_map.insert(*local_id, mir_local);
-                self.push_assign(Place::local(mir_local), Rvalue::Use(Operand::Copy(place.clone())));
+
+                // Check if this is a ref binding (pattern type is a reference)
+                // In that case, we need to create a reference to the place instead of copying
+                if pattern.ty.is_ref() {
+                    // This is a ref binding (e.g., ref x or ref rest @ ..)
+                    // Create a reference to the place
+                    self.push_assign(
+                        Place::local(mir_local),
+                        Rvalue::Ref {
+                            place: place.clone(),
+                            mutable: *mutable,
+                        },
+                    );
+                } else {
+                    // Regular binding - copy the value
+                    self.push_assign(
+                        Place::local(mir_local),
+                        Rvalue::Use(Operand::Copy(place.clone())),
+                    );
+                }
+
                 if let Some(subpat) = subpattern {
                     self.bind_pattern(subpat, &Place::local(mir_local))?;
                 }
