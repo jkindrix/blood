@@ -1,7 +1,11 @@
 //! Semantic Tokens Provider
 //!
 //! Provides semantic highlighting for Blood source files.
+//!
+//! This module integrates with bloodc's lexer to provide accurate semantic
+//! tokens that match the compiler's tokenization.
 
+use bloodc::{Lexer, TokenKind};
 use tower_lsp::lsp_types::*;
 
 use crate::document::Document;
@@ -155,12 +159,10 @@ pub fn legend() -> SemanticTokensLegend {
 }
 
 /// Provider for semantic tokens.
+///
+/// Uses bloodc's lexer for accurate tokenization matching the compiler.
 pub struct SemanticTokensProvider {
-    /// Blood keywords.
-    keywords: Vec<&'static str>,
-    /// Blood effect keywords.
-    effect_keywords: Vec<&'static str>,
-    /// Blood type keywords.
+    /// Blood type keywords (built-in types from stdlib).
     type_keywords: Vec<&'static str>,
 }
 
@@ -168,16 +170,7 @@ impl SemanticTokensProvider {
     /// Creates a new semantic tokens provider.
     pub fn new() -> Self {
         Self {
-            keywords: vec![
-                "fn", "let", "mut", "if", "else", "match", "loop", "while", "for", "in",
-                "break", "continue", "return", "struct", "enum", "trait", "impl", "type",
-                "where", "pub", "mod", "use", "as", "self", "Self", "super", "crate",
-                "const", "static", "async", "await", "move", "ref", "true", "false",
-            ],
-            effect_keywords: vec![
-                "effect", "handler", "perform", "resume", "handle", "with", "deep", "shallow",
-                "pure", "linear",
-            ],
+            // Type keywords are used to distinguish standard library types
             type_keywords: vec![
                 "i8", "i16", "i32", "i64", "i128", "isize",
                 "u8", "u16", "u32", "u64", "u128", "usize",
@@ -188,6 +181,8 @@ impl SemanticTokensProvider {
     }
 
     /// Provides semantic tokens for a document.
+    ///
+    /// Uses bloodc's lexer for accurate tokenization that matches the compiler.
     pub fn provide(&self, doc: &Document) -> SemanticTokens {
         let mut tokens: Vec<SemanticToken> = Vec::new();
         let text = doc.text();
@@ -195,139 +190,36 @@ impl SemanticTokensProvider {
         let mut prev_line = 0u32;
         let mut prev_char = 0u32;
 
-        // Simple lexical tokenization
-        // TODO: Integrate with bloodc parser for accurate semantic tokens
-        for (line_idx, line) in text.lines().enumerate() {
-            let line_num = line_idx as u32;
-            let mut char_idx = 0u32;
-            let chars: Vec<char> = line.chars().collect();
+        // Use bloodc's lexer for accurate tokenization
+        let lexer = Lexer::new(&text);
 
-            while (char_idx as usize) < chars.len() {
-                let remaining = &line[char_idx as usize..];
-
-                // Skip whitespace
-                if chars[char_idx as usize].is_whitespace() {
-                    char_idx += 1;
-                    continue;
-                }
-
-                // Comments
-                if remaining.starts_with("//") {
-                    let length = remaining.len() as u32;
-                    self.add_token(
-                        &mut tokens,
-                        line_num,
-                        char_idx,
-                        length,
-                        TokenType::Comment as u32,
-                        0,
-                        &mut prev_line,
-                        &mut prev_char,
-                    );
-                    break; // Rest of line is comment
-                }
-
-                // String literals
-                if chars[char_idx as usize] == '"' {
-                    let start = char_idx;
-                    char_idx += 1;
-                    while (char_idx as usize) < chars.len() {
-                        if chars[char_idx as usize] == '"'
-                            && (char_idx == 0 || chars[(char_idx - 1) as usize] != '\\')
-                        {
-                            char_idx += 1;
-                            break;
-                        }
-                        char_idx += 1;
-                    }
-                    self.add_token(
-                        &mut tokens,
-                        line_num,
-                        start,
-                        char_idx - start,
-                        TokenType::String as u32,
-                        0,
-                        &mut prev_line,
-                        &mut prev_char,
-                    );
-                    continue;
-                }
-
-                // Character literals
-                if chars[char_idx as usize] == '\'' {
-                    let start = char_idx;
-                    char_idx += 1;
-                    while (char_idx as usize) < chars.len() && chars[char_idx as usize] != '\'' {
-                        char_idx += 1;
-                    }
-                    if (char_idx as usize) < chars.len() {
-                        char_idx += 1;
-                    }
-                    self.add_token(
-                        &mut tokens,
-                        line_num,
-                        start,
-                        char_idx - start,
-                        TokenType::String as u32,
-                        0,
-                        &mut prev_line,
-                        &mut prev_char,
-                    );
-                    continue;
-                }
-
-                // Numbers
-                if chars[char_idx as usize].is_ascii_digit() {
-                    let start = char_idx;
-                    while (char_idx as usize) < chars.len()
-                        && (chars[char_idx as usize].is_ascii_alphanumeric()
-                            || chars[char_idx as usize] == '_'
-                            || chars[char_idx as usize] == '.')
-                    {
-                        char_idx += 1;
-                    }
-                    self.add_token(
-                        &mut tokens,
-                        line_num,
-                        start,
-                        char_idx - start,
-                        TokenType::Number as u32,
-                        0,
-                        &mut prev_line,
-                        &mut prev_char,
-                    );
-                    continue;
-                }
-
-                // Identifiers and keywords
-                if chars[char_idx as usize].is_alphabetic() || chars[char_idx as usize] == '_' {
-                    let start = char_idx;
-                    while (char_idx as usize) < chars.len()
-                        && (chars[char_idx as usize].is_alphanumeric()
-                            || chars[char_idx as usize] == '_')
-                    {
-                        char_idx += 1;
-                    }
-                    let word = &line[start as usize..char_idx as usize];
-                    let length = char_idx - start;
-
-                    let (token_type, modifiers) = self.classify_word(word);
-                    self.add_token(
-                        &mut tokens,
-                        line_num,
-                        start,
-                        length,
-                        token_type,
-                        modifiers,
-                        &mut prev_line,
-                        &mut prev_char,
-                    );
-                    continue;
-                }
-
-                // Operators and punctuation
-                char_idx += 1;
+        for token in lexer {
+            // Skip EOF and whitespace-only spans
+            if matches!(token.kind, TokenKind::Eof) {
+                continue;
             }
+
+            // Map bloodc TokenKind to LSP semantic token type
+            let (token_type, modifiers) = self.map_token_kind(&token.kind, &text[token.span.start..token.span.end]);
+
+            // Skip tokens we don't want to highlight (operators, punctuation, etc.)
+            if token_type.is_none() {
+                continue;
+            }
+
+            let token_type = token_type.unwrap();
+            let length = (token.span.end - token.span.start) as u32;
+
+            self.add_token(
+                &mut tokens,
+                token.span.start_line as u32,
+                token.span.start_col as u32,
+                length,
+                token_type,
+                modifiers,
+                &mut prev_line,
+                &mut prev_char,
+            );
         }
 
         SemanticTokens {
@@ -336,38 +228,84 @@ impl SemanticTokensProvider {
         }
     }
 
-    /// Classifies a word as a token type.
-    fn classify_word(&self, word: &str) -> (u32, u32) {
-        // Keywords
-        if self.keywords.contains(&word) {
-            return (TokenType::Keyword as u32, 0);
-        }
+    /// Maps a bloodc TokenKind to an LSP semantic token type.
+    ///
+    /// Returns None for tokens that shouldn't be highlighted (punctuation, operators).
+    fn map_token_kind(&self, kind: &TokenKind, text: &str) -> (Option<u32>, u32) {
+        match kind {
+            // Keywords
+            TokenKind::As | TokenKind::Break | TokenKind::Const | TokenKind::Continue
+            | TokenKind::Else | TokenKind::Enum | TokenKind::False | TokenKind::Fn
+            | TokenKind::For | TokenKind::If | TokenKind::Impl | TokenKind::In
+            | TokenKind::Let | TokenKind::Loop | TokenKind::Match | TokenKind::Mod
+            | TokenKind::Module | TokenKind::Move | TokenKind::Mut | TokenKind::Pub
+            | TokenKind::Ref | TokenKind::Return | TokenKind::SelfLower | TokenKind::SelfUpper
+            | TokenKind::Static | TokenKind::Struct | TokenKind::Super | TokenKind::Trait
+            | TokenKind::True | TokenKind::Type | TokenKind::Use | TokenKind::Where
+            | TokenKind::While | TokenKind::Yield | TokenKind::Async | TokenKind::Await
+            | TokenKind::Dyn | TokenKind::Crate | TokenKind::Bridge | TokenKind::Extern => {
+                (Some(TokenType::Keyword as u32), 0)
+            }
 
-        // Effect keywords
-        if self.effect_keywords.contains(&word) {
-            let modifier = if word == "pure" {
-                TokenModifier::Pure.bitmask()
-            } else {
-                0
-            };
-            return (TokenType::Keyword as u32, modifier);
-        }
+            // Effect-related keywords
+            TokenKind::Effect | TokenKind::Handler | TokenKind::Perform
+            | TokenKind::Resume | TokenKind::With | TokenKind::Handle
+            | TokenKind::Deep | TokenKind::Shallow | TokenKind::Pure => {
+                let modifier = if matches!(kind, TokenKind::Pure) {
+                    TokenModifier::Pure.bitmask()
+                } else {
+                    0
+                };
+                (Some(TokenType::Keyword as u32), modifier)
+            }
 
-        // Type keywords
-        if self.type_keywords.contains(&word) {
-            return (
-                TokenType::Type as u32,
-                TokenModifier::DefaultLibrary.bitmask(),
-            );
-        }
+            // Numeric literals
+            TokenKind::IntLit | TokenKind::FloatLit => {
+                (Some(TokenType::Number as u32), 0)
+            }
 
-        // Uppercase = type
-        if word.chars().next().is_some_and(|c| c.is_uppercase()) {
-            return (TokenType::Type as u32, 0);
-        }
+            // String and character literals
+            TokenKind::StringLit | TokenKind::CharLit => {
+                (Some(TokenType::String as u32), 0)
+            }
 
-        // Default to variable
-        (TokenType::Variable as u32, 0)
+            // Comments (if lexer preserves them - currently skipped)
+            TokenKind::LineComment | TokenKind::BlockComment => {
+                (Some(TokenType::Comment as u32), 0)
+            }
+
+            // Identifiers
+            TokenKind::Ident => {
+                // Check if it's a known type keyword
+                if self.type_keywords.contains(&text) {
+                    (Some(TokenType::Type as u32), TokenModifier::DefaultLibrary.bitmask())
+                } else {
+                    (Some(TokenType::Variable as u32), 0)
+                }
+            }
+
+            // Type identifiers (uppercase)
+            TokenKind::TypeIdent => {
+                if self.type_keywords.contains(&text) {
+                    (Some(TokenType::Type as u32), TokenModifier::DefaultLibrary.bitmask())
+                } else {
+                    (Some(TokenType::Type as u32), 0)
+                }
+            }
+
+            // Lifetime identifiers
+            TokenKind::Lifetime => {
+                (Some(TokenType::Lifetime as u32), 0)
+            }
+
+            // Attributes/decorators
+            TokenKind::AtUnsafe | TokenKind::AtHeap | TokenKind::AtStack => {
+                (Some(TokenType::Decorator as u32), 0)
+            }
+
+            // Operators and punctuation - don't highlight
+            _ => (None, 0),
+        }
     }
 
     /// Adds a token with delta encoding.
