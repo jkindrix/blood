@@ -44,6 +44,35 @@ use super::ptr::{BloodPtr, PERSISTENT_MARKER};
 use super::types::{Place, Operand, Rvalue, StatementKind, TerminatorKind};
 
 // ============================================================================
+// Snapshot Identification
+// ============================================================================
+
+/// Unique identifier for a snapshot in a snapshot chain.
+///
+/// Used to track parent-child relationships in nested handler contexts.
+/// Snapshot IDs are assigned sequentially and are unique within a compilation unit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SnapshotId(pub u32);
+
+impl SnapshotId {
+    /// Create a new snapshot ID.
+    pub fn new(id: u32) -> Self {
+        Self(id)
+    }
+
+    /// Get the raw ID value.
+    pub fn index(&self) -> u32 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for SnapshotId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "snapshot_{}", self.0)
+    }
+}
+
+// ============================================================================
 // Generation Snapshot
 // ============================================================================
 
@@ -52,23 +81,100 @@ use super::types::{Place, Operand, Rvalue, StatementKind, TerminatorKind};
 /// From MEMORY_MODEL.md §6:
 /// "Generation snapshots record the expected generations at capture time.
 /// On resume, each entry is validated."
+///
+/// ## Snapshot Sharing
+///
+/// For nested effect handlers, snapshots can form a chain via parent references.
+/// This reduces memory from O(n²) to O(n) for deeply nested handlers:
+///
+/// ```text
+/// Snapshot_C → Snapshot_B → Snapshot_A → None
+///    │              │             │
+///    └── delta_C    └── delta_B   └── full_snapshot
+/// ```
+///
+/// Each child snapshot only stores entries that differ from its parent,
+/// avoiding duplication of common data.
 #[derive(Debug, Clone, Default)]
 pub struct GenerationSnapshot {
+    /// Optional unique identifier for this snapshot.
+    pub id: Option<SnapshotId>,
+    /// Reference to parent snapshot for nested handlers.
+    /// When set, this snapshot only contains entries added since the parent.
+    pub parent: Option<SnapshotId>,
     /// Entries mapping addresses to expected generations.
+    /// For child snapshots, this only includes new/modified entries.
     pub entries: Vec<SnapshotEntry>,
 }
 
 impl GenerationSnapshot {
     /// Create an empty snapshot.
     pub fn new() -> Self {
-        Self { entries: Vec::new() }
+        Self {
+            id: None,
+            parent: None,
+            entries: Vec::new(),
+        }
+    }
+
+    /// Create a snapshot with a specific ID.
+    pub fn with_id(id: SnapshotId) -> Self {
+        Self {
+            id: Some(id),
+            parent: None,
+            entries: Vec::new(),
+        }
+    }
+
+    /// Create a child snapshot that references a parent.
+    ///
+    /// The child snapshot only needs to store entries that are new or modified
+    /// compared to the parent, reducing memory for nested handlers.
+    pub fn with_parent(id: SnapshotId, parent_id: SnapshotId) -> Self {
+        Self {
+            id: Some(id),
+            parent: Some(parent_id),
+            entries: Vec::new(),
+        }
     }
 
     /// Create with capacity.
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
+            id: None,
+            parent: None,
             entries: Vec::with_capacity(capacity),
         }
+    }
+
+    /// Check if this is a root snapshot (no parent).
+    pub fn is_root(&self) -> bool {
+        self.parent.is_none()
+    }
+
+    /// Check if this is a child snapshot (has parent).
+    pub fn has_parent(&self) -> bool {
+        self.parent.is_some()
+    }
+
+    /// Get the parent snapshot ID, if any.
+    pub fn parent_id(&self) -> Option<SnapshotId> {
+        self.parent
+    }
+
+    /// Get this snapshot's ID, if assigned.
+    pub fn snapshot_id(&self) -> Option<SnapshotId> {
+        self.id
+    }
+
+    /// Set the snapshot ID.
+    pub fn set_id(&mut self, id: SnapshotId) {
+        self.id = Some(id);
+    }
+
+    /// Set the parent snapshot ID.
+    pub fn set_parent(&mut self, parent_id: SnapshotId) {
+        self.parent = Some(parent_id);
     }
 
     /// Add an entry to the snapshot.
@@ -145,6 +251,224 @@ impl GenerationSnapshot {
     /// Get all locals referenced in this snapshot.
     pub fn locals(&self) -> HashSet<LocalId> {
         self.entries.iter().map(|e| e.local).collect()
+    }
+
+    /// Get the total entry count including parent chain.
+    ///
+    /// This requires access to a SnapshotStore to traverse the parent chain.
+    pub fn total_entries(&self, store: &SnapshotStore) -> usize {
+        let mut count = self.entries.len();
+        if let Some(parent_id) = self.parent {
+            if let Some(parent) = store.get(parent_id) {
+                count += parent.total_entries(store);
+            }
+        }
+        count
+    }
+}
+
+// ============================================================================
+// Snapshot Store
+// ============================================================================
+
+/// A store for managing snapshot chains in nested handlers.
+///
+/// The SnapshotStore enables efficient sharing of snapshot data between
+/// nested effect handlers. Each nested handler creates a child snapshot
+/// that references its parent, avoiding duplication of common entries.
+///
+/// ## Memory Model
+///
+/// Without sharing (n nested handlers with m entries each):
+/// - Memory: O(n * m) per handler = O(n² * m) total
+///
+/// With sharing:
+/// - Memory: O(m) for root + O(delta) per child = O(n * delta) total
+///
+/// For deeply nested handlers where delta << m, this provides significant
+/// memory savings.
+///
+/// ## Example
+///
+/// ```ignore
+/// let mut store = SnapshotStore::new();
+///
+/// // Create root snapshot
+/// let root_id = store.create_root();
+/// store.get_mut(root_id).unwrap().add_entry(...);
+///
+/// // Create child snapshot for nested handler
+/// let child_id = store.create_child(root_id);
+/// store.get_mut(child_id).unwrap().add_entry(...); // Only delta entries
+///
+/// // Validate walks the entire chain
+/// store.validate_chain(child_id, |addr| ...)?;
+/// ```
+#[derive(Debug, Default)]
+pub struct SnapshotStore {
+    /// All snapshots indexed by ID.
+    snapshots: Vec<GenerationSnapshot>,
+    /// Counter for generating unique IDs.
+    next_id: u32,
+}
+
+impl SnapshotStore {
+    /// Create a new empty snapshot store.
+    pub fn new() -> Self {
+        Self {
+            snapshots: Vec::new(),
+            next_id: 0,
+        }
+    }
+
+    /// Create a root snapshot (no parent) and return its ID.
+    pub fn create_root(&mut self) -> SnapshotId {
+        let id = SnapshotId::new(self.next_id);
+        self.next_id += 1;
+        self.snapshots.push(GenerationSnapshot::with_id(id));
+        id
+    }
+
+    /// Create a child snapshot with the given parent and return its ID.
+    pub fn create_child(&mut self, parent_id: SnapshotId) -> SnapshotId {
+        let id = SnapshotId::new(self.next_id);
+        self.next_id += 1;
+        self.snapshots.push(GenerationSnapshot::with_parent(id, parent_id));
+        id
+    }
+
+    /// Get a snapshot by ID.
+    pub fn get(&self, id: SnapshotId) -> Option<&GenerationSnapshot> {
+        self.snapshots.get(id.0 as usize)
+    }
+
+    /// Get a mutable reference to a snapshot by ID.
+    pub fn get_mut(&mut self, id: SnapshotId) -> Option<&mut GenerationSnapshot> {
+        self.snapshots.get_mut(id.0 as usize)
+    }
+
+    /// Validate a snapshot and its entire parent chain.
+    ///
+    /// Validation walks from the given snapshot up through all parent
+    /// snapshots, checking each entry against the current generation.
+    pub fn validate_chain<F>(&self, id: SnapshotId, get_current_gen: F) -> Result<(), SnapshotValidationError>
+    where
+        F: Fn(u64) -> Option<u32>,
+    {
+        let mut current_id = Some(id);
+
+        while let Some(snap_id) = current_id {
+            let snapshot = self.get(snap_id).ok_or_else(|| SnapshotValidationError {
+                entry: SnapshotEntry::new(0, 0, LocalId::new(0)),
+                actual_generation: 0,
+            })?;
+
+            // Validate this snapshot's entries
+            snapshot.validate(&get_current_gen)?;
+
+            // Move to parent
+            current_id = snapshot.parent;
+        }
+
+        Ok(())
+    }
+
+    /// Get the depth of a snapshot chain (number of snapshots from root to this one).
+    pub fn chain_depth(&self, id: SnapshotId) -> usize {
+        let mut depth = 0;
+        let mut current_id = Some(id);
+
+        while let Some(snap_id) = current_id {
+            depth += 1;
+            current_id = self.get(snap_id).and_then(|s| s.parent);
+        }
+
+        depth
+    }
+
+    /// Get all snapshot IDs in the chain from root to the given snapshot.
+    pub fn chain_to_root(&self, id: SnapshotId) -> Vec<SnapshotId> {
+        let mut chain = Vec::new();
+        let mut current_id = Some(id);
+
+        while let Some(snap_id) = current_id {
+            chain.push(snap_id);
+            current_id = self.get(snap_id).and_then(|s| s.parent);
+        }
+
+        chain.reverse(); // Return root-first order
+        chain
+    }
+
+    /// Get all entries in a snapshot chain (flattened).
+    ///
+    /// Returns entries from root to leaf, with later entries overriding
+    /// earlier ones for the same address.
+    pub fn flatten_chain(&self, id: SnapshotId) -> Vec<SnapshotEntry> {
+        let chain = self.chain_to_root(id);
+        let mut seen_addresses = HashSet::new();
+        let mut result = Vec::new();
+
+        // Process from root to leaf so that child entries override parent
+        for snap_id in chain {
+            if let Some(snapshot) = self.get(snap_id) {
+                for entry in &snapshot.entries {
+                    if seen_addresses.insert(entry.address) {
+                        result.push(entry.clone());
+                    } else {
+                        // Update existing entry with newer generation
+                        if let Some(existing) = result.iter_mut().find(|e| e.address == entry.address) {
+                            *existing = entry.clone();
+                        }
+                    }
+                }
+            }
+        }
+
+        result
+    }
+
+    /// Get total entry count across all snapshots.
+    pub fn total_entries(&self) -> usize {
+        self.snapshots.iter().map(|s| s.entries.len()).sum()
+    }
+
+    /// Get the number of snapshots in the store.
+    pub fn len(&self) -> usize {
+        self.snapshots.len()
+    }
+
+    /// Check if the store is empty.
+    pub fn is_empty(&self) -> bool {
+        self.snapshots.is_empty()
+    }
+
+    /// Remove a snapshot and all its descendants.
+    ///
+    /// Note: This invalidates IDs. Use with caution.
+    pub fn remove_chain(&mut self, id: SnapshotId) {
+        // Find all descendants
+        let descendants: Vec<_> = self.snapshots
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| {
+                // Check if this snapshot is in the chain rooted at id
+                let mut current = s.parent;
+                while let Some(pid) = current {
+                    if pid == id {
+                        return true;
+                    }
+                    current = self.get(pid).and_then(|p| p.parent);
+                }
+                s.id == Some(id)
+            })
+            .map(|(i, _)| i)
+            .collect();
+
+        // Remove in reverse order to maintain indices
+        for idx in descendants.into_iter().rev() {
+            self.snapshots.remove(idx);
+        }
     }
 }
 
@@ -1215,5 +1539,298 @@ mod tests {
         let lazy = LazySnapshot::new(snapshot, |_| Some(42));
 
         assert_eq!(lazy.snapshot().len(), 1);
+    }
+
+    // ========================================================================
+    // Snapshot ID Tests
+    // ========================================================================
+
+    #[test]
+    fn test_snapshot_id_new() {
+        let id = SnapshotId::new(42);
+        assert_eq!(id.index(), 42);
+    }
+
+    #[test]
+    fn test_snapshot_id_display() {
+        let id = SnapshotId::new(5);
+        assert_eq!(format!("{}", id), "snapshot_5");
+    }
+
+    #[test]
+    fn test_snapshot_id_equality() {
+        let id1 = SnapshotId::new(10);
+        let id2 = SnapshotId::new(10);
+        let id3 = SnapshotId::new(20);
+
+        assert_eq!(id1, id2);
+        assert_ne!(id1, id3);
+    }
+
+    // ========================================================================
+    // Snapshot Store Tests
+    // ========================================================================
+
+    #[test]
+    fn test_snapshot_store_new() {
+        let store = SnapshotStore::new();
+        assert!(store.is_empty());
+        assert_eq!(store.len(), 0);
+    }
+
+    #[test]
+    fn test_snapshot_store_create_root() {
+        let mut store = SnapshotStore::new();
+        let root_id = store.create_root();
+
+        assert_eq!(store.len(), 1);
+        assert_eq!(root_id.index(), 0);
+
+        let root = store.get(root_id).unwrap();
+        assert!(root.is_root());
+        assert!(!root.has_parent());
+        assert_eq!(root.snapshot_id(), Some(root_id));
+    }
+
+    #[test]
+    fn test_snapshot_store_create_child() {
+        let mut store = SnapshotStore::new();
+        let root_id = store.create_root();
+        let child_id = store.create_child(root_id);
+
+        assert_eq!(store.len(), 2);
+        assert_eq!(child_id.index(), 1);
+
+        let child = store.get(child_id).unwrap();
+        assert!(!child.is_root());
+        assert!(child.has_parent());
+        assert_eq!(child.parent_id(), Some(root_id));
+    }
+
+    #[test]
+    fn test_snapshot_store_chain_depth() {
+        let mut store = SnapshotStore::new();
+        let root_id = store.create_root();
+        let child1_id = store.create_child(root_id);
+        let child2_id = store.create_child(child1_id);
+
+        assert_eq!(store.chain_depth(root_id), 1);
+        assert_eq!(store.chain_depth(child1_id), 2);
+        assert_eq!(store.chain_depth(child2_id), 3);
+    }
+
+    #[test]
+    fn test_snapshot_store_chain_to_root() {
+        let mut store = SnapshotStore::new();
+        let root_id = store.create_root();
+        let child1_id = store.create_child(root_id);
+        let child2_id = store.create_child(child1_id);
+
+        let chain = store.chain_to_root(child2_id);
+        assert_eq!(chain.len(), 3);
+        assert_eq!(chain[0], root_id);
+        assert_eq!(chain[1], child1_id);
+        assert_eq!(chain[2], child2_id);
+    }
+
+    #[test]
+    fn test_snapshot_store_validate_chain_success() {
+        let mut store = SnapshotStore::new();
+
+        // Create root with entry
+        let root_id = store.create_root();
+        store.get_mut(root_id).unwrap().add_entry(
+            SnapshotEntry::new(0x1000, 42, LocalId::new(1))
+        );
+
+        // Create child with additional entry
+        let child_id = store.create_child(root_id);
+        store.get_mut(child_id).unwrap().add_entry(
+            SnapshotEntry::new(0x2000, 43, LocalId::new(2))
+        );
+
+        // Validate entire chain
+        let result = store.validate_chain(child_id, |addr| match addr {
+            0x1000 => Some(42),
+            0x2000 => Some(43),
+            _ => None,
+        });
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_snapshot_store_validate_chain_failure_in_parent() {
+        let mut store = SnapshotStore::new();
+
+        // Create root with entry that will fail
+        let root_id = store.create_root();
+        store.get_mut(root_id).unwrap().add_entry(
+            SnapshotEntry::new(0x1000, 42, LocalId::new(1))
+        );
+
+        // Create child with valid entry
+        let child_id = store.create_child(root_id);
+        store.get_mut(child_id).unwrap().add_entry(
+            SnapshotEntry::new(0x2000, 43, LocalId::new(2))
+        );
+
+        // Validation should fail on parent's entry
+        let result = store.validate_chain(child_id, |addr| match addr {
+            0x1000 => Some(99), // Wrong generation
+            0x2000 => Some(43),
+            _ => None,
+        });
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.entry.address, 0x1000);
+    }
+
+    #[test]
+    fn test_snapshot_store_flatten_chain() {
+        let mut store = SnapshotStore::new();
+
+        // Create root with entries
+        let root_id = store.create_root();
+        store.get_mut(root_id).unwrap().add_entry(
+            SnapshotEntry::new(0x1000, 42, LocalId::new(1))
+        );
+        store.get_mut(root_id).unwrap().add_entry(
+            SnapshotEntry::new(0x2000, 43, LocalId::new(2))
+        );
+
+        // Create child that overrides one entry and adds new one
+        let child_id = store.create_child(root_id);
+        store.get_mut(child_id).unwrap().add_entry(
+            SnapshotEntry::new(0x2000, 99, LocalId::new(2)) // Override
+        );
+        store.get_mut(child_id).unwrap().add_entry(
+            SnapshotEntry::new(0x3000, 44, LocalId::new(3)) // New
+        );
+
+        let flattened = store.flatten_chain(child_id);
+        assert_eq!(flattened.len(), 3);
+
+        // Check that child's override took effect
+        let entry_2000 = flattened.iter().find(|e| e.address == 0x2000).unwrap();
+        assert_eq!(entry_2000.generation, 99); // Child's value
+    }
+
+    #[test]
+    fn test_snapshot_store_total_entries() {
+        let mut store = SnapshotStore::new();
+
+        let root_id = store.create_root();
+        store.get_mut(root_id).unwrap().add_entry(
+            SnapshotEntry::new(0x1000, 42, LocalId::new(1))
+        );
+        store.get_mut(root_id).unwrap().add_entry(
+            SnapshotEntry::new(0x2000, 43, LocalId::new(2))
+        );
+
+        let child_id = store.create_child(root_id);
+        store.get_mut(child_id).unwrap().add_entry(
+            SnapshotEntry::new(0x3000, 44, LocalId::new(3))
+        );
+
+        assert_eq!(store.total_entries(), 3);
+    }
+
+    #[test]
+    fn test_snapshot_total_entries_with_store() {
+        let mut store = SnapshotStore::new();
+
+        let root_id = store.create_root();
+        store.get_mut(root_id).unwrap().add_entry(
+            SnapshotEntry::new(0x1000, 42, LocalId::new(1))
+        );
+        store.get_mut(root_id).unwrap().add_entry(
+            SnapshotEntry::new(0x2000, 43, LocalId::new(2))
+        );
+
+        let child_id = store.create_child(root_id);
+        store.get_mut(child_id).unwrap().add_entry(
+            SnapshotEntry::new(0x3000, 44, LocalId::new(3))
+        );
+
+        // Root has 2 entries
+        let root = store.get(root_id).unwrap();
+        assert_eq!(root.total_entries(&store), 2);
+
+        // Child has 1 + 2 from parent = 3 total
+        let child = store.get(child_id).unwrap();
+        assert_eq!(child.total_entries(&store), 3);
+    }
+
+    #[test]
+    fn test_snapshot_with_id() {
+        let id = SnapshotId::new(42);
+        let snapshot = GenerationSnapshot::with_id(id);
+
+        assert_eq!(snapshot.snapshot_id(), Some(id));
+        assert!(snapshot.is_root());
+        assert!(snapshot.is_empty());
+    }
+
+    #[test]
+    fn test_snapshot_with_parent() {
+        let id = SnapshotId::new(2);
+        let parent_id = SnapshotId::new(1);
+        let snapshot = GenerationSnapshot::with_parent(id, parent_id);
+
+        assert_eq!(snapshot.snapshot_id(), Some(id));
+        assert_eq!(snapshot.parent_id(), Some(parent_id));
+        assert!(snapshot.has_parent());
+        assert!(!snapshot.is_root());
+    }
+
+    #[test]
+    fn test_snapshot_set_id_and_parent() {
+        let mut snapshot = GenerationSnapshot::new();
+
+        assert!(snapshot.snapshot_id().is_none());
+        assert!(snapshot.parent_id().is_none());
+
+        snapshot.set_id(SnapshotId::new(5));
+        snapshot.set_parent(SnapshotId::new(4));
+
+        assert_eq!(snapshot.snapshot_id(), Some(SnapshotId::new(5)));
+        assert_eq!(snapshot.parent_id(), Some(SnapshotId::new(4)));
+    }
+
+    #[test]
+    fn test_deeply_nested_chain() {
+        let mut store = SnapshotStore::new();
+
+        // Create a chain of 10 nested snapshots
+        let mut current_id = store.create_root();
+        store.get_mut(current_id).unwrap().add_entry(
+            SnapshotEntry::new(0x1000, 1, LocalId::new(1))
+        );
+
+        for i in 1..10 {
+            let child_id = store.create_child(current_id);
+            store.get_mut(child_id).unwrap().add_entry(
+                SnapshotEntry::new(0x1000 + (i * 0x100) as u64, (i + 1) as u32, LocalId::new(1))
+            );
+            current_id = child_id;
+        }
+
+        // Verify depth
+        assert_eq!(store.chain_depth(current_id), 10);
+
+        // Verify we can validate the entire chain
+        let result = store.validate_chain(current_id, |addr| {
+            // All generations match based on address
+            let gen = ((addr - 0x1000) / 0x100 + 1) as u32;
+            Some(gen)
+        });
+
+        assert!(result.is_ok());
+
+        // Verify flattening works
+        let flattened = store.flatten_chain(current_id);
+        assert_eq!(flattened.len(), 10);
     }
 }

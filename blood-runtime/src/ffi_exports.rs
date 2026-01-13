@@ -1065,22 +1065,127 @@ struct SnapshotEntry {
 }
 
 /// A generation snapshot for validating captured references.
+///
+/// ## Snapshot Sharing for Nested Handlers
+///
+/// When effect handlers are nested, each handler can create a child snapshot
+/// that references its parent. This reduces memory from O(n²) to O(n) for
+/// deeply nested handlers:
+///
+/// ```text
+/// Snapshot_C → Snapshot_B → Snapshot_A → NULL
+///    │              │             │
+///    └── delta_C    └── delta_B   └── full_snapshot
+/// ```
+///
+/// Each child snapshot only stores entries added in its scope; validation
+/// walks the entire chain to verify all references.
 struct GenerationSnapshot {
+    /// Entries for this snapshot scope only.
     entries: Vec<SnapshotEntry>,
+    /// Parent snapshot for nested handlers (not owned - managed separately).
+    parent: SnapshotHandle,
 }
 
 /// Opaque handle to a generation snapshot.
 pub type SnapshotHandle = *mut c_void;
 
-/// Create a new generation snapshot.
+/// Create a new generation snapshot (root, no parent).
 ///
 /// Returns a handle to an empty snapshot, or null on failure.
 #[no_mangle]
 pub extern "C" fn blood_snapshot_create() -> SnapshotHandle {
     let snapshot = Box::new(GenerationSnapshot {
         entries: Vec::new(),
+        parent: std::ptr::null_mut(),
     });
     Box::into_raw(snapshot) as SnapshotHandle
+}
+
+/// Create a child snapshot that references a parent snapshot.
+///
+/// This is used for nested effect handlers to share snapshot data.
+/// The child only needs to store entries for references captured in its
+/// scope; validation will walk the parent chain automatically.
+///
+/// # Arguments
+/// * `parent` - Handle to the parent snapshot (can be null for root)
+///
+/// # Returns
+/// Handle to a new child snapshot, or null on failure.
+///
+/// # Note
+/// The child does NOT own the parent. The parent's lifetime must be
+/// managed separately (typically by the enclosing handler scope).
+#[no_mangle]
+pub extern "C" fn blood_snapshot_create_child(parent: SnapshotHandle) -> SnapshotHandle {
+    let snapshot = Box::new(GenerationSnapshot {
+        entries: Vec::new(),
+        parent,
+    });
+    Box::into_raw(snapshot) as SnapshotHandle
+}
+
+/// Get the parent snapshot of a snapshot.
+///
+/// # Safety
+/// The snapshot handle must be valid.
+///
+/// # Returns
+/// The parent snapshot handle, or null if this is a root snapshot.
+#[no_mangle]
+pub unsafe extern "C" fn blood_snapshot_get_parent(snapshot: SnapshotHandle) -> SnapshotHandle {
+    if snapshot.is_null() {
+        return std::ptr::null_mut();
+    }
+    let snap = &*(snapshot as *const GenerationSnapshot);
+    snap.parent
+}
+
+/// Set the parent snapshot of a snapshot.
+///
+/// This allows linking snapshots after creation if needed.
+///
+/// # Safety
+/// The snapshot handle must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn blood_snapshot_set_parent(snapshot: SnapshotHandle, parent: SnapshotHandle) {
+    if snapshot.is_null() {
+        return;
+    }
+    let snap = &mut *(snapshot as *mut GenerationSnapshot);
+    snap.parent = parent;
+}
+
+/// Check if a snapshot has a parent (is a child snapshot).
+///
+/// # Safety
+/// The snapshot handle must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn blood_snapshot_has_parent(snapshot: SnapshotHandle) -> bool {
+    if snapshot.is_null() {
+        return false;
+    }
+    let snap = &*(snapshot as *const GenerationSnapshot);
+    !snap.parent.is_null()
+}
+
+/// Get the depth of the snapshot chain (1 for root, 2 for child of root, etc.).
+///
+/// # Safety
+/// The snapshot handle must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn blood_snapshot_chain_depth(snapshot: SnapshotHandle) -> usize {
+    let mut depth = 0;
+    let mut current = snapshot;
+
+    while !current.is_null() {
+        depth += 1;
+        let snap = &*(current as *const GenerationSnapshot);
+        current = snap.parent;
+    }
+
+    depth
 }
 
 /// Add an entry to a generation snapshot.
@@ -1113,9 +1218,13 @@ pub unsafe extern "C" fn blood_snapshot_add_entry(
 
 /// Validate a generation snapshot against current memory state.
 ///
-/// Returns 0 if all generations match (valid), or the 1-based index
-/// of the first stale entry found. A return value > 0 indicates a
-/// stale reference at entry (return_value - 1).
+/// Returns 0 if all generations match (valid), or a positive value
+/// indicating a stale reference was found. For snapshots without parents,
+/// the return value is the 1-based index of the stale entry.
+///
+/// For snapshots with parents (nested handlers), validation walks the
+/// entire chain from child to root. A stale entry in a parent will
+/// also cause validation to fail.
 ///
 /// This function uses the global slot registry to look up the current
 /// generation for each address and compare it against the expected
@@ -1127,6 +1236,67 @@ pub unsafe extern "C" fn blood_snapshot_add_entry(
 /// The snapshot handle must be valid.
 #[no_mangle]
 pub unsafe extern "C" fn blood_snapshot_validate(snapshot: SnapshotHandle) -> i64 {
+    if snapshot.is_null() {
+        return 0; // Empty/null snapshot is valid
+    }
+
+    // Walk the entire chain from this snapshot to root
+    let mut current = snapshot;
+    let mut chain_offset: i64 = 0;
+
+    while !current.is_null() {
+        let snap = &*(current as *const GenerationSnapshot);
+
+        for (i, entry) in snap.entries.iter().enumerate() {
+            // Skip persistent references (generation = 0xFFFFFFFF)
+            if entry.generation == generation::PERSISTENT {
+                continue;
+            }
+
+            // Look up the current generation from the slot registry
+            match get_slot_generation(entry.address) {
+                Some(actual_gen) => {
+                    if actual_gen != entry.generation {
+                        // Generation mismatch - reference is stale
+                        // Return 1-based index accounting for chain position
+                        return chain_offset + (i + 1) as i64;
+                    }
+                }
+                None => {
+                    // Address not found in registry - could be:
+                    // 1. Memory was freed and slot entry was removed
+                    // 2. Address was never registered (stack/static memory)
+                    //
+                    // For now, treat unregistered addresses as potentially valid
+                    // (they might be stack or static memory which isn't tracked).
+                    // A stricter implementation could require all genrefs be registered.
+                    //
+                    // However, if the captured generation is not FIRST (1), the address
+                    // was likely heap memory that has been freed and its entry cleaned up.
+                    if entry.generation > generation::FIRST {
+                        return chain_offset + (i + 1) as i64;
+                    }
+                }
+            }
+        }
+
+        // Move to parent and track offset for error reporting
+        chain_offset += snap.entries.len() as i64;
+        current = snap.parent;
+    }
+
+    0 // All valid
+}
+
+/// Validate only this snapshot's entries, not walking the parent chain.
+///
+/// This is useful when you know the parent has already been validated
+/// and want to avoid redundant work.
+///
+/// # Safety
+/// The snapshot handle must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn blood_snapshot_validate_local(snapshot: SnapshotHandle) -> i64 {
     if snapshot.is_null() {
         return 0; // Empty/null snapshot is valid
     }
@@ -1154,16 +1324,8 @@ pub unsafe extern "C" fn blood_snapshot_validate(snapshot: SnapshotHandle) -> i6
                 }
             }
             None => {
-                // Address not found in registry - could be:
-                // 1. Memory was freed and slot entry was removed
-                // 2. Address was never registered (stack/static memory)
-                //
-                // For now, treat unregistered addresses as potentially valid
-                // (they might be stack or static memory which isn't tracked).
-                // A stricter implementation could require all genrefs be registered.
-                //
-                // However, if the captured generation is not FIRST (1), the address
-                // was likely heap memory that has been freed and its entry cleaned up.
+                // If the captured generation is not FIRST (1), the address
+                // was likely heap memory that has been freed
                 if entry.generation > generation::FIRST {
                     return (i + 1) as i64;
                 }
@@ -1174,7 +1336,7 @@ pub unsafe extern "C" fn blood_snapshot_validate(snapshot: SnapshotHandle) -> i6
     0 // All valid
 }
 
-/// Get the number of entries in a snapshot.
+/// Get the number of entries in this snapshot only (not including parents).
 ///
 /// # Safety
 /// The snapshot handle must be valid.
@@ -1187,10 +1349,35 @@ pub unsafe extern "C" fn blood_snapshot_len(snapshot: SnapshotHandle) -> usize {
     snap.entries.len()
 }
 
-/// Destroy a generation snapshot.
+/// Get the total number of entries in the snapshot chain (including all parents).
+///
+/// This walks the parent chain and sums the entry counts.
 ///
 /// # Safety
-/// The snapshot handle must have been created with blood_snapshot_create.
+/// The snapshot handle must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn blood_snapshot_total_len(snapshot: SnapshotHandle) -> usize {
+    let mut total = 0;
+    let mut current = snapshot;
+
+    while !current.is_null() {
+        let snap = &*(current as *const GenerationSnapshot);
+        total += snap.entries.len();
+        current = snap.parent;
+    }
+
+    total
+}
+
+/// Destroy a generation snapshot.
+///
+/// # Important
+/// This only destroys this snapshot, NOT its parent. Parent snapshots must
+/// be destroyed separately (typically when their handler scope exits).
+///
+/// # Safety
+/// The snapshot handle must have been created with blood_snapshot_create
+/// or blood_snapshot_create_child.
 #[no_mangle]
 pub unsafe extern "C" fn blood_snapshot_destroy(snapshot: SnapshotHandle) {
     if !snapshot.is_null() {
@@ -2790,6 +2977,285 @@ mod tests {
 
         // Clean up
         blood_unregister_allocation(addr);
+    }
+
+    // ========================================================================
+    // Snapshot Sharing Tests (Nested Handlers)
+    // ========================================================================
+
+    #[test]
+    fn test_snapshot_create_child() {
+        let parent = blood_snapshot_create();
+        assert!(!parent.is_null());
+
+        let child = blood_snapshot_create_child(parent);
+        assert!(!child.is_null());
+
+        unsafe {
+            // Child should have parent set
+            assert!(blood_snapshot_has_parent(child));
+            assert_eq!(blood_snapshot_get_parent(child), parent);
+
+            // Parent should not have parent
+            assert!(!blood_snapshot_has_parent(parent));
+            assert!(blood_snapshot_get_parent(parent).is_null());
+
+            // Chain depth
+            assert_eq!(blood_snapshot_chain_depth(parent), 1);
+            assert_eq!(blood_snapshot_chain_depth(child), 2);
+
+            // Clean up (child first, then parent)
+            blood_snapshot_destroy(child);
+            blood_snapshot_destroy(parent);
+        }
+    }
+
+    #[test]
+    fn test_snapshot_chain_depth() {
+        let root = blood_snapshot_create();
+        let child1 = blood_snapshot_create_child(root);
+        let child2 = blood_snapshot_create_child(child1);
+        let child3 = blood_snapshot_create_child(child2);
+
+        unsafe {
+            assert_eq!(blood_snapshot_chain_depth(root), 1);
+            assert_eq!(blood_snapshot_chain_depth(child1), 2);
+            assert_eq!(blood_snapshot_chain_depth(child2), 3);
+            assert_eq!(blood_snapshot_chain_depth(child3), 4);
+
+            // Clean up deepest first
+            blood_snapshot_destroy(child3);
+            blood_snapshot_destroy(child2);
+            blood_snapshot_destroy(child1);
+            blood_snapshot_destroy(root);
+        }
+    }
+
+    #[test]
+    fn test_snapshot_total_len() {
+        let parent = blood_snapshot_create();
+        let child = blood_snapshot_create_child(parent);
+
+        unsafe {
+            // Add entries to parent
+            blood_snapshot_add_entry(parent, 0x1000, 1);
+            blood_snapshot_add_entry(parent, 0x2000, 2);
+
+            // Add entries to child
+            blood_snapshot_add_entry(child, 0x3000, 3);
+
+            // Local lengths
+            assert_eq!(blood_snapshot_len(parent), 2);
+            assert_eq!(blood_snapshot_len(child), 1);
+
+            // Total lengths
+            assert_eq!(blood_snapshot_total_len(parent), 2);
+            assert_eq!(blood_snapshot_total_len(child), 3); // 1 + 2 from parent
+
+            blood_snapshot_destroy(child);
+            blood_snapshot_destroy(parent);
+        }
+    }
+
+    #[test]
+    fn test_snapshot_chain_validate_success() {
+        // Register allocations
+        let addr1 = 0xAAAA_1000u64;
+        let addr2 = 0xAAAA_2000u64;
+        let addr3 = 0xAAAA_3000u64;
+
+        let gen1 = blood_register_allocation(addr1, 64);
+        let gen2 = blood_register_allocation(addr2, 64);
+        let gen3 = blood_register_allocation(addr3, 64);
+
+        let parent = blood_snapshot_create();
+        let child = blood_snapshot_create_child(parent);
+
+        unsafe {
+            // Add parent entries
+            blood_snapshot_add_entry(parent, addr1, gen1);
+            blood_snapshot_add_entry(parent, addr2, gen2);
+
+            // Add child entry
+            blood_snapshot_add_entry(child, addr3, gen3);
+
+            // Validation should succeed for entire chain
+            let result = blood_snapshot_validate(child);
+            assert_eq!(result, 0, "Chain validation should succeed");
+
+            blood_snapshot_destroy(child);
+            blood_snapshot_destroy(parent);
+        }
+
+        // Clean up
+        blood_unregister_allocation(addr1);
+        blood_unregister_allocation(addr2);
+        blood_unregister_allocation(addr3);
+    }
+
+    #[test]
+    fn test_snapshot_chain_validate_failure_in_child() {
+        // Register allocations
+        let addr1 = 0xBBBB_1000u64;
+        let addr2 = 0xBBBB_2000u64;
+
+        let gen1 = blood_register_allocation(addr1, 64);
+        let gen2 = blood_register_allocation(addr2, 64);
+
+        let parent = blood_snapshot_create();
+        let child = blood_snapshot_create_child(parent);
+
+        unsafe {
+            // Add parent entry (valid)
+            blood_snapshot_add_entry(parent, addr1, gen1);
+
+            // Add child entry (will become stale)
+            blood_snapshot_add_entry(child, addr2, gen2);
+
+            // Free the child's reference
+            blood_unregister_allocation(addr2);
+
+            // Validation should fail at child's entry (index 1 in child)
+            let result = blood_snapshot_validate(child);
+            assert_eq!(result, 1, "Should detect stale reference in child at index 1");
+
+            blood_snapshot_destroy(child);
+            blood_snapshot_destroy(parent);
+        }
+
+        // Clean up
+        blood_unregister_allocation(addr1);
+    }
+
+    #[test]
+    fn test_snapshot_chain_validate_failure_in_parent() {
+        // Register allocations
+        let addr1 = 0xCCCC_1000u64;
+        let addr2 = 0xCCCC_2000u64;
+
+        let gen1 = blood_register_allocation(addr1, 64);
+        let gen2 = blood_register_allocation(addr2, 64);
+
+        let parent = blood_snapshot_create();
+        let child = blood_snapshot_create_child(parent);
+
+        unsafe {
+            // Add parent entry (will become stale)
+            blood_snapshot_add_entry(parent, addr1, gen1);
+
+            // Add child entry (valid)
+            blood_snapshot_add_entry(child, addr2, gen2);
+
+            // Free the parent's reference
+            blood_unregister_allocation(addr1);
+
+            // Validation walks child first (1 entry), then parent
+            // Parent's stale entry is at offset 1 (child's len) + 1 = 2
+            let result = blood_snapshot_validate(child);
+            assert!(result > 0, "Should detect stale reference in parent");
+
+            blood_snapshot_destroy(child);
+            blood_snapshot_destroy(parent);
+        }
+
+        // Clean up
+        blood_unregister_allocation(addr2);
+    }
+
+    #[test]
+    fn test_snapshot_validate_local_only() {
+        // Register allocations
+        let addr1 = 0xDDDD_1000u64;
+        let addr2 = 0xDDDD_2000u64;
+
+        let gen1 = blood_register_allocation(addr1, 64);
+        let gen2 = blood_register_allocation(addr2, 64);
+
+        let parent = blood_snapshot_create();
+        let child = blood_snapshot_create_child(parent);
+
+        unsafe {
+            // Add parent entry (will become stale)
+            blood_snapshot_add_entry(parent, addr1, gen1);
+
+            // Add child entry (valid)
+            blood_snapshot_add_entry(child, addr2, gen2);
+
+            // Free the parent's reference
+            blood_unregister_allocation(addr1);
+
+            // Local validation of child should succeed (parent's stale entry not checked)
+            let result = blood_snapshot_validate_local(child);
+            assert_eq!(result, 0, "Local validation of child should succeed");
+
+            // Full chain validation should fail
+            let chain_result = blood_snapshot_validate(child);
+            assert!(chain_result > 0, "Chain validation should fail due to parent");
+
+            blood_snapshot_destroy(child);
+            blood_snapshot_destroy(parent);
+        }
+
+        // Clean up
+        blood_unregister_allocation(addr2);
+    }
+
+    #[test]
+    fn test_snapshot_set_parent_after_creation() {
+        let parent = blood_snapshot_create();
+        let orphan = blood_snapshot_create();
+
+        unsafe {
+            // Initially no parent
+            assert!(!blood_snapshot_has_parent(orphan));
+            assert_eq!(blood_snapshot_chain_depth(orphan), 1);
+
+            // Set parent after creation
+            blood_snapshot_set_parent(orphan, parent);
+
+            // Now has parent
+            assert!(blood_snapshot_has_parent(orphan));
+            assert_eq!(blood_snapshot_get_parent(orphan), parent);
+            assert_eq!(blood_snapshot_chain_depth(orphan), 2);
+
+            blood_snapshot_destroy(orphan);
+            blood_snapshot_destroy(parent);
+        }
+    }
+
+    #[test]
+    fn test_snapshot_deeply_nested_chain() {
+        // Create a chain of 5 nested snapshots
+        let mut snapshots: Vec<SnapshotHandle> = Vec::new();
+
+        let root = blood_snapshot_create();
+        snapshots.push(root);
+
+        for _ in 0..4 {
+            let child = blood_snapshot_create_child(*snapshots.last().unwrap());
+            snapshots.push(child);
+        }
+
+        unsafe {
+            // Verify depths
+            for (i, snap) in snapshots.iter().enumerate() {
+                assert_eq!(blood_snapshot_chain_depth(*snap), i + 1);
+            }
+
+            // Add one entry to each snapshot
+            for (i, snap) in snapshots.iter().enumerate() {
+                let addr = 0xEEEE_0000u64 + (i as u64 * 0x100);
+                blood_snapshot_add_entry(*snap, addr, (i + 1) as u32);
+            }
+
+            // Total length of deepest should be 5
+            assert_eq!(blood_snapshot_total_len(*snapshots.last().unwrap()), 5);
+
+            // Clean up from deepest to root
+            for snap in snapshots.iter().rev() {
+                blood_snapshot_destroy(*snap);
+            }
+        }
     }
 
     // ========================================================================
