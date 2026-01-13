@@ -1,8 +1,8 @@
 # Blood Compiler Implementation Status
 
-**Version**: 0.5.1
-**Last Updated**: 2026-01-11
-**Audit Date**: 2026-01-11
+**Version**: 0.5.2
+**Last Updated**: 2026-01-13
+**Audit Date**: 2026-01-13
 
 ---
 
@@ -24,7 +24,7 @@
 | Effect Handlers | ✅ Integrated | Full runtime dispatch (blood_perform, blood_evidence_*) |
 | Generational Pointers | ✅ Integrated | blood_alloc/blood_free in codegen |
 | MIR Layer | ✅ Integrated | Lowering, escape analysis, generation validation in codegen |
-| Content Addressing | 🔶 Optimization Pending | Hashing active, incremental caching planned |
+| Content Addressing | ✅ Integrated | Hashing and incremental build caching active |
 | Fiber Scheduler | ✅ Integrated | FFI exports (blood_scheduler_*) linked |
 | Multiple Dispatch | ✅ Integrated | Runtime dispatch table (blood_dispatch_*, blood_get_type_tag) |
 | Closures | ✅ Integrated | Environment capture and codegen |
@@ -35,7 +35,7 @@
 
 This document provides a comprehensive technical audit of the Blood compiler implementation status, identifies discrepancies against the ROADMAP.md specification, and defines subsequent work items with verification against 2024-2026 technical standards.
 
-**Current Capabilities**: Core compiler pipeline is complete and production-tested. Effect system with runtime dispatch, generational memory model, MIR-based codegen, and Rust runtime are fully integrated. Content addressing hashing is active; incremental build caching is planned.
+**Current Capabilities**: Core compiler pipeline is complete and production-tested. Effect system with runtime dispatch, generational memory model, MIR-based codegen, and Rust runtime are fully integrated. Content-addressed incremental build caching is active with local and distributed cache support.
 
 ---
 
