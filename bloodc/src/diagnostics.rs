@@ -32,6 +32,8 @@ use thiserror::Error;
 /// - E0200-E0299: Name resolution errors
 /// - E0300-E0399: Type errors
 /// - E0400-E0499: Effect/handler errors
+/// - W0001-W0099: Memory/pointer warnings
+/// - W0100-W0199: Performance warnings
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u16)]
 pub enum ErrorCode {
@@ -90,12 +92,57 @@ pub enum ErrorCode {
     MissingFunctionBody = 114,
     /// Invalid match arm.
     InvalidMatchArm = 115,
+
+    // ============================================================
+    // Pointer/Memory Warnings (W0001-W0099)
+    // Warning codes use 1000+ to distinguish from errors
+    // ============================================================
+    /// Deeply nested box types (e.g., Box<Box<Box<T>>>).
+    /// This causes multiple generation checks per access.
+    DeeplyNestedBox = 1001,
+
+    /// Struct with high pointer density (>75% pointer fields).
+    /// Such structures have significant memory overhead with 128-bit pointers.
+    PointerHeavyStruct = 1002,
+
+    /// Linked list or self-referential type detected.
+    /// These have poor cache behavior with 128-bit pointers.
+    LinkedListPattern = 1003,
+
+    /// Array of pointers detected.
+    /// Consider using indices into a Vec instead for better cache locality.
+    PointerArrayPattern = 1004,
+
+    /// Excessive indirection (>3 dereferences to access data).
+    ExcessiveIndirection = 1005,
+
+    // ============================================================
+    // Effect/Handler Warnings (W0100-W0199)
+    // ============================================================
+    /// Deeply nested effect handlers (>5 levels).
+    /// Each nesting level adds lookup overhead.
+    DeeplyNestedHandlers = 1100,
+
+    /// Handler with many operations may be better split.
+    LargeHandlerDefinition = 1101,
 }
 
 impl ErrorCode {
-    /// Get the formatted error code string (e.g., "E0001").
+    /// Get the formatted error code string (e.g., "E0001" or "W0001").
     pub fn as_str(&self) -> String {
-        format!("E{:04}", *self as u16)
+        let code = *self as u16;
+        if code >= 1000 {
+            // Warnings use W prefix
+            format!("W{:04}", code - 1000)
+        } else {
+            // Errors use E prefix
+            format!("E{:04}", code)
+        }
+    }
+
+    /// Returns true if this is a warning code (not an error).
+    pub fn is_warning(&self) -> bool {
+        (*self as u16) >= 1000
     }
 
     /// Get a human-readable description of the error.
@@ -127,6 +174,15 @@ impl ErrorCode {
             ErrorCode::InvalidVisibility => "invalid visibility specifier",
             ErrorCode::MissingFunctionBody => "missing function body",
             ErrorCode::InvalidMatchArm => "invalid match arm",
+            // Pointer/Memory warnings
+            ErrorCode::DeeplyNestedBox => "deeply nested box type causes multiple generation checks",
+            ErrorCode::PointerHeavyStruct => "struct has high pointer density (>75% pointer fields)",
+            ErrorCode::LinkedListPattern => "linked list pattern detected",
+            ErrorCode::PointerArrayPattern => "array of pointers detected",
+            ErrorCode::ExcessiveIndirection => "excessive pointer indirection (>3 levels)",
+            // Effect/Handler warnings
+            ErrorCode::DeeplyNestedHandlers => "deeply nested effect handlers add lookup overhead",
+            ErrorCode::LargeHandlerDefinition => "handler with many operations may impact readability",
         }
     }
 
@@ -145,6 +201,29 @@ impl ErrorCode {
             }
             ErrorCode::MissingType => Some("add a type annotation after the `:`"),
             ErrorCode::MissingFunctionBody => Some("add a function body `{ ... }` or use `;` for a declaration"),
+            // Pointer/Memory warning help
+            ErrorCode::DeeplyNestedBox => {
+                Some("consider using `Box<T>` directly instead of `Box<Box<T>>`; each nesting adds ~4 cycles per access")
+            }
+            ErrorCode::PointerHeavyStruct => {
+                Some("consider storing values directly or using indices into a Vec; 128-bit pointers double memory for pointer-heavy structures")
+            }
+            ErrorCode::LinkedListPattern => {
+                Some("linked lists have poor cache locality with 128-bit pointers; consider using Vec<T> or indices")
+            }
+            ErrorCode::PointerArrayPattern => {
+                Some("arrays of pointers have 2x memory overhead; consider storing values directly or using indices")
+            }
+            ErrorCode::ExcessiveIndirection => {
+                Some("each pointer dereference costs ~4 cycles; flatten the data structure to reduce indirection")
+            }
+            // Effect/Handler warning help
+            ErrorCode::DeeplyNestedHandlers => {
+                Some("each nested handler adds ~2.6 cycles lookup overhead; consider combining handlers or reducing nesting depth")
+            }
+            ErrorCode::LargeHandlerDefinition => {
+                Some("handlers with many operations may be harder to maintain; consider splitting into focused handlers")
+            }
             _ => None,
         }
     }
