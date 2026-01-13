@@ -13,7 +13,7 @@ use inkwell::values::{FunctionValue, PointerValue};
 use inkwell::types::{BasicType, BasicTypeEnum};
 use inkwell::AddressSpace;
 
-use crate::hir::{self, DefId, LocalId, Type};
+use crate::hir::{self, DefId, LocalId, Type, PrimitiveTy, IntTy, UintTy, FloatTy};
 use crate::hir::ty::{TypeKind, TyVarId};
 use crate::mir::{EscapeResults, MirBody};
 use crate::codegen::mir_codegen::MirTypesCodegen;
@@ -1254,11 +1254,116 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         fn_def: &hir::FnDef,
     ) -> Result<(), Vec<Diagnostic>> {
         let fn_type = self.fn_type_from_sig(&fn_def.sig);
-        // Rename "main" to "blood_main" for runtime linkage
-        let llvm_name = if name == "main" { "blood_main" } else { name };
-        let fn_value = self.module.add_function(llvm_name, fn_type, None);
+        // Generate mangled name for multiple dispatch support
+        // main is special and gets renamed to blood_main
+        let llvm_name = if name == "main" {
+            "blood_main".to_string()
+        } else {
+            // Mangle name with parameter types to support multiple dispatch
+            Self::mangle_function_name(name, &fn_def.sig)
+        };
+        let fn_value = self.module.add_function(&llvm_name, fn_type, None);
         self.functions.insert(def_id, fn_value);
         Ok(())
+    }
+
+    /// Mangle a function name with its parameter types for multiple dispatch.
+    ///
+    /// This generates unique symbol names for overloaded functions.
+    /// For example: `add(i32, i32)` becomes `add$i32$i32`
+    fn mangle_function_name(name: &str, sig: &hir::FnSig) -> String {
+        if sig.inputs.is_empty() {
+            name.to_string()
+        } else {
+            let param_mangles: Vec<String> = sig.inputs.iter()
+                .map(|ty| Self::mangle_type(ty))
+                .collect();
+            format!("{}${}", name, param_mangles.join("$"))
+        }
+    }
+
+    /// Generate a mangled name for a type.
+    fn mangle_type(ty: &Type) -> String {
+        match ty.kind() {
+            TypeKind::Primitive(prim) => match prim {
+                PrimitiveTy::Bool => "bool".to_string(),
+                PrimitiveTy::Char => "char".to_string(),
+                PrimitiveTy::Int(int_ty) => match int_ty {
+                    IntTy::I8 => "i8".to_string(),
+                    IntTy::I16 => "i16".to_string(),
+                    IntTy::I32 => "i32".to_string(),
+                    IntTy::I64 => "i64".to_string(),
+                    IntTy::I128 => "i128".to_string(),
+                    IntTy::Isize => "isize".to_string(),
+                },
+                PrimitiveTy::Uint(uint_ty) => match uint_ty {
+                    UintTy::U8 => "u8".to_string(),
+                    UintTy::U16 => "u16".to_string(),
+                    UintTy::U32 => "u32".to_string(),
+                    UintTy::U64 => "u64".to_string(),
+                    UintTy::U128 => "u128".to_string(),
+                    UintTy::Usize => "usize".to_string(),
+                },
+                PrimitiveTy::Float(float_ty) => match float_ty {
+                    FloatTy::F32 => "f32".to_string(),
+                    FloatTy::F64 => "f64".to_string(),
+                },
+                PrimitiveTy::String => "str".to_string(),
+                PrimitiveTy::Str => "rawstr".to_string(),
+                PrimitiveTy::Unit => "unit".to_string(),
+            },
+            TypeKind::Tuple(elems) => {
+                let elem_mangles: Vec<String> = elems.iter()
+                    .map(|t| Self::mangle_type(t))
+                    .collect();
+                format!("T{}", elem_mangles.join("_"))
+            }
+            TypeKind::Array { element, size } => {
+                format!("A{}_{}", size, Self::mangle_type(element))
+            }
+            TypeKind::Slice { element } => {
+                format!("S{}", Self::mangle_type(element))
+            }
+            TypeKind::Ref { inner, mutable } => {
+                if *mutable {
+                    format!("Rm{}", Self::mangle_type(inner))
+                } else {
+                    format!("R{}", Self::mangle_type(inner))
+                }
+            }
+            TypeKind::Ptr { inner, mutable } => {
+                if *mutable {
+                    format!("Pm{}", Self::mangle_type(inner))
+                } else {
+                    format!("P{}", Self::mangle_type(inner))
+                }
+            }
+            TypeKind::Adt { def_id, args } => {
+                if args.is_empty() {
+                    format!("D{}", def_id.index())
+                } else {
+                    let arg_mangles: Vec<String> = args.iter()
+                        .map(|t| Self::mangle_type(t))
+                        .collect();
+                    format!("D{}_{}", def_id.index(), arg_mangles.join("_"))
+                }
+            }
+            TypeKind::Fn { params, ret } => {
+                let param_mangles: Vec<String> = params.iter()
+                    .map(|t| Self::mangle_type(t))
+                    .collect();
+                format!("F{}_{}", param_mangles.join("_"), Self::mangle_type(ret))
+            }
+            TypeKind::Never => "never".to_string(),
+            TypeKind::Infer(id) => format!("?{}", id.0),
+            TypeKind::Param(id) => format!("G{}", id.0),
+            TypeKind::Error => "error".to_string(),
+            TypeKind::Record { .. } => "record".to_string(),
+            TypeKind::Forall { .. } => "forall".to_string(),
+            TypeKind::Range { .. } => "range".to_string(),
+            TypeKind::Closure { .. } => "closure".to_string(),
+            TypeKind::DynTrait { .. } => "dyn".to_string(),
+        }
     }
 
     /// Declare a closure function from MIR body information.

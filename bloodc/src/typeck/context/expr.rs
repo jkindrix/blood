@@ -1513,18 +1513,13 @@ impl<'a> TypeContext<'a> {
             inferred_arg_types.push(self.unifier.resolve(&arg_expr.ty));
         }
 
-        eprintln!("[DEBUG] resolve_method_family_dispatch: name={}, candidates={:?}", name, candidates);
-        eprintln!("[DEBUG] inferred_arg_types: {:?}", inferred_arg_types);
-
         // Find applicable candidates: methods whose parameter types match the arguments
         let mut applicable: Vec<(DefId, &hir::FnSig)> = Vec::new();
 
         for &def_id in candidates {
             if let Some(sig) = self.fn_sigs.get(&def_id) {
-                eprintln!("[DEBUG] Checking candidate {:?} with inputs: {:?}", def_id, sig.inputs);
                 // Check arity match
                 if sig.inputs.len() != inferred_arg_types.len() {
-                    eprintln!("[DEBUG]   Arity mismatch, skipping");
                     continue;
                 }
 
@@ -1534,16 +1529,13 @@ impl<'a> TypeContext<'a> {
                     // For dispatch, we check if the argument type can unify with or is a subtype of param
                     // We use a temporary unifier to avoid polluting the main one
                     let mut test_unifier = self.unifier.clone();
-                    let unify_result = test_unifier.unify(arg_ty, param_ty, span);
-                    eprintln!("[DEBUG]   unify({:?}, {:?}) = {:?}", arg_ty, param_ty, unify_result.is_ok());
-                    if unify_result.is_err() {
+                    if test_unifier.unify(arg_ty, param_ty, span).is_err() {
                         compatible = false;
                         break;
                     }
                 }
 
                 if compatible {
-                    eprintln!("[DEBUG]   Candidate {:?} is applicable", def_id);
                     applicable.push((def_id, sig));
                 }
             }
@@ -1567,7 +1559,6 @@ impl<'a> TypeContext<'a> {
         if applicable.len() == 1 {
             let (def_id, sig) = applicable[0];
             let fn_ty = Type::function(sig.inputs.clone(), sig.output.clone());
-            eprintln!("[DEBUG] Selected single applicable method: {:?} with type {:?}", def_id, fn_ty);
             return Ok(hir::Expr::new(
                 hir::ExprKind::Def(def_id),
                 fn_ty,
