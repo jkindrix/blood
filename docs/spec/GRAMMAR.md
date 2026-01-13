@@ -224,7 +224,7 @@ Declaration ::=
 FnDecl ::= Visibility? FnQualifier* 'fn' Ident TypeParams? '(' Params ')'
            ('->' Type)? ('/' EffectRow)? WhereClause? (Block | ';')
 
-FnQualifier ::= 'const' | 'async' | 'unsafe'
+FnQualifier ::= 'const' | 'async' | '@unsafe'
 
 Visibility ::= 'pub' ('(' VisScope ')')?
 VisScope ::= 'crate' | 'super' | 'self' | ModulePath

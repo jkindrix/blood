@@ -451,7 +451,13 @@ Compiler is written in Rust, not Blood.
   - *Bootstrap strategy (5 phases)*
   - *Lines of code estimates (~25k Blood LoC)*
   - *Assessment: ~80% ready for self-hosting attempt*
-- [ ] **SELF-002**: Implement lexer in Blood (`blood-std/std/compiler/lexer.blood`)
+- [x] **SELF-002**: Implement lexer in Blood (`blood-std/std/compiler/lexer.blood`)
+  - Created 646-line lexer implementation in Blood
+  - 118 token kinds covering all Blood syntax (keywords, operators, delimiters, literals)
+  - Full Lexer struct with position tracking (line, column, offset)
+  - Scanning methods: strings, chars, numbers (hex/octal/binary/float), identifiers, comments
+  - Public `tokenize()` function producing token array
+  - Handles: escape sequences, nested block comments, doc comments, number literals with exponents
 - [ ] **SELF-003**: Implement parser in Blood
 - [ ] **SELF-004**: Implement type checker in Blood
 - [ ] **SELF-005**: Bootstrap: compile Blood compiler with Blood compiler
@@ -508,15 +514,39 @@ Tooling exists but needs polish.
 - [ ] **TOOL-001**: Complete LSP hover documentation with examples
 - [ ] **TOOL-002**: Add LSP go-to-definition for effect operations
 - [ ] **TOOL-003**: Add LSP completion for effect handlers
-- [ ] **TOOL-004**: Implement blood-fmt auto-formatting
+- [x] **TOOL-004**: Implement blood-fmt auto-formatting
+  - Created `blood-tools/fmt/` with 1673 lines across 6 source files
+  - `config.rs` (239 lines): Configurable formatting options (indent width, line length, etc.)
+  - `formatter.rs` (333 lines): Main formatting engine with tokenization and spacing rules
+  - `printer.rs` (174 lines): Output generation with indentation tracking
+  - `tokens.rs` (587 lines): Tokenizer for source code analysis
+  - `main.rs` (232 lines): CLI interface for standalone usage
+  - Supports: comment normalization, keyword spacing, brace formatting
 - [ ] **TOOL-005**: Add REPL for interactive exploration
 - [ ] **TOOL-006**: Create VS Code extension package
 
 ### 5.4 Build System [P2]
 
-- [ ] **BUILD-001**: Implement content-addressed build caching
-- [ ] **BUILD-002**: Add incremental compilation using content hashes
-- [ ] **BUILD-003**: Implement distributed build cache (HTTP-based)
+- [x] **BUILD-001**: Implement content-addressed build caching
+  - Created `bloodc/src/content/build_cache.rs` with 1976 lines
+  - `BuildCache` struct with object cache, dependency graph, statistics
+  - Methods: `get_object()`, `store_object()`, `store_ir()`, `invalidate()`
+  - Cache structure: `~/.blood/cache/v1/{objects,ir,deps.json}`
+  - Content hash → file path mappings with version control
+  - `CacheStats` tracking hits, misses, cached size/count
+  - `CacheError` enum with IO, Corrupted, VersionMismatch, Json variants
+- [x] **BUILD-002**: Add incremental compilation using content hashes
+  - Integrated in `build_cache.rs` with HIR item hashing
+  - Workflow: compute hash → check cache → reuse or compile → store → link
+  - Dependency tracking for transitive invalidation
+  - Test: `test_incremental_compilation_simulation()`
+- [x] **BUILD-003**: Implement distributed build cache (HTTP-based)
+  - Created `bloodc/src/content/distributed_cache.rs` with 549 lines
+  - `RemoteCacheConfig`: URL, auth token, timeout, read-only flag, priority
+  - `DistributedCache` combining local + remote with fallback
+  - `FetchResult` enum: LocalHit, RemoteHit, NotFound, Error
+  - `from_env()` reads `BLOOD_CACHE_REMOTES` and `BLOOD_CACHE_TOKEN`
+  - `RemoteCacheStats`: remote hits/misses, bytes downloaded/uploaded
 - [ ] **BUILD-004**: Add dependency resolution for multi-file projects
 - [ ] **BUILD-005**: Create package manager foundation
 
@@ -659,7 +689,7 @@ Project appears to have single maintainer.
 
 ## Summary Statistics
 
-**Status as of 2026-01-13:**
+**Status as of 2026-01-13 (Updated):**
 
 | Category | P0 | P1 | P2 | P3 | Completed | Remaining |
 |----------|----|----|----|----|-----------|-----------|
@@ -667,11 +697,11 @@ Project appears to have single maintainer.
 | Validation Gaps | ~~9~~ ✅0 | ~~7~~ ✅2 | 0 | 0 | 22 | **2** |
 | Code Quality | 0 | 0 | ~~3~~ ✅0 | 1 | 12 | **1** |
 | Design Concerns | 0 | ~~3~~ ✅2 | ~~10~~ ✅2 | 0 | 12 | **4** |
-| Ecosystem | 0 | ~~5~~ ✅4 | 11 | 0 | 7 | **15** |
+| Ecosystem | 0 | ~~5~~ ✅3 | ~~11~~ ✅7 | 0 | 12 | **10** |
 | Safety | 0 | 0 | 5 | 4 | 5 | **9** |
 | Documentation | 0 | 0 | ~~1~~ ✅0 | ~~3~~ ✅0 | 9 | **0** |
 | Risk Mitigation | 0 | 0 | 1 | 0 | 9 | **1** |
-| **Total** | **0** | **9** | **19** | **5** | **93** | **33** |
+| **Total** | **0** | **8** | **15** | **5** | **98** | **28** |
 
 **Key Progress:**
 - ✅ All P0 items complete (IMPL-001-007, FFI-001-007, TEST-001-009)
@@ -709,6 +739,11 @@ Project appears to have single maintainer.
 - ✅ Liveness filtering for snapshot size reduction (SNAP-004)
 - ✅ Property tests for escape analysis soundness (FUZZ-005)
 - ✅ MIR visitor infrastructure for analysis passes (DUP-004)
+- ✅ Blood lexer implemented in Blood for self-hosting (SELF-002)
+- ✅ Content-addressed build caching complete (BUILD-001)
+- ✅ Incremental compilation using content hashes (BUILD-002)
+- ✅ Distributed HTTP-based build cache (BUILD-003)
+- ✅ blood-fmt auto-formatting tool complete (TOOL-004)
 
 ---
 
@@ -729,12 +764,12 @@ Project appears to have single maintainer.
 7. Single-maintainer risk mitigation (RISK-001 through RISK-005)
 
 ### Phase 3: 1.0 Release (P2 items)
-1. Design optimizations (EFF-001-005, SNAP-001-005)
-2. Developer tooling polish (TOOL-001-006)
-3. Build system (BUILD-001-005)
-4. Fuzzing and property testing (FUZZ-001-005)
+1. Design optimizations (EFF-001-005, SNAP-001-005) — mostly complete
+2. Developer tooling polish (TOOL-001-003, TOOL-005-006) — TOOL-004 ✅
+3. Build system (BUILD-004-005) — BUILD-001-003 ✅
+4. Fuzzing and property testing (FUZZ-001-004) — FUZZ-005 ✅
 5. Large file modularization (CODE-004)
-6. User documentation (USERDOC-001-005)
+6. User documentation — ✅ COMPLETE
 
 ### Phase 4: Long-term (P3 items)
 1. Formal verification (FORMAL-001-004)

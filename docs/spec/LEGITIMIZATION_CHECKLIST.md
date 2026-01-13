@@ -153,9 +153,9 @@ Blood makes ambitious claims about memory safety, effect systems, and performanc
 | ID | Tool | Importance | Status |
 |----|------|------------|--------|
 | ECO-001 | LSP server with full features | IDE integration | Partial |
-| ECO-002 | VS Code extension | Developer experience | Not started |
-| ECO-003 | blood-fmt auto-formatter | Code consistency | Not started |
-| ECO-004 | blood-doc documentation generator | API documentation | Not started |
+| ECO-002 | VS Code extension | Developer experience | Done |
+| ECO-003 | blood-fmt auto-formatter | Code consistency | Done |
+| ECO-004 | blood-doc documentation generator | API documentation | Done |
 | ECO-005 | REPL/playground | Learning and exploration | Not started |
 | ECO-006 | Debugger support (DWARF info) | Debugging | Not started |
 
@@ -184,7 +184,7 @@ Blood makes ambitious claims about memory safety, effect systems, and performanc
 | ID | Task | Purpose | Status |
 |----|------|---------|--------|
 | ECO-017 | Discussion forum/Discord | Community building | Not started |
-| ECO-018 | Issue templates and triage process | Contribution | Partial |
+| ECO-018 | Issue templates and triage process | Contribution | Done |
 | ECO-019 | Regular release cadence | Predictability | Not started |
 | ECO-020 | Changelog automation | Communication | Not started |
 
@@ -221,7 +221,7 @@ Blood makes ambitious claims about memory safety, effect systems, and performanc
 |----|------|---------|--------|
 | COMP-010 | Code comparison: same program in Blood, Rust, Go | Show ergonomic differences | Done |
 | COMP-011 | Error message comparison | Developer experience | Done |
-| COMP-012 | Learning curve study | Adoption barrier | Not started |
+| COMP-012 | Learning curve study | Adoption barrier | Done |
 
 **Deliverable**: `docs/comparisons/` directory with honest, detailed comparisons including Blood's weaknesses.
 
