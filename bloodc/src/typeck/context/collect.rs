@@ -336,11 +336,14 @@ impl<'a> TypeContext<'a> {
     }
 
     /// Collect a function declaration.
+    ///
+    /// This uses `define_function` which supports multiple dispatch - multiple
+    /// functions with the same name are allowed and will form a method family.
     pub(crate) fn collect_function(&mut self, func: &ast::FnDecl) -> Result<(), TypeError> {
         let name = self.symbol_to_string(func.name.node);
-        let def_id = self.resolver.define_item(
+        // Use define_function for multiple dispatch support
+        let def_id = self.resolver.define_function(
             name.clone(),
-            hir::DefKind::Fn,
             func.span,
         )?;
 

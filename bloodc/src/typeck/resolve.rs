@@ -100,6 +100,9 @@ pub enum Binding {
     },
     /// A definition (function, constant, etc.).
     Def(DefId),
+    /// A method family (multiple functions with the same name for dispatch).
+    /// Used for multiple dispatch where several function overloads share a name.
+    Methods(Vec<DefId>),
 }
 
 impl<'a> Resolver<'a> {
@@ -233,6 +236,88 @@ impl<'a> Resolver<'a> {
         // Also add to globals if in root scope
         if self.current_scope().kind == ScopeKind::Root {
             self.globals.insert(name, def_id);
+        }
+
+        Ok(def_id)
+    }
+
+    /// Define a function in the current scope, supporting multiple dispatch.
+    ///
+    /// Unlike `define_item`, this allows multiple functions with the same name.
+    /// When a function name already exists:
+    /// - If it's a `Binding::Def` pointing to a function, convert to `Binding::Methods`
+    /// - If it's already `Binding::Methods`, add to the list
+    /// - If it's something else (non-function), error as duplicate definition
+    pub fn define_function(
+        &mut self,
+        name: String,
+        span: Span,
+    ) -> Result<DefId, TypeError> {
+        let def_id = self.next_def_id();
+
+        self.def_info.insert(def_id, DefInfo {
+            kind: DefKind::Fn,
+            name: name.clone(),
+            span,
+            ty: None,
+            parent: None,
+        });
+
+        // Check if a binding with this name already exists
+        if let Some(existing) = self.current_scope().bindings.get(&name).cloned() {
+            match existing {
+                Binding::Def(existing_def_id) => {
+                    // Check if the existing definition is a function
+                    if let Some(info) = self.def_info.get(&existing_def_id) {
+                        if info.kind == DefKind::Fn {
+                            // Convert to method family with both functions
+                            self.current_scope_mut()
+                                .bindings
+                                .insert(name.clone(), Binding::Methods(vec![existing_def_id, def_id]));
+                        } else {
+                            // Non-function with same name - error
+                            return Err(TypeError::new(
+                                TypeErrorKind::DuplicateDefinition { name },
+                                span,
+                            ));
+                        }
+                    } else {
+                        // Shouldn't happen - def_id without info
+                        return Err(TypeError::new(
+                            TypeErrorKind::DuplicateDefinition { name },
+                            span,
+                        ));
+                    }
+                }
+                Binding::Methods(mut methods) => {
+                    // Already a method family, add to it
+                    methods.push(def_id);
+                    self.current_scope_mut()
+                        .bindings
+                        .insert(name.clone(), Binding::Methods(methods));
+                }
+                Binding::Local { .. } => {
+                    // Can't define function with same name as local
+                    return Err(TypeError::new(
+                        TypeErrorKind::DuplicateDefinition { name },
+                        span,
+                    ));
+                }
+            }
+        } else {
+            // No existing binding - create new single definition
+            self.current_scope_mut()
+                .bindings
+                .insert(name.clone(), Binding::Def(def_id));
+        }
+
+        // Also track in globals if in root scope
+        // Note: For method families, we only track the first def_id in globals
+        // The method family is resolved through the scope bindings
+        if self.current_scope().kind == ScopeKind::Root {
+            if !self.globals.contains_key(&name) {
+                self.globals.insert(name, def_id);
+            }
         }
 
         Ok(def_id)

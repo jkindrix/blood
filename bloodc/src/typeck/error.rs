@@ -264,6 +264,22 @@ impl TypeError {
                 "E0502",
                 format!("type `{ty}` in {context} may have FFI portability issues: {reason}"),
             ),
+
+            // Multiple dispatch errors (E06xx)
+            TypeErrorKind::NoApplicableMethod { name, arg_types } => (
+                "E0601",
+                format!(
+                    "no applicable method `{name}` found for argument types ({})",
+                    arg_types.join(", ")
+                ),
+            ),
+            TypeErrorKind::AmbiguousDispatch { name, candidates } => (
+                "E0602",
+                format!(
+                    "ambiguous dispatch for `{name}`: multiple methods match with equal specificity: {}",
+                    candidates.join(", ")
+                ),
+            ),
         };
 
         let mut diag = Diagnostic::error(message, self.span).with_code(code);
@@ -496,6 +512,16 @@ pub enum TypeErrorKind {
         ty: Type,
         reason: String,
         context: String,
+    },
+    /// No applicable method for multiple dispatch call.
+    NoApplicableMethod {
+        name: String,
+        arg_types: Vec<String>,
+    },
+    /// Ambiguous dispatch - multiple methods match with equal specificity.
+    AmbiguousDispatch {
+        name: String,
+        candidates: Vec<String>,
     },
 }
 

@@ -1205,6 +1205,34 @@ impl<'a> TypeContext<'a> {
                         Err(self.error_name_not_found(&name, span))
                     }
                 }
+                Some(Binding::Methods(method_def_ids)) => {
+                    // Multiple dispatch: method family with several overloads
+                    // Create a MethodFamily expression that will be resolved at call site
+                    // For now, return the first method's type as a placeholder
+                    // The actual dispatch happens in check_call_expr
+                    if let Some(&first_def_id) = method_def_ids.first() {
+                        if let Some(sig) = self.fn_sigs.get(&first_def_id).cloned() {
+                            let fn_ty = if sig.generics.is_empty() {
+                                Type::function(sig.inputs.clone(), sig.output.clone())
+                            } else {
+                                self.instantiate_fn_sig(&sig)
+                            };
+                            // Store the method family for later dispatch resolution
+                            Ok(hir::Expr::new(
+                                hir::ExprKind::MethodFamily {
+                                    name: name.clone(),
+                                    candidates: method_def_ids.clone(),
+                                },
+                                fn_ty,
+                                span,
+                            ))
+                        } else {
+                            Err(self.error_name_not_found(&name, span))
+                        }
+                    } else {
+                        Err(self.error_name_not_found(&name, span))
+                    }
+                }
                 None => {
                     Err(self.error_name_not_found(&name, span))
                 }
@@ -1396,6 +1424,13 @@ impl<'a> TypeContext<'a> {
     ) -> Result<hir::Expr, TypeError> {
         let callee_expr = self.infer_expr(callee)?;
 
+        // Handle multiple dispatch: if callee is a MethodFamily, resolve to specific method
+        let callee_expr = if let hir::ExprKind::MethodFamily { name, candidates } = &callee_expr.kind {
+            self.resolve_method_family_dispatch(name, candidates, args, span)?
+        } else {
+            callee_expr
+        };
+
         // Resolve the callee type to handle inference variables
         let resolved_callee_ty = self.unifier.resolve(&callee_expr.ty);
 
@@ -1441,7 +1476,7 @@ impl<'a> TypeContext<'a> {
 
         // Check effect compatibility
         if let hir::ExprKind::Def(callee_def_id) = &callee_expr.kind {
-            self.check_effect_compatibility(*callee_def_id, span)?;
+            self.check_effect_compatibility(callee_def_id.clone(), span)?;
         }
 
         let mut hir_args = Vec::new();
@@ -1456,6 +1491,138 @@ impl<'a> TypeContext<'a> {
                 args: hir_args,
             },
             return_type,
+            span,
+        ))
+    }
+
+    /// Resolve a method family to a specific method based on argument types.
+    ///
+    /// This implements the core of multiple dispatch: given a set of candidate methods
+    /// and actual argument types, find the most specific matching method.
+    fn resolve_method_family_dispatch(
+        &mut self,
+        name: &str,
+        candidates: &[DefId],
+        args: &[ast::CallArg],
+        span: Span,
+    ) -> Result<hir::Expr, TypeError> {
+        // First, infer the types of all arguments to guide dispatch
+        let mut inferred_arg_types = Vec::new();
+        for arg in args {
+            let arg_expr = self.infer_expr(&arg.value)?;
+            inferred_arg_types.push(self.unifier.resolve(&arg_expr.ty));
+        }
+
+        eprintln!("[DEBUG] resolve_method_family_dispatch: name={}, candidates={:?}", name, candidates);
+        eprintln!("[DEBUG] inferred_arg_types: {:?}", inferred_arg_types);
+
+        // Find applicable candidates: methods whose parameter types match the arguments
+        let mut applicable: Vec<(DefId, &hir::FnSig)> = Vec::new();
+
+        for &def_id in candidates {
+            if let Some(sig) = self.fn_sigs.get(&def_id) {
+                eprintln!("[DEBUG] Checking candidate {:?} with inputs: {:?}", def_id, sig.inputs);
+                // Check arity match
+                if sig.inputs.len() != inferred_arg_types.len() {
+                    eprintln!("[DEBUG]   Arity mismatch, skipping");
+                    continue;
+                }
+
+                // Check if argument types are compatible with parameter types
+                let mut compatible = true;
+                for (arg_ty, param_ty) in inferred_arg_types.iter().zip(sig.inputs.iter()) {
+                    // For dispatch, we check if the argument type can unify with or is a subtype of param
+                    // We use a temporary unifier to avoid polluting the main one
+                    let mut test_unifier = self.unifier.clone();
+                    let unify_result = test_unifier.unify(arg_ty, param_ty, span);
+                    eprintln!("[DEBUG]   unify({:?}, {:?}) = {:?}", arg_ty, param_ty, unify_result.is_ok());
+                    if unify_result.is_err() {
+                        compatible = false;
+                        break;
+                    }
+                }
+
+                if compatible {
+                    eprintln!("[DEBUG]   Candidate {:?} is applicable", def_id);
+                    applicable.push((def_id, sig));
+                }
+            }
+        }
+
+        // If no applicable methods, report error
+        if applicable.is_empty() {
+            let arg_types: Vec<String> = inferred_arg_types.iter()
+                .map(|t| format!("{:?}", t))
+                .collect();
+            return Err(TypeError::new(
+                TypeErrorKind::NoApplicableMethod {
+                    name: name.to_string(),
+                    arg_types,
+                },
+                span,
+            ));
+        }
+
+        // If exactly one applicable method, use it
+        if applicable.len() == 1 {
+            let (def_id, sig) = applicable[0];
+            let fn_ty = Type::function(sig.inputs.clone(), sig.output.clone());
+            eprintln!("[DEBUG] Selected single applicable method: {:?} with type {:?}", def_id, fn_ty);
+            return Ok(hir::Expr::new(
+                hir::ExprKind::Def(def_id),
+                fn_ty,
+                span,
+            ));
+        }
+
+        // Multiple applicable methods: find the most specific one
+        // Most specific = one where all parameter types are subtypes of (or equal to) other candidates
+        // For now, use a simple strategy: prefer exact type matches over coercions
+        let mut best: Option<(DefId, &hir::FnSig, usize)> = None; // (def_id, sig, specificity_score)
+
+        for (def_id, sig) in &applicable {
+            let mut score = 0;
+            for (arg_ty, param_ty) in inferred_arg_types.iter().zip(sig.inputs.iter()) {
+                // Exact match gets higher score
+                if arg_ty == param_ty {
+                    score += 2;
+                } else {
+                    score += 1;
+                }
+            }
+
+            if let Some((_, _, best_score)) = &best {
+                if score > *best_score {
+                    best = Some((*def_id, *sig, score));
+                }
+            } else {
+                best = Some((*def_id, *sig, score));
+            }
+        }
+
+        if let Some((def_id, sig, _)) = best {
+            let fn_ty = Type::function(sig.inputs.clone(), sig.output.clone());
+            return Ok(hir::Expr::new(
+                hir::ExprKind::Def(def_id),
+                fn_ty,
+                span,
+            ));
+        }
+
+        // Ambiguous dispatch - report error
+        let candidate_sigs: Vec<String> = applicable.iter()
+            .map(|(_, sig)| {
+                let params: Vec<String> = sig.inputs.iter()
+                    .map(|t| format!("{:?}", t))
+                    .collect();
+                format!("({})", params.join(", "))
+            })
+            .collect();
+        Err(TypeError::new(
+            TypeErrorKind::AmbiguousDispatch {
+                name: name.to_string(),
+                candidates: candidate_sigs,
+            },
             span,
         ))
     }
@@ -2345,4 +2512,5 @@ impl<'a> TypeContext<'a> {
             span,
         ))
     }
+
 }

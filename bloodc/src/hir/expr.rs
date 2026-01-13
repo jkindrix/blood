@@ -318,6 +318,18 @@ pub enum ExprKind {
         inclusive: bool,
     },
 
+    /// A method family for multiple dispatch resolution.
+    ///
+    /// This represents a call site where multiple function overloads exist.
+    /// The actual method to call is determined by matching argument types
+    /// against the candidates' parameter types.
+    MethodFamily {
+        /// The method family name.
+        name: String,
+        /// Candidate function DefIds.
+        candidates: Vec<DefId>,
+    },
+
     /// Error placeholder (for error recovery).
     Error,
 }
