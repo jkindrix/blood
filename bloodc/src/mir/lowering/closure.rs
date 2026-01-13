@@ -20,7 +20,7 @@ use crate::mir::types::{
     BinOp as MirBinOp, UnOp as MirUnOp, AggregateKind, SwitchTargets,
 };
 
-use super::util::convert_binop;
+use super::util::{convert_binop, lower_literal_to_constant, is_irrefutable_pattern};
 
 // ============================================================================
 // Closure Lowering
@@ -665,7 +665,7 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
             Place::local(temp)
         };
 
-        if self.is_irrefutable_pattern(pattern) {
+        if is_irrefutable_pattern(pattern) {
             self.bind_pattern(pattern, &init_place)?;
 
             if ty.kind() == &TypeKind::Primitive(crate::hir::ty::PrimitiveTy::Bool) {
@@ -1117,7 +1117,7 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
             }
 
             PatternKind::Literal(lit) => {
-                let lit_const = self.lower_literal_to_constant(lit, &pattern.ty);
+                let lit_const = lower_literal_to_constant(lit, &pattern.ty);
                 let lit_operand = Operand::Constant(lit_const);
                 let value_operand = Operand::Copy(place.clone());
 
@@ -1210,7 +1210,7 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
                 // Check lower bound: value >= start
                 if let Some(start_pat) = start {
                     if let PatternKind::Literal(lit) = &start_pat.kind {
-                        let start_const = self.lower_literal_to_constant(lit, &pattern.ty);
+                        let start_const = lower_literal_to_constant(lit, &pattern.ty);
                         let cmp_result = self.new_temp(Type::bool(), span);
                         self.push_assign(
                             Place::local(cmp_result),
@@ -1227,7 +1227,7 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
                 // Check upper bound: value < end (or value <= end if inclusive)
                 if let Some(end_pat) = end {
                     if let PatternKind::Literal(lit) = &end_pat.kind {
-                        let end_const = self.lower_literal_to_constant(lit, &pattern.ty);
+                        let end_const = lower_literal_to_constant(lit, &pattern.ty);
                         let cmp_result = self.new_temp(Type::bool(), span);
                         let cmp_op = if *inclusive { MirBinOp::Le } else { MirBinOp::Lt };
                         self.push_assign(
@@ -1486,41 +1486,9 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
         Ok(())
     }
 
-    fn lower_literal_to_constant(&self, lit: &LiteralValue, ty: &Type) -> Constant {
-        let kind = match lit {
-            LiteralValue::Int(v) => ConstantKind::Int(*v),
-            LiteralValue::Uint(v) => ConstantKind::Int(*v as i128),
-            LiteralValue::Float(v) => ConstantKind::Float(*v),
-            LiteralValue::Bool(v) => ConstantKind::Bool(*v),
-            LiteralValue::Char(v) => ConstantKind::Char(*v),
-            LiteralValue::String(v) => ConstantKind::String(v.clone()),
-        };
-        Constant::new(ty.clone(), kind)
-    }
-
-    /// Check if a pattern is irrefutable (always matches).
-    fn is_irrefutable_pattern(&self, pattern: &Pattern) -> bool {
-        match &pattern.kind {
-            PatternKind::Wildcard => true,
-            PatternKind::Binding { subpattern, .. } => {
-                subpattern.as_ref().map_or(true, |p| self.is_irrefutable_pattern(p))
-            }
-            PatternKind::Tuple(pats) => pats.iter().all(|p| self.is_irrefutable_pattern(p)),
-            PatternKind::Ref { inner, .. } => self.is_irrefutable_pattern(inner),
-            PatternKind::Literal(_) => false,
-            PatternKind::Or(_) => false,
-            PatternKind::Variant { .. } => false,
-            PatternKind::Struct { fields, .. } => {
-                fields.iter().all(|f| self.is_irrefutable_pattern(&f.pattern))
-            }
-            PatternKind::Slice { prefix, slice, suffix } => {
-                slice.is_some() &&
-                prefix.iter().all(|p| self.is_irrefutable_pattern(p)) &&
-                suffix.iter().all(|p| self.is_irrefutable_pattern(p))
-            }
-            PatternKind::Range { .. } => false,
-        }
-    }
+    // NOTE: `lower_literal_to_constant` and `is_irrefutable_pattern` are now shared
+    // utility functions in `util.rs`. Use `lower_literal_to_constant()` and
+    // `is_irrefutable_pattern()` directly.
 
     /// Bind pattern variables to a place in a closure body.
     fn bind_pattern(&mut self, pattern: &Pattern, place: &Place) -> Result<(), Vec<Diagnostic>> {

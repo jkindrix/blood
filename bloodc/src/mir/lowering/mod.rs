@@ -55,7 +55,7 @@ use super::types::BasicBlockId;
 
 pub use closure::ClosureLowering;
 pub use function::FunctionLowering;
-pub use util::convert_binop;
+pub use util::{convert_binop, convert_unop, lower_literal_to_constant, is_irrefutable_pattern};
 
 // ============================================================================
 // MIR Lowering Pass
