@@ -222,6 +222,12 @@ impl TypeError {
                     "linear value `{field_name}: {field_type}` captured in multi-shot handler operation `{operation}`"
                 ),
             ),
+            TypeErrorKind::AffineValueInMultiShotHandler { operation, field_name, field_type } => (
+                "E0310",
+                format!(
+                    "affine value `{field_name}: {field_type}` captured in multi-shot handler operation `{operation}`"
+                ),
+            ),
 
             // Ownership errors (E04xx)
             TypeErrorKind::MutableBorrow { reason } => (
@@ -467,6 +473,14 @@ pub enum TypeErrorKind {
     /// Linear values must be used exactly once, but multi-shot handlers can
     /// resume multiple times, which would duplicate the linear value.
     LinearValueInMultiShotHandler {
+        operation: String,
+        field_name: String,
+        field_type: String,
+    },
+    /// Affine value captured in a multi-shot (deep) handler operation.
+    /// Affine values may be used at most once, but multi-shot handlers can
+    /// resume multiple times, which would duplicate the affine value.
+    AffineValueInMultiShotHandler {
         operation: String,
         field_name: String,
         field_type: String,
