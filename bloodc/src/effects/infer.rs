@@ -347,11 +347,26 @@ impl EffectInferencer {
 
     /// Extract type arguments from an effect reference.
     ///
-    /// The effect's type arguments are typically encoded in the expression's type
-    /// or determined by context. For now, we use the effect ID directly.
+    /// Currently returns an EffectRef without type arguments. Effects are uniquely
+    /// identified by their DefId, which is sufficient for effect row tracking and
+    /// handler matching.
+    ///
+    /// # Future Enhancement: Generic Effect Type Arguments
+    ///
+    /// To support distinguishing between different instantiations of the same
+    /// generic effect (e.g., `State<i32>` vs `State<String>`), this function
+    /// would need to:
+    ///
+    /// 1. Have `ExprKind::Perform` store the effect's type arguments (currently
+    ///    only stored locally during type checking in `infer_perform`)
+    /// 2. Or re-derive type arguments from the expression's type context
+    ///
+    /// This would enable more precise effect tracking where `State<i32>` and
+    /// `State<String>` are treated as distinct effects in the row.
+    ///
+    /// For most use cases, the current behavior (tracking by DefId only) is
+    /// correct since handlers typically handle all instantiations of an effect.
     fn type_args_from_effect(&self, _expr: &Expr, effect_id: DefId) -> EffectRef {
-        // TODO: Extract actual type arguments from the expression context
-        // For now, we just use the effect ID without type arguments
         EffectRef::new(effect_id)
     }
 
