@@ -12,7 +12,7 @@ Blood synthesizes five cutting-edge programming language innovations:
 
 ## Status
 
-> **Version: 0.5.0**
+> **Version: 0.5.2**
 
 Core compiler is complete and tested. Programs compile and run with full type checking, effect tracking, and generational memory safety. See [IMPLEMENTATION_STATUS.md](docs/spec/IMPLEMENTATION_STATUS.md) for detailed component status.
 
