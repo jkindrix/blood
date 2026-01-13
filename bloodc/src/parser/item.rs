@@ -32,12 +32,45 @@ impl<'src> Parser<'src> {
             TokenKind::Type => Some(Declaration::Type(self.parse_type_decl(attrs, vis))),
             TokenKind::Static => Some(Declaration::Static(self.parse_static_decl(attrs, vis))),
             TokenKind::Bridge => Some(Declaration::Bridge(self.parse_bridge_decl(attrs))),
+            TokenKind::Extern => Some(Declaration::Bridge(self.parse_extern_block(attrs))),
             TokenKind::Mod => Some(Declaration::Module(self.parse_mod_decl(attrs, vis))),
+            // Handle `use` encountered after declarations have started
+            // This is an error (imports must come before declarations) but we
+            // need to handle it to avoid infinite loops in error recovery
+            TokenKind::Use => {
+                self.error_expected_one_of(&[
+                    "`fn`", "`struct`", "`enum`", "`trait`", "`impl`",
+                    "`effect`", "`handler`", "`type`", "`const`", "`static`",
+                    "`bridge`", "`extern`", "`mod`",
+                ]);
+                // Skip past the use statement to avoid infinite loop
+                while !self.is_at_end()
+                    && !matches!(
+                        self.current.kind,
+                        TokenKind::Fn
+                            | TokenKind::Struct
+                            | TokenKind::Enum
+                            | TokenKind::Effect
+                            | TokenKind::Handler
+                            | TokenKind::Trait
+                            | TokenKind::Impl
+                            | TokenKind::Type
+                            | TokenKind::Const
+                            | TokenKind::Static
+                            | TokenKind::Pub
+                            | TokenKind::Module
+                            | TokenKind::Extern
+                    )
+                {
+                    self.advance();
+                }
+                None
+            }
             _ => {
                 self.error_expected_one_of(&[
                     "`fn`", "`struct`", "`enum`", "`trait`", "`impl`",
                     "`effect`", "`handler`", "`type`", "`const`", "`static`",
-                    "`bridge`", "`mod`",
+                    "`bridge`", "`extern`", "`mod`",
                 ]);
                 self.synchronize();
                 None
@@ -398,7 +431,8 @@ impl<'src> Parser<'src> {
         let start = self.previous.span;
         let mut params = Vec::new();
 
-        while !self.check(TokenKind::Gt) && !self.is_at_end() {
+        // Use check_closing_angle() to handle `>>` in nested contexts
+        while !self.check_closing_angle() && !self.is_at_end() {
             params.push(self.parse_generic_param());
 
             if !self.try_consume(TokenKind::Comma) {
@@ -406,7 +440,7 @@ impl<'src> Parser<'src> {
             }
         }
 
-        self.expect(TokenKind::Gt);
+        self.expect_closing_angle();
 
         Some(TypeParams {
             params,
@@ -770,7 +804,21 @@ impl<'src> Parser<'src> {
 
         let mut operations = Vec::new();
         while !self.check(TokenKind::RBrace) && !self.is_at_end() {
-            operations.push(self.parse_operation_decl());
+            // Check if we're at a valid operation start
+            if self.check(TokenKind::Op) {
+                operations.push(self.parse_operation_decl());
+            } else {
+                // Error recovery: skip invalid token and report error
+                self.error_expected("keyword `op`");
+                // Skip past this invalid item to prevent infinite loop
+                // Advance until we hit `op`, `}`, or end of file
+                while !self.check(TokenKind::Op)
+                    && !self.check(TokenKind::RBrace)
+                    && !self.is_at_end()
+                {
+                    self.advance();
+                }
+            }
         }
 
         self.expect(TokenKind::RBrace);
@@ -1016,9 +1064,34 @@ impl<'src> Parser<'src> {
                 TokenKind::Type => {
                     items.push(TraitItem::Type(self.parse_type_decl(attrs, vis)));
                 }
+                // If we hit a top-level declaration keyword, break out of the trait block
+                TokenKind::Impl
+                | TokenKind::Struct
+                | TokenKind::Enum
+                | TokenKind::Effect
+                | TokenKind::Handler
+                | TokenKind::Trait
+                | TokenKind::Pub
+                | TokenKind::Module => {
+                    break;
+                }
                 _ => {
-                    self.error_expected_one_of(&["`fn`", "`type`"]);
+                    self.error_expected_one_of(&["`fn`", "`type`", "`}`"]);
                     self.synchronize();
+                    // After synchronize, check if we're at a top-level keyword and should break
+                    if matches!(
+                        self.current.kind,
+                        TokenKind::Impl
+                            | TokenKind::Struct
+                            | TokenKind::Enum
+                            | TokenKind::Effect
+                            | TokenKind::Handler
+                            | TokenKind::Trait
+                            | TokenKind::Pub
+                            | TokenKind::Module
+                    ) {
+                        break;
+                    }
                 }
             }
         }
@@ -1069,9 +1142,35 @@ impl<'src> Parser<'src> {
                 TokenKind::Type => {
                     items.push(ImplItem::Type(self.parse_type_decl(attrs, vis)));
                 }
+                // If we hit a top-level declaration keyword, break out of the impl block
+                // This handles unclosed impl blocks gracefully
+                TokenKind::Impl
+                | TokenKind::Struct
+                | TokenKind::Enum
+                | TokenKind::Effect
+                | TokenKind::Handler
+                | TokenKind::Trait
+                | TokenKind::Pub
+                | TokenKind::Module => {
+                    break;
+                }
                 _ => {
-                    self.error_expected_one_of(&["`fn`", "`type`"]);
+                    self.error_expected_one_of(&["`fn`", "`type`", "`}`"]);
                     self.synchronize();
+                    // After synchronize, check if we're at a top-level keyword and should break
+                    if matches!(
+                        self.current.kind,
+                        TokenKind::Impl
+                            | TokenKind::Struct
+                            | TokenKind::Enum
+                            | TokenKind::Effect
+                            | TokenKind::Handler
+                            | TokenKind::Trait
+                            | TokenKind::Pub
+                            | TokenKind::Module
+                    ) {
+                        break;
+                    }
                 }
             }
         }
@@ -1213,6 +1312,51 @@ impl<'src> Parser<'src> {
         };
 
         // Parse bridge body
+        self.expect(TokenKind::LBrace);
+
+        let mut items = Vec::new();
+        while !self.check(TokenKind::RBrace) && !self.is_at_end() {
+            if let Some(item) = self.parse_bridge_item() {
+                items.push(item);
+            }
+        }
+
+        self.expect(TokenKind::RBrace);
+
+        BridgeDecl {
+            attrs,
+            language,
+            name,
+            items,
+            span: start.merge(self.previous.span),
+        }
+    }
+
+    /// Parse an extern block: `extern "C" { fn foo(...); ... }`
+    /// This is converted to a BridgeDecl with an auto-generated name.
+    fn parse_extern_block(&mut self, attrs: Vec<Attribute>) -> BridgeDecl {
+        let start = self.current.span;
+        self.advance(); // consume 'extern'
+
+        // Parse language specifier: "C", "Rust", etc.
+        let language = if self.check(TokenKind::StringLit) {
+            let span = self.current.span;
+            let text = self.current_text();
+            // Strip quotes
+            let inner = text.trim_start_matches('"').trim_end_matches('"');
+            self.advance();
+            Spanned::new(inner.to_string(), span)
+        } else {
+            // Default to "C" if no language specified
+            Spanned::new("C".to_string(), self.current.span)
+        };
+
+        // Generate a unique anonymous name for the extern block
+        // Using span position to make it unique
+        let name_str = format!("__extern_{}_{}", start.start_line, start.start);
+        let name = Spanned::new(self.intern(&name_str), start);
+
+        // Parse extern block body
         self.expect(TokenKind::LBrace);
 
         let mut items = Vec::new();

@@ -185,6 +185,8 @@ pub enum TokenKind {
     Union,
     #[token("default")]
     Default,
+    #[token("unsafe")]
+    Unsafe,
 
     // ============================================================
     // Literals
@@ -584,6 +586,7 @@ impl TokenKind {
             TokenKind::Throw => "reserved keyword `throw`",
             TokenKind::Union => "contextual keyword `union`",
             TokenKind::Default => "contextual keyword `default`",
+            TokenKind::Unsafe => "reserved keyword `unsafe`",
             TokenKind::IntLit => "integer literal",
             TokenKind::FloatLit => "float literal",
             TokenKind::StringLit => "string literal",
@@ -721,6 +724,8 @@ impl Token {
 pub struct Lexer<'src> {
     inner: logos::Lexer<'src, TokenKind>,
     source: &'src str,
+    /// Precomputed line index for O(log n) line/column lookup.
+    line_index: crate::span::LineIndex,
     finished: bool,
 }
 
@@ -730,6 +735,7 @@ impl<'src> Lexer<'src> {
         Self {
             inner: TokenKind::lexer(source),
             source,
+            line_index: crate::span::LineIndex::new(source),
             finished: false,
         }
     }
@@ -750,11 +756,15 @@ impl<'src> Iterator for Lexer<'src> {
 
         match self.inner.next() {
             Some(Ok(kind)) => {
-                let span = Span::from_logos(self.inner.span(), self.source);
+                let logos_span = self.inner.span();
+                let (line, col) = self.line_index.line_col(logos_span.start);
+                let span = Span::new(logos_span.start, logos_span.end, line, col);
                 Some(Token::new(kind, span))
             }
             Some(Err(())) => {
-                let span = Span::from_logos(self.inner.span(), self.source);
+                let logos_span = self.inner.span();
+                let (line, col) = self.line_index.line_col(logos_span.start);
+                let span = Span::new(logos_span.start, logos_span.end, line, col);
                 Some(Token::new(TokenKind::Error, span))
             }
             None => {

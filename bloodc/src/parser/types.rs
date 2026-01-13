@@ -212,7 +212,8 @@ impl<'src> Parser<'src> {
                 self.expect(TokenKind::Lt);
 
                 let mut params = Vec::new();
-                while !self.check(TokenKind::Gt) && !self.is_at_end() {
+                // Use check_closing_angle() to handle `>>` in nested contexts
+                while !self.check_closing_angle() && !self.is_at_end() {
                     if self.check(TokenKind::TypeIdent) || self.check(TokenKind::Ident) {
                         self.advance();
                         params.push(self.spanned_symbol());
@@ -225,7 +226,7 @@ impl<'src> Parser<'src> {
                     }
                 }
 
-                self.expect(TokenKind::Gt);
+                self.expect_closing_angle();
                 self.expect(TokenKind::Dot);
                 let body = self.parse_type();
 
@@ -327,6 +328,7 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse type arguments <T, U, ...>.
+    /// This handles `>>` disambiguation for nested generics like `Vec<Vec<T>>`.
     #[must_use = "parsing has no effect if the result is not used"]
     pub fn parse_type_args(&mut self) -> TypeArgs {
         let start = self.current.span;
@@ -334,7 +336,8 @@ impl<'src> Parser<'src> {
 
         let mut args = Vec::new();
 
-        while !self.check(TokenKind::Gt) && !self.is_at_end() {
+        // Use check_closing_angle() to handle `>`, `>>`, and `>>=`
+        while !self.check_closing_angle() && !self.is_at_end() {
             // Could be a type, lifetime, or const
             let arg = if self.check(TokenKind::Lifetime) {
                 self.advance();
@@ -350,7 +353,8 @@ impl<'src> Parser<'src> {
             }
         }
 
-        self.expect(TokenKind::Gt);
+        // Use expect_closing_angle() to properly split `>>` tokens
+        self.expect_closing_angle();
 
         TypeArgs {
             args,

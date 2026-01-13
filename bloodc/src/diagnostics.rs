@@ -92,6 +92,10 @@ pub enum ErrorCode {
     MissingFunctionBody = 114,
     /// Invalid match arm.
     InvalidMatchArm = 115,
+    /// Macro call syntax (macros are planned but not yet implemented).
+    UnsupportedMacro = 116,
+    /// Syntax from another language not supported (e.g., Rust's `unsafe { }`).
+    UnsupportedSyntax = 117,
 
     // ============================================================
     // Pointer/Memory Warnings (W0001-W0099)
@@ -174,6 +178,8 @@ impl ErrorCode {
             ErrorCode::InvalidVisibility => "invalid visibility specifier",
             ErrorCode::MissingFunctionBody => "missing function body",
             ErrorCode::InvalidMatchArm => "invalid match arm",
+            ErrorCode::UnsupportedMacro => "macros are not yet implemented",
+            ErrorCode::UnsupportedSyntax => "unsupported syntax from another language",
             // Pointer/Memory warnings
             ErrorCode::DeeplyNestedBox => "deeply nested box type causes multiple generation checks",
             ErrorCode::PointerHeavyStruct => "struct has high pointer density (>75% pointer fields)",

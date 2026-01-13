@@ -94,6 +94,9 @@ pub struct Parser<'src> {
     errors: Vec<Diagnostic>,
     /// Whether we're in panic mode (error recovery).
     panic_mode: bool,
+    /// Pending `>` token from splitting `>>` or `>>=` in type argument contexts.
+    /// When we consume a `>` from `>>`, we set this to the span of the second `>`.
+    pending_gt: Option<Span>,
 }
 
 impl<'src> Parser<'src> {
@@ -120,6 +123,7 @@ impl<'src> Parser<'src> {
             previous: Token::dummy(TokenKind::Error),
             errors: Vec::new(),
             panic_mode: false,
+            pending_gt: None,
         }
     }
 
@@ -285,6 +289,127 @@ impl<'src> Parser<'src> {
     }
 
     // ============================================================
+    // Type argument `>` handling (for `>>` disambiguation)
+    // ============================================================
+
+    /// Check if we're at a closing angle bracket for type arguments.
+    /// This handles `>`, `>>`, and `>>=` tokens, as well as pending `>` from previous splits.
+    fn check_closing_angle(&self) -> bool {
+        if self.pending_gt.is_some() {
+            return true;
+        }
+        matches!(
+            self.current.kind,
+            TokenKind::Gt | TokenKind::Shr | TokenKind::ShrEq | TokenKind::GtEq
+        )
+    }
+
+    /// Consume a single `>` for closing type arguments.
+    /// If the current token is `>>`, this splits it and leaves a pending `>`.
+    /// If the current token is `>>=`, this splits it and converts current to `>=`.
+    /// If the current token is `>=`, this splits it and leaves a pending `=`.
+    /// Returns the span of the consumed `>`.
+    fn consume_closing_angle(&mut self) -> Option<Span> {
+        // First check for pending `>` from a previous split
+        if let Some(span) = self.pending_gt.take() {
+            self.previous = Token::new(TokenKind::Gt, span);
+            return Some(span);
+        }
+
+        match self.current.kind {
+            TokenKind::Gt => {
+                let span = self.current.span;
+                self.advance();
+                Some(span)
+            }
+            TokenKind::Shr => {
+                // `>>` - consume first `>`, leave second as pending
+                let full_span = self.current.span;
+                // First `>` is the first byte
+                let first_span = Span::new(
+                    full_span.start,
+                    full_span.start + 1,
+                    full_span.start_line,
+                    full_span.start_col,
+                );
+                // Second `>` is the second byte
+                let second_span = Span::new(
+                    full_span.start + 1,
+                    full_span.end,
+                    full_span.start_line,
+                    full_span.start_col + 1,
+                );
+                self.pending_gt = Some(second_span);
+                self.previous = Token::new(TokenKind::Gt, first_span);
+                // Advance past the `>>` token
+                self.current = self.next.clone();
+                self.next = self.lexer.next().unwrap_or_else(|| {
+                    Token::new(TokenKind::Eof, Span::new(self.source.len(), self.source.len(), 0, 0))
+                });
+                Some(first_span)
+            }
+            TokenKind::ShrEq => {
+                // `>>=` - consume first `>`, convert to `>=`
+                let full_span = self.current.span;
+                let first_span = Span::new(
+                    full_span.start,
+                    full_span.start + 1,
+                    full_span.start_line,
+                    full_span.start_col,
+                );
+                // Convert current token to `>=`
+                let ge_span = Span::new(
+                    full_span.start + 1,
+                    full_span.end,
+                    full_span.start_line,
+                    full_span.start_col + 1,
+                );
+                self.current = Token::new(TokenKind::GtEq, ge_span);
+                self.previous = Token::new(TokenKind::Gt, first_span);
+                Some(first_span)
+            }
+            TokenKind::GtEq => {
+                // `>=` in type context - consume `>`, leave `=` as pending
+                // This handles cases like `Vec<T>=` which would be unusual but possible
+                let full_span = self.current.span;
+                let gt_span = Span::new(
+                    full_span.start,
+                    full_span.start + 1,
+                    full_span.start_line,
+                    full_span.start_col,
+                );
+                // We don't have a pending_eq mechanism, so just treat this as `>`
+                // and let the `=` cause an error if it's unexpected
+                self.previous = Token::new(TokenKind::Gt, gt_span);
+                // Convert current to `=`
+                let eq_span = Span::new(
+                    full_span.start + 1,
+                    full_span.end,
+                    full_span.start_line,
+                    full_span.start_col + 1,
+                );
+                self.current = Token::new(TokenKind::Eq, eq_span);
+                Some(gt_span)
+            }
+            _ => {
+                self.error_expected("`>`");
+                None
+            }
+        }
+    }
+
+    /// Expect a closing angle bracket `>` for type arguments.
+    /// This is like `expect(TokenKind::Gt)` but handles `>>` splitting.
+    fn expect_closing_angle(&mut self) -> Option<Span> {
+        if self.check_closing_angle() {
+            self.consume_closing_angle()
+        } else {
+            self.error_expected("`>`");
+            None
+        }
+    }
+
+    // ============================================================
     // Error handling
     // ============================================================
 
@@ -331,14 +456,18 @@ impl<'src> Parser<'src> {
     }
 
     /// Synchronize after an error by skipping to a recovery point.
+    ///
+    /// A recovery point is either:
+    /// 1. A declaration keyword (fn, struct, enum, etc.) that starts a new top-level item
+    /// 2. EOF
+    ///
+    /// The synchronization logic skips tokens until it finds a valid recovery point,
+    /// properly handling nested braces to avoid getting stuck inside blocks.
     fn synchronize(&mut self) {
         self.panic_mode = false;
 
         while !self.is_at_end() {
-            if self.previous.kind == TokenKind::Semi {
-                return;
-            }
-
+            // Check if we're at a valid declaration keyword first
             match self.current.kind {
                 TokenKind::Fn
                 | TokenKind::Struct
@@ -353,7 +482,21 @@ impl<'src> Parser<'src> {
                 | TokenKind::Pub
                 | TokenKind::Use
                 | TokenKind::Module => return,
-                // Intentionally empty: continue advancing until a sync point is found
+                // When we encounter an opening brace, skip the entire block
+                // This prevents getting stuck inside function bodies during error recovery
+                TokenKind::LBrace => {
+                    self.advance(); // consume '{'
+                    self.skip_to_closing(TokenKind::RBrace);
+                    if self.check(TokenKind::RBrace) {
+                        self.advance(); // consume '}'
+                    }
+                    continue;
+                }
+                // Skip closing delimiters to avoid infinite loops
+                TokenKind::RBrace | TokenKind::RParen | TokenKind::RBracket => {
+                    self.advance();
+                    continue;
+                }
                 _ => {}
             }
 
@@ -363,7 +506,6 @@ impl<'src> Parser<'src> {
 
     /// Skip tokens until we find a closing delimiter, handling nested delimiters.
     /// Returns true if the closing delimiter was found.
-    #[allow(dead_code)]
     fn skip_to_closing(&mut self, closing: TokenKind) -> bool {
         let opening = match closing {
             TokenKind::RParen => TokenKind::LParen,
@@ -445,13 +587,32 @@ impl<'src> Parser<'src> {
             self.error_expected("identifier");
         }
 
-        // Additional segments
-        while self.try_consume(TokenKind::Dot) {
-            if self.check(TokenKind::Ident) || self.check(TokenKind::TypeIdent) {
-                self.advance();
-                segments.push(self.spanned_symbol());
+        // Additional segments - accept both `.` and `::` as separators
+        // For `::`, don't consume if followed by `{` or `*` (import target markers)
+        loop {
+            if self.try_consume(TokenKind::Dot) {
+                // `.` is always a path separator
+                if self.check(TokenKind::Ident) || self.check(TokenKind::TypeIdent) {
+                    self.advance();
+                    segments.push(self.spanned_symbol());
+                } else {
+                    self.error_expected("identifier");
+                    break;
+                }
+            } else if self.check(TokenKind::ColonColon) {
+                // Don't consume `::` if it's followed by `{` or `*` (import syntax)
+                if self.check_next(TokenKind::LBrace) || self.check_next(TokenKind::Star) {
+                    break;
+                }
+                self.advance(); // consume `::`
+                if self.check(TokenKind::Ident) || self.check(TokenKind::TypeIdent) {
+                    self.advance();
+                    segments.push(self.spanned_symbol());
+                } else {
+                    self.error_expected("identifier");
+                    break;
+                }
             } else {
-                self.error_expected("identifier");
                 break;
             }
         }
@@ -897,6 +1058,39 @@ impl<'src> Parser<'src> {
                 Some('\'') => '\'',
                 Some('"') => '"',
                 Some('0') => '\0',
+                Some('x') => {
+                    // Hex escape \xNN
+                    let mut hex = String::new();
+                    for _ in 0..2 {
+                        if let Some(h) = chars.next() {
+                            hex.push(h);
+                        }
+                    }
+                    if let Ok(n) = u8::from_str_radix(&hex, 16) {
+                        n as char
+                    } else {
+                        '\0'
+                    }
+                }
+                Some('u') => {
+                    // Unicode escape \u{NNNN}
+                    if chars.next() == Some('{') {
+                        let mut hex = String::new();
+                        while let Some(c) = chars.next() {
+                            if c == '}' {
+                                break;
+                            }
+                            hex.push(c);
+                        }
+                        if let Ok(n) = u32::from_str_radix(&hex, 16) {
+                            char::from_u32(n).unwrap_or('\0')
+                        } else {
+                            '\0'
+                        }
+                    } else {
+                        '\0'
+                    }
+                }
                 Some(c) => c,
                 None => '\0',
             },

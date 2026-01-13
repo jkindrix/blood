@@ -783,6 +783,38 @@ impl<'src> Parser<'src> {
                 }
             }
 
+            // `default` keyword creates a default value of the inferred type
+            TokenKind::Default => {
+                self.advance();
+                Expr {
+                    kind: ExprKind::Default,
+                    span: start.merge(self.previous.span),
+                }
+            }
+
+            // Rust-style `unsafe { }` is not supported - provide helpful error
+            TokenKind::Unsafe => {
+                self.error_at_current(
+                    "`unsafe { }` blocks use `@unsafe { }` syntax in Blood",
+                    crate::diagnostics::ErrorCode::UnsupportedSyntax,
+                );
+                self.advance();
+                // Parse as @unsafe to attempt recovery
+                if self.check(TokenKind::LBrace) {
+                    let block = self.parse_block();
+                    Expr {
+                        kind: ExprKind::Unsafe(block),
+                        span: start.merge(self.previous.span),
+                    }
+                } else {
+                    // Return placeholder to continue parsing
+                    Expr {
+                        kind: ExprKind::Tuple(Vec::new()),
+                        span: start.merge(self.previous.span),
+                    }
+                }
+            }
+
             // Some keywords can be used as identifiers in expression context
             TokenKind::Handler | TokenKind::Effect | TokenKind::Deep | TokenKind::Shallow => {
                 // Treat as identifier
@@ -819,6 +851,32 @@ impl<'src> Parser<'src> {
     /// Parse a path expression or struct literal.
     fn parse_path_or_struct_expr(&mut self) -> Expr {
         let path = self.parse_expr_path();
+
+        // Check for macro call syntax (e.g., println!, vec!, format!)
+        // Macros are planned but not yet implemented (see STDLIB.md §9)
+        if self.check(TokenKind::Not) {
+            let path_name = if let Some(seg) = path.segments.last() {
+                self.interner_symbol_str(seg.name.node).to_string()
+            } else {
+                "unknown".to_string()
+            };
+
+            // Check if this looks like a macro call
+            if self.check_next(TokenKind::LParen)
+                || self.check_next(TokenKind::LBracket)
+                || self.check_next(TokenKind::LBrace)
+            {
+                self.error_at_current(
+                    &format!(
+                        "`{}!` is a macro call, but macros are not yet implemented",
+                        path_name
+                    ),
+                    crate::diagnostics::ErrorCode::UnsupportedMacro,
+                );
+                // Skip the `!` and try to recover
+                self.advance();
+            }
+        }
 
         // Check for struct literal
         if self.check(TokenKind::LBrace) && !self.is_statement_context() {
