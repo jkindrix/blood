@@ -124,6 +124,8 @@ pub enum DefKind {
     Variant,
     /// A struct field.
     Field,
+    /// A module.
+    Mod,
 }
 
 impl DefKind {
@@ -163,6 +165,7 @@ impl DefKind {
             DefKind::EffectOp => "effect operation",
             DefKind::Variant => "variant",
             DefKind::Field => "field",
+            DefKind::Mod => "module",
         }
     }
 }

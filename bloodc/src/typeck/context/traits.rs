@@ -391,4 +391,88 @@ impl<'a> TypeContext<'a> {
     pub(crate) fn types_match_for_impl(&self, ty_a: &Type, ty_b: &Type) -> bool {
         self.impls_could_overlap(ty_a, ty_b)
     }
+
+    /// Extract type substitution when matching a concrete type against an impl's self_ty.
+    ///
+    /// Given an impl block with generics (e.g., `impl<K, V> HashMap<K, V>`) and a concrete
+    /// receiver type (e.g., `HashMap<i32, i32>`), this extracts the substitution
+    /// `{K -> i32, V -> i32}`.
+    ///
+    /// Returns None if the types don't match.
+    pub(crate) fn extract_impl_substitution(
+        &self,
+        impl_generics: &[TyVarId],
+        impl_self_ty: &Type,
+        concrete_ty: &Type,
+    ) -> Option<std::collections::HashMap<TyVarId, Type>> {
+        let mut subst: std::collections::HashMap<TyVarId, Type> = std::collections::HashMap::new();
+
+        // Helper function to recursively extract substitution
+        fn extract_inner(
+            impl_generics: &[TyVarId],
+            pattern: &Type,
+            concrete: &Type,
+            subst: &mut std::collections::HashMap<TyVarId, Type>,
+        ) -> bool {
+            match (pattern.kind(), concrete.kind()) {
+                // Type parameter: check if it's one of the impl's generics
+                (TypeKind::Param(var_id), _) => {
+                    if impl_generics.contains(var_id) {
+                        // Record the substitution
+                        if let Some(existing) = subst.get(var_id) {
+                            // Must match existing binding
+                            existing == concrete
+                        } else {
+                            subst.insert(*var_id, concrete.clone());
+                            true
+                        }
+                    } else {
+                        // Not an impl generic - types must match exactly
+                        pattern == concrete
+                    }
+                }
+
+                // ADT: check def_id matches and recursively check type args
+                (
+                    TypeKind::Adt { def_id: p_id, args: p_args },
+                    TypeKind::Adt { def_id: c_id, args: c_args },
+                ) => {
+                    if p_id != c_id || p_args.len() != c_args.len() {
+                        return false;
+                    }
+                    p_args.iter().zip(c_args.iter()).all(|(p, c)| {
+                        extract_inner(impl_generics, p, c, subst)
+                    })
+                }
+
+                // Reference types
+                (
+                    TypeKind::Ref { mutable: p_mut, inner: p_inner },
+                    TypeKind::Ref { mutable: c_mut, inner: c_inner },
+                ) => {
+                    p_mut == c_mut && extract_inner(impl_generics, p_inner, c_inner, subst)
+                }
+
+                // Tuple types
+                (TypeKind::Tuple(p_elems), TypeKind::Tuple(c_elems)) => {
+                    p_elems.len() == c_elems.len()
+                        && p_elems.iter().zip(c_elems.iter()).all(|(p, c)| {
+                            extract_inner(impl_generics, p, c, subst)
+                        })
+                }
+
+                // Primitives must match exactly
+                (TypeKind::Primitive(p), TypeKind::Primitive(c)) => p == c,
+
+                // Other types must match exactly
+                _ => pattern == concrete,
+            }
+        }
+
+        if extract_inner(impl_generics, impl_self_ty, concrete_ty, &mut subst) {
+            Some(subst)
+        } else {
+            None
+        }
+    }
 }

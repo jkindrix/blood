@@ -578,6 +578,14 @@ fn hash_item_kind(kind: &hir::ItemKind, bodies: &HashMap<hir::BodyId, hir::Body>
             hasher.update_u32(bridge.consts.len() as u32);
             hasher.update_u32(bridge.callbacks.len() as u32);
         }
+        hir::ItemKind::Module(module_def) => {
+            hasher.update_u8(0x0D);
+            hasher.update_u32(module_def.items.len() as u32);
+            for item_def_id in &module_def.items {
+                hasher.update_u32(item_def_id.index);
+            }
+            hasher.update_u8(if module_def.is_external { 1 } else { 0 });
+        }
     }
 }
 
@@ -1354,6 +1362,12 @@ fn extract_item_deps(
                 for param in &cb.params {
                     extract_type_deps(param, deps);
                 }
+            }
+        }
+        hir::ItemKind::Module(module_def) => {
+            // Module depends on all items it contains
+            for item_def_id in &module_def.items {
+                deps.insert(*item_def_id);
             }
         }
     }

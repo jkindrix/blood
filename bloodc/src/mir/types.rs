@@ -652,10 +652,12 @@ pub enum AggregateKind {
     Tuple,
     /// Array.
     Array(Type),
-    /// Struct.
+    /// Struct or enum.
     Adt {
         def_id: DefId,
         variant_idx: Option<u32>,
+        /// Type arguments for generic ADTs (e.g., `Option<i32>` has `[i32]`).
+        type_args: Vec<Type>,
     },
     /// Anonymous record.
     Record,

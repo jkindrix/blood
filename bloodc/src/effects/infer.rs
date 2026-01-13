@@ -548,6 +548,7 @@ impl Default for DetailedEffectInferencer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use crate::hir::{Local, LocalId, LiteralValue, Type};
     use crate::span::Span;
 
@@ -573,6 +574,7 @@ mod tests {
             param_count: 0,
             expr,
             span: Span::dummy(),
+            tuple_destructures: HashMap::new(),
         }
     }
 

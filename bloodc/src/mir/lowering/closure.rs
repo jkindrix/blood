@@ -86,10 +86,10 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
             capture_type_list.push(ty.clone());
         }
 
-        // If there are captures, add an implicit environment parameter
+        // Only add an implicit environment parameter if the closure has captures.
+        // Closures without captures have the same signature as regular functions,
+        // allowing them to be used directly as function pointers.
         let env_local = if !captures.is_empty() {
-            // Always create a tuple type for the environment, even for single captures
-            // This ensures field projections work consistently
             let env_ty = Type::new(TypeKind::Tuple(capture_type_list));
             let env_local = builder.add_param(
                 Some("__env".to_string()),
@@ -602,6 +602,13 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
             field_ops.push(self.lower_expr(field)?);
         }
 
+        // Extract type arguments from the enum type
+        let type_args = if let TypeKind::Adt { args, .. } = ty.kind() {
+            args.clone()
+        } else {
+            Vec::new()
+        };
+
         let dest = self.new_temp(ty.clone(), span);
         let dest_place = Place::local(dest);
 
@@ -611,6 +618,7 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
                 kind: AggregateKind::Adt {
                     def_id,
                     variant_idx: Some(variant_idx),
+                    type_args,
                 },
                 operands: field_ops,
             },
@@ -974,11 +982,18 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
             operands.push(self.lower_expr(&field.value)?);
         }
 
+        // Extract type arguments from the struct type
+        let type_args = if let TypeKind::Adt { args, .. } = ty.kind() {
+            args.clone()
+        } else {
+            Vec::new()
+        };
+
         let temp = self.new_temp(ty.clone(), span);
         self.push_assign(
             Place::local(temp),
             Rvalue::Aggregate {
-                kind: AggregateKind::Adt { def_id, variant_idx: None },
+                kind: AggregateKind::Adt { def_id, variant_idx: None, type_args },
                 operands,
             },
         );
@@ -1147,9 +1162,13 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
                         ),
                     });
 
+                    // Test each field pattern on the downcasted variant
+                    // The Downcast projection tells codegen we're inside a variant,
+                    // so Field projections will be offset by 1 for the discriminant tag.
                     self.builder.switch_to(fields_test_block);
                     self.current_block = fields_test_block;
-                    self.test_pattern_fields(fields, place, on_match, on_no_match, span)?;
+                    let variant_place = place.project(PlaceElem::Downcast(*variant_idx));
+                    self.test_pattern_fields(fields, &variant_place, on_match, on_no_match, span)?;
                 }
             }
 
@@ -1549,9 +1568,14 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
             PatternKind::Wildcard | PatternKind::Literal(_) | PatternKind::Range { .. } => {
                 // Nothing to bind - these patterns only test values
             }
-            PatternKind::Variant { fields, .. } => {
+            PatternKind::Variant { variant_idx, fields, .. } => {
+                // For enum variant patterns, first downcast to the variant,
+                // then bind each field pattern.
+                // The Downcast projection tells codegen we're inside a variant,
+                // so Field projections will be offset by 1 for the discriminant tag.
+                let variant_place = place.project(PlaceElem::Downcast(*variant_idx));
                 for (i, field_pat) in fields.iter().enumerate() {
-                    let field_place = place.project(PlaceElem::Field(i as u32));
+                    let field_place = variant_place.project(PlaceElem::Field(i as u32));
                     self.bind_pattern(field_pat, &field_place)?;
                 }
             }

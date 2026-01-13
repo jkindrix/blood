@@ -94,15 +94,33 @@ void print_char(int32_t c) {
     fflush(stdout);
 }
 
+// Print a character with newline
+void println_char(int32_t c) {
+    printf("%c\n", (char)c);
+}
+
 // Print a newline
 void println(void) {
     printf("\n");
 }
 
-// Print a 64-bit integer (no newline)
+// Note: println_i64 is provided by the Rust runtime (libblood_runtime.a)
+
+// Print a 64-bit integer (no newline) - NOT in Rust runtime
 void print_i64(int64_t n) {
     printf("%ld", n);
     fflush(stdout);
+}
+
+// Print an unsigned 64-bit integer (no newline)
+void print_u64(uint64_t n) {
+    printf("%lu", n);
+    fflush(stdout);
+}
+
+// Print an unsigned 64-bit integer with newline
+void println_u64(uint64_t n) {
+    printf("%lu\n", n);
 }
 
 // Print a double (no newline)
@@ -114,6 +132,17 @@ void print_f64(double n) {
 // Print a double with newline
 void println_f64(double n) {
     printf("%g\n", n);
+}
+
+// Print a float (no newline)
+void print_f32(float n) {
+    printf("%g", (double)n);
+    fflush(stdout);
+}
+
+// Print a float with newline
+void println_f32(float n) {
+    printf("%g\n", (double)n);
 }
 
 // Print a boolean
@@ -184,6 +213,45 @@ void* blood_realloc(void* ptr, size_t size) {
 
 void blood_free_simple(void* ptr) {
     free(ptr);
+}
+
+// ============================================================================
+// Memory Intrinsics for Vec/Collections
+// ============================================================================
+
+// Copy n bytes from src to dest, return dest
+void* blood_memcpy(void* dest, const void* src, size_t n) {
+    return memcpy(dest, src, n);
+}
+
+// Read i32 from memory address
+int32_t ptr_read_i32(uint64_t ptr) {
+    return *(int32_t*)(uintptr_t)ptr;
+}
+
+// Write i32 to memory address
+void ptr_write_i32(uint64_t ptr, int32_t value) {
+    *(int32_t*)(uintptr_t)ptr = value;
+}
+
+// Read i64 from memory address
+int64_t ptr_read_i64(uint64_t ptr) {
+    return *(int64_t*)(uintptr_t)ptr;
+}
+
+// Write i64 to memory address
+void ptr_write_i64(uint64_t ptr, int64_t value) {
+    *(int64_t*)(uintptr_t)ptr = value;
+}
+
+// Read u64 from memory address
+uint64_t ptr_read_u64(uint64_t ptr) {
+    return *(uint64_t*)(uintptr_t)ptr;
+}
+
+// Write u64 to memory address
+void ptr_write_u64(uint64_t ptr, uint64_t value) {
+    *(uint64_t*)(uintptr_t)ptr = value;
 }
 
 // ============================================================================

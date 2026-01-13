@@ -38,6 +38,7 @@ impl Item {
             ItemKind::Handler { .. } => DefKind::Handler,
             ItemKind::ExternFn(_) => DefKind::Fn, // External functions are still functions
             ItemKind::Bridge(_) => DefKind::Struct, // Bridge as a module-like namespace
+            ItemKind::Module(_) => DefKind::Mod,
         }
     }
 }
@@ -100,6 +101,17 @@ pub enum ItemKind {
     ExternFn(ExternFnDef),
     /// An FFI bridge block.
     Bridge(BridgeDef),
+    /// A module.
+    Module(ModuleDef),
+}
+
+/// A module definition.
+#[derive(Debug, Clone)]
+pub struct ModuleDef {
+    /// Items contained within this module.
+    pub items: Vec<DefId>,
+    /// Whether this is an external module (loaded from file) or inline.
+    pub is_external: bool,
 }
 
 /// Handler kind: determines continuation semantics.

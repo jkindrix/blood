@@ -40,10 +40,13 @@ impl<'a> TypeContext<'a> {
         }
 
         // Phase 5: Type-check function bodies
-        let pending = std::mem::take(&mut self.pending_bodies);
-        for (def_id, func) in pending {
-            if let Err(e) = self.check_function_body(def_id, &func) {
-                self.errors.push(e);
+        // Process iteratively since functions can contain nested functions
+        while !self.pending_bodies.is_empty() {
+            let pending = std::mem::take(&mut self.pending_bodies);
+            for (def_id, func) in pending {
+                if let Err(e) = self.check_function_body(def_id, &func) {
+                    self.errors.push(e);
+                }
             }
         }
 
@@ -114,6 +117,7 @@ impl<'a> TypeContext<'a> {
             param_count: 0, // Consts have no parameters
             expr: value_expr,
             span: const_decl.span,
+            tuple_destructures: std::mem::take(&mut self.tuple_destructures),
         };
 
         self.bodies.insert(body_id, hir_body);
@@ -181,6 +185,7 @@ impl<'a> TypeContext<'a> {
             param_count: 0, // Statics have no parameters
             expr: value_expr,
             span: static_decl.span,
+            tuple_destructures: std::mem::take(&mut self.tuple_destructures),
         };
 
         self.bodies.insert(body_id, hir_body);
@@ -209,12 +214,17 @@ impl<'a> TypeContext<'a> {
                 func.span,
             ))?;
 
+        // Save state for nested function support - these fields are modified
+        // during type-checking and need to be restored after nested functions
+        let saved_locals = std::mem::take(&mut self.locals);
+        let saved_return_type = self.return_type.take();
+        let saved_current_fn = self.current_fn.take();
+
         // Set up function scope
         self.resolver.push_scope(ScopeKind::Function, body.span);
         self.resolver.reset_local_ids();
         // Skip LocalId(0) which is reserved for the return place
         let _ = self.resolver.next_local_id();
-        self.locals.clear();
 
         // Register effect operations in scope based on function's declared effects
         self.register_effect_operations_in_scope(def_id)?;
@@ -349,6 +359,7 @@ impl<'a> TypeContext<'a> {
             param_count: sig.inputs.len(),
             expr: body_expr,
             span: body.span,
+            tuple_destructures: std::mem::take(&mut self.tuple_destructures),
         };
 
         self.bodies.insert(body_id, hir_body.clone());
@@ -357,9 +368,11 @@ impl<'a> TypeContext<'a> {
         // Effect inference and verification
         self.infer_and_verify_effects(def_id, &hir_body, body.span)?;
 
-        // Clean up
-        self.return_type = None;
+        // Clean up and restore saved state for nested function support
         self.resolver.pop_scope();
+        self.locals = saved_locals;
+        self.return_type = saved_return_type;
+        self.current_fn = saved_current_fn;
 
         Ok(())
     }
@@ -584,6 +597,7 @@ impl<'a> TypeContext<'a> {
                 param_count: effect_op.params.len(),
                 expr: body_expr,
                 span: op_impl.body.span,
+                tuple_destructures: std::mem::take(&mut self.tuple_destructures),
             };
 
             self.bodies.insert(body_id, hir_body);
@@ -667,6 +681,7 @@ impl<'a> TypeContext<'a> {
                 param_count: 1, // Just the result parameter
                 expr: body_expr,
                 span: ret_clause.body.span,
+                tuple_destructures: std::mem::take(&mut self.tuple_destructures),
             };
 
             self.bodies.insert(body_id, hir_body);
@@ -690,8 +705,27 @@ impl<'a> TypeContext<'a> {
     pub(crate) fn check_block(&mut self, block: &ast::Block, expected: &Type) -> Result<hir::Expr, TypeError> {
         self.resolver.push_scope(ScopeKind::Block, block.span);
 
+        // First pass: collect all items so nested functions can see each other
+        for stmt in &block.statements {
+            if let ast::Statement::Item(decl) = stmt {
+                self.collect_declaration(decl)?;
+            }
+        }
+
+        // Second pass: type-check all nested function bodies while still in block scope
+        // This ensures they can reference each other regardless of declaration order
+        while !self.pending_bodies.is_empty() {
+            let pending = std::mem::take(&mut self.pending_bodies);
+            for (def_id, func) in pending {
+                if let Err(e) = self.check_function_body(def_id, &func) {
+                    self.errors.push(e);
+                }
+            }
+        }
+
         let mut stmts = Vec::new();
 
+        // Third pass: process all statements (now nested items are already handled)
         for stmt in &block.statements {
             match stmt {
                 ast::Statement::Let { pattern, ty, value, span } => {
@@ -727,9 +761,8 @@ impl<'a> TypeContext<'a> {
                     let hir_expr = self.infer_expr(expr)?;
                     stmts.push(hir::Stmt::Expr(hir_expr));
                 }
-                ast::Statement::Item(decl) => {
-                    // Nested items - collect them
-                    self.collect_declaration(decl)?;
+                ast::Statement::Item(_) => {
+                    // Already handled in first pass - skip
                 }
             }
         }

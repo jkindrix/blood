@@ -60,15 +60,27 @@ pub extern "C" fn println_i64(n: i64) {
     println!("{n}");
 }
 
+/// Blood str slice representation {ptr, len}.
+#[repr(C)]
+pub struct BloodStr {
+    /// Pointer to the string data.
+    pub ptr: *const u8,
+    /// Length of the string in bytes.
+    pub len: u64,
+}
+
 /// Print a string (no newline).
 ///
+/// Takes a Blood str slice {ptr, len}.
+///
 /// # Safety
-/// The pointer must be a valid null-terminated C string.
+/// The pointer must be valid for `len` bytes.
 #[no_mangle]
-pub unsafe extern "C" fn print_str(s: *const c_char) {
-    if !s.is_null() {
-        if let Ok(cstr) = CStr::from_ptr(s).to_str() {
-            print!("{cstr}");
+pub unsafe extern "C" fn print_str(s: BloodStr) {
+    if !s.ptr.is_null() && s.len > 0 {
+        let slice = std::slice::from_raw_parts(s.ptr, s.len as usize);
+        if let Ok(str_val) = std::str::from_utf8(slice) {
+            print!("{str_val}");
             let _ = io::stdout().flush();
         }
     }
@@ -76,14 +88,118 @@ pub unsafe extern "C" fn print_str(s: *const c_char) {
 
 /// Print a string with newline.
 ///
+/// Takes a Blood str slice {ptr, len}.
+///
 /// # Safety
-/// The pointer must be a valid null-terminated C string.
+/// The pointer must be valid for `len` bytes.
 #[no_mangle]
-pub unsafe extern "C" fn println_str(s: *const c_char) {
-    if !s.is_null() {
-        if let Ok(cstr) = CStr::from_ptr(s).to_str() {
-            println!("{cstr}");
+pub unsafe extern "C" fn println_str(s: BloodStr) {
+    if !s.ptr.is_null() && s.len > 0 {
+        let slice = std::slice::from_raw_parts(s.ptr, s.len as usize);
+        if let Ok(str_val) = std::str::from_utf8(slice) {
+            println!("{str_val}");
         }
+    } else {
+        // Empty string - just print newline
+        println!();
+    }
+}
+
+/// Get the length of a string in bytes.
+///
+/// # Safety
+/// The pointer must be valid for `len` bytes.
+#[no_mangle]
+pub extern "C" fn str_len(s: BloodStr) -> i64 {
+    s.len as i64
+}
+
+/// Compare two strings for equality.
+///
+/// # Safety
+/// Both pointers must be valid for their respective lengths.
+#[no_mangle]
+pub unsafe extern "C" fn str_eq(a: BloodStr, b: BloodStr) -> bool {
+    if a.len != b.len {
+        return false;
+    }
+    if a.len == 0 {
+        return true;  // Both empty
+    }
+    if a.ptr.is_null() || b.ptr.is_null() {
+        return a.ptr.is_null() && b.ptr.is_null();
+    }
+    let slice_a = std::slice::from_raw_parts(a.ptr, a.len as usize);
+    let slice_b = std::slice::from_raw_parts(b.ptr, b.len as usize);
+    slice_a == slice_b
+}
+
+// ============================================================================
+// Input Functions
+// ============================================================================
+
+/// Read a line from stdin into a statically allocated buffer.
+///
+/// Returns a BloodStr pointing to the line (without trailing newline).
+/// The buffer is reused on each call, so the string is only valid until
+/// the next call to read_line.
+///
+/// On EOF or error, returns an empty string (ptr=null, len=0).
+#[no_mangle]
+pub extern "C" fn read_line() -> BloodStr {
+    use std::io::BufRead;
+
+    // Static buffer for holding the read line
+    // This is a simple approach - more sophisticated handling would
+    // allocate memory dynamically
+    static mut LINE_BUFFER: Vec<u8> = Vec::new();
+
+    let stdin = std::io::stdin();
+    let mut handle = stdin.lock();
+
+    unsafe {
+        LINE_BUFFER.clear();
+
+        match handle.read_until(b'\n', &mut LINE_BUFFER) {
+            Ok(0) => BloodStr { ptr: std::ptr::null(), len: 0 }, // EOF
+            Ok(n) => {
+                // Strip trailing newline if present
+                let len = if n > 0 && LINE_BUFFER[n - 1] == b'\n' {
+                    n - 1
+                } else {
+                    n
+                };
+                // Also strip carriage return if present (Windows)
+                let len = if len > 0 && LINE_BUFFER[len - 1] == b'\r' {
+                    len - 1
+                } else {
+                    len
+                };
+                BloodStr {
+                    ptr: LINE_BUFFER.as_ptr(),
+                    len: len as u64,
+                }
+            }
+            Err(_) => BloodStr { ptr: std::ptr::null(), len: 0 },
+        }
+    }
+}
+
+/// Read an integer from stdin.
+///
+/// Reads a line from stdin, trims whitespace, and parses as i32.
+/// Returns 0 on parse error or EOF.
+#[no_mangle]
+pub extern "C" fn read_int() -> i32 {
+    use std::io::BufRead;
+
+    let stdin = std::io::stdin();
+    let mut handle = stdin.lock();
+    let mut line = String::new();
+
+    match handle.read_line(&mut line) {
+        Ok(_) => line.trim().parse::<i32>().unwrap_or(0),
+        Err(_) => 0,
     }
 }
 
@@ -1916,6 +2032,22 @@ pub unsafe extern "C" fn blood_panic(msg: *const c_char) -> ! {
         CStr::from_ptr(msg).to_str().unwrap_or("invalid UTF-8")
     };
     eprintln!("BLOOD RUNTIME PANIC: {message}");
+    std::process::abort();
+}
+
+/// Panic with a Blood str slice message.
+///
+/// # Safety
+/// The pointer must be valid for `len` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn panic(msg: BloodStr) -> ! {
+    let message = if msg.ptr.is_null() || msg.len == 0 {
+        "explicit panic"
+    } else {
+        let slice = std::slice::from_raw_parts(msg.ptr, msg.len as usize);
+        std::str::from_utf8(slice).unwrap_or("invalid UTF-8")
+    };
+    eprintln!("PANIC: {message}");
     std::process::abort();
 }
 

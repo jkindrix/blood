@@ -36,6 +36,8 @@ pub use item::{
     // FFI types
     ExternFnDef, BridgeDef, LinkSpec, LinkKind, ExternFnItem, OpaqueType,
     BridgeTypeAlias, FfiStruct, FfiField, FfiEnum, FfiEnumVariant, FfiUnion, FfiConst, FfiCallback,
+    // Module
+    ModuleDef,
 };
 pub use ty::{Type, TypeKind, PrimitiveTy, TyVarId, ConstParamId, LifetimeId, ConstValue, GenericArg, RecordRowVarId, RecordField};
 

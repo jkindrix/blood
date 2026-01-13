@@ -155,6 +155,7 @@ pub enum Declaration {
     Impl(ImplBlock),
     Trait(TraitDecl),
     Bridge(BridgeDecl),
+    Module(ModItemDecl),
 }
 
 impl Declaration {
@@ -171,8 +172,27 @@ impl Declaration {
             Declaration::Impl(d) => d.span,
             Declaration::Trait(d) => d.span,
             Declaration::Bridge(d) => d.span,
+            Declaration::Module(d) => d.span,
         }
     }
+}
+
+/// Module item declaration: `mod foo;` or `mod foo { ... }`
+///
+/// This is distinct from `ModuleDecl` at the top of a file (`module std.collections;`).
+/// `ModItemDecl` represents inline module definitions within a file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModItemDecl {
+    /// Attributes on the module
+    pub attrs: Vec<Attribute>,
+    /// Visibility
+    pub vis: Visibility,
+    /// Module name
+    pub name: Spanned<Symbol>,
+    /// Module body - None for `mod foo;` (external module), Some for `mod foo { ... }`
+    pub body: Option<Vec<Declaration>>,
+    /// Full span
+    pub span: Span,
 }
 
 // ============================================================

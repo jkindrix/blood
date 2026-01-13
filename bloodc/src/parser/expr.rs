@@ -634,6 +634,9 @@ impl<'src> Parser<'src> {
             TokenKind::IntLit
             | TokenKind::FloatLit
             | TokenKind::StringLit
+            | TokenKind::RawStringLit
+            | TokenKind::RawStringLitHash1
+            | TokenKind::RawStringLitHash2
             | TokenKind::CharLit
             | TokenKind::True
             | TokenKind::False => {
@@ -712,10 +715,30 @@ impl<'src> Parser<'src> {
             // Match expression
             TokenKind::Match => self.parse_match_expr(),
 
+            // Labeled loop expressions ('label: loop/while/for)
+            TokenKind::Lifetime => {
+                self.advance();
+                let label = self.spanned_symbol();
+                self.expect(TokenKind::Colon);
+                match self.current.kind {
+                    TokenKind::Loop => self.parse_loop_expr_with_label(Some(label)),
+                    TokenKind::While => self.parse_while_expr_with_label(Some(label)),
+                    TokenKind::For => self.parse_for_expr_with_label(Some(label)),
+                    _ => {
+                        self.error_expected_one_of(&["`loop`", "`while`", "`for`"]);
+                        self.advance();
+                        Expr {
+                            kind: ExprKind::Tuple(Vec::new()),
+                            span: start,
+                        }
+                    }
+                }
+            }
+
             // Loop expressions
-            TokenKind::Loop => self.parse_loop_expr(),
-            TokenKind::While => self.parse_while_expr(),
-            TokenKind::For => self.parse_for_expr(),
+            TokenKind::Loop => self.parse_loop_expr_with_label(None),
+            TokenKind::While => self.parse_while_expr_with_label(None),
+            TokenKind::For => self.parse_for_expr_with_label(None),
 
             // Closure
             TokenKind::Or | TokenKind::Move => self.parse_closure_expr(),
@@ -1178,10 +1201,9 @@ impl<'src> Parser<'src> {
         }
     }
 
-    /// Parse a loop expression.
-    fn parse_loop_expr(&mut self) -> Expr {
+    /// Parse a loop expression with an optional label.
+    fn parse_loop_expr_with_label(&mut self, label: Option<Spanned<Symbol>>) -> Expr {
         let start = self.current.span;
-        let label = self.parse_optional_label();
         self.advance(); // consume 'loop'
         let body = self.parse_block();
 
@@ -1191,10 +1213,9 @@ impl<'src> Parser<'src> {
         }
     }
 
-    /// Parse a while expression.
-    fn parse_while_expr(&mut self) -> Expr {
+    /// Parse a while expression with an optional label.
+    fn parse_while_expr_with_label(&mut self, label: Option<Spanned<Symbol>>) -> Expr {
         let start = self.current.span;
-        let label = self.parse_optional_label();
         self.advance(); // consume 'while'
 
         // Check for while-let: `while let PATTERN = EXPR { }`
@@ -1231,10 +1252,9 @@ impl<'src> Parser<'src> {
         }
     }
 
-    /// Parse a for expression.
-    fn parse_for_expr(&mut self) -> Expr {
+    /// Parse a for expression with an optional label.
+    fn parse_for_expr_with_label(&mut self, label: Option<Spanned<Symbol>>) -> Expr {
         let start = self.current.span;
-        let label = self.parse_optional_label();
         self.advance(); // consume 'for'
         let pattern = self.parse_pattern();
         self.expect(TokenKind::In);
@@ -1250,17 +1270,6 @@ impl<'src> Parser<'src> {
                 body,
             },
             span: start.merge(self.previous.span),
-        }
-    }
-
-    fn parse_optional_label(&mut self) -> Option<Spanned<Symbol>> {
-        if self.check(TokenKind::Lifetime) {
-            self.advance();
-            let label = self.spanned_symbol();
-            self.expect(TokenKind::Colon);
-            Some(label)
-        } else {
-            None
         }
     }
 

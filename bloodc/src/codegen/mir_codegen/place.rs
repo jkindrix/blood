@@ -4,6 +4,7 @@
 //! Places represent lvalues - locations that can be read from or written to.
 
 use inkwell::values::{BasicValueEnum, PointerValue};
+use inkwell::types::BasicType;
 
 use crate::diagnostics::Diagnostic;
 use crate::hir::{Type, TypeKind};
@@ -48,12 +49,39 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
         })?;
 
         // Track the current type as we process projections
-        let base_ty = body.locals.get(place.local.index as usize)
+        let local_info = body.locals.get(place.local.index as usize);
+        let base_ty = local_info
             .map(|l| l.ty.clone())
             .unwrap_or_else(Type::error);
-        let mut current_ty = base_ty;
+        let mut current_ty = base_ty.clone();
 
         let mut current_ptr = base_ptr;
+        let mut is_inside_variant = false;  // Track if we're inside an enum variant (after Downcast)
+
+        // Check if this is a closure __env local with Field projections.
+        // If so, we need to cast the i8* to the captures struct type first.
+        let is_closure_env = local_info
+            .map(|l| l.name.as_deref() == Some("__env"))
+            .unwrap_or(false);
+        let has_field_projections = place.projection.iter().any(|p| matches!(p, PlaceElem::Field(_)));
+
+        if is_closure_env && has_field_projections {
+            // Load the i8* from the alloca
+            let env_i8_ptr = self.builder.build_load(current_ptr, "env_ptr")
+                .map_err(|e| vec![Diagnostic::error(
+                    format!("LLVM load error: {}", e), body.span
+                )])?.into_pointer_value();
+
+            // Get the captures struct type from the MIR type (which is a Tuple)
+            let captures_llvm_ty = self.lower_type(&base_ty);
+            let captures_ptr_ty = captures_llvm_ty.ptr_type(inkwell::AddressSpace::default());
+
+            // Cast i8* to captures struct pointer
+            current_ptr = self.builder.build_pointer_cast(env_i8_ptr, captures_ptr_ty, "env_captures_ptr")
+                .map_err(|e| vec![Diagnostic::error(
+                    format!("LLVM pointer cast error: {}", e), body.span
+                )])?;
+        }
 
         for elem in &place.projection {
             current_ptr = match elem {
@@ -148,13 +176,20 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 }
 
                 PlaceElem::Field(idx) => {
+                    // Check if we're accessing an enum variant field (need to offset by 1 for tag)
+                    let actual_idx = if is_inside_variant {
+                        *idx + 1  // Offset by 1 to skip the discriminant tag
+                    } else {
+                        *idx
+                    };
+
                     // Get struct element pointer
                     self.builder.build_struct_gep(
                         current_ptr,
-                        *idx,
+                        actual_idx,
                         &format!("field_{}", idx)
                     ).map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM GEP error: {}", e), body.span
+                        format!("LLVM GEP error: {} (place={:?}, ty={:?})", e, place, current_ty), body.span
                     )])?
                 }
 
@@ -276,15 +311,12 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     }
                 }
 
-                PlaceElem::Downcast(variant_idx) => {
-                    // For enum downcast, skip past the tag
-                    self.builder.build_struct_gep(
-                        current_ptr,
-                        variant_idx + 1, // Skip tag field
-                        &format!("variant_{}", variant_idx)
-                    ).map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM GEP error: {}", e), body.span
-                    )])?
+                PlaceElem::Downcast(_variant_idx) => {
+                    // Downcast is logically an assertion that we have the right variant.
+                    // The actual field offset is handled by subsequent Field projections.
+                    // Mark that we're inside a variant so Field knows to offset by 1 for the tag.
+                    is_inside_variant = true;
+                    current_ptr  // Return the same pointer
                 }
             };
         }

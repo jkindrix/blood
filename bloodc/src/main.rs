@@ -309,7 +309,8 @@ fn cmd_check(args: &FileArgs, verbosity: u8) -> ExitCode {
     let interner = parser.take_interner();
 
     // Type check the program
-    let mut ctx = bloodc::typeck::TypeContext::new(&source, interner);
+    let mut ctx = bloodc::typeck::TypeContext::new(&source, interner)
+        .with_source_path(&args.file);
 
     // Collect declarations and build type information
     if let Err(errors) = ctx.resolve_program(&program) {
@@ -472,7 +473,8 @@ fn cmd_build(args: &FileArgs, verbosity: u8) -> ExitCode {
     }
 
     // Type check and lower to HIR
-    let mut ctx = bloodc::typeck::TypeContext::new(&source, interner);
+    let mut ctx = bloodc::typeck::TypeContext::new(&source, interner)
+        .with_source_path(&args.file);
     if let Err(errors) = ctx.resolve_program(&program) {
         for error in &errors {
             emitter.emit(error);
@@ -605,6 +607,7 @@ fn cmd_build(args: &FileArgs, verbosity: u8) -> ExitCode {
                     bloodc::hir::ItemKind::Static { .. } => NameBinding::value(hash),
                     bloodc::hir::ItemKind::ExternFn(_) => NameBinding::value(hash),
                     bloodc::hir::ItemKind::Bridge(_) => continue, // Bridges are namespaces, not standalone bindings
+                    bloodc::hir::ItemKind::Module(_) => continue, // Modules are namespaces, not standalone bindings
                 };
                 main_ns.bind(&item.name, binding);
             }
@@ -803,6 +806,7 @@ fn cmd_build(args: &FileArgs, verbosity: u8) -> ExitCode {
             &hir_crate,
             Some(mir_body),
             escape_results,
+            Some(&mir_bodies),
             &obj_path,
         ) {
             Ok(()) => {
@@ -866,7 +870,7 @@ fn cmd_build(args: &FileArgs, verbosity: u8) -> ExitCode {
         }
 
         // Cache miss - compile this handler
-        match codegen::compile_definition_to_object(def_id, &hir_crate, None, None, &obj_path) {
+        match codegen::compile_definition_to_object(def_id, &hir_crate, None, None, Some(&mir_bodies), &obj_path) {
             Ok(()) => {
                 compiled_count += 1;
                 if verbosity > 2 {

@@ -60,6 +60,7 @@ fn make_test_crate(body_expr: Expr, return_type: Type) -> HirCrate {
         param_count: 0,
         expr: body_expr,
         span: Span::dummy(),
+        tuple_destructures: HashMap::new(),
     };
 
     let mut items = HashMap::new();
@@ -311,6 +312,7 @@ fn test_mir_codegen_let_binding() {
         param_count: 0,
         expr,
         span: Span::dummy(),
+        tuple_destructures: HashMap::new(),
     };
 
     let mut items = HashMap::new();

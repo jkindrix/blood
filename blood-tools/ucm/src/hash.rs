@@ -234,7 +234,8 @@ fn collect_deps_from_decl(
         | Declaration::Type(_)
         | Declaration::Const(_)
         | Declaration::Static(_)
-        | Declaration::Bridge(_) => {}
+        | Declaration::Bridge(_)
+        | Declaration::Module(_) => {}
     }
 }
 

@@ -17,7 +17,7 @@ use super::{
     TraitAssocTypeInfo, TraitAssocConstInfo,
 };
 use super::super::error::{TypeError, TypeErrorKind};
-use super::super::resolve::Binding;
+use super::super::resolve::{Binding, ScopeKind};
 
 impl<'a> TypeContext<'a> {
     /// Resolve names in a program.
@@ -50,6 +50,7 @@ impl<'a> TypeContext<'a> {
             ast::Declaration::Impl(i) => self.collect_impl_block(i),
             ast::Declaration::Trait(t) => self.collect_trait(t),
             ast::Declaration::Bridge(b) => self.collect_bridge(b),
+            ast::Declaration::Module(m) => self.collect_module(m),
         }
     }
 
@@ -1299,9 +1300,16 @@ impl<'a> TypeContext<'a> {
             trait_decl.span,
         )?;
 
-        // Save current generic params
+        // Save current generic params and current_impl_self_ty
         let saved_generic_params = std::mem::take(&mut self.generic_params);
+        let saved_impl_self_ty = self.current_impl_self_ty.take();
         let mut generics_vec = Vec::new();
+
+        // Create a type parameter for `Self` - this represents "the implementing type"
+        // When the trait is implemented, Self will be substituted with the concrete type
+        let self_ty_var_id = TyVarId::new(self.next_type_param_id);
+        self.next_type_param_id += 1;
+        self.current_impl_self_ty = Some(Type::param(self_ty_var_id));
 
         // Register type parameters
         if let Some(ref type_params) = trait_decl.type_params {
@@ -1477,8 +1485,9 @@ impl<'a> TypeContext<'a> {
             }
         }
 
-        // Restore generic params
+        // Restore generic params and current_impl_self_ty
         self.generic_params = saved_generic_params;
+        self.current_impl_self_ty = saved_impl_self_ty;
 
         // Store the trait info
         self.trait_defs.insert(def_id, TraitInfo {
@@ -1621,6 +1630,157 @@ impl<'a> TypeContext<'a> {
                 self.resolver.current_scope_mut()
                     .bindings
                     .insert(op_info.name.clone(), Binding::Def(op_info.def_id));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Collect a module declaration.
+    ///
+    /// For inline modules (`mod foo { ... }`), recursively collect all declarations.
+    /// For external modules (`mod foo;`), we would need to load the file - not yet implemented.
+    pub(crate) fn collect_module(&mut self, module: &ast::ModItemDecl) -> Result<(), TypeError> {
+        let name = self.symbol_to_string(module.name.node);
+        let def_id = self.resolver.define_item(
+            name.clone(),
+            hir::DefKind::Mod,
+            module.span,
+        )?;
+
+        match &module.body {
+            Some(declarations) => {
+                // Inline module - push a new scope and collect declarations
+                self.resolver.push_scope(ScopeKind::Module, module.span);
+
+                // Track the starting DefId counter
+                let def_id_start = self.resolver.current_def_id_counter();
+
+                for decl in declarations {
+                    if let Err(e) = self.collect_declaration(decl) {
+                        self.errors.push(e);
+                    }
+                }
+
+                // Collect DefIds of items defined during this module's collection
+                let def_id_end = self.resolver.current_def_id_counter();
+                let item_def_ids: Vec<DefId> = (def_id_start..def_id_end)
+                    .map(DefId::new)
+                    .collect();
+
+                self.resolver.pop_scope();
+
+                // Store module info
+                self.module_defs.insert(def_id, super::ModuleInfo {
+                    name,
+                    items: item_def_ids,
+                    is_external: false,
+                    span: module.span,
+                });
+            }
+            None => {
+                // External module - load from file
+                let source_dir = match &self.source_path {
+                    Some(path) => path.parent().map(|p| p.to_path_buf()),
+                    None => None,
+                };
+
+                let source_dir = source_dir.ok_or_else(|| TypeError::new(
+                    TypeErrorKind::UnsupportedFeature {
+                        feature: format!(
+                            "external modules (`mod {};`) - no source path available. \
+                            Use `with_source_path()` when creating the type context.",
+                            name
+                        ),
+                    },
+                    module.span,
+                ))?;
+
+                // Try to find the module file: first `name.blood`, then `name/mod.blood`
+                let file_path = source_dir.join(format!("{}.blood", name));
+                let alt_path = source_dir.join(&name).join("mod.blood");
+
+                let module_path = if file_path.exists() {
+                    file_path
+                } else if alt_path.exists() {
+                    alt_path
+                } else {
+                    return Err(TypeError::new(
+                        TypeErrorKind::ModuleNotFound {
+                            name: name.clone(),
+                            searched_paths: vec![
+                                file_path.display().to_string(),
+                                alt_path.display().to_string(),
+                            ],
+                        },
+                        module.span,
+                    ));
+                };
+
+                // Read the module file
+                let module_source = std::fs::read_to_string(&module_path).map_err(|e| {
+                    TypeError::new(
+                        TypeErrorKind::IoError {
+                            message: format!("failed to read module file '{}': {}", module_path.display(), e),
+                        },
+                        module.span,
+                    )
+                })?;
+
+                // Temporarily take the interner, parse, and restore
+                let interner = std::mem::take(&mut self.interner);
+                let mut parser = crate::parser::Parser::with_interner(&module_source, interner);
+                let module_ast = parser.parse_program();
+                self.interner = parser.take_interner();
+
+                let module_ast = match module_ast {
+                    Ok(ast) => ast,
+                    Err(errors) => {
+                        // Collect parse errors and return the first one
+                        if let Some(first_err) = errors.into_iter().next() {
+                            return Err(TypeError::new(
+                                TypeErrorKind::ParseError {
+                                    message: first_err.message,
+                                },
+                                module.span,
+                            ));
+                        }
+                        return Err(TypeError::new(
+                            TypeErrorKind::ParseError {
+                                message: "unknown parse error".to_string(),
+                            },
+                            module.span,
+                        ));
+                    }
+                };
+
+                // Process the declarations in a new scope
+                self.resolver.push_scope(ScopeKind::Module, module.span);
+
+                // Track the starting DefId counter
+                let def_id_start = self.resolver.current_def_id_counter();
+
+                for decl in &module_ast.declarations {
+                    if let Err(e) = self.collect_declaration(decl) {
+                        self.errors.push(e);
+                    }
+                }
+
+                // Collect DefIds of items defined during this module's collection
+                let def_id_end = self.resolver.current_def_id_counter();
+                let item_def_ids: Vec<DefId> = (def_id_start..def_id_end)
+                    .map(DefId::new)
+                    .collect();
+
+                self.resolver.pop_scope();
+
+                // Store module info
+                self.module_defs.insert(def_id, super::ModuleInfo {
+                    name,
+                    items: item_def_ids,
+                    is_external: true,
+                    span: module.span,
+                });
             }
         }
 

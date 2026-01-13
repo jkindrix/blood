@@ -6,6 +6,7 @@ use std::collections::HashSet;
 
 use crate::ast;
 use crate::hir::{self, LocalId, Type, TypeKind};
+use crate::hir::ty::TyVarId;
 
 use super::TypeContext;
 use super::super::error::{TypeError, TypeErrorKind};
@@ -74,30 +75,36 @@ impl<'a> TypeContext<'a> {
                     ));
                 }
 
-                if matches!(ty.kind(), hir::TypeKind::Infer(_)) {
+                let tuple_ty = if matches!(ty.kind(), hir::TypeKind::Infer(_)) {
                     let tuple_ty = Type::tuple(elem_types.clone());
                     self.unifier.unify(&ty, &tuple_ty, pattern.span)?;
-                }
+                    tuple_ty
+                } else {
+                    ty.clone()
+                };
 
-                let mut first_local_id = None;
+                // First, create all the element locals
+                let mut element_locals = Vec::new();
                 for (field_pat, elem_ty) in fields.iter().zip(elem_types.iter()) {
                     let local_id = self.define_pattern(field_pat, elem_ty.clone())?;
-                    if first_local_id.is_none() {
-                        first_local_id = Some(local_id);
-                    }
+                    element_locals.push(local_id);
                 }
 
-                Ok(first_local_id.unwrap_or_else(|| {
-                    let local_id = self.resolver.next_local_id();
-                    self.locals.push(hir::Local {
-                        id: local_id,
-                        ty: Type::unit(),
-                        mutable: false,
-                        name: None,
-                        span: pattern.span,
-                    });
-                    local_id
-                }))
+                // Create a hidden tuple local that will hold the full tuple value
+                // The MIR lowering will assign to this, then extract fields to element locals
+                let tuple_local_id = self.resolver.next_local_id();
+                self.locals.push(hir::Local {
+                    id: tuple_local_id,
+                    ty: tuple_ty,
+                    mutable: false,
+                    name: Some(format!("__tuple_{}", tuple_local_id.index)),
+                    span: pattern.span,
+                });
+
+                // Record the tuple destructuring info for MIR lowering
+                self.tuple_destructures.insert(tuple_local_id, element_locals);
+
+                Ok(tuple_local_id)
             }
             ast::PatternKind::Paren(inner) => {
                 self.define_pattern(inner, ty)
@@ -404,60 +411,67 @@ impl<'a> TypeContext<'a> {
                 }
             }
             ast::PatternKind::TupleStruct { path, fields, .. } => {
-                let path_str = if let Some(seg) = path.segments.first() {
-                    self.symbol_to_string(seg.name.node)
-                } else {
-                    return Err(TypeError::new(
-                        TypeErrorKind::NotFound { name: format!("{path:?}") },
+                // Handle both single-segment (Some(v)) and two-segment (Option::Some(v)) paths
+                let (enum_def_id, variant_info) = if path.segments.len() == 2 {
+                    // Two-segment path: EnumName::VariantName
+                    let enum_name = self.symbol_to_string(path.segments[0].name.node);
+                    let variant_name = self.symbol_to_string(path.segments[1].name.node);
+
+                    // Look up the enum type
+                    let def_id = match self.resolver.lookup_type(&enum_name) {
+                        Some(def_id) => def_id,
+                        None => return Err(TypeError::new(
+                            TypeErrorKind::NotFound { name: enum_name },
+                            pattern.span,
+                        )),
+                    };
+
+                    let enum_info = self.enum_defs.get(&def_id).cloned().ok_or_else(|| TypeError::new(
+                        TypeErrorKind::NotFound { name: enum_name.clone() },
                         pattern.span,
-                    ));
-                };
+                    ))?;
 
-                match self.resolver.lookup(&path_str) {
-                    Some(Binding::Def(variant_def_id)) => {
-                        if let Some(info) = self.resolver.def_info.get(&variant_def_id) {
-                            if info.kind == hir::DefKind::Variant {
-                                let enum_def_id = info.parent.ok_or_else(|| TypeError::new(
-                                    TypeErrorKind::NotFound { name: format!("parent of variant {}", path_str) },
-                                    pattern.span,
-                                ))?;
+                    let variant = enum_info.variants.iter()
+                        .find(|v| v.name == variant_name)
+                        .cloned()
+                        .ok_or_else(|| TypeError::new(
+                            TypeErrorKind::NotFound { name: format!("{}::{}", enum_name, variant_name) },
+                            pattern.span,
+                        ))?;
 
-                                let enum_info = self.enum_defs.get(&enum_def_id).ok_or_else(|| TypeError::new(
-                                    TypeErrorKind::NotFound { name: format!("enum for variant {}", path_str) },
-                                    pattern.span,
-                                ))?;
+                    (def_id, variant)
+                } else if path.segments.len() == 1 {
+                    // Single-segment path: direct variant reference (e.g., Some)
+                    let path_str = self.symbol_to_string(path.segments[0].name.node);
 
-                                let variant_info = enum_info.variants.iter()
-                                    .find(|v| v.def_id == variant_def_id)
-                                    .ok_or_else(|| TypeError::new(
-                                        TypeErrorKind::NotFound { name: format!("variant {} in enum", path_str) },
+                    match self.resolver.lookup(&path_str) {
+                        Some(Binding::Def(variant_def_id)) => {
+                            if let Some(info) = self.resolver.def_info.get(&variant_def_id) {
+                                if info.kind == hir::DefKind::Variant {
+                                    let enum_def_id = info.parent.ok_or_else(|| TypeError::new(
+                                        TypeErrorKind::NotFound { name: format!("parent of variant {}", path_str) },
                                         pattern.span,
                                     ))?;
 
-                                let variant_idx = variant_info.index;
-                                let variant_field_types: Vec<Type> = variant_info.fields.iter()
-                                    .map(|f| f.ty.clone())
-                                    .collect();
+                                    let enum_info = self.enum_defs.get(&enum_def_id).cloned().ok_or_else(|| TypeError::new(
+                                        TypeErrorKind::NotFound { name: format!("enum for variant {}", path_str) },
+                                        pattern.span,
+                                    ))?;
 
-                                if fields.len() != variant_field_types.len() {
+                                    let variant_info = enum_info.variants.iter()
+                                        .find(|v| v.def_id == variant_def_id)
+                                        .cloned()
+                                        .ok_or_else(|| TypeError::new(
+                                            TypeErrorKind::NotFound { name: format!("variant {} in enum", path_str) },
+                                            pattern.span,
+                                        ))?;
+
+                                    (enum_def_id, variant_info)
+                                } else {
                                     return Err(TypeError::new(
-                                        TypeErrorKind::WrongArity {
-                                            expected: variant_field_types.len(),
-                                            found: fields.len(),
-                                        },
+                                        TypeErrorKind::NotFound { name: path_str },
                                         pattern.span,
                                     ));
-                                }
-
-                                let mut hir_fields = Vec::new();
-                                for (field, field_ty) in fields.iter().zip(variant_field_types.iter()) {
-                                    hir_fields.push(self.lower_pattern(field, field_ty)?);
-                                }
-
-                                hir::PatternKind::Variant {
-                                    def_id: variant_def_id,
-                                    variant_idx,
-                                    fields: hir_fields,
                                 }
                             } else {
                                 return Err(TypeError::new(
@@ -465,19 +479,61 @@ impl<'a> TypeContext<'a> {
                                     pattern.span,
                                 ));
                             }
-                        } else {
+                        }
+                        _ => {
                             return Err(TypeError::new(
                                 TypeErrorKind::NotFound { name: path_str },
                                 pattern.span,
                             ));
                         }
                     }
-                    _ => {
-                        return Err(TypeError::new(
-                            TypeErrorKind::NotFound { name: path_str },
-                            pattern.span,
-                        ));
-                    }
+                } else {
+                    return Err(TypeError::new(
+                        TypeErrorKind::NotFound { name: format!("{path:?}") },
+                        pattern.span,
+                    ));
+                };
+
+                // Get the enum info to access generics for substitution
+                let enum_info = self.enum_defs.get(&enum_def_id).cloned().ok_or_else(|| TypeError::new(
+                    TypeErrorKind::NotFound { name: format!("enum {:?}", enum_def_id) },
+                    pattern.span,
+                ))?;
+
+                // Build substitution map from generic params to concrete types from expected_ty
+                let subst: std::collections::HashMap<TyVarId, Type> = if let TypeKind::Adt { args, .. } = expected_ty.kind() {
+                    enum_info.generics.iter()
+                        .zip(args.iter())
+                        .map(|(&tyvar, ty)| (tyvar, ty.clone()))
+                        .collect()
+                } else {
+                    std::collections::HashMap::new()
+                };
+
+                // Substitute type parameters in field types
+                let variant_field_types: Vec<Type> = variant_info.fields.iter()
+                    .map(|f| self.substitute_type_vars(&f.ty, &subst))
+                    .collect();
+
+                if fields.len() != variant_field_types.len() {
+                    return Err(TypeError::new(
+                        TypeErrorKind::WrongArity {
+                            expected: variant_field_types.len(),
+                            found: fields.len(),
+                        },
+                        pattern.span,
+                    ));
+                }
+
+                let mut hir_fields = Vec::new();
+                for (field, field_ty) in fields.iter().zip(variant_field_types.iter()) {
+                    hir_fields.push(self.lower_pattern(field, field_ty)?);
+                }
+
+                hir::PatternKind::Variant {
+                    def_id: variant_info.def_id,
+                    variant_idx: variant_info.index,
+                    fields: hir_fields,
                 }
             }
             ast::PatternKind::Rest => {
@@ -778,23 +834,75 @@ impl<'a> TypeContext<'a> {
                 }
             }
             ast::PatternKind::Path(path) => {
-                let path_str = if let Some(seg) = path.segments.first() {
-                    self.symbol_to_string(seg.name.node)
-                } else {
-                    return Err(TypeError::new(
-                        TypeErrorKind::NotFound { name: format!("{path:?}") },
-                        pattern.span,
-                    ));
-                };
+                // Handle multi-segment paths like Color::Red (enum variants)
+                if path.segments.len() == 2 {
+                    // Two-segment path: EnumName::VariantName
+                    let enum_name = self.symbol_to_string(path.segments[0].name.node);
+                    let variant_name = self.symbol_to_string(path.segments[1].name.node);
 
-                match self.resolver.lookup(&path_str) {
-                    Some(Binding::Def(def_id)) => {
-                        if let Some(info) = self.resolver.def_info.get(&def_id) {
-                            if info.kind == hir::DefKind::Variant {
-                                hir::PatternKind::Variant {
-                                    def_id,
-                                    variant_idx: 0, // Simplified
-                                    fields: vec![],
+                    // Look up the enum type
+                    match self.resolver.lookup(&enum_name) {
+                        Some(Binding::Def(def_id)) => {
+                            // Find the enum info and variant
+                            if let Some(enum_info) = self.enum_defs.get(&def_id) {
+                                if let Some(variant) = enum_info.variants.iter().find(|v| v.name == variant_name) {
+                                    hir::PatternKind::Variant {
+                                        def_id: variant.def_id,
+                                        variant_idx: variant.index,
+                                        fields: vec![],
+                                    }
+                                } else {
+                                    return Err(TypeError::new(
+                                        TypeErrorKind::NotFound { name: format!("{}::{}", enum_name, variant_name) },
+                                        pattern.span,
+                                    ));
+                                }
+                            } else {
+                                return Err(TypeError::new(
+                                    TypeErrorKind::NotFound { name: enum_name },
+                                    pattern.span,
+                                ));
+                            }
+                        }
+                        _ => {
+                            return Err(TypeError::new(
+                                TypeErrorKind::NotFound { name: enum_name },
+                                pattern.span,
+                            ));
+                        }
+                    }
+                } else if path.segments.len() == 1 {
+                    // Single-segment path: direct variant reference (e.g., None)
+                    let path_str = self.symbol_to_string(path.segments[0].name.node);
+
+                    match self.resolver.lookup(&path_str) {
+                        Some(Binding::Def(def_id)) => {
+                            if let Some(info) = self.resolver.def_info.get(&def_id) {
+                                if info.kind == hir::DefKind::Variant {
+                                    // Find the variant info to get the correct index
+                                    let variant_idx = if let Some(parent_id) = info.parent {
+                                        if let Some(enum_info) = self.enum_defs.get(&parent_id) {
+                                            enum_info.variants.iter()
+                                                .find(|v| v.def_id == def_id)
+                                                .map(|v| v.index)
+                                                .unwrap_or(0)
+                                        } else {
+                                            0
+                                        }
+                                    } else {
+                                        0
+                                    };
+
+                                    hir::PatternKind::Variant {
+                                        def_id,
+                                        variant_idx,
+                                        fields: vec![],
+                                    }
+                                } else {
+                                    return Err(TypeError::new(
+                                        TypeErrorKind::NotFound { name: path_str },
+                                        pattern.span,
+                                    ));
                                 }
                             } else {
                                 return Err(TypeError::new(
@@ -802,19 +910,19 @@ impl<'a> TypeContext<'a> {
                                     pattern.span,
                                 ));
                             }
-                        } else {
+                        }
+                        _ => {
                             return Err(TypeError::new(
                                 TypeErrorKind::NotFound { name: path_str },
                                 pattern.span,
                             ));
                         }
                     }
-                    _ => {
-                        return Err(TypeError::new(
-                            TypeErrorKind::NotFound { name: path_str },
-                            pattern.span,
-                        ));
-                    }
+                } else {
+                    return Err(TypeError::new(
+                        TypeErrorKind::NotFound { name: format!("{:?}", path) },
+                        pattern.span,
+                    ));
                 }
             }
             ast::PatternKind::Paren(inner) => {

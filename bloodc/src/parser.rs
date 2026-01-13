@@ -99,6 +99,14 @@ pub struct Parser<'src> {
 impl<'src> Parser<'src> {
     /// Create a new parser for the given source.
     pub fn new(source: &'src str) -> Self {
+        Self::with_interner(source, DefaultStringInterner::new())
+    }
+
+    /// Create a parser with an existing string interner.
+    ///
+    /// This is useful for parsing external modules where we want to share
+    /// the same symbol table as the parent module.
+    pub fn with_interner(source: &'src str, interner: DefaultStringInterner) -> Self {
         let mut lexer = Lexer::new(source);
         let current = lexer.next().unwrap_or(Token::dummy(TokenKind::Error));
         let next = lexer.next().unwrap_or(Token::dummy(TokenKind::Eof));
@@ -106,7 +114,7 @@ impl<'src> Parser<'src> {
         Self {
             lexer,
             source,
-            interner: DefaultStringInterner::new(),
+            interner,
             current,
             next,
             previous: Token::dummy(TokenKind::Error),
@@ -689,6 +697,18 @@ impl<'src> Parser<'src> {
                 let s = self.parse_string_literal(text);
                 LiteralKind::String(s)
             }
+            TokenKind::RawStringLit => {
+                let s = self.parse_raw_string_literal(text, 0);
+                LiteralKind::String(s)
+            }
+            TokenKind::RawStringLitHash1 => {
+                let s = self.parse_raw_string_literal(text, 1);
+                LiteralKind::String(s)
+            }
+            TokenKind::RawStringLitHash2 => {
+                let s = self.parse_raw_string_literal(text, 2);
+                LiteralKind::String(s)
+            }
             TokenKind::CharLit => {
                 let c = self.parse_char_literal(text);
                 LiteralKind::Char(c)
@@ -850,6 +870,18 @@ impl<'src> Parser<'src> {
         }
 
         result
+    }
+
+    /// Parse a raw string literal like r"...", r#"..."#, or r##"..."##
+    /// The `hash_count` parameter indicates how many # characters are used as delimiters.
+    fn parse_raw_string_literal(&self, text: &str, hash_count: usize) -> String {
+        // Raw string format: r"content" or r#"content"# or r##"content"##
+        // Strip the r prefix, hash delimiters, and quotes
+        // No escape sequence processing - content is taken literally
+        let prefix_len = 1 + hash_count + 1; // r + hashes + opening quote
+        let suffix_len = 1 + hash_count;     // closing quote + hashes
+        let inner = &text[prefix_len..text.len() - suffix_len];
+        inner.to_string()
     }
 
     fn parse_char_literal(&self, text: &str) -> char {

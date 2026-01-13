@@ -753,7 +753,8 @@ impl EffectLowering {
             | ItemKind::Effect { .. }
             | ItemKind::Handler { .. }
             | ItemKind::ExternFn(_)
-            | ItemKind::Bridge(_) => item.clone(),
+            | ItemKind::Bridge(_)
+            | ItemKind::Module(_) => item.clone(),
         }
     }
 

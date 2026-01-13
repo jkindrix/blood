@@ -7,7 +7,6 @@
 use std::collections::HashMap;
 
 use inkwell::basic_block::BasicBlock;
-use inkwell::types::BasicType;
 use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum};
 use inkwell::{AddressSpace, IntPredicate};
 
@@ -78,6 +77,9 @@ impl<'ctx, 'a> MirTerminatorCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
             TerminatorKind::Return => {
                 // Load return value from _0 and return
                 let ret_local = LocalId::new(0);
+                // Check if this is the main function (needs i32 return for C runtime)
+                let is_main = self.current_fn_def_id == self.main_fn_def_id && self.main_fn_def_id.is_some();
+
                 if let Some(&ret_ptr) = self.locals.get(&ret_local) {
                     let ret_ty = body.return_type();
                     if !ret_ty.is_unit() {
@@ -89,12 +91,26 @@ impl<'ctx, 'a> MirTerminatorCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                             .map_err(|e| vec![Diagnostic::error(
                                 format!("LLVM return error: {}", e), term.span
                             )])?;
+                    } else if is_main {
+                        // main must return i32 for C runtime - return 0 on success
+                        let zero = self.context.i32_type().const_int(0, false);
+                        self.builder.build_return(Some(&zero))
+                            .map_err(|e| vec![Diagnostic::error(
+                                format!("LLVM return error: {}", e), term.span
+                            )])?;
                     } else {
                         self.builder.build_return(None)
                             .map_err(|e| vec![Diagnostic::error(
                                 format!("LLVM return error: {}", e), term.span
                             )])?;
                     }
+                } else if is_main {
+                    // main must return i32 for C runtime - return 0 on success
+                    let zero = self.context.i32_type().const_int(0, false);
+                    self.builder.build_return(Some(&zero))
+                        .map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM return error: {}", e), term.span
+                        )])?;
                 } else {
                     self.builder.build_return(None)
                         .map_err(|e| vec![Diagnostic::error(
@@ -198,10 +214,60 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         escape_results: Option<&EscapeResults>,
         span: crate::span::Span,
     ) -> Result<(), Vec<Diagnostic>> {
-        // Compile arguments
-        let arg_vals: Vec<BasicValueEnum> = args.iter()
-            .map(|arg| self.compile_mir_operand(arg, body, escape_results))
-            .collect::<Result<_, _>>()?;
+        // Get the expected parameter types from the function being called
+        let expected_param_types: Vec<crate::hir::Type> = match func {
+            Operand::Constant(Constant { kind: ConstantKind::FnDef(_def_id), ty }) => {
+                // Get function signature from type
+                if let crate::hir::TypeKind::Fn { params, .. } = ty.kind() {
+                    params.clone()
+                } else {
+                    Vec::new()
+                }
+            }
+            _ => Vec::new(),
+        };
+
+        // Compile arguments, converting closures to fn pointers where needed
+        let mut arg_vals: Vec<BasicValueEnum> = Vec::with_capacity(args.len());
+        for (i, arg) in args.iter().enumerate() {
+            let val = self.compile_mir_operand(arg, body, escape_results)?;
+
+            // Check if we need to convert a closure to a function pointer
+            let arg_ty = self.get_operand_type(arg, body);
+            let expected_ty = expected_param_types.get(i);
+
+            let converted_val = match (arg_ty.kind(), expected_ty.map(|t| t.kind())) {
+                (crate::hir::TypeKind::Closure { .. }, Some(crate::hir::TypeKind::Fn { .. })) => {
+                    // Convert closure to function pointer
+                    // Extract fn_ptr from closure struct { fn_ptr, env_ptr }
+                    let fn_ptr = if let BasicValueEnum::StructValue(sv) = val {
+                        self.builder.build_extract_value(sv, 0, "closure.fn_ptr")
+                            .map_err(|e| vec![Diagnostic::error(
+                                format!("LLVM extract error: {}", e), span
+                            )])?
+                    } else {
+                        return Err(vec![Diagnostic::error(
+                            "Expected struct value for closure", span
+                        )]);
+                    };
+
+                    // Cast i8* to function pointer type
+                    // lower_type for Fn already returns a pointer type (fn_type.ptr_type())
+                    // so we just cast directly to that
+                    let expected = expected_ty.unwrap(); // Safe because we matched above
+                    let fn_ptr_ty = self.lower_type(expected).into_pointer_type();
+                    let fn_ptr_i8 = fn_ptr.into_pointer_value();
+                    let cast_ptr = self.builder.build_pointer_cast(fn_ptr_i8, fn_ptr_ty, "fn_ptr_cast")
+                        .map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM pointer cast error: {}", e), span
+                        )])?;
+                    cast_ptr.into()
+                }
+                _ => val,
+            };
+
+            arg_vals.push(converted_val);
+        }
 
         let arg_metas: Vec<_> = arg_vals.iter().map(|v| (*v).into()).collect();
 
@@ -216,7 +282,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // Handle different function operand types
         let call_result = match func {
-            Operand::Constant(Constant { kind: ConstantKind::FnDef(def_id), .. }) => {
+            Operand::Constant(Constant { kind: ConstantKind::FnDef(def_id), ty }) => {
                 // Direct function call
                 if let Some(&fn_value) = self.functions.get(def_id) {
                     self.builder.build_call(fn_value, &arg_metas, "call_result")
@@ -226,7 +292,30 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 } else if let Some(builtin_name) = self.builtin_fns.get(def_id) {
                     // Builtin function call - lookup runtime function by name
                     if let Some(fn_value) = self.module.get_function(builtin_name) {
-                        self.builder.build_call(fn_value, &arg_metas, "builtin_call")
+                        // Convert args for C runtime (e.g., i1 -> i32 for print_bool)
+                        let fn_type = fn_value.get_type();
+                        let param_types = fn_type.get_param_types();
+                        let converted_args: Vec<BasicMetadataValueEnum> = arg_vals.iter()
+                            .enumerate()
+                            .map(|(i, val)| {
+                                if let Some(param_type) = param_types.get(i) {
+                                    if val.is_int_value() && param_type.is_int_type() {
+                                        let val_int = val.into_int_value();
+                                        let param_int_type = param_type.into_int_type();
+                                        // Zero-extend if arg is smaller (e.g., i1 -> i32)
+                                        if val_int.get_type().get_bit_width() < param_int_type.get_bit_width() {
+                                            return self.builder
+                                                .build_int_z_extend(val_int, param_int_type, "zext")
+                                                .map(|v| v.into())
+                                                .unwrap_or((*val).into());
+                                        }
+                                    }
+                                }
+                                (*val).into()
+                            })
+                            .collect();
+
+                        self.builder.build_call(fn_value, &converted_args, "builtin_call")
                             .map_err(|e| vec![Diagnostic::error(
                                 format!("LLVM call error: {}", e), span
                             )])?
@@ -236,44 +325,78 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         )]);
                     }
                 } else {
-                    return Err(vec![Diagnostic::error(
-                        format!("Function {:?} not found", def_id), span
-                    )]);
+                    // Function not found - this is likely a generic function.
+                    // Try to monomorphize it on-demand with concrete types from the call.
+                    if let crate::hir::TypeKind::Fn { params, ret } = ty.kind() {
+                        // Attempt monomorphization
+                        if let Some(mono_fn) = self.monomorphize_function(*def_id, params, ret) {
+                            self.builder.build_call(mono_fn, &arg_metas, "mono_call")
+                                .map_err(|e| vec![Diagnostic::error(
+                                    format!("LLVM call error: {}", e), span
+                                )])?
+                        } else {
+                            // Monomorphization failed
+                            return Err(vec![Diagnostic::error(
+                                format!("Failed to monomorphize generic function {:?}.\n\
+                                         Concrete type at call site: Fn {{ params: {:?}, ret: {:?} }}\n\
+                                         This may indicate missing MIR body or type substitution error.",
+                                        def_id, params, ret),
+                                span
+                            )]);
+                        }
+                    } else {
+                        return Err(vec![Diagnostic::error(
+                            format!("Generic function {:?} called with non-function type: {:?}",
+                                    def_id, ty),
+                            span
+                        )]);
+                    }
                 }
             }
             // Check for closure call: func is Copy/Move of a local with Closure type
             Operand::Copy(place) | Operand::Move(place) => {
                 if let Some(closure_def_id) = get_closure_def_id(place, body) {
-                    // Closure call - call the closure function with environment as first arg
+                    // Closure call - call the closure function
                     if let Some(&fn_value) = self.functions.get(&closure_def_id) {
-                        // Get the closure value (i8* pointer to captures struct)
-                        let closure_ptr = self.compile_mir_operand(func, body, escape_results)?;
-                        let closure_ptr = closure_ptr.into_pointer_value();
+                        // Check if the closure function expects an env parameter
+                        // Closures without captures have signature (args...) -> ret
+                        // Closures with captures have signature (env*, args...) -> ret
+                        let fn_param_count = fn_value.count_params() as usize;
+                        let has_env_param = fn_param_count == args.len() + 1;
 
-                        // Get the expected env type from the function's first parameter
-                        let env_arg = if let Some(first_param) = fn_value.get_first_param() {
-                            // Cast i8* to the correct struct pointer type and load
-                            let first_param_ptr_ty = first_param.get_type().ptr_type(AddressSpace::default());
-                            let typed_ptr = self.builder.build_pointer_cast(
-                                closure_ptr,
-                                first_param_ptr_ty,
-                                "env_typed_ptr"
-                            ).map_err(|e| vec![Diagnostic::error(
-                                format!("LLVM pointer cast error: {}", e), span
-                            )])?;
-                            self.builder.build_load(typed_ptr, "env_load")
-                                .map_err(|e| vec![Diagnostic::error(
-                                    format!("LLVM load error: {}", e), span
-                                )])?
+                        let full_args: Vec<BasicMetadataValueEnum> = if has_env_param {
+                            // Closure with captures - extract and prepend env pointer
+                            let closure_val = self.compile_mir_operand(func, body, escape_results)?;
+
+                            // Extract the environment pointer from the closure struct (field 1)
+                            // The closure struct is { fn_ptr, env_ptr }
+                            let env_ptr = if let BasicValueEnum::StructValue(sv) = closure_val {
+                                self.builder.build_extract_value(sv, 1, "closure.env")
+                                    .map_err(|e| vec![Diagnostic::error(
+                                        format!("LLVM extract error: {}", e), span
+                                    )])?
+                            } else {
+                                // If it's a pointer, load the struct first
+                                let ptr = closure_val.into_pointer_value();
+                                let loaded = self.builder.build_load(ptr, "closure.load")
+                                    .map_err(|e| vec![Diagnostic::error(
+                                        format!("LLVM load error: {}", e), span
+                                    )])?;
+                                let sv = loaded.into_struct_value();
+                                self.builder.build_extract_value(sv, 1, "closure.env")
+                                    .map_err(|e| vec![Diagnostic::error(
+                                        format!("LLVM extract error: {}", e), span
+                                    )])?
+                            };
+
+                            let mut full_args = Vec::with_capacity(args.len() + 1);
+                            full_args.push(env_ptr.into());
+                            full_args.extend(arg_metas.iter().cloned());
+                            full_args
                         } else {
-                            // No parameters means no captures, pass null
-                            self.context.i8_type().ptr_type(AddressSpace::default()).const_null().into()
+                            // Closure without captures - just use the args directly
+                            arg_metas.clone()
                         };
-
-                        // Prepend the closure environment to the arguments
-                        let mut full_args: Vec<BasicMetadataValueEnum> = Vec::with_capacity(args.len() + 1);
-                        full_args.push(env_arg.into());
-                        full_args.extend(arg_metas.iter().cloned());
 
                         self.builder.build_call(fn_value, &full_args, "closure_call")
                             .map_err(|e| vec![Diagnostic::error(

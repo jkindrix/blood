@@ -109,12 +109,22 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
         let body_expr = self.body.expr.clone();
         let result = self.lower_expr(&body_expr)?;
 
-        // Assign to return place
-        let return_place = Place::local(LocalId::new(0));
-        self.push_assign(return_place, Rvalue::Use(result));
+        // Determine if we should add an implicit return:
+        // Skip if:
+        // 1. Body expression diverges (type Never) - we're in unreachable code
+        // 2. Body returns unit but function returns non-unit - explicit return handled it
+        let return_ty = self.body.return_type();
+        let skip_implicit_return = body_expr.ty.is_never()
+            || (body_expr.ty.is_unit() && !return_ty.is_unit());
 
-        // Add return terminator
-        self.terminate(TerminatorKind::Return);
+        if !skip_implicit_return {
+            // Assign body result to return place
+            let return_place = Place::local(LocalId::new(0));
+            self.push_assign(return_place, Rvalue::Use(result));
+
+            // Add return terminator
+            self.terminate(TerminatorKind::Return);
+        }
 
         Ok(self.builder.finish())
     }
@@ -728,6 +738,13 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
         let dest = self.new_temp(ty.clone(), span);
         let dest_place = Place::local(dest);
 
+        // Extract type arguments from the enum type
+        let type_args = if let TypeKind::Adt { args, .. } = ty.kind() {
+            args.clone()
+        } else {
+            Vec::new()
+        };
+
         // Create the aggregate value using Adt with variant_idx
         self.push_assign(
             dest_place.clone(),
@@ -735,6 +752,7 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
                 kind: AggregateKind::Adt {
                     def_id,
                     variant_idx: Some(variant_idx),
+                    type_args,
                 },
                 operands: field_ops,
             },
@@ -938,10 +956,13 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
                         ),
                     });
 
-                    // Test each field pattern
+                    // Test each field pattern on the downcasted variant
+                    // The Downcast projection tells codegen we're inside a variant,
+                    // so Field projections will be offset by 1 for the discriminant tag.
                     self.builder.switch_to(fields_test_block);
                     self.current_block = fields_test_block;
-                    self.test_pattern_fields(fields, place, on_match, on_no_match, span)?;
+                    let variant_place = place.project(PlaceElem::Downcast(*variant_idx));
+                    self.test_pattern_fields(fields, &variant_place, on_match, on_no_match, span)?;
                 }
             }
 
@@ -1374,7 +1395,14 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
         if let Some(tail) = tail {
             self.lower_expr(tail)
         } else {
-            Ok(Operand::Constant(Constant::new(ty.clone(), ConstantKind::Unit)))
+            // No tail expression - return unit.
+            // If the block's type is Never (all paths diverge), we're in unreachable code.
+            // Either way, use the proper unit type for the constant.
+            if ty.is_never() {
+                Ok(Operand::Constant(Constant::new(Type::never(), ConstantKind::Unit)))
+            } else {
+                Ok(Operand::Constant(Constant::unit()))
+            }
         }
     }
 
@@ -1382,34 +1410,80 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
     fn lower_stmt(&mut self, stmt: &Stmt) -> Result<(), Vec<Diagnostic>> {
         match stmt {
             Stmt::Let { local_id, init } => {
-                // Get or create the MIR local
-                let hir_local = self.body.get_local(*local_id)
-                    .ok_or_else(|| vec![ice_err!(
-                        Span::dummy(),
-                        "local not found in HIR body during MIR lowering";
-                        "local_id" => local_id
-                    )])?;
-                let mir_local = self.builder.new_temp(hir_local.ty.clone(), hir_local.span);
-                self.local_map.insert(*local_id, mir_local);
+                // Check if this is a tuple destructuring pattern
+                if let Some(element_locals) = self.body.tuple_destructures.get(local_id) {
+                    // This is a tuple destructure: let (a, b) = expr;
+                    // The local_id is the hidden tuple local, and element_locals are the bindings
 
-                // Storage live
-                self.push_stmt(StatementKind::StorageLive(mir_local));
+                    // Get the hidden tuple local info
+                    let hir_local = self.body.get_local(*local_id)
+                        .ok_or_else(|| vec![ice_err!(
+                            Span::dummy(),
+                            "hidden tuple local not found in HIR body during MIR lowering";
+                            "local_id" => local_id
+                        )])?;
+                    let tuple_mir_local = self.builder.new_temp(hir_local.ty.clone(), hir_local.span);
+                    self.local_map.insert(*local_id, tuple_mir_local);
 
-                // Initialize if there's an init expression
-                if let Some(init) = init {
-                    let init_val = self.lower_expr(init)?;
+                    // Storage live for the hidden tuple local
+                    self.push_stmt(StatementKind::StorageLive(tuple_mir_local));
 
-                    // If init is a closure, propagate the Closure type to the target local
-                    // The init_val will be Copy/Move of a temp with Closure type
-                    if let Operand::Copy(place) | Operand::Move(place) = &init_val {
-                        if let Some(temp_ty) = self.builder.get_local_type(place.local) {
-                            if matches!(temp_ty.kind(), TypeKind::Closure { .. }) {
-                                self.builder.set_local_type(mir_local, temp_ty.clone());
-                            }
+                    // Create MIR locals for each element
+                    let element_mir_locals: Vec<LocalId> = element_locals.iter()
+                        .map(|elem_id| {
+                            let elem_hir_local = self.body.get_local(*elem_id)
+                                .expect("element local not found in HIR body");
+                            let mir_local = self.builder.new_temp(elem_hir_local.ty.clone(), elem_hir_local.span);
+                            self.local_map.insert(*elem_id, mir_local);
+                            self.push_stmt(StatementKind::StorageLive(mir_local));
+                            mir_local
+                        })
+                        .collect();
+
+                    // Initialize if there's an init expression
+                    if let Some(init) = init {
+                        let init_val = self.lower_expr(init)?;
+
+                        // Store the tuple value to the hidden tuple local
+                        self.push_assign(Place::local(tuple_mir_local), Rvalue::Use(init_val));
+
+                        // Extract each field and assign to the corresponding element local
+                        for (i, mir_local) in element_mir_locals.iter().enumerate() {
+                            let field_place = Place::local(tuple_mir_local).project(PlaceElem::Field(i as u32));
+                            self.push_assign(Place::local(*mir_local), Rvalue::Use(Operand::Copy(field_place)));
                         }
                     }
+                } else {
+                    // Normal non-tuple let binding
+                    // Get or create the MIR local
+                    let hir_local = self.body.get_local(*local_id)
+                        .ok_or_else(|| vec![ice_err!(
+                            Span::dummy(),
+                            "local not found in HIR body during MIR lowering";
+                            "local_id" => local_id
+                        )])?;
+                    let mir_local = self.builder.new_temp(hir_local.ty.clone(), hir_local.span);
+                    self.local_map.insert(*local_id, mir_local);
 
-                    self.push_assign(Place::local(mir_local), Rvalue::Use(init_val));
+                    // Storage live
+                    self.push_stmt(StatementKind::StorageLive(mir_local));
+
+                    // Initialize if there's an init expression
+                    if let Some(init) = init {
+                        let init_val = self.lower_expr(init)?;
+
+                        // If init is a closure, propagate the Closure type to the target local
+                        // The init_val will be Copy/Move of a temp with Closure type
+                        if let Operand::Copy(place) | Operand::Move(place) = &init_val {
+                            if let Some(temp_ty) = self.builder.get_local_type(place.local) {
+                                if matches!(temp_ty.kind(), TypeKind::Closure { .. }) {
+                                    self.builder.set_local_type(mir_local, temp_ty.clone());
+                                }
+                            }
+                        }
+
+                        self.push_assign(Place::local(mir_local), Rvalue::Use(init_val));
+                    }
                 }
             }
             Stmt::Expr(expr) => {
@@ -1876,11 +1950,18 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
             operands.push(self.lower_expr(&field.value)?);
         }
 
+        // Extract type arguments from the struct type
+        let type_args = if let TypeKind::Adt { args, .. } = ty.kind() {
+            args.clone()
+        } else {
+            Vec::new()
+        };
+
         let temp = self.new_temp(ty.clone(), span);
         self.push_assign(
             Place::local(temp),
             Rvalue::Aggregate {
-                kind: AggregateKind::Adt { def_id, variant_idx: None },
+                kind: AggregateKind::Adt { def_id, variant_idx: None, type_args },
                 operands,
             },
         );
@@ -2110,10 +2191,14 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
             PatternKind::Wildcard | PatternKind::Literal(_) | PatternKind::Range { .. } => {
                 // Nothing to bind - these patterns only test values
             }
-            PatternKind::Variant { fields, .. } => {
-                // For enum variant patterns, bind each field pattern
+            PatternKind::Variant { variant_idx, fields, .. } => {
+                // For enum variant patterns, first downcast to the variant,
+                // then bind each field pattern.
+                // The Downcast projection tells codegen we're inside a variant,
+                // so Field projections will be offset by 1 for the discriminant tag.
+                let variant_place = place.project(PlaceElem::Downcast(*variant_idx));
                 for (i, field_pat) in fields.iter().enumerate() {
-                    let field_place = place.project(PlaceElem::Field(i as u32));
+                    let field_place = variant_place.project(PlaceElem::Field(i as u32));
                     self.bind_pattern(field_pat, &field_place)?;
                 }
             }

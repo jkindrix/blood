@@ -149,6 +149,12 @@ impl<'a> Resolver<'a> {
         id
     }
 
+    /// Get the current DefId counter value without incrementing.
+    /// Used for tracking which DefIds were created during a scope.
+    pub fn current_def_id_counter(&self) -> u32 {
+        self.next_def_id
+    }
+
     /// Generate a new LocalId.
     pub fn next_local_id(&mut self) -> LocalId {
         let id = LocalId::new(self.next_local_id);

@@ -69,6 +69,7 @@ use std::collections::HashMap;
 use inkwell::basic_block::BasicBlock;
 use inkwell::values::{IntValue, PointerValue};
 use inkwell::types::BasicTypeEnum;
+use inkwell::AddressSpace;
 
 use crate::diagnostics::Diagnostic;
 use crate::hir::{DefId, LocalId, Type};
@@ -175,14 +176,19 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
         body: &MirBody,
         escape_results: Option<&EscapeResults>,
     ) -> Result<(), Vec<Diagnostic>> {
-        let fn_value = *self.functions.get(&def_id).ok_or_else(|| {
-            vec![Diagnostic::error(
-                "Internal error: function not declared for MIR compilation",
-                body.span,
-            )]
-        })?;
+        // Check if this function was declared. Generic functions are skipped during declaration
+        // and will be monomorphized on-demand at call sites (not yet implemented).
+        let fn_value = match self.functions.get(&def_id) {
+            Some(&fv) => fv,
+            None => {
+                // Function not declared - this is a generic function.
+                // Skip compiling its body. It will be monomorphized when called.
+                return Ok(());
+            }
+        };
 
         self.current_fn = Some(fn_value);
+        self.current_fn_def_id = Some(def_id);
         self.locals.clear();
         self.local_generations.clear();
 
@@ -200,10 +206,20 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
         })?;
         self.builder.position_at_end(*entry_bb);
 
+        // Check if this is a closure body (synthetic DefId >= 0xFFFF_0000)
+        let is_closure_body = def_id.index() >= 0xFFFF_0000;
+
         // Allocate locals based on escape analysis
         for local in &body.locals {
             let tier = self.get_local_tier(local.id, escape_results);
-            let llvm_ty = self.lower_type(&local.ty);
+
+            // For closure bodies, the __env parameter should use i8* type
+            // regardless of its MIR type (which is the actual tuple of captures)
+            let llvm_ty = if is_closure_body && local.name.as_deref() == Some("__env") {
+                self.context.i8_type().ptr_type(AddressSpace::default()).into()
+            } else {
+                self.lower_type(&local.ty)
+            };
 
             let alloca = match tier {
                 MemoryTier::Stack => {

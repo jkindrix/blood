@@ -57,17 +57,50 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         self.context.struct_type(&field_types, false).into()
                     }
                 } else if let Some(variants) = self.enum_defs.get(def_id) {
-                    // Enum: { i32 tag, max_payload_fields... }
-                    // Find max fields across variants
-                    let max_fields = variants.iter().map(|v| v.len()).max().unwrap_or(0);
-                    let mut enum_fields: Vec<BasicTypeEnum> = Vec::with_capacity(1 + max_fields);
+                    // Enum: { i32 tag, payload_fields... }
+                    // For generic enums, substitute type parameters with concrete args
+                    // Find the variant with the largest substituted fields
+                    let mut max_variant_types: Vec<BasicTypeEnum> = Vec::new();
+                    let mut max_size = 0usize;
+
+                    for variant_fields in variants {
+                        let mut variant_types: Vec<BasicTypeEnum> = Vec::new();
+                        let mut variant_size = 0usize;
+
+                        for field_ty in variant_fields {
+                            let substituted = self.substitute_type_params(field_ty, args);
+                            let llvm_ty = self.lower_type(&substituted);
+                            // Approximate size by type bit width
+                            let size = match llvm_ty {
+                                BasicTypeEnum::IntType(t) => t.get_bit_width() as usize,
+                                BasicTypeEnum::FloatType(_) => 64,
+                                BasicTypeEnum::PointerType(_) => 64,
+                                BasicTypeEnum::StructType(t) => t.count_fields() as usize * 64,
+                                BasicTypeEnum::ArrayType(t) => t.len() as usize * 64,
+                                BasicTypeEnum::VectorType(_) => 128,
+                            };
+                            variant_types.push(llvm_ty);
+                            variant_size += size;
+                        }
+
+                        if variant_size > max_size {
+                            max_size = variant_size;
+                            max_variant_types = variant_types;
+                        }
+                    }
+
+                    let mut enum_fields: Vec<BasicTypeEnum> = Vec::with_capacity(1 + max_variant_types.len());
                     // Tag
                     enum_fields.push(self.context.i32_type().into());
-                    // Payload fields (use i64 as universal field type for simplicity)
-                    for _ in 0..max_fields {
-                        enum_fields.push(self.context.i64_type().into());
+                    // Payload fields from largest variant
+                    enum_fields.extend(max_variant_types);
+
+                    if enum_fields.len() == 1 {
+                        // No payload fields - just tag
+                        self.context.i32_type().into()
+                    } else {
+                        self.context.struct_type(&enum_fields, false).into()
                     }
-                    self.context.struct_type(&enum_fields, false).into()
                 } else {
                     // Unknown ADT - use pointer placeholder
                     self.context.i8_type().ptr_type(AddressSpace::default()).into()

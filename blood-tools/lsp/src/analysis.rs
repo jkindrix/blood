@@ -432,6 +432,32 @@ impl SemanticAnalyzer {
                     }
                 }
             }
+            Declaration::Module(mod_decl) => {
+                // Collect module symbol
+                let name = self.resolve_symbol(&mod_decl.name.node, interner);
+                let description = format!("mod {}", name);
+
+                let idx = symbols.len();
+                symbols.push(SymbolInfo {
+                    name: name.clone(),
+                    kind: SymbolKind::MODULE,
+                    def_span: mod_decl.name.span,
+                    description,
+                    doc: None,
+                    references: Vec::new(),
+                });
+
+                for offset in mod_decl.name.span.start..mod_decl.name.span.end {
+                    symbol_at_offset.insert(offset, idx);
+                }
+
+                // Recursively collect symbols from inline module body
+                if let Some(ref body) = mod_decl.body {
+                    for inner_decl in body {
+                        self.collect_declaration_symbols(inner_decl, source, interner, symbols, symbol_at_offset);
+                    }
+                }
+            }
         }
     }
 

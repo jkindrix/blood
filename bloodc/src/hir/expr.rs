@@ -3,6 +3,7 @@
 //! This module defines the typed expression representation used after
 //! type checking. All expressions have a resolved type attached.
 
+use std::collections::HashMap;
 use std::fmt;
 
 use crate::ast::{BinOp, UnaryOp, LiteralKind};
@@ -35,6 +36,9 @@ pub struct Body {
     pub expr: Expr,
     /// The span of the body.
     pub span: Span,
+    /// Tuple destructuring info: maps the hidden tuple local to the element locals.
+    /// Used by MIR lowering to decompose tuple patterns.
+    pub tuple_destructures: HashMap<LocalId, Vec<LocalId>>,
 }
 
 impl Body {

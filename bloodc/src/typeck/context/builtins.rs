@@ -12,16 +12,20 @@ impl<'a> TypeContext<'a> {
         let bool_ty = Type::bool();
         let i32_ty = Type::i32();
         let i64_ty = Type::i64();
-        let string_ty = Type::string();
+        let u64_ty = Type::u64();
+        let f32_ty = Type::f32();
+        let f64_ty = Type::f64();
+        let str_ty = Type::str();  // str slice for string literals
+        let string_ty = Type::string();  // owned String (for functions that return owned strings)
         let never_ty = Type::never();
 
         // === I/O Functions ===
 
-        // print(String) -> () - convenience function (maps to runtime print_str)
-        self.register_builtin_fn_aliased("print", "print_str", vec![string_ty.clone()], unit_ty.clone());
+        // print(str) -> () - convenience function (maps to runtime print_str)
+        self.register_builtin_fn_aliased("print", "print_str", vec![str_ty.clone()], unit_ty.clone());
 
-        // println(String) -> () - convenience function (prints string + newline, maps to runtime println_str)
-        self.register_builtin_fn_aliased("println", "println_str", vec![string_ty.clone()], unit_ty.clone());
+        // println(str) -> () - convenience function (prints string + newline, maps to runtime println_str)
+        self.register_builtin_fn_aliased("println", "println_str", vec![str_ty.clone()], unit_ty.clone());
 
         // print_int(i32) -> ()
         self.register_builtin_fn("print_int", vec![i32_ty.clone()], unit_ty.clone());
@@ -29,14 +33,17 @@ impl<'a> TypeContext<'a> {
         // println_int(i32) -> ()
         self.register_builtin_fn("println_int", vec![i32_ty.clone()], unit_ty.clone());
 
-        // print_str(String) -> () - legacy name, same as print
-        self.register_builtin_fn("print_str", vec![string_ty.clone()], unit_ty.clone());
+        // print_str(str) -> () - legacy name, same as print
+        self.register_builtin_fn("print_str", vec![str_ty.clone()], unit_ty.clone());
 
-        // println_str(String) -> () - legacy name, same as println
-        self.register_builtin_fn("println_str", vec![string_ty.clone()], unit_ty.clone());
+        // println_str(str) -> () - legacy name, same as println
+        self.register_builtin_fn("println_str", vec![str_ty.clone()], unit_ty.clone());
 
         // print_char(i32) -> ()  (char as i32 for now)
         self.register_builtin_fn("print_char", vec![i32_ty.clone()], unit_ty.clone());
+
+        // println_char(i32) -> () (char with newline)
+        self.register_builtin_fn("println_char", vec![i32_ty.clone()], unit_ty.clone());
 
         // print_newline() -> () - prints just a newline
         self.register_builtin_fn("print_newline", vec![], unit_ty.clone());
@@ -47,10 +54,34 @@ impl<'a> TypeContext<'a> {
         // println_bool(bool) -> ()
         self.register_builtin_fn("println_bool", vec![bool_ty.clone()], unit_ty.clone());
 
+        // print_f64(f64) -> ()
+        self.register_builtin_fn("print_f64", vec![f64_ty.clone()], unit_ty.clone());
+
+        // println_f64(f64) -> ()
+        self.register_builtin_fn("println_f64", vec![f64_ty.clone()], unit_ty.clone());
+
+        // print_i64(i64) -> () - 64-bit integer output
+        self.register_builtin_fn("print_i64", vec![i64_ty.clone()], unit_ty.clone());
+
+        // println_i64(i64) -> () - 64-bit integer output with newline
+        self.register_builtin_fn("println_i64", vec![i64_ty.clone()], unit_ty.clone());
+
+        // print_u64(u64) -> () - unsigned 64-bit integer output
+        self.register_builtin_fn("print_u64", vec![u64_ty.clone()], unit_ty.clone());
+
+        // println_u64(u64) -> () - unsigned 64-bit integer output with newline
+        self.register_builtin_fn("println_u64", vec![u64_ty.clone()], unit_ty.clone());
+
+        // print_f32(f32) -> ()
+        self.register_builtin_fn("print_f32", vec![f32_ty.clone()], unit_ty.clone());
+
+        // println_f32(f32) -> ()
+        self.register_builtin_fn("println_f32", vec![f32_ty.clone()], unit_ty.clone());
+
         // === Control Flow / Assertions ===
 
-        // panic(String) -> !
-        self.register_builtin_fn("panic", vec![string_ty.clone()], never_ty.clone());
+        // panic(str) -> !
+        self.register_builtin_fn("panic", vec![str_ty.clone()], never_ty.clone());
 
         // assert(bool) -> ()
         self.register_builtin_fn("assert", vec![bool_ty.clone()], unit_ty.clone());
@@ -77,6 +108,55 @@ impl<'a> TypeContext<'a> {
 
         // size_of_bool() -> i64
         self.register_builtin_fn("size_of_bool", vec![], i64_ty.clone());
+
+        // === Dynamic Memory Allocation ===
+        // These use u64 for pointer addresses (void* on 64-bit systems)
+
+        // alloc(size: u64) -> u64 - allocate memory, returns address (0 on failure)
+        self.register_builtin_fn_aliased("alloc", "blood_alloc_simple", vec![u64_ty.clone()], u64_ty.clone());
+
+        // realloc(ptr: u64, size: u64) -> u64 - reallocate memory, returns new address
+        self.register_builtin_fn_aliased("realloc", "blood_realloc", vec![u64_ty.clone(), u64_ty.clone()], u64_ty.clone());
+
+        // free(ptr: u64) -> () - free allocated memory
+        self.register_builtin_fn_aliased("free", "blood_free_simple", vec![u64_ty.clone()], unit_ty.clone());
+
+        // memcpy(dest: u64, src: u64, n: u64) -> u64 - copy n bytes, returns dest
+        self.register_builtin_fn_aliased("memcpy", "blood_memcpy", vec![u64_ty.clone(), u64_ty.clone(), u64_ty.clone()], u64_ty.clone());
+
+        // ptr_read_i32(ptr: u64) -> i32 - read i32 from memory address
+        self.register_builtin_fn("ptr_read_i32", vec![u64_ty.clone()], i32_ty.clone());
+
+        // ptr_write_i32(ptr: u64, value: i32) -> () - write i32 to memory address
+        self.register_builtin_fn("ptr_write_i32", vec![u64_ty.clone(), i32_ty.clone()], unit_ty.clone());
+
+        // ptr_read_i64(ptr: u64) -> i64 - read i64 from memory address
+        self.register_builtin_fn("ptr_read_i64", vec![u64_ty.clone()], i64_ty.clone());
+
+        // ptr_write_i64(ptr: u64, value: i64) -> () - write i64 to memory address
+        self.register_builtin_fn("ptr_write_i64", vec![u64_ty.clone(), i64_ty.clone()], unit_ty.clone());
+
+        // ptr_read_u64(ptr: u64) -> u64 - read u64 from memory address
+        self.register_builtin_fn("ptr_read_u64", vec![u64_ty.clone()], u64_ty.clone());
+
+        // ptr_write_u64(ptr: u64, value: u64) -> () - write u64 to memory address
+        self.register_builtin_fn("ptr_write_u64", vec![u64_ty.clone(), u64_ty.clone()], unit_ty.clone());
+
+        // === String Operations ===
+
+        // str_len(str) -> i64 - get string length in bytes
+        self.register_builtin_fn("str_len", vec![str_ty.clone()], i64_ty.clone());
+
+        // str_eq(str, str) -> bool - compare two strings for equality
+        self.register_builtin_fn("str_eq", vec![str_ty.clone(), str_ty.clone()], bool_ty.clone());
+
+        // === Input Functions ===
+
+        // read_line() -> str - read a line from stdin
+        self.register_builtin_fn("read_line", vec![], str_ty.clone());
+
+        // read_int() -> i32 - read an integer from stdin
+        self.register_builtin_fn("read_int", vec![], i32_ty.clone());
 
         // === Conversion Functions ===
 

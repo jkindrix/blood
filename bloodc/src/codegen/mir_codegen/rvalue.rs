@@ -91,8 +91,13 @@ impl<'ctx, 'a> MirRvalueCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
 
             Rvalue::Discriminant(place) => {
                 let ptr = self.compile_mir_place(place, body)?;
-                // Load discriminant from first field
-                let discr = self.builder.build_load(ptr, "discr")
+                // Load discriminant from first field (field 0 is the tag/discriminant)
+                // The enum is represented as a struct where field 0 is i32 discriminant
+                let discr_ptr = self.builder.build_struct_gep(ptr, 0, "discr_ptr")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM struct gep error: {}", e), Span::dummy()
+                    )])?;
+                let discr = self.builder.build_load(discr_ptr, "discr")
                     .map_err(|e| vec![Diagnostic::error(
                         format!("LLVM load error: {}", e), Span::dummy()
                     )])?;
@@ -637,16 +642,113 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     ) -> Result<BasicValueEnum<'ctx>, Vec<Diagnostic>> {
         let target_llvm = self.lower_type(target_ty);
 
-        // For now, just use int casts
-        if let (BasicValueEnum::IntValue(int_val), BasicTypeEnum::IntType(int_ty)) = (val, target_llvm) {
-            let cast = self.builder.build_int_cast(int_val, int_ty, "cast")
-                .map_err(|e| vec![Diagnostic::error(
-                    format!("LLVM cast error: {}", e), Span::dummy()
-                )])?;
-            Ok(cast.into())
-        } else {
-            // For other types, return as-is for now
-            Ok(val)
+        match (val, target_llvm) {
+            // Int to Int
+            (BasicValueEnum::IntValue(int_val), BasicTypeEnum::IntType(int_ty)) => {
+                let src_bits = int_val.get_type().get_bit_width();
+                let dst_bits = int_ty.get_bit_width();
+
+                if src_bits == dst_bits {
+                    Ok(int_val.into())
+                } else if src_bits < dst_bits {
+                    // Extending: use zero-extend for bools (i1), sign-extend for other ints
+                    if src_bits == 1 {
+                        // Bool to larger int: zero extend
+                        let cast = self.builder.build_int_z_extend(int_val, int_ty, "zext")
+                            .map_err(|e| vec![Diagnostic::error(
+                                format!("LLVM zext error: {}", e), Span::dummy()
+                            )])?;
+                        Ok(cast.into())
+                    } else {
+                        // Regular signed int: sign extend
+                        let cast = self.builder.build_int_s_extend(int_val, int_ty, "sext")
+                            .map_err(|e| vec![Diagnostic::error(
+                                format!("LLVM sext error: {}", e), Span::dummy()
+                            )])?;
+                        Ok(cast.into())
+                    }
+                } else {
+                    // Truncating
+                    let cast = self.builder.build_int_truncate(int_val, int_ty, "trunc")
+                        .map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM trunc error: {}", e), Span::dummy()
+                        )])?;
+                    Ok(cast.into())
+                }
+            }
+
+            // Float to Int (signed)
+            (BasicValueEnum::FloatValue(float_val), BasicTypeEnum::IntType(int_ty)) => {
+                let cast = self.builder.build_float_to_signed_int(float_val, int_ty, "fptosi")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM fptosi error: {}", e), Span::dummy()
+                    )])?;
+                Ok(cast.into())
+            }
+
+            // Int to Float
+            (BasicValueEnum::IntValue(int_val), BasicTypeEnum::FloatType(float_ty)) => {
+                // Determine if the integer is signed based on bit width
+                // Blood's i32/i64 are signed, u32/u64 are unsigned
+                // For now, assume signed conversion
+                let cast = self.builder.build_signed_int_to_float(int_val, float_ty, "sitofp")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM sitofp error: {}", e), Span::dummy()
+                    )])?;
+                Ok(cast.into())
+            }
+
+            // Float to Float
+            (BasicValueEnum::FloatValue(float_val), BasicTypeEnum::FloatType(float_ty)) => {
+                // Compare the float types directly
+                if float_val.get_type() == float_ty {
+                    Ok(float_val.into())
+                } else {
+                    let cast = self.builder.build_float_cast(float_val, float_ty, "fpcast")
+                        .map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM fpcast error: {}", e), Span::dummy()
+                        )])?;
+                    Ok(cast.into())
+                }
+            }
+
+            // Pointer to Pointer
+            (BasicValueEnum::PointerValue(ptr_val), BasicTypeEnum::PointerType(ptr_ty)) => {
+                let cast = self.builder.build_pointer_cast(ptr_val, ptr_ty, "ptrcast")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM ptrcast error: {}", e), Span::dummy()
+                    )])?;
+                Ok(cast.into())
+            }
+
+            // Pointer to Int (for raw address operations)
+            (BasicValueEnum::PointerValue(ptr_val), BasicTypeEnum::IntType(int_ty)) => {
+                let cast = self.builder.build_ptr_to_int(ptr_val, int_ty, "ptrtoint")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM ptrtoint error: {}", e), Span::dummy()
+                    )])?;
+                Ok(cast.into())
+            }
+
+            // Int to Pointer
+            (BasicValueEnum::IntValue(int_val), BasicTypeEnum::PointerType(ptr_ty)) => {
+                let cast = self.builder.build_int_to_ptr(int_val, ptr_ty, "inttoptr")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM inttoptr error: {}", e), Span::dummy()
+                    )])?;
+                Ok(cast.into())
+            }
+
+            // Same type, no cast needed
+            _ if val.get_type() == target_llvm => Ok(val),
+
+            // Unsupported cast
+            _ => {
+                Err(vec![Diagnostic::error(
+                    format!("Unsupported cast from {:?} to {:?}", val.get_type(), target_llvm),
+                    Span::dummy()
+                )])
+            }
         }
     }
 
@@ -702,7 +804,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 }
             }
 
-            AggregateKind::Adt { def_id, variant_idx } => {
+            AggregateKind::Adt { def_id, variant_idx, type_args } => {
                 // Look up struct/enum definition
                 if self.struct_defs.contains_key(def_id) {
                     // Use the concrete types of the operand values directly.
@@ -725,28 +827,51 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         }
                         Ok(agg.into())
                     }
-                } else if let Some(_variants) = self.enum_defs.get(def_id) {
-                    // Enum variant - first field is tag
+                } else if self.enum_defs.contains_key(def_id) {
+                    // Enum variant - first field is tag, followed by payload fields
+                    // IMPORTANT: The constructed value must match the full enum layout,
+                    // which is { tag, max_variant_payload... }. Variants with fewer fields
+                    // than the largest variant must be padded.
                     let variant_index = variant_idx.ok_or_else(|| vec![ice_err!(
                         Span::dummy(),
                         "enum construction without variant index";
                         "def_id" => def_id
                     )])?;
-                    let tag = self.context.i32_type().const_int(variant_index as u64, false);
-                    let mut all_vals = vec![tag.into()];
-                    all_vals.extend(vals);
 
-                    let types: Vec<_> = all_vals.iter().map(|v| v.get_type()).collect();
-                    let struct_ty = self.context.struct_type(&types, false);
-                    let mut agg = struct_ty.get_undef();
-                    for (i, val) in all_vals.iter().enumerate() {
-                        agg = self.builder.build_insert_value(agg, *val, i as u32, &format!("enum_{}", i))
+                    // Get the full enum type using lower_type with concrete type arguments
+                    let enum_ty = Type::adt(*def_id, type_args.clone());
+                    let full_enum_llvm_ty = self.lower_type(&enum_ty);
+
+                    // Build the aggregate with proper padding
+                    let tag = self.context.i32_type().const_int(variant_index as u64, false);
+
+                    if let BasicTypeEnum::StructType(struct_ty) = full_enum_llvm_ty {
+                        // Full enum type is a struct { tag, payload... }
+                        let mut agg = struct_ty.get_undef();
+
+                        // Insert tag at index 0
+                        agg = self.builder.build_insert_value(agg, tag, 0, "enum_tag")
                             .map_err(|e| vec![Diagnostic::error(
                                 format!("LLVM insert error: {}", e), Span::dummy()
                             )])?
                             .into_struct_value();
+
+                        // Insert actual variant fields (starting at index 1)
+                        for (i, val) in vals.iter().enumerate() {
+                            agg = self.builder.build_insert_value(agg, *val, (i + 1) as u32, &format!("enum_field_{}", i))
+                                .map_err(|e| vec![Diagnostic::error(
+                                    format!("LLVM insert error: {}", e), Span::dummy()
+                                )])?
+                                .into_struct_value();
+                        }
+
+                        // Remaining fields are already undef from get_undef(), which is correct
+                        // padding for variants with fewer fields than the maximum.
+                        Ok(agg.into())
+                    } else {
+                        // Enum type is just the tag (all variants are unit variants)
+                        Ok(tag.into())
                     }
-                    Ok(agg.into())
                 } else {
                     Err(vec![Diagnostic::error(
                         format!("Unknown ADT {:?}", def_id), Span::dummy()
@@ -754,14 +879,32 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 }
             }
 
-            AggregateKind::Closure { def_id: _ } => {
-                // Closure is a pointer to captured environment struct
-                // The closure function is called directly and receives this pointer
+            AggregateKind::Closure { def_id } => {
+                // Closure is a fat pointer: { fn_ptr: i8*, env_ptr: i8* }
+                // fn_ptr points to the closure function
+                // env_ptr points to the captured environment (or null if no captures)
                 let i8_ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
+                let closure_struct_ty = self.context.struct_type(&[i8_ptr_ty.into(), i8_ptr_ty.into()], false);
 
-                if vals.is_empty() {
+                // Get the closure function pointer
+                let fn_ptr = if let Some(&fn_value) = self.functions.get(def_id) {
+                    self.builder.build_pointer_cast(
+                        fn_value.as_global_value().as_pointer_value(),
+                        i8_ptr_ty,
+                        "closure.fn_ptr"
+                    ).map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM pointer cast error: {}", e), Span::dummy()
+                    )])?
+                } else {
+                    return Err(vec![Diagnostic::error(
+                        format!("Closure function {:?} not found", def_id), Span::dummy()
+                    )]);
+                };
+
+                // Build the environment pointer
+                let env_ptr = if vals.is_empty() {
                     // No captures - use null pointer
-                    Ok(i8_ptr_ty.const_null().into())
+                    i8_ptr_ty.const_null()
                 } else {
                     // Build a struct with captured values
                     let types: Vec<_> = vals.iter().map(|v| v.get_type()).collect();
@@ -786,13 +929,26 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         )])?;
 
                     // Cast to i8* for the closure type
-                    let env_ptr = self.builder.build_pointer_cast(captures_alloca, i8_ptr_ty, "env_ptr")
+                    self.builder.build_pointer_cast(captures_alloca, i8_ptr_ty, "env_ptr")
                         .map_err(|e| vec![Diagnostic::error(
                             format!("LLVM pointer cast error: {}", e), Span::dummy()
-                        )])?;
+                        )])?
+                };
 
-                    Ok(env_ptr.into())
-                }
+                // Build the closure fat pointer struct { fn_ptr, env_ptr }
+                let mut closure_val = closure_struct_ty.get_undef();
+                closure_val = self.builder.build_insert_value(closure_val, fn_ptr, 0, "closure.with_fn")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM insert error: {}", e), Span::dummy()
+                    )])?
+                    .into_struct_value();
+                closure_val = self.builder.build_insert_value(closure_val, env_ptr, 1, "closure.with_env")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM insert error: {}", e), Span::dummy()
+                    )])?
+                    .into_struct_value();
+
+                Ok(closure_val.into())
             }
 
             AggregateKind::Record => {
@@ -889,7 +1045,14 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             }
 
             ConstantKind::Float(v) => {
-                Ok(self.context.f64_type().const_float(*v).into())
+                // Check the type to determine if it's f32 or f64
+                let llvm_ty = self.lower_type(&constant.ty);
+                if let BasicTypeEnum::FloatType(float_ty) = llvm_ty {
+                    Ok(float_ty.const_float(*v).into())
+                } else {
+                    // Fallback to f64
+                    Ok(self.context.f64_type().const_float(*v).into())
+                }
             }
 
             ConstantKind::Bool(v) => {
@@ -901,11 +1064,22 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             }
 
             ConstantKind::String(s) => {
+                // Create global string constant and str slice {ptr, len}
                 let global = self.builder.build_global_string_ptr(s, "str")
                     .map_err(|e| vec![Diagnostic::error(
                         format!("LLVM string error: {}", e), Span::dummy()
                     )])?;
-                Ok(global.as_pointer_value().into())
+                let ptr = global.as_pointer_value();
+                let len = self.context.i64_type().const_int(s.len() as u64, false);
+
+                // Create str slice struct {ptr, len}
+                let str_type = self.context.struct_type(
+                    &[self.context.i8_type().ptr_type(inkwell::AddressSpace::default()).into(),
+                      self.context.i64_type().into()],
+                    false
+                );
+                let str_val = str_type.const_named_struct(&[ptr.into(), len.into()]);
+                Ok(str_val.into())
             }
 
             ConstantKind::Unit => {

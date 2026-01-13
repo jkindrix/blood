@@ -103,6 +103,9 @@ pub fn compile_mir_to_object(
     // This sets up struct_defs, enum_defs, and function declarations
     codegen.compile_crate_declarations(hir_crate)?;
 
+    // Store MIR bodies for generic functions (for on-demand monomorphization)
+    codegen.set_generic_mir_bodies(mir_bodies);
+
     // Compile const and static items (global variables)
     codegen.compile_const_items(hir_crate)?;
     codegen.compile_static_items(hir_crate)?;
@@ -163,12 +166,14 @@ pub fn compile_mir_to_object(
 /// * `hir_crate` - The full crate (for type declarations)
 /// * `mir_body` - The MIR body for this definition (if it's a function)
 /// * `escape_results` - Escape analysis results for this function
+/// * `all_mir_bodies` - All MIR bodies in the crate (for monomorphization of generic functions)
 /// * `output_path` - Path to write the object file
 pub fn compile_definition_to_object(
     def_id: DefId,
     hir_crate: &hir::Crate,
     mir_body: Option<&MirBody>,
     escape_results: Option<&crate::mir::EscapeResults>,
+    all_mir_bodies: Option<&MirBodiesMap>,
     output_path: &Path,
 ) -> Result<(), Vec<Diagnostic>> {
     let context = Context::create();
@@ -187,6 +192,19 @@ pub fn compile_definition_to_object(
 
     // Declare all types and external functions from the crate
     codegen.compile_crate_declarations(hir_crate)?;
+
+    // Store MIR bodies for generic functions (for on-demand monomorphization)
+    if let Some(mir_bodies) = all_mir_bodies {
+        codegen.set_generic_mir_bodies(mir_bodies);
+
+        // Declare closure functions from MIR bodies
+        // Closures have synthetic DefIds (>= 0xFFFF_0000) that aren't in HIR items
+        for (&closure_def_id, mir_body) in mir_bodies.iter() {
+            if closure_def_id.index() >= 0xFFFF_0000 {
+                codegen.declare_closure_from_mir(closure_def_id, mir_body);
+            }
+        }
+    }
 
     // Compile const and static items (if this is a const/static definition)
     codegen.compile_const_items(hir_crate)?;
@@ -304,7 +322,7 @@ pub fn compile_definitions_to_objects(
         let escape_results = escape_analysis.get(&def_id);
         let output_path = output_dir.join(format!("def_{}.o", def_id.index()));
 
-        match compile_definition_to_object(def_id, hir_crate, mir_body, escape_results, &output_path) {
+        match compile_definition_to_object(def_id, hir_crate, mir_body, escape_results, Some(mir_bodies), &output_path) {
             Ok(()) => {
                 results.push((def_id, output_path));
             }

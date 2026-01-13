@@ -32,11 +32,12 @@ impl<'src> Parser<'src> {
             TokenKind::Type => Some(Declaration::Type(self.parse_type_decl(attrs, vis))),
             TokenKind::Static => Some(Declaration::Static(self.parse_static_decl(attrs, vis))),
             TokenKind::Bridge => Some(Declaration::Bridge(self.parse_bridge_decl(attrs))),
+            TokenKind::Mod => Some(Declaration::Module(self.parse_mod_decl(attrs, vis))),
             _ => {
                 self.error_expected_one_of(&[
                     "`fn`", "`struct`", "`enum`", "`trait`", "`impl`",
                     "`effect`", "`handler`", "`type`", "`const`", "`static`",
-                    "`bridge`",
+                    "`bridge`", "`mod`",
                 ]);
                 self.synchronize();
                 None
@@ -1680,6 +1681,51 @@ impl<'src> Parser<'src> {
             name,
             params,
             return_type,
+            span: start.merge(self.previous.span),
+        }
+    }
+
+    // ============================================================
+    // Module Declaration
+    // ============================================================
+
+    /// Parse a module item: `mod foo;` or `mod foo { ... }`
+    fn parse_mod_decl(&mut self, attrs: Vec<Attribute>, vis: Visibility) -> ModItemDecl {
+        let start = self.current.span;
+        self.advance(); // consume 'mod'
+
+        let name = if self.check(TokenKind::Ident) || self.check(TokenKind::TypeIdent) {
+            self.advance();
+            self.spanned_symbol()
+        } else {
+            self.error_expected("module name");
+            Spanned::new(self.intern(""), self.current.span)
+        };
+
+        // Either `mod foo;` (external) or `mod foo { ... }` (inline)
+        let body = if self.try_consume(TokenKind::Semi) {
+            // External module - will be loaded from a file
+            None
+        } else if self.check(TokenKind::LBrace) {
+            self.advance(); // consume '{'
+            let mut declarations = Vec::new();
+            while !self.check(TokenKind::RBrace) && !self.is_at_end() {
+                if let Some(decl) = self.parse_declaration() {
+                    declarations.push(decl);
+                }
+            }
+            self.expect(TokenKind::RBrace);
+            Some(declarations)
+        } else {
+            self.error_expected_one_of(&["`;`", "`{`"]);
+            None
+        };
+
+        ModItemDecl {
+            attrs,
+            vis,
+            name,
+            body,
             span: start.merge(self.previous.span),
         }
     }

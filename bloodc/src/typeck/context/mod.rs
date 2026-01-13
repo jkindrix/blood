@@ -4,6 +4,7 @@
 //! name resolution, type collection, and type inference.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use string_interner::{DefaultStringInterner, Symbol as _};
 
@@ -30,6 +31,8 @@ mod suggestions;
 pub struct TypeContext<'a> {
     /// The source code (reserved for future use in error messages).
     pub(crate) _source: &'a str,
+    /// The path to the source file (for resolving external modules).
+    pub(crate) source_path: Option<PathBuf>,
     /// The string interner for resolving symbols.
     pub(crate) interner: DefaultStringInterner,
     /// The name resolver.
@@ -120,12 +123,24 @@ pub struct TypeContext<'a> {
     pub(crate) resume_count_in_current_op: usize,
     /// FFI bridge block definitions.
     pub(crate) bridge_defs: Vec<BridgeInfo>,
+    /// Module definitions.
+    pub(crate) module_defs: HashMap<DefId, ModuleInfo>,
     /// Current impl block's Self type during collection phase.
     /// Set when collecting impl block method signatures so `Self` can be resolved.
     pub(crate) current_impl_self_ty: Option<Type>,
     /// Forall parameter environment for resolving type parameter names in forall bodies.
     /// Maps parameter names to their TyVarId when parsing forall<T>. expressions.
     pub(crate) forall_param_env: Vec<(crate::ast::Symbol, TyVarId)>,
+    /// Tuple destructuring info: maps the hidden tuple local to the element locals.
+    /// Used by MIR lowering to decompose tuple patterns.
+    pub tuple_destructures: HashMap<hir::LocalId, Vec<hir::LocalId>>,
+    /// Next loop ID for generating unique LoopIds.
+    pub(crate) next_loop_id: u32,
+    /// Stack of loops, with optional LoopId for each (None for unlabeled loops).
+    /// The last entry is the innermost loop.
+    pub(crate) loop_stack: Vec<hir::LoopId>,
+    /// Mapping from label names to LoopIds for labeled loops.
+    pub(crate) loop_labels: HashMap<String, hir::LoopId>,
 }
 
 /// Information about a struct.
@@ -535,11 +550,25 @@ pub struct BridgeCallbackInfo {
     pub span: Span,
 }
 
+/// Information about a module.
+#[derive(Debug, Clone)]
+pub struct ModuleInfo {
+    /// The module name.
+    pub name: String,
+    /// Items contained in this module.
+    pub items: Vec<DefId>,
+    /// Whether this is an external module (loaded from file).
+    pub is_external: bool,
+    /// Source span.
+    pub span: Span,
+}
+
 impl<'a> TypeContext<'a> {
     /// Create a new type context.
     pub fn new(source: &'a str, interner: DefaultStringInterner) -> Self {
         let mut ctx = Self {
             _source: source,
+            source_path: None,
             interner,
             resolver: Resolver::new(source),
             unifier: Unifier::new(),
@@ -580,11 +609,22 @@ impl<'a> TypeContext<'a> {
             current_handler_kind: None,
             resume_count_in_current_op: 0,
             bridge_defs: Vec::new(),
+            module_defs: HashMap::new(),
             current_impl_self_ty: None,
             forall_param_env: Vec::new(),
+            tuple_destructures: HashMap::new(),
+            next_loop_id: 0,
+            loop_stack: Vec::new(),
+            loop_labels: HashMap::new(),
         };
         ctx.register_builtins();
         ctx
+    }
+
+    /// Set the source file path (for resolving external modules).
+    pub fn with_source_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.source_path = Some(path.into());
+        self
     }
 
     /// Convert a Symbol to a String.
@@ -600,6 +640,42 @@ impl<'a> TypeContext<'a> {
     /// Convert a Type to a string for display.
     pub(crate) fn type_to_string(&self, ty: &Type) -> String {
         format!("{}", ty)
+    }
+
+    /// Generate a fresh loop ID.
+    pub(crate) fn fresh_loop_id(&mut self) -> hir::LoopId {
+        let id = self.next_loop_id;
+        self.next_loop_id += 1;
+        hir::LoopId::new(id)
+    }
+
+    /// Enter a loop, optionally with a label.
+    /// Returns the LoopId assigned to this loop.
+    pub(crate) fn enter_loop(&mut self, label: Option<&str>) -> hir::LoopId {
+        let loop_id = self.fresh_loop_id();
+        self.loop_stack.push(loop_id);
+        if let Some(name) = label {
+            self.loop_labels.insert(name.to_string(), loop_id);
+        }
+        loop_id
+    }
+
+    /// Exit the current loop.
+    pub(crate) fn exit_loop(&mut self, label: Option<&str>) {
+        self.loop_stack.pop();
+        if let Some(name) = label {
+            self.loop_labels.remove(name);
+        }
+    }
+
+    /// Find the LoopId for a labeled break/continue.
+    /// If label is None, returns the innermost loop.
+    /// If label is Some, looks up the label in the loop_labels map.
+    pub(crate) fn find_loop(&self, label: Option<&str>) -> Option<hir::LoopId> {
+        match label {
+            None => self.loop_stack.last().copied(),
+            Some(name) => self.loop_labels.get(name).copied(),
+        }
     }
 
     /// Check if a type is a linear type (must be used exactly once).
@@ -650,6 +726,7 @@ impl<'a> TypeContext<'a> {
             param_count: body.param_count,
             expr: zonked_expr,
             span: body.span,
+            tuple_destructures: body.tuple_destructures,
         }
     }
 
@@ -1136,8 +1213,20 @@ impl<'a> TypeContext<'a> {
                 }
                 // Variants are part of enums, not top-level items
                 hir::DefKind::Variant => continue,
-                // Associated items in impl blocks - not standalone items
-                hir::DefKind::AssocType | hir::DefKind::AssocConst | hir::DefKind::AssocFn => continue,
+                // Associated functions are like regular functions - they need to be compiled
+                hir::DefKind::AssocFn => {
+                    if let Some(sig) = self.fn_sigs.get(&def_id) {
+                        hir::ItemKind::Fn(hir::FnDef {
+                            sig: sig.clone(),
+                            body_id: self.fn_bodies.get(&def_id).copied(),
+                            generics: hir::Generics::empty(),
+                        })
+                    } else {
+                        continue;
+                    }
+                }
+                // Associated types and consts are part of impl blocks, not standalone items
+                hir::DefKind::AssocType | hir::DefKind::AssocConst => continue,
                 // TypeAlias, Trait not yet implemented
                 hir::DefKind::TypeAlias | hir::DefKind::Trait => continue,
                 // Closures are inline, not top-level items
@@ -1150,6 +1239,17 @@ impl<'a> TypeContext<'a> {
                 hir::DefKind::EffectOp => continue,
                 // Fields are part of structs, not standalone
                 hir::DefKind::Field => continue,
+                // Modules are namespaces, handle separately
+                hir::DefKind::Mod => {
+                    if let Some(module_info) = self.module_defs.get(&def_id) {
+                        hir::ItemKind::Module(hir::ModuleDef {
+                            items: module_info.items.clone(),
+                            is_external: module_info.is_external,
+                        })
+                    } else {
+                        continue;
+                    }
+                }
             };
 
             items.insert(def_id, hir::Item {

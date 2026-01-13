@@ -20,7 +20,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         use hir::ExprKind::*;
 
         match &expr.kind {
-            Literal(lit) => self.compile_literal(lit).map(Some),
+            Literal(lit) => self.compile_literal_with_type(lit, &expr.ty).map(Some),
             Local(local_id) => self.compile_local_load(*local_id).map(Some),
             Binary { op, left, right } => self.compile_binary(op, left, right).map(Some),
             Unary { op, operand } => self.compile_unary(op, operand).map(Some),
@@ -191,8 +191,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         }
     }
 
-    /// Compile a literal.
-    pub(super) fn compile_literal(&self, lit: &hir::LiteralValue) -> Result<BasicValueEnum<'ctx>, Vec<Diagnostic>> {
+    /// Compile a literal with type information.
+    pub(super) fn compile_literal_with_type(&self, lit: &hir::LiteralValue, ty: &hir::Type) -> Result<BasicValueEnum<'ctx>, Vec<Diagnostic>> {
         match lit {
             hir::LiteralValue::Int(val) => {
                 Ok(self.context.i32_type().const_int(*val as u64, true).into())
@@ -201,7 +201,16 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 Ok(self.context.i32_type().const_int(*val as u64, false).into())
             }
             hir::LiteralValue::Float(val) => {
-                Ok(self.context.f64_type().const_float(*val).into())
+                // Check if it's f32 or f64
+                let is_f32 = matches!(
+                    ty.kind(),
+                    hir::TypeKind::Primitive(hir::PrimitiveTy::Float(hir::def::FloatTy::F32))
+                );
+                if is_f32 {
+                    Ok(self.context.f32_type().const_float(*val).into())
+                } else {
+                    Ok(self.context.f64_type().const_float(*val).into())
+                }
             }
             hir::LiteralValue::Bool(val) => {
                 Ok(self.context.bool_type().const_int(*val as u64, false).into())
@@ -210,12 +219,29 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 Ok(self.context.i32_type().const_int(*val as u64, false).into())
             }
             hir::LiteralValue::String(s) => {
-                // Create global string constant
+                // Create global string constant and str slice {ptr, len}
                 let global = self.builder.build_global_string_ptr(s, "str")
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?;
-                Ok(global.as_pointer_value().into())
+                let ptr = global.as_pointer_value();
+                let len = self.context.i64_type().const_int(s.len() as u64, false);
+
+                // Create str slice struct {ptr, len}
+                let str_type = self.context.struct_type(
+                    &[self.context.i8_type().ptr_type(inkwell::AddressSpace::default()).into(),
+                      self.context.i64_type().into()],
+                    false
+                );
+                let str_val = str_type.const_named_struct(&[ptr.into(), len.into()]);
+                Ok(str_val.into())
             }
         }
+    }
+
+    /// Compile a literal (defaults to f64 for floats).
+    /// Use `compile_literal_with_type` when type information is available.
+    pub(super) fn compile_literal(&self, lit: &hir::LiteralValue) -> Result<BasicValueEnum<'ctx>, Vec<Diagnostic>> {
+        // Default to f64 type for floats when type is not specified
+        self.compile_literal_with_type(lit, &hir::Type::f64())
     }
 
     /// Load a local variable.
@@ -466,10 +492,31 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             if let Some(builtin_name) = self.builtin_fns.get(def_id) {
                 if let Some(fn_value) = self.module.get_function(builtin_name) {
                     // Builtin function call - compile args and call runtime function
+                    let fn_type = fn_value.get_type();
                     let mut compiled_args = Vec::new();
-                    for arg in args {
+                    for (i, arg) in args.iter().enumerate() {
                         if let Some(val) = self.compile_expr(arg)? {
-                            compiled_args.push(val.into());
+                            // Check if we need to convert i1 (bool) to i32 for C runtime
+                            let converted_val = if let Some(param_type) = fn_type.get_param_types().get(i) {
+                                if val.is_int_value() && param_type.is_int_type() {
+                                    let val_int = val.into_int_value();
+                                    let param_int_type = param_type.into_int_type();
+                                    // Zero-extend if arg is smaller (e.g., i1 -> i32)
+                                    if val_int.get_type().get_bit_width() < param_int_type.get_bit_width() {
+                                        self.builder
+                                            .build_int_z_extend(val_int, param_int_type, "zext")
+                                            .map_err(|e| vec![Diagnostic::error(format!("LLVM zext error: {}", e), Span::dummy())])?
+                                            .into()
+                                    } else {
+                                        val
+                                    }
+                                } else {
+                                    val
+                                }
+                            } else {
+                                val
+                            };
+                            compiled_args.push(converted_val.into());
                         }
                     }
 

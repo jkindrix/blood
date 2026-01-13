@@ -195,6 +195,7 @@ impl<'a> TypeContext<'a> {
             param_count: params.len(),
             expr: body_expr,
             span,
+            tuple_destructures: std::mem::take(&mut self.tuple_destructures),
         };
 
         self.bodies.insert(body_id, hir_body);

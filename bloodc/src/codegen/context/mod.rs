@@ -21,36 +21,39 @@ use crate::diagnostics::Diagnostic;
 use crate::span::Span;
 use crate::effects::{EffectLowering, EffectInfo, HandlerInfo};
 
-/// Normalize type parameters in a type, replacing arbitrary TyVarIds with sequential indices.
+/// Build a mapping from arbitrary TyVarIds to sequential indices (0, 1, 2, ...).
 ///
-/// This is needed because handlers' state fields may reference type parameters with
-/// arbitrary TyVarIds (e.g., TyVarId(3)), but when the handler is instantiated, the
-/// type arguments are in sequential order (args[0], args[1], ...).
-///
-/// The generics parameter provides the list of generic params for the handler, which
-/// we use to determine the correct index for each type parameter.
-fn normalize_type_params(ty: &Type, _generics: &hir::Generics) -> Type {
-    // Build a mapping from any TyVarId to its position in the generics list
-    // We scan the type to find all TyVarIds and assign them sequential indices
-    // based on the order they appear in the generics params (type params only)
-    let mut tyvar_to_idx: HashMap<TyVarId, u32> = HashMap::new();
-
-    // The generics.params contains GenericParam items. Type params should get
-    // sequential indices. We'll also scan the type itself to find TyVarIds and
-    // assume they map to generics params in order.
-
-    // Collect all TyVarIds from the type
-    let mut tyvars_in_type = Vec::new();
-    collect_tyvars(ty, &mut tyvars_in_type);
-
-    // Assume the TyVarIds in the type correspond to the generic params in order
-    // This is a simplification - ideally we'd have a more robust mapping
-    for (idx, tyvar) in tyvars_in_type.iter().enumerate() {
-        tyvar_to_idx.entry(*tyvar).or_insert(idx as u32);
+/// This collects all unique TyVarIds from a list of types, sorts them by their
+/// original ID (to maintain a consistent order), and maps them to sequential indices.
+fn build_tyvar_mapping(types: &[Type]) -> HashMap<TyVarId, u32> {
+    let mut all_tyvars = Vec::new();
+    for ty in types {
+        collect_tyvars(ty, &mut all_tyvars);
     }
 
-    // Now recursively substitute TyVarIds with sequential Param indices
-    normalize_type_recursive(ty, &tyvar_to_idx)
+    // Sort by TyVarId value to get consistent ordering
+    all_tyvars.sort_by_key(|tv| tv.0);
+    all_tyvars.dedup();
+
+    // Build mapping: first unique TyVarId -> 0, second -> 1, etc.
+    all_tyvars.iter()
+        .enumerate()
+        .map(|(idx, &tyvar)| (tyvar, idx as u32))
+        .collect()
+}
+
+/// Normalize multiple types together using a shared TyVarId mapping.
+///
+/// This should be used when normalizing struct/enum fields to ensure all fields
+/// share the same TyVarId-to-index mapping.
+fn normalize_types_together(types: &[Type]) -> Vec<Type> {
+    // Build a shared mapping across all types
+    let tyvar_to_idx = build_tyvar_mapping(types);
+
+    // Normalize each type using the shared mapping
+    types.iter()
+        .map(|ty| normalize_type_recursive(ty, &tyvar_to_idx))
+        .collect()
 }
 
 /// Collect all TyVarIds from a type (in order of appearance).
@@ -150,6 +153,262 @@ mod closures;
 #[cfg(test)]
 mod tests;
 
+/// Substitute type parameters in a MIR body with concrete types.
+///
+/// This creates a monomorphized copy of the MIR body where all type parameters
+/// (represented as Param(TyVarId)) are replaced with concrete types.
+fn substitute_mir_types(mir: &MirBody, subst: &HashMap<TyVarId, Type>) -> MirBody {
+    // Clone the MIR body
+    let mut result = mir.clone();
+
+    // Substitute types in locals
+    for local in &mut result.locals {
+        local.ty = substitute_type(&local.ty, subst);
+    }
+
+    // Substitute types in basic blocks
+    for block in &mut result.basic_blocks {
+        // Substitute in statements
+        for stmt in &mut block.statements {
+            substitute_statement_types(stmt, subst);
+        }
+
+        // Substitute in terminator
+        if let Some(term) = &mut block.terminator {
+            substitute_terminator_types(term, subst);
+        }
+    }
+
+    result
+}
+
+/// Substitute type parameters in a type.
+fn substitute_type(ty: &Type, subst: &HashMap<TyVarId, Type>) -> Type {
+    match ty.kind() {
+        TypeKind::Param(id) => {
+            if let Some(concrete) = subst.get(id) {
+                concrete.clone()
+            } else {
+                ty.clone()
+            }
+        }
+        TypeKind::Tuple(fields) => {
+            let subst_fields: Vec<Type> = fields.iter()
+                .map(|f| substitute_type(f, subst))
+                .collect();
+            Type::tuple(subst_fields)
+        }
+        TypeKind::Array { element, size } => {
+            Type::array(substitute_type(element, subst), *size)
+        }
+        TypeKind::Slice { element } => {
+            Type::slice(substitute_type(element, subst))
+        }
+        TypeKind::Ref { inner, mutable } => {
+            Type::reference(substitute_type(inner, subst), *mutable)
+        }
+        TypeKind::Ptr { inner, mutable } => {
+            Type::new(TypeKind::Ptr {
+                inner: substitute_type(inner, subst),
+                mutable: *mutable,
+            })
+        }
+        TypeKind::Adt { def_id, args } => {
+            let subst_args: Vec<Type> = args.iter()
+                .map(|a| substitute_type(a, subst))
+                .collect();
+            Type::adt(*def_id, subst_args)
+        }
+        TypeKind::Fn { params, ret } => {
+            let subst_params: Vec<Type> = params.iter()
+                .map(|p| substitute_type(p, subst))
+                .collect();
+            Type::function(subst_params, substitute_type(ret, subst))
+        }
+        _ => ty.clone(),
+    }
+}
+
+/// Infer type arguments by unifying generic signature with concrete types.
+///
+/// This matches the generic parameter types (which contain TypeKind::Param) with
+/// the concrete parameter types to determine what each type variable maps to.
+fn infer_type_args(
+    generic_params: &[Type],
+    concrete_params: &[Type],
+    generic_ret: &Type,
+    concrete_ret: &Type,
+) -> HashMap<TyVarId, Type> {
+    let mut subst: HashMap<TyVarId, Type> = HashMap::new();
+
+    // Unify parameters
+    for (generic, concrete) in generic_params.iter().zip(concrete_params.iter()) {
+        unify_types(generic, concrete, &mut subst);
+    }
+
+    // Unify return type
+    unify_types(generic_ret, concrete_ret, &mut subst);
+
+    subst
+}
+
+/// Recursively unify a generic type with a concrete type, populating the substitution map.
+fn unify_types(generic: &Type, concrete: &Type, subst: &mut HashMap<TyVarId, Type>) {
+    match generic.kind() {
+        TypeKind::Param(id) => {
+            // Found a type variable - record its concrete type
+            subst.entry(*id).or_insert_with(|| concrete.clone());
+        }
+        TypeKind::Fn { params: gen_params, ret: gen_ret } => {
+            // Recursively unify function types
+            if let TypeKind::Fn { params: conc_params, ret: conc_ret } = concrete.kind() {
+                for (gp, cp) in gen_params.iter().zip(conc_params.iter()) {
+                    unify_types(gp, cp, subst);
+                }
+                unify_types(gen_ret, conc_ret, subst);
+            }
+        }
+        TypeKind::Tuple(gen_fields) => {
+            if let TypeKind::Tuple(conc_fields) = concrete.kind() {
+                for (gf, cf) in gen_fields.iter().zip(conc_fields.iter()) {
+                    unify_types(gf, cf, subst);
+                }
+            }
+        }
+        TypeKind::Array { element: gen_elem, .. } => {
+            if let TypeKind::Array { element: conc_elem, .. } = concrete.kind() {
+                unify_types(gen_elem, conc_elem, subst);
+            }
+        }
+        TypeKind::Slice { element: gen_elem } => {
+            if let TypeKind::Slice { element: conc_elem } = concrete.kind() {
+                unify_types(gen_elem, conc_elem, subst);
+            }
+        }
+        TypeKind::Ref { inner: gen_inner, .. } => {
+            if let TypeKind::Ref { inner: conc_inner, .. } = concrete.kind() {
+                unify_types(gen_inner, conc_inner, subst);
+            }
+        }
+        TypeKind::Ptr { inner: gen_inner, .. } => {
+            if let TypeKind::Ptr { inner: conc_inner, .. } = concrete.kind() {
+                unify_types(gen_inner, conc_inner, subst);
+            }
+        }
+        TypeKind::Adt { args: gen_args, .. } => {
+            if let TypeKind::Adt { args: conc_args, .. } = concrete.kind() {
+                for (ga, ca) in gen_args.iter().zip(conc_args.iter()) {
+                    unify_types(ga, ca, subst);
+                }
+            }
+        }
+        // For primitive types, unit, etc., there's nothing to unify
+        _ => {}
+    }
+}
+
+/// Substitute types in a MIR statement.
+fn substitute_statement_types(stmt: &mut crate::mir::types::Statement, subst: &HashMap<TyVarId, Type>) {
+    use crate::mir::types::StatementKind;
+
+    match &mut stmt.kind {
+        StatementKind::Assign(_, rvalue) => {
+            substitute_rvalue_types(rvalue, subst);
+        }
+        // These statement kinds don't contain types that need substitution
+        StatementKind::Nop
+        | StatementKind::StorageLive(_)
+        | StatementKind::StorageDead(_)
+        | StatementKind::Drop(_)
+        | StatementKind::IncrementGeneration(_)
+        | StatementKind::CaptureSnapshot(_)
+        | StatementKind::ValidateGeneration { .. }
+        | StatementKind::PushHandler { .. }
+        | StatementKind::PopHandler
+        | StatementKind::CallReturnClause { .. } => {}
+    }
+}
+
+/// Substitute types in an rvalue.
+fn substitute_rvalue_types(rvalue: &mut crate::mir::types::Rvalue, subst: &HashMap<TyVarId, Type>) {
+    use crate::mir::types::Rvalue;
+
+    match rvalue {
+        Rvalue::Use(op) => substitute_operand_types(op, subst),
+        Rvalue::BinaryOp { left, right, .. } | Rvalue::CheckedBinaryOp { left, right, .. } => {
+            substitute_operand_types(left, subst);
+            substitute_operand_types(right, subst);
+        }
+        Rvalue::UnaryOp { operand, .. } => substitute_operand_types(operand, subst),
+        Rvalue::Ref { .. } | Rvalue::AddressOf { .. } => {}
+        Rvalue::Aggregate { operands, .. } => {
+            for op in operands {
+                substitute_operand_types(op, subst);
+            }
+        }
+        Rvalue::Discriminant(_) | Rvalue::Len(_) | Rvalue::ReadGeneration(_) => {}
+        Rvalue::Cast { operand, target_ty } => {
+            substitute_operand_types(operand, subst);
+            *target_ty = substitute_type(target_ty, subst);
+        }
+        Rvalue::NullCheck(op) => substitute_operand_types(op, subst),
+        Rvalue::MakeGenPtr { address, generation, metadata } => {
+            substitute_operand_types(address, subst);
+            substitute_operand_types(generation, subst);
+            substitute_operand_types(metadata, subst);
+        }
+    }
+}
+
+/// Substitute types in an operand.
+fn substitute_operand_types(op: &mut crate::mir::types::Operand, subst: &HashMap<TyVarId, Type>) {
+    use crate::mir::types::Operand;
+
+    match op {
+        Operand::Constant(c) => {
+            c.ty = substitute_type(&c.ty, subst);
+        }
+        Operand::Copy(_) | Operand::Move(_) => {}
+    }
+}
+
+/// Substitute types in a terminator.
+fn substitute_terminator_types(term: &mut crate::mir::types::Terminator, subst: &HashMap<TyVarId, Type>) {
+    use crate::mir::types::TerminatorKind;
+
+    match &mut term.kind {
+        TerminatorKind::Call { func, args, .. } => {
+            substitute_operand_types(func, subst);
+            for arg in args {
+                substitute_operand_types(arg, subst);
+            }
+        }
+        TerminatorKind::SwitchInt { discr, .. } => {
+            substitute_operand_types(discr, subst);
+        }
+        TerminatorKind::Assert { cond, .. } => {
+            substitute_operand_types(cond, subst);
+        }
+        TerminatorKind::DropAndReplace { value, .. } => {
+            substitute_operand_types(value, subst);
+        }
+        TerminatorKind::Perform { args, .. } => {
+            for arg in args {
+                substitute_operand_types(arg, subst);
+            }
+        }
+        TerminatorKind::Resume { value } => {
+            if let Some(val) = value {
+                substitute_operand_types(val, subst);
+            }
+        }
+        TerminatorKind::Goto { .. }
+        | TerminatorKind::Return
+        | TerminatorKind::Unreachable
+        | TerminatorKind::StaleReference { .. } => {}
+    }
+}
+
 /// Loop context for break/continue support.
 #[derive(Clone)]
 pub(super) struct LoopContext<'ctx> {
@@ -197,9 +456,7 @@ pub struct CodegenContext<'ctx, 'a> {
     /// Escape analysis results for optimization.
     /// When available, used to skip generation checks for non-escaping values.
     pub(super) escape_analysis: HashMap<DefId, EscapeResults>,
-    /// Current function's DefId for escape analysis lookup.
-    /// Note: Used for escape-analysis-based optimization when 128-bit pointers are enabled.
-    #[allow(dead_code)]
+    /// Current function's DefId for escape analysis lookup and main function detection.
     pub(super) current_fn_def_id: Option<DefId>,
     /// Effect lowering context for managing effect compilation.
     pub(super) effect_lowering: EffectLowering,
@@ -235,6 +492,19 @@ pub struct CodegenContext<'ctx, 'a> {
     /// Whether the current handler operation is multi-shot.
     /// When true, compile_resume clones the continuation before resuming.
     pub(super) is_multishot_handler: bool,
+    /// The DefId of the main function, if it exists.
+    /// Used to handle main's special return type (must return i32 for C runtime).
+    pub(super) main_fn_def_id: Option<DefId>,
+    /// Generic function definitions for monomorphization.
+    /// Maps DefId to (FnDef, Body) for generic functions.
+    pub(super) generic_fn_defs: HashMap<DefId, (hir::FnDef, hir::Body)>,
+    /// Generic function MIR bodies for monomorphization.
+    /// Maps DefId to MirBody for generic functions.
+    pub(super) generic_mir_bodies: HashMap<DefId, MirBody>,
+    /// Monomorphization cache: (generic DefId, type args) -> monomorphized DefId.
+    pub(super) mono_cache: HashMap<(DefId, Vec<Type>), DefId>,
+    /// Counter for generating unique monomorphized DefIds.
+    pub(super) mono_counter: u32,
 }
 
 impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
@@ -274,6 +544,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             static_globals: HashMap::new(),
             current_continuation: None,
             is_multishot_handler: false,
+            main_fn_def_id: None,
+            generic_fn_defs: HashMap::new(),
+            generic_mir_bodies: HashMap::new(),
+            mono_cache: HashMap::new(),
+            mono_counter: 0,
         }
     }
 
@@ -285,6 +560,20 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     /// - Apply tier-appropriate allocation strategies
     pub fn set_escape_analysis(&mut self, escape_analysis: HashMap<DefId, EscapeResults>) {
         self.escape_analysis = escape_analysis;
+    }
+
+    /// Store MIR bodies for generic functions (for monomorphization).
+    ///
+    /// Generic functions are not compiled directly - instead, they are
+    /// monomorphized on-demand when called with concrete types.
+    pub fn set_generic_mir_bodies(&mut self, mir_bodies: &HashMap<DefId, MirBody>) {
+        for (&def_id, mir_body) in mir_bodies {
+            if let Some((fn_def, _)) = self.generic_fn_defs.get(&def_id) {
+                if !fn_def.sig.generics.is_empty() {
+                    self.generic_mir_bodies.insert(def_id, mir_body.clone());
+                }
+            }
+        }
     }
 
     /// Get WASM import mappings.
@@ -321,25 +610,53 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         for (def_id, item) in &hir_crate.items {
             match &item.kind {
                 hir::ItemKind::Struct(struct_def) => {
-                    let field_types = match &struct_def.kind {
+                    // Normalize type parameters to sequential indices so substitution works
+                    // Must normalize all fields together to ensure consistent TyVarId mapping
+                    let field_types: Vec<Type> = match &struct_def.kind {
                         hir::StructKind::Record(fields) => {
-                            fields.iter().map(|f| f.ty.clone()).collect()
+                            let raw_types: Vec<Type> = fields.iter().map(|f| f.ty.clone()).collect();
+                            normalize_types_together(&raw_types)
                         }
                         hir::StructKind::Tuple(fields) => {
-                            fields.iter().map(|f| f.ty.clone()).collect()
+                            let raw_types: Vec<Type> = fields.iter().map(|f| f.ty.clone()).collect();
+                            normalize_types_together(&raw_types)
                         }
                         hir::StructKind::Unit => Vec::new(),
                     };
                     self.struct_defs.insert(*def_id, field_types);
                 }
                 hir::ItemKind::Enum(enum_def) => {
+                    // For enums, we need to collect ALL field types across ALL variants
+                    // to build a consistent TyVarId mapping
+                    let all_field_types: Vec<Type> = enum_def.variants.iter()
+                        .flat_map(|variant| {
+                            match &variant.fields {
+                                hir::StructKind::Record(fields) => {
+                                    fields.iter().map(|f| f.ty.clone()).collect::<Vec<_>>()
+                                }
+                                hir::StructKind::Tuple(fields) => {
+                                    fields.iter().map(|f| f.ty.clone()).collect::<Vec<_>>()
+                                }
+                                hir::StructKind::Unit => Vec::new(),
+                            }
+                        })
+                        .collect();
+
+                    // Build shared mapping across all variant fields
+                    let tyvar_to_idx = build_tyvar_mapping(&all_field_types);
+
+                    // Now normalize each variant's fields using the shared mapping
                     let variants: Vec<Vec<Type>> = enum_def.variants.iter().map(|variant| {
                         match &variant.fields {
                             hir::StructKind::Record(fields) => {
-                                fields.iter().map(|f| f.ty.clone()).collect()
+                                fields.iter()
+                                    .map(|f| normalize_type_recursive(&f.ty, &tyvar_to_idx))
+                                    .collect()
                             }
                             hir::StructKind::Tuple(fields) => {
-                                fields.iter().map(|f| f.ty.clone()).collect()
+                                fields.iter()
+                                    .map(|f| normalize_type_recursive(&f.ty, &tyvar_to_idx))
+                                    .collect()
                             }
                             hir::StructKind::Unit => Vec::new(),
                         }
@@ -358,6 +675,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // - Const/Static: compiled with function bodies
                 // - Trait/Impl: resolved during type checking
                 // - ExternFn/Bridge: processed in fourth pass for FFI declarations
+                // - Module: items are processed recursively, no LLVM codegen for the module itself
                 hir::ItemKind::Fn(_)
                 | hir::ItemKind::Handler { .. }
                 | hir::ItemKind::TypeAlias { .. }
@@ -366,20 +684,21 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 | hir::ItemKind::Trait { .. }
                 | hir::ItemKind::Impl { .. }
                 | hir::ItemKind::ExternFn(_)
-                | hir::ItemKind::Bridge(_) => {}
+                | hir::ItemKind::Bridge(_)
+                | hir::ItemKind::Module(_) => {}
             }
         }
 
         // Second pass: collect handler definitions (effects must be registered first)
         // Also register handlers in struct_defs so they can be compiled as ADTs
         for (def_id, item) in &hir_crate.items {
-            if let hir::ItemKind::Handler { state, generics, .. } = &item.kind {
+            if let hir::ItemKind::Handler { state, .. } = &item.kind {
                 // Register handler as an ADT in struct_defs (state fields are the struct fields)
                 // Normalize field types: replace arbitrary TyVarIds with sequential indices (0, 1, 2...)
                 // so substitution with type args works correctly during lower_type
-                let field_types: Vec<Type> = state.iter()
-                    .map(|s| normalize_type_params(&s.ty, generics))
-                    .collect();
+                // Must normalize all fields together to ensure consistent TyVarId mapping
+                let raw_types: Vec<Type> = state.iter().map(|s| s.ty.clone()).collect();
+                let field_types = normalize_types_together(&raw_types);
                 self.struct_defs.insert(*def_id, field_types);
 
                 match self.effect_lowering.lower_handler_decl(item, Some(&hir_crate.bodies)) {
@@ -411,6 +730,16 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 if self.builtin_fns.contains_key(def_id) {
                     continue;
                 }
+
+                // Store generic function definitions for on-demand monomorphization
+                if !fn_def.sig.generics.is_empty() {
+                    if let Some(body_id) = fn_def.body_id {
+                        if let Some(body) = hir_crate.get_body(body_id) {
+                            self.generic_fn_defs.insert(*def_id, (fn_def.clone(), body.clone()));
+                        }
+                    }
+                }
+
                 self.declare_function(*def_id, &item.name, fn_def)?;
             }
         }
@@ -1036,15 +1365,29 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 Ok(self.context.i32_type().const_int(*c as u64, false).into())
             }
             LiteralValue::String(s) => {
-                // Create a global string constant
+                // Create a global string constant and str slice {ptr, len}
                 let bytes = s.as_bytes();
                 let string_type = self.context.i8_type().array_type((bytes.len() + 1) as u32);
                 let global = self.module.add_global(string_type, Some(AddressSpace::default()), "");
                 global.set_initializer(&self.context.const_string(bytes, true));
                 global.set_constant(true);
 
-                // Return pointer to the string
-                Ok(global.as_pointer_value().into())
+                // Get pointer to string data
+                let ptr = self.builder.build_pointer_cast(
+                    global.as_pointer_value(),
+                    self.context.i8_type().ptr_type(AddressSpace::default()),
+                    "str_ptr"
+                ).map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?;
+                let len = self.context.i64_type().const_int(bytes.len() as u64, false);
+
+                // Create str slice struct {ptr, len}
+                let str_type = self.context.struct_type(
+                    &[self.context.i8_type().ptr_type(AddressSpace::default()).into(),
+                      self.context.i64_type().into()],
+                    false
+                );
+                let str_val = str_type.const_named_struct(&[ptr.into(), len.into()]);
+                Ok(str_val.into())
             }
         }
     }
@@ -1269,25 +1612,53 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         for (def_id, item) in &hir_crate.items {
             match &item.kind {
                 hir::ItemKind::Struct(struct_def) => {
-                    let field_types = match &struct_def.kind {
+                    // Normalize type parameters to sequential indices so substitution works
+                    // Must normalize all fields together to ensure consistent TyVarId mapping
+                    let field_types: Vec<Type> = match &struct_def.kind {
                         hir::StructKind::Record(fields) => {
-                            fields.iter().map(|f| f.ty.clone()).collect()
+                            let raw_types: Vec<Type> = fields.iter().map(|f| f.ty.clone()).collect();
+                            normalize_types_together(&raw_types)
                         }
                         hir::StructKind::Tuple(fields) => {
-                            fields.iter().map(|f| f.ty.clone()).collect()
+                            let raw_types: Vec<Type> = fields.iter().map(|f| f.ty.clone()).collect();
+                            normalize_types_together(&raw_types)
                         }
                         hir::StructKind::Unit => Vec::new(),
                     };
                     self.struct_defs.insert(*def_id, field_types);
                 }
                 hir::ItemKind::Enum(enum_def) => {
+                    // For enums, we need to collect ALL field types across ALL variants
+                    // to build a consistent TyVarId mapping
+                    let all_field_types: Vec<Type> = enum_def.variants.iter()
+                        .flat_map(|variant| {
+                            match &variant.fields {
+                                hir::StructKind::Record(fields) => {
+                                    fields.iter().map(|f| f.ty.clone()).collect::<Vec<_>>()
+                                }
+                                hir::StructKind::Tuple(fields) => {
+                                    fields.iter().map(|f| f.ty.clone()).collect::<Vec<_>>()
+                                }
+                                hir::StructKind::Unit => Vec::new(),
+                            }
+                        })
+                        .collect();
+
+                    // Build shared mapping across all variant fields
+                    let tyvar_to_idx = build_tyvar_mapping(&all_field_types);
+
+                    // Now normalize each variant's fields using the shared mapping
                     let variants: Vec<Vec<Type>> = enum_def.variants.iter().map(|variant| {
                         match &variant.fields {
                             hir::StructKind::Record(fields) => {
-                                fields.iter().map(|f| f.ty.clone()).collect()
+                                fields.iter()
+                                    .map(|f| normalize_type_recursive(&f.ty, &tyvar_to_idx))
+                                    .collect()
                             }
                             hir::StructKind::Tuple(fields) => {
-                                fields.iter().map(|f| f.ty.clone()).collect()
+                                fields.iter()
+                                    .map(|f| normalize_type_recursive(&f.ty, &tyvar_to_idx))
+                                    .collect()
                             }
                             hir::StructKind::Unit => Vec::new(),
                         }
@@ -1307,6 +1678,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // - Const/Static: compiled with function bodies
                 // - Trait/Impl: resolved during type checking
                 // - ExternFn/Bridge: processed in FFI pass
+                // - Module: items are processed recursively, no LLVM codegen for the module itself
                 hir::ItemKind::Fn(_)
                 | hir::ItemKind::Handler { .. }
                 | hir::ItemKind::TypeAlias { .. }
@@ -1315,20 +1687,21 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 | hir::ItemKind::Trait { .. }
                 | hir::ItemKind::Impl { .. }
                 | hir::ItemKind::ExternFn(_)
-                | hir::ItemKind::Bridge(_) => {}
+                | hir::ItemKind::Bridge(_)
+                | hir::ItemKind::Module(_) => {}
             }
         }
 
         // Second pass: collect handler definitions (effects must be registered first)
         // Also register handlers in struct_defs so they can be compiled as ADTs
         for (def_id, item) in &hir_crate.items {
-            if let hir::ItemKind::Handler { state, generics, .. } = &item.kind {
+            if let hir::ItemKind::Handler { state, .. } = &item.kind {
                 // Register handler as an ADT in struct_defs (state fields are the struct fields)
                 // Normalize field types: replace arbitrary TyVarIds with sequential indices (0, 1, 2...)
                 // so substitution with type args works correctly during lower_type
-                let field_types: Vec<Type> = state.iter()
-                    .map(|s| normalize_type_params(&s.ty, generics))
-                    .collect();
+                // Must normalize all fields together to ensure consistent TyVarId mapping
+                let raw_types: Vec<Type> = state.iter().map(|s| s.ty.clone()).collect();
+                let field_types = normalize_types_together(&raw_types);
                 self.struct_defs.insert(*def_id, field_types);
 
                 match self.effect_lowering.lower_handler_decl(item, Some(&hir_crate.bodies)) {
@@ -1438,16 +1811,33 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // Compile body expression
         let result = self.compile_expr(&body.expr)?;
 
+        // Check if this is the main function
+        let is_main = self.main_fn_def_id == Some(def_id);
+
         // Build return
         if body.return_type().is_unit() {
-            self.builder.build_return(None)
-                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?;
+            if is_main {
+                // main must return i32 for C runtime - return 0 on success
+                let zero = self.context.i32_type().const_int(0, false);
+                self.builder.build_return(Some(&zero))
+                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?;
+            } else {
+                self.builder.build_return(None)
+                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?;
+            }
         } else if let Some(value) = result {
             self.builder.build_return(Some(&value))
                 .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?;
         } else {
-            self.builder.build_return(None)
-                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?;
+            if is_main {
+                // main must return i32 for C runtime - return 0 on success
+                let zero = self.context.i32_type().const_int(0, false);
+                self.builder.build_return(Some(&zero))
+                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?;
+            } else {
+                self.builder.build_return(None)
+                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?;
+            }
         }
 
         self.current_fn = None;
@@ -1473,14 +1863,27 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         name: &str,
         fn_def: &hir::FnDef,
     ) -> Result<(), Vec<Diagnostic>> {
-        let fn_type = self.fn_type_from_sig(&fn_def.sig);
+        // Skip generic functions - they will be monomorphized on-demand at call sites
+        if !fn_def.sig.generics.is_empty() {
+            return Ok(());
+        }
+
         // Generate mangled name for multiple dispatch support
         // main is special and gets renamed to blood_main
-        let llvm_name = if name == "main" {
-            "blood_main".to_string()
+        let (llvm_name, fn_type) = if name == "main" {
+            // Track main's DefId for special return handling
+            self.main_fn_def_id = Some(def_id);
+            // main must return i32 for C runtime compatibility, even if Blood type is unit
+            let param_types: Vec<inkwell::types::BasicMetadataTypeEnum> = fn_def.sig.inputs.iter()
+                .map(|p| self.lower_type(p).into())
+                .collect();
+            let fn_type = self.context.i32_type().fn_type(&param_types, false);
+            ("blood_main".to_string(), fn_type)
         } else {
             // Mangle name with parameter types to support multiple dispatch
-            Self::mangle_function_name(name, &fn_def.sig)
+            let llvm_name = Self::mangle_function_name(name, &fn_def.sig);
+            let fn_type = self.fn_type_from_sig(&fn_def.sig);
+            (llvm_name, fn_type)
         };
         let fn_value = self.module.add_function(&llvm_name, fn_type, None);
         self.functions.insert(def_id, fn_value);
@@ -1591,11 +1994,35 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     /// Closures have synthetic DefIds (starting at 0xFFFF_0000) that aren't
     /// in the HIR items list. This method declares them using the MIR body's
     /// parameter and return type information.
+    ///
+    /// The first parameter is always `i8*` (environment pointer), followed by
+    /// the actual closure parameters.
     pub fn declare_closure_from_mir(&mut self, def_id: DefId, mir_body: &MirBody) {
-        // Build parameter types from MIR body parameters
-        let param_types: Vec<_> = mir_body.params()
-            .map(|local| self.lower_type(&local.ty).into())
-            .collect();
+        let i8_ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
+
+        // Build parameter types: first is always i8* (env), then the actual params
+        let params: Vec<_> = mir_body.params().collect::<Vec<_>>();
+        let mut param_types: Vec<inkwell::types::BasicMetadataTypeEnum> = Vec::with_capacity(params.len());
+
+        // First param is always the environment pointer (i8*), skip the MIR's __env type
+        // because we use a uniform i8* representation regardless of actual captures
+        let first_is_env = params.first()
+            .map(|p| p.name.as_deref() == Some("__env"))
+            .unwrap_or(false);
+
+        if first_is_env {
+            // First param is __env, use i8* instead of its declared type
+            param_types.push(i8_ptr_ty.into());
+            // Add the rest of the params with their actual types
+            for param in params.iter().skip(1) {
+                param_types.push(self.lower_type(&param.ty).into());
+            }
+        } else {
+            // No __env param (shouldn't happen, but be defensive)
+            for param in &params {
+                param_types.push(self.lower_type(&param.ty).into());
+            }
+        }
 
         // Get return type from MIR body
         let ret_type = mir_body.return_type();
@@ -1611,6 +2038,117 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let name = format!("blood_closure_{}", def_id.index());
         let fn_value = self.module.add_function(&name, fn_type, None);
         self.functions.insert(def_id, fn_value);
+    }
+
+    /// Monomorphize a generic function for specific type arguments.
+    ///
+    /// This creates a specialized version of a generic function by:
+    /// 1. Cloning the MIR body
+    /// 2. Substituting type parameters with concrete types
+    /// 3. Declaring and compiling the specialized LLVM function
+    ///
+    /// Returns the LLVM FunctionValue for the monomorphized function, or None
+    /// if monomorphization fails.
+    pub fn monomorphize_function(
+        &mut self,
+        generic_def_id: DefId,
+        concrete_params: &[Type],
+        concrete_ret: &Type,
+    ) -> Option<inkwell::values::FunctionValue<'ctx>> {
+        // Get the generic function's HIR definition first (needed for type inference)
+        let (fn_def, _hir_body) = self.generic_fn_defs.get(&generic_def_id)?.clone();
+
+        // Infer type arguments by unifying generic signature with concrete types
+        // This is needed for higher-order generics like `apply<T, R>(f: fn(T) -> R, x: T) -> R`
+        // where concrete_params = [fn(i32) -> i32, i32] but we need type_args = [i32, i32]
+        let subst = infer_type_args(
+            &fn_def.sig.inputs,
+            concrete_params,
+            &fn_def.sig.output,
+            concrete_ret,
+        );
+
+        // Build type args list from inferred substitution (in order of fn_def.sig.generics)
+        let type_args: Vec<Type> = fn_def.sig.generics.iter()
+            .filter_map(|tyvar_id| subst.get(tyvar_id).cloned())
+            .collect();
+
+        // Check if already monomorphized
+        let cache_key = (generic_def_id, type_args.clone());
+        if let Some(&mono_def_id) = self.mono_cache.get(&cache_key) {
+            return self.functions.get(&mono_def_id).copied();
+        }
+
+        // Get the generic function's MIR body
+        let mir_body = self.generic_mir_bodies.get(&generic_def_id)?.clone();
+
+        // Generate unique DefId for monomorphized version
+        let mono_def_id = DefId::new(0xFFFE_0000 + self.mono_counter);
+        self.mono_counter += 1;
+
+        // Clone and substitute types in MIR body
+        let mono_mir = substitute_mir_types(&mir_body, &subst);
+
+        // Build mangled name for monomorphized function
+        let base_name = format!("blood_mono_{}_{}", generic_def_id.index(), mono_def_id.index());
+        let param_mangles: Vec<String> = concrete_params.iter()
+            .map(|ty| Self::mangle_type(ty))
+            .collect();
+        let llvm_name = if param_mangles.is_empty() {
+            base_name
+        } else {
+            format!("{}${}", base_name, param_mangles.join("$"))
+        };
+
+        // Build LLVM function type from concrete types
+        let param_types: Vec<inkwell::types::BasicMetadataTypeEnum> = concrete_params.iter()
+            .map(|ty| self.lower_type(ty).into())
+            .collect();
+
+        let fn_type = if concrete_ret.is_unit() {
+            self.context.void_type().fn_type(&param_types, false)
+        } else {
+            let llvm_ret_type = self.lower_type(concrete_ret);
+            llvm_ret_type.fn_type(&param_types, false)
+        };
+
+        // Declare the monomorphized function
+        let fn_value = self.module.add_function(&llvm_name, fn_type, None);
+        self.functions.insert(mono_def_id, fn_value);
+
+        // Cache the monomorphization
+        self.mono_cache.insert(cache_key, mono_def_id);
+
+        // Save current function state before compiling monomorphized function
+        // This is necessary because compile_mir_body modifies these fields
+        let saved_locals = std::mem::take(&mut self.locals);
+        let saved_local_generations = std::mem::take(&mut self.local_generations);
+        let saved_current_fn = self.current_fn.take();
+        let saved_current_fn_def_id = self.current_fn_def_id.take();
+        let saved_insert_block = self.builder.get_insert_block();
+
+        // Compile the monomorphized MIR body
+        use crate::codegen::mir_codegen::MirCodegen;
+        let result = self.compile_mir_body(mono_def_id, &mono_mir, None);
+
+        // Restore previous function state
+        self.locals = saved_locals;
+        self.local_generations = saved_local_generations;
+        self.current_fn = saved_current_fn;
+        self.current_fn_def_id = saved_current_fn_def_id;
+
+        // Re-position builder at the original function's current position
+        if let Some(insert_bb) = saved_insert_block {
+            self.builder.position_at_end(insert_bb);
+        }
+
+        if result.is_err() {
+            // Compilation failed - return None
+            // The error was already collected in self.errors
+            return None;
+        }
+
+        Some(fn_value)
     }
 
     /// Declare runtime support functions.
@@ -1638,15 +2176,66 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // println_i64(i64) -> void
         self.module.add_function("println_i64", print_i64_type, None);
 
-        // print_str(*i8) -> void
-        let print_str_type = void_type.fn_type(&[i8_ptr_type.into()], false);
+        // str slice type: { ptr: *i8, len: i64 }
+        let str_slice_type = self.context.struct_type(
+            &[i8_ptr_type.into(), i64_type.into()],
+            false
+        );
+
+        // print_str({*i8, i64}) -> void
+        let print_str_type = void_type.fn_type(&[str_slice_type.into()], false);
         self.module.add_function("print_str", print_str_type, None);
 
-        // println_str(*i8) -> void
+        // println_str({*i8, i64}) -> void
         self.module.add_function("println_str", print_str_type, None);
+
+        // str_len({*i8, i64}) -> i64 - get string length
+        let str_len_type = i64_type.fn_type(&[str_slice_type.into()], false);
+        self.module.add_function("str_len", str_len_type, None);
+
+        // str_eq({*i8, i64}, {*i8, i64}) -> i1 - compare strings
+        let bool_type = self.context.bool_type();
+        let str_eq_type = bool_type.fn_type(&[str_slice_type.into(), str_slice_type.into()], false);
+        self.module.add_function("str_eq", str_eq_type, None);
+
+        // read_line() -> {*i8, i64} - read a line from stdin
+        let read_line_type = str_slice_type.fn_type(&[], false);
+        self.module.add_function("read_line", read_line_type, None);
+
+        // read_int() -> i32 - read an integer from stdin
+        let read_int_type = i32_type.fn_type(&[], false);
+        self.module.add_function("read_int", read_int_type, None);
+
+        // panic({*i8, i64}) -> void (divergent, but declared as void)
+        self.module.add_function("panic", print_str_type, None);
 
         // print_char(i32) -> void
         self.module.add_function("print_char", print_int_type, None);
+
+        // println_char(i32) -> void (char with newline)
+        self.module.add_function("println_char", print_int_type, None);
+
+        // print_bool(i32) -> void (bool as i32)
+        self.module.add_function("print_bool", print_int_type, None);
+
+        // println_bool(i32) -> void (bool with newline)
+        self.module.add_function("println_bool", print_int_type, None);
+
+        // print_f64(f64) -> void
+        let f64_type = self.context.f64_type();
+        let print_f64_type = void_type.fn_type(&[f64_type.into()], false);
+        self.module.add_function("print_f64", print_f64_type, None);
+
+        // println_f64(f64) -> void
+        self.module.add_function("println_f64", print_f64_type, None);
+
+        // print_f32(f32) -> void
+        let f32_type = self.context.f32_type();
+        let print_f32_type = void_type.fn_type(&[f32_type.into()], false);
+        self.module.add_function("print_f32", print_f32_type, None);
+
+        // println_f32(f32) -> void
+        self.module.add_function("println_f32", print_f32_type, None);
 
         // println() -> void
         let println_type = void_type.fn_type(&[], false);
@@ -1707,6 +2296,58 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // blood_increment_generation(address: *void) -> void (increment generation for a slot)
         let increment_gen_type = void_type.fn_type(&[i8_ptr_type.into()], false);
         self.module.add_function("blood_increment_generation", increment_gen_type, None);
+
+        // === Simple Memory Allocation (for Vec/collections) ===
+
+        // blood_alloc_simple(size: i64) -> *void (i64 for address)
+        let alloc_simple_type = i64_type.fn_type(&[i64_type.into()], false);
+        self.module.add_function("blood_alloc_simple", alloc_simple_type, None);
+
+        // blood_realloc(ptr: i64, size: i64) -> *void (i64 for address)
+        let realloc_type = i64_type.fn_type(&[i64_type.into(), i64_type.into()], false);
+        self.module.add_function("blood_realloc", realloc_type, None);
+
+        // blood_free_simple(ptr: i64) -> void
+        let free_simple_type = void_type.fn_type(&[i64_type.into()], false);
+        self.module.add_function("blood_free_simple", free_simple_type, None);
+
+        // blood_memcpy(dest: i64, src: i64, n: i64) -> i64
+        let memcpy_type = i64_type.fn_type(&[i64_type.into(), i64_type.into(), i64_type.into()], false);
+        self.module.add_function("blood_memcpy", memcpy_type, None);
+
+        // === Pointer Read/Write Intrinsics ===
+
+        // ptr_read_i32(ptr: i64) -> i32
+        let ptr_read_i32_type = i32_type.fn_type(&[i64_type.into()], false);
+        self.module.add_function("ptr_read_i32", ptr_read_i32_type, None);
+
+        // ptr_write_i32(ptr: i64, value: i32) -> void
+        let ptr_write_i32_type = void_type.fn_type(&[i64_type.into(), i32_type.into()], false);
+        self.module.add_function("ptr_write_i32", ptr_write_i32_type, None);
+
+        // ptr_read_i64(ptr: i64) -> i64
+        let ptr_read_i64_type = i64_type.fn_type(&[i64_type.into()], false);
+        self.module.add_function("ptr_read_i64", ptr_read_i64_type, None);
+
+        // ptr_write_i64(ptr: i64, value: i64) -> void
+        let ptr_write_i64_type = void_type.fn_type(&[i64_type.into(), i64_type.into()], false);
+        self.module.add_function("ptr_write_i64", ptr_write_i64_type, None);
+
+        // ptr_read_u64(ptr: i64) -> i64 (u64 represented as i64)
+        self.module.add_function("ptr_read_u64", ptr_read_i64_type, None);
+
+        // ptr_write_u64(ptr: i64, value: i64) -> void (u64 represented as i64)
+        self.module.add_function("ptr_write_u64", ptr_write_i64_type, None);
+
+        // print_i64(i64) -> void - already declared above, but let's ensure
+
+        // println_i64(i64) -> void - already declared above, but let's ensure
+
+        // print_u64(i64) -> void (u64 as i64)
+        self.module.add_function("print_u64", print_i64_type, None);
+
+        // println_u64(i64) -> void (u64 as i64)
+        self.module.add_function("println_u64", print_i64_type, None);
 
         // === Effect Runtime ===
 

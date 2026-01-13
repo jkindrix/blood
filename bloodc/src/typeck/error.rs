@@ -292,6 +292,23 @@ impl TypeError {
                     candidates.join(", ")
                 ),
             ),
+
+            // Module errors (E07xx)
+            TypeErrorKind::ModuleNotFound { name, searched_paths } => (
+                "E0701",
+                format!(
+                    "cannot find module `{name}`. Searched in:\n  - {}",
+                    searched_paths.join("\n  - ")
+                ),
+            ),
+            TypeErrorKind::IoError { message } => (
+                "E0702",
+                message.clone(),
+            ),
+            TypeErrorKind::ParseError { message } => (
+                "E0703",
+                format!("parse error in module: {message}"),
+            ),
         };
 
         let mut diag = Diagnostic::error(message, self.span).with_code(code);
@@ -550,6 +567,21 @@ pub enum TypeErrorKind {
     AmbiguousDispatch {
         name: String,
         candidates: Vec<String>,
+    },
+
+    // Module errors (E06xx)
+    /// External module file not found.
+    ModuleNotFound {
+        name: String,
+        searched_paths: Vec<String>,
+    },
+    /// I/O error reading module file.
+    IoError {
+        message: String,
+    },
+    /// Parse error in module file.
+    ParseError {
+        message: String,
     },
 }
 

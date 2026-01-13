@@ -196,13 +196,27 @@ pub enum TokenKind {
     #[regex(r"[0-9][0-9_]*")]
     IntLit,
 
-    /// Float literal
-    #[regex(r"[0-9][0-9_]*\.[0-9][0-9_]*([eE][+-]?[0-9_]+)?")]
+    /// Float literal (with optional f32/f64 suffix)
+    #[regex(r"[0-9][0-9_]*\.[0-9][0-9_]*([eE][+-]?[0-9_]+)?(f32|f64)?")]
     FloatLit,
 
     /// String literal
     #[regex(r#""([^"\\]|\\.)*""#)]
     StringLit,
+
+    /// Raw string literal (r"..." or r#"..."# etc.)
+    /// Simple form: r"..." - no escape processing
+    #[regex(r#"r"[^"]*""#)]
+    RawStringLit,
+
+    /// Raw string literal with # delimiters: r#"..."#
+    /// Content can have quotes as long as they're not followed by #
+    /// For simplicity, we support r#"..."# (1 hash) and r##"..."## (2 hashes)
+    #[regex(r##"r#"([^"]|"[^#])*"#"##)]
+    RawStringLitHash1,
+
+    #[regex(r###"r##"([^"]|"[^#]|"#[^#])*"##"###)]
+    RawStringLitHash2,
 
     /// Character literal
     #[regex(r"'([^'\\]|\\.)'")]
@@ -425,6 +439,9 @@ impl TokenKind {
             TokenKind::IntLit
                 | TokenKind::FloatLit
                 | TokenKind::StringLit
+                | TokenKind::RawStringLit
+                | TokenKind::RawStringLitHash1
+                | TokenKind::RawStringLitHash2
                 | TokenKind::CharLit
                 | TokenKind::Ident
                 | TokenKind::TypeIdent
@@ -570,6 +587,9 @@ impl TokenKind {
             TokenKind::IntLit => "integer literal",
             TokenKind::FloatLit => "float literal",
             TokenKind::StringLit => "string literal",
+            TokenKind::RawStringLit => "raw string literal",
+            TokenKind::RawStringLitHash1 => "raw string literal",
+            TokenKind::RawStringLitHash2 => "raw string literal",
             TokenKind::CharLit => "character literal",
             TokenKind::Ident => "identifier",
             TokenKind::TypeIdent => "type identifier",
@@ -641,6 +661,9 @@ impl TokenKind {
             TokenKind::IntLit
                 | TokenKind::FloatLit
                 | TokenKind::StringLit
+                | TokenKind::RawStringLit
+                | TokenKind::RawStringLitHash1
+                | TokenKind::RawStringLitHash2
                 | TokenKind::CharLit
                 | TokenKind::True
                 | TokenKind::False
@@ -958,6 +981,10 @@ mod tests {
         assert_eq!(lex("2.5e10"), vec![TokenKind::FloatLit]);
         assert_eq!(lex("1.0e-5"), vec![TokenKind::FloatLit]);
         assert_eq!(lex("1_000.5"), vec![TokenKind::FloatLit]);
+        // Float literals with type suffixes
+        assert_eq!(lex("3.14f32"), vec![TokenKind::FloatLit]);
+        assert_eq!(lex("2.718f64"), vec![TokenKind::FloatLit]);
+        assert_eq!(lex("1.0e10f32"), vec![TokenKind::FloatLit]);
     }
 
     #[test]
