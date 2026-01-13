@@ -63,6 +63,29 @@ impl LifetimeId {
     pub const STATIC: Self = LifetimeId(0);
 }
 
+/// The unique identifier for a row variable in record types.
+///
+/// Row variables enable row polymorphism, allowing functions to operate
+/// on records with extra fields: `fn get_x(r: {x: i32 | R}) -> i32`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RecordRowVarId(pub u32);
+
+impl RecordRowVarId {
+    /// Create a new record row variable ID.
+    pub const fn new(id: u32) -> Self {
+        RecordRowVarId(id)
+    }
+}
+
+/// A field in a record type.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RecordField {
+    /// The field name.
+    pub name: crate::ast::Symbol,
+    /// The field type.
+    pub ty: Type,
+}
+
 /// A const value that can appear in type positions (e.g., array sizes).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ConstValue {
@@ -194,6 +217,12 @@ impl Type {
             TypeKind::Range { element, .. } => element.has_type_vars(),
             // Trait objects don't contain type variables (only DefIds)
             TypeKind::DynTrait { .. } => false,
+            // Records have type variables if any field has them or if there's a row variable
+            TypeKind::Record { fields, row_var } => {
+                row_var.is_some() || fields.iter().any(|f| f.ty.has_type_vars())
+            }
+            // Forall types bind their params, but may have free vars in the body
+            TypeKind::Forall { body, .. } => body.has_type_vars(),
         }
     }
 
@@ -313,6 +342,16 @@ impl Type {
     pub fn dyn_trait(trait_id: DefId, auto_traits: Vec<DefId>) -> Self {
         Self::new(TypeKind::DynTrait { trait_id, auto_traits })
     }
+
+    /// Create a record type with known fields and optional row variable.
+    pub fn record(fields: Vec<RecordField>, row_var: Option<RecordRowVarId>) -> Self {
+        Self::new(TypeKind::Record { fields, row_var })
+    }
+
+    /// Create a universally quantified (forall) type.
+    pub fn forall(params: Vec<TyVarId>, body: Type) -> Self {
+        Self::new(TypeKind::Forall { params, body: Box::new(body) })
+    }
 }
 
 impl fmt::Debug for Type {
@@ -405,6 +444,31 @@ pub enum TypeKind {
         /// Additional auto-trait bounds (Send, Sync, etc.).
         auto_traits: Vec<DefId>,
     },
+
+    /// An anonymous record type: `{x: i32, y: bool}` or `{x: i32 | R}`
+    ///
+    /// Records support row polymorphism via row variables. A record with
+    /// a row variable can be used where a record with additional fields
+    /// is expected.
+    Record {
+        /// The known fields of this record.
+        fields: Vec<RecordField>,
+        /// Optional row variable for row polymorphism.
+        /// If present, this record may have additional unknown fields.
+        row_var: Option<RecordRowVarId>,
+    },
+
+    /// A universally quantified (polymorphic) type: `forall<T>. T -> T`
+    ///
+    /// Enables higher-rank polymorphism where types themselves can be polymorphic.
+    /// When used as a parameter type, the function receives a polymorphic value
+    /// that it can instantiate with any concrete type.
+    Forall {
+        /// The type parameters bound by this forall.
+        params: Vec<TyVarId>,
+        /// The body type where params are in scope.
+        body: Box<Type>,
+    },
 }
 
 impl fmt::Display for TypeKind {
@@ -474,6 +538,33 @@ impl fmt::Display for TypeKind {
                     write!(f, " + {auto_trait}")?;
                 }
                 Ok(())
+            }
+            TypeKind::Record { fields, row_var } => {
+                write!(f, "{{ ")?;
+                for (i, field) in fields.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    // Use Debug for Symbol since it doesn't implement Display
+                    write!(f, "{:?}: {}", field.name, field.ty)?;
+                }
+                if let Some(rv) = row_var {
+                    if !fields.is_empty() {
+                        write!(f, " ")?;
+                    }
+                    write!(f, "| RowVar{}", rv.0)?;
+                }
+                write!(f, " }}")
+            }
+            TypeKind::Forall { params, body } => {
+                write!(f, "forall<")?;
+                for (i, param) in params.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "T{}", param.0)?;
+                }
+                write!(f, ">. {body}")
             }
         }
     }

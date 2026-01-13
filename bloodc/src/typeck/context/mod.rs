@@ -112,11 +112,20 @@ pub struct TypeContext<'a> {
     /// For deep handlers, this is a type variable representing the continuation's return value.
     /// For shallow handlers, this is unit (resume must be in tail position).
     pub(crate) current_resume_result_type: Option<Type>,
+    /// The kind of handler (Deep or Shallow) for the current operation body.
+    /// Used for linearity checking - shallow handlers enforce single-shot continuation semantics.
+    pub(crate) current_handler_kind: Option<crate::ast::HandlerKind>,
+    /// Count of resume calls in the current handler operation body.
+    /// Used to enforce single-shot semantics for shallow handlers (resume_count <= 1).
+    pub(crate) resume_count_in_current_op: usize,
     /// FFI bridge block definitions.
     pub(crate) bridge_defs: Vec<BridgeInfo>,
     /// Current impl block's Self type during collection phase.
     /// Set when collecting impl block method signatures so `Self` can be resolved.
     pub(crate) current_impl_self_ty: Option<Type>,
+    /// Forall parameter environment for resolving type parameter names in forall bodies.
+    /// Maps parameter names to their TyVarId when parsing forall<T>. expressions.
+    pub(crate) forall_param_env: Vec<(crate::ast::Symbol, TyVarId)>,
 }
 
 /// Information about a struct.
@@ -568,8 +577,11 @@ impl<'a> TypeContext<'a> {
             type_param_bounds: HashMap::new(),
             current_resume_type: None,
             current_resume_result_type: None,
+            current_handler_kind: None,
+            resume_count_in_current_op: 0,
             bridge_defs: Vec::new(),
             current_impl_self_ty: None,
+            forall_param_env: Vec::new(),
         };
         ctx.register_builtins();
         ctx

@@ -37,7 +37,7 @@ pub use item::{
     ExternFnDef, BridgeDef, LinkSpec, LinkKind, ExternFnItem, OpaqueType,
     BridgeTypeAlias, FfiStruct, FfiField, FfiEnum, FfiEnumVariant, FfiUnion, FfiConst, FfiCallback,
 };
-pub use ty::{Type, TypeKind, PrimitiveTy, TyVarId, ConstParamId, LifetimeId, ConstValue, GenericArg};
+pub use ty::{Type, TypeKind, PrimitiveTy, TyVarId, ConstParamId, LifetimeId, ConstValue, GenericArg, RecordRowVarId, RecordField};
 
 /// A compilation unit (crate) in HIR form.
 #[derive(Debug, Clone)]

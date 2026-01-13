@@ -258,6 +258,10 @@ impl SnapshotAnalyzer {
             TypeKind::Param(_) => false,
             TypeKind::Never => false,
             TypeKind::Error => false,
+            // Records may contain refs if any field does
+            TypeKind::Record { fields, .. } => fields.iter().any(|f| self.type_contains_genref(&f.ty)),
+            // Forall types may contain refs if body does
+            TypeKind::Forall { body, .. } => self.type_contains_genref(body),
         }
     }
 

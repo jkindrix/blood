@@ -39,7 +39,7 @@
 
 use std::collections::HashMap;
 
-use crate::hir::{PrimitiveTy, Type, TypeKind, TyVarId};
+use crate::hir::{PrimitiveTy, Type, TypeKind, TyVarId, RecordRowVarId, RecordField};
 
 use super::error::{TypeError, TypeErrorKind};
 use crate::span::Span;
@@ -52,6 +52,11 @@ pub struct Unifier {
     substitutions: HashMap<TyVarId, Type>,
     /// The next type variable ID to assign.
     next_var: u32,
+    /// Row variable substitutions for record types.
+    /// Maps row variable ID to a record type (fields + optional row var).
+    row_substitutions: HashMap<RecordRowVarId, (Vec<RecordField>, Option<RecordRowVarId>)>,
+    /// The next row variable ID to assign.
+    next_row_var: u32,
 }
 
 impl Unifier {
@@ -60,6 +65,8 @@ impl Unifier {
         Self {
             substitutions: HashMap::new(),
             next_var: 0,
+            row_substitutions: HashMap::new(),
+            next_row_var: 0,
         }
     }
 
@@ -73,6 +80,21 @@ impl Unifier {
     /// Create multiple fresh type variables.
     pub fn fresh_vars(&mut self, count: usize) -> Vec<Type> {
         (0..count).map(|_| self.fresh_var()).collect()
+    }
+
+    /// Create a fresh row variable for record types.
+    pub fn fresh_row_var(&mut self) -> RecordRowVarId {
+        let id = RecordRowVarId::new(self.next_row_var);
+        self.next_row_var += 1;
+        id
+    }
+
+    /// Create a fresh type variable ID for forall-bound parameters.
+    /// These are distinct from inference variables and represent universally quantified types.
+    pub fn fresh_forall_var(&mut self) -> TyVarId {
+        let id = TyVarId::new(self.next_var);
+        self.next_var += 1;
+        id
     }
 
     /// Unify two types, recording substitutions.
@@ -185,6 +207,73 @@ impl Unifier {
             // Type parameter - for now, treat as error (needs constraint solving)
             (TypeKind::Param(id1), TypeKind::Param(id2)) if id1 == id2 => Ok(()),
 
+            // Record types - row polymorphism
+            (
+                TypeKind::Record { fields: f1, row_var: rv1 },
+                TypeKind::Record { fields: f2, row_var: rv2 },
+            ) => self.unify_records(f1, *rv1, f2, *rv2, span),
+
+            // Forall types - higher-rank polymorphism
+            // Two forall types unify if they have the same number of params
+            // and their bodies unify under alpha-renaming
+            (
+                TypeKind::Forall { params: p1, body: b1 },
+                TypeKind::Forall { params: p2, body: b2 },
+            ) if p1.len() == p2.len() => {
+                // For alpha-equivalence, we instantiate both with the same fresh variables
+                // and check if the bodies unify
+                let fresh_vars: Vec<Type> = (0..p1.len())
+                    .map(|_| self.fresh_var())
+                    .collect();
+
+                let subst1: std::collections::HashMap<TyVarId, Type> = p1.iter()
+                    .cloned()
+                    .zip(fresh_vars.iter().cloned())
+                    .collect();
+                let subst2: std::collections::HashMap<TyVarId, Type> = p2.iter()
+                    .cloned()
+                    .zip(fresh_vars.iter().cloned())
+                    .collect();
+
+                let b1_inst = self.substitute_forall_params(b1, &subst1);
+                let b2_inst = self.substitute_forall_params(b2, &subst2);
+
+                self.unify(&b1_inst, &b2_inst, span)
+            }
+
+            // When unifying a forall with a non-forall on the right, instantiate the forall
+            // This handles cases like: forall<T>. T -> T  vs  i32 -> i32
+            (TypeKind::Forall { params, body }, _) => {
+                // Instantiate with fresh inference variables
+                let fresh_vars: Vec<Type> = (0..params.len())
+                    .map(|_| self.fresh_var())
+                    .collect();
+
+                let subst: std::collections::HashMap<TyVarId, Type> = params.iter()
+                    .cloned()
+                    .zip(fresh_vars.iter().cloned())
+                    .collect();
+
+                let body_inst = self.substitute_forall_params(body, &subst);
+                self.unify(&body_inst, &t2, span)
+            }
+
+            // When unifying a non-forall with a forall on the right
+            (_, TypeKind::Forall { params, body }) => {
+                // Instantiate with fresh inference variables
+                let fresh_vars: Vec<Type> = (0..params.len())
+                    .map(|_| self.fresh_var())
+                    .collect();
+
+                let subst: std::collections::HashMap<TyVarId, Type> = params.iter()
+                    .cloned()
+                    .zip(fresh_vars.iter().cloned())
+                    .collect();
+
+                let body_inst = self.substitute_forall_params(body, &subst);
+                self.unify(&t1, &body_inst, span)
+            }
+
             // No match
             _ => Err(TypeError::new(
                 TypeErrorKind::Mismatch {
@@ -193,6 +282,118 @@ impl Unifier {
                 },
                 span,
             )),
+        }
+    }
+
+    /// Unify two record types with row polymorphism.
+    ///
+    /// Row polymorphism allows records with extra fields to match:
+    /// - `{x: i32, y: bool}` matches `{x: i32, y: bool}`
+    /// - `{x: i32 | R}` matches `{x: i32, y: bool}` (R binds to `{y: bool}`)
+    fn unify_records(
+        &mut self,
+        fields1: &[RecordField],
+        row_var1: Option<RecordRowVarId>,
+        fields2: &[RecordField],
+        row_var2: Option<RecordRowVarId>,
+        span: Span,
+    ) -> Result<(), TypeError> {
+        use std::collections::HashMap;
+
+        // Build maps of field name -> type
+        let map1: HashMap<_, _> = fields1.iter().map(|f| (f.name, &f.ty)).collect();
+        let map2: HashMap<_, _> = fields2.iter().map(|f| (f.name, &f.ty)).collect();
+
+        // Find common fields and unify their types
+        for (name, ty1) in &map1 {
+            if let Some(ty2) = map2.get(name) {
+                self.unify(ty1, ty2, span)?;
+            }
+        }
+
+        // Find fields only in record 1
+        let only_in_1: Vec<_> = fields1.iter()
+            .filter(|f| !map2.contains_key(&f.name))
+            .cloned()
+            .collect();
+
+        // Find fields only in record 2
+        let only_in_2: Vec<_> = fields2.iter()
+            .filter(|f| !map1.contains_key(&f.name))
+            .cloned()
+            .collect();
+
+        // Handle row polymorphism
+        match (row_var1, row_var2, only_in_1.is_empty(), only_in_2.is_empty()) {
+            // Both closed, no extra fields - OK
+            (None, None, true, true) => Ok(()),
+
+            // Both closed but have extra fields - mismatch
+            (None, None, false, _) | (None, None, _, false) => {
+                Err(TypeError::new(
+                    TypeErrorKind::Mismatch {
+                        expected: Type::record(fields1.to_vec(), row_var1),
+                        found: Type::record(fields2.to_vec(), row_var2),
+                    },
+                    span,
+                ))
+            }
+
+            // Record 1 is open - bind its row var to record 2's extra fields
+            (Some(rv1), None, _, false) | (Some(rv1), None, _, true) => {
+                if !only_in_1.is_empty() {
+                    // Record 2 is missing fields that record 1 has
+                    return Err(TypeError::new(
+                        TypeErrorKind::Mismatch {
+                            expected: Type::record(fields1.to_vec(), row_var1),
+                            found: Type::record(fields2.to_vec(), row_var2),
+                        },
+                        span,
+                    ));
+                }
+                // Bind rv1 to the extra fields from record 2
+                self.row_substitutions.insert(rv1, (only_in_2, None));
+                Ok(())
+            }
+
+            // Record 2 is open - bind its row var to record 1's extra fields
+            (None, Some(rv2), false, _) | (None, Some(rv2), true, _) => {
+                if !only_in_2.is_empty() {
+                    // Record 1 is missing fields that record 2 has
+                    return Err(TypeError::new(
+                        TypeErrorKind::Mismatch {
+                            expected: Type::record(fields1.to_vec(), row_var1),
+                            found: Type::record(fields2.to_vec(), row_var2),
+                        },
+                        span,
+                    ));
+                }
+                // Bind rv2 to the extra fields from record 1
+                self.row_substitutions.insert(rv2, (only_in_1, None));
+                Ok(())
+            }
+
+            // Both open - create a fresh row variable for the union
+            (Some(rv1), Some(rv2), _, _) => {
+                // Both records are open, combine extra fields
+                let mut combined: Vec<RecordField> = only_in_1;
+                combined.extend(only_in_2);
+
+                if combined.is_empty() {
+                    // Same row variables can unify
+                    if rv1 == rv2 {
+                        return Ok(());
+                    }
+                    // Bind rv1 to rv2
+                    self.row_substitutions.insert(rv1, (Vec::new(), Some(rv2)));
+                } else {
+                    // Create a fresh row variable for the remainder
+                    let fresh_rv = self.fresh_row_var();
+                    self.row_substitutions.insert(rv1, (combined.clone(), Some(fresh_rv)));
+                    self.row_substitutions.insert(rv2, (combined, Some(fresh_rv)));
+                }
+                Ok(())
+            }
         }
     }
 
@@ -223,6 +424,18 @@ impl Unifier {
             }
             TypeKind::Adt { args, .. } => args.iter().any(|t| self.occurs_in(var, t)),
             TypeKind::Range { element, .. } => self.occurs_in(var, element),
+            TypeKind::Record { fields, .. } => {
+                fields.iter().any(|f| self.occurs_in(var, &f.ty))
+            }
+            TypeKind::Forall { params, body } => {
+                // Don't check if var is in params (they're bound)
+                // Only check body if var is not one of the bound params
+                if params.contains(&var) {
+                    false
+                } else {
+                    self.occurs_in(var, body)
+                }
+            }
             _ => false,
         }
     }
@@ -265,6 +478,136 @@ impl Unifier {
                 element: self.resolve(element),
                 inclusive: *inclusive,
             }),
+            TypeKind::Record { fields, row_var } => {
+                // Resolve field types
+                let mut resolved_fields: Vec<RecordField> = fields.iter()
+                    .map(|f| RecordField {
+                        name: f.name,
+                        ty: self.resolve(&f.ty),
+                    })
+                    .collect();
+
+                // Follow row variable substitutions
+                let mut current_rv = *row_var;
+                while let Some(rv) = current_rv {
+                    if let Some((extra_fields, next_rv)) = self.row_substitutions.get(&rv) {
+                        // Add extra fields from substitution
+                        for ef in extra_fields {
+                            // Only add if not already present
+                            if !resolved_fields.iter().any(|f| f.name == ef.name) {
+                                resolved_fields.push(RecordField {
+                                    name: ef.name,
+                                    ty: self.resolve(&ef.ty),
+                                });
+                            }
+                        }
+                        current_rv = *next_rv;
+                    } else {
+                        // No substitution - keep the row variable
+                        break;
+                    }
+                }
+
+                Type::record(resolved_fields, current_rv)
+            }
+            TypeKind::Forall { params, body } => {
+                // Resolve body but keep params intact (they're bound)
+                Type::forall(params.clone(), self.resolve(body))
+            }
+            _ => ty.clone(),
+        }
+    }
+
+    /// Substitute forall-bound type parameters with given types.
+    /// Used during instantiation of polymorphic types.
+    fn substitute_forall_params(
+        &self,
+        ty: &Type,
+        subst: &std::collections::HashMap<TyVarId, Type>,
+    ) -> Type {
+        match ty.kind() {
+            TypeKind::Param(id) => {
+                if let Some(replacement) = subst.get(id) {
+                    replacement.clone()
+                } else {
+                    ty.clone()
+                }
+            }
+            TypeKind::Infer(id) => {
+                // Also resolve inference variables through our substitution chain
+                if let Some(substituted) = self.substitutions.get(id) {
+                    self.substitute_forall_params(substituted, subst)
+                } else {
+                    ty.clone()
+                }
+            }
+            TypeKind::Tuple(tys) => {
+                Type::tuple(
+                    tys.iter()
+                        .map(|t| self.substitute_forall_params(t, subst))
+                        .collect(),
+                )
+            }
+            TypeKind::Array { element, size } => {
+                Type::array(self.substitute_forall_params(element, subst), *size)
+            }
+            TypeKind::Slice { element } => {
+                Type::slice(self.substitute_forall_params(element, subst))
+            }
+            TypeKind::Ref { inner, mutable } => {
+                Type::reference(self.substitute_forall_params(inner, subst), *mutable)
+            }
+            TypeKind::Ptr { inner, mutable } => {
+                Type::new(TypeKind::Ptr {
+                    inner: self.substitute_forall_params(inner, subst),
+                    mutable: *mutable,
+                })
+            }
+            TypeKind::Fn { params, ret } => {
+                Type::function(
+                    params
+                        .iter()
+                        .map(|t| self.substitute_forall_params(t, subst))
+                        .collect(),
+                    self.substitute_forall_params(ret, subst),
+                )
+            }
+            TypeKind::Adt { def_id, args } => {
+                Type::adt(
+                    *def_id,
+                    args.iter()
+                        .map(|t| self.substitute_forall_params(t, subst))
+                        .collect(),
+                )
+            }
+            TypeKind::Range { element, inclusive } => {
+                Type::new(TypeKind::Range {
+                    element: self.substitute_forall_params(element, subst),
+                    inclusive: *inclusive,
+                })
+            }
+            TypeKind::Record { fields, row_var } => {
+                let new_fields: Vec<RecordField> = fields
+                    .iter()
+                    .map(|f| RecordField {
+                        name: f.name,
+                        ty: self.substitute_forall_params(&f.ty, subst),
+                    })
+                    .collect();
+                Type::record(new_fields, *row_var)
+            }
+            TypeKind::Forall { params: inner_params, body } => {
+                // Avoid capturing: skip substitution for inner-bound params
+                let filtered_subst: std::collections::HashMap<TyVarId, Type> = subst
+                    .iter()
+                    .filter(|(k, _)| !inner_params.contains(k))
+                    .map(|(k, v)| (*k, v.clone()))
+                    .collect();
+                Type::forall(
+                    inner_params.clone(),
+                    self.substitute_forall_params(body, &filtered_subst),
+                )
+            }
             _ => ty.clone(),
         }
     }

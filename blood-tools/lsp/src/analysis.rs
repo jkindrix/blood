@@ -736,6 +736,12 @@ impl SemanticAnalyzer {
                 };
                 format!("{} {}", qual, self.type_to_string(inner, interner))
             }
+            ast::TypeKind::Forall { params, body } => {
+                let param_strs: Vec<_> = params.iter()
+                    .map(|p| self.resolve_symbol(&p.node, interner))
+                    .collect();
+                format!("forall<{}>. {}", param_strs.join(", "), self.type_to_string(body, interner))
+            }
         }
     }
 

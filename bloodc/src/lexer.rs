@@ -71,6 +71,8 @@ pub enum TokenKind {
     Fn,
     #[token("for")]
     For,
+    #[token("forall")]
+    Forall,
     #[token("handler")]
     Handler,
     #[token("if")]
@@ -546,6 +548,7 @@ impl TokenKind {
             TokenKind::Handle => "keyword `handle`",
             TokenKind::Affine => "keyword `affine`",
             TokenKind::Bridge => "keyword `bridge`",
+            TokenKind::Forall => "keyword `forall`",
             TokenKind::Abstract => "reserved keyword `abstract`",
             TokenKind::Become => "reserved keyword `become`",
             TokenKind::Box => "reserved keyword `box`",

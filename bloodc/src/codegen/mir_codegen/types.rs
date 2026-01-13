@@ -82,5 +82,11 @@ pub(super) fn type_may_contain_genref_impl(ty: &Type) -> bool {
 
         // Inference and type parameters - be conservative
         TypeKind::Infer(_) | TypeKind::Param(_) => true,
+
+        // Records may contain genrefs if any field does
+        TypeKind::Record { fields, .. } => fields.iter().any(|f| type_may_contain_genref_impl(&f.ty)),
+
+        // Forall types may contain genrefs if body does
+        TypeKind::Forall { body, .. } => type_may_contain_genref_impl(body),
     }
 }

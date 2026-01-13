@@ -711,6 +711,29 @@ fn hash_type(ty: &hir::Type, hasher: &mut ContentHasher) {
                 hasher.update_u32(auto_trait.index);
             }
         }
+        hir::TypeKind::Record { fields, row_var } => {
+            hasher.update_u8(0x0C); // Record type
+            hasher.update_u32(fields.len() as u32);
+            for field in fields {
+                // Hash field name (Symbol) - use its raw u32 representation
+                let sym_raw: u32 = unsafe { std::mem::transmute(field.name) };
+                hasher.update_u32(sym_raw);
+                hash_type(&field.ty, hasher);
+            }
+            // Hash row variable if present
+            hasher.update_u8(if row_var.is_some() { 1 } else { 0 });
+            if let Some(rv) = row_var {
+                hasher.update_u32(rv.0);
+            }
+        }
+        hir::TypeKind::Forall { params, body } => {
+            hasher.update_u8(0x0D); // Forall type
+            hasher.update_u32(params.len() as u32);
+            for param in params {
+                hasher.update_u32(param.0);
+            }
+            hash_type(body, hasher);
+        }
     }
 }
 
@@ -1373,6 +1396,14 @@ fn extract_type_deps(ty: &hir::Type, deps: &mut HashSet<DefId>) {
         }
         hir::TypeKind::Range { element, .. } => {
             extract_type_deps(element, deps);
+        }
+        hir::TypeKind::Record { fields, .. } => {
+            for field in fields {
+                extract_type_deps(&field.ty, deps);
+            }
+        }
+        hir::TypeKind::Forall { body, .. } => {
+            extract_type_deps(body, deps);
         }
         // Primitive types, inference variables, type parameters, never, and error types
         // don't contain dependencies on other definitions

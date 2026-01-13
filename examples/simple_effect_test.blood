@@ -1,4 +1,4 @@
-// Simple effect test
+// Simple effect test - tests multiple performs with handler
 
 effect Counter {
     op increment() -> i32;
@@ -15,14 +15,10 @@ deep handler BasicCounter for Counter {
     }
 }
 
-fn use_counter() -> i32 with Counter {
-    let a = perform Counter.increment();
-    let b = perform Counter.increment();
-    a + b
-}
-
 fn main() -> i32 {
-    handle {
-        use_counter()
-    } with BasicCounter { count: 0 }
+    with BasicCounter { count: 0 } handle {
+        let a = perform Counter.increment();
+        let b = perform Counter.increment();
+        a + b
+    }
 }

@@ -797,6 +797,17 @@ pub enum TypeKind {
         inner: Box<Type>,
     },
 
+    /// Higher-rank polymorphic type: `forall<T>. T -> T`
+    ///
+    /// Enables first-class polymorphism where types themselves can be polymorphic.
+    /// Used for functions that need to work with polymorphic values directly.
+    Forall {
+        /// Type parameters bound by this forall
+        params: Vec<Spanned<Symbol>>,
+        /// The body type where params are in scope
+        body: Box<Type>,
+    },
+
     /// Never type: `!`
     Never,
 

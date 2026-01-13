@@ -557,6 +557,9 @@ impl<'a> TypeContext<'a> {
             ));
         }
 
+        // Increment resume count for linearity checking (shallow handlers)
+        self.resume_count_in_current_op += 1;
+
         let value_expr = self.infer_expr(value)?;
 
         // Check that the value type matches the expected resume type (E0303)
@@ -830,6 +833,14 @@ impl<'a> TypeContext<'a> {
                         _ => {}
                     }
 
+                    // Check forall-bound type parameters first (innermost scope)
+                    let segment_symbol = path.segments[0].name.node;
+                    for (param_name, ty_var_id) in &self.forall_param_env {
+                        if *param_name == segment_symbol {
+                            return Ok(Type::new(TypeKind::Param(*ty_var_id)));
+                        }
+                    }
+
                     // Check generic type parameters in scope
                     if let Some(&ty_var_id) = self.generic_params.get(&name) {
                         return Ok(Type::new(TypeKind::Param(ty_var_id)));
@@ -938,13 +949,49 @@ impl<'a> TypeContext<'a> {
             ast::TypeKind::Never => Ok(Type::never()),
             ast::TypeKind::Infer => Ok(self.unifier.fresh_var()),
             ast::TypeKind::Paren(inner) => self.ast_type_to_hir_type(inner),
-            ast::TypeKind::Record { .. } => {
-                Err(TypeError::new(
-                    TypeErrorKind::UnsupportedFeature {
-                        feature: "anonymous record types".to_string(),
-                    },
-                    ty.span,
-                ))
+            ast::TypeKind::Record { fields, rest } => {
+                // Convert fields from AST to HIR
+                let hir_fields: Vec<hir::RecordField> = fields.iter()
+                    .map(|f| {
+                        let field_ty = self.ast_type_to_hir_type(&f.ty)?;
+                        Ok(hir::RecordField {
+                            name: f.name.node,
+                            ty: field_ty,
+                        })
+                    })
+                    .collect::<Result<_, TypeError>>()?;
+
+                // If there's a rest (row variable), create a fresh row variable
+                let row_var = rest.as_ref().map(|_| self.unifier.fresh_row_var());
+
+                Ok(Type::record(hir_fields, row_var))
+            }
+            ast::TypeKind::Forall { params, body } => {
+                // Create fresh type variable IDs for each forall parameter
+                // These are special: they represent universally quantified variables
+                let hir_params: Vec<hir::TyVarId> = params
+                    .iter()
+                    .map(|_| self.unifier.fresh_forall_var())
+                    .collect();
+
+                // Store mapping from parameter names to their TyVarIds for body conversion
+                // We need to temporarily extend the type environment
+                let mut param_env: Vec<(ast::Symbol, hir::TyVarId)> = Vec::new();
+                for (name, id) in params.iter().zip(hir_params.iter()) {
+                    param_env.push((name.node, *id));
+                }
+
+                // Save old forall params and set new ones
+                let old_forall_params = std::mem::take(&mut self.forall_param_env);
+                self.forall_param_env = param_env;
+
+                // Convert the body type with forall params in scope
+                let body_ty = self.ast_type_to_hir_type(body)?;
+
+                // Restore old forall params
+                self.forall_param_env = old_forall_params;
+
+                Ok(Type::forall(hir_params, body_ty))
             }
             ast::TypeKind::Ownership { .. } => {
                 Err(TypeError::new(
@@ -1349,7 +1396,30 @@ impl<'a> TypeContext<'a> {
     ) -> Result<hir::Expr, TypeError> {
         let callee_expr = self.infer_expr(callee)?;
 
-        let (param_types, return_type) = match callee_expr.ty.kind() {
+        // Resolve the callee type to handle inference variables
+        let resolved_callee_ty = self.unifier.resolve(&callee_expr.ty);
+
+        // Handle forall types by instantiating them with fresh type variables
+        let instantiated_ty = match resolved_callee_ty.kind() {
+            TypeKind::Forall { params, body } => {
+                // Create fresh inference variables for each forall parameter
+                let fresh_vars: Vec<Type> = (0..params.len())
+                    .map(|_| self.unifier.fresh_var())
+                    .collect();
+
+                // Build substitution map
+                let subst: std::collections::HashMap<hir::TyVarId, Type> = params.iter()
+                    .cloned()
+                    .zip(fresh_vars.into_iter())
+                    .collect();
+
+                // Substitute params in the body
+                self.substitute_type_vars(body, &subst)
+            }
+            _ => resolved_callee_ty.clone(),
+        };
+
+        let (param_types, return_type) = match instantiated_ty.kind() {
             TypeKind::Fn { params, ret } => (params.clone(), ret.clone()),
             _ => {
                 return Err(TypeError::new(

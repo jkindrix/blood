@@ -513,11 +513,26 @@ impl<'a> TypeContext<'a> {
             self.current_resume_type = Some(resume_return_ty);
             // Set the resume result type for infer_resume
             self.current_resume_result_type = Some(resume_result_ty.clone());
+            // Set the handler kind for linearity checking
+            self.current_handler_kind = Some(handler_info.kind.clone());
+            // Reset resume count for this operation
+            self.resume_count_in_current_op = 0;
 
             // Type-check the body
             // For deep handlers: body can return a value (same type as continuation result)
             // For shallow handlers: body expected type is unit (resume must be in tail position)
             let body_expr = self.check_block(&op_impl.body, &op_body_expected_ty)?;
+
+            // Check linearity constraint for shallow handlers
+            if handler_info.kind == ast::HandlerKind::Shallow && self.resume_count_in_current_op > 1 {
+                return Err(TypeError::new(
+                    TypeErrorKind::MultipleResumesInShallowHandler {
+                        operation: op_name.clone(),
+                        count: self.resume_count_in_current_op,
+                    },
+                    op_impl.span,
+                ));
+            }
 
             // Create body
             let body_id = hir::BodyId::new(self.next_body_id);
@@ -536,6 +551,8 @@ impl<'a> TypeContext<'a> {
             self.resolver.pop_scope();
             self.current_resume_type = None;
             self.current_resume_result_type = None;
+            self.current_handler_kind = None;
+            self.resume_count_in_current_op = 0;
         }
 
         // Type-check return clause if present
@@ -637,12 +654,21 @@ impl<'a> TypeContext<'a> {
         for stmt in &block.statements {
             match stmt {
                 ast::Statement::Let { pattern, ty, value, span } => {
-                    let local_ty = if let Some(ty) = ty {
-                        self.ast_type_to_hir_type(ty)?
+                    // Determine the type and initial expression together to avoid
+                    // double-processing (which would double-count resumes for linearity)
+                    let (local_ty, init) = if let Some(ty) = ty {
+                        // Type annotation provided - check against it
+                        let ty = self.ast_type_to_hir_type(ty)?;
+                        let init = if let Some(value) = value {
+                            Some(self.check_expr(value, &ty)?)
+                        } else {
+                            None
+                        };
+                        (ty, init)
                     } else if let Some(value) = value {
-                        // Infer from value
+                        // No type annotation - infer from value (only process once)
                         let inferred = self.infer_expr(value)?;
-                        inferred.ty.clone()
+                        (inferred.ty.clone(), Some(inferred))
                     } else {
                         // No type annotation and no value - error
                         return Err(TypeError::new(
@@ -652,13 +678,7 @@ impl<'a> TypeContext<'a> {
                     };
 
                     // Handle the pattern (simplified: just identifiers for Phase 1)
-                    let local_id = self.define_pattern(pattern, local_ty.clone())?;
-
-                    let init = if let Some(value) = value {
-                        Some(self.check_expr(value, &local_ty)?)
-                    } else {
-                        None
-                    };
+                    let local_id = self.define_pattern(pattern, local_ty)?;
 
                     stmts.push(hir::Stmt::Let { local_id, init });
                 }

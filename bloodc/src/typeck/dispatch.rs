@@ -741,6 +741,20 @@ impl<'a> DispatchResolver<'a> {
                 }
             }
 
+            // Record types: match each field type
+            TypeKind::Record { fields: param_fields, .. } => {
+                match arg_type.kind.as_ref() {
+                    TypeKind::Record { fields: arg_fields, .. } if param_fields.len() == arg_fields.len() => {
+                        // Match fields by position (assumes same field ordering)
+                        for (p, a) in param_fields.iter().zip(arg_fields.iter()) {
+                            self.try_match_type_param(&p.ty, &a.ty, valid_params, substitutions)?;
+                        }
+                        Ok(())
+                    }
+                    _ => Ok(()),
+                }
+            }
+
             // Primitive types, Never, Error, Infer, non-method Param: no matching needed
             TypeKind::Primitive(_)
             | TypeKind::Never
@@ -748,7 +762,8 @@ impl<'a> DispatchResolver<'a> {
             | TypeKind::Infer(_)
             | TypeKind::Param(_) // Param not in valid_params
             | TypeKind::Closure { .. }
-            | TypeKind::DynTrait { .. } => Ok(()),
+            | TypeKind::DynTrait { .. }
+            | TypeKind::Forall { .. } => Ok(()),
         }
     }
 
@@ -832,6 +847,26 @@ impl<'a> DispatchResolver<'a> {
 
             TypeKind::DynTrait { trait_id, auto_traits } => {
                 Type::dyn_trait(*trait_id, auto_traits.clone())
+            }
+
+            TypeKind::Record { fields, row_var } => {
+                let new_fields: Vec<crate::hir::RecordField> = fields
+                    .iter()
+                    .map(|f| crate::hir::RecordField {
+                        name: f.name,
+                        ty: self.apply_substitutions(&f.ty, substitutions),
+                    })
+                    .collect();
+                Type::record(new_fields, *row_var)
+            }
+
+            TypeKind::Forall { params, body } => {
+                // Apply substitutions to body, but not to bound params
+                let new_body = self.apply_substitutions(body, substitutions);
+                Type::new(TypeKind::Forall {
+                    params: params.clone(),
+                    body: Box::new(new_body),
+                })
             }
 
             // Types that don't contain type parameters
@@ -1809,6 +1844,8 @@ impl<'a> ConstraintChecker<'a> {
             TypeKind::DynTrait { .. } => false, // Unsized
             TypeKind::Error => true, // Be permissive for error recovery
             TypeKind::Infer(_) | TypeKind::Param(_) => false,
+            TypeKind::Record { fields, .. } => fields.iter().all(|f| self.type_is_copy(&f.ty)),
+            TypeKind::Forall { .. } => false, // Polymorphic types are not Copy
         }
     }
 

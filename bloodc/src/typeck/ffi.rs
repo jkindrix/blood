@@ -233,6 +233,16 @@ impl FfiValidator {
             TypeKind::DynTrait { .. } => FfiSafety::Unsafe(
                 "trait objects are not FFI-safe; use concrete types or opaque pointers".to_string(),
             ),
+
+            // Anonymous records are not FFI-safe
+            TypeKind::Record { .. } => FfiSafety::Unsafe(
+                "anonymous record types are not FFI-safe; use named structs with #[repr(C)]".to_string(),
+            ),
+
+            // Forall types are not FFI-safe (polymorphic)
+            TypeKind::Forall { .. } => FfiSafety::Unsafe(
+                "polymorphic (forall) types are not FFI-safe; use concrete types".to_string(),
+            ),
         }
     }
 

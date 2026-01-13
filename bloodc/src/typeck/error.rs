@@ -210,6 +210,12 @@ impl TypeError {
                     effects.join(", ")
                 ),
             ),
+            TypeErrorKind::MultipleResumesInShallowHandler { operation, count } => (
+                "E0309",
+                format!(
+                    "shallow handler operation `{operation}` calls resume {count} times, but shallow handlers require single-shot semantics (at most 1 resume)"
+                ),
+            ),
 
             // Ownership errors (E04xx)
             TypeErrorKind::MutableBorrow { reason } => (
@@ -428,6 +434,12 @@ pub enum TypeErrorKind {
     /// Function performs effects that were not declared in its signature.
     UndeclaredEffects {
         effects: Vec<String>,
+    },
+    /// Multiple resume calls in a shallow handler operation.
+    /// Shallow handlers enforce single-shot continuation semantics.
+    MultipleResumesInShallowHandler {
+        operation: String,
+        count: usize,
     },
     /// Trait not found.
     TraitNotFound {

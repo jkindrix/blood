@@ -206,6 +206,38 @@ impl<'src> Parser<'src> {
                 }
             }
 
+            // Forall (higher-rank polymorphic) type: forall<T>. Type
+            TokenKind::Forall => {
+                self.advance();
+                self.expect(TokenKind::Lt);
+
+                let mut params = Vec::new();
+                while !self.check(TokenKind::Gt) && !self.is_at_end() {
+                    if self.check(TokenKind::TypeIdent) || self.check(TokenKind::Ident) {
+                        self.advance();
+                        params.push(self.spanned_symbol());
+                    } else {
+                        self.error_expected("type parameter name");
+                        break;
+                    }
+                    if !self.try_consume(TokenKind::Comma) {
+                        break;
+                    }
+                }
+
+                self.expect(TokenKind::Gt);
+                self.expect(TokenKind::Dot);
+                let body = self.parse_type();
+
+                Type {
+                    kind: TypeKind::Forall {
+                        params,
+                        body: Box::new(body),
+                    },
+                    span: start.merge(self.previous.span),
+                }
+            }
+
             // Record type
             TokenKind::LBrace => self.parse_record_type(),
 
@@ -223,7 +255,7 @@ impl<'src> Parser<'src> {
             }
 
             _ => {
-                self.error_expected_one_of(&["type name", "`&`", "`*`", "`[`", "`(`", "`fn`", "`!`"]);
+                self.error_expected_one_of(&["type name", "`&`", "`*`", "`[`", "`(`", "`fn`", "`forall`", "`!`"]);
                 // Advance to prevent infinite loop during error recovery
                 self.advance();
                 Type {

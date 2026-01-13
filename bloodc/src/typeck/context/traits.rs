@@ -154,6 +154,10 @@ impl<'a> TypeContext<'a> {
             TypeKind::Error => true,
             TypeKind::Infer(_) => false,
             TypeKind::Param(_) => false, // Requires trait bound
+            // Records are Copy if all fields are Copy
+            TypeKind::Record { fields, .. } => fields.iter().all(|f| self.type_is_copy(&f.ty)),
+            // Forall types are NOT Copy (polymorphic values need special handling)
+            TypeKind::Forall { .. } => false,
         }
     }
 

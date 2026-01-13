@@ -43,6 +43,15 @@ pub fn type_size(ty: &Type) -> usize {
             ice!("type_size called on unmonomorphized type parameter"; "param" => param);
             8 // assume pointer-sized for safety
         }
+        TypeKind::Record { fields, .. } => {
+            // Record size is sum of field sizes (simplified - doesn't account for padding)
+            fields.iter().map(|f| type_size(&f.ty)).sum()
+        }
+        TypeKind::Forall { body, .. } => {
+            // Forall types should be instantiated before codegen
+            // Use body type size as fallback
+            type_size(body)
+        }
     }
 }
 
@@ -105,6 +114,18 @@ pub fn type_alignment(ty: &Type) -> usize {
         TypeKind::Param(param) => {
             ice!("type_alignment called on unmonomorphized type parameter"; "param" => param);
             8 // conservative default
+        }
+        TypeKind::Record { fields, .. } => {
+            // Record alignment is max of field alignments
+            fields.iter()
+                .map(|f| type_alignment(&f.ty))
+                .max()
+                .unwrap_or(1)
+        }
+        TypeKind::Forall { body, .. } => {
+            // Forall types should be instantiated before codegen
+            // Use body type alignment as fallback
+            type_alignment(body)
         }
     }
 }

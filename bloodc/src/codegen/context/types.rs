@@ -115,6 +115,23 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 let elem_type = self.lower_type(element);
                 self.context.struct_type(&[elem_type, elem_type], false).into()
             }
+            TypeKind::Record { fields, .. } => {
+                // Record: anonymous struct with named fields
+                if fields.is_empty() {
+                    // Empty record - use i8 placeholder
+                    self.context.i8_type().into()
+                } else {
+                    let field_types: Vec<BasicTypeEnum> = fields.iter()
+                        .map(|f| self.lower_type(&f.ty))
+                        .collect();
+                    self.context.struct_type(&field_types, false).into()
+                }
+            }
+            TypeKind::Forall { body, .. } => {
+                // Forall types should be instantiated before codegen.
+                // Lower the body type as fallback.
+                self.lower_type(body)
+            }
         }
     }
 

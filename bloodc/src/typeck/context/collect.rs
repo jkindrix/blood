@@ -1482,6 +1482,7 @@ impl<'a> TypeContext<'a> {
                         // For parenthesized types, recurse
                         return self.resolve_effect_type(inner);
                     }
+                    ast::TypeKind::Forall { .. } => "forall type",
                     ast::TypeKind::Path(_) => unreachable!("Path type should be handled by the match above")
                 };
                 Err(TypeError::new(
