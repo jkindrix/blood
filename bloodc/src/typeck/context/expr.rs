@@ -872,12 +872,70 @@ impl<'a> TypeContext<'a> {
 
                     Err(self.error_type_not_found(&name, ty.span))
                 } else if path.segments.len() == 2 {
-                    // Two-segment path: Module::Type
-                    let _module_name = self.symbol_to_string(path.segments[0].name.node);
+                    // Two-segment path: Module::Type or Bridge::Type
+                    let module_name = self.symbol_to_string(path.segments[0].name.node);
                     let type_name = self.symbol_to_string(path.segments[1].name.node);
 
-                    // Look up the type directly by the second segment
-                    if let Some(def_id) = self.resolver.lookup_type(&type_name) {
+                    // First try to find the type's DefId in bridge definitions with matching namespace
+                    // Store found def_id and whether it's opaque (no type args)
+                    let mut found_def_id: Option<DefId> = None;
+                    let mut is_opaque = false;
+
+                    for bridge_info in &self.bridge_defs {
+                        if bridge_info.name == module_name {
+                            // Check opaque types (no type args)
+                            for opaque in &bridge_info.opaque_types {
+                                if opaque.name == type_name {
+                                    found_def_id = Some(opaque.def_id);
+                                    is_opaque = true;
+                                    break;
+                                }
+                            }
+                            if found_def_id.is_some() { break; }
+
+                            // Check type aliases
+                            for alias in &bridge_info.type_aliases {
+                                if alias.name == type_name {
+                                    found_def_id = Some(alias.def_id);
+                                    break;
+                                }
+                            }
+                            if found_def_id.is_some() { break; }
+
+                            // Check structs
+                            for struct_info in &bridge_info.structs {
+                                if struct_info.name == type_name {
+                                    found_def_id = Some(struct_info.def_id);
+                                    break;
+                                }
+                            }
+                            if found_def_id.is_some() { break; }
+
+                            // Check enums
+                            for enum_info in &bridge_info.enums {
+                                if enum_info.name == type_name {
+                                    found_def_id = Some(enum_info.def_id);
+                                    break;
+                                }
+                            }
+                            if found_def_id.is_some() { break; }
+
+                            // Check unions
+                            for union_info in &bridge_info.unions {
+                                if union_info.name == type_name {
+                                    found_def_id = Some(union_info.def_id);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    // If found in bridge, return with type args
+                    if let Some(def_id) = found_def_id {
+                        if is_opaque {
+                            // Opaque types don't have type arguments
+                            return Ok(Type::adt(def_id, Vec::new()));
+                        }
                         // Extract type arguments if any
                         let type_args = if let Some(ref args) = path.segments[1].args {
                             let mut parsed_args = Vec::new();
@@ -890,20 +948,41 @@ impl<'a> TypeContext<'a> {
                         } else {
                             Vec::new()
                         };
-
                         return Ok(Type::adt(def_id, type_args));
                     }
 
-                    Err(self.error_type_not_found(&type_name, ty.span))
+                    // Fall back to looking up type directly (for non-bridge modules)
+                    if let Some(def_id) = self.resolver.lookup_type(&type_name) {
+                        let type_args = if let Some(ref args) = path.segments[1].args {
+                            let mut parsed_args = Vec::new();
+                            for arg in &args.args {
+                                if let ast::TypeArg::Type(arg_ty) = arg {
+                                    parsed_args.push(self.ast_type_to_hir_type(arg_ty)?);
+                                }
+                            }
+                            parsed_args
+                        } else {
+                            Vec::new()
+                        };
+                        return Ok(Type::adt(def_id, type_args));
+                    }
+
+                    Err(self.error_type_not_found(&format!("{}::{}", module_name, type_name), ty.span))
                 } else {
-                    // More than two segments - not yet supported
+                    // More than two segments requires full module system (not yet implemented)
                     let path_str = path.segments.iter()
                         .map(|s| self.symbol_to_string(s.name.node))
                         .collect::<Vec<_>>()
                         .join("::");
                     Err(TypeError::new(
                         TypeErrorKind::UnsupportedFeature {
-                            feature: format!("type paths with more than 2 segments: {}", path_str),
+                            feature: format!(
+                                "type paths with more than 2 segments (`{}`). \
+                                 Blood currently supports single-segment types and two-segment \
+                                 paths (Module::Type). Full module hierarchies require the module \
+                                 system which is planned for a future release.",
+                                path_str
+                            ),
                         },
                         ty.span,
                     ))
@@ -2276,10 +2355,52 @@ impl<'a> TypeContext<'a> {
                 ));
             }
         } else {
-            return Err(TypeError::new(
-                TypeErrorKind::UnsupportedFeature {
-                    feature: "anonymous structs".to_string(),
-                },
+            // Anonymous record literal: { x: 1, y: 2 }
+            // Type-check each field and build a Record type
+            let mut hir_fields = Vec::new();
+            let mut record_fields = Vec::new();
+
+            for field in fields {
+                let field_name = field.name.node;
+
+                // Infer the value type (or look up variable for shorthand)
+                let value_expr = if let Some(value) = &field.value {
+                    self.infer_expr(value)?
+                } else {
+                    // Shorthand: { x } means { x: x }
+                    let path = ast::ExprPath {
+                        segments: vec![ast::ExprPathSegment {
+                            name: field.name.clone(),
+                            args: None,
+                        }],
+                        span: field.span,
+                    };
+                    let expr = ast::Expr {
+                        kind: ast::ExprKind::Path(path),
+                        span: field.span,
+                    };
+                    self.infer_expr(&expr)?
+                };
+
+                // Add to record type fields
+                record_fields.push(hir::RecordField {
+                    name: field_name,
+                    ty: value_expr.ty.clone(),
+                });
+
+                // Add to HIR expression fields
+                hir_fields.push(hir::RecordFieldExpr {
+                    name: field_name,
+                    value: value_expr,
+                });
+            }
+
+            // Create the record type
+            let result_ty = Type::record(record_fields, None);
+
+            return Ok(hir::Expr::new(
+                hir::ExprKind::Record { fields: hir_fields },
+                result_ty,
                 span,
             ));
         };
@@ -2388,6 +2509,7 @@ impl<'a> TypeContext<'a> {
             ast::FieldAccess::Named(name) => {
                 let field_name = self.symbol_to_string(name.node);
 
+                // Check ADT (struct) types
                 if let TypeKind::Adt { def_id, .. } = base_ty.kind() {
                     if let Some(struct_info) = self.struct_defs.get(def_id) {
                         if let Some(field_info) = struct_info.fields.iter().find(|f| f.name == field_name) {
@@ -2403,6 +2525,24 @@ impl<'a> TypeContext<'a> {
                             return Err(self.error_unknown_field(&base_ty, &field_name, span));
                         }
                     }
+                }
+
+                // Check anonymous record types
+                if let TypeKind::Record { fields, .. } = base_ty.kind() {
+                    for (idx, record_field) in fields.iter().enumerate() {
+                        let record_field_name = self.symbol_to_string(record_field.name);
+                        if record_field_name == field_name {
+                            return Ok(hir::Expr::new(
+                                hir::ExprKind::Field {
+                                    base: Box::new(base_expr),
+                                    field_idx: idx as u32,
+                                },
+                                record_field.ty.clone(),
+                                span,
+                            ));
+                        }
+                    }
+                    return Err(self.error_unknown_field(&base_ty, &field_name, span));
                 }
 
                 Err(TypeError::new(

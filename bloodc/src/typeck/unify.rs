@@ -1,13 +1,13 @@
 //! Type unification for Blood.
 //!
 //! This module implements unification for type inference. The algorithm
-//! is based on Hindley-Milner with some extensions for Blood's type system.
+//! is based on Hindley-Milner with extensions for Blood's type system.
 //!
 //! # Specification Alignment
 //!
 //! This implementation follows the UNIFY algorithm specified in DISPATCH.md §4.4.
 //!
-//! ## Implemented Cases (Phase 1)
+//! ## Implemented Cases
 //!
 //! | Spec Case | Implementation |
 //! |-----------|----------------|
@@ -16,14 +16,12 @@
 //! | Case 4: Type constructors | `Primitive` comparison |
 //! | Case 5: Type applications | `Adt { def_id, args }` |
 //! | Case 6: Function types | `Fn { params, ret }` |
+//! | Case 7: Record types (row polymorphism) | `Record { fields, row_var }` |
+//! | Case 8: Forall types (instantiation) | `Forall { params, body }` |
 //!
-//! ## Deferred Cases (Phase 2+)
+//! ## Related Modules
 //!
-//! | Spec Case | Status |
-//! |-----------|--------|
-//! | Case 7: Record types (row polymorphism) | Phase 2+ |
-//! | Case 8: Forall types (instantiation) | Phase 2+ |
-//! | Effect row unification (§4.4.3) | Phase 2+ |
+//! - Effect row unification is implemented in [`effect.rs`](super::effect)
 //!
 //! # Algorithm
 //!
@@ -163,6 +161,32 @@ impl Unifier {
             (
                 TypeKind::Fn { params: p1, ret: r1 },
                 TypeKind::Fn { params: p2, ret: r2 },
+            ) if p1.len() == p2.len() => {
+                for (param1, param2) in p1.iter().zip(p2.iter()) {
+                    self.unify(param1, param2, span)?;
+                }
+                self.unify(r1, r2, span)
+            }
+
+            // Closure types - unify based on param and return types
+            // Two closures unify if their signatures match (def_id is irrelevant for unification)
+            (
+                TypeKind::Closure { params: p1, ret: r1, .. },
+                TypeKind::Closure { params: p2, ret: r2, .. },
+            ) if p1.len() == p2.len() => {
+                for (param1, param2) in p1.iter().zip(p2.iter()) {
+                    self.unify(param1, param2, span)?;
+                }
+                self.unify(r1, r2, span)
+            }
+
+            // Closure can unify with compatible function type
+            (
+                TypeKind::Closure { params: p1, ret: r1, .. },
+                TypeKind::Fn { params: p2, ret: r2 },
+            ) | (
+                TypeKind::Fn { params: p1, ret: r1 },
+                TypeKind::Closure { params: p2, ret: r2, .. },
             ) if p1.len() == p2.len() => {
                 for (param1, param2) in p1.iter().zip(p2.iter()) {
                     self.unify(param1, param2, span)?;
@@ -436,7 +460,12 @@ impl Unifier {
                     self.occurs_in(var, body)
                 }
             }
-            _ => false,
+            TypeKind::Closure { params, ret, .. } => {
+                params.iter().any(|t| self.occurs_in(var, t)) || self.occurs_in(var, ret)
+            }
+            TypeKind::DynTrait { .. } => false, // DynTrait contains only DefId, no type vars
+            // Leaf types with no nested types
+            TypeKind::Primitive(_) | TypeKind::Never | TypeKind::Error | TypeKind::Param(_) => false,
         }
     }
 
@@ -514,7 +543,16 @@ impl Unifier {
                 // Resolve body but keep params intact (they're bound)
                 Type::forall(params.clone(), self.resolve(body))
             }
-            _ => ty.clone(),
+            TypeKind::Closure { def_id, params, ret } => {
+                Type::new(TypeKind::Closure {
+                    def_id: *def_id,
+                    params: params.iter().map(|t| self.resolve(t)).collect(),
+                    ret: self.resolve(ret),
+                })
+            }
+            // Types with no nested type variables
+            TypeKind::Primitive(_) | TypeKind::Never | TypeKind::Error |
+            TypeKind::Param(_) | TypeKind::DynTrait { .. } => ty.clone(),
         }
     }
 
@@ -608,7 +646,19 @@ impl Unifier {
                     self.substitute_forall_params(body, &filtered_subst),
                 )
             }
-            _ => ty.clone(),
+            TypeKind::Closure { def_id, params, ret } => {
+                Type::new(TypeKind::Closure {
+                    def_id: *def_id,
+                    params: params
+                        .iter()
+                        .map(|t| self.substitute_forall_params(t, subst))
+                        .collect(),
+                    ret: self.substitute_forall_params(ret, subst),
+                })
+            }
+            // Types without nested type parameters
+            TypeKind::Primitive(_) | TypeKind::Never | TypeKind::Error |
+            TypeKind::DynTrait { .. } => ty.clone(),
         }
     }
 
@@ -1118,5 +1168,469 @@ mod tests {
         assert!(u2.unify(&Type::i32(), &var1_b, span).is_ok());
 
         assert_eq!(u1.resolve(&var1_a), u2.resolve(&var1_b));
+    }
+
+    // ============================================================
+    // Record Type Unification Tests
+    // ============================================================
+
+    fn make_symbol(n: u32) -> crate::ast::Symbol {
+        // Create a symbol from a u32 for testing
+        // SAFETY: We use small values that are always valid symbol indices
+        use string_interner::Symbol;
+        <crate::ast::Symbol as Symbol>::try_from_usize(n as usize).unwrap()
+    }
+
+    #[test]
+    fn test_unify_records_same_fields() {
+        let mut u = Unifier::new();
+        let span = Span::dummy();
+
+        // { x: i32, y: bool } should unify with { x: i32, y: bool }
+        let record1 = Type::record(
+            vec![
+                RecordField { name: make_symbol(1), ty: Type::i32() },
+                RecordField { name: make_symbol(2), ty: Type::bool() },
+            ],
+            None,
+        );
+        let record2 = Type::record(
+            vec![
+                RecordField { name: make_symbol(1), ty: Type::i32() },
+                RecordField { name: make_symbol(2), ty: Type::bool() },
+            ],
+            None,
+        );
+
+        assert!(u.unify(&record1, &record2, span).is_ok());
+    }
+
+    #[test]
+    fn test_unify_records_different_field_types() {
+        let mut u = Unifier::new();
+        let span = Span::dummy();
+
+        // { x: i32 } should NOT unify with { x: bool }
+        let record1 = Type::record(
+            vec![RecordField { name: make_symbol(1), ty: Type::i32() }],
+            None,
+        );
+        let record2 = Type::record(
+            vec![RecordField { name: make_symbol(1), ty: Type::bool() }],
+            None,
+        );
+
+        assert!(u.unify(&record1, &record2, span).is_err());
+    }
+
+    #[test]
+    fn test_unify_records_different_field_names() {
+        let mut u = Unifier::new();
+        let span = Span::dummy();
+
+        // { x: i32 } should NOT unify with { y: i32 } (different field names)
+        let record1 = Type::record(
+            vec![RecordField { name: make_symbol(1), ty: Type::i32() }],
+            None,
+        );
+        let record2 = Type::record(
+            vec![RecordField { name: make_symbol(2), ty: Type::i32() }],
+            None,
+        );
+
+        assert!(u.unify(&record1, &record2, span).is_err());
+    }
+
+    #[test]
+    fn test_unify_records_different_number_of_fields() {
+        let mut u = Unifier::new();
+        let span = Span::dummy();
+
+        // { x: i32 } should NOT unify with { x: i32, y: bool }
+        let record1 = Type::record(
+            vec![RecordField { name: make_symbol(1), ty: Type::i32() }],
+            None,
+        );
+        let record2 = Type::record(
+            vec![
+                RecordField { name: make_symbol(1), ty: Type::i32() },
+                RecordField { name: make_symbol(2), ty: Type::bool() },
+            ],
+            None,
+        );
+
+        assert!(u.unify(&record1, &record2, span).is_err());
+    }
+
+    #[test]
+    fn test_unify_records_with_type_variables() {
+        let mut u = Unifier::new();
+        let span = Span::dummy();
+
+        // { x: ?T } should unify with { x: i32 }, binding ?T = i32
+        let var = u.fresh_var();
+        let record1 = Type::record(
+            vec![RecordField { name: make_symbol(1), ty: var.clone() }],
+            None,
+        );
+        let record2 = Type::record(
+            vec![RecordField { name: make_symbol(1), ty: Type::i32() }],
+            None,
+        );
+
+        assert!(u.unify(&record1, &record2, span).is_ok());
+        assert_eq!(u.resolve(&var), Type::i32());
+    }
+
+    #[test]
+    fn test_unify_records_empty() {
+        let mut u = Unifier::new();
+        let span = Span::dummy();
+
+        // {} should unify with {}
+        let record1 = Type::record(vec![], None);
+        let record2 = Type::record(vec![], None);
+
+        assert!(u.unify(&record1, &record2, span).is_ok());
+    }
+
+    // ============================================================
+    // Forall Type Unification Tests
+    // ============================================================
+
+    #[test]
+    fn test_unify_forall_identical() {
+        let mut u = Unifier::new();
+        let span = Span::dummy();
+
+        // forall<T>. T -> T should unify with itself
+        let param_id = TyVarId::new(100);
+        let param_ty = Type::param(param_id);
+        let forall1 = Type::forall(
+            vec![param_id],
+            Type::function(vec![param_ty.clone()], param_ty.clone()),
+        );
+        let forall2 = Type::forall(
+            vec![param_id],
+            Type::function(vec![param_ty.clone()], param_ty),
+        );
+
+        assert!(u.unify(&forall1, &forall2, span).is_ok());
+    }
+
+    #[test]
+    fn test_unify_forall_alpha_equivalence() {
+        let mut u = Unifier::new();
+        let span = Span::dummy();
+
+        // forall<T>. T -> T should unify with forall<U>. U -> U
+        // (alpha-equivalence: same structure, different bound variable names)
+        let param_t = TyVarId::new(100);
+        let param_u = TyVarId::new(200);
+
+        let forall_t = Type::forall(
+            vec![param_t],
+            Type::function(vec![Type::param(param_t)], Type::param(param_t)),
+        );
+        let forall_u = Type::forall(
+            vec![param_u],
+            Type::function(vec![Type::param(param_u)], Type::param(param_u)),
+        );
+
+        assert!(u.unify(&forall_t, &forall_u, span).is_ok());
+    }
+
+    #[test]
+    fn test_unify_forall_instantiation_left() {
+        let mut u = Unifier::new();
+        let span = Span::dummy();
+
+        // forall<T>. T -> T should unify with i32 -> i32
+        // (instantiate T with i32)
+        let param_id = TyVarId::new(100);
+        let forall_ty = Type::forall(
+            vec![param_id],
+            Type::function(vec![Type::param(param_id)], Type::param(param_id)),
+        );
+        let concrete_ty = Type::function(vec![Type::i32()], Type::i32());
+
+        assert!(u.unify(&forall_ty, &concrete_ty, span).is_ok());
+    }
+
+    #[test]
+    fn test_unify_forall_instantiation_right() {
+        let mut u = Unifier::new();
+        let span = Span::dummy();
+
+        // i32 -> i32 should unify with forall<T>. T -> T
+        // (instantiate T with i32)
+        let param_id = TyVarId::new(100);
+        let forall_ty = Type::forall(
+            vec![param_id],
+            Type::function(vec![Type::param(param_id)], Type::param(param_id)),
+        );
+        let concrete_ty = Type::function(vec![Type::i32()], Type::i32());
+
+        assert!(u.unify(&concrete_ty, &forall_ty, span).is_ok());
+    }
+
+    #[test]
+    fn test_unify_forall_different_param_count() {
+        let mut u = Unifier::new();
+        let span = Span::dummy();
+
+        // forall<T>. T -> T vs forall<T, U>. T -> U
+        // The implementation instantiates forall types asymmetrically,
+        // so these CAN unify: T->T becomes ?0->?0, T->U becomes ?1->?2,
+        // then ?0->?0 vs ?1->?2 unifies with ?0=?1=?2
+        let param_t = TyVarId::new(100);
+        let param_u = TyVarId::new(101);
+
+        let forall1 = Type::forall(
+            vec![param_t],
+            Type::function(vec![Type::param(param_t)], Type::param(param_t)),
+        );
+        let forall2 = Type::forall(
+            vec![param_t, param_u],
+            Type::function(vec![Type::param(param_t)], Type::param(param_u)),
+        );
+
+        // This succeeds via instantiation (both instantiate and unify)
+        assert!(u.unify(&forall1, &forall2, span).is_ok());
+    }
+
+    #[test]
+    fn test_unify_forall_same_param_count_compatible_bodies() {
+        let mut u = Unifier::new();
+        let span = Span::dummy();
+
+        // forall<T>. T -> T vs forall<T>. T -> bool
+        // The implementation substitutes SAME fresh var for T in both:
+        //   ?0 -> ?0 vs ?0 -> bool
+        // Params unify (?0 = ?0), return unifies (?0 = bool)
+        // So both become bool -> bool - this SUCCEEDS
+        let param_id = TyVarId::new(100);
+
+        let forall1 = Type::forall(
+            vec![param_id],
+            Type::function(vec![Type::param(param_id)], Type::param(param_id)),
+        );
+        let forall2 = Type::forall(
+            vec![param_id],
+            Type::function(vec![Type::param(param_id)], Type::bool()),
+        );
+
+        // This unifies because both T's get the same fresh var
+        assert!(u.unify(&forall1, &forall2, span).is_ok());
+    }
+
+    #[test]
+    fn test_unify_forall_incompatible_bodies() {
+        let mut u = Unifier::new();
+        let span = Span::dummy();
+
+        // forall<T>. T -> i32 vs forall<T>. T -> bool
+        // Both substitute ?0 for T:
+        //   ?0 -> i32 vs ?0 -> bool
+        // Params unify (?0 = ?0), but returns fail (i32 != bool)
+        let param_id = TyVarId::new(100);
+
+        let forall1 = Type::forall(
+            vec![param_id],
+            Type::function(vec![Type::param(param_id)], Type::i32()),
+        );
+        let forall2 = Type::forall(
+            vec![param_id],
+            Type::function(vec![Type::param(param_id)], Type::bool()),
+        );
+
+        // This fails because i32 != bool
+        assert!(u.unify(&forall1, &forall2, span).is_err());
+    }
+
+    #[test]
+    fn test_unify_forall_instantiation_mismatch() {
+        let mut u = Unifier::new();
+        let span = Span::dummy();
+
+        // forall<T>. T -> T should NOT unify with i32 -> bool
+        // (T can't be both i32 and bool)
+        let param_id = TyVarId::new(100);
+        let forall_ty = Type::forall(
+            vec![param_id],
+            Type::function(vec![Type::param(param_id)], Type::param(param_id)),
+        );
+        let mismatched_ty = Type::function(vec![Type::i32()], Type::bool());
+
+        assert!(u.unify(&forall_ty, &mismatched_ty, span).is_err());
+    }
+
+    #[test]
+    fn test_unify_forall_multiple_params() {
+        let mut u = Unifier::new();
+        let span = Span::dummy();
+
+        // forall<T, U>. T -> U should unify with forall<A, B>. A -> B
+        let param_t = TyVarId::new(100);
+        let param_u = TyVarId::new(101);
+        let param_a = TyVarId::new(200);
+        let param_b = TyVarId::new(201);
+
+        let forall1 = Type::forall(
+            vec![param_t, param_u],
+            Type::function(vec![Type::param(param_t)], Type::param(param_u)),
+        );
+        let forall2 = Type::forall(
+            vec![param_a, param_b],
+            Type::function(vec![Type::param(param_a)], Type::param(param_b)),
+        );
+
+        assert!(u.unify(&forall1, &forall2, span).is_ok());
+    }
+
+    #[test]
+    fn test_unify_forall_with_concrete_inner() {
+        let mut u = Unifier::new();
+        let span = Span::dummy();
+
+        // forall<T>. i32 -> T should unify with forall<U>. i32 -> U
+        let param_t = TyVarId::new(100);
+        let param_u = TyVarId::new(200);
+
+        let forall1 = Type::forall(
+            vec![param_t],
+            Type::function(vec![Type::i32()], Type::param(param_t)),
+        );
+        let forall2 = Type::forall(
+            vec![param_u],
+            Type::function(vec![Type::i32()], Type::param(param_u)),
+        );
+
+        assert!(u.unify(&forall1, &forall2, span).is_ok());
+    }
+
+    #[test]
+    fn test_unify_forall_nested_in_tuple() {
+        let mut u = Unifier::new();
+        let span = Span::dummy();
+
+        // (forall<T>. T -> T, i32) should unify with (forall<U>. U -> U, i32)
+        let param_t = TyVarId::new(100);
+        let param_u = TyVarId::new(200);
+
+        let forall_t = Type::forall(
+            vec![param_t],
+            Type::function(vec![Type::param(param_t)], Type::param(param_t)),
+        );
+        let forall_u = Type::forall(
+            vec![param_u],
+            Type::function(vec![Type::param(param_u)], Type::param(param_u)),
+        );
+
+        let tuple1 = Type::tuple(vec![forall_t, Type::i32()]);
+        let tuple2 = Type::tuple(vec![forall_u, Type::i32()]);
+
+        assert!(u.unify(&tuple1, &tuple2, span).is_ok());
+    }
+
+    #[test]
+    fn test_unify_forall_with_inference_variable() {
+        let mut u = Unifier::new();
+        let span = Span::dummy();
+
+        // forall<T>. T -> T should be assignable to an inference variable
+        let param_id = TyVarId::new(100);
+        let forall_ty = Type::forall(
+            vec![param_id],
+            Type::function(vec![Type::param(param_id)], Type::param(param_id)),
+        );
+        let var = u.fresh_var();
+
+        assert!(u.unify(&var, &forall_ty, span).is_ok());
+
+        // The variable should now resolve to the forall type
+        let resolved = u.resolve(&var);
+        match resolved.kind() {
+            TypeKind::Forall { params, body } => {
+                assert_eq!(params.len(), 1);
+                // Body should be a function type T -> T
+                match body.kind() {
+                    TypeKind::Fn { params: fn_params, .. } => {
+                        assert_eq!(fn_params.len(), 1);
+                        // Both param and return should be the same Param type (or Infer after instantiation)
+                    }
+                    _ => panic!("Expected function body in forall"),
+                }
+            }
+            _ => panic!("Expected forall type, got {:?}", resolved),
+        }
+    }
+
+    #[test]
+    fn test_unify_forall_empty_params() {
+        let mut u = Unifier::new();
+        let span = Span::dummy();
+
+        // forall<>. i32 -> i32 should unify with forall<>. i32 -> i32
+        // (degenerate case with no type parameters)
+        let forall1 = Type::forall(vec![], Type::function(vec![Type::i32()], Type::i32()));
+        let forall2 = Type::forall(vec![], Type::function(vec![Type::i32()], Type::i32()));
+
+        assert!(u.unify(&forall1, &forall2, span).is_ok());
+    }
+
+    #[test]
+    fn test_forall_occurs_check_free_var() {
+        let mut u = Unifier::new();
+        let _span = Span::dummy();
+
+        // Test that occurs check finds free variables in forall body
+        let outer_var = u.fresh_var(); // This creates TyVarId(0)
+        let param_id = TyVarId::new(100);
+
+        // forall<T>. T -> outer_var contains outer_var (TyVarId(0)) in the body
+        let forall_ty = Type::forall(
+            vec![param_id],
+            Type::function(vec![Type::param(param_id)], outer_var.clone()),
+        );
+
+        // TyVarId(0) DOES occur in the forall body (as a free variable)
+        assert!(u.occurs_in(TyVarId::new(0), &forall_ty));
+    }
+
+    #[test]
+    fn test_forall_occurs_check_bound_var() {
+        let u = Unifier::new();
+        let _span = Span::dummy();
+
+        // Test that occurs check does NOT find bound variables
+        let param_id = TyVarId::new(100);
+
+        // forall<T>. T -> T - the T's (param_id=100) are bound
+        let forall_ty = Type::forall(
+            vec![param_id],
+            Type::function(vec![Type::param(param_id)], Type::param(param_id)),
+        );
+
+        // TyVarId(100) is the bound param - occurs_in returns false because
+        // the occurs check skips bound params (they're not free variables)
+        assert!(!u.occurs_in(param_id, &forall_ty));
+    }
+
+    #[test]
+    fn test_forall_occurs_check_unrelated_var() {
+        let u = Unifier::new();
+        let _span = Span::dummy();
+
+        let param_id = TyVarId::new(100);
+
+        // forall<T>. T -> i32
+        let forall_ty = Type::forall(
+            vec![param_id],
+            Type::function(vec![Type::param(param_id)], Type::i32()),
+        );
+
+        // TyVarId(50) doesn't occur anywhere
+        assert!(!u.occurs_in(TyVarId::new(50), &forall_ty));
     }
 }

@@ -10,7 +10,7 @@ use crate::hir::{self, LocalId, Type};
 use crate::span::Span;
 
 use super::TypeContext;
-use super::super::error::TypeError;
+use super::super::error::{TypeError, TypeErrorKind};
 use super::super::resolve::ScopeKind;
 
 impl<'a> TypeContext<'a> {
@@ -57,7 +57,7 @@ impl<'a> TypeContext<'a> {
 
         // Process closure parameters
         let mut param_types = Vec::new();
-        for param in params {
+        for (i, param) in params.iter().enumerate() {
             let param_ty = if let Some(ty) = &param.ty {
                 self.ast_type_to_hir_type(ty)?
             } else {
@@ -65,35 +65,107 @@ impl<'a> TypeContext<'a> {
                 self.unifier.fresh_var()
             };
 
-            // Extract name and mutability from parameter pattern
-            let (param_name, mutable) = match &param.pattern.kind {
+            // Handle parameter pattern
+            match &param.pattern.kind {
                 ast::PatternKind::Ident { name, mutable, .. } => {
-                    (self.symbol_to_string(name.node), *mutable)
+                    let param_name = self.symbol_to_string(name.node);
+                    let local_id = self.resolver.define_local(
+                        param_name.clone(),
+                        param_ty.clone(),
+                        *mutable,
+                        param.span,
+                    )?;
+
+                    self.locals.push(hir::Local {
+                        id: local_id,
+                        ty: param_ty.clone(),
+                        mutable: *mutable,
+                        name: Some(param_name),
+                        span: param.span,
+                    });
                 }
                 ast::PatternKind::Wildcard => {
-                    (format!("_param{}", param_types.len()), false)
+                    let param_name = format!("_param{i}");
+                    let local_id = self.resolver.define_local(
+                        param_name.clone(),
+                        param_ty.clone(),
+                        false,
+                        param.span,
+                    )?;
+
+                    self.locals.push(hir::Local {
+                        id: local_id,
+                        ty: param_ty.clone(),
+                        mutable: false,
+                        name: Some(param_name),
+                        span: param.span,
+                    });
+                }
+                ast::PatternKind::Tuple { fields, .. } => {
+                    // Tuple destructuring in closure parameters: |(x, y)|
+                    // Create a hidden parameter local, then define the pattern bindings
+                    let hidden_name = format!("__cparam{i}");
+                    let _hidden_local_id = self.resolver.define_local(
+                        hidden_name.clone(),
+                        param_ty.clone(),
+                        false,
+                        param.span,
+                    )?;
+
+                    // Now define the pattern bindings from the tuple type
+                    let elem_types = match param_ty.kind() {
+                        hir::TypeKind::Tuple(elems) => elems.clone(),
+                        hir::TypeKind::Infer(_) => {
+                            // Type not yet known - create fresh variables for each element
+                            let vars: Vec<Type> = (0..fields.len())
+                                .map(|_| self.unifier.fresh_var())
+                                .collect();
+                            // Unify with the param type to establish the tuple structure
+                            let tuple_ty = Type::tuple(vars.clone());
+                            self.unifier.unify(&param_ty, &tuple_ty, param.span)?;
+                            vars
+                        }
+                        _ => {
+                            return Err(TypeError::new(
+                                TypeErrorKind::NotATuple { ty: param_ty.clone() },
+                                param.span,
+                            ));
+                        }
+                    };
+
+                    if fields.len() != elem_types.len() {
+                        return Err(TypeError::new(
+                            TypeErrorKind::WrongArity {
+                                expected: elem_types.len(),
+                                found: fields.len(),
+                            },
+                            param.span,
+                        ));
+                    }
+
+                    // Define each element of the tuple pattern
+                    for (field_pat, elem_ty) in fields.iter().zip(elem_types.iter()) {
+                        self.define_pattern(field_pat, elem_ty.clone())?;
+                    }
+
+                    // Add a local for the whole parameter (for param_count tracking)
+                    self.locals.push(hir::Local {
+                        id: self.resolver.next_local_id(),
+                        ty: param_ty.clone(),
+                        mutable: false,
+                        name: Some(hidden_name),
+                        span: param.span,
+                    });
+                }
+                ast::PatternKind::Paren(inner) => {
+                    // Parenthesized pattern - recurse through it
+                    self.define_pattern(inner, param_ty.clone())?;
                 }
                 _ => {
-                    // Complex pattern - generate placeholder
-                    (format!("param{}", param_types.len()), false)
+                    // Other complex patterns - use define_pattern which will error appropriately
+                    self.define_pattern(&param.pattern, param_ty.clone())?;
                 }
-            };
-
-            // Define parameter in closure scope
-            let local_id = self.resolver.define_local(
-                param_name.clone(),
-                param_ty.clone(),
-                mutable,
-                param.span,
-            )?;
-
-            self.locals.push(hir::Local {
-                id: local_id,
-                ty: param_ty.clone(),
-                mutable,
-                name: Some(param_name),
-                span: param.span,
-            });
+            }
 
             param_types.push(param_ty);
         }
@@ -321,6 +393,11 @@ impl<'a> TypeContext<'a> {
                 }
                 if let Some(e) = end {
                     self.collect_captures(e, is_move, captures, seen);
+                }
+            }
+            hir::ExprKind::Record { fields } => {
+                for field in fields {
+                    self.collect_captures(&field.value, is_move, captures, seen);
                 }
             }
             // These don't contain local references directly

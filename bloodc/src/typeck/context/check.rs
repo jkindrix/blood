@@ -534,6 +534,30 @@ impl<'a> TypeContext<'a> {
                 ));
             }
 
+            // Check linearity constraint for deep handlers with linear state
+            // E0304: Linear values cannot be captured in multi-shot handlers
+            if handler_info.kind == ast::HandlerKind::Deep && self.resume_count_in_current_op > 1 {
+                // Check if any handler state field is a linear type
+                for (i, state_field) in handler.state.iter().enumerate() {
+                    let field_ty = &handler_info.fields[i].ty;
+                    if self.is_type_linear(field_ty) {
+                        let field_name = self.symbol_to_string(state_field.name.node);
+                        return Err(TypeError::new(
+                            TypeErrorKind::LinearValueInMultiShotHandler {
+                                operation: op_name.clone(),
+                                field_name,
+                                field_type: field_ty.to_string(),
+                            },
+                            op_impl.span,
+                        ).with_help(
+                            "linear values must be used exactly once, but multi-shot handlers \
+                             can resume multiple times. Consider using an affine type or \
+                             restructuring to single-shot resumption."
+                        ));
+                    }
+                }
+            }
+
             // Create body
             let body_id = hir::BodyId::new(self.next_body_id);
             self.next_body_id += 1;

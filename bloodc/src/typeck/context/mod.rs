@@ -602,6 +602,34 @@ impl<'a> TypeContext<'a> {
         format!("{}", ty)
     }
 
+    /// Check if a type is a linear type (must be used exactly once).
+    ///
+    /// Linear types are specified with the `linear T` syntax in Blood.
+    /// They are critical for effect handler linearity checking (E0304):
+    /// multi-shot handlers cannot safely capture linear values.
+    ///
+    /// Note: Linear types are planned for Phase 3. This method is
+    /// infrastructure for when that feature is implemented.
+    pub(crate) fn is_type_linear(&self, ty: &Type) -> bool {
+        // Phase 3: Implement linear type detection
+        // When TypeKind::Ownership is added to HIR, check:
+        // matches!(ty.kind(), TypeKind::Ownership { qualifier: OwnershipQualifier::Linear, .. })
+        //
+        // For now, return false since linear types aren't yet in HIR
+        let _ = ty;
+        false
+    }
+
+    /// Check if a type is an affine type (may be used at most once).
+    ///
+    /// Affine types are specified with the `affine T` syntax in Blood.
+    /// Unlike linear types, affine values can be safely dropped without use.
+    pub(crate) fn is_type_affine(&self, ty: &Type) -> bool {
+        // Phase 3: Implement affine type detection
+        let _ = ty;
+        false
+    }
+
     // Static zonk functions that take a Unifier reference
     // These are used to resolve type variables before codegen
 
@@ -845,6 +873,14 @@ impl<'a> TypeContext<'a> {
             }
             hir::ExprKind::Unsafe(inner) => {
                 hir::ExprKind::Unsafe(Box::new(Self::zonk_expr_with_unifier(unifier, *inner)))
+            }
+            hir::ExprKind::Record { fields } => {
+                hir::ExprKind::Record {
+                    fields: fields.into_iter().map(|f| hir::RecordFieldExpr {
+                        name: f.name,
+                        value: Self::zonk_expr_with_unifier(unifier, f.value),
+                    }).collect(),
+                }
             }
             kind @ (hir::ExprKind::Literal(_)
                 | hir::ExprKind::Local(_)

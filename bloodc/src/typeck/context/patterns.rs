@@ -481,12 +481,10 @@ impl<'a> TypeContext<'a> {
                 }
             }
             ast::PatternKind::Rest => {
-                return Err(TypeError::new(
-                    TypeErrorKind::UnsupportedFeature {
-                        feature: "rest patterns (..) are not yet supported".to_string(),
-                    },
-                    pattern.span,
-                ));
+                // Standalone rest pattern (..) matches anything and is irrefutable.
+                // This is valid in Rust: `match x { .. => () }` matches any value.
+                // We lower it to a wildcard pattern in HIR.
+                hir::PatternKind::Wildcard
             }
             ast::PatternKind::Ref { mutable, inner } => {
                 match expected_ty.kind() {
@@ -624,6 +622,22 @@ impl<'a> TypeContext<'a> {
                     }
                 };
 
+                // Helper to check if a pattern is a binding rest pattern (x @ ..)
+                fn is_binding_rest_pattern(pat: &ast::Pattern) -> bool {
+                    matches!(
+                        &pat.kind,
+                        ast::PatternKind::Ident { subpattern: Some(sub), .. }
+                            if matches!(sub.kind, ast::PatternKind::Rest)
+                    )
+                }
+
+                // Find binding rest pattern (x @ ..) in elements if rest_pos is None
+                let binding_rest_idx = if rest_pos.is_none() {
+                    elements.iter().position(is_binding_rest_pattern)
+                } else {
+                    None
+                };
+
                 let (prefix_pats, rest_pattern, suffix_pats) = if let Some(rest_idx) = rest_pos {
                     let rest_idx = *rest_idx;
                     // Parser stores elements WITHOUT the Rest pattern itself.
@@ -637,6 +651,59 @@ impl<'a> TypeContext<'a> {
                         ty: Type::slice(elem_ty.clone()),
                         span: pattern.span,
                     }));
+                    (prefix, rest_pat, suffix)
+                } else if let Some(bind_idx) = binding_rest_idx {
+                    // Handle binding rest pattern: [first, middle @ .., last]
+                    let prefix: Vec<_> = elements.iter().take(bind_idx).cloned().collect();
+                    let suffix: Vec<_> = elements.iter().skip(bind_idx + 1).cloned().collect();
+
+                    // Extract the binding information from the ident @ .. pattern
+                    let binding_pat = &elements[bind_idx];
+                    let rest_pat = if let ast::PatternKind::Ident { name, mutable, by_ref, .. } = &binding_pat.kind {
+                        // Create a binding pattern for the rest slice
+                        // The base type is a slice of the element type
+                        let base_slice_ty = Type::slice(elem_ty.clone());
+
+                        // If by_ref is true (ref rest @ ..), the binding's type is a reference
+                        // to the slice rather than the slice itself
+                        let binding_ty = if *by_ref {
+                            Type::reference(base_slice_ty, *mutable)
+                        } else {
+                            base_slice_ty
+                        };
+
+                        let name_str = self.symbol_to_string(name.node);
+
+                        // Define the local variable for the binding
+                        let local_id = self.resolver.define_local(
+                            name_str.clone(),
+                            binding_ty.clone(),
+                            *mutable,
+                            binding_pat.span,
+                        )?;
+
+                        self.locals.push(hir::Local {
+                            id: local_id,
+                            ty: binding_ty.clone(),
+                            mutable: *mutable,
+                            name: Some(name_str),
+                            span: binding_pat.span,
+                        });
+
+                        // Create the HIR binding pattern
+                        Some(Box::new(hir::Pattern {
+                            kind: hir::PatternKind::Binding {
+                                local_id,
+                                mutable: *mutable,
+                                subpattern: None,
+                            },
+                            ty: binding_ty,
+                            span: binding_pat.span,
+                        }))
+                    } else {
+                        // Should not happen due to is_binding_rest_pattern check
+                        None
+                    };
                     (prefix, rest_pat, suffix)
                 } else {
                     (elements.clone(), None, Vec::new())

@@ -216,6 +216,12 @@ impl TypeError {
                     "shallow handler operation `{operation}` calls resume {count} times, but shallow handlers require single-shot semantics (at most 1 resume)"
                 ),
             ),
+            TypeErrorKind::LinearValueInMultiShotHandler { operation, field_name, field_type } => (
+                "E0304",
+                format!(
+                    "linear value `{field_name}: {field_type}` captured in multi-shot handler operation `{operation}`"
+                ),
+            ),
 
             // Ownership errors (E04xx)
             TypeErrorKind::MutableBorrow { reason } => (
@@ -456,6 +462,14 @@ pub enum TypeErrorKind {
     MultipleResumesInShallowHandler {
         operation: String,
         count: usize,
+    },
+    /// Linear value captured in a multi-shot (deep) handler operation.
+    /// Linear values must be used exactly once, but multi-shot handlers can
+    /// resume multiple times, which would duplicate the linear value.
+    LinearValueInMultiShotHandler {
+        operation: String,
+        field_name: String,
+        field_type: String,
     },
     /// Trait not found.
     TraitNotFound {
