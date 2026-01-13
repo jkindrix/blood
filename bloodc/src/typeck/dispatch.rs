@@ -775,6 +775,18 @@ impl<'a> DispatchResolver<'a> {
                 }
             }
 
+            // Ownership types: match inner types
+            TypeKind::Ownership { inner: param_inner, qualifier: param_qual } => {
+                match arg_type.kind.as_ref() {
+                    TypeKind::Ownership { inner: arg_inner, qualifier: arg_qual }
+                        if param_qual == arg_qual =>
+                    {
+                        self.try_match_type_param(param_inner, arg_inner, valid_params, substitutions)
+                    }
+                    _ => Ok(()),
+                }
+            }
+
             // Ground types and non-extractable types: no type parameter substitutions possible.
             // These are either:
             // - Concrete types (Primitive, Never) where no generic extraction is needed
@@ -902,6 +914,11 @@ impl<'a> DispatchResolver<'a> {
                     params: params.clone(),
                     body: Box::new(new_body),
                 })
+            }
+
+            TypeKind::Ownership { qualifier, inner } => {
+                let new_inner = self.apply_substitutions(inner, substitutions);
+                Type::ownership(*qualifier, new_inner)
             }
 
             // Types that don't contain type parameters
@@ -1881,6 +1898,7 @@ impl<'a> ConstraintChecker<'a> {
             TypeKind::Infer(_) | TypeKind::Param(_) => false,
             TypeKind::Record { fields, .. } => fields.iter().all(|f| self.type_is_copy(&f.ty)),
             TypeKind::Forall { .. } => false, // Polymorphic types are not Copy
+            TypeKind::Ownership { inner, .. } => self.type_is_copy(inner), // Copy depends on inner type
         }
     }
 

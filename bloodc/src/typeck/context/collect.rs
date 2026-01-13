@@ -498,7 +498,7 @@ impl<'a> TypeContext<'a> {
 
         // Queue function for later body type-checking
         if func.body.is_some() {
-            self.pending_bodies.push((def_id, func.clone()));
+            self.pending_bodies.push((def_id, func.clone(), self.current_module));
         }
 
         Ok(())
@@ -1222,7 +1222,8 @@ impl<'a> TypeContext<'a> {
                     self.fn_sigs.insert(method_def_id, sig);
 
                     // Queue method body for type-checking
-                    self.pending_bodies.push((method_def_id, func.clone()));
+                    // Include module context if this impl is inside a module
+                    self.pending_bodies.push((method_def_id, func.clone(), self.current_module));
 
                     methods.push(ImplMethodInfo {
                         def_id: method_def_id,
@@ -1431,7 +1432,8 @@ impl<'a> TypeContext<'a> {
                     let has_default = func.body.is_some();
                     if has_default {
                         // Queue the default body for type-checking
-                        self.pending_bodies.push((method_def_id, func.clone()));
+                        // Trait methods don't need module context
+                        self.pending_bodies.push((method_def_id, func.clone(), None));
                     }
 
                     methods.push(TraitMethodInfo {
@@ -1653,6 +1655,10 @@ impl<'a> TypeContext<'a> {
                 // Inline module - push a new scope and collect declarations
                 self.resolver.push_scope(ScopeKind::Module, module.span);
 
+                // Track the current module for functions defined inside
+                let saved_module = self.current_module;
+                self.current_module = Some(def_id);
+
                 // Track the starting DefId counter
                 let def_id_start = self.resolver.current_def_id_counter();
 
@@ -1668,6 +1674,8 @@ impl<'a> TypeContext<'a> {
                     .map(DefId::new)
                     .collect();
 
+                // Restore previous module context
+                self.current_module = saved_module;
                 self.resolver.pop_scope();
 
                 // Store module info
@@ -1757,6 +1765,10 @@ impl<'a> TypeContext<'a> {
                 // Process the declarations in a new scope
                 self.resolver.push_scope(ScopeKind::Module, module.span);
 
+                // Track the current module for functions defined inside
+                let saved_module = self.current_module;
+                self.current_module = Some(def_id);
+
                 // Track the starting DefId counter
                 let def_id_start = self.resolver.current_def_id_counter();
 
@@ -1772,6 +1784,8 @@ impl<'a> TypeContext<'a> {
                     .map(DefId::new)
                     .collect();
 
+                // Restore previous module context
+                self.current_module = saved_module;
                 self.resolver.pop_scope();
 
                 // Store module info

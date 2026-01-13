@@ -1201,13 +1201,15 @@ impl<'a> TypeContext<'a> {
 
                 Ok(Type::forall(hir_params, body_ty))
             }
-            ast::TypeKind::Ownership { .. } => {
-                Err(TypeError::new(
-                    TypeErrorKind::UnsupportedFeature {
-                        feature: "ownership-qualified types".to_string(),
-                    },
-                    ty.span,
-                ))
+            ast::TypeKind::Ownership { qualifier, inner } => {
+                // Convert AST ownership qualifier to HIR
+                let hir_qualifier = match qualifier {
+                    ast::OwnershipQualifier::Linear => hir::ty::OwnershipQualifier::Linear,
+                    ast::OwnershipQualifier::Affine => hir::ty::OwnershipQualifier::Affine,
+                };
+                // Recursively convert the inner type
+                let inner_ty = self.ast_type_to_hir_type(inner)?;
+                Ok(Type::ownership(hir_qualifier, inner_ty))
             }
         }
     }
@@ -1411,7 +1413,12 @@ impl<'a> TypeContext<'a> {
                 (hir::LiteralValue::Float(value.0), ty)
             }
             // For suffixed literals or other types, use regular inference
-            _ => return self.infer_literal(lit, span),
+            // but still unify with expected type to bind inference variables
+            _ => {
+                let inferred = self.infer_literal(lit, span)?;
+                self.unifier.unify(expected, &inferred.ty, span)?;
+                return Ok(inferred);
+            }
         };
 
         // The type is now compatible with expected, but unify anyway to catch edge cases
@@ -1708,6 +1715,109 @@ impl<'a> TypeContext<'a> {
                 TypeErrorKind::NotFound { name: format!("{}::{}", first_name, second_name) },
                 span,
             ))
+        } else if path.segments.len() == 3 {
+            // Three-segment path: module::Type::method
+            let module_name = self.symbol_to_string(path.segments[0].name.node);
+            let type_name = self.symbol_to_string(path.segments[1].name.node);
+            let method_name = self.symbol_to_string(path.segments[2].name.node);
+
+            // First, find the module
+            let mut module_def_id: Option<DefId> = None;
+            for (def_id, info) in &self.module_defs {
+                if info.name == module_name {
+                    module_def_id = Some(*def_id);
+                    break;
+                }
+            }
+
+            if let Some(_mod_def_id) = module_def_id {
+                // Find the type (struct) by name
+                let mut type_def_id: Option<DefId> = None;
+                for (def_id, struct_info) in &self.struct_defs {
+                    if struct_info.name == type_name {
+                        type_def_id = Some(*def_id);
+                        break;
+                    }
+                }
+
+                if let Some(type_def_id) = type_def_id {
+                    // Now look for the associated function on this type
+                    let self_ty = Type::adt(type_def_id, Vec::new());
+                    let mut found_method: Option<(DefId, hir::FnSig, Vec<TyVarId>)> = None;
+
+                    for impl_block in &self.impl_blocks {
+                        // Only check inherent impls (not trait impls)
+                        if impl_block.trait_ref.is_some() {
+                            continue;
+                        }
+                        // Check if impl block applies to this type
+                        if !self.types_match_for_impl(&impl_block.self_ty, &self_ty) {
+                            continue;
+                        }
+                        // Look for a method with matching name
+                        for method in &impl_block.methods {
+                            if method.name == method_name {
+                                if let Some(sig) = self.fn_sigs.get(&method.def_id).cloned() {
+                                    found_method = Some((method.def_id, sig, impl_block.generics.clone()));
+                                    break;
+                                }
+                            }
+                        }
+                        if found_method.is_some() {
+                            break;
+                        }
+                    }
+
+                    if let Some((method_def_id, sig, impl_generics)) = found_method {
+                        // Combine impl-level and method-level generics for instantiation
+                        let all_generics: Vec<TyVarId> = impl_generics.iter()
+                            .chain(sig.generics.iter())
+                            .copied()
+                            .collect();
+
+                        let fn_ty = if all_generics.is_empty() {
+                            Type::function(sig.inputs.clone(), sig.output.clone())
+                        } else {
+                            // Create fresh type vars for all generics (impl + method)
+                            let mut substitution: HashMap<TyVarId, Type> = HashMap::new();
+                            for &old_var in &all_generics {
+                                let fresh_var = self.unifier.fresh_var();
+                                substitution.insert(old_var, fresh_var);
+                            }
+
+                            let subst_inputs: Vec<Type> = sig.inputs.iter()
+                                .map(|ty| self.substitute_type_vars(ty, &substitution))
+                                .collect();
+                            let subst_output = self.substitute_type_vars(&sig.output, &substitution);
+
+                            Type::function(subst_inputs, subst_output)
+                        };
+                        return Ok(hir::Expr::new(
+                            hir::ExprKind::Def(method_def_id),
+                            fn_ty,
+                            span,
+                        ));
+                    }
+
+                    // Type found but no matching method
+                    return Err(TypeError::new(
+                        TypeErrorKind::NotFound { name: format!("{}::{}::{}", module_name, type_name, method_name) },
+                        span,
+                    ));
+                } else {
+                    // Type not found in module
+                    return Err(self.error_type_not_found(
+                        &format!("{}::{}", module_name, type_name),
+                        span,
+                    ));
+                }
+            } else {
+                // Module not found
+                return Err(TypeError::new(
+                    TypeErrorKind::NotFound { name: format!("module '{}'", module_name) },
+                    span,
+                ));
+            }
         } else {
             let path_str = path.segments.iter()
                 .map(|s| self.symbol_to_string(s.name.node))
@@ -1715,7 +1825,7 @@ impl<'a> TypeContext<'a> {
                 .join("::");
             Err(TypeError::new(
                 TypeErrorKind::UnsupportedFeature {
-                    feature: format!("paths with more than 2 segments: {}", path_str),
+                    feature: format!("paths with more than 3 segments: {}", path_str),
                 },
                 span,
             ))
@@ -1924,12 +2034,24 @@ impl<'a> TypeContext<'a> {
             }
         }
 
+        // Resolve the callee's type to ensure inference variables are substituted.
+        // This is critical for generic function calls where the callee type contains
+        // type parameters that were unified during argument type checking.
+        let resolved_callee_expr = hir::Expr::new(
+            callee_expr.kind.clone(),
+            self.unifier.resolve(&callee_expr.ty),
+            callee_expr.span,
+        );
+
+        // Also resolve the return type
+        let resolved_return_type = self.unifier.resolve(&return_type);
+
         Ok(hir::Expr::new(
             hir::ExprKind::Call {
-                callee: Box::new(callee_expr),
+                callee: Box::new(resolved_callee_expr),
                 args: hir_args,
             },
-            return_type,
+            resolved_return_type,
             span,
         ))
     }
@@ -2727,10 +2849,76 @@ impl<'a> TypeContext<'a> {
                 } else {
                     return Err(self.error_type_not_found(&name, span));
                 }
+            } else if path.segments.len() == 2 {
+                // Two-segment path: Module::Struct
+                let module_name = self.symbol_to_string(path.segments[0].name.node);
+                let type_name = self.symbol_to_string(path.segments[1].name.node);
+
+                // First check bridge definitions
+                let mut found_def_id: Option<DefId> = None;
+                for bridge_info in &self.bridge_defs {
+                    if bridge_info.name == module_name {
+                        for struct_info in &bridge_info.structs {
+                            if struct_info.name == type_name {
+                                found_def_id = Some(struct_info.def_id);
+                                break;
+                            }
+                        }
+                    }
+                    if found_def_id.is_some() { break; }
+                }
+
+                if let Some(def_id) = found_def_id {
+                    if let Some(struct_info) = self.struct_defs.get(&def_id) {
+                        let result_ty = Type::adt(def_id, Vec::new());
+                        (def_id, struct_info.clone(), result_ty)
+                    } else {
+                        return Err(TypeError::new(
+                            TypeErrorKind::NotAStruct { ty: Type::adt(def_id, Vec::new()) },
+                            span,
+                        ));
+                    }
+                } else {
+                    // Try to find in module_defs
+                    let mut module_def_id: Option<DefId> = None;
+                    for (def_id, info) in &self.module_defs {
+                        if info.name == module_name {
+                            module_def_id = Some(*def_id);
+                            break;
+                        }
+                    }
+
+                    if let Some(_mod_def_id) = module_def_id {
+                        // Find the type in the module's items by looking up the struct definition
+                        let mut found_struct: Option<(DefId, super::StructInfo)> = None;
+                        for (def_id, struct_info) in &self.struct_defs {
+                            if struct_info.name == type_name {
+                                found_struct = Some((*def_id, struct_info.clone()));
+                                break;
+                            }
+                        }
+
+                        if let Some((def_id, struct_info)) = found_struct {
+                            let result_ty = Type::adt(def_id, Vec::new());
+                            (def_id, struct_info, result_ty)
+                        } else {
+                            return Err(self.error_type_not_found(
+                                &format!("{}::{}", module_name, type_name),
+                                span,
+                            ));
+                        }
+                    } else {
+                        return Err(self.error_type_not_found(
+                            &format!("{}::{}", module_name, type_name),
+                            span,
+                        ));
+                    }
+                }
             } else {
+                // More than 2 segments not yet supported
                 return Err(TypeError::new(
                     TypeErrorKind::UnsupportedFeature {
-                        feature: "multi-segment struct paths".to_string(),
+                        feature: "struct paths with more than 2 segments".to_string(),
                     },
                     span,
                 ));

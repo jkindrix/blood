@@ -243,6 +243,9 @@ impl FfiValidator {
             TypeKind::Forall { .. } => FfiSafety::Unsafe(
                 "polymorphic (forall) types are not FFI-safe; use concrete types".to_string(),
             ),
+
+            // Ownership-qualified types - validate the inner type
+            TypeKind::Ownership { inner, .. } => self.validate_type_inner(inner, visited),
         }
     }
 

@@ -10,13 +10,15 @@ impl<'a> TypeContext<'a> {
     pub(crate) fn register_builtins(&mut self) {
         let unit_ty = Type::unit();
         let bool_ty = Type::bool();
+        let char_ty = Type::char();
+        let u8_ty = Type::u8();
         let i32_ty = Type::i32();
         let i64_ty = Type::i64();
         let u64_ty = Type::u64();
         let f32_ty = Type::f32();
         let f64_ty = Type::f64();
         let str_ty = Type::str();  // str slice for string literals
-        let string_ty = Type::string();  // owned String (for functions that return owned strings)
+        let _string_ty = Type::string();  // owned String (for functions that return owned strings)
         let never_ty = Type::never();
 
         // === I/O Functions ===
@@ -39,11 +41,11 @@ impl<'a> TypeContext<'a> {
         // println_str(str) -> () - legacy name, same as println
         self.register_builtin_fn("println_str", vec![str_ty.clone()], unit_ty.clone());
 
-        // print_char(i32) -> ()  (char as i32 for now)
-        self.register_builtin_fn("print_char", vec![i32_ty.clone()], unit_ty.clone());
+        // print_char(char) -> ()
+        self.register_builtin_fn("print_char", vec![char_ty.clone()], unit_ty.clone());
 
-        // println_char(i32) -> () (char with newline)
-        self.register_builtin_fn("println_char", vec![i32_ty.clone()], unit_ty.clone());
+        // println_char(char) -> ()
+        self.register_builtin_fn("println_char", vec![char_ty.clone()], unit_ty.clone());
 
         // print_newline() -> () - prints just a newline
         self.register_builtin_fn("print_newline", vec![], unit_ty.clone());
@@ -83,14 +85,14 @@ impl<'a> TypeContext<'a> {
         // panic(str) -> !
         self.register_builtin_fn("panic", vec![str_ty.clone()], never_ty.clone());
 
-        // assert(bool) -> ()
-        self.register_builtin_fn("assert", vec![bool_ty.clone()], unit_ty.clone());
+        // assert(bool) -> () - maps to blood_assert in runtime
+        self.register_builtin_fn_aliased("assert", "blood_assert", vec![bool_ty.clone()], unit_ty.clone());
 
-        // assert_eq(i32, i32) -> ()
-        self.register_builtin_fn("assert_eq_int", vec![i32_ty.clone(), i32_ty.clone()], unit_ty.clone());
+        // assert_eq_int(i32, i32) -> () - maps to blood_assert_eq_int in runtime
+        self.register_builtin_fn_aliased("assert_eq_int", "blood_assert_eq_int", vec![i32_ty.clone(), i32_ty.clone()], unit_ty.clone());
 
-        // assert_eq(bool, bool) -> ()
-        self.register_builtin_fn("assert_eq_bool", vec![bool_ty.clone(), bool_ty.clone()], unit_ty.clone());
+        // assert_eq_bool(bool, bool) -> () - maps to blood_assert_eq_bool in runtime
+        self.register_builtin_fn_aliased("assert_eq_bool", "blood_assert_eq_bool", vec![bool_ty.clone(), bool_ty.clone()], unit_ty.clone());
 
         // unreachable() -> !
         self.register_builtin_fn("unreachable", vec![], never_ty.clone());
@@ -142,6 +144,12 @@ impl<'a> TypeContext<'a> {
         // ptr_write_u64(ptr: u64, value: u64) -> () - write u64 to memory address
         self.register_builtin_fn("ptr_write_u64", vec![u64_ty.clone(), u64_ty.clone()], unit_ty.clone());
 
+        // ptr_read_u8(ptr: u64) -> u8 - read u8 from memory address
+        self.register_builtin_fn("ptr_read_u8", vec![u64_ty.clone()], u8_ty.clone());
+
+        // ptr_write_u8(ptr: u64, value: u8) -> () - write u8 to memory address
+        self.register_builtin_fn("ptr_write_u8", vec![u64_ty.clone(), u8_ty.clone()], unit_ty.clone());
+
         // === String Operations ===
 
         // str_len(str) -> i64 - get string length in bytes
@@ -149,6 +157,9 @@ impl<'a> TypeContext<'a> {
 
         // str_eq(str, str) -> bool - compare two strings for equality
         self.register_builtin_fn("str_eq", vec![str_ty.clone(), str_ty.clone()], bool_ty.clone());
+
+        // str_concat(str, str) -> str - concatenate two strings (returns newly allocated string)
+        self.register_builtin_fn_aliased("str_concat", "blood_str_concat", vec![str_ty.clone(), str_ty.clone()], str_ty.clone());
 
         // === Input Functions ===
 
@@ -160,11 +171,11 @@ impl<'a> TypeContext<'a> {
 
         // === Conversion Functions ===
 
-        // int_to_string(i32) -> String
-        self.register_builtin_fn("int_to_string", vec![i32_ty.clone()], string_ty.clone());
+        // int_to_string(i32) -> str - convert integer to string
+        self.register_builtin_fn("int_to_string", vec![i32_ty.clone()], str_ty.clone());
 
-        // bool_to_string(bool) -> String
-        self.register_builtin_fn("bool_to_string", vec![bool_ty.clone()], string_ty.clone());
+        // bool_to_string(bool) -> str - convert boolean to string
+        self.register_builtin_fn("bool_to_string", vec![bool_ty.clone()], str_ty.clone());
 
         // i32_to_i64(i32) -> i64
         self.register_builtin_fn("i32_to_i64", vec![i32_ty.clone()], i64_ty.clone());

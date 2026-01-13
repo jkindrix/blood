@@ -56,7 +56,11 @@ pub struct TypeContext<'a> {
     /// Static items to type-check (includes full declaration for the value expression).
     pub(crate) pending_statics: Vec<(DefId, ast::StaticDecl)>,
     /// Functions to type-check (includes full declaration for parameter names).
-    pub(crate) pending_bodies: Vec<(DefId, ast::FnDecl)>,
+    /// The third element is the parent module DefId, if any.
+    pub(crate) pending_bodies: Vec<(DefId, ast::FnDecl, Option<DefId>)>,
+    /// Current module DefId during collection phase.
+    /// Used to track parent module for functions defined in modules.
+    pub(crate) current_module: Option<DefId>,
     /// The current function's return type.
     pub(crate) return_type: Option<Type>,
     /// The current function's DefId (for effect checking).
@@ -581,6 +585,7 @@ impl<'a> TypeContext<'a> {
             pending_consts: Vec::new(),
             pending_statics: Vec::new(),
             pending_bodies: Vec::new(),
+            current_module: None,
             return_type: None,
             current_fn: None,
             handled_effects: Vec::new(),
@@ -683,17 +688,20 @@ impl<'a> TypeContext<'a> {
     /// Linear types are specified with the `linear T` syntax in Blood.
     /// They are critical for effect handler linearity checking (E0304):
     /// multi-shot handlers cannot safely capture linear values.
-    ///
-    /// Note: Linear types are planned for Phase 3. This method is
-    /// infrastructure for when that feature is implemented.
     pub(crate) fn is_type_linear(&self, ty: &Type) -> bool {
-        // Phase 3: Implement linear type detection
-        // When TypeKind::Ownership is added to HIR, check:
-        // matches!(ty.kind(), TypeKind::Ownership { qualifier: OwnershipQualifier::Linear, .. })
-        //
-        // For now, return false since linear types aren't yet in HIR
-        let _ = ty;
-        false
+        use crate::hir::ty::{TypeKind, OwnershipQualifier};
+        match ty.kind() {
+            TypeKind::Ownership { qualifier: OwnershipQualifier::Linear, .. } => true,
+            // Check inner types recursively for ownership qualifiers
+            TypeKind::Ref { inner, .. } | TypeKind::Ptr { inner, .. } => {
+                self.is_type_linear(inner)
+            }
+            TypeKind::Tuple(tys) => tys.iter().any(|t| self.is_type_linear(t)),
+            TypeKind::Array { element, .. } | TypeKind::Slice { element } => {
+                self.is_type_linear(element)
+            }
+            _ => false,
+        }
     }
 
     /// Check if a type is an affine type (may be used at most once).
@@ -701,9 +709,19 @@ impl<'a> TypeContext<'a> {
     /// Affine types are specified with the `affine T` syntax in Blood.
     /// Unlike linear types, affine values can be safely dropped without use.
     pub(crate) fn is_type_affine(&self, ty: &Type) -> bool {
-        // Phase 3: Implement affine type detection
-        let _ = ty;
-        false
+        use crate::hir::ty::{TypeKind, OwnershipQualifier};
+        match ty.kind() {
+            TypeKind::Ownership { qualifier: OwnershipQualifier::Affine, .. } => true,
+            // Check inner types recursively for ownership qualifiers
+            TypeKind::Ref { inner, .. } | TypeKind::Ptr { inner, .. } => {
+                self.is_type_affine(inner)
+            }
+            TypeKind::Tuple(tys) => tys.iter().any(|t| self.is_type_affine(t)),
+            TypeKind::Array { element, .. } | TypeKind::Slice { element } => {
+                self.is_type_affine(element)
+            }
+            _ => false,
+        }
     }
 
     // Static zonk functions that take a Unifier reference

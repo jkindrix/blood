@@ -271,6 +271,29 @@ fn collect_variant_indices(pattern: &Pattern, indices: &mut HashSet<u32>, varian
 }
 
 /// Check tuple exhaustiveness.
+///
+/// ## Algorithm
+///
+/// For tuple exhaustiveness, we check that every position is covered:
+///
+/// 1. **Quick check**: If any pattern is irrefutable (wildcard, binding), the tuple is covered
+/// 2. **Position extraction**: Extract all tuple patterns and project to each position
+/// 3. **Per-position check**: For each position i, collect patterns at position i and check
+///    exhaustiveness against element_types[i]
+///
+/// ## Example
+///
+/// For `(bool, i32)` with patterns `[(true, _), (false, _)]`:
+/// - Position 0: [true, false] against bool → exhaustive (both values covered)
+/// - Position 1: [_, _] against i32 → exhaustive (wildcards cover all)
+/// - Result: exhaustive
+///
+/// ## Limitation
+///
+/// This is a simplified algorithm that doesn't handle interactions between positions.
+/// Full Maranget algorithm would use pattern matrices for cross-position analysis.
+/// Example not caught: `[(true, 0), (false, 1)]` is NOT exhaustive for (bool, i32),
+/// but this algorithm reports it as exhaustive because each position is individually covered.
 fn check_tuple_exhaustiveness(
     patterns: &[&Pattern],
     element_types: &[Type],
@@ -323,6 +346,30 @@ fn check_tuple_exhaustiveness(
 }
 
 /// Check array exhaustiveness.
+///
+/// ## Algorithm
+///
+/// For fixed-size arrays `[T; N]`, check if slice patterns cover all elements:
+///
+/// 1. **Quick check**: If any pattern is irrefutable (wildcard, binding), array is covered
+/// 2. **Slice pattern extraction**: Extract patterns of form `[prefix.., rest, ..suffix]`
+/// 3. **Length check**: A slice pattern matches if `prefix.len() + suffix.len() <= N`
+///    - With rest (`..`): Can absorb N - prefix.len() - suffix.len() elements
+///    - Without rest: Must match exactly if total length equals N
+/// 4. **Element coverage**: If pattern can match, check that all element patterns are irrefutable
+///
+/// ## Example
+///
+/// For `[i32; 3]` with pattern `[a, .., b]`:
+/// - prefix.len() = 1 (`a`)
+/// - suffix.len() = 1 (`b`)
+/// - rest absorbs 3 - 1 - 1 = 1 element
+/// - Pattern covers array if `a` and `b` are irrefutable
+///
+/// ## Limitation
+///
+/// Like tuple checking, this is simplified. Doesn't handle patterns like
+/// `[[1, ..], [.., 2]]` which together might cover all length-2 arrays.
 fn check_array_exhaustiveness(
     patterns: &[&Pattern],
     element_type: &Type,

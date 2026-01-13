@@ -298,6 +298,12 @@ impl Unifier {
                 self.unify(&t1, &body_inst, span)
             }
 
+            // Ownership types - must have same qualifier
+            (
+                TypeKind::Ownership { qualifier: q1, inner: i1 },
+                TypeKind::Ownership { qualifier: q2, inner: i2 },
+            ) if q1 == q2 => self.unify(i1, i2, span),
+
             // No match
             _ => Err(TypeError::new(
                 TypeErrorKind::Mismatch {
@@ -464,6 +470,7 @@ impl Unifier {
                 params.iter().any(|t| self.occurs_in(var, t)) || self.occurs_in(var, ret)
             }
             TypeKind::DynTrait { .. } => false, // DynTrait contains only DefId, no type vars
+            TypeKind::Ownership { inner, .. } => self.occurs_in(var, inner),
             // Leaf types with no nested types
             TypeKind::Primitive(_) | TypeKind::Never | TypeKind::Error | TypeKind::Param(_) => false,
         }
@@ -549,6 +556,9 @@ impl Unifier {
                     params: params.iter().map(|t| self.resolve(t)).collect(),
                     ret: self.resolve(ret),
                 })
+            }
+            TypeKind::Ownership { qualifier, inner } => {
+                Type::ownership(*qualifier, self.resolve(inner))
             }
             // Types with no nested type variables
             TypeKind::Primitive(_) | TypeKind::Never | TypeKind::Error |
@@ -655,6 +665,9 @@ impl Unifier {
                         .collect(),
                     ret: self.substitute_forall_params(ret, subst),
                 })
+            }
+            TypeKind::Ownership { qualifier, inner } => {
+                Type::ownership(*qualifier, self.substitute_forall_params(inner, subst))
             }
             // Types without nested type parameters
             TypeKind::Primitive(_) | TypeKind::Never | TypeKind::Error |

@@ -314,6 +314,45 @@ impl<'a> TypeContext<'a> {
     }
 
     /// Lower a pattern from AST to HIR.
+    ///
+    /// # Algorithm
+    ///
+    /// Pattern lowering transforms AST patterns into HIR patterns while:
+    /// 1. **Type checking**: Validates pattern structure matches expected type
+    /// 2. **Variable binding**: Creates LocalIds for bound variables
+    /// 3. **Generic substitution**: Substitutes type parameters in enum/struct patterns
+    ///
+    /// ## Pattern Kinds
+    ///
+    /// - **Wildcard** (`_`): Matches anything, no binding created
+    /// - **Ident** (`x`, `mut x`): Creates binding with LocalId
+    /// - **Literal** (`42`, `"hello"`): Matches specific value
+    /// - **Tuple** (`(a, b, .., c)`): Destructures tuples, handles rest patterns
+    /// - **Slice** (`[a, b, .., c]`): Destructures arrays/slices with rest
+    /// - **Struct** (`Point { x, y }`): Matches struct fields by name
+    /// - **TupleStruct** (`Some(x)`): Matches enum variants or tuple structs
+    /// - **Or** (`A | B`): Matches any alternative (all must bind same vars)
+    ///
+    /// ## Rest Pattern Handling (`..`)
+    ///
+    /// Rest patterns in tuples/slices are complex because they have variable arity:
+    /// - `rest_pos` (from parser): Index where `..` appears, elements array excludes `..`
+    /// - `binding_rest_idx`: Index where `x @ ..` appears (named rest)
+    ///
+    /// Given `[a, b, .., c, d]` with 5-element array:
+    /// - `prefix = [a, b]` (before rest)
+    /// - `rest` matches middle elements
+    /// - `suffix = [c, d]` (after rest)
+    ///
+    /// The rest slice length = array_len - prefix_len - suffix_len
+    ///
+    /// ## Generic Substitution
+    ///
+    /// For patterns like `Some(x)` where `Option<T>` is the expected type:
+    /// 1. Resolve `Some` to the enum variant definition
+    /// 2. Extract the variant's field types (with generic params)
+    /// 3. Substitute `T` with the concrete type from expected_ty
+    /// 4. Type check inner patterns against substituted field types
     pub(crate) fn lower_pattern(&mut self, pattern: &ast::Pattern, expected_ty: &Type) -> Result<hir::Pattern, TypeError> {
         let kind = match &pattern.kind {
             ast::PatternKind::Wildcard => hir::PatternKind::Wildcard,

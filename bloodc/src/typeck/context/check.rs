@@ -43,7 +43,11 @@ impl<'a> TypeContext<'a> {
         // Process iteratively since functions can contain nested functions
         while !self.pending_bodies.is_empty() {
             let pending = std::mem::take(&mut self.pending_bodies);
-            for (def_id, func) in pending {
+            for (def_id, func, parent_module) in pending {
+                // If this function is inside a module, inject module items as bindings
+                if let Some(mod_id) = parent_module {
+                    self.inject_module_bindings(mod_id);
+                }
                 if let Err(e) = self.check_function_body(def_id, &func) {
                     self.errors.push(e);
                 }
@@ -63,6 +67,43 @@ impl<'a> TypeContext<'a> {
         }
 
         Ok(())
+    }
+
+    /// Inject module item bindings into the current (root) scope.
+    ///
+    /// This allows functions inside a module to see their sibling functions and types.
+    /// Called before checking a function body that belongs to a module.
+    fn inject_module_bindings(&mut self, module_def_id: DefId) {
+        use super::super::resolve::Binding;
+        use crate::hir::DefKind;
+
+        if let Some(module_info) = self.module_defs.get(&module_def_id).cloned() {
+            for item_def_id in &module_info.items {
+                // Look up the item's name from def_info
+                if let Some(def_info) = self.resolver.def_info.get(item_def_id) {
+                    let name = def_info.name.clone();
+                    let kind = def_info.kind;
+
+                    // Add binding to root scope (current scope when checking top-level bodies)
+                    self.resolver.current_scope_mut()
+                        .bindings
+                        .entry(name.clone())
+                        .or_insert_with(|| Binding::Def(*item_def_id));
+
+                    // Also add type bindings for type-defining items
+                    // This allows types like Point to be visible in function bodies
+                    match kind {
+                        DefKind::Struct | DefKind::Enum | DefKind::TypeAlias => {
+                            self.resolver.current_scope_mut()
+                                .type_bindings
+                                .entry(name)
+                                .or_insert(*item_def_id);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
     }
 
     /// Type-check a const item's initializer expression.
@@ -716,7 +757,9 @@ impl<'a> TypeContext<'a> {
         // This ensures they can reference each other regardless of declaration order
         while !self.pending_bodies.is_empty() {
             let pending = std::mem::take(&mut self.pending_bodies);
-            for (def_id, func) in pending {
+            for (def_id, func, _parent_module) in pending {
+                // Note: nested functions in blocks don't need module injection
+                // because the block scope is already active
                 if let Err(e) = self.check_function_body(def_id, &func) {
                     self.errors.push(e);
                 }

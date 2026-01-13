@@ -158,6 +158,8 @@ impl<'a> TypeContext<'a> {
             TypeKind::Record { fields, .. } => fields.iter().all(|f| self.type_is_copy(&f.ty)),
             // Forall types are NOT Copy (polymorphic values need special handling)
             TypeKind::Forall { .. } => false,
+            // Ownership-qualified types are NOT Copy (substructural semantics)
+            TypeKind::Ownership { .. } => false,
         }
     }
 
