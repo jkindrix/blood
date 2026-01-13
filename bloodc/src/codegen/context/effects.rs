@@ -201,6 +201,19 @@ fn check_expr_tail_resumptive(expr: &hir::Expr, in_tail_position: bool) -> bool 
         // Anonymous record construction - check all field values
         Record { fields } => fields.iter().all(|f| check_expr_tail_resumptive(&f.value, false)),
 
+        // Macro expansion nodes - check subexpressions
+        MacroExpansion { args, .. } => args.iter().all(|a| check_expr_tail_resumptive(a, false)),
+        VecLiteral(exprs) => exprs.iter().all(|e| check_expr_tail_resumptive(e, false)),
+        VecRepeat { value, count } => {
+            check_expr_tail_resumptive(value, false) &&
+            check_expr_tail_resumptive(count, false)
+        }
+        Assert { condition, message } => {
+            check_expr_tail_resumptive(condition, false) &&
+            message.as_ref().map_or(true, |m| check_expr_tail_resumptive(m, false))
+        }
+        Dbg(inner) => check_expr_tail_resumptive(inner, false),
+
         // Leaf nodes - no resume inside
         Literal(_) | Local(_) | Def(_) | Continue { .. } | Error
         | MethodFamily { .. } | Default => true,

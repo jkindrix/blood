@@ -105,6 +105,43 @@ pub unsafe extern "C" fn println_str(s: BloodStr) {
     }
 }
 
+/// Print a string to stderr (no newline).
+///
+/// Takes a Blood str slice {ptr, len}.
+///
+/// # Safety
+/// The pointer must be valid for `len` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn eprint_str(s: BloodStr) {
+    use std::io::Write;
+    if !s.ptr.is_null() && s.len > 0 {
+        let slice = std::slice::from_raw_parts(s.ptr, s.len as usize);
+        if let Ok(str_val) = std::str::from_utf8(slice) {
+            eprint!("{str_val}");
+            let _ = std::io::stderr().flush();
+        }
+    }
+}
+
+/// Print a string to stderr with newline.
+///
+/// Takes a Blood str slice {ptr, len}.
+///
+/// # Safety
+/// The pointer must be valid for `len` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn eprintln_str(s: BloodStr) {
+    if !s.ptr.is_null() && s.len > 0 {
+        let slice = std::slice::from_raw_parts(s.ptr, s.len as usize);
+        if let Ok(str_val) = std::str::from_utf8(slice) {
+            eprintln!("{str_val}");
+        }
+    } else {
+        // Empty string - just print newline
+        eprintln!();
+    }
+}
+
 /// Get the length of a string in bytes.
 ///
 /// # Safety

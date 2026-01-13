@@ -1075,6 +1075,41 @@ fn hash_expr(expr: &hir::Expr, hasher: &mut ContentHasher) {
         hir::ExprKind::Default => {
             hasher.update_u8(0x25);
         }
+        hir::ExprKind::MacroExpansion { macro_name, format_str, args } => {
+            hasher.update_u8(0x26);
+            hasher.update_str(macro_name);
+            hasher.update_str(format_str);
+            hasher.update_u32(args.len() as u32);
+            for arg in args {
+                hash_expr(arg, hasher);
+            }
+        }
+        hir::ExprKind::VecLiteral(exprs) => {
+            hasher.update_u8(0x27);
+            hasher.update_u32(exprs.len() as u32);
+            for e in exprs {
+                hash_expr(e, hasher);
+            }
+        }
+        hir::ExprKind::VecRepeat { value, count } => {
+            hasher.update_u8(0x28);
+            hash_expr(value, hasher);
+            hash_expr(count, hasher);
+        }
+        hir::ExprKind::Assert { condition, message } => {
+            hasher.update_u8(0x29);
+            hash_expr(condition, hasher);
+            if let Some(msg) = message {
+                hasher.update_u8(1);
+                hash_expr(msg, hasher);
+            } else {
+                hasher.update_u8(0);
+            }
+        }
+        hir::ExprKind::Dbg(inner) => {
+            hasher.update_u8(0x2A);
+            hash_expr(inner, hasher);
+        }
         hir::ExprKind::Error => {
             hasher.update_u8(0xFF);
         }
@@ -1629,6 +1664,30 @@ fn extract_expr_deps(expr: &hir::Expr, deps: &mut HashSet<DefId>) {
             for field in fields {
                 extract_expr_deps(&field.value, deps);
             }
+        }
+        // Macro expansion nodes - extract dependencies from subexpressions
+        hir::ExprKind::MacroExpansion { args, .. } => {
+            for arg in args {
+                extract_expr_deps(arg, deps);
+            }
+        }
+        hir::ExprKind::VecLiteral(exprs) => {
+            for e in exprs {
+                extract_expr_deps(e, deps);
+            }
+        }
+        hir::ExprKind::VecRepeat { value, count } => {
+            extract_expr_deps(value, deps);
+            extract_expr_deps(count, deps);
+        }
+        hir::ExprKind::Assert { condition, message } => {
+            extract_expr_deps(condition, deps);
+            if let Some(msg) = message {
+                extract_expr_deps(msg, deps);
+            }
+        }
+        hir::ExprKind::Dbg(inner) => {
+            extract_expr_deps(inner, deps);
         }
         // Leaf expressions that don't contain dependencies
         // (Local is handled above at line 1330)

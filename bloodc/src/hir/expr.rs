@@ -345,6 +345,35 @@ pub enum ExprKind {
     /// The type must implement the Default trait.
     Default,
 
+    // =========================================================================
+    // Macro Expansion Results
+    // =========================================================================
+
+    /// Expanded format macro (format!, println!, print!, etc.)
+    MacroExpansion {
+        macro_name: String,
+        format_str: String,
+        args: Vec<Expr>,
+    },
+
+    /// Vec literal: `vec![1, 2, 3]`
+    VecLiteral(Vec<Expr>),
+
+    /// Vec repeat: `vec![0; 10]`
+    VecRepeat {
+        value: Box<Expr>,
+        count: Box<Expr>,
+    },
+
+    /// Assert expression: `assert!(cond)` or `assert!(cond, msg)`
+    Assert {
+        condition: Box<Expr>,
+        message: Option<Box<Expr>>,
+    },
+
+    /// Debug expression: `dbg!(expr)`
+    Dbg(Box<Expr>),
+
     /// Error placeholder (for error recovery).
     Error,
 }

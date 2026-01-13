@@ -730,6 +730,41 @@ impl SemanticAnalyzer {
                     self.collect_expr_symbols(arg, source, interner, symbols, symbol_at_offset);
                 }
             }
+            // Macro call expressions - collect symbols from arguments
+            ExprKind::MacroCall { kind, .. } => {
+                match kind {
+                    ast::MacroCallKind::Format { args, .. } => {
+                        for arg in args {
+                            self.collect_expr_symbols(arg, source, interner, symbols, symbol_at_offset);
+                        }
+                    }
+                    ast::MacroCallKind::Vec(vec_args) => {
+                        match vec_args {
+                            ast::VecMacroArgs::List(exprs) => {
+                                for e in exprs {
+                                    self.collect_expr_symbols(e, source, interner, symbols, symbol_at_offset);
+                                }
+                            }
+                            ast::VecMacroArgs::Repeat { value, count } => {
+                                self.collect_expr_symbols(value, source, interner, symbols, symbol_at_offset);
+                                self.collect_expr_symbols(count, source, interner, symbols, symbol_at_offset);
+                            }
+                        }
+                    }
+                    ast::MacroCallKind::Assert { condition, message } => {
+                        self.collect_expr_symbols(condition, source, interner, symbols, symbol_at_offset);
+                        if let Some(msg) = message {
+                            self.collect_expr_symbols(msg, source, interner, symbols, symbol_at_offset);
+                        }
+                    }
+                    ast::MacroCallKind::Dbg(inner) => {
+                        self.collect_expr_symbols(inner, source, interner, symbols, symbol_at_offset);
+                    }
+                    ast::MacroCallKind::Custom { .. } => {
+                        // Custom macros are opaque - no symbols to collect
+                    }
+                }
+            }
             // Terminal expressions with no nested symbols
             ExprKind::Literal(_)
             | ExprKind::Path(_)

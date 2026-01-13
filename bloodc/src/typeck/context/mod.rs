@@ -977,6 +977,34 @@ impl<'a> TypeContext<'a> {
                     }).collect(),
                 }
             }
+            // Macro expansion nodes - zonk subexpressions
+            hir::ExprKind::MacroExpansion { macro_name, format_str, args } => {
+                hir::ExprKind::MacroExpansion {
+                    macro_name,
+                    format_str,
+                    args: args.into_iter().map(|a| Self::zonk_expr_with_unifier(unifier, a)).collect(),
+                }
+            }
+            hir::ExprKind::VecLiteral(exprs) => {
+                hir::ExprKind::VecLiteral(
+                    exprs.into_iter().map(|e| Self::zonk_expr_with_unifier(unifier, e)).collect()
+                )
+            }
+            hir::ExprKind::VecRepeat { value, count } => {
+                hir::ExprKind::VecRepeat {
+                    value: Box::new(Self::zonk_expr_with_unifier(unifier, *value)),
+                    count: Box::new(Self::zonk_expr_with_unifier(unifier, *count)),
+                }
+            }
+            hir::ExprKind::Assert { condition, message } => {
+                hir::ExprKind::Assert {
+                    condition: Box::new(Self::zonk_expr_with_unifier(unifier, *condition)),
+                    message: message.map(|m| Box::new(Self::zonk_expr_with_unifier(unifier, *m))),
+                }
+            }
+            hir::ExprKind::Dbg(inner) => {
+                hir::ExprKind::Dbg(Box::new(Self::zonk_expr_with_unifier(unifier, *inner)))
+            }
             kind @ (hir::ExprKind::Literal(_)
                 | hir::ExprKind::Local(_)
                 | hir::ExprKind::Def(_)

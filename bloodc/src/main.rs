@@ -31,6 +31,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use bloodc::diagnostics::DiagnosticEmitter;
 use bloodc::{Lexer, TokenKind};
 use bloodc::codegen;
+use bloodc::expand;
 use bloodc::mir;
 use bloodc::content::{ContentHash, BuildCache, hash_hir_item, extract_dependencies, VFT, VFTEntry};
 use bloodc::content::hash::ContentHasher;
@@ -493,10 +494,24 @@ fn cmd_build(args: &FileArgs, verbosity: u8) -> ExitCode {
     }
 
     // Generate HIR
-    let hir_crate = ctx.into_hir();
+    let mut hir_crate = ctx.into_hir();
 
     if verbosity > 0 {
         eprintln!("Type checking passed. {} items.", hir_crate.items.len());
+    }
+
+    // Expand macros in HIR before MIR lowering
+    if let Err(errors) = expand::expand_macros(&mut hir_crate) {
+        let emitter = DiagnosticEmitter::new(&path_str, &source);
+        for error in &errors {
+            emitter.emit(error);
+        }
+        eprintln!("Build failed: macro expansion errors.");
+        return ExitCode::from(1);
+    }
+
+    if verbosity > 1 {
+        eprintln!("Macro expansion passed.");
     }
 
     // Initialize build cache for incremental compilation

@@ -3,7 +3,7 @@
 use super::Parser;
 use crate::ast::*;
 use crate::lexer::TokenKind;
-use crate::span::Spanned;
+use crate::span::{Span, Spanned};
 
 /// Operator precedence levels (higher = binds tighter).
 /// Based on GRAMMAR.md Section 7.
@@ -848,33 +848,19 @@ impl<'src> Parser<'src> {
         }
     }
 
-    /// Parse a path expression or struct literal.
+    /// Parse a path expression, struct literal, or macro call.
     fn parse_path_or_struct_expr(&mut self) -> Expr {
+        let start = self.previous.span;
         let path = self.parse_expr_path();
 
         // Check for macro call syntax (e.g., println!, vec!, format!)
-        // Macros are planned but not yet implemented (see STDLIB.md §9)
         if self.check(TokenKind::Not) {
-            let path_name = if let Some(seg) = path.segments.last() {
-                self.interner_symbol_str(seg.name.node).to_string()
-            } else {
-                "unknown".to_string()
-            };
-
-            // Check if this looks like a macro call
+            // Check if this looks like a macro call (followed by delimiter)
             if self.check_next(TokenKind::LParen)
                 || self.check_next(TokenKind::LBracket)
                 || self.check_next(TokenKind::LBrace)
             {
-                self.error_at_current(
-                    &format!(
-                        "`{}!` is a macro call, but macros are not yet implemented",
-                        path_name
-                    ),
-                    crate::diagnostics::ErrorCode::UnsupportedMacro,
-                );
-                // Skip the `!` and try to recover
-                self.advance();
+                return self.parse_macro_call(path, start);
             }
         }
 
@@ -886,6 +872,332 @@ impl<'src> Parser<'src> {
         Expr {
             span: path.span,
             kind: ExprKind::Path(path),
+        }
+    }
+
+    /// Parse a macro call after the path has been parsed.
+    /// Called when we see `path!` followed by a delimiter.
+    fn parse_macro_call(&mut self, path: ExprPath, start: Span) -> Expr {
+        use crate::ast::MacroDelimiter;
+
+        // Get the macro name for dispatch
+        let macro_name = if let Some(seg) = path.segments.last() {
+            self.interner_symbol_str(seg.name.node).to_string()
+        } else {
+            String::new()
+        };
+
+        // Consume the `!`
+        self.advance();
+
+        // Determine delimiter and parse accordingly
+        let (delim, _open_kind, close_kind) = match self.current.kind {
+            TokenKind::LParen => (MacroDelimiter::Paren, TokenKind::LParen, TokenKind::RParen),
+            TokenKind::LBracket => (MacroDelimiter::Bracket, TokenKind::LBracket, TokenKind::RBracket),
+            TokenKind::LBrace => (MacroDelimiter::Brace, TokenKind::LBrace, TokenKind::RBrace),
+            _ => {
+                self.error_at_current(
+                    "expected `(`, `[`, or `{` after macro name",
+                    crate::diagnostics::ErrorCode::UnexpectedToken,
+                );
+                return Expr {
+                    span: start.merge(self.previous.span),
+                    kind: ExprKind::Tuple(Vec::new()),
+                };
+            }
+        };
+
+        // Consume opening delimiter
+        self.advance();
+
+        // Parse based on macro name
+        let kind = match macro_name.as_str() {
+            // Format-style macros: format!("...", args), println!("...", args), etc.
+            "format" | "println" | "print" | "eprintln" | "eprint" | "panic" | "write" | "writeln" => {
+                self.parse_format_macro_args(delim, close_kind)
+            }
+
+            // Vec macro: vec![1, 2, 3] or vec![0; 10]
+            "vec" => {
+                self.parse_vec_macro_args(close_kind)
+            }
+
+            // Assert macros: assert!(cond) or assert!(cond, "message")
+            "assert" | "debug_assert" => {
+                self.parse_assert_macro_args(close_kind)
+            }
+
+            // Dbg macro: dbg!(expr)
+            "dbg" => {
+                self.parse_dbg_macro_args(close_kind)
+            }
+
+            // Unknown macro - store as custom for future user-defined macro support
+            _ => {
+                self.parse_custom_macro_args(delim, close_kind)
+            }
+        };
+
+        let end_span = self.previous.span;
+        Expr {
+            span: start.merge(end_span),
+            kind: ExprKind::MacroCall { path, kind },
+        }
+    }
+
+    /// Parse format-style macro arguments: `"format string", arg1, arg2, ...`
+    fn parse_format_macro_args(
+        &mut self,
+        _delim: crate::ast::MacroDelimiter,
+        close_kind: TokenKind,
+    ) -> crate::ast::MacroCallKind {
+        use crate::ast::MacroCallKind;
+        use crate::span::Spanned;
+
+        // Empty macro call like println!()
+        if self.check(close_kind) {
+            self.advance();
+            return MacroCallKind::Format {
+                format_str: Spanned {
+                    node: String::new(),
+                    span: self.previous.span,
+                },
+                args: Vec::new(),
+            };
+        }
+
+        // First argument should be a string literal (format string)
+        let format_str = if self.check(TokenKind::StringLit) {
+            let span = self.current.span;
+            let s = self.parse_string_literal_content();
+            Spanned { node: s, span }
+        } else {
+            // Not a string literal - treat as expression
+            self.error_at_current(
+                "expected string literal as format string",
+                crate::diagnostics::ErrorCode::UnexpectedToken,
+            );
+            Spanned {
+                node: String::new(),
+                span: self.current.span,
+            }
+        };
+
+        // Parse remaining arguments
+        let mut args = Vec::new();
+        while self.check(TokenKind::Comma) {
+            self.advance(); // consume comma
+            if self.check(close_kind) {
+                break; // trailing comma
+            }
+            args.push(self.parse_expr());
+        }
+
+        // Consume closing delimiter
+        if !self.check(close_kind) {
+            self.error_at_current(
+                &format!("expected `{}` to close macro", close_kind.description()),
+                crate::diagnostics::ErrorCode::UnexpectedToken,
+            );
+        } else {
+            self.advance();
+        }
+
+        MacroCallKind::Format { format_str, args }
+    }
+
+    /// Parse vec! macro arguments: `[1, 2, 3]` or `[0; 10]`
+    fn parse_vec_macro_args(&mut self, close_kind: TokenKind) -> crate::ast::MacroCallKind {
+        use crate::ast::{MacroCallKind, VecMacroArgs};
+
+        // Empty vec
+        if self.check(close_kind) {
+            self.advance();
+            return MacroCallKind::Vec(VecMacroArgs::List(Vec::new()));
+        }
+
+        // Parse first expression
+        let first = self.parse_expr();
+
+        // Check for repeat syntax: `[value; count]`
+        if self.check(TokenKind::Semi) {
+            self.advance();
+            let count = self.parse_expr();
+
+            if !self.check(close_kind) {
+                self.error_at_current(
+                    &format!("expected `{}` after repeat count", close_kind.description()),
+                    crate::diagnostics::ErrorCode::UnexpectedToken,
+                );
+            } else {
+                self.advance();
+            }
+
+            return MacroCallKind::Vec(VecMacroArgs::Repeat {
+                value: Box::new(first),
+                count: Box::new(count),
+            });
+        }
+
+        // List syntax: `[a, b, c]`
+        let mut elements = vec![first];
+        while self.check(TokenKind::Comma) {
+            self.advance();
+            if self.check(close_kind) {
+                break; // trailing comma
+            }
+            elements.push(self.parse_expr());
+        }
+
+        if !self.check(close_kind) {
+            self.error_at_current(
+                &format!("expected `{}` to close vec!", close_kind.description()),
+                crate::diagnostics::ErrorCode::UnexpectedToken,
+            );
+        } else {
+            self.advance();
+        }
+
+        MacroCallKind::Vec(VecMacroArgs::List(elements))
+    }
+
+    /// Parse assert! macro arguments: `(condition)` or `(condition, "message")`
+    fn parse_assert_macro_args(&mut self, close_kind: TokenKind) -> crate::ast::MacroCallKind {
+        use crate::ast::MacroCallKind;
+
+        if self.check(close_kind) {
+            self.error_at_current(
+                "assert! requires a condition",
+                crate::diagnostics::ErrorCode::ExpectedExpression,
+            );
+            self.advance();
+            return MacroCallKind::Assert {
+                condition: Box::new(Expr {
+                    kind: ExprKind::Literal(Literal {
+                        kind: LiteralKind::Bool(false),
+                        span: self.previous.span,
+                    }),
+                    span: self.previous.span,
+                }),
+                message: None,
+            };
+        }
+
+        let condition = self.parse_expr();
+        let message = if self.check(TokenKind::Comma) {
+            self.advance();
+            if !self.check(close_kind) {
+                Some(Box::new(self.parse_expr()))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if !self.check(close_kind) {
+            self.error_at_current(
+                &format!("expected `{}` to close assert!", close_kind.description()),
+                crate::diagnostics::ErrorCode::UnexpectedToken,
+            );
+        } else {
+            self.advance();
+        }
+
+        MacroCallKind::Assert { condition: Box::new(condition), message }
+    }
+
+    /// Parse dbg! macro arguments: `(expr)`
+    fn parse_dbg_macro_args(&mut self, close_kind: TokenKind) -> crate::ast::MacroCallKind {
+        use crate::ast::MacroCallKind;
+
+        if self.check(close_kind) {
+            self.error_at_current(
+                "dbg! requires an expression",
+                crate::diagnostics::ErrorCode::ExpectedExpression,
+            );
+            self.advance();
+            return MacroCallKind::Dbg(Box::new(Expr {
+                kind: ExprKind::Tuple(Vec::new()),
+                span: self.previous.span,
+            }));
+        }
+
+        let expr = self.parse_expr();
+
+        if !self.check(close_kind) {
+            self.error_at_current(
+                &format!("expected `{}` to close dbg!", close_kind.description()),
+                crate::diagnostics::ErrorCode::UnexpectedToken,
+            );
+        } else {
+            self.advance();
+        }
+
+        MacroCallKind::Dbg(Box::new(expr))
+    }
+
+    /// Parse custom/unknown macro arguments as raw content (for future expansion).
+    fn parse_custom_macro_args(
+        &mut self,
+        delim: crate::ast::MacroDelimiter,
+        close_kind: TokenKind,
+    ) -> crate::ast::MacroCallKind {
+        use crate::ast::MacroCallKind;
+
+        // For now, just skip tokens until we find the matching close delimiter
+        // Track nesting depth for nested delimiters
+        let start_pos = self.current.span.start;
+        let mut depth = 1;
+
+        let (open_kind, close_check) = match delim {
+            crate::ast::MacroDelimiter::Paren => (TokenKind::LParen, TokenKind::RParen),
+            crate::ast::MacroDelimiter::Bracket => (TokenKind::LBracket, TokenKind::RBracket),
+            crate::ast::MacroDelimiter::Brace => (TokenKind::LBrace, TokenKind::RBrace),
+        };
+
+        while depth > 0 && !self.check(TokenKind::Eof) {
+            if self.current.kind == open_kind {
+                depth += 1;
+            } else if self.current.kind == close_check {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            self.advance();
+        }
+
+        let end_pos = self.current.span.start;
+        let content = self.source[start_pos..end_pos].to_string();
+
+        if self.check(close_kind) {
+            self.advance();
+        }
+
+        // Report that custom macros are not yet supported
+        self.error_at(
+            Span::new(start_pos, end_pos, 0, 0),
+            "user-defined macros are not yet supported",
+            crate::diagnostics::ErrorCode::UnsupportedMacro,
+        );
+
+        MacroCallKind::Custom { delim, content }
+    }
+
+    /// Parse string literal content, handling escape sequences.
+    fn parse_string_literal_content(&mut self) -> String {
+        let span = self.current.span;
+        let raw = &self.source[span.start..span.end];
+        self.advance();
+
+        // Remove quotes and process escapes
+        if raw.len() >= 2 {
+            let inner = &raw[1..raw.len() - 1];
+            // For now, return as-is (escapes already processed by lexer)
+            inner.to_string()
+        } else {
+            String::new()
         }
     }
 

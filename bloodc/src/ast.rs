@@ -1104,6 +1104,57 @@ pub enum ExprKind {
     /// Default value: `default`
     /// Creates a default instance of the type being assigned to.
     Default,
+
+    /// Macro call: `name!(args)`, `name![args]`, `name!{args}`
+    MacroCall {
+        path: ExprPath,
+        kind: MacroCallKind,
+    },
+}
+
+/// The kind of macro call (built-in or user-defined).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MacroCallKind {
+    /// Built-in format macro: `format!("...", args)`, `println!(...)`, etc.
+    Format {
+        format_str: Spanned<String>,
+        args: Vec<Expr>,
+    },
+    /// Built-in vec macro: `vec![1, 2, 3]` or `vec![0; 10]`
+    Vec(VecMacroArgs),
+    /// Built-in assert macro: `assert!(cond)` or `assert!(cond, "message")`
+    Assert {
+        condition: Box<Expr>,
+        message: Option<Box<Expr>>,
+    },
+    /// Built-in dbg macro: `dbg!(expr)`
+    Dbg(Box<Expr>),
+    /// User-defined macro (not yet supported - stored as raw tokens for future expansion)
+    Custom {
+        delim: MacroDelimiter,
+        /// Raw token content between delimiters (as string for now)
+        content: String,
+    },
+}
+
+/// Delimiter type for macro invocations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MacroDelimiter {
+    /// `()`
+    Paren,
+    /// `[]`
+    Bracket,
+    /// `{}`
+    Brace,
+}
+
+/// Arguments to the vec! macro.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VecMacroArgs {
+    /// `vec![1, 2, 3]`
+    List(Vec<Expr>),
+    /// `vec![0; 10]`
+    Repeat { value: Box<Expr>, count: Box<Expr> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

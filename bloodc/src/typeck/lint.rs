@@ -244,6 +244,31 @@ impl HandlerLintContext {
                 }
             }
 
+            // Macro expansion nodes - check subexpressions
+            ExprKind::MacroExpansion { args, .. } => {
+                for arg in args {
+                    self.check_handler_nesting(arg, depth);
+                }
+            }
+            ExprKind::VecLiteral(exprs) => {
+                for e in exprs {
+                    self.check_handler_nesting(e, depth);
+                }
+            }
+            ExprKind::VecRepeat { value, count } => {
+                self.check_handler_nesting(value, depth);
+                self.check_handler_nesting(count, depth);
+            }
+            ExprKind::Assert { condition, message } => {
+                self.check_handler_nesting(condition, depth);
+                if let Some(msg) = message {
+                    self.check_handler_nesting(msg, depth);
+                }
+            }
+            ExprKind::Dbg(inner) => {
+                self.check_handler_nesting(inner, depth);
+            }
+
             // Terminal expressions - no recursion needed
             ExprKind::Literal(_)
             | ExprKind::Local(_)

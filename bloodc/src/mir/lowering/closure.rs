@@ -353,6 +353,38 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
             ExprKind::Error => {
                 Err(vec![Diagnostic::error("lowering error expression".to_string(), expr.span)])
             }
+
+            // Macro expansion nodes - these should be lowered during a macro expansion pass
+            ExprKind::MacroExpansion { macro_name, .. } => {
+                Err(vec![Diagnostic::error(
+                    format!("macro expansion '{}!' should be expanded before MIR lowering", macro_name),
+                    expr.span,
+                )])
+            }
+            ExprKind::VecLiteral(_) => {
+                Err(vec![Diagnostic::error(
+                    "vec! macro should be expanded before MIR lowering".to_string(),
+                    expr.span,
+                )])
+            }
+            ExprKind::VecRepeat { .. } => {
+                Err(vec![Diagnostic::error(
+                    "vec! repeat macro should be expanded before MIR lowering".to_string(),
+                    expr.span,
+                )])
+            }
+            ExprKind::Assert { .. } => {
+                Err(vec![Diagnostic::error(
+                    "assert! macro should be expanded before MIR lowering".to_string(),
+                    expr.span,
+                )])
+            }
+            ExprKind::Dbg(_) => {
+                Err(vec![Diagnostic::error(
+                    "dbg! macro should be expanded before MIR lowering".to_string(),
+                    expr.span,
+                )])
+            }
         }
     }
 

@@ -96,6 +96,7 @@ pub mod codegen;
 pub mod content;
 pub mod diagnostics;
 pub mod effects;
+pub mod expand;
 pub mod hir;
 pub mod lexer;
 pub mod mir;

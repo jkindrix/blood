@@ -134,6 +134,9 @@ impl<'a> TypeContext<'a> {
             ast::ExprKind::Default => {
                 self.infer_default(expr.span)
             }
+            ast::ExprKind::MacroCall { path, kind } => {
+                self.infer_macro_call(path, kind, expr.span)
+            }
         }
     }
 
@@ -3297,4 +3300,209 @@ impl<'a> TypeContext<'a> {
         ))
     }
 
+    /// Infer type of a macro call expression.
+    /// Built-in macros are expanded during type checking.
+    fn infer_macro_call(
+        &mut self,
+        path: &ast::ExprPath,
+        kind: &ast::MacroCallKind,
+        span: Span,
+    ) -> Result<hir::Expr, TypeError> {
+        // Get the macro name for dispatch
+        let macro_name = path.segments.last()
+            .map(|seg| self.interner.resolve(seg.name.node).unwrap_or("").to_string())
+            .unwrap_or_default();
+
+        match kind {
+            // Format-style macros
+            ast::MacroCallKind::Format { format_str, args } => {
+                self.expand_format_macro(&macro_name, format_str, args, span)
+            }
+
+            // vec! macro
+            ast::MacroCallKind::Vec(vec_args) => {
+                self.expand_vec_macro(vec_args, span)
+            }
+
+            // assert! macro
+            ast::MacroCallKind::Assert { condition, message } => {
+                self.expand_assert_macro(condition, message.as_deref(), span)
+            }
+
+            // dbg! macro
+            ast::MacroCallKind::Dbg(expr) => {
+                self.expand_dbg_macro(expr, span)
+            }
+
+            // Custom/user-defined macros - not yet supported
+            ast::MacroCallKind::Custom { .. } => {
+                Err(TypeError::new(
+                    TypeErrorKind::UnsupportedFeature {
+                        feature: format!("user-defined macro `{}!`", macro_name),
+                    },
+                    span,
+                ))
+            }
+        }
+    }
+
+    /// Expand format-style macros (format!, println!, print!, etc.)
+    fn expand_format_macro(
+        &mut self,
+        macro_name: &str,
+        format_str: &crate::span::Spanned<String>,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> Result<hir::Expr, TypeError> {
+        // Type-check all arguments
+        let mut checked_args = Vec::new();
+        for arg in args {
+            let arg_expr = self.infer_expr(arg)?;
+            checked_args.push(arg_expr);
+        }
+
+        // Determine return type based on macro
+        let return_ty = match macro_name {
+            "format" => {
+                // format! returns String
+                Type::new(hir::TypeKind::Primitive(hir::PrimitiveTy::String))
+            }
+            "println" | "print" | "eprintln" | "eprint" => {
+                // print macros return unit
+                Type::unit()
+            }
+            "panic" => {
+                // panic! returns Never type
+                Type::new(hir::TypeKind::Never)
+            }
+            "write" | "writeln" => {
+                // write macros return Result<(), Error>
+                // For now, simplify to unit
+                Type::unit()
+            }
+            _ => Type::unit(),
+        };
+
+        // For now, generate a placeholder Call expression
+        // In a full implementation, we'd generate the actual string building code
+        Ok(hir::Expr::new(
+            hir::ExprKind::MacroExpansion {
+                macro_name: macro_name.to_string(),
+                format_str: format_str.node.clone(),
+                args: checked_args,
+            },
+            return_ty,
+            span,
+        ))
+    }
+
+    /// Expand vec! macro to array construction
+    fn expand_vec_macro(
+        &mut self,
+        vec_args: &ast::VecMacroArgs,
+        span: Span,
+    ) -> Result<hir::Expr, TypeError> {
+        match vec_args {
+            ast::VecMacroArgs::List(elements) => {
+                // Type-check all elements
+                let mut checked_elements = Vec::new();
+                let element_ty = if elements.is_empty() {
+                    self.unifier.fresh_var()
+                } else {
+                    let first = self.infer_expr(&elements[0])?;
+                    let first_ty = first.ty.clone();
+                    checked_elements.push(first);
+
+                    for elem in &elements[1..] {
+                        let elem_expr = self.infer_expr(elem)?;
+                        // Unify element types
+                        self.unifier.unify(&first_ty, &elem_expr.ty, elem.span)?;
+                        checked_elements.push(elem_expr);
+                    }
+                    first_ty
+                };
+
+                // Return Vec<T> type
+                let vec_ty = self.make_vec_type(element_ty.clone());
+
+                Ok(hir::Expr::new(
+                    hir::ExprKind::VecLiteral(checked_elements),
+                    vec_ty,
+                    span,
+                ))
+            }
+            ast::VecMacroArgs::Repeat { value, count } => {
+                let value_expr = self.infer_expr(value)?;
+                let count_expr = self.infer_expr(count)?;
+
+                // Count should be usize
+                let usize_ty = Type::usize();
+                self.unifier.unify(&usize_ty, &count_expr.ty, count.span)?;
+
+                let element_ty = value_expr.ty.clone();
+                let vec_ty = self.make_vec_type(element_ty);
+
+                Ok(hir::Expr::new(
+                    hir::ExprKind::VecRepeat {
+                        value: Box::new(value_expr),
+                        count: Box::new(count_expr),
+                    },
+                    vec_ty,
+                    span,
+                ))
+            }
+        }
+    }
+
+    /// Expand assert! macro to conditional panic
+    fn expand_assert_macro(
+        &mut self,
+        condition: &ast::Expr,
+        message: Option<&ast::Expr>,
+        span: Span,
+    ) -> Result<hir::Expr, TypeError> {
+        let cond_expr = self.infer_expr(condition)?;
+
+        // Condition must be bool
+        let bool_ty = Type::new(hir::TypeKind::Primitive(hir::PrimitiveTy::Bool));
+        self.unifier.unify(&bool_ty, &cond_expr.ty, condition.span)?;
+
+        let msg_expr = if let Some(msg) = message {
+            Some(Box::new(self.infer_expr(msg)?))
+        } else {
+            None
+        };
+
+        Ok(hir::Expr::new(
+            hir::ExprKind::Assert {
+                condition: Box::new(cond_expr),
+                message: msg_expr,
+            },
+            Type::unit(),
+            span,
+        ))
+    }
+
+    /// Expand dbg! macro - evaluates and prints expression, returns the value
+    fn expand_dbg_macro(
+        &mut self,
+        expr: &ast::Expr,
+        span: Span,
+    ) -> Result<hir::Expr, TypeError> {
+        let inner_expr = self.infer_expr(expr)?;
+        let ty = inner_expr.ty.clone();
+
+        Ok(hir::Expr::new(
+            hir::ExprKind::Dbg(Box::new(inner_expr)),
+            ty,
+            span,
+        ))
+    }
+
+    /// Create a Vec<T> type
+    fn make_vec_type(&self, element_ty: Type) -> Type {
+        // For now, use Slice type as placeholder for Vec<T>
+        // A proper implementation would look up Vec in the stdlib
+        Type::new(hir::TypeKind::Slice { element: element_ty })
+    }
 }

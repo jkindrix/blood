@@ -319,6 +319,31 @@ impl EffectInferencer {
                 // Their effects are captured in the closure type
             }
 
+            // Macro expansion expressions
+            ExprKind::MacroExpansion { args, .. } => {
+                for arg in args {
+                    self.infer_expr(arg, ctx);
+                }
+            }
+            ExprKind::VecLiteral(exprs) => {
+                for e in exprs {
+                    self.infer_expr(e, ctx);
+                }
+            }
+            ExprKind::VecRepeat { value, count } => {
+                self.infer_expr(value, ctx);
+                self.infer_expr(count, ctx);
+            }
+            ExprKind::Assert { condition, message } => {
+                self.infer_expr(condition, ctx);
+                if let Some(msg) = message {
+                    self.infer_expr(msg, ctx);
+                }
+            }
+            ExprKind::Dbg(inner) => {
+                self.infer_expr(inner, ctx);
+            }
+
             // Leaf expressions - no effects
             ExprKind::Literal(_) |
             ExprKind::Local(_) |

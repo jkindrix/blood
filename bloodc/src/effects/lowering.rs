@@ -532,6 +532,22 @@ impl EffectLowering {
                 // Closures have their own effect analysis
                 false
             }
+            // Macro expansion expressions - check subexpressions
+            ExprKind::MacroExpansion { args, .. } => {
+                args.iter().any(|a| self.detect_row_poly_recursive(a))
+            }
+            ExprKind::VecLiteral(exprs) => {
+                exprs.iter().any(|e| self.detect_row_poly_recursive(e))
+            }
+            ExprKind::VecRepeat { value, count } => {
+                self.detect_row_poly_recursive(value) || self.detect_row_poly_recursive(count)
+            }
+            ExprKind::Assert { condition, message } => {
+                self.detect_row_poly_recursive(condition)
+                    || message.as_ref().is_some_and(|m| self.detect_row_poly_recursive(m))
+            }
+            ExprKind::Dbg(inner) => self.detect_row_poly_recursive(inner),
+
             // Leaf expressions are not polymorphic
             ExprKind::Literal(_) | ExprKind::Local(_) | ExprKind::Def(_)
             | ExprKind::MethodFamily { .. } | ExprKind::Continue { .. }
@@ -716,6 +732,30 @@ impl EffectLowering {
             }
             ExprKind::Closure { .. } => {
                 // Closures have their own effect analysis
+            }
+            // Macro expansion expressions - collect effects from subexpressions
+            ExprKind::MacroExpansion { args, .. } => {
+                for arg in args {
+                    self.collect_effects_recursive(arg, effects);
+                }
+            }
+            ExprKind::VecLiteral(exprs) => {
+                for e in exprs {
+                    self.collect_effects_recursive(e, effects);
+                }
+            }
+            ExprKind::VecRepeat { value, count } => {
+                self.collect_effects_recursive(value, effects);
+                self.collect_effects_recursive(count, effects);
+            }
+            ExprKind::Assert { condition, message } => {
+                self.collect_effects_recursive(condition, effects);
+                if let Some(msg) = message {
+                    self.collect_effects_recursive(msg, effects);
+                }
+            }
+            ExprKind::Dbg(inner) => {
+                self.collect_effects_recursive(inner, effects);
             }
             // Leaf expressions don't contain effect operations
             ExprKind::Literal(_) | ExprKind::Local(_) | ExprKind::Def(_)

@@ -401,6 +401,30 @@ impl<'a> TypeContext<'a> {
                     self.collect_captures(&field.value, is_move, captures, seen);
                 }
             }
+            // Macro expansion nodes - collect from subexpressions
+            hir::ExprKind::MacroExpansion { args, .. } => {
+                for arg in args {
+                    self.collect_captures(arg, is_move, captures, seen);
+                }
+            }
+            hir::ExprKind::VecLiteral(exprs) => {
+                for e in exprs {
+                    self.collect_captures(e, is_move, captures, seen);
+                }
+            }
+            hir::ExprKind::VecRepeat { value, count } => {
+                self.collect_captures(value, is_move, captures, seen);
+                self.collect_captures(count, is_move, captures, seen);
+            }
+            hir::ExprKind::Assert { condition, message } => {
+                self.collect_captures(condition, is_move, captures, seen);
+                if let Some(msg) = message {
+                    self.collect_captures(msg, is_move, captures, seen);
+                }
+            }
+            hir::ExprKind::Dbg(inner) => {
+                self.collect_captures(inner, is_move, captures, seen);
+            }
             // These don't contain local references directly
             hir::ExprKind::Literal(_)
             | hir::ExprKind::Def(_)
