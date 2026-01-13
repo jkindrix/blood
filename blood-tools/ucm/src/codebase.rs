@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use crate::hash::{structural_hash, Hash};
+use crate::hash::{extract_dependencies, structural_hash, Hash};
 use crate::names::Name;
 use crate::storage::Storage;
 use crate::{DefInfo, DefKind, DefRef, UcmError, UcmResult};
@@ -90,8 +90,14 @@ impl Codebase {
         let hash = structural_hash(source);
         self.storage.store_definition(&hash, kind, source)?;
 
-        // TODO: Parse source and extract dependencies
-        // For now, we don't track dependencies
+        // Extract and store dependencies from the AST
+        let deps = extract_dependencies(source);
+        for dep_name in deps {
+            // Try to resolve the dependency name to a hash
+            if let Some(dep_hash) = self.storage.resolve_name(&Name::new(&dep_name))? {
+                self.storage.add_dependency(&hash, &dep_hash)?;
+            }
+        }
 
         Ok(hash)
     }

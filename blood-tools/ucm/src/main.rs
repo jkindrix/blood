@@ -339,21 +339,47 @@ fn cmd_run(path: &PathBuf, expr: &str) -> Result<()> {
 }
 
 fn cmd_test(path: &PathBuf, filter: Option<&str>) -> Result<()> {
+    use blood_ucm::test_runner::{TestRunner, TestOutcome, TestSummary};
+
     let codebase = Codebase::open(path)?;
-    let tests = codebase.list_tests(filter)?;
+    let runner = TestRunner::new(&codebase);
 
-    println!("Running {} tests...", tests.len());
-    let mut passed = 0;
-    let failed = 0;
+    println!("Running tests...");
+    let results = runner.run(filter)?;
 
-    for (name, _hash) in &tests {
-        // TODO: Actually run the test
-        println!("  {} ... ok", name);
-        passed += 1;
+    for result in &results {
+        let status = match &result.outcome {
+            TestOutcome::Passed { duration } => {
+                format!("ok ({:.2}ms)", duration.as_secs_f64() * 1000.0)
+            }
+            TestOutcome::Failed { message, duration } => {
+                format!("FAILED ({:.2}ms)\n    {}", duration.as_secs_f64() * 1000.0, message)
+            }
+            TestOutcome::Skipped { reason } => {
+                format!("skipped: {}", reason)
+            }
+            TestOutcome::Error { message } => {
+                format!("ERROR: {}", message)
+            }
+        };
+        println!("  {} ... {}", result.name, status);
     }
 
+    let summary = TestSummary::from_results(&results);
     println!();
-    println!("{} passed, {} failed", passed, failed);
+    println!(
+        "{} passed, {} failed, {} skipped, {} errors (total: {})",
+        summary.passed,
+        summary.failed,
+        summary.skipped,
+        summary.errors,
+        summary.total
+    );
+
+    if !summary.all_passed() {
+        std::process::exit(1);
+    }
+
     Ok(())
 }
 
@@ -590,10 +616,51 @@ fn cmd_repl(path: &PathBuf) -> Result<()> {
             }
         } else {
             // Treat as expression to evaluate
-            println!("Evaluating: {}", input);
-            println!("(Expression evaluation not yet implemented)");
+            evaluate_expression(input, &codebase);
         }
     }
 
     Ok(())
+}
+
+/// Evaluate an expression in the REPL.
+fn evaluate_expression(input: &str, codebase: &Codebase) {
+    use bloodc::Parser;
+    use bloodc::typeck::const_eval;
+
+    // First, check if the input is a name in the codebase
+    if let Ok(Some(info)) = codebase.find(&DefRef::name(input.trim())) {
+        println!("= {}", info.source.trim());
+        return;
+    }
+
+    // Try to parse as an expression
+    let mut parser = Parser::new(input);
+    let expr = parser.parse_expr();
+
+    // Check for parse errors
+    let errors = parser.take_errors();
+    if !errors.is_empty() {
+        for err in errors {
+            eprintln!("Parse error: {}", err.message);
+        }
+        return;
+    }
+
+    // Try compile-time constant evaluation
+    match const_eval::eval_const_expr(&expr) {
+        Ok(result) => {
+            match result {
+                const_eval::ConstResult::Int(v) => println!("= {} : Int", v),
+                const_eval::ConstResult::Uint(v) => println!("= {} : UInt", v),
+                const_eval::ConstResult::Bool(v) => println!("= {} : Bool", v),
+            }
+        }
+        Err(_) => {
+            // Non-constant expression - provide helpful message
+            println!("Parsed: {:?}", expr.kind);
+            println!("(Runtime evaluation requires compilation to native code)");
+            println!("Hint: Use 'blood run <file.blood>' to execute Blood programs");
+        }
+    }
 }

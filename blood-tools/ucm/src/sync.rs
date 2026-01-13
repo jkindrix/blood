@@ -266,6 +266,56 @@ impl<'a> SyncEngine<'a> {
         })
     }
 
+    /// Applies resolved operations to the local codebase.
+    pub fn apply_resolved_ops(&mut self, ops: &[ResolvedOp]) -> UcmResult<usize> {
+        let mut applied = 0;
+
+        for op in ops {
+            match op {
+                ResolvedOp::UpdateLocal { name, new_hash } => {
+                    // Remove old name binding and add new one
+                    self.local.remove_name(name)?;
+                    self.local.add_name(name.clone(), new_hash.clone())?;
+                    applied += 1;
+                }
+                ResolvedOp::AddName { name, hash } => {
+                    self.local.add_name(name.clone(), hash.clone())?;
+                    applied += 1;
+                }
+                ResolvedOp::RemoveName { name } => {
+                    self.local.remove_name(name)?;
+                    applied += 1;
+                }
+                ResolvedOp::AddDefinition { name, source, kind } => {
+                    let hash = match kind {
+                        DefKind::Term => self.local.add_term(source)?,
+                        DefKind::Type => self.local.add_type(source)?,
+                        DefKind::Effect => self.local.add_effect(source)?,
+                        DefKind::Handler => self.local.add_handler(source)?,
+                        DefKind::Test => self.local.add_test(source)?,
+                        DefKind::Doc => self.local.add_term(source)?,
+                    };
+                    self.local.add_name(name.clone(), hash)?;
+                    applied += 1;
+                }
+                ResolvedOp::NoOp => {}
+            }
+        }
+
+        Ok(applied)
+    }
+
+    /// Resolves conflicts and applies the resolutions.
+    pub fn resolve_and_apply(
+        &mut self,
+        plan: &SyncPlan,
+        resolver: &ConflictResolver,
+        remote_data: Option<&ExportData>,
+    ) -> UcmResult<usize> {
+        let ops = resolver.resolve_all(plan, remote_data);
+        self.apply_resolved_ops(&ops)
+    }
+
     /// Pulls remote changes to local.
     ///
     /// For file-based remotes, imports from the remote path.
@@ -316,36 +366,234 @@ pub struct PullResult {
 }
 
 /// Conflict resolution strategies.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum ConflictResolution {
     /// Keep the local version
     KeepLocal,
     /// Keep the remote version
     KeepRemote,
     /// Keep both (with different names)
-    KeepBoth,
-    /// Skip this conflict
+    KeepBoth {
+        /// New name for the local version (None = keep original name for local)
+        local_name: Option<Name>,
+        /// New name for the remote version (None = use original name for remote)
+        remote_name: Option<Name>,
+    },
+    /// Skip this conflict (leave it unresolved)
     Skip,
+    /// Custom resolution: replace with new source
+    Custom {
+        /// New source code that resolves the conflict
+        source: String,
+    },
+}
+
+/// Detailed information about a conflict.
+#[derive(Debug, Clone)]
+pub struct ConflictInfo {
+    /// The conflicting name
+    pub name: Name,
+    /// Local hash
+    pub local_hash: Hash,
+    /// Remote hash
+    pub remote_hash: Hash,
+    /// Local source (if available)
+    pub local_source: Option<String>,
+    /// Remote source (if available)
+    pub remote_source: Option<String>,
+}
+
+impl ConflictInfo {
+    /// Creates a new conflict info from a SyncOp::Conflict.
+    pub fn from_sync_op(op: &SyncOp) -> Option<Self> {
+        if let SyncOp::Conflict { name, local_hash, remote_hash } = op {
+            Some(Self {
+                name: name.clone(),
+                local_hash: local_hash.clone(),
+                remote_hash: remote_hash.clone(),
+                local_source: None,
+                remote_source: None,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Adds local source to the conflict info.
+    pub fn with_local_source(mut self, source: String) -> Self {
+        self.local_source = Some(source);
+        self
+    }
+
+    /// Adds remote source to the conflict info.
+    pub fn with_remote_source(mut self, source: String) -> Self {
+        self.remote_source = Some(source);
+        self
+    }
+
+    /// Returns a human-readable description of the conflict.
+    pub fn describe(&self) -> String {
+        format!(
+            "Conflict on '{}': local {} vs remote {}",
+            self.name,
+            self.local_hash.short(),
+            self.remote_hash.short()
+        )
+    }
+}
+
+/// Operations resulting from conflict resolution.
+#[derive(Debug, Clone)]
+pub enum ResolvedOp {
+    /// Update local name to point to a different hash
+    UpdateLocal { name: Name, new_hash: Hash },
+    /// Add a new name pointing to a hash
+    AddName { name: Name, hash: Hash },
+    /// Remove a name
+    RemoveName { name: Name },
+    /// Add a new definition
+    AddDefinition { name: Name, source: String, kind: DefKind },
+    /// No operation needed
+    NoOp,
 }
 
 /// Resolves a conflict using the given strategy.
+///
+/// Returns a list of operations to apply to resolve the conflict.
 pub fn resolve_conflict(
-    _name: &Name,
-    _local_hash: &Hash,
-    _remote_hash: &Hash,
-    resolution: ConflictResolution,
-) -> Option<SyncOp> {
+    conflict: &ConflictInfo,
+    resolution: &ConflictResolution,
+    remote_source: Option<&str>,
+) -> Vec<ResolvedOp> {
     match resolution {
-        ConflictResolution::KeepLocal => None, // No-op, already have local
+        ConflictResolution::KeepLocal => {
+            // No-op: local is already what we want
+            vec![ResolvedOp::NoOp]
+        }
         ConflictResolution::KeepRemote => {
-            // TODO: Return operation to update local with remote
-            None
+            // Update local name to point to remote hash
+            // First we need to add the remote definition, then update the name
+            if let Some(source) = remote_source {
+                vec![
+                    ResolvedOp::AddDefinition {
+                        name: conflict.name.clone(),
+                        source: source.to_string(),
+                        kind: DefKind::Term, // Default, should be provided
+                    },
+                ]
+            } else {
+                // Can't keep remote without source
+                vec![ResolvedOp::UpdateLocal {
+                    name: conflict.name.clone(),
+                    new_hash: conflict.remote_hash.clone(),
+                }]
+            }
         }
-        ConflictResolution::KeepBoth => {
-            // TODO: Rename one and keep both
-            None
+        ConflictResolution::KeepBoth { local_name, remote_name } => {
+            let mut ops = Vec::new();
+
+            // Rename local if specified
+            if let Some(new_local_name) = local_name {
+                ops.push(ResolvedOp::AddName {
+                    name: new_local_name.clone(),
+                    hash: conflict.local_hash.clone(),
+                });
+            }
+
+            // Add remote with its name (original or specified)
+            let remote_name = remote_name.clone().unwrap_or_else(|| conflict.name.clone());
+            if let Some(source) = remote_source {
+                ops.push(ResolvedOp::AddDefinition {
+                    name: remote_name,
+                    source: source.to_string(),
+                    kind: DefKind::Term,
+                });
+            } else {
+                ops.push(ResolvedOp::AddName {
+                    name: remote_name,
+                    hash: conflict.remote_hash.clone(),
+                });
+            }
+
+            // If local was renamed, remove original name from local
+            if local_name.is_some() {
+                ops.push(ResolvedOp::RemoveName {
+                    name: conflict.name.clone(),
+                });
+            }
+
+            ops
         }
-        ConflictResolution::Skip => None,
+        ConflictResolution::Skip => {
+            vec![ResolvedOp::NoOp]
+        }
+        ConflictResolution::Custom { source } => {
+            // Replace with custom merged source
+            vec![ResolvedOp::AddDefinition {
+                name: conflict.name.clone(),
+                source: source.clone(),
+                kind: DefKind::Term,
+            }]
+        }
+    }
+}
+
+/// A conflict resolver that can be used to resolve conflicts interactively or automatically.
+pub struct ConflictResolver {
+    /// Default strategy for unhandled conflicts
+    default_strategy: ConflictResolution,
+}
+
+impl ConflictResolver {
+    /// Creates a new conflict resolver with the given default strategy.
+    pub fn new(default_strategy: ConflictResolution) -> Self {
+        Self { default_strategy }
+    }
+
+    /// Creates a resolver that keeps local versions by default.
+    pub fn keep_local() -> Self {
+        Self::new(ConflictResolution::KeepLocal)
+    }
+
+    /// Creates a resolver that keeps remote versions by default.
+    pub fn keep_remote() -> Self {
+        Self::new(ConflictResolution::KeepRemote)
+    }
+
+    /// Resolves all conflicts in a sync plan using the default strategy.
+    pub fn resolve_all(&self, plan: &SyncPlan, remote_data: Option<&ExportData>) -> Vec<ResolvedOp> {
+        let mut all_ops = Vec::new();
+
+        for op in &plan.operations {
+            if let SyncOp::Conflict { name, local_hash, remote_hash } = op {
+                let conflict = ConflictInfo {
+                    name: name.clone(),
+                    local_hash: local_hash.clone(),
+                    remote_hash: remote_hash.clone(),
+                    local_source: None,
+                    remote_source: None,
+                };
+
+                // Try to find remote source
+                let remote_source = remote_data.and_then(|data| {
+                    data.definitions
+                        .iter()
+                        .find(|(h, _, _)| h == &remote_hash.to_string())
+                        .map(|(_, _, s)| s.as_str())
+                });
+
+                let ops = resolve_conflict(&conflict, &self.default_strategy, remote_source);
+                all_ops.extend(ops);
+            }
+        }
+
+        all_ops
+    }
+}
+
+impl Default for ConflictResolver {
+    fn default() -> Self {
+        Self::keep_local()
     }
 }
 

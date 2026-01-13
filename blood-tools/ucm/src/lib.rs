@@ -50,10 +50,12 @@ pub mod hash;
 pub mod names;
 pub mod storage;
 pub mod sync;
+pub mod test_runner;
 
 pub use codebase::{Codebase, DiffResult, Difference};
 pub use hash::Hash;
 pub use names::Name;
+pub use test_runner::{TestRunner, TestRunOptions, TestResult, TestOutcome, TestSummary, TestDiscovery};
 
 use thiserror::Error;
 

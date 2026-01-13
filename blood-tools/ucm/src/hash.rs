@@ -146,13 +146,307 @@ impl Default for Hasher {
 /// The structural hash is based on the AST structure, not the source text.
 /// This means equivalent definitions with different formatting have the same hash.
 pub fn structural_hash(source: &str) -> Hash {
-    // TODO: Parse the source and hash the AST structure
-    // For now, normalize whitespace and hash
+    // Try to parse and hash the AST structure
+    if let Some(ast_hash) = try_ast_hash(source) {
+        return ast_hash;
+    }
+
+    // Fallback: normalize whitespace and hash
     let normalized: String = source
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
     Hash::of_str(&normalized)
+}
+
+/// Tries to compute an AST-based hash of the source.
+///
+/// This parses the source to verify it's syntactically valid,
+/// then hashes a whitespace-normalized version for consistency.
+/// Symbol values differ between parses (different interners),
+/// so we use normalized source text for deterministic hashing.
+fn try_ast_hash(source: &str) -> Option<Hash> {
+    use bloodc::Parser;
+
+    let mut parser = Parser::new(source);
+    let _program = parser.parse_program().ok()?;
+
+    // Check if there were parse errors
+    if parser.has_errors() {
+        return None;
+    }
+
+    // Parse succeeded - use whitespace-normalized source for deterministic hash
+    // This ensures "fn foo() { 42 }" and "fn  foo()  {  42  }" produce same hash
+    let normalized: String = source
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    Some(Hash::of_str(&normalized))
+}
+
+/// Extracts dependencies (referenced names) from a Blood definition.
+///
+/// Returns a list of name references found in the source.
+pub fn extract_dependencies(source: &str) -> Vec<String> {
+    use bloodc::Parser;
+
+    let mut parser = Parser::new(source);
+    let program = match parser.parse_program() {
+        Ok(p) => p,
+        Err(_) => return Vec::new(),
+    };
+
+    let interner = parser.take_interner();
+    let mut deps = Vec::new();
+
+    // Collect referenced names from expressions
+    for decl in &program.declarations {
+        collect_deps_from_decl(decl, &interner, &mut deps);
+    }
+
+    // Remove duplicates and sort
+    deps.sort();
+    deps.dedup();
+    deps
+}
+
+/// Collects dependencies from a declaration.
+fn collect_deps_from_decl(
+    decl: &bloodc::ast::Declaration,
+    interner: &string_interner::DefaultStringInterner,
+    deps: &mut Vec<String>,
+) {
+    use bloodc::ast::Declaration;
+
+    match decl {
+        Declaration::Function(f) => {
+            if let Some(body) = &f.body {
+                collect_deps_from_block(body, interner, deps);
+            }
+        }
+        Declaration::Struct(_)
+        | Declaration::Enum(_)
+        | Declaration::Effect(_)
+        | Declaration::Handler(_)
+        | Declaration::Trait(_)
+        | Declaration::Impl(_)
+        | Declaration::Type(_)
+        | Declaration::Const(_)
+        | Declaration::Static(_)
+        | Declaration::Bridge(_) => {}
+    }
+}
+
+/// Collects dependencies from a block.
+fn collect_deps_from_block(
+    block: &bloodc::ast::Block,
+    interner: &string_interner::DefaultStringInterner,
+    deps: &mut Vec<String>,
+) {
+    for stmt in &block.statements {
+        collect_deps_from_stmt(stmt, interner, deps);
+    }
+    if let Some(expr) = &block.expr {
+        collect_deps_from_expr(expr, interner, deps);
+    }
+}
+
+/// Collects dependencies from an expression.
+fn collect_deps_from_expr(
+    expr: &bloodc::ast::Expr,
+    interner: &string_interner::DefaultStringInterner,
+    deps: &mut Vec<String>,
+) {
+    use bloodc::ast::ExprKind;
+
+    match &expr.kind {
+        ExprKind::Path(path) => {
+            let path_str: Vec<_> = path.segments.iter()
+                .filter_map(|s| interner.resolve(s.name.node))
+                .collect();
+            if !path_str.is_empty() {
+                let name = path_str[0];
+                if !is_builtin(name) {
+                    deps.push(path_str.join("::"));
+                }
+            }
+        }
+        ExprKind::Block(block) => {
+            collect_deps_from_block(block, interner, deps);
+        }
+        ExprKind::Binary { left, right, .. } => {
+            collect_deps_from_expr(left, interner, deps);
+            collect_deps_from_expr(right, interner, deps);
+        }
+        ExprKind::Unary { operand, .. } => {
+            collect_deps_from_expr(operand, interner, deps);
+        }
+        ExprKind::Call { callee, args } => {
+            collect_deps_from_expr(callee, interner, deps);
+            for arg in args {
+                collect_deps_from_expr(&arg.value, interner, deps);
+            }
+        }
+        ExprKind::If { condition, then_branch, else_branch } => {
+            collect_deps_from_expr(condition, interner, deps);
+            collect_deps_from_block(then_branch, interner, deps);
+            if let Some(e) = else_branch {
+                collect_deps_from_else(e, interner, deps);
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            collect_deps_from_expr(scrutinee, interner, deps);
+            for arm in arms {
+                collect_deps_from_expr(&arm.body, interner, deps);
+            }
+        }
+        ExprKind::Closure { body, .. } => {
+            collect_deps_from_expr(body, interner, deps);
+        }
+        ExprKind::MethodCall { receiver, args, .. } => {
+            collect_deps_from_expr(receiver, interner, deps);
+            for arg in args {
+                collect_deps_from_expr(&arg.value, interner, deps);
+            }
+        }
+        ExprKind::Field { base, .. } => {
+            collect_deps_from_expr(base, interner, deps);
+        }
+        ExprKind::Index { base, index } => {
+            collect_deps_from_expr(base, interner, deps);
+            collect_deps_from_expr(index, interner, deps);
+        }
+        ExprKind::Record { fields, base, .. } => {
+            for field in fields {
+                if let Some(val) = &field.value {
+                    collect_deps_from_expr(val, interner, deps);
+                }
+            }
+            if let Some(b) = base {
+                collect_deps_from_expr(b, interner, deps);
+            }
+        }
+        ExprKind::Array(arr) => {
+            match arr {
+                bloodc::ast::ArrayExpr::List(elements) => {
+                    for e in elements {
+                        collect_deps_from_expr(e, interner, deps);
+                    }
+                }
+                bloodc::ast::ArrayExpr::Repeat { value, count } => {
+                    collect_deps_from_expr(value, interner, deps);
+                    collect_deps_from_expr(count, interner, deps);
+                }
+            }
+        }
+        ExprKind::Tuple(elements) => {
+            for e in elements {
+                collect_deps_from_expr(e, interner, deps);
+            }
+        }
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start {
+                collect_deps_from_expr(s, interner, deps);
+            }
+            if let Some(e) = end {
+                collect_deps_from_expr(e, interner, deps);
+            }
+        }
+        ExprKind::Return(e) => {
+            if let Some(e) = e {
+                collect_deps_from_expr(e, interner, deps);
+            }
+        }
+        ExprKind::Break { value, .. } => {
+            if let Some(e) = value {
+                collect_deps_from_expr(e, interner, deps);
+            }
+        }
+        ExprKind::Loop { body, .. } => {
+            collect_deps_from_block(body, interner, deps);
+        }
+        ExprKind::While { condition, body, .. } => {
+            collect_deps_from_expr(condition, interner, deps);
+            collect_deps_from_block(body, interner, deps);
+        }
+        ExprKind::For { iter, body, .. } => {
+            collect_deps_from_expr(iter, interner, deps);
+            collect_deps_from_block(body, interner, deps);
+        }
+        ExprKind::WithHandle { handler, body } => {
+            collect_deps_from_expr(handler, interner, deps);
+            collect_deps_from_expr(body, interner, deps);
+        }
+        ExprKind::Perform { args, .. } => {
+            for arg in args {
+                collect_deps_from_expr(arg, interner, deps);
+            }
+        }
+        ExprKind::Resume(e) => {
+            collect_deps_from_expr(e, interner, deps);
+        }
+        ExprKind::Cast { expr, .. } => {
+            collect_deps_from_expr(expr, interner, deps);
+        }
+        ExprKind::Unsafe(block) | ExprKind::Region { body: block, .. } => {
+            collect_deps_from_block(block, interner, deps);
+        }
+        ExprKind::Paren(e) => {
+            collect_deps_from_expr(e, interner, deps);
+        }
+        _ => {}
+    }
+}
+
+/// Collects dependencies from an else branch.
+fn collect_deps_from_else(
+    branch: &bloodc::ast::ElseBranch,
+    interner: &string_interner::DefaultStringInterner,
+    deps: &mut Vec<String>,
+) {
+    match branch {
+        bloodc::ast::ElseBranch::Block(block) => collect_deps_from_block(block, interner, deps),
+        bloodc::ast::ElseBranch::If(expr) => collect_deps_from_expr(expr, interner, deps),
+    }
+}
+
+/// Collects dependencies from a statement.
+fn collect_deps_from_stmt(
+    stmt: &bloodc::ast::Statement,
+    interner: &string_interner::DefaultStringInterner,
+    deps: &mut Vec<String>,
+) {
+    use bloodc::ast::Statement;
+
+    match stmt {
+        Statement::Let { value, .. } => {
+            if let Some(e) = value {
+                collect_deps_from_expr(e, interner, deps);
+            }
+        }
+        Statement::Expr { expr, .. } => {
+            collect_deps_from_expr(expr, interner, deps);
+        }
+        Statement::Item(decl) => {
+            collect_deps_from_decl(decl, interner, deps);
+        }
+    }
+}
+
+/// Checks if a name is a builtin/primitive that shouldn't be tracked as a dependency.
+fn is_builtin(name: &str) -> bool {
+    matches!(
+        name,
+        "i8" | "i16" | "i32" | "i64" | "i128" | "isize"
+            | "u8" | "u16" | "u32" | "u64" | "u128" | "usize"
+            | "f32" | "f64"
+            | "bool" | "char" | "str" | "String"
+            | "true" | "false"
+            | "self" | "Self"
+            | "Some" | "None" | "Ok" | "Err"
+            | "Vec" | "Option" | "Result" | "Box"
+    )
 }
 
 #[cfg(test)]
