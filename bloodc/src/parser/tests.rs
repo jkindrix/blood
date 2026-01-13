@@ -360,6 +360,12 @@ fn test_field_init_shorthand() {
 }
 
 #[test]
+fn test_anonymous_record_literal() {
+    let source = "fn f() { { x: 10, y: 20 } }";
+    insta::assert_snapshot!(parse_to_debug(source));
+}
+
+#[test]
 fn test_range_expr() {
     let source = "fn f() { 0..10 }";
     insta::assert_snapshot!(parse_to_debug(source));
@@ -438,6 +444,20 @@ fn test_guard_pattern() {
 #[test]
 fn test_binding_pattern() {
     let source = "fn f() { match opt { Some(x @ 1..10) => x, _ => 0 } }";
+    insta::assert_snapshot!(parse_to_debug(source));
+}
+
+#[test]
+fn test_slice_pattern_with_rest() {
+    // Test slice pattern with binding rest pattern (rest @ ..)
+    let source = "fn f() { match arr { [first, rest @ .., last] => first + last, _ => 0 } }";
+    insta::assert_snapshot!(parse_to_debug(source));
+}
+
+#[test]
+fn test_slice_pattern_ref_rest() {
+    // Test slice pattern with ref binding rest pattern (ref rest @ ..)
+    let source = "fn f() { match arr { [first, ref rest @ ..] => rest.len(), _ => 0 } }";
     insta::assert_snapshot!(parse_to_debug(source));
 }
 

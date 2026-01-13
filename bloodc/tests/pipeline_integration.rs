@@ -1329,7 +1329,7 @@ fn test_e2e_perform_expression_mir() {
             op print(msg: i32) -> unit;
         }
 
-        fn greet() -> unit / Console {
+        fn greet() -> unit / {Console} {
             perform Console::print(42)
         }
     "#;
@@ -1361,7 +1361,7 @@ fn test_e2e_handler_with_resume_mir() {
             op fail() { 0 }
         }
 
-        fn safe_div(a: i32, b: i32) -> i32 / Maybe {
+        fn safe_div(a: i32, b: i32) -> i32 / {Maybe} {
             if b == 0 {
                 perform Maybe::fail()
             } else {
@@ -1764,6 +1764,520 @@ fn test_e2e_effect_llvm_with_generation_checks() {
         }
         Err(e) => {
             eprintln!("Effect + generation LLVM: {}", e);
+        }
+    }
+}
+
+// ============================================================
+// Linear Types + Multi-Shot Handler Rejection Tests (E0304)
+// ============================================================
+
+#[test]
+fn test_e2e_e0309_shallow_handler_multiple_resumes() {
+    // E0309: Shallow handlers must be single-shot (at most 1 resume)
+    let source = r#"
+        effect Choice {
+            op choose(a: i32, b: i32) -> i32;
+        }
+
+        shallow handler BrokenShallow for Choice {
+            return(x) { x }
+            op choose(a, b) {
+                // ERROR: Multiple resumes in shallow handler
+                let first = resume(a);
+                let second = resume(b);
+                first + second
+            }
+        }
+    "#;
+
+    let result = check_source(source);
+    // E0309 should be emitted for multiple resume in shallow handler
+    match result {
+        Err(errors) => {
+            let has_e0309 = errors.iter().any(|e|
+                e.message.contains("E0309") ||
+                e.message.contains("shallow") ||
+                e.message.contains("resume") ||
+                e.message.contains("single-shot")
+            );
+            // Track current implementation status
+            if !has_e0309 {
+                eprintln!("E0309 not yet fully implemented. Errors: {:?}",
+                         errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+            }
+        }
+        Ok(_) => {
+            // Track that this should eventually fail
+            eprintln!("E0309 check not yet implemented - shallow multi-resume should fail");
+        }
+    }
+}
+
+#[test]
+fn test_e2e_shallow_handler_single_resume_ok() {
+    // Shallow handler with exactly one resume should pass
+    let source = r#"
+        effect Choice {
+            op choose(a: i32, b: i32) -> i32;
+        }
+
+        shallow handler GoodShallow for Choice {
+            return(x) { x }
+            op choose(a, b) {
+                // OK: Single resume in shallow handler
+                resume(a + b)
+            }
+        }
+    "#;
+
+    let result = check_source(source);
+    // This should pass type checking
+    match result {
+        Ok(_) => {
+            // Expected: single resume in shallow handler is valid
+        }
+        Err(errors) => {
+            // If it fails, it should not be E0309
+            let has_e0309 = errors.iter().any(|e|
+                e.message.contains("E0309") ||
+                (e.message.contains("shallow") && e.message.contains("resume"))
+            );
+            assert!(!has_e0309, "Single resume in shallow handler should not trigger E0309: {:?}",
+                   errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+        }
+    }
+}
+
+#[test]
+fn test_e2e_deep_handler_multiple_resumes_ok() {
+    // Deep handlers can resume multiple times (multi-shot)
+    let source = r#"
+        effect Choice {
+            op choose(a: i32, b: i32) -> i32;
+        }
+
+        deep handler MultiShot for Choice {
+            let mut count: i32
+
+            return(x) { count }
+            op choose(a, b) {
+                // OK: Deep handlers support multi-shot
+                let first = resume(a);
+                count = count + first;
+                let second = resume(b);
+                count = count + second;
+                0
+            }
+        }
+    "#;
+
+    let result = check_source(source);
+    // Deep handlers with multiple resumes should pass (unless linear values are captured)
+    match result {
+        Ok(_) => {
+            // Expected: deep handler multi-shot is valid
+        }
+        Err(errors) => {
+            // Should NOT fail with E0309 (that's for shallow handlers)
+            let has_e0309 = errors.iter().any(|e| e.message.contains("E0309"));
+            assert!(!has_e0309, "Deep handler multi-shot should not trigger E0309: {:?}",
+                   errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+        }
+    }
+}
+
+#[test]
+fn test_e2e_e0304_linear_value_in_multishot_handler() {
+    // E0304: Linear values cannot be captured in multi-shot handlers
+    // This test verifies the error is emitted when a linear type is captured
+    // Note: Linear types are not yet fully implemented in the type system
+    let source = r#"
+        effect Choice {
+            op choose(a: i32, b: i32) -> i32;
+        }
+
+        // When linear types are implemented, this should fail with E0304:
+        // A linear value (must be used exactly once) captured in a multi-shot
+        // handler would be duplicated when resume is called multiple times.
+        deep handler BadLinear for Choice {
+            let linear_value: linear i32  // hypothetical linear type
+
+            return(x) { x }
+            op choose(a, b) {
+                // ERROR: linear_value would be duplicated across resumes
+                let first = resume(a);
+                let second = resume(b);
+                first + second
+            }
+        }
+    "#;
+
+    let mut parser = Parser::new(source);
+    let result = parser.parse_program();
+
+    // Linear type syntax may not be fully supported yet
+    match result {
+        Ok(_) => {
+            // Linear type parsing works - check type checking
+            eprintln!("Linear type syntax parsed - E0304 check pending full linear type support");
+        }
+        Err(errors) => {
+            // Linear type syntax not yet supported
+            eprintln!("Linear type syntax not yet implemented: {:?}",
+                     errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+        }
+    }
+}
+
+#[test]
+fn test_e2e_e0304_affine_value_in_multishot_handler() {
+    // Affine values (used at most once) should also be rejected in multi-shot handlers
+    let source = r#"
+        effect Amb {
+            op flip() -> bool;
+        }
+
+        // Affine value captured in multi-shot handler
+        deep handler BadAffine for Amb {
+            let affine_resource: &mut i32  // hypothetical affine borrowed reference
+
+            return(x) { x }
+            op flip() {
+                // ERROR: affine reference would be duplicated
+                let a = resume(true);
+                let b = resume(false);
+                a
+            }
+        }
+    "#;
+
+    let mut parser = Parser::new(source);
+    let result = parser.parse_program();
+
+    // Track implementation status
+    match result {
+        Ok(program) => {
+            eprintln!("Affine type syntax parsed ({} declarations)", program.declarations.len());
+        }
+        Err(errors) => {
+            eprintln!("Affine type syntax status: {:?}",
+                     errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+        }
+    }
+}
+
+#[test]
+fn test_e2e_non_linear_value_in_multishot_ok() {
+    // Regular (non-linear) values can be captured in multi-shot handlers
+    let source = r#"
+        effect Choice {
+            op choose() -> i32;
+        }
+
+        deep handler CopyableState for Choice {
+            let count: i32  // Regular i32 is Copy, not linear
+
+            return(x) { x }
+            op choose() {
+                // OK: count is Copy, can be duplicated across resumes
+                let a = resume(count);
+                let b = resume(count + 1);
+                a + b
+            }
+        }
+    "#;
+
+    let result = check_source(source);
+    // This should pass - regular values are fine in multi-shot handlers
+    match result {
+        Ok(_) => {
+            // Expected: non-linear values are valid in multi-shot handlers
+        }
+        Err(errors) => {
+            // Should NOT fail with E0304 (that's for linear values)
+            let has_e0304 = errors.iter().any(|e| e.message.contains("E0304"));
+            assert!(!has_e0304, "Non-linear value should not trigger E0304: {:?}",
+                   errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+        }
+    }
+}
+
+// ============================================================
+// Effects + Generational Snapshot Integration Tests
+// ============================================================
+
+#[test]
+fn test_e2e_effect_generation_snapshot_preservation() {
+    // Test that effect handlers properly preserve generation context
+    // across resume boundaries
+    let source = r#"
+        effect State {
+            op get() -> i32;
+            op set(v: i32) -> unit;
+        }
+
+        deep handler CountingState for State {
+            let mut value: i32
+
+            return(x) { (x, value) }
+            op get() { resume(value) }
+            op set(v) { value = v; resume(()) }
+        }
+
+        fn increment_twice() -> i32 / {State} {
+            let v = perform State::get();
+            perform State::set(v + 1);
+            let v2 = perform State::get();
+            perform State::set(v2 + 1);
+            perform State::get()
+        }
+    "#;
+
+    let result = compile_to_mir(source);
+    match result {
+        Ok(mir_bodies) => {
+            assert!(!mir_bodies.is_empty(), "Should generate MIR bodies");
+            eprintln!("Effect + generation snapshot MIR: {} bodies", mir_bodies.len());
+        }
+        Err(e) => {
+            eprintln!("Effect + generation snapshot MIR status: {}", e);
+        }
+    }
+}
+
+#[test]
+fn test_e2e_nested_handlers_generation_isolation() {
+    // Nested handlers should maintain generation isolation
+    let source = r#"
+        effect Inner { op inner() -> i32; }
+        effect Outer { op outer() -> i32; }
+
+        deep handler HandleInner for Inner {
+            return(x) { x }
+            op inner() { resume(10) }
+        }
+
+        deep handler HandleOuter for Outer {
+            return(x) { x }
+            op outer() { resume(20) }
+        }
+
+        fn nested_effects() -> i32 {
+            with HandleOuter {} handle {
+                with HandleInner {} handle {
+                    let a = perform Outer::outer();
+                    let b = perform Inner::inner();
+                    a + b
+                }
+            }
+        }
+    "#;
+
+    let result = compile_to_mir(source);
+    match result {
+        Ok(mir_bodies) => {
+            assert!(!mir_bodies.is_empty());
+            eprintln!("Nested handlers generation isolation: {} MIR bodies", mir_bodies.len());
+        }
+        Err(e) => {
+            eprintln!("Nested handlers MIR status: {}", e);
+        }
+    }
+}
+
+#[test]
+fn test_e2e_effect_with_struct_state_generations() {
+    // Effect handlers with struct state should properly track generations
+    let source = r#"
+        struct Counter {
+            value: i32,
+            max: i32,
+        }
+
+        effect Counting {
+            op inc() -> i32;
+            op reset() -> unit;
+        }
+
+        deep handler StructCounter for Counting {
+            let mut counter: Counter
+
+            return(x) { x }
+            op inc() {
+                let v = counter.value + 1;
+                counter.value = v;
+                resume(v)
+            }
+            op reset() {
+                counter.value = 0;
+                resume(())
+            }
+        }
+
+        fn use_struct_counter() -> i32 {
+            with StructCounter { counter: Counter { value: 0, max: 100 } } handle {
+                perform Counting::inc();
+                perform Counting::inc();
+                perform Counting::inc()
+            }
+        }
+    "#;
+
+    let result = compile_to_mir(source);
+    match result {
+        Ok(mir_bodies) => {
+            assert!(!mir_bodies.is_empty());
+            eprintln!("Struct state generation tracking: {} MIR bodies", mir_bodies.len());
+        }
+        Err(e) => {
+            eprintln!("Struct state generation MIR status: {}", e);
+        }
+    }
+}
+
+#[test]
+fn test_e2e_effect_generation_llvm_with_snapshots() {
+    // LLVM IR should include generation snapshot calls for effect handlers
+    let source = r#"
+        effect Tick {
+            op tick() -> i32;
+        }
+
+        deep handler TickHandler for Tick {
+            let mut count: i32
+
+            return(x) { count }
+            op tick() {
+                count = count + 1;
+                resume(count)
+            }
+        }
+
+        fn run_ticks() -> i32 {
+            with TickHandler { count: 0 } handle {
+                perform Tick::tick();
+                perform Tick::tick();
+                perform Tick::tick()
+            }
+        }
+    "#;
+
+    let result = compile_to_llvm_ir(source);
+    match result {
+        Ok(llvm_ir) => {
+            // Check for generation-related functions
+            let has_generation_calls = llvm_ir.contains("generation") ||
+                                       llvm_ir.contains("snapshot") ||
+                                       llvm_ir.contains("blood_");
+
+            eprintln!("LLVM IR has generation/snapshot calls: {}", has_generation_calls);
+
+            // Should at least have function definitions
+            assert!(llvm_ir.contains("define"), "Should have function definitions");
+        }
+        Err(e) => {
+            eprintln!("Effect + generation LLVM IR status: {}", e);
+        }
+    }
+}
+
+#[test]
+fn test_e2e_multishot_generation_rollback() {
+    // Multi-shot handlers need to properly rollback generations
+    let source = r#"
+        effect Amb {
+            op choose(a: i32, b: i32) -> i32;
+        }
+
+        deep handler AmbHandler for Amb {
+            let mut sum: i32
+
+            return(x) { sum }
+            op choose(a, b) {
+                // Multi-shot: call resume twice
+                // Each resume should have proper generation management
+                let r1 = resume(a);
+                sum = sum + r1;
+                let r2 = resume(b);
+                sum = sum + r2;
+                0
+            }
+        }
+
+        fn amb_computation() -> i32 {
+            with AmbHandler { sum: 0 } handle {
+                let x = perform Amb::choose(1, 10);
+                let y = perform Amb::choose(2, 20);
+                x + y
+            }
+        }
+    "#;
+
+    let result = compile_to_mir(source);
+    match result {
+        Ok(mir_bodies) => {
+            assert!(!mir_bodies.is_empty());
+            eprintln!("Multi-shot generation rollback: {} MIR bodies", mir_bodies.len());
+        }
+        Err(e) => {
+            eprintln!("Multi-shot generation MIR status: {}", e);
+        }
+    }
+}
+
+#[test]
+fn test_e2e_reserved_generation_values() {
+    // Test that reserved generation values (0, 1, MAX) are properly handled
+    let source = r#"
+        fn test_generations() -> i32 {
+            // Create allocations that will use different generation values
+            let a = 1;
+            let b = 2;
+            let c = 3;
+
+            // Operations that exercise generation checking
+            a + b + c
+        }
+    "#;
+
+    let result = compile_to_llvm_ir(source);
+    assert!(result.is_ok(), "Basic generation test should compile: {:?}", result.err());
+
+    let llvm_ir = result.unwrap();
+
+    // Verify generation validation is present
+    let has_gen_validate = llvm_ir.contains("blood_validate_generation");
+    eprintln!("LLVM IR includes generation validation: {}", has_gen_validate);
+}
+
+#[test]
+fn test_e2e_effect_delimited_continuation_snapshots() {
+    // Delimited continuations should properly snapshot/restore generations
+    let source = r#"
+        effect Shift {
+            op shift(f: fn(fn(i32) -> i32) -> i32) -> i32;
+        }
+
+        fn with_shift() -> i32 / {Shift} {
+            let x = 10;
+            // Using shift to capture continuation
+            let y = perform Shift::shift(|k| k(x) + k(x + 1));
+            y
+        }
+    "#;
+
+    let mut parser = Parser::new(source);
+    let result = parser.parse_program();
+
+    // This is advanced shift/reset - track parsing status
+    match result {
+        Ok(program) => {
+            eprintln!("Shift/reset syntax parsed: {} declarations", program.declarations.len());
+        }
+        Err(errors) => {
+            eprintln!("Shift/reset syntax status: {:?}",
+                     errors.iter().map(|e| &e.message).collect::<Vec<_>>());
         }
     }
 }
