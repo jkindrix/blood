@@ -1,0 +1,272 @@
+{
+  "name": "blood-lang",
+  "displayName": "Blood Language",
+  "description": "Language support for the Blood programming language",
+  "version": "0.1.0",
+  "publisher": "blood-lang",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/blood-lang/blood"
+  },
+  "bugs": {
+    "url": "https://github.com/blood-lang/blood/issues"
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Formatters",
+    "Linters"
+  ],
+  "keywords": [
+    "blood",
+    "effects",
+    "systems programming",
+    "memory safety"
+  ],
+  "activationEvents": [
+    "onLanguage:blood"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "blood",
+        "aliases": [
+          "Blood",
+          "blood"
+        ],
+        "extensions": [
+          ".blood"
+        ],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icons/blood-light.png",
+          "dark": "./icons/blood-dark.png"
+        }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "blood",
+        "scopeName": "source.blood",
+        "path": "./syntaxes/blood.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "Blood",
+      "properties": {
+        "blood.path": {
+          "type": "string",
+          "default": "blood",
+          "description": "Path to the blood executable"
+        },
+        "blood.lsp.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the Blood Language Server"
+        },
+        "blood.lsp.path": {
+          "type": "string",
+          "default": "blood-lsp",
+          "description": "Path to the Blood Language Server executable"
+        },
+        "blood.format.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable formatting with blood-fmt"
+        },
+        "blood.format.onSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Format on save"
+        },
+        "blood.lint.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable linting"
+        },
+        "blood.lint.onSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Lint on save"
+        },
+        "blood.inlayHints.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable inlay hints"
+        },
+        "blood.inlayHints.typeHints": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show type hints for variables"
+        },
+        "blood.inlayHints.effectHints": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show effect hints for function calls"
+        },
+        "blood.inlayHints.parameterHints": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show parameter name hints in function calls"
+        },
+        "blood.checkOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run blood check on save"
+        },
+        "blood.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Trace communication between VS Code and the language server"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "blood.restartServer",
+        "title": "Restart Blood Language Server",
+        "category": "Blood"
+      },
+      {
+        "command": "blood.runFile",
+        "title": "Run Current File",
+        "category": "Blood"
+      },
+      {
+        "command": "blood.checkFile",
+        "title": "Check Current File",
+        "category": "Blood"
+      },
+      {
+        "command": "blood.formatFile",
+        "title": "Format Current File",
+        "category": "Blood"
+      },
+      {
+        "command": "blood.showOutput",
+        "title": "Show Blood Output",
+        "category": "Blood"
+      },
+      {
+        "command": "blood.openDocs",
+        "title": "Open Blood Documentation",
+        "category": "Blood"
+      },
+      {
+        "command": "blood.expandMacro",
+        "title": "Expand Macro at Cursor",
+        "category": "Blood"
+      },
+      {
+        "command": "blood.showEffects",
+        "title": "Show Effects for Function",
+        "category": "Blood"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "blood.runFile",
+        "key": "ctrl+shift+r",
+        "mac": "cmd+shift+r",
+        "when": "editorLangId == blood"
+      },
+      {
+        "command": "blood.formatFile",
+        "key": "ctrl+shift+f",
+        "mac": "cmd+shift+f",
+        "when": "editorLangId == blood"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "blood.runFile",
+          "when": "editorLangId == blood",
+          "group": "blood@1"
+        },
+        {
+          "command": "blood.showEffects",
+          "when": "editorLangId == blood",
+          "group": "blood@2"
+        }
+      ]
+    },
+    "problemMatchers": [
+      {
+        "name": "blood",
+        "owner": "blood",
+        "fileLocation": [
+          "relative",
+          "${workspaceFolder}"
+        ],
+        "pattern": {
+          "regexp": "^error\\[(.+)\\]: (.+)$\\n\\s+-->\\s+(.+):(\\d+):(\\d+)",
+          "code": 1,
+          "message": 2,
+          "file": 3,
+          "line": 4,
+          "column": 5
+        }
+      }
+    ],
+    "taskDefinitions": [
+      {
+        "type": "blood",
+        "required": [
+          "command"
+        ],
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "Blood command to run (build, check, run, test)"
+          },
+          "args": {
+            "type": "array",
+            "description": "Additional arguments"
+          }
+        }
+      }
+    ],
+    "snippets": [
+      {
+        "language": "blood",
+        "path": "./snippets/blood.json"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile",
+    "test": "node ./out/test/runTest.js",
+    "lint": "eslint src --ext ts",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/glob": "^8.0.0",
+    "@types/mocha": "^10.0.0",
+    "@types/node": "^18.0.0",
+    "@types/vscode": "^1.75.0",
+    "@typescript-eslint/eslint-plugin": "^5.0.0",
+    "@typescript-eslint/parser": "^5.0.0",
+    "eslint": "^8.0.0",
+    "glob": "^8.0.0",
+    "mocha": "^10.0.0",
+    "typescript": "^5.0.0",
+    "vsce": "^2.0.0"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.0"
+  }
+}
