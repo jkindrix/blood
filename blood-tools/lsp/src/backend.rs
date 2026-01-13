@@ -8,7 +8,7 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 use tracing::{debug, info};
 
-use crate::analysis::{DefinitionProvider, HoverProvider};
+use crate::analysis::{CompletionProvider, DefinitionProvider, HoverProvider, ReferencesProvider};
 use crate::capabilities;
 use crate::diagnostics::DiagnosticEngine;
 use crate::document::Document;
@@ -28,6 +28,10 @@ pub struct BloodLanguageServer {
     hover_provider: HoverProvider,
     /// Go-to-definition provider.
     definition_provider: DefinitionProvider,
+    /// Find references provider.
+    references_provider: ReferencesProvider,
+    /// Code completion provider.
+    completion_provider: CompletionProvider,
 }
 
 impl BloodLanguageServer {
@@ -40,6 +44,8 @@ impl BloodLanguageServer {
             semantic_tokens: SemanticTokensProvider::new(),
             hover_provider: HoverProvider::new(),
             definition_provider: DefinitionProvider::new(),
+            references_provider: ReferencesProvider::new(),
+            completion_provider: CompletionProvider::new(),
         }
     }
 
@@ -167,16 +173,15 @@ impl LanguageServer for BloodLanguageServer {
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
         let uri = &params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
+        let include_declaration = params.context.include_declaration;
 
         debug!("Find references at {} line {} char {}", uri, position.line, position.character);
 
-        let Some(_doc) = self.documents.get(uri) else {
+        let Some(doc) = self.documents.get(uri) else {
             return Ok(None);
         };
 
-        // TODO: Integrate with bloodc for actual reference lookup
-
-        Ok(None)
+        Ok(self.references_provider.references(&doc, position, include_declaration))
     }
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
@@ -185,29 +190,11 @@ impl LanguageServer for BloodLanguageServer {
 
         debug!("Completion request at {} line {} char {}", uri, position.line, position.character);
 
-        let Some(_doc) = self.documents.get(uri) else {
+        let Some(doc) = self.documents.get(uri) else {
             return Ok(None);
         };
 
-        // TODO: Integrate with bloodc for actual completions
-        // Return some basic keyword completions for now
-
-        let items = vec![
-            CompletionItem::new_simple("fn".to_string(), "Function declaration".to_string()),
-            CompletionItem::new_simple("let".to_string(), "Variable binding".to_string()),
-            CompletionItem::new_simple("effect".to_string(), "Effect declaration".to_string()),
-            CompletionItem::new_simple("handler".to_string(), "Effect handler".to_string()),
-            CompletionItem::new_simple("perform".to_string(), "Perform effect operation".to_string()),
-            CompletionItem::new_simple("resume".to_string(), "Resume continuation".to_string()),
-            CompletionItem::new_simple("match".to_string(), "Pattern matching".to_string()),
-            CompletionItem::new_simple("if".to_string(), "Conditional".to_string()),
-            CompletionItem::new_simple("struct".to_string(), "Struct declaration".to_string()),
-            CompletionItem::new_simple("enum".to_string(), "Enum declaration".to_string()),
-            CompletionItem::new_simple("trait".to_string(), "Trait declaration".to_string()),
-            CompletionItem::new_simple("impl".to_string(), "Implementation block".to_string()),
-            CompletionItem::new_simple("pub".to_string(), "Public visibility".to_string()),
-            CompletionItem::new_simple("pure".to_string(), "Pure effect annotation".to_string()),
-        ];
+        let items = self.completion_provider.completions(&doc, position);
 
         Ok(Some(CompletionResponse::Array(items)))
     }
@@ -234,22 +221,149 @@ impl LanguageServer for BloodLanguageServer {
 
         debug!("Format request for {}", uri);
 
-        let Some(_doc) = self.documents.get(uri) else {
+        let Some(doc) = self.documents.get(uri) else {
             return Ok(None);
         };
 
-        // TODO: Integrate with blood-fmt for actual formatting
+        let source = doc.text();
 
-        Ok(None)
+        // Use blood-fmt to format the source
+        match blood_fmt::format_source(&source) {
+            Ok(formatted) => {
+                if formatted == source {
+                    // No changes needed
+                    return Ok(None);
+                }
+
+                // Calculate the range to replace (entire document)
+                let lines: Vec<&str> = source.lines().collect();
+                let last_line = lines.len().saturating_sub(1);
+                let last_col = lines.last().map(|l| l.len()).unwrap_or(0);
+
+                let edit = TextEdit {
+                    range: Range {
+                        start: Position { line: 0, character: 0 },
+                        end: Position {
+                            line: last_line as u32,
+                            character: last_col as u32,
+                        },
+                    },
+                    new_text: formatted,
+                };
+
+                Ok(Some(vec![edit]))
+            }
+            Err(e) => {
+                debug!("Format error: {}", e);
+                Ok(None)
+            }
+        }
     }
 
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
         let uri = &params.text_document.uri;
+        let range = params.range;
 
         debug!("Code action request for {}", uri);
 
-        // TODO: Implement code actions
+        let Some(doc) = self.documents.get(uri) else {
+            return Ok(None);
+        };
 
-        Ok(None)
+        let mut actions = Vec::new();
+        let text = doc.text();
+
+        // Get the line at the cursor
+        let lines: Vec<&str> = text.lines().collect();
+        let line_idx = range.start.line as usize;
+        let current_line = lines.get(line_idx).unwrap_or(&"");
+        let trimmed = current_line.trim();
+
+        // Code action: Add effect annotation for functions
+        if (trimmed.starts_with("fn ") || trimmed.starts_with("pub fn "))
+            && !trimmed.contains(" / ")
+            && trimmed.contains("->")
+        {
+            if let Some(brace_pos) = current_line.find('{') {
+                let action = CodeAction {
+                    title: "Add effect annotation".to_string(),
+                    kind: Some(CodeActionKind::QUICKFIX),
+                    edit: Some(WorkspaceEdit {
+                        changes: Some({
+                            let mut changes = std::collections::HashMap::new();
+                            changes.insert(uri.clone(), vec![TextEdit {
+                                range: Range {
+                                    start: Position {
+                                        line: range.start.line,
+                                        character: brace_pos as u32,
+                                    },
+                                    end: Position {
+                                        line: range.start.line,
+                                        character: brace_pos as u32,
+                                    },
+                                },
+                                new_text: "/ pure ".to_string(),
+                            }]);
+                            changes
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                };
+                actions.push(CodeActionOrCommand::CodeAction(action));
+            }
+        }
+
+        // Code action: Add type annotation for let bindings
+        if trimmed.starts_with("let ") && !trimmed.contains(':') && trimmed.contains('=') {
+            // Find the variable name and = position
+            if let Some(eq_pos) = current_line.find('=') {
+                let action = CodeAction {
+                    title: "Add type annotation".to_string(),
+                    kind: Some(CodeActionKind::QUICKFIX),
+                    edit: Some(WorkspaceEdit {
+                        changes: Some({
+                            let mut changes = std::collections::HashMap::new();
+                            changes.insert(uri.clone(), vec![TextEdit {
+                                range: Range {
+                                    start: Position {
+                                        line: range.start.line,
+                                        character: (eq_pos.saturating_sub(1)) as u32,
+                                    },
+                                    end: Position {
+                                        line: range.start.line,
+                                        character: eq_pos as u32,
+                                    },
+                                },
+                                new_text: ": Type ".to_string(),
+                            }]);
+                            changes
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                };
+                actions.push(CodeActionOrCommand::CodeAction(action));
+            }
+        }
+
+        // Code action: Format document
+        let format_action = CodeAction {
+            title: "Format document".to_string(),
+            kind: Some(CodeActionKind::SOURCE_ORGANIZE_IMPORTS),
+            command: Some(Command {
+                title: "Format".to_string(),
+                command: "blood.formatDocument".to_string(),
+                arguments: None,
+            }),
+            ..Default::default()
+        };
+        actions.push(CodeActionOrCommand::CodeAction(format_action));
+
+        if actions.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(actions))
+        }
     }
 }

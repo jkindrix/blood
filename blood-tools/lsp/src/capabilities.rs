@@ -7,9 +7,13 @@ use tower_lsp::lsp_types::*;
 use crate::semantic_tokens;
 
 /// Returns the server capabilities for the Blood language server.
+///
+/// NOTE: Only capabilities that are actually implemented are advertised.
+/// Features marked as "not yet implemented" have been disabled to avoid
+/// misleading IDE users.
 pub fn server_capabilities() -> ServerCapabilities {
     ServerCapabilities {
-        // Text document sync
+        // Text document sync - IMPLEMENTED
         text_document_sync: Some(TextDocumentSyncCapability::Options(
             TextDocumentSyncOptions {
                 open_close: Some(true),
@@ -22,90 +26,70 @@ pub fn server_capabilities() -> ServerCapabilities {
             },
         )),
 
-        // Hover provider
+        // Hover provider - IMPLEMENTED (basic keyword and type hovering)
         hover_provider: Some(HoverProviderCapability::Simple(true)),
 
-        // Completion provider
+        // Completion provider - IMPLEMENTED (basic keyword completions)
         completion_provider: Some(CompletionOptions {
-            resolve_provider: Some(true),
+            resolve_provider: Some(false), // resolve not implemented
             trigger_characters: Some(vec![
                 ".".to_string(),
                 ":".to_string(),
-                "<".to_string(),
-                "/".to_string(),
             ]),
             all_commit_characters: None,
             work_done_progress_options: WorkDoneProgressOptions::default(),
             completion_item: None,
         }),
 
-        // Signature help
-        signature_help_provider: Some(SignatureHelpOptions {
-            trigger_characters: Some(vec!["(".to_string(), ",".to_string()]),
-            retrigger_characters: None,
-            work_done_progress_options: WorkDoneProgressOptions::default(),
-        }),
+        // Signature help - NOT YET IMPLEMENTED
+        signature_help_provider: None,
 
-        // Go to definition
+        // Go to definition - IMPLEMENTED (partial, integrated with bloodc)
         definition_provider: Some(OneOf::Left(true)),
 
-        // Go to type definition
-        type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
+        // Go to type definition - NOT YET IMPLEMENTED
+        type_definition_provider: None,
 
-        // Go to implementation
-        implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
+        // Go to implementation - NOT YET IMPLEMENTED
+        implementation_provider: None,
 
-        // Find references
-        references_provider: Some(OneOf::Left(true)),
+        // Find references - NOT YET IMPLEMENTED
+        references_provider: None,
 
-        // Document highlight
-        document_highlight_provider: Some(OneOf::Left(true)),
+        // Document highlight - NOT YET IMPLEMENTED
+        document_highlight_provider: None,
 
-        // Document symbols (outline)
+        // Document symbols (outline) - IMPLEMENTED
         document_symbol_provider: Some(OneOf::Left(true)),
 
-        // Workspace symbols
-        workspace_symbol_provider: Some(OneOf::Left(true)),
+        // Workspace symbols - NOT YET IMPLEMENTED
+        workspace_symbol_provider: None,
 
-        // Code actions (quick fixes, refactorings)
-        code_action_provider: Some(CodeActionProviderCapability::Options(CodeActionOptions {
-            code_action_kinds: Some(vec![
-                CodeActionKind::QUICKFIX,
-                CodeActionKind::REFACTOR,
-                CodeActionKind::REFACTOR_EXTRACT,
-                CodeActionKind::REFACTOR_INLINE,
-                CodeActionKind::REFACTOR_REWRITE,
-                CodeActionKind::SOURCE,
-                CodeActionKind::SOURCE_ORGANIZE_IMPORTS,
-            ]),
-            work_done_progress_options: WorkDoneProgressOptions::default(),
-            resolve_provider: Some(true),
-        })),
+        // Code actions - NOT YET IMPLEMENTED
+        code_action_provider: None,
 
-        // Code lens
+        // Code lens - IMPLEMENTED (main, test, handler annotations)
         code_lens_provider: Some(CodeLensOptions {
             resolve_provider: Some(true),
         }),
 
-        // Document formatting
-        document_formatting_provider: Some(OneOf::Left(true)),
+        // Document formatting - NOT YET IMPLEMENTED
+        // (blood-fmt exists but LSP integration not complete)
+        document_formatting_provider: None,
 
-        // Document range formatting
-        document_range_formatting_provider: Some(OneOf::Left(true)),
+        // Document range formatting - NOT YET IMPLEMENTED
+        document_range_formatting_provider: None,
 
-        // Rename
-        rename_provider: Some(OneOf::Right(RenameOptions {
-            prepare_provider: Some(true),
-            work_done_progress_options: WorkDoneProgressOptions::default(),
-        })),
+        // Rename - NOT YET IMPLEMENTED
+        rename_provider: None,
 
-        // Folding ranges
+        // Folding ranges - IMPLEMENTED
         folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
 
-        // Selection ranges
-        selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
+        // Selection ranges - NOT YET IMPLEMENTED
+        selection_range_provider: None,
 
-        // Semantic tokens
+        // Semantic tokens - IMPLEMENTED (full Blood syntax highlighting)
         semantic_tokens_provider: Some(
             SemanticTokensServerCapabilities::SemanticTokensOptions(SemanticTokensOptions {
                 work_done_progress_options: WorkDoneProgressOptions::default(),
@@ -115,7 +99,7 @@ pub fn server_capabilities() -> ServerCapabilities {
             }),
         ),
 
-        // Inlay hints (for type annotations, parameter names, etc.)
+        // Inlay hints - IMPLEMENTED (let binding types, effect annotations)
         inlay_hint_provider: Some(OneOf::Left(true)),
 
         // Workspace capabilities
@@ -127,7 +111,7 @@ pub fn server_capabilities() -> ServerCapabilities {
             file_operations: None,
         }),
 
-        // Diagnostic provider
+        // Diagnostic provider - IMPLEMENTED (parse + type errors)
         diagnostic_provider: Some(DiagnosticServerCapabilities::Options(DiagnosticOptions {
             identifier: Some("blood".to_string()),
             inter_file_dependencies: true,
