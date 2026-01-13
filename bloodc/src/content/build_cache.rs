@@ -743,6 +743,15 @@ fn hash_type(ty: &hir::Type, hasher: &mut ContentHasher) {
             }
             hash_type(body, hasher);
         }
+        hir::TypeKind::Ownership { qualifier, inner } => {
+            hasher.update_u8(0x0E); // Ownership type
+            // Hash qualifier: 0 = Linear, 1 = Affine
+            hasher.update_u8(match qualifier {
+                hir::ty::OwnershipQualifier::Linear => 0,
+                hir::ty::OwnershipQualifier::Affine => 1,
+            });
+            hash_type(inner, hasher);
+        }
     }
 }
 
@@ -1437,6 +1446,9 @@ fn extract_type_deps(ty: &hir::Type, deps: &mut HashSet<DefId>) {
         }
         hir::TypeKind::Forall { body, .. } => {
             extract_type_deps(body, deps);
+        }
+        hir::TypeKind::Ownership { inner, .. } => {
+            extract_type_deps(inner, deps);
         }
         // Primitive types, inference variables, type parameters, never, and error types
         // don't contain dependencies on other definitions
