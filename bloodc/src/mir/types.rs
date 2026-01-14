@@ -31,6 +31,7 @@ use std::fmt;
 use crate::effects::evidence::HandlerStateKind;
 use crate::hir::{DefId, LocalId, Type};
 use crate::span::Span;
+use super::ptr::MemoryTier;
 
 // ============================================================================
 // Basic Blocks
@@ -177,6 +178,12 @@ pub enum StatementKind {
     /// When `state_kind` indicates the handler state is static (Stateless, Constant,
     /// or ZeroInit), the codegen can avoid runtime evidence allocation and instead
     /// use a pre-allocated static evidence structure.
+    ///
+    /// ## Stack Allocation Optimization (EFF-OPT-005/006)
+    ///
+    /// When `allocation_tier` is `Stack`, the handler evidence is lexically scoped
+    /// and can use stack allocation instead of heap allocation, avoiding the
+    /// overhead of `blood_evidence_create()`.
     PushHandler {
         /// The handler definition ID.
         handler_id: DefId,
@@ -189,6 +196,11 @@ pub enum StatementKind {
         /// - `ZeroInit`: Handler state is default/zero-initialized.
         /// - `Dynamic`: Handler state is computed at runtime. No optimization.
         state_kind: HandlerStateKind,
+        /// Memory tier for handler evidence allocation (EFF-OPT-005/006).
+        ///
+        /// - `Stack`: Handler is lexically scoped, can use stack allocation.
+        /// - `Region`: Handler evidence may escape, needs heap allocation.
+        allocation_tier: MemoryTier,
     },
 
     /// Pop an effect handler from the evidence vector.

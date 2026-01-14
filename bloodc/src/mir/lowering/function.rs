@@ -14,7 +14,7 @@ use crate::ice_err;
 
 use crate::mir::body::MirBodyBuilder;
 use crate::mir::body::MirBody;
-use crate::mir::static_evidence::analyze_handler_state;
+use crate::mir::static_evidence::{analyze_handler_state, analyze_handler_allocation_tier};
 use crate::mir::types::{
     BasicBlockId, Statement, StatementKind, Terminator, TerminatorKind,
     Place, PlaceElem, Operand, Rvalue, Constant, ConstantKind,
@@ -570,8 +570,11 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
         ty: &Type,
         span: Span,
     ) -> Result<Operand, Vec<Diagnostic>> {
-        // Step 0: Analyze handler state for static evidence optimization (EFF-OPT-001)
+        // Step 0: Analyze handler for optimizations
+        // EFF-OPT-001: Handler state classification (Stateless, Constant, ZeroInit, Dynamic)
         let state_kind = analyze_handler_state(handler_instance);
+        // EFF-OPT-005/006: Handler allocation tier (Stack vs Region)
+        let allocation_tier = analyze_handler_allocation_tier(body);
 
         // Step 1: Lower the handler instance to get the state
         let state_operand = self.lower_expr(handler_instance)?;
@@ -586,6 +589,7 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
             handler_id,
             state_place: state_place.clone(),
             state_kind,
+            allocation_tier,
         });
 
         // Step 3: Lower the body expression with the handler installed

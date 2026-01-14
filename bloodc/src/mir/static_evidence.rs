@@ -32,6 +32,7 @@
 
 use crate::effects::evidence::HandlerStateKind;
 use crate::hir::{Expr, ExprKind, LiteralValue, Type, TypeKind};
+use super::ptr::MemoryTier;
 
 /// Analyze a handler instance expression to determine its state kind.
 ///
@@ -244,6 +245,253 @@ impl HandleAnalysis {
     }
 }
 
+// ============================================================================
+// Handler Escape Analysis (EFF-OPT-005/006)
+// ============================================================================
+
+/// Check if a handler body expression contains escaping control flow.
+///
+/// A handler's evidence "escapes" if the body contains:
+/// - `Perform` operations (control transfers to another handler)
+/// - `Resume` operations (continuation transfers control)
+///
+/// When evidence doesn't escape, the handler can use stack allocation
+/// instead of heap allocation for the evidence vector.
+///
+/// # Arguments
+///
+/// * `body` - The handler body expression to analyze
+///
+/// # Returns
+///
+/// `true` if the body contains Perform or Resume operations (evidence escapes),
+/// `false` if the handler is purely lexical (can use stack allocation).
+pub fn handler_evidence_escapes(body: &Expr) -> bool {
+    contains_escaping_control_flow(body)
+}
+
+/// Determine the allocation tier for a handler based on escape analysis.
+///
+/// This is the main entry point for EFF-OPT-005/006.
+///
+/// # Arguments
+///
+/// * `body` - The handler body expression
+///
+/// # Returns
+///
+/// - `MemoryTier::Stack` if the handler is lexically scoped (no escaping control flow)
+/// - `MemoryTier::Region` if the handler evidence may escape (contains Perform/Resume)
+pub fn analyze_handler_allocation_tier(body: &Expr) -> MemoryTier {
+    if handler_evidence_escapes(body) {
+        MemoryTier::Region
+    } else {
+        MemoryTier::Stack
+    }
+}
+
+/// Recursively check if an expression contains escaping control flow.
+fn contains_escaping_control_flow(expr: &Expr) -> bool {
+    match &expr.kind {
+        // Direct escape points
+        ExprKind::Perform { .. } => true,
+        ExprKind::Resume { .. } => true,
+
+        // Nested handle blocks: their body may contain Perform/Resume,
+        // but those are handled by the nested handler, not ours.
+        // However, if the nested handler's body doesn't fully handle
+        // the effect, it could escape to our handler. Be conservative.
+        ExprKind::Handle { body, .. } => {
+            // Conservative: check the nested body too
+            // A more precise analysis would track which effects are handled
+            contains_escaping_control_flow(body)
+        }
+
+        // Recursively check all sub-expressions
+        ExprKind::Block { stmts, expr } => {
+            for stmt in stmts {
+                if contains_escaping_control_flow_stmt(stmt) {
+                    return true;
+                }
+            }
+            if let Some(e) = expr {
+                if contains_escaping_control_flow(e) {
+                    return true;
+                }
+            }
+            false
+        }
+
+        ExprKind::If { condition, then_branch, else_branch } => {
+            contains_escaping_control_flow(condition)
+                || contains_escaping_control_flow(then_branch)
+                || else_branch.as_ref().map_or(false, |e| contains_escaping_control_flow(e))
+        }
+
+        ExprKind::Match { scrutinee, arms } => {
+            if contains_escaping_control_flow(scrutinee) {
+                return true;
+            }
+            for arm in arms {
+                if let Some(ref guard) = arm.guard {
+                    if contains_escaping_control_flow(guard) {
+                        return true;
+                    }
+                }
+                if contains_escaping_control_flow(&arm.body) {
+                    return true;
+                }
+            }
+            false
+        }
+
+        ExprKind::Loop { body, .. } => {
+            contains_escaping_control_flow(body)
+        }
+
+        ExprKind::While { condition, body, .. } => {
+            contains_escaping_control_flow(condition)
+                || contains_escaping_control_flow(body)
+        }
+
+        ExprKind::Call { callee, args } => {
+            // Function calls could internally use effects, but we're
+            // analyzing the direct expression tree, not called functions.
+            // The callee's effects are separate from ours.
+            contains_escaping_control_flow(callee)
+                || args.iter().any(contains_escaping_control_flow)
+        }
+
+        ExprKind::MethodCall { receiver, args, .. } => {
+            contains_escaping_control_flow(receiver)
+                || args.iter().any(contains_escaping_control_flow)
+        }
+
+        ExprKind::Closure { .. } => {
+            // Closures have a separate body_id, we can't analyze them here.
+            // Be conservative: assume closures might contain Perform/Resume.
+            // This is a limitation - a more precise analysis would resolve
+            // the body_id and check the closure body.
+            true
+        }
+
+        ExprKind::Binary { left, right, .. } => {
+            contains_escaping_control_flow(left)
+                || contains_escaping_control_flow(right)
+        }
+
+        ExprKind::Unary { operand, .. } => {
+            contains_escaping_control_flow(operand)
+        }
+
+        ExprKind::Cast { expr, .. } => {
+            contains_escaping_control_flow(expr)
+        }
+
+        ExprKind::Index { base, index } => {
+            contains_escaping_control_flow(base)
+                || contains_escaping_control_flow(index)
+        }
+
+        ExprKind::Field { base, .. } => {
+            contains_escaping_control_flow(base)
+        }
+
+        ExprKind::Tuple(elements) | ExprKind::Array(elements) | ExprKind::VecLiteral(elements) => {
+            elements.iter().any(contains_escaping_control_flow)
+        }
+
+        ExprKind::Struct { fields, base, .. } => {
+            fields.iter().any(|f| contains_escaping_control_flow(&f.value))
+                || base.as_ref().map_or(false, |e| contains_escaping_control_flow(e))
+        }
+
+        ExprKind::Repeat { value, .. } => {
+            // count is u64, not an expression
+            contains_escaping_control_flow(value)
+        }
+
+        ExprKind::VecRepeat { value, count } => {
+            contains_escaping_control_flow(value)
+                || contains_escaping_control_flow(count)
+        }
+
+        ExprKind::Return(value) => {
+            value.as_ref().map_or(false, |e| contains_escaping_control_flow(e))
+        }
+
+        ExprKind::Break { value, .. } => {
+            value.as_ref().map_or(false, |e| contains_escaping_control_flow(e))
+        }
+
+        ExprKind::Assign { target, value } => {
+            contains_escaping_control_flow(target)
+                || contains_escaping_control_flow(value)
+        }
+
+        ExprKind::Borrow { expr, .. } | ExprKind::AddrOf { expr, .. } | ExprKind::Deref(expr) => {
+            contains_escaping_control_flow(expr)
+        }
+
+        ExprKind::Range { start, end, .. } => {
+            start.as_ref().map_or(false, |e| contains_escaping_control_flow(e))
+                || end.as_ref().map_or(false, |e| contains_escaping_control_flow(e))
+        }
+
+        ExprKind::Unsafe(expr) | ExprKind::Dbg(expr) => {
+            contains_escaping_control_flow(expr)
+        }
+
+        ExprKind::Let { init, .. } => {
+            contains_escaping_control_flow(init)
+        }
+
+        ExprKind::Variant { fields, .. } => {
+            fields.iter().any(contains_escaping_control_flow)
+        }
+
+        ExprKind::Record { fields } => {
+            fields.iter().any(|f| contains_escaping_control_flow(&f.value))
+        }
+
+        ExprKind::Assert { condition, message } => {
+            contains_escaping_control_flow(condition)
+                || message.as_ref().map_or(false, |m| contains_escaping_control_flow(m))
+        }
+
+        ExprKind::MacroExpansion { args, .. } => {
+            args.iter().any(contains_escaping_control_flow)
+        }
+
+        ExprKind::MethodFamily { .. } => {
+            // Method family is a call site marker, not directly executable
+            false
+        }
+
+        // Leaf expressions: no sub-expressions to check
+        ExprKind::Literal(_)
+        | ExprKind::Local(_)
+        | ExprKind::Def(_)
+        | ExprKind::Continue { .. }
+        | ExprKind::Default
+        | ExprKind::Error => false,
+    }
+}
+
+/// Check statements for escaping control flow.
+fn contains_escaping_control_flow_stmt(stmt: &crate::hir::Stmt) -> bool {
+    use crate::hir::Stmt;
+    match stmt {
+        Stmt::Let { init, .. } => {
+            init.as_ref().map_or(false, |e| contains_escaping_control_flow(e))
+        }
+        Stmt::Expr(expr) => {
+            contains_escaping_control_flow(expr)
+        }
+        Stmt::Item(_) => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -387,5 +635,205 @@ mod tests {
             Type::i32(),
         );
         assert!(!is_default_expr(&nonzero_expr));
+    }
+
+    // =========================================================================
+    // Handler Escape Analysis Tests (EFF-OPT-005/006)
+    // =========================================================================
+
+    #[test]
+    fn test_literal_body_no_escape() {
+        // A literal body has no Perform/Resume, so handler can use stack allocation
+        let body = make_expr(
+            ExprKind::Literal(LiteralValue::Int(42)),
+            Type::i32(),
+        );
+        assert!(!handler_evidence_escapes(&body));
+        assert_eq!(analyze_handler_allocation_tier(&body), MemoryTier::Stack);
+    }
+
+    #[test]
+    fn test_perform_causes_escape() {
+        use crate::hir::DefId;
+        // A Perform expression causes handler evidence to escape
+        let body = make_expr(
+            ExprKind::Perform {
+                effect_id: DefId::new(0),
+                op_index: 0,
+                args: vec![],
+            },
+            Type::unit(),
+        );
+        assert!(handler_evidence_escapes(&body));
+        assert_eq!(analyze_handler_allocation_tier(&body), MemoryTier::Region);
+    }
+
+    #[test]
+    fn test_resume_causes_escape() {
+        // A Resume expression causes handler evidence to escape
+        let body = make_expr(
+            ExprKind::Resume { value: None },
+            Type::unit(),
+        );
+        assert!(handler_evidence_escapes(&body));
+        assert_eq!(analyze_handler_allocation_tier(&body), MemoryTier::Region);
+    }
+
+    #[test]
+    fn test_block_with_perform_causes_escape() {
+        use crate::hir::DefId;
+        // A block containing Perform causes escape
+        let perform = make_expr(
+            ExprKind::Perform {
+                effect_id: DefId::new(0),
+                op_index: 0,
+                args: vec![],
+            },
+            Type::unit(),
+        );
+        let body = make_expr(
+            ExprKind::Block {
+                stmts: vec![],
+                expr: Some(Box::new(perform)),
+            },
+            Type::unit(),
+        );
+        assert!(handler_evidence_escapes(&body));
+        assert_eq!(analyze_handler_allocation_tier(&body), MemoryTier::Region);
+    }
+
+    #[test]
+    fn test_block_without_effects_no_escape() {
+        // A block without Perform/Resume doesn't cause escape
+        let inner = make_expr(
+            ExprKind::Literal(LiteralValue::Int(1)),
+            Type::i32(),
+        );
+        let body = make_expr(
+            ExprKind::Block {
+                stmts: vec![],
+                expr: Some(Box::new(inner)),
+            },
+            Type::i32(),
+        );
+        assert!(!handler_evidence_escapes(&body));
+        assert_eq!(analyze_handler_allocation_tier(&body), MemoryTier::Stack);
+    }
+
+    #[test]
+    fn test_if_with_perform_causes_escape() {
+        use crate::hir::DefId;
+        // An if expression with Perform in either branch causes escape
+        let condition = make_expr(
+            ExprKind::Literal(LiteralValue::Bool(true)),
+            Type::bool(),
+        );
+        let then_branch = make_expr(
+            ExprKind::Perform {
+                effect_id: DefId::new(0),
+                op_index: 0,
+                args: vec![],
+            },
+            Type::unit(),
+        );
+        let else_branch = make_expr(
+            ExprKind::Literal(LiteralValue::Int(0)),
+            Type::i32(),
+        );
+        let body = make_expr(
+            ExprKind::If {
+                condition: Box::new(condition),
+                then_branch: Box::new(then_branch),
+                else_branch: Some(Box::new(else_branch)),
+            },
+            Type::i32(),
+        );
+        assert!(handler_evidence_escapes(&body));
+        assert_eq!(analyze_handler_allocation_tier(&body), MemoryTier::Region);
+    }
+
+    #[test]
+    fn test_if_without_effects_no_escape() {
+        // An if expression without Perform/Resume doesn't cause escape
+        let condition = make_expr(
+            ExprKind::Literal(LiteralValue::Bool(true)),
+            Type::bool(),
+        );
+        let then_branch = make_expr(
+            ExprKind::Literal(LiteralValue::Int(1)),
+            Type::i32(),
+        );
+        let else_branch = make_expr(
+            ExprKind::Literal(LiteralValue::Int(0)),
+            Type::i32(),
+        );
+        let body = make_expr(
+            ExprKind::If {
+                condition: Box::new(condition),
+                then_branch: Box::new(then_branch),
+                else_branch: Some(Box::new(else_branch)),
+            },
+            Type::i32(),
+        );
+        assert!(!handler_evidence_escapes(&body));
+        assert_eq!(analyze_handler_allocation_tier(&body), MemoryTier::Stack);
+    }
+
+    #[test]
+    fn test_closure_conservatively_escapes() {
+        use crate::hir::BodyId;
+        // Closures are conservatively marked as escaping because we can't
+        // analyze their body_id inline
+        let body = make_expr(
+            ExprKind::Closure {
+                body_id: BodyId::new(0),
+                captures: vec![],
+            },
+            Type::unit(), // closure type
+        );
+        assert!(handler_evidence_escapes(&body));
+        assert_eq!(analyze_handler_allocation_tier(&body), MemoryTier::Region);
+    }
+
+    #[test]
+    fn test_binary_no_escape() {
+        // Binary operations on literals don't cause escape
+        let left = make_expr(
+            ExprKind::Literal(LiteralValue::Int(1)),
+            Type::i32(),
+        );
+        let right = make_expr(
+            ExprKind::Literal(LiteralValue::Int(2)),
+            Type::i32(),
+        );
+        let body = make_expr(
+            ExprKind::Binary {
+                op: crate::ast::BinOp::Add,
+                left: Box::new(left),
+                right: Box::new(right),
+            },
+            Type::i32(),
+        );
+        assert!(!handler_evidence_escapes(&body));
+        assert_eq!(analyze_handler_allocation_tier(&body), MemoryTier::Stack);
+    }
+
+    #[test]
+    fn test_call_no_escape() {
+        use crate::hir::DefId;
+        // Function calls don't cause escape (the callee's effects are separate)
+        let callee = make_expr(
+            ExprKind::Def(DefId::new(0)),
+            Type::unit(), // function type
+        );
+        let body = make_expr(
+            ExprKind::Call {
+                callee: Box::new(callee),
+                args: vec![],
+            },
+            Type::unit(),
+        );
+        assert!(!handler_evidence_escapes(&body));
+        assert_eq!(analyze_handler_allocation_tier(&body), MemoryTier::Stack);
     }
 }

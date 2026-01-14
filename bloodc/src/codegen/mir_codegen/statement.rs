@@ -229,7 +229,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 // Else: Stack-allocated value - skip generation check (optimization)
             }
 
-            StatementKind::PushHandler { handler_id, state_place, state_kind } => {
+            StatementKind::PushHandler { handler_id, state_place, state_kind, allocation_tier } => {
                 // Push effect handler onto the evidence vector with instance state
                 //
                 // STATIC EVIDENCE OPTIMIZATION (EFF-OPT-001):
@@ -240,9 +240,16 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 // - ZeroInit: State is zero-initialized, can use BSS
                 // - Dynamic: Must use full runtime allocation (current path)
                 //
+                // STACK ALLOCATION OPTIMIZATION (EFF-OPT-005/006):
+                // When allocation_tier is Stack, the handler is lexically scoped
+                // and we can skip creating a new evidence vector if one already exists.
+                // When allocation_tier is Region, the handler may escape and needs
+                // full heap allocation.
+                //
                 // TODO: Implement optimized paths for static handlers.
-                // For now, log the state_kind for monitoring purposes.
+                // For now, log the optimization fields for monitoring purposes.
                 let _ = state_kind; // Suppress unused warning until optimization is implemented
+                let _ = allocation_tier; // Suppress unused warning until optimization is implemented
 
                 let i64_ty = self.context.i64_type();
                 let i8_ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());

@@ -152,7 +152,7 @@ pub trait Visitor: Sized {
                 self.visit_place(ptr, PlaceContext::Read, location);
                 self.visit_operand(expected_gen, location);
             }
-            StatementKind::PushHandler { handler_id: _, state_place, state_kind: _ } => {
+            StatementKind::PushHandler { handler_id: _, state_place, state_kind: _, allocation_tier: _ } => {
                 self.visit_place(state_place, PlaceContext::Read, location);
             }
             StatementKind::PopHandler => {
