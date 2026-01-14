@@ -878,9 +878,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     }
                 } else if self.enum_defs.contains_key(def_id) {
                     // Enum variant - first field is tag, followed by payload fields
-                    // IMPORTANT: The constructed value must match the full enum layout,
-                    // which is { tag, max_variant_payload... }. Variants with fewer fields
-                    // than the largest variant must be padded.
+                    // For enums with heterogeneous variant payloads (different sizes/types),
+                    // we use alloca + pointer casting since insertvalue requires exact type match.
                     let variant_index = variant_idx.ok_or_else(|| vec![ice_err!(
                         Span::dummy(),
                         "enum construction without variant index";
@@ -895,28 +894,96 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     let tag = self.context.i32_type().const_int(variant_index as u64, false);
 
                     if let BasicTypeEnum::StructType(struct_ty) = full_enum_llvm_ty {
-                        // Full enum type is a struct { tag, payload... }
-                        let mut agg = struct_ty.get_undef();
+                        // Check if we can use direct insertvalue (types match) or need alloca approach
+                        let types_match = vals.iter().enumerate().all(|(i, val)| {
+                            if let Some(field_ty) = struct_ty.get_field_type_at_index((i + 1) as u32) {
+                                val.get_type() == field_ty
+                            } else {
+                                false
+                            }
+                        });
 
-                        // Insert tag at index 0
-                        agg = self.builder.build_insert_value(agg, tag, 0, "enum_tag")
-                            .map_err(|e| vec![Diagnostic::error(
-                                format!("LLVM insert error: {}", e), Span::dummy()
-                            )])?
-                            .into_struct_value();
-
-                        // Insert actual variant fields (starting at index 1)
-                        for (i, val) in vals.iter().enumerate() {
-                            agg = self.builder.build_insert_value(agg, *val, (i + 1) as u32, &format!("enum_field_{}", i))
+                        if types_match && !vals.is_empty() {
+                            // Fast path: variant field types match struct field types
+                            let mut agg = struct_ty.get_undef();
+                            agg = self.builder.build_insert_value(agg, tag, 0, "enum_tag")
                                 .map_err(|e| vec![Diagnostic::error(
                                     format!("LLVM insert error: {}", e), Span::dummy()
                                 )])?
                                 .into_struct_value();
-                        }
+                            for (i, val) in vals.iter().enumerate() {
+                                agg = self.builder.build_insert_value(agg, *val, (i + 1) as u32, &format!("enum_field_{}", i))
+                                    .map_err(|e| vec![Diagnostic::error(
+                                        format!("LLVM insert error: {}", e), Span::dummy()
+                                    )])?
+                                    .into_struct_value();
+                            }
+                            Ok(agg.into())
+                        } else if vals.is_empty() {
+                            // Unit variant - just set tag
+                            let mut agg = struct_ty.get_undef();
+                            agg = self.builder.build_insert_value(agg, tag, 0, "enum_tag")
+                                .map_err(|e| vec![Diagnostic::error(
+                                    format!("LLVM insert error: {}", e), Span::dummy()
+                                )])?
+                                .into_struct_value();
+                            Ok(agg.into())
+                        } else {
+                            // Slow path: variant field types don't match struct field types
+                            // Use alloca + GEP + bitcast to store fields in the payload area
+                            let alloca = self.builder.build_alloca(struct_ty, "enum_tmp")
+                                .map_err(|e| vec![Diagnostic::error(
+                                    format!("LLVM alloca error: {}", e), Span::dummy()
+                                )])?;
 
-                        // Remaining fields are already undef from get_undef(), which is correct
-                        // padding for variants with fewer fields than the maximum.
-                        Ok(agg.into())
+                            // Store tag at field 0
+                            let tag_ptr = self.builder.build_struct_gep(alloca, 0, "tag_ptr")
+                                .map_err(|e| vec![Diagnostic::error(
+                                    format!("LLVM GEP error: {}", e), Span::dummy()
+                                )])?;
+                            self.builder.build_store(tag_ptr, tag)
+                                .map_err(|e| vec![Diagnostic::error(
+                                    format!("LLVM store error: {}", e), Span::dummy()
+                                )])?;
+
+                            // Get pointer to payload area (field 1)
+                            let payload_ptr = self.builder.build_struct_gep(alloca, 1, "payload_ptr")
+                                .map_err(|e| vec![Diagnostic::error(
+                                    format!("LLVM GEP error: {}", e), Span::dummy()
+                                )])?;
+
+                            // Build the actual variant payload struct type
+                            let variant_field_types: Vec<BasicTypeEnum> = vals.iter().map(|v| v.get_type()).collect();
+                            let variant_struct_ty = self.context.struct_type(&variant_field_types, false);
+
+                            // Cast payload pointer to variant struct pointer
+                            let variant_ptr = self.builder.build_pointer_cast(
+                                payload_ptr,
+                                variant_struct_ty.ptr_type(AddressSpace::default()),
+                                "variant_payload_ptr"
+                            ).map_err(|e| vec![Diagnostic::error(
+                                format!("LLVM pointer cast error: {}", e), Span::dummy()
+                            )])?;
+
+                            // Store each field
+                            for (i, val) in vals.iter().enumerate() {
+                                let field_ptr = self.builder.build_struct_gep(variant_ptr, i as u32, &format!("field_{}_ptr", i))
+                                    .map_err(|e| vec![Diagnostic::error(
+                                        format!("LLVM GEP error: {}", e), Span::dummy()
+                                    )])?;
+                                self.builder.build_store(field_ptr, *val)
+                                    .map_err(|e| vec![Diagnostic::error(
+                                        format!("LLVM store error: {}", e), Span::dummy()
+                                    )])?;
+                            }
+
+                            // Load and return the full enum struct
+                            let result = self.builder.build_load(alloca, "enum_val")
+                                .map_err(|e| vec![Diagnostic::error(
+                                    format!("LLVM load error: {}", e), Span::dummy()
+                                )])?;
+                            Ok(result)
+                        }
                     } else {
                         // Enum type is just the tag (all variants are unit variants)
                         Ok(tag.into())

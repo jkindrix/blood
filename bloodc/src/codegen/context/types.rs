@@ -238,7 +238,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     ///
     /// This is used for monomorphizing generic types during codegen.
     /// Type parameters are indexed positionally, so `Param(0)` gets args[0], etc.
-    pub(super) fn substitute_type_params(&self, ty: &Type, args: &[Type]) -> Type {
+    pub(crate) fn substitute_type_params(&self, ty: &Type, args: &[Type]) -> Type {
         match ty.kind() {
             TypeKind::Param(idx) => {
                 // Substitute type parameter with concrete argument

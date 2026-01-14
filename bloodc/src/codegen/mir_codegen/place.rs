@@ -57,7 +57,9 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
         let mut current_ty = base_ty.clone();
 
         let mut current_ptr = base_ptr;
-        let mut is_inside_variant = false;  // Track if we're inside an enum variant (after Downcast)
+        // Track if we're inside an enum variant: (enum_def_id, variant_index)
+        // This is needed to handle heterogeneous variant payloads correctly
+        let mut variant_ctx: Option<(crate::hir::DefId, u32)> = None;
 
         // Check if this is a closure __env local with Field projections.
         // If so, we need to cast the i8* to the captures struct type first.
@@ -191,8 +193,66 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 }
 
                 PlaceElem::Field(idx) => {
-                    // Check if we're accessing an enum variant field (need to offset by 1 for tag)
-                    let actual_idx = if is_inside_variant {
+                    // Check if we're accessing an enum variant field
+                    if let Some((enum_def_id, variant_idx)) = variant_ctx {
+                        // We're inside an enum variant - need special handling for heterogeneous payloads
+                        // The enum layout is { i32 tag, largest_variant_payload... }
+                        // But the actual variant's payload might be smaller/different type
+
+                        // Get the enum's variant field types
+                        if let Some(variants) = self.enum_defs.get(&enum_def_id) {
+                            if let Some(variant_fields) = variants.get(variant_idx as usize) {
+                                if let Some(variant_field_ty) = variant_fields.get(*idx as usize) {
+                                    // Substitute type params if this is a generic enum
+                                    let args = match current_ty.kind() {
+                                        TypeKind::Adt { args, .. } => args.clone(),
+                                        _ => Vec::new(),
+                                    };
+                                    let actual_field_ty = self.substitute_type_params(variant_field_ty, &args);
+
+                                    // Get pointer to payload area (field 1 of enum struct)
+                                    let payload_ptr = self.builder.build_struct_gep(current_ptr, 1, "payload_ptr")
+                                        .map_err(|e| vec![Diagnostic::error(
+                                            format!("LLVM GEP error: {}", e), body.span
+                                        )])?;
+
+                                    // Build the variant's actual payload struct type
+                                    let variant_field_types: Vec<inkwell::types::BasicTypeEnum> = variant_fields.iter()
+                                        .map(|f| {
+                                            let substituted = self.substitute_type_params(f, &args);
+                                            self.lower_type(&substituted)
+                                        })
+                                        .collect();
+                                    let variant_struct_ty = self.context.struct_type(&variant_field_types, false);
+
+                                    // Cast payload pointer to variant struct pointer
+                                    let variant_ptr = self.builder.build_pointer_cast(
+                                        payload_ptr,
+                                        variant_struct_ty.ptr_type(inkwell::AddressSpace::default()),
+                                        "variant_ptr"
+                                    ).map_err(|e| vec![Diagnostic::error(
+                                        format!("LLVM pointer cast error: {}", e), body.span
+                                    )])?;
+
+                                    // GEP to the specific field within the variant
+                                    let field_ptr = self.builder.build_struct_gep(variant_ptr, *idx, &format!("variant_field_{}", idx))
+                                        .map_err(|e| vec![Diagnostic::error(
+                                            format!("LLVM GEP error: {}", e), body.span
+                                        )])?;
+
+                                    // Clear variant context since we've accessed the field
+                                    variant_ctx = None;
+                                    current_ty = actual_field_ty;
+                                    current_ptr = field_ptr;
+                                    continue;
+                                }
+                            }
+                        }
+                        // Fall through to regular field access if lookup failed
+                    }
+
+                    // Regular field access (not inside variant, or variant lookup failed)
+                    let actual_idx = if variant_ctx.is_some() {
                         *idx + 1  // Offset by 1 to skip the discriminant tag
                     } else {
                         *idx
@@ -442,11 +502,13 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     }
                 }
 
-                PlaceElem::Downcast(_variant_idx) => {
+                PlaceElem::Downcast(variant_idx_val) => {
                     // Downcast is logically an assertion that we have the right variant.
-                    // The actual field offset is handled by subsequent Field projections.
-                    // Mark that we're inside a variant so Field knows to offset by 1 for the tag.
-                    is_inside_variant = true;
+                    // Set variant context so Field knows how to access variant-specific fields.
+                    // This is needed for heterogeneous enum payloads (different sized variants).
+                    if let TypeKind::Adt { def_id, .. } = current_ty.kind() {
+                        variant_ctx = Some((*def_id, *variant_idx_val));
+                    }
                     current_ptr  // Return the same pointer
                 }
             };
