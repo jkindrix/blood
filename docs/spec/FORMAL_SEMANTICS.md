@@ -823,7 +823,31 @@ Effect subsumption maintained because handling removes effect from row. ∎
 
 ## 12. Mechanization Roadmap
 
+**Section Status**: Not Started
+**Last Updated**: 2026-01-14
+
 This section provides a concrete plan for mechanizing Blood's formal semantics in proof assistants, following best practices from recent research (2024-2025).
+
+### 12.0 Current Mechanization Status
+
+| Phase | Name | Status | Progress | Notes |
+|-------|------|--------|----------|-------|
+| M1 | Core Type System | 📋 Planned | 0% | Prerequisites complete (spec finalized) |
+| M2 | Effect Handlers | 📋 Planned | 0% | Depends on M1 |
+| M3 | Linearity | 📋 Planned | 0% | Depends on M2 |
+| M4 | Generational References | 📋 Planned | 0% | Depends on M2; novel contribution |
+| M5 | Composition Safety | 📋 Planned | 0% | Depends on M3, M4 |
+
+**Prerequisites Status**:
+- ✅ Formal semantics specification (this document)
+- ✅ Proof sketches for core theorems (§11)
+- ✅ Generation snapshots proof (§13)
+- ✅ Composition safety analysis (§10)
+- ✅ Reference literature identified (§12.3)
+- 📋 Coq/Agda project setup (not started)
+- 📋 ITrees integration (not started)
+
+**Blocking Items**: None (mechanization can begin when resources are allocated)
 
 ### 12.1 Choice of Proof Assistant
 
