@@ -15,7 +15,7 @@ use inkwell::AddressSpace;
 
 use crate::hir::{self, DefId, LocalId, Type, PrimitiveTy, IntTy, UintTy, FloatTy};
 use crate::hir::ty::{TypeKind, TyVarId};
-use crate::mir::{EscapeResults, MirBody};
+use crate::mir::{EscapeAnalyzer, EscapeResults, MirBody};
 use crate::codegen::mir_codegen::MirTypesCodegen;
 use crate::diagnostics::Diagnostic;
 use crate::span::Span;
@@ -2141,9 +2141,14 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let saved_current_fn_def_id = self.current_fn_def_id.take();
         let saved_insert_block = self.builder.get_insert_block();
 
-        // Compile the monomorphized MIR body
+        // Run escape analysis on the monomorphized MIR body
+        // This is critical for performance - without it, all locals would use Region tier
+        let mut escape_analyzer = EscapeAnalyzer::new();
+        let escape_results = escape_analyzer.analyze(&mono_mir);
+
+        // Compile the monomorphized MIR body with escape analysis results
         use crate::codegen::mir_codegen::MirCodegen;
-        let result = self.compile_mir_body(mono_def_id, &mono_mir, None);
+        let result = self.compile_mir_body(mono_def_id, &mono_mir, Some(&escape_results));
 
         // Restore previous function state
         self.locals = saved_locals;

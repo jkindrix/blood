@@ -501,8 +501,9 @@ fn create_mir_body_with_escape_pattern(
     let def_id = DefId::new(0);
     let mut body = MirBody::new(def_id, Span::dummy());
 
-    // Use non-primitive type (tuple) - primitives are always stack-promotable
-    let non_primitive_ty = Type::tuple(vec![Type::i32()]);
+    // Use non-Copy type (reference) - primitives and tuples of primitives are Copy
+    // and always stack-promotable. References are not Copy in Blood's model.
+    let non_primitive_ty = Type::reference(Type::i32(), false);
 
     // Create return place (local 0)
     let return_local = body.new_local(non_primitive_ty.clone(), LocalKind::ReturnPlace, Span::dummy());
@@ -612,8 +613,9 @@ fn test_stack_promotable_excludes_effect_captured() {
     let def_id = DefId::new(0);
     let mut body = MirBody::new(def_id, Span::dummy());
 
-    // Use a non-primitive type (tuple) - primitives are always stack-promotable
-    let non_primitive_ty = Type::tuple(vec![Type::i32()]);
+    // Use a non-Copy type (reference) - primitives and tuples of primitives are Copy
+    // and always stack-promotable. References are NOT Copy in Blood's model.
+    let non_primitive_ty = Type::reference(Type::i32(), false);
 
     // Create return place
     let _return_local = body.new_local(non_primitive_ty.clone(), LocalKind::ReturnPlace, Span::dummy());
