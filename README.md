@@ -1,5 +1,7 @@
 # Blood
 
+[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE-MIT)
+
 **A systems programming language for environments where failure is not an option.**
 
 Blood synthesizes five cutting-edge programming language innovations:
@@ -115,7 +117,12 @@ See **[GETTING_STARTED.md](docs/spec/GETTING_STARTED.md)** for the full tutorial
 
 ## License
 
-MIT License
+Licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0>)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
+
+at your option.
 
 ## Contributing
 
@@ -124,3 +131,5 @@ We welcome contributions! See the [implementation status](docs/spec/IMPLEMENTATI
 - **Bug reports**: Open an issue with reproduction steps
 - **Feature requests**: Open a discussion first
 - **Code contributions**: Fork, branch, and submit a PR
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in the work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
