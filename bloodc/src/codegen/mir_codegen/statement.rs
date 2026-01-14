@@ -229,9 +229,21 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 // Else: Stack-allocated value - skip generation check (optimization)
             }
 
-            StatementKind::PushHandler { handler_id, state_place } => {
+            StatementKind::PushHandler { handler_id, state_place, state_kind } => {
                 // Push effect handler onto the evidence vector with instance state
-                // This calls blood_evidence_push_with_state with effect_id and state pointer
+                //
+                // STATIC EVIDENCE OPTIMIZATION (EFF-OPT-001):
+                // When state_kind is Stateless, Constant, or ZeroInit, we can use
+                // optimized paths that avoid runtime allocation:
+                // - Stateless: Handler has no state, minimal overhead
+                // - Constant: State is compile-time known, can be embedded
+                // - ZeroInit: State is zero-initialized, can use BSS
+                // - Dynamic: Must use full runtime allocation (current path)
+                //
+                // TODO: Implement optimized paths for static handlers.
+                // For now, log the state_kind for monitoring purposes.
+                let _ = state_kind; // Suppress unused warning until optimization is implemented
+
                 let i64_ty = self.context.i64_type();
                 let i8_ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
 

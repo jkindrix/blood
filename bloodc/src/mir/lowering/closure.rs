@@ -14,6 +14,7 @@ use crate::ice_err;
 
 use crate::mir::body::MirBodyBuilder;
 use crate::mir::body::MirBody;
+use crate::mir::static_evidence::analyze_handler_state;
 use crate::mir::types::{
     BasicBlockId, Statement, StatementKind, Terminator, TerminatorKind,
     Place, PlaceElem, Operand, Rvalue, Constant, ConstantKind,
@@ -575,6 +576,9 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
         ty: &Type,
         span: Span,
     ) -> Result<Operand, Vec<Diagnostic>> {
+        // Step 0: Analyze handler state for static evidence optimization (EFF-OPT-001)
+        let state_kind = analyze_handler_state(handler_instance);
+
         // Step 1: Lower the handler instance to get the state
         let state_operand = self.lower_expr(handler_instance)?;
 
@@ -584,7 +588,11 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
         self.push_assign(state_place.clone(), Rvalue::Use(state_operand));
 
         // Step 2: Push the handler onto the evidence vector with state
-        self.push_stmt(StatementKind::PushHandler { handler_id, state_place: state_place.clone() });
+        self.push_stmt(StatementKind::PushHandler {
+            handler_id,
+            state_place: state_place.clone(),
+            state_kind,
+        });
 
         // Step 3: Lower the body expression with the handler installed
         let body_result = self.lower_expr(body)?;

@@ -58,12 +58,14 @@ pub mod escape;
 pub mod lowering;
 pub mod ptr;
 pub mod snapshot;
+pub mod static_evidence;
 pub mod types;
 pub mod visitor;
 
 pub use body::{MirBody, MirLocal, LocalKind};
 pub use closure_analysis::{ClosureAnalyzer, ClosureAnalysisConfig, ClosureAnalysisResults, ClosureInfo, ClosureStats};
-pub use escape::{EscapeAnalyzer, EscapeState, EscapeResults};
+pub use escape::{EscapeAnalyzer, EscapeState, EscapeResults, EscapeStatistics, EscapeStateBreakdown};
+pub use static_evidence::{analyze_handler_state, HandleAnalysis};
 pub use lowering::MirLowering;
 pub use ptr::{BloodPtr, PtrMetadata, MemoryTier, PtrFlags};
 pub use snapshot::{GenerationSnapshot, SnapshotEntry, LazySnapshot, LazyValidationStats};

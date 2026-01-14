@@ -462,6 +462,282 @@ impl EvidenceCache {
     }
 }
 
+// ============================================================================
+// Static Evidence Optimization (EFF-OPT-001)
+// ============================================================================
+
+/// A unique identifier for a static evidence pattern.
+///
+/// Static evidence patterns are identified at compile time and emitted as
+/// global constants, avoiding runtime allocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct StaticEvidenceId(pub u32);
+
+impl StaticEvidenceId {
+    /// Create a new static evidence ID.
+    pub const fn new(id: u32) -> Self {
+        Self(id)
+    }
+
+    /// Get the numeric ID value.
+    pub fn index(self) -> u32 {
+        self.0
+    }
+}
+
+/// Classification of handler state for static evidence optimization.
+///
+/// Determines whether a handler's state can be pre-allocated at compile time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandlerStateKind {
+    /// Handler has no state (unit type `()`).
+    /// Optimal: no state allocation or initialization needed.
+    Stateless,
+
+    /// Handler state is a constant value known at compile time.
+    /// State can be embedded in static data section.
+    Constant,
+
+    /// Handler state is zero-initialized.
+    /// State can be BSS-allocated (zero-initialized by loader).
+    ZeroInit,
+
+    /// Handler state is computed at runtime.
+    /// Cannot use static evidence; requires dynamic allocation.
+    Dynamic,
+}
+
+impl HandlerStateKind {
+    /// Check if this state kind allows static evidence optimization.
+    pub fn is_static(self) -> bool {
+        matches!(self, Self::Stateless | Self::Constant | Self::ZeroInit)
+    }
+}
+
+/// A single handler entry in static evidence.
+///
+/// Contains compile-time known information about a handler installation.
+#[derive(Debug, Clone)]
+pub struct StaticEvidenceEntry {
+    /// The effect this handler handles.
+    pub effect_id: DefId,
+    /// The handler definition ID.
+    pub handler_id: DefId,
+    /// The kind of handler state.
+    pub state_kind: HandlerStateKind,
+    /// For constant state, the serialized constant value (if small enough).
+    /// This is the LLVM constant representation.
+    pub constant_state: Option<Vec<u8>>,
+}
+
+impl StaticEvidenceEntry {
+    /// Create a new static evidence entry for a stateless handler.
+    pub fn stateless(effect_id: DefId, handler_id: DefId) -> Self {
+        Self {
+            effect_id,
+            handler_id,
+            state_kind: HandlerStateKind::Stateless,
+            constant_state: None,
+        }
+    }
+
+    /// Create a new static evidence entry for a handler with constant state.
+    pub fn with_constant(effect_id: DefId, handler_id: DefId, state: Vec<u8>) -> Self {
+        Self {
+            effect_id,
+            handler_id,
+            state_kind: HandlerStateKind::Constant,
+            constant_state: Some(state),
+        }
+    }
+
+    /// Create a new static evidence entry for a zero-initialized handler.
+    pub fn zero_init(effect_id: DefId, handler_id: DefId) -> Self {
+        Self {
+            effect_id,
+            handler_id,
+            state_kind: HandlerStateKind::ZeroInit,
+            constant_state: None,
+        }
+    }
+
+    /// Create a new static evidence entry for a dynamic handler.
+    pub fn dynamic(effect_id: DefId, handler_id: DefId) -> Self {
+        Self {
+            effect_id,
+            handler_id,
+            state_kind: HandlerStateKind::Dynamic,
+            constant_state: None,
+        }
+    }
+}
+
+/// A complete static evidence pattern.
+///
+/// Represents a compile-time known handler configuration that can be
+/// emitted as a static global constant.
+#[derive(Debug, Clone)]
+pub struct StaticEvidence {
+    /// Unique identifier for this static evidence.
+    pub id: StaticEvidenceId,
+    /// The handler entries in this evidence.
+    pub entries: Vec<StaticEvidenceEntry>,
+    /// Whether all entries are fully static (no runtime state needed).
+    pub fully_static: bool,
+}
+
+impl StaticEvidence {
+    /// Create new static evidence with the given ID.
+    pub fn new(id: StaticEvidenceId) -> Self {
+        Self {
+            id,
+            entries: Vec::new(),
+            fully_static: true,
+        }
+    }
+
+    /// Add a handler entry to this static evidence.
+    pub fn add_entry(&mut self, entry: StaticEvidenceEntry) {
+        if !entry.state_kind.is_static() {
+            self.fully_static = false;
+        }
+        self.entries.push(entry);
+    }
+
+    /// Get the number of handlers in this evidence.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Check if this evidence is empty.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Check if this evidence can be fully emitted as static data.
+    pub fn can_emit_static(&self) -> bool {
+        self.fully_static && !self.entries.is_empty()
+    }
+
+    /// Iterate over entries.
+    pub fn iter(&self) -> impl Iterator<Item = &StaticEvidenceEntry> {
+        self.entries.iter()
+    }
+}
+
+/// Registry of static evidence patterns discovered during MIR analysis.
+///
+/// Collects all handler patterns that can be optimized with static evidence.
+/// Used during codegen to emit static global constants.
+#[derive(Debug, Clone, Default)]
+pub struct StaticEvidenceRegistry {
+    /// All registered static evidence patterns.
+    patterns: Vec<StaticEvidence>,
+    /// Lookup from handler pattern hash to static evidence ID.
+    pattern_lookup: HashMap<u64, StaticEvidenceId>,
+    /// Next available ID.
+    next_id: u32,
+    /// Statistics about static evidence optimization.
+    stats: StaticEvidenceStats,
+}
+
+/// Statistics about static evidence optimization.
+#[derive(Debug, Clone, Default)]
+pub struct StaticEvidenceStats {
+    /// Total number of PushHandler statements analyzed.
+    pub handlers_analyzed: u64,
+    /// Number of handlers eligible for static evidence.
+    pub static_eligible: u64,
+    /// Number of unique static patterns registered.
+    pub unique_patterns: u64,
+    /// Number of pattern reuses (same pattern at multiple sites).
+    pub pattern_reuses: u64,
+}
+
+impl StaticEvidenceStats {
+    /// Calculate the percentage of handlers eligible for static evidence.
+    pub fn eligibility_rate(&self) -> f64 {
+        if self.handlers_analyzed == 0 {
+            0.0
+        } else {
+            (self.static_eligible as f64 / self.handlers_analyzed as f64) * 100.0
+        }
+    }
+}
+
+impl StaticEvidenceRegistry {
+    /// Create a new empty registry.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register a static evidence pattern, returning its ID.
+    ///
+    /// If an identical pattern already exists, returns the existing ID.
+    pub fn register(&mut self, pattern: &HandlerPattern, evidence: StaticEvidence) -> StaticEvidenceId {
+        let hash = pattern.hash_value();
+
+        if let Some(&id) = self.pattern_lookup.get(&hash) {
+            self.stats.pattern_reuses += 1;
+            return id;
+        }
+
+        let id = StaticEvidenceId::new(self.next_id);
+        self.next_id += 1;
+
+        self.pattern_lookup.insert(hash, id);
+        self.patterns.push(evidence);
+        self.stats.unique_patterns += 1;
+
+        id
+    }
+
+    /// Look up static evidence by ID.
+    pub fn get(&self, id: StaticEvidenceId) -> Option<&StaticEvidence> {
+        self.patterns.get(id.index() as usize)
+    }
+
+    /// Check if a pattern is already registered.
+    pub fn contains(&self, pattern: &HandlerPattern) -> bool {
+        self.pattern_lookup.contains_key(&pattern.hash_value())
+    }
+
+    /// Get the ID for a registered pattern.
+    pub fn lookup(&self, pattern: &HandlerPattern) -> Option<StaticEvidenceId> {
+        self.pattern_lookup.get(&pattern.hash_value()).copied()
+    }
+
+    /// Get the number of registered patterns.
+    pub fn len(&self) -> usize {
+        self.patterns.len()
+    }
+
+    /// Check if the registry is empty.
+    pub fn is_empty(&self) -> bool {
+        self.patterns.is_empty()
+    }
+
+    /// Iterate over all registered static evidence patterns.
+    pub fn iter(&self) -> impl Iterator<Item = &StaticEvidence> {
+        self.patterns.iter()
+    }
+
+    /// Record that a handler was analyzed.
+    pub fn record_analyzed(&mut self) {
+        self.stats.handlers_analyzed += 1;
+    }
+
+    /// Record that a handler is eligible for static evidence.
+    pub fn record_static_eligible(&mut self) {
+        self.stats.static_eligible += 1;
+    }
+
+    /// Get statistics.
+    pub fn stats(&self) -> &StaticEvidenceStats {
+        &self.stats
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -736,5 +1012,178 @@ mod tests {
         assert_eq!(cache.len(), 2);
         assert!(cache.contains(&pattern1));
         assert!(cache.contains(&pattern2));
+    }
+
+    // ========================================================================
+    // Static Evidence Optimization Tests (EFF-OPT-001)
+    // ========================================================================
+
+    #[test]
+    fn test_static_evidence_id() {
+        let id = StaticEvidenceId::new(42);
+        assert_eq!(id.index(), 42);
+        assert_eq!(id, StaticEvidenceId(42));
+    }
+
+    #[test]
+    fn test_handler_state_kind_is_static() {
+        assert!(HandlerStateKind::Stateless.is_static());
+        assert!(HandlerStateKind::Constant.is_static());
+        assert!(HandlerStateKind::ZeroInit.is_static());
+        assert!(!HandlerStateKind::Dynamic.is_static());
+    }
+
+    #[test]
+    fn test_static_evidence_entry_stateless() {
+        let entry = StaticEvidenceEntry::stateless(DefId::new(1), DefId::new(10));
+        assert_eq!(entry.effect_id, DefId::new(1));
+        assert_eq!(entry.handler_id, DefId::new(10));
+        assert_eq!(entry.state_kind, HandlerStateKind::Stateless);
+        assert!(entry.constant_state.is_none());
+    }
+
+    #[test]
+    fn test_static_evidence_entry_with_constant() {
+        let state = vec![1, 2, 3, 4];
+        let entry = StaticEvidenceEntry::with_constant(DefId::new(1), DefId::new(10), state.clone());
+        assert_eq!(entry.state_kind, HandlerStateKind::Constant);
+        assert_eq!(entry.constant_state, Some(state));
+    }
+
+    #[test]
+    fn test_static_evidence_entry_zero_init() {
+        let entry = StaticEvidenceEntry::zero_init(DefId::new(1), DefId::new(10));
+        assert_eq!(entry.state_kind, HandlerStateKind::ZeroInit);
+        assert!(entry.constant_state.is_none());
+    }
+
+    #[test]
+    fn test_static_evidence_entry_dynamic() {
+        let entry = StaticEvidenceEntry::dynamic(DefId::new(1), DefId::new(10));
+        assert_eq!(entry.state_kind, HandlerStateKind::Dynamic);
+        assert!(!entry.state_kind.is_static());
+    }
+
+    #[test]
+    fn test_static_evidence_new() {
+        let ev = StaticEvidence::new(StaticEvidenceId::new(0));
+        assert!(ev.is_empty());
+        assert!(ev.fully_static);
+        assert!(!ev.can_emit_static()); // Empty evidence cannot be emitted
+    }
+
+    #[test]
+    fn test_static_evidence_add_entry() {
+        let mut ev = StaticEvidence::new(StaticEvidenceId::new(0));
+
+        ev.add_entry(StaticEvidenceEntry::stateless(DefId::new(1), DefId::new(10)));
+        assert_eq!(ev.len(), 1);
+        assert!(ev.fully_static);
+        assert!(ev.can_emit_static());
+
+        ev.add_entry(StaticEvidenceEntry::zero_init(DefId::new(2), DefId::new(20)));
+        assert_eq!(ev.len(), 2);
+        assert!(ev.fully_static);
+        assert!(ev.can_emit_static());
+    }
+
+    #[test]
+    fn test_static_evidence_becomes_dynamic() {
+        let mut ev = StaticEvidence::new(StaticEvidenceId::new(0));
+
+        ev.add_entry(StaticEvidenceEntry::stateless(DefId::new(1), DefId::new(10)));
+        assert!(ev.fully_static);
+
+        // Adding a dynamic entry makes the whole evidence non-static
+        ev.add_entry(StaticEvidenceEntry::dynamic(DefId::new(2), DefId::new(20)));
+        assert!(!ev.fully_static);
+        assert!(!ev.can_emit_static());
+    }
+
+    #[test]
+    fn test_static_evidence_registry_new() {
+        let registry = StaticEvidenceRegistry::new();
+        assert!(registry.is_empty());
+        assert_eq!(registry.len(), 0);
+    }
+
+    #[test]
+    fn test_static_evidence_registry_register() {
+        let mut registry = StaticEvidenceRegistry::new();
+
+        let mut pattern = HandlerPattern::empty();
+        pattern.add(DefId::new(1), DefId::new(10));
+
+        let mut evidence = StaticEvidence::new(StaticEvidenceId::new(0));
+        evidence.add_entry(StaticEvidenceEntry::stateless(DefId::new(1), DefId::new(10)));
+
+        let id = registry.register(&pattern, evidence);
+        assert_eq!(id.index(), 0);
+        assert_eq!(registry.len(), 1);
+        assert!(registry.contains(&pattern));
+    }
+
+    #[test]
+    fn test_static_evidence_registry_dedup() {
+        let mut registry = StaticEvidenceRegistry::new();
+
+        let mut pattern = HandlerPattern::empty();
+        pattern.add(DefId::new(1), DefId::new(10));
+
+        let evidence1 = StaticEvidence::new(StaticEvidenceId::new(0));
+        let evidence2 = StaticEvidence::new(StaticEvidenceId::new(0));
+
+        let id1 = registry.register(&pattern, evidence1);
+        let id2 = registry.register(&pattern, evidence2);
+
+        // Same pattern should return same ID
+        assert_eq!(id1, id2);
+        assert_eq!(registry.len(), 1);
+        assert_eq!(registry.stats().unique_patterns, 1);
+        assert_eq!(registry.stats().pattern_reuses, 1);
+    }
+
+    #[test]
+    fn test_static_evidence_registry_lookup() {
+        let mut registry = StaticEvidenceRegistry::new();
+
+        let mut pattern = HandlerPattern::empty();
+        pattern.add(DefId::new(1), DefId::new(10));
+
+        let mut evidence = StaticEvidence::new(StaticEvidenceId::new(0));
+        evidence.add_entry(StaticEvidenceEntry::stateless(DefId::new(1), DefId::new(10)));
+
+        let id = registry.register(&pattern, evidence);
+
+        // Can look up by pattern
+        assert_eq!(registry.lookup(&pattern), Some(id));
+
+        // Can get evidence by ID
+        let retrieved = registry.get(id);
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_static_evidence_stats_eligibility_rate() {
+        let mut stats = StaticEvidenceStats::default();
+        assert_eq!(stats.eligibility_rate(), 0.0);
+
+        stats.handlers_analyzed = 100;
+        stats.static_eligible = 75;
+        assert!((stats.eligibility_rate() - 75.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_static_evidence_registry_stats() {
+        let mut registry = StaticEvidenceRegistry::new();
+
+        registry.record_analyzed();
+        registry.record_analyzed();
+        registry.record_static_eligible();
+
+        assert_eq!(registry.stats().handlers_analyzed, 2);
+        assert_eq!(registry.stats().static_eligible, 1);
+        assert!((registry.stats().eligibility_rate() - 50.0).abs() < 0.001);
     }
 }

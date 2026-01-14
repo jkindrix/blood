@@ -28,6 +28,7 @@
 //! ```
 
 use std::fmt;
+use crate::effects::evidence::HandlerStateKind;
 use crate::hir::{DefId, LocalId, Type};
 use crate::span::Span;
 
@@ -170,11 +171,24 @@ pub enum StatementKind {
     /// This installs the handler for the specified effect, making it
     /// available for `perform` operations in the enclosed computation.
     /// The effect_id is looked up from the handler definition during codegen.
+    ///
+    /// ## Static Evidence Optimization (EFF-OPT-001)
+    ///
+    /// When `state_kind` indicates the handler state is static (Stateless, Constant,
+    /// or ZeroInit), the codegen can avoid runtime evidence allocation and instead
+    /// use a pre-allocated static evidence structure.
     PushHandler {
         /// The handler definition ID.
         handler_id: DefId,
         /// The handler state place (pointer to handler state struct).
         state_place: Place,
+        /// Classification of handler state for static evidence optimization.
+        ///
+        /// - `Stateless`: Handler has no state (unit type). Optimal case.
+        /// - `Constant`: Handler state is a compile-time constant.
+        /// - `ZeroInit`: Handler state is default/zero-initialized.
+        /// - `Dynamic`: Handler state is computed at runtime. No optimization.
+        state_kind: HandlerStateKind,
     },
 
     /// Pop an effect handler from the evidence vector.
