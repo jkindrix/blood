@@ -34,6 +34,7 @@ use bloodc::diagnostics::DiagnosticEmitter;
 use bloodc::{Lexer, TokenKind};
 use bloodc::codegen;
 use bloodc::expand;
+use bloodc::macro_expand;
 use bloodc::mir;
 use bloodc::project::{self, Manifest};
 use bloodc::content::{ContentHash, BuildCache, hash_hir_item, extract_dependencies, VFT, VFTEntry};
@@ -638,7 +639,7 @@ fn cmd_check(args: &FileArgs, verbosity: u8) -> ExitCode {
     let path_str = args.file.to_string_lossy();
     let emitter = DiagnosticEmitter::new(&path_str, &source);
 
-    let program = match result {
+    let mut program = match result {
         Ok(program) => {
             if verbosity > 0 {
                 eprintln!("Parsed {} declarations.", program.declarations.len());
@@ -657,6 +658,21 @@ fn cmd_check(args: &FileArgs, verbosity: u8) -> ExitCode {
     // Get the interner for symbol resolution
     let interner = parser.take_interner();
 
+    // Expand user-defined macros before type checking
+    let mut macro_expander = macro_expand::MacroExpander::with_source(interner.clone(), &source);
+    let macro_errors = macro_expander.expand_program(&mut program);
+    if !macro_errors.is_empty() {
+        for error in &macro_errors {
+            eprintln!("Macro expansion error: {}", error);
+        }
+        eprintln!("Macro expansion failed with {} error(s).", macro_errors.len());
+        return ExitCode::from(1);
+    }
+
+    if verbosity > 1 {
+        eprintln!("Macro expansion passed.");
+    }
+
     // Type check the program
     let mut ctx = bloodc::typeck::TypeContext::new(&source, interner)
         .with_source_path(&args.file);
@@ -669,6 +685,9 @@ fn cmd_check(args: &FileArgs, verbosity: u8) -> ExitCode {
         eprintln!("Type checking failed: {} error(s).", errors.len());
         return ExitCode::from(1);
     }
+
+    // Expand derive macros after collection, before type checking bodies
+    ctx.expand_derives();
 
     // Type-check all function bodies
     if let Err(errors) = ctx.check_all_bodies() {
@@ -803,7 +822,7 @@ fn cmd_build(args: &FileArgs, verbosity: u8) -> ExitCode {
 
     // Parse
     let mut parser = bloodc::Parser::new(&source);
-    let program = match parser.parse_program() {
+    let mut program = match parser.parse_program() {
         Ok(p) => p,
         Err(errors) => {
             for error in &errors {
@@ -821,6 +840,21 @@ fn cmd_build(args: &FileArgs, verbosity: u8) -> ExitCode {
         eprintln!("Parsed {} declarations.", program.declarations.len());
     }
 
+    // Expand user-defined macros before type checking
+    let mut macro_expander = macro_expand::MacroExpander::with_source(interner.clone(), &source);
+    let macro_errors = macro_expander.expand_program(&mut program);
+    if !macro_errors.is_empty() {
+        for error in &macro_errors {
+            eprintln!("Macro expansion error: {}", error);
+        }
+        eprintln!("Build failed: macro expansion errors.");
+        return ExitCode::from(1);
+    }
+
+    if verbosity > 1 {
+        eprintln!("User-defined macro expansion passed.");
+    }
+
     // Type check and lower to HIR
     let mut ctx = bloodc::typeck::TypeContext::new(&source, interner)
         .with_source_path(&args.file);
@@ -831,6 +865,9 @@ fn cmd_build(args: &FileArgs, verbosity: u8) -> ExitCode {
         eprintln!("Build failed: type errors.");
         return ExitCode::from(1);
     }
+
+    // Expand derive macros after collection, before type checking bodies
+    ctx.expand_derives();
 
     // Type-check all function bodies
     if let Err(errors) = ctx.check_all_bodies() {
@@ -899,7 +936,7 @@ fn cmd_build(args: &FileArgs, verbosity: u8) -> ExitCode {
     }
 
     for (&def_id, item) in &hir_crate.items {
-        let hash = hash_hir_item(item, &hir_crate.bodies);
+        let hash = hash_hir_item(item, &hir_crate.bodies, &hir_crate.items);
         definition_hashes.insert(def_id, hash);
 
         // Check if we have cached compiled code for this definition (local cache only for stats)
@@ -1189,7 +1226,7 @@ fn cmd_build(args: &FileArgs, verbosity: u8) -> ExitCode {
         for (&def_id, mir_body) in mir_bodies {
             // Get the content hash for this definition
             let def_hash = if let Some(item) = hir_crate.items.get(&def_id) {
-                hash_hir_item(item, &hir_crate.bodies)
+                hash_hir_item(item, &hir_crate.bodies, &hir_crate.items)
             } else {
                 // Synthetic definition (closure) - hash based on MIR
                 let mut hasher = ContentHasher::new();
@@ -1272,7 +1309,7 @@ fn cmd_build(args: &FileArgs, verbosity: u8) -> ExitCode {
             }
 
             // Hash the handler item
-            let def_hash = hash_hir_item(item, &hir_crate.bodies);
+            let def_hash = hash_hir_item(item, &hir_crate.bodies, &hir_crate.items);
 
             // Check cache for this handler (local and remote)
             let obj_path = obj_dir.join(format!("handler_{}.o", def_id.index()));
