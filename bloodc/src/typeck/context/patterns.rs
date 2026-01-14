@@ -611,7 +611,7 @@ impl<'a> TypeContext<'a> {
                 }
             }
             ast::PatternKind::Struct { path, fields, rest } => {
-                let (struct_def_id, _type_args) = match expected_ty.kind() {
+                let (adt_def_id, type_args) = match expected_ty.kind() {
                     TypeKind::Adt { def_id, args, .. } => (*def_id, args.clone()),
                     _ => {
                         return Err(TypeError::new(
@@ -620,6 +620,123 @@ impl<'a> TypeContext<'a> {
                         ));
                     }
                 };
+
+                // Check if this is an enum variant with struct-like syntax
+                // e.g., Status::Active { value } where Status is an enum
+                if let Some(enum_info) = self.enum_defs.get(&adt_def_id).cloned() {
+                    // This is an enum - extract variant name from path
+                    let variant_name = if path.segments.len() == 2 {
+                        // EnumName::VariantName { ... }
+                        self.symbol_to_string(path.segments[1].name.node)
+                    } else if path.segments.len() == 1 {
+                        // Just VariantName { ... } (use expected type context)
+                        self.symbol_to_string(path.segments[0].name.node)
+                    } else {
+                        return Err(TypeError::new(
+                            TypeErrorKind::NotFound { name: format!("invalid enum variant path: {path:?}") },
+                            pattern.span,
+                        ));
+                    };
+
+                    let variant_info = enum_info.variants.iter()
+                        .find(|v| v.name == variant_name)
+                        .cloned()
+                        .ok_or_else(|| TypeError::new(
+                            TypeErrorKind::NotFound { name: format!("{}::{}", enum_info.name, variant_name) },
+                            pattern.span,
+                        ))?;
+
+                    // Build substitution map from generic params to concrete types
+                    let subst: std::collections::HashMap<TyVarId, Type> = enum_info.generics.iter()
+                        .zip(type_args.iter())
+                        .map(|(&tyvar, ty)| (tyvar, ty.clone()))
+                        .collect();
+
+                    // Collect fields with indices for proper ordering
+                    let mut indexed_fields: Vec<(usize, hir::Pattern)> = Vec::new();
+                    let mut bound_fields = HashSet::new();
+
+                    for field_pattern in fields {
+                        let field_name = self.symbol_to_string(field_pattern.name.node);
+
+                        let field_info = variant_info.fields.iter()
+                            .find(|f| f.name == field_name)
+                            .ok_or_else(|| TypeError::new(
+                                TypeErrorKind::NoField {
+                                    ty: expected_ty.clone(),
+                                    field: field_name.clone(),
+                                },
+                                field_pattern.span,
+                            ))?;
+
+                        bound_fields.insert(field_name.clone());
+
+                        let field_ty = self.substitute_type_vars(&field_info.ty, &subst);
+
+                        let inner_pattern = if let Some(ref inner) = field_pattern.pattern {
+                            self.lower_pattern(inner, &field_ty)?
+                        } else {
+                            let local_id = self.resolver.define_local(
+                                field_name.clone(),
+                                field_ty.clone(),
+                                false,
+                                field_pattern.span,
+                            )?;
+                            self.locals.push(hir::Local {
+                                id: local_id,
+                                name: Some(field_name),
+                                ty: field_ty.clone(),
+                                mutable: false,
+                                span: field_pattern.span,
+                            });
+                            hir::Pattern {
+                                kind: hir::PatternKind::Binding {
+                                    local_id,
+                                    mutable: false,
+                                    subpattern: None,
+                                },
+                                ty: field_ty,
+                                span: field_pattern.span,
+                            }
+                        };
+
+                        indexed_fields.push((field_info.index as usize, inner_pattern));
+                    }
+
+                    // Check all fields are provided unless `..` is used
+                    if !*rest {
+                        for field_info in &variant_info.fields {
+                            if !bound_fields.contains(&field_info.name) {
+                                return Err(TypeError::new(
+                                    TypeErrorKind::MissingField {
+                                        ty: expected_ty.clone(),
+                                        field: field_info.name.clone(),
+                                    },
+                                    pattern.span,
+                                ));
+                            }
+                        }
+                    }
+
+                    // Sort fields by index
+                    indexed_fields.sort_by_key(|(idx, _)| *idx);
+                    let ordered_fields: Vec<hir::Pattern> = indexed_fields.into_iter()
+                        .map(|(_, pat)| pat)
+                        .collect();
+
+                    return Ok(hir::Pattern {
+                        kind: hir::PatternKind::Variant {
+                            def_id: variant_info.def_id,
+                            variant_idx: variant_info.index,
+                            fields: ordered_fields,
+                        },
+                        ty: expected_ty.clone(),
+                        span: pattern.span,
+                    });
+                }
+
+                // Not an enum - handle as struct pattern
+                let struct_def_id = adt_def_id;
 
                 if !path.segments.is_empty() {
                     let _path_name = self.symbol_to_string(path.segments[0].name.node);
