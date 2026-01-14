@@ -152,13 +152,13 @@ pub trait Visitor: Sized {
                 self.visit_place(ptr, PlaceContext::Read, location);
                 self.visit_operand(expected_gen, location);
             }
-            StatementKind::PushHandler { handler_id: _, state_place, state_kind: _, allocation_tier: _ } => {
+            StatementKind::PushHandler { handler_id: _, state_place, state_kind: _, allocation_tier: _, inline_mode: _ } => {
                 self.visit_place(state_place, PlaceContext::Read, location);
             }
             StatementKind::PopHandler => {
                 // No places or operands to visit
             }
-            StatementKind::CallReturnClause { handler_id: _, body_result, state_place, destination } => {
+            StatementKind::CallReturnClause { handler_id: _, handler_name: _, body_result, state_place, destination } => {
                 self.visit_operand(body_result, location);
                 self.visit_place(state_place, PlaceContext::Read, location);
                 self.visit_place(destination, PlaceContext::Store, location);

@@ -14,7 +14,10 @@ use crate::ice_err;
 
 use crate::mir::body::MirBodyBuilder;
 use crate::mir::body::MirBody;
-use crate::mir::static_evidence::{analyze_handler_state, analyze_handler_allocation_tier};
+use crate::mir::static_evidence::{
+    analyze_handler_state, analyze_handler_allocation_tier,
+    analyze_inline_evidence_mode, InlineEvidenceContext,
+};
 use crate::mir::types::{
     BasicBlockId, Statement, StatementKind, Terminator, TerminatorKind,
     Place, PlaceElem, Operand, Rvalue, Constant, ConstantKind,
@@ -60,6 +63,8 @@ pub struct ClosureLowering<'hir, 'ctx> {
     pending_closures: &'ctx mut Vec<(hir::BodyId, DefId, Vec<(hir::Capture, Type)>)>,
     /// Counter for generating synthetic closure DefIds.
     closure_counter: &'ctx mut u32,
+    /// Current handler nesting depth for inline evidence optimization (EFF-OPT-003/004).
+    handler_depth: usize,
 }
 
 impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
@@ -131,6 +136,7 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
             temp_counter: 0,
             pending_closures,
             closure_counter,
+            handler_depth: 0,
         }
     }
 
@@ -399,6 +405,7 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
             LiteralValue::Bool(v) => ConstantKind::Bool(*v),
             LiteralValue::Char(v) => ConstantKind::Char(*v),
             LiteralValue::String(v) => ConstantKind::String(v.clone()),
+            LiteralValue::ByteString(v) => ConstantKind::ByteString(v.clone()),
         };
         Ok(Operand::Constant(Constant::new(ty.clone(), kind)))
     }
@@ -581,6 +588,9 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
         let state_kind = analyze_handler_state(handler_instance);
         // EFF-OPT-005/006: Handler allocation tier (Stack vs Region)
         let allocation_tier = analyze_handler_allocation_tier(body);
+        // EFF-OPT-003/004: Inline evidence mode (Inline, SpecializedPair, Vector)
+        let inline_context = InlineEvidenceContext::at_depth(self.handler_depth);
+        let inline_mode = analyze_inline_evidence_mode(body, &inline_context, allocation_tier);
 
         // Step 1: Lower the handler instance to get the state
         let state_operand = self.lower_expr(handler_instance)?;
@@ -590,12 +600,16 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
         let state_place = Place::local(state_local);
         self.push_assign(state_place.clone(), Rvalue::Use(state_operand));
 
+        // Track handler depth for inline optimization (push before body)
+        self.handler_depth += 1;
+
         // Step 2: Push the handler onto the evidence vector with state
         self.push_stmt(StatementKind::PushHandler {
             handler_id,
             state_place: state_place.clone(),
             state_kind,
             allocation_tier,
+            inline_mode,
         });
 
         // Step 3: Lower the body expression with the handler installed
@@ -603,6 +617,9 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
 
         // Step 4: Pop the handler from the evidence vector
         self.push_stmt(StatementKind::PopHandler);
+
+        // Restore handler depth (pop)
+        self.handler_depth -= 1;
 
         // Store the result
         let dest = self.new_temp(ty.clone(), span);

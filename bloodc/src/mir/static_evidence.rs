@@ -34,6 +34,321 @@ use crate::effects::evidence::HandlerStateKind;
 use crate::hir::{Expr, ExprKind, LiteralValue, Type, TypeKind};
 use super::ptr::MemoryTier;
 
+// ============================================================================
+// Inline Evidence Mode (EFF-OPT-003/004)
+// ============================================================================
+
+/// Determines how handler evidence should be passed and stored.
+///
+/// Most effect usage has shallow handler stacks (1-2 handlers). This enum
+/// classifies handler installations to enable optimized evidence passing
+/// that avoids the overhead of a heap-allocated vector.
+///
+/// ## Optimization Levels
+///
+/// | Mode | Handler Count | Evidence Passing |
+/// |------|--------------|------------------|
+/// | Inline | 1 | Direct in registers/stack |
+/// | SpecializedPair | 2 | Inline pair structure |
+/// | Vector | 3+ | Heap-allocated Vec |
+///
+/// ## Usage
+///
+/// ```ignore
+/// let mode = analyze_inline_evidence_mode(&handle_expr, context);
+/// match mode {
+///     InlineEvidenceMode::Inline => /* fast path */,
+///     InlineEvidenceMode::Vector => /* fallback to current impl */,
+/// }
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InlineEvidenceMode {
+    /// Single handler - can pass evidence entry inline (no vector).
+    ///
+    /// This is the optimal case for most effect usage patterns like
+    /// `State`, `Reader`, `Writer`, etc. The evidence entry can be
+    /// stored directly in a stack variable and passed to Perform
+    /// operations without going through the evidence vector.
+    ///
+    /// Requirements:
+    /// - No nested `handle` blocks in the body
+    /// - Handler body doesn't contain closures that capture handler context
+    /// - Handler doesn't escape (allocation_tier == Stack)
+    Inline,
+
+    /// Two handlers - can pass as specialized pair structure.
+    ///
+    /// For common patterns with two effects (e.g., State + Error),
+    /// the evidence can be stored in a fixed-size pair structure
+    /// instead of a dynamic vector.
+    ///
+    /// Note: Currently treated same as Vector in codegen.
+    /// Future optimization opportunity.
+    SpecializedPair,
+
+    /// Three or more handlers - must use vector-based evidence.
+    ///
+    /// When multiple handlers are nested or the handler structure
+    /// is dynamic, fall back to the standard evidence vector.
+    Vector,
+}
+
+impl InlineEvidenceMode {
+    /// Check if this mode allows inline evidence passing.
+    pub fn is_inline(self) -> bool {
+        matches!(self, Self::Inline | Self::SpecializedPair)
+    }
+
+    /// Check if this mode requires the evidence vector.
+    pub fn requires_vector(self) -> bool {
+        matches!(self, Self::Vector)
+    }
+}
+
+/// Context for inline evidence analysis.
+///
+/// Tracks the current handler stack depth and other context needed
+/// to determine inline eligibility.
+#[derive(Debug, Clone, Default)]
+pub struct InlineEvidenceContext {
+    /// Current depth of nested handlers (0 = no handlers in scope).
+    pub handler_depth: usize,
+    /// Whether we're inside a closure (conservative: assume escaping).
+    pub inside_closure: bool,
+}
+
+impl InlineEvidenceContext {
+    /// Create a new context with no handlers in scope.
+    pub fn new() -> Self {
+        Self {
+            handler_depth: 0,
+            inside_closure: false,
+        }
+    }
+
+    /// Create a context at the given handler depth.
+    pub fn at_depth(depth: usize) -> Self {
+        Self {
+            handler_depth: depth,
+            inside_closure: false,
+        }
+    }
+
+    /// Create a context inside a closure.
+    pub fn in_closure() -> Self {
+        Self {
+            handler_depth: 0,
+            inside_closure: true,
+        }
+    }
+
+    /// Check if we can use inline evidence at this context.
+    pub fn can_inline(&self) -> bool {
+        // Can inline if at depth 0 or 1, and not inside a closure
+        !self.inside_closure && self.handler_depth <= 1
+    }
+
+    /// Get the resulting handler depth after pushing a new handler.
+    pub fn after_push(&self) -> usize {
+        self.handler_depth + 1
+    }
+}
+
+/// Analyze a handle expression to determine the inline evidence mode.
+///
+/// This is the main entry point for EFF-OPT-003/004 analysis.
+///
+/// # Arguments
+///
+/// * `body` - The handler body expression
+/// * `context` - Current inline evidence context
+/// * `allocation_tier` - The handler's allocation tier (from escape analysis)
+///
+/// # Returns
+///
+/// The `InlineEvidenceMode` indicating how evidence should be passed.
+pub fn analyze_inline_evidence_mode(
+    body: &Expr,
+    context: &InlineEvidenceContext,
+    allocation_tier: MemoryTier,
+) -> InlineEvidenceMode {
+    // If we're inside a closure, be conservative and use vector
+    if context.inside_closure {
+        return InlineEvidenceMode::Vector;
+    }
+
+    // If the handler escapes (region-tier), it might be captured by a
+    // continuation and accessed from another context. Use vector.
+    if allocation_tier == MemoryTier::Region {
+        return InlineEvidenceMode::Vector;
+    }
+
+    // Check if the body contains nested handle blocks
+    if contains_nested_handle(body) {
+        return InlineEvidenceMode::Vector;
+    }
+
+    // Determine mode based on resulting handler depth
+    let resulting_depth = context.after_push();
+    match resulting_depth {
+        0 => unreachable!("after_push should never return 0"),
+        1 => InlineEvidenceMode::Inline,
+        2 => InlineEvidenceMode::SpecializedPair,
+        _ => InlineEvidenceMode::Vector,
+    }
+}
+
+/// Check if an expression contains nested handle blocks.
+///
+/// Returns true if the expression or any of its children contain
+/// `Handle` expressions, which would require the evidence vector.
+fn contains_nested_handle(expr: &Expr) -> bool {
+    match &expr.kind {
+        // Direct nested handle - requires vector
+        ExprKind::Handle { .. } => true,
+
+        // Closures might contain handles, be conservative
+        ExprKind::Closure { .. } => true,
+
+        // Recursively check sub-expressions
+        ExprKind::Block { stmts, expr } => {
+            for stmt in stmts {
+                if contains_nested_handle_stmt(stmt) {
+                    return true;
+                }
+            }
+            expr.as_ref().map_or(false, |e| contains_nested_handle(e))
+        }
+
+        ExprKind::If { condition, then_branch, else_branch } => {
+            contains_nested_handle(condition)
+                || contains_nested_handle(then_branch)
+                || else_branch.as_ref().map_or(false, |e| contains_nested_handle(e))
+        }
+
+        ExprKind::Match { scrutinee, arms } => {
+            if contains_nested_handle(scrutinee) {
+                return true;
+            }
+            for arm in arms {
+                if let Some(ref guard) = arm.guard {
+                    if contains_nested_handle(guard) {
+                        return true;
+                    }
+                }
+                if contains_nested_handle(&arm.body) {
+                    return true;
+                }
+            }
+            false
+        }
+
+        ExprKind::Loop { body, .. } => contains_nested_handle(body),
+
+        ExprKind::While { condition, body, .. } => {
+            contains_nested_handle(condition) || contains_nested_handle(body)
+        }
+
+        ExprKind::Call { callee, args } => {
+            // Function calls could contain handles, but we're analyzing
+            // the direct expression tree. The callee's handles are separate.
+            contains_nested_handle(callee) || args.iter().any(contains_nested_handle)
+        }
+
+        ExprKind::MethodCall { receiver, args, .. } => {
+            contains_nested_handle(receiver) || args.iter().any(contains_nested_handle)
+        }
+
+        ExprKind::Binary { left, right, .. } => {
+            contains_nested_handle(left) || contains_nested_handle(right)
+        }
+
+        ExprKind::Unary { operand, .. } => contains_nested_handle(operand),
+
+        ExprKind::Cast { expr, .. } => contains_nested_handle(expr),
+
+        ExprKind::Index { base, index } => {
+            contains_nested_handle(base) || contains_nested_handle(index)
+        }
+
+        ExprKind::Field { base, .. } => contains_nested_handle(base),
+
+        ExprKind::Tuple(elements) | ExprKind::Array(elements) | ExprKind::VecLiteral(elements) => {
+            elements.iter().any(contains_nested_handle)
+        }
+
+        ExprKind::Struct { fields, base, .. } => {
+            fields.iter().any(|f| contains_nested_handle(&f.value))
+                || base.as_ref().map_or(false, |e| contains_nested_handle(e))
+        }
+
+        ExprKind::Repeat { value, .. } => contains_nested_handle(value),
+
+        ExprKind::VecRepeat { value, count } => {
+            contains_nested_handle(value) || contains_nested_handle(count)
+        }
+
+        ExprKind::Return(value) => {
+            value.as_ref().map_or(false, |e| contains_nested_handle(e))
+        }
+
+        ExprKind::Break { value, .. } => {
+            value.as_ref().map_or(false, |e| contains_nested_handle(e))
+        }
+
+        ExprKind::Assign { target, value } => {
+            contains_nested_handle(target) || contains_nested_handle(value)
+        }
+
+        ExprKind::Borrow { expr, .. }
+        | ExprKind::AddrOf { expr, .. }
+        | ExprKind::Deref(expr)
+        | ExprKind::Unsafe(expr)
+        | ExprKind::Dbg(expr) => contains_nested_handle(expr),
+
+        ExprKind::Range { start, end, .. } => {
+            start.as_ref().map_or(false, |e| contains_nested_handle(e))
+                || end.as_ref().map_or(false, |e| contains_nested_handle(e))
+        }
+
+        ExprKind::Let { init, .. } => contains_nested_handle(init),
+
+        ExprKind::Variant { fields, .. } => fields.iter().any(contains_nested_handle),
+
+        ExprKind::Record { fields } => {
+            fields.iter().any(|f| contains_nested_handle(&f.value))
+        }
+
+        ExprKind::Assert { condition, message } => {
+            contains_nested_handle(condition)
+                || message.as_ref().map_or(false, |m| contains_nested_handle(m))
+        }
+
+        ExprKind::MacroExpansion { args, .. } => args.iter().any(contains_nested_handle),
+
+        // Leaf expressions: no nested handles possible
+        ExprKind::Literal(_)
+        | ExprKind::Local(_)
+        | ExprKind::Def(_)
+        | ExprKind::Perform { .. }
+        | ExprKind::Resume { .. }
+        | ExprKind::Continue { .. }
+        | ExprKind::Default
+        | ExprKind::MethodFamily { .. }
+        | ExprKind::Error => false,
+    }
+}
+
+/// Check statements for nested handle expressions.
+fn contains_nested_handle_stmt(stmt: &crate::hir::Stmt) -> bool {
+    use crate::hir::Stmt;
+    match stmt {
+        Stmt::Let { init, .. } => init.as_ref().map_or(false, |e| contains_nested_handle(e)),
+        Stmt::Expr(expr) => contains_nested_handle(expr),
+        Stmt::Item(_) => false,
+    }
+}
+
 /// Analyze a handler instance expression to determine its state kind.
 ///
 /// This function examines the handler instance expression (the initializer
@@ -211,6 +526,7 @@ fn literal_to_bytes(lit: &LiteralValue) -> Vec<u8> {
             s.as_bytes().to_vec()
         }
         LiteralValue::String(s) => s.as_bytes().to_vec(),
+        LiteralValue::ByteString(bytes) => bytes.clone(),
     }
 }
 
@@ -835,5 +1151,285 @@ mod tests {
         );
         assert!(!handler_evidence_escapes(&body));
         assert_eq!(analyze_handler_allocation_tier(&body), MemoryTier::Stack);
+    }
+
+    // =========================================================================
+    // Inline Evidence Mode Tests (EFF-OPT-003/004)
+    // =========================================================================
+
+    #[test]
+    fn test_inline_evidence_mode_is_inline() {
+        assert!(InlineEvidenceMode::Inline.is_inline());
+        assert!(InlineEvidenceMode::SpecializedPair.is_inline());
+        assert!(!InlineEvidenceMode::Vector.is_inline());
+    }
+
+    #[test]
+    fn test_inline_evidence_mode_requires_vector() {
+        assert!(!InlineEvidenceMode::Inline.requires_vector());
+        assert!(!InlineEvidenceMode::SpecializedPair.requires_vector());
+        assert!(InlineEvidenceMode::Vector.requires_vector());
+    }
+
+    #[test]
+    fn test_inline_context_new() {
+        let ctx = InlineEvidenceContext::new();
+        assert_eq!(ctx.handler_depth, 0);
+        assert!(!ctx.inside_closure);
+        assert!(ctx.can_inline());
+    }
+
+    #[test]
+    fn test_inline_context_at_depth() {
+        let ctx = InlineEvidenceContext::at_depth(1);
+        assert_eq!(ctx.handler_depth, 1);
+        assert!(!ctx.inside_closure);
+        assert!(ctx.can_inline());
+
+        let ctx2 = InlineEvidenceContext::at_depth(2);
+        assert_eq!(ctx2.handler_depth, 2);
+        assert!(!ctx2.can_inline());
+    }
+
+    #[test]
+    fn test_inline_context_in_closure() {
+        let ctx = InlineEvidenceContext::in_closure();
+        assert_eq!(ctx.handler_depth, 0);
+        assert!(ctx.inside_closure);
+        assert!(!ctx.can_inline());
+    }
+
+    #[test]
+    fn test_inline_context_after_push() {
+        let ctx = InlineEvidenceContext::new();
+        assert_eq!(ctx.after_push(), 1);
+
+        let ctx2 = InlineEvidenceContext::at_depth(1);
+        assert_eq!(ctx2.after_push(), 2);
+    }
+
+    #[test]
+    fn test_analyze_inline_mode_simple_body() {
+        // Simple literal body with no nesting - should be inline
+        let body = make_expr(
+            ExprKind::Literal(LiteralValue::Int(42)),
+            Type::i32(),
+        );
+        let ctx = InlineEvidenceContext::new();
+        let mode = analyze_inline_evidence_mode(&body, &ctx, MemoryTier::Stack);
+        assert_eq!(mode, InlineEvidenceMode::Inline);
+    }
+
+    #[test]
+    fn test_analyze_inline_mode_region_tier_uses_vector() {
+        // Even simple body, region tier forces vector
+        let body = make_expr(
+            ExprKind::Literal(LiteralValue::Int(42)),
+            Type::i32(),
+        );
+        let ctx = InlineEvidenceContext::new();
+        let mode = analyze_inline_evidence_mode(&body, &ctx, MemoryTier::Region);
+        assert_eq!(mode, InlineEvidenceMode::Vector);
+    }
+
+    #[test]
+    fn test_analyze_inline_mode_closure_context_uses_vector() {
+        // Inside closure context forces vector
+        let body = make_expr(
+            ExprKind::Literal(LiteralValue::Int(42)),
+            Type::i32(),
+        );
+        let ctx = InlineEvidenceContext::in_closure();
+        let mode = analyze_inline_evidence_mode(&body, &ctx, MemoryTier::Stack);
+        assert_eq!(mode, InlineEvidenceMode::Vector);
+    }
+
+    #[test]
+    fn test_analyze_inline_mode_depth_1_is_inline() {
+        let body = make_expr(
+            ExprKind::Literal(LiteralValue::Int(42)),
+            Type::i32(),
+        );
+        let ctx = InlineEvidenceContext::at_depth(0); // after push will be 1
+        let mode = analyze_inline_evidence_mode(&body, &ctx, MemoryTier::Stack);
+        assert_eq!(mode, InlineEvidenceMode::Inline);
+    }
+
+    #[test]
+    fn test_analyze_inline_mode_depth_2_is_pair() {
+        let body = make_expr(
+            ExprKind::Literal(LiteralValue::Int(42)),
+            Type::i32(),
+        );
+        let ctx = InlineEvidenceContext::at_depth(1); // after push will be 2
+        let mode = analyze_inline_evidence_mode(&body, &ctx, MemoryTier::Stack);
+        assert_eq!(mode, InlineEvidenceMode::SpecializedPair);
+    }
+
+    #[test]
+    fn test_analyze_inline_mode_depth_3_is_vector() {
+        let body = make_expr(
+            ExprKind::Literal(LiteralValue::Int(42)),
+            Type::i32(),
+        );
+        let ctx = InlineEvidenceContext::at_depth(2); // after push will be 3
+        let mode = analyze_inline_evidence_mode(&body, &ctx, MemoryTier::Stack);
+        assert_eq!(mode, InlineEvidenceMode::Vector);
+    }
+
+    #[test]
+    fn test_analyze_inline_mode_nested_handle_forces_vector() {
+        use crate::hir::DefId;
+        // A body containing a nested handle block forces vector mode
+        let inner_body = make_expr(
+            ExprKind::Literal(LiteralValue::Int(1)),
+            Type::i32(),
+        );
+        let handler_instance = make_expr(ExprKind::Tuple(vec![]), Type::unit());
+        let body = make_expr(
+            ExprKind::Handle {
+                body: Box::new(inner_body),
+                handler_id: DefId::new(0),
+                handler_instance: Box::new(handler_instance),
+            },
+            Type::i32(),
+        );
+        let ctx = InlineEvidenceContext::new();
+        let mode = analyze_inline_evidence_mode(&body, &ctx, MemoryTier::Stack);
+        assert_eq!(mode, InlineEvidenceMode::Vector);
+    }
+
+    #[test]
+    fn test_analyze_inline_mode_closure_in_body_forces_vector() {
+        use crate::hir::BodyId;
+        // A body containing a closure forces vector (conservative)
+        let body = make_expr(
+            ExprKind::Closure {
+                body_id: BodyId::new(0),
+                captures: vec![],
+            },
+            Type::unit(),
+        );
+        let ctx = InlineEvidenceContext::new();
+        let mode = analyze_inline_evidence_mode(&body, &ctx, MemoryTier::Stack);
+        assert_eq!(mode, InlineEvidenceMode::Vector);
+    }
+
+    #[test]
+    fn test_contains_nested_handle_literal() {
+        let body = make_expr(
+            ExprKind::Literal(LiteralValue::Int(42)),
+            Type::i32(),
+        );
+        assert!(!contains_nested_handle(&body));
+    }
+
+    #[test]
+    fn test_contains_nested_handle_handle_expr() {
+        use crate::hir::DefId;
+        let inner = make_expr(
+            ExprKind::Literal(LiteralValue::Int(1)),
+            Type::i32(),
+        );
+        let handler_instance = make_expr(ExprKind::Tuple(vec![]), Type::unit());
+        let body = make_expr(
+            ExprKind::Handle {
+                body: Box::new(inner),
+                handler_id: DefId::new(0),
+                handler_instance: Box::new(handler_instance),
+            },
+            Type::i32(),
+        );
+        assert!(contains_nested_handle(&body));
+    }
+
+    #[test]
+    fn test_contains_nested_handle_in_block() {
+        use crate::hir::DefId;
+        let inner = make_expr(
+            ExprKind::Literal(LiteralValue::Int(1)),
+            Type::i32(),
+        );
+        let handler_instance = make_expr(ExprKind::Tuple(vec![]), Type::unit());
+        let handle_expr = make_expr(
+            ExprKind::Handle {
+                body: Box::new(inner),
+                handler_id: DefId::new(0),
+                handler_instance: Box::new(handler_instance),
+            },
+            Type::i32(),
+        );
+        let body = make_expr(
+            ExprKind::Block {
+                stmts: vec![],
+                expr: Some(Box::new(handle_expr)),
+            },
+            Type::i32(),
+        );
+        assert!(contains_nested_handle(&body));
+    }
+
+    #[test]
+    fn test_contains_nested_handle_in_if() {
+        use crate::hir::DefId;
+        let condition = make_expr(
+            ExprKind::Literal(LiteralValue::Bool(true)),
+            Type::bool(),
+        );
+        let inner = make_expr(
+            ExprKind::Literal(LiteralValue::Int(1)),
+            Type::i32(),
+        );
+        let handler_instance = make_expr(ExprKind::Tuple(vec![]), Type::unit());
+        let handle_expr = make_expr(
+            ExprKind::Handle {
+                body: Box::new(inner),
+                handler_id: DefId::new(0),
+                handler_instance: Box::new(handler_instance),
+            },
+            Type::i32(),
+        );
+        let else_branch = make_expr(
+            ExprKind::Literal(LiteralValue::Int(0)),
+            Type::i32(),
+        );
+        let body = make_expr(
+            ExprKind::If {
+                condition: Box::new(condition),
+                then_branch: Box::new(handle_expr),
+                else_branch: Some(Box::new(else_branch)),
+            },
+            Type::i32(),
+        );
+        assert!(contains_nested_handle(&body));
+    }
+
+    #[test]
+    fn test_contains_nested_handle_closure() {
+        use crate::hir::BodyId;
+        // Closures are conservatively treated as containing handles
+        let body = make_expr(
+            ExprKind::Closure {
+                body_id: BodyId::new(0),
+                captures: vec![],
+            },
+            Type::unit(),
+        );
+        assert!(contains_nested_handle(&body));
+    }
+
+    #[test]
+    fn test_contains_nested_handle_perform_is_leaf() {
+        use crate::hir::DefId;
+        // Perform is a leaf - it doesn't contain nested handles
+        let body = make_expr(
+            ExprKind::Perform {
+                effect_id: DefId::new(0),
+                op_index: 0,
+                args: vec![],
+            },
+            Type::unit(),
+        );
+        assert!(!contains_nested_handle(&body));
     }
 }

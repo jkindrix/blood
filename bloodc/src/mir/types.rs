@@ -32,6 +32,7 @@ use crate::effects::evidence::HandlerStateKind;
 use crate::hir::{DefId, LocalId, Type};
 use crate::span::Span;
 use super::ptr::MemoryTier;
+use super::static_evidence::InlineEvidenceMode;
 
 // ============================================================================
 // Basic Blocks
@@ -184,6 +185,12 @@ pub enum StatementKind {
     /// When `allocation_tier` is `Stack`, the handler evidence is lexically scoped
     /// and can use stack allocation instead of heap allocation, avoiding the
     /// overhead of `blood_evidence_create()`.
+    ///
+    /// ## Inline Evidence Optimization (EFF-OPT-003/004)
+    ///
+    /// When `inline_mode` is `Inline` or `SpecializedPair`, the handler evidence
+    /// can be passed directly without going through the evidence vector, avoiding
+    /// heap allocation and FFI overhead for shallow handler stacks.
     PushHandler {
         /// The handler definition ID.
         handler_id: DefId,
@@ -201,6 +208,12 @@ pub enum StatementKind {
         /// - `Stack`: Handler is lexically scoped, can use stack allocation.
         /// - `Region`: Handler evidence may escape, needs heap allocation.
         allocation_tier: MemoryTier,
+        /// Inline evidence mode for optimized evidence passing (EFF-OPT-003/004).
+        ///
+        /// - `Inline`: Single handler, can pass entry directly without vector.
+        /// - `SpecializedPair`: Two handlers, can use fixed-size pair structure.
+        /// - `Vector`: Three or more handlers, must use heap-allocated vector.
+        inline_mode: InlineEvidenceMode,
     },
 
     /// Pop an effect handler from the evidence vector.
@@ -211,11 +224,14 @@ pub enum StatementKind {
 
     /// Call a handler's return clause to transform the body result.
     ///
-    /// This calls the handler's return clause function: `handler_{id}_return(result, state)`.
+    /// This calls the handler's return clause function: `{handler_name}_return(result, state)`.
     /// The result is stored in the destination place.
     CallReturnClause {
-        /// The handler DefId (used to generate the return clause function name).
+        /// The handler DefId (used for handler metadata lookup).
         handler_id: DefId,
+        /// The handler name (used for content-based function naming).
+        /// This must be included in MIR for proper content hashing.
+        handler_name: String,
         /// The body result value to pass to the return clause.
         body_result: Operand,
         /// The handler state place (pointer to state struct).
@@ -752,6 +768,8 @@ pub enum ConstantKind {
     Char(char),
     /// String constant (interned).
     String(String),
+    /// Byte string constant.
+    ByteString(Vec<u8>),
     /// Unit value.
     Unit,
     /// Function reference.

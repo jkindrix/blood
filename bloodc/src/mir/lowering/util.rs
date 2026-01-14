@@ -24,7 +24,10 @@ use crate::hir::{
     LiteralValue, LoopId, MatchArm, Pattern, PatternKind, RecordFieldExpr, Stmt, Type, TypeKind,
 };
 use crate::mir::body::MirBodyBuilder;
-use crate::mir::static_evidence::{analyze_handler_state, analyze_handler_allocation_tier};
+use crate::mir::static_evidence::{
+    analyze_handler_state, analyze_handler_allocation_tier,
+    analyze_inline_evidence_mode, InlineEvidenceContext,
+};
 use crate::mir::types::{
     BasicBlockId, Statement, StatementKind, Terminator, TerminatorKind,
     Place, PlaceElem, Operand, Rvalue, Constant, ConstantKind, AggregateKind, SwitchTargets,
@@ -93,6 +96,7 @@ pub fn lower_literal_to_constant(lit: &LiteralValue, ty: &Type) -> Constant {
         LiteralValue::Bool(v) => ConstantKind::Bool(*v),
         LiteralValue::Char(v) => ConstantKind::Char(*v),
         LiteralValue::String(v) => ConstantKind::String(v.clone()),
+        LiteralValue::ByteString(v) => ConstantKind::ByteString(v.clone()),
     };
     Constant::new(ty.clone(), kind)
 }
@@ -549,6 +553,7 @@ pub trait ExprLowering {
             LiteralValue::Bool(v) => ConstantKind::Bool(*v),
             LiteralValue::Char(v) => ConstantKind::Char(*v),
             LiteralValue::String(v) => ConstantKind::String(v.clone()),
+            LiteralValue::ByteString(v) => ConstantKind::ByteString(v.clone()),
         };
         Ok(Operand::Constant(Constant::new(ty.clone(), kind)))
     }
@@ -1448,6 +1453,13 @@ pub trait ExprLowering {
         let state_kind = analyze_handler_state(handler_instance);
         // EFF-OPT-005/006: Handler allocation tier (Stack vs Region)
         let allocation_tier = analyze_handler_allocation_tier(body);
+        // EFF-OPT-003/004: Inline evidence mode
+        // Note: The trait default implementation uses conservative Vector mode
+        // because it doesn't have access to handler_depth. The struct-level
+        // implementations (FunctionLowering, ClosureLowering) override this
+        // to use the proper inline mode based on their handler_depth field.
+        let inline_context = InlineEvidenceContext::new();
+        let inline_mode = analyze_inline_evidence_mode(body, &inline_context, allocation_tier);
 
         // Step 1: Lower the handler instance to get the state
         let state_operand = self.lower_expr(handler_instance)?;
@@ -1463,6 +1475,7 @@ pub trait ExprLowering {
             state_place: state_place.clone(),
             state_kind,
             allocation_tier,
+            inline_mode,
         });
 
         // Step 3: Lower the body expression with the handler installed
@@ -1472,11 +1485,16 @@ pub trait ExprLowering {
         self.push_stmt(StatementKind::PopHandler);
 
         // Step 5: Call the return clause to transform the body result
+        // The return clause function is {handler_name}_return (content-based naming)
+        let handler_name = self.hir().get_item(handler_id)
+            .map(|item| item.name.clone())
+            .unwrap_or_else(|| format!("unknown_handler_{}", handler_id.index));
         let dest = self.new_temp(ty.clone(), span);
         let dest_place = Place::local(dest);
 
         self.push_stmt(StatementKind::CallReturnClause {
             handler_id,
+            handler_name,
             state_place,
             body_result,
             destination: dest_place.clone(),
@@ -2549,6 +2567,9 @@ pub trait ExprLowering {
             }
 
             // Test prefix patterns (in reverse order)
+            // Save the starting block - this is where the first prefix test (i=0) must go
+            let prefix_start_block = self.current_block();
+
             for (i, pat) in prefix.iter().enumerate().rev() {
                 let idx_place = place.project(PlaceElem::ConstantIndex {
                     offset: i as u64,
@@ -2556,6 +2577,10 @@ pub trait ExprLowering {
                     from_end: false,
                 });
                 if i == 0 {
+                    // For the first pattern (i=0), switch back to the starting block
+                    // This ensures elements_block (or prefix_block from suffix) gets terminated
+                    self.builder_mut().switch_to(prefix_start_block);
+                    *self.current_block_mut() = prefix_start_block;
                     self.test_pattern_cf(pat, &idx_place, current_target, on_no_match, span)?;
                 } else {
                     let next_block = self.builder_mut().new_block();

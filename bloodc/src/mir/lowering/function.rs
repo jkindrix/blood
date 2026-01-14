@@ -14,7 +14,10 @@ use crate::ice_err;
 
 use crate::mir::body::MirBodyBuilder;
 use crate::mir::body::MirBody;
-use crate::mir::static_evidence::{analyze_handler_state, analyze_handler_allocation_tier};
+use crate::mir::static_evidence::{
+    analyze_handler_state, analyze_handler_allocation_tier,
+    analyze_inline_evidence_mode, InlineEvidenceContext,
+};
 use crate::mir::types::{
     BasicBlockId, Statement, StatementKind, Terminator, TerminatorKind,
     Place, PlaceElem, Operand, Rvalue, Constant, ConstantKind,
@@ -49,6 +52,8 @@ pub struct FunctionLowering<'hir, 'ctx> {
     pending_closures: &'ctx mut Vec<(hir::BodyId, DefId, Vec<(hir::Capture, Type)>)>,
     /// Counter for generating synthetic closure DefIds.
     closure_counter: &'ctx mut u32,
+    /// Current handler nesting depth for inline evidence optimization (EFF-OPT-003/004).
+    handler_depth: usize,
 }
 
 impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
@@ -94,6 +99,7 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
             temp_counter: 0,
             pending_closures,
             closure_counter,
+            handler_depth: 0,
         }
     }
 
@@ -575,6 +581,9 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
         let state_kind = analyze_handler_state(handler_instance);
         // EFF-OPT-005/006: Handler allocation tier (Stack vs Region)
         let allocation_tier = analyze_handler_allocation_tier(body);
+        // EFF-OPT-003/004: Inline evidence mode (Inline, SpecializedPair, Vector)
+        let inline_context = InlineEvidenceContext::at_depth(self.handler_depth);
+        let inline_mode = analyze_inline_evidence_mode(body, &inline_context, allocation_tier);
 
         // Step 1: Lower the handler instance to get the state
         let state_operand = self.lower_expr(handler_instance)?;
@@ -584,12 +593,16 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
         let state_place = Place::local(state_local);
         self.push_assign(state_place.clone(), Rvalue::Use(state_operand));
 
+        // Track handler depth for inline optimization (push before body)
+        self.handler_depth += 1;
+
         // Step 2: Push the handler onto the evidence vector with state
         self.push_stmt(StatementKind::PushHandler {
             handler_id,
             state_place: state_place.clone(),
             state_kind,
             allocation_tier,
+            inline_mode,
         });
 
         // Step 3: Lower the body expression with the handler installed
@@ -598,13 +611,20 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
         // Step 4: Pop the handler from the evidence vector
         self.push_stmt(StatementKind::PopHandler);
 
+        // Restore handler depth (pop)
+        self.handler_depth -= 1;
+
         // Step 5: Call the return clause to transform the body result
-        // The return clause function is handler_{handler_id.index}_return
+        // The return clause function is {handler_name}_return (content-based naming)
+        let handler_name = self.hir.get_item(handler_id)
+            .map(|item| item.name.clone())
+            .unwrap_or_else(|| format!("unknown_handler_{}", handler_id.index));
         let dest = self.new_temp(ty.clone(), span);
         let dest_place = Place::local(dest);
 
         self.push_stmt(StatementKind::CallReturnClause {
             handler_id,
+            handler_name,
             body_result,
             state_place,
             destination: dest_place.clone(),
