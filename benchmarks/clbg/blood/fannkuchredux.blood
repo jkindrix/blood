@@ -1,0 +1,122 @@
+// CLBG Fannkuch-Redux Benchmark for Blood
+// ========================================
+//
+// This is a faithful port of the Computer Language Benchmarks Game fannkuch-redux
+// benchmark, designed for direct comparison with the C reference implementation.
+//
+// CLBG Standard: N = 12 (hardcoded since Blood doesn't have command-line args)
+//
+// Algorithm:
+// 1. Generate all permutations of [0, 1, 2, ..., n-1]
+// 2. For each permutation:
+//    - Count "flips": repeatedly reverse first k+1 elements where k = first element
+//    - Track maximum flips across all permutations
+//    - Update checksum: add flips if even permutation, subtract if odd
+//
+// Output format (must match C exactly):
+//   <checksum>
+//   Pfannkuchen(<n>) = <max_flips>
+
+// Fixed N = 12 (CLBG standard)
+// Array sizes must be compile-time constants in Blood
+
+fn fannkuch() -> (i32, i32) {
+    let n = 12;
+
+    // Working arrays
+    let mut perm: [i32; 12] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let mut perm1: [i32; 12] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let mut count: [i32; 12] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+    // Initialize perm1 = [0, 1, 2, ..., n-1]
+    let mut i = 0;
+    while i < n {
+        perm1[i] = i;
+        i = i + 1;
+    }
+
+    let mut max_flips = 0;
+    let mut checksum = 0;
+    let mut r = n;
+    let mut nperm = 0;
+
+    // Main loop - generate all permutations
+    let mut done = false;
+    while !done {
+        // Countdown r
+        while r != 1 {
+            count[r - 1] = r;
+            r = r - 1;
+        }
+
+        // Copy perm1 to perm
+        i = 0;
+        while i < n {
+            perm[i] = perm1[i];
+            i = i + 1;
+        }
+
+        // Count flips
+        let mut flips = 0;
+        let mut k = perm[0];
+        while k != 0 {
+            // Reverse first k+1 elements
+            let k2 = (k + 1) / 2;
+            i = 0;
+            while i < k2 {
+                let tmp = perm[i];
+                perm[i] = perm[k - i];
+                perm[k - i] = tmp;
+                i = i + 1;
+            }
+            flips = flips + 1;
+            k = perm[0];
+        }
+
+        // Update max and checksum
+        if flips > max_flips {
+            max_flips = flips;
+        }
+        if nperm % 2 == 0 {
+            checksum = checksum + flips;
+        } else {
+            checksum = checksum - flips;
+        }
+        nperm = nperm + 1;
+
+        // Generate next permutation
+        let mut inner_done = false;
+        while !inner_done {
+            if r == n {
+                done = true;
+                inner_done = true;
+            } else {
+                let perm0 = perm1[0];
+                i = 0;
+                while i < r {
+                    perm1[i] = perm1[i + 1];
+                    i = i + 1;
+                }
+                perm1[r] = perm0;
+                count[r] = count[r] - 1;
+                if count[r] > 0 {
+                    inner_done = true;
+                } else {
+                    r = r + 1;
+                }
+            }
+        }
+    }
+
+    (checksum, max_flips)
+}
+
+fn main() {
+    let result = fannkuch();
+    let checksum = result.0;
+    let max_flips = result.1;
+
+    println_int(checksum);
+    print_str("Pfannkuchen(12) = ");
+    println_int(max_flips);
+}

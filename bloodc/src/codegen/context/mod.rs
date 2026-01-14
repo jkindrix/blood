@@ -2309,6 +2309,20 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // println_f32(f32) -> void
         self.module.add_function("println_f32", print_f32_type, None);
 
+        // print_f64_prec(f64, i32) -> void
+        let print_f64_prec_type = void_type.fn_type(&[f64_type.into(), i32_type.into()], false);
+        self.module.add_function("print_f64_prec", print_f64_prec_type, None);
+
+        // println_f64_prec(f64, i32) -> void
+        self.module.add_function("println_f64_prec", print_f64_prec_type, None);
+
+        // print_f32_prec(f32, i32) -> void
+        let print_f32_prec_type = void_type.fn_type(&[f32_type.into(), i32_type.into()], false);
+        self.module.add_function("print_f32_prec", print_f32_prec_type, None);
+
+        // println_f32_prec(f32, i32) -> void
+        self.module.add_function("println_f32_prec", print_f32_prec_type, None);
+
         // println() -> void
         let println_type = void_type.fn_type(&[], false);
         self.module.add_function("println", println_type, None);
@@ -2430,6 +2444,14 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // ptr_write_u8(ptr: i64, value: i8) -> void (u8 represented as i8)
         let ptr_write_u8_type = void_type.fn_type(&[i64_type.into(), i8_type.into()], false);
         self.module.add_function("ptr_write_u8", ptr_write_u8_type, None);
+
+        // ptr_read_f64(ptr: i64) -> f64
+        let ptr_read_f64_type = f64_type.fn_type(&[i64_type.into()], false);
+        self.module.add_function("ptr_read_f64", ptr_read_f64_type, None);
+
+        // ptr_write_f64(ptr: i64, value: f64) -> void
+        let ptr_write_f64_type = void_type.fn_type(&[i64_type.into(), f64_type.into()], false);
+        self.module.add_function("ptr_write_f64", ptr_write_f64_type, None);
 
         // print_i64(i64) -> void - already declared above, but let's ensure
 

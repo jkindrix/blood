@@ -7,6 +7,8 @@
 use std::collections::HashMap;
 
 use inkwell::basic_block::BasicBlock;
+use inkwell::intrinsics::Intrinsic;
+use inkwell::types::BasicType;
 use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum};
 use inkwell::{AddressSpace, IntPredicate};
 
@@ -140,7 +142,7 @@ impl<'ctx, 'a> MirTerminatorCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
 
                 // Then store the new value
                 let new_val = self.compile_mir_operand(value, body, escape_results)?;
-                let ptr = self.compile_mir_place(place, body)?;
+                let ptr = self.compile_mir_place(place, body, escape_results)?;
                 self.builder.build_store(ptr, new_val)
                     .map_err(|e| vec![Diagnostic::error(
                         format!("LLVM store error: {}", e), term.span
@@ -170,7 +172,7 @@ impl<'ctx, 'a> MirTerminatorCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
             TerminatorKind::StaleReference { ptr, expected, actual } => {
                 // Stale reference detected - raise effect or panic
                 // Compile the place to get the pointer value (for diagnostics)
-                let _ptr_val = self.compile_mir_place(ptr, body)?;
+                let _ptr_val = self.compile_mir_place(ptr, body, escape_results)?;
 
                 // Get the panic function
                 let panic_fn = self.module.get_function("blood_stale_reference_panic")
@@ -290,8 +292,161 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                             format!("LLVM call error: {}", e), span
                         )])?
                 } else if let Some(builtin_name) = self.builtin_fns.get(def_id) {
-                    // Builtin function call - lookup runtime function by name
-                    if let Some(fn_value) = self.module.get_function(builtin_name) {
+                    // Check for pointer intrinsics first - these compile to direct load/store
+                    // This avoids function call overhead for every array access
+                    let is_ptr_read = builtin_name.starts_with("ptr_read_");
+                    let is_ptr_write = builtin_name.starts_with("ptr_write_");
+
+                    if is_ptr_read {
+                        // ptr_read_TYPE(ptr: u64) -> TYPE
+                        // Compile to direct LLVM load instruction
+                        let ptr_arg = arg_vals.first().ok_or_else(|| {
+                            vec![Diagnostic::error(
+                                format!("ptr_read requires a pointer argument"), span
+                            )]
+                        })?.into_int_value();
+
+                        // Determine the element type based on the suffix
+                        let elem_type: inkwell::types::BasicTypeEnum = match builtin_name.as_str() {
+                            "ptr_read_i32" => self.context.i32_type().into(),
+                            "ptr_read_i64" => self.context.i64_type().into(),
+                            "ptr_read_u64" => self.context.i64_type().into(), // u64 represented as i64
+                            "ptr_read_u8" => self.context.i8_type().into(),
+                            "ptr_read_f64" => self.context.f64_type().into(),
+                            _ => return Err(vec![Diagnostic::error(
+                                format!("Unknown ptr_read variant: {}", builtin_name), span
+                            )]),
+                        };
+
+                        // Cast integer to pointer: inttoptr i64 %ptr to TYPE*
+                        let ptr_type = elem_type.ptr_type(AddressSpace::default());
+                        let typed_ptr = self.builder.build_int_to_ptr(ptr_arg, ptr_type, "ptr_cast")
+                            .map_err(|e| vec![Diagnostic::error(
+                                format!("LLVM int_to_ptr error: {}", e), span
+                            )])?;
+
+                        // Load value from pointer
+                        let loaded_val = self.builder.build_load(typed_ptr, "ptr_load")
+                            .map_err(|e| vec![Diagnostic::error(
+                                format!("LLVM load error: {}", e), span
+                            )])?;
+
+                        // Store result to destination
+                        let dest_ptr = self.compile_mir_place(destination, body, escape_results)?;
+                        self.builder.build_store(dest_ptr, loaded_val)
+                            .map_err(|e| vec![Diagnostic::error(
+                                format!("LLVM store error: {}", e), span
+                            )])?;
+
+                        // Branch to continuation
+                        if let Some(target_bb_id) = target {
+                            let target_bb = llvm_blocks.get(target_bb_id).ok_or_else(|| {
+                                vec![Diagnostic::error("Call target block not found", span)]
+                            })?;
+                            self.builder.build_unconditional_branch(*target_bb)
+                                .map_err(|e| vec![Diagnostic::error(
+                                    format!("LLVM branch error: {}", e), span
+                                )])?;
+                        }
+                        return Ok(());
+                    }
+
+                    if is_ptr_write {
+                        // ptr_write_TYPE(ptr: u64, value: TYPE) -> ()
+                        // Compile to direct LLVM store instruction
+                        if arg_vals.len() < 2 {
+                            return Err(vec![Diagnostic::error(
+                                format!("ptr_write requires pointer and value arguments"), span
+                            )]);
+                        }
+                        let ptr_arg = arg_vals[0].into_int_value();
+                        let value_arg = arg_vals[1];
+
+                        // Determine the element type based on the suffix
+                        let elem_type: inkwell::types::BasicTypeEnum = match builtin_name.as_str() {
+                            "ptr_write_i32" => self.context.i32_type().into(),
+                            "ptr_write_i64" => self.context.i64_type().into(),
+                            "ptr_write_u64" => self.context.i64_type().into(), // u64 represented as i64
+                            "ptr_write_u8" => self.context.i8_type().into(),
+                            "ptr_write_f64" => self.context.f64_type().into(),
+                            _ => return Err(vec![Diagnostic::error(
+                                format!("Unknown ptr_write variant: {}", builtin_name), span
+                            )]),
+                        };
+
+                        // Cast integer to pointer: inttoptr i64 %ptr to TYPE*
+                        let ptr_type = elem_type.ptr_type(AddressSpace::default());
+                        let typed_ptr = self.builder.build_int_to_ptr(ptr_arg, ptr_type, "ptr_cast")
+                            .map_err(|e| vec![Diagnostic::error(
+                                format!("LLVM int_to_ptr error: {}", e), span
+                            )])?;
+
+                        // Store value to pointer
+                        self.builder.build_store(typed_ptr, value_arg)
+                            .map_err(|e| vec![Diagnostic::error(
+                                format!("LLVM store error: {}", e), span
+                            )])?;
+
+                        // Branch to continuation (ptr_write returns void, no destination store needed)
+                        if let Some(target_bb_id) = target {
+                            let target_bb = llvm_blocks.get(target_bb_id).ok_or_else(|| {
+                                vec![Diagnostic::error("Call target block not found", span)]
+                            })?;
+                            self.builder.build_unconditional_branch(*target_bb)
+                                .map_err(|e| vec![Diagnostic::error(
+                                    format!("LLVM branch error: {}", e), span
+                                )])?;
+                        }
+                        return Ok(());
+                    }
+
+                    // Check for math intrinsics - these compile to hardware instructions
+                    let intrinsic_name = match builtin_name.as_str() {
+                        "sqrt" => Some("llvm.sqrt.f64"),
+                        "sqrt_f32" => Some("llvm.sqrt.f32"),
+                        "abs" => Some("llvm.fabs.f64"),
+                        "abs_f32" => Some("llvm.fabs.f32"),
+                        "floor" => Some("llvm.floor.f64"),
+                        "ceil" => Some("llvm.ceil.f64"),
+                        "sin" => Some("llvm.sin.f64"),
+                        "cos" => Some("llvm.cos.f64"),
+                        "exp" => Some("llvm.exp.f64"),
+                        "log" => Some("llvm.log.f64"),
+                        "pow" => Some("llvm.pow.f64"),
+                        _ => None,
+                    };
+
+                    if let Some(intrinsic_name) = intrinsic_name {
+                        // Use LLVM intrinsic for math functions
+                        let intrinsic = Intrinsic::find(intrinsic_name).ok_or_else(|| {
+                            vec![Diagnostic::error(
+                                format!("LLVM intrinsic {} not found", intrinsic_name), span
+                            )]
+                        })?;
+
+                        // Get the argument type for the intrinsic declaration
+                        let arg_type = if let Some(arg) = arg_vals.first() {
+                            arg.get_type()
+                        } else {
+                            return Err(vec![Diagnostic::error(
+                                format!("Math intrinsic {} requires at least one argument", builtin_name), span
+                            )]);
+                        };
+
+                        let intrinsic_fn = intrinsic
+                            .get_declaration(self.module, &[arg_type])
+                            .ok_or_else(|| {
+                                vec![Diagnostic::error(
+                                    format!("Could not get declaration for {} intrinsic", intrinsic_name), span
+                                )]
+                            })?;
+
+                        self.builder.build_call(intrinsic_fn, &arg_metas, "math_intrinsic")
+                            .map_err(|e| vec![Diagnostic::error(
+                                format!("LLVM intrinsic call error: {}", e), span
+                            )])?
+                    } else if let Some(fn_value) = self.module.get_function(builtin_name) {
+                        // Builtin function call - lookup runtime function by name
                         // Convert args for C runtime (e.g., i1 -> i32 for print_bool)
                         let fn_type = fn_value.get_type();
                         let param_types = fn_type.get_param_types();
@@ -439,7 +594,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         };
 
         // Store result to destination
-        let dest_ptr = self.compile_mir_place(destination, body)?;
+        let dest_ptr = self.compile_mir_place(destination, body, escape_results)?;
         if let Some(ret_val) = call_result.try_as_basic_value().left() {
             self.builder.build_store(dest_ptr, ret_val)
                 .map_err(|e| vec![Diagnostic::error(
@@ -768,7 +923,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let is_unit_type = dest_local.ty.is_unit();
 
         if !is_unit_type {
-            let dest_ptr = self.compile_mir_place(destination, body)?;
+            let dest_ptr = self.compile_mir_place(destination, body, escape_results)?;
             let result_val = result.try_as_basic_value()
                 .left()
                 .ok_or_else(|| vec![ice_err!(

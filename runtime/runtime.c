@@ -155,6 +155,30 @@ void println_f32(float n) {
     fflush(stdout);
 }
 
+// Print a double with specified decimal precision (no newline)
+void print_f64_prec(double n, int32_t precision) {
+    printf("%.*f", precision, n);
+    fflush(stdout);
+}
+
+// Print a double with specified decimal precision (with newline)
+void println_f64_prec(double n, int32_t precision) {
+    printf("%.*f\n", precision, n);
+    fflush(stdout);
+}
+
+// Print a float with specified decimal precision (no newline)
+void print_f32_prec(float n, int32_t precision) {
+    printf("%.*f", precision, (double)n);
+    fflush(stdout);
+}
+
+// Print a float with specified decimal precision (with newline)
+void println_f32_prec(float n, int32_t precision) {
+    printf("%.*f\n", precision, (double)n);
+    fflush(stdout);
+}
+
 // Print a boolean
 void print_bool(int b) {
     printf("%s", b ? "true" : "false");
@@ -273,6 +297,16 @@ uint8_t ptr_read_u8(uint64_t ptr) {
 // Write u8 to memory address
 void ptr_write_u8(uint64_t ptr, uint8_t value) {
     *(uint8_t*)(uintptr_t)ptr = value;
+}
+
+// Read f64 from memory address
+double ptr_read_f64(uint64_t ptr) {
+    return *(double*)(uintptr_t)ptr;
+}
+
+// Write f64 to memory address
+void ptr_write_f64(uint64_t ptr, double value) {
+    *(double*)(uintptr_t)ptr = value;
 }
 
 // ============================================================================

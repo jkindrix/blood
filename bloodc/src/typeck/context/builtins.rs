@@ -92,6 +92,18 @@ impl<'a> TypeContext<'a> {
         // println_f32(f32) -> ()
         self.register_builtin_fn("println_f32", vec![f32_ty.clone()], unit_ty.clone());
 
+        // print_f64_prec(f64, i32) -> () - print with specified decimal precision
+        self.register_builtin_fn("print_f64_prec", vec![f64_ty.clone(), i32_ty.clone()], unit_ty.clone());
+
+        // println_f64_prec(f64, i32) -> () - print with specified decimal precision and newline
+        self.register_builtin_fn("println_f64_prec", vec![f64_ty.clone(), i32_ty.clone()], unit_ty.clone());
+
+        // print_f32_prec(f32, i32) -> () - print with specified decimal precision
+        self.register_builtin_fn("print_f32_prec", vec![f32_ty.clone(), i32_ty.clone()], unit_ty.clone());
+
+        // println_f32_prec(f32, i32) -> () - print with specified decimal precision and newline
+        self.register_builtin_fn("println_f32_prec", vec![f32_ty.clone(), i32_ty.clone()], unit_ty.clone());
+
         // === Control Flow / Assertions ===
 
         // panic(str) -> !
@@ -162,6 +174,12 @@ impl<'a> TypeContext<'a> {
         // ptr_write_u8(ptr: u64, value: u8) -> () - write u8 to memory address
         self.register_builtin_fn("ptr_write_u8", vec![u64_ty.clone(), u8_ty.clone()], unit_ty.clone());
 
+        // ptr_read_f64(ptr: u64) -> f64 - read f64 from memory address
+        self.register_builtin_fn("ptr_read_f64", vec![u64_ty.clone()], f64_ty.clone());
+
+        // ptr_write_f64(ptr: u64, value: f64) -> () - write f64 to memory address
+        self.register_builtin_fn("ptr_write_f64", vec![u64_ty.clone(), f64_ty.clone()], unit_ty.clone());
+
         // === String Operations ===
 
         // str_len(str) -> i64 - get string length in bytes
@@ -209,6 +227,42 @@ impl<'a> TypeContext<'a> {
 
         // i64_to_i32(i64) -> i32
         self.register_builtin_fn("i64_to_i32", vec![i64_ty.clone()], i32_ty.clone());
+
+        // === Math Functions (LLVM intrinsics for performance) ===
+        // These map to LLVM intrinsics which compile to hardware instructions
+
+        // sqrt(f64) -> f64 - square root
+        self.register_builtin_fn("sqrt", vec![f64_ty.clone()], f64_ty.clone());
+
+        // sqrt_f32(f32) -> f32 - square root for f32
+        self.register_builtin_fn("sqrt_f32", vec![f32_ty.clone()], f32_ty.clone());
+
+        // abs(f64) -> f64 - absolute value
+        self.register_builtin_fn("abs", vec![f64_ty.clone()], f64_ty.clone());
+
+        // abs_f32(f32) -> f32 - absolute value for f32
+        self.register_builtin_fn("abs_f32", vec![f32_ty.clone()], f32_ty.clone());
+
+        // floor(f64) -> f64 - round down
+        self.register_builtin_fn("floor", vec![f64_ty.clone()], f64_ty.clone());
+
+        // ceil(f64) -> f64 - round up
+        self.register_builtin_fn("ceil", vec![f64_ty.clone()], f64_ty.clone());
+
+        // sin(f64) -> f64 - sine
+        self.register_builtin_fn("sin", vec![f64_ty.clone()], f64_ty.clone());
+
+        // cos(f64) -> f64 - cosine
+        self.register_builtin_fn("cos", vec![f64_ty.clone()], f64_ty.clone());
+
+        // exp(f64) -> f64 - exponential
+        self.register_builtin_fn("exp", vec![f64_ty.clone()], f64_ty.clone());
+
+        // log(f64) -> f64 - natural logarithm
+        self.register_builtin_fn("log", vec![f64_ty.clone()], f64_ty.clone());
+
+        // pow(f64, f64) -> f64 - power
+        self.register_builtin_fn("pow", vec![f64_ty.clone(), f64_ty.clone()], f64_ty.clone());
     }
 
     /// Register a single built-in function.
