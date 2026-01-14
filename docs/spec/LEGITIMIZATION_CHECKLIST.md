@@ -2,7 +2,23 @@
 
 **Purpose**: Comprehensive action items to legitimize and prove the value of the Blood programming language
 **Generated**: 2026-01-13
+**Last Verified**: 2026-01-14
 **Based on**: Independent evaluation of codebase, design, and current state of the art
+
+---
+
+## Status Legend
+
+| Status | Meaning |
+|--------|---------|
+| **Done** | Fully complete, verified, production-ready |
+| **Implemented** | Code/content exists but not validated against external standards |
+| **Specified** | Design document exists; implementation not started |
+| **Partial** | Work in progress; some functionality exists |
+| **Not started** | No work done |
+| **Unknown** | Status cannot be determined without further investigation |
+
+> **Note**: "Implemented" ≠ "Done". An implemented benchmark that hasn't been run against competitors is not done. A specified design that hasn't been coded is not done.
 
 ---
 
@@ -12,14 +28,14 @@ Blood makes ambitious claims about memory safety, effect systems, and performanc
 
 ### Legitimization Pillars
 
-| Pillar | Purpose | Current Status |
-|--------|---------|----------------|
-| **Performance Proof** | Validate all performance claims with measurements | Partial |
-| **Research Validation** | Publish novel contributions for peer review | Not started |
-| **Production Readiness** | Demonstrate real-world applicability | Early |
-| **Ecosystem Maturity** | Build sustainable community and tools | Early |
-| **Comparative Evidence** | Benchmark against established alternatives | Partial |
-| **External Validation** | Obtain independent reviews and adoption | Not started |
+| Pillar | Purpose | Current Status | Details |
+|--------|---------|----------------|---------|
+| **Performance Proof** | Validate all performance claims with measurements | Implemented | Benchmarks exist but not run against competitors |
+| **Research Validation** | Publish novel contributions for peer review | Not started | Zero publications |
+| **Production Readiness** | Demonstrate real-world applicability | Strong (internal) | 15+ apps; zero external use |
+| **Ecosystem Maturity** | Build sustainable community and tools | Partial | Tools exist; package manager not implemented |
+| **Comparative Evidence** | Benchmark against established alternatives | Implemented | Comparisons written; not benchmarked |
+| **External Validation** | Obtain independent reviews and adoption | **Not started** | Zero external validation (critical gap) |
 
 ---
 
@@ -59,10 +75,36 @@ Blood makes ambitious claims about memory safety, effect systems, and performanc
 
 | ID | Task | Target | Required Evidence | Status |
 |----|------|--------|-------------------|--------|
-| PERF-V-014 | Computer Language Benchmarks Game | vs C, Rust, Go | 5+ benchmark implementations with published results | Done (5 benchmarks: binary-trees, n-body, spectral-norm, fannkuch-redux, fasta) |
+| PERF-V-014 | Computer Language Benchmarks Game | vs C, Rust, Go | 5+ benchmark implementations with published results | **Blocked** (see below) |
 | PERF-V-015 | Effect system comparison | vs Koka, OCaml 5 | Same algorithms, measured overhead | Not started |
 | PERF-V-016 | Memory safety comparison | vs Rust (compile time), Go (GC) | Safety overhead quantified | Not started |
 | PERF-V-017 | Compile time comparison | vs Rust, Go | Incremental and clean build times | Not started |
+
+#### PERF-V-014 Status Detail
+
+**What exists:**
+- ✅ 5 CLBG benchmarks implemented in Blood (binary-trees, n-body, spectral-norm, fannkuch-redux, fasta)
+- ✅ Reference implementations in C and Rust
+- ✅ Benchmark harness script (`benchmarks/run_comparison.sh`)
+- ✅ All benchmarks produce correct results
+
+**What's blocking:**
+- ❌ **Blood compiler does not run LLVM optimization passes** (`bloodc/src/codegen/mod.rs` lacks PassManager)
+- ❌ Blood benchmarks are 100-800x slower than C due to unoptimized codegen
+- ❌ Blood benchmarks use hardcoded sizes (no CLI argument support)
+
+**Measured results (unoptimized):**
+
+| Benchmark | Blood | C (-O3) | Ratio |
+|-----------|-------|---------|-------|
+| N-body (10K) | 837ms | 1ms | 837x |
+| Binary-trees (d=10) | 15ms | 2ms | 7.5x |
+| Spectral-norm (N=10) | 6ms | <1ms | >6x |
+
+**To complete PERF-V-014:**
+1. Add LLVM optimization passes to Blood compiler
+2. Add CLI argument parsing to Blood benchmarks
+3. Re-run benchmarks at CLBG-standard sizes
 
 **Deliverable**: `docs/benchmarks/PERFORMANCE_REPORT.md` with:
 - Methodology (hardware, compiler flags, statistical rigor)
@@ -155,7 +197,7 @@ Blood makes ambitious claims about memory safety, effect systems, and performanc
 | ECO-001 | LSP server with full features | IDE integration | Partial |
 | ECO-002 | VS Code extension | Developer experience | Done |
 | ECO-003 | blood-fmt auto-formatter | Code consistency | Done |
-| ECO-004 | blood-doc documentation generator | API documentation | Done |
+| ECO-004 | blood-doc documentation generator | API documentation | Specified |
 | ECO-005 | REPL/playground | Learning and exploration | Not started |
 | ECO-006 | Debugger support (DWARF info) | Debugging | Not started |
 
@@ -163,10 +205,10 @@ Blood makes ambitious claims about memory safety, effect systems, and performanc
 
 | ID | Task | Importance | Status |
 |----|------|------------|--------|
-| ECO-007 | Package manifest format specification | Dependency management | Done |
-| ECO-008 | Package registry design | Distribution | Done |
-| ECO-009 | Version resolution algorithm | Reproducibility | Done |
-| ECO-010 | Security advisory system | Trust | Done |
+| ECO-007 | Package manifest format specification | Dependency management | Specified |
+| ECO-008 | Package registry design | Distribution | Specified |
+| ECO-009 | Version resolution algorithm | Reproducibility | Specified |
+| ECO-010 | Security advisory system | Trust | Specified |
 
 ### 4.3 Documentation
 
@@ -190,6 +232,8 @@ Blood makes ambitious claims about memory safety, effect systems, and performanc
 
 **Deliverable**: Functional package manager and IDE support sufficient for productive development.
 
+> **Current state**: Package ecosystem is *specified* but not *implemented*. VS Code extension exists. LSP is partial.
+
 ---
 
 ## 5. Comparative Analysis
@@ -210,7 +254,7 @@ Blood makes ambitious claims about memory safety, effect systems, and performanc
 
 | ID | Benchmark Suite | Languages | Status |
 |----|-----------------|-----------|--------|
-| COMP-006 | CLBG subset (5+ benchmarks) | Blood, Rust, Go, C | Done (5 ported) |
+| COMP-006 | CLBG subset (5+ benchmarks) | Blood, Rust, Go, C | Implemented (5 ported; not benchmarked against other languages) |
 | COMP-007 | Effect-heavy workloads | Blood, Koka, OCaml 5 | Not started |
 | COMP-008 | Memory-intensive workloads | Blood, Rust, Go | Not started |
 | COMP-009 | Concurrent workloads | Blood, Go, Rust (tokio) | Not started |
@@ -269,7 +313,7 @@ Blood makes ambitious claims about memory safety, effect systems, and performanc
 | ID | Task | Metric | Status |
 |----|------|--------|--------|
 | QA-001 | Unit test coverage >80% for compiler | Code coverage report | Unknown |
-| QA-002 | Integration tests for all major features | Feature coverage | Good |
+| QA-002 | Integration tests for all major features | Feature coverage | Partial |
 | QA-003 | Fuzz testing for parser | Security | Partial |
 | QA-004 | Property-based testing for type checker | Correctness | Not started |
 | QA-005 | Regression tests for all fixed bugs | Stability | Partial |
@@ -278,7 +322,7 @@ Blood makes ambitious claims about memory safety, effect systems, and performanc
 
 | ID | Task | Purpose | Status |
 |----|------|---------|--------|
-| QA-006 | CI pipeline with all tests | Automated verification | Exists |
+| QA-006 | CI pipeline with all tests | Automated verification | Done |
 | QA-007 | Cross-platform CI (Linux, macOS, Windows) | Portability | Unknown |
 | QA-008 | Performance regression tests in CI | Prevent slowdowns | Not started |
 | QA-009 | Memory sanitizer runs in CI | Memory safety validation | Not started |
@@ -325,68 +369,86 @@ Blood makes ambitious claims about memory safety, effect systems, and performanc
 
 ### Tier 1: Critical for Legitimacy (Must Complete)
 
-| Category | Items | Rationale |
-|----------|-------|-----------|
-| Performance | PERF-V-014 (CLBG), PERF-V-016 (safety comparison) | Claims must be proven |
-| Real-World | REAL-V-003 (HTTP server), REAL-V-005 (DB driver) | Production viability |
-| Publication | PUB-001 (Generation snapshots paper) | Novel contribution recognition |
-| External | EXT-004 (Community review), EXT-005 (Beta users) | Independent validation |
+| Category | Items | Rationale | Status |
+|----------|-------|-----------|--------|
+| Performance | PERF-V-014 (CLBG) | Claims must be proven | **BLOCKED** (compiler needs optimization passes) |
+| Performance | PERF-V-016 (safety comparison) | Claims must be proven | Not started |
+| Real-World | REAL-V-003 (HTTP server) | Production viability | ✅ Done |
+| Real-World | REAL-V-005 (DB driver) | Production viability | ✅ Done |
+| Publication | PUB-001 (Generation snapshots paper) | Novel contribution recognition | Not started |
+| External | EXT-004 (Community review) | Independent validation | **NOT STARTED** (critical gap) |
+| External | EXT-005 (Beta users) | Independent validation | **NOT STARTED** (critical gap) |
 
 ### Tier 2: Important for Adoption (Should Complete)
 
-| Category | Items | Rationale |
-|----------|-------|-----------|
-| Ecosystem | ECO-001 (LSP), ECO-002 (VS Code), ECO-003 (formatter) | Developer experience |
-| Comparison | COMP-001 through COMP-005 | Decision support for evaluators |
-| QA | QA-001 (coverage), QA-007 (cross-platform) | Engineering credibility |
-| Real-World | REAL-V-009 through REAL-V-012 (self-hosting) | Ultimate validation |
+| Category | Items | Rationale | Status |
+|----------|-------|-----------|--------|
+| Ecosystem | ECO-001 (LSP) | Developer experience | Partial |
+| Ecosystem | ECO-002 (VS Code) | Developer experience | ✅ Done |
+| Ecosystem | ECO-003 (formatter) | Developer experience | ✅ Done |
+| Comparison | COMP-001 through COMP-005 | Decision support | ✅ Done |
+| QA | QA-001 (coverage) | Engineering credibility | Unknown |
+| QA | QA-007 (cross-platform) | Engineering credibility | Unknown |
+| Real-World | REAL-V-009-011 (self-hosting) | Ultimate validation | ✅ Done |
+| Real-World | REAL-V-012 (bootstrap) | Ultimate validation | **NOT STARTED** |
 
 ### Tier 3: Nice to Have (Enhances Credibility)
 
-| Category | Items | Rationale |
-|----------|-------|-----------|
-| Formal | FORMAL-001 through FORMAL-004 | Academic rigor |
-| Publication | PUB-005 (synthesis paper) | Research contribution |
-| External | EXT-008 through EXT-010 (industry validation) | Market validation |
+| Category | Items | Rationale | Status |
+|----------|-------|-----------|--------|
+| Formal | FORMAL-001 through FORMAL-004 | Academic rigor | Not started |
+| Publication | PUB-005 (synthesis paper) | Research contribution | Not started |
+| External | EXT-008 through EXT-010 (industry validation) | Market validation | Not started |
 
 ---
 
 ## Execution Roadmap
 
-### Phase 1: Evidence Foundation (Months 1-3)
+### Phase 1: Evidence Foundation — BLOCKED
 
 **Focus**: Prove performance claims and build showcase applications
 
-1. Complete CLBG benchmarks (PERF-V-014) ← **Highest priority**
-2. Complete HTTP server example (REAL-V-003)
-3. Complete database driver (REAL-V-005)
-4. Publish performance report with honest assessment
+1. ~~Complete CLBG benchmarks (PERF-V-014)~~ → **BLOCKED** (compiler needs LLVM optimization passes)
+2. ~~Complete HTTP server example (REAL-V-003)~~ → Done
+3. ~~Complete database driver (REAL-V-005)~~ → Done
+4. Publish performance report with honest assessment → **BLOCKED** (unoptimized code gives misleading results)
 
-### Phase 2: Community Launch (Months 4-6)
+**Critical Blocker Discovered (2026-01-14):**
+- Blood's compiler does not run LLVM optimization passes
+- Benchmarks show 100-800x slowdown vs C/Rust (unoptimized vs -O3)
+- Performance claims cannot be validated until optimization is fixed
+- See `bloodc/src/codegen/mod.rs` — needs PassManager implementation
+
+**Next step**: Implement LLVM optimization passes in Blood compiler before benchmarking.
+
+### Phase 2: Community Launch ✓ PARTIALLY COMPLETE
 
 **Focus**: Enable adoption and gather feedback
 
-1. Complete VS Code extension (ECO-002)
-2. Publish comparison documents (COMP-001-005)
-3. Announce on Hacker News/Reddit (EXT-004)
-4. Begin beta user program (EXT-005)
+1. ~~Complete VS Code extension (ECO-002)~~ → Done
+2. ~~Publish comparison documents (COMP-001-005)~~ → Done
+3. Announce on Hacker News/Reddit (EXT-004) → **NOT STARTED**
+4. Begin beta user program (EXT-005) → **NOT STARTED**
 
-### Phase 3: Academic Validation (Months 7-9)
+**Remaining work**: External validation is the critical gap. All internal artifacts exist.
+
+### Phase 3: Academic Validation — NOT STARTED
 
 **Focus**: Establish research credibility
 
-1. Write and submit generation snapshots paper (PUB-001)
-2. Begin mechanized proofs (FORMAL-001-003)
-3. Present at conference or workshop (EXT-002)
+1. Write and submit generation snapshots paper (PUB-001) → Not started
+2. Begin mechanized proofs (FORMAL-001-003) → Not started
+3. Present at conference or workshop (EXT-002) → Not started
 
-### Phase 4: Production Readiness (Months 10-12)
+### Phase 4: Production Readiness — IN PROGRESS
 
 **Focus**: Enable real-world use
 
-1. Complete self-hosting milestone (REAL-V-009-012)
-2. Package manager MVP (ECO-007-009)
-3. First production pilot (EXT-009)
-4. 1.0 release
+1. ~~Complete self-hosting milestone (REAL-V-009-011)~~ → Lexer, Parser, Type checker done
+2. Bootstrap compilation (REAL-V-012) → **NOT STARTED** (critical)
+3. Package manager MVP (ECO-007-009) → Specified only, not implemented
+4. First production pilot (EXT-009) → Not started
+5. 1.0 release → Blocked on above
 
 ---
 
@@ -394,39 +456,61 @@ Blood makes ambitious claims about memory safety, effect systems, and performanc
 
 ### Quantitative
 
-| Metric | Target | Current |
-|--------|--------|---------|
-| CLBG benchmark results | Within 50% of C | Unknown |
-| GitHub stars | 1,000+ | Unknown |
-| Peer-reviewed publications | 1+ | 0 |
-| Production deployments | 1+ | 0 |
-| Independent reviews | 3+ positive | 0 |
-| Beta users completing real projects | 5+ | 0 |
+| Metric | Target | Current | Notes |
+|--------|--------|---------|-------|
+| CLBG benchmark results | Within 50% of C | Not measured | Implementations exist, need to run comparisons |
+| Showcase applications | 10+ substantial | 15+ | Done: 8 apps + 4 industry demos + 3 self-hosting |
+| Formal specifications | Complete | Done | Semantics, types, effects, memory model |
+| Language comparisons | 5+ languages | Done | Rust, Koka, Vale, Go, Unison documented |
+| Peer-reviewed publications | 1+ | 0 | Not started |
+| Production deployments | 1+ | 0 | No external users |
+| Independent reviews | 3+ positive | 0 | No external validation |
+| Beta users completing real projects | 5+ | 0 | No beta program exists |
 
 ### Qualitative
 
-| Metric | Evidence Needed |
-|--------|-----------------|
-| "Blood is a serious language" | Multiple independent reviewers state this |
-| "Blood is suitable for production" | At least one company using it |
-| "Blood's effect system is state-of-the-art" | PL researcher endorsement |
-| "Blood is easier than Rust" | User testimonials from Rust developers |
+| Metric | Evidence Needed | Current Status |
+|--------|-----------------|----------------|
+| "Blood is a serious language" | Multiple independent reviewers state this | No external reviews |
+| "Blood is suitable for production" | At least one company using it | No production use |
+| "Blood's effect system is state-of-the-art" | PL researcher endorsement | No academic validation |
+| "Blood is easier than Rust" | User testimonials from Rust developers | No user testimonials |
 
 ---
 
 ## Conclusion
 
-Blood has strong foundations: a working compiler, comprehensive specifications, and novel contributions. What's missing is **external validation** — the evidence that proves Blood delivers on its promises to people outside the project.
+Blood has strong internal foundations:
+- ✅ Working compiler with 5 CLBG benchmark implementations
+- ✅ 15+ substantial showcase applications including self-hosting components
+- ✅ Comprehensive formal specifications (semantics, types, effects, memory model)
+- ✅ Detailed language comparisons and documentation
+- ✅ VS Code extension and partial LSP support
 
-The most impactful actions are:
+**What's genuinely missing is external validation** — zero independent reviews, zero beta users, zero production deployments, zero peer-reviewed publications. The internal work is largely done; the legitimization work has not begun.
 
-1. **Publish reproducible benchmarks** — Performance claims need proof
-2. **Build substantial applications** — Show it works for real problems
-3. **Submit for peer review** — Get independent expert validation
-4. **Enable community feedback** — Let others verify the claims
+### Critical Next Steps (in priority order)
 
-Until these are done, Blood remains a promising research project rather than a legitimate production language.
+1. **Run actual comparative benchmarks** — CLBG implementations exist but haven't been measured against C/Rust/Go. This is table stakes.
+
+2. **Bootstrap the compiler** — Lexer, parser, and type checker exist in Blood. Completing bootstrap is the ultimate proof of viability.
+
+3. **Launch external validation** — Post to Hacker News/Reddit, start beta user program, seek independent reviews. Internal quality means nothing without external verification.
+
+4. **Implement package manager** — Designs exist but no implementation. Required for any production use.
+
+### Honest Assessment
+
+| Category | Internal Status | External Status |
+|----------|-----------------|-----------------|
+| Compiler | Solid | Unknown (not benchmarked) |
+| Applications | 15+ examples | Zero production use |
+| Specifications | Complete | Zero peer review |
+| Tooling | Partial (VS Code, LSP) | Zero user feedback |
+| Documentation | Comprehensive | Zero external validation |
+
+**Blood is a well-documented, well-specified language with substantial example code — but it has never been validated by anyone outside the project.** Until external validation occurs, all claims remain unproven.
 
 ---
 
-*This checklist should be updated as items are completed. Each completed item brings Blood closer to legitimacy.*
+*This checklist was verified on 2026-01-14. Status values distinguish between "Done" (complete), "Implemented" (code exists but not validated), and "Specified" (design only).*
