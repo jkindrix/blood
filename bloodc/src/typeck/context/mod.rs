@@ -147,6 +147,10 @@ pub struct TypeContext<'a> {
     pub(crate) loop_labels: HashMap<String, hir::LoopId>,
     /// Pending derive macro requests to expand during into_hir().
     pub(crate) pending_derives: Vec<crate::derive::DeriveRequest>,
+    /// DefId for the built-in Option<T> type.
+    pub(crate) option_def_id: Option<DefId>,
+    /// DefId for the built-in Result<T, E> type.
+    pub(crate) result_def_id: Option<DefId>,
 }
 
 /// Information about a struct.
@@ -624,8 +628,11 @@ impl<'a> TypeContext<'a> {
             loop_stack: Vec::new(),
             loop_labels: HashMap::new(),
             pending_derives: Vec::new(),
+            option_def_id: None,
+            result_def_id: None,
         };
         ctx.register_builtins();
+        ctx.register_builtin_types();
         ctx
     }
 

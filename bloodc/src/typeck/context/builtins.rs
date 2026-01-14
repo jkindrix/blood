@@ -1,9 +1,10 @@
 //! Built-in function registration for the type checker.
 
 use crate::hir::{self, Type};
+use crate::hir::ty::{TyVarId, TypeKind};
 use crate::span::Span;
 
-use super::TypeContext;
+use super::{TypeContext, EnumInfo, VariantInfo, FieldInfo, StructInfo};
 
 impl<'a> TypeContext<'a> {
     /// Register built-in runtime functions.
@@ -290,5 +291,186 @@ impl<'a> TypeContext<'a> {
 
         // Track runtime function name for codegen to resolve runtime function calls
         self.builtin_fns.insert(def_id, runtime_name.to_string());
+    }
+
+    /// Register built-in types like Option<T> and Result<T, E>.
+    pub(crate) fn register_builtin_types(&mut self) {
+        // Register Option<T> as a built-in enum
+        let option_def_id = self.resolver.define_item(
+            "Option".to_string(),
+            hir::DefKind::Enum,
+            Span::dummy(),
+        ).expect("BUG: Option builtin registration failed");
+        self.resolver.define_type("Option".to_string(), option_def_id, Span::dummy())
+            .expect("BUG: Option type registration failed");
+
+        // Option has one type parameter T
+        let t_var_id = TyVarId(self.next_type_param_id);
+        self.next_type_param_id += 1;
+        let t_type = Type::new(TypeKind::Param(t_var_id));
+
+        // Create None variant (unit variant)
+        // Use define_item (not define_namespaced_item) to make None accessible globally
+        let none_def_id = self.resolver.define_item(
+            "None".to_string(),
+            hir::DefKind::Variant,
+            Span::dummy(),
+        ).expect("BUG: None variant registration failed");
+        if let Some(def_info) = self.resolver.def_info.get_mut(&none_def_id) {
+            def_info.parent = Some(option_def_id);
+        }
+
+        // Create Some(T) variant
+        // Use define_item (not define_namespaced_item) to make Some accessible globally
+        let some_def_id = self.resolver.define_item(
+            "Some".to_string(),
+            hir::DefKind::Variant,
+            Span::dummy(),
+        ).expect("BUG: Some variant registration failed");
+        if let Some(def_info) = self.resolver.def_info.get_mut(&some_def_id) {
+            def_info.parent = Some(option_def_id);
+        }
+
+        // Register enum info
+        self.enum_defs.insert(option_def_id, EnumInfo {
+            name: "Option".to_string(),
+            variants: vec![
+                VariantInfo {
+                    name: "None".to_string(),
+                    fields: vec![],
+                    index: 0,
+                    def_id: none_def_id,
+                },
+                VariantInfo {
+                    name: "Some".to_string(),
+                    fields: vec![
+                        FieldInfo {
+                            name: "0".to_string(),
+                            ty: t_type.clone(),
+                            index: 0,
+                        },
+                    ],
+                    index: 1,
+                    def_id: some_def_id,
+                },
+            ],
+            generics: vec![t_var_id],
+        });
+
+        self.option_def_id = Some(option_def_id);
+
+        // Register Result<T, E> as a built-in enum
+        let result_def_id = self.resolver.define_item(
+            "Result".to_string(),
+            hir::DefKind::Enum,
+            Span::dummy(),
+        ).expect("BUG: Result builtin registration failed");
+        self.resolver.define_type("Result".to_string(), result_def_id, Span::dummy())
+            .expect("BUG: Result type registration failed");
+
+        // Result has two type parameters: T and E
+        let t_var_id2 = TyVarId(self.next_type_param_id);
+        self.next_type_param_id += 1;
+        let t_type2 = Type::new(TypeKind::Param(t_var_id2));
+
+        let e_var_id = TyVarId(self.next_type_param_id);
+        self.next_type_param_id += 1;
+        let e_type = Type::new(TypeKind::Param(e_var_id));
+
+        // Create Ok(T) variant
+        // Use define_item (not define_namespaced_item) to make Ok accessible globally
+        let ok_def_id = self.resolver.define_item(
+            "Ok".to_string(),
+            hir::DefKind::Variant,
+            Span::dummy(),
+        ).expect("BUG: Ok variant registration failed");
+        if let Some(def_info) = self.resolver.def_info.get_mut(&ok_def_id) {
+            def_info.parent = Some(result_def_id);
+        }
+
+        // Create Err(E) variant
+        // Use define_item (not define_namespaced_item) to make Err accessible globally
+        let err_def_id = self.resolver.define_item(
+            "Err".to_string(),
+            hir::DefKind::Variant,
+            Span::dummy(),
+        ).expect("BUG: Err variant registration failed");
+        if let Some(def_info) = self.resolver.def_info.get_mut(&err_def_id) {
+            def_info.parent = Some(result_def_id);
+        }
+
+        // Register enum info
+        self.enum_defs.insert(result_def_id, EnumInfo {
+            name: "Result".to_string(),
+            variants: vec![
+                VariantInfo {
+                    name: "Ok".to_string(),
+                    fields: vec![
+                        FieldInfo {
+                            name: "0".to_string(),
+                            ty: t_type2.clone(),
+                            index: 0,
+                        },
+                    ],
+                    index: 0,
+                    def_id: ok_def_id,
+                },
+                VariantInfo {
+                    name: "Err".to_string(),
+                    fields: vec![
+                        FieldInfo {
+                            name: "0".to_string(),
+                            ty: e_type.clone(),
+                            index: 0,
+                        },
+                    ],
+                    index: 1,
+                    def_id: err_def_id,
+                },
+            ],
+            generics: vec![t_var_id2, e_var_id],
+        });
+
+        self.result_def_id = Some(result_def_id);
+
+        // Register Vec<T> as a built-in struct (opaque for now)
+        let vec_def_id = self.resolver.define_item(
+            "Vec".to_string(),
+            hir::DefKind::Struct,
+            Span::dummy(),
+        ).expect("BUG: Vec builtin registration failed");
+        self.resolver.define_type("Vec".to_string(), vec_def_id, Span::dummy())
+            .expect("BUG: Vec type registration failed");
+
+        // Vec has one type parameter T
+        let vec_t_var_id = TyVarId(self.next_type_param_id);
+        self.next_type_param_id += 1;
+
+        // Register struct info (opaque struct with no exposed fields)
+        self.struct_defs.insert(vec_def_id, StructInfo {
+            name: "Vec".to_string(),
+            fields: vec![],  // opaque - no exposed fields
+            generics: vec![vec_t_var_id],
+        });
+
+        // Register Box<T> as a built-in struct (opaque for now)
+        let box_def_id = self.resolver.define_item(
+            "Box".to_string(),
+            hir::DefKind::Struct,
+            Span::dummy(),
+        ).expect("BUG: Box builtin registration failed");
+        self.resolver.define_type("Box".to_string(), box_def_id, Span::dummy())
+            .expect("BUG: Box type registration failed");
+
+        // Box has one type parameter T
+        let box_t_var_id = TyVarId(self.next_type_param_id);
+        self.next_type_param_id += 1;
+
+        // Register struct info (opaque struct with no exposed fields)
+        self.struct_defs.insert(box_def_id, StructInfo {
+            name: "Box".to_string(),
+            fields: vec![],  // opaque - no exposed fields
+            generics: vec![box_t_var_id],
+        });
     }
 }
