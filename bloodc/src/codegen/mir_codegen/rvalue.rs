@@ -53,12 +53,12 @@ impl<'ctx, 'a> MirRvalueCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
             }
 
             Rvalue::Ref { place, mutable: _ } => {
-                let ptr = self.compile_mir_place(place, body)?;
+                let ptr = self.compile_mir_place(place, body, escape_results)?;
                 Ok(ptr.into())
             }
 
             Rvalue::AddressOf { place, mutable: _ } => {
-                let ptr = self.compile_mir_place(place, body)?;
+                let ptr = self.compile_mir_place(place, body, escape_results)?;
                 Ok(ptr.into())
             }
 
@@ -90,7 +90,7 @@ impl<'ctx, 'a> MirRvalueCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
             }
 
             Rvalue::Discriminant(place) => {
-                let ptr = self.compile_mir_place(place, body)?;
+                let ptr = self.compile_mir_place(place, body, escape_results)?;
 
                 // Get the Blood type of the enum to determine its LLVM representation
                 let base_ty = &body.locals[place.local.index() as usize].ty;
@@ -121,7 +121,7 @@ impl<'ctx, 'a> MirRvalueCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
             }
 
             Rvalue::Len(place) => {
-                self.compile_len_rvalue(place, body)
+                self.compile_len_rvalue(place, body, escape_results)
             }
 
             Rvalue::Aggregate { kind, operands } => {
@@ -149,7 +149,7 @@ impl<'ctx, 'a> MirRvalueCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
             }
 
             Rvalue::ReadGeneration(place) => {
-                self.compile_read_generation(place, body)
+                self.compile_read_generation(place, body, escape_results)
             }
 
             Rvalue::MakeGenPtr { address, generation, metadata } => {
@@ -189,6 +189,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         &mut self,
         place: &crate::mir::types::Place,
         body: &MirBody,
+        escape_results: Option<&EscapeResults>,
     ) -> Result<BasicValueEnum<'ctx>, Vec<Diagnostic>> {
         // Array/slice length computation
         // For arrays, we extract the static size from the type
@@ -211,7 +212,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // For slices, extract the length from the fat pointer struct
                 // A slice is represented as { ptr: *element, len: i64 }
                 // We need to load the slice value and extract field 1 (len)
-                let slice_ptr = self.compile_mir_place(place, body)?;
+                let slice_ptr = self.compile_mir_place(place, body, escape_results)?;
 
                 // Get pointer to the length field (index 1)
                 let len_ptr = self.builder.build_struct_gep(
@@ -240,7 +241,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     TypeKind::Slice { .. } => {
                         // For &[T] or *[T], load the pointer and extract length from fat pointer
                         // First, load the pointer to get the slice value
-                        let ref_ptr = self.compile_mir_place(place, body)?;
+                        let ref_ptr = self.compile_mir_place(place, body, escape_results)?;
                         let slice_ptr = self.builder.build_load(ref_ptr, "slice_deref")
                             .map_err(|e| vec![Diagnostic::error(
                                 format!("LLVM load error: {}", e), Span::dummy()
@@ -284,11 +285,12 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         &mut self,
         place: &crate::mir::types::Place,
         body: &MirBody,
+        escape_results: Option<&EscapeResults>,
     ) -> Result<BasicValueEnum<'ctx>, Vec<Diagnostic>> {
         // Read generation from a generational pointer (BloodPtr)
         // BloodPtr structure: { address: i64, generation: i32, metadata: i32 }
         // Generation is at field index 1
-        let ptr = self.compile_mir_place(place, body)?;
+        let ptr = self.compile_mir_place(place, body, escape_results)?;
 
         // Load the BloodPtr struct
         let blood_ptr_val = self.builder.build_load(ptr, "blood_ptr")

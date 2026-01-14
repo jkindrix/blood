@@ -36,7 +36,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
         match &stmt.kind {
             StatementKind::Assign(place, rvalue) => {
                 let value = self.compile_mir_rvalue(rvalue, body, escape_results)?;
-                let ptr = self.compile_mir_place(place, body)?;
+                let ptr = self.compile_mir_place(place, body, escape_results)?;
                 self.builder.build_store(ptr, value)
                     .map_err(|e| vec![Diagnostic::error(
                         format!("LLVM store error: {}", e), stmt.span
@@ -110,7 +110,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
             StatementKind::Drop(place) => {
                 // Drop value - free memory if heap allocated
                 // Get the address of the place
-                let ptr = self.compile_mir_place(place, body)?;
+                let ptr = self.compile_mir_place(place, body, escape_results)?;
 
                 // Get the type to determine size
                 let place_ty = &body.locals[place.local.index as usize].ty;
@@ -169,7 +169,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 // Increment generation counter for a slot
                 // This is used when freeing/reallocating
                 // Requires: blood_increment_generation(address: *void) runtime call
-                let ptr = self.compile_mir_place(place, body)?;
+                let ptr = self.compile_mir_place(place, body, escape_results)?;
 
                 // Get or declare the runtime function
                 let increment_fn = self.module.get_function("blood_increment_generation")
@@ -220,7 +220,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
 
                 if !should_skip {
                     // Validate generation check for region-allocated values
-                    let ptr_val = self.compile_mir_place(ptr, body)?;
+                    let ptr_val = self.compile_mir_place(ptr, body, escape_results)?;
                     let expected = self.compile_mir_operand(expected_gen, body, escape_results)?;
                     if let inkwell::values::BasicValueEnum::IntValue(gen_val) = expected {
                         super::memory::emit_generation_check_impl(self, ptr_val, gen_val, stmt.span)?;
@@ -458,7 +458,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 };
 
                 // Get state pointer from state_place
-                let state_ptr = self.compile_mir_place(state_place, body)?;
+                let state_ptr = self.compile_mir_place(state_place, body, escape_results)?;
                 let state_void_ptr = self.builder.build_pointer_cast(state_ptr, i8_ptr_ty, "state_void_ptr")
                     .map_err(|e| vec![Diagnostic::error(
                         format!("LLVM cast error: {}", e), stmt.span
@@ -479,7 +479,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     )])?;
 
                 // Store result in destination
-                let dest_ptr = self.compile_mir_place(destination, body)?;
+                let dest_ptr = self.compile_mir_place(destination, body, escape_results)?;
 
                 // Get destination type and convert i64 result if needed
                 let dest_ty = &body.locals[destination.local.index as usize].ty;

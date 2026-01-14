@@ -10,7 +10,7 @@ use crate::diagnostics::Diagnostic;
 use crate::hir::{Type, TypeKind};
 use crate::mir::body::MirBody;
 use crate::mir::types::{Place, PlaceElem};
-use crate::mir::EscapeResults;
+use crate::mir::{EscapeResults, EscapeState};
 
 use super::CodegenContext;
 
@@ -21,6 +21,7 @@ pub trait MirPlaceCodegen<'ctx, 'a> {
         &mut self,
         place: &Place,
         body: &MirBody,
+        escape_results: Option<&EscapeResults>,
     ) -> Result<PointerValue<'ctx>, Vec<Diagnostic>>;
 
     /// Load a value from a MIR place (with optional generation check).
@@ -40,6 +41,7 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
         &mut self,
         place: &Place,
         body: &MirBody,
+        escape_results: Option<&EscapeResults>,
     ) -> Result<PointerValue<'ctx>, Vec<Diagnostic>> {
         let base_ptr = *self.locals.get(&place.local).ok_or_else(|| {
             vec![Diagnostic::error(
@@ -97,7 +99,15 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                         )])?;
                     let ptr_val = loaded.into_pointer_value();
 
-                    // If this is a region-allocated pointer, validate generation before use
+                    // Check if we should skip generation checks for this local.
+                    // NoEscape locals are stack-allocated and safe by lexical scoping.
+                    let should_skip_gen_check = escape_results
+                        .map(|er| er.get(place.local) == EscapeState::NoEscape)
+                        .unwrap_or(false);
+
+                    // If this is a region-allocated pointer and the local escapes,
+                    // validate generation before use
+                    if !should_skip_gen_check {
                     if let Some(&gen_alloca) = self.local_generations.get(&place.local) {
                         let i32_ty = self.context.i32_type();
                         let i64_ty = self.context.i64_type();
@@ -174,6 +184,7 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
 
                         // Continue on valid path
                         self.builder.position_at_end(valid_bb);
+                    }
                     }
 
                     ptr_val
@@ -450,7 +461,7 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
         body: &MirBody,
         escape_results: Option<&EscapeResults>,
     ) -> Result<BasicValueEnum<'ctx>, Vec<Diagnostic>> {
-        let ptr = self.compile_mir_place(place, body)?;
+        let ptr = self.compile_mir_place(place, body, escape_results)?;
 
         // Generation checks for region-tier allocations are implemented in
         // compile_mir_place() for PlaceElem::Deref. When dereferencing a pointer
@@ -460,8 +471,8 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
         // on stale reference detection.
         //
         // Stack tier (NoEscape) values skip generation checks entirely as they
-        // are guaranteed safe by lexical scoping.
-        let _ = (escape_results,); // Escape results used in compile_mir_place
+        // are guaranteed safe by lexical scoping - escape_results is passed to
+        // compile_mir_place which checks escape state before emitting gen checks.
 
         // Load value from pointer
         let loaded = self.builder.build_load(ptr, "load")

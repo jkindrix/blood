@@ -36,6 +36,8 @@ pub use context::CodegenContext;
 pub use mir_codegen::MirCodegen;
 
 use inkwell::context::Context;
+use inkwell::module::Module;
+use inkwell::passes::PassManager;
 use inkwell::targets::{Target, TargetMachine, InitializationConfig, CodeModel, RelocMode, FileType};
 use inkwell::OptimizationLevel;
 
@@ -49,8 +51,172 @@ use crate::diagnostics::Diagnostic;
 /// Type alias for escape analysis results per function.
 pub type EscapeAnalysisMap = HashMap<DefId, EscapeResults>;
 
-/// Get a target machine for the native platform.
-fn get_native_target_machine() -> Result<TargetMachine, String> {
+/// Optimization level for code generation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BloodOptLevel {
+    /// No optimizations (for debugging)
+    None,
+    /// Basic optimizations (fast compile)
+    Less,
+    /// Default optimizations (good balance)
+    #[default]
+    Default,
+    /// Aggressive optimizations (like -O3)
+    Aggressive,
+}
+
+impl BloodOptLevel {
+    /// Convert to LLVM optimization level for target machine.
+    fn to_llvm_opt_level(self) -> OptimizationLevel {
+        match self {
+            BloodOptLevel::None => OptimizationLevel::None,
+            BloodOptLevel::Less => OptimizationLevel::Less,
+            BloodOptLevel::Default => OptimizationLevel::Default,
+            BloodOptLevel::Aggressive => OptimizationLevel::Aggressive,
+        }
+    }
+}
+
+/// Run LLVM optimization passes on the module.
+///
+/// This function applies a comprehensive set of LLVM optimization passes
+/// to the generated IR, similar to what clang does with -O2 or -O3.
+///
+/// # Optimization Strategy
+///
+/// The passes are applied in a specific order to maximize effectiveness:
+/// 1. **Canonicalization**: mem2reg, instcombine - normalize IR
+/// 2. **Analysis**: basic alias analysis - enable other optimizations
+/// 3. **Scalar optimizations**: GVN, SCCP, DCE - simplify code
+/// 4. **Loop optimizations**: LICM, unroll, rotate - optimize loops
+/// 5. **Interprocedural**: inlining, global opts - cross-function opts
+/// 6. **Cleanup**: CFG simplification, dead store elimination
+fn optimize_module(module: &Module, opt_level: BloodOptLevel) {
+    if opt_level == BloodOptLevel::None {
+        return;
+    }
+
+    // Create a module pass manager
+    let mpm: PassManager<Module> = PassManager::create(());
+
+    // === Phase 1: Canonicalization ===
+    // These passes normalize the IR into a canonical form that later passes expect
+
+    // Promote allocas to registers - fundamental for SSA form
+    mpm.add_promote_memory_to_register_pass();
+
+    // Combine instructions into simpler forms
+    mpm.add_instruction_combining_pass();
+
+    // Reassociate expressions to enable better constant folding
+    mpm.add_reassociate_pass();
+
+    // === Phase 2: Analysis Setup ===
+    // Set up alias analysis for memory optimization passes
+
+    mpm.add_basic_alias_analysis_pass();
+    mpm.add_type_based_alias_analysis_pass();
+
+    // === Phase 3: Scalar Optimizations ===
+    // These work on individual values and expressions
+
+    // Global Value Numbering - eliminate redundant computations
+    mpm.add_gvn_pass();
+
+    // Sparse Conditional Constant Propagation
+    mpm.add_sccp_pass();
+
+    // Aggressive dead code elimination
+    mpm.add_aggressive_dce_pass();
+
+    // Dead store elimination
+    mpm.add_dead_store_elimination_pass();
+
+    // Simplify the control flow graph
+    mpm.add_cfg_simplification_pass();
+
+    // === Phase 4: Loop Optimizations ===
+    // These optimize loop constructs
+
+    // Loop-invariant code motion (hoist invariants out of loops)
+    mpm.add_licm_pass();
+
+    // Induction variable simplification
+    mpm.add_ind_var_simplify_pass();
+
+    // Loop rotation (for better analysis)
+    mpm.add_loop_rotate_pass();
+
+    // Loop deletion (remove empty/dead loops)
+    mpm.add_loop_deletion_pass();
+
+    if opt_level == BloodOptLevel::Aggressive {
+        // More aggressive loop opts for -O3 equivalent
+        mpm.add_loop_unroll_pass();
+        mpm.add_loop_idiom_pass();
+    }
+
+    // === Phase 5: Interprocedural Optimizations ===
+    // These work across function boundaries
+
+    // Function inlining
+    mpm.add_function_inlining_pass();
+
+    // Always inline functions marked inline
+    mpm.add_always_inliner_pass();
+
+    // Global dead code elimination
+    mpm.add_global_dce_pass();
+
+    // Global optimizer (constant propagation across globals)
+    mpm.add_global_optimizer_pass();
+
+    // Constant merge (deduplicate global constants)
+    mpm.add_constant_merge_pass();
+
+    if opt_level == BloodOptLevel::Aggressive {
+        // Merge identical functions
+        mpm.add_merge_functions_pass();
+
+        // Argument promotion (pass-by-value when beneficial)
+        mpm.add_argument_promotion_pass();
+
+        // Tail call elimination
+        mpm.add_tail_call_elimination_pass();
+    }
+
+    // === Phase 6: Vectorization ===
+    // SLP and loop vectorization for SIMD
+
+    if opt_level == BloodOptLevel::Aggressive {
+        mpm.add_slp_vectorize_pass();
+        mpm.add_loop_vectorize_pass();
+    }
+
+    // === Phase 7: Final Cleanup ===
+    // Clean up after all transformations
+
+    // Another round of instruction combining
+    mpm.add_instruction_combining_pass();
+
+    // Final CFG simplification
+    mpm.add_cfg_simplification_pass();
+
+    // Jump threading
+    mpm.add_jump_threading_pass();
+
+    // Memcpy optimization
+    mpm.add_memcpy_optimize_pass();
+
+    // Strip dead prototypes
+    mpm.add_strip_dead_prototypes_pass();
+
+    // Run all passes on the module
+    mpm.run_on(module);
+}
+
+/// Get a target machine for the native platform with specified optimization level.
+fn get_native_target_machine_with_opt(opt_level: BloodOptLevel) -> Result<TargetMachine, String> {
     Target::initialize_native(&InitializationConfig::default())
         .map_err(|e| format!("Failed to initialize native target: {}", e))?;
 
@@ -66,11 +232,16 @@ fn get_native_target_machine() -> Result<TargetMachine, String> {
             &triple,
             cpu.to_str().unwrap_or("generic"),
             features.to_str().unwrap_or(""),
-            OptimizationLevel::Default,
+            opt_level.to_llvm_opt_level(),
             RelocMode::PIC,  // Required for PIE executables
             CodeModel::Default,
         )
         .ok_or_else(|| "Failed to create target machine".to_string())
+}
+
+/// Get a target machine for the native platform with default optimization.
+fn get_native_target_machine() -> Result<TargetMachine, String> {
+    get_native_target_machine_with_opt(BloodOptLevel::Default)
 }
 
 /// Type alias for MIR bodies per function.
@@ -131,7 +302,7 @@ pub fn compile_mir_to_object(
     // Fifth pass: register handlers with runtime
     codegen.register_handlers_with_runtime()?;
 
-    // Verify the module
+    // Verify the module before optimization
     if let Err(err) = module.verify() {
         return Err(vec![Diagnostic::error(
             format!("LLVM verification failed: {}", err.to_string()),
@@ -139,8 +310,81 @@ pub fn compile_mir_to_object(
         )]);
     }
 
-    // Get target machine
-    let target_machine = get_native_target_machine()
+    // Run LLVM optimization passes (using Aggressive for benchmarks)
+    optimize_module(&module, BloodOptLevel::Aggressive);
+
+    // Get target machine with aggressive optimization
+    let target_machine = get_native_target_machine_with_opt(BloodOptLevel::Aggressive)
+        .map_err(|e| vec![Diagnostic::error(e, crate::span::Span::dummy())])?;
+
+    // Write object file
+    target_machine
+        .write_to_file(&module, FileType::Object, output_path)
+        .map_err(|e| vec![Diagnostic::error(
+            format!("Failed to write object file: {}", e.to_string()),
+            crate::span::Span::dummy(),
+        )])?;
+
+    Ok(())
+}
+
+/// Compile MIR bodies to an object file with specified optimization level.
+pub fn compile_mir_to_object_with_opt(
+    hir_crate: &hir::Crate,
+    mir_bodies: &MirBodiesMap,
+    escape_analysis: &EscapeAnalysisMap,
+    output_path: &Path,
+    opt_level: BloodOptLevel,
+) -> Result<(), Vec<Diagnostic>> {
+    let context = Context::create();
+    let module = context.create_module("blood_program");
+    let builder = context.create_builder();
+
+    let mut codegen = CodegenContext::new(&context, &module, &builder);
+    codegen.set_escape_analysis(escape_analysis.clone());
+
+    // First pass: declare types and functions from HIR
+    codegen.compile_crate_declarations(hir_crate)?;
+
+    // Store MIR bodies for generic functions
+    codegen.set_generic_mir_bodies(mir_bodies);
+
+    // Compile const and static items
+    codegen.compile_const_items(hir_crate)?;
+    codegen.compile_static_items(hir_crate)?;
+
+    // Second pass: declare closure functions from MIR
+    for (&def_id, mir_body) in mir_bodies {
+        if def_id.index() >= 0xFFFF_0000 {
+            codegen.declare_closure_from_mir(def_id, mir_body);
+        }
+    }
+
+    // Third pass: compile MIR function bodies
+    for (&def_id, mir_body) in mir_bodies {
+        let escape_results = escape_analysis.get(&def_id);
+        codegen.compile_mir_body(def_id, mir_body, escape_results)?;
+    }
+
+    // Fourth pass: compile handler operation bodies
+    codegen.compile_handler_operations(hir_crate)?;
+
+    // Fifth pass: register handlers with runtime
+    codegen.register_handlers_with_runtime()?;
+
+    // Verify the module before optimization
+    if let Err(err) = module.verify() {
+        return Err(vec![Diagnostic::error(
+            format!("LLVM verification failed: {}", err.to_string()),
+            crate::span::Span::dummy(),
+        )]);
+    }
+
+    // Run LLVM optimization passes
+    optimize_module(&module, opt_level);
+
+    // Get target machine with matching optimization level
+    let target_machine = get_native_target_machine_with_opt(opt_level)
         .map_err(|e| vec![Diagnostic::error(e, crate::span::Span::dummy())])?;
 
     // Write object file
@@ -237,8 +481,11 @@ pub fn compile_definition_to_object(
         )]);
     }
 
-    // Get target machine
-    let target_machine = get_native_target_machine()
+    // Run LLVM optimization passes
+    optimize_module(&module, BloodOptLevel::Aggressive);
+
+    // Get target machine with aggressive optimization
+    let target_machine = get_native_target_machine_with_opt(BloodOptLevel::Aggressive)
         .map_err(|e| vec![Diagnostic::error(e, crate::span::Span::dummy())])?;
 
     // Write object file
@@ -289,8 +536,11 @@ pub fn compile_handler_registration_to_object(
         )]);
     }
 
-    // Get target machine
-    let target_machine = get_native_target_machine()
+    // Run LLVM optimization passes
+    optimize_module(&module, BloodOptLevel::Aggressive);
+
+    // Get target machine with aggressive optimization
+    let target_machine = get_native_target_machine_with_opt(BloodOptLevel::Aggressive)
         .map_err(|e| vec![Diagnostic::error(e, crate::span::Span::dummy())])?;
 
     // Write object file
@@ -384,11 +634,21 @@ pub fn link_objects(
     }
 }
 
-/// Compile MIR bodies to LLVM IR text.
+/// Compile MIR bodies to LLVM IR text (optimized by default).
 pub fn compile_mir_to_ir(
     hir_crate: &hir::Crate,
     mir_bodies: &MirBodiesMap,
     escape_analysis: &EscapeAnalysisMap,
+) -> Result<String, Vec<Diagnostic>> {
+    compile_mir_to_ir_with_opt(hir_crate, mir_bodies, escape_analysis, BloodOptLevel::Aggressive)
+}
+
+/// Compile MIR bodies to LLVM IR text with specified optimization level.
+pub fn compile_mir_to_ir_with_opt(
+    hir_crate: &hir::Crate,
+    mir_bodies: &MirBodiesMap,
+    escape_analysis: &EscapeAnalysisMap,
+    opt_level: BloodOptLevel,
 ) -> Result<String, Vec<Diagnostic>> {
     let context = Context::create();
     let module = context.create_module("blood_program");
@@ -419,6 +679,9 @@ pub fn compile_mir_to_ir(
 
     // Fifth pass: register handlers with runtime
     codegen.register_handlers_with_runtime()?;
+
+    // Run LLVM optimization passes
+    optimize_module(&module, opt_level);
 
     Ok(module.print_to_string().to_string())
 }

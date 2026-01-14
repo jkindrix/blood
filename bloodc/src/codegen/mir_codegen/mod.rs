@@ -211,7 +211,19 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
 
         // Allocate locals based on escape analysis
         for local in &body.locals {
-            let tier = self.get_local_tier(local.id, escape_results);
+            // Reference types (&T, &mut T) should ALWAYS use stack allocation for their
+            // storage, regardless of escape state. The local stores a pointer value,
+            // not the actual data, so escape analysis doesn't apply to the storage.
+            // This is critical for performance - reference parameters shouldn't trigger
+            // region allocation or generation checks.
+            let is_reference_type = local.ty.is_ref();
+
+            let tier = if is_reference_type {
+                // Force stack allocation for reference storage
+                MemoryTier::Stack
+            } else {
+                self.get_local_tier(local.id, escape_results)
+            };
 
             // For closure bodies, the __env parameter should use i8* type
             // regardless of its MIR type (which is the actual tuple of captures)
