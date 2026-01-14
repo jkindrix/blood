@@ -8,6 +8,7 @@ use inkwell::AddressSpace;
 
 use crate::diagnostics::Diagnostic;
 use crate::mir::body::MirBody;
+use crate::mir::ptr::MemoryTier;
 use crate::mir::types::{Statement, StatementKind};
 use crate::mir::EscapeResults;
 
@@ -242,14 +243,12 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 //
                 // STACK ALLOCATION OPTIMIZATION (EFF-OPT-005/006):
                 // When allocation_tier is Stack, the handler is lexically scoped
-                // and we can skip creating a new evidence vector if one already exists.
-                // When allocation_tier is Region, the handler may escape and needs
-                // full heap allocation.
+                // (no Perform/Resume that could capture the continuation).
+                // We can skip cloning the evidence vector (blood_evidence_create)
+                // and push directly onto the existing one, avoiding heap allocation.
                 //
                 // TODO: Implement optimized paths for static handlers.
-                // For now, log the optimization fields for monitoring purposes.
-                let _ = state_kind; // Suppress unused warning until optimization is implemented
-                let _ = allocation_tier; // Suppress unused warning until optimization is implemented
+                let _ = state_kind; // Suppress unused warning until static optimization is implemented
 
                 let i64_ty = self.context.i64_type();
                 let i8_ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
@@ -297,7 +296,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                         self.module.add_function("blood_evidence_set_current", fn_type, None)
                     });
 
-                // Get current evidence vector, or create one if none exists
+                // Get current evidence vector
                 let current_ev = self.builder.build_call(ev_current, &[], "current_ev")
                     .map_err(|e| vec![Diagnostic::error(
                         format!("LLVM call error: {}", e), stmt.span
@@ -317,63 +316,152 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     format!("LLVM error: {}", e), stmt.span
                 )])?;
 
-                // Create blocks for the conditional
+                // Get current function for creating blocks
                 let current_fn = self.current_fn.ok_or_else(|| {
                     vec![Diagnostic::error("No current function", stmt.span)]
                 })?;
-                let create_block = self.context.append_basic_block(current_fn, "create_ev");
-                let use_block = self.context.append_basic_block(current_fn, "use_ev");
-                let merge_block = self.context.append_basic_block(current_fn, "merge_ev");
 
-                // Branch based on null check
-                self.builder.build_conditional_branch(is_null, create_block, use_block)
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM error: {}", e), stmt.span
-                    )])?;
+                // STACK ALLOCATION OPTIMIZATION (EFF-OPT-005/006):
+                // For stack-tier handlers, we can push directly onto the existing
+                // evidence vector without cloning (avoiding heap allocation).
+                // For region-tier handlers, we must clone to support potential escapes.
+                let ev = if *allocation_tier == MemoryTier::Stack {
+                    // Stack-tier: Push directly onto existing evidence, create only if null
+                    let create_block = self.context.append_basic_block(current_fn, "stack_create_ev");
+                    let use_block = self.context.append_basic_block(current_fn, "stack_use_ev");
+                    let merge_block = self.context.append_basic_block(current_fn, "stack_merge_ev");
 
-                // Create block: evidence is null, create new one
-                self.builder.position_at_end(create_block);
-                let new_ev = self.builder.build_call(ev_create, &[], "new_evidence")
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM call error: {}", e), stmt.span
-                    )])?
-                    .try_as_basic_value()
-                    .left()
-                    .ok_or_else(|| vec![Diagnostic::error(
-                        "blood_evidence_create returned void",
-                        stmt.span
-                    )])?;
-                self.builder.build_unconditional_branch(merge_block)
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM error: {}", e), stmt.span
-                    )])?;
-                let create_block_end = self.builder.get_insert_block()
-                    .ok_or_else(|| vec![Diagnostic::error(
-                        "LLVM builder state invalid after branch".to_string(), stmt.span
-                    )])?;
+                    // Branch: if null, create new evidence; else use existing directly
+                    self.builder.build_conditional_branch(is_null, create_block, use_block)
+                        .map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM error: {}", e), stmt.span
+                        )])?;
 
-                // Use block: evidence exists, use it directly
-                self.builder.position_at_end(use_block);
-                self.builder.build_unconditional_branch(merge_block)
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM error: {}", e), stmt.span
-                    )])?;
-                let use_block_end = self.builder.get_insert_block()
-                    .ok_or_else(|| vec![Diagnostic::error(
-                        "LLVM builder state invalid after branch".to_string(), stmt.span
-                    )])?;
+                    // Create block: evidence is null, create new one
+                    self.builder.position_at_end(create_block);
+                    let new_ev = self.builder.build_call(ev_create, &[], "new_evidence")
+                        .map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM call error: {}", e), stmt.span
+                        )])?
+                        .try_as_basic_value()
+                        .left()
+                        .ok_or_else(|| vec![Diagnostic::error(
+                            "blood_evidence_create returned void",
+                            stmt.span
+                        )])?;
+                    // Set as current since we created a new one
+                    self.builder.build_call(ev_set_current, &[new_ev.into()], "")
+                        .map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM call error: {}", e), stmt.span
+                        )])?;
+                    self.builder.build_unconditional_branch(merge_block)
+                        .map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM error: {}", e), stmt.span
+                        )])?;
+                    let create_block_end = self.builder.get_insert_block()
+                        .ok_or_else(|| vec![Diagnostic::error(
+                            "LLVM builder state invalid after branch".to_string(), stmt.span
+                        )])?;
 
-                // Merge block: phi to select the evidence pointer
-                self.builder.position_at_end(merge_block);
-                let ev_phi = self.builder.build_phi(i8_ptr_ty, "evidence")
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM error: {}", e), stmt.span
-                    )])?;
-                ev_phi.add_incoming(&[
-                    (&new_ev, create_block_end),
-                    (&current_ev, use_block_end),
-                ]);
-                let ev = ev_phi.as_basic_value();
+                    // Use block: evidence exists, use it directly (NO clone, NO set_current)
+                    // This is the key optimization: we skip blood_evidence_create's clone
+                    self.builder.position_at_end(use_block);
+                    self.builder.build_unconditional_branch(merge_block)
+                        .map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM error: {}", e), stmt.span
+                        )])?;
+                    let use_block_end = self.builder.get_insert_block()
+                        .ok_or_else(|| vec![Diagnostic::error(
+                            "LLVM builder state invalid after branch".to_string(), stmt.span
+                        )])?;
+
+                    // Merge block: phi to select the evidence pointer
+                    self.builder.position_at_end(merge_block);
+                    let ev_phi = self.builder.build_phi(i8_ptr_ty, "evidence")
+                        .map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM error: {}", e), stmt.span
+                        )])?;
+                    ev_phi.add_incoming(&[
+                        (&new_ev, create_block_end),
+                        (&current_ev, use_block_end),
+                    ]);
+                    ev_phi.as_basic_value()
+                } else {
+                    // Region-tier: Always clone evidence vector (existing behavior)
+                    // This ensures proper isolation for handlers that may escape
+                    let create_block = self.context.append_basic_block(current_fn, "region_create_ev");
+                    let clone_block = self.context.append_basic_block(current_fn, "region_clone_ev");
+                    let merge_block = self.context.append_basic_block(current_fn, "region_merge_ev");
+
+                    // Branch: if null, create new; else clone existing
+                    self.builder.build_conditional_branch(is_null, create_block, clone_block)
+                        .map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM error: {}", e), stmt.span
+                        )])?;
+
+                    // Create block: evidence is null, create new one
+                    self.builder.position_at_end(create_block);
+                    let new_ev = self.builder.build_call(ev_create, &[], "new_evidence")
+                        .map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM call error: {}", e), stmt.span
+                        )])?
+                        .try_as_basic_value()
+                        .left()
+                        .ok_or_else(|| vec![Diagnostic::error(
+                            "blood_evidence_create returned void",
+                            stmt.span
+                        )])?;
+                    self.builder.build_unconditional_branch(merge_block)
+                        .map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM error: {}", e), stmt.span
+                        )])?;
+                    let create_block_end = self.builder.get_insert_block()
+                        .ok_or_else(|| vec![Diagnostic::error(
+                            "LLVM builder state invalid after branch".to_string(), stmt.span
+                        )])?;
+
+                    // Clone block: evidence exists, clone it via blood_evidence_create
+                    // blood_evidence_create clones the current vector when one exists
+                    self.builder.position_at_end(clone_block);
+                    let cloned_ev = self.builder.build_call(ev_create, &[], "cloned_evidence")
+                        .map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM call error: {}", e), stmt.span
+                        )])?
+                        .try_as_basic_value()
+                        .left()
+                        .ok_or_else(|| vec![Diagnostic::error(
+                            "blood_evidence_create returned void",
+                            stmt.span
+                        )])?;
+                    self.builder.build_unconditional_branch(merge_block)
+                        .map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM error: {}", e), stmt.span
+                        )])?;
+                    let clone_block_end = self.builder.get_insert_block()
+                        .ok_or_else(|| vec![Diagnostic::error(
+                            "LLVM builder state invalid after branch".to_string(), stmt.span
+                        )])?;
+
+                    // Merge block: phi to select the evidence pointer
+                    self.builder.position_at_end(merge_block);
+                    let ev_phi = self.builder.build_phi(i8_ptr_ty, "evidence")
+                        .map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM error: {}", e), stmt.span
+                        )])?;
+                    ev_phi.add_incoming(&[
+                        (&new_ev, create_block_end),
+                        (&cloned_ev, clone_block_end),
+                    ]);
+                    let ev = ev_phi.as_basic_value();
+
+                    // Set as current evidence vector (needed for region-tier since we cloned)
+                    self.builder.build_call(ev_set_current, &[ev.into()], "")
+                        .map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM call error: {}", e), stmt.span
+                        )])?;
+
+                    ev
+                };
 
                 // Push handler with effect_id and state pointer
                 let effect_id_val = i64_ty.const_int(effect_id.index as u64, false);
@@ -392,13 +480,6 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 ).map_err(|e| vec![Diagnostic::error(
                     format!("LLVM call error: {}", e), stmt.span
                 )])?;
-
-                // Set as current evidence vector (only needed if we created a new one,
-                // but setting it unconditionally is harmless and simpler)
-                self.builder.build_call(ev_set_current, &[ev.into()], "")
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM call error: {}", e), stmt.span
-                    )])?;
             }
 
             StatementKind::PopHandler => {
