@@ -384,6 +384,22 @@ impl<'a> MacroExpander<'a> {
                     }
                 }
                 "panic" => self.make_panic_call(format_str, span),
+                "todo" => {
+                    // todo! with message: panic with "not yet implemented: message"
+                    if format_str.is_empty() {
+                        self.make_panic_call("not yet implemented", span)
+                    } else {
+                        self.make_panic_call(&format!("not yet implemented: {}", format_str), span)
+                    }
+                }
+                "unimplemented" => {
+                    // unimplemented! with message: panic with "not implemented: message"
+                    if format_str.is_empty() {
+                        self.make_panic_call("not implemented", span)
+                    } else {
+                        self.make_panic_call(&format!("not implemented: {}", format_str), span)
+                    }
+                }
                 "format" => {
                     // format! with no args just returns the string
                     ExprKind::Literal(LiteralValue::String(format_str.to_string()))
@@ -411,6 +427,36 @@ impl<'a> MacroExpander<'a> {
                             }
                         }
                         "panic" => self.make_panic_expr_call(formatted_expr, span),
+                        "todo" => {
+                            // Prepend "not yet implemented: " to the message
+                            let prefix_expr = Expr::new(
+                                ExprKind::Literal(LiteralValue::String("not yet implemented: ".to_string())),
+                                Type::str(),
+                                span,
+                            );
+                            match self.make_str_concat(prefix_expr, formatted_expr, span) {
+                                Ok(combined) => self.make_panic_expr_call(combined, span),
+                                Err(e) => {
+                                    self.diagnostics.push(Diagnostic::error(e, span));
+                                    ExprKind::Error
+                                }
+                            }
+                        }
+                        "unimplemented" => {
+                            // Prepend "not implemented: " to the message
+                            let prefix_expr = Expr::new(
+                                ExprKind::Literal(LiteralValue::String("not implemented: ".to_string())),
+                                Type::str(),
+                                span,
+                            );
+                            match self.make_str_concat(prefix_expr, formatted_expr, span) {
+                                Ok(combined) => self.make_panic_expr_call(combined, span),
+                                Err(e) => {
+                                    self.diagnostics.push(Diagnostic::error(e, span));
+                                    ExprKind::Error
+                                }
+                            }
+                        }
                         "format" => {
                             // format! returns the string
                             formatted_expr.kind
@@ -637,6 +683,9 @@ impl<'a> MacroExpander<'a> {
                 PrimitiveTy::String => ("", false), // Already a string
                 PrimitiveTy::Unit => {
                     return Err("cannot format unit type".to_string());
+                }
+                PrimitiveTy::Never => {
+                    return Err("cannot format never type".to_string());
                 }
             },
             _ => {
