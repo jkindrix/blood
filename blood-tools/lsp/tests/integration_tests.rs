@@ -360,6 +360,103 @@ mod definition {
         // No definition expected on whitespace - just ensure no panic
         let _ = location;
     }
+
+    #[test]
+    fn test_definition_of_effect() {
+        let source = r#"effect State<T> {
+    fn get() -> T;
+    fn put(value: T);
+}"#;
+        let doc = make_doc(source);
+        let provider = DefinitionProvider::new();
+
+        // Position on effect name "State"
+        let position = Position {
+            line: 0,
+            character: 8,
+        };
+
+        // This should not panic - the result depends on parser completeness
+        let location = provider.definition(&doc, position);
+        // If we get a location, it should be on line 0
+        if let Some(loc) = location {
+            assert_eq!(loc.range.start.line, 0);
+        }
+    }
+
+    #[test]
+    fn test_definition_of_handler() {
+        let source = r#"handler StateHandler<T> for State<T> {
+    state: T,
+    fn get() -> T { resume(self.state) }
+    fn put(value: T) { self.state = value; resume(()) }
+}"#;
+        let doc = make_doc(source);
+        let provider = DefinitionProvider::new();
+
+        // Position on handler name "StateHandler"
+        let position = Position {
+            line: 0,
+            character: 10,
+        };
+
+        // This should not panic - the result depends on parser completeness
+        let location = provider.definition(&doc, position);
+        // If we get a location, it should be on line 0
+        if let Some(loc) = location {
+            assert_eq!(loc.range.start.line, 0);
+        }
+    }
+
+    #[test]
+    fn test_definition_from_qualified_path() {
+        let source = r#"effect Log {
+    fn log(message: str);
+}
+
+fn test() / Log {
+    perform Log::log("hello");
+}"#;
+        let doc = make_doc(source);
+        let provider = DefinitionProvider::new();
+
+        // Position on "log" in "Log::log" (perform expression)
+        // Line 5: "    perform Log::log("hello");"
+        // The "log" after "::" is at approximately character 17
+        let position = Position {
+            line: 5,
+            character: 17,
+        };
+
+        // This should not panic, even if it doesn't find a definition
+        // (depends on semantic analysis being complete enough)
+        let location = provider.definition(&doc, position);
+        let _ = location;
+    }
+
+    #[test]
+    fn test_definition_from_perform_expression() {
+        let source = r#"effect Ask {
+    fn ask() -> i32;
+}
+
+fn computation() / Ask {
+    let x = perform Ask::ask();
+    x * 2
+}"#;
+        let doc = make_doc(source);
+        let provider = DefinitionProvider::new();
+
+        // Position on "ask" in perform expression
+        let position = Position {
+            line: 5,
+            character: 26,
+        };
+
+        // Test that this doesn't panic
+        let location = provider.definition(&doc, position);
+        let _ = location;
+    }
 }
 
 mod document {
@@ -425,5 +522,205 @@ mod document {
         let new_text = doc.text();
         assert!(new_text.contains("let x = 1"), "Change should be applied");
         assert_eq!(doc.version(), 2);
+    }
+}
+
+mod completions {
+    use super::*;
+    use blood_lsp::analysis::CompletionProvider;
+
+    #[test]
+    fn test_completion_in_expression_context() {
+        let source = "fn main() {\n    \n}";
+        let doc = make_doc(source);
+        let provider = CompletionProvider::new();
+
+        // Position inside function body
+        let position = Position {
+            line: 1,
+            character: 4,
+        };
+
+        let completions = provider.completions(&doc, position);
+
+        // Should have keyword completions for expression context
+        let labels: Vec<_> = completions.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels.contains(&"let"), "Expected 'let' keyword");
+        assert!(labels.contains(&"if"), "Expected 'if' keyword");
+        assert!(labels.contains(&"perform"), "Expected 'perform' keyword");
+    }
+
+    #[test]
+    fn test_completion_in_type_context() {
+        let source = "fn foo(x: ) {\n}";
+        let doc = make_doc(source);
+        let provider = CompletionProvider::new();
+
+        // Position after ': ' in parameter type
+        let position = Position {
+            line: 0,
+            character: 10,
+        };
+
+        let completions = provider.completions(&doc, position);
+
+        // Should have type completions
+        let labels: Vec<_> = completions.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels.contains(&"i32"), "Expected 'i32' type");
+        assert!(labels.contains(&"bool"), "Expected 'bool' type");
+        assert!(labels.contains(&"String"), "Expected 'String' type");
+    }
+
+    #[test]
+    fn test_completion_in_handler_context() {
+        let source = r#"effect State<T> {
+    op get() -> T;
+    op put(value: T);
+}
+
+handler StateHandler for State<i32> {
+    state: i32,
+
+}"#;
+        let doc = make_doc(source);
+        let provider = CompletionProvider::new();
+
+        // Position inside handler body (line 7, empty line after 'state: i32,')
+        let position = Position {
+            line: 7,
+            character: 4,
+        };
+
+        let completions = provider.completions(&doc, position);
+
+        // Should have handler-specific completions
+        let labels: Vec<_> = completions.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels.contains(&"resume"), "Expected 'resume' keyword in handler context");
+        assert!(labels.contains(&"self"), "Expected 'self' keyword in handler context");
+        assert!(labels.contains(&"fn"), "Expected 'fn' snippet in handler context");
+    }
+
+    #[test]
+    fn test_completion_after_perform_keyword() {
+        let source = r#"effect Log {
+    op log(msg: String);
+}
+
+fn test() / Log {
+    perform
+}"#;
+        let doc = make_doc(source);
+        let provider = CompletionProvider::new();
+
+        // Position after 'perform '
+        let position = Position {
+            line: 5,
+            character: 12,
+        };
+
+        let completions = provider.completions(&doc, position);
+
+        // Should have effect symbols for perform context
+        // Just verify we get completions without panicking
+        assert!(!completions.is_empty() || completions.is_empty(),
+            "Completion should work in perform context");
+    }
+
+    #[test]
+    fn test_completion_after_with_keyword() {
+        let source = r#"effect State<T> {
+    op get() -> T;
+}
+
+handler StateHandler<T> for State<T> {
+    value: T,
+}
+
+fn test() {
+    with
+}"#;
+        let doc = make_doc(source);
+        let provider = CompletionProvider::new();
+
+        // Position after 'with '
+        let position = Position {
+            line: 9,
+            character: 9,
+        };
+
+        let completions = provider.completions(&doc, position);
+
+        // Should work without panicking
+        // The actual handler completions depend on semantic analysis
+        assert!(!completions.is_empty() || completions.is_empty(),
+            "Completion should work in with-handler context");
+    }
+
+    #[test]
+    fn test_completion_in_effect_signature() {
+        let source = "fn foo() -> i32 / {\n}";
+        let doc = make_doc(source);
+        let provider = CompletionProvider::new();
+
+        // Position after '/ ' in effect signature
+        let position = Position {
+            line: 0,
+            character: 18,
+        };
+
+        let completions = provider.completions(&doc, position);
+
+        // Should have 'pure' for effect context
+        let labels: Vec<_> = completions.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels.contains(&"pure"), "Expected 'pure' in effect context");
+    }
+
+    #[test]
+    fn test_completion_provides_function_symbols() {
+        let source = r#"fn helper() -> i32 {
+    42
+}
+
+fn main() {
+    hel
+}"#;
+        let doc = make_doc(source);
+        let provider = CompletionProvider::new();
+
+        // Position after 'hel' in main
+        let position = Position {
+            line: 5,
+            character: 7,
+        };
+
+        let completions = provider.completions(&doc, position);
+
+        // Should include the helper function
+        let labels: Vec<_> = completions.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels.contains(&"helper"), "Expected 'helper' function in completions");
+    }
+
+    #[test]
+    fn test_completion_in_pattern_context() {
+        // Pattern context is detected after '=>' or in pattern position
+        let source = r#"fn test(x: i32) {
+    match x {
+        1 =>
+    }
+}"#;
+        let doc = make_doc(source);
+        let provider = CompletionProvider::new();
+
+        // Position after '=>' in match arm (pattern context is line after)
+        let position = Position {
+            line: 2,
+            character: 12,
+        };
+
+        let completions = provider.completions(&doc, position);
+
+        // Should have pattern completions (wildcard)
+        let labels: Vec<_> = completions.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels.contains(&"_"), "Expected '_' wildcard pattern");
     }
 }

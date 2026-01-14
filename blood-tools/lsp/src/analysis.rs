@@ -1403,6 +1403,282 @@ unsafe {
 unsafe fn dangerous() { }
 ```"#,
             ),
+            "pure" => (
+                "pure",
+                "Effect annotation indicating a function has no side effects.",
+                r#"```blood
+fn add(a: i32, b: i32) -> i32 / pure {
+    a + b
+}
+
+// Pure functions can be freely memoized, reordered, or eliminated
+```"#,
+            ),
+            "linear" => (
+                "linear",
+                "Type modifier indicating a value must be used exactly once.",
+                r#"```blood
+// Linear types prevent resource leaks and double-free errors
+fn open_file(path: str) -> linear File / IO {
+    // ...
+}
+
+// Must use the file exactly once
+let file = open_file("data.txt");
+write(file, "content");  // file consumed here
+```"#,
+            ),
+            "mut" => (
+                "mut",
+                "Keyword for declaring mutable bindings or references.",
+                r#"```blood
+let mut counter = 0;
+counter = counter + 1;
+
+fn increment(x: &mut i32) {
+    *x = *x + 1;
+}
+```"#,
+            ),
+            "const" => (
+                "const",
+                "Declares a compile-time constant.",
+                r#"```blood
+const MAX_SIZE: usize = 1024;
+const PI: f64 = 3.14159265359;
+const GREETING: str = "Hello";
+```"#,
+            ),
+            "static" => (
+                "static",
+                "Declares a static variable with a fixed memory location.",
+                r#"```blood
+static mut COUNTER: i32 = 0;
+
+// Access requires unsafe block
+unsafe {
+    COUNTER = COUNTER + 1;
+}
+```"#,
+            ),
+            "type" => (
+                "type",
+                "Declares a type alias.",
+                r#"```blood
+type Point = (f64, f64);
+type Result<T> = std::Result<T, Error>;
+type Callback = fn(i32) -> bool;
+```"#,
+            ),
+            "bridge" => (
+                "bridge",
+                "Declares an FFI bridge block for foreign function interfaces.",
+                r#"```blood
+bridge "C" libc {
+    fn malloc(size: usize) -> *mut u8;
+    fn free(ptr: *mut u8);
+    fn strlen(s: *const u8) -> usize;
+}
+
+// Usage
+let ptr = @unsafe { libc::malloc(1024) };
+```"#,
+            ),
+            "extern" => (
+                "extern",
+                "Declares an external function from another language.",
+                r#"```blood
+extern "C" fn external_callback(data: *const u8);
+
+// Import from C library
+bridge "C" {
+    extern fn puts(s: *const u8) -> i32;
+}
+```"#,
+            ),
+            "async" => (
+                "async",
+                "Marks a function as asynchronous, returning a future.",
+                r#"```blood
+async fn fetch_data(url: str) -> Result<str, Error> {
+    let response = await http::get(url)?;
+    response.text()
+}
+
+// Usage
+let data = await fetch_data("https://example.com");
+```"#,
+            ),
+            "await" => (
+                "await",
+                "Suspends execution until an async operation completes.",
+                r#"```blood
+async fn process() -> Result<(), Error> {
+    let data = await fetch_data(url)?;
+    let parsed = await parse_json(data)?;
+    Ok(())
+}
+```"#,
+            ),
+            "where" => (
+                "where",
+                "Specifies trait bounds on generic type parameters.",
+                r#"```blood
+fn print_all<T>(items: [T])
+where
+    T: Display,
+{
+    for item in items {
+        println!("{}", item.display());
+    }
+}
+```"#,
+            ),
+            "as" => (
+                "as",
+                "Type casting operator.",
+                r#"```blood
+let x: i64 = 42;
+let y = x as f64;  // Convert to float
+let ptr = &x as *const i64;  // Convert to raw pointer
+```"#,
+            ),
+            "self" => (
+                "self",
+                "Refers to the current instance in methods.",
+                r#"```blood
+impl Point {
+    fn distance(self, other: Point) -> f64 {
+        let dx = self.x - other.x;
+        let dy = self.y - other.y;
+        (dx * dx + dy * dy).sqrt()
+    }
+
+    fn translate(&mut self, dx: f64, dy: f64) {
+        self.x = self.x + dx;
+        self.y = self.y + dy;
+    }
+}
+```"#,
+            ),
+            "Self" => (
+                "Self",
+                "Refers to the implementing type in trait or impl blocks.",
+                r#"```blood
+impl Point {
+    fn origin() -> Self {
+        Self { x: 0.0, y: 0.0 }
+    }
+}
+
+trait Clone {
+    fn clone(&self) -> Self;
+}
+```"#,
+            ),
+            "freeze" => (
+                "freeze",
+                "Creates an immutable, frozen copy of a value.",
+                r#"```blood
+let data = vec![1, 2, 3];
+let frozen: Frozen<Vec<i32>> = freeze(data);
+
+// frozen is deeply immutable and can be safely shared
+```"#,
+            ),
+            "Frozen" => (
+                "Frozen<T>",
+                "A wrapper type indicating deep immutability.",
+                r#"```blood
+// Frozen values can be safely shared across threads
+fn share_data(data: Frozen<Config>) -> impl Fn() {
+    move || {
+        println!("{}", data.name);
+    }
+}
+```"#,
+            ),
+            "true" | "false" => (
+                "bool",
+                "Boolean literal values.",
+                r#"```blood
+let enabled = true;
+let disabled = false;
+
+if enabled && !disabled {
+    // ...
+}
+```"#,
+            ),
+            "None" => (
+                "None",
+                "The absence of a value in an Option type.",
+                r#"```blood
+let maybe_value: Option<i32> = None;
+
+match maybe_value {
+    Some(x) => println!("Got {}", x),
+    None => println!("No value"),
+}
+```"#,
+            ),
+            "Some" => (
+                "Some",
+                "Wraps a value in an Option type.",
+                r#"```blood
+let maybe_value: Option<i32> = Some(42);
+
+if let Some(x) = maybe_value {
+    println!("Got {}", x);
+}
+```"#,
+            ),
+            "Ok" => (
+                "Ok",
+                "Represents success in a Result type.",
+                r#"```blood
+fn divide(a: i32, b: i32) -> Result<i32, str> {
+    if b == 0 {
+        Err("division by zero")
+    } else {
+        Ok(a / b)
+    }
+}
+```"#,
+            ),
+            "Err" => (
+                "Err",
+                "Represents an error in a Result type.",
+                r#"```blood
+fn parse_int(s: str) -> Result<i32, ParseError> {
+    if s.is_empty() {
+        Err(ParseError::Empty)
+    } else {
+        // ...
+    }
+}
+```"#,
+            ),
+            "deep" | "shallow" => (
+                "handler depth",
+                "Handler depth determines how effect operations propagate.",
+                r#"```blood
+// Deep handler: intercepts effects recursively
+deep handler Logger for Log {
+    fn log(msg: str) {
+        println!("[LOG] {}", msg);
+        resume(())
+    }
+}
+
+// Shallow handler: only handles the first effect
+shallow handler Once for Ask {
+    fn ask() -> i32 {
+        resume(42)  // Only handles first ask
+    }
+}
+```"#,
+            ),
             _ => return None,
         };
 
