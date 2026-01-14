@@ -959,11 +959,13 @@ impl<'a> TypeContext<'a> {
                         "i32" => return Ok(Type::i32()),
                         "i64" => return Ok(Type::i64()),
                         "i128" => return Ok(Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::I128)))),
+                        "isize" => return Ok(Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::Isize)))),
                         "u8" => return Ok(Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U8)))),
                         "u16" => return Ok(Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U16)))),
                         "u32" => return Ok(Type::u32()),
                         "u64" => return Ok(Type::u64()),
                         "u128" => return Ok(Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U128)))),
+                        "usize" => return Ok(Type::usize()),
                         "f32" => return Ok(Type::f32()),
                         "f64" => return Ok(Type::f64()),
                         "bool" => return Ok(Type::bool()),
@@ -1493,7 +1495,64 @@ impl<'a> TypeContext<'a> {
                             fn_ty,
                             span,
                         ))
-                    } else if let Some(def_info) = self.resolver.def_info.get(&def_id) {
+                    } else if let Some(def_info) = self.resolver.def_info.get(&def_id).cloned() {
+                        // Check if this is a variant constructor (e.g., Some, None, Ok, Err)
+                        if def_info.kind == hir::DefKind::Variant {
+                            if let Some(parent_def_id) = def_info.parent {
+                                if let Some(enum_info) = self.enum_defs.get(&parent_def_id).cloned() {
+                                    // Find the variant info
+                                    if let Some(variant) = enum_info.variants.iter().find(|v| v.def_id == def_id) {
+                                        let variant_idx = variant.index;
+                                        let variant_fields = variant.fields.clone();
+
+                                        if variant_fields.is_empty() {
+                                            // Unit variant (like None) - returns the enum type directly
+                                            let type_args: Vec<Type> = enum_info.generics.iter()
+                                                .map(|_| self.unifier.fresh_var())
+                                                .collect();
+                                            let enum_ty = Type::adt(parent_def_id, type_args);
+
+                                            return Ok(hir::Expr::new(
+                                                hir::ExprKind::Variant {
+                                                    def_id: parent_def_id,
+                                                    variant_idx,
+                                                    fields: vec![],
+                                                },
+                                                enum_ty,
+                                                span,
+                                            ));
+                                        } else {
+                                            // Tuple variant (like Some(T)) - returns a function type
+                                            let type_args: Vec<Type> = enum_info.generics.iter()
+                                                .map(|_| self.unifier.fresh_var())
+                                                .collect();
+
+                                            // Build substitution map from generic params to fresh vars
+                                            let subst: std::collections::HashMap<TyVarId, Type> = enum_info.generics.iter()
+                                                .zip(type_args.iter())
+                                                .map(|(&tyvar, ty)| (tyvar, ty.clone()))
+                                                .collect();
+
+                                            // Substitute type parameters in field types
+                                            let field_types: Vec<Type> = variant_fields.iter()
+                                                .map(|f| self.substitute_type_vars(&f.ty, &subst))
+                                                .collect();
+
+                                            let enum_ty = Type::adt(parent_def_id, type_args);
+                                            let fn_ty = Type::function(field_types, enum_ty);
+
+                                            return Ok(hir::Expr::new(
+                                                hir::ExprKind::Def(def_id),
+                                                fn_ty,
+                                                span,
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Default handling for non-variant defs
                         let ty = if let Some(ty) = &def_info.ty {
                             ty.clone()
                         } else {
