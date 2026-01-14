@@ -92,10 +92,12 @@ pub enum ErrorCode {
     MissingFunctionBody = 114,
     /// Invalid match arm.
     InvalidMatchArm = 115,
-    /// Macro call syntax (macros are planned but not yet implemented).
+    /// Macro call to undefined user macro (built-in macros work).
     UnsupportedMacro = 116,
     /// Syntax from another language not supported (e.g., Rust's `unsafe { }`).
     UnsupportedSyntax = 117,
+    /// Invalid macro fragment specifier.
+    InvalidMacroFragment = 118,
 
     // ============================================================
     // Pointer/Memory Warnings (W0001-W0099)
@@ -178,8 +180,9 @@ impl ErrorCode {
             ErrorCode::InvalidVisibility => "invalid visibility specifier",
             ErrorCode::MissingFunctionBody => "missing function body",
             ErrorCode::InvalidMatchArm => "invalid match arm",
-            ErrorCode::UnsupportedMacro => "macros are not yet implemented",
+            ErrorCode::UnsupportedMacro => "undefined macro",
             ErrorCode::UnsupportedSyntax => "unsupported syntax from another language",
+            ErrorCode::InvalidMacroFragment => "invalid macro fragment specifier",
             // Pointer/Memory warnings
             ErrorCode::DeeplyNestedBox => "deeply nested box type causes multiple generation checks",
             ErrorCode::PointerHeavyStruct => "struct has high pointer density (>75% pointer fields)",
