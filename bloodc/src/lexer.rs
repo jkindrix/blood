@@ -191,11 +191,12 @@ pub enum TokenKind {
     // ============================================================
     // Literals
     // ============================================================
-    /// Integer literal (decimal, hex, octal, or binary)
-    #[regex(r"0x[0-9a-fA-F_]+")]
-    #[regex(r"0o[0-7_]+")]
-    #[regex(r"0b[01_]+")]
-    #[regex(r"[0-9][0-9_]*")]
+    /// Integer literal (decimal, hex, octal, or binary) with optional type suffix
+    /// Suffixes: i8, i16, i32, i64, i128, u8, u16, u32, u64, u128, isize, usize
+    #[regex(r"0x[0-9a-fA-F_]+(i8|i16|i32|i64|i128|u8|u16|u32|u64|u128|isize|usize)?")]
+    #[regex(r"0o[0-7_]+(i8|i16|i32|i64|i128|u8|u16|u32|u64|u128|isize|usize)?")]
+    #[regex(r"0b[01_]+(i8|i16|i32|i64|i128|u8|u16|u32|u64|u128|isize|usize)?")]
+    #[regex(r"[0-9][0-9_]*(i8|i16|i32|i64|i128|u8|u16|u32|u64|u128|isize|usize)?")]
     IntLit,
 
     /// Float literal (with optional f32/f64 suffix)
@@ -205,6 +206,10 @@ pub enum TokenKind {
     /// String literal
     #[regex(r#""([^"\\]|\\.)*""#)]
     StringLit,
+
+    /// Byte string literal (b"...")
+    #[regex(r#"b"([^"\\]|\\.)*""#)]
+    ByteStringLit,
 
     /// Raw string literal (r"..." or r#"..."# etc.)
     /// Simple form: r"..." - no escape processing
@@ -357,6 +362,8 @@ pub enum TokenKind {
     Hash,
     #[token("?")]
     Question,
+    #[token("$")]
+    Dollar,
 
     // ============================================================
     // Special
@@ -376,8 +383,17 @@ pub enum TokenKind {
     // ============================================================
     // Comments (handled specially)
     // ============================================================
-    /// Line comment
-    #[regex(r"//[^\n]*", logos::skip)]
+    /// Doc comment (///) - not skipped, attached to items
+    /// Matches /// followed by content until newline (but not //// which is a line comment)
+    #[regex(r"///[^/\n][^\n]*", priority = 3)]
+    #[regex(r"///", priority = 2)]
+    DocComment,
+
+    /// Line comment (skipped)
+    /// Matches // followed by non-/ content, or //// and more
+    #[regex(r"//[^/\n][^\n]*", logos::skip)]
+    #[regex(r"//\n", logos::skip)]
+    #[regex(r"////[^\n]*", logos::skip)]
     LineComment,
 
     /// Block comment (with nesting support via callback)
@@ -441,6 +457,7 @@ impl TokenKind {
             TokenKind::IntLit
                 | TokenKind::FloatLit
                 | TokenKind::StringLit
+                | TokenKind::ByteStringLit
                 | TokenKind::RawStringLit
                 | TokenKind::RawStringLitHash1
                 | TokenKind::RawStringLitHash2
@@ -590,6 +607,7 @@ impl TokenKind {
             TokenKind::IntLit => "integer literal",
             TokenKind::FloatLit => "float literal",
             TokenKind::StringLit => "string literal",
+            TokenKind::ByteStringLit => "byte string literal",
             TokenKind::RawStringLit => "raw string literal",
             TokenKind::RawStringLitHash1 => "raw string literal",
             TokenKind::RawStringLitHash2 => "raw string literal",
@@ -649,11 +667,13 @@ impl TokenKind {
             TokenKind::AtUnsafe => "`@unsafe`",
             TokenKind::AtHeap => "`@heap`",
             TokenKind::AtStack => "`@stack`",
+            TokenKind::DocComment => "doc comment",
             TokenKind::LineComment => "line comment",
             TokenKind::BlockComment => "block comment",
             TokenKind::UnclosedBlockComment => "unclosed block comment",
             TokenKind::Eof => "end of file",
             TokenKind::Error => "error",
+            TokenKind::Dollar => "`$`",
         }
     }
 
@@ -664,6 +684,7 @@ impl TokenKind {
             TokenKind::IntLit
                 | TokenKind::FloatLit
                 | TokenKind::StringLit
+                | TokenKind::ByteStringLit
                 | TokenKind::RawStringLit
                 | TokenKind::RawStringLitHash1
                 | TokenKind::RawStringLitHash2
@@ -674,6 +695,8 @@ impl TokenKind {
                 | TokenKind::TypeIdent
                 | TokenKind::SelfLower
                 | TokenKind::SelfUpper
+                | TokenKind::Default  // Special expression for default values
+                | TokenKind::Handle   // Contextual keyword usable as identifier
                 | TokenKind::LParen
                 | TokenKind::LBrace
                 | TokenKind::LBracket
@@ -685,7 +708,8 @@ impl TokenKind {
                 | TokenKind::Return
                 | TokenKind::Break
                 | TokenKind::Continue
-                | TokenKind::Or      // Closure
+                | TokenKind::Or      // Closure with params |x|
+                | TokenKind::OrOr    // Closure without params ||
                 | TokenKind::Move    // Move closure
                 | TokenKind::Not
                 | TokenKind::Minus
@@ -1012,6 +1036,103 @@ mod tests {
             TokenKind::Final,
             TokenKind::Virtual,
             TokenKind::Yield,
+        ]);
+    }
+
+    #[test]
+    fn test_byte_string_literals() {
+        assert_eq!(lex(r#"b"hello""#), vec![TokenKind::ByteStringLit]);
+        assert_eq!(lex(r#"b"hello\n""#), vec![TokenKind::ByteStringLit]);
+        assert_eq!(lex(r#"b"" b"x""#), vec![
+            TokenKind::ByteStringLit,
+            TokenKind::ByteStringLit,
+        ]);
+    }
+
+    #[test]
+    fn test_integer_type_suffixes() {
+        // Basic integer with suffix
+        assert_eq!(lex("42i32"), vec![TokenKind::IntLit]);
+        assert_eq!(lex("0u64"), vec![TokenKind::IntLit]);
+        assert_eq!(lex("255u8"), vec![TokenKind::IntLit]);
+
+        // Hex with suffix
+        assert_eq!(lex("0xFFi32"), vec![TokenKind::IntLit]);
+        assert_eq!(lex("0xDEADu64"), vec![TokenKind::IntLit]);
+
+        // Binary with suffix
+        assert_eq!(lex("0b1010u8"), vec![TokenKind::IntLit]);
+
+        // Octal with suffix
+        assert_eq!(lex("0o777i32"), vec![TokenKind::IntLit]);
+
+        // All suffix types
+        assert_eq!(lex("1i8 2i16 3i32 4i64 5i128"), vec![
+            TokenKind::IntLit,
+            TokenKind::IntLit,
+            TokenKind::IntLit,
+            TokenKind::IntLit,
+            TokenKind::IntLit,
+        ]);
+        assert_eq!(lex("1u8 2u16 3u32 4u64 5u128"), vec![
+            TokenKind::IntLit,
+            TokenKind::IntLit,
+            TokenKind::IntLit,
+            TokenKind::IntLit,
+            TokenKind::IntLit,
+        ]);
+        assert_eq!(lex("1isize 2usize"), vec![
+            TokenKind::IntLit,
+            TokenKind::IntLit,
+        ]);
+
+        // Mixed with underscores
+        assert_eq!(lex("1_000_000i64"), vec![TokenKind::IntLit]);
+    }
+
+    #[test]
+    fn test_doc_comments() {
+        // Basic doc comment
+        assert_eq!(lex("/// This is a doc comment"), vec![TokenKind::DocComment]);
+
+        // Doc comment followed by code
+        assert_eq!(lex("/// Doc comment\nfn foo"), vec![
+            TokenKind::DocComment,
+            TokenKind::Fn,
+            TokenKind::Ident,
+        ]);
+
+        // Multiple doc comments
+        assert_eq!(lex("/// First line\n/// Second line"), vec![
+            TokenKind::DocComment,
+            TokenKind::DocComment,
+        ]);
+
+        // Empty doc comment (just ///)
+        assert_eq!(lex("///\nfn"), vec![
+            TokenKind::DocComment,
+            TokenKind::Fn,
+        ]);
+
+        // Doc comment with space
+        assert_eq!(lex("/// "), vec![TokenKind::DocComment]);
+    }
+
+    #[test]
+    fn test_line_comments_vs_doc_comments() {
+        // Regular line comment should be skipped
+        assert_eq!(lex("// regular comment\nfn"), vec![TokenKind::Fn]);
+
+        // Four slashes is a line comment, not a doc comment
+        assert_eq!(lex("//// not a doc comment\nfn"), vec![TokenKind::Fn]);
+
+        // Five slashes is also a line comment
+        assert_eq!(lex("///// also not a doc comment\nfn"), vec![TokenKind::Fn]);
+
+        // Three slashes IS a doc comment
+        assert_eq!(lex("/// this IS a doc comment\nfn"), vec![
+            TokenKind::DocComment,
+            TokenKind::Fn,
         ]);
     }
 }
