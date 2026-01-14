@@ -100,6 +100,17 @@ impl<'a> TypeContext<'a> {
             ast::ExprKind::WithHandle { handler, body } => {
                 self.infer_with_handle(handler, body, expr.span)
             }
+            ast::ExprKind::TryWith { body: _, handlers: _ } => {
+                // TODO: Implement try-with inline handlers
+                // For now, return an error indicating this feature is not yet implemented
+                Err(TypeError::new(
+                    TypeErrorKind::UnsupportedFeature {
+                        feature: "try-with inline handler expressions are not yet implemented. \
+                                  Please use `deep handler` declarations with `with Handler handle { }` syntax instead.".into(),
+                    },
+                    expr.span,
+                ))
+            }
             ast::ExprKind::Perform { effect, operation, args } => {
                 self.infer_perform(effect.as_ref(), operation, args, expr.span)
             }
@@ -2905,6 +2916,115 @@ impl<'a> TypeContext<'a> {
                         ));
                     }
                 } else {
+                    // Check if first segment is an enum type and second is a variant
+                    // This handles EnumName::Variant { field: value } syntax
+                    if let Some(enum_def_id) = self.resolver.lookup_type(&module_name) {
+                        if let Some(enum_info) = self.enum_defs.get(&enum_def_id).cloned() {
+                            if let Some(variant) = enum_info.variants.iter().find(|v| v.name == type_name) {
+                                // Found an enum variant - handle struct-like construction
+                                let variant_idx = variant.index;
+                                let variant_fields = variant.fields.clone();
+
+                                // Create fresh type variables for enum generics
+                                let type_args: Vec<Type> = enum_info.generics.iter()
+                                    .map(|_| self.unifier.fresh_var())
+                                    .collect();
+
+                                // Build substitution map from generic params to fresh vars
+                                let subst: std::collections::HashMap<TyVarId, Type> = enum_info.generics.iter()
+                                    .zip(type_args.iter())
+                                    .map(|(&tyvar, ty)| (tyvar, ty.clone()))
+                                    .collect();
+
+                                // Type-check each field from the expression
+                                let mut hir_field_exprs = Vec::new();
+                                for field in fields {
+                                    let field_name = self.symbol_to_string(field.name.node);
+
+                                    // Find the corresponding variant field
+                                    let variant_field = match variant_fields.iter().find(|f| f.name == field_name) {
+                                        Some(f) => f,
+                                        None => {
+                                            return Err(TypeError::new(
+                                                TypeErrorKind::UnknownField {
+                                                    ty: Type::adt(enum_def_id, type_args.clone()),
+                                                    field: field_name,
+                                                },
+                                                field.span,
+                                            ));
+                                        }
+                                    };
+
+                                    // Apply substitution to field type
+                                    let expected_ty = self.substitute_type_vars(&variant_field.ty, &subst);
+
+                                    // Handle shorthand syntax: `{ x }` means `{ x: x }`
+                                    let value_expr = if let Some(value) = &field.value {
+                                        let inferred = self.infer_expr(value)?;
+                                        self.unifier.unify(&inferred.ty, &expected_ty, value.span).map_err(|_| {
+                                            TypeError::new(
+                                                TypeErrorKind::Mismatch {
+                                                    expected: self.unifier.resolve(&expected_ty),
+                                                    found: self.unifier.resolve(&inferred.ty),
+                                                },
+                                                value.span,
+                                            )
+                                        })?;
+                                        inferred
+                                    } else {
+                                        // Shorthand: look up the field name as a variable
+                                        let path = ast::ExprPath {
+                                            segments: vec![ast::ExprPathSegment {
+                                                name: field.name.clone(),
+                                                args: None,
+                                            }],
+                                            span: field.span,
+                                        };
+                                        let expr = ast::Expr {
+                                            kind: ast::ExprKind::Path(path),
+                                            span: field.span,
+                                        };
+                                        let inferred = self.infer_expr(&expr)?;
+                                        self.unifier.unify(&inferred.ty, &expected_ty, field.span).map_err(|_| {
+                                            TypeError::new(
+                                                TypeErrorKind::Mismatch {
+                                                    expected: self.unifier.resolve(&expected_ty),
+                                                    found: self.unifier.resolve(&inferred.ty),
+                                                },
+                                                field.span,
+                                            )
+                                        })?;
+                                        inferred
+                                    };
+
+                                    hir_field_exprs.push((variant_field.index, value_expr));
+                                }
+
+                                // Sort fields by index to ensure correct order in Variant
+                                hir_field_exprs.sort_by_key(|(idx, _)| *idx);
+                                let ordered_fields: Vec<hir::Expr> = hir_field_exprs.into_iter()
+                                    .map(|(_, expr)| expr)
+                                    .collect();
+
+                                // Build result type with resolved type args
+                                let resolved_type_args: Vec<Type> = type_args.iter()
+                                    .map(|ty| self.unifier.resolve(ty))
+                                    .collect();
+                                let enum_ty = Type::adt(enum_def_id, resolved_type_args);
+
+                                return Ok(hir::Expr::new(
+                                    hir::ExprKind::Variant {
+                                        def_id: enum_def_id,
+                                        variant_idx,
+                                        fields: ordered_fields,
+                                    },
+                                    enum_ty,
+                                    span,
+                                ));
+                            }
+                        }
+                    }
+
                     // Try to find in module_defs
                     let mut module_def_id: Option<DefId> = None;
                     for (def_id, info) in &self.module_defs {

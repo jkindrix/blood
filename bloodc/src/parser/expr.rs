@@ -802,6 +802,7 @@ impl<'src> Parser<'src> {
             TokenKind::Or | TokenKind::OrOr | TokenKind::Move => self.parse_closure_expr(),
 
             // Effect expressions
+            TokenKind::Try => self.parse_try_with_expr(),
             TokenKind::With => self.parse_with_handle_expr(),
             TokenKind::Perform => self.parse_perform_expr(),
             TokenKind::Resume => {
@@ -1870,6 +1871,98 @@ impl<'src> Parser<'src> {
                 handler: Box::new(handler),
                 body: Box::new(body),
             },
+            span: start.merge(self.previous.span),
+        }
+    }
+
+    /// Parse a try-with expression: `try { body } with { handlers }`
+    fn parse_try_with_expr(&mut self) -> Expr {
+        use crate::ast::TryWithHandler;
+
+        let start = self.current.span;
+        self.advance(); // consume 'try'
+
+        // Parse the body block
+        let body = self.parse_block();
+
+        // Expect 'with'
+        self.expect(TokenKind::With);
+
+        // Parse handler clauses in braces
+        self.expect(TokenKind::LBrace);
+
+        let mut handlers = Vec::new();
+        while !self.check(TokenKind::RBrace) && !self.is_at_end() {
+            let handler_start = self.current.span;
+
+            // Parse Effect::operation pattern
+            // e.g., LexerDiagnostic::error(msg, span)
+            // The path includes both effect and operation, so we split them
+            let full_path = self.parse_type_path();
+
+            // Split the path: all but last segment is effect, last segment is operation
+            let (effect, operation) = if full_path.segments.len() >= 2 {
+                // Take all but the last segment as effect path
+                let mut effect_segments = full_path.segments.clone();
+                let op_segment = effect_segments.pop().unwrap();
+                let effect_path = crate::ast::TypePath {
+                    segments: effect_segments,
+                    span: full_path.span,
+                };
+                (effect_path, op_segment.name)
+            } else if full_path.segments.len() == 1 {
+                // Single segment - this is just the operation, no effect path
+                let op_segment = &full_path.segments[0];
+                let empty_effect = crate::ast::TypePath {
+                    segments: vec![],
+                    span: full_path.span,
+                };
+                (empty_effect, op_segment.name.clone())
+            } else {
+                self.error_expected("effect::operation pattern");
+                let empty = crate::ast::TypePath { segments: vec![], span: self.current.span };
+                (empty, Spanned::new(self.intern(""), self.current.span))
+            };
+
+            // Parse parameters
+            self.expect(TokenKind::LParen);
+            let mut params = Vec::new();
+            while !self.check(TokenKind::RParen) && !self.is_at_end() {
+                params.push(self.parse_pattern());
+                if !self.try_consume(TokenKind::Comma) {
+                    break;
+                }
+            }
+            self.expect(TokenKind::RParen);
+
+            // Expect '=>' or ':'
+            if self.check(TokenKind::FatArrow) {
+                self.advance();
+            } else if self.check(TokenKind::Colon) {
+                self.advance();
+            } else {
+                self.expect(TokenKind::FatArrow); // This will generate error
+            }
+
+            // Parse handler body
+            let handler_body = self.parse_block();
+
+            handlers.push(TryWithHandler {
+                effect,
+                operation,
+                params,
+                body: handler_body,
+                span: handler_start.merge(self.previous.span),
+            });
+
+            // Consume optional comma between handlers
+            self.try_consume(TokenKind::Comma);
+        }
+
+        self.expect(TokenKind::RBrace);
+
+        Expr {
+            kind: ExprKind::TryWith { body, handlers },
             span: start.merge(self.previous.span),
         }
     }

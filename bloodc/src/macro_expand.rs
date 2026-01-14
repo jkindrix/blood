@@ -374,6 +374,12 @@ impl MacroExpander {
                 self.expand_expr(handler);
                 self.expand_expr(body);
             }
+            ExprKind::TryWith { body, handlers } => {
+                self.expand_block(body);
+                for handler in handlers {
+                    self.expand_block(&mut handler.body);
+                }
+            }
             ExprKind::Record { fields, base, .. } => {
                 for field in fields {
                     if let Some(ref mut value) = field.value {

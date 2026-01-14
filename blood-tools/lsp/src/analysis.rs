@@ -672,6 +672,12 @@ impl SemanticAnalyzer {
                 self.collect_expr_symbols(handler, source, interner, symbols, symbol_at_offset);
                 self.collect_expr_symbols(body, source, interner, symbols, symbol_at_offset);
             }
+            ExprKind::TryWith { body, handlers } => {
+                self.collect_block_symbols(body, source, interner, symbols, symbol_at_offset);
+                for handler in handlers {
+                    self.collect_block_symbols(&handler.body, source, interner, symbols, symbol_at_offset);
+                }
+            }
             ExprKind::Binary { left, right, .. } => {
                 self.collect_expr_symbols(left, source, interner, symbols, symbol_at_offset);
                 self.collect_expr_symbols(right, source, interner, symbols, symbol_at_offset);

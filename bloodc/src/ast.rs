@@ -415,6 +415,21 @@ pub struct OperationImpl {
     pub span: Span,
 }
 
+/// Handler clause in a try-with expression.
+/// Example: `Effect::op(x, y) => { body }`
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TryWithHandler {
+    /// The effect path, e.g., `LexerDiagnostic` in `LexerDiagnostic::error`
+    pub effect: TypePath,
+    /// The operation name, e.g., `error` in `LexerDiagnostic::error`
+    pub operation: Spanned<Symbol>,
+    /// Parameter patterns for the operation
+    pub params: Vec<Pattern>,
+    /// The handler body
+    pub body: Block,
+    pub span: Span,
+}
+
 // ============================================================
 // Trait and Implementation
 // ============================================================
@@ -1094,6 +1109,12 @@ pub enum ExprKind {
 
     /// Resume: `resume(x)`
     Resume(Box<Expr>),
+
+    /// Try-with inline handler: `try { body } with { handlers }`
+    TryWith {
+        body: Block,
+        handlers: Vec<TryWithHandler>,
+    },
 
     /// Unsafe block: `@unsafe { }`
     Unsafe(Block),
