@@ -37,7 +37,8 @@ use crate::hir;
 use crate::hir::DefId;
 
 /// Cache format version. Increment when changing cache structure.
-pub const CACHE_VERSION: u32 = 1;
+/// v2: Handler name hashing fix (36e0804) - invalidate old effect handler caches
+pub const CACHE_VERSION: u32 = 2;
 
 /// Build cache for content-addressed compilation artifacts.
 #[derive(Debug)]
@@ -1790,8 +1791,8 @@ mod tests {
         let cache = BuildCache::with_dir(temp_dir.path().to_path_buf());
         cache.init().unwrap();
 
-        assert!(temp_dir.path().join("v1/objects").exists());
-        assert!(temp_dir.path().join("v1/ir").exists());
+        assert!(temp_dir.path().join("v2/objects").exists());
+        assert!(temp_dir.path().join("v2/ir").exists());
     }
 
     #[test]
