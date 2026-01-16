@@ -1234,24 +1234,82 @@ pub trait ExprLowering {
     }
 
     /// Lower a struct construction expression.
+    ///
+    /// Supports struct spread syntax: `MyStruct { field1: val1, ..base }`
+    /// When a base is provided, fields not explicitly given are copied from the base.
     fn lower_struct(
         &mut self,
         def_id: DefId,
         fields: &[FieldExpr],
-        _base: Option<&Expr>,
+        base: Option<&Expr>,
         ty: &Type,
         span: Span,
     ) -> Result<Operand, Vec<Diagnostic>> {
-        let mut operands = Vec::with_capacity(fields.len());
-        for field in fields {
-            operands.push(self.lower_expr(&field.value)?);
-        }
-
         // Extract type arguments from the struct type
         let type_args = if let TypeKind::Adt { args, .. } = ty.kind() {
             args.clone()
         } else {
             vec![]
+        };
+
+        // Build operands for all fields
+        let operands = if let Some(base_expr) = base {
+            // Struct spread: need to get field count from struct definition
+            let num_fields = self.get_struct_field_count(def_id);
+
+            // Lower the base expression
+            let base_operand = self.lower_expr(base_expr)?;
+            let base_temp = match &base_operand {
+                Operand::Copy(place) | Operand::Move(place) => place.clone(),
+                Operand::Constant(_) => {
+                    // Need to store constant in a temp for field access
+                    let temp = self.new_temp(base_expr.ty.clone(), span);
+                    self.push_assign(Place::local(temp), Rvalue::Use(base_operand));
+                    Place::local(temp)
+                }
+            };
+
+            // Collect explicitly provided field indices and their lowered values
+            let mut explicit_fields: std::collections::HashMap<u32, Operand> = std::collections::HashMap::new();
+            for field in fields {
+                let value_operand = self.lower_expr(&field.value)?;
+                explicit_fields.insert(field.field_idx, value_operand);
+            }
+
+            // Build operands for all fields in order
+            let mut all_operands = Vec::with_capacity(num_fields);
+            for idx in 0..num_fields {
+                let operand = if let Some(explicit) = explicit_fields.remove(&(idx as u32)) {
+                    // Use explicitly provided value
+                    explicit
+                } else {
+                    // Extract from base using field projection
+                    let field_ty = self.get_struct_field_type(def_id, idx as u32, &type_args);
+                    let field_place = Place {
+                        local: base_temp.local,
+                        projection: {
+                            let mut proj = base_temp.projection.clone();
+                            proj.push(PlaceElem::Field(idx as u32));
+                            proj
+                        },
+                    };
+                    let field_temp = self.new_temp(field_ty.clone(), span);
+                    self.push_assign(Place::local(field_temp), Rvalue::Use(Operand::Copy(field_place)));
+                    Operand::Copy(Place::local(field_temp))
+                };
+                all_operands.push(operand);
+            }
+
+            all_operands
+        } else {
+            // No base - all fields must be explicitly provided
+            // Sort by field index to ensure correct order
+            let mut indexed_fields: Vec<(u32, Operand)> = Vec::with_capacity(fields.len());
+            for field in fields {
+                indexed_fields.push((field.field_idx, self.lower_expr(&field.value)?));
+            }
+            indexed_fields.sort_by_key(|(idx, _)| *idx);
+            indexed_fields.into_iter().map(|(_, op)| op).collect()
         };
 
         let temp = self.new_temp(ty.clone(), span);
@@ -1268,6 +1326,101 @@ pub trait ExprLowering {
         );
 
         Ok(Operand::Copy(Place::local(temp)))
+    }
+
+    /// Get the number of fields in a struct.
+    fn get_struct_field_count(&self, def_id: DefId) -> usize {
+        use crate::hir::{ItemKind, StructKind};
+
+        if let Some(item) = self.hir().get_item(def_id) {
+            if let ItemKind::Struct(struct_def) = &item.kind {
+                return match &struct_def.kind {
+                    StructKind::Record(fields) => fields.len(),
+                    StructKind::Tuple(fields) => fields.len(),
+                    StructKind::Unit => 0,
+                };
+            }
+        }
+        // Fallback for builtin types or missing definitions
+        0
+    }
+
+    /// Get the type of a struct field by index.
+    ///
+    /// If the struct is generic, type_args provides the concrete types to substitute.
+    fn get_struct_field_type(&self, def_id: DefId, field_idx: u32, type_args: &[Type]) -> Type {
+        use crate::hir::{ItemKind, StructKind, GenericParamKind};
+        use crate::hir::ty::TyVarId;
+
+        if let Some(item) = self.hir().get_item(def_id) {
+            if let ItemKind::Struct(struct_def) = &item.kind {
+                let fields = match &struct_def.kind {
+                    StructKind::Record(fields) => fields,
+                    StructKind::Tuple(fields) => fields,
+                    StructKind::Unit => return Type::unit(),
+                };
+
+                if let Some(field) = fields.iter().find(|f| f.index == field_idx) {
+                    // Substitute type parameters if needed
+                    // Build a map from type parameter TyVarIds to concrete types
+                    if !type_args.is_empty() && !struct_def.generics.params.is_empty() {
+                        // Collect type parameter indices by matching GenericParamKind::Type
+                        let mut type_param_idx = 0usize;
+                        let mut subst: std::collections::HashMap<TyVarId, Type> = std::collections::HashMap::new();
+
+                        for param in &struct_def.generics.params {
+                            if matches!(param.kind, GenericParamKind::Type { .. }) {
+                                if let Some(arg) = type_args.get(type_param_idx) {
+                                    // The TyVarId for a type param is derived from the param index
+                                    // This is a simplification - ideally we'd track the mapping properly
+                                    let ty_var = TyVarId(type_param_idx as u32);
+                                    subst.insert(ty_var, arg.clone());
+                                }
+                                type_param_idx += 1;
+                            }
+                        }
+
+                        return self.substitute_type(&field.ty, &subst);
+                    }
+                    return field.ty.clone();
+                }
+            }
+        }
+        // Fallback
+        Type::error()
+    }
+
+    /// Substitute type parameters in a type.
+    fn substitute_type(&self, ty: &Type, subst: &std::collections::HashMap<crate::hir::ty::TyVarId, Type>) -> Type {
+        use crate::hir::ty::TypeKind;
+
+        match ty.kind() {
+            TypeKind::Param(id) => {
+                subst.get(id).cloned().unwrap_or_else(|| ty.clone())
+            }
+            TypeKind::Adt { def_id, args } => {
+                let new_args: Vec<Type> = args.iter()
+                    .map(|arg| self.substitute_type(arg, subst))
+                    .collect();
+                Type::adt(*def_id, new_args)
+            }
+            TypeKind::Ref { inner, mutable } => {
+                Type::reference(self.substitute_type(inner, subst), *mutable)
+            }
+            TypeKind::Array { element, size } => {
+                Type::array(self.substitute_type(element, subst), *size)
+            }
+            TypeKind::Slice { element } => {
+                Type::slice(self.substitute_type(element, subst))
+            }
+            TypeKind::Tuple(elements) => {
+                let new_elements: Vec<Type> = elements.iter()
+                    .map(|e| self.substitute_type(e, subst))
+                    .collect();
+                Type::tuple(new_elements)
+            }
+            _ => ty.clone(),
+        }
     }
 
     /// Lower a record (anonymous struct) expression.
