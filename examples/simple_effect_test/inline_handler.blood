@@ -1,0 +1,26 @@
+// Test: Inline effect handlers
+// This tests the `try { } with { }` syntax for inline handlers
+
+effect Emit<T> {
+    op emit(value: T) -> ();
+}
+
+fn emit_numbers() / {Emit<i32>} {
+    perform Emit.emit(1);
+    perform Emit.emit(2);
+    perform Emit.emit(3);
+}
+
+fn main() {
+    // Use inline handler syntax to handle the Emit effect
+    let result = try {
+        emit_numbers();
+        42
+    } with {
+        Emit::emit(value) => {
+            // Print the value (using println which is pure)
+            // For now just resume - handler body runs but we can't accumulate
+            resume(());
+        }
+    };
+}
