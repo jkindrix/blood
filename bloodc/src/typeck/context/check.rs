@@ -261,6 +261,40 @@ impl<'a> TypeContext<'a> {
         let saved_return_type = self.return_type.take();
         let saved_current_fn = self.current_fn.take();
 
+        // Register generic type parameters so they're in scope for type annotations in the body
+        // This allows `let x: T = ...` to resolve T when the function is `fn foo<T>(...)`
+        let saved_generic_params = std::mem::take(&mut self.generic_params);
+        let saved_const_params = std::mem::take(&mut self.const_params);
+        let saved_lifetime_params = std::mem::take(&mut self.lifetime_params);
+
+        if let Some(ref type_params) = func.type_params {
+            // Map type param names from AST to TyVarIds from the signature
+            let mut generic_idx = 0;
+            for generic_param in &type_params.params {
+                match generic_param {
+                    ast::GenericParam::Type(type_param) => {
+                        let param_name = self.symbol_to_string(type_param.name.node);
+                        if generic_idx < sig.generics.len() {
+                            self.generic_params.insert(param_name, sig.generics[generic_idx]);
+                            generic_idx += 1;
+                        }
+                    }
+                    ast::GenericParam::Lifetime(lifetime_param) => {
+                        let param_name = self.symbol_to_string(lifetime_param.name.node);
+                        let lifetime_id = hir::LifetimeId::new(self.next_lifetime_id);
+                        self.next_lifetime_id += 1;
+                        self.lifetime_params.insert(param_name, lifetime_id);
+                    }
+                    ast::GenericParam::Const(const_param) => {
+                        let param_name = self.symbol_to_string(const_param.name.node);
+                        let const_id = hir::ConstParamId::new(self.next_const_param_id);
+                        self.next_const_param_id += 1;
+                        self.const_params.insert(param_name, const_id);
+                    }
+                }
+            }
+        }
+
         // Set up function scope
         self.resolver.push_scope(ScopeKind::Function, body.span);
         self.resolver.reset_local_ids();
@@ -414,6 +448,9 @@ impl<'a> TypeContext<'a> {
         self.locals = saved_locals;
         self.return_type = saved_return_type;
         self.current_fn = saved_current_fn;
+        self.generic_params = saved_generic_params;
+        self.const_params = saved_const_params;
+        self.lifetime_params = saved_lifetime_params;
 
         Ok(())
     }

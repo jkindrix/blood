@@ -28,12 +28,26 @@ impl<'a> TypeContext<'a> {
         is_move: bool,
         params: &[ast::ClosureParam],
         return_type: Option<&ast::Type>,
+        effects: Option<&ast::EffectRow>,
         body: &ast::Expr,
         span: Span,
     ) -> Result<hir::Expr, TypeError> {
         // Save current locals and create fresh ones for closure
         let outer_locals = std::mem::take(&mut self.locals);
         let outer_return_type = self.return_type.take();
+
+        // Parse and register closure's effect annotation if present.
+        // This ensures that `perform Effect.op()` inside the closure uses the closure's
+        // effect type arguments, not the enclosing function's.
+        let closure_effects_count = if let Some(effect_row) = effects {
+            let (effect_refs, _row_var) = self.parse_effect_row(effect_row)?;
+            for effect_ref in &effect_refs {
+                self.handled_effects.push((effect_ref.def_id, effect_ref.type_args.clone()));
+            }
+            effect_refs.len()
+        } else {
+            0
+        };
 
         // Push closure scope (don't reset local IDs - closures share outer function's ID space)
         self.resolver.push_scope(ScopeKind::Closure, span);
@@ -202,6 +216,11 @@ impl<'a> TypeContext<'a> {
 
         // Pop closure scope
         self.resolver.pop_scope();
+
+        // Pop the closure's effects from handled_effects stack
+        for _ in 0..closure_effects_count {
+            self.handled_effects.pop();
+        }
 
         // Restore outer context
         self.locals = outer_locals;

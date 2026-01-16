@@ -109,8 +109,8 @@ impl<'a> TypeContext<'a> {
             ast::ExprKind::Field { base: field_base, field } => {
                 self.infer_field_access(field_base, field, expr.span)
             }
-            ast::ExprKind::Closure { is_move, params, return_type, effects: _, body } => {
-                self.infer_closure(*is_move, params, return_type.as_ref(), body, expr.span)
+            ast::ExprKind::Closure { is_move, params, return_type, effects, body } => {
+                self.infer_closure(*is_move, params, return_type.as_ref(), effects.as_ref(), body, expr.span)
             }
             ast::ExprKind::WithHandle { handler, body } => {
                 self.infer_with_handle(handler, body, expr.span)
