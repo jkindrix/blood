@@ -469,12 +469,12 @@ impl Lexer {
 
     /// Peek at current character
     fn peek(&self) -> Option<char> {
-        self.source.chars().nth(self.pos)
+        self.source.char_at(self.pos)
     }
 
     /// Peek at character at offset
     fn peek_at(&self, offset: usize) -> Option<char> {
-        self.source.chars().nth(self.pos + offset)
+        self.source.char_at(self.pos + offset)
     }
 
     /// Advance to next character
@@ -653,7 +653,7 @@ impl Lexer {
         }
 
         // Check if it's a keyword
-        let kind = match Keyword::from_str(&ident) {
+        let kind = match Keyword::from_str(ident.as_str()) {
             Some(Keyword::True) => TokenKind::BoolLiteral(true),
             Some(Keyword::False) => TokenKind::BoolLiteral(false),
             Some(kw) => TokenKind::Keyword(kw),
@@ -738,9 +738,9 @@ impl Lexer {
 
         // Parse the number
         let kind = if has_dot || has_exp {
-            match num_str.parse::<f64>() {
-                Ok(f) => TokenKind::FloatLiteral(f),
-                Err(_) => {
+            match parse_f64(num_str.as_str()) {
+                Some(f) => TokenKind::FloatLiteral(f),
+                None => {
                     perform LexerDiagnostic.error(
                         format!("Invalid float literal: {}", num_str),
                         self.make_span()
@@ -749,9 +749,9 @@ impl Lexer {
                 }
             }
         } else {
-            match i64::from_str_radix(&num_str, base) {
-                Ok(i) => TokenKind::IntLiteral(i),
-                Err(_) => {
+            match parse_i64_radix(num_str.as_str(), base) {
+                Some(i) => TokenKind::IntLiteral(i),
+                None => {
                     perform LexerDiagnostic.error(
                         format!("Invalid integer literal: {}", num_str),
                         self.make_span()
@@ -924,7 +924,12 @@ impl Lexer {
                         }
                     }
                 }
-                u8::from_str_radix(&hex, 16).ok().map(|n| n as char)
+                // Parse hex and convert to char
+                match parse_u8_radix(hex.as_str(), 16) {
+                    Some(n) => Some(n as char),
+                    // Use helper function for correctly typed None
+                    None => no_char()
+                }
             },
             'u' => {
                 // \u{NNNN}
@@ -957,9 +962,11 @@ impl Lexer {
                     return None;
                 }
 
-                u32::from_str_radix(&hex, 16)
-                    .ok()
-                    .and_then(char::from_u32)
+                // Parse the hex string as u32 and convert to char
+                match parse_u32_radix(hex.as_str(), 16) {
+                    Some(code_point) => char_from_u32(code_point),
+                    None => no_char()
+                }
             },
             _ => {
                 perform LexerDiagnostic.warning(
@@ -1113,6 +1120,12 @@ fn is_digit_for_base(ch: char, base: u32) -> bool {
     }
 }
 
+/// Helper to return None with type Option<char>
+/// (workaround for type inference limitation)
+fn no_char() -> Option<char> {
+    None
+}
+
 // ============================================================================
 // Token Display
 // ============================================================================
@@ -1252,19 +1265,23 @@ impl<T: Add> Point<T> {
     let mut lexer = Lexer::new(source.to_string(), "example.blood".to_string());
 
     // Tokenize
-    print("Tokenizing source code...\n");
+    println!("Tokenizing source code...");
     let tokens = lexer.tokenize();
 
     // Display tokens
-    print("Tokens found: {}\n", tokens.len());
-    print("{:-<60}", "");
+    println!("Tokens found: {}", tokens.len());
+    println!("{:-<60}", "");
 
-    for token in &tokens {
-        let pos = token.span.start;
-        print("{:4}:{:<3} | {}", pos.line, pos.column, token.kind.description());
+    let num_tokens: i32 = tokens.len() as i32;
+    for i in 0..num_tokens {
+        let idx: usize = i as usize;
+        if let Some(token) = tokens.get(idx) {
+            let pos = token.span.start;
+            println!("{:4}:{:<3} | {}", pos.line, pos.column, token.kind.description());
+        }
     }
 
-    print("{:-<60}", "");
+    println!("{:-<60}", "");
 
     // Statistics
     let mut keywords = 0;
@@ -1273,56 +1290,65 @@ impl<T: Add> Point<T> {
     let mut operators = 0;
     let mut delimiters = 0;
 
-    for token in &tokens {
-        match &token.kind {
-            TokenKind::Keyword(_) => keywords += 1,
-            TokenKind::Ident(_) => idents += 1,
-            TokenKind::IntLiteral(_) |
-            TokenKind::FloatLiteral(_) |
-            TokenKind::StringLiteral(_) |
-            TokenKind::CharLiteral(_) |
-            TokenKind::BoolLiteral(_) => literals += 1,
-            TokenKind::Plus | TokenKind::Minus | TokenKind::Star |
-            TokenKind::Slash | TokenKind::Percent | TokenKind::EqEq |
-            TokenKind::NotEq | TokenKind::Lt | TokenKind::LtEq |
-            TokenKind::Gt | TokenKind::GtEq | TokenKind::And |
-            TokenKind::Or | TokenKind::AndAnd | TokenKind::OrOr |
-            TokenKind::Not | TokenKind::Eq | TokenKind::Arrow |
-            TokenKind::FatArrow | TokenKind::DotDot | TokenKind::DotDotEq => operators += 1,
-            TokenKind::LParen | TokenKind::RParen |
-            TokenKind::LBracket | TokenKind::RBracket |
-            TokenKind::LBrace | TokenKind::RBrace |
-            TokenKind::Comma | TokenKind::Semi |
-            TokenKind::Colon | TokenKind::ColonColon |
-            TokenKind::Dot => delimiters += 1,
-            _ => {}
+    for j in 0..num_tokens {
+        let jdx: usize = j as usize;
+        if let Some(token) = tokens.get(jdx) {
+            match &token.kind {
+                TokenKind::Keyword(_) => keywords += 1,
+                TokenKind::Ident(_) => idents += 1,
+                TokenKind::IntLiteral(_) |
+                TokenKind::FloatLiteral(_) |
+                TokenKind::StringLiteral(_) |
+                TokenKind::CharLiteral(_) |
+                TokenKind::BoolLiteral(_) => literals += 1,
+                TokenKind::Plus | TokenKind::Minus | TokenKind::Star |
+                TokenKind::Slash | TokenKind::Percent | TokenKind::EqEq |
+                TokenKind::NotEq | TokenKind::Lt | TokenKind::LtEq |
+                TokenKind::Gt | TokenKind::GtEq | TokenKind::And |
+                TokenKind::Or | TokenKind::AndAnd | TokenKind::OrOr |
+                TokenKind::Not | TokenKind::Eq | TokenKind::Arrow |
+                TokenKind::FatArrow | TokenKind::DotDot | TokenKind::DotDotEq => operators += 1,
+                TokenKind::LParen | TokenKind::RParen |
+                TokenKind::LBracket | TokenKind::RBracket |
+                TokenKind::LBrace | TokenKind::RBrace |
+                TokenKind::Comma | TokenKind::Semi |
+                TokenKind::Colon | TokenKind::ColonColon |
+                TokenKind::Dot => delimiters += 1,
+                _ => {}
+            }
         }
     }
 
-    print("\n=== Token Statistics ===");
-    print("Keywords:   {}", keywords);
-    print("Identifiers: {}", idents);
-    print("Literals:    {}", literals);
-    print("Operators:   {}", operators);
-    print("Delimiters:  {}", delimiters);
-    print("Total:       {}", tokens.len());
+    println!("\n=== Token Statistics ===");
+    println!("Keywords:   {}", keywords);
+    println!("Identifiers: {}", idents);
+    println!("Literals:    {}", literals);
+    println!("Operators:   {}", operators);
+    println!("Delimiters:  {}", delimiters);
+    println!("Total:       {}", tokens.len());
 
-    print("\n=== Lexer test completed successfully! ===");
+    println!("\n=== Lexer test completed successfully! ===");
     0
+}
+
+// Deep handler for LexerDiagnostic
+deep handler DiagnosticPrinter for LexerDiagnostic {
+    return(x) { x }
+
+    op error(msg, span) {
+        println!("ERROR [{}:{}]: {}", span.start.line, span.start.column, msg);
+        resume(())
+    }
+
+    op warning(msg, span) {
+        println!("WARNING [{}:{}]: {}", span.start.line, span.start.column, msg);
+        resume(())
+    }
 }
 
 // Error handler for diagnostics
 fn main_with_handler() -> i32 / {IO} {
-    try {
+    with DiagnosticPrinter {} handle {
         main()
-    } with {
-        LexerDiagnostic::error(msg, span) => {
-            print("ERROR [{}:{}]: {}", span.start.line, span.start.column, msg);
-            resume(())
-        },
-        LexerDiagnostic::warning(msg, span) => {
-            print("WARNING [{}:{}]: {}", span.start.line, span.start.column, msg);
-            resume(())
-        },
     }
 }
