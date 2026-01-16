@@ -108,6 +108,10 @@ fn is_exhaustive(
             // For fixed-size arrays, check if patterns cover all elements
             check_array_exhaustiveness(patterns, element, *size)
         }
+        TypeKind::Ref { inner, .. } => {
+            // Look through references to check exhaustiveness of the inner type
+            is_exhaustive(patterns, inner, enum_info)
+        }
         _ => {
             // For other types (integers, strings, etc.), we can't check exhaustiveness
             // without literal patterns, so we require a wildcard

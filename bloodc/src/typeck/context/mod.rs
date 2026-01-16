@@ -1527,6 +1527,7 @@ impl<'a> TypeContext<'a> {
     }
 
     /// Get enum variant info for exhaustiveness checking.
+    /// This looks through references to find the underlying ADT type.
     pub(crate) fn get_enum_variant_info(&self, ty: &Type) -> Option<exhaustiveness::EnumVariantInfo> {
         match ty.kind() {
             TypeKind::Adt { def_id, .. } => {
@@ -1537,6 +1538,8 @@ impl<'a> TypeContext<'a> {
                             .collect(),
                     })
             }
+            // Look through references to find the underlying enum type
+            TypeKind::Ref { inner, .. } => self.get_enum_variant_info(inner),
             _ => None,
         }
     }
