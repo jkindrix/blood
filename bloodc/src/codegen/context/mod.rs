@@ -2135,15 +2135,17 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // Clone and substitute types in MIR body
         let mono_mir = substitute_mir_types(&mir_body, &subst);
 
-        // Build mangled name for monomorphized function
-        let base_name = format!("blood_mono_{}_{}", generic_def_id.index(), mono_def_id.index());
+        // Build mangled name for monomorphized function.
+        // Use only generic_def_id and concrete types (not mono_def_id) so the name
+        // is stable across compilation units. Combined with LinkOnceODR linkage,
+        // this allows the linker to merge identical instantiations.
         let param_mangles: Vec<String> = concrete_params.iter()
             .map(|ty| Self::mangle_type(ty))
             .collect();
         let llvm_name = if param_mangles.is_empty() {
-            base_name
+            format!("blood_mono_{}", generic_def_id.index())
         } else {
-            format!("{}${}", base_name, param_mangles.join("$"))
+            format!("blood_mono_{}${}", generic_def_id.index(), param_mangles.join("$"))
         };
 
         // Build LLVM function type from concrete types
@@ -2158,8 +2160,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             llvm_ret_type.fn_type(&param_types, false)
         };
 
-        // Declare the monomorphized function
-        let fn_value = self.module.add_function(&llvm_name, fn_type, None);
+        // Declare the monomorphized function with LinkOnceODR linkage.
+        // This allows the linker to merge identical instantiations when
+        // multiple closures/functions call the same generic with the same types.
+        use inkwell::module::Linkage;
+        let fn_value = self.module.add_function(&llvm_name, fn_type, Some(Linkage::LinkOnceODR));
         self.functions.insert(mono_def_id, fn_value);
 
         // Cache the monomorphization
