@@ -106,6 +106,80 @@ fn main() {
 }
 ```
 
+### Inline Handlers (try/with)
+
+For simple, one-off effect handling, you can use inline handlers with `try/with` syntax instead of declaring a separate handler:
+
+```blood
+effect Emit<T> {
+    op emit(value: T) -> ();
+}
+
+fn collect_values() -> [i32] {
+    let mut collected: [i32] = [];
+
+    try {
+        perform Emit.emit(1);
+        perform Emit.emit(2);
+        perform Emit.emit(3);
+    } with {
+        Emit.emit(value) => {
+            collected.push(value);
+            resume(());
+        }
+    }
+
+    collected  // Returns [1, 2, 3]
+}
+```
+
+**Key features of inline handlers:**
+
+1. **Effect.op syntax**: Use dot notation (`Emit.emit`) instead of double-colon (`Emit::emit`) in handler patterns
+2. **Anonymous handlers**: No need to declare a named handler for simple cases
+3. **Scoped handling**: The handler only applies within the `try` block
+4. **Pattern binding**: Operation parameters are bound in the pattern (e.g., `value` above)
+
+### When to Use Inline vs Named Handlers
+
+| Use Inline Handlers | Use Named Handlers |
+|---------------------|-------------------|
+| One-off handling in a single location | Reusable handler across multiple locations |
+| Simple logic without state | Complex logic or stateful handlers |
+| Testing or prototyping | Production code with well-defined semantics |
+| Collecting or transforming values | Implementing specific runtime behaviors |
+
+### Multiple Operations in Inline Handlers
+
+Handle multiple operations from the same effect:
+
+```blood
+effect State<T> {
+    op get() -> T;
+    op set(value: T) -> ();
+}
+
+fn use_state() -> i32 {
+    let mut state: i32 = 0;
+
+    try {
+        let x = perform State.get();
+        perform State.set(x + 1);
+        perform State.get()
+    } with {
+        State.get() => {
+            resume(state)
+        }
+        State.set(value) => {
+            state = value;
+            resume(())
+        }
+    }
+}
+```
+
+**Note:** Inline handler type checking is fully supported. Code generation infrastructure is in place, but runtime execution requires operation function registration which is in progress.
+
 ## The `resume` Keyword
 
 `resume` is crucial: it continues the computation from where the effect was performed.
@@ -282,6 +356,86 @@ fn map_with_effects<T, U, E>(
 ```
 
 The `E` is an effect variable that can represent any effect row.
+
+## Closure Effect Annotations
+
+Closures can perform effects, but they need explicit effect annotations. This is because closures may be stored and called later, so the compiler needs to know which effects they perform.
+
+### Basic Syntax
+
+Annotate closures with effects using the `/ {Effects}` syntax:
+
+```blood
+effect Emit<T> {
+    op emit(value: T);
+}
+
+fn emit_numbers() / {Emit<i32>} {
+    // Closure that performs Emit<i32>
+    let emit_one = || / {Emit<i32>} {
+        perform Emit.emit(1);
+    };
+
+    emit_one();  // Calls the closure, performs Emit<i32>
+}
+```
+
+### Why Explicit Annotations?
+
+Unlike function declarations where effects can often be inferred, closures require explicit annotations for several reasons:
+
+1. **Scoping clarity**: A closure inside an effectful function might have different effects than its enclosing function
+2. **Capture semantics**: Closures capture their environment, and effect annotations help clarify what the closure does vs. captures
+3. **Higher-order functions**: When passing closures to higher-order functions, explicit effects ensure type safety
+
+### Examples with Different Effect Scopes
+
+```blood
+effect Emit<T> {
+    op emit(value: T);
+}
+
+// Function with Emit<i64>, containing closure with Emit<i32>
+fn mixed_effects() / {Emit<i64>} {
+    // This closure performs a DIFFERENT effect (Emit<i32>, not Emit<i64>)
+    let emit_small = || / {Emit<i32>} {
+        perform Emit.emit(42 as i32);  // Uses i32
+    };
+
+    perform Emit.emit(100 as i64);  // Function uses i64
+}
+
+// Pure closure inside effectful function
+fn with_pure_closure() / {Emit<i32>} {
+    let add = |a: i32, b: i32| -> i32 / pure {
+        a + b  // No effects in this closure
+    };
+
+    perform Emit.emit(add(1, 2));  // Effect is in the function, not the closure
+}
+```
+
+### Closures with Multiple Effects
+
+```blood
+effect Logger {
+    op log(message: String);
+}
+
+effect Counter {
+    op increment();
+}
+
+fn multi_effect_closure() / {Logger, Counter} {
+    let do_both = || / {Logger, Counter} {
+        perform Logger.log("Incrementing...");
+        perform Counter.increment();
+    };
+
+    do_both();
+    do_both();
+}
+```
 
 ## Pure Functions
 

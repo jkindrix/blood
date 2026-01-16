@@ -155,6 +155,9 @@ pub trait Visitor: Sized {
             StatementKind::PushHandler { handler_id: _, state_place, state_kind: _, allocation_tier: _, inline_mode: _ } => {
                 self.visit_place(state_place, PlaceContext::Read, location);
             }
+            StatementKind::PushInlineHandler { effect_id: _, operations: _, allocation_tier: _, inline_mode: _ } => {
+                // Inline handlers have no state place to visit
+            }
             StatementKind::PopHandler => {
                 // No places or operands to visit
             }

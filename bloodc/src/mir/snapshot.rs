@@ -1031,7 +1031,7 @@ impl LivenessAnalysis {
                     let _ = local;
                 }
                 StatementKind::Nop => {}
-                StatementKind::PushHandler { .. } | StatementKind::PopHandler => {
+                StatementKind::PushHandler { .. } | StatementKind::PushInlineHandler { .. } | StatementKind::PopHandler => {
                     // Effect handler statements don't use or define locals
                 }
                 StatementKind::CallReturnClause { body_result, state_place, destination, .. } => {

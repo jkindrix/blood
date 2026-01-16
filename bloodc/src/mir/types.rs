@@ -135,6 +135,23 @@ impl Statement {
     }
 }
 
+/// An inline handler operation for `try { } with { }` expressions.
+///
+/// This represents a single operation handler defined inline in a `with` block.
+#[derive(Debug, Clone)]
+pub struct InlineHandlerOp {
+    /// The operation name (e.g., "emit" for Emit.emit).
+    pub op_name: String,
+    /// The operation index within the effect.
+    pub op_index: u32,
+    /// Synthetic DefId for the generated handler function.
+    pub synthetic_fn_def_id: DefId,
+    /// Parameter types for the operation.
+    pub param_types: Vec<Type>,
+    /// Return type of the operation.
+    pub return_type: Type,
+}
+
 /// The kind of a statement.
 ///
 /// Based on [RFC 1211](https://rust-lang.github.io/rfcs/1211-mir.html):
@@ -221,6 +238,23 @@ pub enum StatementKind {
     /// This removes the most recently pushed handler, restoring the
     /// previous handler state.
     PopHandler,
+
+    /// Push an inline effect handler onto the evidence vector.
+    ///
+    /// This is used for `try { } with { }` inline handlers. Unlike `PushHandler`,
+    /// inline handlers don't reference a pre-declared handler definition. Instead,
+    /// they carry references to synthetic functions generated during MIR lowering.
+    PushInlineHandler {
+        /// The effect being handled.
+        effect_id: DefId,
+        /// The inline handler operations. Each entry is:
+        /// (op_name, op_index, synthetic_fn_def_id, param_types, return_type)
+        operations: Vec<InlineHandlerOp>,
+        /// Memory tier for handler evidence allocation.
+        allocation_tier: MemoryTier,
+        /// Inline evidence mode for optimized evidence passing.
+        inline_mode: InlineEvidenceMode,
+    },
 
     /// Call a handler's return clause to transform the body result.
     ///

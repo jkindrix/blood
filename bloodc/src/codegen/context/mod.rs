@@ -315,6 +315,15 @@ fn substitute_statement_types(stmt: &mut crate::mir::types::Statement, subst: &H
         StatementKind::Assign(_, rvalue) => {
             substitute_rvalue_types(rvalue, subst);
         }
+        // PushInlineHandler contains types in operations that need substitution
+        StatementKind::PushInlineHandler { operations, .. } => {
+            for op in operations {
+                for ty in &mut op.param_types {
+                    substitute_type(ty, subst);
+                }
+                substitute_type(&mut op.return_type, subst);
+            }
+        }
         // These statement kinds don't contain types that need substitution
         StatementKind::Nop
         | StatementKind::StorageLive(_)

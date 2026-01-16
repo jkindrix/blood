@@ -474,12 +474,8 @@ pub trait ExprLowering {
                 self.lower_handle(body, *handler_id, handler_instance, &expr.ty, expr.span)
             }
 
-            ExprKind::InlineHandle { .. } => {
-                // TODO: Implement inline handler lowering
-                Err(vec![Diagnostic::error(
-                    "Inline handlers are not yet supported in code generation",
-                    expr.span,
-                )])
+            ExprKind::InlineHandle { body, handlers } => {
+                self.lower_inline_handle(body, handlers, &expr.ty, expr.span)
             }
 
             ExprKind::Range { start, end, inclusive } => {
@@ -1660,6 +1656,72 @@ pub trait ExprLowering {
             body_result,
             destination: dest_place.clone(),
         });
+
+        Ok(Operand::Copy(dest_place))
+    }
+
+    /// Lower an inline handle expression (try/with).
+    fn lower_inline_handle(
+        &mut self,
+        body: &Expr,
+        handlers: &[hir::InlineOpHandler],
+        ty: &Type,
+        span: Span,
+    ) -> Result<Operand, Vec<Diagnostic>> {
+        use crate::mir::types::InlineHandlerOp;
+
+        // Inline handlers are stateless
+        let allocation_tier = analyze_handler_allocation_tier(body);
+        let inline_context = InlineEvidenceContext::new();
+        let inline_mode = analyze_inline_evidence_mode(body, &inline_context, allocation_tier);
+
+        let effect_id = if let Some(first) = handlers.first() {
+            first.effect_id
+        } else {
+            return self.lower_expr(body);
+        };
+
+        let mut inline_ops = Vec::with_capacity(handlers.len());
+        for (idx, handler) in handlers.iter().enumerate() {
+            let synthetic_id = *self.closure_counter_mut();
+            *self.closure_counter_mut() += 1;
+            let synthetic_fn_def_id = DefId::new(0xFFFE_0000 + synthetic_id);
+
+            let op_index = self.hir().get_item(handler.effect_id)
+                .and_then(|item| {
+                    if let hir::ItemKind::Effect { operations, .. } = &item.kind {
+                        operations.iter()
+                            .position(|op| op.name == handler.op_name)
+                            .map(|i| i as u32)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(idx as u32);
+
+            inline_ops.push(InlineHandlerOp {
+                op_name: handler.op_name.clone(),
+                op_index,
+                synthetic_fn_def_id,
+                param_types: handler.param_types.clone(),
+                return_type: handler.return_type.clone(),
+            });
+        }
+
+        self.push_stmt(StatementKind::PushInlineHandler {
+            effect_id,
+            operations: inline_ops,
+            allocation_tier,
+            inline_mode,
+        });
+
+        let body_result = self.lower_expr(body)?;
+
+        self.push_stmt(StatementKind::PopHandler);
+
+        let dest = self.new_temp(ty.clone(), span);
+        let dest_place = Place::local(dest);
+        self.push_assign(dest_place.clone(), Rvalue::Use(body_result));
 
         Ok(Operand::Copy(dest_place))
     }
