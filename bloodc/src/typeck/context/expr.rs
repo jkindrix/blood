@@ -931,9 +931,18 @@ impl<'a> TypeContext<'a> {
                             // Extract the type argument from the ADT
                             if let TypeKind::Adt { args, .. } = ty.kind() {
                                 if !args.is_empty() {
+                                    let element_ty = args[0].clone();
                                     // For Option<T>.unwrap() and Option<T>.try_(), return type is T
                                     if method_name == "unwrap" || method_name == "try_" {
-                                        args[0].clone()
+                                        element_ty
+                                    } else if method_name == "get" {
+                                        // Vec<T>.get() returns Option<&T>
+                                        // Substitute T with the actual element type
+                                        let ref_elem = Type::reference(element_ty, false);
+                                        Type::adt(
+                                            self.option_def_id.expect("BUG: option_def_id not set"),
+                                            vec![ref_elem],
+                                        )
                                     } else {
                                         sig.output.clone()
                                     }
@@ -1547,12 +1556,15 @@ impl<'a> TypeContext<'a> {
             }
             ast::LiteralKind::Bool(b) => (hir::LiteralValue::Bool(*b), Type::bool()),
             ast::LiteralKind::Char(c) => (hir::LiteralValue::Char(*c), Type::char()),
-            ast::LiteralKind::String(s) => (hir::LiteralValue::String(s.clone()), Type::str()),
+            ast::LiteralKind::String(s) => {
+                // String literals are &str (reference to str), like in Rust
+                (hir::LiteralValue::String(s.clone()), Type::reference(Type::str(), false))
+            }
             ast::LiteralKind::ByteString(bytes) => {
-                // Byte string is typed as [u8] slice (fat pointer like str)
+                // Byte string literals are &[u8] (reference to u8 slice), like in Rust
                 let u8_ty = Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U8)));
                 let slice_ty = Type::slice(u8_ty);
-                (hir::LiteralValue::ByteString(bytes.clone()), slice_ty)
+                (hir::LiteralValue::ByteString(bytes.clone()), Type::reference(slice_ty, false))
             }
         };
 
@@ -1802,8 +1814,71 @@ impl<'a> TypeContext<'a> {
                             ));
                         }
                     } else {
-                        // Not an enum variant - check for associated function
-                        // (fall through to associated function check below)
+                        // Not an enum variant - check for associated function in impl blocks
+                        let self_ty = Type::adt(type_def_id, Vec::new());
+
+                        // Find the method def_id, signature, and impl block generics
+                        let mut found_method: Option<(DefId, hir::FnSig, Vec<TyVarId>)> = None;
+                        for impl_block in &self.impl_blocks {
+                            // Only check inherent impls (not trait impls)
+                            if impl_block.trait_ref.is_some() {
+                                continue;
+                            }
+                            // Check if impl block applies to this type
+                            if !self.types_match_for_impl(&impl_block.self_ty, &self_ty) {
+                                continue;
+                            }
+                            // Look for a method with matching name
+                            for method in &impl_block.methods {
+                                if method.name == second_name {
+                                    // Found the associated function!
+                                    if let Some(sig) = self.fn_sigs.get(&method.def_id).cloned() {
+                                        found_method = Some((method.def_id, sig, impl_block.generics.clone()));
+                                        break;
+                                    }
+                                }
+                            }
+                            if found_method.is_some() {
+                                break;
+                            }
+                        }
+
+                        // Process the found method outside the borrow
+                        if let Some((method_def_id, sig, impl_generics)) = found_method {
+                            // Combine impl-level and method-level generics for instantiation
+                            let all_generics: Vec<TyVarId> = impl_generics.iter()
+                                .chain(sig.generics.iter())
+                                .copied()
+                                .collect();
+
+                            let fn_ty = if all_generics.is_empty() {
+                                Type::function(sig.inputs.clone(), sig.output.clone())
+                            } else {
+                                // Create fresh type vars for all generics (impl + method)
+                                let mut substitution: HashMap<TyVarId, Type> = HashMap::new();
+                                for &old_var in &all_generics {
+                                    let fresh_var = self.unifier.fresh_var();
+                                    substitution.insert(old_var, fresh_var);
+                                }
+
+                                // Substitute in parameter types
+                                let subst_inputs: Vec<Type> = sig.inputs.iter()
+                                    .map(|ty| self.substitute_type_vars(ty, &substitution))
+                                    .collect();
+
+                                // Substitute in return type
+                                let subst_output = self.substitute_type_vars(&sig.output, &substitution);
+
+                                Type::function(subst_inputs, subst_output)
+                            };
+                            return Ok(hir::Expr::new(
+                                hir::ExprKind::Def(method_def_id),
+                                fn_ty,
+                                span,
+                            ));
+                        }
+
+                        // Fall through to error if no method found
                     }
                 } else if self.struct_defs.contains_key(&type_def_id) {
                     // It's a struct - check for associated functions in impl blocks
@@ -2844,12 +2919,14 @@ impl<'a> TypeContext<'a> {
             }
         };
 
+        // Extract variable name, or None for wildcard pattern
         let var_name = match &pattern.kind {
-            ast::PatternKind::Ident { name, .. } => self.symbol_to_string(name.node),
+            ast::PatternKind::Ident { name, .. } => Some(self.symbol_to_string(name.node)),
+            ast::PatternKind::Wildcard => None,
             _ => {
                 return Err(TypeError::new(
                     TypeErrorKind::UnsupportedFeature {
-                        feature: "For loop currently only supports simple identifier patterns".into(),
+                        feature: "For loop currently only supports simple identifier or wildcard patterns".into(),
                     },
                     pattern.span,
                 ));
@@ -2876,21 +2953,26 @@ impl<'a> TypeContext<'a> {
             span,
         });
 
-        // Register user's loop variable
-        let var_local_id = self.resolver.define_local(
-            var_name.clone(),
-            idx_ty.clone(),
-            false,
-            pattern.span,
-        )?;
+        // Register user's loop variable (only if not a wildcard pattern)
+        let var_local_id = if let Some(ref name) = var_name {
+            let local_id = self.resolver.define_local(
+                name.clone(),
+                idx_ty.clone(),
+                false,
+                pattern.span,
+            )?;
 
-        self.locals.push(hir::Local {
-            id: var_local_id,
-            ty: idx_ty.clone(),
-            mutable: false,
-            name: Some(var_name),
-            span: pattern.span,
-        });
+            self.locals.push(hir::Local {
+                id: local_id,
+                ty: idx_ty.clone(),
+                mutable: false,
+                name: Some(name.clone()),
+                span: pattern.span,
+            });
+            Some(local_id)
+        } else {
+            None
+        };
 
         let body_expr = self.check_block(body, &Type::unit())?;
 
@@ -2914,14 +2996,15 @@ impl<'a> TypeContext<'a> {
             span,
         );
 
-        let bind_stmt = hir::Stmt::Let {
-            local_id: var_local_id,
+        // Only create bind statement if we have a named loop variable (not wildcard)
+        let bind_stmt = var_local_id.map(|local_id| hir::Stmt::Let {
+            local_id,
             init: Some(hir::Expr::new(
                 hir::ExprKind::Local(idx_local_id),
                 idx_ty.clone(),
                 span,
             )),
-        };
+        });
 
         let increment = hir::Expr::new(
             hir::ExprKind::Assign {
@@ -2952,9 +3035,17 @@ impl<'a> TypeContext<'a> {
             span,
         );
 
+        // Build loop body statements - include bind_stmt only for named patterns
+        let mut body_stmts = Vec::new();
+        if let Some(stmt) = bind_stmt {
+            body_stmts.push(stmt);
+        }
+        body_stmts.push(hir::Stmt::Expr(body_expr));
+        body_stmts.push(hir::Stmt::Expr(increment));
+
         let while_body = hir::Expr::new(
             hir::ExprKind::Block {
-                stmts: vec![bind_stmt, hir::Stmt::Expr(body_expr), hir::Stmt::Expr(increment)],
+                stmts: body_stmts,
                 expr: None,
             },
             Type::unit(),
@@ -3857,8 +3948,8 @@ impl<'a> TypeContext<'a> {
         // Determine return type based on macro
         let return_ty = match macro_name {
             "format" => {
-                // format! returns str (the expansion builds a str slice from str_concat)
-                Type::new(hir::TypeKind::Primitive(hir::PrimitiveTy::Str))
+                // format! returns String (an owned string)
+                Type::new(hir::TypeKind::Primitive(hir::PrimitiveTy::String))
             }
             "println" | "print" | "eprintln" | "eprint" => {
                 // print macros return unit

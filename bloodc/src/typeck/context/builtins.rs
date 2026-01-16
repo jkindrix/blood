@@ -13,22 +13,25 @@ impl<'a> TypeContext<'a> {
         let bool_ty = Type::bool();
         let char_ty = Type::char();
         let u8_ty = Type::u8();
+        let u32_ty = Type::u32();
         let i32_ty = Type::i32();
         let i64_ty = Type::i64();
         let u64_ty = Type::u64();
+        let usize_ty = Type::usize();
         let f32_ty = Type::f32();
         let f64_ty = Type::f64();
-        let str_ty = Type::str();  // str slice for string literals
+        let str_ty = Type::str();  // str slice
+        let ref_str_ty = Type::reference(str_ty.clone(), false);  // &str for string literals
         let _string_ty = Type::string();  // owned String (for functions that return owned strings)
         let never_ty = Type::never();
 
         // === I/O Functions ===
 
-        // print(str) -> () - convenience function (maps to runtime print_str)
-        self.register_builtin_fn_aliased("print", "print_str", vec![str_ty.clone()], unit_ty.clone());
+        // print(&str) -> () - convenience function (maps to runtime print_str)
+        self.register_builtin_fn_aliased("print", "print_str", vec![ref_str_ty.clone()], unit_ty.clone());
 
-        // println(str) -> () - convenience function (prints string + newline, maps to runtime println_str)
-        self.register_builtin_fn_aliased("println", "println_str", vec![str_ty.clone()], unit_ty.clone());
+        // println(&str) -> () - convenience function (prints string + newline, maps to runtime println_str)
+        self.register_builtin_fn_aliased("println", "println_str", vec![ref_str_ty.clone()], unit_ty.clone());
 
         // print_int(i32) -> ()
         self.register_builtin_fn("print_int", vec![i32_ty.clone()], unit_ty.clone());
@@ -36,23 +39,23 @@ impl<'a> TypeContext<'a> {
         // println_int(i32) -> ()
         self.register_builtin_fn("println_int", vec![i32_ty.clone()], unit_ty.clone());
 
-        // print_str(str) -> () - legacy name, same as print
-        self.register_builtin_fn("print_str", vec![str_ty.clone()], unit_ty.clone());
+        // print_str(&str) -> () - legacy name, same as print
+        self.register_builtin_fn("print_str", vec![ref_str_ty.clone()], unit_ty.clone());
 
-        // println_str(str) -> () - legacy name, same as println
-        self.register_builtin_fn("println_str", vec![str_ty.clone()], unit_ty.clone());
+        // println_str(&str) -> () - legacy name, same as println
+        self.register_builtin_fn("println_str", vec![ref_str_ty.clone()], unit_ty.clone());
 
-        // eprint(str) -> () - print to stderr (maps to runtime eprint_str)
-        self.register_builtin_fn_aliased("eprint", "eprint_str", vec![str_ty.clone()], unit_ty.clone());
+        // eprint(&str) -> () - print to stderr (maps to runtime eprint_str)
+        self.register_builtin_fn_aliased("eprint", "eprint_str", vec![ref_str_ty.clone()], unit_ty.clone());
 
-        // eprintln(str) -> () - print to stderr with newline (maps to runtime eprintln_str)
-        self.register_builtin_fn_aliased("eprintln", "eprintln_str", vec![str_ty.clone()], unit_ty.clone());
+        // eprintln(&str) -> () - print to stderr with newline (maps to runtime eprintln_str)
+        self.register_builtin_fn_aliased("eprintln", "eprintln_str", vec![ref_str_ty.clone()], unit_ty.clone());
 
-        // eprint_str(str) -> () - print to stderr
-        self.register_builtin_fn("eprint_str", vec![str_ty.clone()], unit_ty.clone());
+        // eprint_str(&str) -> () - print to stderr
+        self.register_builtin_fn("eprint_str", vec![ref_str_ty.clone()], unit_ty.clone());
 
-        // eprintln_str(str) -> () - print to stderr with newline
-        self.register_builtin_fn("eprintln_str", vec![str_ty.clone()], unit_ty.clone());
+        // eprintln_str(&str) -> () - print to stderr with newline
+        self.register_builtin_fn("eprintln_str", vec![ref_str_ty.clone()], unit_ty.clone());
 
         // print_char(char) -> ()
         self.register_builtin_fn("print_char", vec![char_ty.clone()], unit_ty.clone());
@@ -108,7 +111,7 @@ impl<'a> TypeContext<'a> {
         // === Control Flow / Assertions ===
 
         // panic(str) -> !
-        self.register_builtin_fn("panic", vec![str_ty.clone()], never_ty.clone());
+        self.register_builtin_fn("panic", vec![ref_str_ty.clone()], never_ty.clone());
 
         // assert(bool) -> () - maps to blood_assert in runtime
         self.register_builtin_fn_aliased("assert", "blood_assert", vec![bool_ty.clone()], unit_ty.clone());
@@ -183,45 +186,45 @@ impl<'a> TypeContext<'a> {
 
         // === String Operations ===
 
-        // str_len(str) -> i64 - get string length in bytes
-        self.register_builtin_fn("str_len", vec![str_ty.clone()], i64_ty.clone());
+        // str_len(&str) -> i64 - get string length in bytes
+        self.register_builtin_fn("str_len", vec![ref_str_ty.clone()], i64_ty.clone());
 
-        // str_eq(str, str) -> bool - compare two strings for equality
-        self.register_builtin_fn("str_eq", vec![str_ty.clone(), str_ty.clone()], bool_ty.clone());
+        // str_eq(&str, &str) -> bool - compare two strings for equality
+        self.register_builtin_fn("str_eq", vec![ref_str_ty.clone(), ref_str_ty.clone()], bool_ty.clone());
 
-        // str_concat(str, str) -> str - concatenate two strings (returns newly allocated string)
-        self.register_builtin_fn_aliased("str_concat", "blood_str_concat", vec![str_ty.clone(), str_ty.clone()], str_ty.clone());
+        // str_concat(&str, &str) -> String - concatenate two strings (returns newly allocated string)
+        self.register_builtin_fn_aliased("str_concat", "blood_str_concat", vec![ref_str_ty.clone(), ref_str_ty.clone()], Type::string());
 
         // === Input Functions ===
 
-        // read_line() -> str - read a line from stdin
-        self.register_builtin_fn("read_line", vec![], str_ty.clone());
+        // read_line() -> String - read a line from stdin (returns owned string)
+        self.register_builtin_fn("read_line", vec![], Type::string());
 
         // read_int() -> i32 - read an integer from stdin
         self.register_builtin_fn("read_int", vec![], i32_ty.clone());
 
         // === Conversion Functions ===
 
-        // int_to_string(i32) -> str - convert integer to string
-        self.register_builtin_fn("int_to_string", vec![i32_ty.clone()], str_ty.clone());
+        // int_to_string(i32) -> String - convert integer to string
+        self.register_builtin_fn("int_to_string", vec![i32_ty.clone()], Type::string());
 
-        // i64_to_string(i64) -> str - convert 64-bit integer to string
-        self.register_builtin_fn("i64_to_string", vec![i64_ty.clone()], str_ty.clone());
+        // i64_to_string(i64) -> String - convert 64-bit integer to string
+        self.register_builtin_fn("i64_to_string", vec![i64_ty.clone()], Type::string());
 
-        // u64_to_string(u64) -> str - convert unsigned 64-bit integer to string
-        self.register_builtin_fn("u64_to_string", vec![u64_ty.clone()], str_ty.clone());
+        // u64_to_string(u64) -> String - convert unsigned 64-bit integer to string
+        self.register_builtin_fn("u64_to_string", vec![u64_ty.clone()], Type::string());
 
-        // bool_to_string(bool) -> str - convert boolean to string
-        self.register_builtin_fn("bool_to_string", vec![bool_ty.clone()], str_ty.clone());
+        // bool_to_string(bool) -> String - convert boolean to string
+        self.register_builtin_fn("bool_to_string", vec![bool_ty.clone()], Type::string());
 
-        // char_to_string(char) -> str - convert character to string
-        self.register_builtin_fn("char_to_string", vec![char_ty.clone()], str_ty.clone());
+        // char_to_string(char) -> String - convert character to string
+        self.register_builtin_fn("char_to_string", vec![char_ty.clone()], Type::string());
 
-        // f32_to_string(f32) -> str - convert f32 to string
-        self.register_builtin_fn("f32_to_string", vec![f32_ty.clone()], str_ty.clone());
+        // f32_to_string(f32) -> String - convert f32 to string
+        self.register_builtin_fn("f32_to_string", vec![f32_ty.clone()], Type::string());
 
-        // f64_to_string(f64) -> str - convert f64 to string
-        self.register_builtin_fn("f64_to_string", vec![f64_ty.clone()], str_ty.clone());
+        // f64_to_string(f64) -> String - convert f64 to string
+        self.register_builtin_fn("f64_to_string", vec![f64_ty.clone()], Type::string());
 
         // i32_to_i64(i32) -> i64
         self.register_builtin_fn("i32_to_i64", vec![i32_ty.clone()], i64_ty.clone());
@@ -358,6 +361,36 @@ impl<'a> TypeContext<'a> {
         });
 
         self.option_def_id = Some(option_def_id);
+
+        // === Parsing Functions (registered after Option is available) ===
+        {
+            let f64_ty = Type::f64();
+            let i64_ty = Type::i64();
+            let u8_ty = Type::u8();
+            let u32_ty = Type::u32();
+            let ref_str_ty = Type::reference(Type::str(), false);
+
+            // Parse string to f64, returns None on parse failure
+            let option_f64 = Type::adt(option_def_id, vec![f64_ty.clone()]);
+            self.register_builtin_fn("parse_f64", vec![ref_str_ty.clone()], option_f64);
+
+            // Parse string to i64 with given radix, returns None on parse failure
+            let option_i64 = Type::adt(option_def_id, vec![i64_ty.clone()]);
+            self.register_builtin_fn("parse_i64_radix", vec![ref_str_ty.clone(), u32_ty.clone()], option_i64);
+
+            // Parse string to u8 with given radix, returns None on parse failure
+            let option_u8 = Type::adt(option_def_id, vec![u8_ty.clone()]);
+            self.register_builtin_fn("parse_u8_radix", vec![ref_str_ty.clone(), u32_ty.clone()], option_u8);
+
+            // Parse string to u32 with given radix, returns None on parse failure
+            let option_u32 = Type::adt(option_def_id, vec![u32_ty.clone()]);
+            self.register_builtin_fn("parse_u32_radix", vec![ref_str_ty.clone(), u32_ty.clone()], option_u32);
+
+            // Convert u32 code point to char, returns None if invalid
+            let char_ty = Type::char();
+            let option_char = Type::adt(option_def_id, vec![char_ty.clone()]);
+            self.register_builtin_fn("char_from_u32", vec![u32_ty.clone()], option_char);
+        }
 
         // Register Result<T, E> as a built-in enum
         let result_def_id = self.resolver.define_item(
@@ -695,6 +728,21 @@ impl<'a> TypeContext<'a> {
             "string_clear",
         );
 
+        // String.char_at(&self, index: usize) -> Option<char>
+        // Helper for accessing character at byte index (alternative to chars().nth())
+        let option_char = Type::adt(
+            self.option_def_id.expect("BUG: option_def_id not set"),
+            vec![Type::char()],
+        );
+        self.register_builtin_method(
+            BuiltinMethodType::String,
+            "char_at",
+            false,
+            vec![Type::reference(string_ty.clone(), false), usize_ty.clone()],
+            option_char,
+            "string_char_at",
+        );
+
         // === Option methods ===
         // Note: Option<T>.unwrap(self) -> T requires generic handling,
         // which is done in find_builtin_method with type substitution.
@@ -792,6 +840,20 @@ impl<'a> TypeContext<'a> {
             vec![Type::reference(vec_t.clone(), true), t_ty.clone()],
             Type::unit(),
             "vec_push",
+        );
+
+        // Vec<T>.get(&self, index: usize) -> Option<&T>
+        let option_ref_t = Type::adt(
+            self.option_def_id.expect("BUG: option_def_id not set"),
+            vec![Type::reference(t_ty.clone(), false)],
+        );
+        self.register_builtin_method(
+            BuiltinMethodType::Vec,
+            "get",
+            false,
+            vec![Type::reference(vec_t.clone(), false), usize_ty.clone()],
+            option_ref_t,
+            "vec_get",
         );
     }
 
