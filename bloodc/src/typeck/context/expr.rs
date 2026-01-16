@@ -2880,6 +2880,10 @@ impl<'a> TypeContext<'a> {
     }
 
     /// Infer type of a for loop.
+    ///
+    /// Supports:
+    /// - Range iteration: `for i in 0..10 { ... }`
+    /// - Array iteration: `for item in array { ... }`
     pub(crate) fn infer_for(
         &mut self,
         pattern: &ast::Pattern,
@@ -2888,37 +2892,89 @@ impl<'a> TypeContext<'a> {
         label: Option<&Spanned<ast::Symbol>>,
         span: Span,
     ) -> Result<hir::Expr, TypeError> {
-        // Extract range bounds from the iterator expression
-        let (start, end, inclusive) = match &iter.kind {
-            ast::ExprKind::Range { start, end, inclusive } => {
-                let start = start.as_ref().ok_or_else(|| {
-                    TypeError::new(
-                        TypeErrorKind::UnsupportedFeature {
-                            feature: "For loop requires range with start bound".into(),
-                        },
-                        iter.span,
-                    )
-                })?;
-                let end = end.as_ref().ok_or_else(|| {
-                    TypeError::new(
-                        TypeErrorKind::UnsupportedFeature {
-                            feature: "For loop requires range with end bound".into(),
-                        },
-                        iter.span,
-                    )
-                })?;
-                (start, end, *inclusive)
+        // Try to match range expression first
+        if let ast::ExprKind::Range { start, end, inclusive } = &iter.kind {
+            let start = start.as_ref().ok_or_else(|| {
+                TypeError::new(
+                    TypeErrorKind::UnsupportedFeature {
+                        feature: "For loop requires range with start bound".into(),
+                    },
+                    iter.span,
+                )
+            })?;
+            let end = end.as_ref().ok_or_else(|| {
+                TypeError::new(
+                    TypeErrorKind::UnsupportedFeature {
+                        feature: "For loop requires range with end bound".into(),
+                    },
+                    iter.span,
+                )
+            })?;
+            return self.infer_for_range(pattern, start, end, *inclusive, body, label, span);
+        }
+
+        // Try to infer the iterator expression and check if it's iterable
+        let iter_expr = self.infer_expr(iter)?;
+        let iter_ty = self.unifier.resolve(&iter_expr.ty);
+
+        // Check for array types (fixed-size or dynamically-determined)
+        match iter_ty.kind() {
+            TypeKind::Array { element, size } => {
+                return self.infer_for_array(pattern, iter_expr, element.clone(), *size, body, label, span);
             }
-            _ => {
+            TypeKind::Ref { inner, .. } => {
+                // Handle references to arrays: &[T; N] and &[T]
+                let inner_ty = self.unifier.resolve(inner);
+                match inner_ty.kind() {
+                    TypeKind::Array { element, size } => {
+                        return self.infer_for_array(pattern, iter_expr, element.clone(), *size, body, label, span);
+                    }
+                    TypeKind::Slice { element } => {
+                        // Slices require runtime length - not yet supported
+                        return Err(TypeError::new(
+                            TypeErrorKind::UnsupportedFeature {
+                                feature: "For loop over slices requires runtime length check (use while loop)".into(),
+                            },
+                            iter.span,
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+            TypeKind::Slice { element } => {
                 return Err(TypeError::new(
                     TypeErrorKind::UnsupportedFeature {
-                        feature: "For loop currently only supports range expressions".into(),
+                        feature: "For loop over slices requires runtime length check (use while loop)".into(),
                     },
                     iter.span,
                 ));
             }
-        };
+            _ => {}
+        }
 
+        // Not a supported iterable type
+        Err(TypeError::new(
+            TypeErrorKind::UnsupportedFeature {
+                feature: format!(
+                    "For loop over type `{}` not supported. Use range expressions (0..n) or arrays.",
+                    iter_ty
+                ),
+            },
+            iter.span,
+        ))
+    }
+
+    /// Helper: Infer for loop over a range expression.
+    fn infer_for_range(
+        &mut self,
+        pattern: &ast::Pattern,
+        start: &ast::Expr,
+        end: &ast::Expr,
+        inclusive: bool,
+        body: &ast::Block,
+        label: Option<&Spanned<ast::Symbol>>,
+        span: Span,
+    ) -> Result<hir::Expr, TypeError> {
         // Extract variable name, or None for wildcard pattern
         let var_name = match &pattern.kind {
             ast::PatternKind::Ident { name, .. } => Some(self.symbol_to_string(name.node)),
@@ -3070,6 +3126,225 @@ impl<'a> TypeContext<'a> {
         Ok(hir::Expr::new(
             hir::ExprKind::Block {
                 stmts: vec![init_stmt],
+                expr: Some(Box::new(while_loop)),
+            },
+            Type::unit(),
+            span,
+        ))
+    }
+
+    /// Helper: Infer for loop over a fixed-size array.
+    ///
+    /// Desugars `for item in array` to:
+    /// ```text
+    /// let mut _idx = 0;
+    /// while _idx < ARRAY_SIZE {
+    ///     let item = array[_idx];
+    ///     body;
+    ///     _idx = _idx + 1;
+    /// }
+    /// ```
+    fn infer_for_array(
+        &mut self,
+        pattern: &ast::Pattern,
+        array_expr: hir::Expr,
+        element_ty: Type,
+        array_size: u64,
+        body: &ast::Block,
+        label: Option<&Spanned<ast::Symbol>>,
+        span: Span,
+    ) -> Result<hir::Expr, TypeError> {
+        // Extract variable name, or None for wildcard pattern
+        let var_name = match &pattern.kind {
+            ast::PatternKind::Ident { name, .. } => Some(self.symbol_to_string(name.node)),
+            ast::PatternKind::Wildcard => None,
+            _ => {
+                return Err(TypeError::new(
+                    TypeErrorKind::UnsupportedFeature {
+                        feature: "For loop currently only supports simple identifier or wildcard patterns".into(),
+                    },
+                    pattern.span,
+                ));
+            }
+        };
+
+        let label_str = label.map(|l| self.symbol_to_string(l.node));
+        let loop_id = self.enter_loop(label_str.as_deref());
+
+        self.resolver.push_scope(ScopeKind::Loop, span);
+
+        let idx_ty = Type::i64(); // Use i64 for array indices
+
+        // Store the array in a temporary to avoid re-evaluating
+        let array_local_id = self.resolver.next_local_id();
+        self.locals.push(hir::Local {
+            id: array_local_id,
+            ty: array_expr.ty.clone(),
+            mutable: false,
+            name: Some("_array".to_string()),
+            span,
+        });
+
+        // Create internal loop index
+        let idx_local_id = self.resolver.next_local_id();
+        self.locals.push(hir::Local {
+            id: idx_local_id,
+            ty: idx_ty.clone(),
+            mutable: true,
+            name: Some("_loop_idx".to_string()),
+            span,
+        });
+
+        // Register user's loop variable (only if not a wildcard pattern)
+        let var_local_id = if let Some(ref name) = var_name {
+            let local_id = self.resolver.define_local(
+                name.clone(),
+                element_ty.clone(),
+                false,
+                pattern.span,
+            )?;
+
+            self.locals.push(hir::Local {
+                id: local_id,
+                ty: element_ty.clone(),
+                mutable: false,
+                name: Some(name.clone()),
+                span: pattern.span,
+            });
+            Some(local_id)
+        } else {
+            None
+        };
+
+        let body_expr = self.check_block(body, &Type::unit())?;
+
+        self.resolver.pop_scope();
+
+        self.exit_loop(label_str.as_deref());
+
+        // Build condition: _idx < array_size
+        let condition = hir::Expr::new(
+            hir::ExprKind::Binary {
+                op: ast::BinOp::Lt,
+                left: Box::new(hir::Expr::new(
+                    hir::ExprKind::Local(idx_local_id),
+                    idx_ty.clone(),
+                    span,
+                )),
+                right: Box::new(hir::Expr::new(
+                    hir::ExprKind::Literal(hir::LiteralValue::Int(array_size as i128)),
+                    idx_ty.clone(),
+                    span,
+                )),
+            },
+            Type::bool(),
+            span,
+        );
+
+        // Helper to build array access: array[_idx]
+        let make_array_access = || {
+            hir::Expr::new(
+                hir::ExprKind::Index {
+                    base: Box::new(hir::Expr::new(
+                        hir::ExprKind::Local(array_local_id),
+                        array_expr.ty.clone(),
+                        span,
+                    )),
+                    index: Box::new(hir::Expr::new(
+                        hir::ExprKind::Local(idx_local_id),
+                        idx_ty.clone(),
+                        span,
+                    )),
+                },
+                element_ty.clone(),
+                span,
+            )
+        };
+
+        // Build bind statement if we have a named variable
+        let bind_stmt = var_local_id.map(|local_id| hir::Stmt::Let {
+            local_id,
+            init: Some(make_array_access()),
+        });
+
+        // Build increment: _idx = _idx + 1
+        let increment = hir::Expr::new(
+            hir::ExprKind::Assign {
+                target: Box::new(hir::Expr::new(
+                    hir::ExprKind::Local(idx_local_id),
+                    idx_ty.clone(),
+                    span,
+                )),
+                value: Box::new(hir::Expr::new(
+                    hir::ExprKind::Binary {
+                        op: ast::BinOp::Add,
+                        left: Box::new(hir::Expr::new(
+                            hir::ExprKind::Local(idx_local_id),
+                            idx_ty.clone(),
+                            span,
+                        )),
+                        right: Box::new(hir::Expr::new(
+                            hir::ExprKind::Literal(hir::LiteralValue::Int(1)),
+                            idx_ty.clone(),
+                            span,
+                        )),
+                    },
+                    idx_ty.clone(),
+                    span,
+                )),
+            },
+            Type::unit(),
+            span,
+        );
+
+        // Build loop body statements
+        let mut body_stmts = Vec::new();
+        if let Some(stmt) = bind_stmt {
+            body_stmts.push(stmt);
+        } else {
+            // Even for wildcard, we still need to do the array access (for side effects)
+            body_stmts.push(hir::Stmt::Expr(make_array_access()));
+        }
+        body_stmts.push(hir::Stmt::Expr(body_expr));
+        body_stmts.push(hir::Stmt::Expr(increment));
+
+        let while_body = hir::Expr::new(
+            hir::ExprKind::Block {
+                stmts: body_stmts,
+                expr: None,
+            },
+            Type::unit(),
+            span,
+        );
+
+        let while_loop = hir::Expr::new(
+            hir::ExprKind::While {
+                condition: Box::new(condition),
+                body: Box::new(while_body),
+                label: Some(loop_id),
+            },
+            Type::unit(),
+            span,
+        );
+
+        // Initialize array local and index
+        let array_init_stmt = hir::Stmt::Let {
+            local_id: array_local_id,
+            init: Some(array_expr),
+        };
+
+        let idx_init_stmt = hir::Stmt::Let {
+            local_id: idx_local_id,
+            init: Some(hir::Expr::new(
+                hir::ExprKind::Literal(hir::LiteralValue::Int(0)),
+                idx_ty,
+                span,
+            )),
+        };
+
+        Ok(hir::Expr::new(
+            hir::ExprKind::Block {
+                stmts: vec![array_init_stmt, idx_init_stmt],
                 expr: Some(Box::new(while_loop)),
             },
             Type::unit(),
@@ -3305,11 +3580,14 @@ impl<'a> TypeContext<'a> {
     }
 
     /// Infer type of a record (struct) construction expression.
+    ///
+    /// Supports struct spread syntax: `MyStruct { field1: val1, ..base }`
+    /// where `base` is an expression that provides values for fields not explicitly listed.
     pub(crate) fn infer_record(
         &mut self,
         path: Option<&ast::TypePath>,
         fields: &[ast::RecordExprField],
-        _base: Option<&ast::Expr>,
+        base: Option<&ast::Expr>,
         span: Span,
     ) -> Result<hir::Expr, TypeError> {
         let (def_id, struct_info, result_ty) = if let Some(path) = path {
@@ -3586,7 +3864,56 @@ impl<'a> TypeContext<'a> {
             .map(|(ty_var_id, ty)| (*ty_var_id, ty.clone()))
             .collect();
 
-        // Type-check fields, substituting generics with fresh type vars
+        // Collect explicitly provided field names for struct spread validation
+        let provided_field_names: std::collections::HashSet<String> = fields.iter()
+            .map(|f| self.symbol_to_string(f.name.node))
+            .collect();
+
+        // Type-check the base expression for struct spread syntax (..base)
+        let hir_base = if let Some(base_expr) = base {
+            let base_hir = self.infer_expr(base_expr)?;
+            let base_ty = self.unifier.resolve(&base_hir.ty);
+
+            // Verify the base expression has the same struct type
+            match base_ty.kind() {
+                TypeKind::Adt { def_id: base_def_id, args: base_args } => {
+                    if *base_def_id != def_id {
+                        return Err(TypeError::new(
+                            TypeErrorKind::Mismatch {
+                                expected: result_ty.clone(),
+                                found: base_ty,
+                            },
+                            base_expr.span,
+                        ));
+                    }
+
+                    // Unify type arguments from base with our fresh type vars
+                    for (base_arg, type_arg) in base_args.iter().zip(type_args.iter()) {
+                        self.unifier.unify(base_arg, type_arg, base_expr.span).map_err(|_| {
+                            TypeError::new(
+                                TypeErrorKind::Mismatch {
+                                    expected: type_arg.clone(),
+                                    found: base_arg.clone(),
+                                },
+                                base_expr.span,
+                            )
+                        })?;
+                    }
+                }
+                _ => {
+                    return Err(TypeError::new(
+                        TypeErrorKind::NotAStruct { ty: base_ty },
+                        base_expr.span,
+                    ));
+                }
+            }
+
+            Some(Box::new(base_hir))
+        } else {
+            None
+        };
+
+        // Type-check explicitly provided fields, substituting generics with fresh type vars
         let mut hir_fields = Vec::new();
         for field in fields {
             let field_name = self.symbol_to_string(field.name.node);
@@ -3645,6 +3972,21 @@ impl<'a> TypeContext<'a> {
             });
         }
 
+        // If no base is provided, verify all fields are present
+        if hir_base.is_none() {
+            for field_info in &struct_info.fields {
+                if !provided_field_names.contains(&field_info.name) {
+                    return Err(TypeError::new(
+                        TypeErrorKind::MissingField {
+                            ty: result_ty.clone(),
+                            field: field_info.name.clone(),
+                        },
+                        span,
+                    ));
+                }
+            }
+        }
+
         // Build result type with resolved type args
         let resolved_type_args: Vec<Type> = type_args.iter()
             .map(|ty| self.unifier.resolve(ty))
@@ -3655,7 +3997,7 @@ impl<'a> TypeContext<'a> {
             hir::ExprKind::Struct {
                 def_id,
                 fields: hir_fields,
-                base: None,
+                base: hir_base,
             },
             result_ty,
             span,
