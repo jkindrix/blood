@@ -80,11 +80,17 @@ fn collect_tyvars(ty: &Type, tyvars: &mut Vec<TyVarId>) {
                 collect_tyvars(arg, tyvars);
             }
         }
-        TypeKind::Fn { params, ret } => {
+        TypeKind::Fn { params, ret, effects } => {
             for p in params {
                 collect_tyvars(p, tyvars);
             }
             collect_tyvars(ret, tyvars);
+            // Also collect type vars from effect annotations
+            for eff in effects {
+                for ty_arg in &eff.type_args {
+                    collect_tyvars(ty_arg, tyvars);
+                }
+            }
         }
         _ => {}
     }
@@ -129,12 +135,21 @@ fn normalize_type_recursive(ty: &Type, tyvar_to_idx: &HashMap<TyVarId, u32>) -> 
                 .collect();
             Type::adt(*def_id, normalized_args)
         }
-        TypeKind::Fn { params, ret } => {
+        TypeKind::Fn { params, ret, effects } => {
             let normalized_params: Vec<Type> = params.iter()
                 .map(|p| normalize_type_recursive(p, tyvar_to_idx))
                 .collect();
             let normalized_ret = normalize_type_recursive(ret, tyvar_to_idx);
-            Type::function(normalized_params, normalized_ret)
+            // Also normalize effect type args
+            let normalized_effects: Vec<hir::FnEffect> = effects.iter()
+                .map(|eff| hir::FnEffect {
+                    def_id: eff.def_id,
+                    type_args: eff.type_args.iter()
+                        .map(|ty| normalize_type_recursive(ty, tyvar_to_idx))
+                        .collect(),
+                })
+                .collect();
+            Type::function_with_effects(normalized_params, normalized_ret, normalized_effects)
         }
         _ => ty.clone(),
     }
@@ -219,11 +234,19 @@ fn substitute_type(ty: &Type, subst: &HashMap<TyVarId, Type>) -> Type {
                 .collect();
             Type::adt(*def_id, subst_args)
         }
-        TypeKind::Fn { params, ret } => {
+        TypeKind::Fn { params, ret, effects } => {
             let subst_params: Vec<Type> = params.iter()
                 .map(|p| substitute_type(p, subst))
                 .collect();
-            Type::function(subst_params, substitute_type(ret, subst))
+            let subst_effects: Vec<hir::FnEffect> = effects.iter()
+                .map(|eff| hir::FnEffect {
+                    def_id: eff.def_id,
+                    type_args: eff.type_args.iter()
+                        .map(|ty| substitute_type(ty, subst))
+                        .collect(),
+                })
+                .collect();
+            Type::function_with_effects(subst_params, substitute_type(ret, subst), subst_effects)
         }
         _ => ty.clone(),
     }
@@ -259,13 +282,24 @@ fn unify_types(generic: &Type, concrete: &Type, subst: &mut HashMap<TyVarId, Typ
             // Found a type variable - record its concrete type
             subst.entry(*id).or_insert_with(|| concrete.clone());
         }
-        TypeKind::Fn { params: gen_params, ret: gen_ret } => {
+        TypeKind::Fn { params: gen_params, ret: gen_ret, effects: gen_effects } => {
             // Recursively unify function types
-            if let TypeKind::Fn { params: conc_params, ret: conc_ret } = concrete.kind() {
+            if let TypeKind::Fn { params: conc_params, ret: conc_ret, effects: conc_effects } = concrete.kind() {
                 for (gp, cp) in gen_params.iter().zip(conc_params.iter()) {
                     unify_types(gp, cp, subst);
                 }
                 unify_types(gen_ret, conc_ret, subst);
+                // Also unify effect type arguments
+                // Match effects by def_id and unify their type args
+                for gen_eff in gen_effects {
+                    for conc_eff in conc_effects {
+                        if gen_eff.def_id == conc_eff.def_id {
+                            for (gen_arg, conc_arg) in gen_eff.type_args.iter().zip(conc_eff.type_args.iter()) {
+                                unify_types(gen_arg, conc_arg, subst);
+                            }
+                        }
+                    }
+                }
             }
         }
         TypeKind::Tuple(gen_fields) => {
@@ -2027,7 +2061,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     format!("D{}_{}", def_id.index(), arg_mangles.join("_"))
                 }
             }
-            TypeKind::Fn { params, ret } => {
+            TypeKind::Fn { params, ret, .. } => {
                 let param_mangles: Vec<String> = params.iter()
                     .map(|t| Self::mangle_type(t))
                     .collect();

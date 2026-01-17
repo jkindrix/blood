@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use string_interner::{DefaultStringInterner, Symbol as _};
 
 use crate::ast;
-use crate::hir::{self, DefId, Type, TypeKind, TyVarId};
+use crate::hir::{self, DefId, Type, TypeKind, TyVarId, FnEffect};
 use crate::span::Span;
 
 use super::error::TypeError;
@@ -806,10 +806,19 @@ impl<'a> TypeContext<'a> {
     fn zonk_type_with_unifier(unifier: &Unifier, ty: &Type) -> Type {
         let resolved = unifier.resolve(ty);
         match resolved.kind() {
-            TypeKind::Fn { params, ret } => {
+            TypeKind::Fn { params, ret, effects } => {
                 let zonked_params: Vec<_> = params.iter().map(|p| Self::zonk_type_with_unifier(unifier, p)).collect();
                 let zonked_ret = Self::zonk_type_with_unifier(unifier, ret);
-                Type::function(zonked_params, zonked_ret)
+                // Also zonk type arguments in effect annotations
+                let zonked_effects: Vec<FnEffect> = effects.iter()
+                    .map(|eff| FnEffect::new(
+                        eff.def_id,
+                        eff.type_args.iter()
+                            .map(|arg| Self::zonk_type_with_unifier(unifier, arg))
+                            .collect(),
+                    ))
+                    .collect();
+                Type::function_with_effects(zonked_params, zonked_ret, zonked_effects)
             }
             TypeKind::Tuple(elems) => {
                 let zonked: Vec<_> = elems.iter().map(|e| Self::zonk_type_with_unifier(unifier, e)).collect();

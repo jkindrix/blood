@@ -27,6 +27,25 @@ use std::sync::Arc;
 use super::DefId;
 use super::def::{IntTy, UintTy, FloatTy};
 
+/// An effect annotation on a function type.
+///
+/// Used to preserve effect type arguments in function types for monomorphization.
+/// For example, `fn() / {Emit<T>}` stores `FnEffect { def_id: Emit, type_args: [T] }`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FnEffect {
+    /// The effect definition ID.
+    pub def_id: DefId,
+    /// Type arguments for parameterized effects (e.g., Emit<T>).
+    pub type_args: Vec<Type>,
+}
+
+impl FnEffect {
+    /// Create a new effect annotation with type arguments.
+    pub fn new(def_id: DefId, type_args: Vec<Type>) -> Self {
+        Self { def_id, type_args }
+    }
+}
+
 /// The unique identifier for a type variable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TyVarId(pub u32);
@@ -472,9 +491,14 @@ impl Type {
         Self::new(TypeKind::Tuple(elements))
     }
 
-    /// Create a function type.
+    /// Create a function type (without effects).
     pub fn function(params: Vec<Type>, ret: Type) -> Self {
-        Self::new(TypeKind::Fn { params, ret })
+        Self::new(TypeKind::Fn { params, ret, effects: Vec::new() })
+    }
+
+    /// Create a function type with effect annotations.
+    pub fn function_with_effects(params: Vec<Type>, ret: Type, effects: Vec<FnEffect>) -> Self {
+        Self::new(TypeKind::Fn { params, ret, effects })
     }
 
     /// Create an ADT (struct/enum) type.
@@ -552,8 +576,14 @@ pub enum TypeKind {
     /// A raw pointer type: `*const T`, `*mut T`
     Ptr { inner: Type, mutable: bool },
 
-    /// A function type: `fn(A, B) -> C`
-    Fn { params: Vec<Type>, ret: Type },
+    /// A function type: `fn(A, B) -> C` or `fn(A, B) -> C / {E1, E2}`
+    Fn {
+        params: Vec<Type>,
+        ret: Type,
+        /// Effect annotations on this function type.
+        /// Empty for pure functions.
+        effects: Vec<FnEffect>,
+    },
 
     /// A closure type.
     ///
@@ -670,7 +700,7 @@ impl fmt::Display for TypeKind {
             TypeKind::Ref { inner, mutable: true } => write!(f, "&mut {inner}"),
             TypeKind::Ptr { inner, mutable: false } => write!(f, "*const {inner}"),
             TypeKind::Ptr { inner, mutable: true } => write!(f, "*mut {inner}"),
-            TypeKind::Fn { params, ret } => {
+            TypeKind::Fn { params, ret, effects } => {
                 write!(f, "fn(")?;
                 for (i, p) in params.iter().enumerate() {
                     if i > 0 {
@@ -678,7 +708,28 @@ impl fmt::Display for TypeKind {
                     }
                     write!(f, "{p}")?;
                 }
-                write!(f, ") -> {ret}")
+                write!(f, ") -> {ret}")?;
+                if !effects.is_empty() {
+                    write!(f, " / {{")?;
+                    for (i, eff) in effects.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, ", ")?;
+                        }
+                        write!(f, "E{}", eff.def_id.index())?;
+                        if !eff.type_args.is_empty() {
+                            write!(f, "<")?;
+                            for (j, arg) in eff.type_args.iter().enumerate() {
+                                if j > 0 {
+                                    write!(f, ", ")?;
+                                }
+                                write!(f, "{arg}")?;
+                            }
+                            write!(f, ">")?;
+                        }
+                    }
+                    write!(f, "}}")?;
+                }
+                Ok(())
             }
             TypeKind::Closure { def_id: _, params, ret } => {
                 write!(f, "|")?;

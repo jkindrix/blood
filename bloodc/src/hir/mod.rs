@@ -39,7 +39,7 @@ pub use item::{
     // Module
     ModuleDef,
 };
-pub use ty::{Type, TypeKind, PrimitiveTy, TyVarId, ConstParamId, LifetimeId, ConstValue, GenericArg, RecordRowVarId, RecordField};
+pub use ty::{Type, TypeKind, PrimitiveTy, TyVarId, ConstParamId, LifetimeId, ConstValue, GenericArg, RecordRowVarId, RecordField, FnEffect};
 
 /// A compilation unit (crate) in HIR form.
 #[derive(Debug, Clone)]

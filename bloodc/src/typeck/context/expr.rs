@@ -1285,8 +1285,17 @@ impl<'a> TypeContext<'a> {
 
     /// Instantiate a generic function signature with fresh type variables.
     pub(crate) fn instantiate_fn_sig(&mut self, sig: &hir::FnSig) -> Type {
+        self.instantiate_fn_sig_with_effects(sig, Vec::new())
+    }
+
+    /// Instantiate a generic function signature with fresh type variables, including effects.
+    pub(crate) fn instantiate_fn_sig_with_effects(
+        &mut self,
+        sig: &hir::FnSig,
+        effects: Vec<hir::FnEffect>,
+    ) -> Type {
         if sig.generics.is_empty() {
-            return Type::function(sig.inputs.clone(), sig.output.clone());
+            return Type::function_with_effects(sig.inputs.clone(), sig.output.clone(), effects);
         }
 
         // Create a mapping from old type vars to fresh ones
@@ -1304,7 +1313,17 @@ impl<'a> TypeContext<'a> {
         // Substitute in return type
         let subst_output = self.substitute_type_vars(&sig.output, &substitution);
 
-        Type::function(subst_inputs, subst_output)
+        // Substitute type variables in effect annotations
+        let subst_effects: Vec<hir::FnEffect> = effects.iter()
+            .map(|eff| hir::FnEffect::new(
+                eff.def_id,
+                eff.type_args.iter()
+                    .map(|arg| self.substitute_type_vars(arg, &substitution))
+                    .collect(),
+            ))
+            .collect();
+
+        Type::function_with_effects(subst_inputs, subst_output, subst_effects)
     }
 
     /// Substitute type variables in a type using the given mapping.
@@ -1319,12 +1338,21 @@ impl<'a> TypeContext<'a> {
                     .collect();
                 Type::adt(*def_id, subst_args)
             }
-            TypeKind::Fn { params, ret } => {
+            TypeKind::Fn { params, ret, effects } => {
                 let subst_params: Vec<Type> = params.iter()
                     .map(|p| self.substitute_type_vars(p, subst))
                     .collect();
                 let subst_ret = self.substitute_type_vars(ret, subst);
-                Type::function(subst_params, subst_ret)
+                // Also substitute type variables in effect annotations
+                let subst_effects: Vec<hir::FnEffect> = effects.iter()
+                    .map(|eff| hir::FnEffect::new(
+                        eff.def_id,
+                        eff.type_args.iter()
+                            .map(|arg| self.substitute_type_vars(arg, subst))
+                            .collect(),
+                    ))
+                    .collect();
+                Type::function_with_effects(subst_params, subst_ret, subst_effects)
             }
             TypeKind::Tuple(elems) => {
                 let subst_elems: Vec<Type> = elems.iter()
@@ -1594,12 +1622,21 @@ impl<'a> TypeContext<'a> {
                     .collect::<Result<_, _>>()?;
                 Ok(Type::tuple(elem_types))
             }
-            ast::TypeKind::Function { params, return_type, effects: _ } => {
+            ast::TypeKind::Function { params, return_type, effects } => {
                 let param_types: Vec<Type> = params.iter()
                     .map(|p| self.ast_type_to_hir_type(p))
                     .collect::<Result<_, _>>()?;
                 let ret_ty = self.ast_type_to_hir_type(return_type)?;
-                Ok(Type::function(param_types, ret_ty))
+                // Parse effect annotations and convert to FnEffect
+                let fn_effects = if let Some(effect_row) = effects {
+                    let (effect_refs, _row_var) = self.parse_effect_row(effect_row)?;
+                    effect_refs.into_iter()
+                        .map(|er| hir::FnEffect::new(er.def_id, er.type_args))
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                Ok(Type::function_with_effects(param_types, ret_ty, fn_effects))
             }
             ast::TypeKind::Never => Ok(Type::never()),
             ast::TypeKind::Infer => Ok(self.unifier.fresh_var()),
@@ -1904,11 +1941,14 @@ impl<'a> TypeContext<'a> {
                 }
                 Some(Binding::Def(def_id)) => {
                     if let Some(sig) = self.fn_sigs.get(&def_id).cloned() {
-                        let fn_ty = if sig.generics.is_empty() {
-                            Type::function(sig.inputs.clone(), sig.output.clone())
-                        } else {
-                            self.instantiate_fn_sig(&sig)
-                        };
+                        // Get effect annotations for this function
+                        let fn_effects: Vec<hir::FnEffect> = self.fn_effects.get(&def_id)
+                            .map(|effect_refs| effect_refs.iter()
+                                .map(|er| hir::FnEffect::new(er.def_id, er.type_args.clone()))
+                                .collect())
+                            .unwrap_or_default();
+
+                        let fn_ty = self.instantiate_fn_sig_with_effects(&sig, fn_effects);
                         Ok(hir::Expr::new(
                             hir::ExprKind::Def(def_id),
                             fn_ty,
@@ -2466,7 +2506,7 @@ impl<'a> TypeContext<'a> {
             }
             ast::BinOp::Pipe => {
                 match right_expr.ty.kind() {
-                    TypeKind::Fn { params, ret } => {
+                    TypeKind::Fn { params, ret, .. } => {
                         if params.is_empty() {
                             return Err(TypeError::new(
                                 TypeErrorKind::WrongArity {
@@ -2582,7 +2622,7 @@ impl<'a> TypeContext<'a> {
         };
 
         let (param_types, return_type) = match instantiated_ty.kind() {
-            TypeKind::Fn { params, ret } => (params.clone(), ret.clone()),
+            TypeKind::Fn { params, ret, .. } => (params.clone(), ret.clone()),
             _ => {
                 return Err(TypeError::new(
                     TypeErrorKind::NotAFunction { ty: callee_expr.ty.clone() },
@@ -2640,9 +2680,11 @@ impl<'a> TypeContext<'a> {
         // Resolve the callee's type to ensure inference variables are substituted.
         // This is critical for generic function calls where the callee type contains
         // type parameters that were unified during argument type checking.
+        let resolved_callee_ty = self.unifier.resolve(&callee_expr.ty);
+
         let resolved_callee_expr = hir::Expr::new(
             callee_expr.kind.clone(),
-            self.unifier.resolve(&callee_expr.ty),
+            resolved_callee_ty,
             callee_expr.span,
         );
 

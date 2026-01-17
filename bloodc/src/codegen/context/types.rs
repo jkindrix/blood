@@ -274,7 +274,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     .collect();
                 Type::adt(*def_id, substituted_args)
             }
-            TypeKind::Fn { params, ret } => {
+            TypeKind::Fn { params, ret, .. } => {
                 let substituted_params: Vec<Type> = params.iter()
                     .map(|p| self.substitute_type_params(p, args))
                     .collect();

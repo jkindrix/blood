@@ -1680,7 +1680,7 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
 
         // Create a Closure type with the synthetic DefId
         let closure_ty = match ty.kind() {
-            TypeKind::Fn { params, ret } => {
+            TypeKind::Fn { params, ret, .. } => {
                 Type::new(TypeKind::Closure {
                     def_id: closure_def_id,
                     params: params.clone(),

@@ -46,7 +46,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // Get closure parameter and return types from the closure type
         let (param_types, return_ty): (Vec<Type>, Type) = match closure_ty.kind() {
-            TypeKind::Fn { params, ret } => {
+            TypeKind::Fn { params, ret, .. } => {
                 (params.clone(), (*ret).clone())
             }
             _ => {

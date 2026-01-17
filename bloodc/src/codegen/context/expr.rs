@@ -698,7 +698,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // Get the function type from the callee's Blood type
         let (param_types, return_ty) = match callee.ty.kind() {
-            TypeKind::Fn { params, ret } => (params.clone(), (*ret).clone()),
+            TypeKind::Fn { params, ret, .. } => (params.clone(), (*ret).clone()),
             _ => {
                 return Err(vec![Diagnostic::error(
                     "Expected function type for fn pointer call",
@@ -802,7 +802,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // Build function type for the closure
         let (param_types, return_ty) = match callee.ty.kind() {
-            TypeKind::Fn { params, ret } => (params.clone(), (*ret).clone()),
+            TypeKind::Fn { params, ret, .. } => (params.clone(), (*ret).clone()),
             _ => {
                 return Err(vec![Diagnostic::error(
                     "Expected function type for closure call",

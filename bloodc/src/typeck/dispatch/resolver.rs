@@ -416,9 +416,9 @@ impl<'a> DispatchResolver<'a> {
             }
 
             // Function types: match params and return
-            TypeKind::Fn { params: param_params, ret: param_ret } => {
+            TypeKind::Fn { params: param_params, ret: param_ret, .. } => {
                 match arg_type.kind.as_ref() {
-                    TypeKind::Fn { params: arg_params, ret: arg_ret }
+                    TypeKind::Fn { params: arg_params, ret: arg_ret, .. }
                         if param_params.len() == arg_params.len() =>
                     {
                         for (p, a) in param_params.iter().zip(arg_params.iter()) {
@@ -553,7 +553,7 @@ impl<'a> DispatchResolver<'a> {
                 Type::tuple(new_elems)
             }
 
-            TypeKind::Fn { params, ret } => {
+            TypeKind::Fn { params, ret, .. } => {
                 let new_params: Vec<Type> = params
                     .iter()
                     .map(|p| self.apply_substitutions(p, substitutions))
@@ -719,8 +719,8 @@ impl<'a> DispatchResolver<'a> {
 
             // Function types: contravariant in params, covariant in return
             (
-                TypeKind::Fn { params: a_params, ret: a_ret },
-                TypeKind::Fn { params: b_params, ret: b_ret },
+                TypeKind::Fn { params: a_params, ret: a_ret, .. },
+                TypeKind::Fn { params: b_params, ret: b_ret, .. },
             ) => {
                 // Same arity required
                 if a_params.len() != b_params.len() {
@@ -828,8 +828,8 @@ impl<'a> DispatchResolver<'a> {
                 TypeKind::Ptr { inner: b_inner, mutable: b_mut },
             ) => a_mut == b_mut && self.types_equal(a_inner, b_inner),
             (
-                TypeKind::Fn { params: a_params, ret: a_ret },
-                TypeKind::Fn { params: b_params, ret: b_ret },
+                TypeKind::Fn { params: a_params, ret: a_ret, .. },
+                TypeKind::Fn { params: b_params, ret: b_ret, .. },
             ) => {
                 a_params.len() == b_params.len()
                     && a_params

@@ -461,7 +461,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 } else {
                     // Function not found - this is likely a generic function.
                     // Try to monomorphize it on-demand with concrete types from the call.
-                    if let crate::hir::TypeKind::Fn { params, ret } = ty.kind() {
+                    if let crate::hir::TypeKind::Fn { params, ret, .. } = ty.kind() {
                         // Attempt monomorphization
                         if let Some(mono_fn) = self.monomorphize_function(*def_id, params, ret) {
                             self.builder.build_call(mono_fn, &arg_metas, "mono_call")
@@ -591,7 +591,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     let func_ty = self.get_operand_type(func, body);
                     let i8_ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
 
-                    let fn_type = if let crate::hir::TypeKind::Fn { params, ret } = func_ty.kind() {
+                    let fn_type = if let crate::hir::TypeKind::Fn { params, ret, .. } = func_ty.kind() {
                         let mut param_types: Vec<BasicMetadataTypeEnum> = Vec::with_capacity(params.len() + 1);
                         param_types.push(i8_ptr_ty.into()); // env_ptr
                         for p in params {

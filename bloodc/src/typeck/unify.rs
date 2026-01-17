@@ -37,7 +37,7 @@
 
 use std::collections::HashMap;
 
-use crate::hir::{PrimitiveTy, Type, TypeKind, TyVarId, RecordRowVarId, RecordField};
+use crate::hir::{PrimitiveTy, Type, TypeKind, TyVarId, RecordRowVarId, RecordField, FnEffect};
 
 use super::error::{TypeError, TypeErrorKind};
 use crate::span::Span;
@@ -159,8 +159,8 @@ impl Unifier {
 
             // Functions
             (
-                TypeKind::Fn { params: p1, ret: r1 },
-                TypeKind::Fn { params: p2, ret: r2 },
+                TypeKind::Fn { params: p1, ret: r1, .. },
+                TypeKind::Fn { params: p2, ret: r2, .. },
             ) if p1.len() == p2.len() => {
                 for (param1, param2) in p1.iter().zip(p2.iter()) {
                     self.unify(param1, param2, span)?;
@@ -183,9 +183,9 @@ impl Unifier {
             // Closure can unify with compatible function type
             (
                 TypeKind::Closure { params: p1, ret: r1, .. },
-                TypeKind::Fn { params: p2, ret: r2 },
+                TypeKind::Fn { params: p2, ret: r2, .. },
             ) | (
-                TypeKind::Fn { params: p1, ret: r1 },
+                TypeKind::Fn { params: p1, ret: r1, .. },
                 TypeKind::Closure { params: p2, ret: r2, .. },
             ) if p1.len() == p2.len() => {
                 for (param1, param2) in p1.iter().zip(p2.iter()) {
@@ -463,7 +463,7 @@ impl Unifier {
             TypeKind::Ref { inner, .. } | TypeKind::Ptr { inner, .. } => {
                 self.occurs_in(var, inner)
             }
-            TypeKind::Fn { params, ret } => {
+            TypeKind::Fn { params, ret, .. } => {
                 params.iter().any(|t| self.occurs_in(var, t)) || self.occurs_in(var, ret)
             }
             TypeKind::Adt { args, .. } => args.iter().any(|t| self.occurs_in(var, t)),
@@ -516,10 +516,20 @@ impl Unifier {
                     mutable: *mutable,
                 })
             }
-            TypeKind::Fn { params, ret } => Type::function(
-                params.iter().map(|t| self.resolve(t)).collect(),
-                self.resolve(ret),
-            ),
+            TypeKind::Fn { params, ret, effects } => {
+                // Resolve params, ret, and also resolve type args in effect annotations
+                let resolved_effects: Vec<FnEffect> = effects.iter()
+                    .map(|eff| FnEffect::new(
+                        eff.def_id,
+                        eff.type_args.iter().map(|arg| self.resolve(arg)).collect(),
+                    ))
+                    .collect();
+                Type::function_with_effects(
+                    params.iter().map(|t| self.resolve(t)).collect(),
+                    self.resolve(ret),
+                    resolved_effects,
+                )
+            }
             TypeKind::Adt { def_id, args } => Type::adt(
                 *def_id,
                 args.iter().map(|t| self.resolve(t)).collect(),
@@ -625,7 +635,7 @@ impl Unifier {
                     mutable: *mutable,
                 })
             }
-            TypeKind::Fn { params, ret } => {
+            TypeKind::Fn { params, ret, .. } => {
                 Type::function(
                     params
                         .iter()
@@ -1958,7 +1968,7 @@ mod tests {
 
         let resolved = u.resolve(&fn_with_vars);
         match resolved.kind() {
-            TypeKind::Fn { params, ret } => {
+            TypeKind::Fn { params, ret, .. } => {
                 assert_eq!(params.len(), 1);
                 assert_eq!(params[0], Type::i32());
                 assert_eq!(*ret, Type::bool());

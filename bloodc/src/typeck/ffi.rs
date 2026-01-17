@@ -162,7 +162,7 @@ impl FfiValidator {
             }
 
             // Function pointers are FFI-safe if all types are FFI-safe
-            TypeKind::Fn { params, ret } => {
+            TypeKind::Fn { params, ret, .. } => {
                 for (i, param) in params.iter().enumerate() {
                     if let FfiSafety::Unsafe(msg) = self.validate_type_inner(param, visited) {
                         return FfiSafety::Unsafe(format!(

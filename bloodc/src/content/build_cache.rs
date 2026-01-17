@@ -691,7 +691,7 @@ fn hash_type(ty: &hir::Type, hasher: &mut ContentHasher) {
             hasher.update_u8(if *mutable { 1 } else { 0 });
             hash_type(inner, hasher);
         }
-        hir::TypeKind::Fn { params, ret } => {
+        hir::TypeKind::Fn { params, ret, .. } => {
             hasher.update_u8(0x07);
             hasher.update_u32(params.len() as u32);
             for param in params {
@@ -1527,7 +1527,7 @@ fn extract_type_deps(ty: &hir::Type, deps: &mut HashSet<DefId>) {
         hir::TypeKind::Ref { inner, .. } | hir::TypeKind::Ptr { inner, .. } => {
             extract_type_deps(inner, deps);
         }
-        hir::TypeKind::Fn { params, ret } => {
+        hir::TypeKind::Fn { params, ret, .. } => {
             for param in params {
                 extract_type_deps(param, deps);
             }

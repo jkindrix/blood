@@ -253,8 +253,8 @@ impl<'a> AmbiguityChecker<'a> {
 
             // Function types unify if signatures unify
             (
-                TypeKind::Fn { params: p1, ret: r1 },
-                TypeKind::Fn { params: p2, ret: r2 },
+                TypeKind::Fn { params: p1, ret: r1, .. },
+                TypeKind::Fn { params: p2, ret: r2, .. },
             ) => {
                 p1.len() == p2.len()
                     && p1.iter().zip(p2).all(|(a, b)| self.types_could_unify(a, b))

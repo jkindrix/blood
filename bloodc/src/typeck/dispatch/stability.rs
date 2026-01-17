@@ -271,8 +271,8 @@ impl<'a> TypeStabilityChecker<'a> {
 
             // Function types
             (
-                TypeKind::Fn { params: p1, ret: r1 },
-                TypeKind::Fn { params: p2, ret: r2 },
+                TypeKind::Fn { params: p1, ret: r1, .. },
+                TypeKind::Fn { params: p2, ret: r2, .. },
             ) => {
                 p1.len() == p2.len()
                     && p1.iter().zip(p2).all(|(x, y)| self.types_could_overlap(x, y))
@@ -337,8 +337,8 @@ impl<'a> TypeStabilityChecker<'a> {
                 TypeKind::Ref { inner: b_inner, mutable: b_mut },
             ) => a_mut == b_mut && self.types_equal(a_inner, b_inner),
             (
-                TypeKind::Fn { params: a_params, ret: a_ret },
-                TypeKind::Fn { params: b_params, ret: b_ret },
+                TypeKind::Fn { params: a_params, ret: a_ret, .. },
+                TypeKind::Fn { params: b_params, ret: b_ret, .. },
             ) => {
                 a_params.len() == b_params.len()
                     && a_params

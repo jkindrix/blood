@@ -2972,7 +2972,7 @@ pub trait ExprLowering {
         self.pending_closures_mut().push((body_id, closure_def_id, captures_with_types));
 
         let closure_ty = match ty.kind() {
-            TypeKind::Fn { params, ret } => {
+            TypeKind::Fn { params, ret, .. } => {
                 Type::new(TypeKind::Closure {
                     def_id: closure_def_id,
                     params: params.clone(),
