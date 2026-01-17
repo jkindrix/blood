@@ -2114,7 +2114,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         concrete_ret: &Type,
     ) -> Option<inkwell::values::FunctionValue<'ctx>> {
         // Get the generic function's HIR definition first (needed for type inference)
-        let (fn_def, _hir_body) = self.generic_fn_defs.get(&generic_def_id)?.clone();
+        let (fn_def, _hir_body) = match self.generic_fn_defs.get(&generic_def_id) {
+            Some(v) => v.clone(),
+            None => return None,
+        };
 
         // Infer type arguments by unifying generic signature with concrete types
         // This is needed for higher-order generics like `apply<T, R>(f: fn(T) -> R, x: T) -> R`
@@ -2131,6 +2134,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             .filter_map(|tyvar_id| subst.get(tyvar_id).cloned())
             .collect();
 
+        // Critical: check if type inference succeeded
+        if type_args.len() != fn_def.sig.generics.len() {
+            return None;
+        }
+
         // Check if already monomorphized
         let cache_key = (generic_def_id, type_args.clone());
         if let Some(&mono_def_id) = self.mono_cache.get(&cache_key) {
@@ -2138,7 +2146,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         }
 
         // Get the generic function's MIR body
-        let mir_body = self.generic_mir_bodies.get(&generic_def_id)?.clone();
+        let mir_body = match self.generic_mir_bodies.get(&generic_def_id) {
+            Some(b) => b.clone(),
+            None => return None,
+        };
 
         // Generate unique DefId for monomorphized version
         let mono_def_id = DefId::new(0xFFFE_0000 + self.mono_counter);

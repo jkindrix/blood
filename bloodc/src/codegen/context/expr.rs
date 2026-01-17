@@ -643,30 +643,53 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
     /// Compile a plain function pointer call: calling a function pointer stored in a variable.
     ///
-    /// Plain function pointers (`fn(args) -> ret`) are just pointers to functions,
-    /// with no environment capture. We simply call the function with the provided arguments.
+    /// Function pointers (`fn(args) -> ret`) are now fat pointers `{ fn_ptr, env_ptr }`
+    /// to support closures being passed as fn() parameters. For plain functions,
+    /// env_ptr is null. We extract both, prepend env_ptr to args, and call the function.
     pub(super) fn compile_fn_ptr_call(
         &mut self,
         callee: &hir::Expr,
         args: &[hir::Expr],
     ) -> Result<Option<BasicValueEnum<'ctx>>, Vec<Diagnostic>> {
-        // Compile the callee to get the function pointer
-        let fn_ptr_val = self.compile_expr(callee)?
+        let i8_ptr_type = self.context.i8_type().ptr_type(AddressSpace::default());
+
+        // Compile the callee to get the fat pointer { fn_ptr, env_ptr }
+        let fn_val = self.compile_expr(callee)?
             .ok_or_else(|| vec![Diagnostic::error("Expected function pointer value", callee.span)])?;
 
-        // The fn_ptr_val should be a pointer to a function
-        let fn_ptr = match fn_ptr_val {
-            BasicValueEnum::PointerValue(ptr) => ptr,
+        // Extract fn_ptr and env_ptr from the fat pointer struct
+        let (fn_ptr, env_ptr) = match fn_val {
+            BasicValueEnum::StructValue(sv) => {
+                let fn_ptr = self.builder.build_extract_value(sv, 0, "fn.ptr")
+                    .map_err(|e| vec![Diagnostic::error(format!("LLVM extract error: {}", e), callee.span)])?
+                    .into_pointer_value();
+                let env_ptr = self.builder.build_extract_value(sv, 1, "fn.env")
+                    .map_err(|e| vec![Diagnostic::error(format!("LLVM extract error: {}", e), callee.span)])?;
+                (fn_ptr, env_ptr)
+            }
+            BasicValueEnum::PointerValue(ptr) => {
+                // If it's a pointer, load the struct first
+                let loaded = self.builder.build_load(ptr, "fn.load")
+                    .map_err(|e| vec![Diagnostic::error(format!("LLVM load error: {}", e), callee.span)])?;
+                let sv = loaded.into_struct_value();
+                let fn_ptr = self.builder.build_extract_value(sv, 0, "fn.ptr")
+                    .map_err(|e| vec![Diagnostic::error(format!("LLVM extract error: {}", e), callee.span)])?
+                    .into_pointer_value();
+                let env_ptr = self.builder.build_extract_value(sv, 1, "fn.env")
+                    .map_err(|e| vec![Diagnostic::error(format!("LLVM extract error: {}", e), callee.span)])?;
+                (fn_ptr, env_ptr)
+            }
             _ => {
                 return Err(vec![Diagnostic::error(
-                    format!("Expected function pointer, got {:?}", fn_ptr_val.get_type()),
+                    format!("Expected fn struct or pointer, got {:?}", fn_val.get_type()),
                     callee.span,
                 )]);
             }
         };
 
-        // Compile arguments
-        let mut compiled_args: Vec<BasicMetadataValueEnum> = Vec::new();
+        // Compile arguments - prepend env_ptr
+        let mut compiled_args: Vec<BasicMetadataValueEnum> = Vec::with_capacity(args.len() + 1);
+        compiled_args.push(env_ptr.into());
         for arg in args {
             if let Some(val) = self.compile_expr(arg)? {
                 compiled_args.push(val.into());
@@ -684,10 +707,12 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             }
         };
 
-        // Build LLVM function type
-        let llvm_param_types: Vec<BasicMetadataTypeEnum> = param_types.iter()
-            .map(|p| self.lower_type(p).into())
-            .collect();
+        // Build LLVM function type: (env_ptr, params...) -> ret
+        let mut llvm_param_types: Vec<BasicMetadataTypeEnum> = Vec::with_capacity(param_types.len() + 1);
+        llvm_param_types.push(i8_ptr_type.into()); // env_ptr
+        for p in &param_types {
+            llvm_param_types.push(self.lower_type(p).into());
+        }
 
         let fn_type = if return_ty.is_unit() {
             self.context.void_type().fn_type(&llvm_param_types, false)
@@ -696,7 +721,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             ret_type.fn_type(&llvm_param_types, false)
         };
 
-        // Cast the pointer to the correct function pointer type
+        // Cast the fn_ptr to the correct function pointer type
         let fn_ptr_type = fn_type.ptr_type(AddressSpace::default());
         let typed_fn_ptr = self.builder
             .build_pointer_cast(fn_ptr, fn_ptr_type, "fn_ptr_cast")
