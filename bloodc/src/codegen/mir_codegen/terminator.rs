@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use inkwell::basic_block::BasicBlock;
 use inkwell::intrinsics::Intrinsic;
-use inkwell::types::BasicType;
+use inkwell::types::{BasicMetadataTypeEnum, BasicType};
 use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum};
 use inkwell::{AddressSpace, IntPredicate};
 
@@ -240,30 +240,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
             let converted_val = match (arg_ty.kind(), expected_ty.map(|t| t.kind())) {
                 (crate::hir::TypeKind::Closure { .. }, Some(crate::hir::TypeKind::Fn { .. })) => {
-                    // Convert closure to function pointer
-                    // Extract fn_ptr from closure struct { fn_ptr, env_ptr }
-                    let fn_ptr = if let BasicValueEnum::StructValue(sv) = val {
-                        self.builder.build_extract_value(sv, 0, "closure.fn_ptr")
-                            .map_err(|e| vec![Diagnostic::error(
-                                format!("LLVM extract error: {}", e), span
-                            )])?
-                    } else {
-                        return Err(vec![Diagnostic::error(
-                            "Expected struct value for closure", span
-                        )]);
-                    };
-
-                    // Cast i8* to function pointer type
-                    // lower_type for Fn already returns a pointer type (fn_type.ptr_type())
-                    // so we just cast directly to that
-                    let expected = expected_ty.unwrap(); // Safe because we matched above
-                    let fn_ptr_ty = self.lower_type(expected).into_pointer_type();
-                    let fn_ptr_i8 = fn_ptr.into_pointer_value();
-                    let cast_ptr = self.builder.build_pointer_cast(fn_ptr_i8, fn_ptr_ty, "fn_ptr_cast")
-                        .map_err(|e| vec![Diagnostic::error(
-                            format!("LLVM pointer cast error: {}", e), span
-                        )])?;
-                    cast_ptr.into()
+                    // Closure to Fn conversion: both are now { fn_ptr, env_ptr } fat pointers
+                    // Just pass the closure struct directly - no extraction needed
+                    val
                 }
                 _ => val,
             };
@@ -563,23 +542,88 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         )]);
                     }
                 } else {
-                    // Indirect call through function pointer
+                    // Indirect call through function pointer (fn() type)
+                    // fn() is now a fat pointer { fn_ptr, env_ptr } to support closures with captures
                     let func_val = self.compile_mir_operand(func, body, escape_results)?;
-                    let fn_ptr = if let BasicValueEnum::PointerValue(ptr) = func_val {
-                        ptr
+
+                    // Extract fn_ptr and env_ptr from the fat pointer struct
+                    let (fn_ptr, env_ptr) = if let BasicValueEnum::StructValue(sv) = func_val {
+                        let fn_ptr = self.builder.build_extract_value(sv, 0, "fn.ptr")
+                            .map_err(|e| vec![Diagnostic::error(
+                                format!("LLVM extract error: {}", e), span
+                            )])?
+                            .into_pointer_value();
+                        let env_ptr = self.builder.build_extract_value(sv, 1, "fn.env")
+                            .map_err(|e| vec![Diagnostic::error(
+                                format!("LLVM extract error: {}", e), span
+                            )])?;
+                        (fn_ptr, env_ptr)
+                    } else if let BasicValueEnum::PointerValue(ptr) = func_val {
+                        // If it's stored via pointer, load the struct first
+                        let loaded = self.builder.build_load(ptr, "fn.load")
+                            .map_err(|e| vec![Diagnostic::error(
+                                format!("LLVM load error: {}", e), span
+                            )])?;
+                        let sv = loaded.into_struct_value();
+                        let fn_ptr = self.builder.build_extract_value(sv, 0, "fn.ptr")
+                            .map_err(|e| vec![Diagnostic::error(
+                                format!("LLVM extract error: {}", e), span
+                            )])?
+                            .into_pointer_value();
+                        let env_ptr = self.builder.build_extract_value(sv, 1, "fn.env")
+                            .map_err(|e| vec![Diagnostic::error(
+                                format!("LLVM extract error: {}", e), span
+                            )])?;
+                        (fn_ptr, env_ptr)
                     } else {
                         return Err(vec![Diagnostic::error(
-                            "Expected function pointer for call", span
+                            format!("Expected fn struct or pointer for call, got {:?}", func_val.get_type()), span
                         )]);
                     };
 
-                    // Try to convert to CallableValue for indirect call
-                    let callable = inkwell::values::CallableValue::try_from(fn_ptr)
+                    // Build args with env_ptr prepended (closures expect env as first arg)
+                    let mut full_args: Vec<BasicMetadataValueEnum> = Vec::with_capacity(args.len() + 1);
+                    full_args.push(env_ptr.into());
+                    full_args.extend(arg_metas.iter().cloned());
+
+                    // Build function type: (env_ptr, args...) -> ret
+                    // Get the return type from the func operand's type
+                    let func_ty = self.get_operand_type(func, body);
+                    let i8_ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
+
+                    let fn_type = if let crate::hir::TypeKind::Fn { params, ret } = func_ty.kind() {
+                        let mut param_types: Vec<BasicMetadataTypeEnum> = Vec::with_capacity(params.len() + 1);
+                        param_types.push(i8_ptr_ty.into()); // env_ptr
+                        for p in params {
+                            param_types.push(self.lower_type(p).into());
+                        }
+                        if ret.is_unit() {
+                            self.context.void_type().fn_type(&param_types, false)
+                        } else {
+                            let ret_type = self.lower_type(ret);
+                            ret_type.fn_type(&param_types, false)
+                        }
+                    } else {
+                        return Err(vec![Diagnostic::error(
+                            "Expected Fn type for indirect call", span
+                        )]);
+                    };
+
+                    // Cast fn_ptr to the correct function pointer type
+                    let typed_fn_ptr = self.builder.build_pointer_cast(
+                        fn_ptr,
+                        fn_type.ptr_type(AddressSpace::default()),
+                        "fn.typed"
+                    ).map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM pointer cast error: {}", e), span
+                    )])?;
+
+                    let callable = inkwell::values::CallableValue::try_from(typed_fn_ptr)
                         .map_err(|_| vec![Diagnostic::error(
                             "Invalid function pointer for call", span
                         )])?;
 
-                    self.builder.build_call(callable, &arg_metas, "call_result")
+                    self.builder.build_call(callable, &full_args, "call_result")
                         .map_err(|e| vec![Diagnostic::error(
                             format!("LLVM call error: {}", e), span
                         )])?

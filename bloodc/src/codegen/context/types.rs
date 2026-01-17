@@ -106,18 +106,13 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     self.context.i8_type().ptr_type(AddressSpace::default()).into()
                 }
             }
-            TypeKind::Fn { params, ret } => {
-                // Function types as pointers
-                let param_types: Vec<BasicMetadataTypeEnum> = params.iter()
-                    .map(|p| self.lower_type(p).into())
-                    .collect();
-                let fn_type = if ret.is_unit() {
-                    self.context.void_type().fn_type(&param_types, false)
-                } else {
-                    let ret_type = self.lower_type(ret);
-                    ret_type.fn_type(&param_types, false)
-                };
-                fn_type.ptr_type(AddressSpace::default()).into()
+            TypeKind::Fn { .. } => {
+                // Function types are fat pointers: { fn_ptr, env_ptr }
+                // This allows closures with captures to be passed as fn() parameters.
+                // When a regular function (no captures) is passed, env_ptr is null.
+                // When calling through fn(), the env_ptr is passed as the first argument.
+                let ptr_type = self.context.i8_type().ptr_type(AddressSpace::default());
+                self.context.struct_type(&[ptr_type.into(), ptr_type.into()], false).into()
             }
             TypeKind::DynTrait { .. } => {
                 // Trait object: fat pointer { data_ptr, vtable_ptr }
