@@ -1,0 +1,260 @@
+//! LLVM C API Bindings for Blood Code Generation
+//!
+//! This module provides FFI bindings to the LLVM-C API, enabling Blood
+//! to generate native code via LLVM's infrastructure.
+//!
+//! ## Architecture
+//!
+//! The bindings are organized as:
+//! - Raw FFI declarations (bridge blocks)
+//! - Safe wrapper types (Context, Module, Builder, etc.)
+//! - High-level builder API
+//!
+//! ## LLVM Version
+//!
+//! These bindings target LLVM 17+. Some functions may not be available
+//! on older LLVM versions.
+//!
+//! ## Usage
+//!
+//! ```blood
+//! use std::compiler::codegen::llvm::*;
+//!
+//! // Create context and module
+//! let ctx = LLVMContext::new();
+//! let module = LLVMModule::new("my_module", &ctx);
+//! let builder = LLVMBuilder::new(&ctx);
+//!
+//! // Define function type
+//! let i32_ty = ctx.i32_type();
+//! let fn_ty = ctx.function_type(i32_ty, &[i32_ty], false);
+//!
+//! // Add function to module
+//! let func = module.add_function("my_func", fn_ty);
+//! ```
+
+pub mod core;
+pub mod types;
+pub mod values;
+pub mod builder;
+pub mod target;
+
+// Re-exports for convenience
+pub use core::{LLVMContext, LLVMModule, dispose_message};
+pub use types::{LLVMType, LLVMTypeKind};
+pub use values::{LLVMValue, LLVMBasicBlock};
+pub use builder::LLVMBuilder;
+pub use target::{LLVMTarget, LLVMTargetMachine};
+
+// ============================================================================
+// Opaque Pointer Types
+// ============================================================================
+
+/// Opaque handle to an LLVM context.
+pub type LLVMContextRef = *mut ();
+
+/// Opaque handle to an LLVM module.
+pub type LLVMModuleRef = *mut ();
+
+/// Opaque handle to an LLVM type.
+pub type LLVMTypeRef = *mut ();
+
+/// Opaque handle to an LLVM value.
+pub type LLVMValueRef = *mut ();
+
+/// Opaque handle to an LLVM basic block.
+pub type LLVMBasicBlockRef = *mut ();
+
+/// Opaque handle to an LLVM builder.
+pub type LLVMBuilderRef = *mut ();
+
+/// Opaque handle to an LLVM target.
+pub type LLVMTargetRef = *mut ();
+
+/// Opaque handle to an LLVM target machine.
+pub type LLVMTargetMachineRef = *mut ();
+
+/// Opaque handle to an LLVM target data.
+pub type LLVMTargetDataRef = *mut ();
+
+/// Opaque handle to an LLVM pass manager.
+pub type LLVMPassManagerRef = *mut ();
+
+/// Opaque handle to an LLVM memory buffer.
+pub type LLVMMemoryBufferRef = *mut ();
+
+// ============================================================================
+// Enums
+// ============================================================================
+
+/// LLVM type kinds.
+pub enum TypeKind {
+    Void = 0,
+    Half = 1,
+    Float = 2,
+    Double = 3,
+    X86FP80 = 4,
+    FP128 = 5,
+    PPCFP128 = 6,
+    Label = 7,
+    Integer = 8,
+    Function = 9,
+    Struct = 10,
+    Array = 11,
+    Pointer = 12,
+    Vector = 13,
+    Metadata = 14,
+    Token = 16,
+    ScalableVector = 17,
+    BFloat = 18,
+    X86AMX = 19,
+    TargetExt = 20,
+}
+
+/// LLVM linkage types.
+pub enum Linkage {
+    External = 0,
+    AvailableExternally = 1,
+    LinkOnceAny = 2,
+    LinkOnceODR = 3,
+    WeakAny = 5,
+    WeakODR = 6,
+    Appending = 7,
+    Internal = 8,
+    Private = 9,
+    ExternalWeak = 12,
+    Common = 14,
+}
+
+/// LLVM visibility.
+pub enum Visibility {
+    Default = 0,
+    Hidden = 1,
+    Protected = 2,
+}
+
+/// LLVM calling conventions.
+pub enum CallConv {
+    C = 0,
+    Fast = 8,
+    Cold = 9,
+    WebKitJS = 12,
+    AnyReg = 13,
+    X86Stdcall = 64,
+    X86Fastcall = 65,
+    ARMAPCS = 66,
+    ARMAAPCS = 67,
+    ARMAAPCSvfp = 68,
+}
+
+/// Integer comparison predicates.
+pub enum IntPredicate {
+    EQ = 32,
+    NE = 33,
+    UGT = 34,
+    UGE = 35,
+    ULT = 36,
+    ULE = 37,
+    SGT = 38,
+    SGE = 39,
+    SLT = 40,
+    SLE = 41,
+}
+
+/// Floating-point comparison predicates.
+pub enum RealPredicate {
+    False = 0,
+    OEQ = 1,
+    OGT = 2,
+    OGE = 3,
+    OLT = 4,
+    OLE = 5,
+    ONE = 6,
+    ORD = 7,
+    UNO = 8,
+    UEQ = 9,
+    UGT = 10,
+    UGE = 11,
+    ULT = 12,
+    ULE = 13,
+    UNE = 14,
+    True = 15,
+}
+
+/// LLVM atomic orderings.
+pub enum AtomicOrdering {
+    NotAtomic = 0,
+    Unordered = 1,
+    Monotonic = 2,
+    Acquire = 4,
+    Release = 5,
+    AcquireRelease = 6,
+    SequentiallyConsistent = 7,
+}
+
+/// LLVM optimization levels.
+pub enum OptLevel {
+    None = 0,
+    Less = 1,
+    Default = 2,
+    Aggressive = 3,
+}
+
+/// LLVM relocation models.
+pub enum RelocMode {
+    Default = 0,
+    Static = 1,
+    PIC = 2,
+    DynamicNoPIC = 3,
+    ROPI = 4,
+    RWPI = 5,
+    ROPIRWPI = 6,
+}
+
+/// LLVM code models.
+pub enum CodeModel {
+    Default = 0,
+    JITDefault = 1,
+    Tiny = 2,
+    Small = 3,
+    Kernel = 4,
+    Medium = 5,
+    Large = 6,
+}
+
+/// LLVM file types for code emission.
+pub enum CodeGenFileType {
+    Assembly = 0,
+    Object = 1,
+}
+
+// ============================================================================
+// Address Space
+// ============================================================================
+
+/// LLVM address space (for pointers).
+pub struct AddressSpace {
+    pub value: u32,
+}
+
+impl AddressSpace {
+    /// Generic/default address space.
+    pub fn generic() -> AddressSpace {
+        AddressSpace { value: 0 }
+    }
+
+    /// Create a specific address space.
+    pub fn new(space: u32) -> AddressSpace {
+        AddressSpace { value: space }
+    }
+}
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+/// Boolean true value for LLVM API.
+pub const LLVM_TRUE: i32 = 1;
+
+/// Boolean false value for LLVM API.
+pub const LLVM_FALSE: i32 = 0;

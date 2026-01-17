@@ -1,0 +1,979 @@
+//! MIR Terminator Code Generation
+//!
+//! This module compiles MIR terminators to LLVM IR.
+//! Terminators are the final instructions in a basic block that control
+//! program flow (branches, calls, returns, etc.).
+//!
+//! ## Terminator Kinds
+//!
+//! | Terminator | Description | Control Flow |
+//! |------------|-------------|--------------|
+//! | Goto | Unconditional branch | Single target |
+//! | SwitchInt | Integer switch | Multiple targets |
+//! | Return | Function return | Exit function |
+//! | Unreachable | Never executed | None |
+//! | Call | Function call | Single target (+ unwind) |
+//! | Assert | Condition check | Pass/fail targets |
+//! | DropAndReplace | Drop then assign | Single target |
+//! | Perform | Effect operation | Single target |
+//! | Resume | Resume from handler | Exit handler |
+//! | StaleReference | Stale pointer detected | Panic |
+
+use std::collections::HashMap;
+
+use super::super::llvm::{
+    LLVMValueRef, LLVMTypeRef, LLVMBasicBlockRef,
+    types::{i1_type, i8_type, i32_type, i64_type, ptr_type, void_type, function_type, array_type},
+    values::{const_int, const_null, const_string, append_basic_block, get_undef},
+};
+use super::super::context::CodegenContext;
+use super::super::lower_type::lower_type;
+use super::rvalue::compile_mir_rvalue;
+use super::place::compile_mir_place;
+use super::statement::compile_mir_operand;
+
+use crate::hir::{DefId, LocalId, Type, TypeKind};
+use crate::mir::{
+    MirBody, Terminator, TerminatorKind, BasicBlockId, SwitchTargets,
+    Operand, Place, Constant, ConstantKind, EscapeResults,
+};
+use crate::diagnostics::Diagnostic;
+use crate::span::Span;
+
+// ============================================================================
+// Terminator Compilation
+// ============================================================================
+
+/// Compile a MIR terminator to LLVM IR.
+pub fn compile_mir_terminator(
+    ctx: &mut CodegenContext,
+    term: &Terminator,
+    body: &MirBody,
+    llvm_blocks: &HashMap<BasicBlockId, LLVMBasicBlockRef>,
+    escape_results: Option<&EscapeResults>,
+) -> Result<(), Vec<Diagnostic>> {
+    match &term.kind {
+        TerminatorKind::Goto { target } => {
+            compile_goto(ctx, *target, llvm_blocks, term.span)
+        }
+
+        TerminatorKind::SwitchInt { discr, targets } => {
+            compile_switch_int(ctx, discr, targets, body, llvm_blocks, escape_results, term.span)
+        }
+
+        TerminatorKind::Return => {
+            compile_return(ctx, body, term.span)
+        }
+
+        TerminatorKind::Unreachable => {
+            ctx.llvm_builder().build_unreachable();
+            Ok(())
+        }
+
+        TerminatorKind::Call { func, args, destination, target, unwind } => {
+            compile_call(ctx, func, args, destination, target.as_ref(), body, llvm_blocks, escape_results, term.span)
+        }
+
+        TerminatorKind::Assert { cond, expected, msg, target, unwind } => {
+            compile_assert(ctx, cond, *expected, msg, target, body, llvm_blocks, escape_results, term.span)
+        }
+
+        TerminatorKind::DropAndReplace { place, value, target, unwind } => {
+            compile_drop_and_replace(ctx, place, value, target, body, llvm_blocks, escape_results, term.span)
+        }
+
+        TerminatorKind::Perform { effect_id, op_index, args, destination, target, is_tail_resumptive } => {
+            compile_perform(ctx, *effect_id, *op_index, args, destination, target, *is_tail_resumptive, body, llvm_blocks, escape_results, term.span)
+        }
+
+        TerminatorKind::Resume { value } => {
+            compile_resume(ctx, value.as_ref(), body, escape_results, term.span)
+        }
+
+        TerminatorKind::StaleReference { ptr, expected, actual } => {
+            compile_stale_reference(ctx, ptr, *expected, *actual, body, escape_results, term.span)
+        }
+    }
+}
+
+// ============================================================================
+// Simple Terminators
+// ============================================================================
+
+/// Compile unconditional branch.
+fn compile_goto(
+    ctx: &mut CodegenContext,
+    target: BasicBlockId,
+    llvm_blocks: &HashMap<BasicBlockId, LLVMBasicBlockRef>,
+    span: Span,
+) -> Result<(), Vec<Diagnostic>> {
+    let target_bb = *llvm_blocks.get(&target).ok_or_else(|| {
+        vec![Diagnostic::error(format!("Target block {} not found", target), span)]
+    })?;
+    ctx.llvm_builder().build_br(target_bb);
+    Ok(())
+}
+
+/// Compile integer switch.
+fn compile_switch_int(
+    ctx: &mut CodegenContext,
+    discr: &Operand,
+    targets: &SwitchTargets,
+    body: &MirBody,
+    llvm_blocks: &HashMap<BasicBlockId, LLVMBasicBlockRef>,
+    escape_results: Option<&EscapeResults>,
+    span: Span,
+) -> Result<(), Vec<Diagnostic>> {
+    let discr_val = compile_mir_operand(ctx, discr, body, escape_results)?;
+
+    let otherwise_bb = *llvm_blocks.get(&targets.otherwise).ok_or_else(|| {
+        vec![Diagnostic::error("Otherwise block not found", span)]
+    })?;
+
+    // Build switch cases
+    let mut cases: Vec<(LLVMValueRef, LLVMBasicBlockRef)> = Vec::new();
+    for (val, bb_id) in &targets.branches {
+        if let Some(&bb) = llvm_blocks.get(bb_id) {
+            // Create constant for this case value
+            let discr_ty = ctx.llvm_builder().get_value_type(discr_val);
+            let val_const = const_int(discr_ty, *val as u64, false);
+            cases.push((val_const, bb));
+        }
+    }
+
+    ctx.llvm_builder().build_switch(discr_val, otherwise_bb, &cases);
+    Ok(())
+}
+
+/// Compile function return.
+fn compile_return(
+    ctx: &mut CodegenContext,
+    body: &MirBody,
+    span: Span,
+) -> Result<(), Vec<Diagnostic>> {
+    let ret_local = LocalId::new(0);
+
+    // Check if this is the main function (needs i32 return for C runtime)
+    let is_main = ctx.is_main_function();
+
+    if let Some(&ret_ptr) = ctx.locals.get(&ret_local) {
+        let ret_ty = body.return_type();
+        if !ret_ty.is_unit() {
+            let llvm_ret_ty = lower_type(ctx, &ret_ty);
+            let ret_val = ctx.llvm_builder().build_load(llvm_ret_ty, ret_ptr, "ret_val\0");
+            ctx.llvm_builder().build_ret(Some(ret_val));
+        } else if is_main {
+            // main must return i32 for C runtime - return 0 on success
+            let i32_ty = i32_type(ctx.llvm_context_ref());
+            let zero = const_int(i32_ty, 0, false);
+            ctx.llvm_builder().build_ret(Some(zero));
+        } else {
+            ctx.llvm_builder().build_ret(None);
+        }
+    } else if is_main {
+        // main must return i32 for C runtime
+        let i32_ty = i32_type(ctx.llvm_context_ref());
+        let zero = const_int(i32_ty, 0, false);
+        ctx.llvm_builder().build_ret(Some(zero));
+    } else {
+        ctx.llvm_builder().build_ret(None);
+    }
+
+    Ok(())
+}
+
+// ============================================================================
+// Function Calls
+// ============================================================================
+
+/// Compile function call terminator.
+fn compile_call(
+    ctx: &mut CodegenContext,
+    func: &Operand,
+    args: &[Operand],
+    destination: &Place,
+    target: Option<&BasicBlockId>,
+    body: &MirBody,
+    llvm_blocks: &HashMap<BasicBlockId, LLVMBasicBlockRef>,
+    escape_results: Option<&EscapeResults>,
+    span: Span,
+) -> Result<(), Vec<Diagnostic>> {
+    // Get expected parameter types from function being called
+    let expected_param_types = get_function_param_types(func);
+
+    // Compile arguments with potential type conversion
+    let mut arg_vals: Vec<LLVMValueRef> = Vec::with_capacity(args.len());
+    for (i, arg) in args.iter().enumerate() {
+        let val = compile_mir_operand(ctx, arg, body, escape_results)?;
+        let arg_ty = get_operand_type(ctx, arg, body);
+        let expected_ty = expected_param_types.get(i);
+
+        // Convert closure to fn pointer if needed
+        let converted_val = convert_arg_if_needed(ctx, val, &arg_ty, expected_ty, span)?;
+        arg_vals.push(converted_val);
+    }
+
+    // Handle different function operand types
+    let call_result = match func {
+        Operand::Constant(Constant { kind: ConstantKind::FnDef(def_id), ty }) => {
+            compile_direct_call(ctx, *def_id, ty, &arg_vals, body, llvm_blocks, escape_results, span)?
+        }
+
+        Operand::Copy(place) | Operand::Move(place) => {
+            compile_indirect_call(ctx, func, place, &arg_vals, body, escape_results, span)?
+        }
+
+        Operand::Constant(_) => {
+            return Err(vec![Diagnostic::error(
+                "Expected callable value (function, closure, or function pointer)",
+                span
+            )]);
+        }
+    };
+
+    // Store result to destination
+    let dest_ptr = compile_mir_place(ctx, destination, body, escape_results)?;
+    if let Some(ret_val) = call_result {
+        ctx.llvm_builder().build_store(ret_val, dest_ptr);
+    }
+
+    // Branch to continuation
+    if let Some(target_bb_id) = target {
+        let target_bb = *llvm_blocks.get(target_bb_id).ok_or_else(|| {
+            vec![Diagnostic::error("Call target block not found", span)]
+        })?;
+        ctx.llvm_builder().build_br(target_bb);
+    }
+
+    Ok(())
+}
+
+/// Get parameter types from a function operand.
+fn get_function_param_types(func: &Operand) -> Vec<Type> {
+    match func {
+        Operand::Constant(Constant { kind: ConstantKind::FnDef(_), ty }) => {
+            if let TypeKind::Fn { params, .. } = ty.kind() {
+                params.clone()
+            } else {
+                Vec::new()
+            }
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Get the type of an operand.
+fn get_operand_type(ctx: &CodegenContext, operand: &Operand, body: &MirBody) -> Type {
+    match operand {
+        Operand::Copy(place) | Operand::Move(place) => {
+            body.locals[place.local.index as usize].ty.clone()
+        }
+        Operand::Constant(c) => c.ty.clone(),
+    }
+}
+
+/// Convert argument if type conversion is needed (e.g., closure to fn pointer).
+fn convert_arg_if_needed(
+    ctx: &mut CodegenContext,
+    val: LLVMValueRef,
+    arg_ty: &Type,
+    expected_ty: Option<&Type>,
+    span: Span,
+) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    match (arg_ty.kind(), expected_ty.map(|t| t.kind())) {
+        (TypeKind::Closure { .. }, Some(TypeKind::Fn { .. })) => {
+            // Closure to Fn conversion: both are { fn_ptr, env_ptr } fat pointers
+            // Just pass the closure struct directly
+            Ok(val)
+        }
+        _ => Ok(val),
+    }
+}
+
+/// Compile a direct function call.
+fn compile_direct_call(
+    ctx: &mut CodegenContext,
+    def_id: DefId,
+    fn_ty: &Type,
+    args: &[LLVMValueRef],
+    body: &MirBody,
+    llvm_blocks: &HashMap<BasicBlockId, LLVMBasicBlockRef>,
+    escape_results: Option<&EscapeResults>,
+    span: Span,
+) -> Result<Option<LLVMValueRef>, Vec<Diagnostic>> {
+    // Try to find the function in our function map
+    if let Some(&fn_value) = ctx.functions.get(&def_id) {
+        let result = ctx.llvm_builder().build_call(fn_value, args, "call_result\0");
+        return Ok(Some(result));
+    }
+
+    // Check if it's a builtin function
+    if let Some(builtin_name) = ctx.builtin_fns.get(&def_id).cloned() {
+        return compile_builtin_call(ctx, &builtin_name, args, span);
+    }
+
+    // Try to monomorphize generic function
+    if let TypeKind::Fn { params, ret, .. } = fn_ty.kind() {
+        if let Some(mono_fn) = ctx.monomorphize_function(def_id, params, ret) {
+            let result = ctx.llvm_builder().build_call(mono_fn, args, "mono_call\0");
+            return Ok(Some(result));
+        }
+    }
+
+    Err(vec![Diagnostic::error(
+        format!("Function {:?} not found", def_id),
+        span
+    )])
+}
+
+/// Compile a builtin function call.
+fn compile_builtin_call(
+    ctx: &mut CodegenContext,
+    builtin_name: &str,
+    args: &[LLVMValueRef],
+    span: Span,
+) -> Result<Option<LLVMValueRef>, Vec<Diagnostic>> {
+    // Check for pointer intrinsics
+    if builtin_name.starts_with("ptr_read_") {
+        return compile_ptr_read_intrinsic(ctx, builtin_name, args, span);
+    }
+    if builtin_name.starts_with("ptr_write_") {
+        return compile_ptr_write_intrinsic(ctx, builtin_name, args, span);
+    }
+
+    // Check for math intrinsics
+    if let Some(intrinsic) = get_math_intrinsic(builtin_name) {
+        return compile_math_intrinsic(ctx, intrinsic, args, span);
+    }
+
+    // Look up runtime function
+    if let Some(fn_value) = ctx.get_runtime_fn(builtin_name) {
+        let result = ctx.llvm_builder().build_call(fn_value, args, "builtin_call\0");
+        return Ok(Some(result));
+    }
+
+    Err(vec![Diagnostic::error(
+        format!("Runtime function '{}' not declared", builtin_name),
+        span
+    )])
+}
+
+/// Compile pointer read intrinsic to direct LLVM load.
+fn compile_ptr_read_intrinsic(
+    ctx: &mut CodegenContext,
+    builtin_name: &str,
+    args: &[LLVMValueRef],
+    span: Span,
+) -> Result<Option<LLVMValueRef>, Vec<Diagnostic>> {
+    if args.is_empty() {
+        return Err(vec![Diagnostic::error("ptr_read requires a pointer argument", span)]);
+    }
+
+    let ptr_arg = args[0];
+
+    // Determine element type based on suffix
+    let elem_ty = match builtin_name {
+        "ptr_read_i32" => i32_type(ctx.llvm_context_ref()),
+        "ptr_read_i64" | "ptr_read_u64" => i64_type(ctx.llvm_context_ref()),
+        "ptr_read_u8" => i8_type(ctx.llvm_context_ref()),
+        "ptr_read_f64" => super::super::llvm::types::f64_type(ctx.llvm_context_ref()),
+        _ => return Err(vec![Diagnostic::error(format!("Unknown ptr_read variant: {}", builtin_name), span)]),
+    };
+
+    // Cast integer to pointer
+    let ptr_ty = ptr_type(ctx.llvm_context_ref());
+    let typed_ptr = ctx.llvm_builder().build_int_to_ptr(ptr_arg, ptr_ty, "ptr_cast\0");
+
+    // Load value
+    let loaded_val = ctx.llvm_builder().build_load(elem_ty, typed_ptr, "ptr_load\0");
+
+    Ok(Some(loaded_val))
+}
+
+/// Compile pointer write intrinsic to direct LLVM store.
+fn compile_ptr_write_intrinsic(
+    ctx: &mut CodegenContext,
+    builtin_name: &str,
+    args: &[LLVMValueRef],
+    span: Span,
+) -> Result<Option<LLVMValueRef>, Vec<Diagnostic>> {
+    if args.len() < 2 {
+        return Err(vec![Diagnostic::error("ptr_write requires pointer and value arguments", span)]);
+    }
+
+    let ptr_arg = args[0];
+    let value_arg = args[1];
+
+    // Cast integer to pointer
+    let ptr_ty = ptr_type(ctx.llvm_context_ref());
+    let typed_ptr = ctx.llvm_builder().build_int_to_ptr(ptr_arg, ptr_ty, "ptr_cast\0");
+
+    // Store value
+    ctx.llvm_builder().build_store(value_arg, typed_ptr);
+
+    Ok(None) // ptr_write returns void
+}
+
+/// Get LLVM intrinsic name for math functions.
+fn get_math_intrinsic(builtin_name: &str) -> Option<&'static str> {
+    match builtin_name {
+        "sqrt" => Some("llvm.sqrt.f64"),
+        "sqrt_f32" => Some("llvm.sqrt.f32"),
+        "abs" => Some("llvm.fabs.f64"),
+        "abs_f32" => Some("llvm.fabs.f32"),
+        "floor" => Some("llvm.floor.f64"),
+        "ceil" => Some("llvm.ceil.f64"),
+        "sin" => Some("llvm.sin.f64"),
+        "cos" => Some("llvm.cos.f64"),
+        "exp" => Some("llvm.exp.f64"),
+        "log" => Some("llvm.log.f64"),
+        "pow" => Some("llvm.pow.f64"),
+        _ => None,
+    }
+}
+
+/// Compile math intrinsic.
+fn compile_math_intrinsic(
+    ctx: &mut CodegenContext,
+    intrinsic_name: &str,
+    args: &[LLVMValueRef],
+    span: Span,
+) -> Result<Option<LLVMValueRef>, Vec<Diagnostic>> {
+    // Get or declare the intrinsic function
+    let intrinsic_fn = ctx.get_or_declare_intrinsic(intrinsic_name, args)?;
+    let result = ctx.llvm_builder().build_call(intrinsic_fn, args, "math_intrinsic\0");
+    Ok(Some(result))
+}
+
+/// Compile an indirect function call (through pointer or closure).
+fn compile_indirect_call(
+    ctx: &mut CodegenContext,
+    func: &Operand,
+    place: &Place,
+    args: &[LLVMValueRef],
+    body: &MirBody,
+    escape_results: Option<&EscapeResults>,
+    span: Span,
+) -> Result<Option<LLVMValueRef>, Vec<Diagnostic>> {
+    // Check for closure call
+    if let Some(closure_def_id) = get_closure_def_id(place, body) {
+        return compile_closure_call(ctx, closure_def_id, func, args, body, escape_results, span);
+    }
+
+    // Indirect call through function pointer (fn() type is fat pointer { fn_ptr, env_ptr })
+    let func_val = compile_mir_operand(ctx, func, body, escape_results)?;
+
+    // Extract fn_ptr and env_ptr from the fat pointer struct
+    let fn_ptr = ctx.llvm_builder().build_extract_value(func_val, 0, "fn.ptr\0");
+    let env_ptr = ctx.llvm_builder().build_extract_value(func_val, 1, "fn.env\0");
+
+    // Build args with env_ptr prepended
+    let mut full_args: Vec<LLVMValueRef> = Vec::with_capacity(args.len() + 1);
+    full_args.push(env_ptr);
+    full_args.extend_from_slice(args);
+
+    // Build function type and call
+    let func_ty = get_operand_type(ctx, func, body);
+    let fn_type = build_closure_fn_type(ctx, &func_ty)?;
+
+    let result = ctx.llvm_builder().build_indirect_call(fn_type, fn_ptr, &full_args, "call_result\0");
+    Ok(Some(result))
+}
+
+/// Get closure DefId from a place's type.
+fn get_closure_def_id(place: &Place, body: &MirBody) -> Option<DefId> {
+    let local = body.locals.get(place.local.index as usize)?;
+    match local.ty.kind() {
+        TypeKind::Closure { def_id, .. } => Some(*def_id),
+        _ => None,
+    }
+}
+
+/// Compile a closure call.
+fn compile_closure_call(
+    ctx: &mut CodegenContext,
+    closure_def_id: DefId,
+    func: &Operand,
+    args: &[LLVMValueRef],
+    body: &MirBody,
+    escape_results: Option<&EscapeResults>,
+    span: Span,
+) -> Result<Option<LLVMValueRef>, Vec<Diagnostic>> {
+    let fn_value = *ctx.functions.get(&closure_def_id).ok_or_else(|| {
+        vec![Diagnostic::error(format!("Closure function {:?} not found", closure_def_id), span)]
+    })?;
+
+    // Check if closure expects env parameter
+    let fn_param_count = ctx.get_function_param_count(fn_value);
+    let has_env_param = fn_param_count == args.len() + 1;
+
+    let full_args = if has_env_param {
+        // Extract environment pointer from closure struct
+        let closure_val = compile_mir_operand(ctx, func, body, escape_results)?;
+        let env_ptr = ctx.llvm_builder().build_extract_value(closure_val, 1, "closure.env\0");
+
+        let mut full_args = Vec::with_capacity(args.len() + 1);
+        full_args.push(env_ptr);
+        full_args.extend_from_slice(args);
+        full_args
+    } else {
+        args.to_vec()
+    };
+
+    let result = ctx.llvm_builder().build_call(fn_value, &full_args, "closure_call\0");
+    Ok(Some(result))
+}
+
+/// Build function type for closure call.
+fn build_closure_fn_type(ctx: &CodegenContext, func_ty: &Type) -> Result<LLVMTypeRef, Vec<Diagnostic>> {
+    let i8_ptr_ty = ptr_type(ctx.llvm_context_ref());
+
+    if let TypeKind::Fn { params, ret, .. } = func_ty.kind() {
+        let mut param_types: Vec<LLVMTypeRef> = Vec::with_capacity(params.len() + 1);
+        param_types.push(i8_ptr_ty); // env_ptr
+
+        for p in params {
+            param_types.push(lower_type(ctx, p));
+        }
+
+        if ret.is_unit() {
+            Ok(function_type(void_type(ctx.llvm_context_ref()), &param_types, false))
+        } else {
+            let ret_type = lower_type(ctx, ret);
+            Ok(function_type(ret_type, &param_types, false))
+        }
+    } else {
+        Err(vec![Diagnostic::error(
+            "Expected Fn type for indirect call",
+            Span::dummy()
+        )])
+    }
+}
+
+// ============================================================================
+// Assert Terminator
+// ============================================================================
+
+/// Compile assert terminator.
+fn compile_assert(
+    ctx: &mut CodegenContext,
+    cond: &Operand,
+    expected: bool,
+    msg: &str,
+    target: &BasicBlockId,
+    body: &MirBody,
+    llvm_blocks: &HashMap<BasicBlockId, LLVMBasicBlockRef>,
+    escape_results: Option<&EscapeResults>,
+    span: Span,
+) -> Result<(), Vec<Diagnostic>> {
+    let cond_val = compile_mir_operand(ctx, cond, body, escape_results)?;
+    let i1_ty = i1_type(ctx.llvm_context_ref());
+    let expected_int = const_int(i1_ty, if expected { 1 } else { 0 }, false);
+
+    let check = ctx.llvm_builder().build_icmp_eq(cond_val, expected_int, "assert_check\0");
+
+    let current_fn = ctx.current_fn().ok_or_else(|| {
+        vec![Diagnostic::error("No current function", span)]
+    })?;
+
+    let assert_ok_bb = append_basic_block(ctx.llvm_context_ref(), current_fn, "assert_ok\0");
+    let assert_fail_bb = append_basic_block(ctx.llvm_context_ref(), current_fn, "assert_fail\0");
+
+    ctx.llvm_builder().build_cond_br(check, assert_ok_bb.raw(), assert_fail_bb.raw());
+
+    // Assert fail path - call blood_panic
+    ctx.llvm_builder().position_at_end(assert_fail_bb.raw());
+
+    let panic_fn = ctx.get_or_declare_fn("blood_panic", || {
+        let void_ty = void_type(ctx.llvm_context_ref());
+        let i8_ptr_ty = ptr_type(ctx.llvm_context_ref());
+        function_type(void_ty, &[i8_ptr_ty], false)
+    });
+
+    let msg_str = if msg.is_empty() { "assertion failed" } else { msg };
+    let msg_global = ctx.llvm_builder().build_global_string_ptr(msg_str, "assert_msg\0");
+
+    ctx.llvm_builder().build_call(panic_fn, &[msg_global], "\0");
+    ctx.llvm_builder().build_unreachable();
+
+    // Assert ok path - continue to target
+    ctx.llvm_builder().position_at_end(assert_ok_bb.raw());
+    let target_bb = *llvm_blocks.get(target).ok_or_else(|| {
+        vec![Diagnostic::error("Assert target block not found", span)]
+    })?;
+    ctx.llvm_builder().build_br(target_bb);
+
+    Ok(())
+}
+
+// ============================================================================
+// Drop and Replace
+// ============================================================================
+
+/// Compile drop and replace terminator.
+fn compile_drop_and_replace(
+    ctx: &mut CodegenContext,
+    place: &Place,
+    value: &Operand,
+    target: &BasicBlockId,
+    body: &MirBody,
+    llvm_blocks: &HashMap<BasicBlockId, LLVMBasicBlockRef>,
+    escape_results: Option<&EscapeResults>,
+    span: Span,
+) -> Result<(), Vec<Diagnostic>> {
+    // Drop is already handled by place compilation loading the old value
+    // (which would trigger destructor in a more complete implementation)
+
+    // Store the new value
+    let new_val = compile_mir_operand(ctx, value, body, escape_results)?;
+    let ptr = compile_mir_place(ctx, place, body, escape_results)?;
+    ctx.llvm_builder().build_store(new_val, ptr);
+
+    // Continue to target
+    let target_bb = *llvm_blocks.get(target).ok_or_else(|| {
+        vec![Diagnostic::error("DropAndReplace target not found", span)]
+    })?;
+    ctx.llvm_builder().build_br(target_bb);
+
+    Ok(())
+}
+
+// ============================================================================
+// Effect Operations
+// ============================================================================
+
+/// Compile perform terminator (effect operation).
+fn compile_perform(
+    ctx: &mut CodegenContext,
+    effect_id: DefId,
+    op_index: u32,
+    args: &[Operand],
+    destination: &Place,
+    target: &BasicBlockId,
+    is_tail_resumptive: bool,
+    body: &MirBody,
+    llvm_blocks: &HashMap<BasicBlockId, LLVMBasicBlockRef>,
+    escape_results: Option<&EscapeResults>,
+    span: Span,
+) -> Result<(), Vec<Diagnostic>> {
+    let i32_ty = i32_type(ctx.llvm_context_ref());
+    let i64_ty = i64_type(ctx.llvm_context_ref());
+
+    // Compile arguments
+    let arg_vals: Result<Vec<_>, _> = args.iter()
+        .map(|a| compile_mir_operand(ctx, a, body, escape_results))
+        .collect();
+    let arg_vals = arg_vals?;
+
+    // Create generation snapshot before performing the effect
+    let snapshot = create_snapshot(ctx, span)?;
+
+    // Add entries to snapshot for effect-captured locals
+    if let Some(escape) = escape_results {
+        add_snapshot_entries(ctx, body, escape, snapshot, span)?;
+    }
+
+    // Build arguments array for perform call
+    let args_ptr = build_perform_args_array(ctx, &arg_vals, span)?;
+
+    // Create continuation for handler
+    let continuation_val = ctx.create_perform_continuation()?;
+
+    // Call blood_perform
+    let perform_fn = ctx.get_runtime_fn("blood_perform")
+        .ok_or_else(|| vec![Diagnostic::error(
+            "Runtime function blood_perform not found", span
+        )])?;
+
+    let effect_id_val = const_int(i64_ty, effect_id.index as u64, false);
+    let op_index_val = const_int(i32_ty, op_index as u64, false);
+    let arg_count = const_int(i64_ty, arg_vals.len() as u64, false);
+
+    let result = ctx.llvm_builder().build_call(
+        perform_fn,
+        &[effect_id_val, op_index_val, args_ptr, arg_count, continuation_val],
+        "perform_result\0"
+    );
+
+    // Store result to destination (with type conversion)
+    store_perform_result(ctx, result, destination, body, escape_results, span)?;
+
+    // Validate and destroy snapshot
+    validate_and_destroy_snapshot(ctx, snapshot, span)?;
+
+    // Branch to target on valid path
+    let target_bb = *llvm_blocks.get(target).ok_or_else(|| {
+        vec![Diagnostic::error("Perform target not found", span)]
+    })?;
+    ctx.llvm_builder().build_br(target_bb);
+
+    Ok(())
+}
+
+/// Create a generation snapshot.
+fn create_snapshot(ctx: &mut CodegenContext, span: Span) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    let snapshot_create = ctx.get_runtime_fn("blood_snapshot_create")
+        .ok_or_else(|| vec![Diagnostic::error(
+            "Runtime function blood_snapshot_create not found", span
+        )])?;
+
+    Ok(ctx.llvm_builder().build_call(snapshot_create, &[], "snapshot\0"))
+}
+
+/// Add entries to snapshot for effect-captured locals.
+fn add_snapshot_entries(
+    ctx: &mut CodegenContext,
+    body: &MirBody,
+    escape: &EscapeResults,
+    snapshot: LLVMValueRef,
+    span: Span,
+) -> Result<(), Vec<Diagnostic>> {
+    let i32_ty = i32_type(ctx.llvm_context_ref());
+    let i64_ty = i64_type(ctx.llvm_context_ref());
+
+    let snapshot_add_entry = ctx.get_runtime_fn("blood_snapshot_add_entry")
+        .ok_or_else(|| vec![Diagnostic::error(
+            "Runtime function blood_snapshot_add_entry not found", span
+        )])?;
+
+    for local in &body.locals {
+        if escape.is_effect_captured(local.id) && super::type_may_contain_genref(&local.ty) {
+            if let Some(&local_ptr) = ctx.locals.get(&local.id) {
+                let ptr_ty = ptr_type(ctx.llvm_context_ref());
+                let ptr_val = ctx.llvm_builder().build_load(ptr_ty, local_ptr, &format!("cap_{}\0", local.id.index));
+
+                // Extract address and generation from pointer
+                let address = ctx.llvm_builder().build_ptr_to_int(ptr_val, i64_ty, "addr\0");
+                let generation = ctx.get_generation_for_address(address, i32_ty, span)?;
+
+                ctx.llvm_builder().build_call(
+                    snapshot_add_entry,
+                    &[snapshot, address, generation],
+                    "\0"
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Build arguments array for perform call.
+fn build_perform_args_array(
+    ctx: &mut CodegenContext,
+    args: &[LLVMValueRef],
+    span: Span,
+) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    let i64_ty = i64_type(ctx.llvm_context_ref());
+
+    if args.is_empty() {
+        return Ok(const_null(ptr_type(ctx.llvm_context_ref())));
+    }
+
+    let array_ty = array_type(i64_ty, args.len() as u32);
+    let args_alloca = ctx.llvm_builder().build_alloca(array_ty, "perform_args\0");
+
+    let zero = const_int(i64_ty, 0, false);
+    for (i, val) in args.iter().enumerate() {
+        let idx = const_int(i64_ty, i as u64, false);
+        let gep = ctx.llvm_builder().build_gep(array_ty, args_alloca, &[zero, idx], &format!("arg_{}\0", i));
+        let val_i64 = ctx.llvm_builder().build_int_cast(*val, i64_ty, false, "arg_i64\0");
+        ctx.llvm_builder().build_store(val_i64, gep);
+    }
+
+    Ok(ctx.llvm_builder().build_bitcast(args_alloca, ptr_type(ctx.llvm_context_ref()), "args_ptr\0"))
+}
+
+/// Store perform result to destination with type conversion.
+fn store_perform_result(
+    ctx: &mut CodegenContext,
+    result: LLVMValueRef,
+    destination: &Place,
+    body: &MirBody,
+    escape_results: Option<&EscapeResults>,
+    span: Span,
+) -> Result<(), Vec<Diagnostic>> {
+    let dest_local = &body.locals[destination.local.index as usize];
+
+    // Skip storing for unit type
+    if dest_local.ty.is_unit() {
+        return Ok(());
+    }
+
+    let dest_ptr = compile_mir_place(ctx, destination, body, escape_results)?;
+    let dest_llvm_ty = lower_type(ctx, &dest_local.ty);
+
+    // Convert i64 result to destination type
+    let converted_result = convert_perform_result(ctx, result, dest_llvm_ty, span)?;
+    ctx.llvm_builder().build_store(converted_result, dest_ptr);
+
+    Ok(())
+}
+
+/// Convert perform result (i64) to destination type.
+fn convert_perform_result(
+    ctx: &mut CodegenContext,
+    result: LLVMValueRef,
+    dest_ty: LLVMTypeRef,
+    span: Span,
+) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    let i64_ty = i64_type(ctx.llvm_context_ref());
+
+    // For now, just return the result as-is
+    // A full implementation would check dest_ty and convert appropriately
+    Ok(result)
+}
+
+/// Validate and destroy snapshot.
+fn validate_and_destroy_snapshot(
+    ctx: &mut CodegenContext,
+    snapshot: LLVMValueRef,
+    span: Span,
+) -> Result<(), Vec<Diagnostic>> {
+    let i32_ty = i32_type(ctx.llvm_context_ref());
+    let i64_ty = i64_type(ctx.llvm_context_ref());
+
+    let snapshot_validate = ctx.get_runtime_fn("blood_snapshot_validate")
+        .ok_or_else(|| vec![Diagnostic::error(
+            "Runtime function blood_snapshot_validate not found", span
+        )])?;
+
+    let validation_result = ctx.llvm_builder().build_call(snapshot_validate, &[snapshot], "validation\0");
+
+    // Destroy snapshot after validation
+    let snapshot_destroy = ctx.get_runtime_fn("blood_snapshot_destroy")
+        .ok_or_else(|| vec![Diagnostic::error(
+            "Runtime function blood_snapshot_destroy not found", span
+        )])?;
+    ctx.llvm_builder().build_call(snapshot_destroy, &[snapshot], "\0");
+
+    // Check if validation failed
+    let current_fn = ctx.current_fn().ok_or_else(|| {
+        vec![Diagnostic::error("No current function", span)]
+    })?;
+
+    let continue_bb = append_basic_block(ctx.llvm_context_ref(), current_fn, "snapshot_valid\0");
+    let stale_bb = append_basic_block(ctx.llvm_context_ref(), current_fn, "snapshot_stale\0");
+
+    let zero = const_int(i64_ty, 0, false);
+    let is_valid = ctx.llvm_builder().build_icmp_eq(validation_result, zero, "is_valid\0");
+    ctx.llvm_builder().build_cond_br(is_valid, continue_bb.raw(), stale_bb.raw());
+
+    // Stale path - panic
+    ctx.llvm_builder().position_at_end(stale_bb.raw());
+    let panic_fn = ctx.get_runtime_fn("blood_stale_reference_panic")
+        .ok_or_else(|| vec![Diagnostic::error(
+            "Runtime function blood_stale_reference_panic not found", span
+        )])?;
+    let zero_i32 = const_int(i32_ty, 0, false);
+    ctx.llvm_builder().build_call(panic_fn, &[zero_i32, zero_i32], "\0");
+    ctx.llvm_builder().build_unreachable();
+
+    // Continue on valid path
+    ctx.llvm_builder().position_at_end(continue_bb.raw());
+
+    Ok(())
+}
+
+// ============================================================================
+// Resume Terminator
+// ============================================================================
+
+/// Compile resume terminator (return from effect handler).
+fn compile_resume(
+    ctx: &mut CodegenContext,
+    value: Option<&Operand>,
+    body: &MirBody,
+    escape_results: Option<&EscapeResults>,
+    span: Span,
+) -> Result<(), Vec<Diagnostic>> {
+    let current_fn = ctx.current_fn().ok_or_else(|| {
+        vec![Diagnostic::error("No current function for Resume", span)]
+    })?;
+
+    // Store return value if any
+    if let Some(val_op) = value {
+        let val = compile_mir_operand(ctx, val_op, body, escape_results)?;
+        if let Some(&ret_ptr) = ctx.locals.get(&LocalId::new(0)) {
+            ctx.llvm_builder().build_store(val, ret_ptr);
+        }
+    }
+
+    // Get snapshot from effect context
+    let get_snapshot_fn = ctx.get_runtime_fn("blood_effect_context_get_snapshot")
+        .ok_or_else(|| vec![Diagnostic::error(
+            "Runtime function blood_effect_context_get_snapshot not found", span
+        )])?;
+
+    let snapshot = ctx.llvm_builder().build_call(get_snapshot_fn, &[], "snapshot\0");
+
+    // Check if snapshot is null (no validation needed for tail-resumptive handlers)
+    let i64_ty = i64_type(ctx.llvm_context_ref());
+    let null_snapshot = const_int(i64_ty, 0, false);
+    let snapshot_is_null = ctx.llvm_builder().build_icmp_eq(snapshot, null_snapshot, "snapshot_is_null\0");
+
+    // Create basic blocks for validation path
+    let validate_bb = append_basic_block(ctx.llvm_context_ref(), current_fn, "resume_validate\0");
+    let stale_bb = append_basic_block(ctx.llvm_context_ref(), current_fn, "resume_stale\0");
+    let ok_bb = append_basic_block(ctx.llvm_context_ref(), current_fn, "resume_ok\0");
+
+    ctx.llvm_builder().build_cond_br(snapshot_is_null, ok_bb.raw(), validate_bb.raw());
+
+    // Validation block
+    ctx.llvm_builder().position_at_end(validate_bb.raw());
+    let validate_fn = ctx.get_runtime_fn("blood_snapshot_validate")
+        .ok_or_else(|| vec![Diagnostic::error(
+            "Runtime function blood_snapshot_validate not found", span
+        )])?;
+
+    let stale_index = ctx.llvm_builder().build_call(validate_fn, &[snapshot], "stale_index\0");
+    let zero = const_int(i64_ty, 0, false);
+    let is_valid = ctx.llvm_builder().build_icmp_eq(stale_index, zero, "is_valid\0");
+    ctx.llvm_builder().build_cond_br(is_valid, ok_bb.raw(), stale_bb.raw());
+
+    // Stale block
+    ctx.llvm_builder().position_at_end(stale_bb.raw());
+    let panic_fn = ctx.get_runtime_fn("blood_snapshot_stale_panic")
+        .ok_or_else(|| vec![Diagnostic::error(
+            "Runtime function blood_snapshot_stale_panic not found", span
+        )])?;
+    ctx.llvm_builder().build_call(panic_fn, &[snapshot, stale_index], "\0");
+    ctx.llvm_builder().build_unreachable();
+
+    // OK block - return from handler
+    ctx.llvm_builder().position_at_end(ok_bb.raw());
+    ctx.llvm_builder().build_ret(None);
+
+    Ok(())
+}
+
+// ============================================================================
+// Stale Reference Terminator
+// ============================================================================
+
+/// Compile stale reference terminator (panic on stale pointer).
+fn compile_stale_reference(
+    ctx: &mut CodegenContext,
+    ptr: &Place,
+    expected: u32,
+    actual: u32,
+    body: &MirBody,
+    escape_results: Option<&EscapeResults>,
+    span: Span,
+) -> Result<(), Vec<Diagnostic>> {
+    let i32_ty = i32_type(ctx.llvm_context_ref());
+
+    // Get the panic function
+    let panic_fn = ctx.get_runtime_fn("blood_stale_reference_panic")
+        .ok_or_else(|| vec![Diagnostic::error(
+            "Runtime function blood_stale_reference_panic not found", span
+        )])?;
+
+    let expected_int = const_int(i32_ty, expected as u64, false);
+    let actual_int = const_int(i32_ty, actual as u64, false);
+
+    ctx.llvm_builder().build_call(panic_fn, &[expected_int, actual_int], "\0");
+    ctx.llvm_builder().build_unreachable();
+
+    Ok(())
+}

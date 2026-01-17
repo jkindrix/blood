@@ -1,0 +1,796 @@
+//! # AST Core Node Types
+//!
+//! Fundamental AST node types that form the backbone of the syntax tree.
+//!
+//! ## Overview
+//!
+//! This module defines:
+//! - `Program` - The root node representing a compilation unit
+//! - `ModuleDecl` - Module declaration (`module std.collections.vec`)
+//! - `ModulePath` - Dotted module path segments
+//! - `Import` - Import statements with various forms
+//! - `Spanned` - Generic wrapper for values with source location
+//! - `NodeId` - Unique identifier for AST nodes
+//!
+//! ## Design Principles
+//!
+//! Following [rustc's AST design](https://rustc-dev-guide.rust-lang.org/syntax-intro.html):
+//!
+//! 1. **Source fidelity** - Preserve all information needed for error reporting
+//! 2. **Span tracking** - Every node carries its source location
+//! 3. **Arena allocation** - Nodes designed for arena allocation
+//! 4. **Immutability** - AST is built once, then traversed
+//!
+//! ## Example
+//!
+//! ```blood
+//! use std.compiler.ast.Program
+//! use std.compiler.ast.ModuleDecl
+//!
+//! // A parsed program
+//! let program = Program {
+//!     module: Some(ModuleDecl { path: ..., span: ... }),
+//!     imports: vec![...],
+//!     declarations: vec![...],
+//!     span: Span::new(0, 100),
+//! }
+//! ```
+
+module std.compiler.ast.node
+
+use std.option.Option
+use std.collections.Vec
+use std.hash.Hash
+use std.traits.clone.Clone
+use std.traits.cmp.PartialEq
+use std.traits.cmp.Eq
+
+// ============================================================================
+// Source Location (Span)
+// ============================================================================
+
+/// A source location span representing a range in the source code.
+///
+/// Spans are used throughout the AST to track where each node came from,
+/// enabling precise error messages and IDE features.
+///
+/// ## Fields
+///
+/// | Field | Description |
+/// |-------|-------------|
+/// | `start` | Byte offset of the start position |
+/// | `end` | Byte offset of the end position (exclusive) |
+///
+/// ## Example
+///
+/// ```blood
+/// let span = Span::new(10, 25)
+/// assert(span.len() == 15)
+/// ```
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Span {
+    /// Start byte offset (inclusive).
+    pub start: U32,
+    /// End byte offset (exclusive).
+    pub end: U32,
+}
+
+impl Span {
+    /// Create a new span from start and end positions.
+    pub fn new(start: U32, end: U32) -> Span {
+        Span { start, end }
+    }
+
+    /// Create a dummy/synthetic span.
+    ///
+    /// Used for generated code that has no source location.
+    pub fn dummy() -> Span {
+        Span { start: 0, end: 0 }
+    }
+
+    /// Check if this is a dummy span.
+    pub fn is_dummy(self) -> Bool {
+        self.start == 0 && self.end == 0
+    }
+
+    /// Get the length of the span in bytes.
+    pub fn len(self) -> U32 {
+        self.end - self.start
+    }
+
+    /// Check if the span is empty.
+    pub fn is_empty(self) -> Bool {
+        self.start >= self.end
+    }
+
+    /// Merge two spans into one that covers both.
+    ///
+    /// The resulting span starts at the minimum start and ends at the maximum end.
+    pub fn merge(self, other: Span) -> Span {
+        Span {
+            start: if self.start < other.start { self.start } else { other.start },
+            end: if self.end > other.end { self.end } else { other.end },
+        }
+    }
+
+    /// Extend this span to include another.
+    pub fn to(self, end: Span) -> Span {
+        Span {
+            start: self.start,
+            end: end.end,
+        }
+    }
+
+    /// Check if this span contains a byte offset.
+    pub fn contains(self, offset: U32) -> Bool {
+        offset >= self.start && offset < self.end
+    }
+
+    /// Check if this span contains another span entirely.
+    pub fn contains_span(self, other: Span) -> Bool {
+        other.start >= self.start && other.end <= self.end
+    }
+
+    /// Shrink the span by removing bytes from both ends.
+    pub fn shrink(self, amount: U32) -> Span {
+        let new_start = self.start + amount
+        let new_end = if self.end > amount { self.end - amount } else { self.start }
+        Span {
+            start: if new_start < new_end { new_start } else { new_end },
+            end: new_end,
+        }
+    }
+}
+
+impl Default for Span {
+    fn default() -> Span {
+        Span::dummy()
+    }
+}
+
+impl Debug for Span {
+    fn fmt(self, f: &mut Formatter) -> Result[(), Error] {
+        write!(f, "{}..{}", self.start, self.end)
+    }
+}
+
+// ============================================================================
+// Spanned - Generic wrapper with span
+// ============================================================================
+
+/// A value with attached source location information.
+///
+/// Used throughout the AST to pair identifiers and other values with their
+/// source locations.
+///
+/// ## Example
+///
+/// ```blood
+/// let name: Spanned[String] = Spanned {
+///     value: "main",
+///     span: Span::new(3, 7),
+/// }
+/// ```
+#[derive(Clone, PartialEq, Eq)]
+pub struct Spanned[T] {
+    /// The wrapped value.
+    pub value: T,
+    /// Source location of the value.
+    pub span: Span,
+}
+
+impl[T] Spanned[T] {
+    /// Create a new spanned value.
+    pub fn new(value: T, span: Span) -> Spanned[T] {
+        Spanned { value, span }
+    }
+
+    /// Create a spanned value with a dummy span.
+    pub fn dummy(value: T) -> Spanned[T] {
+        Spanned { value, span: Span::dummy() }
+    }
+
+    /// Map a function over the inner value.
+    pub fn map[U](self, f: fn(T) -> U) -> Spanned[U] {
+        Spanned {
+            value: f(self.value),
+            span: self.span,
+        }
+    }
+
+    /// Get a reference to the inner value.
+    pub fn as_ref(self) -> &T {
+        &self.value
+    }
+}
+
+impl[T: Clone] Spanned[T] {
+    /// Clone the inner value with the same span.
+    pub fn clone_value(self) -> Spanned[T] {
+        Spanned {
+            value: self.value.clone(),
+            span: self.span,
+        }
+    }
+}
+
+impl[T: Debug] Debug for Spanned[T] {
+    fn fmt(self, f: &mut Formatter) -> Result[(), Error] {
+        write!(f, "{:?}@{:?}", self.value, self.span)
+    }
+}
+
+// ============================================================================
+// NodeId - Unique AST Node Identifier
+// ============================================================================
+
+/// A unique identifier for AST nodes.
+///
+/// NodeIds are assigned during parsing and used to:
+/// - Track node identity across transformations
+/// - Key metadata maps (types, resolved names)
+/// - Enable efficient node lookup
+///
+/// ## Example
+///
+/// ```blood
+/// let id = NodeId::new(42)
+/// assert(id.as_u32() == 42)
+/// ```
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct NodeId {
+    id: U32,
+}
+
+impl NodeId {
+    /// Create a new node ID.
+    pub fn new(id: U32) -> NodeId {
+        NodeId { id }
+    }
+
+    /// Get the dummy node ID (used for synthetic nodes).
+    pub fn dummy() -> NodeId {
+        NodeId { id: U32::MAX }
+    }
+
+    /// Check if this is a dummy node ID.
+    pub fn is_dummy(self) -> Bool {
+        self.id == U32::MAX
+    }
+
+    /// Get the raw u32 value.
+    pub fn as_u32(self) -> U32 {
+        self.id
+    }
+}
+
+impl Default for NodeId {
+    fn default() -> NodeId {
+        NodeId::dummy()
+    }
+}
+
+impl Debug for NodeId {
+    fn fmt(self, f: &mut Formatter) -> Result[(), Error] {
+        write!(f, "NodeId({})", self.id)
+    }
+}
+
+// ============================================================================
+// Symbol - Interned Identifier
+// ============================================================================
+
+/// An interned string symbol.
+///
+/// Symbols provide efficient string comparison and storage for identifiers.
+/// Two symbols with the same string content compare equal by pointer.
+///
+/// ## Example
+///
+/// ```blood
+/// let sym1 = Symbol::new(interner, "main")
+/// let sym2 = Symbol::new(interner, "main")
+/// assert(sym1 == sym2)  // Same interned symbol
+/// ```
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Symbol {
+    /// Index into the string interner.
+    index: U32,
+}
+
+impl Symbol {
+    /// Create a symbol from an interner index.
+    pub fn from_index(index: U32) -> Symbol {
+        Symbol { index }
+    }
+
+    /// Get the interner index.
+    pub fn index(self) -> U32 {
+        self.index
+    }
+
+    /// Create a dummy symbol.
+    pub fn dummy() -> Symbol {
+        Symbol { index: U32::MAX }
+    }
+
+    /// Check if this is a dummy symbol.
+    pub fn is_dummy(self) -> Bool {
+        self.index == U32::MAX
+    }
+}
+
+impl Default for Symbol {
+    fn default() -> Symbol {
+        Symbol::dummy()
+    }
+}
+
+impl Debug for Symbol {
+    fn fmt(self, f: &mut Formatter) -> Result[(), Error] {
+        write!(f, "Symbol({})", self.index)
+    }
+}
+
+// ============================================================================
+// Identifier - Named identifier with span
+// ============================================================================
+
+/// An identifier (name) in the source code.
+///
+/// Combines a symbol (interned string) with its source location.
+pub type Ident = Spanned[Symbol]
+
+impl Ident {
+    /// Create a new identifier.
+    pub fn new(symbol: Symbol, span: Span) -> Ident {
+        Spanned::new(symbol, span)
+    }
+
+    /// Create a dummy identifier.
+    pub fn dummy() -> Ident {
+        Spanned::dummy(Symbol::dummy())
+    }
+
+    /// Get the symbol.
+    pub fn symbol(self) -> Symbol {
+        self.value
+    }
+
+    /// Get the span.
+    pub fn span(self) -> Span {
+        self.span
+    }
+}
+
+// ============================================================================
+// Program - Root AST Node
+// ============================================================================
+
+/// A compilation unit (source file).
+///
+/// The `Program` is the root of the AST, representing a single `.blood` file.
+/// It contains the module declaration, imports, and top-level declarations.
+///
+/// ## Structure
+///
+/// ```text
+/// Program
+/// ├── module: Option[ModuleDecl]   // `module std.collections.vec`
+/// ├── imports: Vec[Import]          // `use std.io.println`
+/// └── declarations: Vec[Decl]       // fn, struct, enum, etc.
+/// ```
+///
+/// ## Example
+///
+/// For the source:
+/// ```blood
+/// module std.example
+///
+/// use std.io.println
+///
+/// fn main() {
+///     println("Hello!")
+/// }
+/// ```
+///
+/// The AST would be:
+/// ```blood
+/// Program {
+///     module: Some(ModuleDecl { path: ["std", "example"], ... }),
+///     imports: [Import::Simple { path: ["std", "io", "println"], ... }],
+///     declarations: [Declaration::Function(...)],
+///     span: Span::new(0, ...),
+/// }
+/// ```
+#[derive(Clone, PartialEq, Eq)]
+pub struct Program {
+    /// Unique node ID.
+    pub id: NodeId,
+    /// Optional module declaration at the top of the file.
+    pub module: Option[ModuleDecl],
+    /// Import statements.
+    pub imports: Vec[Import],
+    /// Top-level declarations.
+    pub declarations: Vec[Declaration],
+    /// Span of the entire program.
+    pub span: Span,
+}
+
+impl Program {
+    /// Create an empty program.
+    pub fn empty() -> Program {
+        Program {
+            id: NodeId::dummy(),
+            module: Option::None,
+            imports: Vec::new(),
+            declarations: Vec::new(),
+            span: Span::dummy(),
+        }
+    }
+
+    /// Check if the program has a module declaration.
+    pub fn has_module(self) -> Bool {
+        self.module.is_some()
+    }
+
+    /// Get the number of imports.
+    pub fn import_count(self) -> USize {
+        self.imports.len()
+    }
+
+    /// Get the number of declarations.
+    pub fn declaration_count(self) -> USize {
+        self.declarations.len()
+    }
+}
+
+// ============================================================================
+// Module Declaration
+// ============================================================================
+
+/// Module declaration at the top of a file.
+///
+/// Example: `module std.collections.vec`
+#[derive(Clone, PartialEq, Eq)]
+pub struct ModuleDecl {
+    /// Unique node ID.
+    pub id: NodeId,
+    /// The module path.
+    pub path: ModulePath,
+    /// Span of the entire declaration.
+    pub span: Span,
+}
+
+/// A module path consisting of dot-separated segments.
+///
+/// Example: `std.collections.vec` has segments ["std", "collections", "vec"]
+#[derive(Clone, PartialEq, Eq)]
+pub struct ModulePath {
+    /// Path segments (identifiers).
+    pub segments: Vec[Ident],
+    /// Span of the entire path.
+    pub span: Span,
+}
+
+impl ModulePath {
+    /// Create a new module path.
+    pub fn new(segments: Vec[Ident], span: Span) -> ModulePath {
+        ModulePath { segments, span }
+    }
+
+    /// Create an empty path.
+    pub fn empty() -> ModulePath {
+        ModulePath {
+            segments: Vec::new(),
+            span: Span::dummy(),
+        }
+    }
+
+    /// Check if the path is empty.
+    pub fn is_empty(self) -> Bool {
+        self.segments.is_empty()
+    }
+
+    /// Get the number of segments.
+    pub fn len(self) -> USize {
+        self.segments.len()
+    }
+
+    /// Get the first segment (crate/package name).
+    pub fn first(self) -> Option[&Ident] {
+        self.segments.first()
+    }
+
+    /// Get the last segment (item name).
+    pub fn last(self) -> Option[&Ident] {
+        self.segments.last()
+    }
+}
+
+// ============================================================================
+// Import Statements
+// ============================================================================
+
+/// An import statement.
+///
+/// Blood supports several import forms:
+/// - Simple: `use std.io.println`
+/// - Aliased: `use std.io.println as print`
+/// - Group: `use std.io.{println, stderr}`
+/// - Glob: `use std.ops.*`
+/// - Pub use: `pub use crate.internal.Widget`
+#[derive(Clone, PartialEq, Eq)]
+pub enum Import {
+    /// Simple import: `use std.io.println`
+    Simple {
+        id: NodeId,
+        visibility: Visibility,
+        path: ModulePath,
+        alias: Option[Ident],
+        span: Span,
+    },
+
+    /// Group import: `use std.io.{println, stderr}`
+    Group {
+        id: NodeId,
+        visibility: Visibility,
+        path: ModulePath,
+        items: Vec[ImportItem],
+        span: Span,
+    },
+
+    /// Glob import: `use std.ops.*`
+    Glob {
+        id: NodeId,
+        visibility: Visibility,
+        path: ModulePath,
+        span: Span,
+    },
+}
+
+impl Import {
+    /// Get the node ID.
+    pub fn id(self) -> NodeId {
+        match self {
+            Import::Simple { id, .. } => id,
+            Import::Group { id, .. } => id,
+            Import::Glob { id, .. } => id,
+        }
+    }
+
+    /// Get the span.
+    pub fn span(self) -> Span {
+        match self {
+            Import::Simple { span, .. } => span,
+            Import::Group { span, .. } => span,
+            Import::Glob { span, .. } => span,
+        }
+    }
+
+    /// Get the visibility.
+    pub fn visibility(self) -> Visibility {
+        match self {
+            Import::Simple { visibility, .. } => visibility,
+            Import::Group { visibility, .. } => visibility,
+            Import::Glob { visibility, .. } => visibility,
+        }
+    }
+
+    /// Check if this is a public import (pub use).
+    pub fn is_public(self) -> Bool {
+        match self.visibility() {
+            Visibility::Public => true,
+            _ => false,
+        }
+    }
+}
+
+/// An item in a group import.
+///
+/// Example: In `use std.io.{println as print, stderr}`:
+/// - `println as print` is ImportItem with alias
+/// - `stderr` is ImportItem without alias
+#[derive(Clone, PartialEq, Eq)]
+pub struct ImportItem {
+    /// The item name.
+    pub name: Ident,
+    /// Optional alias.
+    pub alias: Option[Ident],
+    /// Span of this item.
+    pub span: Span,
+}
+
+// ============================================================================
+// Visibility
+// ============================================================================
+
+/// Visibility modifier for declarations.
+///
+/// | Modifier | Meaning |
+/// |----------|---------|
+/// | Private | Visible only in current module (default) |
+/// | Public | Visible everywhere |
+/// | PublicCrate | Visible within the current crate |
+/// | PublicSuper | Visible in parent module |
+/// | PublicSelf | Explicitly private (same as Private) |
+/// | PublicIn(path) | Visible within specified path |
+#[derive(Clone, PartialEq, Eq)]
+pub enum Visibility {
+    /// Private (default) - `fn foo()`
+    Private,
+    /// Public - `pub fn foo()`
+    Public,
+    /// Crate-visible - `pub(crate) fn foo()`
+    PublicCrate,
+    /// Parent-visible - `pub(super) fn foo()`
+    PublicSuper,
+    /// Self-visible (explicit private) - `pub(self) fn foo()`
+    PublicSelf,
+    /// Path-restricted - `pub(in crate::module) fn foo()`
+    PublicIn(ModulePath),
+}
+
+impl Visibility {
+    /// Check if this visibility is public (any form).
+    pub fn is_public(self) -> Bool {
+        match self {
+            Visibility::Private => false,
+            _ => true,
+        }
+    }
+
+    /// Check if this is fully public (visible everywhere).
+    pub fn is_fully_public(self) -> Bool {
+        match self {
+            Visibility::Public => true,
+            _ => false,
+        }
+    }
+}
+
+impl Default for Visibility {
+    fn default() -> Visibility {
+        Visibility::Private
+    }
+}
+
+impl Copy for Visibility {}
+
+// ============================================================================
+// Forward Declaration for Declaration enum
+// ============================================================================
+
+/// Top-level declaration (forward declaration).
+///
+/// The full definition is in decl.blood. This forward declaration allows
+/// Program to reference Declaration without circular dependencies.
+pub enum Declaration {
+    // Variants defined in decl.blood
+    Function(FnDecl),
+    TypeAlias(TypeDecl),
+    Struct(StructDecl),
+    Enum(EnumDecl),
+    Effect(EffectDecl),
+    Handler(HandlerDecl),
+    Const(ConstDecl),
+    Static(StaticDecl),
+    Impl(ImplBlock),
+    Trait(TraitDecl),
+    Bridge(BridgeDecl),
+    Module(ModItemDecl),
+    Macro(MacroDecl),
+}
+
+// Forward declarations for types used in Declaration
+// These are defined in their respective modules
+pub struct FnDecl { _placeholder: () }
+pub struct TypeDecl { _placeholder: () }
+pub struct StructDecl { _placeholder: () }
+pub struct EnumDecl { _placeholder: () }
+pub struct EffectDecl { _placeholder: () }
+pub struct HandlerDecl { _placeholder: () }
+pub struct ConstDecl { _placeholder: () }
+pub struct StaticDecl { _placeholder: () }
+pub struct ImplBlock { _placeholder: () }
+pub struct TraitDecl { _placeholder: () }
+pub struct BridgeDecl { _placeholder: () }
+pub struct ModItemDecl { _placeholder: () }
+pub struct MacroDecl { _placeholder: () }
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[test]
+fn test_span_new() {
+    let span = Span::new(10, 20)
+    assert(span.start == 10)
+    assert(span.end == 20)
+    assert(span.len() == 10)
+}
+
+#[test]
+fn test_span_dummy() {
+    let span = Span::dummy()
+    assert(span.is_dummy())
+    assert(span.start == 0)
+    assert(span.end == 0)
+}
+
+#[test]
+fn test_span_merge() {
+    let span1 = Span::new(5, 15)
+    let span2 = Span::new(10, 25)
+    let merged = span1.merge(span2)
+
+    assert(merged.start == 5)
+    assert(merged.end == 25)
+}
+
+#[test]
+fn test_span_contains() {
+    let span = Span::new(10, 20)
+
+    assert(span.contains(10))
+    assert(span.contains(15))
+    assert(span.contains(19))
+    assert(!span.contains(9))
+    assert(!span.contains(20))
+}
+
+#[test]
+fn test_spanned_new() {
+    let spanned: Spanned[Int] = Spanned::new(42, Span::new(0, 2))
+    assert(spanned.value == 42)
+    assert(spanned.span.start == 0)
+}
+
+#[test]
+fn test_spanned_map() {
+    let spanned: Spanned[Int] = Spanned::new(21, Span::new(0, 2))
+    let doubled = spanned.map(|x| x * 2)
+    assert(doubled.value == 42)
+    assert(doubled.span.start == 0)
+}
+
+#[test]
+fn test_node_id() {
+    let id = NodeId::new(42)
+    assert(id.as_u32() == 42)
+    assert(!id.is_dummy())
+
+    let dummy = NodeId::dummy()
+    assert(dummy.is_dummy())
+}
+
+#[test]
+fn test_symbol() {
+    let sym = Symbol::from_index(100)
+    assert(sym.index() == 100)
+    assert(!sym.is_dummy())
+
+    let dummy = Symbol::dummy()
+    assert(dummy.is_dummy())
+}
+
+#[test]
+fn test_module_path() {
+    let path = ModulePath::empty()
+    assert(path.is_empty())
+    assert(path.len() == 0)
+}
+
+#[test]
+fn test_visibility_default() {
+    let vis: Visibility = Visibility::default()
+    assert(!vis.is_public())
+
+    let public = Visibility::Public
+    assert(public.is_public())
+    assert(public.is_fully_public())
+
+    let crate_vis = Visibility::PublicCrate
+    assert(crate_vis.is_public())
+    assert(!crate_vis.is_fully_public())
+}

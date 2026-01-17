@@ -1,0 +1,837 @@
+/// Codebase Storage Module
+///
+/// Content-addressed storage for definitions.
+///
+/// # Storage Layout
+///
+/// ```text
+/// ~/.blood/codebases/
+/// ├── default/
+/// │   ├── terms/           # Definition storage
+/// │   │   ├── a7/
+/// │   │   │   └── f2k9m3...
+/// │   │   └── ...
+/// │   ├── types/           # Type definitions
+/// │   ├── effects/         # Effect definitions
+/// │   ├── names/           # Name → Hash mappings
+/// │   ├── metadata/        # Comments, docs, locations
+/// │   └── compiled/        # Compiled artifacts
+/// └── projects/
+///     └── myproject/
+///         └── namespace.idx
+/// ```
+///
+/// # Binary Format
+///
+/// ```text
+/// ┌──────────────────────────────────────────────────────────┐
+/// │ Magic: "BLOD" (0x424C4F44)                               │
+/// │ Format version                                           │
+/// │ Hash (32 bytes)                                          │
+/// │ AST size (4 bytes)                                       │
+/// │ Canonical AST                                            │
+/// │ Type size (4 bytes)                                      │
+/// │ Type signature                                           │
+/// │ References count (4 bytes)                               │
+/// │ Reference hashes (32 * N bytes)                          │
+/// │ Optional metadata                                        │
+/// └──────────────────────────────────────────────────────────┘
+/// ```
+
+use std.collections::{HashMap, HashSet};
+use std.path::PathBuf;
+
+use super.canonical::CanonicalAST;
+use super.hash::ContentHash;
+use super.namespace::NameRegistry;
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+/// Magic bytes for definition files: "BLOD".
+pub const MAGIC: [u8; 4] = [0x42, 0x4C, 0x4F, 0x44];
+
+/// Current storage format version.
+pub const STORAGE_VERSION: u8 = 1;
+
+// ============================================================================
+// Storage Errors
+// ============================================================================
+
+/// Errors that can occur during storage operations.
+#[derive(Clone, PartialEq, Eq)]
+pub enum StorageError {
+    /// Definition not found.
+    NotFound(ContentHash),
+    /// Hash collision detected.
+    Collision {
+        hash: ContentHash,
+        existing_summary: String,
+        new_summary: String,
+    },
+    /// Invalid format.
+    InvalidFormat(String),
+    /// IO error.
+    IoError(String),
+}
+
+impl StorageError {
+    /// Create a NotFound error.
+    pub fn not_found(hash: ContentHash) -> StorageError {
+        StorageError::NotFound(hash)
+    }
+
+    /// Create an InvalidFormat error.
+    pub fn invalid_format(msg: &str) -> StorageError {
+        StorageError::InvalidFormat(msg.to_string())
+    }
+
+    /// Create an IoError.
+    pub fn io_error(msg: &str) -> StorageError {
+        StorageError::IoError(msg.to_string())
+    }
+}
+
+impl std.fmt::Debug for StorageError {
+    fn fmt(&self, f: &mut std.fmt::Formatter) -> std.fmt::Result {
+        match self {
+            StorageError::NotFound(hash) => {
+                write!(f, "StorageError::NotFound({})", hash)
+            }
+            StorageError::Collision { hash, .. } => {
+                write!(f, "StorageError::Collision({})", hash)
+            }
+            StorageError::InvalidFormat(msg) => {
+                write!(f, "StorageError::InvalidFormat({})", msg)
+            }
+            StorageError::IoError(msg) => {
+                write!(f, "StorageError::IoError({})", msg)
+            }
+        }
+    }
+}
+
+impl std.fmt::Display for StorageError {
+    fn fmt(&self, f: &mut std.fmt::Formatter) -> std.fmt::Result {
+        match self {
+            StorageError::NotFound(hash) => {
+                write!(f, "Definition not found: {}", hash)
+            }
+            StorageError::Collision { hash, .. } => {
+                write!(f, "Hash collision detected: {}", hash)
+            }
+            StorageError::InvalidFormat(msg) => {
+                write!(f, "Invalid format: {}", msg)
+            }
+            StorageError::IoError(msg) => {
+                write!(f, "IO error: {}", msg)
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Metadata
+// ============================================================================
+
+/// Source file location.
+#[derive(Clone)]
+pub struct SourceLocation {
+    pub file: PathBuf,
+    pub line: u32,
+    pub column: u32,
+}
+
+impl SourceLocation {
+    /// Create a new source location.
+    pub fn new(file: PathBuf, line: u32, column: u32) -> SourceLocation {
+        SourceLocation { file, line, column }
+    }
+}
+
+impl std.fmt::Debug for SourceLocation {
+    fn fmt(&self, f: &mut std.fmt::Formatter) -> std.fmt::Result {
+        write!(f, "{}:{}:{}", self.file.display(), self.line, self.column)
+    }
+}
+
+/// Metadata associated with a definition (not part of hash).
+#[derive(Clone, Default)]
+pub struct DefinitionMetadata {
+    /// Human-readable names for this definition.
+    pub names: Vec<String>,
+    /// Documentation string.
+    pub documentation: Option<String>,
+    /// Source file location.
+    pub source_location: Option<SourceLocation>,
+    /// Creation timestamp.
+    pub created_at: Option<u64>,
+    /// Author information.
+    pub author: Option<String>,
+}
+
+impl DefinitionMetadata {
+    /// Create empty metadata.
+    pub fn new() -> DefinitionMetadata {
+        DefinitionMetadata::default()
+    }
+
+    /// Add a name.
+    pub fn with_name(mut self, name: String) -> DefinitionMetadata {
+        self.names.push(name);
+        self
+    }
+
+    /// Add documentation.
+    pub fn with_doc(mut self, doc: String) -> DefinitionMetadata {
+        self.documentation = Some(doc);
+        self
+    }
+
+    /// Add source location.
+    pub fn with_source(mut self, location: SourceLocation) -> DefinitionMetadata {
+        self.source_location = Some(location);
+        self
+    }
+
+    /// Add creation timestamp.
+    pub fn with_timestamp(mut self, timestamp: u64) -> DefinitionMetadata {
+        self.created_at = Some(timestamp);
+        self
+    }
+
+    /// Add author.
+    pub fn with_author(mut self, author: String) -> DefinitionMetadata {
+        self.author = Some(author);
+        self
+    }
+}
+
+impl std.fmt::Debug for DefinitionMetadata {
+    fn fmt(&self, f: &mut std.fmt::Formatter) -> std.fmt::Result {
+        f.debug_struct("DefinitionMetadata")
+            .field("names", &self.names)
+            .field("documentation", &self.documentation)
+            .field("source_location", &self.source_location)
+            .finish()
+    }
+}
+
+// ============================================================================
+// Definition Record
+// ============================================================================
+
+/// A definition record stored in the codebase.
+#[derive(Clone)]
+pub struct DefinitionRecord {
+    /// The content hash (identity).
+    pub hash: ContentHash,
+    /// The canonical AST.
+    pub ast: CanonicalAST,
+    /// Type signature hash.
+    pub type_hash: Option<ContentHash>,
+    /// Effect signature hash.
+    pub effect_hash: Option<ContentHash>,
+    /// Hashes of definitions this depends on.
+    pub references: Vec<ContentHash>,
+    /// Optional metadata (not part of hash).
+    pub metadata: DefinitionMetadata,
+}
+
+impl DefinitionRecord {
+    /// Create a new definition record from an AST.
+    pub fn new(ast: CanonicalAST) -> DefinitionRecord {
+        let hash = ast.compute_hash();
+        DefinitionRecord {
+            hash,
+            ast,
+            type_hash: None,
+            effect_hash: None,
+            references: Vec::new(),
+            metadata: DefinitionMetadata::default(),
+        }
+    }
+
+    /// Create a definition record with a precomputed hash.
+    pub fn with_hash(hash: ContentHash, ast: CanonicalAST) -> DefinitionRecord {
+        DefinitionRecord {
+            hash,
+            ast,
+            type_hash: None,
+            effect_hash: None,
+            references: Vec::new(),
+            metadata: DefinitionMetadata::default(),
+        }
+    }
+
+    /// Add a name to the metadata.
+    pub fn with_name(mut self, name: &str) -> DefinitionRecord {
+        self.metadata.names.push(name.to_string());
+        self
+    }
+
+    /// Add documentation.
+    pub fn with_doc(mut self, doc: &str) -> DefinitionRecord {
+        self.metadata.documentation = Some(doc.to_string());
+        self
+    }
+
+    /// Add a dependency reference.
+    pub fn with_reference(mut self, hash: ContentHash) -> DefinitionRecord {
+        self.references.push(hash);
+        self
+    }
+
+    /// Add multiple dependency references.
+    pub fn with_references(mut self, hashes: Vec<ContentHash>) -> DefinitionRecord {
+        self.references.extend(hashes);
+        self
+    }
+
+    /// Set the type signature hash.
+    pub fn with_type(mut self, type_hash: ContentHash) -> DefinitionRecord {
+        self.type_hash = Some(type_hash);
+        self
+    }
+
+    /// Set the effect signature hash.
+    pub fn with_effect(mut self, effect_hash: ContentHash) -> DefinitionRecord {
+        self.effect_hash = Some(effect_hash);
+        self
+    }
+
+    /// Get the primary name (first name in the list).
+    pub fn primary_name(&self) -> Option<&str> {
+        self.metadata.names.first().map(|s| s.as_str())
+    }
+
+    /// Check if this definition has any references.
+    pub fn has_references(&self) -> bool {
+        !self.references.is_empty()
+    }
+
+    /// Get the number of references.
+    pub fn reference_count(&self) -> usize {
+        self.references.len()
+    }
+}
+
+impl PartialEq for DefinitionRecord {
+    fn eq(&self, other: &DefinitionRecord) -> bool {
+        self.hash == other.hash
+    }
+}
+
+impl Eq for DefinitionRecord {}
+
+impl std.fmt::Debug for DefinitionRecord {
+    fn fmt(&self, f: &mut std.fmt::Formatter) -> std.fmt::Result {
+        f.debug_struct("DefinitionRecord")
+            .field("hash", &self.hash)
+            .field("type_hash", &self.type_hash)
+            .field("effect_hash", &self.effect_hash)
+            .field("references", &self.references.len())
+            .field("names", &self.metadata.names)
+            .finish()
+    }
+}
+
+// ============================================================================
+// In-Memory Codebase
+// ============================================================================
+
+/// In-memory codebase storage.
+///
+/// For simplicity, this implementation stores everything in memory.
+/// A production implementation would use persistent storage.
+#[derive(Clone, Default)]
+pub struct Codebase {
+    /// Definition storage: hash → record.
+    definitions: HashMap<ContentHash, DefinitionRecord>,
+    /// Type definitions: hash → type record.
+    types: HashMap<ContentHash, DefinitionRecord>,
+    /// Effect definitions: hash → effect record.
+    effects: HashMap<ContentHash, DefinitionRecord>,
+    /// Name registry.
+    names: NameRegistry,
+    /// Compiled artifacts: hash → compiled code.
+    compiled: HashMap<ContentHash, Vec<u8>>,
+    /// Dependency graph: hash → set of dependents.
+    dependents: HashMap<ContentHash, HashSet<ContentHash>>,
+}
+
+impl Codebase {
+    /// Create a new empty codebase.
+    pub fn new() -> Codebase {
+        Codebase::default()
+    }
+
+    /// Add a definition to the codebase.
+    pub fn add(&mut self, record: DefinitionRecord) -> Result<ContentHash, StorageError> {
+        let hash = record.hash;
+
+        // Check for collision
+        if let Some(existing) = self.definitions.get(&hash) {
+            if existing.ast != record.ast {
+                return Err(StorageError::Collision {
+                    hash,
+                    existing_summary: format!("{:?}", existing.ast),
+                    new_summary: format!("{:?}", record.ast),
+                });
+            }
+            // Same AST, just return existing hash
+            return Ok(hash);
+        }
+
+        // Update dependency graph
+        for dep_hash in &record.references {
+            self.dependents
+                .entry(*dep_hash)
+                .or_default()
+                .insert(hash);
+        }
+
+        self.definitions.insert(hash, record);
+        Ok(hash)
+    }
+
+    /// Get a definition by hash.
+    pub fn get(&self, hash: ContentHash) -> Option<&DefinitionRecord> {
+        self.definitions.get(&hash)
+    }
+
+    /// Get a definition mutably by hash.
+    pub fn get_mut(&mut self, hash: ContentHash) -> Option<&mut DefinitionRecord> {
+        self.definitions.get_mut(&hash)
+    }
+
+    /// Check if a definition exists.
+    pub fn contains(&self, hash: ContentHash) -> bool {
+        self.definitions.contains_key(&hash)
+    }
+
+    /// Remove a definition by hash.
+    pub fn remove(&mut self, hash: ContentHash) -> Option<DefinitionRecord> {
+        self.definitions.remove(&hash)
+    }
+
+    /// Get all definitions that depend on a given hash.
+    pub fn get_dependents(&self, hash: ContentHash) -> Vec<ContentHash> {
+        self.dependents
+            .get(&hash)
+            .map(|set| set.iter().copied().collect())
+            .unwrap_or_default()
+    }
+
+    /// Get the transitive closure of dependents.
+    pub fn get_transitive_dependents(&self, hash: ContentHash) -> HashSet<ContentHash> {
+        let mut visited = HashSet::new();
+        let mut stack = vec![hash];
+
+        while let Some(current) = stack.pop() {
+            if visited.contains(&current) {
+                continue;
+            }
+            visited.insert(current);
+
+            if let Some(deps) = self.dependents.get(&current) {
+                stack.extend(deps.iter());
+            }
+        }
+
+        visited.remove(&hash);
+        visited
+    }
+
+    /// Get the name registry.
+    pub fn names(&self) -> &NameRegistry {
+        &self.names
+    }
+
+    /// Get the name registry mutably.
+    pub fn names_mut(&mut self) -> &mut NameRegistry {
+        &mut self.names
+    }
+
+    /// Store compiled code for a definition.
+    pub fn store_compiled(&mut self, hash: ContentHash, code: Vec<u8>) {
+        self.compiled.insert(hash, code);
+    }
+
+    /// Get compiled code for a definition.
+    pub fn get_compiled(&self, hash: ContentHash) -> Option<&[u8]> {
+        self.compiled.get(&hash).map(|v| v.as_slice())
+    }
+
+    /// Check if compiled code exists.
+    pub fn has_compiled(&self, hash: ContentHash) -> bool {
+        self.compiled.contains_key(&hash)
+    }
+
+    /// Remove compiled code for a definition.
+    pub fn remove_compiled(&mut self, hash: ContentHash) -> Option<Vec<u8>> {
+        self.compiled.remove(&hash)
+    }
+
+    /// Add a type definition.
+    pub fn add_type(&mut self, record: DefinitionRecord) -> Result<ContentHash, StorageError> {
+        let hash = record.hash;
+        self.types.insert(hash, record);
+        Ok(hash)
+    }
+
+    /// Get a type definition.
+    pub fn get_type(&self, hash: ContentHash) -> Option<&DefinitionRecord> {
+        self.types.get(&hash)
+    }
+
+    /// Add an effect definition.
+    pub fn add_effect(&mut self, record: DefinitionRecord) -> Result<ContentHash, StorageError> {
+        let hash = record.hash;
+        self.effects.insert(hash, record);
+        Ok(hash)
+    }
+
+    /// Get an effect definition.
+    pub fn get_effect(&self, hash: ContentHash) -> Option<&DefinitionRecord> {
+        self.effects.get(&hash)
+    }
+
+    /// Get all definition hashes.
+    pub fn all_hashes(&self) -> impl Iterator<Item = ContentHash> + '_ {
+        self.definitions.keys().copied()
+    }
+
+    /// Iterate over all definitions.
+    pub fn iter(&self) -> impl Iterator<Item = (&ContentHash, &DefinitionRecord)> {
+        self.definitions.iter()
+    }
+
+    /// Get count of definitions.
+    pub fn len(&self) -> usize {
+        self.definitions.len()
+    }
+
+    /// Check if empty.
+    pub fn is_empty(&self) -> bool {
+        self.definitions.is_empty()
+    }
+
+    /// Garbage collect unreferenced definitions.
+    pub fn collect_garbage(&mut self, roots: &HashSet<ContentHash>) -> usize {
+        let reachable = self.transitive_closure(roots);
+
+        let to_remove: Vec<ContentHash> = self
+            .definitions
+            .keys()
+            .filter(|h| !reachable.contains(h))
+            .copied()
+            .collect();
+
+        let count = to_remove.len();
+
+        for hash in to_remove {
+            self.definitions.remove(&hash);
+            self.compiled.remove(&hash);
+            self.dependents.remove(&hash);
+        }
+
+        count
+    }
+
+    /// Compute the transitive closure of a set of roots.
+    fn transitive_closure(&self, roots: &HashSet<ContentHash>) -> HashSet<ContentHash> {
+        let mut visited = HashSet::new();
+        let mut stack: Vec<ContentHash> = roots.iter().copied().collect();
+
+        while let Some(hash) = stack.pop() {
+            if visited.contains(&hash) {
+                continue;
+            }
+            visited.insert(hash);
+
+            if let Some(record) = self.definitions.get(&hash) {
+                stack.extend(&record.references);
+            }
+        }
+
+        visited
+    }
+
+    /// Get statistics about this codebase.
+    pub fn stats(&self) -> CodebaseStats {
+        CodebaseStats {
+            definition_count: self.definitions.len(),
+            type_count: self.types.len(),
+            effect_count: self.effects.len(),
+            compiled_count: self.compiled.len(),
+            total_ast_size: 0, // Would need AST size tracking
+            total_compiled_size: self.compiled.values().map(|v| v.len()).sum(),
+        }
+    }
+
+    /// Clear all definitions and compiled code.
+    pub fn clear(&mut self) {
+        self.definitions.clear();
+        self.types.clear();
+        self.effects.clear();
+        self.compiled.clear();
+        self.dependents.clear();
+    }
+}
+
+impl std.fmt::Debug for Codebase {
+    fn fmt(&self, f: &mut std.fmt::Formatter) -> std.fmt::Result {
+        f.debug_struct("Codebase")
+            .field("definitions", &self.definitions.len())
+            .field("types", &self.types.len())
+            .field("effects", &self.effects.len())
+            .field("compiled", &self.compiled.len())
+            .finish()
+    }
+}
+
+// ============================================================================
+// Codebase Statistics
+// ============================================================================
+
+/// Statistics about a codebase.
+#[derive(Clone, Default)]
+pub struct CodebaseStats {
+    pub definition_count: usize,
+    pub type_count: usize,
+    pub effect_count: usize,
+    pub compiled_count: usize,
+    pub total_ast_size: usize,
+    pub total_compiled_size: usize,
+}
+
+impl CodebaseStats {
+    /// Create empty stats.
+    pub fn new() -> CodebaseStats {
+        CodebaseStats::default()
+    }
+
+    /// Get the total count of all items.
+    pub fn total_count(&self) -> usize {
+        self.definition_count + self.type_count + self.effect_count
+    }
+
+    /// Get the cache hit ratio (compiled / definitions).
+    pub fn cache_hit_ratio(&self) -> f64 {
+        if self.definition_count == 0 {
+            0.0
+        } else {
+            self.compiled_count as f64 / self.definition_count as f64
+        }
+    }
+}
+
+impl std.fmt::Debug for CodebaseStats {
+    fn fmt(&self, f: &mut std.fmt::Formatter) -> std.fmt::Result {
+        f.debug_struct("CodebaseStats")
+            .field("definitions", &self.definition_count)
+            .field("types", &self.type_count)
+            .field("effects", &self.effect_count)
+            .field("compiled", &self.compiled_count)
+            .field("compiled_size", &self.total_compiled_size)
+            .finish()
+    }
+}
+
+impl std.fmt::Display for CodebaseStats {
+    fn fmt(&self, f: &mut std.fmt::Formatter) -> std.fmt::Result {
+        write!(
+            f,
+            "Codebase: {} definitions, {} types, {} effects, {} compiled ({} bytes)",
+            self.definition_count,
+            self.type_count,
+            self.effect_count,
+            self.compiled_count,
+            self.total_compiled_size
+        )
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super.super.canonical::CanonicalAST;
+
+    fn make_test_ast(value: i128) -> CanonicalAST {
+        CanonicalAST::IntLit(value)
+    }
+
+    #[test]
+    fn test_codebase_add_and_get() {
+        let mut codebase = Codebase::new();
+        let ast = make_test_ast(42);
+        let record = DefinitionRecord::new(ast);
+        let hash = record.hash;
+
+        let result = codebase.add(record);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), hash);
+
+        let retrieved = codebase.get(hash);
+        assert!(retrieved.is_some());
+    }
+
+    #[test]
+    fn test_codebase_duplicate_same_ast() {
+        let mut codebase = Codebase::new();
+        let ast1 = make_test_ast(42);
+        let ast2 = make_test_ast(42);
+
+        let record1 = DefinitionRecord::new(ast1);
+        let record2 = DefinitionRecord::new(ast2);
+
+        let hash1 = codebase.add(record1).unwrap();
+        let hash2 = codebase.add(record2).unwrap();
+
+        // Same AST should produce same hash, no collision
+        assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_definition_record_builder() {
+        let ast = make_test_ast(42);
+        let dep_hash = ContentHash::compute(b"dependency");
+
+        let record = DefinitionRecord::new(ast)
+            .with_name("answer")
+            .with_doc("The answer to everything")
+            .with_reference(dep_hash);
+
+        assert!(record.metadata.names.contains(&"answer".to_string()));
+        assert_eq!(
+            record.metadata.documentation.as_deref(),
+            Some("The answer to everything")
+        );
+        assert!(record.references.contains(&dep_hash));
+    }
+
+    #[test]
+    fn test_codebase_dependents() {
+        let mut codebase = Codebase::new();
+
+        // Create definition A
+        let ast_a = make_test_ast(1);
+        let record_a = DefinitionRecord::new(ast_a);
+        let hash_a = record_a.hash;
+        codebase.add(record_a).unwrap();
+
+        // Create definition B that depends on A
+        let ast_b = make_test_ast(2);
+        let record_b = DefinitionRecord::new(ast_b).with_reference(hash_a);
+        let hash_b = record_b.hash;
+        codebase.add(record_b).unwrap();
+
+        // A should have B as a dependent
+        let dependents = codebase.get_dependents(hash_a);
+        assert!(dependents.contains(&hash_b));
+    }
+
+    #[test]
+    fn test_codebase_garbage_collection() {
+        let mut codebase = Codebase::new();
+
+        // Add some definitions
+        let ast1 = make_test_ast(1);
+        let ast2 = make_test_ast(2);
+        let ast3 = make_test_ast(3);
+
+        let hash1 = codebase.add(DefinitionRecord::new(ast1)).unwrap();
+        let hash2 = codebase.add(DefinitionRecord::new(ast2)).unwrap();
+        let _hash3 = codebase.add(DefinitionRecord::new(ast3)).unwrap();
+
+        // Only keep hash1 and hash2 as roots
+        let mut roots = HashSet::new();
+        roots.insert(hash1);
+        roots.insert(hash2);
+
+        let collected = codebase.collect_garbage(&roots);
+
+        // hash3 should be collected
+        assert_eq!(collected, 1);
+        assert_eq!(codebase.len(), 2);
+    }
+
+    #[test]
+    fn test_codebase_compiled_storage() {
+        let mut codebase = Codebase::new();
+        let hash = ContentHash::compute(b"test");
+        let code = vec![0x90, 0x90, 0xC3]; // NOP NOP RET
+
+        codebase.store_compiled(hash, code.clone());
+
+        assert!(codebase.has_compiled(hash));
+        assert_eq!(codebase.get_compiled(hash), Some(code.as_slice()));
+    }
+
+    #[test]
+    fn test_codebase_stats() {
+        let mut codebase = Codebase::new();
+        let ast = make_test_ast(42);
+        codebase.add(DefinitionRecord::new(ast)).unwrap();
+
+        let stats = codebase.stats();
+        assert_eq!(stats.definition_count, 1);
+    }
+
+    #[test]
+    fn test_storage_error_display() {
+        let hash = ContentHash::compute(b"test");
+        let err = StorageError::NotFound(hash);
+        let display = format!("{}", err);
+        assert!(display.contains("not found"));
+    }
+
+    #[test]
+    fn test_definition_metadata() {
+        let metadata = DefinitionMetadata::new()
+            .with_name("foo".to_string())
+            .with_doc("A test function".to_string())
+            .with_author("test".to_string())
+            .with_timestamp(1234567890);
+
+        assert!(metadata.names.contains(&"foo".to_string()));
+        assert_eq!(metadata.documentation.as_deref(), Some("A test function"));
+        assert_eq!(metadata.author.as_deref(), Some("test"));
+        assert_eq!(metadata.created_at, Some(1234567890));
+    }
+
+    #[test]
+    fn test_codebase_clear() {
+        let mut codebase = Codebase::new();
+        codebase.add(DefinitionRecord::new(make_test_ast(1))).unwrap();
+        codebase.add(DefinitionRecord::new(make_test_ast(2))).unwrap();
+
+        assert_eq!(codebase.len(), 2);
+
+        codebase.clear();
+
+        assert_eq!(codebase.len(), 0);
+        assert!(codebase.is_empty());
+    }
+
+    #[test]
+    fn test_stats_cache_hit_ratio() {
+        let stats = CodebaseStats {
+            definition_count: 100,
+            type_count: 10,
+            effect_count: 5,
+            compiled_count: 80,
+            total_ast_size: 0,
+            total_compiled_size: 1024,
+        };
+
+        assert!((stats.cache_hit_ratio() - 0.8).abs() < 0.001);
+        assert_eq!(stats.total_count(), 115);
+    }
+}

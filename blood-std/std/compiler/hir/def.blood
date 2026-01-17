@@ -1,0 +1,674 @@
+/// HIR Definition Identifiers
+///
+/// This module defines the identifiers used throughout HIR:
+/// - `LocalId` - Local variable identifiers within a body
+/// - `DefKind` - Classification of definitions
+/// - `Res` - Name resolution results
+/// - `BodyId` - Identifier for function/closure bodies
+///
+/// Note: `DefId` is defined in `typeck/types.blood` and reused here
+/// to maintain a single source of truth for definition identifiers.
+
+// Re-export DefId from typeck for convenience
+pub use crate::compiler::typeck::types::DefId;
+
+// ============================================================
+// Local Variable Identifiers
+// ============================================================
+
+/// A local variable identifier within a function body.
+///
+/// LocalIds are unique within a single Body and are assigned
+/// sequentially during HIR lowering. The first local (index 0)
+/// is always the return place.
+pub struct LocalId {
+    index: u32,
+}
+
+impl LocalId {
+    /// Create a new LocalId with the given index.
+    pub fn new(index: u32) -> LocalId {
+        LocalId { index }
+    }
+
+    /// Get the index of this local.
+    pub fn index(&self) -> u32 {
+        self.index
+    }
+
+    /// The special "return place" local (always index 0).
+    ///
+    /// The return place is where the function's return value is stored.
+    /// In MIR, assignments to `_0` represent the function's return.
+    pub fn return_place() -> LocalId {
+        LocalId { index: 0 }
+    }
+
+    /// Check if this is the return place.
+    pub fn is_return_place(&self) -> bool {
+        self.index == 0
+    }
+}
+
+impl Clone for LocalId {
+    fn clone(&self) -> LocalId {
+        LocalId { index: self.index }
+    }
+}
+
+impl PartialEq for LocalId {
+    fn eq(&self, other: &LocalId) -> bool {
+        self.index == other.index
+    }
+}
+
+// ============================================================
+// Body Identifiers
+// ============================================================
+
+/// A unique identifier for a function/closure body.
+///
+/// Bodies are stored separately from items in the HIR Crate,
+/// enabling efficient lookup and iteration over all function bodies.
+pub struct BodyId {
+    id: u32,
+}
+
+impl BodyId {
+    /// Create a new BodyId.
+    pub fn new(id: u32) -> BodyId {
+        BodyId { id }
+    }
+
+    /// Get the raw id value.
+    pub fn id(&self) -> u32 {
+        self.id
+    }
+}
+
+impl Clone for BodyId {
+    fn clone(&self) -> BodyId {
+        BodyId { id: self.id }
+    }
+}
+
+impl PartialEq for BodyId {
+    fn eq(&self, other: &BodyId) -> bool {
+        self.id == other.id
+    }
+}
+
+// ============================================================
+// Loop Identifiers
+// ============================================================
+
+/// A loop identifier for break/continue target resolution.
+///
+/// LoopIds are assigned to loops during HIR lowering and used
+/// to connect break/continue expressions to their target loop.
+pub struct LoopId {
+    id: u32,
+}
+
+impl LoopId {
+    /// Create a new LoopId.
+    pub fn new(id: u32) -> LoopId {
+        LoopId { id }
+    }
+
+    /// Get the raw id value.
+    pub fn id(&self) -> u32 {
+        self.id
+    }
+}
+
+impl Clone for LoopId {
+    fn clone(&self) -> LoopId {
+        LoopId { id: self.id }
+    }
+}
+
+impl PartialEq for LoopId {
+    fn eq(&self, other: &LoopId) -> bool {
+        self.id == other.id
+    }
+}
+
+// ============================================================
+// Definition Kinds
+// ============================================================
+
+/// The kind of a definition.
+///
+/// This classifies what type of entity a DefId refers to.
+/// Used for diagnostics, semantic analysis, and code generation.
+pub enum DefKind {
+    /// A function or method
+    Fn,
+    /// A struct type
+    Struct,
+    /// An enum type
+    Enum,
+    /// A type alias
+    TypeAlias,
+    /// A trait definition
+    Trait,
+    /// An effect definition
+    Effect,
+    /// An effect handler
+    Handler,
+    /// A constant
+    Const,
+    /// A static variable
+    Static,
+    /// An associated function (method in impl block)
+    AssocFn,
+    /// An associated type
+    AssocType,
+    /// An associated constant
+    AssocConst,
+    /// A closure
+    Closure,
+    /// A type parameter
+    TyParam,
+    /// A lifetime parameter
+    LifetimeParam,
+    /// A const parameter
+    ConstParam,
+    /// A local variable (for name lookups)
+    Local,
+    /// An effect operation
+    EffectOp,
+    /// An enum variant
+    Variant,
+    /// A struct field
+    Field,
+    /// A module
+    Mod,
+}
+
+impl DefKind {
+    /// Returns the article to use before this kind ("a" or "an").
+    ///
+    /// Used for generating grammatically correct error messages.
+    pub fn article(&self) -> &str {
+        match self {
+            DefKind::AssocFn => "an",
+            DefKind::AssocType => "an",
+            DefKind::AssocConst => "an",
+            DefKind::Enum => "an",
+            DefKind::Effect => "an",
+            DefKind::EffectOp => "an",
+            DefKind::Fn => "a",
+            DefKind::Struct => "a",
+            DefKind::TypeAlias => "a",
+            DefKind::Trait => "a",
+            DefKind::Handler => "a",
+            DefKind::Const => "a",
+            DefKind::Static => "a",
+            DefKind::Closure => "a",
+            DefKind::TyParam => "a",
+            DefKind::LifetimeParam => "a",
+            DefKind::ConstParam => "a",
+            DefKind::Local => "a",
+            DefKind::Variant => "a",
+            DefKind::Field => "a",
+            DefKind::Mod => "a",
+        }
+    }
+
+    /// Returns the human-readable description of this kind.
+    ///
+    /// Used for generating diagnostic messages.
+    pub fn description(&self) -> &str {
+        match self {
+            DefKind::Fn => "function",
+            DefKind::Struct => "struct",
+            DefKind::Enum => "enum",
+            DefKind::TypeAlias => "type alias",
+            DefKind::Trait => "trait",
+            DefKind::Effect => "effect",
+            DefKind::Handler => "handler",
+            DefKind::Const => "constant",
+            DefKind::Static => "static",
+            DefKind::AssocFn => "associated function",
+            DefKind::AssocType => "associated type",
+            DefKind::AssocConst => "associated constant",
+            DefKind::Closure => "closure",
+            DefKind::TyParam => "type parameter",
+            DefKind::LifetimeParam => "lifetime parameter",
+            DefKind::ConstParam => "const parameter",
+            DefKind::Local => "local variable",
+            DefKind::EffectOp => "effect operation",
+            DefKind::Variant => "variant",
+            DefKind::Field => "field",
+            DefKind::Mod => "module",
+        }
+    }
+}
+
+impl Clone for DefKind {
+    fn clone(&self) -> DefKind {
+        match self {
+            DefKind::Fn => DefKind::Fn,
+            DefKind::Struct => DefKind::Struct,
+            DefKind::Enum => DefKind::Enum,
+            DefKind::TypeAlias => DefKind::TypeAlias,
+            DefKind::Trait => DefKind::Trait,
+            DefKind::Effect => DefKind::Effect,
+            DefKind::Handler => DefKind::Handler,
+            DefKind::Const => DefKind::Const,
+            DefKind::Static => DefKind::Static,
+            DefKind::AssocFn => DefKind::AssocFn,
+            DefKind::AssocType => DefKind::AssocType,
+            DefKind::AssocConst => DefKind::AssocConst,
+            DefKind::Closure => DefKind::Closure,
+            DefKind::TyParam => DefKind::TyParam,
+            DefKind::LifetimeParam => DefKind::LifetimeParam,
+            DefKind::ConstParam => DefKind::ConstParam,
+            DefKind::Local => DefKind::Local,
+            DefKind::EffectOp => DefKind::EffectOp,
+            DefKind::Variant => DefKind::Variant,
+            DefKind::Field => DefKind::Field,
+            DefKind::Mod => DefKind::Mod,
+        }
+    }
+}
+
+impl PartialEq for DefKind {
+    fn eq(&self, other: &DefKind) -> bool {
+        match (self, other) {
+            (DefKind::Fn, DefKind::Fn) => true,
+            (DefKind::Struct, DefKind::Struct) => true,
+            (DefKind::Enum, DefKind::Enum) => true,
+            (DefKind::TypeAlias, DefKind::TypeAlias) => true,
+            (DefKind::Trait, DefKind::Trait) => true,
+            (DefKind::Effect, DefKind::Effect) => true,
+            (DefKind::Handler, DefKind::Handler) => true,
+            (DefKind::Const, DefKind::Const) => true,
+            (DefKind::Static, DefKind::Static) => true,
+            (DefKind::AssocFn, DefKind::AssocFn) => true,
+            (DefKind::AssocType, DefKind::AssocType) => true,
+            (DefKind::AssocConst, DefKind::AssocConst) => true,
+            (DefKind::Closure, DefKind::Closure) => true,
+            (DefKind::TyParam, DefKind::TyParam) => true,
+            (DefKind::LifetimeParam, DefKind::LifetimeParam) => true,
+            (DefKind::ConstParam, DefKind::ConstParam) => true,
+            (DefKind::Local, DefKind::Local) => true,
+            (DefKind::EffectOp, DefKind::EffectOp) => true,
+            (DefKind::Variant, DefKind::Variant) => true,
+            (DefKind::Field, DefKind::Field) => true,
+            (DefKind::Mod, DefKind::Mod) => true,
+            // All non-matching pairs
+            (DefKind::Fn, _) => false,
+            (DefKind::Struct, _) => false,
+            (DefKind::Enum, _) => false,
+            (DefKind::TypeAlias, _) => false,
+            (DefKind::Trait, _) => false,
+            (DefKind::Effect, _) => false,
+            (DefKind::Handler, _) => false,
+            (DefKind::Const, _) => false,
+            (DefKind::Static, _) => false,
+            (DefKind::AssocFn, _) => false,
+            (DefKind::AssocType, _) => false,
+            (DefKind::AssocConst, _) => false,
+            (DefKind::Closure, _) => false,
+            (DefKind::TyParam, _) => false,
+            (DefKind::LifetimeParam, _) => false,
+            (DefKind::ConstParam, _) => false,
+            (DefKind::Local, _) => false,
+            (DefKind::EffectOp, _) => false,
+            (DefKind::Variant, _) => false,
+            (DefKind::Field, _) => false,
+            (DefKind::Mod, _) => false,
+        }
+    }
+}
+
+// ============================================================
+// Name Resolution Results
+// ============================================================
+
+/// Primitive type resolution result.
+///
+/// Used when a name resolves to a primitive type rather than
+/// a user-defined item.
+pub enum PrimTyRes {
+    /// Signed integer type
+    Int(IntTy),
+    /// Unsigned integer type
+    Uint(UintTy),
+    /// Floating-point type
+    Float(FloatTy),
+    /// Boolean type
+    Bool,
+    /// Character type
+    Char,
+    /// String slice type
+    Str,
+    /// Never type
+    Never,
+}
+
+/// Signed integer type variants for primitive resolution.
+pub enum IntTy {
+    I8,
+    I16,
+    I32,
+    I64,
+    I128,
+    Isize,
+}
+
+impl Clone for IntTy {
+    fn clone(&self) -> IntTy {
+        match self {
+            IntTy::I8 => IntTy::I8,
+            IntTy::I16 => IntTy::I16,
+            IntTy::I32 => IntTy::I32,
+            IntTy::I64 => IntTy::I64,
+            IntTy::I128 => IntTy::I128,
+            IntTy::Isize => IntTy::Isize,
+        }
+    }
+}
+
+impl PartialEq for IntTy {
+    fn eq(&self, other: &IntTy) -> bool {
+        match (self, other) {
+            (IntTy::I8, IntTy::I8) => true,
+            (IntTy::I16, IntTy::I16) => true,
+            (IntTy::I32, IntTy::I32) => true,
+            (IntTy::I64, IntTy::I64) => true,
+            (IntTy::I128, IntTy::I128) => true,
+            (IntTy::Isize, IntTy::Isize) => true,
+            (IntTy::I8, _) => false,
+            (IntTy::I16, _) => false,
+            (IntTy::I32, _) => false,
+            (IntTy::I64, _) => false,
+            (IntTy::I128, _) => false,
+            (IntTy::Isize, _) => false,
+        }
+    }
+}
+
+/// Unsigned integer type variants for primitive resolution.
+pub enum UintTy {
+    U8,
+    U16,
+    U32,
+    U64,
+    U128,
+    Usize,
+}
+
+impl Clone for UintTy {
+    fn clone(&self) -> UintTy {
+        match self {
+            UintTy::U8 => UintTy::U8,
+            UintTy::U16 => UintTy::U16,
+            UintTy::U32 => UintTy::U32,
+            UintTy::U64 => UintTy::U64,
+            UintTy::U128 => UintTy::U128,
+            UintTy::Usize => UintTy::Usize,
+        }
+    }
+}
+
+impl PartialEq for UintTy {
+    fn eq(&self, other: &UintTy) -> bool {
+        match (self, other) {
+            (UintTy::U8, UintTy::U8) => true,
+            (UintTy::U16, UintTy::U16) => true,
+            (UintTy::U32, UintTy::U32) => true,
+            (UintTy::U64, UintTy::U64) => true,
+            (UintTy::U128, UintTy::U128) => true,
+            (UintTy::Usize, UintTy::Usize) => true,
+            (UintTy::U8, _) => false,
+            (UintTy::U16, _) => false,
+            (UintTy::U32, _) => false,
+            (UintTy::U64, _) => false,
+            (UintTy::U128, _) => false,
+            (UintTy::Usize, _) => false,
+        }
+    }
+}
+
+/// Floating-point type variants for primitive resolution.
+pub enum FloatTy {
+    F32,
+    F64,
+}
+
+impl Clone for FloatTy {
+    fn clone(&self) -> FloatTy {
+        match self {
+            FloatTy::F32 => FloatTy::F32,
+            FloatTy::F64 => FloatTy::F64,
+        }
+    }
+}
+
+impl PartialEq for FloatTy {
+    fn eq(&self, other: &FloatTy) -> bool {
+        match (self, other) {
+            (FloatTy::F32, FloatTy::F32) => true,
+            (FloatTy::F64, FloatTy::F64) => true,
+            (FloatTy::F32, FloatTy::F64) => false,
+            (FloatTy::F64, FloatTy::F32) => false,
+        }
+    }
+}
+
+impl Clone for PrimTyRes {
+    fn clone(&self) -> PrimTyRes {
+        match self {
+            PrimTyRes::Int(t) => PrimTyRes::Int(t.clone()),
+            PrimTyRes::Uint(t) => PrimTyRes::Uint(t.clone()),
+            PrimTyRes::Float(t) => PrimTyRes::Float(t.clone()),
+            PrimTyRes::Bool => PrimTyRes::Bool,
+            PrimTyRes::Char => PrimTyRes::Char,
+            PrimTyRes::Str => PrimTyRes::Str,
+            PrimTyRes::Never => PrimTyRes::Never,
+        }
+    }
+}
+
+impl PartialEq for PrimTyRes {
+    fn eq(&self, other: &PrimTyRes) -> bool {
+        match (self, other) {
+            (PrimTyRes::Int(a), PrimTyRes::Int(b)) => a.eq(b),
+            (PrimTyRes::Uint(a), PrimTyRes::Uint(b)) => a.eq(b),
+            (PrimTyRes::Float(a), PrimTyRes::Float(b)) => a.eq(b),
+            (PrimTyRes::Bool, PrimTyRes::Bool) => true,
+            (PrimTyRes::Char, PrimTyRes::Char) => true,
+            (PrimTyRes::Str, PrimTyRes::Str) => true,
+            (PrimTyRes::Never, PrimTyRes::Never) => true,
+            (PrimTyRes::Int(_), _) => false,
+            (PrimTyRes::Uint(_), _) => false,
+            (PrimTyRes::Float(_), _) => false,
+            (PrimTyRes::Bool, _) => false,
+            (PrimTyRes::Char, _) => false,
+            (PrimTyRes::Str, _) => false,
+            (PrimTyRes::Never, _) => false,
+        }
+    }
+}
+
+/// A resolution result for a name lookup.
+///
+/// This represents what a name refers to after name resolution:
+/// - A definition (function, struct, etc.)
+/// - A local variable
+/// - A primitive type
+/// - An error (unresolved)
+pub enum Res {
+    /// Resolved to a definition with a known kind.
+    Def(DefKind, DefId),
+    /// Resolved to a local variable.
+    Local(LocalId),
+    /// Resolved to a primitive type.
+    PrimTy(PrimTyRes),
+    /// Failed to resolve (error).
+    Err,
+}
+
+impl Res {
+    /// Check if this resolution succeeded.
+    pub fn is_ok(&self) -> bool {
+        match self {
+            Res::Def(_, _) => true,
+            Res::Local(_) => true,
+            Res::PrimTy(_) => true,
+            Res::Err => false,
+        }
+    }
+
+    /// Check if this resolution failed.
+    pub fn is_err(&self) -> bool {
+        match self {
+            Res::Err => true,
+            Res::Def(_, _) => false,
+            Res::Local(_) => false,
+            Res::PrimTy(_) => false,
+        }
+    }
+
+    /// Get the DefId if this resolves to a definition.
+    pub fn def_id(&self) -> Option<DefId> {
+        match self {
+            Res::Def(_, id) => Some(id.clone()),
+            Res::Local(_) => None,
+            Res::PrimTy(_) => None,
+            Res::Err => None,
+        }
+    }
+
+    /// Get the DefKind if this resolves to a definition.
+    pub fn def_kind(&self) -> Option<DefKind> {
+        match self {
+            Res::Def(kind, _) => Some(kind.clone()),
+            Res::Local(_) => None,
+            Res::PrimTy(_) => None,
+            Res::Err => None,
+        }
+    }
+
+    /// Get the LocalId if this resolves to a local.
+    pub fn local_id(&self) -> Option<LocalId> {
+        match self {
+            Res::Local(id) => Some(id.clone()),
+            Res::Def(_, _) => None,
+            Res::PrimTy(_) => None,
+            Res::Err => None,
+        }
+    }
+}
+
+impl Clone for Res {
+    fn clone(&self) -> Res {
+        match self {
+            Res::Def(kind, id) => Res::Def(kind.clone(), id.clone()),
+            Res::Local(id) => Res::Local(id.clone()),
+            Res::PrimTy(p) => Res::PrimTy(p.clone()),
+            Res::Err => Res::Err,
+        }
+    }
+}
+
+impl PartialEq for Res {
+    fn eq(&self, other: &Res) -> bool {
+        match (self, other) {
+            (Res::Def(k1, id1), Res::Def(k2, id2)) => k1.eq(k2) && id1.eq(id2),
+            (Res::Local(id1), Res::Local(id2)) => id1.eq(id2),
+            (Res::PrimTy(p1), Res::PrimTy(p2)) => p1.eq(p2),
+            (Res::Err, Res::Err) => true,
+            (Res::Def(_, _), _) => false,
+            (Res::Local(_), _) => false,
+            (Res::PrimTy(_), _) => false,
+            (Res::Err, _) => false,
+        }
+    }
+}
+
+// ============================================================
+// Tests
+// ============================================================
+
+#[test]
+fn test_local_id_basics() {
+    let local = LocalId::new(5);
+    assert!(local.index() == 5);
+    assert!(!local.is_return_place());
+
+    let ret = LocalId::return_place();
+    assert!(ret.index() == 0);
+    assert!(ret.is_return_place());
+}
+
+#[test]
+fn test_local_id_equality() {
+    let a = LocalId::new(3);
+    let b = LocalId::new(3);
+    let c = LocalId::new(4);
+
+    assert!(a.eq(&b));
+    assert!(!a.eq(&c));
+}
+
+#[test]
+fn test_body_id() {
+    let body = BodyId::new(42);
+    assert!(body.id() == 42);
+
+    let copy = body.clone();
+    assert!(copy.eq(&body));
+}
+
+#[test]
+fn test_def_kind_article() {
+    assert!(DefKind::Fn.article() == "a");
+    assert!(DefKind::Enum.article() == "an");
+    assert!(DefKind::Effect.article() == "an");
+    assert!(DefKind::Struct.article() == "a");
+}
+
+#[test]
+fn test_def_kind_description() {
+    assert!(DefKind::Fn.description() == "function");
+    assert!(DefKind::Struct.description() == "struct");
+    assert!(DefKind::Effect.description() == "effect");
+    assert!(DefKind::Handler.description() == "handler");
+}
+
+#[test]
+fn test_res_def() {
+    let def_id = DefId::new(10);
+    let res = Res::Def(DefKind::Fn, def_id.clone());
+
+    assert!(res.is_ok());
+    assert!(!res.is_err());
+    assert!(res.def_id().is_some());
+    assert!(res.def_kind().is_some());
+    assert!(res.local_id().is_none());
+}
+
+#[test]
+fn test_res_local() {
+    let local_id = LocalId::new(5);
+    let res = Res::Local(local_id.clone());
+
+    assert!(res.is_ok());
+    assert!(res.local_id().is_some());
+    assert!(res.def_id().is_none());
+}
+
+#[test]
+fn test_res_err() {
+    let res = Res::Err;
+
+    assert!(!res.is_ok());
+    assert!(res.is_err());
+    assert!(res.def_id().is_none());
+    assert!(res.local_id().is_none());
+}

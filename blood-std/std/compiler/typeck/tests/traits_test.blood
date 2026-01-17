@@ -1,0 +1,673 @@
+/// Tests for traits.blood - Trait Resolution
+///
+/// These tests verify trait definitions, implementations, and method resolution work correctly.
+
+use super.super.traits::{
+    TraitDef, TraitMethodDef, TraitAssocTypeDef,
+    ImplDef, ImplMethodDef, TraitBound, TraitResolver, MethodResolution,
+};
+use super.super.types::{Type, TypeKind, DefId, TyVarId};
+use super.super.unify::Unifier;
+
+// ============================================================
+// TraitDef Tests
+// ============================================================
+
+#[test]
+fn test_trait_def_new() {
+    let def = TraitDef::new(
+        "Clone".to_string(),
+        DefId::new(1),
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+    );
+
+    assert_eq!(def.name, "Clone");
+    assert_eq!(def.def_id.id(), 1);
+    assert_eq!(def.type_params.len(), 0);
+    assert_eq!(def.supertraits.len(), 0);
+    assert_eq!(def.methods.len(), 0);
+    assert_eq!(def.assoc_types.len(), 0);
+}
+
+#[test]
+fn test_trait_def_simple() {
+    let methods = vec![
+        TraitMethodDef::simple("clone".to_string(), vec![], Type::i32()),
+    ];
+    let def = TraitDef::simple("Clone".to_string(), DefId::new(1), methods);
+
+    assert_eq!(def.name, "Clone");
+    assert_eq!(def.methods.len(), 1);
+    assert_eq!(def.type_params.len(), 0);
+    assert_eq!(def.supertraits.len(), 0);
+}
+
+#[test]
+fn test_trait_def_has_method() {
+    let methods = vec![
+        TraitMethodDef::simple("clone".to_string(), vec![], Type::i32()),
+        TraitMethodDef::simple("clone_from".to_string(), vec![Type::i32()], Type::unit()),
+    ];
+    let def = TraitDef::simple("Clone".to_string(), DefId::new(1), methods);
+
+    assert!(def.has_method("clone"));
+    assert!(def.has_method("clone_from"));
+    assert!(!def.has_method("copy"));
+}
+
+#[test]
+fn test_trait_def_get_method() {
+    let methods = vec![
+        TraitMethodDef::simple("foo".to_string(), vec![], Type::i32()),
+    ];
+    let def = TraitDef::simple("Test".to_string(), DefId::new(1), methods);
+
+    let foo = def.get_method("foo");
+    assert!(foo.is_some());
+    assert_eq!(foo.unwrap().name, "foo");
+
+    let bar = def.get_method("bar");
+    assert!(bar.is_none());
+}
+
+#[test]
+fn test_trait_def_has_assoc_type() {
+    let assoc_types = vec![
+        TraitAssocTypeDef::unbounded("Item".to_string()),
+    ];
+    let def = TraitDef::new(
+        "Iterator".to_string(),
+        DefId::new(1),
+        vec![],
+        vec![],
+        vec![],
+        assoc_types,
+    );
+
+    assert!(def.has_assoc_type("Item"));
+    assert!(!def.has_assoc_type("Output"));
+}
+
+#[test]
+fn test_trait_def_clone() {
+    let def = TraitDef::simple("Clone".to_string(), DefId::new(1), vec![]);
+    let cloned = def.clone();
+
+    assert_eq!(cloned.name, "Clone");
+    assert_eq!(cloned.def_id.id(), 1);
+}
+
+// ============================================================
+// TraitMethodDef Tests
+// ============================================================
+
+#[test]
+fn test_trait_method_def_new() {
+    let method = TraitMethodDef::new(
+        "clone".to_string(),
+        vec![TyVarId::new(0)],
+        vec![Type::i32()],
+        Type::i32(),
+        true,
+    );
+
+    assert_eq!(method.name, "clone");
+    assert_eq!(method.type_params.len(), 1);
+    assert_eq!(method.params.len(), 1);
+    assert!(method.has_default);
+}
+
+#[test]
+fn test_trait_method_def_simple() {
+    let method = TraitMethodDef::simple("foo".to_string(), vec![Type::i32()], Type::bool());
+
+    assert_eq!(method.name, "foo");
+    assert_eq!(method.type_params.len(), 0);
+    assert!(!method.has_default);
+}
+
+#[test]
+fn test_trait_method_def_is_method() {
+    let method = TraitMethodDef::simple("foo".to_string(), vec![Type::i32()], Type::unit());
+    assert!(method.is_method());
+
+    let assoc_fn = TraitMethodDef::simple("bar".to_string(), vec![], Type::unit());
+    assert!(!assoc_fn.is_method());
+}
+
+#[test]
+fn test_trait_method_def_clone() {
+    let method = TraitMethodDef::new(
+        "foo".to_string(),
+        vec![],
+        vec![],
+        Type::unit(),
+        true,
+    );
+    let cloned = method.clone();
+
+    assert_eq!(cloned.name, "foo");
+    assert!(cloned.has_default);
+}
+
+// ============================================================
+// TraitAssocTypeDef Tests
+// ============================================================
+
+#[test]
+fn test_trait_assoc_type_def_new() {
+    let assoc = TraitAssocTypeDef::new("Item".to_string(), vec![DefId::new(1)]);
+
+    assert_eq!(assoc.name, "Item");
+    assert_eq!(assoc.bounds.len(), 1);
+}
+
+#[test]
+fn test_trait_assoc_type_def_unbounded() {
+    let assoc = TraitAssocTypeDef::unbounded("Output".to_string());
+
+    assert_eq!(assoc.name, "Output");
+    assert_eq!(assoc.bounds.len(), 0);
+}
+
+#[test]
+fn test_trait_assoc_type_def_clone() {
+    let assoc = TraitAssocTypeDef::new("Item".to_string(), vec![DefId::new(1)]);
+    let cloned = assoc.clone();
+
+    assert_eq!(cloned.name, "Item");
+    assert_eq!(cloned.bounds.len(), 1);
+}
+
+// ============================================================
+// ImplDef Tests
+// ============================================================
+
+#[test]
+fn test_impl_def_new() {
+    let def = ImplDef::new(
+        DefId::new(1),
+        Some(DefId::new(2)),
+        Type::i32(),
+        vec![],
+    );
+
+    assert_eq!(def.def_id.id(), 1);
+    assert!(def.trait_id.is_some());
+    assert_eq!(def.trait_id.as_ref().unwrap().id(), 2);
+}
+
+#[test]
+fn test_impl_def_inherent() {
+    let def = ImplDef::inherent(DefId::new(1), Type::i32());
+
+    assert!(def.is_inherent());
+    assert!(!def.is_trait_impl());
+    assert!(def.trait_id.is_none());
+}
+
+#[test]
+fn test_impl_def_for_trait() {
+    let def = ImplDef::for_trait(DefId::new(1), DefId::new(2), Type::i32());
+
+    assert!(!def.is_inherent());
+    assert!(def.is_trait_impl());
+    assert!(def.trait_id.is_some());
+}
+
+#[test]
+fn test_impl_def_add_method() {
+    let mut def = ImplDef::inherent(DefId::new(1), Type::i32());
+    let method = ImplMethodDef::simple("foo".to_string(), vec![], Type::unit());
+
+    def.add_method(method);
+
+    assert!(def.get_method("foo").is_some());
+    assert!(def.get_method("bar").is_none());
+}
+
+#[test]
+fn test_impl_def_add_assoc_type() {
+    let mut def = ImplDef::for_trait(DefId::new(1), DefId::new(2), Type::i32());
+    def.add_assoc_type("Item".to_string(), Type::bool());
+
+    assert!(def.get_assoc_type("Item").is_some());
+    assert_eq!(def.get_assoc_type("Item").unwrap().display(), "bool");
+    assert!(def.get_assoc_type("Output").is_none());
+}
+
+#[test]
+fn test_impl_def_clone() {
+    let mut def = ImplDef::inherent(DefId::new(1), Type::i32());
+    def.add_method(ImplMethodDef::simple("foo".to_string(), vec![], Type::unit()));
+
+    let cloned = def.clone();
+
+    assert!(cloned.get_method("foo").is_some());
+}
+
+// ============================================================
+// ImplMethodDef Tests
+// ============================================================
+
+#[test]
+fn test_impl_method_def_new() {
+    let method = ImplMethodDef::new(
+        "foo".to_string(),
+        vec![TyVarId::new(0)],
+        vec![Type::i32()],
+        Type::bool(),
+    );
+
+    assert_eq!(method.name, "foo");
+    assert_eq!(method.type_params.len(), 1);
+    assert_eq!(method.params.len(), 1);
+}
+
+#[test]
+fn test_impl_method_def_simple() {
+    let method = ImplMethodDef::simple("bar".to_string(), vec![], Type::unit());
+
+    assert_eq!(method.name, "bar");
+    assert_eq!(method.type_params.len(), 0);
+}
+
+#[test]
+fn test_impl_method_def_clone() {
+    let method = ImplMethodDef::simple("test".to_string(), vec![Type::i32()], Type::bool());
+    let cloned = method.clone();
+
+    assert_eq!(cloned.name, "test");
+    assert_eq!(cloned.params.len(), 1);
+}
+
+// ============================================================
+// TraitBound Tests
+// ============================================================
+
+#[test]
+fn test_trait_bound_new() {
+    let bound = TraitBound::new(DefId::new(1), vec![Type::i32()]);
+
+    assert_eq!(bound.trait_id.id(), 1);
+    assert_eq!(bound.args.len(), 1);
+}
+
+#[test]
+fn test_trait_bound_simple() {
+    let bound = TraitBound::simple(DefId::new(1));
+
+    assert_eq!(bound.trait_id.id(), 1);
+    assert_eq!(bound.args.len(), 0);
+}
+
+#[test]
+fn test_trait_bound_clone() {
+    let bound = TraitBound::new(DefId::new(1), vec![Type::i32()]);
+    let cloned = bound.clone();
+
+    assert_eq!(cloned.trait_id.id(), 1);
+    assert_eq!(cloned.args.len(), 1);
+}
+
+// ============================================================
+// TraitResolver Tests
+// ============================================================
+
+#[test]
+fn test_trait_resolver_new() {
+    let resolver = TraitResolver::new();
+    // Fresh resolver should have nothing
+    assert!(resolver.get_trait(&DefId::new(1)).is_none());
+}
+
+#[test]
+fn test_trait_resolver_register_trait() {
+    let mut resolver = TraitResolver::new();
+    let trait_def = TraitDef::simple("Clone".to_string(), DefId::new(1), vec![]);
+
+    resolver.register_trait(trait_def);
+
+    let retrieved = resolver.get_trait(&DefId::new(1));
+    assert!(retrieved.is_some());
+    assert_eq!(retrieved.unwrap().name, "Clone");
+}
+
+#[test]
+fn test_trait_resolver_register_impl() {
+    let mut resolver = TraitResolver::new();
+    let impl_def = ImplDef::inherent(DefId::new(1), Type::i32());
+
+    resolver.register_impl(impl_def);
+
+    // Verify impl was registered by looking it up
+    let unifier = Unifier::new();
+    let found = resolver.find_inherent_impl(&Type::i32(), &unifier);
+    assert!(found.is_some());
+}
+
+#[test]
+fn test_trait_resolver_find_impl() {
+    let mut resolver = TraitResolver::new();
+
+    // Register a trait
+    let trait_def = TraitDef::simple("Clone".to_string(), DefId::new(1), vec![]);
+    resolver.register_trait(trait_def);
+
+    // Register an impl of Clone for i32
+    let impl_def = ImplDef::for_trait(DefId::new(2), DefId::new(1), Type::i32());
+    resolver.register_impl(impl_def);
+
+    let unifier = Unifier::new();
+
+    // Should find impl for i32
+    let found = resolver.find_impl(DefId::new(1), &Type::i32(), &unifier);
+    assert!(found.is_some());
+
+    // Should not find impl for bool
+    let not_found = resolver.find_impl(DefId::new(1), &Type::bool(), &unifier);
+    assert!(not_found.is_none());
+}
+
+#[test]
+fn test_trait_resolver_find_inherent_impl() {
+    let mut resolver = TraitResolver::new();
+
+    let mut impl_def = ImplDef::inherent(DefId::new(1), Type::i32());
+    impl_def.add_method(ImplMethodDef::simple("double".to_string(), vec![], Type::i32()));
+    resolver.register_impl(impl_def);
+
+    let unifier = Unifier::new();
+
+    let found = resolver.find_inherent_impl(&Type::i32(), &unifier);
+    assert!(found.is_some());
+    assert!(found.unwrap().get_method("double").is_some());
+
+    let not_found = resolver.find_inherent_impl(&Type::bool(), &unifier);
+    assert!(not_found.is_none());
+}
+
+#[test]
+fn test_trait_resolver_lookup_method_inherent() {
+    let mut resolver = TraitResolver::new();
+
+    let mut impl_def = ImplDef::inherent(DefId::new(1), Type::i32());
+    impl_def.add_method(ImplMethodDef::simple("double".to_string(), vec![], Type::i32()));
+    resolver.register_impl(impl_def);
+
+    let unifier = Unifier::new();
+
+    let found = resolver.lookup_method(&Type::i32(), "double", &unifier);
+    assert!(found.is_some());
+
+    let not_found = resolver.lookup_method(&Type::i32(), "triple", &unifier);
+    assert!(not_found.is_none());
+}
+
+#[test]
+fn test_trait_resolver_lookup_method_trait_impl() {
+    let mut resolver = TraitResolver::new();
+
+    // Register Clone trait
+    let trait_def = TraitDef::simple(
+        "Clone".to_string(),
+        DefId::new(1),
+        vec![TraitMethodDef::simple("clone".to_string(), vec![], Type::i32())],
+    );
+    resolver.register_trait(trait_def);
+
+    // Register impl Clone for i32
+    let mut impl_def = ImplDef::for_trait(DefId::new(2), DefId::new(1), Type::i32());
+    impl_def.add_method(ImplMethodDef::simple("clone".to_string(), vec![], Type::i32()));
+    resolver.register_impl(impl_def);
+
+    let unifier = Unifier::new();
+
+    let found = resolver.lookup_method(&Type::i32(), "clone", &unifier);
+    assert!(found.is_some());
+}
+
+#[test]
+fn test_trait_resolver_satisfies_bound() {
+    let mut resolver = TraitResolver::new();
+
+    // Register Clone trait
+    let trait_def = TraitDef::simple("Clone".to_string(), DefId::new(1), vec![]);
+    resolver.register_trait(trait_def);
+
+    // Register impl Clone for i32
+    let impl_def = ImplDef::for_trait(DefId::new(2), DefId::new(1), Type::i32());
+    resolver.register_impl(impl_def);
+
+    let unifier = Unifier::new();
+    let bound = TraitBound::simple(DefId::new(1));
+
+    assert!(resolver.satisfies_bound(&Type::i32(), &bound, &unifier));
+    assert!(!resolver.satisfies_bound(&Type::bool(), &bound, &unifier));
+}
+
+#[test]
+fn test_trait_resolver_check_bounds() {
+    let mut resolver = TraitResolver::new();
+
+    // Register Clone trait
+    resolver.register_trait(TraitDef::simple("Clone".to_string(), DefId::new(1), vec![]));
+
+    // Register Debug trait
+    resolver.register_trait(TraitDef::simple("Debug".to_string(), DefId::new(2), vec![]));
+
+    // Impl Clone for i32 (but not Debug)
+    resolver.register_impl(ImplDef::for_trait(DefId::new(10), DefId::new(1), Type::i32()));
+
+    let unifier = Unifier::new();
+    let bounds = vec![
+        TraitBound::simple(DefId::new(1)), // Clone - satisfied
+        TraitBound::simple(DefId::new(2)), // Debug - not satisfied
+    ];
+
+    let unsatisfied = resolver.check_bounds(&Type::i32(), &bounds, &unifier);
+    assert_eq!(unsatisfied.len(), 1);
+    assert_eq!(unsatisfied[0].id(), 2); // Debug is unsatisfied
+}
+
+#[test]
+fn test_trait_resolver_impls_for_trait() {
+    let mut resolver = TraitResolver::new();
+
+    let clone_id = DefId::new(1);
+
+    // Register multiple impls for Clone
+    resolver.register_impl(ImplDef::for_trait(DefId::new(10), clone_id.clone(), Type::i32()));
+    resolver.register_impl(ImplDef::for_trait(DefId::new(11), clone_id.clone(), Type::bool()));
+    resolver.register_impl(ImplDef::for_trait(DefId::new(12), DefId::new(2), Type::i32())); // Different trait
+
+    let impls = resolver.impls_for_trait(&clone_id);
+    assert_eq!(impls.len(), 2);
+}
+
+#[test]
+fn test_trait_resolver_inherent_impls_for_type() {
+    let mut resolver = TraitResolver::new();
+    let unifier = Unifier::new();
+
+    resolver.register_impl(ImplDef::inherent(DefId::new(1), Type::i32()));
+    resolver.register_impl(ImplDef::inherent(DefId::new(2), Type::i32()));
+    resolver.register_impl(ImplDef::inherent(DefId::new(3), Type::bool()));
+    resolver.register_impl(ImplDef::for_trait(DefId::new(4), DefId::new(10), Type::i32())); // Trait impl
+
+    let impls = resolver.inherent_impls_for_type(&Type::i32(), &unifier);
+    assert_eq!(impls.len(), 2);
+}
+
+#[test]
+fn test_trait_resolver_clone() {
+    let mut resolver = TraitResolver::new();
+    resolver.register_trait(TraitDef::simple("Clone".to_string(), DefId::new(1), vec![]));
+    resolver.register_impl(ImplDef::inherent(DefId::new(2), Type::i32()));
+
+    let cloned = resolver.clone();
+
+    assert!(cloned.get_trait(&DefId::new(1)).is_some());
+}
+
+// ============================================================
+// Type Matching Tests
+// ============================================================
+
+#[test]
+fn test_type_matching_primitives() {
+    let mut resolver = TraitResolver::new();
+    let impl_def = ImplDef::inherent(DefId::new(1), Type::i32());
+    resolver.register_impl(impl_def);
+
+    let unifier = Unifier::new();
+
+    // Same primitive should match
+    assert!(resolver.find_inherent_impl(&Type::i32(), &unifier).is_some());
+
+    // Different primitive should not match
+    assert!(resolver.find_inherent_impl(&Type::bool(), &unifier).is_none());
+}
+
+#[test]
+fn test_type_matching_tuples() {
+    let mut resolver = TraitResolver::new();
+    let tuple_ty = Type::tuple(vec![Type::i32(), Type::bool()]);
+    let impl_def = ImplDef::inherent(DefId::new(1), tuple_ty.clone());
+    resolver.register_impl(impl_def);
+
+    let unifier = Unifier::new();
+
+    // Same tuple should match
+    let same_tuple = Type::tuple(vec![Type::i32(), Type::bool()]);
+    assert!(resolver.find_inherent_impl(&same_tuple, &unifier).is_some());
+
+    // Different tuple should not match
+    let diff_tuple = Type::tuple(vec![Type::bool(), Type::i32()]);
+    assert!(resolver.find_inherent_impl(&diff_tuple, &unifier).is_none());
+}
+
+#[test]
+fn test_type_matching_refs() {
+    let mut resolver = TraitResolver::new();
+    let ref_ty = Type::ref_to(Type::i32());
+    resolver.register_impl(ImplDef::inherent(DefId::new(1), ref_ty));
+
+    let unifier = Unifier::new();
+
+    // Same ref should match
+    assert!(resolver.find_inherent_impl(&Type::ref_to(Type::i32()), &unifier).is_some());
+
+    // Different mutability should not match
+    assert!(resolver.find_inherent_impl(&Type::ref_mut(Type::i32()), &unifier).is_none());
+}
+
+#[test]
+fn test_type_matching_arrays() {
+    let mut resolver = TraitResolver::new();
+    let array_ty = Type::array(Type::i32(), 10);
+    resolver.register_impl(ImplDef::inherent(DefId::new(1), array_ty));
+
+    let unifier = Unifier::new();
+
+    // Same array should match
+    assert!(resolver.find_inherent_impl(&Type::array(Type::i32(), 10), &unifier).is_some());
+
+    // Different size should not match
+    assert!(resolver.find_inherent_impl(&Type::array(Type::i32(), 5), &unifier).is_none());
+}
+
+#[test]
+fn test_type_matching_slices() {
+    let mut resolver = TraitResolver::new();
+    let slice_ty = Type::slice(Type::i32());
+    resolver.register_impl(ImplDef::inherent(DefId::new(1), slice_ty));
+
+    let unifier = Unifier::new();
+
+    assert!(resolver.find_inherent_impl(&Type::slice(Type::i32()), &unifier).is_some());
+    assert!(resolver.find_inherent_impl(&Type::slice(Type::bool()), &unifier).is_none());
+}
+
+// ============================================================
+// MethodResolution Tests
+// ============================================================
+
+#[test]
+fn test_method_resolution_inherent() {
+    let impl_def = ImplDef::inherent(DefId::new(1), Type::i32());
+    let method = ImplMethodDef::simple("foo".to_string(), vec![], Type::unit());
+
+    let resolution = MethodResolution::Inherent {
+        impl_def: impl_def,
+        method: method,
+    };
+
+    assert!(resolution.is_found());
+    assert!(resolution.method().is_some());
+    assert_eq!(resolution.method().unwrap().name, "foo");
+}
+
+#[test]
+fn test_method_resolution_trait_impl() {
+    let impl_def = ImplDef::for_trait(DefId::new(1), DefId::new(2), Type::i32());
+    let method = ImplMethodDef::simple("clone".to_string(), vec![], Type::i32());
+
+    let resolution = MethodResolution::TraitImpl {
+        impl_def,
+        trait_id: DefId::new(2),
+        method,
+    };
+
+    assert!(resolution.is_found());
+    assert!(resolution.method().is_some());
+}
+
+#[test]
+fn test_method_resolution_not_found() {
+    let resolution = MethodResolution::NotFound;
+
+    assert!(!resolution.is_found());
+    assert!(resolution.method().is_none());
+}
+
+#[test]
+fn test_method_resolution_ambiguous() {
+    let impl1 = ImplDef::inherent(DefId::new(1), Type::i32());
+    let method1 = ImplMethodDef::simple("foo".to_string(), vec![], Type::unit());
+    let impl2 = ImplDef::inherent(DefId::new(2), Type::i32());
+    let method2 = ImplMethodDef::simple("foo".to_string(), vec![], Type::unit());
+
+    let resolution = MethodResolution::Ambiguous {
+        candidates: vec![(impl1, method1), (impl2, method2)],
+    };
+
+    assert!(!resolution.is_found());
+    assert!(resolution.method().is_none());
+}
+
+#[test]
+fn test_method_resolution_clone() {
+    let impl_def = ImplDef::inherent(DefId::new(1), Type::i32());
+    let method = ImplMethodDef::simple("foo".to_string(), vec![], Type::unit());
+
+    let resolution = MethodResolution::Inherent {
+        impl_def,
+        method,
+    };
+    let cloned = resolution.clone();
+
+    assert!(cloned.is_found());
+    assert_eq!(cloned.method().unwrap().name, "foo");
+}
+
+#[test]
+fn test_method_resolution_not_found_clone() {
+    let resolution = MethodResolution::NotFound;
+    let cloned = resolution.clone();
+
+    assert!(!cloned.is_found());
+}

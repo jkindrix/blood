@@ -1,0 +1,761 @@
+/// Handler Compilation
+///
+/// Implements effect handler compilation and continuation capture.
+///
+/// # Handler Kinds
+///
+/// Blood supports two kinds of handlers:
+///
+/// - **Deep handlers**: Persist across resumes, can be multi-shot
+/// - **Shallow handlers**: Consumed on resume, always single-shot
+///
+/// # Continuation Capture
+///
+/// Blood uses **segmented stacks** for continuation capture:
+///
+/// - Fibers use segmented/cactus stacks
+/// - Capture = save current segment
+/// - Resume = restore segment
+///
+/// # Tail-Resumptive Optimization
+///
+/// When a handler operation immediately resumes (tail-resumptive), no
+/// continuation capture is needed. This is the common case for State,
+/// Reader, and Writer effects.
+///
+/// Performance: Up to 150 million operations/second on modern hardware
+/// See: [Implementing Algebraic Effects in C](https://www.microsoft.com/en-us/research/publication/implementing-algebraic-effects-in-c/)
+
+use crate::compiler::typeck::types::{Type, DefId};
+use crate::compiler::hir::{Expr, ExprKind, Span};
+use crate::compiler::effects::row::EffectRow;
+
+// ============================================================
+// Handler Kind
+// ============================================================
+
+/// The kind of effect handler.
+pub enum HandlerKind {
+    /// Deep handler - persists across resumes, can be multi-shot.
+    Deep,
+    /// Shallow handler - consumed on resume, single-shot only.
+    Shallow,
+}
+
+impl HandlerKind {
+    /// Check if this is a deep handler.
+    pub fn is_deep(&self) -> bool {
+        match self {
+            HandlerKind::Deep => true,
+            HandlerKind::Shallow => false,
+        }
+    }
+
+    /// Check if this is a shallow handler.
+    pub fn is_shallow(&self) -> bool {
+        match self {
+            HandlerKind::Deep => false,
+            HandlerKind::Shallow => true,
+        }
+    }
+}
+
+impl Clone for HandlerKind {
+    fn clone(&self) -> HandlerKind {
+        match self {
+            HandlerKind::Deep => HandlerKind::Deep,
+            HandlerKind::Shallow => HandlerKind::Shallow,
+        }
+    }
+}
+
+impl PartialEq for HandlerKind {
+    fn eq(&self, other: &HandlerKind) -> bool {
+        match (self, other) {
+            (HandlerKind::Deep, HandlerKind::Deep) => true,
+            (HandlerKind::Shallow, HandlerKind::Shallow) => true,
+            _ => false,
+        }
+    }
+}
+
+// ============================================================
+// Resumption Mode
+// ============================================================
+
+/// Resumption mode for continuations.
+pub enum ResumeMode {
+    /// Tail resumption - no capture needed.
+    Tail,
+    /// Direct resumption - returns to handler.
+    Direct,
+    /// Multi-shot resumption - continuation may be used multiple times.
+    MultiShot,
+}
+
+impl ResumeMode {
+    /// Check if this mode requires continuation capture.
+    pub fn needs_capture(&self) -> bool {
+        match self {
+            ResumeMode::Tail => false,
+            ResumeMode::Direct => true,
+            ResumeMode::MultiShot => true,
+        }
+    }
+
+    /// Check if this mode allows multiple resumes.
+    pub fn is_multi_shot(&self) -> bool {
+        match self {
+            ResumeMode::MultiShot => true,
+            _ => false,
+        }
+    }
+}
+
+impl Clone for ResumeMode {
+    fn clone(&self) -> ResumeMode {
+        match self {
+            ResumeMode::Tail => ResumeMode::Tail,
+            ResumeMode::Direct => ResumeMode::Direct,
+            ResumeMode::MultiShot => ResumeMode::MultiShot,
+        }
+    }
+}
+
+impl PartialEq for ResumeMode {
+    fn eq(&self, other: &ResumeMode) -> bool {
+        match (self, other) {
+            (ResumeMode::Tail, ResumeMode::Tail) => true,
+            (ResumeMode::Direct, ResumeMode::Direct) => true,
+            (ResumeMode::MultiShot, ResumeMode::MultiShot) => true,
+            _ => false,
+        }
+    }
+}
+
+// ============================================================
+// Handler State
+// ============================================================
+
+/// Handler state variable.
+pub struct HandlerState {
+    /// The state variable name.
+    pub name: String,
+    /// The state type.
+    pub ty: Type,
+    /// Whether this state is mutable.
+    pub mutable: bool,
+}
+
+impl HandlerState {
+    /// Create a new handler state.
+    pub fn new(name: String, ty: Type, mutable: bool) -> HandlerState {
+        HandlerState { name, ty, mutable }
+    }
+}
+
+impl Clone for HandlerState {
+    fn clone(&self) -> HandlerState {
+        HandlerState {
+            name: self.name.clone(),
+            ty: self.ty.clone(),
+            mutable: self.mutable,
+        }
+    }
+}
+
+// ============================================================
+// Operation Implementation
+// ============================================================
+
+/// An operation implementation in a handler.
+pub struct OperationImpl {
+    /// The operation being implemented.
+    pub operation: DefId,
+    /// Operation name.
+    pub name: String,
+    /// Parameter names.
+    pub params: [String],
+    /// Whether this operation is tail-resumptive.
+    pub is_tail_resumptive: bool,
+    /// The resume mode for this operation.
+    pub resume_mode: ResumeMode,
+    /// Number of resume calls in this operation.
+    pub resume_count: usize,
+}
+
+impl OperationImpl {
+    /// Create a new operation implementation.
+    pub fn new(operation: DefId, name: String, params: [String]) -> OperationImpl {
+        OperationImpl {
+            operation,
+            name,
+            params,
+            is_tail_resumptive: false,
+            resume_mode: ResumeMode::Direct,
+            resume_count: 0,
+        }
+    }
+
+    /// Create a tail-resumptive operation.
+    pub fn tail_resumptive(operation: DefId, name: String, params: [String]) -> OperationImpl {
+        OperationImpl {
+            operation,
+            name,
+            params,
+            is_tail_resumptive: true,
+            resume_mode: ResumeMode::Tail,
+            resume_count: 1,
+        }
+    }
+}
+
+impl Clone for OperationImpl {
+    fn clone(&self) -> OperationImpl {
+        OperationImpl {
+            operation: self.operation.clone(),
+            name: self.name.clone(),
+            params: self.params.clone(),
+            is_tail_resumptive: self.is_tail_resumptive,
+            resume_mode: self.resume_mode.clone(),
+            resume_count: self.resume_count,
+        }
+    }
+}
+
+// ============================================================
+// Return Clause
+// ============================================================
+
+/// Return clause for transforming the final result.
+pub struct ReturnClause {
+    /// The result parameter name.
+    pub param: String,
+    /// The result type.
+    pub result_ty: Type,
+}
+
+impl ReturnClause {
+    /// Create a new return clause.
+    pub fn new(param: String, result_ty: Type) -> ReturnClause {
+        ReturnClause { param, result_ty }
+    }
+}
+
+impl Clone for ReturnClause {
+    fn clone(&self) -> ReturnClause {
+        ReturnClause {
+            param: self.param.clone(),
+            result_ty: self.result_ty.clone(),
+        }
+    }
+}
+
+// ============================================================
+// Handler
+// ============================================================
+
+/// A compiled handler definition.
+pub struct Handler {
+    /// The handler definition ID.
+    pub def_id: DefId,
+    /// Handler name.
+    pub name: String,
+    /// The effect being handled.
+    pub effect: DefId,
+    /// The kind of handler.
+    pub kind: HandlerKind,
+    /// State variables for the handler.
+    pub state: [HandlerState],
+    /// Operation implementations.
+    pub operations: [OperationImpl],
+    /// Return clause (transforms the final result).
+    pub return_clause: Option<ReturnClause>,
+    /// Whether all operations are tail-resumptive.
+    pub all_tail_resumptive: bool,
+}
+
+impl Handler {
+    /// Create a new handler.
+    pub fn new(def_id: DefId, name: String, effect: DefId, kind: HandlerKind) -> Handler {
+        Handler {
+            def_id,
+            name,
+            effect,
+            kind,
+            state: [],
+            operations: [],
+            return_clause: Option::None,
+            all_tail_resumptive: true,
+        }
+    }
+
+    /// Add a state variable.
+    pub fn add_state(&mut self, state: HandlerState) {
+        self.state.push(state);
+    }
+
+    /// Add an operation implementation.
+    pub fn add_operation(&mut self, op: OperationImpl) {
+        if !op.is_tail_resumptive {
+            self.all_tail_resumptive = false;
+        }
+        self.operations.push(op);
+    }
+
+    /// Set the return clause.
+    pub fn set_return_clause(&mut self, clause: ReturnClause) {
+        self.return_clause = Option::Some(clause);
+    }
+
+    /// Check if this handler is fully tail-resumptive.
+    ///
+    /// A handler is fully tail-resumptive if all operations end with
+    /// resume in tail position. Such handlers can be compiled without
+    /// any continuation capture.
+    pub fn is_fully_tail_resumptive(&self) -> bool {
+        self.all_tail_resumptive
+    }
+
+    /// Get the operation count.
+    pub fn operation_count(&self) -> usize {
+        self.operations.len()
+    }
+
+    /// Get an operation by index.
+    pub fn get_operation(&self, index: usize) -> Option<&OperationImpl> {
+        if index < self.operations.len() {
+            Option::Some(&self.operations[index])
+        } else {
+            Option::None
+        }
+    }
+
+    /// Find an operation by DefId.
+    pub fn find_operation(&self, op_id: &DefId) -> Option<&OperationImpl> {
+        let mut i: usize = 0;
+        while i < self.operations.len() {
+            if self.operations[i].operation.eq(op_id) {
+                return Option::Some(&self.operations[i]);
+            }
+            i = i + 1;
+        }
+        Option::None
+    }
+}
+
+impl Clone for Handler {
+    fn clone(&self) -> Handler {
+        Handler {
+            def_id: self.def_id.clone(),
+            name: self.name.clone(),
+            effect: self.effect.clone(),
+            kind: self.kind.clone(),
+            state: self.state.clone(),
+            operations: self.operations.clone(),
+            return_clause: self.return_clause.clone(),
+            all_tail_resumptive: self.all_tail_resumptive,
+        }
+    }
+}
+
+// ============================================================
+// Continuation
+// ============================================================
+
+/// A captured continuation.
+///
+/// Represents the suspended computation that can be resumed.
+pub struct Continuation {
+    /// Unique continuation ID.
+    pub id: u64,
+    /// The effect row at capture time.
+    pub effect_row: EffectRow,
+    /// Whether this continuation has been consumed (for linearity checking).
+    pub consumed: bool,
+    /// The handler depth when captured.
+    pub handler_depth: usize,
+}
+
+impl Continuation {
+    /// Create a new continuation.
+    pub fn new(id: u64, effect_row: EffectRow, handler_depth: usize) -> Continuation {
+        Continuation {
+            id,
+            effect_row,
+            consumed: false,
+            handler_depth,
+        }
+    }
+
+    /// Mark this continuation as consumed.
+    pub fn consume(&mut self) {
+        self.consumed = true;
+    }
+
+    /// Check if this continuation can be resumed.
+    pub fn can_resume(&self) -> bool {
+        !self.consumed
+    }
+
+    /// Get the continuation ID.
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
+    /// Get the handler depth.
+    pub fn depth(&self) -> usize {
+        self.handler_depth
+    }
+}
+
+impl Clone for Continuation {
+    fn clone(&self) -> Continuation {
+        Continuation {
+            id: self.id,
+            effect_row: self.effect_row.clone(),
+            consumed: self.consumed,
+            handler_depth: self.handler_depth,
+        }
+    }
+}
+
+// ============================================================
+// Tail-Resumptive Analysis
+// ============================================================
+
+/// Analyze an expression to determine if it's tail-resumptive.
+///
+/// An expression is tail-resumptive if `resume` is called in tail position
+/// with no further computation. This enables significant optimization.
+///
+/// Based on: [Effect Handlers, Evidently](https://dl.acm.org/doi/10.1145/3408981) (ICFP 2020)
+pub fn analyze_tail_resumptive(expr: &Expr) -> bool {
+    is_tail_resume(expr)
+}
+
+/// Check if an expression is a resume in tail position.
+fn is_tail_resume(expr: &Expr) -> bool {
+    match &expr.kind {
+        // Direct resume in tail position
+        ExprKind::Resume { value: _ } => true,
+
+        // Block: tail position is the trailing expression
+        ExprKind::Block { stmts: _, expr: tail } => {
+            match tail {
+                Option::Some(e) => is_tail_resume(e),
+                Option::None => false,
+            }
+        }
+
+        // If: both branches must be tail-resumptive
+        ExprKind::If { condition: _, then_branch, else_branch } => {
+            match else_branch {
+                Option::Some(else_br) => {
+                    is_tail_resume(then_branch) && is_tail_resume(else_br)
+                }
+                Option::None => false,
+            }
+        }
+
+        // Match: all arms must be tail-resumptive
+        ExprKind::Match { scrutinee: _, arms } => {
+            let mut i: usize = 0;
+            while i < arms.len() {
+                if !is_tail_resume(&arms[i].body) {
+                    return false;
+                }
+                i = i + 1;
+            }
+            true
+        }
+
+        // Return with resume value
+        ExprKind::Return(inner) => {
+            match inner {
+                Option::Some(e) => is_tail_resume(e),
+                Option::None => false,
+            }
+        }
+
+        // All other expressions are not tail-resumptive
+        _ => false,
+    }
+}
+
+/// Count the number of resume expressions in an expression tree.
+pub fn count_resumes(expr: &Expr) -> usize {
+    count_resumes_recursive(expr)
+}
+
+fn count_resumes_recursive(expr: &Expr) -> usize {
+    match &expr.kind {
+        ExprKind::Resume { value } => {
+            let inner_count = match value {
+                Option::Some(v) => count_resumes_recursive(v),
+                Option::None => 0,
+            };
+            1 + inner_count
+        }
+
+        ExprKind::Block { stmts, expr: tail } => {
+            let mut count: usize = 0;
+            let mut i: usize = 0;
+            while i < stmts.len() {
+                count = count + count_stmt_resumes(&stmts[i]);
+                i = i + 1;
+            }
+            match tail {
+                Option::Some(e) => count + count_resumes_recursive(e),
+                Option::None => count,
+            }
+        }
+
+        ExprKind::If { condition, then_branch, else_branch } => {
+            let cond_count = count_resumes_recursive(condition);
+            let then_count = count_resumes_recursive(then_branch);
+            let else_count = match else_branch {
+                Option::Some(e) => count_resumes_recursive(e),
+                Option::None => 0,
+            };
+            cond_count + then_count + else_count
+        }
+
+        ExprKind::Match { scrutinee, arms } => {
+            let mut count = count_resumes_recursive(scrutinee);
+            let mut i: usize = 0;
+            while i < arms.len() {
+                count = count + count_resumes_recursive(&arms[i].body);
+                i = i + 1;
+            }
+            count
+        }
+
+        ExprKind::Binary { left, right, op: _ } => {
+            count_resumes_recursive(left) + count_resumes_recursive(right)
+        }
+
+        ExprKind::Unary { operand, op: _ } => count_resumes_recursive(operand),
+
+        ExprKind::Call { callee, args } => {
+            let mut count = count_resumes_recursive(callee);
+            let mut i: usize = 0;
+            while i < args.len() {
+                count = count + count_resumes_recursive(&args[i]);
+                i = i + 1;
+            }
+            count
+        }
+
+        ExprKind::Tuple(exprs) => {
+            let mut count: usize = 0;
+            let mut i: usize = 0;
+            while i < exprs.len() {
+                count = count + count_resumes_recursive(&exprs[i]);
+                i = i + 1;
+            }
+            count
+        }
+
+        ExprKind::Array(exprs) => {
+            let mut count: usize = 0;
+            let mut i: usize = 0;
+            while i < exprs.len() {
+                count = count + count_resumes_recursive(&exprs[i]);
+                i = i + 1;
+            }
+            count
+        }
+
+        ExprKind::Loop { body, label: _ } => count_resumes_recursive(body),
+
+        ExprKind::While { condition, body, label: _ } => {
+            count_resumes_recursive(condition) + count_resumes_recursive(body)
+        }
+
+        ExprKind::Return(Some(e)) => count_resumes_recursive(e),
+
+        ExprKind::Assign { target, value } => {
+            count_resumes_recursive(target) + count_resumes_recursive(value)
+        }
+
+        ExprKind::Handle { body, handler_id: _, handler_instance } => {
+            count_resumes_recursive(body) + count_resumes_recursive(handler_instance)
+        }
+
+        ExprKind::InlineHandle { body, handlers } => {
+            let mut count = count_resumes_recursive(body);
+            let mut i: usize = 0;
+            while i < handlers.len() {
+                count = count + count_resumes_recursive(&handlers[i].body);
+                i = i + 1;
+            }
+            count
+        }
+
+        ExprKind::Perform { effect_id: _, op_index: _, args } => {
+            let mut count: usize = 0;
+            let mut i: usize = 0;
+            while i < args.len() {
+                count = count + count_resumes_recursive(&args[i]);
+                i = i + 1;
+            }
+            count
+        }
+
+        // Leaf and other expressions
+        _ => 0,
+    }
+}
+
+fn count_stmt_resumes(stmt: &crate::compiler::hir::Stmt) -> usize {
+    match stmt {
+        crate::compiler::hir::Stmt::Expr(e) => count_resumes_recursive(e),
+        crate::compiler::hir::Stmt::Let { init, pattern: _, ty: _ } => {
+            match init {
+                Option::Some(e) => count_resumes_recursive(e),
+                Option::None => 0,
+            }
+        }
+        crate::compiler::hir::Stmt::Item(_) => 0,
+    }
+}
+
+/// Analyze the resume mode for an operation.
+pub fn analyze_resume_mode(expr: &Expr, handler_kind: &HandlerKind) -> ResumeMode {
+    if is_tail_resume(expr) {
+        ResumeMode::Tail
+    } else if handler_kind.is_deep() {
+        // Deep handlers may be multi-shot
+        if count_resumes(expr) > 1 {
+            ResumeMode::MultiShot
+        } else {
+            ResumeMode::Direct
+        }
+    } else {
+        // Shallow handlers are always single-shot
+        ResumeMode::Direct
+    }
+}
+
+/// Analyze a handler to determine if all operations are tail-resumptive.
+pub fn analyze_handler_tail_resumptive(operations: &[OperationImpl]) -> bool {
+    let mut i: usize = 0;
+    while i < operations.len() {
+        if !operations[i].is_tail_resumptive {
+            return false;
+        }
+        i = i + 1;
+    }
+    true
+}
+
+// ============================================================
+// Tests
+// ============================================================
+
+#[test]
+fn test_handler_kind() {
+    let deep = HandlerKind::Deep;
+    let shallow = HandlerKind::Shallow;
+
+    assert!(deep.is_deep());
+    assert!(!deep.is_shallow());
+    assert!(!shallow.is_deep());
+    assert!(shallow.is_shallow());
+    assert!(deep.eq(&HandlerKind::Deep));
+    assert!(!deep.eq(&shallow));
+}
+
+#[test]
+fn test_resume_mode() {
+    let tail = ResumeMode::Tail;
+    let direct = ResumeMode::Direct;
+    let multi = ResumeMode::MultiShot;
+
+    assert!(!tail.needs_capture());
+    assert!(direct.needs_capture());
+    assert!(multi.needs_capture());
+    assert!(multi.is_multi_shot());
+    assert!(!direct.is_multi_shot());
+}
+
+#[test]
+fn test_handler_state() {
+    let state = HandlerState::new("counter".to_string(), Type::i32(), true);
+    assert!(state.name == "counter");
+    assert!(state.mutable);
+}
+
+#[test]
+fn test_operation_impl() {
+    let op = OperationImpl::new(
+        DefId::new(1),
+        "get".to_string(),
+        [],
+    );
+    assert!(op.name == "get");
+    assert!(!op.is_tail_resumptive);
+
+    let tail_op = OperationImpl::tail_resumptive(
+        DefId::new(2),
+        "put".to_string(),
+        ["value".to_string()],
+    );
+    assert!(tail_op.is_tail_resumptive);
+    assert!(tail_op.resume_mode.eq(&ResumeMode::Tail));
+}
+
+#[test]
+fn test_handler() {
+    let mut handler = Handler::new(
+        DefId::new(1),
+        "StateHandler".to_string(),
+        DefId::new(2),
+        HandlerKind::Deep,
+    );
+
+    assert!(handler.is_fully_tail_resumptive());
+    assert!(handler.operation_count() == 0);
+
+    handler.add_operation(OperationImpl::tail_resumptive(
+        DefId::new(3),
+        "get".to_string(),
+        [],
+    ));
+    assert!(handler.is_fully_tail_resumptive());
+    assert!(handler.operation_count() == 1);
+
+    handler.add_operation(OperationImpl::new(
+        DefId::new(4),
+        "modify".to_string(),
+        ["f".to_string()],
+    ));
+    assert!(!handler.is_fully_tail_resumptive());
+}
+
+#[test]
+fn test_continuation() {
+    let mut cont = Continuation::new(1, EffectRow::pure(), 0);
+    assert!(cont.can_resume());
+    assert!(cont.id() == 1);
+    assert!(cont.depth() == 0);
+
+    cont.consume();
+    assert!(!cont.can_resume());
+}
+
+#[test]
+fn test_analyze_handler_tail_resumptive() {
+    let ops = [
+        OperationImpl::tail_resumptive(DefId::new(1), "get".to_string(), []),
+        OperationImpl::tail_resumptive(DefId::new(2), "put".to_string(), ["v".to_string()]),
+    ];
+    assert!(analyze_handler_tail_resumptive(&ops));
+
+    let mixed_ops = [
+        OperationImpl::tail_resumptive(DefId::new(1), "get".to_string(), []),
+        OperationImpl::new(DefId::new(2), "modify".to_string(), ["f".to_string()]),
+    ];
+    assert!(!analyze_handler_tail_resumptive(&mixed_ops));
+}

@@ -1,0 +1,787 @@
+//! # Standard Effects Library
+//!
+//! This module implements Blood's standard effect library, providing
+//! commonly used effects following established patterns from Koka and
+//! other effect-typed languages.
+//!
+//! ## Design References
+//!
+//! - [Koka std/core/exn](https://koka-lang.github.io/koka/doc/std_core_exn.html)
+//! - [Koka std/core types](https://koka-lang.github.io/koka/doc/std_core_types.html)
+//! - [Effect Handlers, Evidently](https://dl.acm.org/doi/10.1145/3408981) (ICFP 2020)
+//!
+//! ## Standard Effects
+//!
+//! | Effect | Operations | Tail-Resumptive |
+//! |--------|------------|-----------------|
+//! | State  | get, put, modify | Yes |
+//! | Error  | throw | No (final ctl) |
+//! | IO     | print, println, read_line | Yes |
+//! | Console | print, println, read_line, read_char | Yes |
+//! | StaleReference | stale_error | No (final ctl) |
+//!
+//! ## Implementation Notes
+//!
+//! All standard effects are defined as built-in effects with well-known
+//! DefIds. This allows the compiler to recognize and optimize them.
+
+use std::collections::HashMap;
+use super::super::hir::{DefId, Type, Expr};
+
+// ============================================================================
+// Well-Known Effect IDs
+// ============================================================================
+
+/// Well-known DefId for the State effect.
+pub const STATE_EFFECT_ID: u32 = 0x1000;
+
+/// Well-known DefId for the Error effect.
+pub const ERROR_EFFECT_ID: u32 = 0x1001;
+
+/// Well-known DefId for the IO effect.
+pub const IO_EFFECT_ID: u32 = 0x1002;
+
+/// Well-known DefId for the Console effect.
+pub const CONSOLE_EFFECT_ID: u32 = 0x1003;
+
+/// Well-known DefId for the StaleReference effect.
+/// This effect is raised when a generational pointer validation fails.
+pub const STALE_REFERENCE_EFFECT_ID: u32 = 0x1004;
+
+// ============================================================================
+// Operation Index Constants
+// ============================================================================
+
+/// State effect operations.
+pub mod state_ops {
+    /// Operation index for `get`.
+    pub const GET: u32 = 0;
+    /// Operation index for `put`.
+    pub const PUT: u32 = 1;
+    /// Operation index for `modify`.
+    pub const MODIFY: u32 = 2;
+}
+
+/// Error effect operations.
+pub mod error_ops {
+    /// Operation index for `throw`.
+    pub const THROW: u32 = 0;
+}
+
+/// IO effect operations.
+pub mod io_ops {
+    /// Operation index for `print`.
+    pub const PRINT: u32 = 0;
+    /// Operation index for `println`.
+    pub const PRINTLN: u32 = 1;
+    /// Operation index for `read_line`.
+    pub const READ_LINE: u32 = 2;
+}
+
+/// Console effect operations.
+pub mod console_ops {
+    /// Operation index for `print`.
+    pub const PRINT: u32 = 0;
+    /// Operation index for `println`.
+    pub const PRINTLN: u32 = 1;
+    /// Operation index for `read_line`.
+    pub const READ_LINE: u32 = 2;
+    /// Operation index for `read_char`.
+    pub const READ_CHAR: u32 = 3;
+}
+
+/// StaleReference effect operations.
+pub mod stale_ref_ops {
+    /// Operation index for `stale_error`.
+    pub const STALE_ERROR: u32 = 0;
+}
+
+// ============================================================================
+// State Effect
+// ============================================================================
+
+/// State effect definition.
+///
+/// The State effect provides mutable state operations following the
+/// pattern from Koka's `st<h>` effect.
+///
+/// ```text
+/// effect State<S> {
+///     fn get() -> S
+///     fn put(s: S) -> ()
+///     fn modify(f: fn(S) -> S) -> ()
+/// }
+/// ```
+///
+/// All State operations are tail-resumptive, meaning they can be
+/// compiled without continuation capture.
+///
+/// Reference: [Koka State](https://koka-lang.github.io/koka/doc/std_core_types.html)
+/// "The effects `alloc⟨h⟩`, `read⟨h⟩` and `write⟨h⟩` are used for stateful functions"
+pub struct StateEffect {
+    /// The state type parameter.
+    pub state_type: Type,
+}
+
+impl StateEffect {
+    /// Create a new State effect with the given state type.
+    pub fn new(state_type: Type) -> StateEffect {
+        StateEffect { state_type }
+    }
+
+    /// Get the DefId for this effect.
+    pub fn def_id() -> DefId {
+        DefId::new(STATE_EFFECT_ID)
+    }
+
+    /// Check if this effect is tail-resumptive.
+    ///
+    /// State is always tail-resumptive: all operations resume immediately.
+    pub fn is_tail_resumptive() -> bool {
+        true
+    }
+
+    /// Get the number of operations for State.
+    pub fn operation_count() -> u32 {
+        3  // get, put, modify
+    }
+
+    /// Get the name of an operation by index.
+    pub fn operation_name(op_index: u32) -> Option<String> {
+        match op_index {
+            0 => Some("get".to_string()),
+            1 => Some("put".to_string()),
+            2 => Some("modify".to_string()),
+            _ => None,
+        }
+    }
+}
+
+/// State effect handler implementation.
+///
+/// Provides a default handler that maintains state in a local variable.
+pub struct StateHandler {
+    /// Initial state value.
+    pub initial_state: Option<Box<Expr>>,
+    /// The state type.
+    pub state_type: Type,
+}
+
+impl StateHandler {
+    /// Create a new State handler.
+    pub fn new(state_type: Type) -> StateHandler {
+        StateHandler {
+            initial_state: None,
+            state_type,
+        }
+    }
+
+    /// Create a handler with an initial state.
+    pub fn with_initial(state_type: Type, initial: Expr) -> StateHandler {
+        StateHandler {
+            initial_state: Some(Box::new(initial)),
+            state_type,
+        }
+    }
+
+    /// Check if this handler has an initial state.
+    pub fn has_initial_state(&self) -> bool {
+        self.initial_state.is_some()
+    }
+}
+
+// ============================================================================
+// Error Effect
+// ============================================================================
+
+/// Exception information categories (following Koka's exception-info).
+///
+/// Reference: [Koka exception-info](https://koka-lang.github.io/koka/doc/std_core_exn.html)
+pub enum ExceptionInfo {
+    /// Generic assertion failure.
+    Assert,
+    /// General error.
+    Error,
+    /// Internal system error with name.
+    Internal { name: String },
+    /// Pattern matching failure with location.
+    Pattern { location: String, definition: String },
+    /// Range/boundary violation.
+    Range,
+    /// System-level error with errno.
+    System { errno: i32 },
+    /// Unimplemented functionality.
+    Todo,
+    /// Finalization needed.
+    Finalize,
+    /// Cancelled operation.
+    Cancel,
+}
+
+impl ExceptionInfo {
+    /// Get the category name.
+    pub fn category_name(&self) -> &str {
+        match self {
+            ExceptionInfo::Assert => "assert",
+            ExceptionInfo::Error => "error",
+            ExceptionInfo::Internal { .. } => "internal",
+            ExceptionInfo::Pattern { .. } => "pattern",
+            ExceptionInfo::Range => "range",
+            ExceptionInfo::System { .. } => "system",
+            ExceptionInfo::Todo => "todo",
+            ExceptionInfo::Finalize => "finalize",
+            ExceptionInfo::Cancel => "cancel",
+        }
+    }
+
+    /// Check if this is a recoverable exception category.
+    pub fn is_recoverable(&self) -> bool {
+        match self {
+            ExceptionInfo::Assert => false,
+            ExceptionInfo::Error => true,
+            ExceptionInfo::Internal { .. } => false,
+            ExceptionInfo::Pattern { .. } => false,
+            ExceptionInfo::Range => true,
+            ExceptionInfo::System { .. } => true,
+            ExceptionInfo::Todo => false,
+            ExceptionInfo::Finalize => true,
+            ExceptionInfo::Cancel => true,
+        }
+    }
+}
+
+/// Standard exception type.
+pub struct Exception {
+    /// Error message.
+    pub message: String,
+    /// Exception category.
+    pub info: ExceptionInfo,
+}
+
+impl Exception {
+    /// Create a new exception.
+    pub fn new(message: String, info: ExceptionInfo) -> Exception {
+        Exception { message, info }
+    }
+
+    /// Create a simple error exception.
+    pub fn error(message: String) -> Exception {
+        Exception::new(message, ExceptionInfo::Error)
+    }
+
+    /// Create an assertion failure.
+    pub fn assert(message: String) -> Exception {
+        Exception::new(message, ExceptionInfo::Assert)
+    }
+
+    /// Create a pattern match failure.
+    pub fn pattern(location: String, definition: String) -> Exception {
+        let message = format!("Pattern match failed at {} in {}", location, definition);
+        Exception::new(message, ExceptionInfo::Pattern { location, definition })
+    }
+
+    /// Create a range error.
+    pub fn range(message: String) -> Exception {
+        Exception::new(message, ExceptionInfo::Range)
+    }
+
+    /// Create a system error.
+    pub fn system(errno: i32, message: String) -> Exception {
+        Exception::new(message, ExceptionInfo::System { errno })
+    }
+
+    /// Create a todo (unimplemented) error.
+    pub fn todo(message: String) -> Exception {
+        Exception::new(message, ExceptionInfo::Todo)
+    }
+
+    /// Create an internal error.
+    pub fn internal(name: String, message: String) -> Exception {
+        Exception::new(message, ExceptionInfo::Internal { name })
+    }
+
+    /// Get the full error message with category.
+    pub fn full_message(&self) -> String {
+        format!("[{}] {}", self.info.category_name(), self.message)
+    }
+}
+
+/// Error effect definition.
+///
+/// The Error effect provides exception-like error handling following
+/// the pattern from Koka's `exn` effect.
+///
+/// ```text
+/// effect Error<E> {
+///     fn throw(e: E) -> !   // never returns (final ctl)
+/// }
+/// ```
+///
+/// The `throw` operation is a `final ctl` - it never resumes.
+/// This means Error handlers don't need continuation capture for throw,
+/// but they do need to set up try/catch boundaries.
+///
+/// Reference: [Koka exn](https://koka-lang.github.io/koka/doc/std_core_exn.html)
+/// "If a function can raise an exception the effect is `exn`"
+pub struct ErrorEffect {
+    /// The error type parameter.
+    pub error_type: Type,
+}
+
+impl ErrorEffect {
+    /// Create a new Error effect with the given error type.
+    pub fn new(error_type: Type) -> ErrorEffect {
+        ErrorEffect { error_type }
+    }
+
+    /// Get the DefId for this effect.
+    pub fn def_id() -> DefId {
+        DefId::new(ERROR_EFFECT_ID)
+    }
+
+    /// Check if this effect is tail-resumptive.
+    ///
+    /// Error is NOT tail-resumptive: throw never resumes (final ctl).
+    pub fn is_tail_resumptive() -> bool {
+        false
+    }
+
+    /// Get the number of operations for Error.
+    pub fn operation_count() -> u32 {
+        1  // throw
+    }
+
+    /// Get the name of an operation by index.
+    pub fn operation_name(op_index: u32) -> Option<String> {
+        match op_index {
+            0 => Some("throw".to_string()),
+            _ => None,
+        }
+    }
+}
+
+/// Error effect handler implementation.
+///
+/// Provides try/catch semantics for error handling.
+pub struct ErrorHandler {
+    /// The error type being handled.
+    pub error_type: Type,
+    /// Optional catch body expression.
+    pub catch_body: Option<Box<Expr>>,
+}
+
+impl ErrorHandler {
+    /// Create a new Error handler.
+    pub fn new(error_type: Type) -> ErrorHandler {
+        ErrorHandler {
+            error_type,
+            catch_body: None,
+        }
+    }
+
+    /// Create a handler with a catch body.
+    pub fn with_catch(error_type: Type, catch_body: Expr) -> ErrorHandler {
+        ErrorHandler {
+            error_type,
+            catch_body: Some(Box::new(catch_body)),
+        }
+    }
+}
+
+// ============================================================================
+// IO Effect
+// ============================================================================
+
+/// IO effect definition.
+///
+/// The IO effect provides input/output operations following the
+/// pattern from Koka's `io` effect.
+///
+/// ```text
+/// effect IO {
+///     fn print(s: String) -> ()
+///     fn println(s: String) -> ()
+///     fn read_line() -> String
+/// }
+/// ```
+///
+/// IO operations are tail-resumptive in the sense that they always
+/// resume after completing the I/O operation.
+///
+/// Reference: [Koka io](https://koka-lang.github.io/koka/doc/std_core_types.html)
+/// "On top of pure effects, we find mutability (as `st`) up to full
+/// non-deterministic side effects in `io`."
+pub struct IOEffect {
+    // IO effect has no type parameters
+    _marker: (),
+}
+
+impl IOEffect {
+    /// Create a new IO effect.
+    pub fn new() -> IOEffect {
+        IOEffect { _marker: () }
+    }
+
+    /// Get the DefId for this effect.
+    pub fn def_id() -> DefId {
+        DefId::new(IO_EFFECT_ID)
+    }
+
+    /// Check if this effect is tail-resumptive.
+    ///
+    /// IO is tail-resumptive: all operations resume after I/O completes.
+    pub fn is_tail_resumptive() -> bool {
+        true
+    }
+
+    /// Get the number of operations for IO.
+    pub fn operation_count() -> u32 {
+        3  // print, println, read_line
+    }
+
+    /// Get the name of an operation by index.
+    pub fn operation_name(op_index: u32) -> Option<String> {
+        match op_index {
+            0 => Some("print".to_string()),
+            1 => Some("println".to_string()),
+            2 => Some("read_line".to_string()),
+            _ => None,
+        }
+    }
+}
+
+// ============================================================================
+// Console Effect
+// ============================================================================
+
+/// Console effect for basic console I/O.
+///
+/// This is a subset of IO focused on console operations.
+///
+/// ```text
+/// effect Console {
+///     fn print(s: String) -> ()
+///     fn println(s: String) -> ()
+///     fn read_line() -> String
+///     fn read_char() -> char
+/// }
+/// ```
+pub struct ConsoleEffect {
+    // Console effect has no type parameters
+    _marker: (),
+}
+
+impl ConsoleEffect {
+    /// Create a new Console effect.
+    pub fn new() -> ConsoleEffect {
+        ConsoleEffect { _marker: () }
+    }
+
+    /// Get the DefId for this effect.
+    pub fn def_id() -> DefId {
+        DefId::new(CONSOLE_EFFECT_ID)
+    }
+
+    /// Check if this effect is tail-resumptive.
+    pub fn is_tail_resumptive() -> bool {
+        true
+    }
+
+    /// Get the number of operations for Console.
+    pub fn operation_count() -> u32 {
+        4  // print, println, read_line, read_char
+    }
+
+    /// Get the name of an operation by index.
+    pub fn operation_name(op_index: u32) -> Option<String> {
+        match op_index {
+            0 => Some("print".to_string()),
+            1 => Some("println".to_string()),
+            2 => Some("read_line".to_string()),
+            3 => Some("read_char".to_string()),
+            _ => None,
+        }
+    }
+}
+
+// ============================================================================
+// StaleReference Effect
+// ============================================================================
+
+/// StaleReference effect for generational pointer validation.
+///
+/// This effect is raised when a generational pointer validation fails,
+/// indicating that the referenced memory has been deallocated or
+/// reallocated.
+///
+/// ```text
+/// effect StaleReference {
+///     fn stale_error(msg: String) -> !   // never returns (final ctl)
+/// }
+/// ```
+pub struct StaleReferenceEffect {
+    // StaleReference effect has no type parameters
+    _marker: (),
+}
+
+impl StaleReferenceEffect {
+    /// Create a new StaleReference effect.
+    pub fn new() -> StaleReferenceEffect {
+        StaleReferenceEffect { _marker: () }
+    }
+
+    /// Get the DefId for this effect.
+    pub fn def_id() -> DefId {
+        DefId::new(STALE_REFERENCE_EFFECT_ID)
+    }
+
+    /// Check if this effect is tail-resumptive.
+    ///
+    /// StaleReference is NOT tail-resumptive: stale_error never resumes.
+    pub fn is_tail_resumptive() -> bool {
+        false
+    }
+
+    /// Get the number of operations for StaleReference.
+    pub fn operation_count() -> u32 {
+        1  // stale_error
+    }
+
+    /// Get the name of an operation by index.
+    pub fn operation_name(op_index: u32) -> Option<String> {
+        match op_index {
+            0 => Some("stale_error".to_string()),
+            _ => None,
+        }
+    }
+}
+
+// ============================================================================
+// Standard Effect Registry
+// ============================================================================
+
+/// Registry of standard effects.
+///
+/// This provides a way to look up standard effects by name or DefId.
+pub struct StandardEffects {
+    /// Whether State is available.
+    pub has_state: bool,
+    /// Whether Error is available.
+    pub has_error: bool,
+    /// Whether IO is available.
+    pub has_io: bool,
+    /// Whether Console is available.
+    pub has_console: bool,
+    /// Whether StaleReference is available.
+    pub has_stale_reference: bool,
+}
+
+impl StandardEffects {
+    /// Create a new registry with all standard effects.
+    pub fn all() -> StandardEffects {
+        StandardEffects {
+            has_state: true,
+            has_error: true,
+            has_io: true,
+            has_console: true,
+            has_stale_reference: true,
+        }
+    }
+
+    /// Create a registry with only pure effects (none).
+    pub fn pure() -> StandardEffects {
+        StandardEffects {
+            has_state: false,
+            has_error: false,
+            has_io: false,
+            has_console: false,
+            has_stale_reference: false,
+        }
+    }
+
+    /// Create a registry with specific effects enabled.
+    pub fn with_effects(
+        state: bool,
+        error: bool,
+        io: bool,
+        console: bool,
+        stale_ref: bool,
+    ) -> StandardEffects {
+        StandardEffects {
+            has_state: state,
+            has_error: error,
+            has_io: io,
+            has_console: console,
+            has_stale_reference: stale_ref,
+        }
+    }
+
+    /// Check if a DefId is a standard effect.
+    pub fn is_standard_effect(def_id: DefId) -> bool {
+        let id = def_id.index;
+        id == STATE_EFFECT_ID
+            || id == ERROR_EFFECT_ID
+            || id == IO_EFFECT_ID
+            || id == CONSOLE_EFFECT_ID
+            || id == STALE_REFERENCE_EFFECT_ID
+    }
+
+    /// Get the name of a standard effect by DefId.
+    pub fn effect_name(def_id: DefId) -> Option<String> {
+        match def_id.index {
+            x if x == STATE_EFFECT_ID => Some("State".to_string()),
+            x if x == ERROR_EFFECT_ID => Some("Error".to_string()),
+            x if x == IO_EFFECT_ID => Some("IO".to_string()),
+            x if x == CONSOLE_EFFECT_ID => Some("Console".to_string()),
+            x if x == STALE_REFERENCE_EFFECT_ID => Some("StaleReference".to_string()),
+            _ => None,
+        }
+    }
+
+    /// Check if an effect is tail-resumptive by DefId.
+    pub fn is_tail_resumptive(def_id: DefId) -> Option<bool> {
+        match def_id.index {
+            x if x == STATE_EFFECT_ID => Some(true),
+            x if x == ERROR_EFFECT_ID => Some(false),
+            x if x == IO_EFFECT_ID => Some(true),
+            x if x == CONSOLE_EFFECT_ID => Some(true),
+            x if x == STALE_REFERENCE_EFFECT_ID => Some(false),
+            _ => None,
+        }
+    }
+
+    /// Get all standard effect DefIds.
+    pub fn all_effect_ids() -> [DefId] {
+        [
+            DefId::new(STATE_EFFECT_ID),
+            DefId::new(ERROR_EFFECT_ID),
+            DefId::new(IO_EFFECT_ID),
+            DefId::new(CONSOLE_EFFECT_ID),
+            DefId::new(STALE_REFERENCE_EFFECT_ID),
+        ]
+    }
+
+    /// Get the operation count for a standard effect.
+    pub fn operation_count(def_id: DefId) -> Option<u32> {
+        match def_id.index {
+            x if x == STATE_EFFECT_ID => Some(3),
+            x if x == ERROR_EFFECT_ID => Some(1),
+            x if x == IO_EFFECT_ID => Some(3),
+            x if x == CONSOLE_EFFECT_ID => Some(4),
+            x if x == STALE_REFERENCE_EFFECT_ID => Some(1),
+            _ => None,
+        }
+    }
+
+    /// Get operation name for a standard effect operation.
+    pub fn operation_name(def_id: DefId, op_index: u32) -> Option<String> {
+        match def_id.index {
+            x if x == STATE_EFFECT_ID => StateEffect::operation_name(op_index),
+            x if x == ERROR_EFFECT_ID => ErrorEffect::operation_name(op_index),
+            x if x == IO_EFFECT_ID => IOEffect::operation_name(op_index),
+            x if x == CONSOLE_EFFECT_ID => ConsoleEffect::operation_name(op_index),
+            x if x == STALE_REFERENCE_EFFECT_ID => StaleReferenceEffect::operation_name(op_index),
+            _ => None,
+        }
+    }
+}
+
+// ============================================================================
+// Effect Type Builders
+// ============================================================================
+
+/// Utilities for building standard effect types.
+pub struct EffectTypeBuilder {
+    _marker: (),
+}
+
+impl EffectTypeBuilder {
+    /// Build a State<S> effect type.
+    pub fn state(state_type: Type) -> Type {
+        Type::effect_app(DefId::new(STATE_EFFECT_ID), [state_type])
+    }
+
+    /// Build an Error<E> effect type.
+    pub fn error(error_type: Type) -> Type {
+        Type::effect_app(DefId::new(ERROR_EFFECT_ID), [error_type])
+    }
+
+    /// Build an IO effect type.
+    pub fn io() -> Type {
+        Type::effect(DefId::new(IO_EFFECT_ID))
+    }
+
+    /// Build a Console effect type.
+    pub fn console() -> Type {
+        Type::effect(DefId::new(CONSOLE_EFFECT_ID))
+    }
+
+    /// Build a StaleReference effect type.
+    pub fn stale_reference() -> Type {
+        Type::effect(DefId::new(STALE_REFERENCE_EFFECT_ID))
+    }
+}
+
+// ============================================================================
+// Default Effect Handlers
+// ============================================================================
+
+/// Provides default handler implementations for standard effects.
+pub struct DefaultHandlers {
+    _marker: (),
+}
+
+impl DefaultHandlers {
+    /// Create a default State handler that stores state in a mutable reference.
+    pub fn state_handler(state_type: Type, initial: Option<Expr>) -> StateHandler {
+        match initial {
+            Some(init) => StateHandler::with_initial(state_type, init),
+            None => StateHandler::new(state_type),
+        }
+    }
+
+    /// Create a default Error handler that converts to Result.
+    pub fn error_handler(error_type: Type) -> ErrorHandler {
+        ErrorHandler::new(error_type)
+    }
+
+    /// Check if a handler kind needs continuation capture.
+    pub fn needs_continuation(def_id: DefId) -> bool {
+        // Effects that are NOT tail-resumptive may need continuation capture
+        match StandardEffects::is_tail_resumptive(def_id) {
+            Some(true) => false,
+            Some(false) => true,
+            None => true, // Conservative: assume continuation capture needed
+        }
+    }
+}
+
+// ============================================================================
+// Effect Subsumption
+// ============================================================================
+
+/// Check if one effect subsumes another (for effect polymorphism).
+pub fn effect_subsumes(broader: DefId, narrower: DefId) -> bool {
+    // IO subsumes Console (Console is a subset of IO)
+    if broader.index == IO_EFFECT_ID && narrower.index == CONSOLE_EFFECT_ID {
+        return true;
+    }
+
+    // An effect always subsumes itself
+    broader.index == narrower.index
+}
+
+/// Get the common supereffect of two effects, if one exists.
+pub fn common_supereffect(a: DefId, b: DefId) -> Option<DefId> {
+    if a.index == b.index {
+        return Some(a);
+    }
+
+    // IO is the supereffect of Console
+    if (a.index == IO_EFFECT_ID && b.index == CONSOLE_EFFECT_ID)
+        || (a.index == CONSOLE_EFFECT_ID && b.index == IO_EFFECT_ID) {
+        return Some(DefId::new(IO_EFFECT_ID));
+    }
+
+    None
+}

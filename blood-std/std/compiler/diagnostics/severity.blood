@@ -1,0 +1,392 @@
+//! # Diagnostic Severity Levels
+//!
+//! Defines the severity levels for compiler diagnostics.
+//!
+//! ## Severity Hierarchy
+//!
+//! ```text
+//! Fatal  → Compilation cannot continue (ICE, resource exhaustion)
+//! Error  → Compilation will fail, but continue to find more errors
+//! Warning → Potentially problematic, but compiles successfully
+//! Note   → Contextual information attached to another diagnostic
+//! Help   → Actionable suggestion for fixing an issue
+//! Remark → Informational message (not an issue)
+//! ```
+
+module std.compiler.diagnostics.severity
+
+// ============================================================================
+// Severity Enum
+// ============================================================================
+
+/// Severity level for a diagnostic message.
+///
+/// Severities are ordered from most severe (Fatal) to least severe (Remark).
+/// This ordering is used for filtering and for determining compilation outcome.
+pub enum Severity {
+    /// Fatal error - compilation cannot continue.
+    ///
+    /// Used for:
+    /// - Internal compiler errors (ICE)
+    /// - Resource exhaustion (out of memory, etc.)
+    /// - Unrecoverable parse states
+    ///
+    /// Fatal errors immediately halt compilation.
+    Fatal,
+
+    /// Error - compilation will fail.
+    ///
+    /// Used for:
+    /// - Syntax errors
+    /// - Type mismatches
+    /// - Undefined identifiers
+    /// - Invalid operations
+    ///
+    /// Compilation continues to find more errors, but will not succeed.
+    Error,
+
+    /// Warning - potentially problematic code that compiles.
+    ///
+    /// Used for:
+    /// - Unused variables
+    /// - Deprecated API usage
+    /// - Suspicious patterns
+    /// - Performance concerns
+    ///
+    /// A warning should only be emitted when:
+    /// 1. The developer's intent is clear
+    /// 2. The code won't immediately crash
+    Warning,
+
+    /// Note - contextual information.
+    ///
+    /// Notes are always attached to a preceding Error or Warning.
+    /// They provide additional context but are not standalone diagnostics.
+    ///
+    /// Used for:
+    /// - Showing where a type was defined
+    /// - Explaining why something is invalid
+    /// - Pointing to related code
+    Note,
+
+    /// Help - actionable suggestion.
+    ///
+    /// Help messages suggest how to fix an issue.
+    /// They may include fix-it suggestions for automated application.
+    ///
+    /// Used for:
+    /// - Suggesting correct syntax
+    /// - Proposing type conversions
+    /// - Recommending API alternatives
+    Help,
+
+    /// Remark - informational message.
+    ///
+    /// Remarks are purely informational and don't indicate any issue.
+    /// They're typically used for compilation progress or optimization reports.
+    ///
+    /// Used for:
+    /// - Optimization decisions
+    /// - Code generation info
+    /// - Debug output
+    Remark,
+}
+
+impl Severity {
+    /// Check if this severity represents an error (Error or Fatal).
+    ///
+    /// Returns true for severities that will cause compilation to fail.
+    pub fn is_error(self) -> Bool {
+        match self {
+            Severity::Fatal => true,
+            Severity::Error => true,
+            Severity::Warning => false,
+            Severity::Note => false,
+            Severity::Help => false,
+            Severity::Remark => false,
+        }
+    }
+
+    /// Check if this severity is a warning.
+    pub fn is_warning(self) -> Bool {
+        match self {
+            Severity::Warning => true,
+            Severity::Fatal => false,
+            Severity::Error => false,
+            Severity::Note => false,
+            Severity::Help => false,
+            Severity::Remark => false,
+        }
+    }
+
+    /// Check if this severity is fatal (compilation must stop immediately).
+    pub fn is_fatal(self) -> Bool {
+        match self {
+            Severity::Fatal => true,
+            Severity::Error => false,
+            Severity::Warning => false,
+            Severity::Note => false,
+            Severity::Help => false,
+            Severity::Remark => false,
+        }
+    }
+
+    /// Check if this is an attached diagnostic (Note or Help).
+    ///
+    /// Attached diagnostics should not appear standalone; they must
+    /// follow an Error or Warning.
+    pub fn is_attached(self) -> Bool {
+        match self {
+            Severity::Note => true,
+            Severity::Help => true,
+            Severity::Fatal => false,
+            Severity::Error => false,
+            Severity::Warning => false,
+            Severity::Remark => false,
+        }
+    }
+
+    /// Check if this is a primary diagnostic (not attached).
+    pub fn is_primary(self) -> Bool {
+        !self.is_attached()
+    }
+
+    /// Get the name of this severity level.
+    pub fn name(self) -> String {
+        match self {
+            Severity::Fatal => "fatal",
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+            Severity::Note => "note",
+            Severity::Help => "help",
+            Severity::Remark => "remark",
+        }
+    }
+
+    /// Get a display name with proper capitalization.
+    pub fn display_name(self) -> String {
+        match self {
+            Severity::Fatal => "Fatal",
+            Severity::Error => "Error",
+            Severity::Warning => "Warning",
+            Severity::Note => "Note",
+            Severity::Help => "Help",
+            Severity::Remark => "Remark",
+        }
+    }
+
+    /// Get the numeric severity level (higher = more severe).
+    ///
+    /// Used for filtering: a diagnostic is shown if its level >= threshold.
+    pub fn level(self) -> U8 {
+        match self {
+            Severity::Fatal => 6,
+            Severity::Error => 5,
+            Severity::Warning => 4,
+            Severity::Note => 3,
+            Severity::Help => 2,
+            Severity::Remark => 1,
+        }
+    }
+
+    /// Compare severity levels.
+    ///
+    /// Returns true if `self` is more severe than `other`.
+    pub fn more_severe_than(self, other: Severity) -> Bool {
+        self.level() > other.level()
+    }
+
+    /// Compare severity levels.
+    ///
+    /// Returns true if `self` is at least as severe as `other`.
+    pub fn at_least(self, other: Severity) -> Bool {
+        self.level() >= other.level()
+    }
+}
+
+// ============================================================================
+// ANSI Color Codes
+// ============================================================================
+
+/// ANSI color codes for terminal output.
+///
+/// These are used by the terminal emitter for colorized output.
+pub enum AnsiColor {
+    /// Reset to default
+    Reset,
+    /// Bold text
+    Bold,
+    /// Red (errors)
+    Red,
+    /// Yellow (warnings)
+    Yellow,
+    /// Blue (notes, secondary labels)
+    Blue,
+    /// Cyan (help)
+    Cyan,
+    /// Green (suggestions)
+    Green,
+    /// Magenta (remarks)
+    Magenta,
+    /// White (normal text)
+    White,
+    /// Bright/bold red
+    BrightRed,
+    /// Bright/bold yellow
+    BrightYellow,
+    /// Bright/bold blue
+    BrightBlue,
+    /// Bright/bold cyan
+    BrightCyan,
+    /// Bright/bold green
+    BrightGreen,
+}
+
+impl AnsiColor {
+    /// Get the ANSI escape sequence for this color.
+    pub fn code(self) -> String {
+        match self {
+            AnsiColor::Reset => "\x1b[0m",
+            AnsiColor::Bold => "\x1b[1m",
+            AnsiColor::Red => "\x1b[31m",
+            AnsiColor::Yellow => "\x1b[33m",
+            AnsiColor::Blue => "\x1b[34m",
+            AnsiColor::Cyan => "\x1b[36m",
+            AnsiColor::Green => "\x1b[32m",
+            AnsiColor::Magenta => "\x1b[35m",
+            AnsiColor::White => "\x1b[37m",
+            AnsiColor::BrightRed => "\x1b[91m",
+            AnsiColor::BrightYellow => "\x1b[93m",
+            AnsiColor::BrightBlue => "\x1b[94m",
+            AnsiColor::BrightCyan => "\x1b[96m",
+            AnsiColor::BrightGreen => "\x1b[92m",
+        }
+    }
+
+    /// Wrap text in this color (with reset at end).
+    pub fn wrap(self, text: String) -> String {
+        self.code() ++ text ++ AnsiColor::Reset.code()
+    }
+}
+
+impl Severity {
+    /// Get the primary ANSI color for this severity level.
+    pub fn color(self) -> AnsiColor {
+        match self {
+            Severity::Fatal => AnsiColor::BrightRed,
+            Severity::Error => AnsiColor::Red,
+            Severity::Warning => AnsiColor::Yellow,
+            Severity::Note => AnsiColor::Blue,
+            Severity::Help => AnsiColor::Cyan,
+            Severity::Remark => AnsiColor::Magenta,
+        }
+    }
+
+    /// Get the bold variant of the color for this severity.
+    pub fn bold_color(self) -> AnsiColor {
+        match self {
+            Severity::Fatal => AnsiColor::BrightRed,
+            Severity::Error => AnsiColor::BrightRed,
+            Severity::Warning => AnsiColor::BrightYellow,
+            Severity::Note => AnsiColor::BrightBlue,
+            Severity::Help => AnsiColor::BrightCyan,
+            Severity::Remark => AnsiColor::Magenta,
+        }
+    }
+
+    /// Format the severity name with color for terminal output.
+    pub fn colored_name(self) -> String {
+        self.bold_color().wrap(self.name())
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[test]
+fn test_severity_is_error() {
+    assert(Severity::Fatal.is_error())
+    assert(Severity::Error.is_error())
+    assert(!Severity::Warning.is_error())
+    assert(!Severity::Note.is_error())
+    assert(!Severity::Help.is_error())
+    assert(!Severity::Remark.is_error())
+}
+
+#[test]
+fn test_severity_is_warning() {
+    assert(!Severity::Fatal.is_warning())
+    assert(!Severity::Error.is_warning())
+    assert(Severity::Warning.is_warning())
+    assert(!Severity::Note.is_warning())
+}
+
+#[test]
+fn test_severity_is_fatal() {
+    assert(Severity::Fatal.is_fatal())
+    assert(!Severity::Error.is_fatal())
+    assert(!Severity::Warning.is_fatal())
+}
+
+#[test]
+fn test_severity_is_attached() {
+    assert(!Severity::Fatal.is_attached())
+    assert(!Severity::Error.is_attached())
+    assert(!Severity::Warning.is_attached())
+    assert(Severity::Note.is_attached())
+    assert(Severity::Help.is_attached())
+    assert(!Severity::Remark.is_attached())
+}
+
+#[test]
+fn test_severity_level_ordering() {
+    // Fatal is most severe
+    assert(Severity::Fatal.level() > Severity::Error.level())
+    assert(Severity::Error.level() > Severity::Warning.level())
+    assert(Severity::Warning.level() > Severity::Note.level())
+    assert(Severity::Note.level() > Severity::Help.level())
+    assert(Severity::Help.level() > Severity::Remark.level())
+}
+
+#[test]
+fn test_severity_comparison() {
+    assert(Severity::Fatal.more_severe_than(Severity::Error))
+    assert(Severity::Error.more_severe_than(Severity::Warning))
+    assert(!Severity::Warning.more_severe_than(Severity::Error))
+
+    assert(Severity::Error.at_least(Severity::Error))
+    assert(Severity::Error.at_least(Severity::Warning))
+    assert(!Severity::Warning.at_least(Severity::Error))
+}
+
+#[test]
+fn test_severity_names() {
+    assert(Severity::Error.name() == "error")
+    assert(Severity::Warning.name() == "warning")
+    assert(Severity::Note.name() == "note")
+    assert(Severity::Help.name() == "help")
+}
+
+#[test]
+fn test_ansi_color_codes() {
+    // Verify codes are non-empty escape sequences
+    assert(AnsiColor::Red.code().starts_with("\x1b["))
+    assert(AnsiColor::Reset.code() == "\x1b[0m")
+}
+
+#[test]
+fn test_ansi_color_wrap() {
+    let colored = AnsiColor::Red.wrap("error")
+    assert(colored.contains("\x1b[31m"))  // Red code
+    assert(colored.contains("\x1b[0m"))   // Reset code
+    assert(colored.contains("error"))     // Original text
+}
+
+#[test]
+fn test_severity_colors() {
+    // Each severity has an associated color
+    assert(Severity::Error.color().code().len() > 0)
+    assert(Severity::Warning.color().code().len() > 0)
+    assert(Severity::Note.color().code().len() > 0)
+}

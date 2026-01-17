@@ -1,0 +1,808 @@
+/// Dispatch Result Types and Error Handling
+///
+/// This module defines the result types returned by the dispatch resolver.
+/// The dispatch system can succeed with a unique method, fail to find any
+/// applicable method, or encounter ambiguity when multiple methods match
+/// equally well.
+///
+/// # Result Variants
+///
+/// | Variant | Meaning | Recovery |
+/// |---------|---------|----------|
+/// | `Resolved` | Unique best method found | Proceed with call |
+/// | `NoMatch` | No applicable methods | Type error - report |
+/// | `Ambiguous` | Multiple equally-good methods | Disambiguation required |
+///
+/// # Diamond Conflicts
+///
+/// A special case of ambiguity occurs when a type implements multiple traits
+/// that provide methods with the same name (the "diamond problem"). In this
+/// case, the user must use qualified syntax to disambiguate:
+///
+/// ```blood
+/// // Instead of: x.method()
+/// <Type as Trait1>::method(x)  // or
+/// <Type as Trait2>::method(x)
+/// ```
+///
+/// # Error Messages
+///
+/// Error types include all context needed to generate helpful diagnostics:
+/// - The method name being called
+/// - The argument types provided
+/// - All candidates that were considered
+/// - For ambiguity: which traits conflict
+
+use std.collections::{HashMap};
+use super.super.types::{Type, DefId};
+use super.types::MethodCandidate;
+
+// ============================================================================
+// Dispatch Result
+// ============================================================================
+
+/// The result of dispatch resolution.
+///
+/// Dispatch resolution either succeeds with a unique method, or fails with
+/// detailed error information to help the user understand what went wrong.
+pub enum DispatchResult {
+    /// A unique method was found.
+    ///
+    /// This is the success case - exactly one method is the unique most
+    /// specific among all applicable candidates.
+    Resolved {
+        /// The winning method candidate.
+        candidate: MethodCandidate,
+    },
+
+    /// No applicable methods found.
+    ///
+    /// None of the methods with the given name could accept the provided
+    /// argument types. This usually indicates a type error at the call site.
+    NoMatch {
+        /// Details about why no method matched.
+        error: NoMatchError,
+    },
+
+    /// Multiple methods are ambiguous.
+    ///
+    /// Two or more methods are equally applicable and neither is more
+    /// specific than the other. The user must disambiguate, typically
+    /// by using qualified syntax or adding type annotations.
+    Ambiguous {
+        /// Details about the ambiguous candidates.
+        error: AmbiguityError,
+    },
+}
+
+impl DispatchResult {
+    /// Create a successful resolution result.
+    pub fn resolved(candidate: MethodCandidate) -> DispatchResult {
+        DispatchResult::Resolved { candidate }
+    }
+
+    /// Create a no-match error result.
+    pub fn no_match(error: NoMatchError) -> DispatchResult {
+        DispatchResult::NoMatch { error }
+    }
+
+    /// Create an ambiguity error result.
+    pub fn ambiguous(error: AmbiguityError) -> DispatchResult {
+        DispatchResult::Ambiguous { error }
+    }
+
+    /// Check if dispatch succeeded.
+    pub fn is_resolved(&self) -> bool {
+        match self {
+            DispatchResult::Resolved { candidate: _ } => true,
+            DispatchResult::NoMatch { error: _ } => false,
+            DispatchResult::Ambiguous { error: _ } => false,
+        }
+    }
+
+    /// Check if dispatch failed due to no match.
+    pub fn is_no_match(&self) -> bool {
+        match self {
+            DispatchResult::Resolved { candidate: _ } => false,
+            DispatchResult::NoMatch { error: _ } => true,
+            DispatchResult::Ambiguous { error: _ } => false,
+        }
+    }
+
+    /// Check if dispatch failed due to ambiguity.
+    pub fn is_ambiguous(&self) -> bool {
+        match self {
+            DispatchResult::Resolved { candidate: _ } => false,
+            DispatchResult::NoMatch { error: _ } => false,
+            DispatchResult::Ambiguous { error: _ } => true,
+        }
+    }
+
+    /// Get the resolved candidate, if any.
+    pub fn candidate(&self) -> Option<&MethodCandidate> {
+        match self {
+            DispatchResult::Resolved { candidate } => Some(candidate),
+            DispatchResult::NoMatch { error: _ } => None,
+            DispatchResult::Ambiguous { error: _ } => None,
+        }
+    }
+
+    /// Get the no-match error, if this is that variant.
+    pub fn no_match_error(&self) -> Option<&NoMatchError> {
+        match self {
+            DispatchResult::Resolved { candidate: _ } => None,
+            DispatchResult::NoMatch { error } => Some(error),
+            DispatchResult::Ambiguous { error: _ } => None,
+        }
+    }
+
+    /// Get the ambiguity error, if this is that variant.
+    pub fn ambiguity_error(&self) -> Option<&AmbiguityError> {
+        match self {
+            DispatchResult::Resolved { candidate: _ } => None,
+            DispatchResult::NoMatch { error: _ } => None,
+            DispatchResult::Ambiguous { error } => Some(error),
+        }
+    }
+
+    /// Unwrap the candidate, panicking if not resolved.
+    ///
+    /// Only use this when you have already verified `is_resolved()`.
+    pub fn unwrap_candidate(self) -> MethodCandidate {
+        match self {
+            DispatchResult::Resolved { candidate } => candidate,
+            DispatchResult::NoMatch { error } => {
+                panic!("called unwrap_candidate on NoMatch: {}", error.method_name)
+            }
+            DispatchResult::Ambiguous { error } => {
+                panic!("called unwrap_candidate on Ambiguous: {}", error.method_name)
+            }
+        }
+    }
+}
+
+impl Clone for DispatchResult {
+    fn clone(&self) -> DispatchResult {
+        match self {
+            DispatchResult::Resolved { candidate } => {
+                DispatchResult::Resolved {
+                    candidate: candidate.clone(),
+                }
+            }
+            DispatchResult::NoMatch { error } => {
+                DispatchResult::NoMatch {
+                    error: error.clone(),
+                }
+            }
+            DispatchResult::Ambiguous { error } => {
+                DispatchResult::Ambiguous {
+                    error: error.clone(),
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// No Match Error
+// ============================================================================
+
+/// Error when no method matches the arguments.
+///
+/// This error provides all context needed to generate a helpful diagnostic:
+/// - What method was being called
+/// - What argument types were provided
+/// - What candidates were considered (and implicitly, why they didn't match)
+///
+/// # Diagnostic Generation
+///
+/// A typical error message might look like:
+///
+/// ```text
+/// error: no method `foo` found for arguments (i32, String)
+///   --> src/main.blood:10:5
+///    |
+/// 10 |     x.foo(42, "hello")
+///    |     ^^^^^^^^^^^^^^^^^^
+///    |
+/// note: candidate `fn foo(i32, i32) -> i32` not applicable
+///       because: argument 2 has type `String`, expected `i32`
+/// ```
+pub struct NoMatchError {
+    /// The method name that was called.
+    pub method_name: String,
+
+    /// The argument types provided at the call site.
+    ///
+    /// These are the actual types of the arguments, not the expected types.
+    pub arg_types: [Type],
+
+    /// All candidates that were considered during dispatch.
+    ///
+    /// This includes methods with the right name but wrong arity,
+    /// wrong parameter types, or incompatible effects.
+    pub candidates: [MethodCandidate],
+}
+
+impl NoMatchError {
+    /// Create a new no-match error.
+    pub fn new(
+        method_name: String,
+        arg_types: [Type],
+        candidates: [MethodCandidate],
+    ) -> NoMatchError {
+        NoMatchError {
+            method_name,
+            arg_types,
+            candidates,
+        }
+    }
+
+    /// Get a simple error message.
+    pub fn message(&self) -> String {
+        format!(
+            "no method `{}` found for the provided argument types",
+            self.method_name
+        )
+    }
+
+    /// Get a detailed error message including argument types.
+    pub fn detailed_message(&self) -> String {
+        let arg_type_strs = self.format_arg_types();
+        format!(
+            "no method `{}` found for arguments ({})",
+            self.method_name,
+            arg_type_strs
+        )
+    }
+
+    /// Format the argument types as a comma-separated string.
+    fn format_arg_types(&self) -> String {
+        if self.arg_types.is_empty() {
+            return "".to_string();
+        }
+
+        let mut result = String::new();
+        let mut i: usize = 0;
+        while i < self.arg_types.len() {
+            if i > 0 {
+                result = format!("{}, ", result);
+            }
+            result = format!("{}{:?}", result, self.arg_types[i].kind());
+            i = i + 1;
+        }
+        result
+    }
+
+    /// Check if there are any candidates to suggest.
+    pub fn has_candidates(&self) -> bool {
+        !self.candidates.is_empty()
+    }
+
+    /// Get suggestions based on near-miss candidates.
+    ///
+    /// Returns candidates that matched the name and were close in arity.
+    pub fn near_miss_candidates(&self) -> [&MethodCandidate] {
+        let expected_arity = self.arg_types.len();
+        let mut near_misses: [&MethodCandidate] = vec![];
+
+        for candidate in self.candidates.iter() {
+            // Within 1 of expected arity is a near miss
+            let arity = candidate.arity();
+            if arity == expected_arity
+                || arity == expected_arity + 1
+                || (expected_arity > 0 && arity == expected_arity - 1)
+            {
+                near_misses.push(candidate);
+            }
+        }
+
+        near_misses
+    }
+}
+
+impl Clone for NoMatchError {
+    fn clone(&self) -> NoMatchError {
+        NoMatchError {
+            method_name: self.method_name.clone(),
+            arg_types: self.arg_types.clone(),
+            candidates: self.candidates.clone(),
+        }
+    }
+}
+
+// ============================================================================
+// Ambiguity Error
+// ============================================================================
+
+/// Error when multiple methods are equally applicable.
+///
+/// This error occurs when the dispatch algorithm finds multiple maximal
+/// candidates - methods that are applicable and not dominated by any other
+/// applicable method in terms of specificity.
+///
+/// # Common Causes
+///
+/// 1. **Overlapping generic methods**: Two generic methods with incompatible
+///    but overlapping constraints
+///
+/// 2. **Diamond conflicts**: A type implements two traits that both provide
+///    a method with the same name
+///
+/// 3. **Effect row ambiguity**: Methods with incomparable effect rows
+///
+/// # Resolution Strategies
+///
+/// - Use qualified syntax: `<Type as Trait>::method()`
+/// - Add type annotations to narrow candidates
+/// - Implement a more specific method that dominates both
+pub struct AmbiguityError {
+    /// The method name that was called.
+    pub method_name: String,
+
+    /// The argument types provided at the call site.
+    pub arg_types: [Type],
+
+    /// The ambiguous candidates (all maximal, none dominates the others).
+    ///
+    /// There will always be at least 2 candidates in an ambiguity error.
+    pub candidates: [MethodCandidate],
+}
+
+impl AmbiguityError {
+    /// Create a new ambiguity error.
+    pub fn new(
+        method_name: String,
+        arg_types: [Type],
+        candidates: [MethodCandidate],
+    ) -> AmbiguityError {
+        AmbiguityError {
+            method_name,
+            arg_types,
+            candidates,
+        }
+    }
+
+    /// Get a simple error message.
+    pub fn message(&self) -> String {
+        format!(
+            "ambiguous call to method `{}`: {} candidates match equally well",
+            self.method_name,
+            self.candidates.len()
+        )
+    }
+
+    /// Get a detailed error message.
+    pub fn detailed_message(&self) -> String {
+        let arg_type_strs = self.format_arg_types();
+        format!(
+            "ambiguous call to `{}` with arguments ({}): {} candidates",
+            self.method_name,
+            arg_type_strs,
+            self.candidates.len()
+        )
+    }
+
+    /// Format the argument types as a comma-separated string.
+    fn format_arg_types(&self) -> String {
+        if self.arg_types.is_empty() {
+            return "".to_string();
+        }
+
+        let mut result = String::new();
+        let mut i: usize = 0;
+        while i < self.arg_types.len() {
+            if i > 0 {
+                result = format!("{}, ", result);
+            }
+            result = format!("{}{:?}", result, self.arg_types[i].kind());
+            i = i + 1;
+        }
+        result
+    }
+
+    /// Check if this is a diamond conflict.
+    ///
+    /// A diamond conflict occurs when the ambiguous candidates come from
+    /// different traits. This is the classic "diamond inheritance" problem
+    /// where a type implements multiple traits that provide the same method.
+    ///
+    /// # Example
+    ///
+    /// ```blood
+    /// trait A { fn method(&self); }
+    /// trait B { fn method(&self); }
+    ///
+    /// struct Foo;
+    /// impl A for Foo { fn method(&self) { } }
+    /// impl B for Foo { fn method(&self) { } }
+    ///
+    /// let f = Foo;
+    /// f.method(); // Diamond conflict! A::method or B::method?
+    /// ```
+    pub fn is_diamond_conflict(&self) -> bool {
+        // Collect unique trait IDs from candidates
+        let mut trait_ids: [DefId] = vec![];
+
+        for candidate in self.candidates.iter() {
+            if let Some(trait_id) = &candidate.trait_id {
+                // Check if we already have this trait ID
+                let mut found = false;
+                for existing in trait_ids.iter() {
+                    if existing.eq(trait_id) {
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    trait_ids.push(trait_id.clone());
+                }
+            }
+        }
+
+        // Diamond conflict requires at least 2 different traits
+        trait_ids.len() >= 2
+    }
+
+    /// Get the conflicting trait IDs for diamond resolution.
+    ///
+    /// Returns a deduplicated list of trait DefIds from the ambiguous
+    /// candidates. Empty if no candidates are trait methods.
+    pub fn conflicting_trait_ids(&self) -> [DefId] {
+        let mut trait_ids: [DefId] = vec![];
+
+        for candidate in self.candidates.iter() {
+            if let Some(trait_id) = &candidate.trait_id {
+                // Check for duplicates
+                let mut found = false;
+                for existing in trait_ids.iter() {
+                    if existing.eq(trait_id) {
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    trait_ids.push(trait_id.clone());
+                }
+            }
+        }
+
+        // Sort by ID for deterministic ordering
+        self.sort_def_ids(&mut trait_ids);
+        trait_ids
+    }
+
+    /// Sort DefIds by their numeric ID for deterministic ordering.
+    fn sort_def_ids(&self, ids: &mut [DefId]) {
+        // Simple insertion sort for small arrays
+        let n = ids.len();
+        let mut i: usize = 1;
+        while i < n {
+            let key = ids[i].clone();
+            let key_id = key.id();
+            let mut j: isize = (i as isize) - 1;
+            while j >= 0 && ids[j as usize].id() > key_id {
+                ids[(j + 1) as usize] = ids[j as usize].clone();
+                j = j - 1;
+            }
+            ids[(j + 1) as usize] = key;
+            i = i + 1;
+        }
+    }
+
+    /// Generate a suggestion message for resolving the ambiguity.
+    ///
+    /// For diamond conflicts, suggests qualified syntax.
+    /// For other ambiguities, suggests adding type annotations.
+    pub fn suggestion(&self) -> String {
+        if self.is_diamond_conflict() {
+            format!(
+                "use qualified syntax to resolve: <Type as Trait>::{}(...)",
+                self.method_name
+            )
+        } else {
+            format!(
+                "add type annotations to narrow the candidates for `{}`",
+                self.method_name
+            )
+        }
+    }
+
+    /// Generate a suggestion for diamond conflict with trait names.
+    ///
+    /// # Arguments
+    /// * `trait_names` - A map from DefId to trait name string
+    ///
+    /// # Returns
+    /// A helpful message showing how to use qualified syntax.
+    pub fn diamond_suggestion(&self, trait_names: &HashMap<DefId, String>) -> String {
+        let conflicting = self.conflicting_trait_ids();
+
+        if conflicting.is_empty() {
+            return self.suggestion();
+        }
+
+        // Get trait names for the conflicting IDs
+        let mut names: [String] = vec![];
+        for trait_id in conflicting.iter() {
+            match trait_names.get(trait_id) {
+                Some(name) => names.push(name.clone()),
+                None => names.push(format!("Trait{}", trait_id.id())),
+            }
+        }
+
+        if names.len() >= 2 {
+            format!(
+                "use qualified syntax: <Type as {}>::{}(...) or <Type as {}>::{}(...)",
+                names[0],
+                self.method_name,
+                names[1],
+                self.method_name
+            )
+        } else if names.len() == 1 {
+            format!(
+                "use qualified syntax: <Type as {}>::{}(...)",
+                names[0],
+                self.method_name
+            )
+        } else {
+            self.suggestion()
+        }
+    }
+
+    /// Get the number of ambiguous candidates.
+    pub fn candidate_count(&self) -> usize {
+        self.candidates.len()
+    }
+
+    /// Check if all ambiguous candidates are from traits (vs inherent methods).
+    pub fn all_from_traits(&self) -> bool {
+        for candidate in self.candidates.iter() {
+            if candidate.trait_id.is_none() {
+                return false;
+            }
+        }
+        !self.candidates.is_empty()
+    }
+
+    /// Check if any ambiguous candidate is an inherent method.
+    pub fn has_inherent_method(&self) -> bool {
+        for candidate in self.candidates.iter() {
+            if candidate.trait_id.is_none() {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+impl Clone for AmbiguityError {
+    fn clone(&self) -> AmbiguityError {
+        AmbiguityError {
+            method_name: self.method_name.clone(),
+            arg_types: self.arg_types.clone(),
+            candidates: self.candidates.clone(),
+        }
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super.super.types::TypeParam;
+
+    fn make_candidate(def_id: u32, name: &str, trait_id: Option<u32>) -> MethodCandidate {
+        let mut candidate = MethodCandidate::new(
+            DefId::new(def_id),
+            name.to_string(),
+            vec![],
+            Type::unit(),
+        );
+        if let Some(tid) = trait_id {
+            candidate.set_trait_id(DefId::new(tid));
+        }
+        candidate
+    }
+
+    #[test]
+    fn test_dispatch_result_resolved() {
+        let candidate = make_candidate(1, "foo", None);
+        let result = DispatchResult::resolved(candidate);
+
+        assert!(result.is_resolved());
+        assert!(!result.is_no_match());
+        assert!(!result.is_ambiguous());
+        assert!(result.candidate().is_some());
+    }
+
+    #[test]
+    fn test_dispatch_result_no_match() {
+        let error = NoMatchError::new(
+            "foo".to_string(),
+            vec![Type::i32()],
+            vec![],
+        );
+        let result = DispatchResult::no_match(error);
+
+        assert!(!result.is_resolved());
+        assert!(result.is_no_match());
+        assert!(!result.is_ambiguous());
+        assert!(result.no_match_error().is_some());
+    }
+
+    #[test]
+    fn test_dispatch_result_ambiguous() {
+        let error = AmbiguityError::new(
+            "foo".to_string(),
+            vec![],
+            vec![
+                make_candidate(1, "foo", Some(10)),
+                make_candidate(2, "foo", Some(20)),
+            ],
+        );
+        let result = DispatchResult::ambiguous(error);
+
+        assert!(!result.is_resolved());
+        assert!(!result.is_no_match());
+        assert!(result.is_ambiguous());
+        assert!(result.ambiguity_error().is_some());
+    }
+
+    #[test]
+    fn test_no_match_error_message() {
+        let error = NoMatchError::new(
+            "bar".to_string(),
+            vec![Type::i32(), Type::bool()],
+            vec![],
+        );
+
+        let msg = error.message();
+        assert!(msg.contains("bar"));
+
+        let detailed = error.detailed_message();
+        assert!(detailed.contains("bar"));
+    }
+
+    #[test]
+    fn test_no_match_near_misses() {
+        let error = NoMatchError::new(
+            "test".to_string(),
+            vec![Type::i32()], // arity 1
+            vec![
+                make_candidate(1, "test", None), // arity 0
+                make_candidate(2, "test", None), // arity 0
+            ],
+        );
+
+        let near_misses = error.near_miss_candidates();
+        // Arity 0 is within 1 of arity 1, so both should be near misses
+        assert_eq!(near_misses.len(), 2);
+    }
+
+    #[test]
+    fn test_ambiguity_is_diamond_conflict() {
+        // Two candidates from different traits = diamond
+        let diamond_error = AmbiguityError::new(
+            "method".to_string(),
+            vec![],
+            vec![
+                make_candidate(1, "method", Some(100)),
+                make_candidate(2, "method", Some(200)),
+            ],
+        );
+        assert!(diamond_error.is_diamond_conflict());
+
+        // Two candidates from same trait = not diamond
+        let same_trait_error = AmbiguityError::new(
+            "method".to_string(),
+            vec![],
+            vec![
+                make_candidate(1, "method", Some(100)),
+                make_candidate(2, "method", Some(100)),
+            ],
+        );
+        assert!(!same_trait_error.is_diamond_conflict());
+
+        // No trait methods = not diamond
+        let no_trait_error = AmbiguityError::new(
+            "method".to_string(),
+            vec![],
+            vec![
+                make_candidate(1, "method", None),
+                make_candidate(2, "method", None),
+            ],
+        );
+        assert!(!no_trait_error.is_diamond_conflict());
+    }
+
+    #[test]
+    fn test_ambiguity_conflicting_trait_ids() {
+        let error = AmbiguityError::new(
+            "foo".to_string(),
+            vec![],
+            vec![
+                make_candidate(1, "foo", Some(100)),
+                make_candidate(2, "foo", Some(200)),
+                make_candidate(3, "foo", Some(100)), // duplicate trait
+            ],
+        );
+
+        let trait_ids = error.conflicting_trait_ids();
+        assert_eq!(trait_ids.len(), 2); // 100 and 200, deduplicated
+    }
+
+    #[test]
+    fn test_ambiguity_suggestion() {
+        let diamond = AmbiguityError::new(
+            "foo".to_string(),
+            vec![],
+            vec![
+                make_candidate(1, "foo", Some(100)),
+                make_candidate(2, "foo", Some(200)),
+            ],
+        );
+        let suggestion = diamond.suggestion();
+        assert!(suggestion.contains("qualified syntax"));
+
+        let non_diamond = AmbiguityError::new(
+            "bar".to_string(),
+            vec![],
+            vec![
+                make_candidate(1, "bar", None),
+                make_candidate(2, "bar", None),
+            ],
+        );
+        let suggestion2 = non_diamond.suggestion();
+        assert!(suggestion2.contains("type annotations"));
+    }
+
+    #[test]
+    fn test_ambiguity_diamond_suggestion_with_names() {
+        let error = AmbiguityError::new(
+            "method".to_string(),
+            vec![],
+            vec![
+                make_candidate(1, "method", Some(100)),
+                make_candidate(2, "method", Some(200)),
+            ],
+        );
+
+        let mut trait_names: HashMap<DefId, String> = HashMap::new();
+        trait_names.insert(DefId::new(100), "Display".to_string());
+        trait_names.insert(DefId::new(200), "Debug".to_string());
+
+        let suggestion = error.diamond_suggestion(&trait_names);
+        assert!(suggestion.contains("Display"));
+        assert!(suggestion.contains("Debug"));
+        assert!(suggestion.contains("method"));
+    }
+
+    #[test]
+    fn test_all_from_traits() {
+        let all_traits = AmbiguityError::new(
+            "foo".to_string(),
+            vec![],
+            vec![
+                make_candidate(1, "foo", Some(10)),
+                make_candidate(2, "foo", Some(20)),
+            ],
+        );
+        assert!(all_traits.all_from_traits());
+        assert!(!all_traits.has_inherent_method());
+
+        let mixed = AmbiguityError::new(
+            "foo".to_string(),
+            vec![],
+            vec![
+                make_candidate(1, "foo", Some(10)),
+                make_candidate(2, "foo", None), // inherent
+            ],
+        );
+        assert!(!mixed.all_from_traits());
+        assert!(mixed.has_inherent_method());
+    }
+}

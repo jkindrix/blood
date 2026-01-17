@@ -1,0 +1,952 @@
+/// Pattern Type Checking for Blood Type Checker
+///
+/// This module handles type checking of patterns in match expressions,
+/// let bindings, and function parameters. It validates that patterns
+/// have the correct structure for the scrutinee type and binds variables.
+///
+/// # Design Principles
+///
+/// 1. **Explicit patterns**: Every pattern kind is explicitly handled
+/// 2. **Type inference**: Pattern types are inferred and unified
+/// 3. **Variable binding**: Patterns introduce variables into scope
+/// 4. **Proper errors**: All errors use explicit error kinds
+
+use std.compiler.parser::{
+    Pattern, PatternKind, Literal, Span, Spanned,
+    FieldPattern,
+};
+use super.types::{
+    Type, TypeKind, TyVarId, DefId, PrimitiveTy, Mutability, Ownership,
+};
+use super.errors::{TypeError, TypeErrorKind};
+use super.resolve::{TypeDef, TypeDefKind, StructFieldDef, EnumVariantDef};
+
+// ============================================================
+// Pattern Checking Result
+// ============================================================
+
+/// Result of checking a pattern.
+pub struct PatternCheckResult {
+    /// Variable bindings introduced by the pattern
+    pub bindings: [PatternBinding],
+    /// Type errors encountered
+    pub errors: [TypeError],
+}
+
+impl PatternCheckResult {
+    pub fn new() -> PatternCheckResult {
+        PatternCheckResult {
+            bindings: vec![],
+            errors: vec![],
+        }
+    }
+
+    pub fn with_binding(name: String, ty: Type) -> PatternCheckResult {
+        PatternCheckResult {
+            bindings: vec![PatternBinding { name, ty }],
+            errors: vec![],
+        }
+    }
+
+    pub fn with_error(error: TypeError) -> PatternCheckResult {
+        PatternCheckResult {
+            bindings: vec![],
+            errors: vec![error],
+        }
+    }
+
+    pub fn add_binding(&mut self, name: String, ty: Type) {
+        self.bindings.push(PatternBinding { name, ty });
+    }
+
+    pub fn add_error(&mut self, error: TypeError) {
+        self.errors.push(error);
+    }
+
+    pub fn merge(&mut self, other: PatternCheckResult) {
+        let mut i: usize = 0;
+        while i < other.bindings.len() {
+            self.bindings.push(other.bindings[i].clone());
+            i = i + 1;
+        }
+        i = 0;
+        while i < other.errors.len() {
+            self.errors.push(other.errors[i].clone());
+            i = i + 1;
+        }
+    }
+
+    pub fn has_errors(&self) -> bool {
+        self.errors.len() > 0
+    }
+}
+
+/// A variable binding from a pattern.
+pub struct PatternBinding {
+    pub name: String,
+    pub ty: Type,
+}
+
+impl Clone for PatternBinding {
+    fn clone(&self) -> PatternBinding {
+        PatternBinding {
+            name: self.name.clone(),
+            ty: self.ty.clone(),
+        }
+    }
+}
+
+// ============================================================
+// Pattern Type Checker
+// ============================================================
+
+/// Checks that a pattern matches a scrutinee type and extracts bindings.
+pub struct PatternChecker {
+    /// Errors accumulated during checking
+    errors: [TypeError],
+}
+
+impl PatternChecker {
+    pub fn new() -> PatternChecker {
+        PatternChecker { errors: vec![] }
+    }
+
+    /// Check a pattern against an expected type, returning bindings.
+    pub fn check_pattern(
+        &mut self,
+        pattern: &Pattern,
+        expected: &Type,
+        type_defs: &std.collections.HashMap<u32, TypeDef>,
+    ) -> PatternCheckResult {
+        let mut result = PatternCheckResult::new();
+
+        match &pattern.kind {
+            PatternKind::Identifier(name) => {
+                // Variable binding: binds the name to the expected type
+                result.add_binding(name.value.clone(), expected.clone());
+            }
+
+            PatternKind::Wildcard => {
+                // Wildcard: matches anything, binds nothing
+            }
+
+            PatternKind::Tuple(patterns) => {
+                self.check_tuple_pattern(&mut result, patterns, expected, pattern.span, type_defs);
+            }
+
+            PatternKind::Struct { name, fields } => {
+                self.check_struct_pattern(&mut result, name, fields, expected, pattern.span, type_defs);
+            }
+
+            PatternKind::Enum { name, variant, payload } => {
+                self.check_enum_pattern(&mut result, name, variant, payload, expected, pattern.span, type_defs);
+            }
+
+            PatternKind::Literal(lit) => {
+                self.check_literal_pattern(&mut result, lit, expected, pattern.span);
+            }
+
+            PatternKind::Or(patterns) => {
+                self.check_or_pattern(&mut result, patterns, expected, type_defs);
+            }
+
+            PatternKind::Range { start, end, inclusive } => {
+                self.check_range_pattern(&mut result, start, end, *inclusive, expected, pattern.span);
+            }
+
+            PatternKind::Rest => {
+                // Rest pattern (..) - used in slice/array patterns
+                // Matches any remaining elements
+            }
+        }
+
+        result
+    }
+
+    fn check_tuple_pattern(
+        &mut self,
+        result: &mut PatternCheckResult,
+        patterns: &[Pattern],
+        expected: &Type,
+        span: Span,
+        type_defs: &std.collections.HashMap<u32, TypeDef>,
+    ) {
+        match &expected.kind {
+            TypeKind::Tuple(tys) => {
+                if patterns.len() != tys.len() {
+                    result.add_error(TypeError::pattern_mismatch(
+                        expected.clone(),
+                        Type::tuple(vec![]), // Empty tuple as placeholder
+                        span,
+                    ));
+                    return;
+                }
+                let mut i: usize = 0;
+                while i < patterns.len() {
+                    let sub_result = self.check_pattern(&patterns[i], &tys[i], type_defs);
+                    result.merge(sub_result);
+                    i = i + 1;
+                }
+            }
+            TypeKind::Primitive(_) => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Never => {
+                // Never matches anything
+            }
+            TypeKind::Array { element: _, size: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Slice { element: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Ref { inner: _, mutability: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Ptr { inner: _, mutability: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Fn { params: _, ret: _, effect: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Closure { params: _, ret: _, effect: _, captures: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Adt { def_id: _, type_args: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Range { element: _, inclusive: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::DynTrait { trait_id: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Record { fields: _, row_var: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Forall { params: _, body: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Infer(_) => {
+                // Infer variable: will be resolved later
+                // For now, assume tuple pattern is valid
+            }
+            TypeKind::Param(_) => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Ownership { inner: _, ownership: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Error => {
+                // Error recovery: silently accept
+            }
+        }
+    }
+
+    fn check_struct_pattern(
+        &mut self,
+        result: &mut PatternCheckResult,
+        name: &std.compiler.parser.Path,
+        fields: &[FieldPattern],
+        expected: &Type,
+        span: Span,
+        type_defs: &std.collections.HashMap<u32, TypeDef>,
+    ) {
+        match &expected.kind {
+            TypeKind::Adt { def_id, type_args: _ } => {
+                match type_defs.get(&def_id.id()) {
+                    Some(type_def) => {
+                        match &type_def.kind {
+                            TypeDefKind::Struct { fields: struct_fields } => {
+                                // Bind each field pattern
+                                let mut i: usize = 0;
+                                while i < fields.len() {
+                                    let field_pat = &fields[i];
+                                    let field_ty = find_struct_field(struct_fields, &field_pat.name.value);
+                                    match field_ty {
+                                        Some(fty) => {
+                                            let sub_result = self.check_pattern(&field_pat.pattern, fty, type_defs);
+                                            result.merge(sub_result);
+                                        }
+                                        None => {
+                                            result.add_error(TypeError::unknown_field(
+                                                type_def.name.clone(),
+                                                field_pat.name.value.clone(),
+                                                span,
+                                            ));
+                                        }
+                                    }
+                                    i = i + 1;
+                                }
+                            }
+                            TypeDefKind::Enum { variants: _ } => {
+                                result.add_error(TypeError::pattern_mismatch(
+                                    expected.clone(),
+                                    Type::error(),
+                                    span,
+                                ));
+                            }
+                        }
+                    }
+                    None => {
+                        let type_name = if name.segments.len() > 0 {
+                            name.segments[0].value.clone()
+                        } else {
+                            "<unknown>".to_string()
+                        };
+                        result.add_error(TypeError::unresolved_type(type_name, span));
+                    }
+                }
+            }
+            TypeKind::Primitive(_) => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Never => {}
+            TypeKind::Tuple(_) => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Array { element: _, size: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Slice { element: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Ref { inner: _, mutability: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Ptr { inner: _, mutability: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Fn { params: _, ret: _, effect: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Closure { params: _, ret: _, effect: _, captures: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Range { element: _, inclusive: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::DynTrait { trait_id: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Record { fields: _, row_var: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Forall { params: _, body: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Infer(_) => {}
+            TypeKind::Param(_) => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Ownership { inner: _, ownership: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Error => {}
+        }
+    }
+
+    fn check_enum_pattern(
+        &mut self,
+        result: &mut PatternCheckResult,
+        name: &std.compiler.parser.Path,
+        variant: &Spanned<String>,
+        payload: &Option<Box<Pattern>>,
+        expected: &Type,
+        span: Span,
+        type_defs: &std.collections.HashMap<u32, TypeDef>,
+    ) {
+        match &expected.kind {
+            TypeKind::Adt { def_id, type_args: _ } => {
+                match type_defs.get(&def_id.id()) {
+                    Some(type_def) => {
+                        match &type_def.kind {
+                            TypeDefKind::Enum { variants } => {
+                                let variant_def = find_enum_variant(variants, &variant.value);
+                                match variant_def {
+                                    Some(vdef) => {
+                                        match payload {
+                                            Some(payload_pat) => {
+                                                match &vdef.payload {
+                                                    Some(payload_ty) => {
+                                                        let sub_result = self.check_pattern(payload_pat, payload_ty, type_defs);
+                                                        result.merge(sub_result);
+                                                    }
+                                                    None => {
+                                                        result.add_error(TypeError::new(
+                                                            TypeErrorKind::UnsupportedExpression {
+                                                                description: format!("Variant {} has no payload", variant.value)
+                                                            },
+                                                            span,
+                                                        ));
+                                                    }
+                                                }
+                                            }
+                                            None => {
+                                                // No payload in pattern
+                                                if vdef.payload.is_some() {
+                                                    result.add_error(TypeError::new(
+                                                        TypeErrorKind::UnsupportedExpression {
+                                                            description: format!("Variant {} requires a payload", variant.value)
+                                                        },
+                                                        span,
+                                                    ));
+                                                }
+                                            }
+                                        }
+                                    }
+                                    None => {
+                                        result.add_error(TypeError::new(
+                                            TypeErrorKind::UnsupportedExpression {
+                                                description: format!("Unknown variant: {}", variant.value)
+                                            },
+                                            span,
+                                        ));
+                                    }
+                                }
+                            }
+                            TypeDefKind::Struct { fields: _ } => {
+                                result.add_error(TypeError::pattern_mismatch(
+                                    expected.clone(),
+                                    Type::error(),
+                                    span,
+                                ));
+                            }
+                        }
+                    }
+                    None => {
+                        let type_name = if name.segments.len() > 0 {
+                            name.segments[0].value.clone()
+                        } else {
+                            "<unknown>".to_string()
+                        };
+                        result.add_error(TypeError::unresolved_type(type_name, span));
+                    }
+                }
+            }
+            TypeKind::Primitive(_) => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Never => {}
+            TypeKind::Tuple(_) => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Array { element: _, size: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Slice { element: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Ref { inner: _, mutability: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Ptr { inner: _, mutability: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Fn { params: _, ret: _, effect: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Closure { params: _, ret: _, effect: _, captures: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Range { element: _, inclusive: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::DynTrait { trait_id: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Record { fields: _, row_var: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Forall { params: _, body: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Infer(_) => {}
+            TypeKind::Param(_) => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Ownership { inner: _, ownership: _ } => {
+                result.add_error(TypeError::pattern_mismatch(expected.clone(), Type::error(), span));
+            }
+            TypeKind::Error => {}
+        }
+    }
+
+    fn check_literal_pattern(
+        &mut self,
+        result: &mut PatternCheckResult,
+        lit: &Literal,
+        expected: &Type,
+        span: Span,
+    ) {
+        let lit_ty = infer_literal_type(lit);
+        // Would need to unify lit_ty with expected
+        // For now, just check if they're compatible
+        if !types_compatible(&lit_ty, expected) {
+            result.add_error(TypeError::pattern_mismatch(expected.clone(), lit_ty, span));
+        }
+    }
+
+    fn check_or_pattern(
+        &mut self,
+        result: &mut PatternCheckResult,
+        patterns: &[Pattern],
+        expected: &Type,
+        type_defs: &std.collections.HashMap<u32, TypeDef>,
+    ) {
+        // All alternatives should bind the same variables with compatible types
+        // For now, we merge all bindings and check the first pattern
+        if patterns.len() > 0 {
+            let first_result = self.check_pattern(&patterns[0], expected, type_defs);
+            result.merge(first_result);
+
+            // Check remaining patterns have compatible structure
+            let mut i: usize = 1;
+            while i < patterns.len() {
+                let sub_result = self.check_pattern(&patterns[i], expected, type_defs);
+                // Would need to verify bindings match the first pattern
+                // For now, just collect errors
+                let mut j: usize = 0;
+                while j < sub_result.errors.len() {
+                    result.add_error(sub_result.errors[j].clone());
+                    j = j + 1;
+                }
+                i = i + 1;
+            }
+        }
+    }
+
+    fn check_range_pattern(
+        &mut self,
+        result: &mut PatternCheckResult,
+        start: &Literal,
+        end: &Option<Literal>,
+        _inclusive: bool,
+        expected: &Type,
+        span: Span,
+    ) {
+        let start_ty = infer_literal_type(start);
+        if !types_compatible(&start_ty, expected) {
+            result.add_error(TypeError::pattern_mismatch(expected.clone(), start_ty.clone(), span));
+        }
+
+        match end {
+            Some(end_lit) => {
+                let end_ty = infer_literal_type(end_lit);
+                if !types_compatible(&start_ty, &end_ty) {
+                    result.add_error(TypeError::pattern_mismatch(start_ty, end_ty, span));
+                }
+            }
+            None => {}
+        }
+    }
+}
+
+// ============================================================
+// Helper Functions
+// ============================================================
+
+/// Find a field in a struct by name.
+fn find_struct_field<'a>(fields: &'a [StructFieldDef], name: &str) -> Option<&'a Type> {
+    let mut i: usize = 0;
+    while i < fields.len() {
+        if fields[i].name == name {
+            return Some(&fields[i].ty);
+        }
+        i = i + 1;
+    }
+    None
+}
+
+/// Find a variant in an enum by name.
+fn find_enum_variant<'a>(variants: &'a [EnumVariantDef], name: &str) -> Option<&'a EnumVariantDef> {
+    let mut i: usize = 0;
+    while i < variants.len() {
+        if variants[i].name == name {
+            return Some(&variants[i]);
+        }
+        i = i + 1;
+    }
+    None
+}
+
+/// Infer the type of a literal.
+fn infer_literal_type(lit: &Literal) -> Type {
+    match lit {
+        Literal::Integer { value: _, suffix } => {
+            match suffix {
+                Some(s) => {
+                    match s.as_str() {
+                        "i8" => Type::new(TypeKind::Primitive(PrimitiveTy::I8)),
+                        "i16" => Type::new(TypeKind::Primitive(PrimitiveTy::I16)),
+                        "i32" => Type::new(TypeKind::Primitive(PrimitiveTy::I32)),
+                        "i64" => Type::new(TypeKind::Primitive(PrimitiveTy::I64)),
+                        "i128" => Type::new(TypeKind::Primitive(PrimitiveTy::I128)),
+                        "isize" => Type::new(TypeKind::Primitive(PrimitiveTy::Isize)),
+                        "u8" => Type::new(TypeKind::Primitive(PrimitiveTy::U8)),
+                        "u16" => Type::new(TypeKind::Primitive(PrimitiveTy::U16)),
+                        "u32" => Type::new(TypeKind::Primitive(PrimitiveTy::U32)),
+                        "u64" => Type::new(TypeKind::Primitive(PrimitiveTy::U64)),
+                        "u128" => Type::new(TypeKind::Primitive(PrimitiveTy::U128)),
+                        "usize" => Type::new(TypeKind::Primitive(PrimitiveTy::Usize)),
+                        _ => Type::i32(), // Default to i32
+                    }
+                }
+                None => Type::i32(), // Default to i32
+            }
+        }
+        Literal::Float { value: _, suffix } => {
+            match suffix {
+                Some(s) => {
+                    match s.as_str() {
+                        "f32" => Type::new(TypeKind::Primitive(PrimitiveTy::F32)),
+                        "f64" => Type::new(TypeKind::Primitive(PrimitiveTy::F64)),
+                        _ => Type::f64(), // Default to f64
+                    }
+                }
+                None => Type::f64(), // Default to f64
+            }
+        }
+        Literal::String(_) => Type::str(),
+        Literal::Char(_) => Type::char(),
+        Literal::Bool(_) => Type::bool(),
+    }
+}
+
+/// Check if two types are compatible (simplified check).
+fn types_compatible(t1: &Type, t2: &Type) -> bool {
+    match (&t1.kind, &t2.kind) {
+        // Error type is compatible with anything (error recovery)
+        (TypeKind::Error, _) => true,
+        (_, TypeKind::Error) => true,
+
+        // Never type is compatible with anything (coerces to any type)
+        (TypeKind::Never, _) => true,
+        (_, TypeKind::Never) => true,
+
+        // Inference variables are compatible with anything (will be unified later)
+        (TypeKind::Infer(_), _) => true,
+        (_, TypeKind::Infer(_)) => true,
+
+        // Primitives must match exactly
+        (TypeKind::Primitive(p1), TypeKind::Primitive(p2)) => p1.eq(p2),
+
+        // Tuples must have same length and compatible elements
+        (TypeKind::Tuple(t1s), TypeKind::Tuple(t2s)) => {
+            if t1s.len() != t2s.len() {
+                return false;
+            }
+            let mut i: usize = 0;
+            while i < t1s.len() {
+                if !types_compatible(&t1s[i], &t2s[i]) {
+                    return false;
+                }
+                i = i + 1;
+            }
+            true
+        }
+
+        // ADTs must have same def_id (ignoring type args for simplified check)
+        (TypeKind::Adt { def_id: d1, type_args: _ }, TypeKind::Adt { def_id: d2, type_args: _ }) => d1.eq(d2),
+
+        // Arrays must have compatible elements and same size
+        (TypeKind::Array { element: e1, size: s1 }, TypeKind::Array { element: e2, size: s2 }) => {
+            s1 == s2 && types_compatible(e1, e2)
+        }
+
+        // Slices must have compatible elements
+        (TypeKind::Slice { element: e1 }, TypeKind::Slice { element: e2 }) => types_compatible(e1, e2),
+
+        // References must have same mutability and compatible inner types
+        (TypeKind::Ref { inner: i1, mutability: m1 }, TypeKind::Ref { inner: i2, mutability: m2 }) => {
+            m1.eq(m2) && types_compatible(i1, i2)
+        }
+
+        // Pointers must have same mutability and compatible inner types
+        (TypeKind::Ptr { inner: i1, mutability: m1 }, TypeKind::Ptr { inner: i2, mutability: m2 }) => {
+            m1.eq(m2) && types_compatible(i1, i2)
+        }
+
+        // Functions must have compatible signatures
+        (TypeKind::Fn { params: p1, ret: r1, effect: _ }, TypeKind::Fn { params: p2, ret: r2, effect: _ }) => {
+            if p1.len() != p2.len() {
+                return false;
+            }
+            let mut i: usize = 0;
+            while i < p1.len() {
+                if !types_compatible(&p1[i], &p2[i]) {
+                    return false;
+                }
+                i = i + 1;
+            }
+            types_compatible(r1, r2)
+        }
+
+        // Closures must have compatible signatures
+        (TypeKind::Closure { params: p1, ret: r1, effect: _, captures: _ }, TypeKind::Closure { params: p2, ret: r2, effect: _, captures: _ }) => {
+            if p1.len() != p2.len() {
+                return false;
+            }
+            let mut i: usize = 0;
+            while i < p1.len() {
+                if !types_compatible(&p1[i], &p2[i]) {
+                    return false;
+                }
+                i = i + 1;
+            }
+            types_compatible(r1, r2)
+        }
+
+        // Ranges must have same inclusivity and compatible elements
+        (TypeKind::Range { element: e1, inclusive: inc1 }, TypeKind::Range { element: e2, inclusive: inc2 }) => {
+            inc1 == inc2 && types_compatible(e1, e2)
+        }
+
+        // Dynamic trait objects must have same trait
+        (TypeKind::DynTrait { trait_id: t1 }, TypeKind::DynTrait { trait_id: t2 }) => t1.eq(t2),
+
+        // Records - simplified, just check field count
+        (TypeKind::Record { fields: f1, row_var: _ }, TypeKind::Record { fields: f2, row_var: _ }) => {
+            f1.len() == f2.len()
+        }
+
+        // Forall types - compare bodies (simplified)
+        (TypeKind::Forall { params: _, body: b1 }, TypeKind::Forall { params: _, body: b2 }) => {
+            types_compatible(b1, b2)
+        }
+
+        // Type parameters - compatible if same ID
+        (TypeKind::Param(p1), TypeKind::Param(p2)) => p1.eq(p2),
+
+        // Ownership-qualified types - compare inner
+        (TypeKind::Ownership { inner: i1, ownership: o1 }, TypeKind::Ownership { inner: i2, ownership: o2 }) => {
+            o1.eq(o2) && types_compatible(i1, i2)
+        }
+
+        // Different type kinds are not compatible
+        (TypeKind::Primitive(_), TypeKind::Tuple(_)) => false,
+        (TypeKind::Primitive(_), TypeKind::Array { element: _, size: _ }) => false,
+        (TypeKind::Primitive(_), TypeKind::Slice { element: _ }) => false,
+        (TypeKind::Primitive(_), TypeKind::Ref { inner: _, mutability: _ }) => false,
+        (TypeKind::Primitive(_), TypeKind::Ptr { inner: _, mutability: _ }) => false,
+        (TypeKind::Primitive(_), TypeKind::Fn { params: _, ret: _, effect: _ }) => false,
+        (TypeKind::Primitive(_), TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }) => false,
+        (TypeKind::Primitive(_), TypeKind::Adt { def_id: _, type_args: _ }) => false,
+        (TypeKind::Primitive(_), TypeKind::Range { element: _, inclusive: _ }) => false,
+        (TypeKind::Primitive(_), TypeKind::DynTrait { trait_id: _ }) => false,
+        (TypeKind::Primitive(_), TypeKind::Record { fields: _, row_var: _ }) => false,
+        (TypeKind::Primitive(_), TypeKind::Forall { params: _, body: _ }) => false,
+        (TypeKind::Primitive(_), TypeKind::Param(_)) => false,
+        (TypeKind::Primitive(_), TypeKind::Ownership { inner: _, ownership: _ }) => false,
+
+        (TypeKind::Tuple(_), TypeKind::Primitive(_)) => false,
+        (TypeKind::Tuple(_), TypeKind::Array { element: _, size: _ }) => false,
+        (TypeKind::Tuple(_), TypeKind::Slice { element: _ }) => false,
+        (TypeKind::Tuple(_), TypeKind::Ref { inner: _, mutability: _ }) => false,
+        (TypeKind::Tuple(_), TypeKind::Ptr { inner: _, mutability: _ }) => false,
+        (TypeKind::Tuple(_), TypeKind::Fn { params: _, ret: _, effect: _ }) => false,
+        (TypeKind::Tuple(_), TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }) => false,
+        (TypeKind::Tuple(_), TypeKind::Adt { def_id: _, type_args: _ }) => false,
+        (TypeKind::Tuple(_), TypeKind::Range { element: _, inclusive: _ }) => false,
+        (TypeKind::Tuple(_), TypeKind::DynTrait { trait_id: _ }) => false,
+        (TypeKind::Tuple(_), TypeKind::Record { fields: _, row_var: _ }) => false,
+        (TypeKind::Tuple(_), TypeKind::Forall { params: _, body: _ }) => false,
+        (TypeKind::Tuple(_), TypeKind::Param(_)) => false,
+        (TypeKind::Tuple(_), TypeKind::Ownership { inner: _, ownership: _ }) => false,
+
+        (TypeKind::Array { element: _, size: _ }, TypeKind::Primitive(_)) => false,
+        (TypeKind::Array { element: _, size: _ }, TypeKind::Tuple(_)) => false,
+        (TypeKind::Array { element: _, size: _ }, TypeKind::Slice { element: _ }) => false,
+        (TypeKind::Array { element: _, size: _ }, TypeKind::Ref { inner: _, mutability: _ }) => false,
+        (TypeKind::Array { element: _, size: _ }, TypeKind::Ptr { inner: _, mutability: _ }) => false,
+        (TypeKind::Array { element: _, size: _ }, TypeKind::Fn { params: _, ret: _, effect: _ }) => false,
+        (TypeKind::Array { element: _, size: _ }, TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }) => false,
+        (TypeKind::Array { element: _, size: _ }, TypeKind::Adt { def_id: _, type_args: _ }) => false,
+        (TypeKind::Array { element: _, size: _ }, TypeKind::Range { element: _, inclusive: _ }) => false,
+        (TypeKind::Array { element: _, size: _ }, TypeKind::DynTrait { trait_id: _ }) => false,
+        (TypeKind::Array { element: _, size: _ }, TypeKind::Record { fields: _, row_var: _ }) => false,
+        (TypeKind::Array { element: _, size: _ }, TypeKind::Forall { params: _, body: _ }) => false,
+        (TypeKind::Array { element: _, size: _ }, TypeKind::Param(_)) => false,
+        (TypeKind::Array { element: _, size: _ }, TypeKind::Ownership { inner: _, ownership: _ }) => false,
+
+        (TypeKind::Slice { element: _ }, TypeKind::Primitive(_)) => false,
+        (TypeKind::Slice { element: _ }, TypeKind::Tuple(_)) => false,
+        (TypeKind::Slice { element: _ }, TypeKind::Array { element: _, size: _ }) => false,
+        (TypeKind::Slice { element: _ }, TypeKind::Ref { inner: _, mutability: _ }) => false,
+        (TypeKind::Slice { element: _ }, TypeKind::Ptr { inner: _, mutability: _ }) => false,
+        (TypeKind::Slice { element: _ }, TypeKind::Fn { params: _, ret: _, effect: _ }) => false,
+        (TypeKind::Slice { element: _ }, TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }) => false,
+        (TypeKind::Slice { element: _ }, TypeKind::Adt { def_id: _, type_args: _ }) => false,
+        (TypeKind::Slice { element: _ }, TypeKind::Range { element: _, inclusive: _ }) => false,
+        (TypeKind::Slice { element: _ }, TypeKind::DynTrait { trait_id: _ }) => false,
+        (TypeKind::Slice { element: _ }, TypeKind::Record { fields: _, row_var: _ }) => false,
+        (TypeKind::Slice { element: _ }, TypeKind::Forall { params: _, body: _ }) => false,
+        (TypeKind::Slice { element: _ }, TypeKind::Param(_)) => false,
+        (TypeKind::Slice { element: _ }, TypeKind::Ownership { inner: _, ownership: _ }) => false,
+
+        (TypeKind::Ref { inner: _, mutability: _ }, TypeKind::Primitive(_)) => false,
+        (TypeKind::Ref { inner: _, mutability: _ }, TypeKind::Tuple(_)) => false,
+        (TypeKind::Ref { inner: _, mutability: _ }, TypeKind::Array { element: _, size: _ }) => false,
+        (TypeKind::Ref { inner: _, mutability: _ }, TypeKind::Slice { element: _ }) => false,
+        (TypeKind::Ref { inner: _, mutability: _ }, TypeKind::Ptr { inner: _, mutability: _ }) => false,
+        (TypeKind::Ref { inner: _, mutability: _ }, TypeKind::Fn { params: _, ret: _, effect: _ }) => false,
+        (TypeKind::Ref { inner: _, mutability: _ }, TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }) => false,
+        (TypeKind::Ref { inner: _, mutability: _ }, TypeKind::Adt { def_id: _, type_args: _ }) => false,
+        (TypeKind::Ref { inner: _, mutability: _ }, TypeKind::Range { element: _, inclusive: _ }) => false,
+        (TypeKind::Ref { inner: _, mutability: _ }, TypeKind::DynTrait { trait_id: _ }) => false,
+        (TypeKind::Ref { inner: _, mutability: _ }, TypeKind::Record { fields: _, row_var: _ }) => false,
+        (TypeKind::Ref { inner: _, mutability: _ }, TypeKind::Forall { params: _, body: _ }) => false,
+        (TypeKind::Ref { inner: _, mutability: _ }, TypeKind::Param(_)) => false,
+        (TypeKind::Ref { inner: _, mutability: _ }, TypeKind::Ownership { inner: _, ownership: _ }) => false,
+
+        (TypeKind::Ptr { inner: _, mutability: _ }, TypeKind::Primitive(_)) => false,
+        (TypeKind::Ptr { inner: _, mutability: _ }, TypeKind::Tuple(_)) => false,
+        (TypeKind::Ptr { inner: _, mutability: _ }, TypeKind::Array { element: _, size: _ }) => false,
+        (TypeKind::Ptr { inner: _, mutability: _ }, TypeKind::Slice { element: _ }) => false,
+        (TypeKind::Ptr { inner: _, mutability: _ }, TypeKind::Ref { inner: _, mutability: _ }) => false,
+        (TypeKind::Ptr { inner: _, mutability: _ }, TypeKind::Fn { params: _, ret: _, effect: _ }) => false,
+        (TypeKind::Ptr { inner: _, mutability: _ }, TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }) => false,
+        (TypeKind::Ptr { inner: _, mutability: _ }, TypeKind::Adt { def_id: _, type_args: _ }) => false,
+        (TypeKind::Ptr { inner: _, mutability: _ }, TypeKind::Range { element: _, inclusive: _ }) => false,
+        (TypeKind::Ptr { inner: _, mutability: _ }, TypeKind::DynTrait { trait_id: _ }) => false,
+        (TypeKind::Ptr { inner: _, mutability: _ }, TypeKind::Record { fields: _, row_var: _ }) => false,
+        (TypeKind::Ptr { inner: _, mutability: _ }, TypeKind::Forall { params: _, body: _ }) => false,
+        (TypeKind::Ptr { inner: _, mutability: _ }, TypeKind::Param(_)) => false,
+        (TypeKind::Ptr { inner: _, mutability: _ }, TypeKind::Ownership { inner: _, ownership: _ }) => false,
+
+        (TypeKind::Fn { params: _, ret: _, effect: _ }, TypeKind::Primitive(_)) => false,
+        (TypeKind::Fn { params: _, ret: _, effect: _ }, TypeKind::Tuple(_)) => false,
+        (TypeKind::Fn { params: _, ret: _, effect: _ }, TypeKind::Array { element: _, size: _ }) => false,
+        (TypeKind::Fn { params: _, ret: _, effect: _ }, TypeKind::Slice { element: _ }) => false,
+        (TypeKind::Fn { params: _, ret: _, effect: _ }, TypeKind::Ref { inner: _, mutability: _ }) => false,
+        (TypeKind::Fn { params: _, ret: _, effect: _ }, TypeKind::Ptr { inner: _, mutability: _ }) => false,
+        (TypeKind::Fn { params: _, ret: _, effect: _ }, TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }) => false,
+        (TypeKind::Fn { params: _, ret: _, effect: _ }, TypeKind::Adt { def_id: _, type_args: _ }) => false,
+        (TypeKind::Fn { params: _, ret: _, effect: _ }, TypeKind::Range { element: _, inclusive: _ }) => false,
+        (TypeKind::Fn { params: _, ret: _, effect: _ }, TypeKind::DynTrait { trait_id: _ }) => false,
+        (TypeKind::Fn { params: _, ret: _, effect: _ }, TypeKind::Record { fields: _, row_var: _ }) => false,
+        (TypeKind::Fn { params: _, ret: _, effect: _ }, TypeKind::Forall { params: _, body: _ }) => false,
+        (TypeKind::Fn { params: _, ret: _, effect: _ }, TypeKind::Param(_)) => false,
+        (TypeKind::Fn { params: _, ret: _, effect: _ }, TypeKind::Ownership { inner: _, ownership: _ }) => false,
+
+        (TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }, TypeKind::Primitive(_)) => false,
+        (TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }, TypeKind::Tuple(_)) => false,
+        (TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }, TypeKind::Array { element: _, size: _ }) => false,
+        (TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }, TypeKind::Slice { element: _ }) => false,
+        (TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }, TypeKind::Ref { inner: _, mutability: _ }) => false,
+        (TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }, TypeKind::Ptr { inner: _, mutability: _ }) => false,
+        (TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }, TypeKind::Fn { params: _, ret: _, effect: _ }) => false,
+        (TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }, TypeKind::Adt { def_id: _, type_args: _ }) => false,
+        (TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }, TypeKind::Range { element: _, inclusive: _ }) => false,
+        (TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }, TypeKind::DynTrait { trait_id: _ }) => false,
+        (TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }, TypeKind::Record { fields: _, row_var: _ }) => false,
+        (TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }, TypeKind::Forall { params: _, body: _ }) => false,
+        (TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }, TypeKind::Param(_)) => false,
+        (TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }, TypeKind::Ownership { inner: _, ownership: _ }) => false,
+
+        (TypeKind::Adt { def_id: _, type_args: _ }, TypeKind::Primitive(_)) => false,
+        (TypeKind::Adt { def_id: _, type_args: _ }, TypeKind::Tuple(_)) => false,
+        (TypeKind::Adt { def_id: _, type_args: _ }, TypeKind::Array { element: _, size: _ }) => false,
+        (TypeKind::Adt { def_id: _, type_args: _ }, TypeKind::Slice { element: _ }) => false,
+        (TypeKind::Adt { def_id: _, type_args: _ }, TypeKind::Ref { inner: _, mutability: _ }) => false,
+        (TypeKind::Adt { def_id: _, type_args: _ }, TypeKind::Ptr { inner: _, mutability: _ }) => false,
+        (TypeKind::Adt { def_id: _, type_args: _ }, TypeKind::Fn { params: _, ret: _, effect: _ }) => false,
+        (TypeKind::Adt { def_id: _, type_args: _ }, TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }) => false,
+        (TypeKind::Adt { def_id: _, type_args: _ }, TypeKind::Range { element: _, inclusive: _ }) => false,
+        (TypeKind::Adt { def_id: _, type_args: _ }, TypeKind::DynTrait { trait_id: _ }) => false,
+        (TypeKind::Adt { def_id: _, type_args: _ }, TypeKind::Record { fields: _, row_var: _ }) => false,
+        (TypeKind::Adt { def_id: _, type_args: _ }, TypeKind::Forall { params: _, body: _ }) => false,
+        (TypeKind::Adt { def_id: _, type_args: _ }, TypeKind::Param(_)) => false,
+        (TypeKind::Adt { def_id: _, type_args: _ }, TypeKind::Ownership { inner: _, ownership: _ }) => false,
+
+        (TypeKind::Range { element: _, inclusive: _ }, TypeKind::Primitive(_)) => false,
+        (TypeKind::Range { element: _, inclusive: _ }, TypeKind::Tuple(_)) => false,
+        (TypeKind::Range { element: _, inclusive: _ }, TypeKind::Array { element: _, size: _ }) => false,
+        (TypeKind::Range { element: _, inclusive: _ }, TypeKind::Slice { element: _ }) => false,
+        (TypeKind::Range { element: _, inclusive: _ }, TypeKind::Ref { inner: _, mutability: _ }) => false,
+        (TypeKind::Range { element: _, inclusive: _ }, TypeKind::Ptr { inner: _, mutability: _ }) => false,
+        (TypeKind::Range { element: _, inclusive: _ }, TypeKind::Fn { params: _, ret: _, effect: _ }) => false,
+        (TypeKind::Range { element: _, inclusive: _ }, TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }) => false,
+        (TypeKind::Range { element: _, inclusive: _ }, TypeKind::Adt { def_id: _, type_args: _ }) => false,
+        (TypeKind::Range { element: _, inclusive: _ }, TypeKind::DynTrait { trait_id: _ }) => false,
+        (TypeKind::Range { element: _, inclusive: _ }, TypeKind::Record { fields: _, row_var: _ }) => false,
+        (TypeKind::Range { element: _, inclusive: _ }, TypeKind::Forall { params: _, body: _ }) => false,
+        (TypeKind::Range { element: _, inclusive: _ }, TypeKind::Param(_)) => false,
+        (TypeKind::Range { element: _, inclusive: _ }, TypeKind::Ownership { inner: _, ownership: _ }) => false,
+
+        (TypeKind::DynTrait { trait_id: _ }, TypeKind::Primitive(_)) => false,
+        (TypeKind::DynTrait { trait_id: _ }, TypeKind::Tuple(_)) => false,
+        (TypeKind::DynTrait { trait_id: _ }, TypeKind::Array { element: _, size: _ }) => false,
+        (TypeKind::DynTrait { trait_id: _ }, TypeKind::Slice { element: _ }) => false,
+        (TypeKind::DynTrait { trait_id: _ }, TypeKind::Ref { inner: _, mutability: _ }) => false,
+        (TypeKind::DynTrait { trait_id: _ }, TypeKind::Ptr { inner: _, mutability: _ }) => false,
+        (TypeKind::DynTrait { trait_id: _ }, TypeKind::Fn { params: _, ret: _, effect: _ }) => false,
+        (TypeKind::DynTrait { trait_id: _ }, TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }) => false,
+        (TypeKind::DynTrait { trait_id: _ }, TypeKind::Adt { def_id: _, type_args: _ }) => false,
+        (TypeKind::DynTrait { trait_id: _ }, TypeKind::Range { element: _, inclusive: _ }) => false,
+        (TypeKind::DynTrait { trait_id: _ }, TypeKind::Record { fields: _, row_var: _ }) => false,
+        (TypeKind::DynTrait { trait_id: _ }, TypeKind::Forall { params: _, body: _ }) => false,
+        (TypeKind::DynTrait { trait_id: _ }, TypeKind::Param(_)) => false,
+        (TypeKind::DynTrait { trait_id: _ }, TypeKind::Ownership { inner: _, ownership: _ }) => false,
+
+        (TypeKind::Record { fields: _, row_var: _ }, TypeKind::Primitive(_)) => false,
+        (TypeKind::Record { fields: _, row_var: _ }, TypeKind::Tuple(_)) => false,
+        (TypeKind::Record { fields: _, row_var: _ }, TypeKind::Array { element: _, size: _ }) => false,
+        (TypeKind::Record { fields: _, row_var: _ }, TypeKind::Slice { element: _ }) => false,
+        (TypeKind::Record { fields: _, row_var: _ }, TypeKind::Ref { inner: _, mutability: _ }) => false,
+        (TypeKind::Record { fields: _, row_var: _ }, TypeKind::Ptr { inner: _, mutability: _ }) => false,
+        (TypeKind::Record { fields: _, row_var: _ }, TypeKind::Fn { params: _, ret: _, effect: _ }) => false,
+        (TypeKind::Record { fields: _, row_var: _ }, TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }) => false,
+        (TypeKind::Record { fields: _, row_var: _ }, TypeKind::Adt { def_id: _, type_args: _ }) => false,
+        (TypeKind::Record { fields: _, row_var: _ }, TypeKind::Range { element: _, inclusive: _ }) => false,
+        (TypeKind::Record { fields: _, row_var: _ }, TypeKind::DynTrait { trait_id: _ }) => false,
+        (TypeKind::Record { fields: _, row_var: _ }, TypeKind::Forall { params: _, body: _ }) => false,
+        (TypeKind::Record { fields: _, row_var: _ }, TypeKind::Param(_)) => false,
+        (TypeKind::Record { fields: _, row_var: _ }, TypeKind::Ownership { inner: _, ownership: _ }) => false,
+
+        (TypeKind::Forall { params: _, body: _ }, TypeKind::Primitive(_)) => false,
+        (TypeKind::Forall { params: _, body: _ }, TypeKind::Tuple(_)) => false,
+        (TypeKind::Forall { params: _, body: _ }, TypeKind::Array { element: _, size: _ }) => false,
+        (TypeKind::Forall { params: _, body: _ }, TypeKind::Slice { element: _ }) => false,
+        (TypeKind::Forall { params: _, body: _ }, TypeKind::Ref { inner: _, mutability: _ }) => false,
+        (TypeKind::Forall { params: _, body: _ }, TypeKind::Ptr { inner: _, mutability: _ }) => false,
+        (TypeKind::Forall { params: _, body: _ }, TypeKind::Fn { params: _, ret: _, effect: _ }) => false,
+        (TypeKind::Forall { params: _, body: _ }, TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }) => false,
+        (TypeKind::Forall { params: _, body: _ }, TypeKind::Adt { def_id: _, type_args: _ }) => false,
+        (TypeKind::Forall { params: _, body: _ }, TypeKind::Range { element: _, inclusive: _ }) => false,
+        (TypeKind::Forall { params: _, body: _ }, TypeKind::DynTrait { trait_id: _ }) => false,
+        (TypeKind::Forall { params: _, body: _ }, TypeKind::Record { fields: _, row_var: _ }) => false,
+        (TypeKind::Forall { params: _, body: _ }, TypeKind::Param(_)) => false,
+        (TypeKind::Forall { params: _, body: _ }, TypeKind::Ownership { inner: _, ownership: _ }) => false,
+
+        (TypeKind::Param(_), TypeKind::Primitive(_)) => false,
+        (TypeKind::Param(_), TypeKind::Tuple(_)) => false,
+        (TypeKind::Param(_), TypeKind::Array { element: _, size: _ }) => false,
+        (TypeKind::Param(_), TypeKind::Slice { element: _ }) => false,
+        (TypeKind::Param(_), TypeKind::Ref { inner: _, mutability: _ }) => false,
+        (TypeKind::Param(_), TypeKind::Ptr { inner: _, mutability: _ }) => false,
+        (TypeKind::Param(_), TypeKind::Fn { params: _, ret: _, effect: _ }) => false,
+        (TypeKind::Param(_), TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }) => false,
+        (TypeKind::Param(_), TypeKind::Adt { def_id: _, type_args: _ }) => false,
+        (TypeKind::Param(_), TypeKind::Range { element: _, inclusive: _ }) => false,
+        (TypeKind::Param(_), TypeKind::DynTrait { trait_id: _ }) => false,
+        (TypeKind::Param(_), TypeKind::Record { fields: _, row_var: _ }) => false,
+        (TypeKind::Param(_), TypeKind::Forall { params: _, body: _ }) => false,
+        (TypeKind::Param(_), TypeKind::Ownership { inner: _, ownership: _ }) => false,
+
+        (TypeKind::Ownership { inner: _, ownership: _ }, TypeKind::Primitive(_)) => false,
+        (TypeKind::Ownership { inner: _, ownership: _ }, TypeKind::Tuple(_)) => false,
+        (TypeKind::Ownership { inner: _, ownership: _ }, TypeKind::Array { element: _, size: _ }) => false,
+        (TypeKind::Ownership { inner: _, ownership: _ }, TypeKind::Slice { element: _ }) => false,
+        (TypeKind::Ownership { inner: _, ownership: _ }, TypeKind::Ref { inner: _, mutability: _ }) => false,
+        (TypeKind::Ownership { inner: _, ownership: _ }, TypeKind::Ptr { inner: _, mutability: _ }) => false,
+        (TypeKind::Ownership { inner: _, ownership: _ }, TypeKind::Fn { params: _, ret: _, effect: _ }) => false,
+        (TypeKind::Ownership { inner: _, ownership: _ }, TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }) => false,
+        (TypeKind::Ownership { inner: _, ownership: _ }, TypeKind::Adt { def_id: _, type_args: _ }) => false,
+        (TypeKind::Ownership { inner: _, ownership: _ }, TypeKind::Range { element: _, inclusive: _ }) => false,
+        (TypeKind::Ownership { inner: _, ownership: _ }, TypeKind::DynTrait { trait_id: _ }) => false,
+        (TypeKind::Ownership { inner: _, ownership: _ }, TypeKind::Record { fields: _, row_var: _ }) => false,
+        (TypeKind::Ownership { inner: _, ownership: _ }, TypeKind::Forall { params: _, body: _ }) => false,
+        (TypeKind::Ownership { inner: _, ownership: _ }, TypeKind::Param(_)) => false,
+    }
+}

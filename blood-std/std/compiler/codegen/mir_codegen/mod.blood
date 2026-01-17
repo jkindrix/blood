@@ -1,0 +1,274 @@
+//! MIR-based Code Generation
+//!
+//! This module compiles MIR (Mid-level Intermediate Representation) to LLVM IR.
+//! MIR provides explicit control flow graphs and flattened expressions, making
+//! it easier to implement optimizations like:
+//!
+//! - **Escape analysis**: Skip generation checks for non-escaping values
+//! - **Tier-based allocation**: Use stack vs region based on escape state
+//! - **Generation validation**: Insert checks for region-allocated values
+//!
+//! ## Architecture
+//!
+//! ```text
+//! MIR Body -> Basic Blocks -> LLVM Basic Blocks
+//!          -> Statements   -> LLVM Instructions
+//!          -> Terminators  -> LLVM Terminators
+//! ```
+//!
+//! ## Memory Tier Allocation Strategy
+//!
+//! | Memory Tier | Escape State | Allocation Method | Generation Checks |
+//! |-------------|--------------|-------------------|-------------------|
+//! | Stack (0)   | NoEscape     | LLVM `alloca`     | NO - safe by construction |
+//! | Region (1)  | ArgEscape    | `blood_alloc`     | YES - on every dereference |
+//! | Region (1)  | GlobalEscape | `blood_alloc`     | YES - on every dereference |
+//! | Persistent  | Effect-captured | `blood_alloc` | YES - on every dereference |
+//!
+//! ## Generation Check Flow
+//!
+//! ```text
+//! 1. Allocation:
+//!    address = blood_alloc_or_abort(size)
+//!    generation = blood_get_generation(address)
+//!
+//! 2. On Dereference:
+//!    result = blood_validate_generation(address, expected_generation)
+//!    if result != 0:
+//!        blood_stale_reference_panic(expected_gen, actual_gen)
+//!
+//! 3. On Free (automatic at scope exit):
+//!    blood_increment_generation(address)
+//! ```
+
+pub mod statement;
+pub mod terminator;
+pub mod rvalue;
+pub mod place;
+pub mod memory;
+
+use std::collections::HashMap;
+
+use super::llvm::{
+    LLVMValueRef, LLVMTypeRef, LLVMBasicBlockRef,
+    values::append_basic_block,
+};
+use super::context::{CodegenContext, MemoryTier};
+use super::lower_type::lower_type;
+use super::runtime;
+
+use crate::hir::{DefId, LocalId, Type};
+use crate::mir::{MirBody, BasicBlockId, EscapeResults, EscapeState};
+use crate::diagnostics::Diagnostic;
+use crate::span::Span;
+
+// ============================================================================
+// MIR Compilation Entry Point
+// ============================================================================
+
+/// Compile a MIR function body to LLVM IR.
+///
+/// This is the main entry point for MIR code generation. It:
+/// 1. Creates LLVM basic blocks for all MIR blocks
+/// 2. Allocates storage for local variables
+/// 3. Stores function parameters
+/// 4. Compiles each basic block's statements and terminator
+pub fn compile_mir_body(
+    ctx: &mut CodegenContext,
+    def_id: DefId,
+    body: &MirBody,
+    escape_results: Option<&EscapeResults>,
+) -> Result<(), Vec<Diagnostic>> {
+    // Get the function value (must already be declared)
+    let fn_value = match ctx.functions.get(&def_id) {
+        Some(&fv) => fv,
+        None => {
+            // Function not declared - skip (may be generic)
+            return Ok(());
+        }
+    };
+
+    // Set up current function context
+    ctx.set_current_function(fn_value, def_id);
+
+    // Create LLVM basic blocks for all MIR blocks
+    let mut llvm_blocks: HashMap<BasicBlockId, LLVMBasicBlockRef> = HashMap::new();
+    for (bb_id, _) in body.blocks() {
+        let name = format!("bb{}\0", bb_id.0);
+        let llvm_bb = append_basic_block(ctx.llvm_context_ref(), fn_value, &name);
+        llvm_blocks.insert(bb_id, llvm_bb.raw());
+    }
+
+    // Position at entry block
+    let entry_bb = match llvm_blocks.get(&BasicBlockId::ENTRY) {
+        Some(&bb) => bb,
+        None => {
+            ctx.clear_current_function();
+            return Err(vec![Diagnostic::error("MIR body has no entry block", body.span)]);
+        }
+    };
+    ctx.llvm_builder().position_at_end(entry_bb);
+
+    // Allocate locals based on escape analysis
+    for local in &body.locals {
+        // Reference types always use stack allocation for storage
+        let is_reference = local.ty.is_ref();
+
+        let tier = if is_reference {
+            MemoryTier::Stack
+        } else {
+            get_local_tier(ctx, local.id, escape_results)
+        };
+
+        let llvm_ty = lower_type(ctx, &local.ty);
+        let name = format!("_{}_{}\0", local.id.index, tier_name(tier));
+
+        let alloca = match tier {
+            MemoryTier::Stack => {
+                // Stack allocation - no generation checks needed
+                ctx.llvm_builder().build_alloca(llvm_ty, &name)
+            }
+            MemoryTier::Region | MemoryTier::Persistent => {
+                // Region allocation - use blood_alloc for generation tracking
+                memory::allocate_with_blood_alloc(ctx, llvm_ty, local.id, body.span)?
+            }
+        };
+
+        ctx.locals.insert(local.id, alloca);
+    }
+
+    // Store function parameters
+    for (i, param_id) in body.param_ids().enumerate() {
+        if let Some(&alloca) = ctx.locals.get(&param_id) {
+            let param_value = super::llvm::values::get_param(fn_value, i as u32).raw();
+            ctx.llvm_builder().build_store(param_value, alloca);
+        }
+    }
+
+    // Compile each basic block
+    for (bb_id, _) in body.blocks() {
+        compile_mir_block(ctx, body, bb_id, &llvm_blocks, escape_results)?;
+    }
+
+    ctx.clear_current_function();
+    Ok(())
+}
+
+/// Compile a single MIR basic block.
+fn compile_mir_block(
+    ctx: &mut CodegenContext,
+    body: &MirBody,
+    block_id: BasicBlockId,
+    llvm_blocks: &HashMap<BasicBlockId, LLVMBasicBlockRef>,
+    escape_results: Option<&EscapeResults>,
+) -> Result<(), Vec<Diagnostic>> {
+    let llvm_bb = match llvm_blocks.get(&block_id) {
+        Some(&bb) => bb,
+        None => {
+            return Err(vec![Diagnostic::error(
+                format!("No LLVM block for {}", block_id),
+                body.span,
+            )]);
+        }
+    };
+
+    ctx.llvm_builder().position_at_end(llvm_bb);
+
+    let block_data = match body.get_block(block_id) {
+        Some(data) => data,
+        None => {
+            return Err(vec![Diagnostic::error(
+                format!("MIR block {} not found", block_id),
+                body.span,
+            )]);
+        }
+    };
+
+    // Compile statements
+    for stmt in &block_data.statements {
+        statement::compile_mir_statement(ctx, stmt, body, escape_results)?;
+    }
+
+    // Compile terminator
+    if let Some(term) = &block_data.terminator {
+        terminator::compile_mir_terminator(ctx, term, body, llvm_blocks, escape_results)?;
+    } else {
+        // Unterminated block - add unreachable
+        ctx.llvm_builder().build_unreachable();
+    }
+
+    Ok(())
+}
+
+// ============================================================================
+// Memory Tier Helpers
+// ============================================================================
+
+/// Determine the memory tier for a local based on escape analysis.
+pub fn get_local_tier(
+    ctx: &CodegenContext,
+    local: LocalId,
+    escape_results: Option<&EscapeResults>,
+) -> MemoryTier {
+    if let Some(results) = escape_results {
+        results.recommended_tier(local)
+    } else {
+        // Default to Region if no escape analysis available
+        MemoryTier::Region
+    }
+}
+
+/// Check if generation checks should be skipped for a local.
+pub fn should_skip_gen_check(
+    ctx: &CodegenContext,
+    local: LocalId,
+    escape_results: Option<&EscapeResults>,
+) -> bool {
+    if let Some(results) = escape_results {
+        let state = results.get_escape_state(local);
+        state == EscapeState::NoEscape && !results.is_effect_captured(local)
+    } else {
+        false  // Conservative: always check if no analysis
+    }
+}
+
+/// Get the name for a memory tier (for debug output).
+pub fn tier_name(tier: MemoryTier) -> &'static str {
+    match tier {
+        MemoryTier::Stack => "stack",
+        MemoryTier::Region => "region",
+        MemoryTier::Persistent => "persistent",
+    }
+}
+
+// ============================================================================
+// Type Helpers
+// ============================================================================
+
+/// Check if a type may contain generational references.
+///
+/// Used to determine which locals need snapshot capture during effect operations.
+pub fn type_may_contain_genref(ty: &Type) -> bool {
+    match ty.kind() {
+        crate::hir::TypeKind::Ref { .. } => true,
+        crate::hir::TypeKind::Ptr { .. } => true,
+        crate::hir::TypeKind::Tuple(fields) => {
+            fields.iter().any(|f| type_may_contain_genref(f))
+        }
+        crate::hir::TypeKind::Array { element, .. } => {
+            type_may_contain_genref(element)
+        }
+        crate::hir::TypeKind::Slice { element } => {
+            type_may_contain_genref(element)
+        }
+        crate::hir::TypeKind::Adt { .. } => {
+            // ADTs may contain references - conservative
+            true
+        }
+        crate::hir::TypeKind::Closure { .. } => {
+            // Closures may capture references
+            true
+        }
+        _ => false,
+    }
+}

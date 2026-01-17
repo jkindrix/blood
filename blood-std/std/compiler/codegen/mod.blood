@@ -1,0 +1,872 @@
+//! Code Generation for Blood
+//!
+//! This module generates LLVM IR from the MIR representation and produces
+//! object code for linking into executables.
+//!
+//! ## Architecture
+//!
+//! ```text
+//! HIR → MIR → CodeGenerator → LLVM IR → Object Code
+//!              ↓
+//!         Escape Analysis
+//!              ↓
+//!         Tier Selection (Stack/Region/Persistent)
+//! ```
+//!
+//! ## Compilation Pipeline
+//!
+//! | Stage | Input | Output | Purpose |
+//! |-------|-------|--------|---------|
+//! | Type Declaration | HIR | LLVM types | Declare structs, enums, functions |
+//! | MIR Compilation | MIR | LLVM IR | Generate function bodies |
+//! | Handler Registration | HIR | LLVM IR | Register effect handlers |
+//! | Optimization | LLVM IR | LLVM IR | Apply optimization passes |
+//! | Object Generation | LLVM IR | Object file | Emit machine code |
+//!
+//! ## Memory Safety Integration
+//!
+//! Code generation integrates with Blood's memory safety system:
+//!
+//! - **Escape Analysis**: Determines allocation strategy per local
+//! - **Generation Checks**: Inserted for region-allocated dereferences
+//! - **Snapshot Operations**: Used for effect boundary validation
+
+// ============================================================================
+// Submodule Declarations
+// ============================================================================
+
+pub mod runtime;
+pub mod types;
+pub mod llvm;
+pub mod context;
+pub mod lower_type;
+pub mod mir_codegen;
+
+// ============================================================================
+// Re-exports
+// ============================================================================
+
+pub use context::CodegenContext;
+pub use mir_codegen::{
+    compile_mir_body,
+    compile_mir_statement,
+    compile_mir_terminator,
+    compile_mir_rvalue,
+    compile_mir_place,
+};
+
+// ============================================================================
+// Imports
+// ============================================================================
+
+use llvm::{
+    LLVMContextRef, LLVMModuleRef, LLVMBuilderRef, LLVMTargetMachineRef,
+    LLVMPassManagerRef, LLVMValueRef, LLVMTargetRef,
+    context::{create_context, dispose_context},
+    module::{create_module, dispose_module, verify_module, print_module_to_string},
+    builder::{create_builder, dispose_builder},
+    target::{
+        initialize_native_target, initialize_native_asm_printer,
+        get_default_target_triple, get_target_from_triple,
+        get_host_cpu_name, get_host_cpu_features,
+        create_target_machine, dispose_target_machine,
+        target_machine_emit_to_file, LLVMCodeGenFileType,
+    },
+    pass_manager::{
+        create_pass_manager, dispose_pass_manager, run_pass_manager,
+        add_promote_memory_to_register_pass, add_instruction_combining_pass,
+        add_reassociate_pass, add_gvn_pass, add_sccp_pass,
+        add_aggressive_dce_pass, add_dead_store_elimination_pass,
+        add_cfg_simplification_pass, add_licm_pass, add_ind_var_simplify_pass,
+        add_loop_rotate_pass, add_loop_deletion_pass, add_loop_unroll_pass,
+        add_function_inlining_pass, add_global_dce_pass, add_global_optimizer_pass,
+        add_constant_merge_pass, add_merge_functions_pass,
+        add_tail_call_elimination_pass, add_jump_threading_pass,
+        add_memcpy_optimize_pass, add_strip_dead_prototypes_pass,
+        add_slp_vectorize_pass, add_loop_vectorize_pass,
+        add_basic_alias_analysis_pass, add_type_based_alias_analysis_pass,
+    },
+};
+
+use crate::hir::{Crate, DefId, Type};
+use crate::mir::{MirBody, EscapeResults, InlineHandlerBodies};
+use crate::diagnostics::Diagnostic;
+use crate::span::Span;
+
+// ============================================================================
+// Codegen Version Tracking
+// ============================================================================
+
+/// ABI version for code generation.
+///
+/// Bump this when making intentional breaking changes to:
+/// - Calling conventions
+/// - Type layouts / struct packing
+/// - Runtime interface (function signatures)
+/// - Closure representation
+/// - Effect handler protocol
+///
+/// This allows cache invalidation even if the source hash doesn't change
+/// (e.g., when the same code produces different output due to bug fixes).
+pub const CODEGEN_ABI_VERSION: u32 = 1;
+
+// ============================================================================
+// Optimization Level
+// ============================================================================
+
+/// Optimization level for code generation.
+///
+/// Maps to LLVM's optimization levels and controls which passes are run.
+pub enum BloodOptLevel {
+    /// No optimizations (for debugging).
+    /// Fastest compile time, slowest runtime, best debuggability.
+    None,
+
+    /// Basic optimizations (fast compile).
+    /// Quick optimizations that don't significantly increase compile time.
+    Less,
+
+    /// Default optimizations (good balance).
+    /// Standard optimization level, similar to -O2.
+    Default,
+
+    /// Aggressive optimizations (like -O3).
+    /// Maximum performance, longest compile time.
+    /// Includes vectorization and aggressive inlining.
+    Aggressive,
+}
+
+impl BloodOptLevel {
+    /// Convert to LLVM optimization level integer.
+    ///
+    /// | Blood Level | LLVM Value | Equivalent Flag |
+    /// |-------------|------------|-----------------|
+    /// | None        | 0          | -O0             |
+    /// | Less        | 1          | -O1             |
+    /// | Default     | 2          | -O2             |
+    /// | Aggressive  | 3          | -O3             |
+    pub fn to_llvm_level(self) -> u32 {
+        match self {
+            BloodOptLevel::None => 0,
+            BloodOptLevel::Less => 1,
+            BloodOptLevel::Default => 2,
+            BloodOptLevel::Aggressive => 3,
+        }
+    }
+
+    /// Returns the default optimization level.
+    pub fn default() -> BloodOptLevel {
+        BloodOptLevel::Default
+    }
+}
+
+// ============================================================================
+// Type Aliases
+// ============================================================================
+
+/// Type alias for escape analysis results per function.
+pub type EscapeAnalysisMap = Map<DefId, EscapeResults>;
+
+/// Type alias for MIR bodies per function.
+pub type MirBodiesMap = Map<DefId, MirBody>;
+
+// ============================================================================
+// Optimization Passes
+// ============================================================================
+
+/// Run LLVM optimization passes on the module.
+///
+/// This function applies a comprehensive set of LLVM optimization passes
+/// to the generated IR, similar to what clang does with -O2 or -O3.
+///
+/// ## Optimization Strategy
+///
+/// The passes are applied in a specific order to maximize effectiveness:
+///
+/// | Phase | Passes | Purpose |
+/// |-------|--------|---------|
+/// | 1. Canonicalization | mem2reg, instcombine | Normalize IR |
+/// | 2. Analysis | alias analysis | Enable other optimizations |
+/// | 3. Scalar | GVN, SCCP, DCE | Simplify code |
+/// | 4. Loop | LICM, unroll, rotate | Optimize loops |
+/// | 5. Interprocedural | inlining, global opts | Cross-function opts |
+/// | 6. Vectorization | SLP, loop vectorize | SIMD optimization |
+/// | 7. Cleanup | CFG simplify, jump thread | Final cleanup |
+pub fn optimize_module(module: LLVMModuleRef, opt_level: BloodOptLevel) {
+    if opt_level == BloodOptLevel::None {
+        return;
+    }
+
+    // Create a module pass manager
+    let mpm = create_pass_manager();
+
+    // === Phase 1: Canonicalization ===
+    // These passes normalize the IR into a canonical form that later passes expect
+
+    // Promote allocas to registers - fundamental for SSA form
+    add_promote_memory_to_register_pass(mpm);
+
+    // Combine instructions into simpler forms
+    add_instruction_combining_pass(mpm);
+
+    // Reassociate expressions to enable better constant folding
+    add_reassociate_pass(mpm);
+
+    // === Phase 2: Analysis Setup ===
+    // Set up alias analysis for memory optimization passes
+
+    add_basic_alias_analysis_pass(mpm);
+    add_type_based_alias_analysis_pass(mpm);
+
+    // === Phase 3: Scalar Optimizations ===
+    // These work on individual values and expressions
+
+    // Global Value Numbering - eliminate redundant computations
+    add_gvn_pass(mpm);
+
+    // Sparse Conditional Constant Propagation
+    add_sccp_pass(mpm);
+
+    // Aggressive dead code elimination
+    add_aggressive_dce_pass(mpm);
+
+    // Dead store elimination
+    add_dead_store_elimination_pass(mpm);
+
+    // Simplify the control flow graph
+    add_cfg_simplification_pass(mpm);
+
+    // === Phase 4: Loop Optimizations ===
+    // These optimize loop constructs
+
+    // Loop-invariant code motion (hoist invariants out of loops)
+    add_licm_pass(mpm);
+
+    // Induction variable simplification
+    add_ind_var_simplify_pass(mpm);
+
+    // Loop rotation (for better analysis)
+    add_loop_rotate_pass(mpm);
+
+    // Loop deletion (remove empty/dead loops)
+    add_loop_deletion_pass(mpm);
+
+    if opt_level == BloodOptLevel::Aggressive {
+        // More aggressive loop opts for -O3 equivalent
+        add_loop_unroll_pass(mpm);
+    }
+
+    // === Phase 5: Interprocedural Optimizations ===
+    // These work across function boundaries
+
+    // Function inlining
+    add_function_inlining_pass(mpm);
+
+    // Global dead code elimination
+    add_global_dce_pass(mpm);
+
+    // Global optimizer (constant propagation across globals)
+    add_global_optimizer_pass(mpm);
+
+    // Constant merge (deduplicate global constants)
+    add_constant_merge_pass(mpm);
+
+    if opt_level == BloodOptLevel::Aggressive {
+        // Merge identical functions
+        add_merge_functions_pass(mpm);
+
+        // Tail call elimination
+        add_tail_call_elimination_pass(mpm);
+    }
+
+    // === Phase 6: Vectorization ===
+    // SLP and loop vectorization for SIMD
+
+    if opt_level == BloodOptLevel::Aggressive {
+        add_slp_vectorize_pass(mpm);
+        add_loop_vectorize_pass(mpm);
+    }
+
+    // === Phase 7: Final Cleanup ===
+    // Clean up after all transformations
+
+    // Another round of instruction combining
+    add_instruction_combining_pass(mpm);
+
+    // Final CFG simplification
+    add_cfg_simplification_pass(mpm);
+
+    // Jump threading
+    add_jump_threading_pass(mpm);
+
+    // Memcpy optimization
+    add_memcpy_optimize_pass(mpm);
+
+    // Strip dead prototypes
+    add_strip_dead_prototypes_pass(mpm);
+
+    // Run all passes on the module
+    run_pass_manager(mpm, module);
+
+    // Clean up pass manager
+    dispose_pass_manager(mpm);
+}
+
+// ============================================================================
+// Target Machine Setup
+// ============================================================================
+
+/// Get a target machine for the native platform with specified optimization level.
+///
+/// Initializes the native target and creates a target machine configured for
+/// the host CPU with appropriate features enabled.
+pub fn get_native_target_machine_with_opt(
+    opt_level: BloodOptLevel,
+) -> Result<LLVMTargetMachineRef, String> {
+    // Initialize native target and assembler
+    if !initialize_native_target() {
+        return Err("Failed to initialize native target".to_string());
+    }
+
+    if !initialize_native_asm_printer() {
+        return Err("Failed to initialize native ASM printer".to_string());
+    }
+
+    // Get the default target triple for this platform
+    let triple = get_default_target_triple();
+
+    // Look up the target
+    let target = get_target_from_triple(triple)?;
+
+    // Get host CPU name and features
+    let cpu = get_host_cpu_name();
+    let features = get_host_cpu_features();
+
+    // Create target machine with:
+    // - PIC mode for position-independent code (required for PIE executables)
+    // - Default code model
+    // - Specified optimization level
+    let machine = create_target_machine(
+        target,
+        triple,
+        cpu,
+        features,
+        opt_level.to_llvm_level(),
+        1,  // RelocMode::PIC
+        0,  // CodeModel::Default
+    );
+
+    if machine.is_null() {
+        return Err("Failed to create target machine".to_string());
+    }
+
+    Ok(machine)
+}
+
+/// Get a target machine for the native platform with default optimization.
+pub fn get_native_target_machine() -> Result<LLVMTargetMachineRef, String> {
+    get_native_target_machine_with_opt(BloodOptLevel::Default)
+}
+
+// ============================================================================
+// MIR Compilation Entry Points
+// ============================================================================
+
+/// Compile MIR bodies to an object file.
+///
+/// This is the primary MIR-based compilation path. It takes:
+/// - The HIR crate (for type declarations)
+/// - All MIR function bodies
+/// - Escape analysis results (for allocation strategy)
+/// - Inline handler bodies (for try/with blocks)
+///
+/// ## Compilation Passes
+///
+/// | Pass | Purpose |
+/// |------|---------|
+/// | 1. Type Declaration | Declare structs, enums, functions from HIR |
+/// | 2. Closure Declaration | Declare closure functions from MIR |
+/// | 3. MIR Compilation | Compile function bodies |
+/// | 4. Handler Operations | Compile effect handler bodies |
+/// | 5. Handler Registration | Register handlers with runtime |
+/// | 6. Verification | Verify LLVM module is valid |
+/// | 7. Optimization | Run LLVM optimization passes |
+/// | 8. Object Emission | Generate object file |
+pub fn compile_mir_to_object(
+    hir_crate: &Crate,
+    mir_bodies: &MirBodiesMap,
+    escape_analysis: &EscapeAnalysisMap,
+    inline_handler_bodies: &InlineHandlerBodies,
+    output_path: &str,
+) -> Result<(), Vec<Diagnostic>> {
+    compile_mir_to_object_with_opt(
+        hir_crate,
+        mir_bodies,
+        escape_analysis,
+        inline_handler_bodies,
+        output_path,
+        BloodOptLevel::Aggressive,
+    )
+}
+
+/// Compile MIR bodies to an object file with specified optimization level.
+pub fn compile_mir_to_object_with_opt(
+    hir_crate: &Crate,
+    mir_bodies: &MirBodiesMap,
+    escape_analysis: &EscapeAnalysisMap,
+    inline_handler_bodies: &InlineHandlerBodies,
+    output_path: &str,
+    opt_level: BloodOptLevel,
+) -> Result<(), Vec<Diagnostic>> {
+    // Create LLVM context, module, and builder
+    let llvm_context = create_context();
+    let module = create_module(llvm_context, "blood_program\0");
+    let builder = create_builder(llvm_context);
+
+    // Create codegen context
+    let mut ctx = CodegenContext::new(llvm_context, module, builder);
+    ctx.set_escape_analysis(escape_analysis.clone());
+    ctx.set_inline_handler_bodies(inline_handler_bodies.clone());
+
+    // Pass 1: Declare types and functions from HIR
+    // This sets up struct_defs, enum_defs, and function declarations
+    ctx.compile_crate_declarations(hir_crate)?;
+
+    // Store MIR bodies for generic functions (for on-demand monomorphization)
+    ctx.set_generic_mir_bodies(mir_bodies);
+
+    // Compile const and static items (global variables)
+    ctx.compile_const_items(hir_crate)?;
+    ctx.compile_static_items(hir_crate)?;
+
+    // Pass 2: Declare closure functions from MIR
+    // Closures have synthetic DefIds (>= 0xFFFF_0000) that aren't in HIR items
+    for (def_id, mir_body) in mir_bodies.iter() {
+        if def_id.index() >= 0xFFFF_0000 {
+            ctx.declare_closure_from_mir(*def_id, mir_body);
+        }
+    }
+
+    // Pass 3: Compile MIR function bodies
+    for (def_id, mir_body) in mir_bodies.iter() {
+        let escape_results = escape_analysis.get(def_id);
+        ctx.compile_mir_body(*def_id, mir_body, escape_results)?;
+    }
+
+    // Pass 4: Compile handler operation bodies (from HIR)
+    ctx.compile_handler_operations(hir_crate)?;
+
+    // Pass 5: Register handlers with runtime
+    ctx.register_handlers_with_runtime()?;
+
+    // Verify the module before optimization
+    let verify_result = verify_module(module);
+    if !verify_result.is_valid {
+        return Err(vec![Diagnostic::error(
+            format!("LLVM verification failed: {}", verify_result.message),
+            Span::dummy(),
+        )]);
+    }
+
+    // Run LLVM optimization passes
+    optimize_module(module, opt_level);
+
+    // Get target machine with specified optimization level
+    let target_machine = get_native_target_machine_with_opt(opt_level)
+        .map_err(|e| vec![Diagnostic::error(e, Span::dummy())])?;
+
+    // Write object file
+    let emit_result = target_machine_emit_to_file(
+        target_machine,
+        module,
+        output_path,
+        LLVMCodeGenFileType::Object,
+    );
+
+    if !emit_result.success {
+        return Err(vec![Diagnostic::error(
+            format!("Failed to write object file: {}", emit_result.message),
+            Span::dummy(),
+        )]);
+    }
+
+    // Clean up LLVM resources
+    dispose_target_machine(target_machine);
+    dispose_builder(builder);
+    dispose_module(module);
+    dispose_context(llvm_context);
+
+    Ok(())
+}
+
+/// Compile a single definition to an object file.
+///
+/// This enables per-definition incremental compilation:
+/// 1. Each definition gets its own LLVM module
+/// 2. Dependencies are declared as external symbols
+/// 3. The linker resolves symbols when combining object files
+///
+/// ## Use Cases
+///
+/// - Incremental compilation (only recompile changed definitions)
+/// - Parallel compilation (compile definitions in parallel)
+/// - Fine-grained caching (cache object files per definition)
+pub fn compile_definition_to_object(
+    def_id: DefId,
+    hir_crate: &Crate,
+    mir_body: Option<&MirBody>,
+    escape_results: Option<&EscapeResults>,
+    all_mir_bodies: Option<&MirBodiesMap>,
+    inline_handler_bodies: Option<&InlineHandlerBodies>,
+    output_path: &str,
+) -> Result<(), Vec<Diagnostic>> {
+    // Create LLVM context, module, and builder
+    let llvm_context = create_context();
+    let module_name = format!("blood_def_{}\0", def_id.index());
+    let module = create_module(llvm_context, &module_name);
+    let builder = create_builder(llvm_context);
+
+    // Create codegen context
+    let mut ctx = CodegenContext::new(llvm_context, module, builder);
+
+    // Set up escape analysis if provided
+    if let Some(results) = escape_results {
+        let mut escape_map = Map::new();
+        escape_map.insert(def_id, results.clone());
+        ctx.set_escape_analysis(escape_map);
+    }
+
+    // Set up inline handler bodies if provided
+    if let Some(handlers) = inline_handler_bodies {
+        ctx.set_inline_handler_bodies(handlers.clone());
+    }
+
+    // Declare all types and external functions from the crate
+    ctx.compile_crate_declarations(hir_crate)?;
+
+    // Store MIR bodies for generic functions (for on-demand monomorphization)
+    if let Some(mir_bodies) = all_mir_bodies {
+        ctx.set_generic_mir_bodies(mir_bodies);
+
+        // Declare closure functions from MIR bodies
+        for (closure_def_id, mir_body) in mir_bodies.iter() {
+            if closure_def_id.index() >= 0xFFFF_0000 {
+                ctx.declare_closure_from_mir(*closure_def_id, mir_body);
+            }
+        }
+    }
+
+    // Compile const and static items
+    ctx.compile_const_items(hir_crate)?;
+    ctx.compile_static_items(hir_crate)?;
+
+    // Compile the specific definition
+    if let Some(mir) = mir_body {
+        ctx.compile_mir_body(def_id, mir, escape_results)?;
+    } else if let Some(item) = hir_crate.items.get(&def_id) {
+        // Non-function items - handle based on kind
+        match &item.kind {
+            ItemKind::Handler { .. } => {
+                ctx.compile_handler_item(def_id, item, hir_crate)?;
+            }
+            ItemKind::Const { .. } | ItemKind::Static { .. } => {
+                // Already compiled above
+            }
+            _ => {
+                // Type declarations are already handled in compile_crate_declarations
+            }
+        }
+    }
+
+    // Verify the module
+    let verify_result = verify_module(module);
+    if !verify_result.is_valid {
+        return Err(vec![Diagnostic::error(
+            format!("LLVM verification failed for def {:?}: {}", def_id, verify_result.message),
+            Span::dummy(),
+        )]);
+    }
+
+    // Run LLVM optimization passes
+    optimize_module(module, BloodOptLevel::Aggressive);
+
+    // Get target machine with aggressive optimization
+    let target_machine = get_native_target_machine_with_opt(BloodOptLevel::Aggressive)
+        .map_err(|e| vec![Diagnostic::error(e, Span::dummy())])?;
+
+    // Write object file
+    let emit_result = target_machine_emit_to_file(
+        target_machine,
+        module,
+        output_path,
+        LLVMCodeGenFileType::Object,
+    );
+
+    if !emit_result.success {
+        return Err(vec![Diagnostic::error(
+            format!("Failed to write object file: {}", emit_result.message),
+            Span::dummy(),
+        )]);
+    }
+
+    // Clean up LLVM resources
+    dispose_target_machine(target_machine);
+    dispose_builder(builder);
+    dispose_module(module);
+    dispose_context(llvm_context);
+
+    Ok(())
+}
+
+/// Compile handler registration code to a separate object file.
+///
+/// This function generates a global constructor that registers all handlers
+/// with the runtime's effect registry. It must be called after all handler
+/// definitions have been compiled.
+pub fn compile_handler_registration_to_object(
+    hir_crate: &Crate,
+    output_path: &str,
+) -> Result<(), Vec<Diagnostic>> {
+    // Create LLVM context, module, and builder
+    let llvm_context = create_context();
+    let module = create_module(llvm_context, "blood_handler_registration\0");
+    let builder = create_builder(llvm_context);
+
+    // Create codegen context
+    let mut ctx = CodegenContext::new(llvm_context, module, builder);
+
+    // Declare all types and functions needed for handler registration
+    ctx.compile_crate_declarations(hir_crate)?;
+
+    // Generate the handler registration global constructor
+    ctx.register_handlers_with_runtime()?;
+
+    // Verify the module
+    let verify_result = verify_module(module);
+    if !verify_result.is_valid {
+        return Err(vec![Diagnostic::error(
+            format!("LLVM verification failed for handler registration: {}", verify_result.message),
+            Span::dummy(),
+        )]);
+    }
+
+    // Run LLVM optimization passes
+    optimize_module(module, BloodOptLevel::Aggressive);
+
+    // Get target machine with aggressive optimization
+    let target_machine = get_native_target_machine_with_opt(BloodOptLevel::Aggressive)
+        .map_err(|e| vec![Diagnostic::error(e, Span::dummy())])?;
+
+    // Write object file
+    let emit_result = target_machine_emit_to_file(
+        target_machine,
+        module,
+        output_path,
+        LLVMCodeGenFileType::Object,
+    );
+
+    if !emit_result.success {
+        return Err(vec![Diagnostic::error(
+            format!("Failed to write handler registration object: {}", emit_result.message),
+            Span::dummy(),
+        )]);
+    }
+
+    // Clean up LLVM resources
+    dispose_target_machine(target_machine);
+    dispose_builder(builder);
+    dispose_module(module);
+    dispose_context(llvm_context);
+
+    Ok(())
+}
+
+// ============================================================================
+// Batch Compilation
+// ============================================================================
+
+/// Compile multiple definitions to separate object files.
+///
+/// Returns a list of (DefId, object_path) pairs for successfully compiled definitions.
+pub fn compile_definitions_to_objects(
+    def_ids: &[DefId],
+    hir_crate: &Crate,
+    mir_bodies: &MirBodiesMap,
+    escape_analysis: &EscapeAnalysisMap,
+    inline_handler_bodies: Option<&InlineHandlerBodies>,
+    output_dir: &str,
+) -> Result<Vec<(DefId, String)>, Vec<Diagnostic>> {
+    let mut results = Vec::new();
+    let mut errors = Vec::new();
+
+    for def_id in def_ids.iter() {
+        let mir_body = mir_bodies.get(def_id);
+        let escape_results = escape_analysis.get(def_id);
+        let output_path = format!("{}/def_{}.o", output_dir, def_id.index());
+
+        match compile_definition_to_object(
+            *def_id,
+            hir_crate,
+            mir_body,
+            escape_results,
+            Some(mir_bodies),
+            inline_handler_bodies,
+            &output_path,
+        ) {
+            Ok(()) => {
+                results.push((*def_id, output_path));
+            }
+            Err(errs) => {
+                errors.extend(errs);
+            }
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(results)
+    } else {
+        Err(errors)
+    }
+}
+
+// ============================================================================
+// Linking
+// ============================================================================
+
+/// Link multiple object files into a single executable.
+///
+/// Uses the system linker (cc) to combine object files with the Blood runtime.
+///
+/// ## Linked Libraries
+///
+/// - Blood runtime library (memory management, effect system)
+/// - pthread (threading support)
+/// - dl (dynamic loading)
+/// - m (math functions)
+pub fn link_objects(
+    object_files: &[String],
+    runtime_lib: &str,
+    output_path: &str,
+) -> Result<(), String> {
+    use std::process::Command;
+
+    let mut cmd = Command::new("cc");
+
+    // Add all object files
+    for obj in object_files.iter() {
+        cmd.arg(obj);
+    }
+
+    // Link with runtime
+    cmd.arg(runtime_lib);
+
+    // Link with system libraries
+    cmd.arg("-lpthread");
+    cmd.arg("-ldl");
+    cmd.arg("-lm");
+
+    // Output path
+    cmd.arg("-o");
+    cmd.arg(output_path);
+
+    // PIE for ASLR (Address Space Layout Randomization)
+    cmd.arg("-pie");
+
+    let output = cmd.output()
+        .map_err(|e| format!("Failed to run linker: {}", e))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Linking failed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        ))
+    }
+}
+
+// ============================================================================
+// IR Generation (for debugging and testing)
+// ============================================================================
+
+/// Compile MIR bodies to LLVM IR text (optimized by default).
+///
+/// Useful for:
+/// - Debugging code generation issues
+/// - Inspecting generated IR
+/// - Testing optimization passes
+pub fn compile_mir_to_ir(
+    hir_crate: &Crate,
+    mir_bodies: &MirBodiesMap,
+    escape_analysis: &EscapeAnalysisMap,
+) -> Result<String, Vec<Diagnostic>> {
+    compile_mir_to_ir_with_opt(hir_crate, mir_bodies, escape_analysis, BloodOptLevel::Aggressive)
+}
+
+/// Compile MIR bodies to LLVM IR text with specified optimization level.
+pub fn compile_mir_to_ir_with_opt(
+    hir_crate: &Crate,
+    mir_bodies: &MirBodiesMap,
+    escape_analysis: &EscapeAnalysisMap,
+    opt_level: BloodOptLevel,
+) -> Result<String, Vec<Diagnostic>> {
+    // Create LLVM context, module, and builder
+    let llvm_context = create_context();
+    let module = create_module(llvm_context, "blood_program\0");
+    let builder = create_builder(llvm_context);
+
+    // Create codegen context
+    let mut ctx = CodegenContext::new(llvm_context, module, builder);
+    ctx.set_escape_analysis(escape_analysis.clone());
+
+    // Pass 1: Declare types and functions from HIR
+    ctx.compile_crate_declarations(hir_crate)?;
+
+    // Pass 2: Declare closure functions from MIR
+    for (def_id, mir_body) in mir_bodies.iter() {
+        if def_id.index() >= 0xFFFF_0000 {
+            ctx.declare_closure_from_mir(*def_id, mir_body);
+        }
+    }
+
+    // Pass 3: Compile MIR function bodies
+    for (def_id, mir_body) in mir_bodies.iter() {
+        let escape_results = escape_analysis.get(def_id);
+        ctx.compile_mir_body(*def_id, mir_body, escape_results)?;
+    }
+
+    // Pass 4: Compile handler operation bodies (from HIR)
+    ctx.compile_handler_operations(hir_crate)?;
+
+    // Pass 5: Register handlers with runtime
+    ctx.register_handlers_with_runtime()?;
+
+    // Run LLVM optimization passes
+    optimize_module(module, opt_level);
+
+    // Get IR string
+    let ir_string = print_module_to_string(module);
+
+    // Clean up LLVM resources
+    dispose_builder(builder);
+    dispose_module(module);
+    dispose_context(llvm_context);
+
+    Ok(ir_string)
+}
+
+// ============================================================================
+// Unoptimized IR (for debugging)
+// ============================================================================
+
+/// Compile MIR bodies to unoptimized LLVM IR text.
+///
+/// Useful for debugging when you want to see the raw generated IR
+/// before any optimization passes are applied.
+pub fn compile_mir_to_unoptimized_ir(
+    hir_crate: &Crate,
+    mir_bodies: &MirBodiesMap,
+    escape_analysis: &EscapeAnalysisMap,
+) -> Result<String, Vec<Diagnostic>> {
+    compile_mir_to_ir_with_opt(hir_crate, mir_bodies, escape_analysis, BloodOptLevel::None)
+}

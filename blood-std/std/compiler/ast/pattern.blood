@@ -1,0 +1,501 @@
+//! # AST Pattern Types
+//!
+//! Pattern definitions for the Blood AST.
+//!
+//! ## Overview
+//!
+//! Patterns are used for destructuring and matching in Blood:
+//! - Let bindings: `let (x, y) = point`
+//! - Match arms: `match opt { Some(v) => v, None => 0 }`
+//! - Function parameters: `fn foo((x, y): Point)`
+//! - If-let: `if let Some(v) = opt { ... }`
+//! - While-let: `while let Some(v) = iter.next() { ... }`
+//! - For loops: `for (key, value) in map { ... }`
+//!
+//! ## Pattern Forms
+//!
+//! | Form | Example | Description |
+//! |------|---------|-------------|
+//! | Wildcard | `_` | Matches anything, binds nothing |
+//! | Rest | `..` | Matches remaining elements |
+//! | Literal | `42`, `"hi"` | Matches exact value |
+//! | Identifier | `x`, `mut x` | Binds to variable |
+//! | Reference | `&x`, `&mut x` | Matches references |
+//! | Struct | `Point { x, y }` | Destructures struct |
+//! | Tuple struct | `Some(v)` | Destructures tuple struct/variant |
+//! | Tuple | `(a, b, c)` | Destructures tuple |
+//! | Slice | `[first, .., last]` | Destructures slice |
+//! | Or | `A \| B \| C` | Matches alternatives |
+//! | Range | `0..10` | Matches range of values |
+//! | Path | `None`, `Color::Red` | Matches unit variant |
+
+module std.compiler.ast.pattern
+
+use std.option.Option
+use std.collections.Vec
+use std.compiler.ast.node.Span
+use std.compiler.ast.node.Ident
+use std.compiler.ast.node.NodeId
+use std.compiler.ast.lit.Literal
+use std.compiler.ast.ty.TypePath
+
+// ============================================================================
+// Pattern
+// ============================================================================
+
+/// A pattern in the Blood AST.
+///
+/// Patterns are used for destructuring values and binding variables.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Pattern {
+    /// Unique node ID.
+    pub id: NodeId,
+    /// The pattern kind.
+    pub kind: PatternKind,
+    /// Span of the pattern.
+    pub span: Span,
+}
+
+impl Pattern {
+    /// Create a new pattern.
+    pub fn new(kind: PatternKind, span: Span) -> Pattern {
+        Pattern {
+            id: NodeId::dummy(),
+            kind,
+            span,
+        }
+    }
+
+    /// Create a wildcard pattern `_`.
+    pub fn wildcard(span: Span) -> Pattern {
+        Pattern::new(PatternKind::Wildcard, span)
+    }
+
+    /// Create a rest pattern `..`.
+    pub fn rest(span: Span) -> Pattern {
+        Pattern::new(PatternKind::Rest, span)
+    }
+
+    /// Create a simple identifier pattern.
+    pub fn ident(name: Ident, span: Span) -> Pattern {
+        Pattern::new(
+            PatternKind::Ident {
+                by_ref: false,
+                mutable: false,
+                name,
+                subpattern: Option::None,
+            },
+            span,
+        )
+    }
+
+    /// Check if this is a wildcard pattern.
+    pub fn is_wildcard(self) -> Bool {
+        match self.kind {
+            PatternKind::Wildcard => true,
+            _ => false,
+        }
+    }
+
+    /// Check if this is a rest pattern.
+    pub fn is_rest(self) -> Bool {
+        match self.kind {
+            PatternKind::Rest => true,
+            _ => false,
+        }
+    }
+
+    /// Check if this pattern is irrefutable (always matches).
+    ///
+    /// Irrefutable patterns can be used in let bindings without
+    /// requiring a refutable pattern context (match, if-let, etc.).
+    pub fn is_irrefutable(self) -> Bool {
+        match self.kind {
+            PatternKind::Wildcard => true,
+            PatternKind::Rest => true,
+            PatternKind::Ident { ref subpattern, .. } => {
+                match subpattern {
+                    Option::Some(sub) => sub.is_irrefutable(),
+                    Option::None => true,
+                }
+            }
+            PatternKind::Ref { ref inner, .. } => inner.is_irrefutable(),
+            PatternKind::Tuple { ref fields, .. } => {
+                fields.iter().all(|p| p.is_irrefutable())
+            }
+            PatternKind::Paren(ref inner) => inner.is_irrefutable(),
+            // All other patterns are potentially refutable
+            _ => false,
+        }
+    }
+
+    /// Check if this pattern binds any variables.
+    pub fn binds_variables(self) -> Bool {
+        match self.kind {
+            PatternKind::Wildcard => false,
+            PatternKind::Rest => false,
+            PatternKind::Literal(_) => false,
+            PatternKind::Ident { .. } => true,
+            PatternKind::Ref { ref inner, .. } => inner.binds_variables(),
+            PatternKind::Struct { ref fields, .. } => {
+                fields.iter().any(|f| {
+                    match f.pattern {
+                        Option::Some(ref p) => p.binds_variables(),
+                        Option::None => true, // Shorthand binds the field name
+                    }
+                })
+            }
+            PatternKind::TupleStruct { ref fields, .. } => {
+                fields.iter().any(|p| p.binds_variables())
+            }
+            PatternKind::Tuple { ref fields, .. } => {
+                fields.iter().any(|p| p.binds_variables())
+            }
+            PatternKind::Slice { ref elements, .. } => {
+                elements.iter().any(|p| p.binds_variables())
+            }
+            PatternKind::Or(ref patterns) => {
+                patterns.iter().any(|p| p.binds_variables())
+            }
+            PatternKind::Range { .. } => false,
+            PatternKind::Path(_) => false,
+            PatternKind::Paren(ref inner) => inner.binds_variables(),
+        }
+    }
+}
+
+// ============================================================================
+// Pattern Kind
+// ============================================================================
+
+/// The kind of pattern.
+#[derive(Clone, PartialEq, Eq)]
+pub enum PatternKind {
+    /// Wildcard: `_`
+    Wildcard,
+
+    /// Rest: `..`
+    Rest,
+
+    /// Literal: `42`, `"hello"`, `true`
+    Literal(Literal),
+
+    /// Identifier: `x`, `ref x`, `mut x`, `x @ pat`
+    Ident {
+        /// Bind by reference.
+        by_ref: Bool,
+        /// Mutable binding.
+        mutable: Bool,
+        /// Variable name.
+        name: Ident,
+        /// Optional subpattern for `@` binding.
+        subpattern: Option[Box[Pattern]],
+    },
+
+    /// Reference pattern: `&x`, `&mut x`
+    Ref {
+        /// Mutable reference.
+        mutable: Bool,
+        /// Inner pattern.
+        inner: Box[Pattern],
+    },
+
+    /// Struct pattern: `Point { x, y: 0 }`, `Point { x, .. }`
+    Struct {
+        /// The struct path.
+        path: TypePath,
+        /// Field patterns.
+        fields: Vec[StructPatternField],
+        /// Has rest pattern `..`.
+        rest: Bool,
+    },
+
+    /// Tuple struct pattern: `Some(x)`, `Ok(v)`
+    TupleStruct {
+        /// The constructor path.
+        path: TypePath,
+        /// Field patterns.
+        fields: Vec[Pattern],
+        /// Position of rest pattern `..` if present.
+        rest_pos: Option[USize],
+    },
+
+    /// Tuple pattern: `(x, y)`, `(a, .., z)`
+    Tuple {
+        /// Element patterns.
+        fields: Vec[Pattern],
+        /// Position of rest pattern `..` if present.
+        rest_pos: Option[USize],
+    },
+
+    /// Slice pattern: `[first, .., last]`, `[a, b, c]`
+    Slice {
+        /// Element patterns.
+        elements: Vec[Pattern],
+        /// Position of rest pattern `..` if present.
+        rest_pos: Option[USize],
+    },
+
+    /// Or pattern: `A | B | C`
+    Or(Vec[Pattern]),
+
+    /// Range pattern: `0..10`, `'a'..='z'`
+    Range {
+        /// Start of range (None for open start).
+        start: Option[Box[Pattern]],
+        /// End of range (None for open end).
+        end: Option[Box[Pattern]],
+        /// Is the range inclusive (`..=`)?
+        inclusive: Bool,
+    },
+
+    /// Path pattern: `None`, `Color::Red`
+    Path(TypePath),
+
+    /// Parenthesized: `(pat)`
+    Paren(Box[Pattern]),
+}
+
+// ============================================================================
+// Struct Pattern Field
+// ============================================================================
+
+/// A field in a struct pattern.
+///
+/// ## Example
+///
+/// ```blood
+/// match point {
+///     Point { x, y: 0 } => ...      // y has explicit pattern
+///     Point { x, y } => ...         // shorthand
+///     Point { x, .. } => ...        // rest
+/// }
+/// ```
+#[derive(Clone, PartialEq, Eq)]
+pub struct StructPatternField {
+    /// Field name.
+    pub name: Ident,
+    /// Optional explicit pattern (None for shorthand `{ x }` meaning `{ x: x }`).
+    pub pattern: Option[Pattern],
+    /// Span of the field.
+    pub span: Span,
+}
+
+impl StructPatternField {
+    /// Check if this uses shorthand syntax.
+    pub fn is_shorthand(self) -> Bool {
+        self.pattern.is_none()
+    }
+}
+
+// ============================================================================
+// Pattern Helpers
+// ============================================================================
+
+/// Collect all identifiers bound by a pattern.
+pub fn collect_bindings(pattern: &Pattern) -> Vec[Ident] {
+    let mut bindings = Vec::new()
+    collect_bindings_inner(pattern, &mut bindings)
+    bindings
+}
+
+fn collect_bindings_inner(pattern: &Pattern, bindings: &mut Vec[Ident]) {
+    match pattern.kind {
+        PatternKind::Wildcard => {}
+        PatternKind::Rest => {}
+        PatternKind::Literal(_) => {}
+
+        PatternKind::Ident { ref name, ref subpattern, .. } => {
+            bindings.push(name.clone())
+            if let Option::Some(ref sub) = subpattern {
+                collect_bindings_inner(sub, bindings)
+            }
+        }
+
+        PatternKind::Ref { ref inner, .. } => {
+            collect_bindings_inner(inner, bindings)
+        }
+
+        PatternKind::Struct { ref fields, .. } => {
+            for field in fields.iter() {
+                match field.pattern {
+                    Option::Some(ref p) => collect_bindings_inner(p, bindings),
+                    Option::None => bindings.push(field.name.clone()), // Shorthand
+                }
+            }
+        }
+
+        PatternKind::TupleStruct { ref fields, .. } => {
+            for field in fields.iter() {
+                collect_bindings_inner(field, bindings)
+            }
+        }
+
+        PatternKind::Tuple { ref fields, .. } => {
+            for field in fields.iter() {
+                collect_bindings_inner(field, bindings)
+            }
+        }
+
+        PatternKind::Slice { ref elements, .. } => {
+            for element in elements.iter() {
+                collect_bindings_inner(element, bindings)
+            }
+        }
+
+        PatternKind::Or(ref patterns) => {
+            // Or patterns must bind the same variables in all branches
+            // We only collect from the first branch
+            if let Option::Some(first) = patterns.first() {
+                collect_bindings_inner(first, bindings)
+            }
+        }
+
+        PatternKind::Range { .. } => {}
+        PatternKind::Path(_) => {}
+
+        PatternKind::Paren(ref inner) => {
+            collect_bindings_inner(inner, bindings)
+        }
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[test]
+fn test_pattern_wildcard() {
+    let pat = Pattern::wildcard(Span::dummy())
+    assert(pat.is_wildcard())
+    assert(pat.is_irrefutable())
+    assert(!pat.binds_variables())
+}
+
+#[test]
+fn test_pattern_rest() {
+    let pat = Pattern::rest(Span::dummy())
+    assert(pat.is_rest())
+    assert(pat.is_irrefutable())
+}
+
+#[test]
+fn test_pattern_ident() {
+    let name = Ident::dummy()
+    let pat = Pattern::ident(name, Span::dummy())
+
+    assert(pat.is_irrefutable())
+    assert(pat.binds_variables())
+}
+
+#[test]
+fn test_pattern_ident_with_subpattern() {
+    let name = Ident::dummy()
+    let sub = Pattern::wildcard(Span::dummy())
+    let pat = Pattern::new(
+        PatternKind::Ident {
+            by_ref: false,
+            mutable: false,
+            name,
+            subpattern: Option::Some(Box::new(sub)),
+        },
+        Span::dummy(),
+    )
+
+    assert(pat.is_irrefutable())
+    assert(pat.binds_variables())
+}
+
+#[test]
+fn test_pattern_literal_refutable() {
+    let lit = Literal::int(42, Span::dummy())
+    let pat = Pattern::new(PatternKind::Literal(lit), Span::dummy())
+
+    assert(!pat.is_irrefutable())
+    assert(!pat.binds_variables())
+}
+
+#[test]
+fn test_pattern_tuple_irrefutable() {
+    let a = Pattern::ident(Ident::dummy(), Span::dummy())
+    let b = Pattern::wildcard(Span::dummy())
+    let pat = Pattern::new(
+        PatternKind::Tuple {
+            fields: vec![a, b],
+            rest_pos: Option::None,
+        },
+        Span::dummy(),
+    )
+
+    assert(pat.is_irrefutable())
+    assert(pat.binds_variables())
+}
+
+#[test]
+fn test_pattern_or_refutable() {
+    let a = Pattern::new(PatternKind::Literal(Literal::int(1, Span::dummy())), Span::dummy())
+    let b = Pattern::new(PatternKind::Literal(Literal::int(2, Span::dummy())), Span::dummy())
+    let pat = Pattern::new(PatternKind::Or(vec![a, b]), Span::dummy())
+
+    assert(!pat.is_irrefutable())
+}
+
+#[test]
+fn test_struct_pattern_field_shorthand() {
+    let shorthand = StructPatternField {
+        name: Ident::dummy(),
+        pattern: Option::None,
+        span: Span::dummy(),
+    }
+    assert(shorthand.is_shorthand())
+
+    let explicit = StructPatternField {
+        name: Ident::dummy(),
+        pattern: Option::Some(Pattern::wildcard(Span::dummy())),
+        span: Span::dummy(),
+    }
+    assert(!explicit.is_shorthand())
+}
+
+#[test]
+fn test_collect_bindings_simple() {
+    let name = Ident::new_for_test("x")
+    let pat = Pattern::ident(name, Span::dummy())
+
+    let bindings = collect_bindings(&pat)
+    assert(bindings.len() == 1)
+}
+
+#[test]
+fn test_collect_bindings_tuple() {
+    let a = Pattern::ident(Ident::new_for_test("a"), Span::dummy())
+    let b = Pattern::ident(Ident::new_for_test("b"), Span::dummy())
+    let c = Pattern::wildcard(Span::dummy())
+    let pat = Pattern::new(
+        PatternKind::Tuple {
+            fields: vec![a, b, c],
+            rest_pos: Option::None,
+        },
+        Span::dummy(),
+    )
+
+    let bindings = collect_bindings(&pat)
+    assert(bindings.len() == 2) // a and b, not wildcard
+}
+
+#[test]
+fn test_collect_bindings_nested() {
+    let inner = Pattern::ident(Ident::new_for_test("inner"), Span::dummy())
+    let outer = Pattern::new(
+        PatternKind::Ident {
+            by_ref: false,
+            mutable: false,
+            name: Ident::new_for_test("outer"),
+            subpattern: Option::Some(Box::new(inner)),
+        },
+        Span::dummy(),
+    )
+
+    let bindings = collect_bindings(&outer)
+    assert(bindings.len() == 2) // outer and inner
+}

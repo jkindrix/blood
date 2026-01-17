@@ -1,0 +1,628 @@
+//! # String Arena with Interning
+//!
+//! An arena allocator specialized for strings with automatic deduplication.
+//!
+//! ## Overview
+//!
+//! StringArena provides:
+//! - Efficient string allocation with bump allocation
+//! - String interning for automatic deduplication
+//! - All strings share the arena's lifetime
+//!
+//! ## String Interning
+//!
+//! String interning ensures that identical strings are stored only once.
+//! When you allocate the same string twice, you get the same reference:
+//!
+//! ```blood
+//! let arena = StringArena::new()
+//! let a = arena.alloc("hello")
+//! let b = arena.alloc("hello")
+//!
+//! // a and b point to the same memory!
+//! assert(ptr::eq(a, b))
+//! ```
+//!
+//! ## Benefits
+//!
+//! - **Memory efficiency**: Duplicate strings stored once
+//! - **Fast comparison**: Interned strings can be compared by address
+//! - **Cache-friendly**: Contiguous memory layout
+//!
+//! ## Use Cases
+//!
+//! - Identifier storage in symbol tables
+//! - String literals in AST
+//! - Error messages and diagnostics
+//! - Module paths and file names
+
+module std.compiler.arena.string
+
+use std.option.Option
+use std.collections.Vec
+use std.collections.HashMap
+use std.hash.Hash
+use std.ptr.RawPtr
+use std.compiler.arena.chunk.Chunk
+use std.compiler.arena.chunk.DEFAULT_CHUNK_SIZE
+use std.compiler.arena.chunk.align_up
+use std.compiler.arena.stats.ArenaStats
+
+// ============================================================================
+// StringArena
+// ============================================================================
+
+/// A string arena with interning support.
+///
+/// StringArena allocates strings in contiguous memory and provides automatic
+/// deduplication through interning. Equal strings return the same reference.
+///
+/// ## Memory Layout
+///
+/// ```text
+/// StringArena
+/// ├── chunks: Vec[Chunk]
+/// │   ├── Chunk 0: "hello\0world\0foo\0..."
+/// │   ├── Chunk 1: "bar\0baz\0..."
+/// │   └── ...
+/// └── interned: HashMap[&str, &str]
+///     "hello" → ptr to "hello" in chunk 0
+///     "world" → ptr to "world" in chunk 0
+///     ...
+/// ```
+///
+/// ## Thread Safety
+///
+/// StringArena is NOT thread-safe. For concurrent access, use external
+/// synchronization or per-thread arenas.
+///
+/// ## Example
+///
+/// ```blood
+/// let arena = StringArena::new()
+///
+/// // Allocate strings
+/// let greeting = arena.alloc("hello")
+/// let name = arena.alloc("world")
+///
+/// // Interning: same content returns same reference
+/// let greeting2 = arena.alloc("hello")
+/// assert(greeting == greeting2)  // Same pointer!
+///
+/// // All strings freed when arena drops
+/// ```
+pub struct StringArena {
+    /// Memory chunks storing string data.
+    chunks: Vec[Chunk],
+
+    /// Interning map for deduplication.
+    /// Maps string content to its arena-allocated location.
+    interned: HashMap[String, &str],
+}
+
+impl StringArena {
+    /// Create a new empty string arena.
+    ///
+    /// The arena lazily allocates its first chunk on the first allocation.
+    ///
+    /// ## Example
+    ///
+    /// ```blood
+    /// let arena = StringArena::new()
+    /// assert(arena.is_empty())
+    /// ```
+    pub fn new() -> StringArena {
+        StringArena {
+            chunks: Vec::new(),
+            interned: HashMap::new(),
+        }
+    }
+
+    /// Create a new arena with pre-allocated capacity.
+    ///
+    /// ## Arguments
+    ///
+    /// * `byte_capacity` - Number of bytes to pre-allocate
+    ///
+    /// ## Example
+    ///
+    /// ```blood
+    /// // Pre-allocate 64KB for strings
+    /// let arena = StringArena::with_capacity(64 * 1024)
+    /// ```
+    pub fn with_capacity(byte_capacity: USize) -> StringArena {
+        let chunk_size = byte_capacity.max(DEFAULT_CHUNK_SIZE)
+
+        let mut arena = StringArena {
+            chunks: Vec::with_capacity(1),
+            interned: HashMap::new(),
+        }
+
+        arena.chunks.push(Chunk::new(chunk_size))
+        arena
+    }
+
+    /// Allocate and intern a string.
+    ///
+    /// If the string has been allocated before, returns the existing
+    /// reference. Otherwise, allocates new storage and interns the string.
+    ///
+    /// ## Arguments
+    ///
+    /// * `s` - The string to allocate/intern
+    ///
+    /// ## Returns
+    ///
+    /// A reference to the interned string.
+    ///
+    /// ## Example
+    ///
+    /// ```blood
+    /// let arena = StringArena::new()
+    ///
+    /// let a = arena.alloc("hello")
+    /// let b = arena.alloc("hello")
+    ///
+    /// // Same string returns same pointer
+    /// assert(ptr::eq(a.as_ptr(), b.as_ptr()))
+    /// ```
+    pub fn alloc(mut self, s: &str) -> &str {
+        // Check if already interned
+        if let Option::Some(existing) = self.interned.get(s) {
+            return *existing
+        }
+
+        // Allocate new string
+        let allocated = self.alloc_raw(s)
+
+        // Store in intern map
+        self.interned.insert(s.to_string(), allocated)
+
+        allocated
+    }
+
+    /// Allocate a string without interning.
+    ///
+    /// This bypasses the interning mechanism and always allocates
+    /// new storage. Use this when you know the string is unique.
+    ///
+    /// ## Arguments
+    ///
+    /// * `s` - The string to allocate
+    ///
+    /// ## Returns
+    ///
+    /// A reference to the allocated string.
+    ///
+    /// ## Example
+    ///
+    /// ```blood
+    /// let arena = StringArena::new()
+    ///
+    /// // These are different allocations even with same content
+    /// let a = arena.alloc_unique("test")
+    /// let b = arena.alloc_unique("test")
+    ///
+    /// assert(!ptr::eq(a.as_ptr(), b.as_ptr()))
+    /// ```
+    pub fn alloc_unique(mut self, s: &str) -> &str {
+        self.alloc_raw(s)
+    }
+
+    /// Allocate a string from owned String.
+    ///
+    /// Takes ownership and interns the string.
+    ///
+    /// ## Example
+    ///
+    /// ```blood
+    /// let arena = StringArena::new()
+    /// let owned = "hello".to_string()
+    /// let interned = arena.alloc_string(owned)
+    /// ```
+    pub fn alloc_string(mut self, s: String) -> &str {
+        self.alloc(s.as_str())
+    }
+
+    /// Check if a string is already interned.
+    ///
+    /// ## Example
+    ///
+    /// ```blood
+    /// let arena = StringArena::new()
+    /// let _ = arena.alloc("hello")
+    ///
+    /// assert(arena.contains("hello"))
+    /// assert(!arena.contains("world"))
+    /// ```
+    pub fn contains(self, s: &str) -> Bool {
+        self.interned.contains_key(s)
+    }
+
+    /// Get an existing interned string, if present.
+    ///
+    /// Returns `None` if the string hasn't been allocated yet.
+    ///
+    /// ## Example
+    ///
+    /// ```blood
+    /// let arena = StringArena::new()
+    /// let _ = arena.alloc("hello")
+    ///
+    /// match arena.get("hello") {
+    ///     Option::Some(s) => assert(s == "hello"),
+    ///     Option::None => panic("expected string to exist"),
+    /// }
+    /// ```
+    pub fn get(self, s: &str) -> Option[&str] {
+        self.interned.get(s).copied()
+    }
+
+    /// Get the number of interned strings.
+    pub fn len(self) -> USize {
+        self.interned.len()
+    }
+
+    /// Check if the arena is empty.
+    pub fn is_empty(self) -> Bool {
+        self.interned.is_empty()
+    }
+
+    /// Get statistics about arena usage.
+    ///
+    /// ## Example
+    ///
+    /// ```blood
+    /// let arena = StringArena::new()
+    /// let _ = arena.alloc("hello")
+    /// let _ = arena.alloc("world")
+    ///
+    /// let stats = arena.stats()
+    /// println("Interned {} strings using {} bytes",
+    ///     stats.num_items, stats.total_used)
+    /// ```
+    pub fn stats(self) -> ArenaStats {
+        let num_chunks = self.chunks.len()
+        let mut total_capacity: USize = 0
+        let mut total_used: USize = 0
+
+        for chunk in self.chunks.iter() {
+            total_capacity = total_capacity + chunk.capacity()
+            total_used = total_used + chunk.offset()
+        }
+
+        ArenaStats {
+            num_chunks,
+            total_capacity,
+            total_used,
+            num_items: self.interned.len(),
+        }
+    }
+
+    /// Iterate over all interned strings.
+    ///
+    /// ## Example
+    ///
+    /// ```blood
+    /// let arena = StringArena::new()
+    /// let _ = arena.alloc("foo")
+    /// let _ = arena.alloc("bar")
+    ///
+    /// for s in arena.iter() {
+    ///     println("Interned: {}", s)
+    /// }
+    /// ```
+    pub fn iter(self) -> impl Iterator[Item = &str] {
+        self.interned.values().copied()
+    }
+
+    /// Clear all strings and reset the arena.
+    ///
+    /// After calling clear(), all previously allocated string references
+    /// become invalid.
+    ///
+    /// ## Safety
+    ///
+    /// All references to arena-allocated strings become invalid.
+    ///
+    /// ## Example
+    ///
+    /// ```blood
+    /// let mut arena = StringArena::new()
+    /// let _ = arena.alloc("hello")
+    ///
+    /// unsafe {
+    ///     arena.clear()
+    /// }
+    ///
+    /// assert(arena.is_empty())
+    /// ```
+    pub unsafe fn clear(mut self) {
+        for chunk in self.chunks.iter_mut() {
+            chunk.reset()
+        }
+        self.interned.clear()
+    }
+
+    // ========================================================================
+    // Private Methods
+    // ========================================================================
+
+    /// Allocate a string without interning.
+    fn alloc_raw(mut self, s: &str) -> &str {
+        let len = s.len()
+
+        // Handle empty string specially
+        if len == 0 {
+            return ""
+        }
+
+        // Try to allocate in the current chunk
+        let ptr = self.alloc_bytes(len)
+
+        // Copy the string data
+        unsafe {
+            __builtin_memcpy(ptr, s.as_ptr(), len)
+        }
+
+        // Create a string reference from the allocated memory
+        unsafe {
+            __builtin_str_from_raw_parts(ptr, len)
+        }
+    }
+
+    /// Allocate raw bytes.
+    fn alloc_bytes(mut self, len: USize) -> RawPtr[U8] {
+        // Try current chunk first
+        if let Some(chunk) = self.chunks.last_mut() {
+            if let Option::Some(ptr) = chunk.try_alloc(len, 1) {
+                return ptr
+            }
+        }
+
+        // Need a new chunk
+        let chunk_size = len.max(DEFAULT_CHUNK_SIZE)
+        let mut new_chunk = Chunk::new(chunk_size)
+
+        let ptr = new_chunk.try_alloc(len, 1)
+            .expect("BUG: fresh chunk must have space")
+
+        self.chunks.push(new_chunk)
+        ptr
+    }
+}
+
+impl Default for StringArena {
+    fn default() -> StringArena {
+        StringArena::new()
+    }
+}
+
+impl Drop for StringArena {
+    fn drop(mut self) {
+        // Chunks are automatically dropped when Vec drops
+        // HashMap is also automatically dropped
+    }
+}
+
+// ============================================================================
+// SymbolArena
+// ============================================================================
+
+/// A specialized arena for compiler symbols (identifiers).
+///
+/// SymbolArena is an alias for StringArena with additional methods
+/// optimized for identifier handling in symbol tables.
+///
+/// ## Use Cases
+///
+/// - Variable names in scope
+/// - Function names
+/// - Type names
+/// - Module paths
+///
+/// ## Example
+///
+/// ```blood
+/// let symbols = SymbolArena::new()
+///
+/// let fn_name = symbols.intern_symbol("main")
+/// let var_name = symbols.intern_symbol("x")
+///
+/// // Fast comparison by pointer
+/// let fn_name2 = symbols.intern_symbol("main")
+/// assert(ptr::eq(fn_name.as_ptr(), fn_name2.as_ptr()))
+/// ```
+pub type SymbolArena = StringArena
+
+impl SymbolArena {
+    /// Intern a symbol (identifier).
+    ///
+    /// This is an alias for `alloc` with semantic meaning for symbols.
+    pub fn intern_symbol(mut self, name: &str) -> &str {
+        self.alloc(name)
+    }
+
+    /// Intern a symbol, creating a new copy if a symbol with the same
+    /// name already exists but is logically different (e.g., in a
+    /// different namespace).
+    ///
+    /// This is useful for keeping symbols from different namespaces
+    /// separate even if they have the same name.
+    pub fn intern_symbol_unique(mut self, name: &str) -> &str {
+        self.alloc_unique(name)
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[test]
+fn test_string_arena_new() {
+    let arena = StringArena::new()
+
+    assert(arena.is_empty())
+    assert(arena.len() == 0)
+}
+
+#[test]
+fn test_string_arena_alloc() {
+    let arena = StringArena::new()
+
+    let s = arena.alloc("hello")
+
+    assert(s == "hello")
+    assert(!arena.is_empty())
+    assert(arena.len() == 1)
+}
+
+#[test]
+fn test_string_arena_interning() {
+    let arena = StringArena::new()
+
+    let a = arena.alloc("hello")
+    let b = arena.alloc("hello")
+    let c = arena.alloc("world")
+
+    // Same content returns same pointer
+    assert(a.as_ptr() == b.as_ptr())
+
+    // Different content returns different pointer
+    assert(a.as_ptr() != c.as_ptr())
+
+    // Only 2 unique strings
+    assert(arena.len() == 2)
+}
+
+#[test]
+fn test_string_arena_unique() {
+    let arena = StringArena::new()
+
+    let a = arena.alloc_unique("test")
+    let b = arena.alloc_unique("test")
+
+    // Unique allocation - different pointers
+    assert(a.as_ptr() != b.as_ptr())
+}
+
+#[test]
+fn test_string_arena_contains() {
+    let arena = StringArena::new()
+
+    let _ = arena.alloc("hello")
+
+    assert(arena.contains("hello"))
+    assert(!arena.contains("world"))
+}
+
+#[test]
+fn test_string_arena_get() {
+    let arena = StringArena::new()
+
+    let _ = arena.alloc("hello")
+
+    match arena.get("hello") {
+        Option::Some(s) => assert(s == "hello"),
+        Option::None => panic("expected string to be found"),
+    }
+
+    match arena.get("world") {
+        Option::Some(_) => panic("expected string not to be found"),
+        Option::None => { /* expected */ },
+    }
+}
+
+#[test]
+fn test_string_arena_stats() {
+    let arena = StringArena::new()
+
+    let _ = arena.alloc("hello")
+    let _ = arena.alloc("world")
+    let _ = arena.alloc("hello")  // Interned, not new allocation
+
+    let stats = arena.stats()
+
+    assert(stats.num_items == 2)
+    assert(stats.total_used >= 10)  // "hello" + "world" = 10 bytes
+}
+
+#[test]
+fn test_string_arena_clear() {
+    let mut arena = StringArena::new()
+
+    let _ = arena.alloc("hello")
+    let _ = arena.alloc("world")
+
+    unsafe {
+        arena.clear()
+    }
+
+    assert(arena.is_empty())
+    assert(arena.len() == 0)
+}
+
+#[test]
+fn test_string_arena_many_strings() {
+    let arena = StringArena::new()
+    let mut strings: Vec[&str] = Vec::new()
+
+    for i in 0..1000 {
+        let s = format!("string_{}", i)
+        strings.push(arena.alloc(s.as_str()))
+    }
+
+    // Verify all strings
+    for i in 0..1000 {
+        let expected = format!("string_{}", i)
+        assert(strings[i] == expected.as_str())
+    }
+
+    // Verify interning
+    for i in 0..1000 {
+        let s = format!("string_{}", i)
+        let interned = arena.get(s.as_str())
+        assert(interned.is_some())
+        assert(interned.unwrap().as_ptr() == strings[i].as_ptr())
+    }
+}
+
+#[test]
+fn test_string_arena_empty_string() {
+    let arena = StringArena::new()
+
+    let empty1 = arena.alloc("")
+    let empty2 = arena.alloc("")
+
+    assert(empty1 == "")
+    assert(empty2 == "")
+    assert(empty1.len() == 0)
+}
+
+#[test]
+fn test_string_arena_unicode() {
+    let arena = StringArena::new()
+
+    let s1 = arena.alloc("hello")
+    let s2 = arena.alloc("こんにちは")  // Japanese
+    let s3 = arena.alloc("🎉🚀")  // Emoji
+
+    assert(s1 == "hello")
+    assert(s2 == "こんにちは")
+    assert(s3 == "🎉🚀")
+}
+
+#[test]
+fn test_symbol_arena() {
+    let symbols: SymbolArena = SymbolArena::new()
+
+    let main = symbols.intern_symbol("main")
+    let foo = symbols.intern_symbol("foo")
+    let main2 = symbols.intern_symbol("main")
+
+    // Same symbol returns same pointer
+    assert(main.as_ptr() == main2.as_ptr())
+
+    // Different symbols have different pointers
+    assert(main.as_ptr() != foo.as_ptr())
+}

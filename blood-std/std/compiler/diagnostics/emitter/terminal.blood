@@ -1,0 +1,661 @@
+//! # Terminal Emitter
+//!
+//! Emits diagnostics with ANSI color codes for terminal display.
+//!
+//! ## Example Output
+//!
+//! ```text
+//! error[E0308]: type mismatch
+//!   --> src/main.blood:10:12
+//!    |
+//! 10 |     let x: Int = "hello"
+//!    |            ---   ^^^^^^^ expected `Int`, found `String`
+//!    |            |
+//!    |            expected due to this
+//!    |
+//! help: consider using `parse` to convert the string
+//!    |
+//! 10 |     let x: Int = "hello".parse()
+//!    |                         ++++++++
+//! ```
+
+module std.compiler.diagnostics.emitter.terminal
+
+use std.collections.Vec
+use std.option.Option
+use std.io.Writer
+use std.io.Stdout
+use std.compiler.diagnostics.diagnostic.Diagnostic
+use std.compiler.diagnostics.severity.Severity
+use std.compiler.diagnostics.severity.AnsiColor
+use std.compiler.diagnostics.code.ErrorCode
+use std.compiler.diagnostics.label.Label
+use std.compiler.diagnostics.label.LabelKind
+use std.compiler.diagnostics.label.LabelCollection
+use std.compiler.diagnostics.suggestion.Suggestion
+use std.compiler.diagnostics.suggestion.Substitution
+use std.compiler.diagnostics.suggestion.Help
+use std.compiler.diagnostics.span.Span
+use std.compiler.diagnostics.span.FileId
+use std.compiler.diagnostics.renderer.source.SourceFile
+use std.compiler.diagnostics.renderer.source.SourceMap
+use std.compiler.diagnostics.renderer.snippet.Snippet
+use std.compiler.diagnostics.renderer.snippet.SnippetBuilder
+use std.compiler.diagnostics.renderer.snippet.SnippetConfig
+use std.compiler.diagnostics.renderer.snippet.SnippetLine
+use std.compiler.diagnostics.renderer.snippet.expand_tabs
+use std.compiler.diagnostics.renderer.snippet.pad_number
+use std.compiler.diagnostics.emitter.config.EmitterConfig
+use std.compiler.diagnostics.emitter.config.ColorConfig
+
+// ============================================================================
+// Terminal Emitter
+// ============================================================================
+
+/// Emits diagnostics with ANSI color codes.
+///
+/// This is the primary emitter for interactive terminal use.
+pub struct TerminalEmitter {
+    /// Emitter configuration.
+    config: EmitterConfig,
+
+    /// Source map for looking up file contents.
+    source_map: SourceMap,
+
+    /// Number of errors emitted.
+    error_count: U32,
+
+    /// Number of warnings emitted.
+    warning_count: U32,
+}
+
+impl TerminalEmitter {
+    /// Create a new terminal emitter with default configuration.
+    pub fn new(source_map: SourceMap) -> TerminalEmitter {
+        TerminalEmitter {
+            config: EmitterConfig::default(),
+            source_map,
+            error_count: 0,
+            warning_count: 0,
+        }
+    }
+
+    /// Create a terminal emitter with custom configuration.
+    pub fn with_config(config: EmitterConfig, source_map: SourceMap) -> TerminalEmitter {
+        TerminalEmitter {
+            config,
+            source_map,
+            error_count: 0,
+            warning_count: 0,
+        }
+    }
+
+    /// Emit a single diagnostic.
+    pub fn emit(mut self, diagnostic: Diagnostic) -> String {
+        let mut output = String::new()
+
+        // Track counts
+        match diagnostic.severity() {
+            Severity::Error => self.error_count = self.error_count + 1,
+            Severity::Fatal => self.error_count = self.error_count + 1,
+            Severity::Warning => self.warning_count = self.warning_count + 1,
+            Severity::Note => {},
+            Severity::Help => {},
+            Severity::Remark => {},
+        }
+
+        // Emit header line
+        output = output ++ self.emit_header(diagnostic.clone())
+
+        // Emit source location
+        output = output ++ self.emit_location(diagnostic.clone())
+
+        // Emit source snippet with labels
+        output = output ++ self.emit_snippet(diagnostic.clone())
+
+        // Emit suggestions if enabled
+        if self.config.show_suggestions() {
+            for suggestion in diagnostic.suggestions() {
+                output = output ++ self.emit_suggestion(suggestion)
+            }
+        }
+
+        // Emit help messages if enabled
+        if self.config.show_help() {
+            for help in diagnostic.help_messages() {
+                output = output ++ self.emit_help(help)
+            }
+        }
+
+        // Emit related diagnostics if enabled
+        if self.config.show_related() {
+            for related in diagnostic.related() {
+                output = output ++ "\n"
+                output = output ++ self.emit_related(related)
+            }
+        }
+
+        output
+    }
+
+    /// Emit multiple diagnostics.
+    pub fn emit_all(mut self, diagnostics: Vec[Diagnostic]) -> String {
+        let mut output = String::new()
+
+        for diagnostic in diagnostics {
+            output = output ++ self.emit(diagnostic)
+            output = output ++ "\n"
+        }
+
+        output
+    }
+
+    /// Get the number of errors emitted.
+    pub fn error_count(self) -> U32 {
+        self.error_count
+    }
+
+    /// Get the number of warnings emitted.
+    pub fn warning_count(self) -> U32 {
+        self.warning_count
+    }
+
+    /// Check if any errors were emitted.
+    pub fn has_errors(self) -> Bool {
+        self.error_count > 0
+    }
+
+    /// Emit a summary line.
+    ///
+    /// Example: "error: aborting due to 3 previous errors; 2 warnings emitted"
+    pub fn emit_summary(self) -> String {
+        let mut output = String::new()
+
+        if self.error_count > 0 {
+            output = output ++ self.colorize("error", AnsiColor::BrightRed)
+            output = output ++ ": aborting due to "
+
+            if self.error_count == 1 {
+                output = output ++ "previous error"
+            } else {
+                output = output ++ self.error_count.to_string() ++ " previous errors"
+            }
+
+            if self.warning_count > 0 {
+                output = output ++ "; "
+                output = output ++ self.warning_count.to_string()
+                if self.warning_count == 1 {
+                    output = output ++ " warning emitted"
+                } else {
+                    output = output ++ " warnings emitted"
+                }
+            }
+
+            output = output ++ "\n"
+        } else if self.warning_count > 0 {
+            output = output ++ self.colorize("warning", AnsiColor::BrightYellow)
+            output = output ++ ": "
+            output = output ++ self.warning_count.to_string()
+            if self.warning_count == 1 {
+                output = output ++ " warning emitted"
+            } else {
+                output = output ++ " warnings emitted"
+            }
+            output = output ++ "\n"
+        }
+
+        output
+    }
+
+    // === Private Helper Methods ===
+
+    /// Emit the header line (severity, code, message).
+    fn emit_header(self, diagnostic: Diagnostic) -> String {
+        let mut output = String::new()
+        let severity = diagnostic.severity()
+        let color = self.config.colors().color_for_severity(severity)
+
+        // Severity
+        output = output ++ self.colorize(severity.name(), color)
+
+        // Error code
+        if self.config.show_error_codes() {
+            match diagnostic.code() {
+                Option::Some(code) => {
+                    output = output ++ self.colorize("[" ++ code.code() ++ "]", color)
+                }
+                Option::None => {}
+            }
+        }
+
+        // Message
+        output = output ++ ": "
+        output = output ++ self.bold(diagnostic.message())
+        output = output ++ "\n"
+
+        output
+    }
+
+    /// Emit the source location line.
+    fn emit_location(self, diagnostic: Diagnostic) -> String {
+        let mut output = String::new()
+        let span = diagnostic.span()
+
+        if span.is_dummy() {
+            return output
+        }
+
+        let separator_color = self.config.colors().separator_color()
+
+        // Indentation and arrow
+        output = output ++ "  "
+        output = output ++ self.colorize(self.config.arrow(), separator_color)
+        output = output ++ " "
+
+        // File name
+        let file_name = match self.source_map.get_filename(span.file()) {
+            Option::Some(name) => {
+                if self.config.show_full_path() {
+                    name
+                } else {
+                    // Extract just the filename from path
+                    self.basename(name)
+                }
+            }
+            Option::None => "<unknown>",
+        }
+
+        output = output ++ file_name
+        output = output ++ ":"
+        output = output ++ span.start_line().to_string()
+        output = output ++ ":"
+        output = output ++ span.start_column().to_string()
+        output = output ++ "\n"
+
+        output
+    }
+
+    /// Emit the source snippet with labels.
+    fn emit_snippet(self, diagnostic: Diagnostic) -> String {
+        let mut output = String::new()
+        let span = diagnostic.span()
+
+        if span.is_dummy() {
+            return output
+        }
+
+        // Get the source file
+        let file = match self.source_map.get(span.file()) {
+            Option::Some(f) => f,
+            Option::None => return output,
+        }
+
+        let separator_color = self.config.colors().separator_color()
+        let line_number_color = self.config.colors().line_number_color()
+
+        // Calculate gutter width (max line number width)
+        let max_line = span.end_line() + self.config.context_lines_after()
+        let gutter_width = max_line.to_string().len()
+
+        // Empty gutter line
+        output = output ++ self.emit_gutter("", gutter_width, separator_color)
+        output = output ++ "\n"
+
+        // Get lines to display
+        let start_line = if span.start_line() > self.config.context_lines_before() {
+            span.start_line() - self.config.context_lines_before()
+        } else {
+            1
+        }
+        let end_line = span.end_line() + self.config.context_lines_after()
+
+        // Emit source lines with annotations
+        let mut line_num = start_line
+        while line_num <= end_line {
+            match file.get_line(line_num) {
+                Option::Some(line_content) => {
+                    let is_highlighted = line_num >= span.start_line() && line_num <= span.end_line()
+                    let expanded_content = expand_tabs(line_content, self.config.tab_width())
+
+                    // Source line
+                    output = output ++ self.emit_gutter(
+                        pad_number(line_num, gutter_width),
+                        gutter_width,
+                        line_number_color,
+                    )
+                    output = output ++ " "
+                    output = output ++ expanded_content
+                    output = output ++ "\n"
+
+                    // Annotation line if this is a highlighted line
+                    if is_highlighted {
+                        output = output ++ self.emit_annotation_line(
+                            diagnostic.clone(),
+                            line_num,
+                            expanded_content,
+                            gutter_width,
+                        )
+                    }
+                }
+                Option::None => break,
+            }
+            line_num = line_num + 1
+        }
+
+        output
+    }
+
+    /// Emit an annotation line with underlines and labels.
+    fn emit_annotation_line(
+        self,
+        diagnostic: Diagnostic,
+        line_number: U32,
+        source_line: String,
+        gutter_width: USize,
+    ) -> String {
+        let mut output = String::new()
+        let span = diagnostic.span()
+        let separator_color = self.config.colors().separator_color()
+        let primary_color = self.config.colors().primary_label_color()
+
+        // Gutter
+        output = output ++ self.emit_gutter("", gutter_width, separator_color)
+        output = output ++ " "
+
+        // Calculate underline positions
+        let start_col = if line_number == span.start_line() {
+            span.start_column()
+        } else {
+            1
+        }
+
+        let end_col = if line_number == span.end_line() {
+            span.end_column()
+        } else {
+            source_line.len() as U32 + 1
+        }
+
+        // Build annotation string
+        let mut annotation = String::new()
+        let mut col: U32 = 1
+
+        // Spaces before underline
+        while col < start_col {
+            annotation = annotation ++ " "
+            col = col + 1
+        }
+
+        // Underline characters
+        let underline_width = if end_col > start_col { end_col - start_col } else { 1 }
+        let mut i: U32 = 0
+        while i < underline_width {
+            annotation = annotation ++ "^"
+            i = i + 1
+        }
+
+        // Add primary label message if any
+        let labels = diagnostic.labels()
+        for label in labels {
+            if label.kind() == LabelKind::Primary {
+                match label.message() {
+                    Option::Some(msg) => {
+                        annotation = annotation ++ " " ++ msg
+                    }
+                    Option::None => {}
+                }
+                break
+            }
+        }
+
+        output = output ++ self.colorize(annotation, primary_color)
+        output = output ++ "\n"
+
+        // Emit secondary labels on separate lines
+        for label in diagnostic.labels() {
+            if label.kind() == LabelKind::Secondary {
+                let label_span = label.span()
+                if label_span.start_line() == line_number {
+                    output = output ++ self.emit_secondary_label(label, gutter_width)
+                }
+            }
+        }
+
+        output
+    }
+
+    /// Emit a secondary label.
+    fn emit_secondary_label(self, label: Label, gutter_width: USize) -> String {
+        let mut output = String::new()
+        let separator_color = self.config.colors().separator_color()
+        let secondary_color = self.config.colors().secondary_label_color()
+
+        // Gutter
+        output = output ++ self.emit_gutter("", gutter_width, separator_color)
+        output = output ++ " "
+
+        // Indentation to label start column
+        let start_col = label.span().start_column()
+        let mut col: U32 = 1
+        while col < start_col {
+            output = output ++ " "
+            col = col + 1
+        }
+
+        // Vertical line down to message
+        output = output ++ self.colorize(self.config.vertical_line(), secondary_color)
+        output = output ++ "\n"
+
+        // Gutter for message line
+        output = output ++ self.emit_gutter("", gutter_width, separator_color)
+        output = output ++ " "
+
+        // Indentation
+        col = 1
+        while col < start_col {
+            output = output ++ " "
+            col = col + 1
+        }
+
+        // Message
+        match label.message() {
+            Option::Some(msg) => {
+                output = output ++ self.colorize(msg, secondary_color)
+            }
+            Option::None => {}
+        }
+        output = output ++ "\n"
+
+        output
+    }
+
+    /// Emit a suggestion.
+    fn emit_suggestion(self, suggestion: Suggestion) -> String {
+        let mut output = String::new()
+        let separator_color = self.config.colors().separator_color()
+        let suggestion_color = self.config.colors().suggestion_color()
+
+        // Empty line before suggestion
+        output = output ++ self.emit_gutter("", 3, separator_color)
+        output = output ++ "\n"
+
+        // Help label
+        output = output ++ self.colorize("help", suggestion_color)
+        output = output ++ ": "
+        output = output ++ suggestion.message()
+        output = output ++ "\n"
+
+        // Show the suggested change
+        // TODO: Show actual source diff with + characters
+
+        output
+    }
+
+    /// Emit a help message.
+    fn emit_help(self, help: Help) -> String {
+        let mut output = String::new()
+        let help_color = self.config.colors().help_color()
+
+        output = output ++ " = "
+        output = output ++ self.colorize("help", help_color)
+        output = output ++ ": "
+        output = output ++ help.message()
+        output = output ++ "\n"
+
+        output
+    }
+
+    /// Emit a related diagnostic (nested).
+    fn emit_related(mut self, diagnostic: Diagnostic) -> String {
+        // Related diagnostics are indented and use Note severity styling
+        let mut output = String::new()
+        let note_color = self.config.colors().note_color()
+
+        output = output ++ self.colorize("note", note_color)
+        output = output ++ ": "
+        output = output ++ diagnostic.message()
+        output = output ++ "\n"
+
+        // Emit location for related
+        output = output ++ self.emit_location(diagnostic)
+
+        output
+    }
+
+    /// Emit a gutter (line number area).
+    fn emit_gutter(self, content: String, width: USize, color: AnsiColor) -> String {
+        let mut output = String::new()
+
+        // Pad content to width
+        let pad = if width > content.len() { width - content.len() } else { 0 }
+        let mut i: USize = 0
+        while i < pad {
+            output = output ++ " "
+            i = i + 1
+        }
+
+        if content.len() > 0 {
+            output = output ++ self.colorize(content, color)
+        } else {
+            // Just spaces for empty gutter
+            i = 0
+            while i < width {
+                output = output ++ " "
+                i = i + 1
+            }
+        }
+
+        output = output ++ " "
+        output = output ++ self.colorize(self.config.vertical_line(), self.config.colors().separator_color())
+
+        output
+    }
+
+    /// Colorize text with ANSI codes.
+    fn colorize(self, text: String, color: AnsiColor) -> String {
+        if self.config.use_colors() {
+            color.code() ++ text ++ AnsiColor::Reset.code()
+        } else {
+            text
+        }
+    }
+
+    /// Make text bold.
+    fn bold(self, text: String) -> String {
+        if self.config.use_colors() {
+            "\x1b[1m" ++ text ++ "\x1b[0m"
+        } else {
+            text
+        }
+    }
+
+    /// Extract basename from a path.
+    fn basename(self, path: String) -> String {
+        // Find last / or \ and return everything after
+        let mut last_sep: Option[USize] = Option::None
+        let mut i: USize = 0
+
+        for ch in path.chars() {
+            if ch == '/' || ch == '\\' {
+                last_sep = Option::Some(i)
+            }
+            i = i + 1
+        }
+
+        match last_sep {
+            Option::Some(pos) => path.substring(pos + 1, path.len()),
+            Option::None => path,
+        }
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[test]
+fn test_terminal_emitter_creation() {
+    let source_map = SourceMap::new()
+    let emitter = TerminalEmitter::new(source_map)
+
+    assert(emitter.error_count() == 0)
+    assert(emitter.warning_count() == 0)
+    assert(!emitter.has_errors())
+}
+
+#[test]
+fn test_terminal_emitter_with_config() {
+    let source_map = SourceMap::new()
+    let config = EmitterConfig::plain()
+    let emitter = TerminalEmitter::with_config(config, source_map)
+
+    assert(!emitter.config.use_colors())
+}
+
+#[test]
+fn test_colorize_enabled() {
+    let source_map = SourceMap::new()
+    let emitter = TerminalEmitter::new(source_map)
+
+    let colored = emitter.colorize("test", AnsiColor::BrightRed)
+    assert(colored.contains("\x1b["))
+}
+
+#[test]
+fn test_colorize_disabled() {
+    let source_map = SourceMap::new()
+    let config = EmitterConfig::plain()
+    let emitter = TerminalEmitter::with_config(config, source_map)
+
+    let colored = emitter.colorize("test", AnsiColor::BrightRed)
+    assert(colored == "test")
+}
+
+#[test]
+fn test_basename() {
+    let source_map = SourceMap::new()
+    let emitter = TerminalEmitter::new(source_map)
+
+    assert(emitter.basename("/home/user/project/main.blood") == "main.blood")
+    assert(emitter.basename("main.blood") == "main.blood")
+    assert(emitter.basename("src/lib.blood") == "lib.blood")
+}
+
+#[test]
+fn test_emit_summary_no_errors() {
+    let source_map = SourceMap::new()
+    let emitter = TerminalEmitter::new(source_map)
+
+    let summary = emitter.emit_summary()
+    assert(summary == "")
+}
+
+#[test]
+fn test_gutter_formatting() {
+    let source_map = SourceMap::new()
+    let config = EmitterConfig::plain()  // No colors for easy testing
+    let emitter = TerminalEmitter::with_config(config, source_map)
+
+    let gutter = emitter.emit_gutter("10", 4, AnsiColor::Reset)
+    assert(gutter.contains("10"))
+    assert(gutter.contains("|"))
+}

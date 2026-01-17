@@ -1,0 +1,795 @@
+//! # AST Type Expression Types
+//!
+//! Type annotations and type expressions in the Blood AST.
+//!
+//! ## Overview
+//!
+//! Types appear in many places in Blood source code:
+//! - Function signatures: `fn foo(x: Int) -> String`
+//! - Variable bindings: `let x: Vec[Int] = ...`
+//! - Struct fields: `struct Point { x: F64, y: F64 }`
+//! - Type aliases: `type Result[T] = Either[Error, T]`
+//!
+//! ## Type Forms
+//!
+//! | Form | Example | Description |
+//! |------|---------|-------------|
+//! | Path | `Int`, `Vec[T]` | Named type with optional generics |
+//! | Reference | `&T`, `&mut T` | Borrowed reference |
+//! | Pointer | `*const T`, `*mut T` | Raw pointer |
+//! | Array | `[T; N]` | Fixed-size array |
+//! | Slice | `[T]` | Dynamic-size slice |
+//! | Tuple | `(T, U, V)` | Product type |
+//! | Function | `fn(A) -> B / E` | Function with effects |
+//! | Never | `!` | Bottom type |
+//! | Infer | `_` | Inferred type |
+//!
+//! ## Blood-Specific Types
+//!
+//! Blood adds several type forms not found in Rust:
+//! - **Effect rows**: `/ {IO, Error[E]}` or `/ pure`
+//! - **Record types**: `{ x: Int, y: Int }` with row polymorphism
+//! - **Ownership qualifiers**: `linear T`, `affine T`
+//! - **Higher-rank types**: `forall[T]. T -> T`
+
+module std.compiler.ast.ty
+
+use std.option.Option
+use std.collections.Vec
+use std.compiler.ast.node.Span
+use std.compiler.ast.node.Ident
+use std.compiler.ast.node.NodeId
+use std.compiler.ast.node.Symbol
+use std.compiler.ast.expr.Expr
+
+// ============================================================================
+// Type
+// ============================================================================
+
+/// A type expression in the AST.
+///
+/// Types represent the annotations that appear in source code, before
+/// type checking resolves them to concrete types.
+///
+/// ## Example
+///
+/// ```blood
+/// // Type annotations in various positions
+/// fn process(data: Vec[String]) -> Result[Int, Error] / {IO} {
+///     let count: Int = data.len()
+///     // ...
+/// }
+/// ```
+#[derive(Clone, PartialEq, Eq)]
+pub struct Type {
+    /// Unique node ID.
+    pub id: NodeId,
+    /// The type kind.
+    pub kind: TypeKind,
+    /// Span of the type.
+    pub span: Span,
+}
+
+impl Type {
+    /// Create a new type.
+    pub fn new(kind: TypeKind, span: Span) -> Type {
+        Type {
+            id: NodeId::dummy(),
+            kind,
+            span,
+        }
+    }
+
+    /// Create a type path (simple named type).
+    pub fn path(path: TypePath, span: Span) -> Type {
+        Type::new(TypeKind::Path(path), span)
+    }
+
+    /// Create a unit type `()`.
+    pub fn unit(span: Span) -> Type {
+        Type::new(TypeKind::Tuple(Vec::new()), span)
+    }
+
+    /// Create the never type `!`.
+    pub fn never(span: Span) -> Type {
+        Type::new(TypeKind::Never, span)
+    }
+
+    /// Create an inferred type `_`.
+    pub fn infer(span: Span) -> Type {
+        Type::new(TypeKind::Infer, span)
+    }
+
+    /// Check if this is a path type.
+    pub fn is_path(self) -> Bool {
+        match self.kind {
+            TypeKind::Path(_) => true,
+            _ => false,
+        }
+    }
+
+    /// Check if this is the unit type.
+    pub fn is_unit(self) -> Bool {
+        match self.kind {
+            TypeKind::Tuple(ref types) => types.is_empty(),
+            _ => false,
+        }
+    }
+
+    /// Check if this is the never type.
+    pub fn is_never(self) -> Bool {
+        match self.kind {
+            TypeKind::Never => true,
+            _ => false,
+        }
+    }
+
+    /// Check if this is an inferred type.
+    pub fn is_infer(self) -> Bool {
+        match self.kind {
+            TypeKind::Infer => true,
+            _ => false,
+        }
+    }
+
+    /// Check if this is a reference type.
+    pub fn is_reference(self) -> Bool {
+        match self.kind {
+            TypeKind::Reference { .. } => true,
+            _ => false,
+        }
+    }
+
+    /// Check if this is a pointer type.
+    pub fn is_pointer(self) -> Bool {
+        match self.kind {
+            TypeKind::Pointer { .. } => true,
+            _ => false,
+        }
+    }
+
+    /// Check if this is a function type.
+    pub fn is_function(self) -> Bool {
+        match self.kind {
+            TypeKind::Function { .. } => true,
+            _ => false,
+        }
+    }
+}
+
+// ============================================================================
+// Type Kind
+// ============================================================================
+
+/// The kind of type expression.
+#[derive(Clone, PartialEq, Eq)]
+pub enum TypeKind {
+    /// Type path: `Int`, `Vec[T]`, `std.collections.HashMap[K, V]`
+    Path(TypePath),
+
+    /// Reference type: `&T`, `&mut T`, `&'a T`
+    Reference {
+        /// Optional lifetime.
+        lifetime: Option[Lifetime],
+        /// Whether this is a mutable reference.
+        mutable: Bool,
+        /// The referenced type.
+        inner: Box[Type],
+    },
+
+    /// Raw pointer: `*const T`, `*mut T`
+    Pointer {
+        /// Whether this is a mutable pointer.
+        mutable: Bool,
+        /// The pointed-to type.
+        inner: Box[Type],
+    },
+
+    /// Fixed-size array: `[T; N]`
+    Array {
+        /// Element type.
+        element: Box[Type],
+        /// Array size expression.
+        size: Box[Expr],
+    },
+
+    /// Slice type: `[T]`
+    Slice {
+        /// Element type.
+        element: Box[Type],
+    },
+
+    /// Tuple type: `()`, `(T,)`, `(T, U)`
+    Tuple(Vec[Type]),
+
+    /// Function type: `fn(T, U) -> V / E`
+    Function {
+        /// Parameter types.
+        params: Vec[Type],
+        /// Return type.
+        return_type: Box[Type],
+        /// Optional effect row.
+        effects: Option[EffectRow],
+    },
+
+    /// Record type: `{ x: T, y: U }` or `{ x: T | R }`
+    Record {
+        /// Named fields.
+        fields: Vec[RecordTypeField],
+        /// Optional rest/row variable.
+        rest: Option[Ident],
+    },
+
+    /// Ownership-qualified type: `linear T`, `affine T`
+    Ownership {
+        /// The ownership qualifier.
+        qualifier: OwnershipQualifier,
+        /// The inner type.
+        inner: Box[Type],
+    },
+
+    /// Higher-rank polymorphic type: `forall[T]. T -> T`
+    Forall {
+        /// Type parameters.
+        params: Vec[Ident],
+        /// The body type.
+        body: Box[Type],
+    },
+
+    /// The never type: `!`
+    Never,
+
+    /// Inferred type: `_`
+    Infer,
+
+    /// Parenthesized type: `(T)` for grouping
+    Paren(Box[Type]),
+
+    /// Impl trait type: `impl Trait`
+    ImplTrait {
+        /// The trait bounds.
+        bounds: Vec[TypeBound],
+    },
+
+    /// Dynamic trait object: `dyn Trait`
+    DynTrait {
+        /// The trait bounds.
+        bounds: Vec[TypeBound],
+    },
+
+    /// Error placeholder (for error recovery).
+    Error,
+}
+
+// ============================================================================
+// Type Path
+// ============================================================================
+
+/// A type path like `Vec[T]` or `std.collections.HashMap[K, V]`.
+///
+/// Type paths consist of segments separated by `.`, where each segment
+/// can have generic type arguments.
+#[derive(Clone, PartialEq, Eq)]
+pub struct TypePath {
+    /// Path segments.
+    pub segments: Vec[TypePathSegment],
+    /// Span of the entire path.
+    pub span: Span,
+}
+
+impl TypePath {
+    /// Create a new type path.
+    pub fn new(segments: Vec[TypePathSegment], span: Span) -> TypePath {
+        TypePath { segments, span }
+    }
+
+    /// Create a simple single-segment path.
+    pub fn simple(name: Ident) -> TypePath {
+        let span = name.span
+        TypePath {
+            segments: vec![TypePathSegment { name, args: Option::None }],
+            span,
+        }
+    }
+
+    /// Check if this is a single-segment path.
+    pub fn is_simple(self) -> Bool {
+        self.segments.len() == 1 && self.segments[0].args.is_none()
+    }
+
+    /// Get the number of segments.
+    pub fn len(self) -> USize {
+        self.segments.len()
+    }
+
+    /// Get the first segment.
+    pub fn first(self) -> Option[&TypePathSegment] {
+        self.segments.first()
+    }
+
+    /// Get the last segment.
+    pub fn last(self) -> Option[&TypePathSegment] {
+        self.segments.last()
+    }
+}
+
+/// A segment in a type path.
+#[derive(Clone, PartialEq, Eq)]
+pub struct TypePathSegment {
+    /// The segment name.
+    pub name: Ident,
+    /// Optional generic arguments.
+    pub args: Option[TypeArgs],
+}
+
+impl TypePathSegment {
+    /// Create a new segment.
+    pub fn new(name: Ident, args: Option[TypeArgs]) -> TypePathSegment {
+        TypePathSegment { name, args }
+    }
+
+    /// Create a simple segment (no arguments).
+    pub fn simple(name: Ident) -> TypePathSegment {
+        TypePathSegment { name, args: Option::None }
+    }
+
+    /// Check if this segment has type arguments.
+    pub fn has_args(self) -> Bool {
+        self.args.is_some()
+    }
+}
+
+// ============================================================================
+// Generic Arguments
+// ============================================================================
+
+/// Generic type arguments: `[T, U]` or `[K, V, const N: usize]`
+#[derive(Clone, PartialEq, Eq)]
+pub struct TypeArgs {
+    /// The arguments.
+    pub args: Vec[TypeArg],
+    /// Span of the entire argument list.
+    pub span: Span,
+}
+
+impl TypeArgs {
+    /// Create new type arguments.
+    pub fn new(args: Vec[TypeArg], span: Span) -> TypeArgs {
+        TypeArgs { args, span }
+    }
+
+    /// Check if empty.
+    pub fn is_empty(self) -> Bool {
+        self.args.is_empty()
+    }
+
+    /// Get the number of arguments.
+    pub fn len(self) -> USize {
+        self.args.len()
+    }
+}
+
+/// A single generic argument.
+#[derive(Clone, PartialEq, Eq)]
+pub enum TypeArg {
+    /// A type argument: `T` in `Vec[T]`
+    Type(Type),
+    /// A lifetime argument: `'a` in `&'a T`
+    Lifetime(Lifetime),
+    /// A const argument: `N` in `[T; N]`
+    Const(Expr),
+    /// An associated type binding: `Item = T` in `Iterator[Item = Int]`
+    Binding {
+        name: Ident,
+        ty: Type,
+        span: Span,
+    },
+}
+
+impl TypeArg {
+    /// Get the span.
+    pub fn span(self) -> Span {
+        match self {
+            TypeArg::Type(ty) => ty.span,
+            TypeArg::Lifetime(lt) => lt.span,
+            TypeArg::Const(expr) => expr.span,
+            TypeArg::Binding { span, .. } => span,
+        }
+    }
+}
+
+// ============================================================================
+// Lifetime
+// ============================================================================
+
+/// A lifetime parameter: `'a`, `'static`
+#[derive(Clone, PartialEq, Eq)]
+pub struct Lifetime {
+    /// The lifetime name (including the leading `'`).
+    pub name: Ident,
+    /// Span of the lifetime.
+    pub span: Span,
+}
+
+impl Lifetime {
+    /// Create a new lifetime.
+    pub fn new(name: Ident, span: Span) -> Lifetime {
+        Lifetime { name, span }
+    }
+
+    /// Check if this is the static lifetime.
+    pub fn is_static(self) -> Bool {
+        // Would need interner access to check
+        false
+    }
+
+    /// Check if this is an anonymous lifetime `'_`.
+    pub fn is_anonymous(self) -> Bool {
+        // Would need interner access to check
+        false
+    }
+}
+
+// ============================================================================
+// Effect Row
+// ============================================================================
+
+/// An effect row annotation: `/ {IO, Error[E]}` or `/ pure`
+///
+/// Effect rows specify which effects a function may perform.
+#[derive(Clone, PartialEq, Eq)]
+pub struct EffectRow {
+    /// The effect row kind.
+    pub kind: EffectRowKind,
+    /// Span of the effect row.
+    pub span: Span,
+}
+
+impl EffectRow {
+    /// Create a pure effect row.
+    pub fn pure(span: Span) -> EffectRow {
+        EffectRow {
+            kind: EffectRowKind::Pure,
+            span,
+        }
+    }
+
+    /// Create an effect row with specific effects.
+    pub fn effects(effects: Vec[Type], rest: Option[Ident], span: Span) -> EffectRow {
+        EffectRow {
+            kind: EffectRowKind::Effects { effects, rest },
+            span,
+        }
+    }
+
+    /// Create an effect row that's just a variable.
+    pub fn var(name: Ident, span: Span) -> EffectRow {
+        EffectRow {
+            kind: EffectRowKind::Var(name),
+            span,
+        }
+    }
+
+    /// Check if this is a pure effect row.
+    pub fn is_pure(self) -> Bool {
+        match self.kind {
+            EffectRowKind::Pure => true,
+            EffectRowKind::Effects { ref effects, .. } => effects.is_empty(),
+            _ => false,
+        }
+    }
+}
+
+/// The kind of effect row.
+#[derive(Clone, PartialEq, Eq)]
+pub enum EffectRowKind {
+    /// Pure (no effects): `/ pure` or `/ {}`
+    Pure,
+
+    /// Specific effects: `/ {IO, Error[E]}` or `/ {IO | e}`
+    Effects {
+        /// The named effects.
+        effects: Vec[Type],
+        /// Optional rest variable for open rows.
+        rest: Option[Ident],
+    },
+
+    /// Just a type variable: `/ e`
+    Var(Ident),
+}
+
+// ============================================================================
+// Record Type Field
+// ============================================================================
+
+/// A field in a record type: `x: Int`
+#[derive(Clone, PartialEq, Eq)]
+pub struct RecordTypeField {
+    /// Field name.
+    pub name: Ident,
+    /// Field type.
+    pub ty: Type,
+    /// Span of the field.
+    pub span: Span,
+}
+
+// ============================================================================
+// Ownership Qualifier
+// ============================================================================
+
+/// Ownership qualifier for types.
+///
+/// | Qualifier | Meaning |
+/// |-----------|---------|
+/// | Linear | Must be used exactly once |
+/// | Affine | Must be used at most once |
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub enum OwnershipQualifier {
+    /// Linear: must be used exactly once.
+    Linear,
+    /// Affine: must be used at most once.
+    Affine,
+}
+
+impl OwnershipQualifier {
+    /// Get the qualifier as a string.
+    pub fn as_str(self) -> &str {
+        match self {
+            OwnershipQualifier::Linear => "linear",
+            OwnershipQualifier::Affine => "affine",
+        }
+    }
+}
+
+// ============================================================================
+// Type Bound
+// ============================================================================
+
+/// A trait bound on a type: `T: Clone + Debug`
+#[derive(Clone, PartialEq, Eq)]
+pub struct TypeBound {
+    /// The bound path (trait name with optional generics).
+    pub path: TypePath,
+    /// Span of the bound.
+    pub span: Span,
+}
+
+impl TypeBound {
+    /// Create a new type bound.
+    pub fn new(path: TypePath, span: Span) -> TypeBound {
+        TypeBound { path, span }
+    }
+}
+
+// ============================================================================
+// Generic Parameters (for declarations)
+// ============================================================================
+
+/// Generic type parameters: `[T, U: Clone, const N: usize]`
+#[derive(Clone, PartialEq, Eq)]
+pub struct TypeParams {
+    /// The parameters.
+    pub params: Vec[GenericParam],
+    /// Span of the parameter list.
+    pub span: Span,
+}
+
+impl TypeParams {
+    /// Create new type parameters.
+    pub fn new(params: Vec[GenericParam], span: Span) -> TypeParams {
+        TypeParams { params, span }
+    }
+
+    /// Create empty type parameters.
+    pub fn empty() -> TypeParams {
+        TypeParams {
+            params: Vec::new(),
+            span: Span::dummy(),
+        }
+    }
+
+    /// Check if empty.
+    pub fn is_empty(self) -> Bool {
+        self.params.is_empty()
+    }
+
+    /// Get the number of parameters.
+    pub fn len(self) -> USize {
+        self.params.len()
+    }
+}
+
+/// A single generic parameter.
+#[derive(Clone, PartialEq, Eq)]
+pub enum GenericParam {
+    /// Type parameter: `T`, `T: Clone`
+    Type(TypeParam),
+    /// Lifetime parameter: `'a`, `'a: 'b`
+    Lifetime(LifetimeParam),
+    /// Const parameter: `const N: usize`
+    Const(ConstParam),
+}
+
+impl GenericParam {
+    /// Get the span.
+    pub fn span(self) -> Span {
+        match self {
+            GenericParam::Type(p) => p.span,
+            GenericParam::Lifetime(p) => p.span,
+            GenericParam::Const(p) => p.span,
+        }
+    }
+}
+
+/// A type parameter: `T` or `T: Clone + Debug`
+#[derive(Clone, PartialEq, Eq)]
+pub struct TypeParam {
+    /// Parameter name.
+    pub name: Ident,
+    /// Trait bounds.
+    pub bounds: Vec[TypeBound],
+    /// Default type (optional).
+    pub default: Option[Type],
+    /// Span of the parameter.
+    pub span: Span,
+}
+
+/// A lifetime parameter: `'a` or `'a: 'b`
+#[derive(Clone, PartialEq, Eq)]
+pub struct LifetimeParam {
+    /// Lifetime name.
+    pub lifetime: Lifetime,
+    /// Lifetime bounds.
+    pub bounds: Vec[Lifetime],
+    /// Span of the parameter.
+    pub span: Span,
+}
+
+/// A const generic parameter: `const N: usize`
+#[derive(Clone, PartialEq, Eq)]
+pub struct ConstParam {
+    /// Parameter name.
+    pub name: Ident,
+    /// Parameter type.
+    pub ty: Type,
+    /// Default value (optional).
+    pub default: Option[Expr],
+    /// Span of the parameter.
+    pub span: Span,
+}
+
+// ============================================================================
+// Where Clause
+// ============================================================================
+
+/// A where clause: `where T: Clone, U: Debug`
+#[derive(Clone, PartialEq, Eq)]
+pub struct WhereClause {
+    /// The predicates.
+    pub predicates: Vec[WherePredicate],
+    /// Span of the where clause.
+    pub span: Span,
+}
+
+impl WhereClause {
+    /// Create a new where clause.
+    pub fn new(predicates: Vec[WherePredicate], span: Span) -> WhereClause {
+        WhereClause { predicates, span }
+    }
+
+    /// Create an empty where clause.
+    pub fn empty() -> WhereClause {
+        WhereClause {
+            predicates: Vec::new(),
+            span: Span::dummy(),
+        }
+    }
+
+    /// Check if empty.
+    pub fn is_empty(self) -> Bool {
+        self.predicates.is_empty()
+    }
+}
+
+/// A predicate in a where clause.
+#[derive(Clone, PartialEq, Eq)]
+pub enum WherePredicate {
+    /// Type bound: `T: Clone + Debug`
+    TypeBound {
+        ty: Type,
+        bounds: Vec[TypeBound],
+        span: Span,
+    },
+
+    /// Lifetime bound: `'a: 'b`
+    Lifetime {
+        lifetime: Lifetime,
+        bounds: Vec[Lifetime],
+        span: Span,
+    },
+
+    /// Equality predicate: `T::Item = U`
+    Eq {
+        lhs: Type,
+        rhs: Type,
+        span: Span,
+    },
+}
+
+impl WherePredicate {
+    /// Get the span.
+    pub fn span(self) -> Span {
+        match self {
+            WherePredicate::TypeBound { span, .. } => span,
+            WherePredicate::Lifetime { span, .. } => span,
+            WherePredicate::Eq { span, .. } => span,
+        }
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[test]
+fn test_type_unit() {
+    let unit = Type::unit(Span::dummy())
+    assert(unit.is_unit())
+}
+
+#[test]
+fn test_type_never() {
+    let never = Type::never(Span::dummy())
+    assert(never.is_never())
+}
+
+#[test]
+fn test_type_infer() {
+    let infer = Type::infer(Span::dummy())
+    assert(infer.is_infer())
+}
+
+#[test]
+fn test_type_path_simple() {
+    let name = Ident::dummy()
+    let path = TypePath::simple(name)
+
+    assert(path.is_simple())
+    assert(path.len() == 1)
+}
+
+#[test]
+fn test_type_args_empty() {
+    let args = TypeArgs::new(Vec::new(), Span::dummy())
+
+    assert(args.is_empty())
+    assert(args.len() == 0)
+}
+
+#[test]
+fn test_effect_row_pure() {
+    let row = EffectRow::pure(Span::dummy())
+
+    assert(row.is_pure())
+}
+
+#[test]
+fn test_ownership_qualifier() {
+    assert(OwnershipQualifier::Linear.as_str() == "linear")
+    assert(OwnershipQualifier::Affine.as_str() == "affine")
+}
+
+#[test]
+fn test_type_params_empty() {
+    let params = TypeParams::empty()
+
+    assert(params.is_empty())
+    assert(params.len() == 0)
+}
+
+#[test]
+fn test_where_clause_empty() {
+    let clause = WhereClause::empty()
+
+    assert(clause.is_empty())
+}

@@ -1,0 +1,841 @@
+/// Tests for errors.blood - Type Error Representations
+///
+/// These tests verify the type error structures and messages work correctly.
+
+use super.super.errors::{TypeError, TypeErrorKind, TypeErrors, Span};
+use super.super.types::{Type, TyVarId, DefId, EffectInstance};
+
+// ============================================================
+// TypeError Factory Tests
+// ============================================================
+
+#[test]
+fn test_error_mismatch() {
+    let err = TypeError::mismatch(Type::i32(), Type::bool(), Span::dummy());
+    match err.kind() {
+        TypeErrorKind::Mismatch { expected, found } => {
+            assert_eq!(expected.display(), "i32");
+            assert_eq!(found.display(), "bool");
+        }
+        _ => panic!("Expected Mismatch error"),
+    }
+}
+
+#[test]
+fn test_error_unresolved_name() {
+    let err = TypeError::unresolved_name("foo".to_string(), Span::dummy());
+    match err.kind() {
+        TypeErrorKind::UnresolvedName { name } => {
+            assert_eq!(*name, "foo");
+        }
+        _ => panic!("Expected UnresolvedName error"),
+    }
+}
+
+#[test]
+fn test_error_unresolved_type() {
+    let err = TypeError::unresolved_type("MyType".to_string(), Span::dummy());
+    match err.kind() {
+        TypeErrorKind::UnresolvedType { name } => {
+            assert_eq!(*name, "MyType");
+        }
+        _ => panic!("Expected UnresolvedType error"),
+    }
+}
+
+#[test]
+fn test_error_wrong_arity() {
+    let err = TypeError::wrong_arity(2, 3, Span::dummy());
+    match err.kind() {
+        TypeErrorKind::WrongArity { expected, found } => {
+            assert_eq!(*expected, 2);
+            assert_eq!(*found, 3);
+        }
+        _ => panic!("Expected WrongArity error"),
+    }
+}
+
+#[test]
+fn test_error_occurs_check() {
+    let var = TyVarId::new(1);
+    let ty = Type::array(Type::infer(var.clone()), 5);
+    let err = TypeError::occurs_check(var.clone(), ty, Span::dummy());
+    match err.kind() {
+        TypeErrorKind::OccursCheck { var: v, ty: _ } => {
+            assert_eq!(v.id(), 1);
+        }
+        _ => panic!("Expected OccursCheck error"),
+    }
+}
+
+#[test]
+fn test_error_unhandled_effect() {
+    let effect = EffectInstance::simple(DefId::new(42));
+    let err = TypeError::unhandled_effect(effect, Span::dummy());
+    match err.kind() {
+        TypeErrorKind::UnhandledEffect { effect: e } => {
+            assert_eq!(e.def_id.id(), 42);
+        }
+        _ => panic!("Expected UnhandledEffect error"),
+    }
+}
+
+#[test]
+fn test_error_invalid_effect_op() {
+    let err = TypeError::invalid_effect_op("Console".to_string(), "read".to_string(), Span::dummy());
+    match err.kind() {
+        TypeErrorKind::InvalidEffectOp { effect, op } => {
+            assert_eq!(*effect, "Console");
+            assert_eq!(*op, "read");
+        }
+        _ => panic!("Expected InvalidEffectOp error"),
+    }
+}
+
+#[test]
+fn test_error_duplicate_definition() {
+    let err = TypeError::duplicate_definition("foo".to_string(), Span::dummy());
+    match err.kind() {
+        TypeErrorKind::DuplicateDefinition { name } => {
+            assert_eq!(*name, "foo");
+        }
+        _ => panic!("Expected DuplicateDefinition error"),
+    }
+}
+
+#[test]
+fn test_error_missing_field() {
+    let err = TypeError::missing_field("Point".to_string(), "z".to_string(), Span::dummy());
+    match err.kind() {
+        TypeErrorKind::MissingField { struct_name, field } => {
+            assert_eq!(*struct_name, "Point");
+            assert_eq!(*field, "z");
+        }
+        _ => panic!("Expected MissingField error"),
+    }
+}
+
+#[test]
+fn test_error_unknown_field() {
+    let err = TypeError::unknown_field("Point".to_string(), "w".to_string(), Span::dummy());
+    match err.kind() {
+        TypeErrorKind::UnknownField { struct_name, field } => {
+            assert_eq!(*struct_name, "Point");
+            assert_eq!(*field, "w");
+        }
+        _ => panic!("Expected UnknownField error"),
+    }
+}
+
+#[test]
+fn test_error_pattern_mismatch() {
+    let err = TypeError::pattern_mismatch(Type::i32(), Type::bool(), Span::dummy());
+    match err.kind() {
+        TypeErrorKind::PatternMismatch { expected, found } => {
+            assert_eq!(expected.display(), "i32");
+            assert_eq!(found.display(), "bool");
+        }
+        _ => panic!("Expected PatternMismatch error"),
+    }
+}
+
+#[test]
+fn test_error_non_exhaustive() {
+    let err = TypeError::non_exhaustive(vec!["None".to_string(), "Some(_)".to_string()], Span::dummy());
+    match err.kind() {
+        TypeErrorKind::NonExhaustive { missing } => {
+            assert_eq!(missing.len(), 2);
+            assert_eq!(missing[0], "None");
+            assert_eq!(missing[1], "Some(_)");
+        }
+        _ => panic!("Expected NonExhaustive error"),
+    }
+}
+
+#[test]
+fn test_error_cannot_deref() {
+    let err = TypeError::cannot_deref(Type::i32(), Span::dummy());
+    match err.kind() {
+        TypeErrorKind::CannotDeref { ty } => {
+            assert_eq!(ty.display(), "i32");
+        }
+        _ => panic!("Expected CannotDeref error"),
+    }
+}
+
+#[test]
+fn test_error_cannot_call() {
+    let err = TypeError::cannot_call(Type::i32(), Span::dummy());
+    match err.kind() {
+        TypeErrorKind::CannotCall { ty } => {
+            assert_eq!(ty.display(), "i32");
+        }
+        _ => panic!("Expected CannotCall error"),
+    }
+}
+
+#[test]
+fn test_error_cannot_index() {
+    let err = TypeError::cannot_index(Type::bool(), Span::dummy());
+    match err.kind() {
+        TypeErrorKind::CannotIndex { ty } => {
+            assert_eq!(ty.display(), "bool");
+        }
+        _ => panic!("Expected CannotIndex error"),
+    }
+}
+
+#[test]
+fn test_error_not_iterable() {
+    let err = TypeError::not_iterable(Type::i32(), Span::dummy());
+    match err.kind() {
+        TypeErrorKind::NotIterable { ty } => {
+            assert_eq!(ty.display(), "i32");
+        }
+        _ => panic!("Expected NotIterable error"),
+    }
+}
+
+#[test]
+fn test_error_cannot_access_field() {
+    let err = TypeError::cannot_access_field(Type::i32(), "x".to_string(), Span::dummy());
+    match err.kind() {
+        TypeErrorKind::CannotAccessField { ty, field } => {
+            assert_eq!(ty.display(), "i32");
+            assert_eq!(*field, "x");
+        }
+        _ => panic!("Expected CannotAccessField error"),
+    }
+}
+
+#[test]
+fn test_error_effect_mismatch_expected_pure() {
+    let err = TypeError::effect_mismatch(true, Span::dummy());
+    match err.kind() {
+        TypeErrorKind::EffectMismatch { expected_pure } => {
+            assert!(*expected_pure);
+        }
+        _ => panic!("Expected EffectMismatch error"),
+    }
+}
+
+#[test]
+fn test_error_effect_mismatch_expected_effectful() {
+    let err = TypeError::effect_mismatch(false, Span::dummy());
+    match err.kind() {
+        TypeErrorKind::EffectMismatch { expected_pure } => {
+            assert!(!*expected_pure);
+        }
+        _ => panic!("Expected EffectMismatch error"),
+    }
+}
+
+#[test]
+fn test_error_effect_row_mismatch() {
+    let err = TypeError::effect_row_mismatch(2, 3, Span::dummy());
+    match err.kind() {
+        TypeErrorKind::EffectRowMismatch { expected_count, found_count } => {
+            assert_eq!(*expected_count, 2);
+            assert_eq!(*found_count, 3);
+        }
+        _ => panic!("Expected EffectRowMismatch error"),
+    }
+}
+
+#[test]
+fn test_error_effect_not_in_row() {
+    let err = TypeError::effect_not_in_row("IO".to_string(), Span::dummy());
+    match err.kind() {
+        TypeErrorKind::EffectNotInRow { effect } => {
+            assert_eq!(*effect, "IO");
+        }
+        _ => panic!("Expected EffectNotInRow error"),
+    }
+}
+
+#[test]
+fn test_error_tuple_field_not_numeric() {
+    let err = TypeError::tuple_field_not_numeric("foo".to_string(), Span::dummy());
+    match err.kind() {
+        TypeErrorKind::TupleFieldNotNumeric { field } => {
+            assert_eq!(*field, "foo");
+        }
+        _ => panic!("Expected TupleFieldNotNumeric error"),
+    }
+}
+
+#[test]
+fn test_error_tuple_field_out_of_bounds() {
+    let err = TypeError::tuple_field_out_of_bounds(5, 3, Span::dummy());
+    match err.kind() {
+        TypeErrorKind::TupleFieldOutOfBounds { index, tuple_len } => {
+            assert_eq!(*index, 5);
+            assert_eq!(*tuple_len, 3);
+        }
+        _ => panic!("Expected TupleFieldOutOfBounds error"),
+    }
+}
+
+#[test]
+fn test_error_cannot_construct_enum() {
+    let err = TypeError::cannot_construct_enum("Option".to_string(), Span::dummy());
+    match err.kind() {
+        TypeErrorKind::CannotConstructEnum { name } => {
+            assert_eq!(*name, "Option");
+        }
+        _ => panic!("Expected CannotConstructEnum error"),
+    }
+}
+
+#[test]
+fn test_error_enum_used_as_value() {
+    let err = TypeError::enum_used_as_value("Result".to_string(), Span::dummy());
+    match err.kind() {
+        TypeErrorKind::EnumUsedAsValue { name } => {
+            assert_eq!(*name, "Result");
+        }
+        _ => panic!("Expected EnumUsedAsValue error"),
+    }
+}
+
+#[test]
+fn test_error_module_path_not_implemented() {
+    let err = TypeError::module_path_not_implemented(Span::dummy());
+    match err.kind() {
+        TypeErrorKind::ModulePathNotImplemented => {}
+        _ => panic!("Expected ModulePathNotImplemented error"),
+    }
+}
+
+#[test]
+fn test_error_binary_op_type_error() {
+    let err = TypeError::binary_op_type_error(
+        "+".to_string(),
+        Type::i32(),
+        Type::bool(),
+        Span::dummy(),
+    );
+    match err.kind() {
+        TypeErrorKind::BinaryOpTypeError { op, left, right } => {
+            assert_eq!(*op, "+");
+            assert_eq!(left.display(), "i32");
+            assert_eq!(right.display(), "bool");
+        }
+        _ => panic!("Expected BinaryOpTypeError"),
+    }
+}
+
+#[test]
+fn test_error_unary_op_type_error() {
+    let err = TypeError::unary_op_type_error("-".to_string(), Type::bool(), Span::dummy());
+    match err.kind() {
+        TypeErrorKind::UnaryOpTypeError { op, operand } => {
+            assert_eq!(*op, "-");
+            assert_eq!(operand.display(), "bool");
+        }
+        _ => panic!("Expected UnaryOpTypeError"),
+    }
+}
+
+#[test]
+fn test_error_return_outside_function() {
+    let err = TypeError::return_outside_function(Span::dummy());
+    match err.kind() {
+        TypeErrorKind::ReturnOutsideFunction => {}
+        _ => panic!("Expected ReturnOutsideFunction error"),
+    }
+}
+
+#[test]
+fn test_error_break_outside_loop() {
+    let err = TypeError::break_outside_loop(Span::dummy());
+    match err.kind() {
+        TypeErrorKind::BreakOutsideLoop => {}
+        _ => panic!("Expected BreakOutsideLoop error"),
+    }
+}
+
+#[test]
+fn test_error_continue_outside_loop() {
+    let err = TypeError::continue_outside_loop(Span::dummy());
+    match err.kind() {
+        TypeErrorKind::ContinueOutsideLoop => {}
+        _ => panic!("Expected ContinueOutsideLoop error"),
+    }
+}
+
+#[test]
+fn test_error_unsupported_expression() {
+    let err = TypeError::unsupported_expression("async blocks".to_string(), Span::dummy());
+    match err.kind() {
+        TypeErrorKind::UnsupportedExpression { description } => {
+            assert_eq!(*description, "async blocks");
+        }
+        _ => panic!("Expected UnsupportedExpression error"),
+    }
+}
+
+#[test]
+fn test_error_unsupported_type_syntax() {
+    let err = TypeError::unsupported_type_syntax("impl Trait".to_string(), Span::dummy());
+    match err.kind() {
+        TypeErrorKind::UnsupportedTypeSyntax { description } => {
+            assert_eq!(*description, "impl Trait");
+        }
+        _ => panic!("Expected UnsupportedTypeSyntax error"),
+    }
+}
+
+// ============================================================
+// TypeError Clone Tests
+// ============================================================
+
+#[test]
+fn test_type_error_clone() {
+    let err = TypeError::mismatch(Type::i32(), Type::bool(), Span::dummy());
+    let err2 = err.clone();
+    match err2.kind() {
+        TypeErrorKind::Mismatch { expected, found } => {
+            assert_eq!(expected.display(), "i32");
+            assert_eq!(found.display(), "bool");
+        }
+        _ => panic!("Expected Mismatch error after clone"),
+    }
+}
+
+// ============================================================
+// TypeErrorKind Message Tests
+// ============================================================
+
+#[test]
+fn test_message_mismatch() {
+    let kind = TypeErrorKind::Mismatch {
+        expected: Type::i32(),
+        found: Type::bool(),
+    };
+    let msg = kind.message();
+    assert!(msg.contains("type mismatch"));
+    assert!(msg.contains("i32"));
+    assert!(msg.contains("bool"));
+}
+
+#[test]
+fn test_message_pattern_mismatch() {
+    let kind = TypeErrorKind::PatternMismatch {
+        expected: Type::i32(),
+        found: Type::bool(),
+    };
+    let msg = kind.message();
+    assert!(msg.contains("pattern type mismatch"));
+}
+
+#[test]
+fn test_message_unresolved_name() {
+    let kind = TypeErrorKind::UnresolvedName { name: "foo".to_string() };
+    let msg = kind.message();
+    assert!(msg.contains("cannot find value"));
+    assert!(msg.contains("foo"));
+}
+
+#[test]
+fn test_message_unresolved_type() {
+    let kind = TypeErrorKind::UnresolvedType { name: "MyType".to_string() };
+    let msg = kind.message();
+    assert!(msg.contains("cannot find type"));
+    assert!(msg.contains("MyType"));
+}
+
+#[test]
+fn test_message_wrong_arity() {
+    let kind = TypeErrorKind::WrongArity { expected: 2, found: 3 };
+    let msg = kind.message();
+    assert!(msg.contains("wrong number of arguments"));
+    assert!(msg.contains("2"));
+    assert!(msg.contains("3"));
+}
+
+#[test]
+fn test_message_occurs_check() {
+    let kind = TypeErrorKind::OccursCheck {
+        var: TyVarId::new(5),
+        ty: Type::i32(),
+    };
+    let msg = kind.message();
+    assert!(msg.contains("infinite type"));
+}
+
+#[test]
+fn test_message_unhandled_effect() {
+    let kind = TypeErrorKind::UnhandledEffect {
+        effect: EffectInstance::simple(DefId::new(1)),
+    };
+    let msg = kind.message();
+    assert!(msg.contains("unhandled effect"));
+}
+
+#[test]
+fn test_message_invalid_effect_op() {
+    let kind = TypeErrorKind::InvalidEffectOp {
+        effect: "Console".to_string(),
+        op: "read".to_string(),
+    };
+    let msg = kind.message();
+    assert!(msg.contains("Console"));
+    assert!(msg.contains("read"));
+    assert!(msg.contains("no operation"));
+}
+
+#[test]
+fn test_message_effect_mismatch_pure() {
+    let kind = TypeErrorKind::EffectMismatch { expected_pure: true };
+    let msg = kind.message();
+    assert!(msg.contains("expected pure"));
+}
+
+#[test]
+fn test_message_effect_mismatch_effectful() {
+    let kind = TypeErrorKind::EffectMismatch { expected_pure: false };
+    let msg = kind.message();
+    assert!(msg.contains("expected effectful"));
+}
+
+#[test]
+fn test_message_effect_row_mismatch() {
+    let kind = TypeErrorKind::EffectRowMismatch {
+        expected_count: 2,
+        found_count: 3,
+    };
+    let msg = kind.message();
+    assert!(msg.contains("effect row length mismatch"));
+}
+
+#[test]
+fn test_message_effect_not_in_row() {
+    let kind = TypeErrorKind::EffectNotInRow { effect: "IO".to_string() };
+    let msg = kind.message();
+    assert!(msg.contains("IO"));
+    assert!(msg.contains("not found in row"));
+}
+
+#[test]
+fn test_message_duplicate_definition() {
+    let kind = TypeErrorKind::DuplicateDefinition { name: "foo".to_string() };
+    let msg = kind.message();
+    assert!(msg.contains("duplicate definition"));
+    assert!(msg.contains("foo"));
+}
+
+#[test]
+fn test_message_missing_field() {
+    let kind = TypeErrorKind::MissingField {
+        struct_name: "Point".to_string(),
+        field: "z".to_string(),
+    };
+    let msg = kind.message();
+    assert!(msg.contains("missing field"));
+    assert!(msg.contains("z"));
+    assert!(msg.contains("Point"));
+}
+
+#[test]
+fn test_message_unknown_field() {
+    let kind = TypeErrorKind::UnknownField {
+        struct_name: "Point".to_string(),
+        field: "w".to_string(),
+    };
+    let msg = kind.message();
+    assert!(msg.contains("unknown field"));
+    assert!(msg.contains("w"));
+    assert!(msg.contains("Point"));
+}
+
+#[test]
+fn test_message_cannot_access_field() {
+    let kind = TypeErrorKind::CannotAccessField {
+        ty: Type::i32(),
+        field: "x".to_string(),
+    };
+    let msg = kind.message();
+    assert!(msg.contains("cannot access field"));
+    assert!(msg.contains("x"));
+    assert!(msg.contains("i32"));
+}
+
+#[test]
+fn test_message_non_exhaustive() {
+    let kind = TypeErrorKind::NonExhaustive {
+        missing: vec!["None".to_string()],
+    };
+    let msg = kind.message();
+    assert!(msg.contains("non-exhaustive"));
+    assert!(msg.contains("None"));
+}
+
+#[test]
+fn test_message_cannot_deref() {
+    let kind = TypeErrorKind::CannotDeref { ty: Type::i32() };
+    let msg = kind.message();
+    assert!(msg.contains("cannot dereference"));
+    assert!(msg.contains("i32"));
+}
+
+#[test]
+fn test_message_cannot_call() {
+    let kind = TypeErrorKind::CannotCall { ty: Type::i32() };
+    let msg = kind.message();
+    assert!(msg.contains("cannot call"));
+    assert!(msg.contains("i32"));
+}
+
+#[test]
+fn test_message_cannot_index() {
+    let kind = TypeErrorKind::CannotIndex { ty: Type::bool() };
+    let msg = kind.message();
+    assert!(msg.contains("does not support indexing"));
+}
+
+#[test]
+fn test_message_not_iterable() {
+    let kind = TypeErrorKind::NotIterable { ty: Type::i32() };
+    let msg = kind.message();
+    assert!(msg.contains("not iterable"));
+}
+
+#[test]
+fn test_message_tuple_field_not_numeric() {
+    let kind = TypeErrorKind::TupleFieldNotNumeric { field: "foo".to_string() };
+    let msg = kind.message();
+    assert!(msg.contains("must be numeric"));
+    assert!(msg.contains("foo"));
+}
+
+#[test]
+fn test_message_tuple_field_out_of_bounds() {
+    let kind = TypeErrorKind::TupleFieldOutOfBounds { index: 5, tuple_len: 3 };
+    let msg = kind.message();
+    assert!(msg.contains("out of bounds"));
+    assert!(msg.contains("5"));
+    assert!(msg.contains("3"));
+}
+
+#[test]
+fn test_message_cannot_construct_enum() {
+    let kind = TypeErrorKind::CannotConstructEnum { name: "Option".to_string() };
+    let msg = kind.message();
+    assert!(msg.contains("cannot construct enum"));
+    assert!(msg.contains("Option"));
+}
+
+#[test]
+fn test_message_enum_used_as_value() {
+    let kind = TypeErrorKind::EnumUsedAsValue { name: "Result".to_string() };
+    let msg = kind.message();
+    assert!(msg.contains("cannot be used as a value"));
+    assert!(msg.contains("Result"));
+}
+
+#[test]
+fn test_message_binary_op_type_error() {
+    let kind = TypeErrorKind::BinaryOpTypeError {
+        op: "+".to_string(),
+        left: Type::i32(),
+        right: Type::bool(),
+    };
+    let msg = kind.message();
+    assert!(msg.contains("binary operator"));
+    assert!(msg.contains("+"));
+    assert!(msg.contains("i32"));
+    assert!(msg.contains("bool"));
+}
+
+#[test]
+fn test_message_unary_op_type_error() {
+    let kind = TypeErrorKind::UnaryOpTypeError {
+        op: "-".to_string(),
+        operand: Type::bool(),
+    };
+    let msg = kind.message();
+    assert!(msg.contains("unary operator"));
+    assert!(msg.contains("-"));
+    assert!(msg.contains("bool"));
+}
+
+#[test]
+fn test_message_return_outside_function() {
+    let kind = TypeErrorKind::ReturnOutsideFunction;
+    let msg = kind.message();
+    assert!(msg.contains("return statement outside"));
+}
+
+#[test]
+fn test_message_break_outside_loop() {
+    let kind = TypeErrorKind::BreakOutsideLoop;
+    let msg = kind.message();
+    assert!(msg.contains("break statement outside"));
+}
+
+#[test]
+fn test_message_continue_outside_loop() {
+    let kind = TypeErrorKind::ContinueOutsideLoop;
+    let msg = kind.message();
+    assert!(msg.contains("continue statement outside"));
+}
+
+#[test]
+fn test_message_module_path_not_implemented() {
+    let kind = TypeErrorKind::ModulePathNotImplemented;
+    let msg = kind.message();
+    assert!(msg.contains("module paths"));
+    assert!(msg.contains("not yet implemented"));
+}
+
+#[test]
+fn test_message_unsupported_expression() {
+    let kind = TypeErrorKind::UnsupportedExpression {
+        description: "async blocks".to_string(),
+    };
+    let msg = kind.message();
+    assert!(msg.contains("unsupported expression"));
+    assert!(msg.contains("async blocks"));
+}
+
+#[test]
+fn test_message_unsupported_type_syntax() {
+    let kind = TypeErrorKind::UnsupportedTypeSyntax {
+        description: "impl Trait".to_string(),
+    };
+    let msg = kind.message();
+    assert!(msg.contains("unsupported type syntax"));
+    assert!(msg.contains("impl Trait"));
+}
+
+// ============================================================
+// TypeErrorKind Clone Tests
+// ============================================================
+
+#[test]
+fn test_type_error_kind_clone_mismatch() {
+    let kind = TypeErrorKind::Mismatch {
+        expected: Type::i32(),
+        found: Type::bool(),
+    };
+    let kind2 = kind.clone();
+    match kind2 {
+        TypeErrorKind::Mismatch { expected, found } => {
+            assert_eq!(expected.display(), "i32");
+            assert_eq!(found.display(), "bool");
+        }
+        _ => panic!("Expected Mismatch after clone"),
+    }
+}
+
+#[test]
+fn test_type_error_kind_clone_unit_variants() {
+    let k1 = TypeErrorKind::ReturnOutsideFunction.clone();
+    let k2 = TypeErrorKind::BreakOutsideLoop.clone();
+    let k3 = TypeErrorKind::ContinueOutsideLoop.clone();
+    let k4 = TypeErrorKind::ModulePathNotImplemented.clone();
+
+    match k1 {
+        TypeErrorKind::ReturnOutsideFunction => {}
+        _ => panic!("Expected ReturnOutsideFunction"),
+    }
+    match k2 {
+        TypeErrorKind::BreakOutsideLoop => {}
+        _ => panic!("Expected BreakOutsideLoop"),
+    }
+    match k3 {
+        TypeErrorKind::ContinueOutsideLoop => {}
+        _ => panic!("Expected ContinueOutsideLoop"),
+    }
+    match k4 {
+        TypeErrorKind::ModulePathNotImplemented => {}
+        _ => panic!("Expected ModulePathNotImplemented"),
+    }
+}
+
+// ============================================================
+// TypeErrors Collection Tests
+// ============================================================
+
+#[test]
+fn test_type_errors_new() {
+    let errors = TypeErrors::new();
+    assert!(!errors.has_errors());
+    assert_eq!(errors.len(), 0);
+}
+
+#[test]
+fn test_type_errors_push() {
+    let mut errors = TypeErrors::new();
+    errors.push(TypeError::mismatch(Type::i32(), Type::bool(), Span::dummy()));
+
+    assert!(errors.has_errors());
+    assert_eq!(errors.len(), 1);
+}
+
+#[test]
+fn test_type_errors_multiple() {
+    let mut errors = TypeErrors::new();
+    errors.push(TypeError::mismatch(Type::i32(), Type::bool(), Span::dummy()));
+    errors.push(TypeError::unresolved_name("foo".to_string(), Span::dummy()));
+    errors.push(TypeError::wrong_arity(2, 3, Span::dummy()));
+
+    assert_eq!(errors.len(), 3);
+}
+
+#[test]
+fn test_type_errors_errors() {
+    let mut errors = TypeErrors::new();
+    errors.push(TypeError::mismatch(Type::i32(), Type::bool(), Span::dummy()));
+
+    let all = errors.errors();
+    assert_eq!(all.len(), 1);
+}
+
+#[test]
+fn test_type_errors_clear() {
+    let mut errors = TypeErrors::new();
+    errors.push(TypeError::mismatch(Type::i32(), Type::bool(), Span::dummy()));
+    errors.push(TypeError::unresolved_name("foo".to_string(), Span::dummy()));
+
+    assert!(errors.has_errors());
+
+    errors.clear();
+
+    assert!(!errors.has_errors());
+    assert_eq!(errors.len(), 0);
+}
+
+#[test]
+fn test_type_errors_into_vec() {
+    let mut errors = TypeErrors::new();
+    errors.push(TypeError::mismatch(Type::i32(), Type::bool(), Span::dummy()));
+    errors.push(TypeError::unresolved_name("foo".to_string(), Span::dummy()));
+
+    let vec = errors.into_vec();
+    assert_eq!(vec.len(), 2);
+}
+
+#[test]
+fn test_type_errors_clone() {
+    let mut errors = TypeErrors::new();
+    errors.push(TypeError::mismatch(Type::i32(), Type::bool(), Span::dummy()));
+
+    let errors2 = errors.clone();
+    assert_eq!(errors2.len(), 1);
+}
+
+// ============================================================
+// TypeError Span Tests
+// ============================================================
+
+#[test]
+fn test_type_error_span() {
+    let span = Span::new(10, 20);
+    let err = TypeError::mismatch(Type::i32(), Type::bool(), span.clone());
+
+    let retrieved_span = err.span();
+    assert_eq!(retrieved_span.start, 10);
+    assert_eq!(retrieved_span.end, 20);
+}

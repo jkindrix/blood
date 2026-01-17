@@ -1,0 +1,685 @@
+//! LLVM Type API Bindings
+//!
+//! This module provides bindings to LLVM's type system:
+//! - Primitive types (void, integers, floats)
+//! - Composite types (arrays, structs, vectors)
+//! - Function types
+//! - Pointer types
+
+use super::{
+    LLVMContextRef, LLVMTypeRef, LLVMValueRef,
+    TypeKind, LLVM_TRUE, LLVM_FALSE,
+};
+
+// ============================================================================
+// Raw FFI Declarations
+// ============================================================================
+
+bridge "C" llvm_types {
+    // === Type Inspection ===
+
+    /// Get the kind of a type.
+    fn LLVMGetTypeKind(ty: LLVMTypeRef) -> i32;
+
+    /// Check if a type has a known size.
+    fn LLVMTypeIsSized(ty: LLVMTypeRef) -> i32;
+
+    /// Get the context for a type.
+    fn LLVMGetTypeContext(ty: LLVMTypeRef) -> LLVMContextRef;
+
+    /// Print a type to a string (for debugging).
+    fn LLVMPrintTypeToString(ty: LLVMTypeRef) -> *mut u8;
+
+    // === Void Type ===
+
+    /// Create a void type in a context.
+    fn LLVMVoidTypeInContext(ctx: LLVMContextRef) -> LLVMTypeRef;
+
+    /// Create a void type in the global context.
+    fn LLVMVoidType() -> LLVMTypeRef;
+
+    // === Label Type ===
+
+    /// Create a label type in a context.
+    fn LLVMLabelTypeInContext(ctx: LLVMContextRef) -> LLVMTypeRef;
+
+    /// Create a label type in the global context.
+    fn LLVMLabelType() -> LLVMTypeRef;
+
+    // === Integer Types ===
+
+    /// Create a 1-bit integer type in a context.
+    fn LLVMInt1TypeInContext(ctx: LLVMContextRef) -> LLVMTypeRef;
+
+    /// Create an 8-bit integer type in a context.
+    fn LLVMInt8TypeInContext(ctx: LLVMContextRef) -> LLVMTypeRef;
+
+    /// Create a 16-bit integer type in a context.
+    fn LLVMInt16TypeInContext(ctx: LLVMContextRef) -> LLVMTypeRef;
+
+    /// Create a 32-bit integer type in a context.
+    fn LLVMInt32TypeInContext(ctx: LLVMContextRef) -> LLVMTypeRef;
+
+    /// Create a 64-bit integer type in a context.
+    fn LLVMInt64TypeInContext(ctx: LLVMContextRef) -> LLVMTypeRef;
+
+    /// Create a 128-bit integer type in a context.
+    fn LLVMInt128TypeInContext(ctx: LLVMContextRef) -> LLVMTypeRef;
+
+    /// Create an arbitrary-width integer type in a context.
+    fn LLVMIntTypeInContext(ctx: LLVMContextRef, num_bits: u32) -> LLVMTypeRef;
+
+    /// Create a 1-bit integer type in the global context.
+    fn LLVMInt1Type() -> LLVMTypeRef;
+
+    /// Create an 8-bit integer type in the global context.
+    fn LLVMInt8Type() -> LLVMTypeRef;
+
+    /// Create a 16-bit integer type in the global context.
+    fn LLVMInt16Type() -> LLVMTypeRef;
+
+    /// Create a 32-bit integer type in the global context.
+    fn LLVMInt32Type() -> LLVMTypeRef;
+
+    /// Create a 64-bit integer type in the global context.
+    fn LLVMInt64Type() -> LLVMTypeRef;
+
+    /// Create a 128-bit integer type in the global context.
+    fn LLVMInt128Type() -> LLVMTypeRef;
+
+    /// Create an arbitrary-width integer type in the global context.
+    fn LLVMIntType(num_bits: u32) -> LLVMTypeRef;
+
+    /// Get the bit width of an integer type.
+    fn LLVMGetIntTypeWidth(int_ty: LLVMTypeRef) -> u32;
+
+    // === Floating Point Types ===
+
+    /// Create a half (16-bit float) type in a context.
+    fn LLVMHalfTypeInContext(ctx: LLVMContextRef) -> LLVMTypeRef;
+
+    /// Create a bfloat16 type in a context.
+    fn LLVMBFloatTypeInContext(ctx: LLVMContextRef) -> LLVMTypeRef;
+
+    /// Create a float (32-bit) type in a context.
+    fn LLVMFloatTypeInContext(ctx: LLVMContextRef) -> LLVMTypeRef;
+
+    /// Create a double (64-bit float) type in a context.
+    fn LLVMDoubleTypeInContext(ctx: LLVMContextRef) -> LLVMTypeRef;
+
+    /// Create an x86 80-bit float type in a context.
+    fn LLVMX86FP80TypeInContext(ctx: LLVMContextRef) -> LLVMTypeRef;
+
+    /// Create a 128-bit float type in a context.
+    fn LLVMFP128TypeInContext(ctx: LLVMContextRef) -> LLVMTypeRef;
+
+    /// Create a PPC 128-bit float type in a context.
+    fn LLVMPPCFP128TypeInContext(ctx: LLVMContextRef) -> LLVMTypeRef;
+
+    /// Create a half type in the global context.
+    fn LLVMHalfType() -> LLVMTypeRef;
+
+    /// Create a bfloat16 type in the global context.
+    fn LLVMBFloatType() -> LLVMTypeRef;
+
+    /// Create a float type in the global context.
+    fn LLVMFloatType() -> LLVMTypeRef;
+
+    /// Create a double type in the global context.
+    fn LLVMDoubleType() -> LLVMTypeRef;
+
+    /// Create an x86 80-bit float type in the global context.
+    fn LLVMX86FP80Type() -> LLVMTypeRef;
+
+    /// Create a 128-bit float type in the global context.
+    fn LLVMFP128Type() -> LLVMTypeRef;
+
+    /// Create a PPC 128-bit float type in the global context.
+    fn LLVMPPCFP128Type() -> LLVMTypeRef;
+
+    // === Function Types ===
+
+    /// Create a function type.
+    fn LLVMFunctionType(
+        return_type: LLVMTypeRef,
+        param_types: *const LLVMTypeRef,
+        param_count: u32,
+        is_var_arg: i32
+    ) -> LLVMTypeRef;
+
+    /// Check if a function type is variadic.
+    fn LLVMIsFunctionVarArg(fn_ty: LLVMTypeRef) -> i32;
+
+    /// Get the return type of a function type.
+    fn LLVMGetReturnType(fn_ty: LLVMTypeRef) -> LLVMTypeRef;
+
+    /// Get the number of parameters in a function type.
+    fn LLVMCountParamTypes(fn_ty: LLVMTypeRef) -> u32;
+
+    /// Get the parameter types of a function type.
+    fn LLVMGetParamTypes(fn_ty: LLVMTypeRef, dest: *mut LLVMTypeRef);
+
+    // === Struct Types ===
+
+    /// Create a struct type in a context.
+    fn LLVMStructTypeInContext(
+        ctx: LLVMContextRef,
+        element_types: *const LLVMTypeRef,
+        element_count: u32,
+        packed: i32
+    ) -> LLVMTypeRef;
+
+    /// Create a struct type in the global context.
+    fn LLVMStructType(
+        element_types: *const LLVMTypeRef,
+        element_count: u32,
+        packed: i32
+    ) -> LLVMTypeRef;
+
+    /// Create an empty named struct type.
+    fn LLVMStructCreateNamed(ctx: LLVMContextRef, name: *const u8) -> LLVMTypeRef;
+
+    /// Get the name of a struct type.
+    fn LLVMGetStructName(struct_ty: LLVMTypeRef) -> *const u8;
+
+    /// Set the body of a struct type.
+    fn LLVMStructSetBody(
+        struct_ty: LLVMTypeRef,
+        element_types: *const LLVMTypeRef,
+        element_count: u32,
+        packed: i32
+    );
+
+    /// Get the number of elements in a struct type.
+    fn LLVMCountStructElementTypes(struct_ty: LLVMTypeRef) -> u32;
+
+    /// Get the element types of a struct type.
+    fn LLVMGetStructElementTypes(struct_ty: LLVMTypeRef, dest: *mut LLVMTypeRef);
+
+    /// Get a specific element type from a struct.
+    fn LLVMStructGetTypeAtIndex(struct_ty: LLVMTypeRef, index: u32) -> LLVMTypeRef;
+
+    /// Check if a struct type is packed.
+    fn LLVMIsPackedStruct(struct_ty: LLVMTypeRef) -> i32;
+
+    /// Check if a struct type is opaque (has no body).
+    fn LLVMIsOpaqueStruct(struct_ty: LLVMTypeRef) -> i32;
+
+    /// Check if a struct is a literal struct.
+    fn LLVMIsLiteralStruct(struct_ty: LLVMTypeRef) -> i32;
+
+    // === Array Types ===
+
+    /// Create an array type.
+    fn LLVMArrayType(element_type: LLVMTypeRef, element_count: u32) -> LLVMTypeRef;
+
+    /// Create an array type (64-bit count version).
+    fn LLVMArrayType2(element_type: LLVMTypeRef, element_count: u64) -> LLVMTypeRef;
+
+    /// Get the length of an array type.
+    fn LLVMGetArrayLength(array_ty: LLVMTypeRef) -> u32;
+
+    /// Get the length of an array type (64-bit version).
+    fn LLVMGetArrayLength2(array_ty: LLVMTypeRef) -> u64;
+
+    /// Get the element type of an array.
+    fn LLVMGetElementType(ty: LLVMTypeRef) -> LLVMTypeRef;
+
+    // === Pointer Types ===
+
+    /// Create a pointer type.
+    fn LLVMPointerType(element_type: LLVMTypeRef, address_space: u32) -> LLVMTypeRef;
+
+    /// Check if a pointer type is opaque.
+    fn LLVMPointerTypeIsOpaque(ty: LLVMTypeRef) -> i32;
+
+    /// Create an opaque pointer type in a context.
+    fn LLVMPointerTypeInContext(ctx: LLVMContextRef, address_space: u32) -> LLVMTypeRef;
+
+    /// Get the address space of a pointer type.
+    fn LLVMGetPointerAddressSpace(pointer_ty: LLVMTypeRef) -> u32;
+
+    // === Vector Types ===
+
+    /// Create a fixed-size vector type.
+    fn LLVMVectorType(element_type: LLVMTypeRef, element_count: u32) -> LLVMTypeRef;
+
+    /// Create a scalable vector type.
+    fn LLVMScalableVectorType(element_type: LLVMTypeRef, element_count: u32) -> LLVMTypeRef;
+
+    /// Get the size of a vector type.
+    fn LLVMGetVectorSize(vector_ty: LLVMTypeRef) -> u32;
+}
+
+// ============================================================================
+// Safe Wrapper: LLVMType
+// ============================================================================
+
+/// Safe wrapper around an LLVM type.
+///
+/// Types in LLVM are uniqued by the context and are immutable once created.
+/// They do not need to be disposed.
+pub struct LLVMType {
+    /// The raw LLVM type reference.
+    raw: LLVMTypeRef,
+}
+
+impl LLVMType {
+    /// Create a wrapper from a raw type reference.
+    pub fn from_raw(raw: LLVMTypeRef) -> LLVMType {
+        LLVMType { raw }
+    }
+
+    /// Get the raw type reference.
+    pub fn raw(&self) -> LLVMTypeRef {
+        self.raw
+    }
+
+    /// Check if this is a null reference.
+    pub fn is_null(&self) -> bool {
+        self.raw.is_null()
+    }
+
+    /// Get the kind of this type.
+    pub fn kind(&self) -> TypeKind {
+        let kind = llvm_types::LLVMGetTypeKind(self.raw);
+        match kind {
+            0 => TypeKind::Void,
+            1 => TypeKind::Half,
+            2 => TypeKind::Float,
+            3 => TypeKind::Double,
+            4 => TypeKind::X86FP80,
+            5 => TypeKind::FP128,
+            6 => TypeKind::PPCFP128,
+            7 => TypeKind::Label,
+            8 => TypeKind::Integer,
+            9 => TypeKind::Function,
+            10 => TypeKind::Struct,
+            11 => TypeKind::Array,
+            12 => TypeKind::Pointer,
+            13 => TypeKind::Vector,
+            14 => TypeKind::Metadata,
+            16 => TypeKind::Token,
+            17 => TypeKind::ScalableVector,
+            18 => TypeKind::BFloat,
+            19 => TypeKind::X86AMX,
+            20 => TypeKind::TargetExt,
+            _ => TypeKind::Void,  // Default to void for unknown kinds
+        }
+    }
+
+    /// Check if this type has a known size.
+    pub fn is_sized(&self) -> bool {
+        llvm_types::LLVMTypeIsSized(self.raw) != 0
+    }
+
+    /// Get the context for this type.
+    pub fn context(&self) -> LLVMContextRef {
+        llvm_types::LLVMGetTypeContext(self.raw)
+    }
+
+    /// Print this type to a string (for debugging).
+    pub fn to_string(&self) -> String {
+        let ptr = llvm_types::LLVMPrintTypeToString(self.raw);
+        if ptr.is_null() {
+            "".to_string()
+        } else {
+            let s = unsafe { core::ffi::CStr::from_ptr(ptr as *const i8) };
+            let result = s.to_string_lossy().to_string();
+            super::core::llvm_core::LLVMDisposeMessage(ptr);
+            result
+        }
+    }
+
+    // === Type Predicates ===
+
+    /// Check if this is a void type.
+    pub fn is_void(&self) -> bool {
+        matches!(self.kind(), TypeKind::Void)
+    }
+
+    /// Check if this is an integer type.
+    pub fn is_integer(&self) -> bool {
+        matches!(self.kind(), TypeKind::Integer)
+    }
+
+    /// Check if this is a floating-point type.
+    pub fn is_float(&self) -> bool {
+        matches!(self.kind(), TypeKind::Half | TypeKind::BFloat |
+                 TypeKind::Float | TypeKind::Double |
+                 TypeKind::X86FP80 | TypeKind::FP128 | TypeKind::PPCFP128)
+    }
+
+    /// Check if this is a function type.
+    pub fn is_function(&self) -> bool {
+        matches!(self.kind(), TypeKind::Function)
+    }
+
+    /// Check if this is a struct type.
+    pub fn is_struct(&self) -> bool {
+        matches!(self.kind(), TypeKind::Struct)
+    }
+
+    /// Check if this is an array type.
+    pub fn is_array(&self) -> bool {
+        matches!(self.kind(), TypeKind::Array)
+    }
+
+    /// Check if this is a pointer type.
+    pub fn is_pointer(&self) -> bool {
+        matches!(self.kind(), TypeKind::Pointer)
+    }
+
+    /// Check if this is a vector type.
+    pub fn is_vector(&self) -> bool {
+        matches!(self.kind(), TypeKind::Vector | TypeKind::ScalableVector)
+    }
+
+    // === Integer Type Operations ===
+
+    /// Get the bit width of an integer type.
+    /// Returns 0 if this is not an integer type.
+    pub fn int_width(&self) -> u32 {
+        if self.is_integer() {
+            llvm_types::LLVMGetIntTypeWidth(self.raw)
+        } else {
+            0
+        }
+    }
+
+    // === Function Type Operations ===
+
+    /// Check if a function type is variadic.
+    pub fn is_var_arg(&self) -> bool {
+        if self.is_function() {
+            llvm_types::LLVMIsFunctionVarArg(self.raw) != 0
+        } else {
+            false
+        }
+    }
+
+    /// Get the return type of a function type.
+    pub fn return_type(&self) -> Option<LLVMType> {
+        if self.is_function() {
+            Some(LLVMType::from_raw(llvm_types::LLVMGetReturnType(self.raw)))
+        } else {
+            None
+        }
+    }
+
+    /// Get the number of parameters in a function type.
+    pub fn param_count(&self) -> u32 {
+        if self.is_function() {
+            llvm_types::LLVMCountParamTypes(self.raw)
+        } else {
+            0
+        }
+    }
+
+    // === Struct Type Operations ===
+
+    /// Get the number of elements in a struct type.
+    pub fn struct_element_count(&self) -> u32 {
+        if self.is_struct() {
+            llvm_types::LLVMCountStructElementTypes(self.raw)
+        } else {
+            0
+        }
+    }
+
+    /// Get an element type from a struct at the given index.
+    pub fn struct_element_at(&self, index: u32) -> Option<LLVMType> {
+        if self.is_struct() && index < self.struct_element_count() {
+            Some(LLVMType::from_raw(llvm_types::LLVMStructGetTypeAtIndex(self.raw, index)))
+        } else {
+            None
+        }
+    }
+
+    /// Check if a struct type is packed.
+    pub fn is_packed(&self) -> bool {
+        if self.is_struct() {
+            llvm_types::LLVMIsPackedStruct(self.raw) != 0
+        } else {
+            false
+        }
+    }
+
+    /// Check if a struct type is opaque.
+    pub fn is_opaque(&self) -> bool {
+        if self.is_struct() {
+            llvm_types::LLVMIsOpaqueStruct(self.raw) != 0
+        } else {
+            false
+        }
+    }
+
+    // === Array Type Operations ===
+
+    /// Get the length of an array type.
+    pub fn array_length(&self) -> u64 {
+        if self.is_array() {
+            llvm_types::LLVMGetArrayLength2(self.raw)
+        } else {
+            0
+        }
+    }
+
+    /// Get the element type of an array or vector.
+    pub fn element_type(&self) -> Option<LLVMType> {
+        if self.is_array() || self.is_vector() {
+            Some(LLVMType::from_raw(llvm_types::LLVMGetElementType(self.raw)))
+        } else {
+            None
+        }
+    }
+
+    // === Pointer Type Operations ===
+
+    /// Get the address space of a pointer type.
+    pub fn address_space(&self) -> u32 {
+        if self.is_pointer() {
+            llvm_types::LLVMGetPointerAddressSpace(self.raw)
+        } else {
+            0
+        }
+    }
+
+    // === Vector Type Operations ===
+
+    /// Get the size of a vector type.
+    pub fn vector_size(&self) -> u32 {
+        if self.is_vector() {
+            llvm_types::LLVMGetVectorSize(self.raw)
+        } else {
+            0
+        }
+    }
+}
+
+// ============================================================================
+// Type Kind Enumeration
+// ============================================================================
+
+/// LLVM type kind enumeration (for matching).
+pub enum LLVMTypeKind {
+    Void,
+    Half,
+    Float,
+    Double,
+    X86FP80,
+    FP128,
+    PPCFP128,
+    Label,
+    Integer,
+    Function,
+    Struct,
+    Array,
+    Pointer,
+    Vector,
+    Metadata,
+    Token,
+    ScalableVector,
+    BFloat,
+    X86AMX,
+    TargetExt,
+    Unknown,
+}
+
+// ============================================================================
+// Type Factory Functions (Context-Based)
+// ============================================================================
+
+/// Create a void type in a context.
+pub fn void_type(ctx: LLVMContextRef) -> LLVMType {
+    LLVMType::from_raw(llvm_types::LLVMVoidTypeInContext(ctx))
+}
+
+/// Create a label type in a context.
+pub fn label_type(ctx: LLVMContextRef) -> LLVMType {
+    LLVMType::from_raw(llvm_types::LLVMLabelTypeInContext(ctx))
+}
+
+/// Create a 1-bit integer type (boolean) in a context.
+pub fn i1_type(ctx: LLVMContextRef) -> LLVMType {
+    LLVMType::from_raw(llvm_types::LLVMInt1TypeInContext(ctx))
+}
+
+/// Create an 8-bit integer type in a context.
+pub fn i8_type(ctx: LLVMContextRef) -> LLVMType {
+    LLVMType::from_raw(llvm_types::LLVMInt8TypeInContext(ctx))
+}
+
+/// Create a 16-bit integer type in a context.
+pub fn i16_type(ctx: LLVMContextRef) -> LLVMType {
+    LLVMType::from_raw(llvm_types::LLVMInt16TypeInContext(ctx))
+}
+
+/// Create a 32-bit integer type in a context.
+pub fn i32_type(ctx: LLVMContextRef) -> LLVMType {
+    LLVMType::from_raw(llvm_types::LLVMInt32TypeInContext(ctx))
+}
+
+/// Create a 64-bit integer type in a context.
+pub fn i64_type(ctx: LLVMContextRef) -> LLVMType {
+    LLVMType::from_raw(llvm_types::LLVMInt64TypeInContext(ctx))
+}
+
+/// Create a 128-bit integer type in a context.
+pub fn i128_type(ctx: LLVMContextRef) -> LLVMType {
+    LLVMType::from_raw(llvm_types::LLVMInt128TypeInContext(ctx))
+}
+
+/// Create an arbitrary-width integer type in a context.
+pub fn int_type(ctx: LLVMContextRef, bits: u32) -> LLVMType {
+    LLVMType::from_raw(llvm_types::LLVMIntTypeInContext(ctx, bits))
+}
+
+/// Create a half (16-bit float) type in a context.
+pub fn half_type(ctx: LLVMContextRef) -> LLVMType {
+    LLVMType::from_raw(llvm_types::LLVMHalfTypeInContext(ctx))
+}
+
+/// Create a bfloat16 type in a context.
+pub fn bfloat_type(ctx: LLVMContextRef) -> LLVMType {
+    LLVMType::from_raw(llvm_types::LLVMBFloatTypeInContext(ctx))
+}
+
+/// Create a float (32-bit) type in a context.
+pub fn f32_type(ctx: LLVMContextRef) -> LLVMType {
+    LLVMType::from_raw(llvm_types::LLVMFloatTypeInContext(ctx))
+}
+
+/// Create a double (64-bit float) type in a context.
+pub fn f64_type(ctx: LLVMContextRef) -> LLVMType {
+    LLVMType::from_raw(llvm_types::LLVMDoubleTypeInContext(ctx))
+}
+
+/// Create an x86 80-bit float type in a context.
+pub fn x86_fp80_type(ctx: LLVMContextRef) -> LLVMType {
+    LLVMType::from_raw(llvm_types::LLVMX86FP80TypeInContext(ctx))
+}
+
+/// Create a 128-bit float type in a context.
+pub fn fp128_type(ctx: LLVMContextRef) -> LLVMType {
+    LLVMType::from_raw(llvm_types::LLVMFP128TypeInContext(ctx))
+}
+
+/// Create an opaque pointer type in a context.
+pub fn ptr_type(ctx: LLVMContextRef, address_space: u32) -> LLVMType {
+    LLVMType::from_raw(llvm_types::LLVMPointerTypeInContext(ctx, address_space))
+}
+
+/// Create a function type.
+pub fn function_type(return_type: LLVMTypeRef, param_types: &[LLVMTypeRef], is_var_arg: bool) -> LLVMType {
+    let params_ptr = if param_types.is_empty() {
+        core::ptr::null()
+    } else {
+        param_types.as_ptr()
+    };
+    let var_arg = if is_var_arg { LLVM_TRUE } else { LLVM_FALSE };
+    LLVMType::from_raw(llvm_types::LLVMFunctionType(
+        return_type,
+        params_ptr,
+        param_types.len() as u32,
+        var_arg
+    ))
+}
+
+/// Create an anonymous struct type in a context.
+pub fn struct_type(ctx: LLVMContextRef, element_types: &[LLVMTypeRef], packed: bool) -> LLVMType {
+    let elements_ptr = if element_types.is_empty() {
+        core::ptr::null()
+    } else {
+        element_types.as_ptr()
+    };
+    let packed_flag = if packed { LLVM_TRUE } else { LLVM_FALSE };
+    LLVMType::from_raw(llvm_types::LLVMStructTypeInContext(
+        ctx,
+        elements_ptr,
+        element_types.len() as u32,
+        packed_flag
+    ))
+}
+
+/// Create a named struct type in a context.
+pub fn named_struct_type(ctx: LLVMContextRef, name: &str) -> LLVMType {
+    let name_ptr = name.as_ptr();
+    LLVMType::from_raw(llvm_types::LLVMStructCreateNamed(ctx, name_ptr))
+}
+
+/// Set the body of a named struct type.
+pub fn set_struct_body(struct_ty: LLVMTypeRef, element_types: &[LLVMTypeRef], packed: bool) {
+    let elements_ptr = if element_types.is_empty() {
+        core::ptr::null()
+    } else {
+        element_types.as_ptr()
+    };
+    let packed_flag = if packed { LLVM_TRUE } else { LLVM_FALSE };
+    llvm_types::LLVMStructSetBody(
+        struct_ty,
+        elements_ptr,
+        element_types.len() as u32,
+        packed_flag
+    );
+}
+
+/// Create an array type.
+pub fn array_type(element_type: LLVMTypeRef, count: u64) -> LLVMType {
+    LLVMType::from_raw(llvm_types::LLVMArrayType2(element_type, count))
+}
+
+/// Create a fixed-size vector type.
+pub fn vector_type(element_type: LLVMTypeRef, count: u32) -> LLVMType {
+    LLVMType::from_raw(llvm_types::LLVMVectorType(element_type, count))
+}
+
+/// Create a scalable vector type.
+pub fn scalable_vector_type(element_type: LLVMTypeRef, count: u32) -> LLVMType {
+    LLVMType::from_raw(llvm_types::LLVMScalableVectorType(element_type, count))
+}
+
+/// Create a typed pointer type (legacy, prefer opaque pointers).
+pub fn typed_pointer_type(element_type: LLVMTypeRef, address_space: u32) -> LLVMType {
+    LLVMType::from_raw(llvm_types::LLVMPointerType(element_type, address_space))
+}

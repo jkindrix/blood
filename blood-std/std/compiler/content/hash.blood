@@ -1,0 +1,501 @@
+/// Content Hash Module
+///
+/// BLAKE3-256 hash computation for content-addressed code identity.
+///
+/// # Why BLAKE3?
+///
+/// | Factor    | BLAKE3    | SHA3-512 (Unison) | SHA-256   |
+/// |-----------|-----------|-------------------|-----------|
+/// | Speed     | ~5x faster| Baseline          | ~3x slower|
+/// | Security  | 128-bit   | 256-bit           | 128-bit   |
+/// | Output    | 256 bits  | 512 bits          | 256 bits  |
+///
+/// # Collision Probability
+///
+/// With 256-bit hashes and the birthday paradox:
+/// - Expected first collision at ~2^128 unique hashes
+/// - At 1 million definitions/second: ~10^31 years
+///
+/// # Display Format
+///
+/// Hashes are displayed in lowercase base32 (RFC 4648):
+/// ```text
+/// Full:  #a7f2k9m3xp5jht2ngqw4bc8rv6ys7dz1ef0il
+/// Short: #a7f2k9m3xp (10 characters typical)
+/// ```
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+/// Format version for hash computation.
+/// Increment when changing canonicalization or serialization.
+pub const FORMAT_VERSION: u8 = 1;
+
+/// Base32 alphabet for display (RFC 4648, lowercase).
+const BASE32_ALPHABET: [u8; 32] = [
+    b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h',
+    b'i', b'j', b'k', b'l', b'm', b'n', b'o', b'p',
+    b'q', b'r', b's', b't', b'u', b'v', b'w', b'x',
+    b'y', b'z', b'2', b'3', b'4', b'5', b'6', b'7',
+];
+
+// ============================================================================
+// ContentHash
+// ============================================================================
+
+/// A 256-bit content hash (BLAKE3).
+///
+/// This is the fundamental identity type in Blood. Every definition,
+/// type, and effect is identified by its content hash, not by name.
+///
+/// # Examples
+///
+/// ```blood
+/// let hash = ContentHash::compute(b"hello world");
+/// println("Hash: {}", hash);  // Prints: Hash: #a7f2k9m3xp
+///
+/// // Builtins have well-known hashes
+/// let int_add = ContentHash::builtin("Int.add");
+/// ```
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ContentHash {
+    bytes: [u8; 32],
+}
+
+impl ContentHash {
+    /// The zero hash (for error cases or placeholders).
+    pub const ZERO: ContentHash = ContentHash { bytes: [0u8; 32] };
+
+    /// Create a new content hash from raw bytes.
+    pub fn from_bytes(bytes: [u8; 32]) -> ContentHash {
+        ContentHash { bytes }
+    }
+
+    /// Compute hash from bytes using BLAKE3-256.
+    pub fn compute(data: &[u8]) -> ContentHash {
+        let hash = blake3::hash(data);
+        ContentHash { bytes: *hash.as_bytes() }
+    }
+
+    /// Compute hash with format version prefix.
+    ///
+    /// This ensures hash stability across format versions.
+    pub fn compute_versioned(data: &[u8]) -> ContentHash {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&[FORMAT_VERSION]);
+        hasher.update(data);
+        ContentHash { bytes: *hasher.finalize().as_bytes() }
+    }
+
+    /// Get the raw bytes of the hash.
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.bytes
+    }
+
+    /// Create a hash for builtins with a fixed well-known value.
+    ///
+    /// Builtin hashes are computed as `blake3("builtin:" + name)`.
+    pub fn builtin(name: &str) -> ContentHash {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"builtin:");
+        hasher.update(name.as_bytes());
+        ContentHash { bytes: *hasher.finalize().as_bytes() }
+    }
+
+    /// Get a short display form (first 10 base32 characters).
+    pub fn short_display(&self) -> HashDisplay {
+        HashDisplay {
+            hash: *self,
+            max_chars: 10,
+        }
+    }
+
+    /// Get the full display form (52 base32 characters).
+    pub fn full_display(&self) -> HashDisplay {
+        HashDisplay {
+            hash: *self,
+            max_chars: 52,
+        }
+    }
+
+    /// Check if this is the zero hash.
+    pub fn is_zero(&self) -> bool {
+        self.bytes == [0u8; 32]
+    }
+}
+
+impl Default for ContentHash {
+    fn default() -> ContentHash {
+        ContentHash::ZERO
+    }
+}
+
+impl std.fmt::Debug for ContentHash {
+    fn fmt(&self, f: &mut std.fmt::Formatter) -> std.fmt::Result {
+        write!(f, "ContentHash(#{})", self.short_display())
+    }
+}
+
+impl std.fmt::Display for ContentHash {
+    fn fmt(&self, f: &mut std.fmt::Formatter) -> std.fmt::Result {
+        write!(f, "#{}", self.short_display())
+    }
+}
+
+impl From<ContentHash> for String {
+    fn from(hash: ContentHash) -> String {
+        // Convert to hex string for serialization
+        let mut result = String::with_capacity(64);
+        for byte in hash.bytes.iter() {
+            result.push_str(&format!("{:02x}", byte));
+        }
+        result
+    }
+}
+
+impl TryFrom<String> for ContentHash {
+    type Error = String;
+
+    fn try_from(s: String) -> Result<ContentHash, String> {
+        if s.len() != 64 {
+            return Err(format!("expected 64 hex characters, got {}", s.len()));
+        }
+
+        let mut bytes = [0u8; 32];
+        let chars: Vec<char> = s.chars().collect();
+
+        for i in 0..32 {
+            let hex_str: String = chars[i * 2..i * 2 + 2].iter().collect();
+            match u8::from_str_radix(&hex_str, 16) {
+                Ok(byte) => bytes[i] = byte,
+                Err(_) => return Err(format!("invalid hex at position {}", i * 2)),
+            }
+        }
+
+        Ok(ContentHash { bytes })
+    }
+}
+
+// ============================================================================
+// HashDisplay
+// ============================================================================
+
+/// Display helper for content hashes.
+///
+/// Converts the hash bytes to base32 (RFC 4648, lowercase) and
+/// optionally truncates to a maximum number of characters.
+pub struct HashDisplay {
+    hash: ContentHash,
+    max_chars: usize,
+}
+
+impl std.fmt::Display for HashDisplay {
+    fn fmt(&self, f: &mut std.fmt::Formatter) -> std.fmt::Result {
+        // Encode to base32
+        let mut output = String::with_capacity(52);
+        let bytes = self.hash.as_bytes();
+
+        // Process 5 bytes at a time (40 bits → 8 base32 chars)
+        let mut i = 0;
+        while i < bytes.len() {
+            let chunk_len = std.cmp::min(5, bytes.len() - i);
+            let chunk = &bytes[i..i + chunk_len];
+
+            // Accumulate bits
+            let mut acc: u64 = 0;
+            for (j, &b) in chunk.iter().enumerate() {
+                acc |= (b as u64) << (32 - j * 8);
+            }
+
+            // Extract 5-bit groups
+            let bits = chunk_len * 8;
+            let chars = (bits + 4) / 5;  // Ceiling division
+            for j in 0..chars {
+                let idx = ((acc >> (35 - j * 5)) & 0x1f) as usize;
+                output.push(BASE32_ALPHABET[idx] as char);
+            }
+
+            i += 5;
+        }
+
+        // Truncate to max_chars
+        let display = if output.len() > self.max_chars {
+            &output[..self.max_chars]
+        } else {
+            &output
+        };
+
+        write!(f, "{}", display)
+    }
+}
+
+// ============================================================================
+// ContentHasher
+// ============================================================================
+
+/// A hasher for building content hashes incrementally.
+///
+/// Use this when you need to hash multiple pieces of data in sequence.
+///
+/// # Examples
+///
+/// ```blood
+/// let mut hasher = ContentHasher::new();
+/// hasher.update_u8(0x01);
+/// hasher.update_str("hello");
+/// hasher.update_i64(42);
+/// let hash = hasher.finalize();
+/// ```
+pub struct ContentHasher {
+    hasher: blake3::Hasher,
+}
+
+impl ContentHasher {
+    /// Create a new hasher with version prefix.
+    pub fn new() -> ContentHasher {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&[FORMAT_VERSION]);
+        ContentHasher { hasher }
+    }
+
+    /// Create a new hasher without version prefix.
+    pub fn new_unversioned() -> ContentHasher {
+        ContentHasher {
+            hasher: blake3::Hasher::new(),
+        }
+    }
+
+    /// Update the hash with more data.
+    pub fn update(&mut self, data: &[u8]) {
+        self.hasher.update(data);
+    }
+
+    /// Update with a u8 value.
+    pub fn update_u8(&mut self, value: u8) {
+        self.hasher.update(&[value]);
+    }
+
+    /// Update with a u16 value (little-endian).
+    pub fn update_u16(&mut self, value: u16) {
+        self.hasher.update(&value.to_le_bytes());
+    }
+
+    /// Update with a u32 value (little-endian).
+    pub fn update_u32(&mut self, value: u32) {
+        self.hasher.update(&value.to_le_bytes());
+    }
+
+    /// Update with a u64 value (little-endian).
+    pub fn update_u64(&mut self, value: u64) {
+        self.hasher.update(&value.to_le_bytes());
+    }
+
+    /// Update with an i32 value (little-endian).
+    pub fn update_i32(&mut self, value: i32) {
+        self.hasher.update(&value.to_le_bytes());
+    }
+
+    /// Update with an i64 value (little-endian).
+    pub fn update_i64(&mut self, value: i64) {
+        self.hasher.update(&value.to_le_bytes());
+    }
+
+    /// Update with an i128 value (little-endian).
+    pub fn update_i128(&mut self, value: i128) {
+        self.hasher.update(&value.to_le_bytes());
+    }
+
+    /// Update with an f64 value (IEEE 754 canonical form).
+    ///
+    /// Uses bits representation for determinism.
+    pub fn update_f64(&mut self, value: f64) {
+        self.hasher.update(&value.to_bits().to_le_bytes());
+    }
+
+    /// Update with a string (length-prefixed).
+    pub fn update_str(&mut self, s: &str) {
+        self.update_u32(s.len() as u32);
+        self.hasher.update(s.as_bytes());
+    }
+
+    /// Update with another hash.
+    pub fn update_hash(&mut self, hash: &ContentHash) {
+        self.hasher.update(hash.as_bytes());
+    }
+
+    /// Update with a bool value.
+    pub fn update_bool(&mut self, value: bool) {
+        self.update_u8(if value { 1 } else { 0 });
+    }
+
+    /// Update with an optional value.
+    pub fn update_option<T>(&mut self, value: &Option<T>, hash_fn: fn(&mut ContentHasher, &T)) {
+        match value {
+            Some(v) => {
+                self.update_u8(1);
+                hash_fn(self, v);
+            }
+            None => {
+                self.update_u8(0);
+            }
+        }
+    }
+
+    /// Update with a slice of values.
+    pub fn update_slice<T>(&mut self, values: &[T], hash_fn: fn(&mut ContentHasher, &T)) {
+        self.update_u32(values.len() as u32);
+        for value in values {
+            hash_fn(self, value);
+        }
+    }
+
+    /// Finalize and return the hash.
+    pub fn finalize(self) -> ContentHash {
+        ContentHash { bytes: *self.hasher.finalize().as_bytes() }
+    }
+}
+
+impl Default for ContentHasher {
+    fn default() -> ContentHasher {
+        ContentHasher::new()
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_content_hash_compute() {
+        let hash1 = ContentHash::compute(b"hello world");
+        let hash2 = ContentHash::compute(b"hello world");
+        let hash3 = ContentHash::compute(b"hello world!");
+
+        assert_eq!(hash1, hash2);
+        assert_ne!(hash1, hash3);
+    }
+
+    #[test]
+    fn test_content_hash_versioned() {
+        let hash1 = ContentHash::compute_versioned(b"test");
+        let hash2 = ContentHash::compute(b"test");
+
+        // Versioned should be different from non-versioned
+        assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_content_hash_display() {
+        let hash = ContentHash::compute(b"test");
+        let short = format!("{}", hash.short_display());
+        let full = format!("{}", hash.full_display());
+
+        assert_eq!(short.len(), 10);
+        assert!(full.len() <= 52);
+
+        // Should only contain base32 characters
+        for c in short.chars() {
+            assert!(c.is_ascii_lowercase() || c.is_ascii_digit());
+        }
+    }
+
+    #[test]
+    fn test_content_hash_builtin() {
+        let add1 = ContentHash::builtin("Int.add");
+        let add2 = ContentHash::builtin("Int.add");
+        let sub = ContentHash::builtin("Int.sub");
+
+        assert_eq!(add1, add2);
+        assert_ne!(add1, sub);
+    }
+
+    #[test]
+    fn test_content_hasher() {
+        let mut hasher = ContentHasher::new();
+        hasher.update_u8(0x01);
+        hasher.update_i64(42);
+        hasher.update_str("test");
+        let hash = hasher.finalize();
+
+        // Same inputs should produce same hash
+        let mut hasher2 = ContentHasher::new();
+        hasher2.update_u8(0x01);
+        hasher2.update_i64(42);
+        hasher2.update_str("test");
+        let hash2 = hasher2.finalize();
+
+        assert_eq!(hash, hash2);
+    }
+
+    #[test]
+    fn test_content_hash_default() {
+        let hash = ContentHash::default();
+        assert_eq!(hash, ContentHash::ZERO);
+        assert!(hash.is_zero());
+    }
+
+    #[test]
+    fn test_content_hasher_f64_determinism() {
+        let mut h1 = ContentHasher::new();
+        h1.update_f64(1.234567);
+        let hash1 = h1.finalize();
+
+        let mut h2 = ContentHasher::new();
+        h2.update_f64(1.234567);
+        let hash2 = h2.finalize();
+
+        assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_content_hash_as_bytes() {
+        let bytes = [42u8; 32];
+        let hash = ContentHash::from_bytes(bytes);
+        assert_eq!(hash.as_bytes(), &bytes);
+    }
+
+    #[test]
+    fn test_deterministic_hash_across_runs() {
+        let input = b"fn add(x: i32, y: i32) -> i32 { x + y }";
+        let hash1 = ContentHash::compute(input);
+        let hash2 = ContentHash::compute(input);
+        let hash3 = ContentHash::compute(input);
+
+        assert_eq!(hash1, hash2);
+        assert_eq!(hash2, hash3);
+        assert_eq!(hash1.as_bytes(), hash2.as_bytes());
+    }
+
+    #[test]
+    fn test_builtin_hash_determinism() {
+        let builtins = [
+            "Int.add", "Int.sub", "Int.mul", "Int.div",
+            "Bool.and", "Bool.or", "Bool.not",
+        ];
+
+        for name in builtins.iter() {
+            let hash1 = ContentHash::builtin(name);
+            let hash2 = ContentHash::builtin(name);
+            assert_eq!(hash1, hash2);
+        }
+
+        // Different builtins should have different hashes
+        assert_ne!(
+            ContentHash::builtin("Int.add"),
+            ContentHash::builtin("Int.sub")
+        );
+    }
+
+    #[test]
+    fn test_hash_serialization_roundtrip() {
+        let original = ContentHash::compute(b"test input");
+        let serialized: String = original.into();
+        let deserialized = ContentHash::try_from(serialized).unwrap();
+        assert_eq!(original, deserialized);
+    }
+}

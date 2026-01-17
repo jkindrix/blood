@@ -1,0 +1,928 @@
+/// Trait Resolution for Blood Type Checker
+///
+/// This module handles trait definitions, implementations, and method resolution.
+/// It provides the infrastructure for finding trait implementations and looking
+/// up methods on types.
+///
+/// # Design Principles
+///
+/// 1. **No shortcuts**: Every type kind is explicitly handled in matching
+/// 2. **Explicit error handling**: All failure cases are properly reported
+/// 3. **Separation of concerns**: Trait resolution is independent of type checking
+
+use super.types::{
+    Type, TypeKind, DefId, TyVarId, PrimitiveTy, Mutability, Ownership,
+    EffectRow, RecordField, RecordRowVarId,
+};
+use super.unify::Unifier;
+
+// ============================================================
+// Trait Definitions
+// ============================================================
+
+/// A trait definition.
+///
+/// Traits define a set of methods and associated types that can be
+/// implemented by types. They form the basis of Blood's ad-hoc polymorphism.
+pub struct TraitDef {
+    /// Name of the trait
+    pub name: String,
+    /// Unique identifier for this trait
+    pub def_id: DefId,
+    /// Type parameters of the trait (e.g., T in Trait<T>)
+    pub type_params: [TyVarId],
+    /// Supertraits that this trait requires
+    pub supertraits: [DefId],
+    /// Method signatures defined in this trait
+    pub methods: [TraitMethodDef],
+    /// Associated types defined in this trait
+    pub assoc_types: [TraitAssocTypeDef],
+}
+
+impl TraitDef {
+    /// Create a new trait definition.
+    pub fn new(
+        name: String,
+        def_id: DefId,
+        type_params: [TyVarId],
+        supertraits: [DefId],
+        methods: [TraitMethodDef],
+        assoc_types: [TraitAssocTypeDef],
+    ) -> TraitDef {
+        TraitDef {
+            name,
+            def_id,
+            type_params,
+            supertraits,
+            methods,
+            assoc_types,
+        }
+    }
+
+    /// Create a simple trait with no type parameters or supertraits.
+    pub fn simple(name: String, def_id: DefId, methods: [TraitMethodDef]) -> TraitDef {
+        TraitDef {
+            name,
+            def_id,
+            type_params: vec![],
+            supertraits: vec![],
+            methods,
+            assoc_types: vec![],
+        }
+    }
+
+    /// Check if this trait has a method with the given name.
+    pub fn has_method(&self, name: &str) -> bool {
+        let mut i: usize = 0;
+        while i < self.methods.len() {
+            if self.methods[i].name.eq(name) {
+                return true;
+            }
+            i = i + 1;
+        }
+        false
+    }
+
+    /// Get a method by name.
+    pub fn get_method(&self, name: &str) -> Option<&TraitMethodDef> {
+        let mut i: usize = 0;
+        while i < self.methods.len() {
+            if self.methods[i].name.eq(name) {
+                return Some(&self.methods[i]);
+            }
+            i = i + 1;
+        }
+        None
+    }
+
+    /// Check if this trait has an associated type with the given name.
+    pub fn has_assoc_type(&self, name: &str) -> bool {
+        let mut i: usize = 0;
+        while i < self.assoc_types.len() {
+            if self.assoc_types[i].name.eq(name) {
+                return true;
+            }
+            i = i + 1;
+        }
+        false
+    }
+}
+
+impl Clone for TraitDef {
+    fn clone(&self) -> TraitDef {
+        TraitDef {
+            name: self.name.clone(),
+            def_id: self.def_id.clone(),
+            type_params: self.type_params.clone(),
+            supertraits: self.supertraits.clone(),
+            methods: self.methods.clone(),
+            assoc_types: self.assoc_types.clone(),
+        }
+    }
+}
+
+/// A method signature in a trait.
+///
+/// This represents the signature of a method without its implementation.
+/// The first parameter is Self if this is a method (not an associated function).
+pub struct TraitMethodDef {
+    /// Method name
+    pub name: String,
+    /// Type parameters specific to this method
+    pub type_params: [TyVarId],
+    /// Parameter types (first is Self for methods)
+    pub params: [Type],
+    /// Return type
+    pub ret: Type,
+    /// Whether this method has a default implementation
+    pub has_default: bool,
+}
+
+impl TraitMethodDef {
+    /// Create a new trait method definition.
+    pub fn new(
+        name: String,
+        type_params: [TyVarId],
+        params: [Type],
+        ret: Type,
+        has_default: bool,
+    ) -> TraitMethodDef {
+        TraitMethodDef {
+            name,
+            type_params,
+            params,
+            ret,
+            has_default,
+        }
+    }
+
+    /// Create a simple method with no type parameters and no default.
+    pub fn simple(name: String, params: [Type], ret: Type) -> TraitMethodDef {
+        TraitMethodDef {
+            name,
+            type_params: vec![],
+            params,
+            ret,
+            has_default: false,
+        }
+    }
+
+    /// Check if this is a method (has self parameter) vs an associated function.
+    pub fn is_method(&self) -> bool {
+        // Methods have at least one parameter and the first is some form of Self
+        self.params.len() > 0
+    }
+}
+
+impl Clone for TraitMethodDef {
+    fn clone(&self) -> TraitMethodDef {
+        TraitMethodDef {
+            name: self.name.clone(),
+            type_params: self.type_params.clone(),
+            params: self.params.clone(),
+            ret: self.ret.clone(),
+            has_default: self.has_default,
+        }
+    }
+}
+
+/// An associated type in a trait.
+///
+/// Associated types allow traits to define placeholder types that are
+/// specified by each implementation.
+pub struct TraitAssocTypeDef {
+    /// Name of the associated type
+    pub name: String,
+    /// Trait bounds on the associated type
+    pub bounds: [DefId],
+}
+
+impl TraitAssocTypeDef {
+    /// Create a new associated type definition.
+    pub fn new(name: String, bounds: [DefId]) -> TraitAssocTypeDef {
+        TraitAssocTypeDef { name, bounds }
+    }
+
+    /// Create an unbounded associated type.
+    pub fn unbounded(name: String) -> TraitAssocTypeDef {
+        TraitAssocTypeDef {
+            name,
+            bounds: vec![],
+        }
+    }
+}
+
+impl Clone for TraitAssocTypeDef {
+    fn clone(&self) -> TraitAssocTypeDef {
+        TraitAssocTypeDef {
+            name: self.name.clone(),
+            bounds: self.bounds.clone(),
+        }
+    }
+}
+
+// ============================================================
+// Implementation Definitions
+// ============================================================
+
+/// An implementation of a trait for a type.
+///
+/// This can be either:
+/// - A trait impl: `impl Trait for Type { ... }`
+/// - An inherent impl: `impl Type { ... }` (trait_id is None)
+pub struct ImplDef {
+    /// Unique identifier for this implementation
+    pub def_id: DefId,
+    /// The trait being implemented (None for inherent impls)
+    pub trait_id: Option<DefId>,
+    /// The type this impl is for
+    pub self_type: Type,
+    /// Type parameters of the impl
+    pub type_params: [TyVarId],
+    /// Method implementations
+    pub methods: HashMap<String, ImplMethodDef>,
+    /// Associated type assignments
+    pub assoc_types: HashMap<String, Type>,
+}
+
+impl ImplDef {
+    /// Create a new implementation definition.
+    pub fn new(
+        def_id: DefId,
+        trait_id: Option<DefId>,
+        self_type: Type,
+        type_params: [TyVarId],
+    ) -> ImplDef {
+        ImplDef {
+            def_id,
+            trait_id,
+            self_type,
+            type_params,
+            methods: HashMap::new(),
+            assoc_types: HashMap::new(),
+        }
+    }
+
+    /// Create an inherent impl (no trait).
+    pub fn inherent(def_id: DefId, self_type: Type) -> ImplDef {
+        ImplDef {
+            def_id,
+            trait_id: None,
+            self_type,
+            type_params: vec![],
+            methods: HashMap::new(),
+            assoc_types: HashMap::new(),
+        }
+    }
+
+    /// Create a trait impl.
+    pub fn for_trait(def_id: DefId, trait_id: DefId, self_type: Type) -> ImplDef {
+        ImplDef {
+            def_id,
+            trait_id: Some(trait_id),
+            self_type,
+            type_params: vec![],
+            methods: HashMap::new(),
+            assoc_types: HashMap::new(),
+        }
+    }
+
+    /// Check if this is an inherent impl (not a trait impl).
+    pub fn is_inherent(&self) -> bool {
+        self.trait_id.is_none()
+    }
+
+    /// Check if this is a trait impl.
+    pub fn is_trait_impl(&self) -> bool {
+        self.trait_id.is_some()
+    }
+
+    /// Add a method implementation.
+    pub fn add_method(&mut self, method: ImplMethodDef) {
+        self.methods.insert(method.name.clone(), method);
+    }
+
+    /// Add an associated type assignment.
+    pub fn add_assoc_type(&mut self, name: String, ty: Type) {
+        self.assoc_types.insert(name, ty);
+    }
+
+    /// Get a method by name.
+    pub fn get_method(&self, name: &str) -> Option<&ImplMethodDef> {
+        self.methods.get(name)
+    }
+
+    /// Get an associated type by name.
+    pub fn get_assoc_type(&self, name: &str) -> Option<&Type> {
+        self.assoc_types.get(name)
+    }
+}
+
+impl Clone for ImplDef {
+    fn clone(&self) -> ImplDef {
+        ImplDef {
+            def_id: self.def_id.clone(),
+            trait_id: self.trait_id.clone(),
+            self_type: self.self_type.clone(),
+            type_params: self.type_params.clone(),
+            methods: self.methods.clone(),
+            assoc_types: self.assoc_types.clone(),
+        }
+    }
+}
+
+/// A method implementation.
+pub struct ImplMethodDef {
+    /// Method name
+    pub name: String,
+    /// Type parameters specific to this method
+    pub type_params: [TyVarId],
+    /// Parameter types
+    pub params: [Type],
+    /// Return type
+    pub ret: Type,
+}
+
+impl ImplMethodDef {
+    /// Create a new method implementation definition.
+    pub fn new(name: String, type_params: [TyVarId], params: [Type], ret: Type) -> ImplMethodDef {
+        ImplMethodDef {
+            name,
+            type_params,
+            params,
+            ret,
+        }
+    }
+
+    /// Create a simple method with no type parameters.
+    pub fn simple(name: String, params: [Type], ret: Type) -> ImplMethodDef {
+        ImplMethodDef {
+            name,
+            type_params: vec![],
+            params,
+            ret,
+        }
+    }
+}
+
+impl Clone for ImplMethodDef {
+    fn clone(&self) -> ImplMethodDef {
+        ImplMethodDef {
+            name: self.name.clone(),
+            type_params: self.type_params.clone(),
+            params: self.params.clone(),
+            ret: self.ret.clone(),
+        }
+    }
+}
+
+// ============================================================
+// Trait Bounds
+// ============================================================
+
+/// A trait bound on a type parameter.
+///
+/// Trait bounds constrain what types can be used for a type parameter.
+/// For example, `T: Clone + Debug` requires T to implement both Clone and Debug.
+pub struct TraitBound {
+    /// The trait that must be implemented
+    pub trait_id: DefId,
+    /// Type arguments for parameterized traits (e.g., T: Iterator<Item = u32>)
+    pub args: [Type],
+}
+
+impl TraitBound {
+    /// Create a new trait bound.
+    pub fn new(trait_id: DefId, args: [Type]) -> TraitBound {
+        TraitBound { trait_id, args }
+    }
+
+    /// Create a simple trait bound with no type arguments.
+    pub fn simple(trait_id: DefId) -> TraitBound {
+        TraitBound {
+            trait_id,
+            args: vec![],
+        }
+    }
+}
+
+impl Clone for TraitBound {
+    fn clone(&self) -> TraitBound {
+        TraitBound {
+            trait_id: self.trait_id.clone(),
+            args: self.args.clone(),
+        }
+    }
+}
+
+// ============================================================
+// Trait Resolution
+// ============================================================
+
+/// Resolves trait implementations and method lookup.
+///
+/// The TraitResolver maintains a registry of all trait definitions and
+/// implementations, and provides methods to find implementations for
+/// specific types and look up methods.
+pub struct TraitResolver {
+    /// All trait definitions indexed by DefId
+    trait_defs: HashMap<u32, TraitDef>,
+    /// All implementations
+    impl_defs: [ImplDef],
+    /// Cache of resolved implementations: (trait_id, type_hash) -> impl_id
+    impl_cache: HashMap<(u32, u32), Option<DefId>>,
+}
+
+impl TraitResolver {
+    /// Create a new empty trait resolver.
+    pub fn new() -> TraitResolver {
+        TraitResolver {
+            trait_defs: HashMap::new(),
+            impl_defs: vec![],
+            impl_cache: HashMap::new(),
+        }
+    }
+
+    /// Register a trait definition.
+    pub fn register_trait(&mut self, trait_def: TraitDef) {
+        self.trait_defs.insert(trait_def.def_id.id(), trait_def);
+    }
+
+    /// Register an implementation.
+    pub fn register_impl(&mut self, impl_def: ImplDef) {
+        self.impl_defs.push(impl_def);
+    }
+
+    /// Get a trait definition by ID.
+    pub fn get_trait(&self, def_id: &DefId) -> Option<&TraitDef> {
+        self.trait_defs.get(&def_id.id())
+    }
+
+    /// Find an implementation of a trait for a type.
+    ///
+    /// Returns the first matching implementation, if any.
+    pub fn find_impl(&self, trait_id: DefId, ty: &Type, unifier: &Unifier) -> Option<ImplDef> {
+        let mut i: usize = 0;
+        while i < self.impl_defs.len() {
+            let impl_def = &self.impl_defs[i];
+
+            // Check if this impl is for the right trait
+            match &impl_def.trait_id {
+                Some(tid) => {
+                    if tid.id() != trait_id.id() {
+                        i = i + 1;
+                        continue;
+                    }
+                }
+                None => {
+                    // This is an inherent impl, skip it
+                    i = i + 1;
+                    continue;
+                }
+            }
+
+            // Check if the type matches
+            if self.type_matches(&impl_def.self_type, ty, unifier) {
+                return Some(impl_def.clone());
+            }
+
+            i = i + 1;
+        }
+        None
+    }
+
+    /// Find an inherent impl for a type (non-trait impl).
+    ///
+    /// Returns the first matching inherent implementation, if any.
+    pub fn find_inherent_impl(&self, ty: &Type, unifier: &Unifier) -> Option<ImplDef> {
+        let mut i: usize = 0;
+        while i < self.impl_defs.len() {
+            let impl_def = &self.impl_defs[i];
+
+            // Skip trait impls
+            match &impl_def.trait_id {
+                Some(_) => {
+                    i = i + 1;
+                    continue;
+                }
+                None => {}
+            }
+
+            // Check if the type matches
+            if self.type_matches(&impl_def.self_type, ty, unifier) {
+                return Some(impl_def.clone());
+            }
+
+            i = i + 1;
+        }
+        None
+    }
+
+    /// Check if an impl type matches a concrete type.
+    ///
+    /// This performs a structural comparison, treating type parameters in the
+    /// impl as wildcards that match any type.
+    fn type_matches(&self, impl_ty: &Type, concrete_ty: &Type, unifier: &Unifier) -> bool {
+        let resolved_impl = unifier.resolve(impl_ty);
+        let resolved_concrete = unifier.resolve(concrete_ty);
+
+        match (&resolved_impl.kind(), &resolved_concrete.kind()) {
+            // Primitives must match exactly
+            (TypeKind::Primitive(p1), TypeKind::Primitive(p2)) => {
+                self.primitives_equal(p1, p2)
+            }
+
+            // ADTs must have same def_id and matching type arguments
+            (TypeKind::Adt { def_id: d1, type_args: a1 }, TypeKind::Adt { def_id: d2, type_args: a2 }) => {
+                if d1.id() != d2.id() {
+                    return false;
+                }
+                if a1.len() != a2.len() {
+                    return false;
+                }
+                let mut i: usize = 0;
+                while i < a1.len() {
+                    if !self.type_matches(&a1[i], &a2[i], unifier) {
+                        return false;
+                    }
+                    i = i + 1;
+                }
+                true
+            }
+
+            // Tuples must have same length and matching elements
+            (TypeKind::Tuple(t1), TypeKind::Tuple(t2)) => {
+                if t1.len() != t2.len() {
+                    return false;
+                }
+                let mut i: usize = 0;
+                while i < t1.len() {
+                    if !self.type_matches(&t1[i], &t2[i], unifier) {
+                        return false;
+                    }
+                    i = i + 1;
+                }
+                true
+            }
+
+            // References must have same mutability and matching inner types
+            (TypeKind::Ref { inner: i1, mutability: m1 }, TypeKind::Ref { inner: i2, mutability: m2 }) => {
+                self.mutability_equal(m1, m2) && self.type_matches(i1, i2, unifier)
+            }
+
+            // Pointers must have same mutability and matching inner types
+            (TypeKind::Ptr { inner: i1, mutability: m1 }, TypeKind::Ptr { inner: i2, mutability: m2 }) => {
+                self.mutability_equal(m1, m2) && self.type_matches(i1, i2, unifier)
+            }
+
+            // Arrays must have same element type and size
+            (TypeKind::Array { element: e1, size: s1 }, TypeKind::Array { element: e2, size: s2 }) => {
+                s1 == s2 && self.type_matches(e1, e2, unifier)
+            }
+
+            // Slices must have matching element types
+            (TypeKind::Slice { element: e1 }, TypeKind::Slice { element: e2 }) => {
+                self.type_matches(e1, e2, unifier)
+            }
+
+            // Type parameter in impl - matches any type
+            (TypeKind::Param(_), _) => true,
+
+            // Inference variables - defer to unification
+            (TypeKind::Infer(_), _) => true,
+            (_, TypeKind::Infer(_)) => true,
+
+            // Error types match anything (for error recovery)
+            (TypeKind::Error, _) => true,
+            (_, TypeKind::Error) => true,
+
+            // Never type only matches never
+            (TypeKind::Never, TypeKind::Never) => true,
+            (TypeKind::Never, _) => false,
+
+            // Function types - match by signature
+            (TypeKind::Fn { params: p1, ret: r1, effect: _ }, TypeKind::Fn { params: p2, ret: r2, effect: _ }) => {
+                if p1.len() != p2.len() {
+                    return false;
+                }
+                let mut i: usize = 0;
+                while i < p1.len() {
+                    if !self.type_matches(&p1[i], &p2[i], unifier) {
+                        return false;
+                    }
+                    i = i + 1;
+                }
+                self.type_matches(r1, r2, unifier)
+            }
+
+            // Closures - match by signature
+            (TypeKind::Closure { params: p1, ret: r1, effect: _, captures: _ }, TypeKind::Closure { params: p2, ret: r2, effect: _, captures: _ }) => {
+                if p1.len() != p2.len() {
+                    return false;
+                }
+                let mut i: usize = 0;
+                while i < p1.len() {
+                    if !self.type_matches(&p1[i], &p2[i], unifier) {
+                        return false;
+                    }
+                    i = i + 1;
+                }
+                self.type_matches(r1, r2, unifier)
+            }
+
+            // Range types - match by element type and inclusivity
+            (TypeKind::Range { element: e1, inclusive: inc1 }, TypeKind::Range { element: e2, inclusive: inc2 }) => {
+                inc1 == inc2 && self.type_matches(e1, e2, unifier)
+            }
+
+            // Dynamic trait objects - match by trait ID
+            (TypeKind::DynTrait { trait_id: t1 }, TypeKind::DynTrait { trait_id: t2 }) => {
+                t1.id() == t2.id()
+            }
+
+            // Record types - structural match (simplified, ignores row vars for now)
+            (TypeKind::Record { fields: f1, row_var: _ }, TypeKind::Record { fields: f2, row_var: _ }) => {
+                if f1.len() != f2.len() {
+                    return false;
+                }
+                // Check all fields match (order-sensitive for now)
+                let mut i: usize = 0;
+                while i < f1.len() {
+                    if !f1[i].name.eq(&f2[i].name) {
+                        return false;
+                    }
+                    if !self.type_matches(&f1[i].ty, &f2[i].ty, unifier) {
+                        return false;
+                    }
+                    i = i + 1;
+                }
+                true
+            }
+
+            // Forall types - match body types
+            (TypeKind::Forall { params: _, body: b1 }, TypeKind::Forall { params: _, body: b2 }) => {
+                self.type_matches(b1, b2, unifier)
+            }
+
+            // Ownership-qualified types - match inner types
+            (TypeKind::Ownership { inner: i1, ownership: o1 }, TypeKind::Ownership { inner: i2, ownership: o2 }) => {
+                self.ownership_equal(o1, o2) && self.type_matches(i1, i2, unifier)
+            }
+
+            // Mismatched type kinds don't match
+            (TypeKind::Primitive(_), _) => false,
+            (TypeKind::Adt { def_id: _, type_args: _ }, _) => false,
+            (TypeKind::Tuple(_), _) => false,
+            (TypeKind::Ref { inner: _, mutability: _ }, _) => false,
+            (TypeKind::Ptr { inner: _, mutability: _ }, _) => false,
+            (TypeKind::Array { element: _, size: _ }, _) => false,
+            (TypeKind::Slice { element: _ }, _) => false,
+            (TypeKind::Fn { params: _, ret: _, effect: _ }, _) => false,
+            (TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }, _) => false,
+            (TypeKind::Range { element: _, inclusive: _ }, _) => false,
+            (TypeKind::DynTrait { trait_id: _ }, _) => false,
+            (TypeKind::Record { fields: _, row_var: _ }, _) => false,
+            (TypeKind::Forall { params: _, body: _ }, _) => false,
+            (TypeKind::Param(_), _) => false,
+            (TypeKind::Ownership { inner: _, ownership: _ }, _) => false,
+        }
+    }
+
+    /// Check if two primitive types are equal.
+    fn primitives_equal(&self, p1: &PrimitiveTy, p2: &PrimitiveTy) -> bool {
+        match (p1, p2) {
+            (PrimitiveTy::I8, PrimitiveTy::I8) => true,
+            (PrimitiveTy::I16, PrimitiveTy::I16) => true,
+            (PrimitiveTy::I32, PrimitiveTy::I32) => true,
+            (PrimitiveTy::I64, PrimitiveTy::I64) => true,
+            (PrimitiveTy::I128, PrimitiveTy::I128) => true,
+            (PrimitiveTy::Isize, PrimitiveTy::Isize) => true,
+            (PrimitiveTy::U8, PrimitiveTy::U8) => true,
+            (PrimitiveTy::U16, PrimitiveTy::U16) => true,
+            (PrimitiveTy::U32, PrimitiveTy::U32) => true,
+            (PrimitiveTy::U64, PrimitiveTy::U64) => true,
+            (PrimitiveTy::U128, PrimitiveTy::U128) => true,
+            (PrimitiveTy::Usize, PrimitiveTy::Usize) => true,
+            (PrimitiveTy::F32, PrimitiveTy::F32) => true,
+            (PrimitiveTy::F64, PrimitiveTy::F64) => true,
+            (PrimitiveTy::Bool, PrimitiveTy::Bool) => true,
+            (PrimitiveTy::Char, PrimitiveTy::Char) => true,
+            (PrimitiveTy::Str, PrimitiveTy::Str) => true,
+            (PrimitiveTy::Unit, PrimitiveTy::Unit) => true,
+            // All non-matching pairs
+            (PrimitiveTy::I8, _) => false,
+            (PrimitiveTy::I16, _) => false,
+            (PrimitiveTy::I32, _) => false,
+            (PrimitiveTy::I64, _) => false,
+            (PrimitiveTy::I128, _) => false,
+            (PrimitiveTy::Isize, _) => false,
+            (PrimitiveTy::U8, _) => false,
+            (PrimitiveTy::U16, _) => false,
+            (PrimitiveTy::U32, _) => false,
+            (PrimitiveTy::U64, _) => false,
+            (PrimitiveTy::U128, _) => false,
+            (PrimitiveTy::Usize, _) => false,
+            (PrimitiveTy::F32, _) => false,
+            (PrimitiveTy::F64, _) => false,
+            (PrimitiveTy::Bool, _) => false,
+            (PrimitiveTy::Char, _) => false,
+            (PrimitiveTy::Str, _) => false,
+            (PrimitiveTy::Unit, _) => false,
+        }
+    }
+
+    /// Check if two mutability qualifiers are equal.
+    fn mutability_equal(&self, m1: &Mutability, m2: &Mutability) -> bool {
+        match (m1, m2) {
+            (Mutability::Immutable, Mutability::Immutable) => true,
+            (Mutability::Mutable, Mutability::Mutable) => true,
+            (Mutability::Immutable, Mutability::Mutable) => false,
+            (Mutability::Mutable, Mutability::Immutable) => false,
+        }
+    }
+
+    /// Check if two ownership qualifiers are equal.
+    fn ownership_equal(&self, o1: &Ownership, o2: &Ownership) -> bool {
+        match (o1, o2) {
+            (Ownership::Linear, Ownership::Linear) => true,
+            (Ownership::Affine, Ownership::Affine) => true,
+            (Ownership::Default, Ownership::Default) => true,
+            (Ownership::Linear, Ownership::Affine) => false,
+            (Ownership::Linear, Ownership::Default) => false,
+            (Ownership::Affine, Ownership::Linear) => false,
+            (Ownership::Affine, Ownership::Default) => false,
+            (Ownership::Default, Ownership::Linear) => false,
+            (Ownership::Default, Ownership::Affine) => false,
+        }
+    }
+
+    /// Look up a method on a type.
+    ///
+    /// Searches first in inherent impls, then in trait impls.
+    /// Returns both the impl and the method definition if found.
+    pub fn lookup_method(&self, ty: &Type, method_name: &str, unifier: &Unifier) -> Option<(ImplDef, ImplMethodDef)> {
+        // First, check inherent impls
+        match self.find_inherent_impl(ty, unifier) {
+            Some(impl_def) => {
+                match impl_def.methods.get(method_name) {
+                    Some(method) => return Some((impl_def.clone(), method.clone())),
+                    None => {}
+                }
+            }
+            None => {}
+        }
+
+        // Then, check all trait impls
+        let mut i: usize = 0;
+        while i < self.impl_defs.len() {
+            let impl_def = &self.impl_defs[i];
+            if self.type_matches(&impl_def.self_type, ty, unifier) {
+                match impl_def.methods.get(method_name) {
+                    Some(method) => return Some((impl_def.clone(), method.clone())),
+                    None => {}
+                }
+            }
+            i = i + 1;
+        }
+
+        None
+    }
+
+    /// Check if a type satisfies a trait bound.
+    pub fn satisfies_bound(&self, ty: &Type, bound: &TraitBound, unifier: &Unifier) -> bool {
+        match self.find_impl(bound.trait_id.clone(), ty, unifier) {
+            Some(_) => true,
+            None => false,
+        }
+    }
+
+    /// Check all trait bounds on a type.
+    ///
+    /// Returns a list of unsatisfied trait IDs.
+    pub fn check_bounds(&self, ty: &Type, bounds: &[TraitBound], unifier: &Unifier) -> [DefId] {
+        let mut unsatisfied: [DefId] = vec![];
+        let mut i: usize = 0;
+        while i < bounds.len() {
+            if !self.satisfies_bound(ty, &bounds[i], unifier) {
+                unsatisfied.push(bounds[i].trait_id.clone());
+            }
+            i = i + 1;
+        }
+        unsatisfied
+    }
+
+    /// Find all implementations for a specific trait.
+    pub fn impls_for_trait(&self, trait_id: &DefId) -> [&ImplDef] {
+        let mut result: [&ImplDef] = vec![];
+        let mut i: usize = 0;
+        while i < self.impl_defs.len() {
+            match &self.impl_defs[i].trait_id {
+                Some(tid) => {
+                    if tid.id() == trait_id.id() {
+                        result.push(&self.impl_defs[i]);
+                    }
+                }
+                None => {}
+            }
+            i = i + 1;
+        }
+        result
+    }
+
+    /// Find all inherent implementations for a specific type.
+    pub fn inherent_impls_for_type(&self, ty: &Type, unifier: &Unifier) -> [&ImplDef] {
+        let mut result: [&ImplDef] = vec![];
+        let mut i: usize = 0;
+        while i < self.impl_defs.len() {
+            match &self.impl_defs[i].trait_id {
+                Some(_) => {
+                    // Skip trait impls
+                }
+                None => {
+                    if self.type_matches(&self.impl_defs[i].self_type, ty, unifier) {
+                        result.push(&self.impl_defs[i]);
+                    }
+                }
+            }
+            i = i + 1;
+        }
+        result
+    }
+}
+
+impl Clone for TraitResolver {
+    fn clone(&self) -> TraitResolver {
+        TraitResolver {
+            trait_defs: self.trait_defs.clone(),
+            impl_defs: self.impl_defs.clone(),
+            impl_cache: self.impl_cache.clone(),
+        }
+    }
+}
+
+// ============================================================
+// Method Resolution Result
+// ============================================================
+
+/// The result of method resolution.
+pub enum MethodResolution {
+    /// Method found in an inherent impl
+    Inherent {
+        impl_def: ImplDef,
+        method: ImplMethodDef,
+    },
+    /// Method found in a trait impl
+    TraitImpl {
+        impl_def: ImplDef,
+        trait_id: DefId,
+        method: ImplMethodDef,
+    },
+    /// Method not found
+    NotFound,
+    /// Multiple methods found (ambiguous)
+    Ambiguous {
+        candidates: [(ImplDef, ImplMethodDef)],
+    },
+}
+
+impl MethodResolution {
+    /// Check if a method was found.
+    pub fn is_found(&self) -> bool {
+        match self {
+            MethodResolution::Inherent { impl_def: _, method: _ } => true,
+            MethodResolution::TraitImpl { impl_def: _, trait_id: _, method: _ } => true,
+            MethodResolution::NotFound => false,
+            MethodResolution::Ambiguous { candidates: _ } => false,
+        }
+    }
+
+    /// Get the method definition if found.
+    pub fn method(&self) -> Option<&ImplMethodDef> {
+        match self {
+            MethodResolution::Inherent { impl_def: _, method } => Some(method),
+            MethodResolution::TraitImpl { impl_def: _, trait_id: _, method } => Some(method),
+            MethodResolution::NotFound => None,
+            MethodResolution::Ambiguous { candidates: _ } => None,
+        }
+    }
+}
+
+impl Clone for MethodResolution {
+    fn clone(&self) -> MethodResolution {
+        match self {
+            MethodResolution::Inherent { impl_def, method } => MethodResolution::Inherent {
+                impl_def: impl_def.clone(),
+                method: method.clone(),
+            },
+            MethodResolution::TraitImpl { impl_def, trait_id, method } => MethodResolution::TraitImpl {
+                impl_def: impl_def.clone(),
+                trait_id: trait_id.clone(),
+                method: method.clone(),
+            },
+            MethodResolution::NotFound => MethodResolution::NotFound,
+            MethodResolution::Ambiguous { candidates } => MethodResolution::Ambiguous {
+                candidates: candidates.clone(),
+            },
+        }
+    }
+}

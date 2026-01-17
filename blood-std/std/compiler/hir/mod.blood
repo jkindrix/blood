@@ -1,0 +1,307 @@
+/// High-level Intermediate Representation (HIR) for Blood
+///
+/// The HIR is a simplified, typed representation of the AST. Key characteristics:
+///
+/// 1. **Types are resolved** - All type annotations are resolved to concrete `Type` values
+/// 2. **Names are resolved** - All identifiers are resolved to `DefId` or `LocalId`
+/// 3. **Desugaring** - Some syntactic sugar is expanded (e.g., `for` loops to `while`)
+/// 4. **Spans preserved** - Source locations maintained for error reporting
+///
+/// # Module Structure
+///
+/// - `def`: Definition identifiers (LocalId, DefKind, Res, BodyId)
+/// - `item`: Top-level items (Item, ItemKind, FnDef, StructDef, etc.)
+/// - `expr`: Expressions and bodies (Body, Expr, ExprKind, Pattern, Stmt)
+///
+/// # Compilation Pipeline
+///
+/// ```text
+/// Source Code
+///     ↓
+/// Lexer → Tokens
+///     ↓
+/// Parser → AST (Abstract Syntax Tree)
+///     ↓
+/// Name Resolution → Resolved AST
+///     ↓
+/// Type Checker → HIR (High-level IR with types)
+///     ↓
+/// MIR Lowering → MIR (Control Flow Graph)
+///     ↓
+/// Codegen → LLVM IR
+///     ↓
+/// LLVM → Machine Code
+/// ```
+///
+/// # Design References
+///
+/// - [Rust HIR](https://rustc-dev-guide.rust-lang.org/hir.html)
+/// - Blood's own type checker in `typeck/`
+/// - MIR module in `mir/`
+
+use crate::collections::HashMap;
+use crate::compiler::typeck::types::DefId;
+
+// ============================================================
+// Module Exports
+// ============================================================
+
+pub mod def;
+pub mod item;
+pub mod expr;
+
+// ============================================================
+// Re-exports for Convenience
+// ============================================================
+
+// From def module
+pub use def::{
+    LocalId,
+    BodyId,
+    LoopId,
+    DefKind,
+    Res,
+    PrimTyRes,
+    IntTy,
+    UintTy,
+    FloatTy,
+};
+
+// From item module
+pub use item::{
+    Visibility,
+    Span,
+    Item,
+    ItemKind,
+    FnDef,
+    FnSig,
+    StructDef,
+    StructKind,
+    FieldDef,
+    EnumDef,
+    Variant,
+    Generics,
+    GenericParam,
+    GenericParamKind,
+    WherePredicate,
+    TraitRef,
+    TraitItem,
+    TraitItemKind,
+    ImplItem,
+    ImplItemKind,
+    EffectOp,
+    HandlerKind,
+    HandlerState,
+    HandlerOp,
+    ReturnClause,
+    ExternFnDef,
+    BridgeDef,
+    LinkSpec,
+    LinkKind,
+    ExternFnItem,
+    OpaqueType,
+    BridgeTypeAlias,
+    FfiStruct,
+    FfiField,
+    FfiEnum,
+    FfiEnumVariant,
+    FfiUnion,
+    FfiConst,
+    FfiCallback,
+    ModuleDef,
+};
+
+// From expr module
+pub use expr::{
+    Body,
+    Local,
+    Expr,
+    ExprKind,
+    LiteralValue,
+    BinOp,
+    UnaryOp,
+    FieldExpr,
+    RecordFieldExpr,
+    Stmt,
+    MatchArm,
+    Pattern,
+    PatternKind,
+    FieldPattern,
+    Capture,
+    InlineOpHandler,
+};
+
+// ============================================================
+// Crate: The Root HIR Node
+// ============================================================
+
+/// A compilation unit (crate) in HIR form.
+///
+/// The Crate is the root node of the HIR, containing:
+/// - All items (functions, structs, enums, etc.) indexed by DefId
+/// - All function/closure bodies indexed by BodyId
+/// - The entry point (main function), if present
+/// - Builtin functions that have no source code
+pub struct Crate {
+    /// All items in the crate, indexed by DefId.
+    items: HashMap<u32, Item>,
+    /// All function/closure bodies, indexed by BodyId.
+    bodies: HashMap<u32, Body>,
+    /// The entry point (main function), if present.
+    entry: Option<DefId>,
+    /// Builtin functions: DefId -> function name.
+    /// These are runtime functions with no source code.
+    builtin_fns: HashMap<u32, String>,
+}
+
+impl Crate {
+    /// Create an empty crate.
+    pub fn new() -> Crate {
+        Crate {
+            items: HashMap::new(),
+            bodies: HashMap::new(),
+            entry: None,
+            builtin_fns: HashMap::new(),
+        }
+    }
+
+    /// Get an item by its DefId.
+    pub fn get_item(&self, id: &DefId) -> Option<&Item> {
+        self.items.get(&id.id())
+    }
+
+    /// Get a mutable reference to an item by its DefId.
+    pub fn get_item_mut(&mut self, id: &DefId) -> Option<&mut Item> {
+        self.items.get_mut(&id.id())
+    }
+
+    /// Insert an item into the crate.
+    pub fn insert_item(&mut self, id: DefId, item: Item) {
+        self.items.insert(id.id(), item);
+    }
+
+    /// Get a body by its BodyId.
+    pub fn get_body(&self, id: &BodyId) -> Option<&Body> {
+        self.bodies.get(&id.id())
+    }
+
+    /// Get a mutable reference to a body by its BodyId.
+    pub fn get_body_mut(&mut self, id: &BodyId) -> Option<&mut Body> {
+        self.bodies.get_mut(&id.id())
+    }
+
+    /// Insert a body into the crate.
+    pub fn insert_body(&mut self, id: BodyId, body: Body) {
+        self.bodies.insert(id.id(), body);
+    }
+
+    /// Get the entry point DefId.
+    pub fn entry(&self) -> Option<&DefId> {
+        self.entry.as_ref()
+    }
+
+    /// Set the entry point.
+    pub fn set_entry(&mut self, id: DefId) {
+        self.entry = Some(id);
+    }
+
+    /// Check if this crate has an entry point.
+    pub fn has_entry(&self) -> bool {
+        self.entry.is_some()
+    }
+
+    /// Register a builtin function.
+    pub fn register_builtin(&mut self, id: DefId, name: String) {
+        self.builtin_fns.insert(id.id(), name);
+    }
+
+    /// Check if a DefId is a builtin function.
+    pub fn is_builtin(&self, id: &DefId) -> bool {
+        self.builtin_fns.contains_key(&id.id())
+    }
+
+    /// Get the name of a builtin function.
+    pub fn get_builtin_name(&self, id: &DefId) -> Option<&String> {
+        self.builtin_fns.get(&id.id())
+    }
+
+    /// Get the number of items in the crate.
+    pub fn item_count(&self) -> usize {
+        self.items.len()
+    }
+
+    /// Get the number of bodies in the crate.
+    pub fn body_count(&self) -> usize {
+        self.bodies.len()
+    }
+
+    /// Get the number of builtin functions.
+    pub fn builtin_count(&self) -> usize {
+        self.builtin_fns.len()
+    }
+}
+
+// ============================================================
+// Module-Level Documentation Tests
+// ============================================================
+
+#[test]
+fn test_crate_new() {
+    let krate = Crate::new();
+    assert!(krate.item_count() == 0);
+    assert!(krate.body_count() == 0);
+    assert!(!krate.has_entry());
+}
+
+#[test]
+fn test_crate_entry() {
+    let mut krate = Crate::new();
+    assert!(!krate.has_entry());
+
+    let main_id = DefId::new(0);
+    krate.set_entry(main_id);
+    assert!(krate.has_entry());
+}
+
+#[test]
+fn test_local_id_basics() {
+    let local = LocalId::new(5);
+    assert!(local.index() == 5);
+
+    let ret = LocalId::return_place();
+    assert!(ret.is_return_place());
+}
+
+#[test]
+fn test_def_kind_description() {
+    let kind = DefKind::Fn;
+    assert!(kind.description() == "function");
+
+    let effect = DefKind::Effect;
+    assert!(effect.article() == "an");
+}
+
+#[test]
+fn test_handler_kind_equality() {
+    let deep = HandlerKind::Deep;
+    let shallow = HandlerKind::Shallow;
+
+    assert!(deep.eq(&HandlerKind::Deep));
+    assert!(!deep.eq(&shallow));
+}
+
+#[test]
+fn test_binop_clone() {
+    let add = BinOp::Add;
+    let cloned = add.clone();
+    assert!(add.eq(&cloned));
+}
+
+#[test]
+fn test_literal_value_types() {
+    let int_lit = LiteralValue::Int(42);
+    let str_lit = LiteralValue::String("hello".to_string());
+
+    assert!(int_lit.eq(&LiteralValue::Int(42)));
+    assert!(!int_lit.eq(&str_lit));
+}

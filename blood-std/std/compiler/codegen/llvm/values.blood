@@ -1,0 +1,866 @@
+//! LLVM Value API Bindings
+//!
+//! This module provides bindings to LLVM's value system:
+//! - Constants (integers, floats, strings, null)
+//! - Global values (functions, global variables)
+//! - Basic blocks
+//! - Instructions
+//! - Parameters
+
+use super::{
+    LLVMContextRef, LLVMModuleRef, LLVMTypeRef, LLVMValueRef,
+    LLVMBasicBlockRef, Linkage, Visibility, CallConv,
+    LLVM_TRUE, LLVM_FALSE,
+};
+
+// ============================================================================
+// Raw FFI Declarations
+// ============================================================================
+
+bridge "C" llvm_values {
+    // === Value Inspection ===
+
+    /// Get the type of a value.
+    fn LLVMTypeOf(val: LLVMValueRef) -> LLVMTypeRef;
+
+    /// Get the kind of a value.
+    fn LLVMGetValueKind(val: LLVMValueRef) -> i32;
+
+    /// Get the name of a value.
+    fn LLVMGetValueName2(val: LLVMValueRef, length: *mut u64) -> *const u8;
+
+    /// Set the name of a value.
+    fn LLVMSetValueName2(val: LLVMValueRef, name: *const u8, name_len: u64);
+
+    /// Print a value to a string.
+    fn LLVMPrintValueToString(val: LLVMValueRef) -> *mut u8;
+
+    /// Check if a value is null.
+    fn LLVMIsNull(val: LLVMValueRef) -> i32;
+
+    /// Check if a value is a constant.
+    fn LLVMIsConstant(val: LLVMValueRef) -> i32;
+
+    /// Check if a value is undefined.
+    fn LLVMIsUndef(val: LLVMValueRef) -> i32;
+
+    /// Check if a value is poison.
+    fn LLVMIsPoison(val: LLVMValueRef) -> i32;
+
+    /// Replace all uses of a value with another value.
+    fn LLVMReplaceAllUsesWith(old_val: LLVMValueRef, new_val: LLVMValueRef);
+
+    // === Constant Creation ===
+
+    /// Create a constant null pointer.
+    fn LLVMConstPointerNull(ty: LLVMTypeRef) -> LLVMValueRef;
+
+    /// Create a constant null value of any type.
+    fn LLVMConstNull(ty: LLVMTypeRef) -> LLVMValueRef;
+
+    /// Create an undefined value.
+    fn LLVMGetUndef(ty: LLVMTypeRef) -> LLVMValueRef;
+
+    /// Create a poison value.
+    fn LLVMGetPoison(ty: LLVMTypeRef) -> LLVMValueRef;
+
+    /// Create a constant all-ones value (for integers).
+    fn LLVMConstAllOnes(ty: LLVMTypeRef) -> LLVMValueRef;
+
+    // === Integer Constants ===
+
+    /// Create a constant integer value.
+    fn LLVMConstInt(int_ty: LLVMTypeRef, n: u64, sign_extend: i32) -> LLVMValueRef;
+
+    /// Create a constant integer from a string.
+    fn LLVMConstIntOfString(int_ty: LLVMTypeRef, text: *const u8, radix: u8) -> LLVMValueRef;
+
+    /// Create a constant integer from arbitrary precision words.
+    fn LLVMConstIntOfArbitraryPrecision(int_ty: LLVMTypeRef, num_words: u32, words: *const u64) -> LLVMValueRef;
+
+    /// Get the zero-extended value of a constant integer.
+    fn LLVMConstIntGetZExtValue(const_val: LLVMValueRef) -> u64;
+
+    /// Get the sign-extended value of a constant integer.
+    fn LLVMConstIntGetSExtValue(const_val: LLVMValueRef) -> i64;
+
+    // === Float Constants ===
+
+    /// Create a constant float value.
+    fn LLVMConstReal(real_ty: LLVMTypeRef, n: f64) -> LLVMValueRef;
+
+    /// Create a constant float from a string.
+    fn LLVMConstRealOfString(real_ty: LLVMTypeRef, text: *const u8) -> LLVMValueRef;
+
+    /// Get the double value of a constant float.
+    fn LLVMConstRealGetDouble(const_val: LLVMValueRef, loses_info: *mut i32) -> f64;
+
+    // === String Constants ===
+
+    /// Create a constant string in a context.
+    fn LLVMConstStringInContext(
+        ctx: LLVMContextRef,
+        str: *const u8,
+        length: u32,
+        dont_null_terminate: i32
+    ) -> LLVMValueRef;
+
+    /// Create a constant string in the global context.
+    fn LLVMConstString(str: *const u8, length: u32, dont_null_terminate: i32) -> LLVMValueRef;
+
+    /// Check if a value is a constant string.
+    fn LLVMIsConstantString(val: LLVMValueRef) -> i32;
+
+    /// Get the string from a constant string value.
+    fn LLVMGetAsString(val: LLVMValueRef, length: *mut u64) -> *const u8;
+
+    // === Composite Constants ===
+
+    /// Create a constant struct value.
+    fn LLVMConstStructInContext(
+        ctx: LLVMContextRef,
+        const_vals: *const LLVMValueRef,
+        count: u32,
+        packed: i32
+    ) -> LLVMValueRef;
+
+    /// Create a constant struct with a named type.
+    fn LLVMConstNamedStruct(
+        struct_ty: LLVMTypeRef,
+        const_vals: *const LLVMValueRef,
+        count: u32
+    ) -> LLVMValueRef;
+
+    /// Create a constant array value.
+    fn LLVMConstArray(
+        element_ty: LLVMTypeRef,
+        const_vals: *const LLVMValueRef,
+        length: u32
+    ) -> LLVMValueRef;
+
+    /// Create a constant array (64-bit length).
+    fn LLVMConstArray2(
+        element_ty: LLVMTypeRef,
+        const_vals: *const LLVMValueRef,
+        length: u64
+    ) -> LLVMValueRef;
+
+    /// Create a constant vector value.
+    fn LLVMConstVector(const_vals: *const LLVMValueRef, size: u32) -> LLVMValueRef;
+
+    /// Get an element from a constant aggregate.
+    fn LLVMGetAggregateElement(val: LLVMValueRef, idx: u32) -> LLVMValueRef;
+
+    // === Constant Expressions ===
+
+    /// Create a constant GEP (getelementptr) expression.
+    fn LLVMConstGEP2(
+        ty: LLVMTypeRef,
+        const_val: LLVMValueRef,
+        indices: *const LLVMValueRef,
+        num_indices: u32
+    ) -> LLVMValueRef;
+
+    /// Create a constant inbounds GEP expression.
+    fn LLVMConstInBoundsGEP2(
+        ty: LLVMTypeRef,
+        const_val: LLVMValueRef,
+        indices: *const LLVMValueRef,
+        num_indices: u32
+    ) -> LLVMValueRef;
+
+    /// Create a constant bitcast expression.
+    fn LLVMConstBitCast(const_val: LLVMValueRef, to_type: LLVMTypeRef) -> LLVMValueRef;
+
+    /// Create a constant pointer cast expression.
+    fn LLVMConstPointerCast(const_val: LLVMValueRef, to_type: LLVMTypeRef) -> LLVMValueRef;
+
+    /// Create a constant trunc expression.
+    fn LLVMConstTrunc(const_val: LLVMValueRef, to_type: LLVMTypeRef) -> LLVMValueRef;
+
+    /// Create a constant sign extend expression.
+    fn LLVMConstSExt(const_val: LLVMValueRef, to_type: LLVMTypeRef) -> LLVMValueRef;
+
+    /// Create a constant zero extend expression.
+    fn LLVMConstZExt(const_val: LLVMValueRef, to_type: LLVMTypeRef) -> LLVMValueRef;
+
+    /// Create a constant int-to-pointer expression.
+    fn LLVMConstIntToPtr(const_val: LLVMValueRef, to_type: LLVMTypeRef) -> LLVMValueRef;
+
+    /// Create a constant pointer-to-int expression.
+    fn LLVMConstPtrToInt(const_val: LLVMValueRef, to_type: LLVMTypeRef) -> LLVMValueRef;
+
+    // === Global Values ===
+
+    /// Get the linkage of a global value.
+    fn LLVMGetLinkage(global: LLVMValueRef) -> u32;
+
+    /// Set the linkage of a global value.
+    fn LLVMSetLinkage(global: LLVMValueRef, linkage: u32);
+
+    /// Get the section of a global value.
+    fn LLVMGetSection(global: LLVMValueRef) -> *const u8;
+
+    /// Set the section of a global value.
+    fn LLVMSetSection(global: LLVMValueRef, section: *const u8);
+
+    /// Get the visibility of a global value.
+    fn LLVMGetVisibility(global: LLVMValueRef) -> u32;
+
+    /// Set the visibility of a global value.
+    fn LLVMSetVisibility(global: LLVMValueRef, visibility: u32);
+
+    /// Get the alignment of a global value.
+    fn LLVMGetAlignment(val: LLVMValueRef) -> u32;
+
+    /// Set the alignment of a global value.
+    fn LLVMSetAlignment(val: LLVMValueRef, bytes: u32);
+
+    // === Global Variables ===
+
+    /// Get the initializer of a global variable.
+    fn LLVMGetInitializer(global: LLVMValueRef) -> LLVMValueRef;
+
+    /// Set the initializer of a global variable.
+    fn LLVMSetInitializer(global: LLVMValueRef, const_val: LLVMValueRef);
+
+    /// Check if a global is a constant.
+    fn LLVMIsGlobalConstant(global: LLVMValueRef) -> i32;
+
+    /// Set whether a global is a constant.
+    fn LLVMSetGlobalConstant(global: LLVMValueRef, is_constant: i32);
+
+    /// Check if a global variable is thread-local.
+    fn LLVMIsThreadLocal(global: LLVMValueRef) -> i32;
+
+    /// Set whether a global variable is thread-local.
+    fn LLVMSetThreadLocal(global: LLVMValueRef, is_thread_local: i32);
+
+    /// Check if a global variable is externally initialized.
+    fn LLVMIsExternallyInitialized(global: LLVMValueRef) -> i32;
+
+    /// Set whether a global variable is externally initialized.
+    fn LLVMSetExternallyInitialized(global: LLVMValueRef, is_ext_init: i32);
+
+    // === Functions ===
+
+    /// Delete a function.
+    fn LLVMDeleteFunction(func: LLVMValueRef);
+
+    /// Check if a function has personality function.
+    fn LLVMHasPersonalityFn(func: LLVMValueRef) -> i32;
+
+    /// Get the personality function.
+    fn LLVMGetPersonalityFn(func: LLVMValueRef) -> LLVMValueRef;
+
+    /// Set the personality function.
+    fn LLVMSetPersonalityFn(func: LLVMValueRef, personality_fn: LLVMValueRef);
+
+    /// Get the intrinsic ID of a function.
+    fn LLVMGetIntrinsicID(func: LLVMValueRef) -> u32;
+
+    /// Get the calling convention of a function.
+    fn LLVMGetFunctionCallConv(func: LLVMValueRef) -> u32;
+
+    /// Set the calling convention of a function.
+    fn LLVMSetFunctionCallConv(func: LLVMValueRef, cc: u32);
+
+    /// Get the GC name of a function.
+    fn LLVMGetGC(func: LLVMValueRef) -> *const u8;
+
+    /// Set the GC name of a function.
+    fn LLVMSetGC(func: LLVMValueRef, name: *const u8);
+
+    /// Add a function attribute.
+    fn LLVMAddAttributeAtIndex(func: LLVMValueRef, idx: u32, attr: LLVMAttributeRef);
+
+    /// Count function parameters.
+    fn LLVMCountParams(func: LLVMValueRef) -> u32;
+
+    /// Get function parameters.
+    fn LLVMGetParams(func: LLVMValueRef, params: *mut LLVMValueRef);
+
+    /// Get a specific parameter.
+    fn LLVMGetParam(func: LLVMValueRef, index: u32) -> LLVMValueRef;
+
+    /// Get the function that a parameter belongs to.
+    fn LLVMGetParamParent(param: LLVMValueRef) -> LLVMValueRef;
+
+    /// Get the first parameter of a function.
+    fn LLVMGetFirstParam(func: LLVMValueRef) -> LLVMValueRef;
+
+    /// Get the last parameter of a function.
+    fn LLVMGetLastParam(func: LLVMValueRef) -> LLVMValueRef;
+
+    /// Get the next parameter.
+    fn LLVMGetNextParam(param: LLVMValueRef) -> LLVMValueRef;
+
+    /// Get the previous parameter.
+    fn LLVMGetPreviousParam(param: LLVMValueRef) -> LLVMValueRef;
+
+    // === Basic Blocks ===
+
+    /// Get the function that a basic block belongs to.
+    fn LLVMGetBasicBlockParent(bb: LLVMBasicBlockRef) -> LLVMValueRef;
+
+    /// Get the terminator instruction of a basic block.
+    fn LLVMGetBasicBlockTerminator(bb: LLVMBasicBlockRef) -> LLVMValueRef;
+
+    /// Count basic blocks in a function.
+    fn LLVMCountBasicBlocks(func: LLVMValueRef) -> u32;
+
+    /// Get basic blocks in a function.
+    fn LLVMGetBasicBlocks(func: LLVMValueRef, basic_blocks: *mut LLVMBasicBlockRef);
+
+    /// Get the first basic block of a function.
+    fn LLVMGetFirstBasicBlock(func: LLVMValueRef) -> LLVMBasicBlockRef;
+
+    /// Get the last basic block of a function.
+    fn LLVMGetLastBasicBlock(func: LLVMValueRef) -> LLVMBasicBlockRef;
+
+    /// Get the next basic block.
+    fn LLVMGetNextBasicBlock(bb: LLVMBasicBlockRef) -> LLVMBasicBlockRef;
+
+    /// Get the previous basic block.
+    fn LLVMGetPreviousBasicBlock(bb: LLVMBasicBlockRef) -> LLVMBasicBlockRef;
+
+    /// Get the entry basic block of a function.
+    fn LLVMGetEntryBasicBlock(func: LLVMValueRef) -> LLVMBasicBlockRef;
+
+    /// Create a new basic block without inserting it.
+    fn LLVMCreateBasicBlockInContext(ctx: LLVMContextRef, name: *const u8) -> LLVMBasicBlockRef;
+
+    /// Append a basic block to a function.
+    fn LLVMAppendBasicBlockInContext(
+        ctx: LLVMContextRef,
+        func: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMBasicBlockRef;
+
+    /// Insert a basic block before another.
+    fn LLVMInsertBasicBlockInContext(
+        ctx: LLVMContextRef,
+        bb: LLVMBasicBlockRef,
+        name: *const u8
+    ) -> LLVMBasicBlockRef;
+
+    /// Delete a basic block.
+    fn LLVMDeleteBasicBlock(bb: LLVMBasicBlockRef);
+
+    /// Remove a basic block from its function (but don't delete it).
+    fn LLVMRemoveBasicBlockFromParent(bb: LLVMBasicBlockRef);
+
+    /// Move a basic block before another.
+    fn LLVMMoveBasicBlockBefore(bb: LLVMBasicBlockRef, move_pos: LLVMBasicBlockRef);
+
+    /// Move a basic block after another.
+    fn LLVMMoveBasicBlockAfter(bb: LLVMBasicBlockRef, move_pos: LLVMBasicBlockRef);
+
+    /// Get the first instruction in a basic block.
+    fn LLVMGetFirstInstruction(bb: LLVMBasicBlockRef) -> LLVMValueRef;
+
+    /// Get the last instruction in a basic block.
+    fn LLVMGetLastInstruction(bb: LLVMBasicBlockRef) -> LLVMValueRef;
+
+    // === Instructions ===
+
+    /// Get the parent basic block of an instruction.
+    fn LLVMGetInstructionParent(inst: LLVMValueRef) -> LLVMBasicBlockRef;
+
+    /// Get the next instruction.
+    fn LLVMGetNextInstruction(inst: LLVMValueRef) -> LLVMValueRef;
+
+    /// Get the previous instruction.
+    fn LLVMGetPreviousInstruction(inst: LLVMValueRef) -> LLVMValueRef;
+
+    /// Remove an instruction from its parent block (but don't delete it).
+    fn LLVMInstructionRemoveFromParent(inst: LLVMValueRef);
+
+    /// Delete an instruction.
+    fn LLVMInstructionEraseFromParent(inst: LLVMValueRef);
+
+    /// Get the opcode of an instruction.
+    fn LLVMGetInstructionOpcode(inst: LLVMValueRef) -> i32;
+
+    /// Check if an instruction is a terminator.
+    fn LLVMIsATerminatorInst(inst: LLVMValueRef) -> LLVMValueRef;
+
+    // === Phi Nodes ===
+
+    /// Add an incoming value to a phi node.
+    fn LLVMAddIncoming(
+        phi_node: LLVMValueRef,
+        incoming_values: *const LLVMValueRef,
+        incoming_blocks: *const LLVMBasicBlockRef,
+        count: u32
+    );
+
+    /// Count incoming values in a phi node.
+    fn LLVMCountIncoming(phi_node: LLVMValueRef) -> u32;
+
+    /// Get an incoming value from a phi node.
+    fn LLVMGetIncomingValue(phi_node: LLVMValueRef, index: u32) -> LLVMValueRef;
+
+    /// Get an incoming block from a phi node.
+    fn LLVMGetIncomingBlock(phi_node: LLVMValueRef, index: u32) -> LLVMBasicBlockRef;
+
+    // === Call Instructions ===
+
+    /// Get the number of arguments in a call instruction.
+    fn LLVMGetNumArgOperands(call: LLVMValueRef) -> u32;
+
+    /// Set the calling convention for a call instruction.
+    fn LLVMSetInstructionCallConv(call: LLVMValueRef, cc: u32);
+
+    /// Get the calling convention for a call instruction.
+    fn LLVMGetInstructionCallConv(call: LLVMValueRef) -> u32;
+
+    /// Set if a call is a tail call.
+    fn LLVMSetTailCall(call: LLVMValueRef, is_tail_call: i32);
+
+    /// Check if a call is a tail call.
+    fn LLVMIsTailCall(call: LLVMValueRef) -> i32;
+
+    /// Get the normal destination of an invoke.
+    fn LLVMGetNormalDest(invoke: LLVMValueRef) -> LLVMBasicBlockRef;
+
+    /// Get the unwind destination of an invoke.
+    fn LLVMGetUnwindDest(invoke: LLVMValueRef) -> LLVMBasicBlockRef;
+
+    /// Set the normal destination of an invoke.
+    fn LLVMSetNormalDest(invoke: LLVMValueRef, bb: LLVMBasicBlockRef);
+
+    /// Set the unwind destination of an invoke.
+    fn LLVMSetUnwindDest(invoke: LLVMValueRef, bb: LLVMBasicBlockRef);
+
+    // === Switch Instructions ===
+
+    /// Add a case to a switch instruction.
+    fn LLVMAddCase(switch: LLVMValueRef, on_val: LLVMValueRef, dest: LLVMBasicBlockRef);
+
+    /// Get the default destination of a switch.
+    fn LLVMGetSwitchDefaultDest(switch: LLVMValueRef) -> LLVMBasicBlockRef;
+
+    // === Attributes ===
+
+    /// Create an enum attribute.
+    fn LLVMCreateEnumAttribute(ctx: LLVMContextRef, kind_id: u32, val: u64) -> LLVMAttributeRef;
+
+    /// Create a string attribute.
+    fn LLVMCreateStringAttribute(
+        ctx: LLVMContextRef,
+        k: *const u8,
+        k_length: u32,
+        v: *const u8,
+        v_length: u32
+    ) -> LLVMAttributeRef;
+
+    /// Get the enum attribute kind ID by name.
+    fn LLVMGetEnumAttributeKindForName(name: *const u8, s_len: u64) -> u32;
+
+    /// Get the last enum attribute kind.
+    fn LLVMGetLastEnumAttributeKind() -> u32;
+}
+
+/// Opaque handle to an LLVM attribute.
+pub type LLVMAttributeRef = *mut ();
+
+// ============================================================================
+// Safe Wrapper: LLVMValue
+// ============================================================================
+
+/// Safe wrapper around an LLVM value.
+///
+/// Values in LLVM represent computed results or storage locations.
+/// They include constants, instructions, function arguments, etc.
+pub struct LLVMValue {
+    /// The raw LLVM value reference.
+    raw: LLVMValueRef,
+}
+
+impl LLVMValue {
+    /// Create a wrapper from a raw value reference.
+    pub fn from_raw(raw: LLVMValueRef) -> LLVMValue {
+        LLVMValue { raw }
+    }
+
+    /// Get the raw value reference.
+    pub fn raw(&self) -> LLVMValueRef {
+        self.raw
+    }
+
+    /// Check if this is a null reference.
+    pub fn is_null_ref(&self) -> bool {
+        self.raw.is_null()
+    }
+
+    /// Get the type of this value.
+    pub fn get_type(&self) -> LLVMTypeRef {
+        llvm_values::LLVMTypeOf(self.raw)
+    }
+
+    /// Get the name of this value.
+    pub fn name(&self) -> String {
+        let mut len: u64 = 0;
+        let ptr = llvm_values::LLVMGetValueName2(self.raw, &mut len);
+        if ptr.is_null() || len == 0 {
+            "".to_string()
+        } else {
+            let slice = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
+            String::from_utf8_lossy(slice).to_string()
+        }
+    }
+
+    /// Set the name of this value.
+    pub fn set_name(&self, name: &str) {
+        llvm_values::LLVMSetValueName2(self.raw, name.as_ptr(), name.len() as u64);
+    }
+
+    /// Print this value to a string.
+    pub fn to_string(&self) -> String {
+        let ptr = llvm_values::LLVMPrintValueToString(self.raw);
+        if ptr.is_null() {
+            "".to_string()
+        } else {
+            let s = unsafe { core::ffi::CStr::from_ptr(ptr as *const i8) };
+            let result = s.to_string_lossy().to_string();
+            super::core::llvm_core::LLVMDisposeMessage(ptr);
+            result
+        }
+    }
+
+    /// Check if this value is null.
+    pub fn is_null(&self) -> bool {
+        llvm_values::LLVMIsNull(self.raw) != 0
+    }
+
+    /// Check if this value is a constant.
+    pub fn is_constant(&self) -> bool {
+        llvm_values::LLVMIsConstant(self.raw) != 0
+    }
+
+    /// Check if this value is undefined.
+    pub fn is_undef(&self) -> bool {
+        llvm_values::LLVMIsUndef(self.raw) != 0
+    }
+
+    /// Check if this value is poison.
+    pub fn is_poison(&self) -> bool {
+        llvm_values::LLVMIsPoison(self.raw) != 0
+    }
+
+    /// Replace all uses of this value with another value.
+    pub fn replace_all_uses_with(&self, new_val: LLVMValueRef) {
+        llvm_values::LLVMReplaceAllUsesWith(self.raw, new_val);
+    }
+}
+
+// ============================================================================
+// Safe Wrapper: LLVMBasicBlock
+// ============================================================================
+
+/// Safe wrapper around an LLVM basic block.
+///
+/// A basic block is a sequence of instructions with a single entry point
+/// and a single exit point (the terminator instruction).
+pub struct LLVMBasicBlock {
+    /// The raw LLVM basic block reference.
+    raw: LLVMBasicBlockRef,
+}
+
+impl LLVMBasicBlock {
+    /// Create a wrapper from a raw basic block reference.
+    pub fn from_raw(raw: LLVMBasicBlockRef) -> LLVMBasicBlock {
+        LLVMBasicBlock { raw }
+    }
+
+    /// Get the raw basic block reference.
+    pub fn raw(&self) -> LLVMBasicBlockRef {
+        self.raw
+    }
+
+    /// Check if this is a null reference.
+    pub fn is_null(&self) -> bool {
+        self.raw.is_null()
+    }
+
+    /// Get the parent function of this basic block.
+    pub fn parent(&self) -> LLVMValueRef {
+        llvm_values::LLVMGetBasicBlockParent(self.raw)
+    }
+
+    /// Get the terminator instruction of this basic block.
+    pub fn terminator(&self) -> Option<LLVMValue> {
+        let term = llvm_values::LLVMGetBasicBlockTerminator(self.raw);
+        if term.is_null() {
+            None
+        } else {
+            Some(LLVMValue::from_raw(term))
+        }
+    }
+
+    /// Get the first instruction in this basic block.
+    pub fn first_instruction(&self) -> Option<LLVMValue> {
+        let inst = llvm_values::LLVMGetFirstInstruction(self.raw);
+        if inst.is_null() {
+            None
+        } else {
+            Some(LLVMValue::from_raw(inst))
+        }
+    }
+
+    /// Get the last instruction in this basic block.
+    pub fn last_instruction(&self) -> Option<LLVMValue> {
+        let inst = llvm_values::LLVMGetLastInstruction(self.raw);
+        if inst.is_null() {
+            None
+        } else {
+            Some(LLVMValue::from_raw(inst))
+        }
+    }
+
+    /// Get the next basic block.
+    pub fn next(&self) -> Option<LLVMBasicBlock> {
+        let bb = llvm_values::LLVMGetNextBasicBlock(self.raw);
+        if bb.is_null() {
+            None
+        } else {
+            Some(LLVMBasicBlock::from_raw(bb))
+        }
+    }
+
+    /// Get the previous basic block.
+    pub fn prev(&self) -> Option<LLVMBasicBlock> {
+        let bb = llvm_values::LLVMGetPreviousBasicBlock(self.raw);
+        if bb.is_null() {
+            None
+        } else {
+            Some(LLVMBasicBlock::from_raw(bb))
+        }
+    }
+
+    /// Delete this basic block.
+    pub fn delete(self) {
+        llvm_values::LLVMDeleteBasicBlock(self.raw);
+    }
+
+    /// Remove this basic block from its parent function (but don't delete it).
+    pub fn remove_from_parent(&self) {
+        llvm_values::LLVMRemoveBasicBlockFromParent(self.raw);
+    }
+
+    /// Move this basic block before another.
+    pub fn move_before(&self, target: LLVMBasicBlockRef) {
+        llvm_values::LLVMMoveBasicBlockBefore(self.raw, target);
+    }
+
+    /// Move this basic block after another.
+    pub fn move_after(&self, target: LLVMBasicBlockRef) {
+        llvm_values::LLVMMoveBasicBlockAfter(self.raw, target);
+    }
+}
+
+// ============================================================================
+// Constant Factory Functions
+// ============================================================================
+
+/// Create a null pointer constant.
+pub fn const_null_ptr(ty: LLVMTypeRef) -> LLVMValue {
+    LLVMValue::from_raw(llvm_values::LLVMConstPointerNull(ty))
+}
+
+/// Create a null constant of any type.
+pub fn const_null(ty: LLVMTypeRef) -> LLVMValue {
+    LLVMValue::from_raw(llvm_values::LLVMConstNull(ty))
+}
+
+/// Create an undefined value.
+pub fn const_undef(ty: LLVMTypeRef) -> LLVMValue {
+    LLVMValue::from_raw(llvm_values::LLVMGetUndef(ty))
+}
+
+/// Create a poison value.
+pub fn const_poison(ty: LLVMTypeRef) -> LLVMValue {
+    LLVMValue::from_raw(llvm_values::LLVMGetPoison(ty))
+}
+
+/// Create a constant all-ones value.
+pub fn const_all_ones(ty: LLVMTypeRef) -> LLVMValue {
+    LLVMValue::from_raw(llvm_values::LLVMConstAllOnes(ty))
+}
+
+/// Create a constant integer value.
+pub fn const_int(int_ty: LLVMTypeRef, value: u64, sign_extend: bool) -> LLVMValue {
+    let sign = if sign_extend { LLVM_TRUE } else { LLVM_FALSE };
+    LLVMValue::from_raw(llvm_values::LLVMConstInt(int_ty, value, sign))
+}
+
+/// Create a constant signed integer value.
+pub fn const_int_signed(int_ty: LLVMTypeRef, value: i64) -> LLVMValue {
+    LLVMValue::from_raw(llvm_values::LLVMConstInt(int_ty, value as u64, LLVM_TRUE))
+}
+
+/// Create a constant float value.
+pub fn const_real(real_ty: LLVMTypeRef, value: f64) -> LLVMValue {
+    LLVMValue::from_raw(llvm_values::LLVMConstReal(real_ty, value))
+}
+
+/// Create a constant string in a context.
+pub fn const_string(ctx: LLVMContextRef, value: &str, null_terminate: bool) -> LLVMValue {
+    let dont_null = if null_terminate { LLVM_FALSE } else { LLVM_TRUE };
+    LLVMValue::from_raw(llvm_values::LLVMConstStringInContext(
+        ctx,
+        value.as_ptr(),
+        value.len() as u32,
+        dont_null
+    ))
+}
+
+/// Create a constant struct in a context.
+pub fn const_struct(ctx: LLVMContextRef, values: &[LLVMValueRef], packed: bool) -> LLVMValue {
+    let vals_ptr = if values.is_empty() {
+        core::ptr::null()
+    } else {
+        values.as_ptr()
+    };
+    let packed_flag = if packed { LLVM_TRUE } else { LLVM_FALSE };
+    LLVMValue::from_raw(llvm_values::LLVMConstStructInContext(
+        ctx,
+        vals_ptr,
+        values.len() as u32,
+        packed_flag
+    ))
+}
+
+/// Create a constant named struct.
+pub fn const_named_struct(struct_ty: LLVMTypeRef, values: &[LLVMValueRef]) -> LLVMValue {
+    let vals_ptr = if values.is_empty() {
+        core::ptr::null()
+    } else {
+        values.as_ptr()
+    };
+    LLVMValue::from_raw(llvm_values::LLVMConstNamedStruct(
+        struct_ty,
+        vals_ptr,
+        values.len() as u32
+    ))
+}
+
+/// Create a constant array.
+pub fn const_array(element_ty: LLVMTypeRef, values: &[LLVMValueRef]) -> LLVMValue {
+    let vals_ptr = if values.is_empty() {
+        core::ptr::null()
+    } else {
+        values.as_ptr()
+    };
+    LLVMValue::from_raw(llvm_values::LLVMConstArray2(
+        element_ty,
+        vals_ptr,
+        values.len() as u64
+    ))
+}
+
+/// Create a constant vector.
+pub fn const_vector(values: &[LLVMValueRef]) -> LLVMValue {
+    let vals_ptr = if values.is_empty() {
+        core::ptr::null()
+    } else {
+        values.as_ptr()
+    };
+    LLVMValue::from_raw(llvm_values::LLVMConstVector(vals_ptr, values.len() as u32))
+}
+
+// ============================================================================
+// Basic Block Factory Functions
+// ============================================================================
+
+/// Create a basic block without inserting it into a function.
+pub fn create_basic_block(ctx: LLVMContextRef, name: &str) -> LLVMBasicBlock {
+    LLVMBasicBlock::from_raw(llvm_values::LLVMCreateBasicBlockInContext(ctx, name.as_ptr()))
+}
+
+/// Append a basic block to a function.
+pub fn append_basic_block(ctx: LLVMContextRef, func: LLVMValueRef, name: &str) -> LLVMBasicBlock {
+    LLVMBasicBlock::from_raw(llvm_values::LLVMAppendBasicBlockInContext(
+        ctx,
+        func,
+        name.as_ptr()
+    ))
+}
+
+/// Insert a basic block before another.
+pub fn insert_basic_block(ctx: LLVMContextRef, before: LLVMBasicBlockRef, name: &str) -> LLVMBasicBlock {
+    LLVMBasicBlock::from_raw(llvm_values::LLVMInsertBasicBlockInContext(
+        ctx,
+        before,
+        name.as_ptr()
+    ))
+}
+
+// ============================================================================
+// Function/Global Helpers
+// ============================================================================
+
+/// Get the entry basic block of a function.
+pub fn get_entry_block(func: LLVMValueRef) -> Option<LLVMBasicBlock> {
+    let bb = llvm_values::LLVMGetEntryBasicBlock(func);
+    if bb.is_null() {
+        None
+    } else {
+        Some(LLVMBasicBlock::from_raw(bb))
+    }
+}
+
+/// Get the number of basic blocks in a function.
+pub fn count_basic_blocks(func: LLVMValueRef) -> u32 {
+    llvm_values::LLVMCountBasicBlocks(func)
+}
+
+/// Get the number of parameters in a function.
+pub fn count_params(func: LLVMValueRef) -> u32 {
+    llvm_values::LLVMCountParams(func)
+}
+
+/// Get a specific parameter from a function.
+pub fn get_param(func: LLVMValueRef, index: u32) -> LLVMValue {
+    LLVMValue::from_raw(llvm_values::LLVMGetParam(func, index))
+}
+
+/// Set the linkage of a global value.
+pub fn set_linkage(global: LLVMValueRef, linkage: Linkage) {
+    llvm_values::LLVMSetLinkage(global, linkage as u32);
+}
+
+/// Set the visibility of a global value.
+pub fn set_visibility(global: LLVMValueRef, visibility: Visibility) {
+    llvm_values::LLVMSetVisibility(global, visibility as u32);
+}
+
+/// Set the calling convention of a function.
+pub fn set_call_conv(func: LLVMValueRef, cc: CallConv) {
+    llvm_values::LLVMSetFunctionCallConv(func, cc as u32);
+}
+
+/// Add an incoming value to a phi node.
+pub fn add_phi_incoming(phi: LLVMValueRef, values: &[LLVMValueRef], blocks: &[LLVMBasicBlockRef]) {
+    if values.len() != blocks.len() || values.is_empty() {
+        return;
+    }
+    llvm_values::LLVMAddIncoming(
+        phi,
+        values.as_ptr(),
+        blocks.as_ptr(),
+        values.len() as u32
+    );
+}
+
+/// Add a case to a switch instruction.
+pub fn add_switch_case(switch: LLVMValueRef, on_val: LLVMValueRef, dest: LLVMBasicBlockRef) {
+    llvm_values::LLVMAddCase(switch, on_val, dest);
+}
+
+/// Set if a call is a tail call.
+pub fn set_tail_call(call: LLVMValueRef, is_tail: bool) {
+    let flag = if is_tail { LLVM_TRUE } else { LLVM_FALSE };
+    llvm_values::LLVMSetTailCall(call, flag);
+}

@@ -1,0 +1,311 @@
+/// Multiple Dispatch Resolution for Blood
+///
+/// This module implements the dispatch resolution algorithm that selects
+/// which method implementation to call based on the runtime types of all
+/// arguments. Blood uses multiple dispatch similar to Julia/Dylan, with
+/// effect-aware dispatch and strict type stability enforcement.
+///
+/// # Algorithm Overview
+///
+/// Multiple dispatch resolution follows these steps:
+///
+/// 1. **Collect candidates**: Find all methods with matching name and arity
+/// 2. **Filter applicable**: Keep methods where each param type matches arg type
+/// 3. **Instantiate generics**: Infer type parameter substitutions
+/// 4. **Order by specificity**: Rank from most to least specific
+/// 5. **Select best**: Choose unique most specific, or error on ambiguity
+///
+/// # Specificity Rules
+///
+/// Method A is more specific than method B if:
+/// - For each position i: A[i] <: B[i] (at least as specific)
+/// - For at least one position j: A[j] <: B[j] but not B[j] <: A[j] (strictly more specific)
+///
+/// When parameter types are equal, effect specificity breaks ties:
+/// ```text
+/// pure > closed row (fewer effects) > closed row (more effects) > open row
+/// ```
+///
+/// # Type Stability
+///
+/// Blood enforces type stability: the return type of a method call must be
+/// uniquely determined by the input types at compile time. This enables
+/// efficient monomorphization and optimization.
+///
+/// # Module Structure
+///
+/// | Module | Purpose |
+/// |--------|---------|
+/// | `types` | Core type definitions (MethodCandidate, TypeParam, etc.) |
+/// | `effect_row` | Effect row operations for effect-aware dispatch |
+/// | `result` | Dispatch result types and errors |
+/// | `resolver` | Main dispatch resolution algorithm |
+/// | `constraints` | Constraint satisfaction checking |
+/// | `stability` | Type stability analysis |
+///
+/// # Usage Example
+///
+/// ```blood
+/// use std.compiler.typeck.dispatch::{DispatchResolver, DispatchResult};
+///
+/// let resolver = DispatchResolver::new();
+///
+/// let result = resolver.resolve(
+///     "method_name",
+///     &arg_types,
+///     &candidates,
+/// );
+///
+/// match result {
+///     DispatchResult::Resolved { candidate } => {
+///         // Generate call to candidate.def_id
+///     }
+///     DispatchResult::NoMatch { error } => {
+///         // Report "no method found" error
+///     }
+///     DispatchResult::Ambiguous { error } => {
+///         // Report ambiguity, suggest qualified syntax
+///     }
+/// }
+/// ```
+///
+/// # References
+///
+/// - Dylan Reference Manual: Method Dispatch
+/// - Julia Documentation: Methods and Dispatch
+/// - "A Polyglot's Guide to Multiple Dispatch" - Eli Bendersky
+/// - Blood Effect System Specification
+
+// ============================================================================
+// Submodule Declarations
+// ============================================================================
+
+pub mod types;
+pub mod effect_row;
+pub mod result;
+pub mod resolver;
+pub mod constraints;
+pub mod stability;
+
+// ============================================================================
+// Re-exports
+// ============================================================================
+
+// Core type definitions
+pub use types::{
+    MethodCandidate,
+    TypeParam,
+    Constraint,
+    InstantiationResult,
+    ConstraintError,
+};
+
+// Effect row operations
+pub use effect_row::{
+    DispatchEffectRow,
+    Ordering,
+};
+
+// Result types
+pub use result::{
+    DispatchResult,
+    NoMatchError,
+    AmbiguityError,
+};
+
+// Main resolver
+pub use resolver::{
+    DispatchResolver,
+    compare_type_param_specificity,
+};
+
+// Constraint checking
+pub use constraints::ConstraintChecker;
+
+// Type stability
+pub use stability::{
+    TypeStabilityError,
+    TypeStabilityResult,
+    TypeStabilityChecker,
+};
+
+// ============================================================================
+// Convenience Functions
+// ============================================================================
+
+/// Resolve a method call with dispatch.
+///
+/// This is a convenience function for common dispatch resolution.
+///
+/// # Arguments
+///
+/// * `method_name` - The name of the method being called
+/// * `arg_types` - The types of the arguments at the call site
+/// * `candidates` - All method candidates with the given name
+///
+/// # Returns
+///
+/// A `DispatchResult` indicating success or failure with appropriate details.
+pub fn resolve_dispatch(
+    method_name: &str,
+    arg_types: &[super.types::Type],
+    candidates: &[MethodCandidate],
+) -> DispatchResult {
+    let resolver = DispatchResolver::new();
+    resolver.resolve(method_name, arg_types, candidates)
+}
+
+/// Check type stability for a method family.
+///
+/// This is a convenience function for type stability checking.
+///
+/// # Arguments
+///
+/// * `family_name` - The name of the method family
+/// * `candidates` - All methods in the family
+///
+/// # Returns
+///
+/// A `TypeStabilityResult` indicating stability status and any errors.
+pub fn check_type_stability(
+    family_name: &str,
+    candidates: &[MethodCandidate],
+) -> TypeStabilityResult {
+    let checker = TypeStabilityChecker::new();
+    checker.check_family(family_name, candidates)
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super.super.types::{Type, DefId, TyVarId};
+
+    #[test]
+    fn test_basic_dispatch() {
+        // Create a simple candidate
+        let candidate = MethodCandidate::new(
+            DefId::new(1),
+            "foo".to_string(),
+            vec![Type::i32()],
+            Type::bool(),
+        );
+
+        // Resolve dispatch
+        let result = resolve_dispatch("foo", &[Type::i32()], &[candidate]);
+
+        assert!(result.is_resolved());
+    }
+
+    #[test]
+    fn test_no_match_dispatch() {
+        // Candidate expects i32
+        let candidate = MethodCandidate::new(
+            DefId::new(1),
+            "foo".to_string(),
+            vec![Type::i32()],
+            Type::bool(),
+        );
+
+        // Call with bool
+        let result = resolve_dispatch("foo", &[Type::bool()], &[candidate]);
+
+        assert!(result.is_no_match());
+    }
+
+    #[test]
+    fn test_stability_check() {
+        // Two methods with different input types are stable
+        let m1 = MethodCandidate::new(
+            DefId::new(1),
+            "convert".to_string(),
+            vec![Type::i32()],
+            Type::string(),
+        );
+        let m2 = MethodCandidate::new(
+            DefId::new(2),
+            "convert".to_string(),
+            vec![Type::bool()],
+            Type::i64(),
+        );
+
+        let result = check_type_stability("convert", &[m1, m2]);
+
+        assert!(result.is_type_stable());
+    }
+
+    #[test]
+    fn test_instability_detection() {
+        // Two methods with same inputs, different returns = unstable
+        let m1 = MethodCandidate::new(
+            DefId::new(1),
+            "convert".to_string(),
+            vec![Type::i32()],
+            Type::string(),
+        );
+        let m2 = MethodCandidate::new(
+            DefId::new(2),
+            "convert".to_string(),
+            vec![Type::i32()],
+            Type::i64(),
+        );
+
+        let result = check_type_stability("convert", &[m1, m2]);
+
+        assert!(!result.is_type_stable());
+    }
+
+    #[test]
+    fn test_generic_candidate() {
+        // Generic method with type parameter
+        let candidate = MethodCandidate::generic(
+            DefId::new(1),
+            "identity".to_string(),
+            vec![Type::param(TyVarId::new(0))],
+            Type::param(TyVarId::new(0)),
+            vec![TypeParam::new("T".to_string(), TyVarId::new(0))],
+        );
+
+        assert!(candidate.is_generic());
+        assert_eq!(candidate.type_params.len(), 1);
+    }
+
+    #[test]
+    fn test_effect_specificity() {
+        let pure = DispatchEffectRow::pure();
+        assert!(pure.is_pure());
+        assert!(pure.is_closed());
+    }
+
+    #[test]
+    fn test_constraint_checking() {
+        let checker = ConstraintChecker::new();
+
+        let type_params = vec![
+            TypeParam::with_constraints(
+                "T".to_string(),
+                TyVarId::new(0),
+                vec![Constraint::from_name("Copy".to_string())],
+            ),
+        ];
+
+        let mut subs: std.collections::HashMap<u32, Type> = std.collections::HashMap::new();
+        subs.insert(0, Type::i32()); // i32 is Copy
+
+        let result = checker.check_constraints(&type_params, &subs);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_ordering_enum() {
+        assert!(Ordering::Less.is_less());
+        assert!(Ordering::Equal.is_equal());
+        assert!(Ordering::Greater.is_greater());
+
+        assert!(Ordering::Less.reverse().is_greater());
+        assert!(Ordering::Greater.reverse().is_less());
+    }
+}

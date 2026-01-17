@@ -1,0 +1,600 @@
+/// Pattern Exhaustiveness Checking for Blood Type Checker
+///
+/// This module implements exhaustiveness checking for match expressions,
+/// ensuring that all possible values of the scrutinee type are covered
+/// by at least one pattern.
+///
+/// # Algorithm
+///
+/// The algorithm uses a simplified pattern matrix representation that
+/// abstracts away syntax details, focusing on constructor coverage.
+///
+/// # Design Principles
+///
+/// 1. **Complete coverage**: All type constructors must be matched
+/// 2. **Explicit variants**: Every pattern kind is explicitly handled
+/// 3. **Clear diagnostics**: Missing patterns are reported clearly
+
+use std.collections::{HashMap, HashSet};
+use std.compiler.parser::{Pattern, PatternKind, Literal, Span};
+use super.types::{Type, TypeKind, DefId, PrimitiveTy};
+use super.resolve::{TypeDef, TypeDefKind, EnumVariantDef};
+use super.errors::{TypeError, TypeErrorKind};
+
+// ============================================================
+// Pattern Matrix
+// ============================================================
+
+/// Simplified pattern representation for exhaustiveness checking.
+///
+/// This abstracts away syntax details like spans and focuses on
+/// the structural properties relevant for exhaustiveness.
+pub enum PatternMatrix {
+    /// Wildcard - matches anything
+    Wild,
+
+    /// Constructor with subpatterns (e.g., Some(x), Foo { a, b })
+    Constructor {
+        name: String,
+        args: [PatternMatrix],
+    },
+
+    /// Literal value
+    Literal(LiteralPattern),
+
+    /// Or-pattern (multiple alternatives)
+    Or([PatternMatrix]),
+
+    /// Missing pattern (represents what's not yet covered)
+    Missing,
+}
+
+impl Clone for PatternMatrix {
+    fn clone(&self) -> PatternMatrix {
+        match self {
+            PatternMatrix::Wild => PatternMatrix::Wild,
+            PatternMatrix::Constructor { name, args } => {
+                PatternMatrix::Constructor {
+                    name: name.clone(),
+                    args: args.clone(),
+                }
+            }
+            PatternMatrix::Literal(lit) => PatternMatrix::Literal(lit.clone()),
+            PatternMatrix::Or(alts) => PatternMatrix::Or(alts.clone()),
+            PatternMatrix::Missing => PatternMatrix::Missing,
+        }
+    }
+}
+
+/// Literal patterns for exhaustiveness checking.
+pub enum LiteralPattern {
+    Int(i64),
+    Bool(bool),
+    Char(char),
+    String(String),
+    Range {
+        start: i64,
+        end: i64,
+        inclusive: bool,
+    },
+}
+
+impl Clone for LiteralPattern {
+    fn clone(&self) -> LiteralPattern {
+        match self {
+            LiteralPattern::Int(i) => LiteralPattern::Int(*i),
+            LiteralPattern::Bool(b) => LiteralPattern::Bool(*b),
+            LiteralPattern::Char(c) => LiteralPattern::Char(*c),
+            LiteralPattern::String(s) => LiteralPattern::String(s.clone()),
+            LiteralPattern::Range { start, end, inclusive } => {
+                LiteralPattern::Range {
+                    start: *start,
+                    end: *end,
+                    inclusive: *inclusive,
+                }
+            }
+        }
+    }
+}
+
+// ============================================================
+// Exhaustiveness Checker
+// ============================================================
+
+/// The exhaustiveness checker.
+pub struct ExhaustivenessChecker {
+    /// Type definitions for looking up constructors
+    type_defs: HashMap<u32, TypeDef>,
+}
+
+impl ExhaustivenessChecker {
+    pub fn new(type_defs: &HashMap<u32, TypeDef>) -> ExhaustivenessChecker {
+        ExhaustivenessChecker {
+            type_defs: type_defs.clone(),
+        }
+    }
+
+    /// Check if a set of patterns is exhaustive for a given type.
+    /// Returns a list of missing pattern descriptions if not exhaustive.
+    pub fn check_exhaustiveness(&self, patterns: &[PatternMatrix], ty: &Type) -> [String] {
+        self.find_missing_patterns(patterns, ty)
+    }
+
+    /// Find patterns that are not covered.
+    fn find_missing_patterns(&self, patterns: &[PatternMatrix], ty: &Type) -> [String] {
+        // If any pattern is a wildcard, the match is exhaustive
+        let mut i: usize = 0;
+        while i < patterns.len() {
+            match &patterns[i] {
+                PatternMatrix::Wild => return vec![],
+                PatternMatrix::Constructor { name: _, args: _ } => {}
+                PatternMatrix::Literal(_) => {}
+                PatternMatrix::Or(alts) => {
+                    // Check if any alternative is a wildcard
+                    let mut j: usize = 0;
+                    while j < alts.len() {
+                        match &alts[j] {
+                            PatternMatrix::Wild => return vec![],
+                            PatternMatrix::Constructor { name: _, args: _ } => {}
+                            PatternMatrix::Literal(_) => {}
+                            PatternMatrix::Or(_) => {}
+                            PatternMatrix::Missing => {}
+                        }
+                        j = j + 1;
+                    }
+                }
+                PatternMatrix::Missing => {}
+            }
+            i = i + 1;
+        }
+
+        // Check based on type
+        match &ty.kind {
+            TypeKind::Primitive(PrimitiveTy::Bool) => {
+                self.check_bool_exhaustiveness(patterns)
+            }
+            TypeKind::Primitive(PrimitiveTy::Unit) => {
+                // Unit has exactly one value
+                if patterns.len() == 0 {
+                    vec!["()".to_string()]
+                } else {
+                    vec![]
+                }
+            }
+            TypeKind::Primitive(PrimitiveTy::I8) => self.check_integer_exhaustiveness(patterns),
+            TypeKind::Primitive(PrimitiveTy::I16) => self.check_integer_exhaustiveness(patterns),
+            TypeKind::Primitive(PrimitiveTy::I32) => self.check_integer_exhaustiveness(patterns),
+            TypeKind::Primitive(PrimitiveTy::I64) => self.check_integer_exhaustiveness(patterns),
+            TypeKind::Primitive(PrimitiveTy::I128) => self.check_integer_exhaustiveness(patterns),
+            TypeKind::Primitive(PrimitiveTy::Isize) => self.check_integer_exhaustiveness(patterns),
+            TypeKind::Primitive(PrimitiveTy::U8) => self.check_integer_exhaustiveness(patterns),
+            TypeKind::Primitive(PrimitiveTy::U16) => self.check_integer_exhaustiveness(patterns),
+            TypeKind::Primitive(PrimitiveTy::U32) => self.check_integer_exhaustiveness(patterns),
+            TypeKind::Primitive(PrimitiveTy::U64) => self.check_integer_exhaustiveness(patterns),
+            TypeKind::Primitive(PrimitiveTy::U128) => self.check_integer_exhaustiveness(patterns),
+            TypeKind::Primitive(PrimitiveTy::Usize) => self.check_integer_exhaustiveness(patterns),
+            TypeKind::Primitive(PrimitiveTy::F32) => self.check_float_exhaustiveness(patterns),
+            TypeKind::Primitive(PrimitiveTy::F64) => self.check_float_exhaustiveness(patterns),
+            TypeKind::Primitive(PrimitiveTy::Char) => self.check_char_exhaustiveness(patterns),
+            TypeKind::Primitive(PrimitiveTy::Str) => self.check_string_exhaustiveness(patterns),
+            TypeKind::Adt { def_id, type_args: _ } => {
+                self.check_adt_exhaustiveness(patterns, def_id)
+            }
+            TypeKind::Tuple(tys) => {
+                self.check_tuple_exhaustiveness(patterns, tys)
+            }
+            TypeKind::Never => {
+                // Never type has no values, always exhaustive
+                vec![]
+            }
+            TypeKind::Array { element: _, size: _ } => {
+                self.check_array_exhaustiveness(patterns)
+            }
+            TypeKind::Slice { element: _ } => {
+                self.check_slice_exhaustiveness(patterns)
+            }
+            TypeKind::Ref { inner: _, mutability: _ } => {
+                // References require a wildcard for exhaustiveness
+                if patterns.len() == 0 {
+                    vec!["_".to_string()]
+                } else {
+                    vec![]
+                }
+            }
+            TypeKind::Ptr { inner: _, mutability: _ } => {
+                if patterns.len() == 0 {
+                    vec!["_".to_string()]
+                } else {
+                    vec![]
+                }
+            }
+            TypeKind::Fn { params: _, ret: _, effect: _ } => {
+                // Functions require a wildcard
+                if patterns.len() == 0 {
+                    vec!["_".to_string()]
+                } else {
+                    vec![]
+                }
+            }
+            TypeKind::Closure { params: _, ret: _, effect: _, captures: _ } => {
+                if patterns.len() == 0 {
+                    vec!["_".to_string()]
+                } else {
+                    vec![]
+                }
+            }
+            TypeKind::Range { element: _, inclusive: _ } => {
+                if patterns.len() == 0 {
+                    vec!["_".to_string()]
+                } else {
+                    vec![]
+                }
+            }
+            TypeKind::DynTrait { trait_id: _ } => {
+                if patterns.len() == 0 {
+                    vec!["_".to_string()]
+                } else {
+                    vec![]
+                }
+            }
+            TypeKind::Record { fields: _, row_var: _ } => {
+                if patterns.len() == 0 {
+                    vec!["{ .. }".to_string()]
+                } else {
+                    vec![]
+                }
+            }
+            TypeKind::Forall { params: _, body } => {
+                // For polymorphic types, check the body
+                self.find_missing_patterns(patterns, body)
+            }
+            TypeKind::Infer(_) => {
+                // Inference variable - assume exhaustive
+                vec![]
+            }
+            TypeKind::Param(_) => {
+                // Type parameter - require wildcard
+                if patterns.len() == 0 {
+                    vec!["_".to_string()]
+                } else {
+                    vec![]
+                }
+            }
+            TypeKind::Ownership { inner, ownership: _ } => {
+                // Check the inner type
+                self.find_missing_patterns(patterns, inner)
+            }
+            TypeKind::Error => {
+                // Error type - assume exhaustive for recovery
+                vec![]
+            }
+        }
+    }
+
+    /// Check exhaustiveness for bool type.
+    fn check_bool_exhaustiveness(&self, patterns: &[PatternMatrix]) -> [String] {
+        let mut has_true = false;
+        let mut has_false = false;
+
+        let mut i: usize = 0;
+        while i < patterns.len() {
+            self.check_bool_pattern(&patterns[i], &mut has_true, &mut has_false);
+            i = i + 1;
+        }
+
+        let mut missing: [String] = vec![];
+        if !has_true { missing.push("true".to_string()); }
+        if !has_false { missing.push("false".to_string()); }
+        missing
+    }
+
+    fn check_bool_pattern(&self, pattern: &PatternMatrix, has_true: &mut bool, has_false: &mut bool) {
+        match pattern {
+            PatternMatrix::Wild => {
+                *has_true = true;
+                *has_false = true;
+            }
+            PatternMatrix::Literal(LiteralPattern::Bool(true)) => *has_true = true,
+            PatternMatrix::Literal(LiteralPattern::Bool(false)) => *has_false = true,
+            PatternMatrix::Literal(LiteralPattern::Int(_)) => {}
+            PatternMatrix::Literal(LiteralPattern::Char(_)) => {}
+            PatternMatrix::Literal(LiteralPattern::String(_)) => {}
+            PatternMatrix::Literal(LiteralPattern::Range { start: _, end: _, inclusive: _ }) => {}
+            PatternMatrix::Or(alts) => {
+                let mut j: usize = 0;
+                while j < alts.len() {
+                    self.check_bool_pattern(&alts[j], has_true, has_false);
+                    j = j + 1;
+                }
+            }
+            PatternMatrix::Constructor { name: _, args: _ } => {}
+            PatternMatrix::Missing => {}
+        }
+    }
+
+    /// Check exhaustiveness for integer types.
+    fn check_integer_exhaustiveness(&self, patterns: &[PatternMatrix]) -> [String] {
+        // Integers have too many values to enumerate
+        // Require a wildcard or comprehensive ranges
+        if patterns.len() == 0 {
+            vec!["_".to_string()]
+        } else {
+            // Check if there's any wildcard
+            let mut i: usize = 0;
+            while i < patterns.len() {
+                match &patterns[i] {
+                    PatternMatrix::Wild => return vec![],
+                    PatternMatrix::Or(alts) => {
+                        let mut j: usize = 0;
+                        while j < alts.len() {
+                            match &alts[j] {
+                                PatternMatrix::Wild => return vec![],
+                                PatternMatrix::Constructor { name: _, args: _ } => {}
+                                PatternMatrix::Literal(_) => {}
+                                PatternMatrix::Or(_) => {}
+                                PatternMatrix::Missing => {}
+                            }
+                            j = j + 1;
+                        }
+                    }
+                    PatternMatrix::Constructor { name: _, args: _ } => {}
+                    PatternMatrix::Literal(_) => {}
+                    PatternMatrix::Missing => {}
+                }
+                i = i + 1;
+            }
+            vec!["_".to_string()]
+        }
+    }
+
+    /// Check exhaustiveness for float types.
+    fn check_float_exhaustiveness(&self, patterns: &[PatternMatrix]) -> [String] {
+        // Floats always require a wildcard
+        if patterns.len() == 0 {
+            vec!["_".to_string()]
+        } else {
+            vec![]
+        }
+    }
+
+    /// Check exhaustiveness for char type.
+    fn check_char_exhaustiveness(&self, patterns: &[PatternMatrix]) -> [String] {
+        // Chars have too many values to enumerate
+        if patterns.len() == 0 {
+            vec!["_".to_string()]
+        } else {
+            vec![]
+        }
+    }
+
+    /// Check exhaustiveness for string type.
+    fn check_string_exhaustiveness(&self, patterns: &[PatternMatrix]) -> [String] {
+        // Strings require a wildcard
+        if patterns.len() == 0 {
+            vec!["_".to_string()]
+        } else {
+            vec![]
+        }
+    }
+
+    /// Check exhaustiveness for ADT (struct/enum) type.
+    fn check_adt_exhaustiveness(&self, patterns: &[PatternMatrix], def_id: &DefId) -> [String] {
+        match self.type_defs.get(&def_id.id()) {
+            Some(type_def) => {
+                match &type_def.kind {
+                    TypeDefKind::Struct { fields: _ } => {
+                        // Structs have exactly one constructor
+                        if patterns.len() == 0 {
+                            vec![format!("{} {{ .. }}", type_def.name)]
+                        } else {
+                            vec![]
+                        }
+                    }
+                    TypeDefKind::Enum { variants } => {
+                        self.check_enum_exhaustiveness(patterns, &type_def.name, variants)
+                    }
+                }
+            }
+            None => vec![]
+        }
+    }
+
+    /// Check exhaustiveness for enum variants.
+    fn check_enum_exhaustiveness(&self, patterns: &[PatternMatrix], enum_name: &str, variants: &[EnumVariantDef]) -> [String] {
+        // Track which variants are covered
+        let mut covered: HashSet<String> = HashSet::new();
+
+        let mut i: usize = 0;
+        while i < patterns.len() {
+            self.collect_covered_variants(&patterns[i], &mut covered);
+            if covered.len() >= variants.len() {
+                return vec![]; // All variants covered
+            }
+            i = i + 1;
+        }
+
+        // Find missing variants
+        let mut missing: [String] = vec![];
+        i = 0;
+        while i < variants.len() {
+            if !covered.contains(&variants[i].name) {
+                let pattern_str = match &variants[i].payload {
+                    Some(_) => format!("{}::{}(_)", enum_name, variants[i].name),
+                    None => format!("{}::{}", enum_name, variants[i].name),
+                };
+                missing.push(pattern_str);
+            }
+            i = i + 1;
+        }
+
+        missing
+    }
+
+    fn collect_covered_variants(&self, pattern: &PatternMatrix, covered: &mut HashSet<String>) {
+        match pattern {
+            PatternMatrix::Wild => {
+                // Wildcard covers all - caller should handle this
+            }
+            PatternMatrix::Constructor { name, args: _ } => {
+                covered.insert(name.clone());
+            }
+            PatternMatrix::Or(alts) => {
+                let mut j: usize = 0;
+                while j < alts.len() {
+                    self.collect_covered_variants(&alts[j], covered);
+                    j = j + 1;
+                }
+            }
+            PatternMatrix::Literal(_) => {}
+            PatternMatrix::Missing => {}
+        }
+    }
+
+    /// Check exhaustiveness for tuple type.
+    fn check_tuple_exhaustiveness(&self, patterns: &[PatternMatrix], element_tys: &[Type]) -> [String] {
+        if patterns.len() == 0 {
+            if element_tys.len() == 0 {
+                vec!["()".to_string()]
+            } else {
+                vec!["(_, ...)".to_string()]
+            }
+        } else {
+            vec![]
+        }
+    }
+
+    /// Check exhaustiveness for array type.
+    fn check_array_exhaustiveness(&self, patterns: &[PatternMatrix]) -> [String] {
+        if patterns.len() == 0 {
+            vec!["[..]".to_string()]
+        } else {
+            vec![]
+        }
+    }
+
+    /// Check exhaustiveness for slice type.
+    fn check_slice_exhaustiveness(&self, patterns: &[PatternMatrix]) -> [String] {
+        if patterns.len() == 0 {
+            vec!["[..]".to_string()]
+        } else {
+            vec![]
+        }
+    }
+
+    // --------------------------------------------------------
+    // Pattern Conversion
+    // --------------------------------------------------------
+
+    /// Convert an AST pattern to matrix form.
+    pub fn pattern_to_matrix(&self, pattern: &Pattern) -> PatternMatrix {
+        match &pattern.kind {
+            PatternKind::Wildcard => PatternMatrix::Wild,
+            PatternKind::Identifier(_) => PatternMatrix::Wild, // Binding is like wildcard
+            PatternKind::Literal(lit) => self.literal_to_pattern(lit),
+            PatternKind::Tuple(pats) => {
+                let mut args: [PatternMatrix] = vec![];
+                let mut i: usize = 0;
+                while i < pats.len() {
+                    args.push(self.pattern_to_matrix(&pats[i]));
+                    i = i + 1;
+                }
+                PatternMatrix::Constructor { name: "tuple".to_string(), args }
+            }
+            PatternKind::Struct { name, fields } => {
+                let mut args: [PatternMatrix] = vec![];
+                let mut i: usize = 0;
+                while i < fields.len() {
+                    args.push(self.pattern_to_matrix(&fields[i].pattern));
+                    i = i + 1;
+                }
+                let struct_name = if name.segments.len() > 0 {
+                    name.segments[0].value.clone()
+                } else {
+                    "<unknown>".to_string()
+                };
+                PatternMatrix::Constructor { name: struct_name, args }
+            }
+            PatternKind::Enum { name: _, variant, payload } => {
+                let args = match payload {
+                    Some(p) => vec![self.pattern_to_matrix(p)],
+                    None => vec![],
+                };
+                PatternMatrix::Constructor { name: variant.value.clone(), args }
+            }
+            PatternKind::Or(pats) => {
+                let mut alts: [PatternMatrix] = vec![];
+                let mut i: usize = 0;
+                while i < pats.len() {
+                    alts.push(self.pattern_to_matrix(&pats[i]));
+                    i = i + 1;
+                }
+                PatternMatrix::Or(alts)
+            }
+            PatternKind::Range { start, end, inclusive } => {
+                self.range_to_pattern(start, end, *inclusive)
+            }
+            PatternKind::Rest => PatternMatrix::Wild,
+        }
+    }
+
+    fn literal_to_pattern(&self, lit: &Literal) -> PatternMatrix {
+        match lit {
+            Literal::Bool(b) => PatternMatrix::Literal(LiteralPattern::Bool(*b)),
+            Literal::Integer { value, suffix: _ } => {
+                PatternMatrix::Literal(LiteralPattern::Int(*value))
+            }
+            Literal::Char(c) => PatternMatrix::Literal(LiteralPattern::Char(*c)),
+            Literal::String(s) => PatternMatrix::Literal(LiteralPattern::String(s.clone())),
+            Literal::Float { value: _, suffix: _ } => PatternMatrix::Wild, // Floats treated as wildcard
+        }
+    }
+
+    fn range_to_pattern(&self, start: &Literal, end: &Option<Literal>, inclusive: bool) -> PatternMatrix {
+        match start {
+            Literal::Integer { value: s, suffix: _ } => {
+                match end {
+                    Some(Literal::Integer { value: e, suffix: _ }) => {
+                        PatternMatrix::Literal(LiteralPattern::Range {
+                            start: *s,
+                            end: *e,
+                            inclusive,
+                        })
+                    }
+                    Some(Literal::Float { value: _, suffix: _ }) => PatternMatrix::Wild,
+                    Some(Literal::Bool(_)) => PatternMatrix::Wild,
+                    Some(Literal::Char(_)) => PatternMatrix::Wild,
+                    Some(Literal::String(_)) => PatternMatrix::Wild,
+                    None => PatternMatrix::Wild,
+                }
+            }
+            Literal::Float { value: _, suffix: _ } => PatternMatrix::Wild,
+            Literal::Bool(_) => PatternMatrix::Wild,
+            Literal::Char(_) => PatternMatrix::Wild,
+            Literal::String(_) => PatternMatrix::Wild,
+        }
+    }
+}
+
+// ============================================================
+// Public Interface
+// ============================================================
+
+/// Check pattern exhaustiveness and return missing patterns.
+pub fn check_exhaustiveness(
+    patterns: &[Pattern],
+    scrutinee_ty: &Type,
+    type_defs: &HashMap<u32, TypeDef>,
+) -> [String] {
+    let checker = ExhaustivenessChecker::new(type_defs);
+
+    // Convert patterns to matrix form
+    let mut matrix: [PatternMatrix] = vec![];
+    let mut i: usize = 0;
+    while i < patterns.len() {
+        matrix.push(checker.pattern_to_matrix(&patterns[i]));
+        i = i + 1;
+    }
+
+    // Check exhaustiveness
+    checker.check_exhaustiveness(&matrix, scrutinee_ty)
+}

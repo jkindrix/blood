@@ -1,0 +1,501 @@
+/// Effect Row Operations for Effect-Aware Dispatch
+///
+/// This module provides operations on effect rows that are specific to
+/// the multiple dispatch system. Effect rows represent the set of effects
+/// a function may perform, and these operations enable:
+///
+/// 1. **Effect compatibility checking**: Can a method be called in a given context?
+/// 2. **Effect specificity ordering**: Which method is more restrictive?
+/// 3. **Effect subset verification**: Does one effect set include another?
+///
+/// # Effect Row Semantics
+///
+/// An effect row can be:
+/// - **Pure**: No effects, closed row - the function performs no effects
+/// - **Closed**: Fixed set of effects - the function performs exactly these effects
+/// - **Open**: Effects plus row variable - the function may perform more effects
+///
+/// # Specificity Ordering
+///
+/// For dispatch, more restrictive effects are more specific:
+///
+/// ```text
+/// pure > closed row (fewer effects) > closed row (more effects) > open row
+/// ```
+///
+/// This allows pure methods to be selected over effectful ones when both apply.
+///
+/// # References
+///
+/// - Effect systems with row polymorphism (Koka, Frank)
+/// - Blood effect system specification
+
+use super.super.types::{EffectRow, EffectInstance, EffectRowVarId, DefId};
+
+// ============================================================================
+// Dispatch Effect Row
+// ============================================================================
+
+/// Dispatch-specific wrapper for effect rows.
+///
+/// Provides additional operations needed for effect-aware dispatch that are
+/// not part of the core EffectRow type. This wrapper enables comparing
+/// effect specificity and checking effect compatibility.
+pub struct DispatchEffectRow {
+    /// The underlying effect row.
+    row: EffectRow,
+}
+
+impl DispatchEffectRow {
+    /// Create a dispatch effect row from an EffectRow.
+    pub fn from_row(row: EffectRow) -> DispatchEffectRow {
+        DispatchEffectRow { row }
+    }
+
+    /// Create a pure (empty, closed) effect row.
+    ///
+    /// Pure methods can be called from any context and are the most
+    /// specific in terms of effects.
+    pub fn pure() -> DispatchEffectRow {
+        DispatchEffectRow {
+            row: EffectRow::pure(),
+        }
+    }
+
+    /// Create an effect row with the given effects (closed).
+    pub fn with_effects(effects: [EffectInstance]) -> DispatchEffectRow {
+        DispatchEffectRow {
+            row: EffectRow::new(effects, None),
+        }
+    }
+
+    /// Create an open effect row with a row variable.
+    pub fn open(effects: [EffectInstance], row_var: EffectRowVarId) -> DispatchEffectRow {
+        DispatchEffectRow {
+            row: EffectRow::new(effects, Some(row_var)),
+        }
+    }
+
+    /// Get the underlying effect row.
+    pub fn row(&self) -> &EffectRow {
+        &self.row
+    }
+
+    /// Check if this effect row is pure (no effects and closed).
+    pub fn is_pure(&self) -> bool {
+        self.row.is_pure()
+    }
+
+    /// Check if this effect row is closed (no row variable).
+    pub fn is_closed(&self) -> bool {
+        self.row.is_closed()
+    }
+
+    /// Check if this effect row is open (has a row variable).
+    pub fn is_open(&self) -> bool {
+        !self.row.is_closed()
+    }
+
+    /// Count the number of concrete effects.
+    pub fn effect_count(&self) -> usize {
+        self.row.effects().len()
+    }
+
+    // ========================================================================
+    // Effect Compatibility
+    // ========================================================================
+
+    /// Check if this row is a subset of another row.
+    ///
+    /// For effect dispatch compatibility:
+    /// - A method with effects {A, B} can be called in a context that handles {A, B, C}
+    /// - An open row {A | rho} is compatible with any superset of {A}
+    /// - A closed row {A, B} requires exactly those effects to be handled
+    ///
+    /// # Returns
+    ///
+    /// `true` if all effects in `self` are present in `other`, and:
+    /// - If `self` is closed, `other` can be open or closed
+    /// - If `self` is open, `other` must also be open
+    pub fn is_subset_of(&self, other: &DispatchEffectRow) -> bool {
+        // Check that all effects in self are present in other
+        let self_effects = self.row.effects();
+        let other_effects = other.row.effects();
+
+        let mut i: usize = 0;
+        while i < self_effects.len() {
+            let self_effect = &self_effects[i];
+            if !self.contains_effect_id(other_effects, &self_effect.def_id) {
+                return false;
+            }
+            i = i + 1;
+        }
+
+        // If self is open, other must also be open
+        // (because the row variable could expand to anything)
+        if self.is_open() && !other.is_open() {
+            return false;
+        }
+
+        true
+    }
+
+    /// Check if another effect row is a subset of this one.
+    ///
+    /// This is the inverse of `is_subset_of`.
+    pub fn is_superset_of(&self, other: &DispatchEffectRow) -> bool {
+        other.is_subset_of(self)
+    }
+
+    /// Check if this row and another have any overlap.
+    ///
+    /// Two effect rows overlap if they share at least one effect.
+    pub fn overlaps_with(&self, other: &DispatchEffectRow) -> bool {
+        let self_effects = self.row.effects();
+        let other_effects = other.row.effects();
+
+        let mut i: usize = 0;
+        while i < self_effects.len() {
+            if self.contains_effect_id(other_effects, &self_effects[i].def_id) {
+                return true;
+            }
+            i = i + 1;
+        }
+
+        // Open rows may overlap via their row variables
+        if self.is_open() && other.is_open() {
+            return true;
+        }
+
+        false
+    }
+
+    /// Helper to check if an effect list contains a specific effect ID.
+    fn contains_effect_id(&self, effects: &[EffectInstance], def_id: &DefId) -> bool {
+        let mut i: usize = 0;
+        while i < effects.len() {
+            if effects[i].def_id.eq(def_id) {
+                return true;
+            }
+            i = i + 1;
+        }
+        false
+    }
+
+    // ========================================================================
+    // Effect Specificity
+    // ========================================================================
+
+    /// Compare effect specificity between this row and another.
+    ///
+    /// Returns:
+    /// - `Ordering::Less` if self is more specific (more restrictive)
+    /// - `Ordering::Greater` if other is more specific
+    /// - `Ordering::Equal` if they are equally specific
+    ///
+    /// # Specificity Rules
+    ///
+    /// 1. Pure (no effects) is most specific
+    /// 2. Closed rows are more specific than open rows
+    /// 3. Fewer effects = more specific
+    /// 4. For same effect count, compare lexicographically for determinism
+    pub fn compare_specificity(&self, other: &DispatchEffectRow) -> Ordering {
+        // Rule 1: Pure is most specific
+        let self_pure = self.is_pure();
+        let other_pure = other.is_pure();
+
+        if self_pure && !other_pure {
+            return Ordering::Less; // self is more specific
+        }
+        if !self_pure && other_pure {
+            return Ordering::Greater; // other is more specific
+        }
+        if self_pure && other_pure {
+            return Ordering::Equal; // both pure
+        }
+
+        // Rule 2: Closed rows are more specific than open rows
+        let self_open = self.is_open();
+        let other_open = other.is_open();
+
+        if !self_open && other_open {
+            return Ordering::Less; // closed is more specific
+        }
+        if self_open && !other_open {
+            return Ordering::Greater; // open is less specific
+        }
+
+        // Rule 3: Fewer effects = more specific
+        let self_count = self.effect_count();
+        let other_count = other.effect_count();
+
+        if self_count < other_count {
+            return Ordering::Less; // fewer effects = more specific
+        }
+        if self_count > other_count {
+            return Ordering::Greater;
+        }
+
+        // Rule 4: Same count, compare lexicographically for determinism
+        self.compare_effects_lexicographically(other)
+    }
+
+    /// Compare effects lexicographically by effect name.
+    ///
+    /// This provides a deterministic ordering when effect counts are equal.
+    fn compare_effects_lexicographically(&self, other: &DispatchEffectRow) -> Ordering {
+        // Get sorted effect IDs
+        let mut self_ids: [u32] = vec![];
+        let mut other_ids: [u32] = vec![];
+
+        for effect in self.row.effects().iter() {
+            self_ids.push(effect.def_id.id());
+        }
+        for effect in other.row.effects().iter() {
+            other_ids.push(effect.def_id.id());
+        }
+
+        // Sort for comparison
+        self.sort_u32(&mut self_ids);
+        self.sort_u32(&mut other_ids);
+
+        // Compare element by element
+        let len = if self_ids.len() < other_ids.len() {
+            self_ids.len()
+        } else {
+            other_ids.len()
+        };
+
+        let mut i: usize = 0;
+        while i < len {
+            if self_ids[i] < other_ids[i] {
+                return Ordering::Less;
+            }
+            if self_ids[i] > other_ids[i] {
+                return Ordering::Greater;
+            }
+            i = i + 1;
+        }
+
+        // All compared elements equal
+        Ordering::Equal
+    }
+
+    /// Simple insertion sort for small arrays.
+    fn sort_u32(&self, arr: &mut [u32]) {
+        let n = arr.len();
+        let mut i: usize = 1;
+        while i < n {
+            let key = arr[i];
+            let mut j: isize = (i as isize) - 1;
+            while j >= 0 && arr[j as usize] > key {
+                arr[(j + 1) as usize] = arr[j as usize];
+                j = j - 1;
+            }
+            arr[(j + 1) as usize] = key;
+            i = i + 1;
+        }
+    }
+}
+
+impl Clone for DispatchEffectRow {
+    fn clone(&self) -> DispatchEffectRow {
+        DispatchEffectRow {
+            row: self.row.clone(),
+        }
+    }
+}
+
+// ============================================================================
+// Ordering Enum
+// ============================================================================
+
+/// Ordering result for comparisons.
+///
+/// Used by compare_specificity to indicate the relative ordering of two
+/// effect rows.
+pub enum Ordering {
+    /// Self is less than (more specific than) other.
+    Less,
+    /// Self equals other in specificity.
+    Equal,
+    /// Self is greater than (less specific than) other.
+    Greater,
+}
+
+impl Ordering {
+    pub fn is_less(&self) -> bool {
+        match self {
+            Ordering::Less => true,
+            Ordering::Equal => false,
+            Ordering::Greater => false,
+        }
+    }
+
+    pub fn is_equal(&self) -> bool {
+        match self {
+            Ordering::Less => false,
+            Ordering::Equal => true,
+            Ordering::Greater => false,
+        }
+    }
+
+    pub fn is_greater(&self) -> bool {
+        match self {
+            Ordering::Less => false,
+            Ordering::Equal => false,
+            Ordering::Greater => true,
+        }
+    }
+
+    /// Reverse the ordering.
+    pub fn reverse(&self) -> Ordering {
+        match self {
+            Ordering::Less => Ordering::Greater,
+            Ordering::Equal => Ordering::Equal,
+            Ordering::Greater => Ordering::Less,
+        }
+    }
+}
+
+impl Clone for Ordering {
+    fn clone(&self) -> Ordering {
+        match self {
+            Ordering::Less => Ordering::Less,
+            Ordering::Equal => Ordering::Equal,
+            Ordering::Greater => Ordering::Greater,
+        }
+    }
+}
+
+impl PartialEq for Ordering {
+    fn eq(&self, other: &Ordering) -> bool {
+        match (self, other) {
+            (Ordering::Less, Ordering::Less) => true,
+            (Ordering::Equal, Ordering::Equal) => true,
+            (Ordering::Greater, Ordering::Greater) => true,
+            (Ordering::Less, Ordering::Equal) => false,
+            (Ordering::Less, Ordering::Greater) => false,
+            (Ordering::Equal, Ordering::Less) => false,
+            (Ordering::Equal, Ordering::Greater) => false,
+            (Ordering::Greater, Ordering::Less) => false,
+            (Ordering::Greater, Ordering::Equal) => false,
+        }
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pure_row() {
+        let row = DispatchEffectRow::pure();
+        assert!(row.is_pure());
+        assert!(row.is_closed());
+        assert!(!row.is_open());
+        assert_eq!(row.effect_count(), 0);
+    }
+
+    #[test]
+    fn test_pure_is_subset_of_anything() {
+        let pure = DispatchEffectRow::pure();
+        let with_effects = DispatchEffectRow::with_effects(vec![
+            EffectInstance::simple(DefId::new(1)),
+        ]);
+
+        // Pure is subset of everything
+        assert!(pure.is_subset_of(&with_effects));
+        assert!(pure.is_subset_of(&pure));
+    }
+
+    #[test]
+    fn test_subset_checking() {
+        let small = DispatchEffectRow::with_effects(vec![
+            EffectInstance::simple(DefId::new(1)),
+        ]);
+        let large = DispatchEffectRow::with_effects(vec![
+            EffectInstance::simple(DefId::new(1)),
+            EffectInstance::simple(DefId::new(2)),
+        ]);
+
+        // small is subset of large
+        assert!(small.is_subset_of(&large));
+        // large is not subset of small
+        assert!(!large.is_subset_of(&small));
+    }
+
+    #[test]
+    fn test_open_subset_requires_open_target() {
+        let open = DispatchEffectRow::open(vec![], EffectRowVarId::new(0));
+        let closed = DispatchEffectRow::with_effects(vec![
+            EffectInstance::simple(DefId::new(1)),
+        ]);
+
+        // Open row cannot be subset of closed row
+        assert!(!open.is_subset_of(&closed));
+    }
+
+    #[test]
+    fn test_pure_most_specific() {
+        let pure = DispatchEffectRow::pure();
+        let effectful = DispatchEffectRow::with_effects(vec![
+            EffectInstance::simple(DefId::new(1)),
+        ]);
+
+        let ord = pure.compare_specificity(&effectful);
+        assert!(ord.is_less()); // pure is more specific
+    }
+
+    #[test]
+    fn test_closed_more_specific_than_open() {
+        let closed = DispatchEffectRow::with_effects(vec![
+            EffectInstance::simple(DefId::new(1)),
+        ]);
+        let open = DispatchEffectRow::open(
+            vec![EffectInstance::simple(DefId::new(1))],
+            EffectRowVarId::new(0),
+        );
+
+        let ord = closed.compare_specificity(&open);
+        assert!(ord.is_less()); // closed is more specific
+    }
+
+    #[test]
+    fn test_fewer_effects_more_specific() {
+        let one = DispatchEffectRow::with_effects(vec![
+            EffectInstance::simple(DefId::new(1)),
+        ]);
+        let two = DispatchEffectRow::with_effects(vec![
+            EffectInstance::simple(DefId::new(1)),
+            EffectInstance::simple(DefId::new(2)),
+        ]);
+
+        let ord = one.compare_specificity(&two);
+        assert!(ord.is_less()); // fewer effects is more specific
+    }
+
+    #[test]
+    fn test_same_effects_equal() {
+        let a = DispatchEffectRow::with_effects(vec![
+            EffectInstance::simple(DefId::new(1)),
+        ]);
+        let b = DispatchEffectRow::with_effects(vec![
+            EffectInstance::simple(DefId::new(1)),
+        ]);
+
+        let ord = a.compare_specificity(&b);
+        assert!(ord.is_equal());
+    }
+
+    #[test]
+    fn test_ordering_reverse() {
+        assert!(Ordering::Less.reverse().is_greater());
+        assert!(Ordering::Greater.reverse().is_less());
+        assert!(Ordering::Equal.reverse().is_equal());
+    }
+}

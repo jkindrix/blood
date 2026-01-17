@@ -1,0 +1,654 @@
+//! # AST FFI Bridge Types
+//!
+//! Foreign Function Interface (FFI) bridge declarations for the Blood AST.
+//!
+//! ## Overview
+//!
+//! Bridge declarations allow Blood to interface with foreign code:
+//! - C libraries
+//! - C++ libraries
+//! - WebAssembly modules
+//! - System calls
+//!
+//! ## Bridge Structure
+//!
+//! ```blood
+//! bridge "C" libc {
+//!     #[link(name = "c")]
+//!
+//!     // Opaque types
+//!     type FILE;
+//!
+//!     // Type aliases
+//!     type size_t = USize;
+//!
+//!     // Constants
+//!     const STDIN_FILENO: I32 = 0;
+//!
+//!     // Functions
+//!     fn malloc(size: size_t) -> *mut U8;
+//!     fn free(ptr: *mut U8);
+//!     fn printf(format: *const I8, ...) -> I32;
+//!
+//!     // Structs
+//!     #[repr(C)]
+//!     struct timespec {
+//!         tv_sec: I64,
+//!         tv_nsec: I64,
+//!     }
+//!
+//!     // Enums
+//!     #[repr(C)]
+//!     enum ErrorCode {
+//!         Success = 0,
+//!         Error = 1,
+//!     }
+//!
+//!     // Unions
+//!     #[repr(C)]
+//!     union Value {
+//!         i: I32,
+//!         f: F32,
+//!     }
+//!
+//!     // Callbacks
+//!     callback Comparator = fn(*const U8, *const U8) -> I32;
+//! }
+//! ```
+//!
+//! ## Ownership Annotations
+//!
+//! Bridge parameters can have ownership annotations:
+//! - `#[borrow]` - Caller retains ownership
+//! - `#[transfer]` - Caller transfers ownership
+//! - `#[acquire]` - Callee returns ownership
+
+module std.compiler.ast.bridge
+
+use std.option.Option
+use std.collections.Vec
+use std.string.String
+use std.compiler.ast.node.Span
+use std.compiler.ast.node.Ident
+use std.compiler.ast.node.NodeId
+use std.compiler.ast.attr.Attribute
+use std.compiler.ast.lit.Literal
+use std.compiler.ast.ty.Type
+
+// ============================================================================
+// Bridge Declaration
+// ============================================================================
+
+/// A foreign function interface bridge declaration.
+///
+/// ## Example
+///
+/// ```blood
+/// bridge "C" libc {
+///     fn malloc(size: USize) -> *mut U8;
+///     fn free(ptr: *mut U8);
+/// }
+/// ```
+#[derive(Clone, PartialEq, Eq)]
+pub struct BridgeDecl {
+    /// Unique node ID.
+    pub id: NodeId,
+    /// Attributes on the bridge.
+    pub attrs: Vec[Attribute],
+    /// The language/ABI specifier ("C", "C++", "wasm").
+    pub language: BridgeLanguage,
+    /// The bridge name (e.g., "libc").
+    pub name: Ident,
+    /// Items within the bridge.
+    pub items: Vec[BridgeItem],
+    /// Span of the entire declaration.
+    pub span: Span,
+}
+
+impl BridgeDecl {
+    /// Check if this is a C bridge.
+    pub fn is_c(self) -> Bool {
+        match self.language {
+            BridgeLanguage::C => true,
+            _ => false,
+        }
+    }
+
+    /// Check if this is a C++ bridge.
+    pub fn is_cpp(self) -> Bool {
+        match self.language {
+            BridgeLanguage::Cpp => true,
+            _ => false,
+        }
+    }
+
+    /// Check if this is a WebAssembly bridge.
+    pub fn is_wasm(self) -> Bool {
+        match self.language {
+            BridgeLanguage::Wasm => true,
+            _ => false,
+        }
+    }
+}
+
+/// The language/ABI for a bridge.
+#[derive(Clone, PartialEq, Eq)]
+pub enum BridgeLanguage {
+    /// C ABI: `bridge "C"`
+    C,
+    /// C++ ABI: `bridge "C++"`
+    Cpp,
+    /// WebAssembly: `bridge "wasm"`
+    Wasm,
+    /// Custom ABI: `bridge "custom"`
+    Custom(String),
+}
+
+impl BridgeLanguage {
+    /// Get the language as a string.
+    pub fn as_str(self) -> &str {
+        match self {
+            BridgeLanguage::C => "C",
+            BridgeLanguage::Cpp => "C++",
+            BridgeLanguage::Wasm => "wasm",
+            BridgeLanguage::Custom(ref s) => s.as_str(),
+        }
+    }
+
+    /// Parse a language from a string.
+    pub fn from_str(s: &str) -> BridgeLanguage {
+        match s {
+            "C" => BridgeLanguage::C,
+            "C++" => BridgeLanguage::Cpp,
+            "wasm" => BridgeLanguage::Wasm,
+            _ => BridgeLanguage::Custom(String::from(s)),
+        }
+    }
+}
+
+// ============================================================================
+// Bridge Item
+// ============================================================================
+
+/// An item within a bridge block.
+#[derive(Clone, PartialEq, Eq)]
+pub enum BridgeItem {
+    /// Link specification: `#[link(name = "c")]`
+    Link(LinkSpec),
+    /// Foreign function: `fn malloc(size: USize) -> *mut U8;`
+    Function(BridgeFn),
+    /// Constant: `const STDIN_FILENO: I32 = 0;`
+    Const(BridgeConst),
+    /// Opaque type: `type FILE;`
+    OpaqueType(BridgeOpaqueType),
+    /// Type alias: `type size_t = USize;`
+    TypeAlias(BridgeTypeAlias),
+    /// Struct with C layout: `#[repr(C)] struct Point { x: F64, y: F64 }`
+    Struct(BridgeStruct),
+    /// Enum with C layout: `#[repr(C)] enum Status { Ok = 0, Error = 1 }`
+    Enum(BridgeEnum),
+    /// Union with C layout: `#[repr(C)] union Value { i: I32, f: F32 }`
+    Union(BridgeUnion),
+    /// Callback type: `callback Comparator = fn(*const U8, *const U8) -> I32;`
+    Callback(BridgeCallback),
+}
+
+impl BridgeItem {
+    /// Get the span of this item.
+    pub fn span(self) -> Span {
+        match self {
+            BridgeItem::Link(ref item) => item.span,
+            BridgeItem::Function(ref item) => item.span,
+            BridgeItem::Const(ref item) => item.span,
+            BridgeItem::OpaqueType(ref item) => item.span,
+            BridgeItem::TypeAlias(ref item) => item.span,
+            BridgeItem::Struct(ref item) => item.span,
+            BridgeItem::Enum(ref item) => item.span,
+            BridgeItem::Union(ref item) => item.span,
+            BridgeItem::Callback(ref item) => item.span,
+        }
+    }
+}
+
+// ============================================================================
+// Link Specification
+// ============================================================================
+
+/// Link specification for a bridge.
+///
+/// ## Example
+///
+/// ```blood
+/// #[link(name = "c")]
+/// #[link(name = "m", kind = "dylib")]
+/// #[link(wasm_import_module = "env")]
+/// ```
+#[derive(Clone, PartialEq, Eq)]
+pub struct LinkSpec {
+    /// Unique node ID.
+    pub id: NodeId,
+    /// Library name to link.
+    pub name: String,
+    /// Link kind (dylib, static, framework).
+    pub kind: Option[LinkKind],
+    /// WASM import module name.
+    pub wasm_import_module: Option[String],
+    /// Span of the specification.
+    pub span: Span,
+}
+
+/// Kind of library linking.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum LinkKind {
+    /// Dynamic library (default).
+    Dylib,
+    /// Static library.
+    Static,
+    /// macOS framework.
+    Framework,
+}
+
+impl LinkKind {
+    /// Get the link kind as a string.
+    pub fn as_str(self) -> &str {
+        match self {
+            LinkKind::Dylib => "dylib",
+            LinkKind::Static => "static",
+            LinkKind::Framework => "framework",
+        }
+    }
+
+    /// Parse a link kind from a string.
+    pub fn from_str(s: &str) -> Option[LinkKind] {
+        match s {
+            "dylib" => Option::Some(LinkKind::Dylib),
+            "static" => Option::Some(LinkKind::Static),
+            "framework" => Option::Some(LinkKind::Framework),
+            _ => Option::None,
+        }
+    }
+}
+
+// ============================================================================
+// Bridge Function
+// ============================================================================
+
+/// A foreign function declaration.
+///
+/// ## Example
+///
+/// ```blood
+/// fn malloc(size: USize) -> *mut U8;
+/// fn printf(format: *const I8, ...) -> I32;
+/// ```
+#[derive(Clone, PartialEq, Eq)]
+pub struct BridgeFn {
+    /// Unique node ID.
+    pub id: NodeId,
+    /// Attributes (calling_convention, link_name, etc.).
+    pub attrs: Vec[Attribute],
+    /// Function name.
+    pub name: Ident,
+    /// Parameters.
+    pub params: Vec[BridgeParam],
+    /// Is variadic (...).
+    pub is_variadic: Bool,
+    /// Return type.
+    pub return_type: Option[Type],
+    /// Span of the declaration.
+    pub span: Span,
+}
+
+impl BridgeFn {
+    /// Check if this function is variadic.
+    pub fn is_variadic(self) -> Bool {
+        self.is_variadic
+    }
+
+    /// Check if this function returns void.
+    pub fn returns_void(self) -> Bool {
+        self.return_type.is_none()
+    }
+}
+
+/// A parameter in a bridge function.
+#[derive(Clone, PartialEq, Eq)]
+pub struct BridgeParam {
+    /// Unique node ID.
+    pub id: NodeId,
+    /// Parameter name.
+    pub name: Ident,
+    /// Parameter type.
+    pub ty: Type,
+    /// Ownership annotation.
+    pub ownership: Option[BridgeOwnership],
+    /// Span of the parameter.
+    pub span: Span,
+}
+
+/// Ownership annotation for bridge parameters.
+///
+/// These annotations help the compiler understand memory ownership
+/// across the FFI boundary.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum BridgeOwnership {
+    /// Caller retains ownership, callee borrows.
+    /// The callee must not store or free the pointer.
+    Borrow,
+    /// Caller transfers ownership to callee.
+    /// The callee is responsible for freeing the memory.
+    Transfer,
+    /// Callee returns ownership to caller.
+    /// The caller must free the returned memory.
+    Acquire,
+}
+
+impl BridgeOwnership {
+    /// Get the ownership as a string.
+    pub fn as_str(self) -> &str {
+        match self {
+            BridgeOwnership::Borrow => "borrow",
+            BridgeOwnership::Transfer => "transfer",
+            BridgeOwnership::Acquire => "acquire",
+        }
+    }
+}
+
+// ============================================================================
+// Bridge Constant
+// ============================================================================
+
+/// A constant declaration in a bridge.
+///
+/// ## Example
+///
+/// ```blood
+/// const STDIN_FILENO: I32 = 0;
+/// const NULL: *const U8 = 0 as *const U8;
+/// ```
+#[derive(Clone, PartialEq, Eq)]
+pub struct BridgeConst {
+    /// Unique node ID.
+    pub id: NodeId,
+    /// Constant name.
+    pub name: Ident,
+    /// Constant type.
+    pub ty: Type,
+    /// Constant value.
+    pub value: Literal,
+    /// Span of the declaration.
+    pub span: Span,
+}
+
+// ============================================================================
+// Bridge Type Declarations
+// ============================================================================
+
+/// An opaque type declaration.
+///
+/// Opaque types represent foreign types whose layout is unknown to Blood.
+///
+/// ## Example
+///
+/// ```blood
+/// type FILE;      // C's FILE type
+/// type pthread_t; // POSIX thread type
+/// ```
+#[derive(Clone, PartialEq, Eq)]
+pub struct BridgeOpaqueType {
+    /// Unique node ID.
+    pub id: NodeId,
+    /// Type name.
+    pub name: Ident,
+    /// Span of the declaration.
+    pub span: Span,
+}
+
+/// A type alias declaration.
+///
+/// ## Example
+///
+/// ```blood
+/// type size_t = USize;
+/// type time_t = I64;
+/// ```
+#[derive(Clone, PartialEq, Eq)]
+pub struct BridgeTypeAlias {
+    /// Unique node ID.
+    pub id: NodeId,
+    /// Type name.
+    pub name: Ident,
+    /// The aliased type.
+    pub ty: Type,
+    /// Span of the declaration.
+    pub span: Span,
+}
+
+// ============================================================================
+// Bridge Struct
+// ============================================================================
+
+/// A C-compatible struct.
+///
+/// ## Example
+///
+/// ```blood
+/// #[repr(C)]
+/// struct timespec {
+///     tv_sec: I64,
+///     tv_nsec: I64,
+/// }
+///
+/// #[repr(C, packed)]
+/// struct PackedData {
+///     a: U8,
+///     b: U32,
+/// }
+/// ```
+#[derive(Clone, PartialEq, Eq)]
+pub struct BridgeStruct {
+    /// Unique node ID.
+    pub id: NodeId,
+    /// Attributes (repr, packed, align).
+    pub attrs: Vec[Attribute],
+    /// Struct name.
+    pub name: Ident,
+    /// Fields.
+    pub fields: Vec[BridgeField],
+    /// Span of the declaration.
+    pub span: Span,
+}
+
+/// A field in a bridge struct or union.
+#[derive(Clone, PartialEq, Eq)]
+pub struct BridgeField {
+    /// Unique node ID.
+    pub id: NodeId,
+    /// Field name.
+    pub name: Ident,
+    /// Field type.
+    pub ty: Type,
+    /// Span of the field.
+    pub span: Span,
+}
+
+// ============================================================================
+// Bridge Enum
+// ============================================================================
+
+/// A C-compatible enum.
+///
+/// ## Example
+///
+/// ```blood
+/// #[repr(C)]
+/// enum ErrorCode {
+///     Success = 0,
+///     InvalidArg = 1,
+///     OutOfMemory = 2,
+/// }
+/// ```
+#[derive(Clone, PartialEq, Eq)]
+pub struct BridgeEnum {
+    /// Unique node ID.
+    pub id: NodeId,
+    /// Attributes (repr).
+    pub attrs: Vec[Attribute],
+    /// Enum name.
+    pub name: Ident,
+    /// Variants.
+    pub variants: Vec[BridgeEnumVariant],
+    /// Span of the declaration.
+    pub span: Span,
+}
+
+/// An enum variant in a bridge enum.
+#[derive(Clone, PartialEq, Eq)]
+pub struct BridgeEnumVariant {
+    /// Unique node ID.
+    pub id: NodeId,
+    /// Variant name.
+    pub name: Ident,
+    /// Discriminant value (if specified).
+    pub discriminant: Option[Literal],
+    /// Span of the variant.
+    pub span: Span,
+}
+
+// ============================================================================
+// Bridge Union
+// ============================================================================
+
+/// A C-compatible union.
+///
+/// ## Example
+///
+/// ```blood
+/// #[repr(C)]
+/// union Value {
+///     i: I32,
+///     f: F32,
+///     bytes: [U8; 4],
+/// }
+/// ```
+#[derive(Clone, PartialEq, Eq)]
+pub struct BridgeUnion {
+    /// Unique node ID.
+    pub id: NodeId,
+    /// Attributes (repr).
+    pub attrs: Vec[Attribute],
+    /// Union name.
+    pub name: Ident,
+    /// Fields.
+    pub fields: Vec[BridgeField],
+    /// Span of the declaration.
+    pub span: Span,
+}
+
+// ============================================================================
+// Bridge Callback
+// ============================================================================
+
+/// A callback type definition.
+///
+/// Callbacks define function pointer types for use in FFI.
+///
+/// ## Example
+///
+/// ```blood
+/// callback Comparator = fn(*const U8, *const U8) -> I32;
+/// callback Callback = fn(*mut U8);
+/// ```
+#[derive(Clone, PartialEq, Eq)]
+pub struct BridgeCallback {
+    /// Unique node ID.
+    pub id: NodeId,
+    /// Callback name.
+    pub name: Ident,
+    /// Parameter types.
+    pub params: Vec[Type],
+    /// Return type.
+    pub return_type: Option[Type],
+    /// Span of the declaration.
+    pub span: Span,
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[test]
+fn test_bridge_language() {
+    assert(BridgeLanguage::C.as_str() == "C")
+    assert(BridgeLanguage::Cpp.as_str() == "C++")
+    assert(BridgeLanguage::Wasm.as_str() == "wasm")
+
+    assert(BridgeLanguage::from_str("C") == BridgeLanguage::C)
+    assert(BridgeLanguage::from_str("C++") == BridgeLanguage::Cpp)
+    assert(BridgeLanguage::from_str("wasm") == BridgeLanguage::Wasm)
+}
+
+#[test]
+fn test_link_kind() {
+    assert(LinkKind::Dylib.as_str() == "dylib")
+    assert(LinkKind::Static.as_str() == "static")
+    assert(LinkKind::Framework.as_str() == "framework")
+
+    assert(LinkKind::from_str("dylib") == Option::Some(LinkKind::Dylib))
+    assert(LinkKind::from_str("invalid").is_none())
+}
+
+#[test]
+fn test_bridge_ownership() {
+    assert(BridgeOwnership::Borrow.as_str() == "borrow")
+    assert(BridgeOwnership::Transfer.as_str() == "transfer")
+    assert(BridgeOwnership::Acquire.as_str() == "acquire")
+}
+
+#[test]
+fn test_bridge_decl_is_c() {
+    let decl = BridgeDecl {
+        id: NodeId::dummy(),
+        attrs: Vec::new(),
+        language: BridgeLanguage::C,
+        name: Ident::dummy(),
+        items: Vec::new(),
+        span: Span::dummy(),
+    }
+
+    assert(decl.is_c())
+    assert(!decl.is_cpp())
+    assert(!decl.is_wasm())
+}
+
+#[test]
+fn test_bridge_fn_variadic() {
+    let variadic_fn = BridgeFn {
+        id: NodeId::dummy(),
+        attrs: Vec::new(),
+        name: Ident::dummy(),
+        params: Vec::new(),
+        is_variadic: true,
+        return_type: Option::None,
+        span: Span::dummy(),
+    }
+
+    assert(variadic_fn.is_variadic())
+    assert(variadic_fn.returns_void())
+}
+
+#[test]
+fn test_bridge_fn_with_return() {
+    let fn_with_return = BridgeFn {
+        id: NodeId::dummy(),
+        attrs: Vec::new(),
+        name: Ident::dummy(),
+        params: Vec::new(),
+        is_variadic: false,
+        return_type: Option::Some(Type::unit(Span::dummy())),
+        span: Span::dummy(),
+    }
+
+    assert(!fn_with_return.is_variadic())
+    assert(!fn_with_return.returns_void())
+}

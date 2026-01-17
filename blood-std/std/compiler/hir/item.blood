@@ -1,0 +1,1209 @@
+/// HIR Items (Top-Level Declarations)
+///
+/// This module defines the HIR representation of top-level items:
+/// functions, structs, enums, traits, effects, handlers, and more.
+///
+/// Items are the building blocks of a Blood program at the module level.
+
+use crate::compiler::typeck::types::{DefId, Type};
+use crate::compiler::hir::def::{BodyId};
+
+// ============================================================
+// Visibility
+// ============================================================
+
+/// Visibility of an item.
+pub enum Visibility {
+    /// Public to all modules: `pub`
+    Public,
+    /// Private to the current module (default)
+    Private,
+    /// Public within a crate: `pub(crate)`
+    PubCrate,
+    /// Public within parent module: `pub(super)`
+    PubSuper,
+}
+
+impl Clone for Visibility {
+    fn clone(&self) -> Visibility {
+        match self {
+            Visibility::Public => Visibility::Public,
+            Visibility::Private => Visibility::Private,
+            Visibility::PubCrate => Visibility::PubCrate,
+            Visibility::PubSuper => Visibility::PubSuper,
+        }
+    }
+}
+
+impl PartialEq for Visibility {
+    fn eq(&self, other: &Visibility) -> bool {
+        match (self, other) {
+            (Visibility::Public, Visibility::Public) => true,
+            (Visibility::Private, Visibility::Private) => true,
+            (Visibility::PubCrate, Visibility::PubCrate) => true,
+            (Visibility::PubSuper, Visibility::PubSuper) => true,
+            (Visibility::Public, _) => false,
+            (Visibility::Private, _) => false,
+            (Visibility::PubCrate, _) => false,
+            (Visibility::PubSuper, _) => false,
+        }
+    }
+}
+
+// ============================================================
+// Source Span
+// ============================================================
+
+/// A span in the source code.
+///
+/// Spans are used for error reporting and debugging.
+/// They track the byte offsets in the original source file.
+pub struct Span {
+    /// Start byte offset
+    start: u32,
+    /// End byte offset
+    end: u32,
+}
+
+impl Span {
+    /// Create a new span.
+    pub fn new(start: u32, end: u32) -> Span {
+        Span { start, end }
+    }
+
+    /// Get the start offset.
+    pub fn start(&self) -> u32 {
+        self.start
+    }
+
+    /// Get the end offset.
+    pub fn end(&self) -> u32 {
+        self.end
+    }
+
+    /// Get the length of this span.
+    pub fn len(&self) -> u32 {
+        self.end - self.start
+    }
+
+    /// Create a dummy/invalid span.
+    pub fn dummy() -> Span {
+        Span { start: 0, end: 0 }
+    }
+}
+
+impl Clone for Span {
+    fn clone(&self) -> Span {
+        Span { start: self.start, end: self.end }
+    }
+}
+
+impl PartialEq for Span {
+    fn eq(&self, other: &Span) -> bool {
+        self.start == other.start && self.end == other.end
+    }
+}
+
+// ============================================================
+// Item
+// ============================================================
+
+/// A top-level item in HIR.
+///
+/// Items represent the major syntactic elements of a Blood program:
+/// functions, structs, enums, traits, effects, handlers, etc.
+pub struct Item {
+    /// The definition ID for this item.
+    pub def_id: DefId,
+    /// The kind of item.
+    pub kind: ItemKind,
+    /// The visibility of this item.
+    pub vis: Visibility,
+    /// The name of this item.
+    pub name: String,
+    /// Source location.
+    pub span: Span,
+}
+
+impl Item {
+    /// Create a new item.
+    pub fn new(
+        def_id: DefId,
+        kind: ItemKind,
+        vis: Visibility,
+        name: String,
+        span: Span,
+    ) -> Item {
+        Item { def_id, kind, vis, name, span }
+    }
+}
+
+impl Clone for Item {
+    fn clone(&self) -> Item {
+        Item {
+            def_id: self.def_id.clone(),
+            kind: self.kind.clone(),
+            vis: self.vis.clone(),
+            name: self.name.clone(),
+            span: self.span.clone(),
+        }
+    }
+}
+
+// ============================================================
+// Item Kind
+// ============================================================
+
+/// The kind of an item.
+pub enum ItemKind {
+    /// A function definition.
+    Fn(FnDef),
+    /// A struct definition.
+    Struct(StructDef),
+    /// An enum definition.
+    Enum(EnumDef),
+    /// A type alias: `type Foo = Bar`
+    TypeAlias {
+        generics: Generics,
+        ty: Type,
+    },
+    /// A constant: `const FOO: i32 = 42`
+    Const {
+        ty: Type,
+        body_id: BodyId,
+    },
+    /// A static variable: `static FOO: i32 = 42`
+    Static {
+        ty: Type,
+        mutable: bool,
+        body_id: BodyId,
+    },
+    /// A trait definition.
+    Trait {
+        generics: Generics,
+        items: [TraitItem],
+    },
+    /// An impl block.
+    Impl {
+        generics: Generics,
+        /// The trait being implemented, if any.
+        trait_ref: Option<TraitRef>,
+        /// The type being implemented for.
+        self_ty: Type,
+        items: [ImplItem],
+    },
+    /// An effect definition.
+    Effect {
+        generics: Generics,
+        operations: [EffectOp],
+    },
+    /// An effect handler definition.
+    Handler {
+        generics: Generics,
+        /// Handler kind: deep or shallow.
+        kind: HandlerKind,
+        /// The effect being handled.
+        effect: Type,
+        /// Handler state variables.
+        state: [HandlerState],
+        /// Handler operation implementations.
+        operations: [HandlerOp],
+        /// Optional return clause.
+        return_clause: Option<ReturnClause>,
+    },
+    /// An external (FFI) function.
+    ExternFn(ExternFnDef),
+    /// An FFI bridge block.
+    Bridge(BridgeDef),
+    /// A module.
+    Module(ModuleDef),
+}
+
+impl Clone for ItemKind {
+    fn clone(&self) -> ItemKind {
+        match self {
+            ItemKind::Fn(f) => ItemKind::Fn(f.clone()),
+            ItemKind::Struct(s) => ItemKind::Struct(s.clone()),
+            ItemKind::Enum(e) => ItemKind::Enum(e.clone()),
+            ItemKind::TypeAlias { generics, ty } => ItemKind::TypeAlias {
+                generics: generics.clone(),
+                ty: ty.clone(),
+            },
+            ItemKind::Const { ty, body_id } => ItemKind::Const {
+                ty: ty.clone(),
+                body_id: body_id.clone(),
+            },
+            ItemKind::Static { ty, mutable, body_id } => ItemKind::Static {
+                ty: ty.clone(),
+                mutable: *mutable,
+                body_id: body_id.clone(),
+            },
+            ItemKind::Trait { generics, items } => ItemKind::Trait {
+                generics: generics.clone(),
+                items: items.clone(),
+            },
+            ItemKind::Impl { generics, trait_ref, self_ty, items } => ItemKind::Impl {
+                generics: generics.clone(),
+                trait_ref: trait_ref.clone(),
+                self_ty: self_ty.clone(),
+                items: items.clone(),
+            },
+            ItemKind::Effect { generics, operations } => ItemKind::Effect {
+                generics: generics.clone(),
+                operations: operations.clone(),
+            },
+            ItemKind::Handler { generics, kind, effect, state, operations, return_clause } => {
+                ItemKind::Handler {
+                    generics: generics.clone(),
+                    kind: kind.clone(),
+                    effect: effect.clone(),
+                    state: state.clone(),
+                    operations: operations.clone(),
+                    return_clause: return_clause.clone(),
+                }
+            }
+            ItemKind::ExternFn(f) => ItemKind::ExternFn(f.clone()),
+            ItemKind::Bridge(b) => ItemKind::Bridge(b.clone()),
+            ItemKind::Module(m) => ItemKind::Module(m.clone()),
+        }
+    }
+}
+
+// ============================================================
+// Function Definitions
+// ============================================================
+
+/// A function definition.
+pub struct FnDef {
+    /// The function signature.
+    pub sig: FnSig,
+    /// The function body, if present (None for trait method declarations).
+    pub body_id: Option<BodyId>,
+    /// Generic parameters.
+    pub generics: Generics,
+}
+
+impl Clone for FnDef {
+    fn clone(&self) -> FnDef {
+        FnDef {
+            sig: self.sig.clone(),
+            body_id: self.body_id.clone(),
+            generics: self.generics.clone(),
+        }
+    }
+}
+
+/// A function signature.
+pub struct FnSig {
+    /// Parameter types.
+    pub inputs: [Type],
+    /// Return type.
+    pub output: Type,
+    /// Whether this is a const function.
+    pub is_const: bool,
+    /// Whether this is an async function.
+    pub is_async: bool,
+    /// Whether this is an unsafe function.
+    pub is_unsafe: bool,
+}
+
+impl FnSig {
+    /// Create a simple function signature.
+    pub fn new(inputs: [Type], output: Type) -> FnSig {
+        FnSig {
+            inputs,
+            output,
+            is_const: false,
+            is_async: false,
+            is_unsafe: false,
+        }
+    }
+}
+
+impl Clone for FnSig {
+    fn clone(&self) -> FnSig {
+        FnSig {
+            inputs: self.inputs.clone(),
+            output: self.output.clone(),
+            is_const: self.is_const,
+            is_async: self.is_async,
+            is_unsafe: self.is_unsafe,
+        }
+    }
+}
+
+// ============================================================
+// Struct Definitions
+// ============================================================
+
+/// A struct definition.
+pub struct StructDef {
+    /// Generic parameters.
+    pub generics: Generics,
+    /// The kind of struct.
+    pub kind: StructKind,
+}
+
+impl Clone for StructDef {
+    fn clone(&self) -> StructDef {
+        StructDef {
+            generics: self.generics.clone(),
+            kind: self.kind.clone(),
+        }
+    }
+}
+
+/// The kind of struct.
+pub enum StructKind {
+    /// A struct with named fields: `struct Point { x: i32, y: i32 }`
+    Record([FieldDef]),
+    /// A tuple struct: `struct Point(i32, i32)`
+    Tuple([FieldDef]),
+    /// A unit struct: `struct Marker;`
+    Unit,
+}
+
+impl Clone for StructKind {
+    fn clone(&self) -> StructKind {
+        match self {
+            StructKind::Record(fields) => StructKind::Record(fields.clone()),
+            StructKind::Tuple(fields) => StructKind::Tuple(fields.clone()),
+            StructKind::Unit => StructKind::Unit,
+        }
+    }
+}
+
+/// A struct field definition.
+pub struct FieldDef {
+    /// Field index (0-based).
+    pub index: u32,
+    /// Field name (None for tuple structs).
+    pub name: Option<String>,
+    /// Field type.
+    pub ty: Type,
+    /// Field visibility.
+    pub vis: Visibility,
+    /// Source location.
+    pub span: Span,
+}
+
+impl Clone for FieldDef {
+    fn clone(&self) -> FieldDef {
+        FieldDef {
+            index: self.index,
+            name: self.name.clone(),
+            ty: self.ty.clone(),
+            vis: self.vis.clone(),
+            span: self.span.clone(),
+        }
+    }
+}
+
+// ============================================================
+// Enum Definitions
+// ============================================================
+
+/// An enum definition.
+pub struct EnumDef {
+    /// Generic parameters.
+    pub generics: Generics,
+    /// The variants.
+    pub variants: [Variant],
+}
+
+impl Clone for EnumDef {
+    fn clone(&self) -> EnumDef {
+        EnumDef {
+            generics: self.generics.clone(),
+            variants: self.variants.clone(),
+        }
+    }
+}
+
+/// An enum variant.
+pub struct Variant {
+    /// Variant index (0-based).
+    pub index: u32,
+    /// Variant name.
+    pub name: String,
+    /// Variant fields.
+    pub fields: StructKind,
+    /// The DefId for this variant.
+    pub def_id: DefId,
+    /// Source location.
+    pub span: Span,
+}
+
+impl Clone for Variant {
+    fn clone(&self) -> Variant {
+        Variant {
+            index: self.index,
+            name: self.name.clone(),
+            fields: self.fields.clone(),
+            def_id: self.def_id.clone(),
+            span: self.span.clone(),
+        }
+    }
+}
+
+// ============================================================
+// Generics
+// ============================================================
+
+/// Generic parameters for a definition.
+pub struct Generics {
+    /// Type, lifetime, and const parameters.
+    pub params: [GenericParam],
+    /// Where clause predicates.
+    pub predicates: [WherePredicate],
+}
+
+impl Generics {
+    /// Create empty generics.
+    pub fn empty() -> Generics {
+        Generics {
+            params: vec![],
+            predicates: vec![],
+        }
+    }
+
+    /// Check if there are no generic parameters.
+    pub fn is_empty(&self) -> bool {
+        self.params.len() == 0
+    }
+}
+
+impl Clone for Generics {
+    fn clone(&self) -> Generics {
+        Generics {
+            params: self.params.clone(),
+            predicates: self.predicates.clone(),
+        }
+    }
+}
+
+/// A generic parameter.
+pub struct GenericParam {
+    /// The DefId for this parameter.
+    pub def_id: DefId,
+    /// The parameter name.
+    pub name: String,
+    /// The kind of parameter.
+    pub kind: GenericParamKind,
+    /// Source location.
+    pub span: Span,
+}
+
+impl Clone for GenericParam {
+    fn clone(&self) -> GenericParam {
+        GenericParam {
+            def_id: self.def_id.clone(),
+            name: self.name.clone(),
+            kind: self.kind.clone(),
+            span: self.span.clone(),
+        }
+    }
+}
+
+/// The kind of generic parameter.
+pub enum GenericParamKind {
+    /// A type parameter: `T` or `T = Default`
+    Type {
+        default: Option<Type>,
+    },
+    /// A lifetime parameter: `'a`
+    Lifetime,
+    /// A const parameter: `const N: usize`
+    Const {
+        ty: Type,
+    },
+}
+
+impl Clone for GenericParamKind {
+    fn clone(&self) -> GenericParamKind {
+        match self {
+            GenericParamKind::Type { default } => GenericParamKind::Type {
+                default: default.clone(),
+            },
+            GenericParamKind::Lifetime => GenericParamKind::Lifetime,
+            GenericParamKind::Const { ty } => GenericParamKind::Const {
+                ty: ty.clone(),
+            },
+        }
+    }
+}
+
+/// A where clause predicate.
+pub struct WherePredicate {
+    /// The type being constrained.
+    pub ty: Type,
+    /// The bounds.
+    pub bounds: [TraitRef],
+    /// Source location.
+    pub span: Span,
+}
+
+impl Clone for WherePredicate {
+    fn clone(&self) -> WherePredicate {
+        WherePredicate {
+            ty: self.ty.clone(),
+            bounds: self.bounds.clone(),
+            span: self.span.clone(),
+        }
+    }
+}
+
+/// A reference to a trait.
+pub struct TraitRef {
+    /// The trait being referenced.
+    pub def_id: DefId,
+    /// Type arguments.
+    pub args: [Type],
+}
+
+impl Clone for TraitRef {
+    fn clone(&self) -> TraitRef {
+        TraitRef {
+            def_id: self.def_id.clone(),
+            args: self.args.clone(),
+        }
+    }
+}
+
+// ============================================================
+// Trait Items
+// ============================================================
+
+/// An item within a trait definition.
+pub struct TraitItem {
+    /// The DefId of this item.
+    pub def_id: DefId,
+    /// The name.
+    pub name: String,
+    /// The kind of trait item.
+    pub kind: TraitItemKind,
+    /// Source location.
+    pub span: Span,
+}
+
+impl Clone for TraitItem {
+    fn clone(&self) -> TraitItem {
+        TraitItem {
+            def_id: self.def_id.clone(),
+            name: self.name.clone(),
+            kind: self.kind.clone(),
+            span: self.span.clone(),
+        }
+    }
+}
+
+/// The kind of trait item.
+pub enum TraitItemKind {
+    /// A method: `fn foo(&self) -> T`
+    Fn(FnSig, Option<BodyId>),
+    /// An associated type: `type Item`
+    Type(Option<Type>),
+    /// An associated constant: `const SIZE: usize`
+    Const(Type, Option<BodyId>),
+}
+
+impl Clone for TraitItemKind {
+    fn clone(&self) -> TraitItemKind {
+        match self {
+            TraitItemKind::Fn(sig, body) => TraitItemKind::Fn(sig.clone(), body.clone()),
+            TraitItemKind::Type(ty) => TraitItemKind::Type(ty.clone()),
+            TraitItemKind::Const(ty, body) => TraitItemKind::Const(ty.clone(), body.clone()),
+        }
+    }
+}
+
+// ============================================================
+// Impl Items
+// ============================================================
+
+/// An item within an impl block.
+pub struct ImplItem {
+    /// The DefId of this item.
+    pub def_id: DefId,
+    /// The name.
+    pub name: String,
+    /// The kind of impl item.
+    pub kind: ImplItemKind,
+    /// Source location.
+    pub span: Span,
+}
+
+impl Clone for ImplItem {
+    fn clone(&self) -> ImplItem {
+        ImplItem {
+            def_id: self.def_id.clone(),
+            name: self.name.clone(),
+            kind: self.kind.clone(),
+            span: self.span.clone(),
+        }
+    }
+}
+
+/// The kind of impl item.
+pub enum ImplItemKind {
+    /// A method implementation.
+    Fn(FnSig, BodyId),
+    /// An associated type implementation.
+    Type(Type),
+    /// An associated constant implementation.
+    Const(Type, BodyId),
+}
+
+impl Clone for ImplItemKind {
+    fn clone(&self) -> ImplItemKind {
+        match self {
+            ImplItemKind::Fn(sig, body) => ImplItemKind::Fn(sig.clone(), body.clone()),
+            ImplItemKind::Type(ty) => ImplItemKind::Type(ty.clone()),
+            ImplItemKind::Const(ty, body) => ImplItemKind::Const(ty.clone(), body.clone()),
+        }
+    }
+}
+
+// ============================================================
+// Effect Definitions
+// ============================================================
+
+/// An effect operation.
+pub struct EffectOp {
+    /// The DefId of this operation.
+    pub def_id: DefId,
+    /// The operation name.
+    pub name: String,
+    /// Parameter types.
+    pub inputs: [Type],
+    /// Return type.
+    pub output: Type,
+    /// Source location.
+    pub span: Span,
+}
+
+impl Clone for EffectOp {
+    fn clone(&self) -> EffectOp {
+        EffectOp {
+            def_id: self.def_id.clone(),
+            name: self.name.clone(),
+            inputs: self.inputs.clone(),
+            output: self.output.clone(),
+            span: self.span.clone(),
+        }
+    }
+}
+
+// ============================================================
+// Handler Definitions
+// ============================================================
+
+/// Handler kind: determines continuation semantics.
+pub enum HandlerKind {
+    /// Deep handler: reifies the continuation, allowing multiple resumes.
+    ///
+    /// Deep handlers capture the full continuation to the handler boundary,
+    /// enabling the handler to resume multiple times or not at all.
+    Deep,
+    /// Shallow handler: single-shot continuation, more efficient.
+    ///
+    /// Shallow handlers only handle the first occurrence of an effect
+    /// and can resume at most once.
+    Shallow,
+}
+
+impl Clone for HandlerKind {
+    fn clone(&self) -> HandlerKind {
+        match self {
+            HandlerKind::Deep => HandlerKind::Deep,
+            HandlerKind::Shallow => HandlerKind::Shallow,
+        }
+    }
+}
+
+impl PartialEq for HandlerKind {
+    fn eq(&self, other: &HandlerKind) -> bool {
+        match (self, other) {
+            (HandlerKind::Deep, HandlerKind::Deep) => true,
+            (HandlerKind::Shallow, HandlerKind::Shallow) => true,
+            (HandlerKind::Deep, HandlerKind::Shallow) => false,
+            (HandlerKind::Shallow, HandlerKind::Deep) => false,
+        }
+    }
+}
+
+/// Handler state variable.
+pub struct HandlerState {
+    /// The variable name.
+    pub name: String,
+    /// The type.
+    pub ty: Type,
+    /// Whether mutable.
+    pub mutable: bool,
+    /// Default value body, if any.
+    pub default: Option<BodyId>,
+}
+
+impl Clone for HandlerState {
+    fn clone(&self) -> HandlerState {
+        HandlerState {
+            name: self.name.clone(),
+            ty: self.ty.clone(),
+            mutable: self.mutable,
+            default: self.default.clone(),
+        }
+    }
+}
+
+/// Handler operation implementation.
+pub struct HandlerOp {
+    /// The operation name (must match an effect operation).
+    pub name: String,
+    /// The implementation body.
+    pub body_id: BodyId,
+    /// Source location.
+    pub span: Span,
+}
+
+impl Clone for HandlerOp {
+    fn clone(&self) -> HandlerOp {
+        HandlerOp {
+            name: self.name.clone(),
+            body_id: self.body_id.clone(),
+            span: self.span.clone(),
+        }
+    }
+}
+
+/// Return clause for transforming the final result of a handled computation.
+pub struct ReturnClause {
+    /// The parameter name for the result value.
+    pub param: String,
+    /// The transformation body.
+    pub body_id: BodyId,
+    /// Source location.
+    pub span: Span,
+}
+
+impl Clone for ReturnClause {
+    fn clone(&self) -> ReturnClause {
+        ReturnClause {
+            param: self.param.clone(),
+            body_id: self.body_id.clone(),
+            span: self.span.clone(),
+        }
+    }
+}
+
+// ============================================================
+// FFI Definitions
+// ============================================================
+
+/// An external (foreign) function definition.
+pub struct ExternFnDef {
+    /// The function signature.
+    pub sig: FnSig,
+    /// The ABI/language (e.g., "C", "C++", "wasm").
+    pub abi: String,
+    /// The symbol name to link against (may differ from Blood name).
+    pub link_name: Option<String>,
+    /// Whether this function is variadic.
+    pub is_variadic: bool,
+}
+
+impl Clone for ExternFnDef {
+    fn clone(&self) -> ExternFnDef {
+        ExternFnDef {
+            sig: self.sig.clone(),
+            abi: self.abi.clone(),
+            link_name: self.link_name.clone(),
+            is_variadic: self.is_variadic,
+        }
+    }
+}
+
+/// A bridge block containing multiple FFI items.
+pub struct BridgeDef {
+    /// The ABI/language for this bridge.
+    pub abi: String,
+    /// Link specifications.
+    pub link_specs: [LinkSpec],
+    /// External functions.
+    pub extern_fns: [ExternFnItem],
+    /// Opaque types (forward declarations).
+    pub opaque_types: [OpaqueType],
+    /// Type aliases.
+    pub type_aliases: [BridgeTypeAlias],
+    /// FFI structs.
+    pub structs: [FfiStruct],
+    /// FFI enums.
+    pub enums: [FfiEnum],
+    /// FFI unions.
+    pub unions: [FfiUnion],
+    /// FFI constants.
+    pub consts: [FfiConst],
+    /// Callback type definitions.
+    pub callbacks: [FfiCallback],
+}
+
+impl Clone for BridgeDef {
+    fn clone(&self) -> BridgeDef {
+        BridgeDef {
+            abi: self.abi.clone(),
+            link_specs: self.link_specs.clone(),
+            extern_fns: self.extern_fns.clone(),
+            opaque_types: self.opaque_types.clone(),
+            type_aliases: self.type_aliases.clone(),
+            structs: self.structs.clone(),
+            enums: self.enums.clone(),
+            unions: self.unions.clone(),
+            consts: self.consts.clone(),
+            callbacks: self.callbacks.clone(),
+        }
+    }
+}
+
+/// Link specification for an FFI bridge.
+pub struct LinkSpec {
+    /// The library name to link.
+    pub name: String,
+    /// The link kind.
+    pub kind: LinkKind,
+    /// WASM import module name.
+    pub wasm_import_module: Option<String>,
+}
+
+impl Clone for LinkSpec {
+    fn clone(&self) -> LinkSpec {
+        LinkSpec {
+            name: self.name.clone(),
+            kind: self.kind.clone(),
+            wasm_import_module: self.wasm_import_module.clone(),
+        }
+    }
+}
+
+/// The kind of library linking.
+pub enum LinkKind {
+    /// Dynamic library (default).
+    Dylib,
+    /// Static library.
+    Static,
+    /// macOS framework.
+    Framework,
+}
+
+impl Clone for LinkKind {
+    fn clone(&self) -> LinkKind {
+        match self {
+            LinkKind::Dylib => LinkKind::Dylib,
+            LinkKind::Static => LinkKind::Static,
+            LinkKind::Framework => LinkKind::Framework,
+        }
+    }
+}
+
+/// An external function item within a bridge.
+pub struct ExternFnItem {
+    /// The DefId for this function.
+    pub def_id: DefId,
+    /// The function name.
+    pub name: String,
+    /// The function signature.
+    pub sig: FnSig,
+    /// Optional link name.
+    pub link_name: Option<String>,
+    /// Whether variadic.
+    pub is_variadic: bool,
+    /// Source location.
+    pub span: Span,
+}
+
+impl Clone for ExternFnItem {
+    fn clone(&self) -> ExternFnItem {
+        ExternFnItem {
+            def_id: self.def_id.clone(),
+            name: self.name.clone(),
+            sig: self.sig.clone(),
+            link_name: self.link_name.clone(),
+            is_variadic: self.is_variadic,
+            span: self.span.clone(),
+        }
+    }
+}
+
+/// An opaque type (forward declaration).
+pub struct OpaqueType {
+    /// The DefId.
+    pub def_id: DefId,
+    /// The type name.
+    pub name: String,
+    /// Source location.
+    pub span: Span,
+}
+
+impl Clone for OpaqueType {
+    fn clone(&self) -> OpaqueType {
+        OpaqueType {
+            def_id: self.def_id.clone(),
+            name: self.name.clone(),
+            span: self.span.clone(),
+        }
+    }
+}
+
+/// A type alias in a bridge.
+pub struct BridgeTypeAlias {
+    /// The DefId.
+    pub def_id: DefId,
+    /// The type name.
+    pub name: String,
+    /// The aliased type.
+    pub ty: Type,
+    /// Source location.
+    pub span: Span,
+}
+
+impl Clone for BridgeTypeAlias {
+    fn clone(&self) -> BridgeTypeAlias {
+        BridgeTypeAlias {
+            def_id: self.def_id.clone(),
+            name: self.name.clone(),
+            ty: self.ty.clone(),
+            span: self.span.clone(),
+        }
+    }
+}
+
+/// An FFI struct (C-compatible layout).
+pub struct FfiStruct {
+    /// The DefId.
+    pub def_id: DefId,
+    /// The struct name.
+    pub name: String,
+    /// The fields.
+    pub fields: [FfiField],
+    /// Whether packed.
+    pub is_packed: bool,
+    /// Explicit alignment.
+    pub align: Option<u32>,
+    /// Source location.
+    pub span: Span,
+}
+
+impl Clone for FfiStruct {
+    fn clone(&self) -> FfiStruct {
+        FfiStruct {
+            def_id: self.def_id.clone(),
+            name: self.name.clone(),
+            fields: self.fields.clone(),
+            is_packed: self.is_packed,
+            align: self.align.clone(),
+            span: self.span.clone(),
+        }
+    }
+}
+
+/// A field in an FFI struct or union.
+pub struct FfiField {
+    /// The field name.
+    pub name: String,
+    /// The field type.
+    pub ty: Type,
+    /// Source location.
+    pub span: Span,
+}
+
+impl Clone for FfiField {
+    fn clone(&self) -> FfiField {
+        FfiField {
+            name: self.name.clone(),
+            ty: self.ty.clone(),
+            span: self.span.clone(),
+        }
+    }
+}
+
+/// An FFI enum (C-compatible).
+pub struct FfiEnum {
+    /// The DefId.
+    pub def_id: DefId,
+    /// The enum name.
+    pub name: String,
+    /// The representation type.
+    pub repr: Type,
+    /// The variants.
+    pub variants: [FfiEnumVariant],
+    /// Source location.
+    pub span: Span,
+}
+
+impl Clone for FfiEnum {
+    fn clone(&self) -> FfiEnum {
+        FfiEnum {
+            def_id: self.def_id.clone(),
+            name: self.name.clone(),
+            repr: self.repr.clone(),
+            variants: self.variants.clone(),
+            span: self.span.clone(),
+        }
+    }
+}
+
+/// A variant in an FFI enum.
+pub struct FfiEnumVariant {
+    /// The variant name.
+    pub name: String,
+    /// The discriminant value.
+    pub value: i64,
+    /// Source location.
+    pub span: Span,
+}
+
+impl Clone for FfiEnumVariant {
+    fn clone(&self) -> FfiEnumVariant {
+        FfiEnumVariant {
+            name: self.name.clone(),
+            value: self.value,
+            span: self.span.clone(),
+        }
+    }
+}
+
+/// An FFI union (C-compatible).
+pub struct FfiUnion {
+    /// The DefId.
+    pub def_id: DefId,
+    /// The union name.
+    pub name: String,
+    /// The fields (all at offset 0).
+    pub fields: [FfiField],
+    /// Source location.
+    pub span: Span,
+}
+
+impl Clone for FfiUnion {
+    fn clone(&self) -> FfiUnion {
+        FfiUnion {
+            def_id: self.def_id.clone(),
+            name: self.name.clone(),
+            fields: self.fields.clone(),
+            span: self.span.clone(),
+        }
+    }
+}
+
+/// An FFI constant.
+pub struct FfiConst {
+    /// The DefId.
+    pub def_id: DefId,
+    /// The constant name.
+    pub name: String,
+    /// The constant type.
+    pub ty: Type,
+    /// The constant value.
+    pub value: i64,
+    /// Source location.
+    pub span: Span,
+}
+
+impl Clone for FfiConst {
+    fn clone(&self) -> FfiConst {
+        FfiConst {
+            def_id: self.def_id.clone(),
+            name: self.name.clone(),
+            ty: self.ty.clone(),
+            value: self.value,
+            span: self.span.clone(),
+        }
+    }
+}
+
+/// A callback type definition.
+pub struct FfiCallback {
+    /// The DefId.
+    pub def_id: DefId,
+    /// The callback name.
+    pub name: String,
+    /// Parameter types.
+    pub params: [Type],
+    /// Return type.
+    pub return_type: Type,
+    /// Source location.
+    pub span: Span,
+}
+
+impl Clone for FfiCallback {
+    fn clone(&self) -> FfiCallback {
+        FfiCallback {
+            def_id: self.def_id.clone(),
+            name: self.name.clone(),
+            params: self.params.clone(),
+            return_type: self.return_type.clone(),
+            span: self.span.clone(),
+        }
+    }
+}
+
+// ============================================================
+// Module Definitions
+// ============================================================
+
+/// A module definition.
+pub struct ModuleDef {
+    /// Items contained within this module.
+    pub items: [DefId],
+    /// Whether this is an external module (loaded from file).
+    pub is_external: bool,
+}
+
+impl Clone for ModuleDef {
+    fn clone(&self) -> ModuleDef {
+        ModuleDef {
+            items: self.items.clone(),
+            is_external: self.is_external,
+        }
+    }
+}
+
+// ============================================================
+// Tests
+// ============================================================
+
+#[test]
+fn test_visibility() {
+    let vis = Visibility::Public;
+    assert!(vis.eq(&Visibility::Public));
+    assert!(!vis.eq(&Visibility::Private));
+}
+
+#[test]
+fn test_span() {
+    let span = Span::new(10, 20);
+    assert!(span.start() == 10);
+    assert!(span.end() == 20);
+    assert!(span.len() == 10);
+}
+
+#[test]
+fn test_generics_empty() {
+    let gen = Generics::empty();
+    assert!(gen.is_empty());
+}
+
+#[test]
+fn test_handler_kind() {
+    let deep = HandlerKind::Deep;
+    let shallow = HandlerKind::Shallow;
+    assert!(deep.eq(&HandlerKind::Deep));
+    assert!(!deep.eq(&shallow));
+}
+
+#[test]
+fn test_link_kind() {
+    let dylib = LinkKind::Dylib;
+    let static_ = LinkKind::Static;
+    let cloned = dylib.clone();
+    // Just verify clone works
+    assert!(matches!(cloned, LinkKind::Dylib));
+}

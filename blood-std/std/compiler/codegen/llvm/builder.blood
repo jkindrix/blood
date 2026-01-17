@@ -1,0 +1,1116 @@
+//! LLVM IR Builder API Bindings
+//!
+//! This module provides bindings to LLVM's instruction builder:
+//! - Arithmetic operations (add, sub, mul, div)
+//! - Bitwise operations (and, or, xor, shifts)
+//! - Comparison operations (icmp, fcmp)
+//! - Memory operations (alloca, load, store, gep)
+//! - Control flow (br, cond_br, switch, ret)
+//! - Type conversions (trunc, zext, sext, bitcast)
+//! - Function calls
+
+use super::{
+    LLVMContextRef, LLVMModuleRef, LLVMTypeRef, LLVMValueRef,
+    LLVMBasicBlockRef, LLVMBuilderRef,
+    IntPredicate, RealPredicate, AtomicOrdering,
+    LLVM_TRUE, LLVM_FALSE,
+};
+
+// ============================================================================
+// Raw FFI Declarations
+// ============================================================================
+
+bridge "C" llvm_builder {
+    // === Builder Management ===
+
+    /// Create a builder in a context.
+    fn LLVMCreateBuilderInContext(ctx: LLVMContextRef) -> LLVMBuilderRef;
+
+    /// Create a builder in the global context.
+    fn LLVMCreateBuilder() -> LLVMBuilderRef;
+
+    /// Position the builder at the end of a basic block.
+    fn LLVMPositionBuilderAtEnd(builder: LLVMBuilderRef, bb: LLVMBasicBlockRef);
+
+    /// Position the builder before an instruction.
+    fn LLVMPositionBuilderBefore(builder: LLVMBuilderRef, inst: LLVMValueRef);
+
+    /// Position the builder at an instruction in a block.
+    fn LLVMPositionBuilder(builder: LLVMBuilderRef, bb: LLVMBasicBlockRef, inst: LLVMValueRef);
+
+    /// Get the current insert block.
+    fn LLVMGetInsertBlock(builder: LLVMBuilderRef) -> LLVMBasicBlockRef;
+
+    /// Clear the insertion position.
+    fn LLVMClearInsertionPosition(builder: LLVMBuilderRef);
+
+    /// Insert an instruction using the builder.
+    fn LLVMInsertIntoBuilder(builder: LLVMBuilderRef, inst: LLVMValueRef);
+
+    /// Insert a named instruction using the builder.
+    fn LLVMInsertIntoBuilderWithName(builder: LLVMBuilderRef, inst: LLVMValueRef, name: *const u8);
+
+    /// Dispose of a builder.
+    fn LLVMDisposeBuilder(builder: LLVMBuilderRef);
+
+    // === Return Instructions ===
+
+    /// Build a void return.
+    fn LLVMBuildRetVoid(builder: LLVMBuilderRef) -> LLVMValueRef;
+
+    /// Build a return with a value.
+    fn LLVMBuildRet(builder: LLVMBuilderRef, val: LLVMValueRef) -> LLVMValueRef;
+
+    /// Build an aggregate return.
+    fn LLVMBuildAggregateRet(
+        builder: LLVMBuilderRef,
+        ret_vals: *const LLVMValueRef,
+        n: u32
+    ) -> LLVMValueRef;
+
+    // === Branch Instructions ===
+
+    /// Build an unconditional branch.
+    fn LLVMBuildBr(builder: LLVMBuilderRef, dest: LLVMBasicBlockRef) -> LLVMValueRef;
+
+    /// Build a conditional branch.
+    fn LLVMBuildCondBr(
+        builder: LLVMBuilderRef,
+        if_cond: LLVMValueRef,
+        then_bb: LLVMBasicBlockRef,
+        else_bb: LLVMBasicBlockRef
+    ) -> LLVMValueRef;
+
+    /// Build a switch instruction.
+    fn LLVMBuildSwitch(
+        builder: LLVMBuilderRef,
+        val: LLVMValueRef,
+        else_bb: LLVMBasicBlockRef,
+        num_cases: u32
+    ) -> LLVMValueRef;
+
+    /// Build an indirect branch.
+    fn LLVMBuildIndirectBr(
+        builder: LLVMBuilderRef,
+        addr: LLVMValueRef,
+        num_dests: u32
+    ) -> LLVMValueRef;
+
+    /// Build an unreachable instruction.
+    fn LLVMBuildUnreachable(builder: LLVMBuilderRef) -> LLVMValueRef;
+
+    // === Invoke and Resume ===
+
+    /// Build an invoke instruction.
+    fn LLVMBuildInvoke2(
+        builder: LLVMBuilderRef,
+        ty: LLVMTypeRef,
+        func: LLVMValueRef,
+        args: *const LLVMValueRef,
+        num_args: u32,
+        then_bb: LLVMBasicBlockRef,
+        catch_bb: LLVMBasicBlockRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a resume instruction.
+    fn LLVMBuildResume(builder: LLVMBuilderRef, exn: LLVMValueRef) -> LLVMValueRef;
+
+    /// Build a landing pad.
+    fn LLVMBuildLandingPad(
+        builder: LLVMBuilderRef,
+        ty: LLVMTypeRef,
+        pers_fn: LLVMValueRef,
+        num_clauses: u32,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    // === Arithmetic Operations ===
+
+    /// Build an add instruction.
+    fn LLVMBuildAdd(
+        builder: LLVMBuilderRef,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a no-signed-wrap add instruction.
+    fn LLVMBuildNSWAdd(
+        builder: LLVMBuilderRef,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a no-unsigned-wrap add instruction.
+    fn LLVMBuildNUWAdd(
+        builder: LLVMBuilderRef,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a floating-point add instruction.
+    fn LLVMBuildFAdd(
+        builder: LLVMBuilderRef,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a sub instruction.
+    fn LLVMBuildSub(
+        builder: LLVMBuilderRef,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a no-signed-wrap sub instruction.
+    fn LLVMBuildNSWSub(
+        builder: LLVMBuilderRef,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a no-unsigned-wrap sub instruction.
+    fn LLVMBuildNUWSub(
+        builder: LLVMBuilderRef,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a floating-point sub instruction.
+    fn LLVMBuildFSub(
+        builder: LLVMBuilderRef,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a mul instruction.
+    fn LLVMBuildMul(
+        builder: LLVMBuilderRef,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a no-signed-wrap mul instruction.
+    fn LLVMBuildNSWMul(
+        builder: LLVMBuilderRef,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a no-unsigned-wrap mul instruction.
+    fn LLVMBuildNUWMul(
+        builder: LLVMBuilderRef,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a floating-point mul instruction.
+    fn LLVMBuildFMul(
+        builder: LLVMBuilderRef,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build an unsigned div instruction.
+    fn LLVMBuildUDiv(
+        builder: LLVMBuilderRef,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build an exact unsigned div instruction.
+    fn LLVMBuildExactUDiv(
+        builder: LLVMBuilderRef,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a signed div instruction.
+    fn LLVMBuildSDiv(
+        builder: LLVMBuilderRef,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build an exact signed div instruction.
+    fn LLVMBuildExactSDiv(
+        builder: LLVMBuilderRef,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a floating-point div instruction.
+    fn LLVMBuildFDiv(
+        builder: LLVMBuilderRef,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build an unsigned remainder instruction.
+    fn LLVMBuildURem(
+        builder: LLVMBuilderRef,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a signed remainder instruction.
+    fn LLVMBuildSRem(
+        builder: LLVMBuilderRef,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a floating-point remainder instruction.
+    fn LLVMBuildFRem(
+        builder: LLVMBuilderRef,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    // === Bitwise Operations ===
+
+    /// Build a left shift instruction.
+    fn LLVMBuildShl(
+        builder: LLVMBuilderRef,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a logical right shift instruction.
+    fn LLVMBuildLShr(
+        builder: LLVMBuilderRef,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build an arithmetic right shift instruction.
+    fn LLVMBuildAShr(
+        builder: LLVMBuilderRef,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build an and instruction.
+    fn LLVMBuildAnd(
+        builder: LLVMBuilderRef,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build an or instruction.
+    fn LLVMBuildOr(
+        builder: LLVMBuilderRef,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build an xor instruction.
+    fn LLVMBuildXor(
+        builder: LLVMBuilderRef,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a negation instruction.
+    fn LLVMBuildNeg(builder: LLVMBuilderRef, val: LLVMValueRef, name: *const u8) -> LLVMValueRef;
+
+    /// Build a no-signed-wrap negation instruction.
+    fn LLVMBuildNSWNeg(builder: LLVMBuilderRef, val: LLVMValueRef, name: *const u8) -> LLVMValueRef;
+
+    /// Build a no-unsigned-wrap negation instruction.
+    fn LLVMBuildNUWNeg(builder: LLVMBuilderRef, val: LLVMValueRef, name: *const u8) -> LLVMValueRef;
+
+    /// Build a floating-point negation instruction.
+    fn LLVMBuildFNeg(builder: LLVMBuilderRef, val: LLVMValueRef, name: *const u8) -> LLVMValueRef;
+
+    /// Build a not instruction.
+    fn LLVMBuildNot(builder: LLVMBuilderRef, val: LLVMValueRef, name: *const u8) -> LLVMValueRef;
+
+    // === Memory Operations ===
+
+    /// Build an alloca instruction.
+    fn LLVMBuildAlloca(builder: LLVMBuilderRef, ty: LLVMTypeRef, name: *const u8) -> LLVMValueRef;
+
+    /// Build an array alloca instruction.
+    fn LLVMBuildArrayAlloca(
+        builder: LLVMBuilderRef,
+        ty: LLVMTypeRef,
+        val: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a load instruction (with explicit type).
+    fn LLVMBuildLoad2(
+        builder: LLVMBuilderRef,
+        ty: LLVMTypeRef,
+        ptr: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a store instruction.
+    fn LLVMBuildStore(builder: LLVMBuilderRef, val: LLVMValueRef, ptr: LLVMValueRef) -> LLVMValueRef;
+
+    /// Build a GEP instruction (with explicit type).
+    fn LLVMBuildGEP2(
+        builder: LLVMBuilderRef,
+        ty: LLVMTypeRef,
+        ptr: LLVMValueRef,
+        indices: *const LLVMValueRef,
+        num_indices: u32,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build an inbounds GEP instruction (with explicit type).
+    fn LLVMBuildInBoundsGEP2(
+        builder: LLVMBuilderRef,
+        ty: LLVMTypeRef,
+        ptr: LLVMValueRef,
+        indices: *const LLVMValueRef,
+        num_indices: u32,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a struct GEP instruction (with explicit type).
+    fn LLVMBuildStructGEP2(
+        builder: LLVMBuilderRef,
+        ty: LLVMTypeRef,
+        ptr: LLVMValueRef,
+        idx: u32,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a memset instruction.
+    fn LLVMBuildMemSet(
+        builder: LLVMBuilderRef,
+        ptr: LLVMValueRef,
+        val: LLVMValueRef,
+        len: LLVMValueRef,
+        align: u32
+    ) -> LLVMValueRef;
+
+    /// Build a memcpy instruction.
+    fn LLVMBuildMemCpy(
+        builder: LLVMBuilderRef,
+        dst: LLVMValueRef,
+        dst_align: u32,
+        src: LLVMValueRef,
+        src_align: u32,
+        size: LLVMValueRef
+    ) -> LLVMValueRef;
+
+    /// Build a memmove instruction.
+    fn LLVMBuildMemMove(
+        builder: LLVMBuilderRef,
+        dst: LLVMValueRef,
+        dst_align: u32,
+        src: LLVMValueRef,
+        src_align: u32,
+        size: LLVMValueRef
+    ) -> LLVMValueRef;
+
+    // === Comparison Operations ===
+
+    /// Build an integer comparison instruction.
+    fn LLVMBuildICmp(
+        builder: LLVMBuilderRef,
+        op: i32,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a floating-point comparison instruction.
+    fn LLVMBuildFCmp(
+        builder: LLVMBuilderRef,
+        op: i32,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    // === Cast Operations ===
+
+    /// Build a trunc instruction.
+    fn LLVMBuildTrunc(
+        builder: LLVMBuilderRef,
+        val: LLVMValueRef,
+        dest_ty: LLVMTypeRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a zero extend instruction.
+    fn LLVMBuildZExt(
+        builder: LLVMBuilderRef,
+        val: LLVMValueRef,
+        dest_ty: LLVMTypeRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a sign extend instruction.
+    fn LLVMBuildSExt(
+        builder: LLVMBuilderRef,
+        val: LLVMValueRef,
+        dest_ty: LLVMTypeRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a float-to-unsigned-int instruction.
+    fn LLVMBuildFPToUI(
+        builder: LLVMBuilderRef,
+        val: LLVMValueRef,
+        dest_ty: LLVMTypeRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a float-to-signed-int instruction.
+    fn LLVMBuildFPToSI(
+        builder: LLVMBuilderRef,
+        val: LLVMValueRef,
+        dest_ty: LLVMTypeRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build an unsigned-int-to-float instruction.
+    fn LLVMBuildUIToFP(
+        builder: LLVMBuilderRef,
+        val: LLVMValueRef,
+        dest_ty: LLVMTypeRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a signed-int-to-float instruction.
+    fn LLVMBuildSIToFP(
+        builder: LLVMBuilderRef,
+        val: LLVMValueRef,
+        dest_ty: LLVMTypeRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a float truncate instruction.
+    fn LLVMBuildFPTrunc(
+        builder: LLVMBuilderRef,
+        val: LLVMValueRef,
+        dest_ty: LLVMTypeRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a float extend instruction.
+    fn LLVMBuildFPExt(
+        builder: LLVMBuilderRef,
+        val: LLVMValueRef,
+        dest_ty: LLVMTypeRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a pointer-to-int instruction.
+    fn LLVMBuildPtrToInt(
+        builder: LLVMBuilderRef,
+        val: LLVMValueRef,
+        dest_ty: LLVMTypeRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build an int-to-pointer instruction.
+    fn LLVMBuildIntToPtr(
+        builder: LLVMBuilderRef,
+        val: LLVMValueRef,
+        dest_ty: LLVMTypeRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a bitcast instruction.
+    fn LLVMBuildBitCast(
+        builder: LLVMBuilderRef,
+        val: LLVMValueRef,
+        dest_ty: LLVMTypeRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build an address space cast instruction.
+    fn LLVMBuildAddrSpaceCast(
+        builder: LLVMBuilderRef,
+        val: LLVMValueRef,
+        dest_ty: LLVMTypeRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a pointer cast instruction.
+    fn LLVMBuildPointerCast(
+        builder: LLVMBuilderRef,
+        val: LLVMValueRef,
+        dest_ty: LLVMTypeRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build an integer cast instruction.
+    fn LLVMBuildIntCast2(
+        builder: LLVMBuilderRef,
+        val: LLVMValueRef,
+        dest_ty: LLVMTypeRef,
+        is_signed: i32,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a float cast instruction.
+    fn LLVMBuildFPCast(
+        builder: LLVMBuilderRef,
+        val: LLVMValueRef,
+        dest_ty: LLVMTypeRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    // === Miscellaneous Instructions ===
+
+    /// Build a phi node.
+    fn LLVMBuildPhi(builder: LLVMBuilderRef, ty: LLVMTypeRef, name: *const u8) -> LLVMValueRef;
+
+    /// Build a call instruction (with explicit type).
+    fn LLVMBuildCall2(
+        builder: LLVMBuilderRef,
+        ty: LLVMTypeRef,
+        func: LLVMValueRef,
+        args: *const LLVMValueRef,
+        num_args: u32,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a select instruction.
+    fn LLVMBuildSelect(
+        builder: LLVMBuilderRef,
+        if_val: LLVMValueRef,
+        then_val: LLVMValueRef,
+        else_val: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a va_arg instruction.
+    fn LLVMBuildVAArg(
+        builder: LLVMBuilderRef,
+        list: LLVMValueRef,
+        ty: LLVMTypeRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build an extract element instruction.
+    fn LLVMBuildExtractElement(
+        builder: LLVMBuilderRef,
+        vec_val: LLVMValueRef,
+        index: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build an insert element instruction.
+    fn LLVMBuildInsertElement(
+        builder: LLVMBuilderRef,
+        vec_val: LLVMValueRef,
+        elem_val: LLVMValueRef,
+        index: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a shuffle vector instruction.
+    fn LLVMBuildShuffleVector(
+        builder: LLVMBuilderRef,
+        v1: LLVMValueRef,
+        v2: LLVMValueRef,
+        mask: LLVMValueRef,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build an extract value instruction.
+    fn LLVMBuildExtractValue(
+        builder: LLVMBuilderRef,
+        agg_val: LLVMValueRef,
+        index: u32,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build an insert value instruction.
+    fn LLVMBuildInsertValue(
+        builder: LLVMBuilderRef,
+        agg_val: LLVMValueRef,
+        elem_val: LLVMValueRef,
+        index: u32,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build a freeze instruction.
+    fn LLVMBuildFreeze(builder: LLVMBuilderRef, val: LLVMValueRef, name: *const u8) -> LLVMValueRef;
+
+    /// Build an is-null check.
+    fn LLVMBuildIsNull(builder: LLVMBuilderRef, val: LLVMValueRef, name: *const u8) -> LLVMValueRef;
+
+    /// Build an is-not-null check.
+    fn LLVMBuildIsNotNull(builder: LLVMBuilderRef, val: LLVMValueRef, name: *const u8) -> LLVMValueRef;
+
+    // === Atomics ===
+
+    /// Build a fence instruction.
+    fn LLVMBuildFence(
+        builder: LLVMBuilderRef,
+        ordering: i32,
+        single_thread: i32,
+        name: *const u8
+    ) -> LLVMValueRef;
+
+    /// Build an atomic rmw instruction.
+    fn LLVMBuildAtomicRMW(
+        builder: LLVMBuilderRef,
+        op: i32,
+        ptr: LLVMValueRef,
+        val: LLVMValueRef,
+        ordering: i32,
+        single_thread: i32
+    ) -> LLVMValueRef;
+
+    /// Build an atomic cmpxchg instruction.
+    fn LLVMBuildAtomicCmpXchg(
+        builder: LLVMBuilderRef,
+        ptr: LLVMValueRef,
+        cmp: LLVMValueRef,
+        new_val: LLVMValueRef,
+        success_ordering: i32,
+        failure_ordering: i32,
+        single_thread: i32
+    ) -> LLVMValueRef;
+}
+
+// ============================================================================
+// Safe Wrapper: LLVMBuilder
+// ============================================================================
+
+/// Safe wrapper around an LLVM instruction builder.
+///
+/// The builder is used to construct LLVM IR instructions at a specific
+/// insertion point within a basic block.
+pub struct LLVMBuilder {
+    /// The raw LLVM builder reference.
+    raw: LLVMBuilderRef,
+}
+
+impl LLVMBuilder {
+    /// Create a new builder in a context.
+    pub fn new(ctx: LLVMContextRef) -> LLVMBuilder {
+        let raw = llvm_builder::LLVMCreateBuilderInContext(ctx);
+        LLVMBuilder { raw }
+    }
+
+    /// Get the raw builder reference.
+    pub fn raw(&self) -> LLVMBuilderRef {
+        self.raw
+    }
+
+    /// Position the builder at the end of a basic block.
+    pub fn position_at_end(&self, bb: LLVMBasicBlockRef) {
+        llvm_builder::LLVMPositionBuilderAtEnd(self.raw, bb);
+    }
+
+    /// Position the builder before an instruction.
+    pub fn position_before(&self, inst: LLVMValueRef) {
+        llvm_builder::LLVMPositionBuilderBefore(self.raw, inst);
+    }
+
+    /// Get the current insert block.
+    pub fn get_insert_block(&self) -> LLVMBasicBlockRef {
+        llvm_builder::LLVMGetInsertBlock(self.raw)
+    }
+
+    /// Clear the insertion position.
+    pub fn clear_insertion_position(&self) {
+        llvm_builder::LLVMClearInsertionPosition(self.raw);
+    }
+
+    // === Return Instructions ===
+
+    /// Build a void return.
+    pub fn build_ret_void(&self) -> LLVMValueRef {
+        llvm_builder::LLVMBuildRetVoid(self.raw)
+    }
+
+    /// Build a return with a value.
+    pub fn build_ret(&self, val: LLVMValueRef) -> LLVMValueRef {
+        llvm_builder::LLVMBuildRet(self.raw, val)
+    }
+
+    // === Branch Instructions ===
+
+    /// Build an unconditional branch.
+    pub fn build_br(&self, dest: LLVMBasicBlockRef) -> LLVMValueRef {
+        llvm_builder::LLVMBuildBr(self.raw, dest)
+    }
+
+    /// Build a conditional branch.
+    pub fn build_cond_br(
+        &self,
+        cond: LLVMValueRef,
+        then_bb: LLVMBasicBlockRef,
+        else_bb: LLVMBasicBlockRef
+    ) -> LLVMValueRef {
+        llvm_builder::LLVMBuildCondBr(self.raw, cond, then_bb, else_bb)
+    }
+
+    /// Build a switch instruction.
+    pub fn build_switch(&self, val: LLVMValueRef, else_bb: LLVMBasicBlockRef, num_cases: u32) -> LLVMValueRef {
+        llvm_builder::LLVMBuildSwitch(self.raw, val, else_bb, num_cases)
+    }
+
+    /// Build an unreachable instruction.
+    pub fn build_unreachable(&self) -> LLVMValueRef {
+        llvm_builder::LLVMBuildUnreachable(self.raw)
+    }
+
+    // === Arithmetic Operations ===
+
+    /// Build an add instruction.
+    pub fn build_add(&self, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildAdd(self.raw, lhs, rhs, name.as_ptr())
+    }
+
+    /// Build a no-signed-wrap add instruction.
+    pub fn build_nsw_add(&self, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildNSWAdd(self.raw, lhs, rhs, name.as_ptr())
+    }
+
+    /// Build a no-unsigned-wrap add instruction.
+    pub fn build_nuw_add(&self, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildNUWAdd(self.raw, lhs, rhs, name.as_ptr())
+    }
+
+    /// Build a floating-point add instruction.
+    pub fn build_fadd(&self, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildFAdd(self.raw, lhs, rhs, name.as_ptr())
+    }
+
+    /// Build a sub instruction.
+    pub fn build_sub(&self, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildSub(self.raw, lhs, rhs, name.as_ptr())
+    }
+
+    /// Build a floating-point sub instruction.
+    pub fn build_fsub(&self, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildFSub(self.raw, lhs, rhs, name.as_ptr())
+    }
+
+    /// Build a mul instruction.
+    pub fn build_mul(&self, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildMul(self.raw, lhs, rhs, name.as_ptr())
+    }
+
+    /// Build a floating-point mul instruction.
+    pub fn build_fmul(&self, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildFMul(self.raw, lhs, rhs, name.as_ptr())
+    }
+
+    /// Build an unsigned div instruction.
+    pub fn build_udiv(&self, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildUDiv(self.raw, lhs, rhs, name.as_ptr())
+    }
+
+    /// Build a signed div instruction.
+    pub fn build_sdiv(&self, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildSDiv(self.raw, lhs, rhs, name.as_ptr())
+    }
+
+    /// Build a floating-point div instruction.
+    pub fn build_fdiv(&self, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildFDiv(self.raw, lhs, rhs, name.as_ptr())
+    }
+
+    /// Build an unsigned remainder instruction.
+    pub fn build_urem(&self, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildURem(self.raw, lhs, rhs, name.as_ptr())
+    }
+
+    /// Build a signed remainder instruction.
+    pub fn build_srem(&self, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildSRem(self.raw, lhs, rhs, name.as_ptr())
+    }
+
+    /// Build a floating-point remainder instruction.
+    pub fn build_frem(&self, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildFRem(self.raw, lhs, rhs, name.as_ptr())
+    }
+
+    // === Bitwise Operations ===
+
+    /// Build a left shift instruction.
+    pub fn build_shl(&self, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildShl(self.raw, lhs, rhs, name.as_ptr())
+    }
+
+    /// Build a logical right shift instruction.
+    pub fn build_lshr(&self, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildLShr(self.raw, lhs, rhs, name.as_ptr())
+    }
+
+    /// Build an arithmetic right shift instruction.
+    pub fn build_ashr(&self, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildAShr(self.raw, lhs, rhs, name.as_ptr())
+    }
+
+    /// Build an and instruction.
+    pub fn build_and(&self, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildAnd(self.raw, lhs, rhs, name.as_ptr())
+    }
+
+    /// Build an or instruction.
+    pub fn build_or(&self, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildOr(self.raw, lhs, rhs, name.as_ptr())
+    }
+
+    /// Build an xor instruction.
+    pub fn build_xor(&self, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildXor(self.raw, lhs, rhs, name.as_ptr())
+    }
+
+    /// Build a negation instruction.
+    pub fn build_neg(&self, val: LLVMValueRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildNeg(self.raw, val, name.as_ptr())
+    }
+
+    /// Build a floating-point negation instruction.
+    pub fn build_fneg(&self, val: LLVMValueRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildFNeg(self.raw, val, name.as_ptr())
+    }
+
+    /// Build a not instruction.
+    pub fn build_not(&self, val: LLVMValueRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildNot(self.raw, val, name.as_ptr())
+    }
+
+    // === Memory Operations ===
+
+    /// Build an alloca instruction.
+    pub fn build_alloca(&self, ty: LLVMTypeRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildAlloca(self.raw, ty, name.as_ptr())
+    }
+
+    /// Build an array alloca instruction.
+    pub fn build_array_alloca(&self, ty: LLVMTypeRef, val: LLVMValueRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildArrayAlloca(self.raw, ty, val, name.as_ptr())
+    }
+
+    /// Build a load instruction.
+    pub fn build_load(&self, ty: LLVMTypeRef, ptr: LLVMValueRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildLoad2(self.raw, ty, ptr, name.as_ptr())
+    }
+
+    /// Build a store instruction.
+    pub fn build_store(&self, val: LLVMValueRef, ptr: LLVMValueRef) -> LLVMValueRef {
+        llvm_builder::LLVMBuildStore(self.raw, val, ptr)
+    }
+
+    /// Build a GEP instruction.
+    pub fn build_gep(
+        &self,
+        ty: LLVMTypeRef,
+        ptr: LLVMValueRef,
+        indices: &[LLVMValueRef],
+        name: &str
+    ) -> LLVMValueRef {
+        let indices_ptr = if indices.is_empty() {
+            core::ptr::null()
+        } else {
+            indices.as_ptr()
+        };
+        llvm_builder::LLVMBuildGEP2(self.raw, ty, ptr, indices_ptr, indices.len() as u32, name.as_ptr())
+    }
+
+    /// Build an inbounds GEP instruction.
+    pub fn build_inbounds_gep(
+        &self,
+        ty: LLVMTypeRef,
+        ptr: LLVMValueRef,
+        indices: &[LLVMValueRef],
+        name: &str
+    ) -> LLVMValueRef {
+        let indices_ptr = if indices.is_empty() {
+            core::ptr::null()
+        } else {
+            indices.as_ptr()
+        };
+        llvm_builder::LLVMBuildInBoundsGEP2(self.raw, ty, ptr, indices_ptr, indices.len() as u32, name.as_ptr())
+    }
+
+    /// Build a struct GEP instruction.
+    pub fn build_struct_gep(&self, ty: LLVMTypeRef, ptr: LLVMValueRef, idx: u32, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildStructGEP2(self.raw, ty, ptr, idx, name.as_ptr())
+    }
+
+    /// Build a memset instruction.
+    pub fn build_memset(&self, ptr: LLVMValueRef, val: LLVMValueRef, len: LLVMValueRef, align: u32) -> LLVMValueRef {
+        llvm_builder::LLVMBuildMemSet(self.raw, ptr, val, len, align)
+    }
+
+    /// Build a memcpy instruction.
+    pub fn build_memcpy(
+        &self,
+        dst: LLVMValueRef,
+        dst_align: u32,
+        src: LLVMValueRef,
+        src_align: u32,
+        size: LLVMValueRef
+    ) -> LLVMValueRef {
+        llvm_builder::LLVMBuildMemCpy(self.raw, dst, dst_align, src, src_align, size)
+    }
+
+    // === Comparison Operations ===
+
+    /// Build an integer comparison instruction.
+    pub fn build_icmp(&self, op: IntPredicate, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildICmp(self.raw, op as i32, lhs, rhs, name.as_ptr())
+    }
+
+    /// Build a floating-point comparison instruction.
+    pub fn build_fcmp(&self, op: RealPredicate, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildFCmp(self.raw, op as i32, lhs, rhs, name.as_ptr())
+    }
+
+    // === Cast Operations ===
+
+    /// Build a trunc instruction.
+    pub fn build_trunc(&self, val: LLVMValueRef, dest_ty: LLVMTypeRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildTrunc(self.raw, val, dest_ty, name.as_ptr())
+    }
+
+    /// Build a zero extend instruction.
+    pub fn build_zext(&self, val: LLVMValueRef, dest_ty: LLVMTypeRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildZExt(self.raw, val, dest_ty, name.as_ptr())
+    }
+
+    /// Build a sign extend instruction.
+    pub fn build_sext(&self, val: LLVMValueRef, dest_ty: LLVMTypeRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildSExt(self.raw, val, dest_ty, name.as_ptr())
+    }
+
+    /// Build a float-to-unsigned-int instruction.
+    pub fn build_fp_to_ui(&self, val: LLVMValueRef, dest_ty: LLVMTypeRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildFPToUI(self.raw, val, dest_ty, name.as_ptr())
+    }
+
+    /// Build a float-to-signed-int instruction.
+    pub fn build_fp_to_si(&self, val: LLVMValueRef, dest_ty: LLVMTypeRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildFPToSI(self.raw, val, dest_ty, name.as_ptr())
+    }
+
+    /// Build an unsigned-int-to-float instruction.
+    pub fn build_ui_to_fp(&self, val: LLVMValueRef, dest_ty: LLVMTypeRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildUIToFP(self.raw, val, dest_ty, name.as_ptr())
+    }
+
+    /// Build a signed-int-to-float instruction.
+    pub fn build_si_to_fp(&self, val: LLVMValueRef, dest_ty: LLVMTypeRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildSIToFP(self.raw, val, dest_ty, name.as_ptr())
+    }
+
+    /// Build a bitcast instruction.
+    pub fn build_bitcast(&self, val: LLVMValueRef, dest_ty: LLVMTypeRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildBitCast(self.raw, val, dest_ty, name.as_ptr())
+    }
+
+    /// Build a pointer-to-int instruction.
+    pub fn build_ptr_to_int(&self, val: LLVMValueRef, dest_ty: LLVMTypeRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildPtrToInt(self.raw, val, dest_ty, name.as_ptr())
+    }
+
+    /// Build an int-to-pointer instruction.
+    pub fn build_int_to_ptr(&self, val: LLVMValueRef, dest_ty: LLVMTypeRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildIntToPtr(self.raw, val, dest_ty, name.as_ptr())
+    }
+
+    /// Build an integer cast instruction.
+    pub fn build_int_cast(&self, val: LLVMValueRef, dest_ty: LLVMTypeRef, is_signed: bool, name: &str) -> LLVMValueRef {
+        let signed = if is_signed { LLVM_TRUE } else { LLVM_FALSE };
+        llvm_builder::LLVMBuildIntCast2(self.raw, val, dest_ty, signed, name.as_ptr())
+    }
+
+    // === Miscellaneous Instructions ===
+
+    /// Build a phi node.
+    pub fn build_phi(&self, ty: LLVMTypeRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildPhi(self.raw, ty, name.as_ptr())
+    }
+
+    /// Build a call instruction.
+    pub fn build_call(&self, fn_ty: LLVMTypeRef, func: LLVMValueRef, args: &[LLVMValueRef], name: &str) -> LLVMValueRef {
+        let args_ptr = if args.is_empty() {
+            core::ptr::null()
+        } else {
+            args.as_ptr()
+        };
+        llvm_builder::LLVMBuildCall2(self.raw, fn_ty, func, args_ptr, args.len() as u32, name.as_ptr())
+    }
+
+    /// Build a select instruction.
+    pub fn build_select(
+        &self,
+        cond: LLVMValueRef,
+        then_val: LLVMValueRef,
+        else_val: LLVMValueRef,
+        name: &str
+    ) -> LLVMValueRef {
+        llvm_builder::LLVMBuildSelect(self.raw, cond, then_val, else_val, name.as_ptr())
+    }
+
+    /// Build an extract value instruction.
+    pub fn build_extract_value(&self, agg: LLVMValueRef, index: u32, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildExtractValue(self.raw, agg, index, name.as_ptr())
+    }
+
+    /// Build an insert value instruction.
+    pub fn build_insert_value(&self, agg: LLVMValueRef, elem: LLVMValueRef, index: u32, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildInsertValue(self.raw, agg, elem, index, name.as_ptr())
+    }
+
+    /// Build an is-null check.
+    pub fn build_is_null(&self, val: LLVMValueRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildIsNull(self.raw, val, name.as_ptr())
+    }
+
+    /// Build an is-not-null check.
+    pub fn build_is_not_null(&self, val: LLVMValueRef, name: &str) -> LLVMValueRef {
+        llvm_builder::LLVMBuildIsNotNull(self.raw, val, name.as_ptr())
+    }
+
+    // === Atomics ===
+
+    /// Build a fence instruction.
+    pub fn build_fence(&self, ordering: AtomicOrdering, single_thread: bool, name: &str) -> LLVMValueRef {
+        let st = if single_thread { LLVM_TRUE } else { LLVM_FALSE };
+        llvm_builder::LLVMBuildFence(self.raw, ordering as i32, st, name.as_ptr())
+    }
+}
+
+impl Drop for LLVMBuilder {
+    fn drop(&mut self) {
+        if !self.raw.is_null() {
+            llvm_builder::LLVMDisposeBuilder(self.raw);
+        }
+    }
+}

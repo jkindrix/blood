@@ -1,0 +1,687 @@
+//! # JSON Emitter
+//!
+//! Emits diagnostics in JSON format for IDE integration and tooling.
+//!
+//! ## Output Format
+//!
+//! The JSON format follows a structure similar to rustc's JSON output,
+//! making it easy to integrate with existing tooling.
+//!
+//! ```json
+//! {
+//!   "type": "diagnostic",
+//!   "severity": "error",
+//!   "code": "E0308",
+//!   "message": "type mismatch",
+//!   "spans": [
+//!     {
+//!       "file": "src/main.blood",
+//!       "start_line": 10,
+//!       "start_column": 12,
+//!       "end_line": 10,
+//!       "end_column": 19,
+//!       "is_primary": true,
+//!       "label": "expected `Int`, found `String`"
+//!     }
+//!   ],
+//!   "suggestions": [...],
+//!   "children": [...]
+//! }
+//! ```
+
+module std.compiler.diagnostics.emitter.json
+
+use std.collections.Vec
+use std.option.Option
+use std.compiler.diagnostics.diagnostic.Diagnostic
+use std.compiler.diagnostics.severity.Severity
+use std.compiler.diagnostics.code.ErrorCode
+use std.compiler.diagnostics.label.Label
+use std.compiler.diagnostics.label.LabelKind
+use std.compiler.diagnostics.suggestion.Suggestion
+use std.compiler.diagnostics.suggestion.Substitution
+use std.compiler.diagnostics.suggestion.Applicability
+use std.compiler.diagnostics.suggestion.Help
+use std.compiler.diagnostics.span.Span
+use std.compiler.diagnostics.renderer.source.SourceMap
+use std.compiler.diagnostics.emitter.config.EmitterConfig
+
+// ============================================================================
+// JSON Emitter
+// ============================================================================
+
+/// Emits diagnostics in JSON format.
+///
+/// This emitter produces machine-readable output suitable for:
+/// - IDE integration (Language Server Protocol)
+/// - Build system tooling
+/// - CI/CD pipelines
+/// - Automated code analysis
+pub struct JsonEmitter {
+    /// Emitter configuration.
+    config: EmitterConfig,
+
+    /// Source map for looking up file names.
+    source_map: SourceMap,
+
+    /// Whether to pretty-print the JSON.
+    pretty: Bool,
+
+    /// Number of errors emitted.
+    error_count: U32,
+
+    /// Number of warnings emitted.
+    warning_count: U32,
+}
+
+impl JsonEmitter {
+    /// Create a new JSON emitter.
+    pub fn new(source_map: SourceMap) -> JsonEmitter {
+        JsonEmitter {
+            config: EmitterConfig::json(),
+            source_map,
+            pretty: false,
+            error_count: 0,
+            warning_count: 0,
+        }
+    }
+
+    /// Create a JSON emitter with pretty-printing enabled.
+    pub fn pretty(source_map: SourceMap) -> JsonEmitter {
+        JsonEmitter {
+            config: EmitterConfig::json(),
+            source_map,
+            pretty: true,
+            error_count: 0,
+            warning_count: 0,
+        }
+    }
+
+    /// Create a JSON emitter with custom configuration.
+    pub fn with_config(config: EmitterConfig, source_map: SourceMap, pretty: Bool) -> JsonEmitter {
+        JsonEmitter {
+            config,
+            source_map,
+            pretty,
+            error_count: 0,
+            warning_count: 0,
+        }
+    }
+
+    /// Emit a single diagnostic as JSON.
+    pub fn emit(mut self, diagnostic: Diagnostic) -> String {
+        // Track counts
+        match diagnostic.severity() {
+            Severity::Error => self.error_count = self.error_count + 1,
+            Severity::Fatal => self.error_count = self.error_count + 1,
+            Severity::Warning => self.warning_count = self.warning_count + 1,
+            Severity::Note => {},
+            Severity::Help => {},
+            Severity::Remark => {},
+        }
+
+        self.diagnostic_to_json(diagnostic)
+    }
+
+    /// Emit multiple diagnostics as a JSON array.
+    pub fn emit_all(mut self, diagnostics: Vec[Diagnostic]) -> String {
+        let mut output = String::new()
+
+        if self.pretty {
+            output = output ++ "[\n"
+        } else {
+            output = output ++ "["
+        }
+
+        let mut first = true
+        for diagnostic in diagnostics {
+            if !first {
+                output = output ++ ","
+                if self.pretty {
+                    output = output ++ "\n"
+                }
+            }
+            first = false
+
+            let json = self.emit(diagnostic)
+            if self.pretty {
+                output = output ++ self.indent(json, 2)
+            } else {
+                output = output ++ json
+            }
+        }
+
+        if self.pretty {
+            output = output ++ "\n]"
+        } else {
+            output = output ++ "]"
+        }
+
+        output
+    }
+
+    /// Emit diagnostics as newline-delimited JSON (NDJSON/JSON Lines).
+    ///
+    /// Each diagnostic is on its own line, making it easy to stream
+    /// and process incrementally.
+    pub fn emit_ndjson(mut self, diagnostics: Vec[Diagnostic]) -> String {
+        let mut output = String::new()
+
+        for diagnostic in diagnostics {
+            // Force non-pretty for NDJSON (one object per line)
+            let json = self.diagnostic_to_json(diagnostic)
+            output = output ++ json ++ "\n"
+
+            // Track counts
+            match diagnostic.severity() {
+                Severity::Error => self.error_count = self.error_count + 1,
+                Severity::Fatal => self.error_count = self.error_count + 1,
+                Severity::Warning => self.warning_count = self.warning_count + 1,
+                Severity::Note => {},
+                Severity::Help => {},
+                Severity::Remark => {},
+            }
+        }
+
+        output
+    }
+
+    /// Get the number of errors emitted.
+    pub fn error_count(self) -> U32 {
+        self.error_count
+    }
+
+    /// Get the number of warnings emitted.
+    pub fn warning_count(self) -> U32 {
+        self.warning_count
+    }
+
+    /// Check if any errors were emitted.
+    pub fn has_errors(self) -> Bool {
+        self.error_count > 0
+    }
+
+    /// Emit a summary as JSON.
+    pub fn emit_summary(self) -> String {
+        let mut output = String::new()
+
+        output = output ++ "{"
+        output = output ++ self.json_field("type", "summary")
+        output = output ++ ","
+        output = output ++ self.json_field_num("error_count", self.error_count as USize)
+        output = output ++ ","
+        output = output ++ self.json_field_num("warning_count", self.warning_count as USize)
+        output = output ++ ","
+        output = output ++ self.json_field_bool("success", self.error_count == 0)
+        output = output ++ "}"
+
+        if self.pretty {
+            self.prettify(output)
+        } else {
+            output
+        }
+    }
+
+    // === Private Helper Methods ===
+
+    /// Convert a diagnostic to JSON.
+    fn diagnostic_to_json(self, diagnostic: Diagnostic) -> String {
+        let mut output = String::new()
+
+        output = output ++ "{"
+
+        // Type
+        output = output ++ self.json_field("type", "diagnostic")
+        output = output ++ ","
+
+        // Severity
+        output = output ++ self.json_field("severity", diagnostic.severity().name())
+        output = output ++ ","
+
+        // Code (if present)
+        match diagnostic.code() {
+            Option::Some(code) => {
+                output = output ++ self.json_field("code", code.code())
+                output = output ++ ","
+            }
+            Option::None => {}
+        }
+
+        // Message
+        output = output ++ self.json_field("message", self.escape_json_string(diagnostic.message()))
+        output = output ++ ","
+
+        // Primary span
+        let span = diagnostic.span()
+        if !span.is_dummy() {
+            output = output ++ "\"primary_span\":"
+            output = output ++ self.span_to_json(span, Option::None, true)
+            output = output ++ ","
+        }
+
+        // Spans (labels)
+        output = output ++ "\"spans\":["
+        let mut first = true
+        for label in diagnostic.labels() {
+            if !first {
+                output = output ++ ","
+            }
+            first = false
+            output = output ++ self.label_to_json(label)
+        }
+        output = output ++ "]"
+
+        // Suggestions
+        if self.config.show_suggestions() && !diagnostic.suggestions().is_empty() {
+            output = output ++ ","
+            output = output ++ "\"suggestions\":["
+            first = true
+            for suggestion in diagnostic.suggestions() {
+                if !first {
+                    output = output ++ ","
+                }
+                first = false
+                output = output ++ self.suggestion_to_json(suggestion)
+            }
+            output = output ++ "]"
+        }
+
+        // Help messages
+        if self.config.show_help() && !diagnostic.help_messages().is_empty() {
+            output = output ++ ","
+            output = output ++ "\"help\":["
+            first = true
+            for help in diagnostic.help_messages() {
+                if !first {
+                    output = output ++ ","
+                }
+                first = false
+                output = output ++ self.json_string(self.escape_json_string(help.message()))
+            }
+            output = output ++ "]"
+        }
+
+        // Related diagnostics (children)
+        if self.config.show_related() && !diagnostic.related().is_empty() {
+            output = output ++ ","
+            output = output ++ "\"children\":["
+            first = true
+            for related in diagnostic.related() {
+                if !first {
+                    output = output ++ ","
+                }
+                first = false
+                output = output ++ self.diagnostic_to_json(related)
+            }
+            output = output ++ "]"
+        }
+
+        output = output ++ "}"
+
+        if self.pretty {
+            self.prettify(output)
+        } else {
+            output
+        }
+    }
+
+    /// Convert a span to JSON.
+    fn span_to_json(self, span: Span, label: Option[String], is_primary: Bool) -> String {
+        let mut output = String::new()
+
+        output = output ++ "{"
+
+        // File name
+        let file_name = match self.source_map.get_filename(span.file()) {
+            Option::Some(name) => name,
+            Option::None => "<unknown>",
+        }
+        output = output ++ self.json_field("file", self.escape_json_string(file_name))
+        output = output ++ ","
+
+        // Start position
+        output = output ++ self.json_field_num("start_line", span.start_line() as USize)
+        output = output ++ ","
+        output = output ++ self.json_field_num("start_column", span.start_column() as USize)
+        output = output ++ ","
+
+        // End position
+        output = output ++ self.json_field_num("end_line", span.end_line() as USize)
+        output = output ++ ","
+        output = output ++ self.json_field_num("end_column", span.end_column() as USize)
+        output = output ++ ","
+
+        // Byte offsets (useful for tooling)
+        output = output ++ self.json_field_num("byte_start", span.start_offset())
+        output = output ++ ","
+        output = output ++ self.json_field_num("byte_end", span.end_offset())
+        output = output ++ ","
+
+        // Is primary
+        output = output ++ self.json_field_bool("is_primary", is_primary)
+
+        // Label (if any)
+        match label {
+            Option::Some(msg) => {
+                output = output ++ ","
+                output = output ++ self.json_field("label", self.escape_json_string(msg))
+            }
+            Option::None => {}
+        }
+
+        output = output ++ "}"
+
+        output
+    }
+
+    /// Convert a label to JSON.
+    fn label_to_json(self, label: Label) -> String {
+        let is_primary = label.kind() == LabelKind::Primary
+        self.span_to_json(label.span(), label.message(), is_primary)
+    }
+
+    /// Convert a suggestion to JSON.
+    fn suggestion_to_json(self, suggestion: Suggestion) -> String {
+        let mut output = String::new()
+
+        output = output ++ "{"
+
+        // Message
+        output = output ++ self.json_field("message", self.escape_json_string(suggestion.message()))
+        output = output ++ ","
+
+        // Applicability
+        let applicability = match suggestion.applicability() {
+            Applicability::MachineApplicable => "machine_applicable",
+            Applicability::HasPlaceholders => "has_placeholders",
+            Applicability::MaybeIncorrect => "maybe_incorrect",
+            Applicability::Unspecified => "unspecified",
+        }
+        output = output ++ self.json_field("applicability", applicability)
+        output = output ++ ","
+
+        // Substitutions
+        output = output ++ "\"substitutions\":["
+        let mut first = true
+        for sub in suggestion.substitutions() {
+            if !first {
+                output = output ++ ","
+            }
+            first = false
+            output = output ++ self.substitution_to_json(sub)
+        }
+        output = output ++ "]"
+
+        output = output ++ "}"
+
+        output
+    }
+
+    /// Convert a substitution to JSON.
+    fn substitution_to_json(self, sub: Substitution) -> String {
+        let mut output = String::new()
+
+        output = output ++ "{"
+
+        // Type
+        let sub_type = if sub.is_insert() {
+            "insert"
+        } else if sub.is_remove() {
+            "remove"
+        } else {
+            "replace"
+        }
+        output = output ++ self.json_field("type", sub_type)
+        output = output ++ ","
+
+        // Span
+        let span = sub.span()
+        output = output ++ self.json_field_num("start", span.start_offset())
+        output = output ++ ","
+        output = output ++ self.json_field_num("end", span.end_offset())
+
+        // New text (if not a removal)
+        if !sub.is_remove() {
+            output = output ++ ","
+            output = output ++ self.json_field("text", self.escape_json_string(sub.new_text()))
+        }
+
+        output = output ++ "}"
+
+        output
+    }
+
+    // === JSON Utilities ===
+
+    /// Create a JSON field with string value.
+    fn json_field(self, key: String, value: String) -> String {
+        "\"" ++ key ++ "\":\"" ++ value ++ "\""
+    }
+
+    /// Create a JSON field with numeric value.
+    fn json_field_num(self, key: String, value: USize) -> String {
+        "\"" ++ key ++ "\":" ++ value.to_string()
+    }
+
+    /// Create a JSON field with boolean value.
+    fn json_field_bool(self, key: String, value: Bool) -> String {
+        let bool_str = if value { "true" } else { "false" }
+        "\"" ++ key ++ "\":" ++ bool_str
+    }
+
+    /// Create a JSON string value.
+    fn json_string(self, value: String) -> String {
+        "\"" ++ value ++ "\""
+    }
+
+    /// Escape special characters in JSON strings.
+    fn escape_json_string(self, s: String) -> String {
+        let mut result = String::new()
+
+        for ch in s.chars() {
+            match ch {
+                '"' => result = result ++ "\\\"",
+                '\\' => result = result ++ "\\\\",
+                '\n' => result = result ++ "\\n",
+                '\r' => result = result ++ "\\r",
+                '\t' => result = result ++ "\\t",
+                _ => result = result ++ ch.to_string(),
+            }
+        }
+
+        result
+    }
+
+    /// Indent a string by a number of spaces.
+    fn indent(self, s: String, spaces: U32) -> String {
+        let mut result = String::new()
+        let mut indent_str = String::new()
+
+        let mut i: U32 = 0
+        while i < spaces {
+            indent_str = indent_str ++ " "
+            i = i + 1
+        }
+
+        for line in s.lines() {
+            result = result ++ indent_str ++ line ++ "\n"
+        }
+
+        // Remove trailing newline
+        if result.ends_with("\n") {
+            result = result.substring(0, result.len() - 1)
+        }
+
+        result
+    }
+
+    /// Basic pretty-printing for JSON.
+    ///
+    /// Adds newlines and indentation for readability.
+    fn prettify(self, json: String) -> String {
+        let mut result = String::new()
+        let mut indent_level: U32 = 0
+        let mut in_string = false
+
+        for ch in json.chars() {
+            if in_string {
+                result = result ++ ch.to_string()
+                if ch == '"' {
+                    in_string = false
+                } else if ch == '\\' {
+                    // Skip next character (escaped)
+                    // Note: This is simplified; proper handling would need lookahead
+                }
+                continue
+            }
+
+            match ch {
+                '"' => {
+                    in_string = true
+                    result = result ++ ch.to_string()
+                }
+                '{' => {
+                    result = result ++ "{\n"
+                    indent_level = indent_level + 1
+                    result = result ++ self.make_indent(indent_level)
+                }
+                '}' => {
+                    result = result ++ "\n"
+                    indent_level = indent_level - 1
+                    result = result ++ self.make_indent(indent_level)
+                    result = result ++ "}"
+                }
+                '[' => {
+                    result = result ++ "[\n"
+                    indent_level = indent_level + 1
+                    result = result ++ self.make_indent(indent_level)
+                }
+                ']' => {
+                    result = result ++ "\n"
+                    indent_level = indent_level - 1
+                    result = result ++ self.make_indent(indent_level)
+                    result = result ++ "]"
+                }
+                ',' => {
+                    result = result ++ ",\n"
+                    result = result ++ self.make_indent(indent_level)
+                }
+                ':' => {
+                    result = result ++ ": "
+                }
+                ' ' => {
+                    // Skip spaces (we're adding our own formatting)
+                }
+                _ => {
+                    result = result ++ ch.to_string()
+                }
+            }
+        }
+
+        result
+    }
+
+    /// Create indentation string.
+    fn make_indent(self, level: U32) -> String {
+        let mut result = String::new()
+        let mut i: U32 = 0
+        while i < level * 2 {
+            result = result ++ " "
+            i = i + 1
+        }
+        result
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[test]
+fn test_json_emitter_creation() {
+    let source_map = SourceMap::new()
+    let emitter = JsonEmitter::new(source_map)
+
+    assert(emitter.error_count() == 0)
+    assert(emitter.warning_count() == 0)
+    assert(!emitter.has_errors())
+    assert(!emitter.pretty)
+}
+
+#[test]
+fn test_json_emitter_pretty() {
+    let source_map = SourceMap::new()
+    let emitter = JsonEmitter::pretty(source_map)
+
+    assert(emitter.pretty)
+}
+
+#[test]
+fn test_escape_json_string() {
+    let source_map = SourceMap::new()
+    let emitter = JsonEmitter::new(source_map)
+
+    assert(emitter.escape_json_string("hello") == "hello")
+    assert(emitter.escape_json_string("hello\"world") == "hello\\\"world")
+    assert(emitter.escape_json_string("line1\nline2") == "line1\\nline2")
+    assert(emitter.escape_json_string("tab\there") == "tab\\there")
+    assert(emitter.escape_json_string("back\\slash") == "back\\\\slash")
+}
+
+#[test]
+fn test_json_field() {
+    let source_map = SourceMap::new()
+    let emitter = JsonEmitter::new(source_map)
+
+    assert(emitter.json_field("key", "value") == "\"key\":\"value\"")
+}
+
+#[test]
+fn test_json_field_num() {
+    let source_map = SourceMap::new()
+    let emitter = JsonEmitter::new(source_map)
+
+    assert(emitter.json_field_num("count", 42) == "\"count\":42")
+}
+
+#[test]
+fn test_json_field_bool() {
+    let source_map = SourceMap::new()
+    let emitter = JsonEmitter::new(source_map)
+
+    assert(emitter.json_field_bool("flag", true) == "\"flag\":true")
+    assert(emitter.json_field_bool("flag", false) == "\"flag\":false")
+}
+
+#[test]
+fn test_make_indent() {
+    let source_map = SourceMap::new()
+    let emitter = JsonEmitter::new(source_map)
+
+    assert(emitter.make_indent(0) == "")
+    assert(emitter.make_indent(1) == "  ")
+    assert(emitter.make_indent(2) == "    ")
+}
+
+#[test]
+fn test_json_summary() {
+    let source_map = SourceMap::new()
+    let mut emitter = JsonEmitter::new(source_map)
+    emitter.error_count = 5
+    emitter.warning_count = 3
+
+    let summary = emitter.emit_summary()
+    assert(summary.contains("\"type\":\"summary\""))
+    assert(summary.contains("\"error_count\":5"))
+    assert(summary.contains("\"warning_count\":3"))
+    assert(summary.contains("\"success\":false"))
+}
+
+#[test]
+fn test_json_summary_success() {
+    let source_map = SourceMap::new()
+    let emitter = JsonEmitter::new(source_map)
+
+    let summary = emitter.emit_summary()
+    assert(summary.contains("\"success\":true"))
+}

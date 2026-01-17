@@ -1,0 +1,625 @@
+//! # Type Checker Diagnostic Conversion
+//!
+//! Converts type checker errors into rich diagnostics with:
+//! - Appropriate error codes
+//! - Helpful labels pointing to relevant source locations
+//! - Suggestions for common fixes
+//! - Help messages explaining the error
+//!
+//! ## Error Code Mapping
+//!
+//! Type errors map to E0300-E0399 range:
+//! - E0300: Type mismatch
+//! - E0301: Occurs check failure (infinite type)
+//! - E0302: Cannot infer type
+//! - E0303: Wrong number of type arguments
+//! - E0304: Missing type annotation
+//! - E0305: Incompatible types
+//! - E0306: Cannot coerce
+//! - E0307: Recursive type without indirection
+//! - ... etc.
+
+module std.compiler.diagnostics.typeck
+
+use std.option.Option
+use std.collections.Vec
+use std.compiler.diagnostics.diagnostic.Diagnostic
+use std.compiler.diagnostics.severity.Severity
+use std.compiler.diagnostics.code.ErrorCode
+use std.compiler.diagnostics.span.Span as DiagSpan
+use std.compiler.diagnostics.label.Label
+use std.compiler.diagnostics.suggestion.Suggestion
+use std.compiler.diagnostics.suggestion.Applicability
+use std.compiler.diagnostics.convert.DiagnosticConverter
+use std.compiler.diagnostics.convert.IntoDiagnostic
+use std.compiler.diagnostics.convert.SimpleSpan
+
+// Note: In a real integration, these would be imported from the typeck module.
+// For now, we define adapter types that mirror the typeck error structure.
+
+// ============================================================================
+// Type Error Adapter
+// ============================================================================
+
+/// Adapter for type checker errors.
+///
+/// This mirrors the structure in `typeck/errors.blood` but uses our
+/// SimpleSpan type to avoid circular dependencies.
+pub struct TypeErrorAdapter {
+    /// The kind of error.
+    kind: TypeErrorKindAdapter,
+    /// Source location.
+    span: SimpleSpan,
+}
+
+impl TypeErrorAdapter {
+    /// Create a new type error adapter.
+    pub fn new(kind: TypeErrorKindAdapter, span: SimpleSpan) -> TypeErrorAdapter {
+        TypeErrorAdapter { kind, span }
+    }
+
+    /// Get the error kind.
+    pub fn kind(self) -> TypeErrorKindAdapter {
+        self.kind.clone()
+    }
+
+    /// Get the span.
+    pub fn span(self) -> SimpleSpan {
+        self.span
+    }
+}
+
+// ============================================================================
+// Type Error Kind Adapter
+// ============================================================================
+
+/// Adapter for type error kinds.
+///
+/// This mirrors TypeErrorKind from typeck/errors.blood.
+pub enum TypeErrorKindAdapter {
+    // Type Mismatch
+    Mismatch {
+        expected: String,  // Type display string
+        found: String,
+    },
+    PatternMismatch {
+        expected: String,
+        found: String,
+    },
+
+    // Resolution
+    UnresolvedName { name: String },
+    UnresolvedType { name: String },
+
+    // Arity
+    WrongArity { expected: U32, found: U32 },
+
+    // Unification
+    OccursCheck { var_id: U32, ty: String },
+
+    // Effects
+    UnhandledEffect { effect: String },
+    InvalidEffectOp { effect: String, op: String },
+    EffectMismatch { expected_pure: Bool },
+    EffectRowMismatch { expected_count: U32, found_count: U32 },
+    EffectNotInRow { effect: String },
+
+    // Definitions
+    DuplicateDefinition { name: String },
+
+    // Struct/Record
+    MissingField { struct_name: String, field: String },
+    UnknownField { struct_name: String, field: String },
+    CannotAccessField { ty: String, field: String },
+
+    // Patterns
+    NonExhaustive { missing: Vec[String] },
+
+    // Operations
+    CannotDeref { ty: String },
+    CannotCall { ty: String },
+    CannotIndex { ty: String },
+    NotIterable { ty: String },
+
+    // Tuples
+    TupleFieldNotNumeric { field: String },
+    TupleFieldOutOfBounds { index: U32, tuple_len: U32 },
+
+    // Enums
+    CannotConstructEnum { name: String },
+    EnumUsedAsValue { name: String },
+
+    // Operators
+    BinaryOpTypeError { op: String, left: String, right: String },
+    UnaryOpTypeError { op: String, operand: String },
+
+    // Control Flow
+    ReturnOutsideFunction,
+    BreakOutsideLoop,
+    ContinueOutsideLoop,
+
+    // Not Yet Implemented
+    ModulePathNotImplemented,
+    UnsupportedExpression { description: String },
+    UnsupportedTypeSyntax { description: String },
+}
+
+impl TypeErrorKindAdapter {
+    /// Get the error code for this error kind.
+    pub fn error_code(self) -> ErrorCode {
+        match self {
+            TypeErrorKindAdapter::Mismatch { .. } => ErrorCode::TypeMismatch,
+            TypeErrorKindAdapter::PatternMismatch { .. } => ErrorCode::PatternTypeMismatch,
+            TypeErrorKindAdapter::UnresolvedName { .. } => ErrorCode::UnresolvedName,
+            TypeErrorKindAdapter::UnresolvedType { .. } => ErrorCode::UnresolvedType,
+            TypeErrorKindAdapter::WrongArity { .. } => ErrorCode::WrongArgumentCount,
+            TypeErrorKindAdapter::OccursCheck { .. } => ErrorCode::OccursCheckFailure,
+            TypeErrorKindAdapter::UnhandledEffect { .. } => ErrorCode::UnhandledEffect,
+            TypeErrorKindAdapter::InvalidEffectOp { .. } => ErrorCode::InvalidEffectOperation,
+            TypeErrorKindAdapter::EffectMismatch { .. } => ErrorCode::EffectMismatch,
+            TypeErrorKindAdapter::EffectRowMismatch { .. } => ErrorCode::EffectMismatch,
+            TypeErrorKindAdapter::EffectNotInRow { .. } => ErrorCode::EffectMismatch,
+            TypeErrorKindAdapter::DuplicateDefinition { .. } => ErrorCode::DuplicateDefinition,
+            TypeErrorKindAdapter::MissingField { .. } => ErrorCode::MissingField,
+            TypeErrorKindAdapter::UnknownField { .. } => ErrorCode::UnknownField,
+            TypeErrorKindAdapter::CannotAccessField { .. } => ErrorCode::CannotAccessField,
+            TypeErrorKindAdapter::NonExhaustive { .. } => ErrorCode::NonExhaustivePatterns,
+            TypeErrorKindAdapter::CannotDeref { .. } => ErrorCode::TypeMismatch,
+            TypeErrorKindAdapter::CannotCall { .. } => ErrorCode::NotCallable,
+            TypeErrorKindAdapter::CannotIndex { .. } => ErrorCode::NotIndexable,
+            TypeErrorKindAdapter::NotIterable { .. } => ErrorCode::TypeMismatch,
+            TypeErrorKindAdapter::TupleFieldNotNumeric { .. } => ErrorCode::TypeMismatch,
+            TypeErrorKindAdapter::TupleFieldOutOfBounds { .. } => ErrorCode::TypeMismatch,
+            TypeErrorKindAdapter::CannotConstructEnum { .. } => ErrorCode::TypeMismatch,
+            TypeErrorKindAdapter::EnumUsedAsValue { .. } => ErrorCode::TypeMismatch,
+            TypeErrorKindAdapter::BinaryOpTypeError { .. } => ErrorCode::BinaryOperatorMismatch,
+            TypeErrorKindAdapter::UnaryOpTypeError { .. } => ErrorCode::UnaryOperatorMismatch,
+            TypeErrorKindAdapter::ReturnOutsideFunction => ErrorCode::InvalidStatement,
+            TypeErrorKindAdapter::BreakOutsideLoop => ErrorCode::BreakOutsideLoop,
+            TypeErrorKindAdapter::ContinueOutsideLoop => ErrorCode::ContinueOutsideLoop,
+            TypeErrorKindAdapter::ModulePathNotImplemented => ErrorCode::UnsupportedFeature,
+            TypeErrorKindAdapter::UnsupportedExpression { .. } => ErrorCode::UnsupportedFeature,
+            TypeErrorKindAdapter::UnsupportedTypeSyntax { .. } => ErrorCode::UnsupportedFeature,
+        }
+    }
+
+    /// Get the human-readable message.
+    pub fn message(self) -> String {
+        match self {
+            TypeErrorKindAdapter::Mismatch { expected, found } => {
+                "type mismatch: expected `" ++ expected ++ "`, found `" ++ found ++ "`"
+            }
+            TypeErrorKindAdapter::PatternMismatch { expected, found } => {
+                "pattern type mismatch: expected `" ++ expected ++ "`, found `" ++ found ++ "`"
+            }
+            TypeErrorKindAdapter::UnresolvedName { name } => {
+                "cannot find value `" ++ name ++ "` in this scope"
+            }
+            TypeErrorKindAdapter::UnresolvedType { name } => {
+                "cannot find type `" ++ name ++ "` in this scope"
+            }
+            TypeErrorKindAdapter::WrongArity { expected, found } => {
+                "wrong number of arguments: expected " ++ expected.to_string() ++ ", found " ++ found.to_string()
+            }
+            TypeErrorKindAdapter::OccursCheck { var_id, ty } => {
+                "infinite type: type variable `_" ++ var_id.to_string() ++ "` appears in `" ++ ty ++ "`"
+            }
+            TypeErrorKindAdapter::UnhandledEffect { effect } => {
+                "unhandled effect: `" ++ effect ++ "` is not handled in this context"
+            }
+            TypeErrorKindAdapter::InvalidEffectOp { effect, op } => {
+                "effect `" ++ effect ++ "` has no operation `" ++ op ++ "`"
+            }
+            TypeErrorKindAdapter::EffectMismatch { expected_pure } => {
+                if expected_pure {
+                    "effect mismatch: expected pure, found effectful"
+                } else {
+                    "effect mismatch: expected effectful, found pure"
+                }
+            }
+            TypeErrorKindAdapter::EffectRowMismatch { expected_count, found_count } => {
+                "effect row length mismatch: expected " ++ expected_count.to_string() ++ ", found " ++ found_count.to_string()
+            }
+            TypeErrorKindAdapter::EffectNotInRow { effect } => {
+                "effect `" ++ effect ++ "` not found in effect row"
+            }
+            TypeErrorKindAdapter::DuplicateDefinition { name } => {
+                "duplicate definition: `" ++ name ++ "` is defined multiple times"
+            }
+            TypeErrorKindAdapter::MissingField { struct_name, field } => {
+                "missing field `" ++ field ++ "` in struct `" ++ struct_name ++ "`"
+            }
+            TypeErrorKindAdapter::UnknownField { struct_name, field } => {
+                "struct `" ++ struct_name ++ "` has no field `" ++ field ++ "`"
+            }
+            TypeErrorKindAdapter::CannotAccessField { ty, field } => {
+                "cannot access field `" ++ field ++ "` on type `" ++ ty ++ "`"
+            }
+            TypeErrorKindAdapter::NonExhaustive { missing } => {
+                "non-exhaustive patterns: " ++ missing.join(", ") ++ " not covered"
+            }
+            TypeErrorKindAdapter::CannotDeref { ty } => {
+                "cannot dereference value of type `" ++ ty ++ "`"
+            }
+            TypeErrorKindAdapter::CannotCall { ty } => {
+                "cannot call value of type `" ++ ty ++ "`"
+            }
+            TypeErrorKindAdapter::CannotIndex { ty } => {
+                "type `" ++ ty ++ "` cannot be indexed"
+            }
+            TypeErrorKindAdapter::NotIterable { ty } => {
+                "type `" ++ ty ++ "` is not iterable"
+            }
+            TypeErrorKindAdapter::TupleFieldNotNumeric { field } => {
+                "tuple field access `" ++ field ++ "` must be numeric"
+            }
+            TypeErrorKindAdapter::TupleFieldOutOfBounds { index, tuple_len } => {
+                "tuple field " ++ index.to_string() ++ " is out of bounds (tuple has " ++ tuple_len.to_string() ++ " elements)"
+            }
+            TypeErrorKindAdapter::CannotConstructEnum { name } => {
+                "cannot construct enum `" ++ name ++ "` with struct syntax"
+            }
+            TypeErrorKindAdapter::EnumUsedAsValue { name } => {
+                "enum type `" ++ name ++ "` cannot be used as a value"
+            }
+            TypeErrorKindAdapter::BinaryOpTypeError { op, left, right } => {
+                "binary operator `" ++ op ++ "` cannot be applied to `" ++ left ++ "` and `" ++ right ++ "`"
+            }
+            TypeErrorKindAdapter::UnaryOpTypeError { op, operand } => {
+                "unary operator `" ++ op ++ "` cannot be applied to `" ++ operand ++ "`"
+            }
+            TypeErrorKindAdapter::ReturnOutsideFunction => {
+                "return statement outside of function"
+            }
+            TypeErrorKindAdapter::BreakOutsideLoop => {
+                "break statement outside of loop"
+            }
+            TypeErrorKindAdapter::ContinueOutsideLoop => {
+                "continue statement outside of loop"
+            }
+            TypeErrorKindAdapter::ModulePathNotImplemented => {
+                "module paths are not yet implemented"
+            }
+            TypeErrorKindAdapter::UnsupportedExpression { description } => {
+                "unsupported expression: " ++ description
+            }
+            TypeErrorKindAdapter::UnsupportedTypeSyntax { description } => {
+                "unsupported type syntax: " ++ description
+            }
+        }
+    }
+}
+
+// ============================================================================
+// IntoDiagnostic Implementation
+// ============================================================================
+
+impl IntoDiagnostic for TypeErrorAdapter {
+    /// Convert this type error into a rich diagnostic.
+    fn into_diagnostic(self, ctx: DiagnosticConverter) -> Diagnostic {
+        let diag_span = ctx.convert_span(self.span)
+        let kind = self.kind.clone()
+        let message = kind.message()
+        let code = kind.error_code()
+
+        // Start building the diagnostic
+        let mut diagnostic = Diagnostic::error(message)
+            .with_span(diag_span.clone())
+            .with_code(code)
+
+        // Add error-specific labels, suggestions, and help
+        match kind {
+            TypeErrorKindAdapter::Mismatch { expected, found } => {
+                diagnostic = diagnostic
+                    .with_label(Label::primary(diag_span.clone(), "expected `" ++ expected.clone() ++ "`, found `" ++ found.clone() ++ "`"))
+                    .with_help_message("consider using a type cast or changing the expression")
+            }
+
+            TypeErrorKindAdapter::PatternMismatch { expected, found } => {
+                diagnostic = diagnostic
+                    .with_label(Label::primary(diag_span.clone(), "expected `" ++ expected.clone() ++ "`"))
+                    .with_help_message("patterns must match the type of the scrutinee")
+            }
+
+            TypeErrorKindAdapter::UnresolvedName { name } => {
+                diagnostic = diagnostic
+                    .with_label(Label::primary(diag_span.clone(), "not found in this scope"))
+                    .with_help_message("check for typos or ensure the value is in scope")
+                // TODO: Add suggestions for similar names
+            }
+
+            TypeErrorKindAdapter::UnresolvedType { name } => {
+                diagnostic = diagnostic
+                    .with_label(Label::primary(diag_span.clone(), "not found in this scope"))
+                    .with_help_message("check for typos or add the appropriate import")
+            }
+
+            TypeErrorKindAdapter::WrongArity { expected, found } => {
+                let label_msg = if found < expected {
+                    "missing " ++ (expected - found).to_string() ++ " argument(s)"
+                } else {
+                    (found - expected).to_string() ++ " extra argument(s)"
+                }
+                diagnostic = diagnostic
+                    .with_label(Label::primary(diag_span.clone(), label_msg))
+            }
+
+            TypeErrorKindAdapter::OccursCheck { var_id, ty } => {
+                diagnostic = diagnostic
+                    .with_label(Label::primary(diag_span.clone(), "recursive type"))
+                    .with_help_message("recursive types need explicit indirection with `Box` or similar")
+            }
+
+            TypeErrorKindAdapter::UnhandledEffect { effect } => {
+                diagnostic = diagnostic
+                    .with_label(Label::primary(diag_span.clone(), "effect not handled"))
+                    .with_help_message("wrap in a handler block: `handle { ... } with EffectHandler`")
+            }
+
+            TypeErrorKindAdapter::InvalidEffectOp { effect, op } => {
+                diagnostic = diagnostic
+                    .with_label(Label::primary(diag_span.clone(), "unknown operation"))
+            }
+
+            TypeErrorKindAdapter::EffectMismatch { expected_pure } => {
+                let label_msg = if expected_pure {
+                    "effectful expression in pure context"
+                } else {
+                    "pure expression where effect expected"
+                }
+                diagnostic = diagnostic.with_label(Label::primary(diag_span.clone(), label_msg))
+            }
+
+            TypeErrorKindAdapter::EffectRowMismatch { expected_count, found_count } => {
+                diagnostic = diagnostic.with_label(Label::primary(diag_span.clone(), "effect count mismatch"))
+            }
+
+            TypeErrorKindAdapter::EffectNotInRow { effect } => {
+                diagnostic = diagnostic.with_label(Label::primary(diag_span.clone(), "effect not available"))
+            }
+
+            TypeErrorKindAdapter::DuplicateDefinition { name } => {
+                diagnostic = diagnostic
+                    .with_label(Label::primary(diag_span.clone(), "duplicate definition"))
+                    .with_help_message("remove the duplicate or rename one of the definitions")
+                // TODO: Add secondary label pointing to first definition
+            }
+
+            TypeErrorKindAdapter::MissingField { struct_name, field } => {
+                diagnostic = diagnostic
+                    .with_label(Label::primary(diag_span.clone(), "missing field"))
+                    .with_help_message("add the missing field: `" ++ field ++ ": ...`")
+            }
+
+            TypeErrorKindAdapter::UnknownField { struct_name, field } => {
+                diagnostic = diagnostic
+                    .with_label(Label::primary(diag_span.clone(), "unknown field"))
+                // TODO: Suggest similar field names
+            }
+
+            TypeErrorKindAdapter::CannotAccessField { ty, field } => {
+                diagnostic = diagnostic
+                    .with_label(Label::primary(diag_span.clone(), "not a struct or record type"))
+            }
+
+            TypeErrorKindAdapter::NonExhaustive { missing } => {
+                diagnostic = diagnostic
+                    .with_label(Label::primary(diag_span.clone(), "non-exhaustive"))
+                    .with_help_message("ensure all patterns are covered or add a catch-all `_` pattern")
+            }
+
+            TypeErrorKindAdapter::CannotDeref { ty } => {
+                diagnostic = diagnostic
+                    .with_label(Label::primary(diag_span.clone(), "cannot dereference"))
+            }
+
+            TypeErrorKindAdapter::CannotCall { ty } => {
+                diagnostic = diagnostic
+                    .with_label(Label::primary(diag_span.clone(), "not a function"))
+                    .with_help_message("ensure this is a function or closure")
+            }
+
+            TypeErrorKindAdapter::CannotIndex { ty } => {
+                diagnostic = diagnostic
+                    .with_label(Label::primary(diag_span.clone(), "not indexable"))
+            }
+
+            TypeErrorKindAdapter::NotIterable { ty } => {
+                diagnostic = diagnostic
+                    .with_label(Label::primary(diag_span.clone(), "not iterable"))
+                    .with_help_message("consider implementing `Iterator` or using a different loop construct")
+            }
+
+            TypeErrorKindAdapter::TupleFieldNotNumeric { field } => {
+                diagnostic = diagnostic
+                    .with_label(Label::primary(diag_span.clone(), "use numeric index"))
+                    .with_help_message("tuple fields are accessed by number: `.0`, `.1`, etc.")
+            }
+
+            TypeErrorKindAdapter::TupleFieldOutOfBounds { index, tuple_len } => {
+                diagnostic = diagnostic
+                    .with_label(Label::primary(diag_span.clone(), "index out of bounds"))
+                    .with_help_message("valid indices are 0 to " ++ (tuple_len - 1).to_string())
+            }
+
+            TypeErrorKindAdapter::CannotConstructEnum { name } => {
+                diagnostic = diagnostic
+                    .with_label(Label::primary(diag_span.clone(), "enum type"))
+                    .with_help_message("use variant syntax: `EnumName::Variant { ... }`")
+            }
+
+            TypeErrorKindAdapter::EnumUsedAsValue { name } => {
+                diagnostic = diagnostic
+                    .with_label(Label::primary(diag_span.clone(), "enum type, not value"))
+                    .with_help_message("use a specific variant of the enum")
+            }
+
+            TypeErrorKindAdapter::BinaryOpTypeError { op, left, right } => {
+                diagnostic = diagnostic
+                    .with_label(Label::primary(diag_span.clone(), "operator not supported for these types"))
+            }
+
+            TypeErrorKindAdapter::UnaryOpTypeError { op, operand } => {
+                diagnostic = diagnostic
+                    .with_label(Label::primary(diag_span.clone(), "operator not supported for this type"))
+            }
+
+            TypeErrorKindAdapter::ReturnOutsideFunction => {
+                diagnostic = diagnostic
+                    .with_label(Label::primary(diag_span.clone(), "not in a function"))
+            }
+
+            TypeErrorKindAdapter::BreakOutsideLoop => {
+                diagnostic = diagnostic
+                    .with_label(Label::primary(diag_span.clone(), "not in a loop"))
+            }
+
+            TypeErrorKindAdapter::ContinueOutsideLoop => {
+                diagnostic = diagnostic
+                    .with_label(Label::primary(diag_span.clone(), "not in a loop"))
+            }
+
+            TypeErrorKindAdapter::ModulePathNotImplemented => {
+                diagnostic = diagnostic
+                    .with_label(Label::primary(diag_span.clone(), "not yet implemented"))
+            }
+
+            TypeErrorKindAdapter::UnsupportedExpression { description } => {
+                diagnostic = diagnostic
+                    .with_label(Label::primary(diag_span.clone(), "unsupported"))
+            }
+
+            TypeErrorKindAdapter::UnsupportedTypeSyntax { description } => {
+                diagnostic = diagnostic
+                    .with_label(Label::primary(diag_span.clone(), "unsupported syntax"))
+            }
+        }
+
+        diagnostic
+    }
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/// Convert multiple type errors to diagnostics.
+pub fn convert_type_errors(
+    errors: Vec[TypeErrorAdapter],
+    ctx: DiagnosticConverter,
+) -> Vec[Diagnostic] {
+    let mut diagnostics = Vec::new()
+
+    for error in errors {
+        diagnostics.push(error.into_diagnostic(ctx.clone()))
+    }
+
+    diagnostics
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[test]
+fn test_type_mismatch_diagnostic() {
+    let error = TypeErrorAdapter::new(
+        TypeErrorKindAdapter::Mismatch {
+            expected: "Int",
+            found: "String",
+        },
+        SimpleSpan::new(10, 20),
+    )
+
+    let ctx = DiagnosticConverter::empty()
+    let diagnostic = error.into_diagnostic(ctx)
+
+    assert(diagnostic.severity() == Severity::Error)
+    assert(diagnostic.message().contains("type mismatch"))
+    assert(diagnostic.code().is_some())
+}
+
+#[test]
+fn test_unresolved_name_diagnostic() {
+    let error = TypeErrorAdapter::new(
+        TypeErrorKindAdapter::UnresolvedName { name: "foo" },
+        SimpleSpan::new(5, 8),
+    )
+
+    let ctx = DiagnosticConverter::empty()
+    let diagnostic = error.into_diagnostic(ctx)
+
+    assert(diagnostic.message().contains("cannot find value"))
+    assert(diagnostic.message().contains("foo"))
+}
+
+#[test]
+fn test_wrong_arity_diagnostic() {
+    let error = TypeErrorAdapter::new(
+        TypeErrorKindAdapter::WrongArity { expected: 3, found: 1 },
+        SimpleSpan::new(0, 10),
+    )
+
+    let ctx = DiagnosticConverter::empty()
+    let diagnostic = error.into_diagnostic(ctx)
+
+    assert(diagnostic.message().contains("wrong number of arguments"))
+}
+
+#[test]
+fn test_error_code_mapping() {
+    let kind = TypeErrorKindAdapter::Mismatch {
+        expected: "Int",
+        found: "Bool",
+    }
+
+    assert(kind.error_code() == ErrorCode::TypeMismatch)
+}
+
+#[test]
+fn test_convert_multiple_errors() {
+    let errors = vec![
+        TypeErrorAdapter::new(
+            TypeErrorKindAdapter::UnresolvedName { name: "x" },
+            SimpleSpan::new(0, 1),
+        ),
+        TypeErrorAdapter::new(
+            TypeErrorKindAdapter::UnresolvedName { name: "y" },
+            SimpleSpan::new(5, 6),
+        ),
+    ]
+
+    let ctx = DiagnosticConverter::empty()
+    let diagnostics = convert_type_errors(errors, ctx)
+
+    assert(diagnostics.len() == 2)
+}
+
+#[test]
+fn test_non_exhaustive_diagnostic() {
+    let error = TypeErrorAdapter::new(
+        TypeErrorKindAdapter::NonExhaustive {
+            missing: vec!["None", "Some(_)"],
+        },
+        SimpleSpan::new(10, 50),
+    )
+
+    let ctx = DiagnosticConverter::empty()
+    let diagnostic = error.into_diagnostic(ctx)
+
+    assert(diagnostic.message().contains("non-exhaustive"))
+}
+
+#[test]
+fn test_effect_error_diagnostic() {
+    let error = TypeErrorAdapter::new(
+        TypeErrorKindAdapter::UnhandledEffect { effect: "IO" },
+        SimpleSpan::new(20, 30),
+    )
+
+    let ctx = DiagnosticConverter::empty()
+    let diagnostic = error.into_diagnostic(ctx)
+
+    assert(diagnostic.message().contains("unhandled effect"))
+    assert(diagnostic.message().contains("IO"))
+}

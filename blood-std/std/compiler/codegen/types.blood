@@ -1,0 +1,596 @@
+//! Type Layout Utilities for Code Generation
+//!
+//! This module handles computation of type sizes and alignments for
+//! memory layout during code generation. These values must match the
+//! target platform's ABI requirements.
+//!
+//! ## Platform Assumptions
+//!
+//! Currently assumes a 64-bit platform where:
+//! - Pointers are 8 bytes
+//! - `isize`/`usize` are 8 bytes
+//! - Maximum alignment is 16 bytes (for i128/u128)
+//!
+//! ## Type Layout Rules
+//!
+//! | Type | Size | Alignment |
+//! |------|------|-----------|
+//! | bool | 1 | 1 |
+//! | i8/u8 | 1 | 1 |
+//! | i16/u16 | 2 | 2 |
+//! | i32/u32 | 4 | 4 |
+//! | i64/u64 | 8 | 8 |
+//! | i128/u128 | 16 | 16 |
+//! | f32 | 4 | 4 |
+//! | f64 | 8 | 8 |
+//! | char | 4 | 4 |
+//! | pointer | 8 | 8 |
+//! | &str (fat ptr) | 16 | 8 |
+//! | String | 24 | 8 |
+//! | () | 0 | 1 |
+//! | ! | 0 | 1 |
+
+use super::super::hir::{Type, DefId};
+use super::super::hir::ty::TypeKind;
+use super::super::hir::def::{PrimitiveTy, IntTy, UintTy, FloatTy};
+
+// ============================================================================
+// Type Size Calculation
+// ============================================================================
+
+/// Calculate the size of a type in bytes (for layout purposes).
+///
+/// Returns 0 for zero-sized types (unit, never) and error types.
+///
+/// # Panics
+///
+/// Returns an error value for type variables that should have been
+/// resolved before codegen.
+pub fn type_size(ty: &Type) -> usize {
+    match ty.kind() {
+        TypeKind::Primitive(prim) => primitive_size(prim),
+        TypeKind::Tuple(types) => {
+            // Tuple size is sum of field sizes with padding
+            // Simplified: just sum for now (proper padding in aligned_size)
+            let mut size: usize = 0;
+            let mut i: usize = 0;
+            while i < types.len() {
+                let field_size = type_size(&types[i]);
+                let field_align = type_alignment(&types[i]);
+                // Align to field alignment
+                size = align_up(size, field_align);
+                size = size + field_size;
+                i = i + 1;
+            }
+            size
+        }
+        TypeKind::Array { element, size: count } => {
+            let elem_size = type_size(element);
+            elem_size * (*count as usize)
+        }
+        TypeKind::Slice { .. } => {
+            // Slice is a fat pointer: (ptr, len)
+            16
+        }
+        TypeKind::Ref { .. } => {
+            // Reference is a pointer
+            8
+        }
+        TypeKind::Ptr { .. } => {
+            // Raw pointer
+            8
+        }
+        TypeKind::Fn { .. } => {
+            // Function pointer (thin, or fat if closure)
+            // For bare fn types, use thin pointer
+            8
+        }
+        TypeKind::Closure { .. } => {
+            // Closure is a fat pointer: (fn_ptr, env_ptr)
+            16
+        }
+        TypeKind::Adt { def_id, .. } => {
+            // ADT sizes must be computed from field layout
+            // This is a placeholder - real implementation needs struct_defs
+            // Return 8 as a conservative default (pointer-sized)
+            8
+        }
+        TypeKind::Range { element, inclusive } => {
+            // Range<T>: { start: T, end: T }
+            // RangeInclusive<T>: { start: T, end: T, exhausted: bool }
+            let elem_size = type_size(element);
+            if *inclusive {
+                // start + end + exhausted (1 byte, but aligned)
+                elem_size * 2 + 1
+            } else {
+                elem_size * 2
+            }
+        }
+        TypeKind::Never => {
+            // Uninhabited type is zero-sized
+            0
+        }
+        TypeKind::Error => {
+            // Error recovery, treated as zero-sized
+            0
+        }
+        TypeKind::DynTrait { .. } => {
+            // dyn Trait is a fat pointer: (data_ptr, vtable_ptr)
+            16
+        }
+        TypeKind::Infer(_) => {
+            // Type variable should be resolved before codegen
+            // Return pointer size as safe default
+            8
+        }
+        TypeKind::Param(_) => {
+            // Type parameter should be monomorphized before codegen
+            // Return pointer size as safe default
+            8
+        }
+        TypeKind::Record { fields, .. } => {
+            // Anonymous record: sum of field sizes with padding
+            let mut size: usize = 0;
+            let mut i: usize = 0;
+            while i < fields.len() {
+                let field_size = type_size(&fields[i].ty);
+                let field_align = type_alignment(&fields[i].ty);
+                size = align_up(size, field_align);
+                size = size + field_size;
+                i = i + 1;
+            }
+            size
+        }
+        TypeKind::Forall { body, .. } => {
+            // Forall types should be instantiated before codegen
+            // Use body type size as fallback
+            type_size(body)
+        }
+        TypeKind::Ownership { inner, .. } => {
+            // Ownership qualifiers are compile-time only
+            // Runtime size is the same as the inner type
+            type_size(inner)
+        }
+    }
+}
+
+/// Calculate the size of a primitive type.
+fn primitive_size(prim: &PrimitiveTy) -> usize {
+    match prim {
+        PrimitiveTy::Bool => 1,
+        PrimitiveTy::Char => 4,  // Unicode code point
+        PrimitiveTy::Int(int_ty) => int_size(int_ty),
+        PrimitiveTy::Uint(uint_ty) => uint_size(uint_ty),
+        PrimitiveTy::Float(float_ty) => float_size(float_ty),
+        PrimitiveTy::Str => 16,     // Fat pointer (ptr + len)
+        PrimitiveTy::String => 24,  // ptr + len + cap
+        PrimitiveTy::Unit => 0,     // Zero-sized type
+        PrimitiveTy::Never => 0,    // Never type is zero-sized
+    }
+}
+
+/// Calculate the size of a signed integer type.
+fn int_size(int_ty: &IntTy) -> usize {
+    match int_ty {
+        IntTy::I8 => 1,
+        IntTy::I16 => 2,
+        IntTy::I32 => 4,
+        IntTy::I64 => 8,
+        IntTy::I128 => 16,
+        IntTy::Isize => 8,  // Assuming 64-bit platform
+    }
+}
+
+/// Calculate the size of an unsigned integer type.
+fn uint_size(uint_ty: &UintTy) -> usize {
+    match uint_ty {
+        UintTy::U8 => 1,
+        UintTy::U16 => 2,
+        UintTy::U32 => 4,
+        UintTy::U64 => 8,
+        UintTy::U128 => 16,
+        UintTy::Usize => 8,  // Assuming 64-bit platform
+    }
+}
+
+/// Calculate the size of a floating point type.
+fn float_size(float_ty: &FloatTy) -> usize {
+    match float_ty {
+        FloatTy::F32 => 4,
+        FloatTy::F64 => 8,
+    }
+}
+
+// ============================================================================
+// Type Alignment Calculation
+// ============================================================================
+
+/// Calculate alignment requirements for a type.
+///
+/// Returns 1 for zero-sized types and error types.
+pub fn type_alignment(ty: &Type) -> usize {
+    match ty.kind() {
+        TypeKind::Primitive(prim) => primitive_alignment(prim),
+        TypeKind::Tuple(types) => {
+            // Tuple alignment is max of field alignments
+            let mut max_align: usize = 1;
+            let mut i: usize = 0;
+            while i < types.len() {
+                let align = type_alignment(&types[i]);
+                if align > max_align {
+                    max_align = align;
+                }
+                i = i + 1;
+            }
+            max_align
+        }
+        TypeKind::Array { element, .. } => type_alignment(element),
+        TypeKind::Slice { .. } => 8,  // Fat pointer alignment
+        TypeKind::Ref { .. } => 8,
+        TypeKind::Ptr { .. } => 8,
+        TypeKind::Fn { .. } => 8,
+        TypeKind::Closure { .. } => 8,
+        TypeKind::Adt { .. } => 8,  // Conservative default
+        TypeKind::Range { element, .. } => type_alignment(element),
+        TypeKind::Never => 1,  // Zero-sized, minimal alignment
+        TypeKind::Error => 1,  // Error recovery
+        TypeKind::DynTrait { .. } => 8,  // Fat pointer alignment
+        TypeKind::Infer(_) => 8,  // Conservative default
+        TypeKind::Param(_) => 8,  // Conservative default
+        TypeKind::Record { fields, .. } => {
+            // Record alignment is max of field alignments
+            let mut max_align: usize = 1;
+            let mut i: usize = 0;
+            while i < fields.len() {
+                let align = type_alignment(&fields[i].ty);
+                if align > max_align {
+                    max_align = align;
+                }
+                i = i + 1;
+            }
+            max_align
+        }
+        TypeKind::Forall { body, .. } => type_alignment(body),
+        TypeKind::Ownership { inner, .. } => type_alignment(inner),
+    }
+}
+
+/// Calculate alignment of a primitive type.
+fn primitive_alignment(prim: &PrimitiveTy) -> usize {
+    match prim {
+        PrimitiveTy::Bool => 1,
+        PrimitiveTy::Char => 4,
+        PrimitiveTy::Int(int_ty) => int_size(int_ty),  // Alignment equals size
+        PrimitiveTy::Uint(uint_ty) => uint_size(uint_ty),
+        PrimitiveTy::Float(float_ty) => float_size(float_ty),
+        PrimitiveTy::Str => 8,     // Pointer alignment
+        PrimitiveTy::String => 8,  // Pointer alignment
+        PrimitiveTy::Unit => 1,    // Minimal alignment
+        PrimitiveTy::Never => 1,   // Minimal alignment
+    }
+}
+
+// ============================================================================
+// Layout Utilities
+// ============================================================================
+
+/// Align a value up to the given alignment.
+///
+/// # Example
+/// ```
+/// assert_eq!(align_up(5, 4), 8);
+/// assert_eq!(align_up(8, 4), 8);
+/// assert_eq!(align_up(0, 8), 0);
+/// ```
+pub fn align_up(value: usize, alignment: usize) -> usize {
+    if alignment == 0 {
+        return value;
+    }
+    let mask = alignment - 1;
+    (value + mask) & !mask
+}
+
+/// Align a value down to the given alignment.
+pub fn align_down(value: usize, alignment: usize) -> usize {
+    if alignment == 0 {
+        return value;
+    }
+    value & !(alignment - 1)
+}
+
+/// Check if a value is aligned to the given alignment.
+pub fn is_aligned(value: usize, alignment: usize) -> bool {
+    if alignment == 0 {
+        return true;
+    }
+    (value & (alignment - 1)) == 0
+}
+
+/// Calculate the padded size of a type (size rounded up to alignment).
+pub fn padded_size(ty: &Type) -> usize {
+    let size = type_size(ty);
+    let align = type_alignment(ty);
+    align_up(size, align)
+}
+
+// ============================================================================
+// Struct/Enum Layout
+// ============================================================================
+
+/// Layout information for a struct or enum variant.
+pub struct FieldLayout {
+    /// Offset of the field from the start of the struct.
+    pub offset: usize,
+    /// Size of the field.
+    pub size: usize,
+    /// Alignment of the field.
+    pub alignment: usize,
+}
+
+/// Calculate the layout of struct fields.
+///
+/// Returns the field layouts and total size of the struct.
+pub fn compute_struct_layout(field_types: &[Type]) -> ([FieldLayout], usize) {
+    let mut layouts: [FieldLayout] = vec![];
+    let mut current_offset: usize = 0;
+    let mut max_align: usize = 1;
+
+    let mut i: usize = 0;
+    while i < field_types.len() {
+        let field_size = type_size(&field_types[i]);
+        let field_align = type_alignment(&field_types[i]);
+
+        // Align to field alignment
+        current_offset = align_up(current_offset, field_align);
+
+        layouts.push(FieldLayout {
+            offset: current_offset,
+            size: field_size,
+            alignment: field_align,
+        });
+
+        current_offset = current_offset + field_size;
+
+        if field_align > max_align {
+            max_align = field_align;
+        }
+
+        i = i + 1;
+    }
+
+    // Pad to struct alignment
+    let total_size = align_up(current_offset, max_align);
+
+    (layouts, total_size)
+}
+
+/// Enum layout strategy.
+pub enum EnumLayout {
+    /// Unit enum (no variants have data).
+    /// Represented as just the discriminant.
+    Unit { discriminant_size: usize },
+
+    /// Tagged union.
+    /// Discriminant followed by largest variant data.
+    Tagged {
+        discriminant_size: usize,
+        discriminant_offset: usize,
+        payload_offset: usize,
+        payload_size: usize,
+        total_size: usize,
+        total_alignment: usize,
+    },
+}
+
+/// Calculate the layout of an enum.
+///
+/// # Arguments
+/// * `variant_field_types` - Field types for each variant
+///
+/// # Returns
+/// The enum layout strategy.
+pub fn compute_enum_layout(variant_field_types: &[[Type]]) -> EnumLayout {
+    let variant_count = variant_field_types.len();
+
+    // Determine discriminant size based on variant count
+    let discriminant_size = if variant_count <= 256 {
+        1  // u8
+    } else if variant_count <= 65536 {
+        2  // u16
+    } else {
+        4  // u32
+    };
+
+    // Check if all variants are unit variants
+    let mut all_unit = true;
+    let mut i: usize = 0;
+    while i < variant_field_types.len() {
+        if !variant_field_types[i].is_empty() {
+            all_unit = false;
+            break;
+        }
+        i = i + 1;
+    }
+
+    if all_unit {
+        return EnumLayout::Unit { discriminant_size };
+    }
+
+    // Calculate max variant size and alignment
+    let mut max_payload_size: usize = 0;
+    let mut max_payload_align: usize = 1;
+
+    i = 0;
+    while i < variant_field_types.len() {
+        let (_, variant_size) = compute_struct_layout(&variant_field_types[i]);
+
+        // Calculate variant alignment
+        let mut variant_align: usize = 1;
+        let mut j: usize = 0;
+        while j < variant_field_types[i].len() {
+            let align = type_alignment(&variant_field_types[i][j]);
+            if align > variant_align {
+                variant_align = align;
+            }
+            j = j + 1;
+        }
+
+        if variant_size > max_payload_size {
+            max_payload_size = variant_size;
+        }
+        if variant_align > max_payload_align {
+            max_payload_align = variant_align;
+        }
+
+        i = i + 1;
+    }
+
+    // Calculate total enum layout
+    // Layout: [discriminant] [padding] [payload]
+    let discriminant_align = discriminant_size;  // Natural alignment
+    let total_alignment = if discriminant_align > max_payload_align {
+        discriminant_align
+    } else {
+        max_payload_align
+    };
+
+    let discriminant_offset: usize = 0;
+    let payload_offset = align_up(discriminant_size, max_payload_align);
+    let total_size = align_up(payload_offset + max_payload_size, total_alignment);
+
+    EnumLayout::Tagged {
+        discriminant_size,
+        discriminant_offset,
+        payload_offset,
+        payload_size: max_payload_size,
+        total_size,
+        total_alignment,
+    }
+}
+
+// ============================================================================
+// Type Predicates
+// ============================================================================
+
+/// Check if a type is zero-sized.
+pub fn is_zero_sized(ty: &Type) -> bool {
+    type_size(ty) == 0
+}
+
+/// Check if a type is a primitive type.
+pub fn is_primitive(ty: &Type) -> bool {
+    matches!(ty.kind(), TypeKind::Primitive(_))
+}
+
+/// Check if a type is an integer type.
+pub fn is_integer(ty: &Type) -> bool {
+    match ty.kind() {
+        TypeKind::Primitive(PrimitiveTy::Int(_)) => true,
+        TypeKind::Primitive(PrimitiveTy::Uint(_)) => true,
+        _ => false,
+    }
+}
+
+/// Check if a type is a signed integer.
+pub fn is_signed_integer(ty: &Type) -> bool {
+    matches!(ty.kind(), TypeKind::Primitive(PrimitiveTy::Int(_)))
+}
+
+/// Check if a type is an unsigned integer.
+pub fn is_unsigned_integer(ty: &Type) -> bool {
+    matches!(ty.kind(), TypeKind::Primitive(PrimitiveTy::Uint(_)))
+}
+
+/// Check if a type is a floating point type.
+pub fn is_float(ty: &Type) -> bool {
+    matches!(ty.kind(), TypeKind::Primitive(PrimitiveTy::Float(_)))
+}
+
+/// Check if a type is a pointer type (reference or raw pointer).
+pub fn is_pointer(ty: &Type) -> bool {
+    matches!(ty.kind(), TypeKind::Ref { .. } | TypeKind::Ptr { .. })
+}
+
+/// Check if a type may contain generational references.
+///
+/// Used to determine which values need snapshot capture during
+/// effect operations (continuation capture).
+pub fn type_may_contain_genref(ty: &Type) -> bool {
+    match ty.kind() {
+        // Primitives never contain genrefs
+        TypeKind::Primitive(_) => false,
+        TypeKind::Never | TypeKind::Error => false,
+
+        // References/pointers may point to genref data
+        TypeKind::Ref { .. } | TypeKind::Ptr { .. } => true,
+
+        // Aggregates: recurse into components
+        TypeKind::Tuple(fields) => {
+            let mut i: usize = 0;
+            while i < fields.len() {
+                if type_may_contain_genref(&fields[i]) {
+                    return true;
+                }
+                i = i + 1;
+            }
+            false
+        }
+        TypeKind::Array { element, .. } => type_may_contain_genref(element),
+        TypeKind::Slice { element } => type_may_contain_genref(element),
+
+        // ADTs, closures, functions may contain genrefs
+        TypeKind::Adt { .. } => true,  // Conservative
+        TypeKind::Closure { .. } => true,
+        TypeKind::Fn { .. } => true,  // Function pointer could be closure
+        TypeKind::DynTrait { .. } => true,
+
+        // Other types
+        TypeKind::Range { element, .. } => type_may_contain_genref(element),
+        TypeKind::Record { fields, .. } => {
+            let mut i: usize = 0;
+            while i < fields.len() {
+                if type_may_contain_genref(&fields[i].ty) {
+                    return true;
+                }
+                i = i + 1;
+            }
+            false
+        }
+        TypeKind::Forall { body, .. } => type_may_contain_genref(body),
+        TypeKind::Ownership { inner, .. } => type_may_contain_genref(inner),
+
+        // Type variables: conservative
+        TypeKind::Infer(_) | TypeKind::Param(_) => true,
+    }
+}
+
+// ============================================================================
+// LLVM Type Width Helpers
+// ============================================================================
+
+/// Get the bit width for an integer type.
+pub fn integer_bit_width(ty: &Type) -> Option<u32> {
+    match ty.kind() {
+        TypeKind::Primitive(PrimitiveTy::Bool) => Some(1),
+        TypeKind::Primitive(PrimitiveTy::Int(int_ty)) => {
+            Some(match int_ty {
+                IntTy::I8 => 8,
+                IntTy::I16 => 16,
+                IntTy::I32 => 32,
+                IntTy::I64 | IntTy::Isize => 64,
+                IntTy::I128 => 128,
+            })
+        }
+        TypeKind::Primitive(PrimitiveTy::Uint(uint_ty)) => {
+            Some(match uint_ty {
+                UintTy::U8 => 8,
+                UintTy::U16 => 16,
+                UintTy::U32 => 32,
+                UintTy::U64 | UintTy::Usize => 64,
+                UintTy::U128 => 128,
+            })
+        }
+        TypeKind::Primitive(PrimitiveTy::Char) => Some(32),
+        _ => None,
+    }
+}

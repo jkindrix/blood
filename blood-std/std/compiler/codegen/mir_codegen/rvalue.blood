@@ -1,0 +1,1007 @@
+//! MIR Rvalue Code Generation
+//!
+//! This module compiles MIR rvalues (expressions that produce values) to LLVM IR.
+//!
+//! ## Rvalue Kinds
+//!
+//! | Rvalue | Description | Notes |
+//! |--------|-------------|-------|
+//! | Use | Use operand directly | Copy/move semantics |
+//! | Ref | Create reference | &place or &mut place |
+//! | AddressOf | Create raw pointer | *place |
+//! | BinaryOp | Binary operation | Arithmetic, comparison, bitwise |
+//! | CheckedBinaryOp | Overflow-checked op | Returns (result, overflow) |
+//! | UnaryOp | Unary operation | Not, Neg |
+//! | Cast | Type cast | Numeric, pointer casts |
+//! | Discriminant | Get enum tag | Reads field 0 of enum struct |
+//! | Len | Array/slice length | Static or fat pointer |
+//! | Aggregate | Build composite | Struct, tuple, array, closure |
+//! | NullCheck | Check for non-null | Returns bool |
+//! | ReadGeneration | Read BloodPtr gen | Field 1 of BloodPtr struct |
+//! | MakeGenPtr | Create BloodPtr | { addr, gen, meta } |
+//! | ZeroInit | Zero-initialize | const_zero() |
+
+use std::collections::HashMap;
+
+use super::super::llvm::{
+    LLVMValueRef, LLVMTypeRef, LLVMBasicBlockRef,
+    types::{i1_type, i8_type, i32_type, i64_type, ptr_type, void_type, struct_type, array_type, f32_type, f64_type},
+    values::{const_int, const_real, const_null, const_struct, const_array, get_undef},
+};
+use super::super::context::CodegenContext;
+use super::super::lower_type::lower_type;
+use super::place::compile_mir_place;
+
+use crate::hir::{DefId, LocalId, Type, TypeKind, PrimitiveTy};
+use crate::mir::{
+    MirBody, Rvalue, Operand, Place, PlaceElem, Constant, ConstantKind,
+    BinOp, UnOp, AggregateKind, EscapeResults,
+};
+use crate::diagnostics::Diagnostic;
+use crate::span::Span;
+
+// ============================================================================
+// Rvalue Compilation
+// ============================================================================
+
+/// Compile a MIR rvalue to produce an LLVM value.
+pub fn compile_mir_rvalue(
+    ctx: &mut CodegenContext,
+    rvalue: &Rvalue,
+    body: &MirBody,
+    escape_results: Option<&EscapeResults>,
+) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    match rvalue {
+        Rvalue::Use(operand) => {
+            compile_mir_operand(ctx, operand, body, escape_results)
+        }
+
+        Rvalue::Ref { place, mutable: _ } => {
+            let ptr = compile_mir_place(ctx, place, body, escape_results)?;
+            Ok(ptr)
+        }
+
+        Rvalue::AddressOf { place, mutable: _ } => {
+            let ptr = compile_mir_place(ctx, place, body, escape_results)?;
+            Ok(ptr)
+        }
+
+        Rvalue::BinaryOp { op, left, right } => {
+            let operand_ty = get_operand_type(body, left);
+            let is_float = is_float_type(&operand_ty);
+            let lhs = compile_mir_operand(ctx, left, body, escape_results)?;
+            let rhs = compile_mir_operand(ctx, right, body, escape_results)?;
+            compile_binary_op(ctx, *op, lhs, rhs, is_float)
+        }
+
+        Rvalue::CheckedBinaryOp { op, left, right } => {
+            let operand_ty = get_operand_type(body, left);
+            let is_signed = is_signed_type(&operand_ty);
+            let lhs = compile_mir_operand(ctx, left, body, escape_results)?;
+            let rhs = compile_mir_operand(ctx, right, body, escape_results)?;
+            compile_checked_binary_op(ctx, *op, lhs, rhs, is_signed)
+        }
+
+        Rvalue::UnaryOp { op, operand } => {
+            let val = compile_mir_operand(ctx, operand, body, escape_results)?;
+            compile_unary_op(ctx, *op, val)
+        }
+
+        Rvalue::Cast { operand, target_ty } => {
+            let val = compile_mir_operand(ctx, operand, body, escape_results)?;
+            compile_cast(ctx, val, target_ty)
+        }
+
+        Rvalue::Discriminant(place) => {
+            compile_discriminant(ctx, place, body, escape_results)
+        }
+
+        Rvalue::Len(place) => {
+            compile_len(ctx, place, body, escape_results)
+        }
+
+        Rvalue::Aggregate { kind, operands } => {
+            compile_aggregate(ctx, kind, operands, body, escape_results)
+        }
+
+        Rvalue::NullCheck(operand) => {
+            compile_null_check(ctx, operand, body, escape_results)
+        }
+
+        Rvalue::ReadGeneration(place) => {
+            compile_read_generation(ctx, place, body, escape_results)
+        }
+
+        Rvalue::MakeGenPtr { address, generation, metadata } => {
+            compile_make_gen_ptr(ctx, address, generation, metadata, body, escape_results)
+        }
+
+        Rvalue::ZeroInit(ty) => {
+            let llvm_ty = lower_type(ctx, ty);
+            Ok(ctx.llvm_builder().build_const_zero(llvm_ty))
+        }
+    }
+}
+
+// ============================================================================
+// Operand Compilation
+// ============================================================================
+
+/// Compile a MIR operand to an LLVM value.
+pub fn compile_mir_operand(
+    ctx: &mut CodegenContext,
+    operand: &Operand,
+    body: &MirBody,
+    escape_results: Option<&EscapeResults>,
+) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    match operand {
+        Operand::Copy(place) | Operand::Move(place) => {
+            compile_mir_place_load(ctx, place, body, escape_results)
+        }
+        Operand::Constant(constant) => {
+            compile_constant(ctx, constant)
+        }
+    }
+}
+
+/// Load a value from a place.
+fn compile_mir_place_load(
+    ctx: &mut CodegenContext,
+    place: &Place,
+    body: &MirBody,
+    escape_results: Option<&EscapeResults>,
+) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    let ptr = compile_mir_place(ctx, place, body, escape_results)?;
+    let place_ty = get_place_type(body, place);
+    let llvm_ty = lower_type(ctx, &place_ty);
+    Ok(ctx.llvm_builder().build_load(llvm_ty, ptr, "load\0"))
+}
+
+// ============================================================================
+// Binary Operations
+// ============================================================================
+
+/// Compile a binary operation.
+fn compile_binary_op(
+    ctx: &mut CodegenContext,
+    op: BinOp,
+    lhs: LLVMValueRef,
+    rhs: LLVMValueRef,
+    is_float: bool,
+) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    if is_float {
+        compile_float_binary_op(ctx, op, lhs, rhs)
+    } else {
+        compile_int_binary_op(ctx, op, lhs, rhs)
+    }
+}
+
+/// Compile an integer binary operation.
+fn compile_int_binary_op(
+    ctx: &mut CodegenContext,
+    op: BinOp,
+    lhs: LLVMValueRef,
+    rhs: LLVMValueRef,
+) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    let builder = ctx.llvm_builder();
+
+    let result = match op {
+        BinOp::Add => builder.build_add(lhs, rhs, "add\0"),
+        BinOp::Sub => builder.build_sub(lhs, rhs, "sub\0"),
+        BinOp::Mul => builder.build_mul(lhs, rhs, "mul\0"),
+        BinOp::Div => builder.build_sdiv(lhs, rhs, "div\0"),
+        BinOp::Rem => builder.build_srem(lhs, rhs, "rem\0"),
+        BinOp::BitAnd => builder.build_and(lhs, rhs, "and\0"),
+        BinOp::BitOr => builder.build_or(lhs, rhs, "or\0"),
+        BinOp::BitXor => builder.build_xor(lhs, rhs, "xor\0"),
+        BinOp::Shl => builder.build_shl(lhs, rhs, "shl\0"),
+        BinOp::Shr => builder.build_ashr(lhs, rhs, "shr\0"),  // Arithmetic shift right
+        BinOp::Eq => builder.build_icmp_eq(lhs, rhs, "eq\0"),
+        BinOp::Ne => builder.build_icmp_ne(lhs, rhs, "ne\0"),
+        BinOp::Lt => builder.build_icmp_slt(lhs, rhs, "lt\0"),
+        BinOp::Le => builder.build_icmp_sle(lhs, rhs, "le\0"),
+        BinOp::Gt => builder.build_icmp_sgt(lhs, rhs, "gt\0"),
+        BinOp::Ge => builder.build_icmp_sge(lhs, rhs, "ge\0"),
+        BinOp::Offset => builder.build_add(lhs, rhs, "offset\0"),  // Pointer offset
+    };
+
+    Ok(result)
+}
+
+/// Compile a floating-point binary operation.
+fn compile_float_binary_op(
+    ctx: &mut CodegenContext,
+    op: BinOp,
+    lhs: LLVMValueRef,
+    rhs: LLVMValueRef,
+) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    let builder = ctx.llvm_builder();
+
+    let result = match op {
+        BinOp::Add => builder.build_fadd(lhs, rhs, "fadd\0"),
+        BinOp::Sub => builder.build_fsub(lhs, rhs, "fsub\0"),
+        BinOp::Mul => builder.build_fmul(lhs, rhs, "fmul\0"),
+        BinOp::Div => builder.build_fdiv(lhs, rhs, "fdiv\0"),
+        BinOp::Rem => builder.build_frem(lhs, rhs, "frem\0"),
+        BinOp::Eq => builder.build_fcmp_oeq(lhs, rhs, "feq\0"),
+        BinOp::Ne => builder.build_fcmp_one(lhs, rhs, "fne\0"),
+        BinOp::Lt => builder.build_fcmp_olt(lhs, rhs, "flt\0"),
+        BinOp::Le => builder.build_fcmp_ole(lhs, rhs, "fle\0"),
+        BinOp::Gt => builder.build_fcmp_ogt(lhs, rhs, "fgt\0"),
+        BinOp::Ge => builder.build_fcmp_oge(lhs, rhs, "fge\0"),
+        // Bitwise operations not supported for floats
+        BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr | BinOp::Offset => {
+            return Err(vec![Diagnostic::error(
+                format!("bitwise operation {:?} not supported for floating-point types", op),
+                Span::dummy(),
+            )]);
+        }
+    };
+
+    Ok(result)
+}
+
+/// Compile a checked binary operation using LLVM overflow intrinsics.
+fn compile_checked_binary_op(
+    ctx: &mut CodegenContext,
+    op: BinOp,
+    lhs: LLVMValueRef,
+    rhs: LLVMValueRef,
+    is_signed: bool,
+) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    // Determine intrinsic name based on operation and signedness
+    let intrinsic_name = match (op, is_signed) {
+        (BinOp::Add, true) => "llvm.sadd.with.overflow",
+        (BinOp::Add, false) => "llvm.uadd.with.overflow",
+        (BinOp::Sub, true) => "llvm.ssub.with.overflow",
+        (BinOp::Sub, false) => "llvm.usub.with.overflow",
+        (BinOp::Mul, true) => "llvm.smul.with.overflow",
+        (BinOp::Mul, false) => "llvm.umul.with.overflow",
+        // For operations without overflow intrinsics, fall back to unchecked
+        _ => {
+            let result = compile_binary_op(ctx, op, lhs, rhs, false)?;
+            // Build struct with result and false (no overflow)
+            let i1_ty = i1_type(ctx.llvm_context_ref());
+            let no_overflow = const_int(i1_ty, 0, false);
+            let lhs_ty = ctx.llvm_builder().get_value_type(lhs);
+            let struct_ty = struct_type(ctx.llvm_context_ref(), &[lhs_ty, i1_ty], false);
+            let mut struct_val = get_undef(struct_ty);
+            struct_val = ctx.llvm_builder().build_insert_value(struct_val, result, 0, "checked_result\0");
+            struct_val = ctx.llvm_builder().build_insert_value(struct_val, no_overflow, 1, "checked_overflow\0");
+            return Ok(struct_val);
+        }
+    };
+
+    // Get or declare the intrinsic
+    let intrinsic_fn = ctx.get_or_declare_intrinsic(intrinsic_name, &[lhs])?;
+
+    // Call the intrinsic
+    Ok(ctx.llvm_builder().build_call(intrinsic_fn, &[lhs, rhs], "checked_op\0"))
+}
+
+// ============================================================================
+// Unary Operations
+// ============================================================================
+
+/// Compile a unary operation.
+fn compile_unary_op(
+    ctx: &mut CodegenContext,
+    op: UnOp,
+    val: LLVMValueRef,
+) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    let builder = ctx.llvm_builder();
+
+    match op {
+        UnOp::Not => {
+            Ok(builder.build_not(val, "not\0"))
+        }
+        UnOp::Neg => {
+            // Check if float or int
+            if builder.is_float_value(val) {
+                Ok(builder.build_fneg(val, "fneg\0"))
+            } else {
+                Ok(builder.build_neg(val, "neg\0"))
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Type Casts
+// ============================================================================
+
+/// Compile a type cast.
+fn compile_cast(
+    ctx: &mut CodegenContext,
+    val: LLVMValueRef,
+    target_ty: &Type,
+) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    let target_llvm = lower_type(ctx, target_ty);
+    let builder = ctx.llvm_builder();
+
+    let val_ty = builder.get_value_type(val);
+
+    // Check type kinds and perform appropriate cast
+    if builder.is_int_type(val_ty) && builder.is_int_type(target_llvm) {
+        // Int to Int
+        let src_bits = builder.get_int_type_width(val_ty);
+        let dst_bits = builder.get_int_type_width(target_llvm);
+
+        if src_bits == dst_bits {
+            Ok(val)
+        } else if src_bits < dst_bits {
+            // Extending
+            if src_bits == 1 {
+                // Bool to larger int: zero extend
+                Ok(builder.build_zext(val, target_llvm, "zext\0"))
+            } else {
+                // Regular int: sign extend
+                Ok(builder.build_sext(val, target_llvm, "sext\0"))
+            }
+        } else {
+            // Truncating
+            Ok(builder.build_trunc(val, target_llvm, "trunc\0"))
+        }
+    } else if builder.is_float_type(val_ty) && builder.is_int_type(target_llvm) {
+        // Float to Int
+        Ok(builder.build_fptosi(val, target_llvm, "fptosi\0"))
+    } else if builder.is_int_type(val_ty) && builder.is_float_type(target_llvm) {
+        // Int to Float
+        Ok(builder.build_sitofp(val, target_llvm, "sitofp\0"))
+    } else if builder.is_float_type(val_ty) && builder.is_float_type(target_llvm) {
+        // Float to Float
+        let src_bits = builder.get_float_type_bits(val_ty);
+        let dst_bits = builder.get_float_type_bits(target_llvm);
+        if src_bits == dst_bits {
+            Ok(val)
+        } else if src_bits < dst_bits {
+            Ok(builder.build_fpext(val, target_llvm, "fpext\0"))
+        } else {
+            Ok(builder.build_fptrunc(val, target_llvm, "fptrunc\0"))
+        }
+    } else if builder.is_pointer_type(val_ty) && builder.is_pointer_type(target_llvm) {
+        // Pointer to Pointer (using opaque pointer, this is usually a no-op)
+        Ok(builder.build_bitcast(val, target_llvm, "ptrcast\0"))
+    } else if builder.is_pointer_type(val_ty) && builder.is_int_type(target_llvm) {
+        // Pointer to Int
+        Ok(builder.build_ptr_to_int(val, target_llvm, "ptrtoint\0"))
+    } else if builder.is_int_type(val_ty) && builder.is_pointer_type(target_llvm) {
+        // Int to Pointer
+        Ok(builder.build_int_to_ptr(val, target_llvm, "inttoptr\0"))
+    } else {
+        // Unsupported cast - try bitcast as last resort
+        Ok(builder.build_bitcast(val, target_llvm, "cast\0"))
+    }
+}
+
+// ============================================================================
+// Discriminant and Length
+// ============================================================================
+
+/// Compile discriminant access for enums.
+fn compile_discriminant(
+    ctx: &mut CodegenContext,
+    place: &Place,
+    body: &MirBody,
+    escape_results: Option<&EscapeResults>,
+) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    let ptr = compile_mir_place(ctx, place, body, escape_results)?;
+
+    // Get the type to determine if it's struct-backed or bare tag
+    let base_ty = &body.locals[place.local.index as usize].ty;
+    let llvm_ty = lower_type(ctx, base_ty);
+
+    if ctx.llvm_builder().is_struct_type(llvm_ty) {
+        // Enum with payload: { i32 tag, payload... }
+        // Load discriminant from first field
+        let i32_ty = i32_type(ctx.llvm_context_ref());
+        let discr_ptr = ctx.llvm_builder().build_struct_gep(llvm_ty, ptr, 0, "discr_ptr\0");
+        Ok(ctx.llvm_builder().build_load(i32_ty, discr_ptr, "discr\0"))
+    } else {
+        // Tag-only enum: just load the value
+        Ok(ctx.llvm_builder().build_load(llvm_ty, ptr, "discr\0"))
+    }
+}
+
+/// Compile length access for arrays/slices.
+fn compile_len(
+    ctx: &mut CodegenContext,
+    place: &Place,
+    body: &MirBody,
+    escape_results: Option<&EscapeResults>,
+) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    let base_ty = body.locals[place.local.index as usize].ty.clone();
+    let effective_ty = compute_place_type(&base_ty, &place.projection);
+
+    match effective_ty.kind() {
+        TypeKind::Array { size, .. } => {
+            // Static array size
+            let i64_ty = i64_type(ctx.llvm_context_ref());
+            Ok(const_int(i64_ty, *size, false))
+        }
+        TypeKind::Slice { .. } => {
+            // Slice: { ptr, len } - extract len field
+            let ptr = compile_mir_place(ctx, place, body, escape_results)?;
+            let slice_ty = lower_type(ctx, &effective_ty);
+            let i64_ty = i64_type(ctx.llvm_context_ref());
+            let len_ptr = ctx.llvm_builder().build_struct_gep(slice_ty, ptr, 1, "slice_len_ptr\0");
+            Ok(ctx.llvm_builder().build_load(i64_ty, len_ptr, "slice_len\0"))
+        }
+        TypeKind::Ref { inner, .. } | TypeKind::Ptr { inner, .. } => {
+            match inner.kind() {
+                TypeKind::Array { size, .. } => {
+                    let i64_ty = i64_type(ctx.llvm_context_ref());
+                    Ok(const_int(i64_ty, *size, false))
+                }
+                TypeKind::Slice { .. } => {
+                    // Load the pointer then extract length
+                    let ref_ptr = compile_mir_place(ctx, place, body, escape_results)?;
+                    let ptr_ty = ptr_type(ctx.llvm_context_ref());
+                    let slice_ptr = ctx.llvm_builder().build_load(ptr_ty, ref_ptr, "slice_deref\0");
+                    let slice_ty = lower_type(ctx, inner);
+                    let i64_ty = i64_type(ctx.llvm_context_ref());
+                    let len_ptr = ctx.llvm_builder().build_struct_gep(slice_ty, slice_ptr, 1, "slice_len_ptr\0");
+                    Ok(ctx.llvm_builder().build_load(i64_ty, len_ptr, "slice_len\0"))
+                }
+                _ => Err(vec![Diagnostic::error(
+                    format!("Cannot compute length of type {:?}", inner.kind()),
+                    Span::dummy()
+                )])
+            }
+        }
+        _ => Err(vec![Diagnostic::error(
+            format!("Cannot compute length of type {:?}", effective_ty.kind()),
+            Span::dummy()
+        )])
+    }
+}
+
+// ============================================================================
+// Aggregates
+// ============================================================================
+
+/// Compile an aggregate value (struct, tuple, array, closure).
+fn compile_aggregate(
+    ctx: &mut CodegenContext,
+    kind: &AggregateKind,
+    operands: &[Operand],
+    body: &MirBody,
+    escape_results: Option<&EscapeResults>,
+) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    // Compile all operand values
+    let vals: Result<Vec<_>, _> = operands.iter()
+        .map(|op| compile_mir_operand(ctx, op, body, escape_results))
+        .collect();
+    let vals = vals?;
+
+    match kind {
+        AggregateKind::Tuple => {
+            compile_tuple_aggregate(ctx, &vals)
+        }
+
+        AggregateKind::Array(_elem_ty) => {
+            compile_array_aggregate(ctx, &vals)
+        }
+
+        AggregateKind::Adt { def_id, variant_idx, type_args } => {
+            compile_adt_aggregate(ctx, *def_id, *variant_idx, type_args, &vals)
+        }
+
+        AggregateKind::Closure { def_id } => {
+            compile_closure_aggregate(ctx, *def_id, &vals)
+        }
+
+        AggregateKind::Record => {
+            compile_tuple_aggregate(ctx, &vals)  // Record is like tuple
+        }
+
+        AggregateKind::Range { element, inclusive } => {
+            compile_range_aggregate(ctx, element, *inclusive, &vals)
+        }
+    }
+}
+
+/// Compile a tuple aggregate.
+fn compile_tuple_aggregate(
+    ctx: &mut CodegenContext,
+    vals: &[LLVMValueRef],
+) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    if vals.is_empty() {
+        // Unit tuple
+        let i8_ty = i8_type(ctx.llvm_context_ref());
+        return Ok(const_int(i8_ty, 0, false));
+    }
+
+    // Create struct type from values
+    let types: Vec<_> = vals.iter()
+        .map(|v| ctx.llvm_builder().get_value_type(*v))
+        .collect();
+    let struct_ty = struct_type(ctx.llvm_context_ref(), &types, false);
+
+    // Build struct value
+    let mut agg = get_undef(struct_ty);
+    for (i, val) in vals.iter().enumerate() {
+        agg = ctx.llvm_builder().build_insert_value(agg, *val, i as u32, &format!("tuple_{}\0", i));
+    }
+
+    Ok(agg)
+}
+
+/// Compile an array aggregate.
+fn compile_array_aggregate(
+    ctx: &mut CodegenContext,
+    vals: &[LLVMValueRef],
+) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    if vals.is_empty() {
+        let arr_ty = array_type(i32_type(ctx.llvm_context_ref()), 0);
+        return Ok(get_undef(arr_ty));
+    }
+
+    let elem_ty = ctx.llvm_builder().get_value_type(vals[0]);
+    let arr_ty = array_type(elem_ty, vals.len() as u32);
+
+    let mut agg = get_undef(arr_ty);
+    for (i, val) in vals.iter().enumerate() {
+        agg = ctx.llvm_builder().build_insert_value(agg, *val, i as u32, &format!("arr_{}\0", i));
+    }
+
+    Ok(agg)
+}
+
+/// Compile an ADT (struct or enum) aggregate.
+fn compile_adt_aggregate(
+    ctx: &mut CodegenContext,
+    def_id: DefId,
+    variant_idx: Option<u32>,
+    type_args: &[Type],
+    vals: &[LLVMValueRef],
+) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    // Check if it's a struct
+    if ctx.struct_defs.contains_key(&def_id) {
+        if vals.is_empty() {
+            // Unit struct
+            let i8_ty = i8_type(ctx.llvm_context_ref());
+            return Ok(const_int(i8_ty, 0, false));
+        }
+
+        let types: Vec<_> = vals.iter()
+            .map(|v| ctx.llvm_builder().get_value_type(*v))
+            .collect();
+        let struct_ty = struct_type(ctx.llvm_context_ref(), &types, false);
+
+        let mut agg = get_undef(struct_ty);
+        for (i, val) in vals.iter().enumerate() {
+            agg = ctx.llvm_builder().build_insert_value(agg, *val, i as u32, &format!("field_{}\0", i));
+        }
+
+        return Ok(agg);
+    }
+
+    // Check if it's an enum
+    if ctx.enum_defs.contains_key(&def_id) {
+        let variant_index = variant_idx.ok_or_else(|| vec![Diagnostic::error(
+            "enum construction without variant index",
+            Span::dummy()
+        )])?;
+
+        // Get the full enum type
+        let enum_ty = Type::adt(def_id, type_args.to_vec());
+        let full_enum_llvm_ty = lower_type(ctx, &enum_ty);
+
+        let i32_ty = i32_type(ctx.llvm_context_ref());
+        let tag = const_int(i32_ty, variant_index as u64, false);
+
+        if ctx.llvm_builder().is_struct_type(full_enum_llvm_ty) {
+            // Enum with payload: { tag, payload... }
+            if vals.is_empty() {
+                // Unit variant
+                let mut agg = get_undef(full_enum_llvm_ty);
+                agg = ctx.llvm_builder().build_insert_value(agg, tag, 0, "enum_tag\0");
+                return Ok(agg);
+            }
+
+            // Build struct with tag and fields
+            let mut agg = get_undef(full_enum_llvm_ty);
+            agg = ctx.llvm_builder().build_insert_value(agg, tag, 0, "enum_tag\0");
+            for (i, val) in vals.iter().enumerate() {
+                agg = ctx.llvm_builder().build_insert_value(agg, *val, (i + 1) as u32, &format!("enum_field_{}\0", i));
+            }
+            return Ok(agg);
+        } else {
+            // Tag-only enum
+            return Ok(tag);
+        }
+    }
+
+    Err(vec![Diagnostic::error(
+        format!("Unknown ADT {:?}", def_id),
+        Span::dummy()
+    )])
+}
+
+/// Compile a closure aggregate.
+fn compile_closure_aggregate(
+    ctx: &mut CodegenContext,
+    def_id: DefId,
+    vals: &[LLVMValueRef],
+) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    let i8_ptr_ty = ptr_type(ctx.llvm_context_ref());
+    let closure_struct_ty = struct_type(ctx.llvm_context_ref(), &[i8_ptr_ty, i8_ptr_ty], false);
+
+    // Get the closure function pointer
+    let fn_ptr = if let Some(&fn_value) = ctx.functions.get(&def_id) {
+        ctx.llvm_builder().build_bitcast(fn_value, i8_ptr_ty, "closure.fn_ptr\0")
+    } else {
+        return Err(vec![Diagnostic::error(
+            format!("Closure function {:?} not found", def_id),
+            Span::dummy()
+        )]);
+    };
+
+    // Build environment pointer
+    let env_ptr = if vals.is_empty() {
+        const_null(i8_ptr_ty)
+    } else {
+        // Build captures struct
+        let types: Vec<_> = vals.iter()
+            .map(|v| ctx.llvm_builder().get_value_type(*v))
+            .collect();
+        let captures_struct_ty = struct_type(ctx.llvm_context_ref(), &types, false);
+
+        let mut captures_val = get_undef(captures_struct_ty);
+        for (i, val) in vals.iter().enumerate() {
+            captures_val = ctx.llvm_builder().build_insert_value(captures_val, *val, i as u32, &format!("capture_{}\0", i));
+        }
+
+        // Allocate and store captures
+        let captures_alloca = ctx.llvm_builder().build_alloca(captures_struct_ty, "closure_env\0");
+        ctx.llvm_builder().build_store(captures_val, captures_alloca);
+
+        ctx.llvm_builder().build_bitcast(captures_alloca, i8_ptr_ty, "env_ptr\0")
+    };
+
+    // Build closure fat pointer { fn_ptr, env_ptr }
+    let mut closure_val = get_undef(closure_struct_ty);
+    closure_val = ctx.llvm_builder().build_insert_value(closure_val, fn_ptr, 0, "closure.with_fn\0");
+    closure_val = ctx.llvm_builder().build_insert_value(closure_val, env_ptr, 1, "closure.with_env\0");
+
+    Ok(closure_val)
+}
+
+/// Compile a range aggregate.
+fn compile_range_aggregate(
+    ctx: &mut CodegenContext,
+    element: &Type,
+    inclusive: bool,
+    vals: &[LLVMValueRef],
+) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    let elem_ty = lower_type(ctx, element);
+
+    if inclusive {
+        // RangeInclusive: { start, end, exhausted }
+        if vals.len() != 3 {
+            return Err(vec![Diagnostic::error(
+                format!("RangeInclusive expects 3 fields, got {}", vals.len()),
+                Span::dummy()
+            )]);
+        }
+        let i1_ty = i1_type(ctx.llvm_context_ref());
+        let struct_ty = struct_type(ctx.llvm_context_ref(), &[elem_ty, elem_ty, i1_ty], false);
+        let mut range_val = get_undef(struct_ty);
+        range_val = ctx.llvm_builder().build_insert_value(range_val, vals[0], 0, "start\0");
+        range_val = ctx.llvm_builder().build_insert_value(range_val, vals[1], 1, "end\0");
+        range_val = ctx.llvm_builder().build_insert_value(range_val, vals[2], 2, "exhausted\0");
+        Ok(range_val)
+    } else {
+        // Range: { start, end }
+        if vals.len() != 2 {
+            return Err(vec![Diagnostic::error(
+                format!("Range expects 2 fields, got {}", vals.len()),
+                Span::dummy()
+            )]);
+        }
+        let struct_ty = struct_type(ctx.llvm_context_ref(), &[elem_ty, elem_ty], false);
+        let mut range_val = get_undef(struct_ty);
+        range_val = ctx.llvm_builder().build_insert_value(range_val, vals[0], 0, "start\0");
+        range_val = ctx.llvm_builder().build_insert_value(range_val, vals[1], 1, "end\0");
+        Ok(range_val)
+    }
+}
+
+// ============================================================================
+// Null Check and Generational Pointers
+// ============================================================================
+
+/// Compile a null check.
+fn compile_null_check(
+    ctx: &mut CodegenContext,
+    operand: &Operand,
+    body: &MirBody,
+    escape_results: Option<&EscapeResults>,
+) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    let val = compile_mir_operand(ctx, operand, body, escape_results)?;
+    let builder = ctx.llvm_builder();
+
+    if builder.is_pointer_value(val) {
+        let i64_ty = i64_type(ctx.llvm_context_ref());
+        let null_ptr = const_null(ptr_type(ctx.llvm_context_ref()));
+        let ptr_int = builder.build_ptr_to_int(val, i64_ty, "ptr_int\0");
+        let null_int = builder.build_ptr_to_int(null_ptr, i64_ty, "null_int\0");
+        Ok(builder.build_icmp_ne(ptr_int, null_int, "not_null\0"))
+    } else {
+        // Non-pointer: always "valid"
+        let i1_ty = i1_type(ctx.llvm_context_ref());
+        Ok(const_int(i1_ty, 1, false))
+    }
+}
+
+/// Compile reading generation from a BloodPtr.
+fn compile_read_generation(
+    ctx: &mut CodegenContext,
+    place: &Place,
+    body: &MirBody,
+    escape_results: Option<&EscapeResults>,
+) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    let ptr = compile_mir_place(ctx, place, body, escape_results)?;
+    let place_ty = get_place_type(body, place);
+    let llvm_ty = lower_type(ctx, &place_ty);
+
+    // Load the BloodPtr struct
+    let blood_ptr_val = ctx.llvm_builder().build_load(llvm_ty, ptr, "blood_ptr\0");
+
+    // Extract generation field (index 1)
+    if ctx.llvm_builder().is_struct_value(blood_ptr_val) {
+        Ok(ctx.llvm_builder().build_extract_value(blood_ptr_val, 1, "generation\0"))
+    } else {
+        // Not a BloodPtr struct - return generation::FIRST (1)
+        let i32_ty = i32_type(ctx.llvm_context_ref());
+        Ok(const_int(i32_ty, 1, false))
+    }
+}
+
+/// Compile creating a BloodPtr.
+fn compile_make_gen_ptr(
+    ctx: &mut CodegenContext,
+    address: &Operand,
+    generation: &Operand,
+    metadata: &Operand,
+    body: &MirBody,
+    escape_results: Option<&EscapeResults>,
+) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    let addr_val = compile_mir_operand(ctx, address, body, escape_results)?;
+    let gen_val = compile_mir_operand(ctx, generation, body, escape_results)?;
+    let meta_val = compile_mir_operand(ctx, metadata, body, escape_results)?;
+
+    let i64_ty = i64_type(ctx.llvm_context_ref());
+    let i32_ty = i32_type(ctx.llvm_context_ref());
+    let blood_ptr_type = struct_type(ctx.llvm_context_ref(), &[i64_ty, i32_ty, i32_ty], false);
+
+    let builder = ctx.llvm_builder();
+
+    // Ensure address is i64
+    let addr_i64 = if builder.is_pointer_value(addr_val) {
+        builder.build_ptr_to_int(addr_val, i64_ty, "addr_as_i64\0")
+    } else {
+        builder.build_int_cast(addr_val, i64_ty, false, "addr_i64\0")
+    };
+
+    // Ensure generation is i32
+    let gen_i32 = builder.build_int_cast(gen_val, i32_ty, false, "gen_i32\0");
+
+    // Ensure metadata is i32
+    let meta_i32 = builder.build_int_cast(meta_val, i32_ty, false, "meta_i32\0");
+
+    // Build the BloodPtr struct
+    let mut blood_ptr_val = get_undef(blood_ptr_type);
+    blood_ptr_val = builder.build_insert_value(blood_ptr_val, addr_i64, 0, "with_addr\0");
+    blood_ptr_val = builder.build_insert_value(blood_ptr_val, gen_i32, 1, "with_gen\0");
+    blood_ptr_val = builder.build_insert_value(blood_ptr_val, meta_i32, 2, "with_meta\0");
+
+    Ok(blood_ptr_val)
+}
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+/// Compile a constant to an LLVM value.
+fn compile_constant(
+    ctx: &mut CodegenContext,
+    constant: &Constant,
+) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    match &constant.kind {
+        ConstantKind::Int(v) => {
+            let llvm_ty = lower_type(ctx, &constant.ty);
+            Ok(const_int(llvm_ty, *v as u64, *v < 0))
+        }
+
+        ConstantKind::Uint(v) => {
+            let llvm_ty = lower_type(ctx, &constant.ty);
+            Ok(const_int(llvm_ty, *v as u64, false))
+        }
+
+        ConstantKind::Float(v) => {
+            let llvm_ty = lower_type(ctx, &constant.ty);
+            Ok(const_real(llvm_ty, *v))
+        }
+
+        ConstantKind::Bool(v) => {
+            let i1_ty = i1_type(ctx.llvm_context_ref());
+            Ok(const_int(i1_ty, if *v { 1 } else { 0 }, false))
+        }
+
+        ConstantKind::Char(v) => {
+            let i32_ty = i32_type(ctx.llvm_context_ref());
+            Ok(const_int(i32_ty, *v as u64, false))
+        }
+
+        ConstantKind::String(s) => {
+            compile_string_constant(ctx, s)
+        }
+
+        ConstantKind::ByteString(bytes) => {
+            compile_byte_string_constant(ctx, bytes)
+        }
+
+        ConstantKind::Unit => {
+            let i8_ty = i8_type(ctx.llvm_context_ref());
+            Ok(const_int(i8_ty, 0, false))
+        }
+
+        ConstantKind::FnDef(def_id) => {
+            compile_fn_def_constant(ctx, *def_id)
+        }
+
+        ConstantKind::ConstDef(def_id) => {
+            if let Some(&global) = ctx.const_globals.get(def_id) {
+                let ty = ctx.llvm_builder().get_global_type(global);
+                Ok(ctx.llvm_builder().build_load(ty, global, "const_load\0"))
+            } else {
+                Err(vec![Diagnostic::error(format!("Unknown const {:?}", def_id), Span::dummy())])
+            }
+        }
+
+        ConstantKind::StaticDef(def_id) => {
+            if let Some(&global) = ctx.static_globals.get(def_id) {
+                let ty = ctx.llvm_builder().get_global_type(global);
+                Ok(ctx.llvm_builder().build_load(ty, global, "static_load\0"))
+            } else {
+                Err(vec![Diagnostic::error(format!("Unknown static {:?}", def_id), Span::dummy())])
+            }
+        }
+
+        ConstantKind::ZeroSized => {
+            let i8_ty = i8_type(ctx.llvm_context_ref());
+            Ok(const_int(i8_ty, 0, false))
+        }
+    }
+}
+
+/// Compile a string constant.
+fn compile_string_constant(ctx: &mut CodegenContext, s: &str) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    let global = ctx.llvm_builder().build_global_string_ptr(s, "str\0");
+    let i64_ty = i64_type(ctx.llvm_context_ref());
+    let i8_ptr_ty = ptr_type(ctx.llvm_context_ref());
+    let len = const_int(i64_ty, s.len() as u64, false);
+
+    // Create str slice struct { ptr, len }
+    let str_type = struct_type(ctx.llvm_context_ref(), &[i8_ptr_ty, i64_ty], false);
+    let str_val = const_struct(ctx.llvm_context_ref(), &[global, len], false);
+    Ok(str_val)
+}
+
+/// Compile a byte string constant.
+fn compile_byte_string_constant(ctx: &mut CodegenContext, bytes: &[u8]) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    let i8_ty = i8_type(ctx.llvm_context_ref());
+    let arr_ty = array_type(i8_ty, bytes.len() as u32);
+    let global = ctx.llvm_module().add_global(arr_ty, "bytes\0");
+
+    // Initialize with byte values
+    let byte_vals: Vec<_> = bytes.iter()
+        .map(|b| const_int(i8_ty, *b as u64, false))
+        .collect();
+    let init = const_array(i8_ty, &byte_vals);
+    ctx.llvm_builder().set_global_initializer(global, init);
+    ctx.llvm_builder().set_global_constant(global, true);
+
+    let i64_ty = i64_type(ctx.llvm_context_ref());
+    let i8_ptr_ty = ptr_type(ctx.llvm_context_ref());
+    let ptr = ctx.llvm_builder().build_bitcast(global, i8_ptr_ty, "bytes_ptr\0");
+    let len = const_int(i64_ty, bytes.len() as u64, false);
+
+    // Create byte slice struct { ptr, len }
+    let slice_type = struct_type(ctx.llvm_context_ref(), &[i8_ptr_ty, i64_ty], false);
+    let slice_val = const_struct(ctx.llvm_context_ref(), &[ptr, len], false);
+    Ok(slice_val)
+}
+
+/// Compile a function definition constant (creates fat pointer).
+fn compile_fn_def_constant(ctx: &mut CodegenContext, def_id: DefId) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    let i8_ptr_ty = ptr_type(ctx.llvm_context_ref());
+
+    // Get or create wrapper for fn pointer
+    if let Some(wrapper_fn) = ctx.get_or_create_fn_ptr_wrapper(def_id) {
+        let fn_ptr = ctx.llvm_builder().build_bitcast(wrapper_fn, i8_ptr_ty, "fn_ptr\0");
+        let null_env = const_null(i8_ptr_ty);
+
+        // Create fat pointer struct { fn_ptr, null_env }
+        let fat_ptr_type = struct_type(ctx.llvm_context_ref(), &[i8_ptr_ty, i8_ptr_ty], false);
+        let fat_ptr = const_struct(ctx.llvm_context_ref(), &[fn_ptr, null_env], false);
+        Ok(fat_ptr)
+    } else if ctx.functions.contains_key(&def_id) {
+        Err(vec![Diagnostic::error(
+            format!("Failed to create fn pointer wrapper for {:?}", def_id),
+            Span::dummy()
+        )])
+    } else {
+        Err(vec![Diagnostic::error(format!("Unknown function {:?}", def_id), Span::dummy())])
+    }
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/// Get the type of an operand.
+fn get_operand_type(body: &MirBody, operand: &Operand) -> Type {
+    match operand {
+        Operand::Copy(place) | Operand::Move(place) => {
+            body.locals[place.local.index as usize].ty.clone()
+        }
+        Operand::Constant(c) => c.ty.clone(),
+    }
+}
+
+/// Get the type of a place after projections.
+fn get_place_type(body: &MirBody, place: &Place) -> Type {
+    let base_ty = body.locals[place.local.index as usize].ty.clone();
+    compute_place_type(&base_ty, &place.projection)
+}
+
+/// Compute the type after applying projections.
+fn compute_place_type(base_ty: &Type, projection: &[PlaceElem]) -> Type {
+    let mut ty = base_ty.clone();
+
+    for elem in projection {
+        ty = match elem {
+            PlaceElem::Deref => {
+                if let Some(inner) = ty.pointee_type() {
+                    inner.clone()
+                } else {
+                    ty
+                }
+            }
+            PlaceElem::Field(idx) => {
+                if let Some(field_ty) = ty.field_type(*idx as usize) {
+                    field_ty.clone()
+                } else {
+                    ty
+                }
+            }
+            PlaceElem::Index(_) | PlaceElem::ConstantIndex { .. } => {
+                if let Some(elem_ty) = ty.element_type() {
+                    elem_ty.clone()
+                } else {
+                    ty
+                }
+            }
+            PlaceElem::Subslice { .. } | PlaceElem::Downcast(_) => ty,
+        };
+    }
+
+    ty
+}
+
+/// Check if a type is signed.
+fn is_signed_type(ty: &Type) -> bool {
+    match ty.kind() {
+        TypeKind::Primitive(PrimitiveTy::Int(_)) => true,
+        TypeKind::Primitive(PrimitiveTy::Uint(_)) => false,
+        _ => true, // Default to signed
+    }
+}
+
+/// Check if a type is floating-point.
+fn is_float_type(ty: &Type) -> bool {
+    matches!(ty.kind(), TypeKind::Primitive(PrimitiveTy::Float(_)))
+}

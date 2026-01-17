@@ -1,0 +1,821 @@
+/// Constraint Checking for Generic Dispatch
+///
+/// When a generic method has constraints on its type parameters
+/// (e.g., `fn sort<T: Ord>(list: [T]) -> [T]`), we must verify that
+/// the concrete types inferred for each parameter actually satisfy
+/// those constraints.
+///
+/// # Built-in Constraints
+///
+/// This module provides heuristic checking for well-known traits:
+///
+/// | Trait | Semantics |
+/// |-------|-----------|
+/// | `Copy` | Can be duplicated by bit copy |
+/// | `Clone` | Can be explicitly duplicated |
+/// | `Sized` | Has a known size at compile time |
+/// | `Send` | Can be sent between threads |
+/// | `Sync` | Can be shared between threads via `&T` |
+/// | `Ord` | Has a total ordering |
+/// | `Eq` | Has reflexive equality |
+/// | `Hash` | Can be hashed |
+/// | `Default` | Has a default value |
+/// | `Debug` | Can be formatted for debugging |
+///
+/// # Usage
+///
+/// ```blood
+/// let checker = ConstraintChecker::new();
+///
+/// // Check constraints for generic method instantiation
+/// match checker.check_constraints(&type_params, &substitutions) {
+///     Ok(()) => { /* constraints satisfied */ }
+///     Err(error) => {
+///         // Report: "the trait bound `T: Ord` is not satisfied"
+///     }
+/// }
+/// ```
+///
+/// # Extension
+///
+/// For project-specific traits, a custom trait checker function can be
+/// provided to extend the built-in heuristics.
+
+use std.collections::{HashMap};
+use super.super.types::{Type, TypeKind, TyVarId, PrimitiveTy};
+use super.types::{TypeParam, Constraint, ConstraintError};
+
+// ============================================================================
+// Constraint Checker
+// ============================================================================
+
+/// Checker for type parameter constraints during generic instantiation.
+///
+/// When a generic method is instantiated with concrete types, this checker
+/// verifies that all type parameter constraints are satisfied.
+///
+/// # Algorithm
+///
+/// For each type parameter with constraints:
+/// 1. Look up the concrete type from the substitution map
+/// 2. For each constraint on the parameter, check if the concrete type satisfies it
+/// 3. Return an error for the first unsatisfied constraint
+pub struct ConstraintChecker {
+    // Currently uses built-in heuristics only.
+    // Future: Add optional trait registry callback.
+}
+
+impl ConstraintChecker {
+    /// Create a new constraint checker.
+    ///
+    /// Uses built-in heuristics for well-known traits.
+    pub fn new() -> ConstraintChecker {
+        ConstraintChecker {}
+    }
+
+    /// Check if all type parameter constraints are satisfied by the given substitutions.
+    ///
+    /// # Arguments
+    ///
+    /// * `type_params` - The type parameters with their constraints
+    /// * `substitutions` - Map from type parameter ID to concrete type
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` if all constraints are satisfied
+    /// * `Err(ConstraintError)` for the first unsatisfied constraint
+    pub fn check_constraints(
+        &self,
+        type_params: &[TypeParam],
+        substitutions: &HashMap<u32, Type>,
+    ) -> Result<(), ConstraintError> {
+        for param in type_params.iter() {
+            // Skip parameters with no constraints
+            if !param.has_constraints() {
+                continue;
+            }
+
+            // Get the concrete type for this parameter
+            let concrete_type = match substitutions.get(&param.id.id()) {
+                Some(ty) => ty,
+                None => {
+                    // No substitution for this parameter - skip checking
+                    // (this shouldn't happen in a well-formed instantiation)
+                    continue;
+                }
+            };
+
+            // Check each constraint
+            for constraint in param.constraints.iter() {
+                if !self.type_satisfies_constraint(concrete_type, constraint) {
+                    return Err(ConstraintError::new(
+                        param.name.clone(),
+                        param.id.clone(),
+                        concrete_type.clone(),
+                        constraint.clone(),
+                    ));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Check if a concrete type satisfies a constraint.
+    fn type_satisfies_constraint(&self, ty: &Type, constraint: &Constraint) -> bool {
+        // Use built-in heuristics for well-known traits
+        self.builtin_constraint_check(ty, &constraint.trait_name)
+    }
+
+    /// Check constraints using built-in heuristics for well-known traits.
+    ///
+    /// This provides a reasonable default for common traits without requiring
+    /// full trait resolution infrastructure.
+    fn builtin_constraint_check(&self, ty: &Type, trait_name: &str) -> bool {
+        match trait_name {
+            // Copy: primitives, shared refs, raw pointers, small tuples, arrays of Copy
+            "Copy" => self.type_is_copy(ty),
+
+            // Clone: everything that is Copy, plus more
+            "Clone" => self.type_is_clone(ty),
+
+            // Sized: almost everything except [T], str, dyn Trait
+            "Sized" => self.type_is_sized(ty),
+
+            // Send: most types can be sent across threads
+            "Send" => self.type_is_send(ty),
+
+            // Sync: most types can be shared via references
+            "Sync" => self.type_is_sync(ty),
+
+            // Ord: types that have a total ordering
+            "Ord" => self.type_is_ord(ty),
+            "PartialOrd" => self.type_is_partial_ord(ty),
+
+            // Eq: types that have equality
+            "Eq" => self.type_is_eq(ty),
+            "PartialEq" => self.type_is_partial_eq(ty),
+
+            // Hash: types that can be hashed
+            "Hash" => self.type_is_hash(ty),
+
+            // Default: types that have a default value
+            "Default" => self.type_is_default(ty),
+
+            // Debug, Display: formatting traits
+            "Debug" => self.type_is_debug(ty),
+            "Display" => self.type_is_display(ty),
+
+            // Iterator: types that can be iterated
+            "Iterator" => self.type_is_iterator(ty),
+            "IntoIterator" => self.type_is_into_iterator(ty),
+
+            // Unknown trait - conservatively return false
+            _ => false,
+        }
+    }
+
+    // ========================================================================
+    // Copy Trait
+    // ========================================================================
+
+    /// Check if a type implements Copy.
+    ///
+    /// Copy types can be duplicated by simple bitwise copy.
+    /// - All primitives are Copy
+    /// - Shared references (&T) are Copy
+    /// - Raw pointers (*T) are Copy
+    /// - Function pointers are Copy
+    /// - Arrays/tuples are Copy if their elements are Copy
+    fn type_is_copy(&self, ty: &Type) -> bool {
+        match ty.kind() {
+            TypeKind::Primitive(prim) => self.primitive_is_copy(prim),
+            TypeKind::Ref { inner: _, mutable } => !mutable, // &T is Copy, &mut T is not
+            TypeKind::Ptr { inner: _, mutable: _ } => true,
+            TypeKind::Fn { params: _, ret: _ } => true,
+            TypeKind::Never => true,
+            TypeKind::Array { element, size: _ } => self.type_is_copy(element),
+            TypeKind::Tuple(elements) => {
+                for elem in elements.iter() {
+                    if !self.type_is_copy(elem) {
+                        return false;
+                    }
+                }
+                true
+            }
+            TypeKind::Range { element, inclusive: _ } => self.type_is_copy(element),
+            TypeKind::Slice { element: _ } => false, // Unsized
+            TypeKind::Closure { def_id: _, params: _, ret: _ } => false,
+            TypeKind::Adt { def_id: _, args: _ } => false, // Requires explicit impl
+            TypeKind::DynTrait { trait_id: _, auto_traits: _ } => false, // Unsized
+            TypeKind::Error => true, // Be permissive for error recovery
+            TypeKind::Infer(_) => false,
+            TypeKind::Param(_) => false,
+            TypeKind::Record { fields, row_var: _ } => {
+                for field in fields.iter() {
+                    if !self.type_is_copy(&field.ty) {
+                        return false;
+                    }
+                }
+                true
+            }
+            TypeKind::Ownership { qualifier: _, inner } => self.type_is_copy(inner),
+            TypeKind::Forall { params: _, body: _ } => false,
+        }
+    }
+
+    /// Check if a primitive type is Copy.
+    fn primitive_is_copy(&self, prim: &PrimitiveTy) -> bool {
+        match prim {
+            PrimitiveTy::Bool => true,
+            PrimitiveTy::Char => true,
+            PrimitiveTy::Int(_) => true,
+            PrimitiveTy::Uint(_) => true,
+            PrimitiveTy::Float(_) => true,
+            PrimitiveTy::Str => false, // str is unsized
+            PrimitiveTy::String => false, // String is heap-allocated
+            PrimitiveTy::Unit => true,
+            PrimitiveTy::Never => true,
+        }
+    }
+
+    // ========================================================================
+    // Clone Trait
+    // ========================================================================
+
+    /// Check if a type implements Clone.
+    ///
+    /// Clone types can be explicitly duplicated via `.clone()`.
+    /// Everything that is Copy is also Clone.
+    fn type_is_clone(&self, ty: &Type) -> bool {
+        // Everything that is Copy is also Clone
+        if self.type_is_copy(ty) {
+            return true;
+        }
+
+        match ty.kind() {
+            // Slices can be cloned if element is Clone
+            TypeKind::Slice { element } => self.type_is_clone(element),
+            // String is Clone
+            TypeKind::Primitive(PrimitiveTy::String) => true,
+            // ADTs might implement Clone (can't know without trait resolution)
+            TypeKind::Adt { def_id: _, args: _ } => false,
+            // Closures might implement Clone
+            TypeKind::Closure { def_id: _, params: _, ret: _ } => false,
+            // Everything else inherits from Copy check
+            _ => false,
+        }
+    }
+
+    // ========================================================================
+    // Sized Trait
+    // ========================================================================
+
+    /// Check if a type implements Sized.
+    ///
+    /// Sized types have a known size at compile time.
+    /// Unsized types: [T], str, dyn Trait
+    fn type_is_sized(&self, ty: &Type) -> bool {
+        match ty.kind() {
+            TypeKind::Slice { element: _ } => false,       // [T] is !Sized
+            TypeKind::DynTrait { trait_id: _, auto_traits: _ } => false, // dyn Trait is !Sized
+            TypeKind::Primitive(PrimitiveTy::Str) => false, // str is !Sized
+            TypeKind::Error => true, // Permissive
+            // Everything else is Sized
+            _ => true,
+        }
+    }
+
+    // ========================================================================
+    // Send Trait
+    // ========================================================================
+
+    /// Check if a type implements Send.
+    ///
+    /// Send types can be transferred to another thread.
+    fn type_is_send(&self, ty: &Type) -> bool {
+        match ty.kind() {
+            TypeKind::Primitive(_) => true,
+            TypeKind::Ref { inner, mutable: _ } => {
+                self.type_is_send(inner) && self.type_is_sync(inner)
+            }
+            TypeKind::Ptr { inner, mutable: _ } => self.type_is_send(inner),
+            TypeKind::Array { element, size: _ } => self.type_is_send(element),
+            TypeKind::Slice { element } => self.type_is_send(element),
+            TypeKind::Tuple(elements) => {
+                for elem in elements.iter() {
+                    if !self.type_is_send(elem) {
+                        return false;
+                    }
+                }
+                true
+            }
+            TypeKind::Fn { params: _, ret: _ } => true,
+            TypeKind::Never => true,
+            TypeKind::Error => true,
+            // ADTs and closures: conservative false
+            TypeKind::Adt { def_id: _, args: _ } => false,
+            TypeKind::Closure { def_id: _, params: _, ret: _ } => false,
+            TypeKind::DynTrait { trait_id: _, auto_traits: _ } => false,
+            TypeKind::Infer(_) => false,
+            TypeKind::Param(_) => false,
+            TypeKind::Range { element, inclusive: _ } => self.type_is_send(element),
+            TypeKind::Record { fields, row_var: _ } => {
+                for field in fields.iter() {
+                    if !self.type_is_send(&field.ty) {
+                        return false;
+                    }
+                }
+                true
+            }
+            TypeKind::Ownership { qualifier: _, inner } => self.type_is_send(inner),
+            TypeKind::Forall { params: _, body } => self.type_is_send(body),
+        }
+    }
+
+    // ========================================================================
+    // Sync Trait
+    // ========================================================================
+
+    /// Check if a type implements Sync.
+    ///
+    /// Sync types can be safely shared between threads via `&T`.
+    fn type_is_sync(&self, ty: &Type) -> bool {
+        match ty.kind() {
+            TypeKind::Primitive(_) => true,
+            TypeKind::Ref { inner, mutable: _ } => self.type_is_sync(inner),
+            TypeKind::Ptr { inner, mutable: _ } => self.type_is_sync(inner),
+            TypeKind::Array { element, size: _ } => self.type_is_sync(element),
+            TypeKind::Slice { element } => self.type_is_sync(element),
+            TypeKind::Tuple(elements) => {
+                for elem in elements.iter() {
+                    if !self.type_is_sync(elem) {
+                        return false;
+                    }
+                }
+                true
+            }
+            TypeKind::Fn { params: _, ret: _ } => true,
+            TypeKind::Never => true,
+            TypeKind::Error => true,
+            TypeKind::Adt { def_id: _, args: _ } => false,
+            TypeKind::Closure { def_id: _, params: _, ret: _ } => false,
+            TypeKind::DynTrait { trait_id: _, auto_traits: _ } => false,
+            TypeKind::Infer(_) => false,
+            TypeKind::Param(_) => false,
+            TypeKind::Range { element, inclusive: _ } => self.type_is_sync(element),
+            TypeKind::Record { fields, row_var: _ } => {
+                for field in fields.iter() {
+                    if !self.type_is_sync(&field.ty) {
+                        return false;
+                    }
+                }
+                true
+            }
+            TypeKind::Ownership { qualifier: _, inner } => self.type_is_sync(inner),
+            TypeKind::Forall { params: _, body } => self.type_is_sync(body),
+        }
+    }
+
+    // ========================================================================
+    // Ord Trait
+    // ========================================================================
+
+    /// Check if a type implements Ord (total ordering).
+    ///
+    /// Ord requires a total ordering where every pair of elements is comparable.
+    /// Floats don't implement Ord due to NaN.
+    fn type_is_ord(&self, ty: &Type) -> bool {
+        match ty.kind() {
+            TypeKind::Primitive(prim) => self.primitive_is_ord(prim),
+            TypeKind::Tuple(elements) => {
+                for elem in elements.iter() {
+                    if !self.type_is_ord(elem) {
+                        return false;
+                    }
+                }
+                true
+            }
+            TypeKind::Array { element, size: _ } => self.type_is_ord(element),
+            TypeKind::Slice { element } => self.type_is_ord(element),
+            TypeKind::Ref { inner, mutable: _ } => self.type_is_ord(inner),
+            _ => false,
+        }
+    }
+
+    /// Check if a primitive implements Ord.
+    fn primitive_is_ord(&self, prim: &PrimitiveTy) -> bool {
+        match prim {
+            PrimitiveTy::Bool => true,
+            PrimitiveTy::Char => true,
+            PrimitiveTy::Int(_) => true,
+            PrimitiveTy::Uint(_) => true,
+            PrimitiveTy::Float(_) => false, // NaN breaks total ordering
+            PrimitiveTy::Str => true,
+            PrimitiveTy::String => true,
+            PrimitiveTy::Unit => true,
+            PrimitiveTy::Never => true,
+        }
+    }
+
+    /// Check if a type implements PartialOrd.
+    ///
+    /// PartialOrd is weaker than Ord - allows types with NaN.
+    fn type_is_partial_ord(&self, ty: &Type) -> bool {
+        // Everything that is Ord is also PartialOrd
+        if self.type_is_ord(ty) {
+            return true;
+        }
+
+        // Floats implement PartialOrd but not Ord
+        match ty.kind() {
+            TypeKind::Primitive(PrimitiveTy::Float(_)) => true,
+            _ => false,
+        }
+    }
+
+    // ========================================================================
+    // Eq Trait
+    // ========================================================================
+
+    /// Check if a type implements Eq (reflexive equality).
+    ///
+    /// Eq requires that `x == x` for all values.
+    /// Floats don't implement Eq due to NaN != NaN.
+    fn type_is_eq(&self, ty: &Type) -> bool {
+        match ty.kind() {
+            TypeKind::Primitive(prim) => self.primitive_is_eq(prim),
+            TypeKind::Tuple(elements) => {
+                for elem in elements.iter() {
+                    if !self.type_is_eq(elem) {
+                        return false;
+                    }
+                }
+                true
+            }
+            TypeKind::Array { element, size: _ } => self.type_is_eq(element),
+            TypeKind::Slice { element } => self.type_is_eq(element),
+            TypeKind::Ref { inner, mutable: _ } => self.type_is_eq(inner),
+            _ => false,
+        }
+    }
+
+    /// Check if a primitive implements Eq.
+    fn primitive_is_eq(&self, prim: &PrimitiveTy) -> bool {
+        match prim {
+            PrimitiveTy::Bool => true,
+            PrimitiveTy::Char => true,
+            PrimitiveTy::Int(_) => true,
+            PrimitiveTy::Uint(_) => true,
+            PrimitiveTy::Float(_) => false, // NaN != NaN
+            PrimitiveTy::Str => true,
+            PrimitiveTy::String => true,
+            PrimitiveTy::Unit => true,
+            PrimitiveTy::Never => true,
+        }
+    }
+
+    /// Check if a type implements PartialEq.
+    fn type_is_partial_eq(&self, ty: &Type) -> bool {
+        // Everything that is Eq is also PartialEq
+        if self.type_is_eq(ty) {
+            return true;
+        }
+
+        // Floats implement PartialEq but not Eq
+        match ty.kind() {
+            TypeKind::Primitive(PrimitiveTy::Float(_)) => true,
+            _ => false,
+        }
+    }
+
+    // ========================================================================
+    // Hash Trait
+    // ========================================================================
+
+    /// Check if a type implements Hash.
+    ///
+    /// Hash requires that if `a == b` then `hash(a) == hash(b)`.
+    /// Floats don't implement Hash because NaN != NaN but would need same hash.
+    fn type_is_hash(&self, ty: &Type) -> bool {
+        match ty.kind() {
+            TypeKind::Primitive(prim) => self.primitive_is_hash(prim),
+            TypeKind::Tuple(elements) => {
+                for elem in elements.iter() {
+                    if !self.type_is_hash(elem) {
+                        return false;
+                    }
+                }
+                true
+            }
+            TypeKind::Array { element, size: _ } => self.type_is_hash(element),
+            TypeKind::Slice { element } => self.type_is_hash(element),
+            TypeKind::Ref { inner, mutable: _ } => self.type_is_hash(inner),
+            _ => false,
+        }
+    }
+
+    /// Check if a primitive implements Hash.
+    fn primitive_is_hash(&self, prim: &PrimitiveTy) -> bool {
+        match prim {
+            PrimitiveTy::Bool => true,
+            PrimitiveTy::Char => true,
+            PrimitiveTy::Int(_) => true,
+            PrimitiveTy::Uint(_) => true,
+            PrimitiveTy::Float(_) => false, // Can't hash floats due to NaN
+            PrimitiveTy::Str => true,
+            PrimitiveTy::String => true,
+            PrimitiveTy::Unit => true,
+            PrimitiveTy::Never => true,
+        }
+    }
+
+    // ========================================================================
+    // Default Trait
+    // ========================================================================
+
+    /// Check if a type implements Default.
+    ///
+    /// Default provides a zero/empty value for the type.
+    fn type_is_default(&self, ty: &Type) -> bool {
+        match ty.kind() {
+            TypeKind::Primitive(prim) => self.primitive_is_default(prim),
+            TypeKind::Tuple(elements) => {
+                for elem in elements.iter() {
+                    if !self.type_is_default(elem) {
+                        return false;
+                    }
+                }
+                true
+            }
+            TypeKind::Array { element, size: _ } => self.type_is_default(element),
+            _ => false,
+        }
+    }
+
+    /// Check if a primitive implements Default.
+    fn primitive_is_default(&self, prim: &PrimitiveTy) -> bool {
+        match prim {
+            PrimitiveTy::Bool => true,       // false
+            PrimitiveTy::Int(_) => true,     // 0
+            PrimitiveTy::Uint(_) => true,    // 0
+            PrimitiveTy::Float(_) => true,   // 0.0
+            PrimitiveTy::Char => true,       // '\0'
+            PrimitiveTy::Unit => true,       // ()
+            PrimitiveTy::Str => false,       // &str doesn't have Default
+            PrimitiveTy::String => true,     // String::new()
+            PrimitiveTy::Never => false,     // Never type cannot be constructed
+        }
+    }
+
+    // ========================================================================
+    // Debug/Display Traits
+    // ========================================================================
+
+    /// Check if a type implements Debug.
+    fn type_is_debug(&self, ty: &Type) -> bool {
+        match ty.kind() {
+            TypeKind::Primitive(_) => true,
+            TypeKind::Tuple(elements) => {
+                for elem in elements.iter() {
+                    if !self.type_is_debug(elem) {
+                        return false;
+                    }
+                }
+                true
+            }
+            TypeKind::Array { element, size: _ } => self.type_is_debug(element),
+            TypeKind::Slice { element } => self.type_is_debug(element),
+            TypeKind::Ref { inner, mutable: _ } => self.type_is_debug(inner),
+            TypeKind::Never => true,
+            _ => false,
+        }
+    }
+
+    /// Check if a type implements Display.
+    fn type_is_display(&self, ty: &Type) -> bool {
+        match ty.kind() {
+            TypeKind::Primitive(prim) => self.primitive_is_display(prim),
+            TypeKind::Ref { inner, mutable: _ } => self.type_is_display(inner),
+            _ => false,
+        }
+    }
+
+    /// Check if a primitive implements Display.
+    fn primitive_is_display(&self, prim: &PrimitiveTy) -> bool {
+        match prim {
+            PrimitiveTy::Bool => true,
+            PrimitiveTy::Char => true,
+            PrimitiveTy::Int(_) => true,
+            PrimitiveTy::Uint(_) => true,
+            PrimitiveTy::Float(_) => true,
+            PrimitiveTy::Str => true,
+            PrimitiveTy::String => true,
+            PrimitiveTy::Unit => false,      // () doesn't display nicely
+            PrimitiveTy::Never => false,
+        }
+    }
+
+    // ========================================================================
+    // Iterator Traits
+    // ========================================================================
+
+    /// Check if a type implements Iterator.
+    fn type_is_iterator(&self, ty: &Type) -> bool {
+        // Iterators are ADTs typically - can't know without trait resolution
+        match ty.kind() {
+            TypeKind::Range { element: _, inclusive: _ } => true, // Ranges are iterators
+            _ => false,
+        }
+    }
+
+    /// Check if a type implements IntoIterator.
+    fn type_is_into_iterator(&self, ty: &Type) -> bool {
+        // Everything that is Iterator is also IntoIterator
+        if self.type_is_iterator(ty) {
+            return true;
+        }
+
+        match ty.kind() {
+            TypeKind::Array { element: _, size: _ } => true,
+            TypeKind::Slice { element: _ } => true,
+            _ => false,
+        }
+    }
+}
+
+impl Clone for ConstraintChecker {
+    fn clone(&self) -> ConstraintChecker {
+        ConstraintChecker {}
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_primitive_is_copy() {
+        let checker = ConstraintChecker::new();
+
+        assert!(checker.type_is_copy(&Type::i32()));
+        assert!(checker.type_is_copy(&Type::bool()));
+        assert!(checker.type_is_copy(&Type::f64()));
+        assert!(checker.type_is_copy(&Type::unit()));
+    }
+
+    #[test]
+    fn test_ref_is_copy() {
+        let checker = ConstraintChecker::new();
+
+        // Shared ref is Copy
+        let shared_ref = Type::reference(Type::i32(), false);
+        assert!(checker.type_is_copy(&shared_ref));
+
+        // Mutable ref is not Copy
+        let mut_ref = Type::reference(Type::i32(), true);
+        assert!(!checker.type_is_copy(&mut_ref));
+    }
+
+    #[test]
+    fn test_string_not_copy() {
+        let checker = ConstraintChecker::new();
+
+        assert!(!checker.type_is_copy(&Type::string()));
+    }
+
+    #[test]
+    fn test_string_is_clone() {
+        let checker = ConstraintChecker::new();
+
+        assert!(checker.type_is_clone(&Type::string()));
+    }
+
+    #[test]
+    fn test_slice_not_sized() {
+        let checker = ConstraintChecker::new();
+
+        let slice = Type::slice(Type::i32());
+        assert!(!checker.type_is_sized(&slice));
+    }
+
+    #[test]
+    fn test_primitive_is_sized() {
+        let checker = ConstraintChecker::new();
+
+        assert!(checker.type_is_sized(&Type::i32()));
+        assert!(checker.type_is_sized(&Type::bool()));
+    }
+
+    #[test]
+    fn test_float_not_ord() {
+        let checker = ConstraintChecker::new();
+
+        assert!(!checker.type_is_ord(&Type::f64()));
+        assert!(checker.type_is_partial_ord(&Type::f64()));
+    }
+
+    #[test]
+    fn test_int_is_ord() {
+        let checker = ConstraintChecker::new();
+
+        assert!(checker.type_is_ord(&Type::i32()));
+    }
+
+    #[test]
+    fn test_float_not_eq() {
+        let checker = ConstraintChecker::new();
+
+        assert!(!checker.type_is_eq(&Type::f64()));
+        assert!(checker.type_is_partial_eq(&Type::f64()));
+    }
+
+    #[test]
+    fn test_int_is_eq() {
+        let checker = ConstraintChecker::new();
+
+        assert!(checker.type_is_eq(&Type::i32()));
+    }
+
+    #[test]
+    fn test_float_not_hash() {
+        let checker = ConstraintChecker::new();
+
+        assert!(!checker.type_is_hash(&Type::f64()));
+    }
+
+    #[test]
+    fn test_int_is_hash() {
+        let checker = ConstraintChecker::new();
+
+        assert!(checker.type_is_hash(&Type::i32()));
+    }
+
+    #[test]
+    fn test_int_is_default() {
+        let checker = ConstraintChecker::new();
+
+        assert!(checker.type_is_default(&Type::i32()));
+    }
+
+    #[test]
+    fn test_never_not_default() {
+        let checker = ConstraintChecker::new();
+
+        assert!(!checker.type_is_default(&Type::never()));
+    }
+
+    #[test]
+    fn test_constraint_check_success() {
+        let checker = ConstraintChecker::new();
+
+        let type_params = vec![
+            TypeParam::with_constraints(
+                "T".to_string(),
+                TyVarId::new(0),
+                vec![Constraint::from_name("Copy".to_string())],
+            ),
+        ];
+
+        let mut substitutions: HashMap<u32, Type> = HashMap::new();
+        substitutions.insert(0, Type::i32());
+
+        let result = checker.check_constraints(&type_params, &substitutions);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_constraint_check_failure() {
+        let checker = ConstraintChecker::new();
+
+        let type_params = vec![
+            TypeParam::with_constraints(
+                "T".to_string(),
+                TyVarId::new(0),
+                vec![Constraint::from_name("Copy".to_string())],
+            ),
+        ];
+
+        let mut substitutions: HashMap<u32, Type> = HashMap::new();
+        substitutions.insert(0, Type::string()); // String is not Copy
+
+        let result = checker.check_constraints(&type_params, &substitutions);
+        assert!(result.is_err());
+
+        let error = result.unwrap_err();
+        assert_eq!(error.param_name, "T");
+        assert_eq!(error.constraint.trait_name, "Copy");
+    }
+
+    #[test]
+    fn test_builtin_constraint_unknown_trait() {
+        let checker = ConstraintChecker::new();
+
+        // Unknown trait returns false conservatively
+        assert!(!checker.builtin_constraint_check(&Type::i32(), "MyCustomTrait"));
+    }
+}

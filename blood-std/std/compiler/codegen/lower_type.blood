@@ -1,0 +1,480 @@
+//! Type Lowering for LLVM Codegen
+//!
+//! This module handles conversion from Blood types to LLVM types.
+//!
+//! ## Type Representation
+//!
+//! Blood types are lowered to LLVM types as follows:
+//!
+//! | Blood Type | LLVM Type |
+//! |------------|-----------|
+//! | `bool` | `i1` |
+//! | `i8`/`u8` | `i8` |
+//! | `i16`/`u16` | `i16` |
+//! | `i32`/`u32`/`char` | `i32` |
+//! | `i64`/`u64`/`isize`/`usize` | `i64` |
+//! | `i128`/`u128` | `i128` |
+//! | `f32` | `float` |
+//! | `f64` | `double` |
+//! | `()` | `i8` (placeholder) |
+//! | `(A, B, C)` | `{ A, B, C }` (struct) |
+//! | `[T; N]` | `[N x T]` (array) |
+//! | `[T]` | `{ ptr, i64 }` (slice) |
+//! | `&T`/`*T` | `ptr` |
+//! | `str` | `{ ptr, i64 }` |
+//! | `String` | `{ ptr, i64, i64 }` |
+//! | `fn(A) -> B` | `{ ptr, ptr }` (fat pointer) |
+//! | `dyn Trait` | `{ ptr, ptr }` (data + vtable) |
+//! | Struct | `{ field1, field2, ... }` |
+//! | Enum | `{ i32, payload... }` (tagged union) |
+
+use std::collections::HashMap;
+
+use super::llvm::{
+    LLVMContextRef, LLVMTypeRef,
+};
+use super::llvm::types::{
+    void_type, i1_type, i8_type, i16_type, i32_type, i64_type, i128_type,
+    f32_type, f64_type, ptr_type, array_type, struct_type, function_type,
+    LLVMType,
+};
+use super::context::CodegenContext;
+
+use crate::hir::{DefId, Type, TypeKind, PrimitiveTy, IntTy, UintTy, FloatTy, FnSig};
+
+// ============================================================================
+// Type Lowering
+// ============================================================================
+
+/// Lower a Blood type to an LLVM type.
+///
+/// This is the main entry point for type lowering. It handles all Blood types
+/// and converts them to their LLVM representation.
+pub fn lower_type(ctx: &CodegenContext, ty: &Type) -> LLVMTypeRef {
+    let llvm_ctx = ctx.llvm_context_ref();
+
+    match ty.kind() {
+        TypeKind::Primitive(prim) => lower_primitive(llvm_ctx, prim),
+
+        TypeKind::Tuple(fields) if fields.is_empty() => {
+            // Unit type - use i8 as placeholder
+            i8_type(llvm_ctx).raw()
+        }
+
+        TypeKind::Tuple(fields) => {
+            let field_types: Vec<LLVMTypeRef> = fields.iter()
+                .map(|f| lower_type(ctx, f))
+                .collect();
+            struct_type(llvm_ctx, &field_types, false).raw()
+        }
+
+        TypeKind::Array { element, size } => {
+            let elem_type = lower_type(ctx, element);
+            array_type(elem_type, *size as u64).raw()
+        }
+
+        TypeKind::Slice { element } => {
+            // Slices are { ptr, len }
+            let ptr_ty = ptr_type(llvm_ctx, 0).raw();
+            let len_ty = i64_type(llvm_ctx).raw();
+            struct_type(llvm_ctx, &[ptr_ty, len_ty], false).raw()
+        }
+
+        TypeKind::Ref { inner, .. } | TypeKind::Ptr { inner, .. } => {
+            // References and pointers are just opaque pointers
+            ptr_type(llvm_ctx, 0).raw()
+        }
+
+        TypeKind::Adt { def_id, args } => {
+            lower_adt(ctx, *def_id, args)
+        }
+
+        TypeKind::Fn { .. } => {
+            // Function types are fat pointers: { fn_ptr, env_ptr }
+            // This allows closures with captures to be passed as fn() parameters.
+            let ptr_ty = ptr_type(llvm_ctx, 0).raw();
+            struct_type(llvm_ctx, &[ptr_ty, ptr_ty], false).raw()
+        }
+
+        TypeKind::DynTrait { .. } => {
+            // Trait object: fat pointer { data_ptr, vtable_ptr }
+            let ptr_ty = ptr_type(llvm_ctx, 0).raw();
+            struct_type(llvm_ctx, &[ptr_ty, ptr_ty], false).raw()
+        }
+
+        TypeKind::Never => {
+            // Never type - use i8 as placeholder (will never actually be used)
+            i8_type(llvm_ctx).raw()
+        }
+
+        TypeKind::Infer(_) | TypeKind::Error => {
+            // Error/unresolved types - use i8 placeholder
+            i8_type(llvm_ctx).raw()
+        }
+
+        TypeKind::Param(_) => {
+            // Generic parameters should be monomorphized before codegen
+            // Use pointer as placeholder
+            ptr_type(llvm_ctx, 0).raw()
+        }
+
+        TypeKind::Closure { .. } => {
+            // Closure: fat pointer { fn_ptr, env_ptr }
+            let ptr_ty = ptr_type(llvm_ctx, 0).raw();
+            struct_type(llvm_ctx, &[ptr_ty, ptr_ty], false).raw()
+        }
+
+        TypeKind::Range { element, .. } => {
+            // Range: { start, end } of the element type
+            let elem_ty = lower_type(ctx, element);
+            struct_type(llvm_ctx, &[elem_ty, elem_ty], false).raw()
+        }
+
+        TypeKind::Record { fields, .. } => {
+            // Record: anonymous struct with named fields
+            if fields.is_empty() {
+                i8_type(llvm_ctx).raw()
+            } else {
+                let field_types: Vec<LLVMTypeRef> = fields.iter()
+                    .map(|f| lower_type(ctx, &f.ty))
+                    .collect();
+                struct_type(llvm_ctx, &field_types, false).raw()
+            }
+        }
+
+        TypeKind::Forall { body, .. } => {
+            // Forall types should be instantiated before codegen.
+            // Lower the body type as fallback.
+            lower_type(ctx, body)
+        }
+
+        TypeKind::Ownership { inner, .. } => {
+            // Ownership qualifiers are compile-time only.
+            // Runtime representation is the same as the inner type.
+            lower_type(ctx, inner)
+        }
+    }
+}
+
+/// Lower a primitive type to LLVM.
+fn lower_primitive(llvm_ctx: LLVMContextRef, prim: &PrimitiveTy) -> LLVMTypeRef {
+    match prim {
+        PrimitiveTy::Bool => i1_type(llvm_ctx).raw(),
+        PrimitiveTy::Char => i32_type(llvm_ctx).raw(),
+
+        PrimitiveTy::Int(int_ty) => match int_ty {
+            IntTy::I8 => i8_type(llvm_ctx).raw(),
+            IntTy::I16 => i16_type(llvm_ctx).raw(),
+            IntTy::I32 => i32_type(llvm_ctx).raw(),
+            IntTy::I64 => i64_type(llvm_ctx).raw(),
+            IntTy::I128 => i128_type(llvm_ctx).raw(),
+            IntTy::Isize => i64_type(llvm_ctx).raw(),
+        },
+
+        PrimitiveTy::Uint(uint_ty) => match uint_ty {
+            UintTy::U8 => i8_type(llvm_ctx).raw(),
+            UintTy::U16 => i16_type(llvm_ctx).raw(),
+            UintTy::U32 => i32_type(llvm_ctx).raw(),
+            UintTy::U64 => i64_type(llvm_ctx).raw(),
+            UintTy::U128 => i128_type(llvm_ctx).raw(),
+            UintTy::Usize => i64_type(llvm_ctx).raw(),
+        },
+
+        PrimitiveTy::Float(FloatTy::F32) => f32_type(llvm_ctx).raw(),
+        PrimitiveTy::Float(FloatTy::F64) => f64_type(llvm_ctx).raw(),
+
+        PrimitiveTy::Str => {
+            // String slice: { ptr, len }
+            let ptr_ty = ptr_type(llvm_ctx, 0).raw();
+            let len_ty = i64_type(llvm_ctx).raw();
+            struct_type(llvm_ctx, &[ptr_ty, len_ty], false).raw()
+        }
+
+        PrimitiveTy::String => {
+            // Heap-allocated string: { ptr, len, capacity }
+            let ptr_ty = ptr_type(llvm_ctx, 0).raw();
+            let len_ty = i64_type(llvm_ctx).raw();
+            struct_type(llvm_ctx, &[ptr_ty, len_ty, len_ty], false).raw()
+        }
+
+        PrimitiveTy::Unit => {
+            // Unit type - use i8 as placeholder
+            i8_type(llvm_ctx).raw()
+        }
+
+        PrimitiveTy::Never => {
+            // Never type (!) - use i8 placeholder
+            i8_type(llvm_ctx).raw()
+        }
+    }
+}
+
+/// Lower an ADT (struct or enum) type to LLVM.
+fn lower_adt(ctx: &CodegenContext, def_id: DefId, args: &[Type]) -> LLVMTypeRef {
+    let llvm_ctx = ctx.llvm_context_ref();
+
+    // Try struct first
+    if let Some(fields) = ctx.struct_defs.get(&def_id) {
+        // Substitute type parameters with concrete type arguments
+        let field_types: Vec<LLVMTypeRef> = fields.iter()
+            .map(|f| {
+                let substituted = substitute_type_params(f, args);
+                lower_type(ctx, &substituted)
+            })
+            .collect();
+
+        if field_types.is_empty() {
+            // Unit struct - use i8 placeholder
+            i8_type(llvm_ctx).raw()
+        } else {
+            struct_type(llvm_ctx, &field_types, false).raw()
+        }
+    } else if let Some(variants) = ctx.enum_defs.get(&def_id) {
+        // Enum: { i32 tag, payload_fields... }
+        // Find the variant with the largest substituted fields
+        let mut max_variant_types: Vec<LLVMTypeRef> = Vec::new();
+        let mut max_size = 0usize;
+
+        for variant_fields in variants {
+            let mut variant_types: Vec<LLVMTypeRef> = Vec::new();
+            let mut variant_size = 0usize;
+
+            for field_ty in variant_fields {
+                let substituted = substitute_type_params(field_ty, args);
+                let llvm_ty = lower_type(ctx, &substituted);
+
+                // Approximate size by type (simplified)
+                let size = approximate_type_size(llvm_ty);
+                variant_types.push(llvm_ty);
+                variant_size += size;
+            }
+
+            if variant_size > max_size {
+                max_size = variant_size;
+                max_variant_types = variant_types;
+            }
+        }
+
+        let mut enum_fields: Vec<LLVMTypeRef> = Vec::with_capacity(1 + max_variant_types.len());
+        // Tag
+        enum_fields.push(i32_type(llvm_ctx).raw());
+        // Payload fields from largest variant
+        enum_fields.extend(max_variant_types);
+
+        if enum_fields.len() == 1 {
+            // No payload fields - just tag
+            i32_type(llvm_ctx).raw()
+        } else {
+            struct_type(llvm_ctx, &enum_fields, false).raw()
+        }
+    } else {
+        // Unknown ADT - use pointer placeholder
+        ptr_type(llvm_ctx, 0).raw()
+    }
+}
+
+/// Approximate the size of an LLVM type in bits (for enum layout calculation).
+fn approximate_type_size(ty: LLVMTypeRef) -> usize {
+    let llvm_ty = LLVMType::from_raw(ty);
+
+    if llvm_ty.is_integer() {
+        llvm_ty.int_width() as usize
+    } else if llvm_ty.is_float() {
+        64  // Conservative estimate
+    } else if llvm_ty.is_pointer() {
+        64  // Pointer size
+    } else if llvm_ty.is_struct() {
+        llvm_ty.struct_element_count() as usize * 64  // Conservative estimate
+    } else if llvm_ty.is_array() {
+        llvm_ty.array_length() as usize * 64  // Conservative estimate
+    } else {
+        64  // Default
+    }
+}
+
+// ============================================================================
+// Type Parameter Substitution
+// ============================================================================
+
+/// Substitute type parameters in a type with concrete type arguments.
+///
+/// This is used for monomorphizing generic types during codegen.
+/// Type parameters are indexed positionally, so `Param(0)` gets args[0], etc.
+pub fn substitute_type_params(ty: &Type, args: &[Type]) -> Type {
+    match ty.kind() {
+        TypeKind::Param(idx) => {
+            // Substitute type parameter with concrete argument
+            if let Some(arg) = args.get(idx.0 as usize) {
+                arg.clone()
+            } else {
+                ty.clone()
+            }
+        }
+
+        TypeKind::Tuple(fields) => {
+            let substituted: Vec<Type> = fields.iter()
+                .map(|f| substitute_type_params(f, args))
+                .collect();
+            Type::tuple(substituted)
+        }
+
+        TypeKind::Array { element, size } => {
+            let substituted = substitute_type_params(element, args);
+            Type::array(substituted, *size)
+        }
+
+        TypeKind::Slice { element } => {
+            let substituted = substitute_type_params(element, args);
+            Type::slice(substituted)
+        }
+
+        TypeKind::Ref { inner, mutable } => {
+            let substituted = substitute_type_params(inner, args);
+            Type::reference(substituted, *mutable)
+        }
+
+        TypeKind::Ptr { inner, mutable } => {
+            let substituted = substitute_type_params(inner, args);
+            Type::ptr(substituted, *mutable)
+        }
+
+        TypeKind::Adt { def_id, args: inner_args } => {
+            // Recursively substitute in the ADT's own type arguments
+            let substituted_args: Vec<Type> = inner_args.iter()
+                .map(|a| substitute_type_params(a, args))
+                .collect();
+            Type::adt(*def_id, substituted_args)
+        }
+
+        TypeKind::Fn { params, ret, effects } => {
+            let substituted_params: Vec<Type> = params.iter()
+                .map(|p| substitute_type_params(p, args))
+                .collect();
+            let substituted_ret = substitute_type_params(ret, args);
+            let substituted_effects: Vec<crate::hir::FnEffect> = effects.iter()
+                .map(|eff| crate::hir::FnEffect {
+                    def_id: eff.def_id,
+                    type_args: eff.type_args.iter()
+                        .map(|ty| substitute_type_params(ty, args))
+                        .collect(),
+                })
+                .collect();
+            Type::function_with_effects(substituted_params, substituted_ret, substituted_effects)
+        }
+
+        // All other types return as-is
+        _ => ty.clone(),
+    }
+}
+
+// ============================================================================
+// Function Type Creation
+// ============================================================================
+
+/// Create an LLVM function type from a Blood function signature.
+///
+/// Returns void function type if return is unit, otherwise returns-valued function.
+pub fn fn_type_from_sig(ctx: &CodegenContext, sig: &FnSig) -> LLVMTypeRef {
+    let llvm_ctx = ctx.llvm_context_ref();
+
+    let param_types: Vec<LLVMTypeRef> = sig.inputs.iter()
+        .map(|p| lower_type(ctx, p))
+        .collect();
+
+    if sig.output.is_unit() {
+        let void_ty = void_type(llvm_ctx).raw();
+        function_type(void_ty, &param_types, false).raw()
+    } else {
+        let ret_type = lower_type(ctx, &sig.output);
+        function_type(ret_type, &param_types, false).raw()
+    }
+}
+
+/// Create an LLVM function type for a function with an environment pointer.
+///
+/// This is used for closures and functions that need to receive an environment
+/// as their first argument (for captured variables).
+pub fn fn_type_with_env(ctx: &CodegenContext, sig: &FnSig) -> LLVMTypeRef {
+    let llvm_ctx = ctx.llvm_context_ref();
+
+    let mut param_types: Vec<LLVMTypeRef> = Vec::with_capacity(sig.inputs.len() + 1);
+
+    // Environment pointer as first argument
+    param_types.push(ptr_type(llvm_ctx, 0).raw());
+
+    // Regular parameters
+    for p in &sig.inputs {
+        param_types.push(lower_type(ctx, p));
+    }
+
+    if sig.output.is_unit() {
+        let void_ty = void_type(llvm_ctx).raw();
+        function_type(void_ty, &param_types, false).raw()
+    } else {
+        let ret_type = lower_type(ctx, &sig.output);
+        function_type(ret_type, &param_types, false).raw()
+    }
+}
+
+// ============================================================================
+// Type Utilities
+// ============================================================================
+
+/// Check if a type is zero-sized (e.g., unit, empty struct).
+pub fn is_zero_sized_type(ctx: &CodegenContext, ty: &Type) -> bool {
+    match ty.kind() {
+        TypeKind::Tuple(fields) if fields.is_empty() => true,
+        TypeKind::Primitive(PrimitiveTy::Unit) => true,
+        TypeKind::Adt { def_id, .. } => {
+            if let Some(fields) = ctx.struct_defs.get(def_id) {
+                fields.is_empty()
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
+
+/// Get the LLVM type for a generational reference.
+///
+/// Generational references are represented as:
+/// `{ ptr, i32 }` - pointer + generation counter
+pub fn genref_type(ctx: &CodegenContext) -> LLVMTypeRef {
+    let llvm_ctx = ctx.llvm_context_ref();
+    let ptr_ty = ptr_type(llvm_ctx, 0).raw();
+    let gen_ty = i32_type(llvm_ctx).raw();
+    struct_type(llvm_ctx, &[ptr_ty, gen_ty], false).raw()
+}
+
+/// Get the LLVM type for an evidence pointer.
+///
+/// Evidence pointers are opaque pointers to the evidence vector.
+pub fn evidence_ptr_type(ctx: &CodegenContext) -> LLVMTypeRef {
+    ptr_type(ctx.llvm_context_ref(), 0).raw()
+}
+
+/// Get the LLVM type for a continuation.
+///
+/// Continuations are represented as opaque pointers to runtime structures.
+pub fn continuation_type(ctx: &CodegenContext) -> LLVMTypeRef {
+    ptr_type(ctx.llvm_context_ref(), 0).raw()
+}
+
+/// Get the LLVM type for a vtable.
+///
+/// Vtables are arrays of function pointers.
+pub fn vtable_type(ctx: &CodegenContext, num_methods: usize) -> LLVMTypeRef {
+    let llvm_ctx = ctx.llvm_context_ref();
+    let fn_ptr_ty = ptr_type(llvm_ctx, 0).raw();
+    array_type(fn_ptr_ty, num_methods as u64).raw()
+}
+
+/// Get the LLVM type for a trait object.
+///
+/// Trait objects are fat pointers: `{ data_ptr, vtable_ptr }`
+pub fn dyn_trait_type(ctx: &CodegenContext) -> LLVMTypeRef {
+    let llvm_ctx = ctx.llvm_context_ref();
+    let ptr_ty = ptr_type(llvm_ctx, 0).raw();
+    struct_type(llvm_ctx, &[ptr_ty, ptr_ty], false).raw()
+}

@@ -1,0 +1,1167 @@
+/// AST Canonicalization Module
+///
+/// Transforms AST into canonical form for content addressing.
+///
+/// # Canonicalization Steps
+///
+/// 1. **De Bruijn Indexing**: Replace variable names with position indices
+/// 2. **Dependency Resolution**: Replace name references with content hashes
+/// 3. **Type Normalization**: Normalize type expressions
+/// 4. **Effect Row Sorting**: Sort effects lexicographically by hash
+/// 5. **Metadata Stripping**: Remove comments, whitespace, source locations
+///
+/// # De Bruijn Indices
+///
+/// ```text
+/// // Source
+/// fn add(x, y) { x + y }
+///
+/// // Canonicalized
+/// fn #0(#0, #1) { #0 + #1 }
+/// ```
+///
+/// This makes `add(x, y) = x + y` and `add(a, b) = a + b` produce identical hashes.
+
+use std.collections::HashMap;
+use super.hash::{ContentHash, ContentHasher};
+
+// ============================================================================
+// Type Aliases
+// ============================================================================
+
+/// Effect definition ID.
+pub type EffectId = u32;
+
+/// Definition ID for external references.
+pub type DefId = u32;
+
+// ============================================================================
+// Node Type Tags
+// ============================================================================
+
+/// Tags for serialization of canonical AST nodes.
+mod tags {
+    pub const INT_LIT: u8 = 0x01;
+    pub const FLOAT_LIT: u8 = 0x02;
+    pub const STRING_LIT: u8 = 0x03;
+    pub const BOOL_LIT: u8 = 0x04;
+    pub const LOCAL_VAR: u8 = 0x05;
+    pub const TYPE_VAR: u8 = 0x06;
+    pub const DEF_REF: u8 = 0x07;
+    pub const BUILTIN_REF: u8 = 0x08;
+    pub const LAMBDA: u8 = 0x10;
+    pub const APPLY: u8 = 0x11;
+    pub const LET: u8 = 0x12;
+    pub const IF_THEN_ELSE: u8 = 0x13;
+    pub const TYPE_ARROW: u8 = 0x20;
+    pub const TYPE_APP: u8 = 0x21;
+    pub const TYPE_RECORD: u8 = 0x22;
+    pub const PERFORM: u8 = 0x30;
+    pub const HANDLE: u8 = 0x31;
+    pub const RESUME: u8 = 0x32;
+    pub const STRUCT: u8 = 0x40;
+    pub const ENUM: u8 = 0x41;
+    pub const MATCH: u8 = 0x42;
+    pub const UNIT: u8 = 0x50;
+    pub const TUPLE: u8 = 0x51;
+    pub const BLOCK: u8 = 0x52;
+    pub const BINOP: u8 = 0x53;
+    pub const UNOP: u8 = 0x54;
+    pub const RETURN: u8 = 0x55;
+    pub const BREAK: u8 = 0x56;
+    pub const CONTINUE: u8 = 0x57;
+    pub const LOOP: u8 = 0x58;
+    pub const WHILE: u8 = 0x59;
+    pub const ARRAY: u8 = 0x5a;
+    pub const INDEX: u8 = 0x5b;
+    pub const FIELD: u8 = 0x5c;
+    pub const ASSIGN: u8 = 0x5d;
+}
+
+// ============================================================================
+// De Bruijn Index
+// ============================================================================
+
+/// De Bruijn index for local variables.
+///
+/// Index 0 refers to the innermost binding, increasing outward.
+///
+/// # Example
+///
+/// ```text
+/// fn(x, y) { fn(z) { x + z } }
+///           ^       ^   ^
+///           |       |   DeBruijnIndex(0) - refers to z (innermost)
+///           |       DeBruijnIndex(2) - refers to x (2 levels out)
+///           introduces a new binding level
+/// ```
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DeBruijnIndex {
+    index: u32,
+}
+
+impl DeBruijnIndex {
+    /// Create a new de Bruijn index.
+    pub fn new(index: u32) -> DeBruijnIndex {
+        DeBruijnIndex { index }
+    }
+
+    /// Get the index value.
+    pub fn index(&self) -> u32 {
+        self.index
+    }
+}
+
+impl std.fmt::Debug for DeBruijnIndex {
+    fn fmt(&self, f: &mut std.fmt::Formatter) -> std.fmt::Result {
+        write!(f, "#{}", self.index)
+    }
+}
+
+// ============================================================================
+// Field and Variant IDs
+// ============================================================================
+
+/// A field ID for struct/record fields (de Bruijn indexed).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct FieldId {
+    index: u32,
+}
+
+impl FieldId {
+    /// Create a new field ID.
+    pub fn new(index: u32) -> FieldId {
+        FieldId { index }
+    }
+
+    /// Get the index value.
+    pub fn index(&self) -> u32 {
+        self.index
+    }
+}
+
+impl std.fmt::Debug for FieldId {
+    fn fmt(&self, f: &mut std.fmt::Formatter) -> std.fmt::Result {
+        write!(f, "field#{}", self.index)
+    }
+}
+
+/// A variant ID for enum variants.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct VariantId {
+    index: u32,
+}
+
+impl VariantId {
+    /// Create a new variant ID.
+    pub fn new(index: u32) -> VariantId {
+        VariantId { index }
+    }
+
+    /// Get the index value.
+    pub fn index(&self) -> u32 {
+        self.index
+    }
+}
+
+impl std.fmt::Debug for VariantId {
+    fn fmt(&self, f: &mut std.fmt::Formatter) -> std.fmt::Result {
+        write!(f, "variant#{}", self.index)
+    }
+}
+
+// ============================================================================
+// Builtin IDs
+// ============================================================================
+
+/// A builtin operation ID.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BuiltinId {
+    id: u16,
+}
+
+impl BuiltinId {
+    // Integer operations
+    pub const INT_ADD: BuiltinId = BuiltinId { id: 0x0001 };
+    pub const INT_SUB: BuiltinId = BuiltinId { id: 0x0002 };
+    pub const INT_MUL: BuiltinId = BuiltinId { id: 0x0003 };
+    pub const INT_DIV: BuiltinId = BuiltinId { id: 0x0004 };
+    pub const INT_MOD: BuiltinId = BuiltinId { id: 0x0005 };
+    pub const INT_NEG: BuiltinId = BuiltinId { id: 0x0006 };
+
+    // Comparison
+    pub const EQ: BuiltinId = BuiltinId { id: 0x0010 };
+    pub const NE: BuiltinId = BuiltinId { id: 0x0011 };
+    pub const LT: BuiltinId = BuiltinId { id: 0x0012 };
+    pub const LE: BuiltinId = BuiltinId { id: 0x0013 };
+    pub const GT: BuiltinId = BuiltinId { id: 0x0014 };
+    pub const GE: BuiltinId = BuiltinId { id: 0x0015 };
+
+    // Boolean operations
+    pub const BOOL_AND: BuiltinId = BuiltinId { id: 0x0020 };
+    pub const BOOL_OR: BuiltinId = BuiltinId { id: 0x0021 };
+    pub const BOOL_NOT: BuiltinId = BuiltinId { id: 0x0022 };
+
+    // Bitwise operations
+    pub const BIT_AND: BuiltinId = BuiltinId { id: 0x0030 };
+    pub const BIT_OR: BuiltinId = BuiltinId { id: 0x0031 };
+    pub const BIT_XOR: BuiltinId = BuiltinId { id: 0x0032 };
+    pub const BIT_NOT: BuiltinId = BuiltinId { id: 0x0033 };
+    pub const SHL: BuiltinId = BuiltinId { id: 0x0034 };
+    pub const SHR: BuiltinId = BuiltinId { id: 0x0035 };
+
+    /// Create a new builtin ID.
+    pub fn new(id: u16) -> BuiltinId {
+        BuiltinId { id }
+    }
+
+    /// Get the raw ID value.
+    pub fn value(&self) -> u16 {
+        self.id
+    }
+}
+
+impl std.fmt::Debug for BuiltinId {
+    fn fmt(&self, f: &mut std.fmt::Formatter) -> std.fmt::Result {
+        write!(f, "builtin#{:04x}", self.id)
+    }
+}
+
+// ============================================================================
+// Binary and Unary Operators
+// ============================================================================
+
+/// Binary operator for canonical AST.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CanonicalBinOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    And,
+    Or,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
+}
+
+impl CanonicalBinOp {
+    /// Get the serialization tag for this operator.
+    fn tag(&self) -> u8 {
+        match self {
+            CanonicalBinOp::Add => 0,
+            CanonicalBinOp::Sub => 1,
+            CanonicalBinOp::Mul => 2,
+            CanonicalBinOp::Div => 3,
+            CanonicalBinOp::Mod => 4,
+            CanonicalBinOp::Eq => 5,
+            CanonicalBinOp::Ne => 6,
+            CanonicalBinOp::Lt => 7,
+            CanonicalBinOp::Le => 8,
+            CanonicalBinOp::Gt => 9,
+            CanonicalBinOp::Ge => 10,
+            CanonicalBinOp::And => 11,
+            CanonicalBinOp::Or => 12,
+            CanonicalBinOp::BitAnd => 13,
+            CanonicalBinOp::BitOr => 14,
+            CanonicalBinOp::BitXor => 15,
+            CanonicalBinOp::Shl => 16,
+            CanonicalBinOp::Shr => 17,
+        }
+    }
+}
+
+impl std.fmt::Debug for CanonicalBinOp {
+    fn fmt(&self, f: &mut std.fmt::Formatter) -> std.fmt::Result {
+        let name = match self {
+            CanonicalBinOp::Add => "+",
+            CanonicalBinOp::Sub => "-",
+            CanonicalBinOp::Mul => "*",
+            CanonicalBinOp::Div => "/",
+            CanonicalBinOp::Mod => "%",
+            CanonicalBinOp::Eq => "==",
+            CanonicalBinOp::Ne => "!=",
+            CanonicalBinOp::Lt => "<",
+            CanonicalBinOp::Le => "<=",
+            CanonicalBinOp::Gt => ">",
+            CanonicalBinOp::Ge => ">=",
+            CanonicalBinOp::And => "&&",
+            CanonicalBinOp::Or => "||",
+            CanonicalBinOp::BitAnd => "&",
+            CanonicalBinOp::BitOr => "|",
+            CanonicalBinOp::BitXor => "^",
+            CanonicalBinOp::Shl => "<<",
+            CanonicalBinOp::Shr => ">>",
+        };
+        write!(f, "{}", name)
+    }
+}
+
+/// Unary operator for canonical AST.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CanonicalUnOp {
+    Neg,
+    Not,
+    BitNot,
+}
+
+impl CanonicalUnOp {
+    /// Get the serialization tag for this operator.
+    fn tag(&self) -> u8 {
+        match self {
+            CanonicalUnOp::Neg => 0,
+            CanonicalUnOp::Not => 1,
+            CanonicalUnOp::BitNot => 2,
+        }
+    }
+}
+
+impl std.fmt::Debug for CanonicalUnOp {
+    fn fmt(&self, f: &mut std.fmt::Formatter) -> std.fmt::Result {
+        let name = match self {
+            CanonicalUnOp::Neg => "-",
+            CanonicalUnOp::Not => "!",
+            CanonicalUnOp::BitNot => "~",
+        };
+        write!(f, "{}", name)
+    }
+}
+
+// ============================================================================
+// Canonical AST
+// ============================================================================
+
+/// Canonicalized AST node.
+///
+/// All local names are replaced with de Bruijn indices.
+/// All external references are replaced with content hashes.
+#[derive(Clone, PartialEq)]
+pub enum CanonicalAST {
+    // Literals
+    IntLit(i128),
+    FloatLit(f64),
+    StringLit(Vec<u8>),
+    BoolLit(bool),
+    Unit,
+
+    // Variables (de Bruijn indexed)
+    LocalVar(DeBruijnIndex),
+    TypeVar(u32),
+
+    // References (by hash)
+    DefRef(ContentHash),
+    BuiltinRef(BuiltinId),
+
+    // Expressions
+    Lambda {
+        param_count: u32,
+        body: Box<CanonicalAST>,
+    },
+    Apply {
+        func: Box<CanonicalAST>,
+        args: Vec<CanonicalAST>,
+    },
+    Let {
+        value: Box<CanonicalAST>,
+        body: Box<CanonicalAST>,
+    },
+    IfThenElse {
+        cond: Box<CanonicalAST>,
+        then_branch: Box<CanonicalAST>,
+        else_branch: Box<CanonicalAST>,
+    },
+    Block(Vec<CanonicalAST>),
+    BinOp {
+        op: CanonicalBinOp,
+        lhs: Box<CanonicalAST>,
+        rhs: Box<CanonicalAST>,
+    },
+    UnOp {
+        op: CanonicalUnOp,
+        operand: Box<CanonicalAST>,
+    },
+
+    // Control flow
+    Return(Option<Box<CanonicalAST>>),
+    Break(Option<Box<CanonicalAST>>),
+    Continue,
+    Loop(Box<CanonicalAST>),
+    While {
+        cond: Box<CanonicalAST>,
+        body: Box<CanonicalAST>,
+    },
+
+    // Data structures
+    Tuple(Vec<CanonicalAST>),
+    Array(Vec<CanonicalAST>),
+    Struct {
+        fields: Vec<(FieldId, CanonicalAST)>,
+    },
+    Enum {
+        variant: VariantId,
+        payload: Box<CanonicalAST>,
+    },
+    Index {
+        base: Box<CanonicalAST>,
+        index: Box<CanonicalAST>,
+    },
+    Field {
+        base: Box<CanonicalAST>,
+        field: FieldId,
+    },
+    Assign {
+        target: Box<CanonicalAST>,
+        value: Box<CanonicalAST>,
+    },
+
+    // Pattern matching
+    Match {
+        scrutinee: Box<CanonicalAST>,
+        arms: Vec<CanonicalMatchArm>,
+    },
+
+    // Types
+    TypeArrow {
+        params: Vec<CanonicalAST>,
+        ret: Box<CanonicalAST>,
+        effects: CanonicalEffectRow,
+    },
+    TypeApp {
+        constructor: Box<CanonicalAST>,
+        args: Vec<CanonicalAST>,
+    },
+    TypeRecord {
+        fields: Vec<(FieldId, CanonicalAST)>,
+    },
+
+    // Effects
+    Perform {
+        effect: ContentHash,
+        op_index: u32,
+        args: Vec<CanonicalAST>,
+    },
+    Handle {
+        body: Box<CanonicalAST>,
+        handler: CanonicalHandler,
+    },
+    Resume(Box<CanonicalAST>),
+}
+
+impl CanonicalAST {
+    /// Serialize to bytes for hashing.
+    pub fn serialize(&self, hasher: &mut ContentHasher) {
+        match self {
+            CanonicalAST::IntLit(n) => {
+                hasher.update_u8(tags::INT_LIT);
+                hasher.update_i128(*n);
+            }
+            CanonicalAST::FloatLit(f) => {
+                hasher.update_u8(tags::FLOAT_LIT);
+                hasher.update_f64(*f);
+            }
+            CanonicalAST::StringLit(s) => {
+                hasher.update_u8(tags::STRING_LIT);
+                hasher.update_u32(s.len() as u32);
+                hasher.update(s);
+            }
+            CanonicalAST::BoolLit(b) => {
+                hasher.update_u8(tags::BOOL_LIT);
+                hasher.update_u8(if *b { 1 } else { 0 });
+            }
+            CanonicalAST::Unit => {
+                hasher.update_u8(tags::UNIT);
+            }
+            CanonicalAST::LocalVar(idx) => {
+                hasher.update_u8(tags::LOCAL_VAR);
+                hasher.update_u32(idx.index());
+            }
+            CanonicalAST::TypeVar(idx) => {
+                hasher.update_u8(tags::TYPE_VAR);
+                hasher.update_u32(*idx);
+            }
+            CanonicalAST::DefRef(hash) => {
+                hasher.update_u8(tags::DEF_REF);
+                hasher.update_hash(hash);
+            }
+            CanonicalAST::BuiltinRef(id) => {
+                hasher.update_u8(tags::BUILTIN_REF);
+                hasher.update_u16(id.value());
+            }
+            CanonicalAST::Lambda { param_count, body } => {
+                hasher.update_u8(tags::LAMBDA);
+                hasher.update_u32(*param_count);
+                body.serialize(hasher);
+            }
+            CanonicalAST::Apply { func, args } => {
+                hasher.update_u8(tags::APPLY);
+                func.serialize(hasher);
+                hasher.update_u32(args.len() as u32);
+                for arg in args {
+                    arg.serialize(hasher);
+                }
+            }
+            CanonicalAST::Let { value, body } => {
+                hasher.update_u8(tags::LET);
+                value.serialize(hasher);
+                body.serialize(hasher);
+            }
+            CanonicalAST::IfThenElse { cond, then_branch, else_branch } => {
+                hasher.update_u8(tags::IF_THEN_ELSE);
+                cond.serialize(hasher);
+                then_branch.serialize(hasher);
+                else_branch.serialize(hasher);
+            }
+            CanonicalAST::Block(stmts) => {
+                hasher.update_u8(tags::BLOCK);
+                hasher.update_u32(stmts.len() as u32);
+                for stmt in stmts {
+                    stmt.serialize(hasher);
+                }
+            }
+            CanonicalAST::BinOp { op, lhs, rhs } => {
+                hasher.update_u8(tags::BINOP);
+                hasher.update_u8(op.tag());
+                lhs.serialize(hasher);
+                rhs.serialize(hasher);
+            }
+            CanonicalAST::UnOp { op, operand } => {
+                hasher.update_u8(tags::UNOP);
+                hasher.update_u8(op.tag());
+                operand.serialize(hasher);
+            }
+            CanonicalAST::Return(value) => {
+                hasher.update_u8(tags::RETURN);
+                match value {
+                    Some(v) => {
+                        hasher.update_u8(1);
+                        v.serialize(hasher);
+                    }
+                    None => hasher.update_u8(0),
+                }
+            }
+            CanonicalAST::Break(value) => {
+                hasher.update_u8(tags::BREAK);
+                match value {
+                    Some(v) => {
+                        hasher.update_u8(1);
+                        v.serialize(hasher);
+                    }
+                    None => hasher.update_u8(0),
+                }
+            }
+            CanonicalAST::Continue => {
+                hasher.update_u8(tags::CONTINUE);
+            }
+            CanonicalAST::Loop(body) => {
+                hasher.update_u8(tags::LOOP);
+                body.serialize(hasher);
+            }
+            CanonicalAST::While { cond, body } => {
+                hasher.update_u8(tags::WHILE);
+                cond.serialize(hasher);
+                body.serialize(hasher);
+            }
+            CanonicalAST::Tuple(elems) => {
+                hasher.update_u8(tags::TUPLE);
+                hasher.update_u32(elems.len() as u32);
+                for elem in elems {
+                    elem.serialize(hasher);
+                }
+            }
+            CanonicalAST::Array(elems) => {
+                hasher.update_u8(tags::ARRAY);
+                hasher.update_u32(elems.len() as u32);
+                for elem in elems {
+                    elem.serialize(hasher);
+                }
+            }
+            CanonicalAST::Struct { fields } => {
+                hasher.update_u8(tags::STRUCT);
+                hasher.update_u32(fields.len() as u32);
+                for (id, value) in fields {
+                    hasher.update_u32(id.index());
+                    value.serialize(hasher);
+                }
+            }
+            CanonicalAST::Enum { variant, payload } => {
+                hasher.update_u8(tags::ENUM);
+                hasher.update_u32(variant.index());
+                payload.serialize(hasher);
+            }
+            CanonicalAST::Index { base, index } => {
+                hasher.update_u8(tags::INDEX);
+                base.serialize(hasher);
+                index.serialize(hasher);
+            }
+            CanonicalAST::Field { base, field } => {
+                hasher.update_u8(tags::FIELD);
+                base.serialize(hasher);
+                hasher.update_u32(field.index());
+            }
+            CanonicalAST::Assign { target, value } => {
+                hasher.update_u8(tags::ASSIGN);
+                target.serialize(hasher);
+                value.serialize(hasher);
+            }
+            CanonicalAST::Match { scrutinee, arms } => {
+                hasher.update_u8(tags::MATCH);
+                scrutinee.serialize(hasher);
+                hasher.update_u32(arms.len() as u32);
+                for arm in arms {
+                    arm.serialize(hasher);
+                }
+            }
+            CanonicalAST::TypeArrow { params, ret, effects } => {
+                hasher.update_u8(tags::TYPE_ARROW);
+                hasher.update_u32(params.len() as u32);
+                for param in params {
+                    param.serialize(hasher);
+                }
+                ret.serialize(hasher);
+                effects.serialize(hasher);
+            }
+            CanonicalAST::TypeApp { constructor, args } => {
+                hasher.update_u8(tags::TYPE_APP);
+                constructor.serialize(hasher);
+                hasher.update_u32(args.len() as u32);
+                for arg in args {
+                    arg.serialize(hasher);
+                }
+            }
+            CanonicalAST::TypeRecord { fields } => {
+                hasher.update_u8(tags::TYPE_RECORD);
+                hasher.update_u32(fields.len() as u32);
+                for (id, ty) in fields {
+                    hasher.update_u32(id.index());
+                    ty.serialize(hasher);
+                }
+            }
+            CanonicalAST::Perform { effect, op_index, args } => {
+                hasher.update_u8(tags::PERFORM);
+                hasher.update_hash(effect);
+                hasher.update_u32(*op_index);
+                hasher.update_u32(args.len() as u32);
+                for arg in args {
+                    arg.serialize(hasher);
+                }
+            }
+            CanonicalAST::Handle { body, handler } => {
+                hasher.update_u8(tags::HANDLE);
+                body.serialize(hasher);
+                handler.serialize(hasher);
+            }
+            CanonicalAST::Resume(value) => {
+                hasher.update_u8(tags::RESUME);
+                value.serialize(hasher);
+            }
+        }
+    }
+
+    /// Compute the content hash for this AST.
+    pub fn compute_hash(&self) -> ContentHash {
+        let mut hasher = ContentHasher::new();
+        self.serialize(&mut hasher);
+        hasher.finalize()
+    }
+}
+
+impl std.fmt::Debug for CanonicalAST {
+    fn fmt(&self, f: &mut std.fmt::Formatter) -> std.fmt::Result {
+        match self {
+            CanonicalAST::IntLit(n) => write!(f, "IntLit({})", n),
+            CanonicalAST::FloatLit(n) => write!(f, "FloatLit({})", n),
+            CanonicalAST::StringLit(s) => write!(f, "StringLit({:?})", s),
+            CanonicalAST::BoolLit(b) => write!(f, "BoolLit({})", b),
+            CanonicalAST::Unit => write!(f, "Unit"),
+            CanonicalAST::LocalVar(idx) => write!(f, "LocalVar({:?})", idx),
+            CanonicalAST::TypeVar(idx) => write!(f, "TypeVar({})", idx),
+            CanonicalAST::DefRef(hash) => write!(f, "DefRef({})", hash),
+            CanonicalAST::BuiltinRef(id) => write!(f, "BuiltinRef({:?})", id),
+            CanonicalAST::Lambda { param_count, body } => {
+                write!(f, "Lambda({}, {:?})", param_count, body)
+            }
+            CanonicalAST::Apply { func, args } => {
+                write!(f, "Apply({:?}, {:?})", func, args)
+            }
+            CanonicalAST::Let { value, body } => {
+                write!(f, "Let({:?}, {:?})", value, body)
+            }
+            CanonicalAST::IfThenElse { cond, then_branch, else_branch } => {
+                write!(f, "IfThenElse({:?}, {:?}, {:?})", cond, then_branch, else_branch)
+            }
+            CanonicalAST::Block(stmts) => write!(f, "Block({:?})", stmts),
+            CanonicalAST::BinOp { op, lhs, rhs } => {
+                write!(f, "BinOp({:?}, {:?}, {:?})", op, lhs, rhs)
+            }
+            CanonicalAST::UnOp { op, operand } => {
+                write!(f, "UnOp({:?}, {:?})", op, operand)
+            }
+            CanonicalAST::Return(v) => write!(f, "Return({:?})", v),
+            CanonicalAST::Break(v) => write!(f, "Break({:?})", v),
+            CanonicalAST::Continue => write!(f, "Continue"),
+            CanonicalAST::Loop(body) => write!(f, "Loop({:?})", body),
+            CanonicalAST::While { cond, body } => write!(f, "While({:?}, {:?})", cond, body),
+            CanonicalAST::Tuple(elems) => write!(f, "Tuple({:?})", elems),
+            CanonicalAST::Array(elems) => write!(f, "Array({:?})", elems),
+            CanonicalAST::Struct { fields } => write!(f, "Struct({:?})", fields),
+            CanonicalAST::Enum { variant, payload } => {
+                write!(f, "Enum({:?}, {:?})", variant, payload)
+            }
+            CanonicalAST::Index { base, index } => write!(f, "Index({:?}, {:?})", base, index),
+            CanonicalAST::Field { base, field } => write!(f, "Field({:?}, {:?})", base, field),
+            CanonicalAST::Assign { target, value } => {
+                write!(f, "Assign({:?}, {:?})", target, value)
+            }
+            CanonicalAST::Match { scrutinee, arms } => {
+                write!(f, "Match({:?}, {:?})", scrutinee, arms)
+            }
+            CanonicalAST::TypeArrow { params, ret, effects } => {
+                write!(f, "TypeArrow({:?}, {:?}, {:?})", params, ret, effects)
+            }
+            CanonicalAST::TypeApp { constructor, args } => {
+                write!(f, "TypeApp({:?}, {:?})", constructor, args)
+            }
+            CanonicalAST::TypeRecord { fields } => write!(f, "TypeRecord({:?})", fields),
+            CanonicalAST::Perform { effect, op_index, args } => {
+                write!(f, "Perform({}, {}, {:?})", effect, op_index, args)
+            }
+            CanonicalAST::Handle { body, handler } => {
+                write!(f, "Handle({:?}, {:?})", body, handler)
+            }
+            CanonicalAST::Resume(v) => write!(f, "Resume({:?})", v),
+        }
+    }
+}
+
+// ============================================================================
+// Match Arms and Patterns
+// ============================================================================
+
+/// A canonicalized match arm.
+#[derive(Clone, PartialEq)]
+pub struct CanonicalMatchArm {
+    pub pattern: CanonicalPattern,
+    pub guard: Option<Box<CanonicalAST>>,
+    pub body: Box<CanonicalAST>,
+}
+
+impl CanonicalMatchArm {
+    /// Serialize the match arm for hashing.
+    pub fn serialize(&self, hasher: &mut ContentHasher) {
+        self.pattern.serialize(hasher);
+        match &self.guard {
+            Some(guard) => {
+                hasher.update_u8(1);
+                guard.serialize(hasher);
+            }
+            None => hasher.update_u8(0),
+        }
+        self.body.serialize(hasher);
+    }
+}
+
+impl std.fmt::Debug for CanonicalMatchArm {
+    fn fmt(&self, f: &mut std.fmt::Formatter) -> std.fmt::Result {
+        write!(f, "Arm({:?}, {:?}, {:?})", self.pattern, self.guard, self.body)
+    }
+}
+
+/// A canonicalized pattern.
+#[derive(Clone, PartialEq)]
+pub enum CanonicalPattern {
+    Wildcard,
+    Binding(DeBruijnIndex),
+    Literal(Box<CanonicalAST>),
+    Tuple(Vec<CanonicalPattern>),
+    Struct {
+        fields: Vec<(FieldId, CanonicalPattern)>,
+    },
+    Enum {
+        variant: VariantId,
+        payload: Option<Box<CanonicalPattern>>,
+    },
+}
+
+impl CanonicalPattern {
+    /// Serialize the pattern for hashing.
+    pub fn serialize(&self, hasher: &mut ContentHasher) {
+        match self {
+            CanonicalPattern::Wildcard => hasher.update_u8(0),
+            CanonicalPattern::Binding(idx) => {
+                hasher.update_u8(1);
+                hasher.update_u32(idx.index());
+            }
+            CanonicalPattern::Literal(lit) => {
+                hasher.update_u8(2);
+                lit.serialize(hasher);
+            }
+            CanonicalPattern::Tuple(pats) => {
+                hasher.update_u8(3);
+                hasher.update_u32(pats.len() as u32);
+                for pat in pats {
+                    pat.serialize(hasher);
+                }
+            }
+            CanonicalPattern::Struct { fields } => {
+                hasher.update_u8(4);
+                hasher.update_u32(fields.len() as u32);
+                for (id, pat) in fields {
+                    hasher.update_u32(id.index());
+                    pat.serialize(hasher);
+                }
+            }
+            CanonicalPattern::Enum { variant, payload } => {
+                hasher.update_u8(5);
+                hasher.update_u32(variant.index());
+                match payload {
+                    Some(p) => {
+                        hasher.update_u8(1);
+                        p.serialize(hasher);
+                    }
+                    None => hasher.update_u8(0),
+                }
+            }
+        }
+    }
+}
+
+impl std.fmt::Debug for CanonicalPattern {
+    fn fmt(&self, f: &mut std.fmt::Formatter) -> std.fmt::Result {
+        match self {
+            CanonicalPattern::Wildcard => write!(f, "_"),
+            CanonicalPattern::Binding(idx) => write!(f, "Bind({:?})", idx),
+            CanonicalPattern::Literal(lit) => write!(f, "Lit({:?})", lit),
+            CanonicalPattern::Tuple(pats) => write!(f, "Tuple({:?})", pats),
+            CanonicalPattern::Struct { fields } => write!(f, "Struct({:?})", fields),
+            CanonicalPattern::Enum { variant, payload } => {
+                write!(f, "Enum({:?}, {:?})", variant, payload)
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Effect Row
+// ============================================================================
+
+/// A canonicalized effect row (sorted by hash).
+#[derive(Clone, PartialEq)]
+pub struct CanonicalEffectRow {
+    /// Effects sorted by their hash.
+    pub effects: Vec<ContentHash>,
+    /// Whether the row is open (has a row variable).
+    pub is_open: bool,
+}
+
+impl CanonicalEffectRow {
+    /// Create an empty effect row.
+    pub fn empty() -> CanonicalEffectRow {
+        CanonicalEffectRow {
+            effects: Vec::new(),
+            is_open: false,
+        }
+    }
+
+    /// Create a pure effect row (no effects).
+    pub fn pure() -> CanonicalEffectRow {
+        CanonicalEffectRow::empty()
+    }
+
+    /// Create an effect row with the given effects.
+    ///
+    /// Effects will be sorted by their hash for canonical ordering.
+    pub fn with_effects(mut effects: Vec<ContentHash>, is_open: bool) -> CanonicalEffectRow {
+        // Sort by hash bytes for canonical ordering
+        effects.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+        CanonicalEffectRow { effects, is_open }
+    }
+
+    /// Serialize the effect row for hashing.
+    pub fn serialize(&self, hasher: &mut ContentHasher) {
+        hasher.update_u32(self.effects.len() as u32);
+        for effect in &self.effects {
+            hasher.update_hash(effect);
+        }
+        hasher.update_u8(if self.is_open { 1 } else { 0 });
+    }
+
+    /// Check if this is a pure effect row (no effects, closed).
+    pub fn is_pure(&self) -> bool {
+        self.effects.is_empty() && !self.is_open
+    }
+}
+
+impl std.fmt::Debug for CanonicalEffectRow {
+    fn fmt(&self, f: &mut std.fmt::Formatter) -> std.fmt::Result {
+        if self.effects.is_empty() {
+            if self.is_open {
+                write!(f, "<...>")
+            } else {
+                write!(f, "<pure>")
+            }
+        } else {
+            write!(f, "<{}{}>",
+                self.effects.iter().map(|e| format!("{}", e.short_display())).collect::<Vec<_>>().join(", "),
+                if self.is_open { ", ..." } else { "" }
+            )
+        }
+    }
+}
+
+// ============================================================================
+// Handler
+// ============================================================================
+
+/// A canonicalized effect handler.
+#[derive(Clone, PartialEq)]
+pub struct CanonicalHandler {
+    pub effect: ContentHash,
+    pub operations: Vec<CanonicalOpImpl>,
+    pub return_clause: Option<Box<CanonicalAST>>,
+}
+
+impl CanonicalHandler {
+    /// Serialize the handler for hashing.
+    pub fn serialize(&self, hasher: &mut ContentHasher) {
+        hasher.update_hash(&self.effect);
+        hasher.update_u32(self.operations.len() as u32);
+        for op in &self.operations {
+            op.serialize(hasher);
+        }
+        match &self.return_clause {
+            Some(ret) => {
+                hasher.update_u8(1);
+                ret.serialize(hasher);
+            }
+            None => hasher.update_u8(0),
+        }
+    }
+}
+
+impl std.fmt::Debug for CanonicalHandler {
+    fn fmt(&self, f: &mut std.fmt::Formatter) -> std.fmt::Result {
+        write!(f, "Handler({}, {:?}, {:?})", self.effect, self.operations, self.return_clause)
+    }
+}
+
+/// A canonicalized operation implementation.
+#[derive(Clone, PartialEq)]
+pub struct CanonicalOpImpl {
+    pub op_index: u32,
+    pub param_count: u32,
+    pub body: Box<CanonicalAST>,
+}
+
+impl CanonicalOpImpl {
+    /// Serialize the operation implementation for hashing.
+    pub fn serialize(&self, hasher: &mut ContentHasher) {
+        hasher.update_u32(self.op_index);
+        hasher.update_u32(self.param_count);
+        self.body.serialize(hasher);
+    }
+}
+
+impl std.fmt::Debug for CanonicalOpImpl {
+    fn fmt(&self, f: &mut std.fmt::Formatter) -> std.fmt::Result {
+        write!(f, "Op({}, {}, {:?})", self.op_index, self.param_count, self.body)
+    }
+}
+
+// ============================================================================
+// Canonicalizer
+// ============================================================================
+
+/// Context for converting to canonical form.
+pub struct Canonicalizer {
+    /// Name to hash mappings for external definitions.
+    def_hashes: HashMap<DefId, ContentHash>,
+    /// Effect ID to hash mappings.
+    effect_hashes: HashMap<EffectId, ContentHash>,
+    /// Stack of bound variable names for de Bruijn indexing.
+    scope_stack: Vec<String>,
+}
+
+impl Canonicalizer {
+    /// Create a new canonicalizer.
+    pub fn new() -> Canonicalizer {
+        Canonicalizer {
+            def_hashes: HashMap::new(),
+            effect_hashes: HashMap::new(),
+            scope_stack: Vec::new(),
+        }
+    }
+
+    /// Register a definition hash.
+    pub fn register_def(&mut self, def_id: DefId, hash: ContentHash) {
+        self.def_hashes.insert(def_id, hash);
+    }
+
+    /// Register an effect hash.
+    pub fn register_effect(&mut self, effect_id: EffectId, hash: ContentHash) {
+        self.effect_hashes.insert(effect_id, hash);
+    }
+
+    /// Look up a definition hash.
+    pub fn lookup_def(&self, def_id: DefId) -> Option<ContentHash> {
+        self.def_hashes.get(&def_id).copied()
+    }
+
+    /// Look up an effect hash.
+    pub fn lookup_effect(&self, effect_id: EffectId) -> Option<ContentHash> {
+        self.effect_hashes.get(&effect_id).copied()
+    }
+
+    /// Push a binding onto the scope stack.
+    pub fn push_binding(&mut self, name: String) {
+        self.scope_stack.push(name);
+    }
+
+    /// Pop a binding from the scope stack.
+    pub fn pop_binding(&mut self) {
+        self.scope_stack.pop();
+    }
+
+    /// Look up a variable by name and return its de Bruijn index.
+    pub fn lookup_local(&self, name: &str) -> Option<DeBruijnIndex> {
+        for (i, bound_name) in self.scope_stack.iter().rev().enumerate() {
+            if bound_name == name {
+                return Some(DeBruijnIndex::new(i as u32));
+            }
+        }
+        None
+    }
+
+    /// Get current scope depth.
+    pub fn scope_depth(&self) -> u32 {
+        self.scope_stack.len() as u32
+    }
+
+    /// Clear all bindings (for a fresh context).
+    pub fn clear(&mut self) {
+        self.scope_stack.clear();
+    }
+}
+
+impl Default for Canonicalizer {
+    fn default() -> Canonicalizer {
+        Canonicalizer::new()
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_debruijn_index() {
+        let idx = DeBruijnIndex::new(5);
+        assert_eq!(idx.index(), 5);
+    }
+
+    #[test]
+    fn test_canonical_ast_hash_determinism() {
+        let ast1 = CanonicalAST::IntLit(42);
+        let ast2 = CanonicalAST::IntLit(42);
+        let ast3 = CanonicalAST::IntLit(43);
+
+        assert_eq!(ast1.compute_hash(), ast2.compute_hash());
+        assert_ne!(ast1.compute_hash(), ast3.compute_hash());
+    }
+
+    #[test]
+    fn test_canonical_lambda_hash() {
+        // fn(x) { x } - same structure produces same hash
+        let ast1 = CanonicalAST::Lambda {
+            param_count: 1,
+            body: Box::new(CanonicalAST::LocalVar(DeBruijnIndex::new(0))),
+        };
+
+        let ast2 = CanonicalAST::Lambda {
+            param_count: 1,
+            body: Box::new(CanonicalAST::LocalVar(DeBruijnIndex::new(0))),
+        };
+
+        assert_eq!(ast1.compute_hash(), ast2.compute_hash());
+    }
+
+    #[test]
+    fn test_canonicalizer_scope() {
+        let mut canon = Canonicalizer::new();
+
+        canon.push_binding("x".into());
+        canon.push_binding("y".into());
+
+        // y is at index 0 (innermost)
+        assert_eq!(canon.lookup_local("y"), Some(DeBruijnIndex::new(0)));
+        // x is at index 1 (outer)
+        assert_eq!(canon.lookup_local("x"), Some(DeBruijnIndex::new(1)));
+        // z is not bound
+        assert_eq!(canon.lookup_local("z"), None);
+
+        canon.pop_binding();
+        // After popping y, x is at index 0
+        assert_eq!(canon.lookup_local("x"), Some(DeBruijnIndex::new(0)));
+    }
+
+    #[test]
+    fn test_effect_row_sorting() {
+        let h1 = ContentHash::compute(b"effect1");
+        let h2 = ContentHash::compute(b"effect2");
+
+        let row1 = CanonicalEffectRow::with_effects(vec![h1, h2], false);
+        let row2 = CanonicalEffectRow::with_effects(vec![h2, h1], false);
+
+        assert_eq!(row1.effects, row2.effects);
+    }
+
+    #[test]
+    fn test_builtin_id() {
+        assert_eq!(BuiltinId::INT_ADD.value(), 0x0001);
+        assert_eq!(BuiltinId::BOOL_AND.value(), 0x0020);
+    }
+
+    #[test]
+    fn test_binop_serialization() {
+        let ast1 = CanonicalAST::BinOp {
+            op: CanonicalBinOp::Add,
+            lhs: Box::new(CanonicalAST::IntLit(1)),
+            rhs: Box::new(CanonicalAST::IntLit(2)),
+        };
+
+        let ast2 = CanonicalAST::BinOp {
+            op: CanonicalBinOp::Sub,
+            lhs: Box::new(CanonicalAST::IntLit(1)),
+            rhs: Box::new(CanonicalAST::IntLit(2)),
+        };
+
+        assert_ne!(ast1.compute_hash(), ast2.compute_hash());
+    }
+
+    #[test]
+    fn test_field_id_ordering() {
+        let f1 = FieldId::new(1);
+        let f2 = FieldId::new(2);
+        assert!(f1 < f2);
+    }
+
+    #[test]
+    fn test_effect_row_pure() {
+        let row = CanonicalEffectRow::pure();
+        assert!(row.is_pure());
+        assert!(row.effects.is_empty());
+        assert!(!row.is_open);
+    }
+}

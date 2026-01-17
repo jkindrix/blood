@@ -1,0 +1,460 @@
+//! # Arena Statistics
+//!
+//! Types for tracking arena memory usage and statistics.
+//!
+//! ## Overview
+//!
+//! ArenaStats provides insight into how arenas are using memory:
+//! - Number of chunks allocated
+//! - Total capacity vs used memory
+//! - Number of items allocated
+//! - Utilization percentage
+//!
+//! ## Use Cases
+//!
+//! - Debugging memory usage during compilation
+//! - Tuning initial capacity for known workloads
+//! - Detecting memory leaks or excessive allocation
+//! - Performance profiling
+
+module std.compiler.arena.stats
+
+use std.traits.fmt.Display
+use std.traits.fmt.Debug
+use std.traits.fmt.Formatter
+
+// ============================================================================
+// ArenaStats
+// ============================================================================
+
+/// Statistics about arena memory usage.
+///
+/// Provides a snapshot of arena memory consumption and allocation patterns.
+///
+/// ## Fields
+///
+/// | Field | Description |
+/// |-------|-------------|
+/// | `num_chunks` | Number of memory chunks allocated |
+/// | `total_capacity` | Total bytes available across all chunks |
+/// | `total_used` | Total bytes actually used for allocations |
+/// | `num_items` | Number of items allocated (for TypedArena) |
+///
+/// ## Example
+///
+/// ```blood
+/// let arena: TypedArena[Int] = TypedArena::new()
+/// let _ = arena.alloc(42)
+/// let _ = arena.alloc(100)
+///
+/// let stats = arena.stats()
+/// println("Utilization: {}%", stats.utilization())
+/// println("Items: {}", stats.num_items)
+/// ```
+pub struct ArenaStats {
+    /// Number of memory chunks allocated.
+    pub num_chunks: USize,
+
+    /// Total capacity in bytes across all chunks.
+    pub total_capacity: USize,
+
+    /// Total bytes used for allocations.
+    pub total_used: USize,
+
+    /// Number of items allocated.
+    ///
+    /// For StringArena, this represents the number of interned strings.
+    /// For TypedArena, this represents the number of values allocated.
+    pub num_items: USize,
+}
+
+impl ArenaStats {
+    /// Create new zero-initialized stats.
+    pub fn new() -> ArenaStats {
+        ArenaStats {
+            num_chunks: 0,
+            total_capacity: 0,
+            total_used: 0,
+            num_items: 0,
+        }
+    }
+
+    /// Create stats with initial values.
+    pub fn with_values(
+        num_chunks: USize,
+        total_capacity: USize,
+        total_used: USize,
+        num_items: USize,
+    ) -> ArenaStats {
+        ArenaStats {
+            num_chunks,
+            total_capacity,
+            total_used,
+            num_items,
+        }
+    }
+
+    /// Calculate memory utilization as a percentage (0.0 to 100.0).
+    ///
+    /// Returns 0.0 if no memory has been allocated.
+    ///
+    /// ## Example
+    ///
+    /// ```blood
+    /// let stats = ArenaStats {
+    ///     num_chunks: 1,
+    ///     total_capacity: 1000,
+    ///     total_used: 750,
+    ///     num_items: 10,
+    /// }
+    ///
+    /// assert(stats.utilization() == 75.0)
+    /// ```
+    pub fn utilization(self) -> F64 {
+        if self.total_capacity == 0 {
+            0.0
+        } else {
+            (self.total_used as F64 / self.total_capacity as F64) * 100.0
+        }
+    }
+
+    /// Calculate the average item size in bytes.
+    ///
+    /// Returns 0 if no items have been allocated.
+    pub fn avg_item_size(self) -> USize {
+        if self.num_items == 0 {
+            0
+        } else {
+            self.total_used / self.num_items
+        }
+    }
+
+    /// Get the amount of wasted (unused) memory in bytes.
+    pub fn wasted(self) -> USize {
+        self.total_capacity - self.total_used
+    }
+
+    /// Get the fragmentation ratio (wasted / total).
+    ///
+    /// Lower is better. 0.0 means no fragmentation.
+    pub fn fragmentation(self) -> F64 {
+        if self.total_capacity == 0 {
+            0.0
+        } else {
+            self.wasted() as F64 / self.total_capacity as F64
+        }
+    }
+
+    /// Check if the arena is empty (no allocations).
+    pub fn is_empty(self) -> Bool {
+        self.num_items == 0
+    }
+
+    /// Merge stats from another arena (for aggregate reporting).
+    pub fn merge(mut self, other: ArenaStats) -> ArenaStats {
+        ArenaStats {
+            num_chunks: self.num_chunks + other.num_chunks,
+            total_capacity: self.total_capacity + other.total_capacity,
+            total_used: self.total_used + other.total_used,
+            num_items: self.num_items + other.num_items,
+        }
+    }
+}
+
+impl Default for ArenaStats {
+    fn default() -> ArenaStats {
+        ArenaStats::new()
+    }
+}
+
+impl Clone for ArenaStats {
+    fn clone(self) -> ArenaStats {
+        ArenaStats {
+            num_chunks: self.num_chunks,
+            total_capacity: self.total_capacity,
+            total_used: self.total_used,
+            num_items: self.num_items,
+        }
+    }
+}
+
+impl Copy for ArenaStats {}
+
+impl PartialEq for ArenaStats {
+    fn eq(self, other: ArenaStats) -> Bool {
+        self.num_chunks == other.num_chunks &&
+        self.total_capacity == other.total_capacity &&
+        self.total_used == other.total_used &&
+        self.num_items == other.num_items
+    }
+}
+
+impl Eq for ArenaStats {}
+
+impl Debug for ArenaStats {
+    fn fmt(self, f: &mut Formatter) -> Result[(), Error] {
+        f.debug_struct("ArenaStats")
+            .field("num_chunks", self.num_chunks)
+            .field("total_capacity", self.total_capacity)
+            .field("total_used", self.total_used)
+            .field("num_items", self.num_items)
+            .finish()
+    }
+}
+
+impl Display for ArenaStats {
+    fn fmt(self, f: &mut Formatter) -> Result[(), Error] {
+        write!(f, "ArenaStats {{ chunks: {}, capacity: {} bytes, used: {} bytes ({:.1}%), items: {} }}",
+            self.num_chunks,
+            self.total_capacity,
+            self.total_used,
+            self.utilization(),
+            self.num_items
+        )
+    }
+}
+
+// ============================================================================
+// ArenaReport
+// ============================================================================
+
+/// A detailed report of arena usage across multiple arenas.
+///
+/// Used for aggregate reporting during compilation diagnostics.
+pub struct ArenaReport {
+    /// Stats for the AST node arena.
+    pub ast_arena: ArenaStats,
+
+    /// Stats for the HIR arena.
+    pub hir_arena: ArenaStats,
+
+    /// Stats for the type arena.
+    pub type_arena: ArenaStats,
+
+    /// Stats for the string arena.
+    pub string_arena: ArenaStats,
+
+    /// Combined stats across all arenas.
+    pub total: ArenaStats,
+}
+
+impl ArenaReport {
+    /// Create an empty report.
+    pub fn new() -> ArenaReport {
+        ArenaReport {
+            ast_arena: ArenaStats::new(),
+            hir_arena: ArenaStats::new(),
+            type_arena: ArenaStats::new(),
+            string_arena: ArenaStats::new(),
+            total: ArenaStats::new(),
+        }
+    }
+
+    /// Update the total from individual arena stats.
+    pub fn compute_total(mut self) {
+        self.total = self.ast_arena
+            .merge(self.hir_arena)
+            .merge(self.type_arena)
+            .merge(self.string_arena)
+    }
+
+    /// Get total memory used across all arenas.
+    pub fn total_memory_used(self) -> USize {
+        self.total.total_used
+    }
+
+    /// Get total memory allocated across all arenas.
+    pub fn total_memory_allocated(self) -> USize {
+        self.total.total_capacity
+    }
+}
+
+impl Default for ArenaReport {
+    fn default() -> ArenaReport {
+        ArenaReport::new()
+    }
+}
+
+impl Debug for ArenaReport {
+    fn fmt(self, f: &mut Formatter) -> Result[(), Error] {
+        f.debug_struct("ArenaReport")
+            .field("ast_arena", self.ast_arena)
+            .field("hir_arena", self.hir_arena)
+            .field("type_arena", self.type_arena)
+            .field("string_arena", self.string_arena)
+            .field("total", self.total)
+            .finish()
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[test]
+fn test_arena_stats_new() {
+    let stats = ArenaStats::new()
+
+    assert(stats.num_chunks == 0)
+    assert(stats.total_capacity == 0)
+    assert(stats.total_used == 0)
+    assert(stats.num_items == 0)
+}
+
+#[test]
+fn test_arena_stats_utilization_empty() {
+    let stats = ArenaStats::new()
+
+    assert(stats.utilization() == 0.0)
+}
+
+#[test]
+fn test_arena_stats_utilization() {
+    let stats = ArenaStats {
+        num_chunks: 1,
+        total_capacity: 1000,
+        total_used: 500,
+        num_items: 10,
+    }
+
+    assert(stats.utilization() == 50.0)
+}
+
+#[test]
+fn test_arena_stats_utilization_full() {
+    let stats = ArenaStats {
+        num_chunks: 1,
+        total_capacity: 1000,
+        total_used: 1000,
+        num_items: 100,
+    }
+
+    assert(stats.utilization() == 100.0)
+}
+
+#[test]
+fn test_arena_stats_avg_item_size() {
+    let stats = ArenaStats {
+        num_chunks: 1,
+        total_capacity: 1000,
+        total_used: 800,
+        num_items: 100,
+    }
+
+    assert(stats.avg_item_size() == 8)
+}
+
+#[test]
+fn test_arena_stats_wasted() {
+    let stats = ArenaStats {
+        num_chunks: 2,
+        total_capacity: 2000,
+        total_used: 1500,
+        num_items: 150,
+    }
+
+    assert(stats.wasted() == 500)
+}
+
+#[test]
+fn test_arena_stats_fragmentation() {
+    let stats = ArenaStats {
+        num_chunks: 1,
+        total_capacity: 1000,
+        total_used: 750,
+        num_items: 75,
+    }
+
+    assert(stats.fragmentation() == 0.25)
+}
+
+#[test]
+fn test_arena_stats_merge() {
+    let stats1 = ArenaStats {
+        num_chunks: 1,
+        total_capacity: 1000,
+        total_used: 500,
+        num_items: 50,
+    }
+
+    let stats2 = ArenaStats {
+        num_chunks: 2,
+        total_capacity: 2000,
+        total_used: 1000,
+        num_items: 100,
+    }
+
+    let merged = stats1.merge(stats2)
+
+    assert(merged.num_chunks == 3)
+    assert(merged.total_capacity == 3000)
+    assert(merged.total_used == 1500)
+    assert(merged.num_items == 150)
+}
+
+#[test]
+fn test_arena_stats_is_empty() {
+    let empty = ArenaStats::new()
+    let non_empty = ArenaStats {
+        num_chunks: 1,
+        total_capacity: 100,
+        total_used: 50,
+        num_items: 5,
+    }
+
+    assert(empty.is_empty())
+    assert(!non_empty.is_empty())
+}
+
+#[test]
+fn test_arena_stats_equality() {
+    let stats1 = ArenaStats {
+        num_chunks: 1,
+        total_capacity: 1000,
+        total_used: 500,
+        num_items: 50,
+    }
+
+    let stats2 = ArenaStats {
+        num_chunks: 1,
+        total_capacity: 1000,
+        total_used: 500,
+        num_items: 50,
+    }
+
+    let stats3 = ArenaStats {
+        num_chunks: 2,
+        total_capacity: 1000,
+        total_used: 500,
+        num_items: 50,
+    }
+
+    assert(stats1 == stats2)
+    assert(stats1 != stats3)
+}
+
+#[test]
+fn test_arena_report() {
+    let mut report = ArenaReport::new()
+
+    report.ast_arena = ArenaStats {
+        num_chunks: 1,
+        total_capacity: 1000,
+        total_used: 500,
+        num_items: 50,
+    }
+
+    report.string_arena = ArenaStats {
+        num_chunks: 1,
+        total_capacity: 2000,
+        total_used: 1500,
+        num_items: 100,
+    }
+
+    report.compute_total()
+
+    assert(report.total.num_chunks == 2)
+    assert(report.total.total_capacity == 3000)
+    assert(report.total.total_used == 2000)
+    assert(report.total.num_items == 150)
+}

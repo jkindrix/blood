@@ -1,0 +1,539 @@
+//! MIR Place Code Generation
+//!
+//! This module compiles MIR places (memory locations/lvalues) to LLVM IR.
+//! Places represent locations that can be read from or written to.
+//!
+//! ## Place Projections
+//!
+//! | Projection | Description | LLVM Operation |
+//! |------------|-------------|----------------|
+//! | Deref | Dereference pointer | Load + optional gen check |
+//! | Field(n) | Struct/tuple field | struct_gep(ptr, n) |
+//! | Index(local) | Dynamic array index | gep(ptr, [0, idx]) |
+//! | ConstantIndex | Static array index | gep(ptr, [0, const]) |
+//! | Subslice | Array subslice | gep(ptr, [0, from]) |
+//! | Downcast(v) | Enum variant cast | Set variant context |
+//!
+//! ## Generation Checks
+//!
+//! For region-allocated values (ArgEscape, GlobalEscape), Deref projections
+//! emit generation validation:
+//! 1. Load expected generation from local_generations
+//! 2. Call blood_validate_generation(address, expected)
+//! 3. Branch to panic if stale, continue otherwise
+//!
+//! Stack-allocated values (NoEscape) skip generation checks.
+
+use std::collections::HashMap;
+
+use super::super::llvm::{
+    LLVMValueRef, LLVMTypeRef, LLVMBasicBlockRef,
+    types::{i32_type, i64_type, ptr_type},
+    values::{const_int, append_basic_block},
+};
+use super::super::context::CodegenContext;
+use super::super::lower_type::lower_type;
+
+use crate::hir::{DefId, LocalId, Type, TypeKind};
+use crate::mir::{
+    MirBody, Place, PlaceElem, EscapeResults, EscapeState,
+};
+use crate::diagnostics::Diagnostic;
+use crate::span::Span;
+
+// ============================================================================
+// Place Compilation
+// ============================================================================
+
+/// Compile a MIR place to get a pointer to the memory location.
+pub fn compile_mir_place(
+    ctx: &mut CodegenContext,
+    place: &Place,
+    body: &MirBody,
+    escape_results: Option<&EscapeResults>,
+) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    // Get base pointer from local
+    let base_ptr = *ctx.locals.get(&place.local).ok_or_else(|| {
+        vec![Diagnostic::error(
+            format!("Local _{} not found", place.local.index),
+            body.span,
+        )]
+    })?;
+
+    // Track current type as we process projections
+    let local_info = &body.locals[place.local.index as usize];
+    let base_ty = local_info.ty.clone();
+    let mut current_ty = base_ty.clone();
+    let mut current_ptr = base_ptr;
+
+    // Track if we're inside an enum variant: (enum_def_id, variant_index)
+    let mut variant_ctx: Option<(DefId, u32)> = None;
+
+    // Handle closure __env local with Field projections
+    let is_closure_env = local_info.name.as_deref() == Some("__env");
+    let has_field_projections = place.projection.iter().any(|p| matches!(p, PlaceElem::Field(_)));
+
+    if is_closure_env && has_field_projections {
+        // Load the i8* from the alloca
+        let i8_ptr_ty = ptr_type(ctx.llvm_context_ref());
+        let env_i8_ptr = ctx.llvm_builder().build_load(i8_ptr_ty, current_ptr, "env_ptr\0");
+
+        // Get the captures struct type from MIR type
+        let captures_llvm_ty = lower_type(ctx, &base_ty);
+
+        // Cast i8* to captures struct pointer
+        current_ptr = ctx.llvm_builder().build_bitcast(env_i8_ptr, ptr_type(ctx.llvm_context_ref()), "env_captures_ptr\0");
+    }
+
+    // Process each projection
+    for elem in &place.projection {
+        current_ptr = match elem {
+            PlaceElem::Deref => {
+                compile_deref_projection(ctx, current_ptr, &mut current_ty, place, body, escape_results)?
+            }
+
+            PlaceElem::Field(idx) => {
+                compile_field_projection(ctx, current_ptr, *idx, &mut current_ty, &mut variant_ctx, place, body)?
+            }
+
+            PlaceElem::Index(idx_local) => {
+                compile_index_projection(ctx, current_ptr, *idx_local, &mut current_ty, body)?
+            }
+
+            PlaceElem::ConstantIndex { offset, min_length: _, from_end } => {
+                compile_constant_index_projection(ctx, current_ptr, *offset, *from_end, &mut current_ty, body)?
+            }
+
+            PlaceElem::Subslice { from, to, from_end: _ } => {
+                compile_subslice_projection(ctx, current_ptr, *from, *to, &current_ty, body)?
+            }
+
+            PlaceElem::Downcast(variant_idx) => {
+                // Set variant context for subsequent field access
+                if let TypeKind::Adt { def_id, .. } = current_ty.kind() {
+                    variant_ctx = Some((*def_id, *variant_idx));
+                }
+                current_ptr  // Same pointer, just context change
+            }
+        };
+    }
+
+    Ok(current_ptr)
+}
+
+// ============================================================================
+// Projection Compilation
+// ============================================================================
+
+/// Compile Deref projection: load pointer and optionally validate generation.
+fn compile_deref_projection(
+    ctx: &mut CodegenContext,
+    current_ptr: LLVMValueRef,
+    current_ty: &mut Type,
+    place: &Place,
+    body: &MirBody,
+    escape_results: Option<&EscapeResults>,
+) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    // Update type to inner type
+    *current_ty = match current_ty.kind() {
+        TypeKind::Ref { inner, .. } => inner.clone(),
+        TypeKind::Ptr { inner, .. } => inner.clone(),
+        _ => current_ty.clone(),
+    };
+
+    // Load the pointer value
+    let ptr_ty = ptr_type(ctx.llvm_context_ref());
+    let loaded = ctx.llvm_builder().build_load(ptr_ty, current_ptr, "deref\0");
+
+    // Check if we should skip generation checks for this local
+    let should_skip_gen_check = escape_results
+        .map(|er| er.get_escape_state(place.local) == EscapeState::NoEscape)
+        .unwrap_or(false);
+
+    // If this is a region-allocated pointer and the local escapes,
+    // validate generation before use
+    if !should_skip_gen_check {
+        if let Some(&gen_alloca) = ctx.local_generations.get(&place.local) {
+            emit_generation_validation(ctx, loaded, gen_alloca, body.span)?;
+        }
+    }
+
+    Ok(loaded)
+}
+
+/// Emit generation validation code.
+fn emit_generation_validation(
+    ctx: &mut CodegenContext,
+    ptr_val: LLVMValueRef,
+    gen_alloca: LLVMValueRef,
+    span: Span,
+) -> Result<(), Vec<Diagnostic>> {
+    let i32_ty = i32_type(ctx.llvm_context_ref());
+    let i64_ty = i64_type(ctx.llvm_context_ref());
+
+    // Load the expected generation
+    let expected_gen = ctx.llvm_builder().build_load(i32_ty, gen_alloca, "expected_gen\0");
+
+    // Convert pointer to address for validation
+    let address = ctx.llvm_builder().build_ptr_to_int(ptr_val, i64_ty, "ptr_addr\0");
+
+    // Call blood_validate_generation(address, expected_gen)
+    let validate_fn = ctx.get_runtime_fn("blood_validate_generation")
+        .ok_or_else(|| vec![Diagnostic::error(
+            "blood_validate_generation not declared",
+            span
+        )])?;
+
+    let result = ctx.llvm_builder().build_call(validate_fn, &[address, expected_gen], "gen_check\0");
+
+    // Check if stale (result != 0)
+    let zero = const_int(i32_ty, 0, false);
+    let is_stale = ctx.llvm_builder().build_icmp_ne(result, zero, "is_stale\0");
+
+    // Create blocks for valid and stale paths
+    let current_fn = ctx.current_fn().ok_or_else(|| {
+        vec![Diagnostic::error("No current function", span)]
+    })?;
+    let valid_bb = append_basic_block(ctx.llvm_context_ref(), current_fn, "gen_valid\0");
+    let stale_bb = append_basic_block(ctx.llvm_context_ref(), current_fn, "gen_stale\0");
+
+    ctx.llvm_builder().build_cond_br(is_stale, stale_bb.raw(), valid_bb.raw());
+
+    // Stale path: abort
+    ctx.llvm_builder().position_at_end(stale_bb.raw());
+    let panic_fn = ctx.get_runtime_fn("blood_stale_reference_panic")
+        .ok_or_else(|| vec![Diagnostic::error(
+            "blood_stale_reference_panic not declared",
+            span
+        )])?;
+    ctx.llvm_builder().build_call(panic_fn, &[expected_gen, result], "\0");
+    ctx.llvm_builder().build_unreachable();
+
+    // Continue on valid path
+    ctx.llvm_builder().position_at_end(valid_bb.raw());
+
+    Ok(())
+}
+
+/// Compile Field projection: struct GEP to access field.
+fn compile_field_projection(
+    ctx: &mut CodegenContext,
+    current_ptr: LLVMValueRef,
+    idx: u32,
+    current_ty: &mut Type,
+    variant_ctx: &mut Option<(DefId, u32)>,
+    place: &Place,
+    body: &MirBody,
+) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    // Check if we're accessing an enum variant field
+    if let Some((enum_def_id, variant_idx)) = variant_ctx.take() {
+        return compile_enum_variant_field(ctx, current_ptr, idx, enum_def_id, variant_idx, current_ty, body);
+    }
+
+    // Regular field access
+    let actual_idx = idx;
+
+    // Check if this is a reference to a struct
+    let is_ref_to_struct = matches!(
+        current_ty.kind(),
+        TypeKind::Ref { inner, .. } | TypeKind::Ptr { inner, .. }
+            if matches!(inner.kind(), TypeKind::Adt { .. } | TypeKind::Tuple(_))
+    );
+
+    // Update current_ty to the field type
+    let effective_ty = match current_ty.kind() {
+        TypeKind::Ref { inner, .. } | TypeKind::Ptr { inner, .. } => inner.clone(),
+        _ => current_ty.clone(),
+    };
+    *current_ty = match effective_ty.kind() {
+        TypeKind::Tuple(fields) => {
+            fields.get(idx as usize).cloned().unwrap_or(current_ty.clone())
+        }
+        TypeKind::Adt { .. } => {
+            // For ADT types, keep current_ty (field access works via GEP)
+            current_ty.clone()
+        }
+        _ => current_ty.clone(),
+    };
+
+    // Get struct element pointer
+    let struct_ty = lower_type(ctx, &effective_ty);
+
+    if is_ref_to_struct {
+        // Reference to struct: load pointer then struct_gep
+        let ptr_ty = ptr_type(ctx.llvm_context_ref());
+        let struct_ptr = ctx.llvm_builder().build_load(ptr_ty, current_ptr, "struct_ptr\0");
+        Ok(ctx.llvm_builder().build_struct_gep(struct_ty, struct_ptr, actual_idx, &format!("field_{}\0", idx)))
+    } else {
+        Ok(ctx.llvm_builder().build_struct_gep(struct_ty, current_ptr, actual_idx, &format!("field_{}\0", idx)))
+    }
+}
+
+/// Compile field access within an enum variant (heterogeneous payload handling).
+fn compile_enum_variant_field(
+    ctx: &mut CodegenContext,
+    current_ptr: LLVMValueRef,
+    idx: u32,
+    enum_def_id: DefId,
+    variant_idx: u32,
+    current_ty: &mut Type,
+    body: &MirBody,
+) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    // Get the enum's variant field types
+    if let Some(variants) = ctx.enum_defs.get(&enum_def_id) {
+        if let Some(variant_fields) = variants.get(variant_idx as usize) {
+            if let Some(variant_field_ty) = variant_fields.get(idx as usize) {
+                // Get type args for generic enum substitution
+                let args = match current_ty.kind() {
+                    TypeKind::Adt { args, .. } => args.clone(),
+                    _ => Vec::new(),
+                };
+                let actual_field_ty = ctx.substitute_type_params(variant_field_ty, &args);
+
+                // Get pointer to payload area (field 1 of enum struct)
+                let enum_ty = lower_type(ctx, current_ty);
+                let payload_ptr = ctx.llvm_builder().build_struct_gep(enum_ty, current_ptr, 1, "payload_ptr\0");
+
+                // Build the variant's actual payload struct type
+                let variant_field_types: Vec<LLVMTypeRef> = variant_fields.iter()
+                    .map(|f| {
+                        let substituted = ctx.substitute_type_params(f, &args);
+                        lower_type(ctx, &substituted)
+                    })
+                    .collect();
+                let variant_struct_ty = super::super::llvm::types::struct_type(
+                    ctx.llvm_context_ref(),
+                    &variant_field_types,
+                    false
+                );
+
+                // Cast payload pointer to variant struct pointer
+                let variant_ptr = ctx.llvm_builder().build_bitcast(
+                    payload_ptr,
+                    ptr_type(ctx.llvm_context_ref()),
+                    "variant_ptr\0"
+                );
+
+                // GEP to the specific field within the variant
+                let field_ptr = ctx.llvm_builder().build_struct_gep(
+                    variant_struct_ty,
+                    variant_ptr,
+                    idx,
+                    &format!("variant_field_{}\0", idx)
+                );
+
+                *current_ty = actual_field_ty;
+                return Ok(field_ptr);
+            }
+        }
+    }
+
+    // Fallback to regular field access with offset for discriminant
+    let enum_ty = lower_type(ctx, current_ty);
+    Ok(ctx.llvm_builder().build_struct_gep(enum_ty, current_ptr, idx + 1, &format!("enum_field_{}\0", idx)))
+}
+
+/// Compile Index projection: GEP with dynamic index.
+fn compile_index_projection(
+    ctx: &mut CodegenContext,
+    current_ptr: LLVMValueRef,
+    idx_local: LocalId,
+    current_ty: &mut Type,
+    body: &MirBody,
+) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    // Load index value
+    let idx_ptr = ctx.locals.get(&idx_local).ok_or_else(|| {
+        vec![Diagnostic::error(
+            format!("Index local _{} not found", idx_local.index),
+            body.span,
+        )]
+    })?;
+    let i64_ty = i64_type(ctx.llvm_context_ref());
+    let idx_val = ctx.llvm_builder().build_load(i64_ty, *idx_ptr, "idx\0");
+
+    // Determine array access pattern
+    let (is_direct_array, is_ref_to_array) = match current_ty.kind() {
+        TypeKind::Array { .. } | TypeKind::Slice { .. } => (true, false),
+        TypeKind::Ref { inner, .. } | TypeKind::Ptr { inner, .. } => {
+            (false, matches!(inner.kind(), TypeKind::Array { .. } | TypeKind::Slice { .. }))
+        }
+        _ => (false, false),
+    };
+
+    // Update current_ty to element type
+    *current_ty = match current_ty.kind() {
+        TypeKind::Array { element, .. } => element.clone(),
+        TypeKind::Slice { element } => element.clone(),
+        TypeKind::Ref { inner, .. } | TypeKind::Ptr { inner, .. } => {
+            match inner.kind() {
+                TypeKind::Array { element, .. } => element.clone(),
+                TypeKind::Slice { element } => element.clone(),
+                _ => current_ty.clone(),
+            }
+        }
+        _ => current_ty.clone(),
+    };
+
+    let zero = const_int(i64_ty, 0, false);
+    let array_ty = lower_type(ctx, current_ty);
+
+    if is_direct_array {
+        // Direct array: [N x T]*, use two-index GEP
+        Ok(ctx.llvm_builder().build_gep(array_ty, current_ptr, &[zero, idx_val], "idx_gep\0"))
+    } else if is_ref_to_array {
+        // Reference to array: load pointer then two-index GEP
+        let ptr_ty = ptr_type(ctx.llvm_context_ref());
+        let array_ptr = ctx.llvm_builder().build_load(ptr_ty, current_ptr, "array_ptr\0");
+        Ok(ctx.llvm_builder().build_gep(array_ty, array_ptr, &[zero, idx_val], "idx_gep\0"))
+    } else {
+        // Other pointer type: single-index GEP
+        Ok(ctx.llvm_builder().build_gep(array_ty, current_ptr, &[idx_val], "idx_gep\0"))
+    }
+}
+
+/// Compile ConstantIndex projection: GEP with static index.
+fn compile_constant_index_projection(
+    ctx: &mut CodegenContext,
+    current_ptr: LLVMValueRef,
+    offset: u64,
+    from_end: bool,
+    current_ty: &mut Type,
+    body: &MirBody,
+) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    let i64_ty = i64_type(ctx.llvm_context_ref());
+
+    // Determine array access pattern
+    let (is_direct_array, is_ref_to_array) = match current_ty.kind() {
+        TypeKind::Array { .. } | TypeKind::Slice { .. } => (true, false),
+        TypeKind::Ref { inner, .. } | TypeKind::Ptr { inner, .. } => {
+            (false, matches!(inner.kind(), TypeKind::Array { .. } | TypeKind::Slice { .. }))
+        }
+        _ => (false, false),
+    };
+
+    // Get effective array type for from_end calculations
+    let effective_array_ty = match current_ty.kind() {
+        TypeKind::Array { .. } => current_ty.clone(),
+        TypeKind::Ref { inner, .. } | TypeKind::Ptr { inner, .. } => inner.clone(),
+        _ => current_ty.clone(),
+    };
+
+    // Calculate actual index
+    let idx = if from_end {
+        let array_len = match effective_array_ty.kind() {
+            TypeKind::Array { size, .. } => *size,
+            _ => {
+                return Err(vec![Diagnostic::error(
+                    format!("ConstantIndex from_end requires array type, got {:?}", current_ty),
+                    body.span,
+                )]);
+            }
+        };
+        let actual_idx = array_len - 1 - offset;
+        const_int(i64_ty, actual_idx, false)
+    } else {
+        const_int(i64_ty, offset, false)
+    };
+
+    // Update current_ty to element type
+    *current_ty = match current_ty.kind() {
+        TypeKind::Array { element, .. } => element.clone(),
+        TypeKind::Slice { element } => element.clone(),
+        TypeKind::Ref { inner, .. } | TypeKind::Ptr { inner, .. } => {
+            match inner.kind() {
+                TypeKind::Array { element, .. } => element.clone(),
+                TypeKind::Slice { element } => element.clone(),
+                _ => current_ty.clone(),
+            }
+        }
+        _ => current_ty.clone(),
+    };
+
+    let zero = const_int(i64_ty, 0, false);
+    let array_ty = lower_type(ctx, current_ty);
+
+    if is_direct_array {
+        Ok(ctx.llvm_builder().build_gep(array_ty, current_ptr, &[zero, idx], "const_idx\0"))
+    } else if is_ref_to_array {
+        let ptr_ty = ptr_type(ctx.llvm_context_ref());
+        let array_ptr = ctx.llvm_builder().build_load(ptr_ty, current_ptr, "array_ptr\0");
+        Ok(ctx.llvm_builder().build_gep(array_ty, array_ptr, &[zero, idx], "const_idx\0"))
+    } else {
+        Ok(ctx.llvm_builder().build_gep(array_ty, current_ptr, &[idx], "const_idx\0"))
+    }
+}
+
+/// Compile Subslice projection: GEP to get subslice start.
+fn compile_subslice_projection(
+    ctx: &mut CodegenContext,
+    current_ptr: LLVMValueRef,
+    from: u64,
+    to: u64,
+    current_ty: &Type,
+    body: &MirBody,
+) -> Result<LLVMValueRef, Vec<Diagnostic>> {
+    let i64_ty = i64_type(ctx.llvm_context_ref());
+
+    let (is_direct_array, is_ref_to_array) = match current_ty.kind() {
+        TypeKind::Array { .. } | TypeKind::Slice { .. } => (true, false),
+        TypeKind::Ref { inner, .. } | TypeKind::Ptr { inner, .. } => {
+            (false, matches!(inner.kind(), TypeKind::Array { .. } | TypeKind::Slice { .. }))
+        }
+        _ => (false, false),
+    };
+
+    let idx = const_int(i64_ty, from, false);
+    let zero = const_int(i64_ty, 0, false);
+    let array_ty = lower_type(ctx, current_ty);
+
+    if is_direct_array {
+        Ok(ctx.llvm_builder().build_gep(array_ty, current_ptr, &[zero, idx], "subslice\0"))
+    } else if is_ref_to_array {
+        let ptr_ty = ptr_type(ctx.llvm_context_ref());
+        let array_ptr = ctx.llvm_builder().build_load(ptr_ty, current_ptr, "array_ptr\0");
+        Ok(ctx.llvm_builder().build_gep(array_ty, array_ptr, &[zero, idx], "subslice\0"))
+    } else {
+        Ok(ctx.llvm_builder().build_gep(array_ty, current_ptr, &[idx], "subslice\0"))
+    }
+}
+
+// ============================================================================
+// Place Type Computation
+// ============================================================================
+
+/// Compute the effective type of a place after applying projections.
+pub fn compute_place_type(base_ty: &Type, projections: &[PlaceElem]) -> Type {
+    let mut current_ty = base_ty.clone();
+
+    for proj in projections {
+        current_ty = match proj {
+            PlaceElem::Deref => {
+                match current_ty.kind() {
+                    TypeKind::Ref { inner, .. } => inner.clone(),
+                    TypeKind::Ptr { inner, .. } => inner.clone(),
+                    _ => current_ty,
+                }
+            }
+            PlaceElem::Field(idx) => {
+                match current_ty.kind() {
+                    TypeKind::Tuple(tys) => {
+                        tys.get(*idx as usize).cloned().unwrap_or(current_ty)
+                    }
+                    TypeKind::Adt { .. } => current_ty,
+                    _ => current_ty,
+                }
+            }
+            PlaceElem::Index(_) | PlaceElem::ConstantIndex { .. } => {
+                match current_ty.kind() {
+                    TypeKind::Array { element, .. } => element.clone(),
+                    TypeKind::Slice { element } => element.clone(),
+                    _ => current_ty,
+                }
+            }
+            PlaceElem::Subslice { .. } => current_ty,
+            PlaceElem::Downcast(_) => current_ty,
+        };
+    }
+
+    current_ty
+}
