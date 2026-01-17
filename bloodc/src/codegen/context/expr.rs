@@ -203,10 +203,64 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     pub(super) fn compile_literal_with_type(&self, lit: &hir::LiteralValue, ty: &hir::Type) -> Result<BasicValueEnum<'ctx>, Vec<Diagnostic>> {
         match lit {
             hir::LiteralValue::Int(val) => {
-                Ok(self.context.i32_type().const_int(*val as u64, true).into())
+                // Use the actual type to determine the LLVM integer type
+                let int_type = match ty.kind() {
+                    hir::TypeKind::Primitive(hir::PrimitiveTy::Int(int_ty)) => {
+                        use hir::def::IntTy;
+                        match int_ty {
+                            IntTy::I8 => self.context.i8_type(),
+                            IntTy::I16 => self.context.i16_type(),
+                            IntTy::I32 => self.context.i32_type(),
+                            IntTy::I64 => self.context.i64_type(),
+                            IntTy::I128 => self.context.i128_type(),
+                            IntTy::Isize => self.context.i64_type(),
+                        }
+                    }
+                    hir::TypeKind::Primitive(hir::PrimitiveTy::Uint(uint_ty)) => {
+                        use hir::def::UintTy;
+                        match uint_ty {
+                            UintTy::U8 => self.context.i8_type(),
+                            UintTy::U16 => self.context.i16_type(),
+                            UintTy::U32 => self.context.i32_type(),
+                            UintTy::U64 => self.context.i64_type(),
+                            UintTy::U128 => self.context.i128_type(),
+                            UintTy::Usize => self.context.i64_type(),
+                        }
+                    }
+                    // Default to i32 if type is unresolved or inferred
+                    _ => self.context.i32_type(),
+                };
+                Ok(int_type.const_int(*val as u64, true).into())
             }
             hir::LiteralValue::Uint(val) => {
-                Ok(self.context.i32_type().const_int(*val as u64, false).into())
+                // Use the actual type to determine the LLVM integer type
+                let int_type = match ty.kind() {
+                    hir::TypeKind::Primitive(hir::PrimitiveTy::Uint(uint_ty)) => {
+                        use hir::def::UintTy;
+                        match uint_ty {
+                            UintTy::U8 => self.context.i8_type(),
+                            UintTy::U16 => self.context.i16_type(),
+                            UintTy::U32 => self.context.i32_type(),
+                            UintTy::U64 => self.context.i64_type(),
+                            UintTy::U128 => self.context.i128_type(),
+                            UintTy::Usize => self.context.i64_type(),
+                        }
+                    }
+                    hir::TypeKind::Primitive(hir::PrimitiveTy::Int(int_ty)) => {
+                        use hir::def::IntTy;
+                        match int_ty {
+                            IntTy::I8 => self.context.i8_type(),
+                            IntTy::I16 => self.context.i16_type(),
+                            IntTy::I32 => self.context.i32_type(),
+                            IntTy::I64 => self.context.i64_type(),
+                            IntTy::I128 => self.context.i128_type(),
+                            IntTy::Isize => self.context.i64_type(),
+                        }
+                    }
+                    // Default to i32 if type is unresolved or inferred
+                    _ => self.context.i32_type(),
+                };
+                Ok(int_type.const_int(*val as u64, false).into())
             }
             hir::LiteralValue::Float(val) => {
                 // Check if it's f32 or f64
