@@ -100,20 +100,24 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
             capture_type_list.push(ty.clone());
         }
 
-        // Only add an implicit environment parameter if the closure has captures.
-        // Closures without captures have the same signature as regular functions,
-        // allowing them to be used directly as function pointers.
-        let env_local = if !captures.is_empty() {
-            let env_ty = Type::new(TypeKind::Tuple(capture_type_list));
-            let env_local = builder.add_param(
-                Some("__env".to_string()),
-                env_ty,
-                body.span,
-            );
-            Some(env_local)
+        // Always add an implicit environment parameter for closures.
+        // Even closures without captures need the __env parameter because:
+        // 1. fn() types are fat pointers { fn_ptr, env_ptr }
+        // 2. All calls through fn() pass env_ptr as first argument
+        // 3. The closure function signature must match this calling convention
+        // For capture-less closures, the env_ptr is null but still passed.
+        let env_ty = if !captures.is_empty() {
+            Type::new(TypeKind::Tuple(capture_type_list))
         } else {
-            None
+            // Empty tuple for closures without captures
+            Type::unit()
         };
+        let env_local = builder.add_param(
+            Some("__env".to_string()),
+            env_ty,
+            body.span,
+        );
+        let env_local = Some(env_local);
 
         // Add parameters from the closure's explicit parameter list
         let mut local_map = HashMap::new();
