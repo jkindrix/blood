@@ -114,22 +114,27 @@ pub struct ModulePath {
 }
 
 /// Import statement.
+///
+/// Imports can be made public with `pub use` for re-exporting from a module.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Import {
-    /// `use std.mem.allocate;`
+    /// `use std.mem.allocate;` or `pub use std.mem.allocate;`
     Simple {
+        visibility: Visibility,
         path: ModulePath,
         alias: Option<Spanned<Symbol>>,
         span: Span,
     },
     /// `use std.iter::{Iterator, IntoIterator};`
     Group {
+        visibility: Visibility,
         path: ModulePath,
         items: Vec<ImportItem>,
         span: Span,
     },
     /// `use std.ops::*;`
     Glob {
+        visibility: Visibility,
         path: ModulePath,
         span: Span,
     },

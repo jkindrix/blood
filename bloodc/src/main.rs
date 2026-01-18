@@ -33,10 +33,13 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use bloodc::diagnostics::DiagnosticEmitter;
 use bloodc::{Lexer, TokenKind};
 use bloodc::codegen;
+#[allow(unused_imports)] // Will be used when multi-module support is complete
+use bloodc::driver::CompilationDriver;
 use bloodc::expand;
 use bloodc::macro_expand;
 use bloodc::mir;
 use bloodc::project::{self, Manifest};
+use bloodc::stdlib_loader::StdlibLoader;
 use bloodc::content::{ContentHash, BuildCache, hash_hir_item, extract_dependencies, VFT, VFTEntry};
 use bloodc::content::hash::ContentHasher;
 use bloodc::content::namespace::{NameRegistry, NameBinding, BindingKind};
@@ -677,6 +680,52 @@ fn cmd_check(args: &FileArgs, verbosity: u8) -> ExitCode {
     let mut ctx = bloodc::typeck::TypeContext::new(&source, interner)
         .with_source_path(&args.file);
 
+    // Load and register standard library modules if a stdlib path is provided
+    if let Some(ref stdlib_path) = args.stdlib_path {
+        if verbosity > 1 {
+            eprintln!("Loading stdlib from: {}", stdlib_path.display());
+        }
+        let mut stdlib_loader = StdlibLoader::new(stdlib_path.clone());
+
+        if verbosity > 1 {
+            eprintln!("  Discovering stdlib modules...");
+        }
+        if let Err(e) = stdlib_loader.discover() {
+            eprintln!("Stdlib error: {}", e);
+            return ExitCode::from(1);
+        }
+        if verbosity > 1 {
+            eprintln!("  Found {} modules.", stdlib_loader.module_count());
+        }
+
+        if verbosity > 1 {
+            eprintln!("  Parsing stdlib modules...");
+        }
+        if let Err(parse_errors) = stdlib_loader.parse_all() {
+            for e in parse_errors {
+                eprintln!("Stdlib parse error: {}", e);
+            }
+            return ExitCode::from(1);
+        }
+        if verbosity > 1 {
+            eprintln!("  Parsed all modules.");
+        }
+
+        if verbosity > 1 {
+            eprintln!("  Registering stdlib in context...");
+        }
+        if let Err(register_errors) = stdlib_loader.register_in_context(&mut ctx) {
+            for e in register_errors {
+                eprintln!("Stdlib registration error: {}", e);
+            }
+            return ExitCode::from(1);
+        }
+
+        if verbosity > 1 {
+            eprintln!("Loaded {} stdlib modules.", stdlib_loader.module_count());
+        }
+    }
+
     // Collect declarations and build type information
     if let Err(errors) = ctx.resolve_program(&program) {
         for error in &errors {
@@ -858,6 +907,35 @@ fn cmd_build(args: &FileArgs, verbosity: u8) -> ExitCode {
     // Type check and lower to HIR
     let mut ctx = bloodc::typeck::TypeContext::new(&source, interner)
         .with_source_path(&args.file);
+
+    // Load and register standard library modules if a stdlib path is provided
+    if let Some(ref stdlib_path) = args.stdlib_path {
+        let mut stdlib_loader = StdlibLoader::new(stdlib_path.clone());
+
+        if let Err(e) = stdlib_loader.discover() {
+            eprintln!("Stdlib error: {}", e);
+            return ExitCode::from(1);
+        }
+
+        if let Err(parse_errors) = stdlib_loader.parse_all() {
+            for e in parse_errors {
+                eprintln!("Stdlib parse error: {}", e);
+            }
+            return ExitCode::from(1);
+        }
+
+        if let Err(register_errors) = stdlib_loader.register_in_context(&mut ctx) {
+            for e in register_errors {
+                eprintln!("Stdlib registration error: {}", e);
+            }
+            return ExitCode::from(1);
+        }
+
+        if verbosity > 1 {
+            eprintln!("Loaded {} stdlib modules.", stdlib_loader.module_count());
+        }
+    }
+
     if let Err(errors) = ctx.resolve_program(&program) {
         for error in &errors {
             emitter.emit(error);

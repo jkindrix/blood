@@ -149,10 +149,11 @@ impl<'src> Parser<'src> {
         }
 
         // Parse imports (also skip doc comments before use statements)
+        // Imports can be `use ...` or `pub use ...`
         while self.check(TokenKind::DocComment) {
             self.advance();
         }
-        while self.check(TokenKind::Use) {
+        while self.check(TokenKind::Use) || (self.check(TokenKind::Pub) && self.check_next(TokenKind::Use)) {
             imports.push(self.parse_import());
             // Skip doc comments between use statements
             while self.check(TokenKind::DocComment) {
@@ -681,6 +682,14 @@ impl<'src> Parser<'src> {
 
     fn parse_import(&mut self) -> Import {
         let start = self.current.span;
+
+        // Parse optional visibility: `pub use ...`
+        let visibility = if self.try_consume(TokenKind::Pub) {
+            Visibility::Public
+        } else {
+            Visibility::Private
+        };
+
         self.advance(); // consume 'use'
 
         let path = self.parse_module_path();
@@ -691,6 +700,7 @@ impl<'src> Parser<'src> {
                 // Glob import
                 self.expect(TokenKind::Semi);
                 Import::Glob {
+                    visibility,
                     path,
                     span: start.merge(self.previous.span),
                 }
@@ -727,6 +737,7 @@ impl<'src> Parser<'src> {
                 self.expect(TokenKind::Semi);
 
                 Import::Group {
+                    visibility,
                     path,
                     items,
                     span: start.merge(self.previous.span),
@@ -744,6 +755,7 @@ impl<'src> Parser<'src> {
                 self.expect(TokenKind::Semi);
 
                 Import::Group {
+                    visibility,
                     path,
                     items: vec![ImportItem { name, alias }],
                     span: start.merge(self.previous.span),
@@ -752,6 +764,7 @@ impl<'src> Parser<'src> {
                 self.error_expected("`*`, `{`, or identifier");
                 self.expect(TokenKind::Semi);
                 Import::Simple {
+                    visibility,
                     path,
                     alias: None,
                     span: start.merge(self.previous.span),
@@ -769,6 +782,7 @@ impl<'src> Parser<'src> {
             self.expect(TokenKind::Semi);
 
             Import::Simple {
+                visibility,
                 path,
                 alias,
                 span: start.merge(self.previous.span),

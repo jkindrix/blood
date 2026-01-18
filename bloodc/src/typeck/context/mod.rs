@@ -615,6 +615,9 @@ pub struct ModuleInfo {
     pub name: String,
     /// Items contained in this module.
     pub items: Vec<DefId>,
+    /// Re-exports from this module (`pub use` imports).
+    /// Maps the exported name to the DefId of the re-exported item.
+    pub reexports: Vec<(String, DefId)>,
     /// Whether this is an external module (loaded from file).
     pub is_external: bool,
     /// Source span.
@@ -784,6 +787,91 @@ impl<'a> TypeContext<'a> {
             }
             _ => false,
         }
+    }
+
+    // ================================================================================
+    // External Module Support
+    // ================================================================================
+    //
+    // These methods support multi-file compilation by allowing external modules
+    // (from other files) to be registered and resolved.
+
+    /// Register an external module from another file.
+    ///
+    /// This is called by the compilation driver when loading modules from other files.
+    /// The module's items should already be collected using `collect_program`.
+    ///
+    /// # Arguments
+    /// * `module_path` - The dotted path to the module (e.g., "std.compiler.ast")
+    /// * `def_id` - The DefId for the module itself
+    /// * `items` - DefIds of items contained in the module
+    /// * `span` - Source span of the module declaration
+    pub fn register_external_module(
+        &mut self,
+        module_name: String,
+        def_id: DefId,
+        items: Vec<DefId>,
+        span: Span,
+    ) {
+        self.module_defs.insert(def_id, ModuleInfo {
+            name: module_name,
+            items,
+            reexports: Vec::new(),
+            is_external: true,
+            span,
+        });
+    }
+
+    /// Look up a module by its path segments.
+    ///
+    /// Returns the DefId of the module if found.
+    pub fn find_module_by_path(&self, path: &[&str]) -> Option<DefId> {
+        if path.is_empty() {
+            return None;
+        }
+
+        // Look through all registered modules
+        for (&def_id, info) in &self.module_defs {
+            // For now, simple name matching
+            // TODO: Support full path matching for nested modules
+            if path.len() == 1 && info.name == path[0] {
+                return Some(def_id);
+            }
+        }
+
+        None
+    }
+
+    /// Get all public items from a module.
+    ///
+    /// Returns a list of (name, DefId) pairs for all public items.
+    pub fn get_module_exports(&self, module_id: DefId) -> Vec<(String, DefId)> {
+        if let Some(module_info) = self.module_defs.get(&module_id) {
+            module_info.items.iter()
+                .filter_map(|&item_id| {
+                    self.resolver.def_info.get(&item_id).and_then(|info| {
+                        match info.visibility {
+                            ast::Visibility::Public | ast::Visibility::PublicCrate => {
+                                Some((info.name.clone(), item_id))
+                            }
+                            _ => None,
+                        }
+                    })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Check if a DefId refers to a module.
+    pub fn is_module(&self, def_id: DefId) -> bool {
+        self.module_defs.contains_key(&def_id)
+    }
+
+    /// Get module info by DefId.
+    pub fn get_module_info(&self, def_id: DefId) -> Option<&ModuleInfo> {
+        self.module_defs.get(&def_id)
     }
 
     // Static zonk functions that take a Unifier reference

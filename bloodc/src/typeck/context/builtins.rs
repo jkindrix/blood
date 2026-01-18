@@ -353,6 +353,102 @@ impl<'a> TypeContext<'a> {
         // Permissions
         // __builtin_set_permissions(path: &str, mode: u32) -> Result<(), Error>
         self.register_builtin_fn("__builtin_set_permissions", vec![ref_str_ty.clone(), Type::u32()], i32_ty.clone());
+
+        // Register builtin traits (Default, Debug, Clone, Copy, etc.)
+        self.register_builtin_traits();
+    }
+
+    /// Register built-in trait definitions.
+    ///
+    /// These are marker traits that the type system knows about intrinsically
+    /// and are required for derive macros and other language features.
+    pub(crate) fn register_builtin_traits(&mut self) {
+        use super::{TraitInfo, TraitMethodInfo};
+
+        // List of builtin traits that need definitions
+        // These are marker traits or traits with special compiler support
+        let builtin_traits = [
+            ("Copy", vec![]),      // Marker trait - no methods
+            ("Clone", vec![       // clone(&self) -> Self
+                ("clone", false), // &self method
+            ]),
+            ("Default", vec![     // default() -> Self
+                ("default", true), // static method
+            ]),
+            ("Debug", vec![       // fmt(&self, f: &mut Formatter) -> Result
+                ("fmt", false),
+            ]),
+            ("Display", vec![     // fmt(&self, f: &mut Formatter) -> Result
+                ("fmt", false),
+            ]),
+            ("PartialEq", vec![   // eq(&self, other: &Self) -> bool
+                ("eq", false),
+            ]),
+            ("Eq", vec![]),       // Marker trait - requires PartialEq
+            ("PartialOrd", vec![ // partial_cmp(&self, other: &Self) -> Option<Ordering>
+                ("partial_cmp", false),
+            ]),
+            ("Ord", vec![         // cmp(&self, other: &Self) -> Ordering
+                ("cmp", false),
+            ]),
+            ("Hash", vec![        // hash<H: Hasher>(&self, state: &mut H)
+                ("hash", false),
+            ]),
+            ("Send", vec![]),     // Marker trait
+            ("Sync", vec![]),     // Marker trait
+            ("Sized", vec![]),    // Marker trait
+            ("Unpin", vec![]),    // Marker trait
+        ];
+
+        for (trait_name, methods) in builtin_traits {
+            // Create a synthetic DefId for this builtin trait
+            let def_id = match self.resolver.define_item(
+                trait_name.to_string(),
+                hir::DefKind::Trait,
+                Span::dummy(),
+            ) {
+                Ok(id) => id,
+                Err(_) => continue, // Skip if already defined
+            };
+
+            // Create method infos (simplified - actual signatures would be more complex)
+            let method_infos: Vec<TraitMethodInfo> = methods
+                .iter()
+                .filter_map(|(method_name, _is_static)| {
+                    let method_def_id = self.resolver.define_item(
+                        format!("{}::{}", trait_name, method_name),
+                        hir::DefKind::Fn,
+                        Span::dummy(),
+                    ).ok()?;
+                    Some(TraitMethodInfo {
+                        def_id: method_def_id,
+                        name: method_name.to_string(),
+                        sig: hir::FnSig {
+                            inputs: vec![],  // Simplified - actual would have proper types
+                            output: Type::unit(),
+                            is_async: false,
+                            is_unsafe: false,
+                            is_const: false,
+                            generics: vec![],
+                        },
+                        has_default: false,
+                    })
+                })
+                .collect();
+
+            // Register the trait
+            self.trait_defs.insert(def_id, TraitInfo {
+                name: trait_name.to_string(),
+                generics: vec![],
+                supertraits: vec![],
+                methods: method_infos,
+                assoc_types: vec![],
+                assoc_consts: vec![],
+            });
+
+            // Also bind the trait in type_bindings so it can be found via lookup_type
+            let _ = self.resolver.define_type(trait_name.to_string(), def_id, Span::dummy());
+        }
     }
 
     /// Register a single built-in function.

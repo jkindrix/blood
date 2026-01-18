@@ -157,24 +157,40 @@ impl<'a> TypeContext<'a> {
         Ok(())
     }
 
+    /// Add a re-export to the current module's reexports list.
+    /// Called when processing `pub use` imports.
+    fn add_reexport_to_current_module(&mut self, name: String, def_id: DefId) {
+        if let Some(module_def_id) = self.current_module {
+            if let Some(module_info) = self.module_defs.get_mut(&module_def_id) {
+                module_info.reexports.push((name, def_id));
+            }
+        }
+        // If we're not in a module (root level), the re-export is tracked
+        // at the crate level. For now, we don't have a separate crate-level
+        // exports list, so root-level pub use is a no-op for re-export tracking.
+        // TODO: Add crate-level exports for pub use at root level
+    }
+
     /// Resolve an import statement.
     fn resolve_import(&mut self, import: &ast::Import) -> Result<(), TypeError> {
         match import {
-            ast::Import::Simple { path, alias, span } => {
-                self.resolve_simple_import(path, alias.as_ref(), *span)
+            ast::Import::Simple { visibility, path, alias, span } => {
+                self.resolve_simple_import(*visibility, path, alias.as_ref(), *span)
             }
-            ast::Import::Group { path, items, span } => {
-                self.resolve_group_import(path, items, *span)
+            ast::Import::Group { visibility, path, items, span } => {
+                self.resolve_group_import(*visibility, path, items, *span)
             }
-            ast::Import::Glob { path, span } => {
-                self.resolve_glob_import(path, *span)
+            ast::Import::Glob { visibility, path, span } => {
+                self.resolve_glob_import(*visibility, path, *span)
             }
         }
     }
 
     /// Resolve a simple import: `use std.mem.allocate;` or `use std.mem.allocate as alloc;`
+    /// If visibility is Public, this is a re-export (`pub use`).
     fn resolve_simple_import(
         &mut self,
+        visibility: ast::Visibility,
         path: &ast::ModulePath,
         alias: Option<&crate::span::Spanned<ast::Symbol>>,
         span: crate::span::Span,
@@ -204,10 +220,10 @@ impl<'a> TypeContext<'a> {
             match info.kind {
                 hir::DefKind::Struct | hir::DefKind::Enum | hir::DefKind::TypeAlias
                 | hir::DefKind::Effect | hir::DefKind::Trait => {
-                    self.resolver.import_type_binding(local_name, def_id, span)?;
+                    self.resolver.import_type_binding(local_name.clone(), def_id, span)?;
                 }
                 _ => {
-                    self.resolver.import_binding(local_name, def_id, span)?;
+                    self.resolver.import_binding(local_name.clone(), def_id, span)?;
                 }
             }
         } else {
@@ -219,12 +235,19 @@ impl<'a> TypeContext<'a> {
             ));
         }
 
+        // Track public re-exports
+        if visibility == ast::Visibility::Public {
+            self.add_reexport_to_current_module(local_name, def_id);
+        }
+
         Ok(())
     }
 
     /// Resolve a group import: `use std.iter::{Iterator, IntoIterator};`
+    /// If visibility is Public, this is a re-export (`pub use`).
     fn resolve_group_import(
         &mut self,
+        visibility: ast::Visibility,
         path: &ast::ModulePath,
         items: &[ast::ImportItem],
         span: crate::span::Span,
@@ -249,12 +272,17 @@ impl<'a> TypeContext<'a> {
                     match info.kind {
                         hir::DefKind::Struct | hir::DefKind::Enum | hir::DefKind::TypeAlias
                         | hir::DefKind::Effect | hir::DefKind::Trait => {
-                            self.resolver.import_type_binding(local_name, def_id, span)?;
+                            self.resolver.import_type_binding(local_name.clone(), def_id, span)?;
                         }
                         _ => {
-                            self.resolver.import_binding(local_name, def_id, span)?;
+                            self.resolver.import_binding(local_name.clone(), def_id, span)?;
                         }
                     }
+                }
+
+                // Track public re-exports
+                if visibility == ast::Visibility::Public {
+                    self.add_reexport_to_current_module(local_name, def_id);
                 }
             } else {
                 return Err(TypeError::new(
@@ -270,8 +298,10 @@ impl<'a> TypeContext<'a> {
     }
 
     /// Resolve a glob import: `use std.ops::*;`
+    /// If visibility is Public, this is a re-export (`pub use`).
     fn resolve_glob_import(
         &mut self,
+        visibility: ast::Visibility,
         path: &ast::ModulePath,
         span: crate::span::Span,
     ) -> Result<(), TypeError> {
@@ -299,6 +329,11 @@ impl<'a> TypeContext<'a> {
                     if !matches!(e.kind, TypeErrorKind::DuplicateDefinition { .. }) {
                         return Err(e);
                     }
+                }
+
+                // Track public re-exports
+                if visibility == ast::Visibility::Public {
+                    self.add_reexport_to_current_module(name, def_id);
                 }
             }
         }
@@ -377,10 +412,16 @@ impl<'a> TypeContext<'a> {
 
         let first_name = self.symbol_to_string(path.segments[0].node);
 
-        // Look up the first segment
+        // Look up the first segment in multiple places:
+        // 1. Value bindings in current scope
+        // 2. Type bindings in current scope
+        // 3. External modules registered via register_external_module
         let mut current_id = if let Some(Binding::Def(def_id)) = self.resolver.lookup(&first_name) {
             def_id
         } else if let Some(def_id) = self.resolver.lookup_type(&first_name) {
+            def_id
+        } else if let Some(def_id) = self.find_root_module_by_name(&first_name) {
+            // Check for external modules like "std"
             def_id
         } else {
             return Err(TypeError::new(
@@ -422,17 +463,25 @@ impl<'a> TypeContext<'a> {
                     }
                 }
             }
+
+            // Also check re-exports (pub use)
+            for (reexport_name, def_id) in &module_def.reexports {
+                if reexport_name == name {
+                    return Some(*def_id);
+                }
+            }
         }
         None
     }
 
-    /// Get all public items from a module.
+    /// Get all public items from a module (including re-exports).
     fn get_module_public_items(&self, module_id: DefId) -> Vec<(String, DefId)> {
         use crate::ast::Visibility;
 
         let mut items = Vec::new();
 
         if let Some(module_def) = self.module_defs.get(&module_id) {
+            // Include public items defined in the module
             for &item_id in &module_def.items {
                 if let Some(info) = self.resolver.def_info.get(&item_id) {
                     // Only include public items (Public or PublicCrate from outside)
@@ -446,9 +495,29 @@ impl<'a> TypeContext<'a> {
                     }
                 }
             }
+
+            // Include re-exports (pub use)
+            for (name, def_id) in &module_def.reexports {
+                items.push((name.clone(), *def_id));
+            }
         }
 
         items
+    }
+
+    /// Find a root-level module by name.
+    ///
+    /// This searches through registered external modules to find one with the given name.
+    /// Used for resolving the first segment of import paths like `std.compiler.lexer`.
+    fn find_root_module_by_name(&self, name: &str) -> Option<DefId> {
+        // Search through all registered modules
+        for (&def_id, info) in &self.module_defs {
+            // Only consider root-level external modules
+            if info.is_external && info.name == name {
+                return Some(def_id);
+            }
+        }
+        None
     }
 
     /// Collect a declaration.
@@ -2213,6 +2282,7 @@ impl<'a> TypeContext<'a> {
                 self.module_defs.insert(def_id, super::ModuleInfo {
                     name,
                     items: item_def_ids,
+                    reexports: Vec::new(),
                     is_external: false,
                     span: module.span,
                 });
@@ -2323,6 +2393,7 @@ impl<'a> TypeContext<'a> {
                 self.module_defs.insert(def_id, super::ModuleInfo {
                     name,
                     items: item_def_ids,
+                    reexports: Vec::new(),
                     is_external: true,
                     span: module.span,
                 });
