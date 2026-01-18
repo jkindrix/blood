@@ -135,14 +135,29 @@ impl<'src> Parser<'src> {
         let mut imports = Vec::new();
         let mut declarations = Vec::new();
 
+        // Skip any leading doc comments before module declaration.
+        // Doc comments at file level before `module` are module-level documentation.
+        // We consume them here to prevent infinite loop when `parse_declaration`
+        // sees `module` (which is not a valid declaration keyword).
+        while self.check(TokenKind::DocComment) {
+            self.advance();
+        }
+
         // Parse optional module declaration
         if self.check(TokenKind::Module) {
             module = Some(self.parse_module_decl());
         }
 
-        // Parse imports
+        // Parse imports (also skip doc comments before use statements)
+        while self.check(TokenKind::DocComment) {
+            self.advance();
+        }
         while self.check(TokenKind::Use) {
             imports.push(self.parse_import());
+            // Skip doc comments between use statements
+            while self.check(TokenKind::DocComment) {
+                self.advance();
+            }
         }
 
         // Parse declarations

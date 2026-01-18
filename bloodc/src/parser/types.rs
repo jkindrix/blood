@@ -360,6 +360,14 @@ impl<'src> Parser<'src> {
 
             args.push(arg);
 
+            // Don't consume comma if we're about to close the type args.
+            // This handles cases like `Option<Spanned<String>>` where the `>>`
+            // is split and pending_gt is set after parsing the inner type.
+            // The comma after `>>` is NOT a type arg separator.
+            if self.check_closing_angle() {
+                break;
+            }
+
             if !self.try_consume(TokenKind::Comma) {
                 break;
             }
