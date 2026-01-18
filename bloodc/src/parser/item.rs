@@ -1936,7 +1936,7 @@ impl<'src> Parser<'src> {
         let start = self.current.span;
         self.advance(); // consume 'macro'
 
-        // Parse macro name (followed by `!`)
+        // Parse macro name (optionally followed by `!`)
         let name = if self.check(TokenKind::Ident) || self.check(TokenKind::TypeIdent) {
             self.advance();
             self.spanned_symbol()
@@ -1945,8 +1945,8 @@ impl<'src> Parser<'src> {
             Spanned::new(self.intern(""), self.current.span)
         };
 
-        // Expect `!` after the name
-        self.expect(TokenKind::Not);
+        // Optional `!` after the name (Blood allows both `macro name { ... }` and `macro name! { ... }`)
+        self.try_consume(TokenKind::Not);
 
         let rules = if self.check(TokenKind::LBrace) {
             // Multiple rules: macro name! { (pattern) => expansion, ... }

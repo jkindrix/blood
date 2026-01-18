@@ -596,6 +596,20 @@ fn test_import_single_item_rust_style() {
     insta::assert_snapshot!(parse_to_debug(source));
 }
 
+#[test]
+fn test_pub_use_reexport() {
+    // Public re-export: `pub use` makes an import visible to external modules
+    let source = "pub use std.io::println;";
+    insta::assert_snapshot!(parse_to_debug(source));
+}
+
+#[test]
+fn test_pub_use_glob_reexport() {
+    // Public glob re-export
+    let source = "pub use std.prelude::*;";
+    insta::assert_snapshot!(parse_to_debug(source));
+}
+
 // ============================================================
 // Module Tests
 // ============================================================
