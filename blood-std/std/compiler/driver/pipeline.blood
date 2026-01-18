@@ -18,6 +18,7 @@ module std.compiler.driver.pipeline;
 use std.option.Option;
 use std.result.Result;
 use std.collections.Vec;
+use std.collections.HashMap;
 use std.string.String;
 use std.compiler.driver.session.Session;
 use std.compiler.driver.session.SourceFile;
@@ -29,6 +30,27 @@ use std.compiler.parser.Program;
 use std.compiler.parser.ParseError;
 use std.compiler.typeck.check_program;
 use std.compiler.typeck.TypeError;
+
+// HIR imports
+use std.compiler.hir.Crate as HirCrate;
+use std.compiler.hir.lowering.{lower_to_hir as hir_lower, LoweringResult, LoweringError};
+
+// MIR imports
+use std.compiler.mir.lowering.{lower_crate as mir_lower, Diagnostic as MirDiagnostic, InlineHandlerBodies};
+use std.compiler.mir.escape.{EscapeAnalyzer, EscapeResults};
+use std.compiler.mir.body.MirBody;
+
+// Codegen imports
+use std.compiler.codegen.{compile_mir_to_object_with_opt, BloodOptLevel};
+use std.compiler.diagnostics.Diagnostic as CodegenDiagnostic;
+
+// Type system imports (for TypeCheckResult)
+use std.compiler.typeck.types.{DefId, Type};
+use std.compiler.typeck.{TypeCheckResult, TypeErrors};
+
+// Type aliases for codegen compatibility
+type MirBodiesMap = HashMap<u32, MirBody>;
+type EscapeAnalysisMap = HashMap<u32, EscapeResults>;
 
 // ============================================================================
 // Compilation Result
@@ -236,8 +258,8 @@ pub fn compile_source(session: &mut Session, file: SourceFile) -> Result<Compila
     };
 
     // Phase 3: Type Checking
-    match typecheck_ast(session, &ast) {
-        Result::Ok(()) => {}
+    let type_result = match typecheck_ast(session, &ast) {
+        Result::Ok(result) => result,
         Result::Err(type_errors) => {
             for err in type_errors {
                 errors.push(CompilationError::from_type_error(err, file.name.clone()));
@@ -245,7 +267,7 @@ pub fn compile_source(session: &mut Session, file: SourceFile) -> Result<Compila
             }
             return Result::Err(errors)
         }
-    }
+    };
 
     // Check if we should stop early
     if session.should_stop() {
@@ -253,7 +275,7 @@ pub fn compile_source(session: &mut Session, file: SourceFile) -> Result<Compila
     }
 
     // Phase 4: HIR Lowering
-    let hir = match lower_to_hir(session, &ast) {
+    let hir = match lower_to_hir(session, &ast, type_result) {
         Result::Ok(h) => h,
         Result::Err(e) => {
             errors.push(e);
@@ -271,7 +293,7 @@ pub fn compile_source(session: &mut Session, file: SourceFile) -> Result<Compila
     };
 
     // Phase 6: Code Generation
-    let output = match generate_code(session, &mir) {
+    let output = match generate_code(session, &hir, &mir) {
         Result::Ok(o) => o,
         Result::Err(e) => {
             errors.push(e);
@@ -308,7 +330,7 @@ pub fn check_source(session: &mut Session, file: SourceFile) -> Result<(), Vec<C
 
     // Phase 3: Type Checking
     match typecheck_ast(session, &ast) {
-        Result::Ok(()) => Result::Ok(()),
+        Result::Ok(_type_result) => Result::Ok(()),
         Result::Err(type_errors) => {
             for err in type_errors {
                 errors.push(CompilationError::from_type_error(err, file.name.clone()));
@@ -340,60 +362,174 @@ fn parse_source(session: &mut Session, file: &SourceFile) -> Result<Program, Vec
 /// Phase 3: Type checking.
 ///
 /// Validates types and infers missing type annotations.
-fn typecheck_ast(session: &mut Session, ast: &Program) -> Result<(), Vec<TypeError>> {
-    check_program(ast)
+/// Returns TypeCheckResult containing resolved types for all definitions.
+fn typecheck_ast(session: &mut Session, ast: &Program) -> Result<TypeCheckResult, Vec<TypeError>> {
+    // Call the type checker - now returns TypeCheckResult directly with resolved types
+    let result = check_program(ast);
+
+    if result.is_success() {
+        Result::Ok(result)
+    } else {
+        // Extract errors from the result
+        let errors = result.get_errors();
+        let mut error_vec: Vec<TypeError> = Vec::new();
+        let mut i: usize = 0;
+        while i < errors.len() {
+            error_vec.push(errors[i].clone());
+            i = i + 1;
+        }
+        Result::Err(error_vec)
+    }
 }
 
 /// Phase 4: HIR lowering.
 ///
 /// Transforms AST to High-level Intermediate Representation.
-fn lower_to_hir(session: &mut Session, ast: &Program) -> Result<HIR, CompilationError> {
-    // TODO: Implement HIR lowering
-    // For now, return a placeholder
-    Result::Ok(HIR::placeholder())
+/// Requires type information from type checking phase.
+fn lower_to_hir(session: &mut Session, ast: &Program, type_result: TypeCheckResult) -> Result<HirCrate, CompilationError> {
+    // Call the real HIR lowering implementation
+    let result = hir_lower(ast, type_result);
+
+    if result.is_success() {
+        Result::Ok(result.into_crate())
+    } else {
+        // Convert first lowering error to compilation error
+        let errors = result.errors;
+        if errors.len() > 0 {
+            let err = &errors[0];
+            Result::Err(CompilationError::new(
+                CompilationPhase::HIRLowering,
+                err.message(),
+                session.current_file().unwrap_or("unknown".to_string()),
+                err.span().line(),
+                err.span().column(),
+            ))
+        } else {
+            Result::Err(CompilationError::new(
+                CompilationPhase::HIRLowering,
+                "HIR lowering failed with unknown error".to_string(),
+                session.current_file().unwrap_or("unknown".to_string()),
+                0,
+                0,
+            ))
+        }
+    }
 }
 
 /// Phase 5: MIR lowering.
 ///
 /// Transforms HIR to Mid-level Intermediate Representation.
-fn lower_to_mir(session: &mut Session, hir: &HIR) -> Result<MIR, CompilationError> {
-    // TODO: Implement MIR lowering
-    Result::Ok(MIR::placeholder())
+/// Returns MIR bodies along with escape analysis results.
+fn lower_to_mir(session: &mut Session, hir: &HirCrate) -> Result<MirLoweringResult, CompilationError> {
+    // Call the real MIR lowering implementation
+    let (mir_bodies, diagnostics, inline_handlers) = mir_lower(hir);
+
+    // Check for errors in diagnostics
+    let mut has_error = false;
+    let mut i: usize = 0;
+    while i < diagnostics.len() {
+        if diagnostics[i].is_error {
+            has_error = true;
+            break;
+        }
+        i = i + 1;
+    }
+
+    if has_error {
+        let err = &diagnostics[0];
+        return Result::Err(CompilationError::new(
+            CompilationPhase::MIRLowering,
+            err.message.clone(),
+            session.current_file().unwrap_or("unknown".to_string()),
+            err.span.line(),
+            err.span.column(),
+        ));
+    }
+
+    // Run escape analysis on all MIR bodies
+    let mut escape_results: EscapeAnalysisMap = HashMap::new();
+    let mut analyzer = EscapeAnalyzer::new();
+    for (def_id, mir_body) in mir_bodies.iter() {
+        let results = analyzer.analyze(mir_body);
+        escape_results.insert(*def_id, results);
+    }
+
+    Result::Ok(MirLoweringResult {
+        bodies: mir_bodies,
+        escape_analysis: escape_results,
+        inline_handlers,
+    })
 }
 
 /// Phase 6: Code generation.
 ///
 /// Generates target code from MIR.
-fn generate_code(session: &mut Session, mir: &MIR) -> Result<Vec<U8>, CompilationError> {
-    // TODO: Implement code generation
-    // For now, return empty output
-    Result::Ok(Vec::new())
-}
+/// Takes HIR crate for type information and MIR bodies for code generation.
+fn generate_code(
+    session: &mut Session,
+    hir: &HirCrate,
+    mir: &MirLoweringResult,
+) -> Result<Vec<U8>, CompilationError> {
+    // Determine output path from session
+    let output_path = session.output_path().unwrap_or("a.out".to_string());
 
-// ============================================================================
-// Placeholder Types (to be replaced with actual implementations)
-// ============================================================================
+    // Determine optimization level
+    let opt_level = if session.config.optimize {
+        BloodOptLevel::Aggressive
+    } else {
+        BloodOptLevel::Default
+    };
 
-/// Placeholder for HIR type.
-pub struct HIR {
-    _placeholder: (),
-}
-
-impl HIR {
-    pub fn placeholder() -> HIR {
-        HIR { _placeholder: () }
+    // Call the real codegen implementation
+    match compile_mir_to_object_with_opt(
+        hir,
+        &mir.bodies,
+        &mir.escape_analysis,
+        &mir.inline_handlers,
+        &output_path,
+        opt_level,
+    ) {
+        Result::Ok(()) => {
+            // Read the generated object file back as bytes
+            // In a real implementation, we'd use the File API
+            // For now, return success with empty bytes (file was written to disk)
+            Result::Ok(Vec::new())
+        }
+        Result::Err(diagnostics) => {
+            if diagnostics.len() > 0 {
+                let diag = &diagnostics[0];
+                Result::Err(CompilationError::new(
+                    CompilationPhase::CodeGen,
+                    diag.message.clone(),
+                    session.current_file().unwrap_or("unknown".to_string()),
+                    diag.span.line(),
+                    diag.span.column(),
+                ))
+            } else {
+                Result::Err(CompilationError::new(
+                    CompilationPhase::CodeGen,
+                    "Code generation failed with unknown error".to_string(),
+                    session.current_file().unwrap_or("unknown".to_string()),
+                    0,
+                    0,
+                ))
+            }
+        }
     }
 }
 
-/// Placeholder for MIR type.
-pub struct MIR {
-    _placeholder: (),
-}
+// ============================================================================
+// MIR Lowering Result
+// ============================================================================
 
-impl MIR {
-    pub fn placeholder() -> MIR {
-        MIR { _placeholder: () }
-    }
+/// Result of MIR lowering phase, containing all data needed for codegen.
+pub struct MirLoweringResult {
+    /// MIR bodies for all functions, keyed by DefId.
+    pub bodies: MirBodiesMap,
+    /// Escape analysis results for all functions.
+    pub escape_analysis: EscapeAnalysisMap,
+    /// Inline handler bodies discovered during MIR lowering.
+    pub inline_handlers: InlineHandlerBodies,
 }
 
 // ============================================================================
