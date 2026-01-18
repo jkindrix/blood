@@ -22,13 +22,13 @@
 //! - **Multiple dispatch**: Type-based dispatch tables
 //! - **Epoch management**: Scheduled updates for safe transitions
 
-module std.compiler.content.vft
+module std.compiler.content.vft;
 
-use std.collections.HashMap
-use std.collections.Vec
-use std.result.Result
-use std.option.Option
-use std.compiler.content.hash.ContentHash
+use std.collections.HashMap;
+use std.collections.Vec;
+use std.result.Result;
+use std.option.Option;
+use std.compiler.content.hash.ContentHash;
 
 // ============================================================================
 // Calling Convention
@@ -478,7 +478,7 @@ impl HotSwapResult {
     }
 
     /// Get the error if present.
-    pub fn error(self) -> Option[HotSwapError] {
+    pub fn error(self) -> Option<HotSwapError> {
         match self {
             HotSwapResult::Error(e) => Option::Some(e),
             HotSwapResult::Success { .. } => Option::None,
@@ -548,7 +548,7 @@ pub struct VFTUpdate {
     /// Swap mode.
     mode: SwapMode,
     /// Scheduled epoch (for Epoch mode).
-    target_epoch: Option[U64],
+    target_epoch: Option<U64>,
 }
 
 impl VFTUpdate {
@@ -589,19 +589,19 @@ const MAX_REDIRECT_DEPTH: USize = 10
 /// - Redirect chains for live code replacement
 pub struct VFT {
     /// Hash-indexed lookup.
-    entries: HashMap[ContentHash, VFTEntry],
+    entries: HashMap<ContentHash, VFTEntry>,
 
     /// All entries for iteration (maintains insertion order).
-    all_entries: Vec[ContentHash],
+    all_entries: Vec<ContentHash>,
 
     /// Current version/generation.
     version: U64,
 
     /// Pending updates (for batch/epoch swaps).
-    pending_updates: Vec[VFTUpdate],
+    pending_updates: Vec<VFTUpdate>,
 
     /// Redirects for hot-swap (old hash → new hash).
-    redirects: HashMap[ContentHash, ContentHash],
+    redirects: HashMap<ContentHash, ContentHash>,
 }
 
 impl VFT {
@@ -646,7 +646,7 @@ impl VFT {
     /// Look up an entry by hash, following redirects.
     ///
     /// Returns None if the hash is not found (even after following redirects).
-    pub fn lookup(self, hash: ContentHash) -> Option[VFTEntry] {
+    pub fn lookup(self, hash: ContentHash) -> Option<VFTEntry> {
         let actual_hash = self.resolve_redirect(hash)
         self.entries.get(actual_hash)
     }
@@ -681,7 +681,7 @@ impl VFT {
     }
 
     /// Get the entry point address for a hash.
-    pub fn get_entry_point(self, hash: ContentHash) -> Option[USize] {
+    pub fn get_entry_point(self, hash: ContentHash) -> Option<USize> {
         match self.lookup(hash) {
             Option::Some(entry) => Option::Some(entry.entry_point),
             Option::None => Option::None,
@@ -689,7 +689,7 @@ impl VFT {
     }
 
     /// Get the arity for a hash.
-    pub fn get_arity(self, hash: ContentHash) -> Option[U8] {
+    pub fn get_arity(self, hash: ContentHash) -> Option<U8> {
         match self.lookup(hash) {
             Option::Some(entry) => Option::Some(entry.arity),
             Option::None => Option::None,
@@ -782,7 +782,7 @@ impl VFT {
     ///
     /// Returns Ok(()) if compatible, or an error describing the mismatch.
     pub fn validate_swap_compatibility(self, old_hash: ContentHash, new_hash: ContentHash)
-        -> Result[Unit, HotSwapError]
+        -> Result<Unit, HotSwapError>
     {
         // Get both entries
         let old_entry = match self.entries.get(old_hash) {
@@ -896,7 +896,7 @@ impl VFT {
     }
 
     /// Get all entry hashes.
-    pub fn all_hashes(self) -> Vec[ContentHash] {
+    pub fn all_hashes(self) -> Vec<ContentHash> {
         self.all_entries.clone()
     }
 
@@ -924,7 +924,7 @@ pub enum TypePattern {
     /// Match a type constructor with arguments.
     Applied {
         constructor: ContentHash,
-        args: Vec[TypePattern],
+        args: Vec<TypePattern>,
     },
 }
 
@@ -1000,7 +1000,7 @@ impl DispatchEntry {
 /// implementation is selected.
 pub struct DispatchTable {
     /// Method hash → dispatch entries.
-    methods: HashMap[ContentHash, Vec[DispatchEntry]],
+    methods: HashMap<ContentHash, Vec<DispatchEntry>>,
 }
 
 impl DispatchTable {
@@ -1029,13 +1029,13 @@ impl DispatchTable {
     ///
     /// Returns the implementation hash with the highest specificity
     /// among those that match the argument type.
-    pub fn dispatch(self, method_hash: ContentHash, arg_type: ContentHash) -> Option[ContentHash] {
+    pub fn dispatch(self, method_hash: ContentHash, arg_type: ContentHash) -> Option<ContentHash> {
         let entries = match self.methods.get(method_hash) {
             Option::Some(e) => e,
             Option::None => return Option::None,
         }
 
-        let mut best: Option[DispatchEntry] = Option::None
+        let mut best: Option<DispatchEntry> = Option::None
         let mut best_specificity: U32 = 0
 
         for entry in entries {
@@ -1054,7 +1054,7 @@ impl DispatchTable {
     }
 
     /// Get all registered methods.
-    pub fn methods(self) -> Vec[ContentHash] {
+    pub fn methods(self) -> Vec<ContentHash> {
         self.methods.keys().collect()
     }
 

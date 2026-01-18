@@ -8,7 +8,7 @@
 //! - Functions: `fn foo() { ... }`
 //! - Types: `type Alias = Int`
 //! - Structs: `struct Point { x: Int, y: Int }`
-//! - Enums: `enum Option[T] { Some(T), None }`
+//! - Enums: `enum Option<T> { Some(T), None }`
 //! - Effects: `effect IO { fn read() -> String }`
 //! - Handlers: `handler ConsoleIO for IO { ... }`
 //! - Traits: `trait Clone { fn clone(self) -> Self }`
@@ -25,7 +25,7 @@
 //! | Function | `fn` | `fn add(a: Int, b: Int) -> Int` |
 //! | Type Alias | `type` | `type Id = Int` |
 //! | Struct | `struct` | `struct User { name: String }` |
-//! | Enum | `enum` | `enum Result[T, E] { Ok(T), Err(E) }` |
+//! | Enum | `enum` | `enum Result<T, E> { Ok(T), Err(E) }` |
 //! | Effect | `effect` | `effect Log { fn log(msg: String) }` |
 //! | Handler | `handler` | `handler FileLog for Log { ... }` |
 //! | Trait | `trait` | `trait Iterator { type Item; fn next() }` |
@@ -35,23 +35,23 @@
 //! | Module | `mod` | `mod utils { ... }` |
 //! | Macro | `macro` | `macro dbg!($e:expr) { ... }` |
 
-module std.compiler.ast.decl
+module std.compiler.ast.decl;
 
-use std.option.Option
-use std.collections.Vec
-use std.compiler.ast.node.Span
-use std.compiler.ast.node.Ident
-use std.compiler.ast.node.NodeId
-use std.compiler.ast.node.Visibility
-use std.compiler.ast.attr.Attribute
-use std.compiler.ast.ty.Type
-use std.compiler.ast.ty.TypePath
-use std.compiler.ast.ty.TypeParams
-use std.compiler.ast.ty.TypeArgs
-use std.compiler.ast.ty.WhereClause
-use std.compiler.ast.ty.EffectRow
-use std.compiler.ast.pattern.Pattern
-use std.compiler.ast.stmt.Block
+use std.option.Option;
+use std.collections.Vec;
+use std.compiler.ast.node.Span;
+use std.compiler.ast.node.Ident;
+use std.compiler.ast.node.NodeId;
+use std.compiler.ast.node.Visibility;
+use std.compiler.ast.attr.Attribute;
+use std.compiler.ast.ty.Type;
+use std.compiler.ast.ty.TypePath;
+use std.compiler.ast.ty.TypeParams;
+use std.compiler.ast.ty.TypeArgs;
+use std.compiler.ast.ty.WhereClause;
+use std.compiler.ast.ty.EffectRow;
+use std.compiler.ast.pattern.Pattern;
+use std.compiler.ast.stmt.Block;
 
 // ============================================================================
 // Declaration
@@ -69,7 +69,7 @@ pub enum Declaration {
     Type(TypeDecl),
     /// Struct: `struct Point { x: Int, y: Int }`
     Struct(StructDecl),
-    /// Enum: `enum Option[T] { Some(T), None }`
+    /// Enum: `enum Option<T> { Some(T), None }`
     Enum(EnumDecl),
     /// Effect: `effect IO { ... }`
     Effect(EffectDecl),
@@ -155,7 +155,7 @@ impl Declaration {
 ///
 /// ```blood
 /// #[inline]
-/// pub fn add[T: Add](a: T, b: T) -> T / pure
+/// pub fn add<T: Add>(a: T, b: T) -> T / pure
 /// where
 ///     T: Clone,
 /// {
@@ -167,7 +167,7 @@ pub struct FnDecl {
     /// Unique node ID.
     pub id: NodeId,
     /// Attributes on the function.
-    pub attrs: Vec[Attribute],
+    pub attrs: Vec<Attribute>,
     /// Visibility.
     pub vis: Visibility,
     /// Function qualifiers (const, async, unsafe).
@@ -175,17 +175,17 @@ pub struct FnDecl {
     /// Function name.
     pub name: Ident,
     /// Generic type parameters.
-    pub type_params: Option[TypeParams],
+    pub type_params: Option<TypeParams>,
     /// Function parameters.
-    pub params: Vec[Param],
+    pub params: Vec<Param>,
     /// Return type (None means unit `()`).
-    pub return_type: Option[Type],
+    pub return_type: Option<Type>,
     /// Effect row annotation.
-    pub effects: Option[EffectRow],
+    pub effects: Option<EffectRow>,
     /// Where clause.
-    pub where_clause: Option[WhereClause],
+    pub where_clause: Option<WhereClause>,
     /// Function body (None for declarations without body, e.g., in traits).
-    pub body: Option[Block],
+    pub body: Option<Block>,
     /// Span of the entire declaration.
     pub span: Span,
 }
@@ -260,7 +260,7 @@ pub struct Param {
     /// Unique node ID.
     pub id: NodeId,
     /// Optional ownership/mutability qualifier.
-    pub qualifier: Option[ParamQualifier],
+    pub qualifier: Option<ParamQualifier>,
     /// Parameter pattern (usually just an identifier).
     pub pattern: Pattern,
     /// Parameter type.
@@ -300,7 +300,7 @@ impl ParamQualifier {
 /// ## Example
 ///
 /// ```blood
-/// pub type Result[T, E] = Either[E, T]
+/// pub type Result<T, E> = Either[E, T]
 /// type Id = Int
 /// ```
 #[derive(Clone, PartialEq, Eq)]
@@ -308,13 +308,13 @@ pub struct TypeDecl {
     /// Unique node ID.
     pub id: NodeId,
     /// Attributes.
-    pub attrs: Vec[Attribute],
+    pub attrs: Vec<Attribute>,
     /// Visibility.
     pub vis: Visibility,
     /// Type name.
     pub name: Ident,
     /// Generic type parameters.
-    pub type_params: Option[TypeParams],
+    pub type_params: Option<TypeParams>,
     /// The aliased type.
     pub ty: Type,
     /// Span of the declaration.
@@ -331,7 +331,7 @@ pub struct TypeDecl {
 ///
 /// ```blood
 /// #[derive(Clone, Debug)]
-/// pub struct Point[T] {
+/// pub struct Point<T> {
 ///     pub x: T,
 ///     pub y: T,
 /// }
@@ -345,13 +345,13 @@ pub struct StructDecl {
     /// Unique node ID.
     pub id: NodeId,
     /// Attributes.
-    pub attrs: Vec[Attribute],
+    pub attrs: Vec<Attribute>,
     /// Visibility.
     pub vis: Visibility,
     /// Struct name.
     pub name: Ident,
     /// Generic type parameters.
-    pub type_params: Option[TypeParams],
+    pub type_params: Option<TypeParams>,
     /// Struct body (record, tuple, or unit).
     pub body: StructBody,
     /// Span of the declaration.
@@ -388,9 +388,9 @@ impl StructDecl {
 #[derive(Clone, PartialEq, Eq)]
 pub enum StructBody {
     /// Record struct: `struct Foo { x: Int, y: Int }`
-    Record(Vec[StructField]),
+    Record(Vec<StructField>),
     /// Tuple struct: `struct Foo(Int, Int);`
-    Tuple(Vec[Type]),
+    Tuple(Vec<Type>),
     /// Unit struct: `struct Foo;`
     Unit,
 }
@@ -401,7 +401,7 @@ pub struct StructField {
     /// Unique node ID.
     pub id: NodeId,
     /// Attributes on the field.
-    pub attrs: Vec[Attribute],
+    pub attrs: Vec<Attribute>,
     /// Field visibility.
     pub vis: Visibility,
     /// Field name.
@@ -421,7 +421,7 @@ pub struct StructField {
 /// ## Example
 ///
 /// ```blood
-/// pub enum Option[T] {
+/// pub enum Option<T> {
 ///     Some(T),
 ///     None,
 /// }
@@ -437,15 +437,15 @@ pub struct EnumDecl {
     /// Unique node ID.
     pub id: NodeId,
     /// Attributes.
-    pub attrs: Vec[Attribute],
+    pub attrs: Vec<Attribute>,
     /// Visibility.
     pub vis: Visibility,
     /// Enum name.
     pub name: Ident,
     /// Generic type parameters.
-    pub type_params: Option[TypeParams],
+    pub type_params: Option<TypeParams>,
     /// Enum variants.
-    pub variants: Vec[EnumVariant],
+    pub variants: Vec<EnumVariant>,
     /// Span of the declaration.
     pub span: Span,
 }
@@ -456,7 +456,7 @@ pub struct EnumVariant {
     /// Unique node ID.
     pub id: NodeId,
     /// Attributes on the variant.
-    pub attrs: Vec[Attribute],
+    pub attrs: Vec<Attribute>,
     /// Variant name.
     pub name: Ident,
     /// Variant body (same forms as struct).
@@ -484,12 +484,12 @@ pub struct EnumVariant {
 ///     fn write(s: String)
 /// }
 ///
-/// effect State[S] {
+/// effect State<S> {
 ///     fn get() -> S
 ///     fn set(s: S)
 /// }
 ///
-/// effect Exception[E] extends IO {
+/// effect Exception<E> extends IO {
 ///     fn throw(e: E) -> !
 /// }
 /// ```
@@ -498,17 +498,17 @@ pub struct EffectDecl {
     /// Unique node ID.
     pub id: NodeId,
     /// Attributes.
-    pub attrs: Vec[Attribute],
+    pub attrs: Vec<Attribute>,
     /// Visibility.
     pub vis: Visibility,
     /// Effect name.
     pub name: Ident,
     /// Generic type parameters.
-    pub type_params: Option[TypeParams],
+    pub type_params: Option<TypeParams>,
     /// Extended effects (supereffects).
-    pub extends: Vec[Type],
+    pub extends: Vec<Type>,
     /// Effect operations.
-    pub operations: Vec[OperationDecl],
+    pub operations: Vec<OperationDecl>,
     /// Span of the declaration.
     pub span: Span,
 }
@@ -521,9 +521,9 @@ pub struct OperationDecl {
     /// Operation name.
     pub name: Ident,
     /// Generic type parameters.
-    pub type_params: Option[TypeParams],
+    pub type_params: Option<TypeParams>,
     /// Operation parameters.
-    pub params: Vec[Param],
+    pub params: Vec<Param>,
     /// Return type.
     pub return_type: Type,
     /// Span of the operation.
@@ -552,7 +552,7 @@ pub struct OperationDecl {
 ///     }
 /// }
 ///
-/// handler StateHandler[S] for State[S] {
+/// handler StateHandler<S> for State<S> {
 ///     state mut current: S = default
 ///
 ///     fn get() -> S {
@@ -569,7 +569,7 @@ pub struct HandlerDecl {
     /// Unique node ID.
     pub id: NodeId,
     /// Attributes.
-    pub attrs: Vec[Attribute],
+    pub attrs: Vec<Attribute>,
     /// Visibility.
     pub vis: Visibility,
     /// Handler kind (deep or shallow).
@@ -577,17 +577,17 @@ pub struct HandlerDecl {
     /// Handler name.
     pub name: Ident,
     /// Generic type parameters.
-    pub type_params: Option[TypeParams],
+    pub type_params: Option<TypeParams>,
     /// The effect being handled.
     pub effect: Type,
     /// Where clause.
-    pub where_clause: Option[WhereClause],
+    pub where_clause: Option<WhereClause>,
     /// Handler state fields.
-    pub state: Vec[HandlerState],
+    pub state: Vec<HandlerState>,
     /// Optional return clause.
-    pub return_clause: Option[ReturnClause],
+    pub return_clause: Option<ReturnClause>,
     /// Operation implementations.
-    pub operations: Vec[OperationImpl],
+    pub operations: Vec<OperationImpl>,
     /// Span of the declaration.
     pub span: Span,
 }
@@ -659,7 +659,7 @@ pub struct OperationImpl {
     /// Operation name.
     pub name: Ident,
     /// Parameter patterns.
-    pub params: Vec[Pattern],
+    pub params: Vec<Pattern>,
     /// Implementation body.
     pub body: Block,
     /// Span of the implementation.
@@ -685,7 +685,7 @@ pub struct TryWithHandler {
     /// The operation name.
     pub operation: Ident,
     /// Parameter patterns.
-    pub params: Vec[Pattern],
+    pub params: Vec<Pattern>,
     /// Handler body.
     pub body: Block,
     /// Span of the handler.
@@ -709,13 +709,13 @@ pub struct TryWithHandler {
 ///     type Item
 ///
 ///     fn next(mut self) -> Option[Self::Item]
-///     fn size_hint(self) -> (USize, Option[USize]) {
+///     fn size_hint(self) -> (USize, Option<USize>) {
 ///         (0, Option::None)
 ///     }
 /// }
 ///
 /// trait PartialOrd: PartialEq {
-///     fn partial_cmp(self, other: &Self) -> Option[Ordering]
+///     fn partial_cmp(self, other: &Self) -> Option<Ordering>
 /// }
 /// ```
 #[derive(Clone, PartialEq, Eq)]
@@ -723,19 +723,19 @@ pub struct TraitDecl {
     /// Unique node ID.
     pub id: NodeId,
     /// Attributes.
-    pub attrs: Vec[Attribute],
+    pub attrs: Vec<Attribute>,
     /// Visibility.
     pub vis: Visibility,
     /// Trait name.
     pub name: Ident,
     /// Generic type parameters.
-    pub type_params: Option[TypeParams],
+    pub type_params: Option<TypeParams>,
     /// Supertraits (traits that must also be implemented).
-    pub supertraits: Vec[Type],
+    pub supertraits: Vec<Type>,
     /// Where clause.
-    pub where_clause: Option[WhereClause],
+    pub where_clause: Option<WhereClause>,
     /// Trait items (functions, types, constants).
-    pub items: Vec[TraitItem],
+    pub items: Vec<TraitItem>,
     /// Span of the declaration.
     pub span: Span,
 }
@@ -790,8 +790,8 @@ impl TraitItem {
 /// }
 ///
 /// // Generic impl
-/// impl[T: Clone] Clone for Option[T] {
-///     fn clone(self) -> Option[T] {
+/// impl<T: Clone> Clone for Option<T> {
+///     fn clone(self) -> Option<T> {
 ///         match self {
 ///             Option::Some(v) => Option::Some(v.clone()),
 ///             Option::None => Option::None,
@@ -804,17 +804,17 @@ pub struct ImplBlock {
     /// Unique node ID.
     pub id: NodeId,
     /// Attributes.
-    pub attrs: Vec[Attribute],
+    pub attrs: Vec<Attribute>,
     /// Generic type parameters.
-    pub type_params: Option[TypeParams],
+    pub type_params: Option<TypeParams>,
     /// Trait being implemented (None for inherent impl).
-    pub trait_ty: Option[Type],
+    pub trait_ty: Option<Type>,
     /// The type this impl is for.
     pub self_ty: Type,
     /// Where clause.
-    pub where_clause: Option[WhereClause],
+    pub where_clause: Option<WhereClause>,
     /// Implementation items.
-    pub items: Vec[ImplItem],
+    pub items: Vec<ImplItem>,
     /// Span of the block.
     pub span: Span,
 }
@@ -870,7 +870,7 @@ pub struct ConstDecl {
     /// Unique node ID.
     pub id: NodeId,
     /// Attributes.
-    pub attrs: Vec[Attribute],
+    pub attrs: Vec<Attribute>,
     /// Visibility.
     pub vis: Visibility,
     /// Constant name.
@@ -896,7 +896,7 @@ pub struct StaticDecl {
     /// Unique node ID.
     pub id: NodeId,
     /// Attributes.
-    pub attrs: Vec[Attribute],
+    pub attrs: Vec<Attribute>,
     /// Visibility.
     pub vis: Visibility,
     /// Whether this static is mutable.
@@ -935,13 +935,13 @@ pub struct ModItemDecl {
     /// Unique node ID.
     pub id: NodeId,
     /// Attributes.
-    pub attrs: Vec[Attribute],
+    pub attrs: Vec<Attribute>,
     /// Visibility.
     pub vis: Visibility,
     /// Module name.
     pub name: Ident,
     /// Module body (None for `mod foo;`, Some for `mod foo { ... }`).
-    pub body: Option[Vec[Declaration]],
+    pub body: Option[Vec<Declaration>],
     /// Span of the declaration.
     pub span: Span,
 }
@@ -980,13 +980,13 @@ pub struct MacroDecl {
     /// Unique node ID.
     pub id: NodeId,
     /// Attributes.
-    pub attrs: Vec[Attribute],
+    pub attrs: Vec<Attribute>,
     /// Visibility.
     pub vis: Visibility,
     /// Macro name (without the `!`).
     pub name: Ident,
     /// Macro rules.
-    pub rules: Vec[MacroRule],
+    pub rules: Vec<MacroRule>,
     /// Span of the declaration.
     pub span: Span,
 }
@@ -1006,7 +1006,7 @@ pub struct MacroRule {
 #[derive(Clone, PartialEq, Eq)]
 pub struct MacroPattern {
     /// Pattern parts.
-    pub parts: Vec[MacroPatternPart],
+    pub parts: Vec<MacroPatternPart>,
     /// Span of the pattern.
     pub span: Span,
 }
@@ -1029,8 +1029,8 @@ pub enum MacroPatternPart {
 
     /// Repetition: `$(...)*`, `$(...)+`, `$(...)?`
     Repetition {
-        pattern: Vec[MacroPatternPart],
-        separator: Option[TokenKind],
+        pattern: Vec<MacroPatternPart>,
+        separator: Option<TokenKind>,
         kind: RepetitionKind,
         span: Span,
     },
@@ -1038,7 +1038,7 @@ pub enum MacroPatternPart {
     /// Delimited group.
     Group {
         delimiter: MacroDelimiter,
-        pattern: Vec[MacroPatternPart],
+        pattern: Vec<MacroPatternPart>,
         span: Span,
     },
 }
@@ -1083,7 +1083,7 @@ impl FragmentKind {
     }
 
     /// Parse a fragment kind from a string.
-    pub fn from_str(s: &str) -> Option[FragmentKind] {
+    pub fn from_str(s: &str) -> Option<FragmentKind> {
         match s {
             "expr" => Option::Some(FragmentKind::Expr),
             "ty" => Option::Some(FragmentKind::Ty),
@@ -1156,7 +1156,7 @@ impl MacroDelimiter {
 #[derive(Clone, PartialEq, Eq)]
 pub struct MacroExpansion {
     /// Expansion parts.
-    pub parts: Vec[MacroExpansionPart],
+    pub parts: Vec<MacroExpansionPart>,
     /// Span of the expansion.
     pub span: Span,
 }
@@ -1165,7 +1165,7 @@ pub struct MacroExpansion {
 #[derive(Clone, PartialEq, Eq)]
 pub enum MacroExpansionPart {
     /// Literal tokens to emit.
-    Tokens(Vec[MacroToken]),
+    Tokens(Vec<MacroToken>),
 
     /// Substitution: `$name`
     Substitution {
@@ -1175,15 +1175,15 @@ pub enum MacroExpansionPart {
 
     /// Repetition: `$(...)*`
     Repetition {
-        parts: Vec[MacroExpansionPart],
-        separator: Option[MacroToken],
+        parts: Vec<MacroExpansionPart>,
+        separator: Option<MacroToken>,
         span: Span,
     },
 
     /// Delimited group.
     Group {
         delimiter: MacroDelimiter,
-        parts: Vec[MacroExpansionPart],
+        parts: Vec<MacroExpansionPart>,
         span: Span,
     },
 }

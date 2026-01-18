@@ -30,20 +30,20 @@
 //! - **Authentication**: Bearer token support
 //! - **Upload support**: Publish artifacts to non-read-only remotes
 
-module std.compiler.content.distributed_cache
+module std.compiler.content.distributed_cache;
 
-use std.collections.HashMap
-use std.collections.Vec
-use std.result.Result
-use std.option.Option
-use std.time.Duration
-use std.env
-use std.net.http.HttpClient
-use std.net.http.HttpRequest
-use std.net.http.HttpResponse
-use std.compiler.content.hash.ContentHash
-use std.compiler.content.build_cache.BuildCache
-use std.compiler.content.build_cache.CacheError
+use std.collections.HashMap;
+use std.collections.Vec;
+use std.result.Result;
+use std.option.Option;
+use std.time.Duration;
+use std.env;
+use std.net.http.HttpClient;
+use std.net.http.HttpRequest;
+use std.net.http.HttpResponse;
+use std.compiler.content.hash.ContentHash;
+use std.compiler.content.build_cache.BuildCache;
+use std.compiler.content.build_cache.CacheError;
 
 // ============================================================================
 // Configuration
@@ -55,7 +55,7 @@ pub struct RemoteCacheConfig {
     url: String,
 
     /// Authentication token (if required).
-    auth_token: Option[String],
+    auth_token: Option<String>,
 
     /// Request timeout in seconds.
     timeout_secs: U32,
@@ -130,7 +130,7 @@ impl RemoteCacheConfig {
     }
 
     /// Get the authentication token.
-    pub fn auth_token(self) -> Option[String] {
+    pub fn auth_token(self) -> Option<String> {
         self.auth_token.clone()
     }
 
@@ -264,11 +264,11 @@ impl RemoteCacheStats {
 /// Result of a cache fetch operation.
 pub enum FetchResult {
     /// Found in local cache.
-    LocalHit(Vec[U8]),
+    LocalHit(Vec<U8>),
 
     /// Found in remote cache (downloaded and stored locally).
     RemoteHit {
-        data: Vec[U8],
+        data: Vec<U8>,
         source: String,
     },
 
@@ -311,7 +311,7 @@ impl FetchResult {
     }
 
     /// Get the data if this was a hit.
-    pub fn data(self) -> Option[Vec[U8]] {
+    pub fn data(self) -> Option[Vec<U8>] {
         match self {
             FetchResult::LocalHit(data) => Option::Some(data),
             FetchResult::RemoteHit { data, .. } => Option::Some(data),
@@ -321,7 +321,7 @@ impl FetchResult {
     }
 
     /// Get the source URL if this was a remote hit.
-    pub fn source(self) -> Option[String] {
+    pub fn source(self) -> Option<String> {
         match self {
             FetchResult::RemoteHit { source, .. } => Option::Some(source),
             FetchResult::LocalHit(_) => Option::None,
@@ -331,7 +331,7 @@ impl FetchResult {
     }
 
     /// Get the error if this was an error.
-    pub fn error(self) -> Option[CacheError] {
+    pub fn error(self) -> Option<CacheError> {
         match self {
             FetchResult::Error(e) => Option::Some(e),
             FetchResult::LocalHit(_) => Option::None,
@@ -370,10 +370,10 @@ pub struct DistributedCache {
     local: BuildCache,
 
     /// Remote cache endpoints, sorted by priority.
-    remotes: Vec[RemoteCacheConfig],
+    remotes: Vec<RemoteCacheConfig>,
 
     /// In-flight request tracking to avoid duplicate downloads.
-    in_flight: HashMap[ContentHash, Unit],
+    in_flight: HashMap<ContentHash, Unit>,
 
     /// Statistics.
     stats: RemoteCacheStats,
@@ -382,7 +382,7 @@ pub struct DistributedCache {
     enabled: Bool,
 
     /// HTTP client for making requests.
-    http_client: Option[HttpClient],
+    http_client: Option<HttpClient>,
 }
 
 impl DistributedCache {
@@ -466,7 +466,7 @@ impl DistributedCache {
     }
 
     /// Get the list of configured remotes.
-    pub fn remotes(self) -> Vec[RemoteCacheConfig] {
+    pub fn remotes(self) -> Vec<RemoteCacheConfig> {
         self.remotes.clone()
     }
 
@@ -531,7 +531,7 @@ impl DistributedCache {
     }
 
     /// Fetch from a specific remote endpoint.
-    fn fetch_from_remote(mut self, hash: ContentHash, config: RemoteCacheConfig) -> Option[Vec[U8]] {
+    fn fetch_from_remote(mut self, hash: ContentHash, config: RemoteCacheConfig) -> Option[Vec<U8>] {
         // Mark as in-flight
         self.in_flight.insert(hash, ())
 
@@ -557,7 +557,7 @@ impl DistributedCache {
     }
 
     /// Perform an HTTP GET request.
-    fn http_get(self, url: String, config: RemoteCacheConfig) -> Result[Vec[U8], CacheError] {
+    fn http_get(self, url: String, config: RemoteCacheConfig) -> Result<Vec<U8>, CacheError> {
         let mut request = HttpRequest::get(url)
             .with_timeout(config.timeout())
 
@@ -598,7 +598,7 @@ impl DistributedCache {
     /// Only publishes to remotes that are not read-only.
     ///
     /// Returns the number of remotes the object was published to.
-    pub fn publish(mut self, hash: ContentHash, data: Vec[U8]) -> Result[USize, CacheError] {
+    pub fn publish(mut self, hash: ContentHash, data: Vec<U8>) -> Result<USize, CacheError> {
         if !self.is_enabled() {
             return Result::Ok(0)
         }
@@ -625,8 +625,8 @@ impl DistributedCache {
     }
 
     /// Publish to a specific remote endpoint.
-    fn publish_to_remote(self, hash: ContentHash, data: Vec[U8], config: RemoteCacheConfig)
-        -> Result[Unit, CacheError]
+    fn publish_to_remote(self, hash: ContentHash, data: Vec<U8>, config: RemoteCacheConfig)
+        -> Result<Unit, CacheError>
     {
         let hash_str = hash.full_display()
         let prefix = hash_str.substring(0, 2)
@@ -637,7 +637,7 @@ impl DistributedCache {
     }
 
     /// Perform an HTTP PUT request.
-    fn http_put(self, url: String, data: Vec[U8], config: RemoteCacheConfig) -> Result[Unit, CacheError] {
+    fn http_put(self, url: String, data: Vec<U8>, config: RemoteCacheConfig) -> Result<Unit, CacheError> {
         let mut request = HttpRequest::put(url)
             .with_timeout(config.timeout())
             .with_header("Content-Type", "application/octet-stream")
@@ -686,7 +686,7 @@ impl DistributedCache {
     }
 
     /// Store an object in local cache and optionally publish to remotes.
-    pub fn store(mut self, hash: ContentHash, data: Vec[U8], publish: Bool) -> Result[Unit, CacheError] {
+    pub fn store(mut self, hash: ContentHash, data: Vec<U8>, publish: Bool) -> Result<Unit, CacheError> {
         // Store locally
         match self.local.store_object(hash, data.clone()) {
             Result::Err(e) => return Result::Err(e),
@@ -767,12 +767,12 @@ pub struct PutRequest {
     /// The content hash.
     hash: ContentHash,
     /// The object data.
-    data: Vec[U8],
+    data: Vec<U8>,
 }
 
 impl PutRequest {
     /// Create a new PUT request.
-    pub fn new(hash: ContentHash, data: Vec[U8]) -> PutRequest {
+    pub fn new(hash: ContentHash, data: Vec<U8>) -> PutRequest {
         PutRequest { hash, data }
     }
 
@@ -782,7 +782,7 @@ impl PutRequest {
     }
 
     /// Get the data.
-    pub fn data(self) -> Vec[U8] {
+    pub fn data(self) -> Vec<U8> {
         self.data.clone()
     }
 }
@@ -790,7 +790,7 @@ impl PutRequest {
 /// Response from cache server.
 pub enum CacheResponse {
     /// Object found with data.
-    Found { data: Vec[U8] },
+    Found { data: Vec<U8> },
 
     /// Object not found.
     NotFound,
@@ -829,7 +829,7 @@ impl CacheResponse {
     }
 
     /// Get the data if found.
-    pub fn data(self) -> Option[Vec[U8]] {
+    pub fn data(self) -> Option[Vec<U8>] {
         match self {
             CacheResponse::Found { data } => Option::Some(data),
             CacheResponse::NotFound => Option::None,
@@ -840,7 +840,7 @@ impl CacheResponse {
     }
 
     /// Get the error message if error.
-    pub fn error_message(self) -> Option[String] {
+    pub fn error_message(self) -> Option<String> {
         match self {
             CacheResponse::Error { message } => Option::Some(message),
             CacheResponse::Found { .. } => Option::None,

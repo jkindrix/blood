@@ -19,20 +19,20 @@
 //! - E0307: Recursive type without indirection
 //! - ... etc.
 
-module std.compiler.diagnostics.typeck
+module std.compiler.diagnostics.typeck;
 
-use std.option.Option
-use std.collections.Vec
-use std.compiler.diagnostics.diagnostic.Diagnostic
-use std.compiler.diagnostics.severity.Severity
-use std.compiler.diagnostics.code.ErrorCode
-use std.compiler.diagnostics.span.Span as DiagSpan
-use std.compiler.diagnostics.label.Label
-use std.compiler.diagnostics.suggestion.Suggestion
-use std.compiler.diagnostics.suggestion.Applicability
-use std.compiler.diagnostics.convert.DiagnosticConverter
-use std.compiler.diagnostics.convert.IntoDiagnostic
-use std.compiler.diagnostics.convert.SimpleSpan
+use std.option.Option;
+use std.collections.Vec;
+use std.compiler.diagnostics.diagnostic.Diagnostic;
+use std.compiler.diagnostics.severity.Severity;
+use std.compiler.diagnostics.code.ErrorCode;
+use std.compiler.diagnostics.span.Span as DiagSpan;
+use std.compiler.diagnostics.label.Label;
+use std.compiler.diagnostics.suggestion.Suggestion;
+use std.compiler.diagnostics.suggestion.Applicability;
+use std.compiler.diagnostics.convert.DiagnosticConverter;
+use std.compiler.diagnostics.convert.IntoDiagnostic;
+use std.compiler.diagnostics.convert.SimpleSpan;
 
 // Note: In a real integration, these would be imported from the typeck module.
 // For now, we define adapter types that mirror the typeck error structure.
@@ -113,7 +113,7 @@ pub enum TypeErrorKindAdapter {
     CannotAccessField { ty: String, field: String },
 
     // Patterns
-    NonExhaustive { missing: Vec[String] },
+    NonExhaustive { missing: Vec<String> },
 
     // Operations
     CannotDeref { ty: String },
@@ -505,9 +505,9 @@ impl IntoDiagnostic for TypeErrorAdapter {
 
 /// Convert multiple type errors to diagnostics.
 pub fn convert_type_errors(
-    errors: Vec[TypeErrorAdapter],
+    errors: Vec<TypeErrorAdapter>,
     ctx: DiagnosticConverter,
-) -> Vec[Diagnostic] {
+) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new()
 
     for error in errors {

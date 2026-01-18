@@ -26,9 +26,9 @@
 /// Performance: Up to 150 million operations/second on modern hardware
 /// See: [Implementing Algebraic Effects in C](https://www.microsoft.com/en-us/research/publication/implementing-algebraic-effects-in-c/)
 
-use crate::compiler::typeck::types::{Type, DefId};
-use crate::compiler::hir::{Expr, ExprKind, Span};
-use crate::compiler::effects::row::EffectRow;
+use crate.compiler.typeck::types::{Type, DefId};
+use crate.compiler.hir::{Expr, ExprKind, Span};
+use crate.compiler.effects::row::EffectRow;
 
 // ============================================================
 // Handler Kind
@@ -608,16 +608,16 @@ fn count_resumes_recursive(expr: &Expr) -> usize {
     }
 }
 
-fn count_stmt_resumes(stmt: &crate::compiler::hir::Stmt) -> usize {
+fn count_stmt_resumes(stmt: &crate.compiler.hir::Stmt) -> usize {
     match stmt {
-        crate::compiler::hir::Stmt::Expr(e) => count_resumes_recursive(e),
-        crate::compiler::hir::Stmt::Let { init, pattern: _, ty: _ } => {
+        crate.compiler.hir::Stmt::Expr(e) => count_resumes_recursive(e),
+        crate.compiler.hir::Stmt::Let { init, pattern: _, ty: _ } => {
             match init {
                 Option::Some(e) => count_resumes_recursive(e),
                 Option::None => 0,
             }
         }
-        crate::compiler::hir::Stmt::Item(_) => 0,
+        crate.compiler.hir::Stmt::Item(_) => 0,
     }
 }
 

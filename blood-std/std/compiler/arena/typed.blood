@@ -33,7 +33,7 @@
 //!     span: Span,
 //! }
 //!
-//! let arena: TypedArena[AstNode] = TypedArena::new()
+//! let arena: TypedArena<AstNode> = TypedArena::new()
 //!
 //! // Allocate nodes
 //! let node1 = arena.alloc(AstNode { kind: NodeKind::Expr, span: Span::dummy() })
@@ -42,18 +42,18 @@
 //! // All nodes freed when arena drops
 //! ```
 
-module std.compiler.arena.typed
+module std.compiler.arena.typed;
 
-use std.mem.size_of
-use std.mem.align_of
-use std.option.Option
-use std.collections.Vec
-use std.ptr.RawPtr
-use std.compiler.arena.chunk.Chunk
-use std.compiler.arena.chunk.DEFAULT_CHUNK_SIZE
-use std.compiler.arena.chunk.DEFAULT_ALIGNMENT
-use std.compiler.arena.chunk.align_up
-use std.compiler.arena.stats.ArenaStats
+use std.mem.size_of;
+use std.mem.align_of;
+use std.option.Option;
+use std.collections.Vec;
+use std.ptr.RawPtr;
+use std.compiler.arena.chunk.Chunk;
+use std.compiler.arena.chunk.DEFAULT_CHUNK_SIZE;
+use std.compiler.arena.chunk.DEFAULT_ALIGNMENT;
+use std.compiler.arena.chunk.align_up;
+use std.compiler.arena.stats.ArenaStats;
 
 // ============================================================================
 // TypedArena
@@ -78,22 +78,22 @@ use std.compiler.arena.stats.ArenaStats
 /// ## Memory Layout
 ///
 /// ```text
-/// TypedArena[T]
-/// ├── chunks: Vec[Chunk]
+/// TypedArena<T>
+/// ├── chunks: Vec<Chunk>
 /// │   ├── Chunk 0: [T, T, T, T, ...]
 /// │   ├── Chunk 1: [T, T, T, ...]
 /// │   └── ...
 /// └── count: USize  (total allocations)
 /// ```
-pub struct TypedArena[T] {
+pub struct TypedArena<T> {
     /// The memory chunks holding allocated values.
-    chunks: Vec[Chunk],
+    chunks: Vec<Chunk>,
 
     /// Total number of values allocated.
     count: USize,
 }
 
-impl[T] TypedArena[T] {
+impl<T> TypedArena<T> {
     /// Create a new empty typed arena.
     ///
     /// The arena lazily allocates its first chunk on the first allocation.
@@ -101,10 +101,10 @@ impl[T] TypedArena[T] {
     /// ## Example
     ///
     /// ```blood
-    /// let arena: TypedArena[Int] = TypedArena::new()
+    /// let arena: TypedArena<Int> = TypedArena::new()
     /// assert(arena.is_empty())
     /// ```
-    pub fn new() -> TypedArena[T] {
+    pub fn new() -> TypedArena<T> {
         TypedArena {
             chunks: Vec::new(),
             count: 0,
@@ -124,9 +124,9 @@ impl[T] TypedArena[T] {
     ///
     /// ```blood
     /// // Pre-allocate space for 1000 AST nodes
-    /// let arena: TypedArena[AstNode] = TypedArena::with_capacity(1000)
+    /// let arena: TypedArena<AstNode> = TypedArena::with_capacity(1000)
     /// ```
-    pub fn with_capacity(capacity: USize) -> TypedArena[T] {
+    pub fn with_capacity(capacity: USize) -> TypedArena<T> {
         let item_size = size_of::<T>()
         let chunk_size = (capacity * item_size).max(DEFAULT_CHUNK_SIZE)
 
@@ -155,7 +155,7 @@ impl[T] TypedArena[T] {
     /// ## Example
     ///
     /// ```blood
-    /// let arena: TypedArena[Int] = TypedArena::new()
+    /// let arena: TypedArena<Int> = TypedArena::new()
     /// let x = arena.alloc(42)
     /// let y = arena.alloc(100)
     ///
@@ -191,7 +191,7 @@ impl[T] TypedArena[T] {
     /// ## Example
     ///
     /// ```blood
-    /// let arena: TypedArena[LargeStruct] = TypedArena::new()
+    /// let arena: TypedArena<LargeStruct> = TypedArena::new()
     ///
     /// let ptr = arena.alloc_uninit()
     /// unsafe {
@@ -200,7 +200,7 @@ impl[T] TypedArena[T] {
     ///     (*ptr).field2 = compute_value2()
     /// }
     /// ```
-    pub fn alloc_uninit(mut self) -> RawPtr[T] {
+    pub fn alloc_uninit(mut self) -> RawPtr<T> {
         let ptr = self.alloc_raw()
         self.count = self.count + 1
         ptr
@@ -221,7 +221,7 @@ impl[T] TypedArena[T] {
     /// ## Example
     ///
     /// ```blood
-    /// let arena: TypedArena[Int] = TypedArena::new()
+    /// let arena: TypedArena<Int> = TypedArena::new()
     /// let slice = arena.alloc_slice(&[1, 2, 3, 4, 5])
     ///
     /// assert(slice.len() == 5)
@@ -241,8 +241,8 @@ impl[T] TypedArena[T] {
         // Copy values to the allocated memory
         unsafe {
             __builtin_memcpy(
-                ptr.as_ptr() as RawPtr[U8],
-                values.as_ptr() as RawPtr[U8],
+                ptr.as_ptr() as RawPtr<U8>,
+                values.as_ptr() as RawPtr<U8>,
                 len * size_of::<T>()
             )
         }
@@ -315,7 +315,7 @@ impl[T] TypedArena[T] {
     /// ## Example
     ///
     /// ```blood
-    /// let mut arena: TypedArena[Int] = TypedArena::new()
+    /// let mut arena: TypedArena<Int> = TypedArena::new()
     /// let _ = arena.alloc(42)
     ///
     /// unsafe {
@@ -336,7 +336,7 @@ impl[T] TypedArena[T] {
     // ========================================================================
 
     /// Allocate raw memory for a single value.
-    fn alloc_raw(mut self) -> RawPtr[T] {
+    fn alloc_raw(mut self) -> RawPtr<T> {
         let size = size_of::<T>()
         let align = align_of::<T>()
 
@@ -358,7 +358,7 @@ impl[T] TypedArena[T] {
     }
 
     /// Allocate raw memory for a slice.
-    fn alloc_slice_raw(mut self, len: USize) -> RawPtr[T] {
+    fn alloc_slice_raw(mut self, len: USize) -> RawPtr<T> {
         let item_size = size_of::<T>()
         let align = align_of::<T>()
         let total_size = len * item_size
@@ -394,13 +394,13 @@ impl[T] TypedArena[T] {
     }
 }
 
-impl[T] Default for TypedArena[T] {
-    fn default() -> TypedArena[T] {
+impl<T> Default for TypedArena<T> {
+    fn default() -> TypedArena<T> {
         TypedArena::new()
     }
 }
 
-impl[T] Drop for TypedArena[T] {
+impl<T> Drop for TypedArena<T> {
     /// Drop all chunks when the arena is dropped.
     fn drop(mut self) {
         // Note: Chunks are automatically dropped when Vec drops.
@@ -415,7 +415,7 @@ impl[T] Drop for TypedArena[T] {
 
 #[test]
 fn test_typed_arena_new() {
-    let arena: TypedArena[Int] = TypedArena::new()
+    let arena: TypedArena<Int> = TypedArena::new()
 
     assert(arena.is_empty())
     assert(arena.len() == 0)
@@ -423,7 +423,7 @@ fn test_typed_arena_new() {
 
 #[test]
 fn test_typed_arena_with_capacity() {
-    let arena: TypedArena[Int] = TypedArena::with_capacity(1000)
+    let arena: TypedArena<Int> = TypedArena::with_capacity(1000)
 
     assert(arena.is_empty())
 
@@ -433,7 +433,7 @@ fn test_typed_arena_with_capacity() {
 
 #[test]
 fn test_typed_arena_alloc() {
-    let arena: TypedArena[Int] = TypedArena::new()
+    let arena: TypedArena<Int> = TypedArena::new()
 
     let x = arena.alloc(42)
     let y = arena.alloc(100)
@@ -447,7 +447,7 @@ fn test_typed_arena_alloc() {
 
 #[test]
 fn test_typed_arena_many_allocations() {
-    let arena: TypedArena[U64] = TypedArena::new()
+    let arena: TypedArena<U64> = TypedArena::new()
     let mut refs: Vec[&U64] = Vec::new()
 
     for i in 0..10000 {
@@ -461,7 +461,7 @@ fn test_typed_arena_many_allocations() {
 
 #[test]
 fn test_typed_arena_alloc_slice() {
-    let arena: TypedArena[Int] = TypedArena::new()
+    let arena: TypedArena<Int> = TypedArena::new()
     let slice = arena.alloc_slice(&[1, 2, 3, 4, 5])
 
     assert(slice.len() == 5)
@@ -474,7 +474,7 @@ fn test_typed_arena_alloc_slice() {
 
 #[test]
 fn test_typed_arena_empty_slice() {
-    let arena: TypedArena[Int] = TypedArena::new()
+    let arena: TypedArena<Int> = TypedArena::new()
     let slice = arena.alloc_slice(&[])
 
     assert(slice.len() == 0)
@@ -482,7 +482,7 @@ fn test_typed_arena_empty_slice() {
 
 #[test]
 fn test_typed_arena_stats() {
-    let arena: TypedArena[Int] = TypedArena::new()
+    let arena: TypedArena<Int> = TypedArena::new()
 
     let _ = arena.alloc(1)
     let _ = arena.alloc(2)
@@ -495,7 +495,7 @@ fn test_typed_arena_stats() {
 
 #[test]
 fn test_typed_arena_clear() {
-    let mut arena: TypedArena[Int] = TypedArena::new()
+    let mut arena: TypedArena<Int> = TypedArena::new()
 
     let _ = arena.alloc(42)
     let _ = arena.alloc(100)
@@ -511,7 +511,7 @@ fn test_typed_arena_clear() {
 
 #[test]
 fn test_typed_arena_growth() {
-    let arena: TypedArena[Int] = TypedArena::new()
+    let arena: TypedArena<Int> = TypedArena::new()
 
     // Allocate enough to trigger multiple chunks
     for i in 0..100000 {
@@ -530,7 +530,7 @@ fn test_typed_arena_struct() {
         y: Int,
     }
 
-    let arena: TypedArena[Point] = TypedArena::new()
+    let arena: TypedArena<Point> = TypedArena::new()
 
     let p1 = arena.alloc(Point { x: 10, y: 20 })
     let p2 = arena.alloc(Point { x: -5, y: 15 })

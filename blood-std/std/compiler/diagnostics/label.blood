@@ -13,12 +13,12 @@
 //! - Labels should point to the **smallest relevant span**
 //! - Use secondary labels to show related code (type definitions, etc.)
 
-module std.compiler.diagnostics.label
+module std.compiler.diagnostics.label;
 
-use std.compiler.diagnostics.span.Span
-use std.compiler.diagnostics.severity.AnsiColor
-use std.collections.Vec
-use std.option.Option
+use std.compiler.diagnostics.span.Span;
+use std.compiler.diagnostics.severity.AnsiColor;
+use std.collections.Vec;
+use std.option.Option;
 
 // ============================================================================
 // Label Kind
@@ -104,7 +104,7 @@ pub struct Label {
 
     /// The message to display at this location.
     /// If None, the label is shown without text (just underline).
-    message: Option[String],
+    message: Option<String>,
 
     /// The kind of label (primary or secondary).
     kind: LabelKind,
@@ -114,7 +114,7 @@ pub struct Label {
     priority: U32,
 
     /// Optional override color.
-    color: Option[AnsiColor],
+    color: Option<AnsiColor>,
 }
 
 impl Label {
@@ -203,7 +203,7 @@ impl Label {
     }
 
     /// Get the message.
-    pub fn message(self) -> Option[String] {
+    pub fn message(self) -> Option<String> {
         self.message.clone()
     }
 
@@ -270,7 +270,7 @@ impl Label {
 /// A collection of labels with ordering and grouping utilities.
 pub struct LabelCollection {
     /// The labels.
-    labels: Vec[Label],
+    labels: Vec<Label>,
 }
 
 impl LabelCollection {
@@ -282,7 +282,7 @@ impl LabelCollection {
     }
 
     /// Create a collection from a vector of labels.
-    pub fn from_vec(labels: Vec[Label]) -> LabelCollection {
+    pub fn from_vec(labels: Vec<Label>) -> LabelCollection {
         LabelCollection { labels }
     }
 
@@ -302,12 +302,12 @@ impl LabelCollection {
     }
 
     /// Get all labels.
-    pub fn labels(self) -> Vec[Label] {
+    pub fn labels(self) -> Vec<Label> {
         self.labels.clone()
     }
 
     /// Get primary labels only.
-    pub fn primary_labels(self) -> Vec[Label] {
+    pub fn primary_labels(self) -> Vec<Label> {
         let mut result = Vec::new()
         for label in self.labels.clone() {
             if label.is_primary() {
@@ -318,7 +318,7 @@ impl LabelCollection {
     }
 
     /// Get secondary labels only.
-    pub fn secondary_labels(self) -> Vec[Label] {
+    pub fn secondary_labels(self) -> Vec<Label> {
         let mut result = Vec::new()
         for label in self.labels.clone() {
             if label.is_secondary() {
@@ -341,7 +341,7 @@ impl LabelCollection {
     }
 
     /// Get labels that overlap with a given line.
-    pub fn labels_on_line(self, line: U32) -> Vec[Label] {
+    pub fn labels_on_line(self, line: U32) -> Vec<Label> {
         let mut result = Vec::new()
         for label in self.labels.clone() {
             if label.start_line() <= line && label.end_line() >= line {

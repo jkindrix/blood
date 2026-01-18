@@ -1,0 +1,470 @@
+//! # Compilation Pipeline
+//!
+//! Implements the compilation pipeline stages:
+//! 1. Lexing - Source code to tokens
+//! 2. Parsing - Tokens to AST
+//! 3. Type Checking - Validate types and infer missing annotations
+//! 4. HIR Lowering - AST to High-level IR
+//! 5. MIR Lowering - HIR to Mid-level IR
+//! 6. Code Generation - MIR to target code
+//!
+//! ## Pipeline Architecture
+//!
+//! Each stage transforms the program representation and may produce diagnostics.
+//! The pipeline can be run partially (e.g., check-only mode) or fully.
+
+module std.compiler.driver.pipeline;
+
+use std.option.Option;
+use std.result.Result;
+use std.collections.Vec;
+use std.string.String;
+use std.compiler.driver.session.Session;
+use std.compiler.driver.session.SourceFile;
+use std.compiler.driver.config.OutputType;
+use std.compiler.lexer.tokenize;
+use std.compiler.lexer.Token;
+use std.compiler.parser.parse;
+use std.compiler.parser.Program;
+use std.compiler.parser.ParseError;
+use std.compiler.typeck.check_program;
+use std.compiler.typeck.TypeError;
+
+// ============================================================================
+// Compilation Result
+// ============================================================================
+
+/// Result of a successful compilation.
+///
+/// Contains the generated output and any metadata.
+pub struct CompilationResult {
+    /// The generated output (bytes).
+    pub output: Vec<U8>,
+    /// Output type that was generated.
+    pub output_type: OutputType,
+    /// Source file name.
+    pub source_name: String,
+    /// Number of warnings generated.
+    pub warning_count: U32,
+}
+
+impl CompilationResult {
+    /// Create a new compilation result.
+    pub fn new(output: Vec<U8>, output_type: OutputType, source_name: String) -> CompilationResult {
+        CompilationResult {
+            output,
+            output_type,
+            source_name,
+            warning_count: 0,
+        }
+    }
+
+    /// Create an empty result (for check-only mode).
+    pub fn empty(source_name: String) -> CompilationResult {
+        CompilationResult {
+            output: Vec::new(),
+            output_type: OutputType::Executable,
+            source_name,
+            warning_count: 0,
+        }
+    }
+
+    /// Check if the output is empty.
+    pub fn is_empty(self) -> Bool {
+        self.output.is_empty()
+    }
+
+    /// Get the output size in bytes.
+    pub fn output_size(self) -> USize {
+        self.output.len()
+    }
+}
+
+// ============================================================================
+// Compilation Error
+// ============================================================================
+
+/// An error that occurred during compilation.
+///
+/// Wraps errors from different compilation phases with unified formatting.
+#[derive(Clone)]
+pub struct CompilationError {
+    /// Error phase (lexer, parser, typeck, etc.).
+    pub phase: CompilationPhase,
+    /// Error message.
+    pub message: String,
+    /// Source file name.
+    pub file: String,
+    /// Line number (1-indexed, 0 if unknown).
+    pub line: U32,
+    /// Column number (1-indexed, 0 if unknown).
+    pub column: U32,
+    /// Optional help text.
+    pub help: Option<String>,
+}
+
+impl CompilationError {
+    /// Create a new compilation error.
+    pub fn new(phase: CompilationPhase, message: String, file: String, line: U32, column: U32) -> CompilationError {
+        CompilationError {
+            phase,
+            message,
+            file,
+            line,
+            column,
+            help: Option::None,
+        }
+    }
+
+    /// Create an I/O error.
+    pub fn io_error(file: String, message: String) -> CompilationError {
+        CompilationError {
+            phase: CompilationPhase::IO,
+            message,
+            file,
+            line: 0,
+            column: 0,
+            help: Option::None,
+        }
+    }
+
+    /// Create from a parse error.
+    pub fn from_parse_error(err: ParseError, file: String) -> CompilationError {
+        CompilationError {
+            phase: CompilationPhase::Parser,
+            message: err.message.clone(),
+            file,
+            line: err.span.line,
+            column: err.span.column,
+            help: Option::None,
+        }
+    }
+
+    /// Create from a type error.
+    pub fn from_type_error(err: TypeError, file: String) -> CompilationError {
+        CompilationError {
+            phase: CompilationPhase::TypeCheck,
+            message: err.message.clone(),
+            file,
+            line: err.span.line,
+            column: err.span.column,
+            help: err.help.clone(),
+        }
+    }
+
+    /// Add help text.
+    pub fn with_help(mut self, help: String) -> CompilationError {
+        self.help = Option::Some(help);
+        self
+    }
+
+    /// Format the error for display.
+    pub fn format(self) -> String {
+        let location = if self.line > 0 {
+            format!("{}:{}:{}", self.file, self.line, self.column)
+        } else {
+            self.file.clone()
+        };
+
+        let phase_name = match self.phase {
+            CompilationPhase::IO => "io",
+            CompilationPhase::Lexer => "lexer",
+            CompilationPhase::Parser => "parser",
+            CompilationPhase::TypeCheck => "type",
+            CompilationPhase::HIRLowering => "hir",
+            CompilationPhase::MIRLowering => "mir",
+            CompilationPhase::CodeGen => "codegen",
+        };
+
+        let base = format!("error[{}]: {} --> {}", phase_name, self.message, location);
+
+        match self.help {
+            Option::Some(h) => format!("{}\n  help: {}", base, h),
+            Option::None => base,
+        }
+    }
+}
+
+/// Compilation phase where an error occurred.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CompilationPhase {
+    /// File I/O phase.
+    IO,
+    /// Lexical analysis phase.
+    Lexer,
+    /// Parsing phase.
+    Parser,
+    /// Type checking phase.
+    TypeCheck,
+    /// HIR lowering phase.
+    HIRLowering,
+    /// MIR lowering phase.
+    MIRLowering,
+    /// Code generation phase.
+    CodeGen,
+}
+
+// ============================================================================
+// Pipeline Entry Points
+// ============================================================================
+
+/// Compile a source file to the configured output.
+///
+/// Runs the full compilation pipeline:
+/// 1. Lex
+/// 2. Parse
+/// 3. Type check
+/// 4. Lower to HIR
+/// 5. Lower to MIR
+/// 6. Generate code
+pub fn compile_source(session: &mut Session, file: SourceFile) -> Result<CompilationResult, Vec<CompilationError>> {
+    let mut errors: Vec<CompilationError> = Vec::new();
+
+    // Phase 1: Lexing
+    let tokens = lex_source(session, &file);
+
+    // Phase 2: Parsing
+    let ast = match parse_source(session, &file) {
+        Result::Ok(ast) => ast,
+        Result::Err(parse_errors) => {
+            for err in parse_errors {
+                errors.push(CompilationError::from_parse_error(err, file.name.clone()));
+                session.record_error();
+            }
+            return Result::Err(errors)
+        }
+    };
+
+    // Phase 3: Type Checking
+    match typecheck_ast(session, &ast) {
+        Result::Ok(()) => {}
+        Result::Err(type_errors) => {
+            for err in type_errors {
+                errors.push(CompilationError::from_type_error(err, file.name.clone()));
+                session.record_error();
+            }
+            return Result::Err(errors)
+        }
+    }
+
+    // Check if we should stop early
+    if session.should_stop() {
+        return Result::Err(errors)
+    }
+
+    // Phase 4: HIR Lowering
+    let hir = match lower_to_hir(session, &ast) {
+        Result::Ok(h) => h,
+        Result::Err(e) => {
+            errors.push(e);
+            return Result::Err(errors)
+        }
+    };
+
+    // Phase 5: MIR Lowering
+    let mir = match lower_to_mir(session, &hir) {
+        Result::Ok(m) => m,
+        Result::Err(e) => {
+            errors.push(e);
+            return Result::Err(errors)
+        }
+    };
+
+    // Phase 6: Code Generation
+    let output = match generate_code(session, &mir) {
+        Result::Ok(o) => o,
+        Result::Err(e) => {
+            errors.push(e);
+            return Result::Err(errors)
+        }
+    };
+
+    Result::Ok(CompilationResult {
+        output,
+        output_type: session.config.output_type,
+        source_name: file.name.clone(),
+        warning_count: session.warning_count(),
+    })
+}
+
+/// Check a source file without generating code.
+///
+/// Runs phases 1-3 only (lex, parse, type check).
+pub fn check_source(session: &mut Session, file: SourceFile) -> Result<(), Vec<CompilationError>> {
+    let mut errors: Vec<CompilationError> = Vec::new();
+
+    // Phase 1: Lexing (implicitly done in parse)
+    // Phase 2: Parsing
+    let ast = match parse_source(session, &file) {
+        Result::Ok(ast) => ast,
+        Result::Err(parse_errors) => {
+            for err in parse_errors {
+                errors.push(CompilationError::from_parse_error(err, file.name.clone()));
+                session.record_error();
+            }
+            return Result::Err(errors)
+        }
+    };
+
+    // Phase 3: Type Checking
+    match typecheck_ast(session, &ast) {
+        Result::Ok(()) => Result::Ok(()),
+        Result::Err(type_errors) => {
+            for err in type_errors {
+                errors.push(CompilationError::from_type_error(err, file.name.clone()));
+                session.record_error();
+            }
+            Result::Err(errors)
+        }
+    }
+}
+
+// ============================================================================
+// Pipeline Phases
+// ============================================================================
+
+/// Phase 1: Lexical analysis.
+///
+/// Converts source code to a stream of tokens.
+fn lex_source(session: &mut Session, file: &SourceFile) -> Vec<Token> {
+    tokenize(file.content.clone())
+}
+
+/// Phase 2: Parsing.
+///
+/// Converts source code to an AST.
+fn parse_source(session: &mut Session, file: &SourceFile) -> Result<Program, Vec<ParseError>> {
+    parse(file.content.clone())
+}
+
+/// Phase 3: Type checking.
+///
+/// Validates types and infers missing type annotations.
+fn typecheck_ast(session: &mut Session, ast: &Program) -> Result<(), Vec<TypeError>> {
+    check_program(ast)
+}
+
+/// Phase 4: HIR lowering.
+///
+/// Transforms AST to High-level Intermediate Representation.
+fn lower_to_hir(session: &mut Session, ast: &Program) -> Result<HIR, CompilationError> {
+    // TODO: Implement HIR lowering
+    // For now, return a placeholder
+    Result::Ok(HIR::placeholder())
+}
+
+/// Phase 5: MIR lowering.
+///
+/// Transforms HIR to Mid-level Intermediate Representation.
+fn lower_to_mir(session: &mut Session, hir: &HIR) -> Result<MIR, CompilationError> {
+    // TODO: Implement MIR lowering
+    Result::Ok(MIR::placeholder())
+}
+
+/// Phase 6: Code generation.
+///
+/// Generates target code from MIR.
+fn generate_code(session: &mut Session, mir: &MIR) -> Result<Vec<U8>, CompilationError> {
+    // TODO: Implement code generation
+    // For now, return empty output
+    Result::Ok(Vec::new())
+}
+
+// ============================================================================
+// Placeholder Types (to be replaced with actual implementations)
+// ============================================================================
+
+/// Placeholder for HIR type.
+pub struct HIR {
+    _placeholder: (),
+}
+
+impl HIR {
+    pub fn placeholder() -> HIR {
+        HIR { _placeholder: () }
+    }
+}
+
+/// Placeholder for MIR type.
+pub struct MIR {
+    _placeholder: (),
+}
+
+impl MIR {
+    pub fn placeholder() -> MIR {
+        MIR { _placeholder: () }
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[test]
+fn test_compilation_result_new() {
+    let result = CompilationResult::new(
+        vec![0x00, 0x01, 0x02],
+        OutputType::Executable,
+        "test.blood".to_string()
+    );
+
+    assert(!result.is_empty())
+    assert(result.output_size() == 3)
+    assert(result.source_name == "test.blood")
+}
+
+#[test]
+fn test_compilation_result_empty() {
+    let result = CompilationResult::empty("test.blood".to_string());
+
+    assert(result.is_empty())
+    assert(result.output_size() == 0)
+}
+
+#[test]
+fn test_compilation_error_format() {
+    let error = CompilationError::new(
+        CompilationPhase::Parser,
+        "unexpected token".to_string(),
+        "test.blood".to_string(),
+        10,
+        5
+    );
+
+    let formatted = error.format();
+    assert(formatted.contains("parser"))
+    assert(formatted.contains("unexpected token"))
+    assert(formatted.contains("test.blood:10:5"))
+}
+
+#[test]
+fn test_compilation_error_with_help() {
+    let error = CompilationError::new(
+        CompilationPhase::TypeCheck,
+        "type mismatch".to_string(),
+        "test.blood".to_string(),
+        15,
+        10
+    ).with_help("expected Int, found String".to_string());
+
+    let formatted = error.format();
+    assert(formatted.contains("help"))
+    assert(formatted.contains("expected Int"))
+}
+
+#[test]
+fn test_compilation_error_io() {
+    let error = CompilationError::io_error(
+        "missing.blood".to_string(),
+        "file not found".to_string()
+    );
+
+    assert(error.phase == CompilationPhase::IO)
+    assert(error.line == 0)
+}
+
+#[test]
+fn test_compilation_phase_equality() {
+    assert(CompilationPhase::Parser == CompilationPhase::Parser)
+    assert(CompilationPhase::Parser != CompilationPhase::TypeCheck)
+}

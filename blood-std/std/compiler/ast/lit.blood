@@ -33,12 +33,12 @@
 //! - `\xNN` - Byte escape
 //! - `\u{NNNN}` - Unicode escape
 
-module std.compiler.ast.lit
+module std.compiler.ast.lit;
 
-use std.option.Option
-use std.compiler.ast.node.Span
-use std.compiler.ast.node.NodeId
-use std.compiler.ast.node.Symbol
+use std.option.Option;
+use std.compiler.ast.node.Span;
+use std.compiler.ast.node.NodeId;
+use std.compiler.ast.node.Symbol;
 
 // ============================================================================
 // Literal
@@ -78,12 +78,12 @@ impl Literal {
     }
 
     /// Create an integer literal.
-    pub fn int(value: I64, suffix: Option[IntSuffix], span: Span) -> Literal {
+    pub fn int(value: I64, suffix: Option<IntSuffix>, span: Span) -> Literal {
         Literal::new(LiteralKind::Int { value, suffix }, span)
     }
 
     /// Create a float literal.
-    pub fn float(value: F64, suffix: Option[FloatSuffix], span: Span) -> Literal {
+    pub fn float(value: F64, suffix: Option<FloatSuffix>, span: Span) -> Literal {
         Literal::new(LiteralKind::Float { value, suffix }, span)
     }
 
@@ -113,7 +113,7 @@ impl Literal {
     }
 
     /// Create a byte string literal.
-    pub fn byte_string(value: Vec[U8], span: Span) -> Literal {
+    pub fn byte_string(value: Vec<U8>, span: Span) -> Literal {
         Literal::new(LiteralKind::ByteString(value), span)
     }
 
@@ -155,7 +155,7 @@ impl Literal {
     }
 
     /// Try to get as an integer value.
-    pub fn as_int(self) -> Option[I64] {
+    pub fn as_int(self) -> Option<I64> {
         match self.kind {
             LiteralKind::Int { value, .. } => Option::Some(value),
             _ => Option::None,
@@ -163,7 +163,7 @@ impl Literal {
     }
 
     /// Try to get as a float value.
-    pub fn as_float(self) -> Option[F64] {
+    pub fn as_float(self) -> Option<F64> {
         match self.kind {
             LiteralKind::Float { value, .. } => Option::Some(value),
             _ => Option::None,
@@ -179,7 +179,7 @@ impl Literal {
     }
 
     /// Try to get as a boolean value.
-    pub fn as_bool(self) -> Option[Bool] {
+    pub fn as_bool(self) -> Option<Bool> {
         match self.kind {
             LiteralKind::Bool(value) => Option::Some(value),
             _ => Option::None,
@@ -201,7 +201,7 @@ pub enum LiteralKind {
         /// The integer value.
         value: I64,
         /// Optional type suffix.
-        suffix: Option[IntSuffix],
+        suffix: Option<IntSuffix>,
     },
 
     /// Float literal: `3.14`, `1e10`, `2.5f32`
@@ -209,7 +209,7 @@ pub enum LiteralKind {
         /// The float value.
         value: F64,
         /// Optional type suffix.
-        suffix: Option[FloatSuffix],
+        suffix: Option<FloatSuffix>,
     },
 
     /// String literal: `"hello"`, `r#"raw"#`
@@ -230,7 +230,7 @@ pub enum LiteralKind {
     Byte(U8),
 
     /// Byte string literal: `b"bytes"`
-    ByteString(Vec[U8]),
+    ByteString(Vec<U8>),
 }
 
 impl Eq for LiteralKind {
@@ -307,7 +307,7 @@ impl IntSuffix {
     }
 
     /// Parse a suffix from a string.
-    pub fn from_str(s: &str) -> Option[IntSuffix] {
+    pub fn from_str(s: &str) -> Option<IntSuffix> {
         match s {
             "i8" => Option::Some(IntSuffix::I8),
             "i16" => Option::Some(IntSuffix::I16),
@@ -348,7 +348,7 @@ impl FloatSuffix {
     }
 
     /// Parse a suffix from a string.
-    pub fn from_str(s: &str) -> Option[FloatSuffix] {
+    pub fn from_str(s: &str) -> Option<FloatSuffix> {
         match s {
             "f32" => Option::Some(FloatSuffix::F32),
             "f64" => Option::Some(FloatSuffix::F64),
@@ -419,7 +419,7 @@ pub struct EscapeInfo {
 /// Process escape sequences in a string.
 ///
 /// Converts escape sequences like `\n` to their actual characters.
-pub fn process_escapes(s: &str) -> Result[String, String] {
+pub fn process_escapes(s: &str) -> Result<String, String> {
     let mut result = String::new()
     let mut chars = s.chars().peekable()
 
@@ -468,7 +468,7 @@ pub fn process_escapes(s: &str) -> Result[String, String] {
 }
 
 /// Collect a specific number of hex digits.
-fn collect_hex_digits(chars: &mut impl Iterator[Item = Char], count: USize) -> Result[String, String] {
+fn collect_hex_digits(chars: &mut impl Iterator[Item = Char], count: USize) -> Result<String, String> {
     let mut result = String::new()
     for _ in 0..count {
         match chars.next() {
@@ -481,7 +481,7 @@ fn collect_hex_digits(chars: &mut impl Iterator[Item = Char], count: USize) -> R
 }
 
 /// Collect characters until a delimiter.
-fn collect_until(chars: &mut impl Iterator[Item = Char], delim: Char) -> Result[String, String] {
+fn collect_until(chars: &mut impl Iterator[Item = Char], delim: Char) -> Result<String, String> {
     let mut result = String::new()
     loop {
         match chars.next() {

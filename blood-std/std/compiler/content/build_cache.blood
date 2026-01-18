@@ -24,19 +24,19 @@
 //! 4. If cache miss: compile and store
 //! 5. Link all objects together
 
-module std.compiler.content.build_cache
+module std.compiler.content.build_cache;
 
-use std.collections.HashMap
-use std.collections.HashSet
-use std.collections.Vec
-use std.result.Result
-use std.option.Option
-use std.io.Path
-use std.io.File
-use std.io.IoError
-use std.env
-use std.compiler.content.hash.ContentHash
-use std.compiler.content.hash.ContentHasher
+use std.collections.HashMap;
+use std.collections.HashSet;
+use std.collections.Vec;
+use std.result.Result;
+use std.option.Option;
+use std.io.Path;
+use std.io.File;
+use std.io.IoError;
+use std.env;
+use std.compiler.content.hash.ContentHash;
+use std.compiler.content.hash.ContentHasher;
 
 // ============================================================================
 // Constants
@@ -176,7 +176,7 @@ pub struct CacheIndex {
     /// Cache format version for compatibility checking.
     version: U32,
     /// Dependency graph: hash → list of dependency hashes.
-    dependencies: HashMap[ContentHash, Vec[ContentHash]],
+    dependencies: HashMap<ContentHash, Vec<ContentHash>>,
 }
 
 impl CacheIndex {
@@ -220,7 +220,7 @@ impl CacheIndex {
     }
 
     /// Deserialize the index from JSON.
-    pub fn from_json(json: String) -> Result[CacheIndex, CacheError] {
+    pub fn from_json(json: String) -> Result<CacheIndex, CacheError> {
         // For now, return a placeholder implementation
         // In production, this would use a proper JSON parser
         Result::Err(CacheError::Json("JSON parsing not yet implemented"))
@@ -244,10 +244,10 @@ pub struct BuildCache {
     cache_dir: Path,
 
     /// In-memory cache of hash → file path mappings.
-    object_cache: HashMap[ContentHash, Path],
+    object_cache: HashMap<ContentHash, Path>,
 
     /// Dependency graph: hash → set of dependency hashes.
-    dependencies: HashMap[ContentHash, Vec[ContentHash]],
+    dependencies: HashMap<ContentHash, Vec<ContentHash>>,
 
     /// Whether caching is enabled.
     enabled: Bool,
@@ -386,7 +386,7 @@ impl BuildCache {
     /// Creates the following directories:
     /// - `{version}/objects/` for compiled artifacts
     /// - `{version}/ir/` for debugging IR dumps
-    pub fn init(self) -> Result[Unit, CacheError] {
+    pub fn init(self) -> Result<Unit, CacheError> {
         if !self.enabled {
             return Result::Ok(())
         }
@@ -411,7 +411,7 @@ impl BuildCache {
     ///
     /// This creates the cache directory structure and loads any
     /// existing dependency index.
-    pub fn init_and_load(mut self) -> Result[Bool, CacheError] {
+    pub fn init_and_load(mut self) -> Result<Bool, CacheError> {
         match self.init() {
             Result::Err(e) => return Result::Err(e),
             Result::Ok(_) => {}
@@ -439,7 +439,7 @@ impl BuildCache {
     /// Get a compiled object by hash.
     ///
     /// Returns the object data if found, or None if not cached.
-    pub fn get_object(mut self, hash: ContentHash) -> Result[Option[Vec[U8]], CacheError] {
+    pub fn get_object(mut self, hash: ContentHash) -> Result<Option[Vec<U8>>, CacheError] {
         if !self.enabled {
             return Result::Ok(Option::None)
         }
@@ -462,7 +462,7 @@ impl BuildCache {
     /// Store a compiled object.
     ///
     /// Returns the path where the object was stored.
-    pub fn store_object(mut self, hash: ContentHash, data: Vec[U8]) -> Result[Path, CacheError] {
+    pub fn store_object(mut self, hash: ContentHash, data: Vec<U8>) -> Result<Path, CacheError> {
         if !self.enabled {
             return Result::Ok(Path::new(""))
         }
@@ -495,7 +495,7 @@ impl BuildCache {
     /// Get the path where an object file would be stored for a hash.
     ///
     /// Returns None if caching is disabled.
-    pub fn get_object_path(self, hash: ContentHash) -> Option[Path] {
+    pub fn get_object_path(self, hash: ContentHash) -> Option<Path> {
         if self.enabled {
             Option::Some(self.object_path(hash))
         } else {
@@ -504,7 +504,7 @@ impl BuildCache {
     }
 
     /// Store IR for debugging.
-    pub fn store_ir(self, hash: ContentHash, ir: String) -> Result[Path, CacheError] {
+    pub fn store_ir(self, hash: ContentHash, ir: String) -> Result<Path, CacheError> {
         if !self.enabled {
             return Result::Ok(Path::new(""))
         }
@@ -536,14 +536,14 @@ impl BuildCache {
     /// Record dependencies for a hash.
     ///
     /// This enables automatic invalidation when dependencies change.
-    pub fn record_dependencies(mut self, hash: ContentHash, deps: Vec[ContentHash]) -> Unit {
+    pub fn record_dependencies(mut self, hash: ContentHash, deps: Vec<ContentHash>) -> Unit {
         if self.enabled {
             self.dependencies.insert(hash, deps)
         }
     }
 
     /// Get dependencies for a hash.
-    pub fn get_dependencies(self, hash: ContentHash) -> Option[Vec[ContentHash]] {
+    pub fn get_dependencies(self, hash: ContentHash) -> Option[Vec<ContentHash>] {
         self.dependencies.get(hash).map(|v| v.clone())
     }
 
@@ -553,7 +553,7 @@ impl BuildCache {
     /// depend (directly or indirectly) on the changed hash.
     ///
     /// Returns the list of invalidated hashes.
-    pub fn invalidate(mut self, changed_hash: ContentHash) -> Result[Vec[ContentHash], CacheError] {
+    pub fn invalidate(mut self, changed_hash: ContentHash) -> Result<Vec<ContentHash>, CacheError> {
         if !self.enabled {
             return Result::Ok(Vec::new())
         }
@@ -600,7 +600,7 @@ impl BuildCache {
     ///
     /// This persists the dependency graph so that subsequent builds
     /// can use it for incremental invalidation.
-    pub fn save_index(self) -> Result[Unit, CacheError] {
+    pub fn save_index(self) -> Result<Unit, CacheError> {
         if !self.enabled {
             return Result::Ok(())
         }
@@ -634,7 +634,7 @@ impl BuildCache {
     ///
     /// Returns `Ok(true)` if the index was successfully loaded,
     /// `Ok(false)` if no index exists (fresh cache), or an error.
-    pub fn load_index(mut self) -> Result[Bool, CacheError] {
+    pub fn load_index(mut self) -> Result<Bool, CacheError> {
         if !self.enabled {
             return Result::Ok(false)
         }
@@ -668,7 +668,7 @@ impl BuildCache {
     // === Cache Management ===
 
     /// Clear all cached objects.
-    pub fn clear(mut self) -> Result[Unit, CacheError] {
+    pub fn clear(mut self) -> Result<Unit, CacheError> {
         if !self.enabled {
             return Result::Ok(())
         }
@@ -694,7 +694,7 @@ impl BuildCache {
     }
 
     /// Calculate full cache statistics by walking the directory.
-    pub fn calculate_stats(self) -> Result[CacheStats, CacheError] {
+    pub fn calculate_stats(self) -> Result<CacheStats, CacheError> {
         if !self.enabled {
             return Result::Ok(CacheStats::new())
         }

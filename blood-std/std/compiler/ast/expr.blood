@@ -56,21 +56,21 @@
 //! with handler handle { body }
 //! ```
 
-module std.compiler.ast.expr
+module std.compiler.ast.expr;
 
-use std.option.Option
-use std.collections.Vec
-use std.compiler.ast.node.Span
-use std.compiler.ast.node.Ident
-use std.compiler.ast.node.NodeId
-use std.compiler.ast.lit.Literal
-use std.compiler.ast.ty.Type
-use std.compiler.ast.ty.TypePath
-use std.compiler.ast.ty.TypeArgs
-use std.compiler.ast.ty.EffectRow
-use std.compiler.ast.pattern.Pattern
-use std.compiler.ast.stmt.Block
-use std.compiler.ast.decl.TryWithHandler
+use std.option.Option;
+use std.collections.Vec;
+use std.compiler.ast.node.Span;
+use std.compiler.ast.node.Ident;
+use std.compiler.ast.node.NodeId;
+use std.compiler.ast.lit.Literal;
+use std.compiler.ast.ty.Type;
+use std.compiler.ast.ty.TypePath;
+use std.compiler.ast.ty.TypeArgs;
+use std.compiler.ast.ty.EffectRow;
+use std.compiler.ast.pattern.Pattern;
+use std.compiler.ast.stmt.Block;
+use std.compiler.ast.decl.TryWithHandler;
 
 // ============================================================================
 // Expression
@@ -173,79 +173,79 @@ pub enum ExprKind {
     /// Binary operation: `a + b`, `x && y`
     Binary {
         op: BinOp,
-        left: Box[Expr],
-        right: Box[Expr],
+        left: Box<Expr>,
+        right: Box<Expr>,
     },
 
     /// Unary operation: `!x`, `-y`, `*ptr`, `&val`
     Unary {
         op: UnaryOp,
-        operand: Box[Expr],
+        operand: Box<Expr>,
     },
 
     /// Function call: `f(x, y)`
     Call {
-        callee: Box[Expr],
-        args: Vec[CallArg],
+        callee: Box<Expr>,
+        args: Vec<CallArg>,
     },
 
     /// Method call: `x.foo(y)`, `x.foo[T](y)`
     MethodCall {
-        receiver: Box[Expr],
+        receiver: Box<Expr>,
         method: Ident,
-        type_args: Option[TypeArgs],
-        args: Vec[CallArg],
+        type_args: Option<TypeArgs>,
+        args: Vec<CallArg>,
     },
 
     /// Field access: `x.field`, `x.0`
     Field {
-        base: Box[Expr],
+        base: Box<Expr>,
         field: FieldAccess,
     },
 
     /// Index: `x[i]`
     Index {
-        base: Box[Expr],
-        index: Box[Expr],
+        base: Box<Expr>,
+        index: Box<Expr>,
     },
 
     /// Tuple: `()`, `(x,)`, `(x, y)`
-    Tuple(Vec[Expr]),
+    Tuple(Vec<Expr>),
 
     /// Array: `[1, 2, 3]` or `[0; 10]`
     Array(ArrayExpr),
 
     /// Record/struct: `Point { x: 1, y: 2 }` or `{ x, y }`
     Record {
-        path: Option[TypePath],
-        fields: Vec[RecordExprField],
-        base: Option[Box[Expr]],
+        path: Option<TypePath>,
+        fields: Vec<RecordExprField>,
+        base: Option[Box<Expr>],
     },
 
     /// Range: `a..b`, `a..=b`, `..b`, `a..`
     Range {
-        start: Option[Box[Expr]],
-        end: Option[Box[Expr]],
+        start: Option[Box<Expr>],
+        end: Option[Box<Expr>],
         inclusive: Bool,
     },
 
     /// Cast: `x as T`
     Cast {
-        expr: Box[Expr],
+        expr: Box<Expr>,
         ty: Type,
     },
 
     /// Assignment: `x = y`
     Assign {
-        target: Box[Expr],
-        value: Box[Expr],
+        target: Box<Expr>,
+        value: Box<Expr>,
     },
 
     /// Compound assignment: `x += y`, `x *= 2`
     AssignOp {
         op: BinOp,
-        target: Box[Expr],
-        value: Box[Expr],
+        target: Box<Expr>,
+        value: Box<Expr>,
     },
 
     /// Block: `{ statements; expr }`
@@ -253,97 +253,97 @@ pub enum ExprKind {
 
     /// If expression: `if cond { a } else { b }`
     If {
-        condition: Box[Expr],
+        condition: Box<Expr>,
         then_branch: Block,
-        else_branch: Option[ElseBranch],
+        else_branch: Option<ElseBranch>,
     },
 
     /// If-let expression: `if let Pat = expr { a } else { b }`
     IfLet {
         pattern: Pattern,
-        scrutinee: Box[Expr],
+        scrutinee: Box<Expr>,
         then_branch: Block,
-        else_branch: Option[ElseBranch],
+        else_branch: Option<ElseBranch>,
     },
 
     /// Match expression: `match x { Pat => expr, ... }`
     Match {
-        scrutinee: Box[Expr],
-        arms: Vec[MatchArm],
+        scrutinee: Box<Expr>,
+        arms: Vec<MatchArm>,
     },
 
     /// Loop: `loop { body }`
     Loop {
-        label: Option[Ident],
+        label: Option<Ident>,
         body: Block,
     },
 
     /// While loop: `while cond { body }`
     While {
-        label: Option[Ident],
-        condition: Box[Expr],
+        label: Option<Ident>,
+        condition: Box<Expr>,
         body: Block,
     },
 
     /// While-let loop: `while let Pat = expr { body }`
     WhileLet {
-        label: Option[Ident],
+        label: Option<Ident>,
         pattern: Pattern,
-        scrutinee: Box[Expr],
+        scrutinee: Box<Expr>,
         body: Block,
     },
 
     /// For loop: `for pat in iter { body }`
     For {
-        label: Option[Ident],
+        label: Option<Ident>,
         pattern: Pattern,
-        iter: Box[Expr],
+        iter: Box<Expr>,
         body: Block,
     },
 
     /// Return: `return`, `return x`
-    Return(Option[Box[Expr]]),
+    Return(Option[Box<Expr>]),
 
     /// Break: `break`, `break 'label`, `break x`
     Break {
-        label: Option[Ident],
-        value: Option[Box[Expr]],
+        label: Option<Ident>,
+        value: Option[Box<Expr>],
     },
 
     /// Continue: `continue`, `continue 'label`
     Continue {
-        label: Option[Ident],
+        label: Option<Ident>,
     },
 
     /// Closure: `|x| x + 1`, `move |x, y| { x + y }`
     Closure {
         is_move: Bool,
-        params: Vec[ClosureParam],
-        return_type: Option[Type],
-        effects: Option[EffectRow],
-        body: Box[Expr],
+        params: Vec<ClosureParam>,
+        return_type: Option<Type>,
+        effects: Option<EffectRow>,
+        body: Box<Expr>,
     },
 
     /// With-handle: `with handler handle { body }`
     WithHandle {
-        handler: Box[Expr],
-        body: Box[Expr],
+        handler: Box<Expr>,
+        body: Box<Expr>,
     },
 
     /// Perform effect operation: `perform IO.read()`, `perform Error.throw(e)`
     Perform {
-        effect: Option[TypePath],
+        effect: Option<TypePath>,
         operation: Ident,
-        args: Vec[Expr],
+        args: Vec<Expr>,
     },
 
     /// Resume continuation: `resume(x)`
-    Resume(Box[Expr]),
+    Resume(Box<Expr>),
 
     /// Try-with inline handler: `try { body } with { handlers }`
     TryWith {
         body: Block,
-        handlers: Vec[TryWithHandler],
+        handlers: Vec<TryWithHandler>,
     },
 
     /// Unsafe block: `@unsafe { body }`
@@ -351,12 +351,12 @@ pub enum ExprKind {
 
     /// Region: `region 'a { body }`
     Region {
-        name: Option[Ident],
+        name: Option<Ident>,
         body: Block,
     },
 
     /// Parenthesized: `(x)`
-    Paren(Box[Expr]),
+    Paren(Box<Expr>),
 
     /// Default value: `default`
     Default,
@@ -379,14 +379,14 @@ pub enum ExprKind {
 #[derive(Clone, PartialEq, Eq)]
 pub struct ExprPath {
     /// Path segments.
-    pub segments: Vec[ExprPathSegment],
+    pub segments: Vec<ExprPathSegment>,
     /// Span of the entire path.
     pub span: Span,
 }
 
 impl ExprPath {
     /// Create a new expression path.
-    pub fn new(segments: Vec[ExprPathSegment], span: Span) -> ExprPath {
+    pub fn new(segments: Vec<ExprPathSegment>, span: Span) -> ExprPath {
         ExprPath { segments, span }
     }
 
@@ -416,7 +416,7 @@ pub struct ExprPathSegment {
     /// Segment name.
     pub name: Ident,
     /// Optional generic arguments (turbofish): `foo[T, U]`
-    pub args: Option[TypeArgs],
+    pub args: Option<TypeArgs>,
 }
 
 // ============================================================================
@@ -435,7 +435,7 @@ pub struct ExprPathSegment {
 #[derive(Clone, PartialEq, Eq)]
 pub struct CallArg {
     /// Optional argument name (for named arguments).
-    pub name: Option[Ident],
+    pub name: Option<Ident>,
     /// Argument value.
     pub value: Expr,
     /// Span of the argument.
@@ -499,11 +499,11 @@ impl FieldAccess {
 #[derive(Clone, PartialEq, Eq)]
 pub enum ArrayExpr {
     /// List: `[1, 2, 3]`
-    List(Vec[Expr]),
+    List(Vec<Expr>),
     /// Repeat: `[0; 10]`
     Repeat {
-        value: Box[Expr],
-        count: Box[Expr],
+        value: Box<Expr>,
+        count: Box<Expr>,
     },
 }
 
@@ -525,7 +525,7 @@ pub struct RecordExprField {
     /// Field name.
     pub name: Ident,
     /// Field value (None for shorthand `{ x }` meaning `{ x: x }`).
-    pub value: Option[Expr],
+    pub value: Option<Expr>,
     /// Span of the field.
     pub span: Span,
 }
@@ -547,7 +547,7 @@ pub enum ElseBranch {
     /// Block: `else { ... }`
     Block(Block),
     /// Else-if: `else if ... { ... }`
-    If(Box[Expr]),
+    If(Box<Expr>),
 }
 
 impl ElseBranch {
@@ -580,7 +580,7 @@ pub struct MatchArm {
     /// The pattern to match.
     pub pattern: Pattern,
     /// Optional guard condition.
-    pub guard: Option[Expr],
+    pub guard: Option<Expr>,
     /// The body expression.
     pub body: Expr,
     /// Span of the arm.
@@ -613,7 +613,7 @@ pub struct ClosureParam {
     /// Parameter pattern.
     pub pattern: Pattern,
     /// Optional explicit type.
-    pub ty: Option[Type],
+    pub ty: Option<Type>,
     /// Span of the parameter.
     pub span: Span,
 }
@@ -803,7 +803,7 @@ pub enum MacroCallKind {
     /// Format macro: `format!("...", args)`, `println!(...)`, etc.
     Format {
         format_str: Ident, // Actually a string, but using Ident for span
-        args: Vec[Expr],
+        args: Vec<Expr>,
     },
 
     /// Vec macro: `vec![1, 2, 3]` or `vec![0; 10]`
@@ -811,17 +811,17 @@ pub enum MacroCallKind {
 
     /// Assert macro: `assert!(cond)` or `assert!(cond, "message")`
     Assert {
-        condition: Box[Expr],
-        message: Option[Box[Expr]],
+        condition: Box<Expr>,
+        message: Option[Box<Expr>],
     },
 
     /// Debug macro: `dbg!(expr)`
-    Dbg(Box[Expr]),
+    Dbg(Box<Expr>),
 
     /// Matches macro: `matches!(expr, pattern)`
     Matches {
-        expr: Box[Expr],
-        pattern: Box[Pattern],
+        expr: Box<Expr>,
+        pattern: Box<Pattern>,
     },
 
     /// Custom/user-defined macro with raw content.
@@ -835,11 +835,11 @@ pub enum MacroCallKind {
 #[derive(Clone, PartialEq, Eq)]
 pub enum VecMacroArgs {
     /// List: `vec![1, 2, 3]`
-    List(Vec[Expr]),
+    List(Vec<Expr>),
     /// Repeat: `vec![0; 10]`
     Repeat {
-        value: Box[Expr],
-        count: Box[Expr],
+        value: Box<Expr>,
+        count: Box<Expr>,
     },
 }
 

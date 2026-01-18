@@ -31,16 +31,16 @@ use super::rvalue::compile_mir_rvalue;
 use super::place::compile_mir_place;
 use super::memory;
 
-use crate::hir::{DefId, LocalId, Type};
-use crate::mir::{
+use crate.compiler.hir::{DefId, LocalId, Type};
+use crate.compiler.mir::{
     MirBody, Statement, StatementKind, Place, Operand,
     EscapeResults, InlineHandlerOp, InlineHandlerCapture,
 };
-use crate::mir::ptr::MemoryTier as MirMemoryTier;
-use crate::mir::static_evidence::InlineEvidenceMode;
-use crate::effects::evidence::HandlerStateKind;
-use crate::diagnostics::Diagnostic;
-use crate::span::Span;
+use crate.compiler.mir::ptr::MemoryTier as MirMemoryTier;
+use crate.compiler.mir::static_evidence::InlineEvidenceMode;
+use crate.compiler.effects::evidence::HandlerStateKind;
+use crate.compiler.diagnostics::Diagnostic;
+use crate.compiler.span::Span;
 
 // ============================================================================
 // Statement Compilation
@@ -133,7 +133,7 @@ pub fn compile_mir_statement(
 fn compile_assign(
     ctx: &mut CodegenContext,
     place: &Place,
-    rvalue: &crate::mir::Rvalue,
+    rvalue: &crate.compiler.mir.Rvalue,
     body: &MirBody,
     escape_results: Option<&EscapeResults>,
     span: Span,
@@ -624,7 +624,7 @@ fn compile_captures_struct(
 fn compile_inline_handler_op_body(
     ctx: &mut CodegenContext,
     def_id: DefId,
-    handler_body: &crate::mir::MirBody,
+    handler_body: &crate.compiler.mir.MirBody,
 ) -> Result<LLVMValueRef, Vec<Diagnostic>> {
     // This will be implemented to compile the handler body as a separate function
     // For now, return error indicating not yet implemented
@@ -763,8 +763,8 @@ fn get_place_type(body: &MirBody, place: &Place) -> Type {
 }
 
 /// Apply a projection element to get the resulting type.
-fn apply_projection_type(ty: &Type, elem: &crate::mir::PlaceElem) -> Type {
-    use crate::mir::PlaceElem;
+fn apply_projection_type(ty: &Type, elem: &crate.compiler.mir.PlaceElem) -> Type {
+    use crate.compiler.mir::PlaceElem;
 
     match elem {
         PlaceElem::Deref => {
@@ -805,9 +805,9 @@ fn apply_projection_type(ty: &Type, elem: &crate::mir::PlaceElem) -> Type {
 /// Compile a constant to an LLVM value.
 fn compile_constant(
     ctx: &mut CodegenContext,
-    constant: &crate::mir::Constant,
+    constant: &crate.compiler.mir.Constant,
 ) -> Result<LLVMValueRef, Vec<Diagnostic>> {
-    use crate::mir::ConstantKind;
+    use crate.compiler.mir::ConstantKind;
     use super::super::llvm::values::{const_int, const_real, const_string};
 
     let llvm_ty = lower_type(ctx, &constant.ty);
@@ -852,7 +852,7 @@ fn compile_constant(
             } else {
                 Err(vec![Diagnostic::error(
                     format!("Function {:?} not found", def_id),
-                    crate::span::Span::dummy()
+                    crate.compiler.span.Span::dummy()
                 )])
             }
         }
@@ -863,7 +863,7 @@ fn compile_constant(
             } else {
                 Err(vec![Diagnostic::error(
                     format!("Constant/static {:?} not found", def_id),
-                    crate::span::Span::dummy()
+                    crate.compiler.span.Span::dummy()
                 )])
             }
         }

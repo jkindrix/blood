@@ -9,9 +9,9 @@
 //! - Support **multi-line spans** for complex constructs
 //! - O(log n) line/column lookup via precomputed line indices
 
-module std.compiler.diagnostics.span
+module std.compiler.diagnostics.span;
 
-use std.collections.Vec
+use std.collections.Vec;
 
 // ============================================================================
 // File Identification
@@ -67,7 +67,7 @@ impl FileId {
 pub struct LineIndex {
     /// Byte offsets where each line starts.
     /// line_starts[0] = 0 (line 1 starts at byte 0).
-    line_starts: Vec[USize],
+    line_starts: Vec<USize>,
 }
 
 impl LineIndex {
@@ -136,7 +136,7 @@ impl LineIndex {
     /// Get the byte offset where a line starts.
     ///
     /// Line numbers are 1-indexed.
-    pub fn line_start(self, line: U32) -> Option[USize] {
+    pub fn line_start(self, line: U32) -> Option<USize> {
         if line == 0 {
             return Option::None
         }
@@ -457,21 +457,21 @@ impl Span {
 ///
 /// This is useful for attaching location information to AST nodes and
 /// other compiler data structures.
-pub struct Spanned[T] {
+pub struct Spanned<T> {
     /// The wrapped value.
     node: T,
     /// The source span.
     span: Span,
 }
 
-impl[T] Spanned[T] {
+impl<T> Spanned<T> {
     /// Create a new spanned value.
-    pub fn new(node: T, span: Span) -> Spanned[T] {
+    pub fn new(node: T, span: Span) -> Spanned<T> {
         Spanned { node, span }
     }
 
     /// Create a spanned value with a dummy span.
-    pub fn dummy(node: T) -> Spanned[T] {
+    pub fn dummy(node: T) -> Spanned<T> {
         Spanned {
             node,
             span: Span::dummy(),
@@ -489,7 +489,7 @@ impl[T] Spanned[T] {
     }
 
     /// Map the wrapped value while preserving the span.
-    pub fn map[U](self, f: fn(T) -> U) -> Spanned[U] {
+    pub fn map<U>(self, f: fn(T) -> U) -> Spanned<U> {
         Spanned {
             node: f(self.node),
             span: self.span,

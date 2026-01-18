@@ -36,14 +36,14 @@
 //! }
 //! ```
 
-module std.compiler.ast.node
+module std.compiler.ast.node;
 
-use std.option.Option
-use std.collections.Vec
-use std.hash.Hash
-use std.traits.clone.Clone
-use std.traits.cmp.PartialEq
-use std.traits.cmp.Eq
+use std.option.Option;
+use std.collections.Vec;
+use std.hash.Hash;
+use std.traits.clone.Clone;
+use std.traits.cmp.PartialEq;
+use std.traits.cmp.Eq;
 
 // ============================================================================
 // Source Location (Span)
@@ -60,12 +60,15 @@ use std.traits.cmp.Eq
 /// |-------|-------------|
 /// | `start` | Byte offset of the start position |
 /// | `end` | Byte offset of the end position (exclusive) |
+/// | `line` | Line number (1-indexed) |
+/// | `column` | Column number (1-indexed) |
 ///
 /// ## Example
 ///
 /// ```blood
-/// let span = Span::new(10, 25)
+/// let span = Span::new(10, 25, 1, 5)
 /// assert(span.len() == 15)
+/// assert(span.line == 1)
 /// ```
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Span {
@@ -73,19 +76,30 @@ pub struct Span {
     pub start: U32,
     /// End byte offset (exclusive).
     pub end: U32,
+    /// Line number (1-indexed).
+    pub line: U32,
+    /// Column number (1-indexed).
+    pub column: U32,
 }
 
 impl Span {
-    /// Create a new span from start and end positions.
-    pub fn new(start: U32, end: U32) -> Span {
-        Span { start, end }
+    /// Create a new span from start and end positions with line/column info.
+    pub fn new(start: U32, end: U32, line: U32, column: U32) -> Span {
+        Span { start, end, line, column }
+    }
+
+    /// Create a span from byte offsets only (line/column will be 0).
+    ///
+    /// Use this when line/column information is not available.
+    pub fn from_offsets(start: U32, end: U32) -> Span {
+        Span { start, end, line: 0, column: 0 }
     }
 
     /// Create a dummy/synthetic span.
     ///
     /// Used for generated code that has no source location.
     pub fn dummy() -> Span {
-        Span { start: 0, end: 0 }
+        Span { start: 0, end: 0, line: 0, column: 0 }
     }
 
     /// Check if this is a dummy span.
@@ -106,10 +120,18 @@ impl Span {
     /// Merge two spans into one that covers both.
     ///
     /// The resulting span starts at the minimum start and ends at the maximum end.
+    /// Line/column info is taken from the earlier span.
     pub fn merge(self, other: Span) -> Span {
+        let (start, line, column) = if self.start < other.start {
+            (self.start, self.line, self.column)
+        } else {
+            (other.start, other.line, other.column)
+        };
         Span {
-            start: if self.start < other.start { self.start } else { other.start },
+            start,
             end: if self.end > other.end { self.end } else { other.end },
+            line,
+            column,
         }
     }
 
@@ -118,6 +140,8 @@ impl Span {
         Span {
             start: self.start,
             end: end.end,
+            line: self.line,
+            column: self.column,
         }
     }
 
@@ -133,11 +157,13 @@ impl Span {
 
     /// Shrink the span by removing bytes from both ends.
     pub fn shrink(self, amount: U32) -> Span {
-        let new_start = self.start + amount
-        let new_end = if self.end > amount { self.end - amount } else { self.start }
+        let new_start = self.start + amount;
+        let new_end = if self.end > amount { self.end - amount } else { self.start };
         Span {
             start: if new_start < new_end { new_start } else { new_end },
             end: new_end,
+            line: self.line,
+            column: self.column + amount,
         }
     }
 }
@@ -149,7 +175,7 @@ impl Default for Span {
 }
 
 impl Debug for Span {
-    fn fmt(self, f: &mut Formatter) -> Result[(), Error] {
+    fn fmt(self, f: &mut Formatter) -> Result<(), Error> {
         write!(f, "{}..{}", self.start, self.end)
     }
 }
@@ -166,32 +192,32 @@ impl Debug for Span {
 /// ## Example
 ///
 /// ```blood
-/// let name: Spanned[String] = Spanned {
+/// let name: Spanned<String> = Spanned {
 ///     value: "main",
 ///     span: Span::new(3, 7),
 /// }
 /// ```
 #[derive(Clone, PartialEq, Eq)]
-pub struct Spanned[T] {
+pub struct Spanned<T> {
     /// The wrapped value.
     pub value: T,
     /// Source location of the value.
     pub span: Span,
 }
 
-impl[T] Spanned[T] {
+impl<T> Spanned<T> {
     /// Create a new spanned value.
-    pub fn new(value: T, span: Span) -> Spanned[T] {
+    pub fn new(value: T, span: Span) -> Spanned<T> {
         Spanned { value, span }
     }
 
     /// Create a spanned value with a dummy span.
-    pub fn dummy(value: T) -> Spanned[T] {
+    pub fn dummy(value: T) -> Spanned<T> {
         Spanned { value, span: Span::dummy() }
     }
 
     /// Map a function over the inner value.
-    pub fn map[U](self, f: fn(T) -> U) -> Spanned[U] {
+    pub fn map<U>(self, f: fn(T) -> U) -> Spanned<U> {
         Spanned {
             value: f(self.value),
             span: self.span,
@@ -204,9 +230,9 @@ impl[T] Spanned[T] {
     }
 }
 
-impl[T: Clone] Spanned[T] {
+impl<T: Clone> Spanned<T> {
     /// Clone the inner value with the same span.
-    pub fn clone_value(self) -> Spanned[T] {
+    pub fn clone_value(self) -> Spanned<T> {
         Spanned {
             value: self.value.clone(),
             span: self.span,
@@ -214,8 +240,8 @@ impl[T: Clone] Spanned[T] {
     }
 }
 
-impl[T: Debug] Debug for Spanned[T] {
-    fn fmt(self, f: &mut Formatter) -> Result[(), Error] {
+impl<T: Debug> Debug for Spanned<T> {
+    fn fmt(self, f: &mut Formatter) -> Result<(), Error> {
         write!(f, "{:?}@{:?}", self.value, self.span)
     }
 }
@@ -271,7 +297,7 @@ impl Default for NodeId {
 }
 
 impl Debug for NodeId {
-    fn fmt(self, f: &mut Formatter) -> Result[(), Error] {
+    fn fmt(self, f: &mut Formatter) -> Result<(), Error> {
         write!(f, "NodeId({})", self.id)
     }
 }
@@ -327,7 +353,7 @@ impl Default for Symbol {
 }
 
 impl Debug for Symbol {
-    fn fmt(self, f: &mut Formatter) -> Result[(), Error] {
+    fn fmt(self, f: &mut Formatter) -> Result<(), Error> {
         write!(f, "Symbol({})", self.index)
     }
 }
@@ -339,7 +365,7 @@ impl Debug for Symbol {
 /// An identifier (name) in the source code.
 ///
 /// Combines a symbol (interned string) with its source location.
-pub type Ident = Spanned[Symbol]
+pub type Ident = Spanned<Symbol>;
 
 impl Ident {
     /// Create a new identifier.
@@ -376,9 +402,9 @@ impl Ident {
 ///
 /// ```text
 /// Program
-/// ├── module: Option[ModuleDecl]   // `module std.collections.vec`
-/// ├── imports: Vec[Import]          // `use std.io.println`
-/// └── declarations: Vec[Decl]       // fn, struct, enum, etc.
+/// ├── module: Option<ModuleDecl>   // `module std.collections.vec`
+/// ├── imports: Vec<Import>          // `use std.io.println`
+/// └── declarations: Vec<Decl>       // fn, struct, enum, etc.
 /// ```
 ///
 /// ## Example
@@ -408,11 +434,11 @@ pub struct Program {
     /// Unique node ID.
     pub id: NodeId,
     /// Optional module declaration at the top of the file.
-    pub module: Option[ModuleDecl],
+    pub mod_decl: Option<ModuleDecl>,
     /// Import statements.
-    pub imports: Vec[Import],
+    pub imports: Vec<Import>,
     /// Top-level declarations.
-    pub declarations: Vec[Declaration],
+    pub declarations: Vec<Declaration>,
     /// Span of the entire program.
     pub span: Span,
 }
@@ -422,7 +448,7 @@ impl Program {
     pub fn empty() -> Program {
         Program {
             id: NodeId::dummy(),
-            module: Option::None,
+            mod_decl: Option::None,
             imports: Vec::new(),
             declarations: Vec::new(),
             span: Span::dummy(),
@@ -431,7 +457,7 @@ impl Program {
 
     /// Check if the program has a module declaration.
     pub fn has_module(self) -> Bool {
-        self.module.is_some()
+        self.mod_decl.is_some()
     }
 
     /// Get the number of imports.
@@ -468,14 +494,14 @@ pub struct ModuleDecl {
 #[derive(Clone, PartialEq, Eq)]
 pub struct ModulePath {
     /// Path segments (identifiers).
-    pub segments: Vec[Ident],
+    pub segments: Vec<Ident>,
     /// Span of the entire path.
     pub span: Span,
 }
 
 impl ModulePath {
     /// Create a new module path.
-    pub fn new(segments: Vec[Ident], span: Span) -> ModulePath {
+    pub fn new(segments: Vec<Ident>, span: Span) -> ModulePath {
         ModulePath { segments, span }
     }
 
@@ -498,12 +524,12 @@ impl ModulePath {
     }
 
     /// Get the first segment (crate/package name).
-    pub fn first(self) -> Option[&Ident] {
+    pub fn first(self) -> Option<&Ident> {
         self.segments.first()
     }
 
     /// Get the last segment (item name).
-    pub fn last(self) -> Option[&Ident] {
+    pub fn last(self) -> Option<&Ident> {
         self.segments.last()
     }
 }
@@ -527,7 +553,7 @@ pub enum Import {
         id: NodeId,
         visibility: Visibility,
         path: ModulePath,
-        alias: Option[Ident],
+        alias: Option<Ident>,
         span: Span,
     },
 
@@ -536,7 +562,7 @@ pub enum Import {
         id: NodeId,
         visibility: Visibility,
         path: ModulePath,
-        items: Vec[ImportItem],
+        items: Vec<ImportItem>,
         span: Span,
     },
 
@@ -596,7 +622,7 @@ pub struct ImportItem {
     /// The item name.
     pub name: Ident,
     /// Optional alias.
-    pub alias: Option[Ident],
+    pub alias: Option<Ident>,
     /// Span of this item.
     pub span: Span,
 }
@@ -704,93 +730,108 @@ pub struct MacroDecl { _placeholder: () }
 
 #[test]
 fn test_span_new() {
-    let span = Span::new(10, 20)
-    assert(span.start == 10)
-    assert(span.end == 20)
-    assert(span.len() == 10)
+    let span = Span::new(10, 20, 1, 5);
+    assert!(span.start == 10);
+    assert!(span.end == 20);
+    assert!(span.len() == 10);
+    assert!(span.line == 1);
+    assert!(span.column == 5);
+}
+
+#[test]
+fn test_span_from_offsets() {
+    let span = Span::from_offsets(10, 20);
+    assert!(span.start == 10);
+    assert!(span.end == 20);
+    assert!(span.line == 0);
+    assert!(span.column == 0);
 }
 
 #[test]
 fn test_span_dummy() {
-    let span = Span::dummy()
-    assert(span.is_dummy())
-    assert(span.start == 0)
-    assert(span.end == 0)
+    let span = Span::dummy();
+    assert!(span.is_dummy());
+    assert!(span.start == 0);
+    assert!(span.end == 0);
+    assert!(span.line == 0);
+    assert!(span.column == 0);
 }
 
 #[test]
 fn test_span_merge() {
-    let span1 = Span::new(5, 15)
-    let span2 = Span::new(10, 25)
-    let merged = span1.merge(span2)
+    let span1 = Span::new(5, 15, 1, 1);
+    let span2 = Span::new(10, 25, 2, 5);
+    let merged = span1.merge(span2);
 
-    assert(merged.start == 5)
-    assert(merged.end == 25)
+    assert!(merged.start == 5);
+    assert!(merged.end == 25);
+    assert!(merged.line == 1);
+    assert!(merged.column == 1);
 }
 
 #[test]
 fn test_span_contains() {
-    let span = Span::new(10, 20)
+    let span = Span::new(10, 20, 1, 1);
 
-    assert(span.contains(10))
-    assert(span.contains(15))
-    assert(span.contains(19))
-    assert(!span.contains(9))
-    assert(!span.contains(20))
+    assert!(span.contains(10));
+    assert!(span.contains(15));
+    assert!(span.contains(19));
+    assert!(!span.contains(9));
+    assert!(!span.contains(20));
 }
 
 #[test]
 fn test_spanned_new() {
-    let spanned: Spanned[Int] = Spanned::new(42, Span::new(0, 2))
-    assert(spanned.value == 42)
-    assert(spanned.span.start == 0)
+    let spanned: Spanned<Int> = Spanned::new(42, Span::new(0, 2, 1, 1));
+    assert!(spanned.value == 42);
+    assert!(spanned.span.start == 0);
 }
 
 #[test]
 fn test_spanned_map() {
-    let spanned: Spanned[Int] = Spanned::new(21, Span::new(0, 2))
-    let doubled = spanned.map(|x| x * 2)
-    assert(doubled.value == 42)
-    assert(doubled.span.start == 0)
+    let spanned: Spanned<Int> = Spanned::new(21, Span::new(0, 2, 1, 1));
+    let doubled = spanned.map(|x| x * 2);
+    assert!(doubled.value == 42);
+    assert!(doubled.span.start == 0);
 }
 
 #[test]
 fn test_node_id() {
-    let id = NodeId::new(42)
-    assert(id.as_u32() == 42)
-    assert(!id.is_dummy())
+    let id = NodeId::new(42);
+    assert!(id.as_u32() == 42);
+    assert!(!id.is_dummy());
 
-    let dummy = NodeId::dummy()
-    assert(dummy.is_dummy())
+    let dummy = NodeId::dummy();
+    assert!(dummy.is_dummy());
 }
 
 #[test]
 fn test_symbol() {
-    let sym = Symbol::from_index(100)
-    assert(sym.index() == 100)
-    assert(!sym.is_dummy())
+    let sym = Symbol::from_index(100);
+    assert!(sym.index() == 100);
+    assert!(!sym.is_dummy());
 
-    let dummy = Symbol::dummy()
-    assert(dummy.is_dummy())
+    let dummy = Symbol::dummy();
+    assert!(dummy.is_dummy());
 }
 
 #[test]
 fn test_module_path() {
-    let path = ModulePath::empty()
-    assert(path.is_empty())
-    assert(path.len() == 0)
+    let path = ModulePath::empty();
+    assert!(path.is_empty());
+    assert!(path.len() == 0);
 }
 
 #[test]
 fn test_visibility_default() {
-    let vis: Visibility = Visibility::default()
-    assert(!vis.is_public())
+    let vis: Visibility = Visibility::default();
+    assert!(!vis.is_public());
 
-    let public = Visibility::Public
-    assert(public.is_public())
-    assert(public.is_fully_public())
+    let public = Visibility::Public;
+    assert!(public.is_public());
+    assert!(public.is_fully_public());
 
-    let crate_vis = Visibility::PublicCrate
-    assert(crate_vis.is_public())
-    assert(!crate_vis.is_fully_public())
+    let crate_vis = Visibility::PublicCrate;
+    assert!(crate_vis.is_public());
+    assert!(!crate_vis.is_fully_public());
 }

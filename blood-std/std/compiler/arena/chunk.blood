@@ -15,13 +15,13 @@
 //! - Alignment: 16 bytes (suitable for SIMD and most types)
 //! - Growth strategy: Double size when full (capped at max chunk size)
 
-module std.compiler.arena.chunk
+module std.compiler.arena.chunk;
 
-use std.mem.size_of
-use std.mem.align_of
-use std.option.Option
-use std.ptr.NonNull
-use std.ptr.RawPtr
+use std.mem.size_of;
+use std.mem.align_of;
+use std.option.Option;
+use std.ptr.NonNull;
+use std.ptr.RawPtr;
 
 // ============================================================================
 // Constants
@@ -57,7 +57,7 @@ pub const DEFAULT_ALIGNMENT: USize = 16
 /// ```
 pub struct Chunk {
     /// Pointer to the start of allocated memory.
-    data: RawPtr[U8],
+    data: RawPtr<U8>,
 
     /// Current allocation offset (bytes used).
     offset: USize,
@@ -108,7 +108,7 @@ impl Chunk {
     }
 
     /// Get the pointer to the start of the chunk's memory.
-    pub fn data(self) -> RawPtr[U8] {
+    pub fn data(self) -> RawPtr<U8> {
         self.data
     }
 
@@ -160,7 +160,7 @@ impl Chunk {
     ///     }
     /// }
     /// ```
-    pub fn try_alloc(mut self, size: USize, align: USize) -> Option[RawPtr[U8]] {
+    pub fn try_alloc(mut self, size: USize, align: USize) -> Option[RawPtr<U8>] {
         // Calculate aligned offset
         let aligned_offset = align_up(self.offset, align)
         let new_offset = aligned_offset + size
@@ -199,7 +199,7 @@ impl Chunk {
     ///     }
     /// }
     /// ```
-    pub fn try_alloc_for[T](mut self) -> Option[RawPtr[T]] {
+    pub fn try_alloc_for<T>(mut self) -> Option[RawPtr<T>] {
         match self.try_alloc(size_of::<T>(), align_of::<T>()) {
             Option::Some(ptr) => Option::Some(ptr.cast::<T>()),
             Option::None => Option::None,

@@ -5,26 +5,26 @@
 
 module std.compiler.hir.lowering.stmt;
 
-use std.result.Result
-use std.option.Option
+use std.result.Result;
+use std.option.Option;
 
-use crate::compiler::ast::{
+use crate.compiler.ast.{
     Stmt as AstStmt, StmtKind as AstStmtKind,
     Expr as AstExpr, Pattern as AstPattern,
     Ident, Span as AstSpan,
 }
 
-use crate::compiler::hir::{
+use crate.compiler.hir.{
     Stmt as HirStmt,
     Expr as HirExpr, Pattern as HirPattern,
     Local, LocalId, Span as HirSpan,
 }
 
-use crate::compiler::hir::lowering::{AstLowering, LoweringError}
-use crate::compiler::hir::lowering::expr::lower_expr
-use crate::compiler::hir::lowering::pattern::lower_pattern
-use crate::compiler::hir::lowering::item::lower_type
-use crate::compiler::typeck::types::Type
+use crate.compiler.hir.lowering.{AstLowering, LoweringError}
+use crate.compiler.hir.lowering.expr.lower_expr;
+use crate.compiler.hir.lowering.pattern.lower_pattern;
+use crate.compiler.hir.lowering.item.lower_type;
+use crate.compiler.typeck.types.Type;
 
 // ============================================================================
 // Statement Lowering
@@ -50,7 +50,7 @@ pub fn lower_stmt(ctx: &mut AstLowering, stmt: &AstStmt) -> Result<HirStmt, Lowe
                 None => {
                     // Create a default/undefined expression
                     HirExpr::new(
-                        crate::compiler::hir::ExprKind::Default,
+                        crate.compiler.hir::ExprKind::Default,
                         Type::infer(),
                         span.clone(),
                     )
@@ -91,7 +91,7 @@ pub fn lower_stmt(ctx: &mut AstLowering, stmt: &AstStmt) -> Result<HirStmt, Lowe
         AstStmtKind::Empty => {
             // Empty statements become unit expressions
             Ok(HirStmt::Semi(HirExpr::new(
-                crate::compiler::hir::ExprKind::Tuple([]),
+                crate.compiler.hir::ExprKind::Tuple([]),
                 Type::unit(),
                 span,
             )))
@@ -111,7 +111,7 @@ fn register_pattern_bindings(
     span: &HirSpan,
 ) -> Result<(), LoweringError> {
     match &pattern.kind {
-        crate::compiler::hir::PatternKind::Binding { name, local_id, mutable, subpattern } => {
+        crate.compiler.hir::PatternKind::Binding { name, local_id, mutable, subpattern } => {
             // Local already allocated during pattern lowering
             // Add to current body's locals list
             let local_ty = match ty {
@@ -128,33 +128,33 @@ fn register_pattern_bindings(
             }
         }
 
-        crate::compiler::hir::PatternKind::Tuple(patterns) => {
+        crate.compiler.hir::PatternKind::Tuple(patterns) => {
             for p in patterns {
                 register_pattern_bindings(ctx, p, &None, span)?;
             }
         }
 
-        crate::compiler::hir::PatternKind::Struct { def_id: _, fields, rest: _ } => {
+        crate.compiler.hir::PatternKind::Struct { def_id: _, fields, rest: _ } => {
             for field in fields {
                 register_pattern_bindings(ctx, &field.pattern, &None, span)?;
             }
         }
 
-        crate::compiler::hir::PatternKind::Variant { def_id: _, variant_idx: _, fields } => {
+        crate.compiler.hir::PatternKind::Variant { def_id: _, variant_idx: _, fields } => {
             for p in fields {
                 register_pattern_bindings(ctx, p, &None, span)?;
             }
         }
 
-        crate::compiler::hir::PatternKind::Ref { mutable: _, pattern: inner } => {
+        crate.compiler.hir::PatternKind::Ref { mutable: _, pattern: inner } => {
             register_pattern_bindings(ctx, inner, &None, span)?;
         }
 
-        crate::compiler::hir::PatternKind::Box(inner) => {
+        crate.compiler.hir::PatternKind::Box(inner) => {
             register_pattern_bindings(ctx, inner, &None, span)?;
         }
 
-        crate::compiler::hir::PatternKind::Slice { prefix, rest, suffix } => {
+        crate.compiler.hir::PatternKind::Slice { prefix, rest, suffix } => {
             for p in prefix {
                 register_pattern_bindings(ctx, p, &None, span)?;
             }
@@ -166,7 +166,7 @@ fn register_pattern_bindings(
             }
         }
 
-        crate::compiler::hir::PatternKind::Or(patterns) => {
+        crate.compiler.hir::PatternKind::Or(patterns) => {
             // All alternatives must bind the same names
             for p in patterns {
                 register_pattern_bindings(ctx, p, &None, span)?;
@@ -174,12 +174,12 @@ fn register_pattern_bindings(
         }
 
         // These patterns don't introduce bindings
-        crate::compiler::hir::PatternKind::Wildcard => {}
-        crate::compiler::hir::PatternKind::Literal(_) => {}
-        crate::compiler::hir::PatternKind::Constant(_) => {}
-        crate::compiler::hir::PatternKind::Range { .. } => {}
-        crate::compiler::hir::PatternKind::Rest => {}
-        crate::compiler::hir::PatternKind::Error => {}
+        crate.compiler.hir::PatternKind::Wildcard => {}
+        crate.compiler.hir::PatternKind::Literal(_) => {}
+        crate.compiler.hir::PatternKind::Constant(_) => {}
+        crate.compiler.hir::PatternKind::Range { .. } => {}
+        crate.compiler.hir::PatternKind::Rest => {}
+        crate.compiler.hir::PatternKind::Error => {}
     }
 
     Ok(())
@@ -191,8 +191,8 @@ fn register_pattern_bindings(
 
 #[test]
 fn test_lower_expr_stmt() {
-    use crate::compiler::typeck::TypeCheckResult;
-    use crate::compiler::ast::{NodeId, Span};
+    use crate.compiler.typeck::TypeCheckResult;
+    use crate.compiler.ast::{NodeId, Span};
     use std.collections.HashMap;
 
     let types = TypeCheckResult::success(HashMap::new());
@@ -203,8 +203,8 @@ fn test_lower_expr_stmt() {
         id: NodeId::new(1),
         kind: AstStmtKind::Semi(AstExpr {
             id: NodeId::new(2),
-            kind: crate::compiler::ast::ExprKind::Literal(
-                crate::compiler::ast::Literal::Integer(42, None)
+            kind: crate.compiler.ast::ExprKind::Literal(
+                crate.compiler.ast::Literal::Integer(42, None)
             ),
             span: Span::dummy(),
         }),
@@ -223,8 +223,8 @@ fn test_lower_expr_stmt() {
 
 #[test]
 fn test_lower_let_stmt() {
-    use crate::compiler::typeck::TypeCheckResult;
-    use crate::compiler::ast::{NodeId, Span, Ident, PatternKind};
+    use crate.compiler.typeck::TypeCheckResult;
+    use crate.compiler.ast::{NodeId, Span, Ident, PatternKind};
     use std.collections.HashMap;
 
     let types = TypeCheckResult::success(HashMap::new());
@@ -246,8 +246,8 @@ fn test_lower_let_stmt() {
             ty: None,
             init: Some(AstExpr {
                 id: NodeId::new(3),
-                kind: crate::compiler::ast::ExprKind::Literal(
-                    crate::compiler::ast::Literal::Integer(42, None)
+                kind: crate.compiler.ast::ExprKind::Literal(
+                    crate.compiler.ast::Literal::Integer(42, None)
                 ),
                 span: Span::dummy(),
             }),
@@ -263,7 +263,7 @@ fn test_lower_let_stmt() {
         HirStmt::Let { pattern, ty: _, init: _ } => {
             // Verify pattern is a binding
             match pattern.kind {
-                crate::compiler::hir::PatternKind::Binding { name, .. } => {
+                crate.compiler.hir::PatternKind::Binding { name, .. } => {
                     assert(name == "x");
                 }
                 _ => assert(false),
@@ -275,8 +275,8 @@ fn test_lower_let_stmt() {
 
 #[test]
 fn test_lower_empty_stmt() {
-    use crate::compiler::typeck::TypeCheckResult;
-    use crate::compiler::ast::{NodeId, Span};
+    use crate.compiler.typeck::TypeCheckResult;
+    use crate.compiler.ast::{NodeId, Span};
     use std.collections.HashMap;
 
     let types = TypeCheckResult::success(HashMap::new());

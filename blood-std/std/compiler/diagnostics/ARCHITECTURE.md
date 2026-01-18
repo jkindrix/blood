@@ -137,7 +137,7 @@ pub struct Label {
     span: Span,
 
     /// Message to display at this location
-    message: Option[String],
+    message: Option<String>,
 
     /// Whether this is the primary label
     primary: Bool,
@@ -181,7 +181,7 @@ pub struct Diagnostic {
     severity: Severity,
 
     /// Error code (optional, e.g., "E0100")
-    code: Option[ErrorCode],
+    code: Option<ErrorCode>,
 
     /// Primary error message
     message: String,
@@ -190,16 +190,16 @@ pub struct Diagnostic {
     span: Span,
 
     /// Additional labels pointing to relevant code
-    labels: Vec[Label],
+    labels: Vec<Label>,
 
     /// Suggestions for fixing the error
-    suggestions: Vec[Suggestion],
+    suggestions: Vec<Suggestion>,
 
     /// Related diagnostics (sub-errors, notes)
-    related: Vec[Diagnostic],
+    related: Vec<Diagnostic>,
 
     /// Diagnostic group for categorization
-    group: Option[DiagnosticGroup],
+    group: Option<DiagnosticGroup>,
 }
 ```
 
@@ -212,7 +212,7 @@ The `DiagnosticContext` manages diagnostic emission and state:
 ```blood
 pub struct DiagnosticContext {
     /// Accumulated diagnostics
-    diagnostics: Vec[Diagnostic],
+    diagnostics: Vec<Diagnostic>,
 
     /// Error count (for early termination)
     error_count: USize,
@@ -233,7 +233,7 @@ pub struct DiagnosticContext {
     warnings_as_errors: Bool,
 
     /// Suppressed warning groups
-    suppressed_groups: HashSet[DiagnosticGroup],
+    suppressed_groups: HashSet<DiagnosticGroup>,
 }
 ```
 
@@ -319,7 +319,7 @@ pub struct SourceFile {
     content: String,
 
     /// Line start indices for O(log n) lookup
-    line_starts: Vec[usize],
+    line_starts: Vec<usize>,
 }
 ```
 
@@ -367,7 +367,7 @@ pub struct Ice {
     line: U32,
 
     /// Additional context
-    context: Vec[String],
+    context: Vec<String>,
 }
 ```
 

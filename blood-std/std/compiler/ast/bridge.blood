@@ -63,17 +63,17 @@
 //! - `#[transfer]` - Caller transfers ownership
 //! - `#[acquire]` - Callee returns ownership
 
-module std.compiler.ast.bridge
+module std.compiler.ast.bridge;
 
-use std.option.Option
-use std.collections.Vec
-use std.string.String
-use std.compiler.ast.node.Span
-use std.compiler.ast.node.Ident
-use std.compiler.ast.node.NodeId
-use std.compiler.ast.attr.Attribute
-use std.compiler.ast.lit.Literal
-use std.compiler.ast.ty.Type
+use std.option.Option;
+use std.collections.Vec;
+use std.string.String;
+use std.compiler.ast.node.Span;
+use std.compiler.ast.node.Ident;
+use std.compiler.ast.node.NodeId;
+use std.compiler.ast.attr.Attribute;
+use std.compiler.ast.lit.Literal;
+use std.compiler.ast.ty.Type;
 
 // ============================================================================
 // Bridge Declaration
@@ -94,13 +94,13 @@ pub struct BridgeDecl {
     /// Unique node ID.
     pub id: NodeId,
     /// Attributes on the bridge.
-    pub attrs: Vec[Attribute],
+    pub attrs: Vec<Attribute>,
     /// The language/ABI specifier ("C", "C++", "wasm").
     pub language: BridgeLanguage,
     /// The bridge name (e.g., "libc").
     pub name: Ident,
     /// Items within the bridge.
-    pub items: Vec[BridgeItem],
+    pub items: Vec<BridgeItem>,
     /// Span of the entire declaration.
     pub span: Span,
 }
@@ -230,9 +230,9 @@ pub struct LinkSpec {
     /// Library name to link.
     pub name: String,
     /// Link kind (dylib, static, framework).
-    pub kind: Option[LinkKind],
+    pub kind: Option<LinkKind>,
     /// WASM import module name.
-    pub wasm_import_module: Option[String],
+    pub wasm_import_module: Option<String>,
     /// Span of the specification.
     pub span: Span,
 }
@@ -259,7 +259,7 @@ impl LinkKind {
     }
 
     /// Parse a link kind from a string.
-    pub fn from_str(s: &str) -> Option[LinkKind] {
+    pub fn from_str(s: &str) -> Option<LinkKind> {
         match s {
             "dylib" => Option::Some(LinkKind::Dylib),
             "static" => Option::Some(LinkKind::Static),
@@ -286,15 +286,15 @@ pub struct BridgeFn {
     /// Unique node ID.
     pub id: NodeId,
     /// Attributes (calling_convention, link_name, etc.).
-    pub attrs: Vec[Attribute],
+    pub attrs: Vec<Attribute>,
     /// Function name.
     pub name: Ident,
     /// Parameters.
-    pub params: Vec[BridgeParam],
+    pub params: Vec<BridgeParam>,
     /// Is variadic (...).
     pub is_variadic: Bool,
     /// Return type.
-    pub return_type: Option[Type],
+    pub return_type: Option<Type>,
     /// Span of the declaration.
     pub span: Span,
 }
@@ -321,7 +321,7 @@ pub struct BridgeParam {
     /// Parameter type.
     pub ty: Type,
     /// Ownership annotation.
-    pub ownership: Option[BridgeOwnership],
+    pub ownership: Option<BridgeOwnership>,
     /// Span of the parameter.
     pub span: Span,
 }
@@ -450,11 +450,11 @@ pub struct BridgeStruct {
     /// Unique node ID.
     pub id: NodeId,
     /// Attributes (repr, packed, align).
-    pub attrs: Vec[Attribute],
+    pub attrs: Vec<Attribute>,
     /// Struct name.
     pub name: Ident,
     /// Fields.
-    pub fields: Vec[BridgeField],
+    pub fields: Vec<BridgeField>,
     /// Span of the declaration.
     pub span: Span,
 }
@@ -493,11 +493,11 @@ pub struct BridgeEnum {
     /// Unique node ID.
     pub id: NodeId,
     /// Attributes (repr).
-    pub attrs: Vec[Attribute],
+    pub attrs: Vec<Attribute>,
     /// Enum name.
     pub name: Ident,
     /// Variants.
-    pub variants: Vec[BridgeEnumVariant],
+    pub variants: Vec<BridgeEnumVariant>,
     /// Span of the declaration.
     pub span: Span,
 }
@@ -510,7 +510,7 @@ pub struct BridgeEnumVariant {
     /// Variant name.
     pub name: Ident,
     /// Discriminant value (if specified).
-    pub discriminant: Option[Literal],
+    pub discriminant: Option<Literal>,
     /// Span of the variant.
     pub span: Span,
 }
@@ -536,11 +536,11 @@ pub struct BridgeUnion {
     /// Unique node ID.
     pub id: NodeId,
     /// Attributes (repr).
-    pub attrs: Vec[Attribute],
+    pub attrs: Vec<Attribute>,
     /// Union name.
     pub name: Ident,
     /// Fields.
-    pub fields: Vec[BridgeField],
+    pub fields: Vec<BridgeField>,
     /// Span of the declaration.
     pub span: Span,
 }
@@ -566,9 +566,9 @@ pub struct BridgeCallback {
     /// Callback name.
     pub name: Ident,
     /// Parameter types.
-    pub params: Vec[Type],
+    pub params: Vec<Type>,
     /// Return type.
-    pub return_type: Option[Type],
+    pub return_type: Option<Type>,
     /// Span of the declaration.
     pub span: Span,
 }

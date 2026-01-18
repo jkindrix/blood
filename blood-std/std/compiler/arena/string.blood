@@ -36,17 +36,17 @@
 //! - Error messages and diagnostics
 //! - Module paths and file names
 
-module std.compiler.arena.string
+module std.compiler.arena.string;
 
-use std.option.Option
-use std.collections.Vec
-use std.collections.HashMap
-use std.hash.Hash
-use std.ptr.RawPtr
-use std.compiler.arena.chunk.Chunk
-use std.compiler.arena.chunk.DEFAULT_CHUNK_SIZE
-use std.compiler.arena.chunk.align_up
-use std.compiler.arena.stats.ArenaStats
+use std.option.Option;
+use std.collections.Vec;
+use std.collections.HashMap;
+use std.hash.Hash;
+use std.ptr.RawPtr;
+use std.compiler.arena.chunk.Chunk;
+use std.compiler.arena.chunk.DEFAULT_CHUNK_SIZE;
+use std.compiler.arena.chunk.align_up;
+use std.compiler.arena.stats.ArenaStats;
 
 // ============================================================================
 // StringArena
@@ -61,11 +61,11 @@ use std.compiler.arena.stats.ArenaStats
 ///
 /// ```text
 /// StringArena
-/// ├── chunks: Vec[Chunk]
+/// ├── chunks: Vec<Chunk>
 /// │   ├── Chunk 0: "hello\0world\0foo\0..."
 /// │   ├── Chunk 1: "bar\0baz\0..."
 /// │   └── ...
-/// └── interned: HashMap[&str, &str]
+/// └── interned: HashMap<&str, &str>
 ///     "hello" → ptr to "hello" in chunk 0
 ///     "world" → ptr to "world" in chunk 0
 ///     ...
@@ -93,11 +93,11 @@ use std.compiler.arena.stats.ArenaStats
 /// ```
 pub struct StringArena {
     /// Memory chunks storing string data.
-    chunks: Vec[Chunk],
+    chunks: Vec<Chunk>,
 
     /// Interning map for deduplication.
     /// Maps string content to its arena-allocated location.
-    interned: HashMap[String, &str],
+    interned: HashMap<String, &str>,
 }
 
 impl StringArena {
@@ -372,7 +372,7 @@ impl StringArena {
     }
 
     /// Allocate raw bytes.
-    fn alloc_bytes(mut self, len: USize) -> RawPtr[U8] {
+    fn alloc_bytes(mut self, len: USize) -> RawPtr<U8> {
         // Try current chunk first
         if let Some(chunk) = self.chunks.last_mut() {
             if let Option::Some(ptr) = chunk.try_alloc(len, 1) {

@@ -57,10 +57,10 @@ use super::context::{CodegenContext, MemoryTier};
 use super::lower_type::lower_type;
 use super::runtime;
 
-use crate::hir::{DefId, LocalId, Type};
-use crate::mir::{MirBody, BasicBlockId, EscapeResults, EscapeState};
-use crate::diagnostics::Diagnostic;
-use crate::span::Span;
+use crate.compiler.hir::{DefId, LocalId, Type};
+use crate.compiler.mir::{MirBody, BasicBlockId, EscapeResults, EscapeState};
+use crate.compiler.diagnostics::Diagnostic;
+use crate.compiler.span::Span;
 
 // ============================================================================
 // MIR Compilation Entry Point
@@ -250,22 +250,22 @@ pub fn tier_name(tier: MemoryTier) -> &'static str {
 /// Used to determine which locals need snapshot capture during effect operations.
 pub fn type_may_contain_genref(ty: &Type) -> bool {
     match ty.kind() {
-        crate::hir::TypeKind::Ref { .. } => true,
-        crate::hir::TypeKind::Ptr { .. } => true,
-        crate::hir::TypeKind::Tuple(fields) => {
+        crate.compiler.hir.TypeKind::Ref { .. } => true,
+        crate.compiler.hir.TypeKind::Ptr { .. } => true,
+        crate.compiler.hir.TypeKind::Tuple(fields) => {
             fields.iter().any(|f| type_may_contain_genref(f))
         }
-        crate::hir::TypeKind::Array { element, .. } => {
+        crate.compiler.hir.TypeKind::Array { element, .. } => {
             type_may_contain_genref(element)
         }
-        crate::hir::TypeKind::Slice { element } => {
+        crate.compiler.hir.TypeKind::Slice { element } => {
             type_may_contain_genref(element)
         }
-        crate::hir::TypeKind::Adt { .. } => {
+        crate.compiler.hir.TypeKind::Adt { .. } => {
             // ADTs may contain references - conservative
             true
         }
-        crate::hir::TypeKind::Closure { .. } => {
+        crate.compiler.hir.TypeKind::Closure { .. } => {
             // Closures may capture references
             true
         }

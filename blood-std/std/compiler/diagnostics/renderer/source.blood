@@ -10,15 +10,15 @@
 
 module std.compiler.diagnostics.renderer.source;
 
-use std.collections.HashMap
-use std.collections.Vec
-use std.option.Option
-use std.result.Result
-use std.io.IoError
-use std.compiler.diagnostics.span.FileId
-use std.compiler.diagnostics.span.Span
-use std.compiler.diagnostics.span.LineIndex
-use std.compiler.diagnostics.span.Position
+use std.collections.HashMap;
+use std.collections.Vec;
+use std.option.Option;
+use std.result.Result;
+use std.io.IoError;
+use std.compiler.diagnostics.span.FileId;
+use std.compiler.diagnostics.span.Span;
+use std.compiler.diagnostics.span.LineIndex;
+use std.compiler.diagnostics.span.Position;
 
 // ============================================================================
 // Source File
@@ -84,7 +84,7 @@ impl SourceFile {
     /// Get a specific line (1-indexed).
     ///
     /// Returns None if line is out of range.
-    pub fn get_line(self, line_number: U32) -> Option[String] {
+    pub fn get_line(self, line_number: U32) -> Option<String> {
         if line_number == 0 || line_number > self.line_count() as U32 {
             return Option::None
         }
@@ -105,7 +105,7 @@ impl SourceFile {
     }
 
     /// Get multiple lines (1-indexed, inclusive range).
-    pub fn get_lines(self, start_line: U32, end_line: U32) -> Vec[String] {
+    pub fn get_lines(self, start_line: U32, end_line: U32) -> Vec<String> {
         let mut lines = Vec::new()
         let mut line = start_line
 
@@ -139,10 +139,10 @@ impl SourceFile {
 /// A collection of source files for a compilation.
 pub struct SourceMap {
     /// Files indexed by ID.
-    files: HashMap[U32, SourceFile],
+    files: HashMap<U32, SourceFile>,
 
     /// Files indexed by name (for lookup by path).
-    by_name: HashMap[String, FileId],
+    by_name: HashMap<String, FileId>,
 
     /// Next file ID to assign.
     next_id: U32,
@@ -187,12 +187,12 @@ impl SourceMap {
     }
 
     /// Get a source file by ID.
-    pub fn get(self, id: FileId) -> Option[SourceFile] {
+    pub fn get(self, id: FileId) -> Option<SourceFile> {
         self.files.get(id.raw()).map(|f| f.clone())
     }
 
     /// Get a source file by name.
-    pub fn get_by_name(self, name: String) -> Option[SourceFile] {
+    pub fn get_by_name(self, name: String) -> Option<SourceFile> {
         match self.by_name.get(name) {
             Option::Some(id) => self.get(*id),
             Option::None => Option::None,
@@ -200,7 +200,7 @@ impl SourceMap {
     }
 
     /// Get the file name for an ID.
-    pub fn get_filename(self, id: FileId) -> Option[String] {
+    pub fn get_filename(self, id: FileId) -> Option<String> {
         self.files.get(id.raw()).map(|f| f.name())
     }
 
@@ -225,7 +225,7 @@ impl SourceMap {
     }
 
     /// Get all file IDs.
-    pub fn file_ids(self) -> Vec[FileId] {
+    pub fn file_ids(self) -> Vec<FileId> {
         let mut ids = Vec::new()
         for (id, _) in self.files {
             ids.push(FileId::new(*id))
@@ -236,7 +236,7 @@ impl SourceMap {
     /// Get text for a span.
     ///
     /// Returns None if the file is not found.
-    pub fn get_span_text(self, span: Span) -> Option[String] {
+    pub fn get_span_text(self, span: Span) -> Option<String> {
         match self.get(span.file()) {
             Option::Some(file) => Option::Some(file.get_span_text(span)),
             Option::None => Option::None,
@@ -244,7 +244,7 @@ impl SourceMap {
     }
 
     /// Get a line from a file.
-    pub fn get_line(self, file_id: FileId, line_number: U32) -> Option[String] {
+    pub fn get_line(self, file_id: FileId, line_number: U32) -> Option<String> {
         match self.get(file_id) {
             Option::Some(file) => file.get_line(line_number),
             Option::None => Option::None,

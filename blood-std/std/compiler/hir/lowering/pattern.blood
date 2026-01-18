@@ -5,24 +5,24 @@
 
 module std.compiler.hir.lowering.pattern;
 
-use std.result.Result
-use std.option.Option
+use std.result.Result;
+use std.option.Option;
 
-use crate::compiler::ast::{
+use crate.compiler.ast.{
     Pattern as AstPattern, PatternKind as AstPatternKind,
     Literal, Ident, Span as AstSpan,
     FieldPattern as AstFieldPattern,
 }
 
-use crate::compiler::hir::{
+use crate.compiler.hir.{
     Pattern as HirPattern, PatternKind as HirPatternKind,
     LocalId, Span as HirSpan,
     FieldPattern as HirFieldPattern,
 }
 
-use crate::compiler::hir::lowering::{AstLowering, LoweringError}
-use crate::compiler::hir::lowering::item::lower_type
-use crate::compiler::typeck::types::{DefId, Type}
+use crate.compiler.hir.lowering.{AstLowering, LoweringError}
+use crate.compiler.hir.lowering.item.lower_type;
+use crate.compiler.typeck.types.{DefId, Type}
 
 // ============================================================================
 // Pattern Lowering
@@ -238,32 +238,32 @@ pub fn lower_pattern(ctx: &mut AstLowering, pattern: &AstPattern) -> Result<HirP
 // ============================================================================
 
 /// Lower a literal in a pattern.
-fn lower_literal(lit: &Literal) -> crate::compiler::hir::LiteralValue {
+fn lower_literal(lit: &Literal) -> crate.compiler.hir::LiteralValue {
     match lit {
-        Literal::Integer(v, suffix) => crate::compiler::hir::LiteralValue::Integer(*v, suffix.clone()),
-        Literal::Float(v, suffix) => crate::compiler::hir::LiteralValue::Float(*v, suffix.clone()),
-        Literal::String(s) => crate::compiler::hir::LiteralValue::String(s.clone()),
-        Literal::Char(c) => crate::compiler::hir::LiteralValue::Char(*c),
-        Literal::Bool(b) => crate::compiler::hir::LiteralValue::Bool(*b),
-        Literal::Byte(b) => crate::compiler::hir::LiteralValue::Byte(*b),
-        Literal::ByteString(bs) => crate::compiler::hir::LiteralValue::ByteString(bs.clone()),
+        Literal::Integer(v, suffix) => crate.compiler.hir::LiteralValue::Integer(*v, suffix.clone()),
+        Literal::Float(v, suffix) => crate.compiler.hir::LiteralValue::Float(*v, suffix.clone()),
+        Literal::String(s) => crate.compiler.hir::LiteralValue::String(s.clone()),
+        Literal::Char(c) => crate.compiler.hir::LiteralValue::Char(*c),
+        Literal::Bool(b) => crate.compiler.hir::LiteralValue::Bool(*b),
+        Literal::Byte(b) => crate.compiler.hir::LiteralValue::Byte(*b),
+        Literal::ByteString(bs) => crate.compiler.hir::LiteralValue::ByteString(bs.clone()),
     }
 }
 
 /// Lower a range endpoint (for range patterns).
 fn lower_range_end(
     ctx: &mut AstLowering,
-    end: &crate::compiler::ast::RangeEnd,
+    end: &crate.compiler.ast::RangeEnd,
 ) -> Result<HirPattern, LoweringError> {
     match end {
-        crate::compiler::ast::RangeEnd::Literal(lit) => {
+        crate.compiler.ast::RangeEnd::Literal(lit) => {
             Ok(HirPattern::new(
                 HirPatternKind::Literal(lower_literal(lit)),
                 Type::infer(),
                 HirSpan::dummy(),
             ))
         }
-        crate::compiler::ast::RangeEnd::Path(path) => {
+        crate.compiler.ast::RangeEnd::Path(path) => {
             let def_id = ctx.alloc_def_id(); // Placeholder
             Ok(HirPattern::new(
                 HirPatternKind::Constant(def_id),
@@ -280,14 +280,14 @@ fn lower_range_end(
 
 #[test]
 fn test_wildcard_pattern() {
-    use crate::compiler::typeck::TypeCheckResult;
+    use crate.compiler.typeck::TypeCheckResult;
     use std.collections.HashMap;
 
     let types = TypeCheckResult::success(HashMap::new());
     let mut ctx = AstLowering::new(types);
 
     let ast_pattern = AstPattern {
-        id: crate::compiler::ast::NodeId::new(1),
+        id: crate.compiler.ast::NodeId::new(1),
         kind: AstPatternKind::Wildcard,
         span: AstSpan::dummy(),
     };
@@ -304,14 +304,14 @@ fn test_wildcard_pattern() {
 
 #[test]
 fn test_binding_pattern() {
-    use crate::compiler::typeck::TypeCheckResult;
+    use crate.compiler.typeck::TypeCheckResult;
     use std.collections.HashMap;
 
     let types = TypeCheckResult::success(HashMap::new());
     let mut ctx = AstLowering::new(types);
 
     let ast_pattern = AstPattern {
-        id: crate::compiler::ast::NodeId::new(1),
+        id: crate.compiler.ast::NodeId::new(1),
         kind: AstPatternKind::Binding {
             name: Ident::new("x".to_string(), AstSpan::dummy()),
             mutable: false,
@@ -335,22 +335,22 @@ fn test_binding_pattern() {
 
 #[test]
 fn test_tuple_pattern() {
-    use crate::compiler::typeck::TypeCheckResult;
+    use crate.compiler.typeck::TypeCheckResult;
     use std.collections.HashMap;
 
     let types = TypeCheckResult::success(HashMap::new());
     let mut ctx = AstLowering::new(types);
 
     let ast_pattern = AstPattern {
-        id: crate::compiler::ast::NodeId::new(1),
+        id: crate.compiler.ast::NodeId::new(1),
         kind: AstPatternKind::Tuple([
             AstPattern {
-                id: crate::compiler::ast::NodeId::new(2),
+                id: crate.compiler.ast::NodeId::new(2),
                 kind: AstPatternKind::Wildcard,
                 span: AstSpan::dummy(),
             },
             AstPattern {
-                id: crate::compiler::ast::NodeId::new(3),
+                id: crate.compiler.ast::NodeId::new(3),
                 kind: AstPatternKind::Wildcard,
                 span: AstSpan::dummy(),
             },

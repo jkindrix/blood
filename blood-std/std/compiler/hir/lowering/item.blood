@@ -6,11 +6,11 @@
 
 module std.compiler.hir.lowering.item;
 
-use std.result.Result
-use std.option.Option
-use std.collections.HashMap
+use std.result.Result;
+use std.option.Option;
+use std.collections.HashMap;
 
-use crate::compiler::ast::{
+use crate.compiler.ast.{
     Declaration, DeclarationKind, Ident, Span as AstSpan, NodeId,
     FunctionDecl, StructDecl, EnumDecl, EffectDecl, HandlerDecl,
     ImplDecl, TraitDecl, TypeAliasDecl, ConstDecl, StaticDecl,
@@ -18,7 +18,7 @@ use crate::compiler::ast::{
     Param, GenericParam, TypePath, Visibility as AstVisibility,
 }
 
-use crate::compiler::hir::{
+use crate.compiler.hir.{
     Item, ItemKind, Visibility, Span as HirSpan,
     FnDef, FnSig, StructDef, StructFieldDef, EnumDef, EnumVariant,
     Generics, GenericParamDef, GenericParamKind,
@@ -27,9 +27,9 @@ use crate::compiler::hir::{
     ExternFnDef, BridgeDef, ModuleDef, Body, BodyId,
 }
 
-use crate::compiler::hir::lowering::{AstLowering, LoweringError}
-use crate::compiler::hir::lowering::expr
-use crate::compiler::typeck::types::{DefId, Type}
+use crate.compiler.hir.lowering.{AstLowering, LoweringError}
+use crate.compiler.hir.lowering.expr;
+use crate.compiler.typeck.types.{DefId, Type}
 
 // ============================================================================
 // Declaration Lowering Entry Point
@@ -362,7 +362,7 @@ fn lower_trait(
 }
 
 /// Lower a trait item.
-fn lower_trait_item(ctx: &mut AstLowering, item: &crate::compiler::ast::TraitItem) -> Result<TraitItem, LoweringError> {
+fn lower_trait_item(ctx: &mut AstLowering, item: &crate.compiler.ast::TraitItem) -> Result<TraitItem, LoweringError> {
     let def_id = match ctx.node_to_def.get(&item.id.id()) {
         Some(id) => id.clone(),
         None => ctx.alloc_def_id(),
@@ -381,10 +381,10 @@ fn lower_trait_item(ctx: &mut AstLowering, item: &crate::compiler::ast::TraitIte
 /// Lower a trait item kind.
 fn lower_trait_item_kind(
     ctx: &mut AstLowering,
-    item: &crate::compiler::ast::TraitItem,
-) -> Result<crate::compiler::hir::TraitItemKind, LoweringError> {
+    item: &crate.compiler.ast::TraitItem,
+) -> Result<crate.compiler.hir::TraitItemKind, LoweringError> {
     match &item.kind {
-        crate::compiler::ast::TraitItemKind::Function(f) => {
+        crate.compiler.ast::TraitItemKind::Function(f) => {
             let sig = lower_fn_sig(ctx, f)?;
             let body_id = match &f.body {
                 Some(block) => {
@@ -400,17 +400,17 @@ fn lower_trait_item_kind(
                 }
                 None => None,
             };
-            Ok(crate::compiler::hir::TraitItemKind::Fn { sig, body_id })
+            Ok(crate.compiler.hir::TraitItemKind::Fn { sig, body_id })
         }
-        crate::compiler::ast::TraitItemKind::Type(t) => {
+        crate.compiler.ast::TraitItemKind::Type(t) => {
             let bounds = lower_type_bounds(ctx, &t.bounds)?;
             let default = match &t.default {
                 Some(ty) => Some(lower_type(ctx, ty)?),
                 None => None,
             };
-            Ok(crate::compiler::hir::TraitItemKind::Type { bounds, default })
+            Ok(crate.compiler.hir::TraitItemKind::Type { bounds, default })
         }
-        crate::compiler::ast::TraitItemKind::Const(c) => {
+        crate.compiler.ast::TraitItemKind::Const(c) => {
             let ty = lower_type(ctx, &c.ty)?;
             let default = match &c.default {
                 Some(expr) => {
@@ -426,7 +426,7 @@ fn lower_trait_item_kind(
                 }
                 None => None,
             };
-            Ok(crate::compiler::hir::TraitItemKind::Const { ty, default })
+            Ok(crate.compiler.hir::TraitItemKind::Const { ty, default })
         }
     }
 }
@@ -461,7 +461,7 @@ fn lower_impl(
 }
 
 /// Lower an impl item.
-fn lower_impl_item(ctx: &mut AstLowering, item: &crate::compiler::ast::ImplItem) -> Result<ImplItem, LoweringError> {
+fn lower_impl_item(ctx: &mut AstLowering, item: &crate.compiler.ast::ImplItem) -> Result<ImplItem, LoweringError> {
     let def_id = match ctx.node_to_def.get(&item.id.id()) {
         Some(id) => id.clone(),
         None => ctx.alloc_def_id(),
@@ -479,22 +479,22 @@ fn lower_impl_item(ctx: &mut AstLowering, item: &crate::compiler::ast::ImplItem)
 /// Lower an impl item kind.
 fn lower_impl_item_kind(
     ctx: &mut AstLowering,
-    item: &crate::compiler::ast::ImplItem,
-) -> Result<crate::compiler::hir::ImplItemKind, LoweringError> {
+    item: &crate.compiler.ast::ImplItem,
+) -> Result<crate.compiler.hir::ImplItemKind, LoweringError> {
     match &item.kind {
-        crate::compiler::ast::ImplItemKind::Function(f) => {
+        crate.compiler.ast::ImplItemKind::Function(f) => {
             let def_id = match ctx.node_to_def.get(&item.id.id()) {
                 Some(id) => id.clone(),
                 None => ctx.alloc_def_id(),
             };
             let fn_def = lower_function(ctx, f, &def_id)?;
-            Ok(crate::compiler::hir::ImplItemKind::Fn(fn_def))
+            Ok(crate.compiler.hir::ImplItemKind::Fn(fn_def))
         }
-        crate::compiler::ast::ImplItemKind::Type(t) => {
+        crate.compiler.ast::ImplItemKind::Type(t) => {
             let ty = lower_type(ctx, &t.ty)?;
-            Ok(crate::compiler::hir::ImplItemKind::Type(ty))
+            Ok(crate.compiler.hir::ImplItemKind::Type(ty))
         }
-        crate::compiler::ast::ImplItemKind::Const(c) => {
+        crate.compiler.ast::ImplItemKind::Const(c) => {
             let ty = lower_type(ctx, &c.ty)?;
             let body_id = ctx.alloc_body_id();
             ctx.reset_local_ids();
@@ -504,7 +504,7 @@ fn lower_impl_item_kind(
             ctx.crate_.insert_body(body_id.clone(), body);
             ctx.current_body_id = None;
 
-            Ok(crate::compiler::hir::ImplItemKind::Const { ty, body_id })
+            Ok(crate.compiler.hir::ImplItemKind::Const { ty, body_id })
         }
     }
 }
@@ -568,8 +568,8 @@ fn lower_handler(
     let generics = lower_generics(ctx, &h.generics)?;
 
     let kind = match h.kind {
-        crate::compiler::ast::HandlerKind::Deep => HandlerKind::Deep,
-        crate::compiler::ast::HandlerKind::Shallow => HandlerKind::Shallow,
+        crate.compiler.ast::HandlerKind::Deep => HandlerKind::Deep,
+        crate.compiler.ast::HandlerKind::Shallow => HandlerKind::Shallow,
     };
 
     let effect = lower_type(ctx, &h.effect)?;
@@ -720,7 +720,7 @@ fn lower_module(ctx: &mut AstLowering, m: &ModuleDecl) -> Result<ModuleDef, Lowe
 /// Lower generic parameters.
 fn lower_generics(
     ctx: &mut AstLowering,
-    generics: &crate::compiler::ast::Generics,
+    generics: &crate.compiler.ast::Generics,
 ) -> Result<Generics, LoweringError> {
     let mut params: [GenericParamDef] = [];
     let mut i: usize = 0;
@@ -729,17 +729,17 @@ fn lower_generics(
         let def_id = ctx.alloc_def_id();
 
         let kind = match &param.kind {
-            crate::compiler::ast::GenericParamKind::Type { default } => {
+            crate.compiler.ast::GenericParamKind::Type { default } => {
                 let default_ty = match default {
                     Some(ty) => Some(lower_type(ctx, ty)?),
                     None => None,
                 };
                 GenericParamKind::Type { default: default_ty }
             }
-            crate::compiler::ast::GenericParamKind::Lifetime => {
+            crate.compiler.ast::GenericParamKind::Lifetime => {
                 GenericParamKind::Lifetime
             }
-            crate::compiler::ast::GenericParamKind::Const { ty } => {
+            crate.compiler.ast::GenericParamKind::Const { ty } => {
                 let const_ty = lower_type(ctx, ty)?;
                 GenericParamKind::Const { ty: const_ty }
             }
@@ -764,18 +764,18 @@ fn lower_generics(
 /// Lower a where clause.
 fn lower_where_clause(
     ctx: &mut AstLowering,
-    where_clause: &Option<crate::compiler::ast::WhereClause>,
-) -> Result<Option<crate::compiler::hir::WhereClause>, LoweringError> {
+    where_clause: &Option<crate.compiler.ast::WhereClause>,
+) -> Result<Option<crate.compiler.hir::WhereClause>, LoweringError> {
     match where_clause {
         Some(wc) => {
-            let mut predicates: [crate::compiler::hir::WherePredicate] = [];
+            let mut predicates: [crate.compiler.hir::WherePredicate] = [];
             let mut i: usize = 0;
             while i < wc.predicates.len() {
                 let pred = lower_where_predicate(ctx, &wc.predicates[i])?;
                 predicates.push(pred);
                 i = i + 1;
             }
-            Ok(Some(crate::compiler::hir::WhereClause {
+            Ok(Some(crate.compiler.hir::WhereClause {
                 predicates,
                 span: ctx.lower_span(&wc.span),
             }))
@@ -787,20 +787,20 @@ fn lower_where_clause(
 /// Lower a where predicate.
 fn lower_where_predicate(
     ctx: &mut AstLowering,
-    pred: &crate::compiler::ast::WherePredicate,
-) -> Result<crate::compiler::hir::WherePredicate, LoweringError> {
+    pred: &crate.compiler.ast::WherePredicate,
+) -> Result<crate.compiler.hir::WherePredicate, LoweringError> {
     match pred {
-        crate::compiler::ast::WherePredicate::TypeBound { ty, bounds, span } => {
+        crate.compiler.ast::WherePredicate::TypeBound { ty, bounds, span } => {
             let hir_ty = lower_type(ctx, ty)?;
             let hir_bounds = lower_type_bounds(ctx, bounds)?;
-            Ok(crate::compiler::hir::WherePredicate::TypeBound {
+            Ok(crate.compiler.hir::WherePredicate::TypeBound {
                 ty: hir_ty,
                 bounds: hir_bounds,
                 span: ctx.lower_span(span),
             })
         }
-        crate::compiler::ast::WherePredicate::Lifetime { lifetime, bounds, span } => {
-            Ok(crate::compiler::hir::WherePredicate::Lifetime {
+        crate.compiler.ast::WherePredicate::Lifetime { lifetime, bounds, span } => {
+            Ok(crate.compiler.hir::WherePredicate::Lifetime {
                 lifetime: lifetime.clone(),
                 bounds: bounds.clone(),
                 span: ctx.lower_span(span),
@@ -812,9 +812,9 @@ fn lower_where_predicate(
 /// Lower type bounds.
 fn lower_type_bounds(
     ctx: &mut AstLowering,
-    bounds: &[crate::compiler::ast::TypeBound],
-) -> Result<[crate::compiler::hir::TypeBound], LoweringError> {
-    let mut result: [crate::compiler::hir::TypeBound] = [];
+    bounds: &[crate.compiler.ast::TypeBound],
+) -> Result<[crate.compiler.hir::TypeBound], LoweringError> {
+    let mut result: [crate.compiler.hir::TypeBound] = [];
     let mut i: usize = 0;
     while i < bounds.len() {
         let bound = lower_type_bound(ctx, &bounds[i])?;
@@ -827,15 +827,15 @@ fn lower_type_bounds(
 /// Lower a single type bound.
 fn lower_type_bound(
     ctx: &mut AstLowering,
-    bound: &crate::compiler::ast::TypeBound,
-) -> Result<crate::compiler::hir::TypeBound, LoweringError> {
+    bound: &crate.compiler.ast::TypeBound,
+) -> Result<crate.compiler.hir::TypeBound, LoweringError> {
     match bound {
-        crate::compiler::ast::TypeBound::Trait(tr) => {
+        crate.compiler.ast::TypeBound::Trait(tr) => {
             let trait_ref = lower_trait_ref(ctx, tr)?;
-            Ok(crate::compiler::hir::TypeBound::Trait(trait_ref))
+            Ok(crate.compiler.hir::TypeBound::Trait(trait_ref))
         }
-        crate::compiler::ast::TypeBound::Lifetime(lt) => {
-            Ok(crate::compiler::hir::TypeBound::Lifetime(lt.clone()))
+        crate.compiler.ast::TypeBound::Lifetime(lt) => {
+            Ok(crate.compiler.hir::TypeBound::Lifetime(lt.clone()))
         }
     }
 }
@@ -843,7 +843,7 @@ fn lower_type_bound(
 /// Lower a trait reference.
 fn lower_trait_ref(
     ctx: &mut AstLowering,
-    tr: &crate::compiler::ast::TraitRef,
+    tr: &crate.compiler.ast::TraitRef,
 ) -> Result<TraitRef, LoweringError> {
     // Resolve the trait path to a DefId
     let def_id = resolve_path_to_def(ctx, &tr.path)?;
@@ -872,7 +872,7 @@ fn lower_trait_ref(
 /// Lower function parameters.
 fn lower_params(
     ctx: &mut AstLowering,
-    params: &[crate::compiler::ast::Param],
+    params: &[crate.compiler.ast::Param],
 ) -> Result<[(String, Type)], LoweringError> {
     let mut result: [(String, Type)] = [];
     let mut i: usize = 0;
@@ -885,13 +885,13 @@ fn lower_params(
 }
 
 /// Lower an AST type to HIR Type.
-pub fn lower_type(ctx: &mut AstLowering, ty: &crate::compiler::ast::Type) -> Result<Type, LoweringError> {
+pub fn lower_type(ctx: &mut AstLowering, ty: &crate.compiler.ast::Type) -> Result<Type, LoweringError> {
     match &ty.kind {
-        crate::compiler::ast::TypeKind::Path(path) => {
+        crate.compiler.ast::TypeKind::Path(path) => {
             // Try to resolve the path to a type
             resolve_type_path(ctx, path)
         }
-        crate::compiler::ast::TypeKind::Tuple(tys) => {
+        crate.compiler.ast::TypeKind::Tuple(tys) => {
             let mut elements: [Type] = [];
             let mut i: usize = 0;
             while i < tys.len() {
@@ -901,23 +901,23 @@ pub fn lower_type(ctx: &mut AstLowering, ty: &crate::compiler::ast::Type) -> Res
             }
             Ok(Type::tuple(elements))
         }
-        crate::compiler::ast::TypeKind::Array { elem, len } => {
+        crate.compiler.ast::TypeKind::Array { elem, len } => {
             let elem_ty = lower_type(ctx, elem)?;
             Ok(Type::array(elem_ty, *len))
         }
-        crate::compiler::ast::TypeKind::Slice(elem) => {
+        crate.compiler.ast::TypeKind::Slice(elem) => {
             let elem_ty = lower_type(ctx, elem)?;
             Ok(Type::slice(elem_ty))
         }
-        crate::compiler::ast::TypeKind::Reference { mutable, ty: inner } => {
+        crate.compiler.ast::TypeKind::Reference { mutable, ty: inner } => {
             let inner_ty = lower_type(ctx, inner)?;
             Ok(Type::reference(inner_ty, *mutable))
         }
-        crate::compiler::ast::TypeKind::Pointer { mutable, ty: inner } => {
+        crate.compiler.ast::TypeKind::Pointer { mutable, ty: inner } => {
             let inner_ty = lower_type(ctx, inner)?;
             Ok(Type::pointer(inner_ty, *mutable))
         }
-        crate::compiler::ast::TypeKind::Function { params, return_ty, effects } => {
+        crate.compiler.ast::TypeKind::Function { params, return_ty, effects } => {
             let mut param_tys: [Type] = [];
             let mut i: usize = 0;
             while i < params.len() {
@@ -928,13 +928,13 @@ pub fn lower_type(ctx: &mut AstLowering, ty: &crate::compiler::ast::Type) -> Res
             let ret_ty = lower_type(ctx, return_ty)?;
             Ok(Type::function(param_tys, ret_ty))
         }
-        crate::compiler::ast::TypeKind::Infer => {
+        crate.compiler.ast::TypeKind::Infer => {
             Ok(Type::infer())
         }
-        crate::compiler::ast::TypeKind::Never => {
+        crate.compiler.ast::TypeKind::Never => {
             Ok(Type::never())
         }
-        crate::compiler::ast::TypeKind::Error => {
+        crate.compiler.ast::TypeKind::Error => {
             Ok(Type::error())
         }
     }
@@ -943,16 +943,16 @@ pub fn lower_type(ctx: &mut AstLowering, ty: &crate::compiler::ast::Type) -> Res
 /// Lower an effect row.
 fn lower_effect_row(
     ctx: &mut AstLowering,
-    row: &crate::compiler::ast::EffectRow,
-) -> Result<crate::compiler::typeck::types::EffectRow, LoweringError> {
-    let mut effects: [crate::compiler::typeck::types::EffectInstance] = [];
+    row: &crate.compiler.ast::EffectRow,
+) -> Result<crate.compiler.typeck::types::EffectRow, LoweringError> {
+    let mut effects: [crate.compiler.typeck::types::EffectInstance] = [];
     let mut i: usize = 0;
     while i < row.effects.len() {
         let effect = lower_effect_instance(ctx, &row.effects[i])?;
         effects.push(effect);
         i = i + 1;
     }
-    Ok(crate::compiler::typeck::types::EffectRow {
+    Ok(crate.compiler.typeck::types::EffectRow {
         effects,
         tail: row.tail.clone(),
     })
@@ -961,8 +961,8 @@ fn lower_effect_row(
 /// Lower an effect instance.
 fn lower_effect_instance(
     ctx: &mut AstLowering,
-    effect: &crate::compiler::ast::EffectInstance,
-) -> Result<crate::compiler::typeck::types::EffectInstance, LoweringError> {
+    effect: &crate.compiler.ast::EffectInstance,
+) -> Result<crate.compiler.typeck::types::EffectInstance, LoweringError> {
     let def_id = resolve_path_to_def(ctx, &effect.path)?;
 
     let mut args: [Type] = [];
@@ -978,7 +978,7 @@ fn lower_effect_instance(
         None => {}
     }
 
-    Ok(crate::compiler::typeck::types::EffectInstance {
+    Ok(crate.compiler.typeck::types::EffectInstance {
         def_id,
         args,
     })

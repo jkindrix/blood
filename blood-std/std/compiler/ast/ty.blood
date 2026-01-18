@@ -6,15 +6,15 @@
 //!
 //! Types appear in many places in Blood source code:
 //! - Function signatures: `fn foo(x: Int) -> String`
-//! - Variable bindings: `let x: Vec[Int] = ...`
+//! - Variable bindings: `let x: Vec<Int> = ...`
 //! - Struct fields: `struct Point { x: F64, y: F64 }`
-//! - Type aliases: `type Result[T] = Either[Error, T]`
+//! - Type aliases: `type Result<T> = Either[Error, T]`
 //!
 //! ## Type Forms
 //!
 //! | Form | Example | Description |
 //! |------|---------|-------------|
-//! | Path | `Int`, `Vec[T]` | Named type with optional generics |
+//! | Path | `Int`, `Vec<T>` | Named type with optional generics |
 //! | Reference | `&T`, `&mut T` | Borrowed reference |
 //! | Pointer | `*const T`, `*mut T` | Raw pointer |
 //! | Array | `[T; N]` | Fixed-size array |
@@ -27,20 +27,20 @@
 //! ## Blood-Specific Types
 //!
 //! Blood adds several type forms not found in Rust:
-//! - **Effect rows**: `/ {IO, Error[E]}` or `/ pure`
+//! - **Effect rows**: `/ {IO, Error<E>}` or `/ pure`
 //! - **Record types**: `{ x: Int, y: Int }` with row polymorphism
 //! - **Ownership qualifiers**: `linear T`, `affine T`
-//! - **Higher-rank types**: `forall[T]. T -> T`
+//! - **Higher-rank types**: `forall<T>. T -> T`
 
-module std.compiler.ast.ty
+module std.compiler.ast.ty;
 
-use std.option.Option
-use std.collections.Vec
-use std.compiler.ast.node.Span
-use std.compiler.ast.node.Ident
-use std.compiler.ast.node.NodeId
-use std.compiler.ast.node.Symbol
-use std.compiler.ast.expr.Expr
+use std.option.Option;
+use std.collections.Vec;
+use std.compiler.ast.node.Span;
+use std.compiler.ast.node.Ident;
+use std.compiler.ast.node.NodeId;
+use std.compiler.ast.node.Symbol;
+use std.compiler.ast.expr.Expr;
 
 // ============================================================================
 // Type
@@ -55,7 +55,7 @@ use std.compiler.ast.expr.Expr
 ///
 /// ```blood
 /// // Type annotations in various positions
-/// fn process(data: Vec[String]) -> Result[Int, Error] / {IO} {
+/// fn process(data: Vec<String>) -> Result<Int, Error> / {IO} {
 ///     let count: Int = data.len()
 ///     // ...
 /// }
@@ -164,17 +164,17 @@ impl Type {
 /// The kind of type expression.
 #[derive(Clone, PartialEq, Eq)]
 pub enum TypeKind {
-    /// Type path: `Int`, `Vec[T]`, `std.collections.HashMap[K, V]`
+    /// Type path: `Int`, `Vec<T>`, `std.collections.HashMap<K, V>`
     Path(TypePath),
 
     /// Reference type: `&T`, `&mut T`, `&'a T`
     Reference {
         /// Optional lifetime.
-        lifetime: Option[Lifetime],
+        lifetime: Option<Lifetime>,
         /// Whether this is a mutable reference.
         mutable: Bool,
         /// The referenced type.
-        inner: Box[Type],
+        inner: Box<Type>,
     },
 
     /// Raw pointer: `*const T`, `*mut T`
@@ -182,42 +182,42 @@ pub enum TypeKind {
         /// Whether this is a mutable pointer.
         mutable: Bool,
         /// The pointed-to type.
-        inner: Box[Type],
+        inner: Box<Type>,
     },
 
     /// Fixed-size array: `[T; N]`
     Array {
         /// Element type.
-        element: Box[Type],
+        element: Box<Type>,
         /// Array size expression.
-        size: Box[Expr],
+        size: Box<Expr>,
     },
 
     /// Slice type: `[T]`
     Slice {
         /// Element type.
-        element: Box[Type],
+        element: Box<Type>,
     },
 
     /// Tuple type: `()`, `(T,)`, `(T, U)`
-    Tuple(Vec[Type]),
+    Tuple(Vec<Type>),
 
     /// Function type: `fn(T, U) -> V / E`
     Function {
         /// Parameter types.
-        params: Vec[Type],
+        params: Vec<Type>,
         /// Return type.
-        return_type: Box[Type],
+        return_type: Box<Type>,
         /// Optional effect row.
-        effects: Option[EffectRow],
+        effects: Option<EffectRow>,
     },
 
     /// Record type: `{ x: T, y: U }` or `{ x: T | R }`
     Record {
         /// Named fields.
-        fields: Vec[RecordTypeField],
+        fields: Vec<RecordTypeField>,
         /// Optional rest/row variable.
-        rest: Option[Ident],
+        rest: Option<Ident>,
     },
 
     /// Ownership-qualified type: `linear T`, `affine T`
@@ -225,15 +225,15 @@ pub enum TypeKind {
         /// The ownership qualifier.
         qualifier: OwnershipQualifier,
         /// The inner type.
-        inner: Box[Type],
+        inner: Box<Type>,
     },
 
-    /// Higher-rank polymorphic type: `forall[T]. T -> T`
+    /// Higher-rank polymorphic type: `forall<T>. T -> T`
     Forall {
         /// Type parameters.
-        params: Vec[Ident],
+        params: Vec<Ident>,
         /// The body type.
-        body: Box[Type],
+        body: Box<Type>,
     },
 
     /// The never type: `!`
@@ -243,18 +243,18 @@ pub enum TypeKind {
     Infer,
 
     /// Parenthesized type: `(T)` for grouping
-    Paren(Box[Type]),
+    Paren(Box<Type>),
 
     /// Impl trait type: `impl Trait`
     ImplTrait {
         /// The trait bounds.
-        bounds: Vec[TypeBound],
+        bounds: Vec<TypeBound>,
     },
 
     /// Dynamic trait object: `dyn Trait`
     DynTrait {
         /// The trait bounds.
-        bounds: Vec[TypeBound],
+        bounds: Vec<TypeBound>,
     },
 
     /// Error placeholder (for error recovery).
@@ -265,21 +265,21 @@ pub enum TypeKind {
 // Type Path
 // ============================================================================
 
-/// A type path like `Vec[T]` or `std.collections.HashMap[K, V]`.
+/// A type path like `Vec<T>` or `std.collections.HashMap<K, V>`.
 ///
 /// Type paths consist of segments separated by `.`, where each segment
 /// can have generic type arguments.
 #[derive(Clone, PartialEq, Eq)]
 pub struct TypePath {
     /// Path segments.
-    pub segments: Vec[TypePathSegment],
+    pub segments: Vec<TypePathSegment>,
     /// Span of the entire path.
     pub span: Span,
 }
 
 impl TypePath {
     /// Create a new type path.
-    pub fn new(segments: Vec[TypePathSegment], span: Span) -> TypePath {
+    pub fn new(segments: Vec<TypePathSegment>, span: Span) -> TypePath {
         TypePath { segments, span }
     }
 
@@ -319,12 +319,12 @@ pub struct TypePathSegment {
     /// The segment name.
     pub name: Ident,
     /// Optional generic arguments.
-    pub args: Option[TypeArgs],
+    pub args: Option<TypeArgs>,
 }
 
 impl TypePathSegment {
     /// Create a new segment.
-    pub fn new(name: Ident, args: Option[TypeArgs]) -> TypePathSegment {
+    pub fn new(name: Ident, args: Option<TypeArgs>) -> TypePathSegment {
         TypePathSegment { name, args }
     }
 
@@ -347,14 +347,14 @@ impl TypePathSegment {
 #[derive(Clone, PartialEq, Eq)]
 pub struct TypeArgs {
     /// The arguments.
-    pub args: Vec[TypeArg],
+    pub args: Vec<TypeArg>,
     /// Span of the entire argument list.
     pub span: Span,
 }
 
 impl TypeArgs {
     /// Create new type arguments.
-    pub fn new(args: Vec[TypeArg], span: Span) -> TypeArgs {
+    pub fn new(args: Vec<TypeArg>, span: Span) -> TypeArgs {
         TypeArgs { args, span }
     }
 
@@ -372,7 +372,7 @@ impl TypeArgs {
 /// A single generic argument.
 #[derive(Clone, PartialEq, Eq)]
 pub enum TypeArg {
-    /// A type argument: `T` in `Vec[T]`
+    /// A type argument: `T` in `Vec<T>`
     Type(Type),
     /// A lifetime argument: `'a` in `&'a T`
     Lifetime(Lifetime),
@@ -434,7 +434,7 @@ impl Lifetime {
 // Effect Row
 // ============================================================================
 
-/// An effect row annotation: `/ {IO, Error[E]}` or `/ pure`
+/// An effect row annotation: `/ {IO, Error<E>}` or `/ pure`
 ///
 /// Effect rows specify which effects a function may perform.
 #[derive(Clone, PartialEq, Eq)]
@@ -455,7 +455,7 @@ impl EffectRow {
     }
 
     /// Create an effect row with specific effects.
-    pub fn effects(effects: Vec[Type], rest: Option[Ident], span: Span) -> EffectRow {
+    pub fn effects(effects: Vec<Type>, rest: Option<Ident>, span: Span) -> EffectRow {
         EffectRow {
             kind: EffectRowKind::Effects { effects, rest },
             span,
@@ -486,12 +486,12 @@ pub enum EffectRowKind {
     /// Pure (no effects): `/ pure` or `/ {}`
     Pure,
 
-    /// Specific effects: `/ {IO, Error[E]}` or `/ {IO | e}`
+    /// Specific effects: `/ {IO, Error<E>}` or `/ {IO | e}`
     Effects {
         /// The named effects.
-        effects: Vec[Type],
+        effects: Vec<Type>,
         /// Optional rest variable for open rows.
-        rest: Option[Ident],
+        rest: Option<Ident>,
     },
 
     /// Just a type variable: `/ e`
@@ -569,14 +569,14 @@ impl TypeBound {
 #[derive(Clone, PartialEq, Eq)]
 pub struct TypeParams {
     /// The parameters.
-    pub params: Vec[GenericParam],
+    pub params: Vec<GenericParam>,
     /// Span of the parameter list.
     pub span: Span,
 }
 
 impl TypeParams {
     /// Create new type parameters.
-    pub fn new(params: Vec[GenericParam], span: Span) -> TypeParams {
+    pub fn new(params: Vec<GenericParam>, span: Span) -> TypeParams {
         TypeParams { params, span }
     }
 
@@ -627,9 +627,9 @@ pub struct TypeParam {
     /// Parameter name.
     pub name: Ident,
     /// Trait bounds.
-    pub bounds: Vec[TypeBound],
+    pub bounds: Vec<TypeBound>,
     /// Default type (optional).
-    pub default: Option[Type],
+    pub default: Option<Type>,
     /// Span of the parameter.
     pub span: Span,
 }
@@ -640,7 +640,7 @@ pub struct LifetimeParam {
     /// Lifetime name.
     pub lifetime: Lifetime,
     /// Lifetime bounds.
-    pub bounds: Vec[Lifetime],
+    pub bounds: Vec<Lifetime>,
     /// Span of the parameter.
     pub span: Span,
 }
@@ -653,7 +653,7 @@ pub struct ConstParam {
     /// Parameter type.
     pub ty: Type,
     /// Default value (optional).
-    pub default: Option[Expr],
+    pub default: Option<Expr>,
     /// Span of the parameter.
     pub span: Span,
 }
@@ -666,14 +666,14 @@ pub struct ConstParam {
 #[derive(Clone, PartialEq, Eq)]
 pub struct WhereClause {
     /// The predicates.
-    pub predicates: Vec[WherePredicate],
+    pub predicates: Vec<WherePredicate>,
     /// Span of the where clause.
     pub span: Span,
 }
 
 impl WhereClause {
     /// Create a new where clause.
-    pub fn new(predicates: Vec[WherePredicate], span: Span) -> WhereClause {
+    pub fn new(predicates: Vec<WherePredicate>, span: Span) -> WhereClause {
         WhereClause { predicates, span }
     }
 
@@ -697,14 +697,14 @@ pub enum WherePredicate {
     /// Type bound: `T: Clone + Debug`
     TypeBound {
         ty: Type,
-        bounds: Vec[TypeBound],
+        bounds: Vec<TypeBound>,
         span: Span,
     },
 
     /// Lifetime bound: `'a: 'b`
     Lifetime {
         lifetime: Lifetime,
-        bounds: Vec[Lifetime],
+        bounds: Vec<Lifetime>,
         span: Span,
     },
 

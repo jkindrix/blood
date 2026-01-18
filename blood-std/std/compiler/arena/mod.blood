@@ -16,7 +16,7 @@
 //! arena/
 //! ├── mod.blood     # This file - module entry point
 //! ├── chunk.blood   # Memory chunk management
-//! ├── typed.blood   # TypedArena[T] - generic typed arena
+//! ├── typed.blood   # TypedArena<T> - generic typed arena
 //! ├── string.blood  # StringArena - string arena with interning
 //! └── stats.blood   # ArenaStats - usage statistics
 //! ```
@@ -25,7 +25,7 @@
 //!
 //! | Arena | Use Case |
 //! |-------|----------|
-//! | `TypedArena[T]` | Single-type allocations (AST nodes, types) |
+//! | `TypedArena<T>` | Single-type allocations (AST nodes, types) |
 //! | `StringArena` | String storage with interning |
 //! | `SymbolArena` | Compiler symbols and identifiers |
 //!
@@ -41,7 +41,7 @@
 //!     span: Span,
 //! }
 //!
-//! let arena: TypedArena[AstNode] = TypedArena::new()
+//! let arena: TypedArena<AstNode> = TypedArena::new()
 //!
 //! let node1 = arena.alloc(AstNode { kind: NodeKind::Expr, span: Span::dummy() })
 //! let node2 = arena.alloc(AstNode { kind: NodeKind::Stmt, span: Span::dummy() })
@@ -101,7 +101,7 @@
 //!
 //! ```blood
 //! struct Parser {
-//!     ast_arena: TypedArena[AstNode],
+//!     ast_arena: TypedArena<AstNode>,
 //!     string_arena: StringArena,
 //! }
 //!
@@ -122,7 +122,7 @@
 //!
 //! ```blood
 //! struct TypeChecker {
-//!     type_arena: TypedArena[Type],
+//!     type_arena: TypedArena<Type>,
 //!     // Types are interned separately...
 //! }
 //! ```
@@ -144,7 +144,7 @@
 //! - Zig's GeneralPurposeAllocator arena mode
 //! - Vale's generational allocator
 
-module std.compiler.arena
+module std.compiler.arena;
 
 // ============================================================================
 // Core Types (Re-exports)
@@ -175,13 +175,13 @@ pub use stats.ArenaReport
 // ============================================================================
 
 /// Arena for AST nodes (alias for common use case).
-pub type AstArena[T] = TypedArena[T]
+pub type AstArena<T> = TypedArena<T>
 
 /// Arena for HIR nodes (alias for common use case).
-pub type HirArena[T] = TypedArena[T]
+pub type HirArena<T> = TypedArena<T>
 
 /// Arena for type information (alias for common use case).
-pub type TypeArena[T] = TypedArena[T]
+pub type TypeArena<T> = TypedArena<T>
 
 // ============================================================================
 // Arena Collection
@@ -206,21 +206,21 @@ pub type TypeArena[T] = TypedArena[T]
 /// let report = arenas.stats()
 /// println("Total memory: {} bytes", report.total.total_used)
 /// ```
-pub struct CompilerArenas[AstNode, HirNode, TypeInfo] {
+pub struct CompilerArenas<AstNode, HirNode, TypeInfo> {
     /// Arena for AST nodes.
-    pub ast: TypedArena[AstNode],
+    pub ast: TypedArena<AstNode>,
 
     /// Arena for HIR nodes.
-    pub hir: TypedArena[HirNode],
+    pub hir: TypedArena<HirNode>,
 
     /// Arena for type information.
-    pub types: TypedArena[TypeInfo],
+    pub types: TypedArena<TypeInfo>,
 
     /// Arena for interned strings and symbols.
     pub strings: StringArena,
 }
 
-impl[AstNode, HirNode, TypeInfo] CompilerArenas[AstNode, HirNode, TypeInfo] {
+impl<AstNode, HirNode, TypeInfo> CompilerArenas[AstNode, HirNode, TypeInfo] {
     /// Create a new collection of compiler arenas.
     pub fn new() -> CompilerArenas[AstNode, HirNode, TypeInfo] {
         CompilerArenas {
@@ -279,7 +279,7 @@ impl[AstNode, HirNode, TypeInfo] CompilerArenas[AstNode, HirNode, TypeInfo] {
     }
 }
 
-impl[AstNode, HirNode, TypeInfo] Default for CompilerArenas[AstNode, HirNode, TypeInfo] {
+impl<AstNode, HirNode, TypeInfo> Default for CompilerArenas[AstNode, HirNode, TypeInfo] {
     fn default() -> CompilerArenas[AstNode, HirNode, TypeInfo] {
         CompilerArenas::new()
     }
@@ -292,7 +292,7 @@ impl[AstNode, HirNode, TypeInfo] Default for CompilerArenas[AstNode, HirNode, Ty
 #[test]
 fn test_module_exports() {
     // Verify that all expected types are accessible
-    let _: TypedArena[Int] = TypedArena::new()
+    let _: TypedArena<Int> = TypedArena::new()
     let _: StringArena = StringArena::new()
     let _: ArenaStats = ArenaStats::new()
     let _: ArenaReport = ArenaReport::new()

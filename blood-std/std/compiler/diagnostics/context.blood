@@ -32,29 +32,29 @@
 //! }
 //! ```
 
-module std.compiler.diagnostics.context
+module std.compiler.diagnostics.context;
 
-use std.collections.Vec
-use std.collections.HashSet
-use std.option.Option
-use std.compiler.diagnostics.diagnostic.Diagnostic
-use std.compiler.diagnostics.severity.Severity
-use std.compiler.diagnostics.code.ErrorCode
-use std.compiler.diagnostics.code.WarningCode
-use std.compiler.diagnostics.code.DiagnosticGroup
-use std.compiler.diagnostics.span.Span
-use std.compiler.diagnostics.span.FileId
-use std.compiler.diagnostics.label.Label
-use std.compiler.diagnostics.suggestion.Suggestion
-use std.compiler.diagnostics.renderer.source.SourceMap
-use std.compiler.diagnostics.renderer.source.SourceFile
-use std.compiler.diagnostics.emitter.terminal.TerminalEmitter
-use std.compiler.diagnostics.emitter.plain.PlainEmitter
-use std.compiler.diagnostics.emitter.json.JsonEmitter
-use std.compiler.diagnostics.emitter.config.EmitterConfig
-use std.compiler.diagnostics.convert.DiagnosticConverter
-use std.compiler.diagnostics.convert.IntoDiagnostic
-use std.compiler.diagnostics.convert.SimpleSpan
+use std.collections.Vec;
+use std.collections.HashSet;
+use std.option.Option;
+use std.compiler.diagnostics.diagnostic.Diagnostic;
+use std.compiler.diagnostics.severity.Severity;
+use std.compiler.diagnostics.code.ErrorCode;
+use std.compiler.diagnostics.code.WarningCode;
+use std.compiler.diagnostics.code.DiagnosticGroup;
+use std.compiler.diagnostics.span.Span;
+use std.compiler.diagnostics.span.FileId;
+use std.compiler.diagnostics.label.Label;
+use std.compiler.diagnostics.suggestion.Suggestion;
+use std.compiler.diagnostics.renderer.source.SourceMap;
+use std.compiler.diagnostics.renderer.source.SourceFile;
+use std.compiler.diagnostics.emitter.terminal.TerminalEmitter;
+use std.compiler.diagnostics.emitter.plain.PlainEmitter;
+use std.compiler.diagnostics.emitter.json.JsonEmitter;
+use std.compiler.diagnostics.emitter.config.EmitterConfig;
+use std.compiler.diagnostics.convert.DiagnosticConverter;
+use std.compiler.diagnostics.convert.IntoDiagnostic;
+use std.compiler.diagnostics.convert.SimpleSpan;
 
 // ============================================================================
 // Emission Mode
@@ -141,7 +141,7 @@ pub struct DiagCtxt {
     current_file: FileId,
 
     /// Buffered diagnostics (when in buffered mode).
-    diagnostics: Vec[Diagnostic],
+    diagnostics: Vec<Diagnostic>,
 
     /// Number of fatal errors emitted.
     fatal_count: U32,
@@ -165,10 +165,10 @@ pub struct DiagCtxt {
     config: EmitterConfig,
 
     /// Suppressed warning groups.
-    suppressed_groups: Vec[DiagnosticGroup],
+    suppressed_groups: Vec<DiagnosticGroup>,
 
     /// Deduplicated diagnostic hashes (to prevent spam).
-    seen_hashes: HashSet[U64],
+    seen_hashes: HashSet<U64>,
 
     /// Whether to deduplicate diagnostics.
     deduplicate: Bool,
@@ -332,7 +332,7 @@ impl DiagCtxt {
     }
 
     /// Emit a diagnostic converted from an error type.
-    pub fn emit_converted[E: IntoDiagnostic](mut self, error: E) -> Unit {
+    pub fn emit_converted<E: IntoDiagnostic>(mut self, error: E) -> Unit {
         let converter = self.converter()
         let diagnostic = error.into_diagnostic(converter)
         self.emit(diagnostic)
@@ -418,7 +418,7 @@ impl DiagCtxt {
     }
 
     /// Get all buffered diagnostics without clearing.
-    pub fn buffered_diagnostics(self) -> Vec[Diagnostic] {
+    pub fn buffered_diagnostics(self) -> Vec<Diagnostic> {
         self.diagnostics.clone()
     }
 
@@ -569,7 +569,7 @@ pub struct ScopedDiagCtxt {
     parent: DiagCtxt,
 
     /// Local diagnostics collected in this scope.
-    local_diagnostics: Vec[Diagnostic],
+    local_diagnostics: Vec<Diagnostic>,
 
     /// Previous file (to restore on drop).
     previous_file: FileId,
@@ -592,7 +592,7 @@ impl ScopedDiagCtxt {
     }
 
     /// Get local diagnostics.
-    pub fn local_diagnostics(self) -> Vec[Diagnostic] {
+    pub fn local_diagnostics(self) -> Vec<Diagnostic> {
         self.local_diagnostics.clone()
     }
 

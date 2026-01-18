@@ -43,64 +43,64 @@
 //! methods to process specific node types, calling the corresponding
 //! `walk_*` function to continue traversal into children.
 
-module std.compiler.ast.visitor
+module std.compiler.ast.visitor;
 
-use std.compiler.ast.node.Program
-use std.compiler.ast.node.ModuleDecl
-use std.compiler.ast.node.ModulePath
-use std.compiler.ast.node.Import
-use std.compiler.ast.node.Ident
-use std.compiler.ast.attr.Attribute
-use std.compiler.ast.attr.AttrArgs
-use std.compiler.ast.attr.AttrArg
-use std.compiler.ast.lit.Literal
-use std.compiler.ast.ty.Type
-use std.compiler.ast.ty.TypeKind
-use std.compiler.ast.ty.TypePath
-use std.compiler.ast.ty.TypeParams
-use std.compiler.ast.ty.GenericParam
-use std.compiler.ast.ty.WhereClause
-use std.compiler.ast.ty.WherePredicate
-use std.compiler.ast.ty.EffectRow
-use std.compiler.ast.decl.Declaration
-use std.compiler.ast.decl.FnDecl
-use std.compiler.ast.decl.Param
-use std.compiler.ast.decl.TypeDecl
-use std.compiler.ast.decl.StructDecl
-use std.compiler.ast.decl.StructBody
-use std.compiler.ast.decl.StructField
-use std.compiler.ast.decl.EnumDecl
-use std.compiler.ast.decl.EnumVariant
-use std.compiler.ast.decl.EffectDecl
-use std.compiler.ast.decl.OperationDecl
-use std.compiler.ast.decl.HandlerDecl
-use std.compiler.ast.decl.OperationImpl
-use std.compiler.ast.decl.TraitDecl
-use std.compiler.ast.decl.TraitItem
-use std.compiler.ast.decl.ImplBlock
-use std.compiler.ast.decl.ImplItem
-use std.compiler.ast.decl.ConstDecl
-use std.compiler.ast.decl.StaticDecl
-use std.compiler.ast.decl.ModItemDecl
-use std.compiler.ast.decl.MacroDecl
-use std.compiler.ast.expr.Expr
-use std.compiler.ast.expr.ExprKind
-use std.compiler.ast.expr.ExprPath
-use std.compiler.ast.expr.CallArg
-use std.compiler.ast.expr.MatchArm
-use std.compiler.ast.expr.ClosureParam
-use std.compiler.ast.pattern.Pattern
-use std.compiler.ast.pattern.PatternKind
-use std.compiler.ast.pattern.StructPatternField
-use std.compiler.ast.stmt.Block
-use std.compiler.ast.stmt.Statement
-use std.compiler.ast.bridge.BridgeDecl
-use std.compiler.ast.bridge.BridgeItem
-use std.compiler.ast.bridge.BridgeFn
-use std.compiler.ast.bridge.BridgeStruct
-use std.compiler.ast.bridge.BridgeEnum
-use std.compiler.ast.bridge.BridgeUnion
-use std.compiler.ast.bridge.BridgeCallback
+use std.compiler.ast.node.Program;
+use std.compiler.ast.node.ModuleDecl;
+use std.compiler.ast.node.ModulePath;
+use std.compiler.ast.node.Import;
+use std.compiler.ast.node.Ident;
+use std.compiler.ast.attr.Attribute;
+use std.compiler.ast.attr.AttrArgs;
+use std.compiler.ast.attr.AttrArg;
+use std.compiler.ast.lit.Literal;
+use std.compiler.ast.ty.Type;
+use std.compiler.ast.ty.TypeKind;
+use std.compiler.ast.ty.TypePath;
+use std.compiler.ast.ty.TypeParams;
+use std.compiler.ast.ty.GenericParam;
+use std.compiler.ast.ty.WhereClause;
+use std.compiler.ast.ty.WherePredicate;
+use std.compiler.ast.ty.EffectRow;
+use std.compiler.ast.decl.Declaration;
+use std.compiler.ast.decl.FnDecl;
+use std.compiler.ast.decl.Param;
+use std.compiler.ast.decl.TypeDecl;
+use std.compiler.ast.decl.StructDecl;
+use std.compiler.ast.decl.StructBody;
+use std.compiler.ast.decl.StructField;
+use std.compiler.ast.decl.EnumDecl;
+use std.compiler.ast.decl.EnumVariant;
+use std.compiler.ast.decl.EffectDecl;
+use std.compiler.ast.decl.OperationDecl;
+use std.compiler.ast.decl.HandlerDecl;
+use std.compiler.ast.decl.OperationImpl;
+use std.compiler.ast.decl.TraitDecl;
+use std.compiler.ast.decl.TraitItem;
+use std.compiler.ast.decl.ImplBlock;
+use std.compiler.ast.decl.ImplItem;
+use std.compiler.ast.decl.ConstDecl;
+use std.compiler.ast.decl.StaticDecl;
+use std.compiler.ast.decl.ModItemDecl;
+use std.compiler.ast.decl.MacroDecl;
+use std.compiler.ast.expr.Expr;
+use std.compiler.ast.expr.ExprKind;
+use std.compiler.ast.expr.ExprPath;
+use std.compiler.ast.expr.CallArg;
+use std.compiler.ast.expr.MatchArm;
+use std.compiler.ast.expr.ClosureParam;
+use std.compiler.ast.pattern.Pattern;
+use std.compiler.ast.pattern.PatternKind;
+use std.compiler.ast.pattern.StructPatternField;
+use std.compiler.ast.stmt.Block;
+use std.compiler.ast.stmt.Statement;
+use std.compiler.ast.bridge.BridgeDecl;
+use std.compiler.ast.bridge.BridgeItem;
+use std.compiler.ast.bridge.BridgeFn;
+use std.compiler.ast.bridge.BridgeStruct;
+use std.compiler.ast.bridge.BridgeEnum;
+use std.compiler.ast.bridge.BridgeUnion;
+use std.compiler.ast.bridge.BridgeCallback;
 
 // ============================================================================
 // Visitor Trait
@@ -116,7 +116,7 @@ use std.compiler.ast.bridge.BridgeCallback
 ///
 /// ```blood
 /// struct IdentCollector {
-///     idents: Vec[Ident],
+///     idents: Vec<Ident>,
 /// }
 ///
 /// impl Visitor for IdentCollector {
@@ -389,7 +389,7 @@ pub trait Visitor {
 // ============================================================================
 
 /// Walk a program, visiting all children.
-pub fn walk_program[V: Visitor](visitor: &mut V, program: &Program) {
+pub fn walk_program<V: Visitor>(visitor: &mut V, program: &Program) {
     if let Option::Some(ref module) = program.module {
         visitor.visit_module_decl(module)
     }
@@ -404,19 +404,19 @@ pub fn walk_program[V: Visitor](visitor: &mut V, program: &Program) {
 }
 
 /// Walk a module declaration.
-pub fn walk_module_decl[V: Visitor](visitor: &mut V, decl: &ModuleDecl) {
+pub fn walk_module_decl<V: Visitor>(visitor: &mut V, decl: &ModuleDecl) {
     visitor.visit_module_path(&decl.path)
 }
 
 /// Walk a module path.
-pub fn walk_module_path[V: Visitor](visitor: &mut V, path: &ModulePath) {
+pub fn walk_module_path<V: Visitor>(visitor: &mut V, path: &ModulePath) {
     for segment in path.segments.iter() {
         visitor.visit_ident(segment)
     }
 }
 
 /// Walk an import.
-pub fn walk_import[V: Visitor](visitor: &mut V, import: &Import) {
+pub fn walk_import<V: Visitor>(visitor: &mut V, import: &Import) {
     match import {
         Import::Simple { ref path, .. } => {
             visitor.visit_module_path(path)
@@ -431,7 +431,7 @@ pub fn walk_import[V: Visitor](visitor: &mut V, import: &Import) {
 }
 
 /// Walk a declaration.
-pub fn walk_declaration[V: Visitor](visitor: &mut V, decl: &Declaration) {
+pub fn walk_declaration<V: Visitor>(visitor: &mut V, decl: &Declaration) {
     match decl {
         Declaration::Function(ref d) => visitor.visit_fn_decl(d),
         Declaration::Type(ref d) => visitor.visit_type_decl(d),
@@ -449,7 +449,7 @@ pub fn walk_declaration[V: Visitor](visitor: &mut V, decl: &Declaration) {
 }
 
 /// Walk a function declaration.
-pub fn walk_fn_decl[V: Visitor](visitor: &mut V, decl: &FnDecl) {
+pub fn walk_fn_decl<V: Visitor>(visitor: &mut V, decl: &FnDecl) {
     for attr in decl.attrs.iter() {
         visitor.visit_attribute(attr)
     }
@@ -482,13 +482,13 @@ pub fn walk_fn_decl[V: Visitor](visitor: &mut V, decl: &FnDecl) {
 }
 
 /// Walk a parameter.
-pub fn walk_param[V: Visitor](visitor: &mut V, param: &Param) {
+pub fn walk_param<V: Visitor>(visitor: &mut V, param: &Param) {
     visitor.visit_pattern(&param.pattern)
     visitor.visit_type(&param.ty)
 }
 
 /// Walk a type declaration.
-pub fn walk_type_decl[V: Visitor](visitor: &mut V, decl: &TypeDecl) {
+pub fn walk_type_decl<V: Visitor>(visitor: &mut V, decl: &TypeDecl) {
     for attr in decl.attrs.iter() {
         visitor.visit_attribute(attr)
     }
@@ -503,7 +503,7 @@ pub fn walk_type_decl[V: Visitor](visitor: &mut V, decl: &TypeDecl) {
 }
 
 /// Walk a struct declaration.
-pub fn walk_struct_decl[V: Visitor](visitor: &mut V, decl: &StructDecl) {
+pub fn walk_struct_decl<V: Visitor>(visitor: &mut V, decl: &StructDecl) {
     for attr in decl.attrs.iter() {
         visitor.visit_attribute(attr)
     }
@@ -530,7 +530,7 @@ pub fn walk_struct_decl[V: Visitor](visitor: &mut V, decl: &StructDecl) {
 }
 
 /// Walk a struct field.
-pub fn walk_struct_field[V: Visitor](visitor: &mut V, field: &StructField) {
+pub fn walk_struct_field<V: Visitor>(visitor: &mut V, field: &StructField) {
     for attr in field.attrs.iter() {
         visitor.visit_attribute(attr)
     }
@@ -539,7 +539,7 @@ pub fn walk_struct_field[V: Visitor](visitor: &mut V, field: &StructField) {
 }
 
 /// Walk an enum declaration.
-pub fn walk_enum_decl[V: Visitor](visitor: &mut V, decl: &EnumDecl) {
+pub fn walk_enum_decl<V: Visitor>(visitor: &mut V, decl: &EnumDecl) {
     for attr in decl.attrs.iter() {
         visitor.visit_attribute(attr)
     }
@@ -556,7 +556,7 @@ pub fn walk_enum_decl[V: Visitor](visitor: &mut V, decl: &EnumDecl) {
 }
 
 /// Walk an enum variant.
-pub fn walk_enum_variant[V: Visitor](visitor: &mut V, variant: &EnumVariant) {
+pub fn walk_enum_variant<V: Visitor>(visitor: &mut V, variant: &EnumVariant) {
     for attr in variant.attrs.iter() {
         visitor.visit_attribute(attr)
     }
@@ -583,7 +583,7 @@ pub fn walk_enum_variant[V: Visitor](visitor: &mut V, variant: &EnumVariant) {
 }
 
 /// Walk an effect declaration.
-pub fn walk_effect_decl[V: Visitor](visitor: &mut V, decl: &EffectDecl) {
+pub fn walk_effect_decl<V: Visitor>(visitor: &mut V, decl: &EffectDecl) {
     for attr in decl.attrs.iter() {
         visitor.visit_attribute(attr)
     }
@@ -604,7 +604,7 @@ pub fn walk_effect_decl[V: Visitor](visitor: &mut V, decl: &EffectDecl) {
 }
 
 /// Walk an operation declaration.
-pub fn walk_operation_decl[V: Visitor](visitor: &mut V, decl: &OperationDecl) {
+pub fn walk_operation_decl<V: Visitor>(visitor: &mut V, decl: &OperationDecl) {
     visitor.visit_ident(&decl.name)
 
     if let Option::Some(ref params) = decl.type_params {
@@ -619,7 +619,7 @@ pub fn walk_operation_decl[V: Visitor](visitor: &mut V, decl: &OperationDecl) {
 }
 
 /// Walk a handler declaration.
-pub fn walk_handler_decl[V: Visitor](visitor: &mut V, decl: &HandlerDecl) {
+pub fn walk_handler_decl<V: Visitor>(visitor: &mut V, decl: &HandlerDecl) {
     for attr in decl.attrs.iter() {
         visitor.visit_attribute(attr)
     }
@@ -642,7 +642,7 @@ pub fn walk_handler_decl[V: Visitor](visitor: &mut V, decl: &HandlerDecl) {
 }
 
 /// Walk an operation implementation.
-pub fn walk_operation_impl[V: Visitor](visitor: &mut V, impl_: &OperationImpl) {
+pub fn walk_operation_impl<V: Visitor>(visitor: &mut V, impl_: &OperationImpl) {
     visitor.visit_ident(&impl_.name)
 
     for param in impl_.params.iter() {
@@ -653,7 +653,7 @@ pub fn walk_operation_impl[V: Visitor](visitor: &mut V, impl_: &OperationImpl) {
 }
 
 /// Walk a trait declaration.
-pub fn walk_trait_decl[V: Visitor](visitor: &mut V, decl: &TraitDecl) {
+pub fn walk_trait_decl<V: Visitor>(visitor: &mut V, decl: &TraitDecl) {
     for attr in decl.attrs.iter() {
         visitor.visit_attribute(attr)
     }
@@ -678,7 +678,7 @@ pub fn walk_trait_decl[V: Visitor](visitor: &mut V, decl: &TraitDecl) {
 }
 
 /// Walk a trait item.
-pub fn walk_trait_item[V: Visitor](visitor: &mut V, item: &TraitItem) {
+pub fn walk_trait_item<V: Visitor>(visitor: &mut V, item: &TraitItem) {
     match item {
         TraitItem::Function(ref f) => visitor.visit_fn_decl(f),
         TraitItem::Type(ref t) => visitor.visit_type_decl(t),
@@ -687,7 +687,7 @@ pub fn walk_trait_item[V: Visitor](visitor: &mut V, item: &TraitItem) {
 }
 
 /// Walk an impl block.
-pub fn walk_impl_block[V: Visitor](visitor: &mut V, impl_: &ImplBlock) {
+pub fn walk_impl_block<V: Visitor>(visitor: &mut V, impl_: &ImplBlock) {
     for attr in impl_.attrs.iter() {
         visitor.visit_attribute(attr)
     }
@@ -712,7 +712,7 @@ pub fn walk_impl_block[V: Visitor](visitor: &mut V, impl_: &ImplBlock) {
 }
 
 /// Walk an impl item.
-pub fn walk_impl_item[V: Visitor](visitor: &mut V, item: &ImplItem) {
+pub fn walk_impl_item<V: Visitor>(visitor: &mut V, item: &ImplItem) {
     match item {
         ImplItem::Function(ref f) => visitor.visit_fn_decl(f),
         ImplItem::Type(ref t) => visitor.visit_type_decl(t),
@@ -721,7 +721,7 @@ pub fn walk_impl_item[V: Visitor](visitor: &mut V, item: &ImplItem) {
 }
 
 /// Walk a const declaration.
-pub fn walk_const_decl[V: Visitor](visitor: &mut V, decl: &ConstDecl) {
+pub fn walk_const_decl<V: Visitor>(visitor: &mut V, decl: &ConstDecl) {
     for attr in decl.attrs.iter() {
         visitor.visit_attribute(attr)
     }
@@ -732,7 +732,7 @@ pub fn walk_const_decl[V: Visitor](visitor: &mut V, decl: &ConstDecl) {
 }
 
 /// Walk a static declaration.
-pub fn walk_static_decl[V: Visitor](visitor: &mut V, decl: &StaticDecl) {
+pub fn walk_static_decl<V: Visitor>(visitor: &mut V, decl: &StaticDecl) {
     for attr in decl.attrs.iter() {
         visitor.visit_attribute(attr)
     }
@@ -743,7 +743,7 @@ pub fn walk_static_decl[V: Visitor](visitor: &mut V, decl: &StaticDecl) {
 }
 
 /// Walk a module item declaration.
-pub fn walk_mod_item_decl[V: Visitor](visitor: &mut V, decl: &ModItemDecl) {
+pub fn walk_mod_item_decl<V: Visitor>(visitor: &mut V, decl: &ModItemDecl) {
     for attr in decl.attrs.iter() {
         visitor.visit_attribute(attr)
     }
@@ -758,7 +758,7 @@ pub fn walk_mod_item_decl[V: Visitor](visitor: &mut V, decl: &ModItemDecl) {
 }
 
 /// Walk a macro declaration.
-pub fn walk_macro_decl[V: Visitor](visitor: &mut V, decl: &MacroDecl) {
+pub fn walk_macro_decl<V: Visitor>(visitor: &mut V, decl: &MacroDecl) {
     for attr in decl.attrs.iter() {
         visitor.visit_attribute(attr)
     }
@@ -768,7 +768,7 @@ pub fn walk_macro_decl[V: Visitor](visitor: &mut V, decl: &MacroDecl) {
 }
 
 /// Walk a type.
-pub fn walk_type[V: Visitor](visitor: &mut V, ty: &Type) {
+pub fn walk_type<V: Visitor>(visitor: &mut V, ty: &Type) {
     match ty.kind {
         TypeKind::Path(ref path) => {
             visitor.visit_type_path(path)
@@ -824,7 +824,7 @@ pub fn walk_type[V: Visitor](visitor: &mut V, ty: &Type) {
 }
 
 /// Walk a type path.
-pub fn walk_type_path[V: Visitor](visitor: &mut V, path: &TypePath) {
+pub fn walk_type_path<V: Visitor>(visitor: &mut V, path: &TypePath) {
     for segment in path.segments.iter() {
         visitor.visit_ident(&segment.name)
         if let Option::Some(ref args) = segment.args {
@@ -841,14 +841,14 @@ pub fn walk_type_path[V: Visitor](visitor: &mut V, path: &TypePath) {
 }
 
 /// Walk type parameters.
-pub fn walk_type_params[V: Visitor](visitor: &mut V, params: &TypeParams) {
+pub fn walk_type_params<V: Visitor>(visitor: &mut V, params: &TypeParams) {
     for param in params.params.iter() {
         visitor.visit_generic_param(param)
     }
 }
 
 /// Walk a generic parameter.
-pub fn walk_generic_param[V: Visitor](visitor: &mut V, param: &GenericParam) {
+pub fn walk_generic_param<V: Visitor>(visitor: &mut V, param: &GenericParam) {
     match param {
         GenericParam::Type(ref tp) => {
             visitor.visit_ident(&tp.name)
@@ -873,14 +873,14 @@ pub fn walk_generic_param[V: Visitor](visitor: &mut V, param: &GenericParam) {
 }
 
 /// Walk a where clause.
-pub fn walk_where_clause[V: Visitor](visitor: &mut V, clause: &WhereClause) {
+pub fn walk_where_clause<V: Visitor>(visitor: &mut V, clause: &WhereClause) {
     for pred in clause.predicates.iter() {
         visitor.visit_where_predicate(pred)
     }
 }
 
 /// Walk a where predicate.
-pub fn walk_where_predicate[V: Visitor](visitor: &mut V, pred: &WherePredicate) {
+pub fn walk_where_predicate<V: Visitor>(visitor: &mut V, pred: &WherePredicate) {
     match pred {
         WherePredicate::TypeBound { ref ty, ref bounds, .. } => {
             visitor.visit_type(ty)
@@ -897,7 +897,7 @@ pub fn walk_where_predicate[V: Visitor](visitor: &mut V, pred: &WherePredicate) 
 }
 
 /// Walk an effect row.
-pub fn walk_effect_row[V: Visitor](visitor: &mut V, row: &EffectRow) {
+pub fn walk_effect_row<V: Visitor>(visitor: &mut V, row: &EffectRow) {
     match row.kind {
         crate.compiler.ast.ty.EffectRowKind::Effects { ref effects, .. } => {
             for eff in effects.iter() {
@@ -909,7 +909,7 @@ pub fn walk_effect_row[V: Visitor](visitor: &mut V, row: &EffectRow) {
 }
 
 /// Walk an expression.
-pub fn walk_expr[V: Visitor](visitor: &mut V, expr: &Expr) {
+pub fn walk_expr<V: Visitor>(visitor: &mut V, expr: &Expr) {
     match expr.kind {
         ExprKind::Literal(ref lit) => {
             visitor.visit_literal(lit)
@@ -1097,14 +1097,14 @@ pub fn walk_expr[V: Visitor](visitor: &mut V, expr: &Expr) {
 }
 
 /// Walk an expression path.
-pub fn walk_expr_path[V: Visitor](visitor: &mut V, path: &ExprPath) {
+pub fn walk_expr_path<V: Visitor>(visitor: &mut V, path: &ExprPath) {
     for segment in path.segments.iter() {
         visitor.visit_ident(&segment.name)
     }
 }
 
 /// Walk a call argument.
-pub fn walk_call_arg[V: Visitor](visitor: &mut V, arg: &CallArg) {
+pub fn walk_call_arg<V: Visitor>(visitor: &mut V, arg: &CallArg) {
     if let Option::Some(ref name) = arg.name {
         visitor.visit_ident(name)
     }
@@ -1112,7 +1112,7 @@ pub fn walk_call_arg[V: Visitor](visitor: &mut V, arg: &CallArg) {
 }
 
 /// Walk a match arm.
-pub fn walk_match_arm[V: Visitor](visitor: &mut V, arm: &MatchArm) {
+pub fn walk_match_arm<V: Visitor>(visitor: &mut V, arm: &MatchArm) {
     visitor.visit_pattern(&arm.pattern)
     if let Option::Some(ref guard) = arm.guard {
         visitor.visit_expr(guard)
@@ -1121,7 +1121,7 @@ pub fn walk_match_arm[V: Visitor](visitor: &mut V, arm: &MatchArm) {
 }
 
 /// Walk a closure parameter.
-pub fn walk_closure_param[V: Visitor](visitor: &mut V, param: &ClosureParam) {
+pub fn walk_closure_param<V: Visitor>(visitor: &mut V, param: &ClosureParam) {
     visitor.visit_pattern(&param.pattern)
     if let Option::Some(ref ty) = param.ty {
         visitor.visit_type(ty)
@@ -1129,7 +1129,7 @@ pub fn walk_closure_param[V: Visitor](visitor: &mut V, param: &ClosureParam) {
 }
 
 /// Walk a pattern.
-pub fn walk_pattern[V: Visitor](visitor: &mut V, pattern: &Pattern) {
+pub fn walk_pattern<V: Visitor>(visitor: &mut V, pattern: &Pattern) {
     match pattern.kind {
         PatternKind::Wildcard | PatternKind::Rest => {}
         PatternKind::Literal(ref lit) => {
@@ -1189,7 +1189,7 @@ pub fn walk_pattern[V: Visitor](visitor: &mut V, pattern: &Pattern) {
 }
 
 /// Walk a struct pattern field.
-pub fn walk_struct_pattern_field[V: Visitor](visitor: &mut V, field: &StructPatternField) {
+pub fn walk_struct_pattern_field<V: Visitor>(visitor: &mut V, field: &StructPatternField) {
     visitor.visit_ident(&field.name)
     if let Option::Some(ref pat) = field.pattern {
         visitor.visit_pattern(pat)
@@ -1197,7 +1197,7 @@ pub fn walk_struct_pattern_field[V: Visitor](visitor: &mut V, field: &StructPatt
 }
 
 /// Walk a block.
-pub fn walk_block[V: Visitor](visitor: &mut V, block: &Block) {
+pub fn walk_block<V: Visitor>(visitor: &mut V, block: &Block) {
     for stmt in block.statements.iter() {
         visitor.visit_statement(stmt)
     }
@@ -1207,7 +1207,7 @@ pub fn walk_block[V: Visitor](visitor: &mut V, block: &Block) {
 }
 
 /// Walk a statement.
-pub fn walk_statement[V: Visitor](visitor: &mut V, stmt: &Statement) {
+pub fn walk_statement<V: Visitor>(visitor: &mut V, stmt: &Statement) {
     match stmt {
         Statement::Let { ref pattern, ref ty, ref value, .. } => {
             visitor.visit_pattern(pattern)
@@ -1228,7 +1228,7 @@ pub fn walk_statement[V: Visitor](visitor: &mut V, stmt: &Statement) {
 }
 
 /// Walk an attribute.
-pub fn walk_attribute[V: Visitor](visitor: &mut V, attr: &Attribute) {
+pub fn walk_attribute<V: Visitor>(visitor: &mut V, attr: &Attribute) {
     // Visit path segments
     for segment in attr.path.segments.iter() {
         visitor.visit_ident(segment)
@@ -1249,7 +1249,7 @@ pub fn walk_attribute[V: Visitor](visitor: &mut V, attr: &Attribute) {
     }
 }
 
-fn walk_attr_arg[V: Visitor](visitor: &mut V, arg: &AttrArg) {
+fn walk_attr_arg<V: Visitor>(visitor: &mut V, arg: &AttrArg) {
     match arg {
         AttrArg::Ident { ref ident, .. } => {
             visitor.visit_ident(ident)
@@ -1276,7 +1276,7 @@ fn walk_attr_arg[V: Visitor](visitor: &mut V, arg: &AttrArg) {
 }
 
 /// Walk a bridge declaration.
-pub fn walk_bridge_decl[V: Visitor](visitor: &mut V, decl: &BridgeDecl) {
+pub fn walk_bridge_decl<V: Visitor>(visitor: &mut V, decl: &BridgeDecl) {
     for attr in decl.attrs.iter() {
         visitor.visit_attribute(attr)
     }
@@ -1289,7 +1289,7 @@ pub fn walk_bridge_decl[V: Visitor](visitor: &mut V, decl: &BridgeDecl) {
 }
 
 /// Walk a bridge item.
-pub fn walk_bridge_item[V: Visitor](visitor: &mut V, item: &BridgeItem) {
+pub fn walk_bridge_item<V: Visitor>(visitor: &mut V, item: &BridgeItem) {
     match item {
         BridgeItem::Function(ref f) => {
             for attr in f.attrs.iter() {

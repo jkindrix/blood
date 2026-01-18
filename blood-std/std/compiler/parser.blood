@@ -4,6 +4,8 @@
 /// Pratt parsing for expressions. Works with the lexer from lexer.blood.
 /// Part of Phase 6: Self-Hosting.
 
+module std.compiler.parser;
+
 use std.compiler.lexer::{Token, TokenKind, Lexer, tokenize};
 
 // ============================================================
@@ -45,7 +47,7 @@ struct Spanned<T> {
 
 /// A complete Blood program
 struct Program {
-    module: Option<ModuleDecl>,
+    mod_decl: Option<ModuleDecl>,
     imports: [Import],
     declarations: [Declaration],
     span: Span,
@@ -737,7 +739,7 @@ impl Parser {
         }
 
         let start = self.token_span(self.current());
-        let mut module = None;
+        let mut mod_decl = None;
         let mut imports = [];
         let mut declarations = [];
 
@@ -766,7 +768,7 @@ impl Parser {
         if self.errors.is_empty() {
             let end = self.token_span(self.current());
             Ok(Program {
-                module,
+                mod_decl,
                 imports,
                 declarations,
                 span: start.merge(&end),
@@ -1308,8 +1310,8 @@ impl Parser {
         let mut operations = [];
 
         while !self.check(TokenKind::RBrace) && !self.is_at_end() {
-            if let Some(op) = self.parse_operation_decl() {
-                operations.push(op);
+            if let Some(operation) = self.parse_operation_decl() {
+                operations.push(operation);
             } else {
                 break;
             }
@@ -1369,7 +1371,7 @@ impl Parser {
         };
 
         self.expect(TokenKind::KwFor, "expected 'for'");
-        let effect = self.parse_type()?;
+        let effect_type = self.parse_type()?;
 
         self.expect(TokenKind::LBrace, "expected '{'");
 
@@ -1388,8 +1390,8 @@ impl Parser {
                 return_clause = self.parse_return_clause();
             } else if self.check(TokenKind::KwFn) {
                 // Operation implementation
-                if let Some(op) = self.parse_operation_impl() {
-                    operations.push(op);
+                if let Some(operation) = self.parse_operation_impl() {
+                    operations.push(operation);
                 }
             } else {
                 self.error("expected handler item");
@@ -1403,7 +1405,7 @@ impl Parser {
             kind,
             name,
             type_params,
-            effect,
+            effect: effect_type,
             state,
             return_clause,
             operations,
@@ -1854,13 +1856,13 @@ impl Parser {
         while !self.is_at_end() {
             let op_info = self.get_binary_op();
             match op_info {
-                Some((op, prec, assoc)) if prec >= min_prec => {
+                Some((bin_op, prec, assoc)) if prec >= min_prec => {
                     self.advance();
                     let next_prec = if assoc { prec + 1 } else { prec };
                     let right = self.parse_expr_prec(next_prec)?;
                     let span = left.span.merge(&right.span);
                     left = Expr {
-                        kind: ExprKind::Binary { op, left: Box::new(left), right: Box::new(right) },
+                        kind: ExprKind::Binary { op: bin_op, left: Box::new(left), right: Box::new(right) },
                         span,
                     };
                 }
@@ -1929,7 +1931,7 @@ impl Parser {
             }
             TokenKind::Amp => {
                 self.advance();
-                let op = if self.consume(TokenKind::KwMut) {
+                let unary_op = if self.consume(TokenKind::KwMut) {
                     UnaryOp::RefMut
                 } else {
                     UnaryOp::Ref
@@ -1937,7 +1939,7 @@ impl Parser {
                 let operand = self.parse_unary_expr()?;
                 let span = start.merge(&operand.span);
                 Some(Expr {
-                    kind: ExprKind::Unary { op, operand: Box::new(operand) },
+                    kind: ExprKind::Unary { op: unary_op, operand: Box::new(operand) },
                     span,
                 })
             }
@@ -2536,7 +2538,7 @@ impl Parser {
             return None;
         }
 
-        let (effect, operation) = if self.consume(TokenKind::ColonColon) {
+        let (eff_path, operation) = if self.consume(TokenKind::ColonColon) {
             // Full path: `Effect::operation`
             let effect_path = TypePath {
                 segments: [TypePathSegment { name: self.spanned_ident(&name_tok), args: None }],
@@ -2561,7 +2563,7 @@ impl Parser {
 
         let end = self.token_span(self.current());
         Some(Expr {
-            kind: ExprKind::Perform { effect, operation, args },
+            kind: ExprKind::Perform { effect: eff_path, operation, args },
             span: start.merge(&end),
         })
     }
@@ -2570,13 +2572,13 @@ impl Parser {
         let start = self.token_span(self.current());
         self.expect(TokenKind::KwWith, "expected 'with'");
 
-        let handler = self.parse_expr()?;
+        let handler_expr = self.parse_expr()?;
         self.expect(TokenKind::KwHandle, "expected 'handle'");
         let body = self.parse_expr()?;
 
         let end = body.span;
         Some(Expr {
-            kind: ExprKind::WithHandle { handler: Box::new(handler), body: Box::new(body) },
+            kind: ExprKind::WithHandle { handler: Box::new(handler_expr), body: Box::new(body) },
             span: start.merge(&end),
         })
     }

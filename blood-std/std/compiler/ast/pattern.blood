@@ -29,15 +29,15 @@
 //! | Range | `0..10` | Matches range of values |
 //! | Path | `None`, `Color::Red` | Matches unit variant |
 
-module std.compiler.ast.pattern
+module std.compiler.ast.pattern;
 
-use std.option.Option
-use std.collections.Vec
-use std.compiler.ast.node.Span
-use std.compiler.ast.node.Ident
-use std.compiler.ast.node.NodeId
-use std.compiler.ast.lit.Literal
-use std.compiler.ast.ty.TypePath
+use std.option.Option;
+use std.collections.Vec;
+use std.compiler.ast.node.Span;
+use std.compiler.ast.node.Ident;
+use std.compiler.ast.node.NodeId;
+use std.compiler.ast.lit.Literal;
+use std.compiler.ast.ty.TypePath;
 
 // ============================================================================
 // Pattern
@@ -189,7 +189,7 @@ pub enum PatternKind {
         /// Variable name.
         name: Ident,
         /// Optional subpattern for `@` binding.
-        subpattern: Option[Box[Pattern]],
+        subpattern: Option[Box<Pattern>],
     },
 
     /// Reference pattern: `&x`, `&mut x`
@@ -197,7 +197,7 @@ pub enum PatternKind {
         /// Mutable reference.
         mutable: Bool,
         /// Inner pattern.
-        inner: Box[Pattern],
+        inner: Box<Pattern>,
     },
 
     /// Struct pattern: `Point { x, y: 0 }`, `Point { x, .. }`
@@ -205,7 +205,7 @@ pub enum PatternKind {
         /// The struct path.
         path: TypePath,
         /// Field patterns.
-        fields: Vec[StructPatternField],
+        fields: Vec<StructPatternField>,
         /// Has rest pattern `..`.
         rest: Bool,
     },
@@ -215,36 +215,36 @@ pub enum PatternKind {
         /// The constructor path.
         path: TypePath,
         /// Field patterns.
-        fields: Vec[Pattern],
+        fields: Vec<Pattern>,
         /// Position of rest pattern `..` if present.
-        rest_pos: Option[USize],
+        rest_pos: Option<USize>,
     },
 
     /// Tuple pattern: `(x, y)`, `(a, .., z)`
     Tuple {
         /// Element patterns.
-        fields: Vec[Pattern],
+        fields: Vec<Pattern>,
         /// Position of rest pattern `..` if present.
-        rest_pos: Option[USize],
+        rest_pos: Option<USize>,
     },
 
     /// Slice pattern: `[first, .., last]`, `[a, b, c]`
     Slice {
         /// Element patterns.
-        elements: Vec[Pattern],
+        elements: Vec<Pattern>,
         /// Position of rest pattern `..` if present.
-        rest_pos: Option[USize],
+        rest_pos: Option<USize>,
     },
 
     /// Or pattern: `A | B | C`
-    Or(Vec[Pattern]),
+    Or(Vec<Pattern>),
 
     /// Range pattern: `0..10`, `'a'..='z'`
     Range {
         /// Start of range (None for open start).
-        start: Option[Box[Pattern]],
+        start: Option[Box<Pattern>],
         /// End of range (None for open end).
-        end: Option[Box[Pattern]],
+        end: Option[Box<Pattern>],
         /// Is the range inclusive (`..=`)?
         inclusive: Bool,
     },
@@ -253,7 +253,7 @@ pub enum PatternKind {
     Path(TypePath),
 
     /// Parenthesized: `(pat)`
-    Paren(Box[Pattern]),
+    Paren(Box<Pattern>),
 }
 
 // ============================================================================
@@ -276,7 +276,7 @@ pub struct StructPatternField {
     /// Field name.
     pub name: Ident,
     /// Optional explicit pattern (None for shorthand `{ x }` meaning `{ x: x }`).
-    pub pattern: Option[Pattern],
+    pub pattern: Option<Pattern>,
     /// Span of the field.
     pub span: Span,
 }
@@ -293,13 +293,13 @@ impl StructPatternField {
 // ============================================================================
 
 /// Collect all identifiers bound by a pattern.
-pub fn collect_bindings(pattern: &Pattern) -> Vec[Ident] {
+pub fn collect_bindings(pattern: &Pattern) -> Vec<Ident> {
     let mut bindings = Vec::new()
     collect_bindings_inner(pattern, &mut bindings)
     bindings
 }
 
-fn collect_bindings_inner(pattern: &Pattern, bindings: &mut Vec[Ident]) {
+fn collect_bindings_inner(pattern: &Pattern, bindings: &mut Vec<Ident>) {
     match pattern.kind {
         PatternKind::Wildcard => {}
         PatternKind::Rest => {}

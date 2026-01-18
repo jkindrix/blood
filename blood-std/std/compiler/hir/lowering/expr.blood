@@ -55,11 +55,11 @@
 
 module std.compiler.hir.lowering.expr;
 
-use std.result.Result
-use std.option.Option
-use std.collections.HashMap
+use std.result.Result;
+use std.option.Option;
+use std.collections.HashMap;
 
-use crate::compiler::ast::{
+use crate.compiler.ast.{
     Expr as AstExpr, ExprKind as AstExprKind,
     Block as AstBlock, Stmt as AstStmt, StmtKind as AstStmtKind,
     Literal, BinOp as AstBinOp, UnaryOp as AstUnaryOp,
@@ -70,7 +70,7 @@ use crate::compiler::ast::{
     FunctionDecl,
 }
 
-use crate::compiler::hir::{
+use crate.compiler.hir.{
     Body, Local, LocalId, BodyId, LoopId,
     Expr as HirExpr, ExprKind as HirExprKind,
     Stmt as HirStmt,
@@ -81,11 +81,11 @@ use crate::compiler::hir::{
     FieldExpr, RecordFieldExpr, Capture, InlineOpHandler,
 }
 
-use crate::compiler::hir::lowering::{AstLowering, LoweringError}
-use crate::compiler::hir::lowering::pattern
-use crate::compiler::hir::lowering::stmt
-use crate::compiler::hir::lowering::item::lower_type
-use crate::compiler::typeck::types::{DefId, Type}
+use crate.compiler.hir.lowering.{AstLowering, LoweringError}
+use crate.compiler.hir.lowering.pattern;
+use crate.compiler.hir.lowering.stmt;
+use crate.compiler.hir.lowering.item.lower_type;
+use crate.compiler.typeck.types.{DefId, Type}
 
 // ============================================================================
 // Function Body Lowering
@@ -178,7 +178,7 @@ pub fn lower_const_body(
 /// Lower a handler operation body.
 pub fn lower_handler_op_body(
     ctx: &mut AstLowering,
-    op: &crate::compiler::ast::HandlerOp,
+    op: &crate.compiler.ast::HandlerOp,
 ) -> Result<Body, LoweringError> {
     let mut locals: [Local] = [];
 
@@ -242,7 +242,7 @@ pub fn lower_handler_op_body(
 /// Lower a return clause body.
 pub fn lower_return_clause_body(
     ctx: &mut AstLowering,
-    rc: &crate::compiler::ast::ReturnClause,
+    rc: &crate.compiler.ast::ReturnClause,
 ) -> Result<Body, LoweringError> {
     let mut locals: [Local] = [];
 
@@ -726,7 +726,7 @@ fn lower_if_let(
     pattern: &AstPattern,
     scrutinee: &AstExpr,
     then_branch: &AstBlock,
-    else_branch: &Option<crate::compiler::ast::ElseBranch>,
+    else_branch: &Option<crate.compiler.ast::ElseBranch>,
     span: &HirSpan,
 ) -> Result<HirExprKind, LoweringError> {
     // if let pat = scrutinee { then } else { else }
@@ -1116,13 +1116,13 @@ fn lower_unaryop(op: &AstUnaryOp) -> HirUnaryOp {
 /// Lower an else branch.
 fn lower_else_branch(
     ctx: &mut AstLowering,
-    else_branch: &crate::compiler::ast::ElseBranch,
+    else_branch: &crate.compiler.ast::ElseBranch,
 ) -> Result<HirExpr, LoweringError> {
     match else_branch {
-        crate::compiler::ast::ElseBranch::Block(block) => {
+        crate.compiler.ast::ElseBranch::Block(block) => {
             lower_block(ctx, block)
         }
-        crate::compiler::ast::ElseBranch::ElseIf(if_expr) => {
+        crate.compiler.ast::ElseBranch::ElseIf(if_expr) => {
             lower_expr(ctx, if_expr)
         }
     }
@@ -1240,7 +1240,7 @@ fn resolve_loop_label(
 fn lower_closure_body(
     ctx: &mut AstLowering,
     params: &[ClosureParam],
-    return_type: &Option<crate::compiler::ast::Type>,
+    return_type: &Option<crate.compiler.ast::Type>,
     body: &AstExpr,
 ) -> Result<Body, LoweringError> {
     ctx.reset_local_ids();

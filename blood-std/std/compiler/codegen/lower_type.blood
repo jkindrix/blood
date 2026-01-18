@@ -40,7 +40,7 @@ use super::llvm::types::{
 };
 use super::context::CodegenContext;
 
-use crate::hir::{DefId, Type, TypeKind, PrimitiveTy, IntTy, UintTy, FloatTy, FnSig};
+use crate.compiler.hir::{DefId, Type, TypeKind, PrimitiveTy, IntTy, UintTy, FloatTy, FnSig};
 
 // ============================================================================
 // Type Lowering
@@ -351,8 +351,8 @@ pub fn substitute_type_params(ty: &Type, args: &[Type]) -> Type {
                 .map(|p| substitute_type_params(p, args))
                 .collect();
             let substituted_ret = substitute_type_params(ret, args);
-            let substituted_effects: Vec<crate::hir::FnEffect> = effects.iter()
-                .map(|eff| crate::hir::FnEffect {
+            let substituted_effects: Vec<crate.compiler.hir.FnEffect> = effects.iter()
+                .map(|eff| crate.compiler.hir.FnEffect {
                     def_id: eff.def_id,
                     type_args: eff.type_args.iter()
                         .map(|ty| substitute_type_params(ty, args))

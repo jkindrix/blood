@@ -28,14 +28,14 @@
 //! - `#[cfg(...)]` - Conditional compilation
 //! - `#[allow(...)]`, `#[warn(...)]`, `#[deny(...)]` - Lint control
 
-module std.compiler.ast.attr
+module std.compiler.ast.attr;
 
-use std.option.Option
-use std.collections.Vec
-use std.compiler.ast.node.Span
-use std.compiler.ast.node.Ident
-use std.compiler.ast.node.NodeId
-use std.compiler.ast.lit.Literal
+use std.option.Option;
+use std.collections.Vec;
+use std.compiler.ast.node.Span;
+use std.compiler.ast.node.Ident;
+use std.compiler.ast.node.NodeId;
+use std.compiler.ast.lit.Literal;
 
 // ============================================================================
 // Attribute
@@ -70,14 +70,14 @@ pub struct Attribute {
     /// The attribute path (e.g., `test`, `derive`, `repr`).
     pub path: AttrPath,
     /// Optional arguments.
-    pub args: Option[AttrArgs],
+    pub args: Option<AttrArgs>,
     /// Span of the entire attribute.
     pub span: Span,
 }
 
 impl Attribute {
     /// Create a new outer attribute.
-    pub fn outer(path: AttrPath, args: Option[AttrArgs], span: Span) -> Attribute {
+    pub fn outer(path: AttrPath, args: Option<AttrArgs>, span: Span) -> Attribute {
         Attribute {
             id: NodeId::dummy(),
             is_inner: false,
@@ -88,7 +88,7 @@ impl Attribute {
     }
 
     /// Create a new inner attribute.
-    pub fn inner(path: AttrPath, args: Option[AttrArgs], span: Span) -> Attribute {
+    pub fn inner(path: AttrPath, args: Option<AttrArgs>, span: Span) -> Attribute {
         Attribute {
             id: NodeId::dummy(),
             is_inner: true,
@@ -132,14 +132,14 @@ impl Attribute {
 #[derive(Clone, PartialEq, Eq)]
 pub struct AttrPath {
     /// Path segments.
-    pub segments: Vec[Ident],
+    pub segments: Vec<Ident>,
     /// Span of the path.
     pub span: Span,
 }
 
 impl AttrPath {
     /// Create a new attribute path.
-    pub fn new(segments: Vec[Ident], span: Span) -> AttrPath {
+    pub fn new(segments: Vec<Ident>, span: Span) -> AttrPath {
         AttrPath { segments, span }
     }
 
@@ -192,7 +192,7 @@ pub enum AttrArgs {
     /// Parenthesized form: `#[attr(arg1, arg2)]`
     List {
         /// The arguments.
-        args: Vec[AttrArg],
+        args: Vec<AttrArg>,
         /// Span of the `(args)` part.
         span: Span,
     },
@@ -261,7 +261,7 @@ pub enum AttrArg {
     /// Call-style nested: `#[repr(align(8))]` -> `align(8)`
     Call {
         name: Ident,
-        args: Vec[AttrArg],
+        args: Vec<AttrArg>,
         span: Span,
     },
 
@@ -318,7 +318,7 @@ impl AttrArg {
 /// Provides helper methods for querying attributes.
 pub struct Attrs {
     /// The attributes.
-    pub attrs: Vec[Attribute],
+    pub attrs: Vec<Attribute>,
 }
 
 impl Attrs {
@@ -328,7 +328,7 @@ impl Attrs {
     }
 
     /// Create from a vector of attributes.
-    pub fn new(attrs: Vec[Attribute]) -> Attrs {
+    pub fn new(attrs: Vec<Attribute>) -> Attrs {
         Attrs { attrs }
     }
 
