@@ -473,4 +473,241 @@ impl<'a> TypeContext<'a> {
             | hir::ExprKind::Error => {}
         }
     }
+
+    /// Check a closure expression against an expected type.
+    ///
+    /// This propagates parameter types from the expected function type to closure
+    /// parameters that don't have explicit type annotations. This enables type
+    /// inference for closures like `|c| c.is_digit()` when passed to a function
+    /// expecting `fn(char) -> bool`.
+    pub(crate) fn check_closure(
+        &mut self,
+        is_move: bool,
+        params: &[ast::ClosureParam],
+        return_type: Option<&ast::Type>,
+        effects: Option<&ast::EffectRow>,
+        body: &ast::Expr,
+        expected: &Type,
+        span: Span,
+    ) -> Result<hir::Expr, TypeError> {
+        // Resolve expected type to see if we can extract parameter types
+        let resolved_expected = self.unifier.resolve(expected);
+
+        // Extract expected parameter and return types from the expected function type
+        let (expected_params, expected_ret): (Option<Vec<Type>>, Option<Type>) = match resolved_expected.kind() {
+            hir::TypeKind::Fn { params, ret, .. } => (Some(params.clone()), Some(ret.clone())),
+            hir::TypeKind::Infer(_) => (None, None),
+            _ => (None, None),
+        };
+
+        // Save current locals and create fresh ones for closure
+        let outer_locals = std::mem::take(&mut self.locals);
+        let outer_return_type = self.return_type.take();
+
+        // Parse and register closure's effect annotation if present.
+        let closure_effects_count = if let Some(effect_row) = effects {
+            let (effect_refs, _row_var) = self.parse_effect_row(effect_row)?;
+            for effect_ref in &effect_refs {
+                self.handled_effects.push((effect_ref.def_id, effect_ref.type_args.clone()));
+            }
+            effect_refs.len()
+        } else {
+            0
+        };
+
+        // Push closure scope
+        self.resolver.push_scope(ScopeKind::Closure, span);
+
+        // Add return place
+        let return_local_id = self.resolver.next_local_id();
+        let expected_return_ty = if let Some(ret_ty) = return_type {
+            self.ast_type_to_hir_type(ret_ty)?
+        } else if let Some(ref exp_ret) = expected_ret {
+            exp_ret.clone()
+        } else {
+            self.unifier.fresh_var()
+        };
+
+        self.locals.push(hir::Local {
+            id: return_local_id,
+            ty: expected_return_ty.clone(),
+            mutable: false,
+            name: None,
+            span,
+        });
+
+        // Process closure parameters with expected types from function signature
+        let mut param_types = Vec::new();
+        for (i, param) in params.iter().enumerate() {
+            // Determine parameter type: explicit annotation > expected > fresh var
+            let param_ty = if let Some(ty) = &param.ty {
+                // Explicit annotation takes precedence
+                self.ast_type_to_hir_type(ty)?
+            } else if let Some(ref exp_params) = expected_params {
+                // Use expected type from function signature
+                if i < exp_params.len() {
+                    exp_params[i].clone()
+                } else {
+                    self.unifier.fresh_var()
+                }
+            } else {
+                // Create inference variable for parameter without annotation
+                self.unifier.fresh_var()
+            };
+
+            // Handle parameter pattern
+            match &param.pattern.kind {
+                ast::PatternKind::Ident { name, mutable, .. } => {
+                    let param_name = self.symbol_to_string(name.node);
+                    let local_id = self.resolver.define_local(
+                        param_name.clone(),
+                        param_ty.clone(),
+                        *mutable,
+                        param.span,
+                    )?;
+
+                    self.locals.push(hir::Local {
+                        id: local_id,
+                        ty: param_ty.clone(),
+                        mutable: *mutable,
+                        name: Some(param_name),
+                        span: param.span,
+                    });
+                }
+                ast::PatternKind::Wildcard => {
+                    let param_name = format!("_param{i}");
+                    let local_id = self.resolver.define_local(
+                        param_name.clone(),
+                        param_ty.clone(),
+                        false,
+                        param.span,
+                    )?;
+
+                    self.locals.push(hir::Local {
+                        id: local_id,
+                        ty: param_ty.clone(),
+                        mutable: false,
+                        name: Some(param_name),
+                        span: param.span,
+                    });
+                }
+                ast::PatternKind::Tuple { fields, .. } => {
+                    // Tuple destructuring in closure parameters: |(x, y)|
+                    let hidden_name = format!("__cparam{i}");
+                    let _hidden_local_id = self.resolver.define_local(
+                        hidden_name.clone(),
+                        param_ty.clone(),
+                        false,
+                        param.span,
+                    )?;
+
+                    // Define the pattern bindings from the tuple type
+                    let elem_types = match param_ty.kind() {
+                        hir::TypeKind::Tuple(elems) => elems.clone(),
+                        hir::TypeKind::Infer(_) => {
+                            let vars: Vec<Type> = (0..fields.len())
+                                .map(|_| self.unifier.fresh_var())
+                                .collect();
+                            let tuple_ty = Type::tuple(vars.clone());
+                            self.unifier.unify(&param_ty, &tuple_ty, param.span)?;
+                            vars
+                        }
+                        _ => {
+                            return Err(TypeError::new(
+                                TypeErrorKind::NotATuple { ty: param_ty.clone() },
+                                param.span,
+                            ));
+                        }
+                    };
+
+                    if fields.len() != elem_types.len() {
+                        return Err(TypeError::new(
+                            TypeErrorKind::WrongArity {
+                                expected: elem_types.len(),
+                                found: fields.len(),
+                            },
+                            param.span,
+                        ));
+                    }
+
+                    for (field_pat, elem_ty) in fields.iter().zip(elem_types.iter()) {
+                        self.define_pattern(field_pat, elem_ty.clone())?;
+                    }
+
+                    self.locals.push(hir::Local {
+                        id: self.resolver.next_local_id(),
+                        ty: param_ty.clone(),
+                        mutable: false,
+                        name: Some(hidden_name),
+                        span: param.span,
+                    });
+                }
+                ast::PatternKind::Paren(inner) => {
+                    self.define_pattern(inner, param_ty.clone())?;
+                }
+                _ => {
+                    self.define_pattern(&param.pattern, param_ty.clone())?;
+                }
+            }
+
+            param_types.push(param_ty);
+        }
+
+        // Type-check the closure body
+        let body_expr = self.infer_expr(body)?;
+
+        // Unify body type with expected return type
+        self.unifier.unify(&body_expr.ty, &expected_return_ty, body.span)?;
+
+        // Resolve all types now that inference is done
+        let resolved_return_ty = self.unifier.resolve(&expected_return_ty);
+        let resolved_param_types: Vec<Type> = param_types
+            .iter()
+            .map(|t| self.unifier.resolve(t))
+            .collect();
+
+        // Analyze captures
+        let captures = self.analyze_closure_captures(&body_expr, is_move);
+
+        // Create closure body
+        let body_id = hir::BodyId::new(self.next_body_id);
+        self.next_body_id += 1;
+
+        let hir_body = hir::Body {
+            locals: std::mem::take(&mut self.locals),
+            param_count: params.len(),
+            expr: body_expr,
+            span,
+            tuple_destructures: std::mem::take(&mut self.tuple_destructures),
+        };
+
+        self.bodies.insert(body_id, hir_body);
+
+        // Pop closure scope
+        self.resolver.pop_scope();
+
+        // Pop the closure's effects from handled_effects stack
+        for _ in 0..closure_effects_count {
+            self.handled_effects.pop();
+        }
+
+        // Restore outer context
+        self.locals = outer_locals;
+        self.return_type = outer_return_type;
+
+        // Build the closure type: Fn(params) -> ret
+        let closure_ty = Type::function(resolved_param_types, resolved_return_ty);
+
+        // Unify with expected type to ensure compatibility
+        self.unifier.unify(expected, &closure_ty, span)?;
+
+        Ok(hir::Expr::new(
+            hir::ExprKind::Closure {
+                body_id,
+                captures,
+            },
+            closure_ty,
+            span,
+        ))
+    }
 }

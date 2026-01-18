@@ -38,6 +38,19 @@ impl<'a> TypeContext<'a> {
             return self.check_block(block, expected);
         }
 
+        // Special case for closures: propagate expected function parameter types
+        if let ast::ExprKind::Closure { is_move, params, return_type, effects, body } = &expr.kind {
+            return self.check_closure(
+                *is_move,
+                params,
+                return_type.as_ref(),
+                effects.as_ref(),
+                body,
+                expected,
+                expr.span,
+            );
+        }
+
         let inferred = self.infer_expr(expr)?;
 
         // Unify expected type with inferred - order matters for error messages
@@ -909,16 +922,9 @@ impl<'a> TypeContext<'a> {
         let receiver_expr = self.infer_expr(receiver)?;
         let method_name = self.symbol_to_string(*method);
 
-        // Type-check arguments
-        let mut hir_args = Vec::with_capacity(args.len());
-        for arg in args {
-            let arg_expr = self.infer_expr(&arg.value)?;
-            hir_args.push(arg_expr);
-        }
-
-        // Try to find method signature
+        // First resolve the method to get its signature (args parameter is unused)
         let (method_def_id, return_ty, first_param, impl_generics, method_generics, needs_auto_ref) =
-            self.resolve_method(&receiver_expr.ty, &method_name, &hir_args, span)?;
+            self.resolve_method(&receiver_expr.ty, &method_name, &[], span)?;
 
         // Build substitution from impl generics to concrete types from receiver
         let mut substitution: HashMap<TyVarId, Type> = HashMap::new();
@@ -935,6 +941,31 @@ impl<'a> TypeContext<'a> {
         // Add fresh type vars for method-level generics
         for &tyvar in &method_generics {
             substitution.insert(tyvar, self.unifier.fresh_var());
+        }
+
+        // Get expected parameter types from the function signature
+        let expected_param_types: Vec<Type> = if let Some(sig) = self.fn_sigs.get(&method_def_id).cloned() {
+            // Apply substitution to inputs (skip first param which is receiver)
+            sig.inputs.iter()
+                .skip(1) // Skip receiver parameter
+                .map(|ty| self.substitute_type_vars(ty, &substitution))
+                .collect()
+        } else {
+            // No signature available, create fresh inference vars
+            args.iter().map(|_| self.unifier.fresh_var()).collect()
+        };
+
+        // Type-check arguments with expected types (for closure inference)
+        let mut hir_args = Vec::with_capacity(args.len());
+        for (i, arg) in args.iter().enumerate() {
+            let arg_expr = if i < expected_param_types.len() {
+                // Use check_expr to propagate expected type to closures
+                self.check_expr(&arg.value, &expected_param_types[i])?
+            } else {
+                // More args than params - just infer
+                self.infer_expr(&arg.value)?
+            };
+            hir_args.push(arg_expr);
         }
 
         // Build the callee type by substituting in the stored signature
@@ -1156,10 +1187,18 @@ impl<'a> TypeContext<'a> {
             TypeKind::Primitive(PrimitiveTy::Str) => Some(BuiltinMethodType::Str),
             TypeKind::Primitive(PrimitiveTy::Char) => Some(BuiltinMethodType::Char),
             TypeKind::Primitive(PrimitiveTy::String) => Some(BuiltinMethodType::String),
+            TypeKind::Slice { .. } => Some(BuiltinMethodType::Slice),
+            TypeKind::Array { .. } => Some(BuiltinMethodType::Array),
+            TypeKind::Range { inclusive: false, .. } => Some(BuiltinMethodType::Range),
+            TypeKind::Range { inclusive: true, .. } => Some(BuiltinMethodType::RangeInclusive),
             TypeKind::Ref { inner, .. } => {
                 match inner.kind() {
                     TypeKind::Primitive(PrimitiveTy::Str) => Some(BuiltinMethodType::StrRef),
                     TypeKind::Primitive(PrimitiveTy::String) => Some(BuiltinMethodType::String),
+                    TypeKind::Slice { .. } => Some(BuiltinMethodType::Slice),
+                    TypeKind::Array { .. } => Some(BuiltinMethodType::Array),
+                    TypeKind::Range { inclusive: false, .. } => Some(BuiltinMethodType::Range),
+                    TypeKind::Range { inclusive: true, .. } => Some(BuiltinMethodType::RangeInclusive),
                     _ => None,
                 }
             }
@@ -1182,7 +1221,7 @@ impl<'a> TypeContext<'a> {
         for builtin_method in &self.builtin_methods {
             if builtin_method.type_match == type_match && builtin_method.name == method_name {
                 if let Some(sig) = self.fn_sigs.get(&builtin_method.def_id) {
-                    // For generic types (Option<T>, Vec<T>), we need to substitute
+                    // For generic types (Option<T>, Vec<T>, [T], [T;N]), we need to substitute
                     // the type argument into the return type
                     let return_type = match &type_match {
                         BuiltinMethodType::Option | BuiltinMethodType::Vec => {
@@ -1204,6 +1243,33 @@ impl<'a> TypeContext<'a> {
                                     } else {
                                         sig.output.clone()
                                     }
+                                } else {
+                                    sig.output.clone()
+                                }
+                            } else {
+                                sig.output.clone()
+                            }
+                        }
+                        BuiltinMethodType::Slice | BuiltinMethodType::Array => {
+                            // Extract element type from Slice or Array
+                            let elem_ty = match ty.kind() {
+                                TypeKind::Slice { element } => Some(element.clone()),
+                                TypeKind::Array { element, .. } => Some(element.clone()),
+                                TypeKind::Ref { inner, .. } => match inner.kind() {
+                                    TypeKind::Slice { element } => Some(element.clone()),
+                                    TypeKind::Array { element, .. } => Some(element.clone()),
+                                    _ => None,
+                                },
+                                _ => None,
+                            };
+                            if let Some(element_ty) = elem_ty {
+                                if method_name == "get" {
+                                    // [T].get() returns Option<&T>
+                                    let ref_elem = Type::reference(element_ty, false);
+                                    Type::adt(
+                                        self.option_def_id.expect("BUG: option_def_id not set"),
+                                        vec![ref_elem],
+                                    )
                                 } else {
                                     sig.output.clone()
                                 }
@@ -4540,6 +4606,13 @@ impl<'a> TypeContext<'a> {
                 self.expand_format_macro(&macro_name, format_str, args, span)
             }
 
+            // Write-style macros (write!, writeln!)
+            ast::MacroCallKind::Write {
+                dest,
+                format_str,
+                args,
+            } => self.expand_write_macro(&macro_name, dest, format_str, args, span),
+
             // vec! macro
             ast::MacroCallKind::Vec(vec_args) => {
                 self.expand_vec_macro(vec_args, span)
@@ -4601,11 +4674,7 @@ impl<'a> TypeContext<'a> {
                 // panic! returns Never type
                 Type::new(hir::TypeKind::Never)
             }
-            "write" | "writeln" => {
-                // write macros return Result<(), Error>
-                // For now, simplify to unit
-                Type::unit()
-            }
+            // Note: write/writeln are now handled by expand_write_macro
             _ => Type::unit(),
         };
 
@@ -4616,6 +4685,45 @@ impl<'a> TypeContext<'a> {
                 macro_name: macro_name.to_string(),
                 format_str: format_str.node.clone(),
                 args: checked_args,
+            },
+            return_ty,
+            span,
+        ))
+    }
+
+    /// Expand write-style macros (write!, writeln!)
+    fn expand_write_macro(
+        &mut self,
+        macro_name: &str,
+        dest: &ast::Expr,
+        format_str: &crate::span::Spanned<String>,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> Result<hir::Expr, TypeError> {
+        // Type-check the destination
+        let dest_expr = self.infer_expr(dest)?;
+
+        // Type-check all format arguments
+        let mut checked_args = Vec::new();
+        for arg in args {
+            let arg_expr = self.infer_expr(arg)?;
+            checked_args.push(arg_expr);
+        }
+
+        // write! and writeln! return Result<(), Error>
+        // For now, simplify to unit
+        let return_ty = Type::unit();
+
+        // Generate a write macro expansion expression
+        // Include the destination as the first argument
+        let mut all_args = vec![dest_expr];
+        all_args.extend(checked_args);
+
+        Ok(hir::Expr::new(
+            hir::ExprKind::MacroExpansion {
+                macro_name: macro_name.to_string(),
+                format_str: format_str.node.clone(),
+                args: all_args,
             },
             return_ty,
             span,
