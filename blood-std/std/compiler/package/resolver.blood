@@ -1,0 +1,820 @@
+/// Dependency resolution for Blood packages.
+///
+/// This module implements a dependency resolver that:
+/// - Parses dependency specifications from Blood.toml
+/// - Resolves version constraints to concrete versions
+/// - Detects and reports conflicts
+/// - Produces a resolution plan for fetching packages
+///
+/// # Resolution Algorithm
+///
+/// The resolver uses a SAT-solver inspired approach:
+/// 1. Start with root package dependencies
+/// 2. For each dependency, find compatible versions
+/// 3. Recursively resolve transitive dependencies
+/// 4. Backtrack on conflicts
+/// 5. Prefer locked versions when available
+
+use std.option.Option;
+use std.result.Result;
+use std.string::String;
+use std.collections::{Vec, HashMap, HashSet};
+use super.version::{Version, VersionReq};
+use super.lockfile::{Lockfile, LockedPackage, PackageSource};
+
+// ============================================================
+// Package Identifier
+// ============================================================
+
+/// Unique identifier for a package in the dependency graph.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct PackageId {
+    /// Package name.
+    pub name: String,
+    /// Resolved version.
+    pub version: Version,
+}
+
+impl PackageId {
+    /// Create a new package ID.
+    pub fn new(name: String, version: Version) -> PackageId {
+        PackageId { name, version }
+    }
+
+    /// Format as a display string.
+    pub fn to_string(&self) -> String {
+        format!("{} v{}", self.name, self.version.to_string())
+    }
+}
+
+// ============================================================
+// Resolution
+// ============================================================
+
+/// Result of dependency resolution.
+#[derive(Clone)]
+pub struct Resolution {
+    /// All resolved packages.
+    pub packages: Vec<ResolvedPackage>,
+    /// Dependency graph (edges are "depends on" relationships).
+    pub graph: HashMap<PackageId, Vec<PackageId>>,
+    /// Packages that need to be fetched.
+    pub to_fetch: Vec<PackageId>,
+    /// Packages already available locally.
+    pub available: Vec<PackageId>,
+}
+
+impl Resolution {
+    /// Create a new empty resolution.
+    pub fn new() -> Resolution {
+        Resolution {
+            packages: Vec::new(),
+            graph: HashMap::new(),
+            to_fetch: Vec::new(),
+            available: Vec::new(),
+        }
+    }
+
+    /// Get a resolved package by ID.
+    pub fn get(&self, id: &PackageId) -> Option<&ResolvedPackage> {
+        let mut i: USize = 0;
+        while i < self.packages.len() {
+            if self.packages[i].id == *id {
+                return Option::Some(&self.packages[i]);
+            }
+            i = i + 1;
+        }
+        Option::None
+    }
+
+    /// Get all packages in topological order (dependencies before dependents).
+    pub fn topological_order(&self) -> Vec<&ResolvedPackage> {
+        let mut result: Vec<&ResolvedPackage> = Vec::new();
+        let mut visited: HashSet<PackageId> = HashSet::new();
+        let mut visiting: HashSet<PackageId> = HashSet::new();
+
+        let mut i: USize = 0;
+        while i < self.packages.len() {
+            self.topo_visit(&self.packages[i].id, &mut visited, &mut visiting, &mut result);
+            i = i + 1;
+        }
+
+        result
+    }
+
+    fn topo_visit<'a>(
+        &'a self,
+        id: &PackageId,
+        visited: &mut HashSet<PackageId>,
+        visiting: &mut HashSet<PackageId>,
+        result: &mut Vec<&'a ResolvedPackage>,
+    ) {
+        if visited.contains(id) {
+            return;
+        }
+        if visiting.contains(id) {
+            // Cycle detected
+            return;
+        }
+
+        visiting.insert(id.clone());
+
+        match self.graph.get(id) {
+            Option::Some(deps) => {
+                let mut i: USize = 0;
+                while i < deps.len() {
+                    self.topo_visit(&deps[i], visited, visiting, result);
+                    i = i + 1;
+                }
+            }
+            Option::None => {}
+        }
+
+        visiting.remove(id);
+        visited.insert(id.clone());
+
+        match self.get(id) {
+            Option::Some(pkg) => result.push(pkg),
+            Option::None => {}
+        }
+    }
+
+    /// Generate a lockfile from this resolution.
+    pub fn to_lockfile(&self) -> Lockfile {
+        let mut lockfile = Lockfile::new();
+
+        let mut i: USize = 0;
+        while i < self.packages.len() {
+            let pkg = &self.packages[i];
+            let mut locked = LockedPackage::new(pkg.id.name.clone(), pkg.id.version.clone());
+
+            // Set source
+            match &pkg.source {
+                ResolvedSource::Registry { url, checksum } => {
+                    locked.source = Option::Some(format!("registry+{}", url));
+                    locked.checksum = checksum.clone();
+                }
+                ResolvedSource::Git { url, reference, revision } => {
+                    locked.source = match reference {
+                        Option::Some(r) => Option::Some(format!("git+{}?{}#{}", url, r, revision)),
+                        Option::None => Option::Some(format!("git+{}#{}", url, revision)),
+                    };
+                }
+                ResolvedSource::Path { path } => {
+                    locked.source = Option::Some(format!("path+{}", path));
+                }
+            }
+
+            // Add dependencies
+            match self.graph.get(&pkg.id) {
+                Option::Some(deps) => {
+                    let mut j: USize = 0;
+                    while j < deps.len() {
+                        locked.add_dependency(&deps[j].name, &deps[j].version);
+                        j = j + 1;
+                    }
+                }
+                Option::None => {}
+            }
+
+            // Add features
+            locked.features = pkg.features.clone();
+
+            lockfile.add_package(locked);
+            i = i + 1;
+        }
+
+        lockfile.sort();
+        lockfile
+    }
+}
+
+impl Default for Resolution {
+    fn default() -> Resolution {
+        Resolution::new()
+    }
+}
+
+// ============================================================
+// Resolved Package
+// ============================================================
+
+/// A resolved package with its source and features.
+#[derive(Clone)]
+pub struct ResolvedPackage {
+    /// Package identifier.
+    pub id: PackageId,
+    /// Where to fetch the package from.
+    pub source: ResolvedSource,
+    /// Enabled features.
+    pub features: Vec<String>,
+}
+
+/// Resolved source for a package.
+#[derive(Clone)]
+pub enum ResolvedSource {
+    /// Registry source.
+    Registry {
+        /// Registry URL.
+        url: String,
+        /// Package checksum.
+        checksum: Option<String>,
+    },
+    /// Git repository source.
+    Git {
+        /// Repository URL.
+        url: String,
+        /// Reference (branch, tag).
+        reference: Option<String>,
+        /// Commit revision.
+        revision: String,
+    },
+    /// Local path source.
+    Path {
+        /// Path to the package.
+        path: String,
+    },
+}
+
+// ============================================================
+// Package Metadata
+// ============================================================
+
+/// Metadata about an available package version.
+#[derive(Clone)]
+pub struct PackageMetadata {
+    /// Package name.
+    pub name: String,
+    /// Package version.
+    pub version: Version,
+    /// Dependencies.
+    pub dependencies: Vec<DependencySpec>,
+    /// Available features.
+    pub features: HashMap<String, Vec<String>>,
+    /// Is this version yanked?
+    pub yanked: Bool,
+}
+
+/// A dependency specification.
+#[derive(Clone)]
+pub struct DependencySpec {
+    /// Dependency name.
+    pub name: String,
+    /// Version requirement.
+    pub req: VersionReq,
+    /// Is this optional?
+    pub optional: Bool,
+    /// Required features.
+    pub features: Vec<String>,
+}
+
+// ============================================================
+// Dependency Requirement
+// ============================================================
+
+/// Internal representation of a dependency requirement.
+#[derive(Clone)]
+pub struct DependencyReq {
+    /// Version requirement.
+    pub version: Option<VersionReq>,
+    /// Git URL.
+    pub git: Option<String>,
+    /// Local path.
+    pub path: Option<String>,
+    /// Requested features.
+    pub features: Vec<String>,
+    /// Is this optional?
+    pub optional: Bool,
+}
+
+impl DependencyReq {
+    /// Create a new dependency requirement from a version string.
+    pub fn from_version(version: &str) -> Result<DependencyReq, ResolveError> {
+        match VersionReq::parse(version) {
+            Result::Ok(req) => Result::Ok(DependencyReq {
+                version: Option::Some(req),
+                git: Option::None,
+                path: Option::None,
+                features: Vec::new(),
+                optional: false,
+            }),
+            Result::Err(e) => Result::Err(ResolveError::InvalidVersion(e.message())),
+        }
+    }
+
+    /// Create a new dependency requirement for a git source.
+    pub fn from_git(url: String) -> DependencyReq {
+        DependencyReq {
+            version: Option::None,
+            git: Option::Some(url),
+            path: Option::None,
+            features: Vec::new(),
+            optional: false,
+        }
+    }
+
+    /// Create a new dependency requirement for a path source.
+    pub fn from_path(path: String) -> DependencyReq {
+        DependencyReq {
+            version: Option::None,
+            git: Option::None,
+            path: Option::Some(path),
+            features: Vec::new(),
+            optional: false,
+        }
+    }
+}
+
+// ============================================================
+// Resolver
+// ============================================================
+
+/// The dependency resolver.
+pub struct Resolver {
+    /// Available package versions (would be populated from registry index).
+    available_versions: HashMap<String, Vec<PackageMetadata>>,
+    /// Resolution in progress.
+    resolution: Resolution,
+    /// Packages currently being resolved (cycle detection).
+    resolving: HashSet<String>,
+}
+
+impl Resolver {
+    /// Create a new resolver.
+    pub fn new() -> Resolver {
+        Resolver {
+            available_versions: HashMap::new(),
+            resolution: Resolution::new(),
+            resolving: HashSet::new(),
+        }
+    }
+
+    /// Register available versions for a package (from registry index).
+    pub fn register_versions(&mut self, name: &str, versions: Vec<PackageMetadata>) {
+        self.available_versions.insert(name.to_string(), versions);
+    }
+
+    /// Resolve a single dependency.
+    pub fn resolve_dependency(
+        &mut self,
+        name: &str,
+        req: &DependencyReq,
+        parent: &PackageId,
+        existing_lock: Option<&Lockfile>,
+    ) -> Result<PackageId, ResolveError> {
+        // Check for cycles
+        if self.resolving.contains(name) {
+            return Result::Err(ResolveError::CyclicDependency {
+                package: name.to_string(),
+            });
+        }
+        self.resolving.insert(name.to_string());
+
+        let result = self.do_resolve_dependency(name, req, parent, existing_lock);
+
+        self.resolving.remove(name);
+        result
+    }
+
+    fn do_resolve_dependency(
+        &mut self,
+        name: &str,
+        req: &DependencyReq,
+        parent: &PackageId,
+        existing_lock: Option<&Lockfile>,
+    ) -> Result<PackageId, ResolveError> {
+        // Handle path dependency
+        match &req.path {
+            Option::Some(path) => {
+                let version = Version::new(0, 0, 0); // Path deps use local version
+                let id = PackageId::new(name.to_string(), version.clone());
+
+                // Check if already resolved
+                match self.resolution.get(&id) {
+                    Option::Some(_) => {
+                        self.add_edge(parent, &id);
+                        return Result::Ok(id);
+                    }
+                    Option::None => {}
+                }
+
+                let resolved = ResolvedPackage {
+                    id: id.clone(),
+                    source: ResolvedSource::Path { path: path.clone() },
+                    features: req.features.clone(),
+                };
+
+                self.resolution.packages.push(resolved);
+                self.resolution.available.push(id.clone());
+                self.add_edge(parent, &id);
+
+                return Result::Ok(id);
+            }
+            Option::None => {}
+        }
+
+        // Handle git dependency
+        match &req.git {
+            Option::Some(git_url) => {
+                let version = Version::new(0, 0, 0); // Git deps use commit version
+                let id = PackageId::new(name.to_string(), version.clone());
+
+                match self.resolution.get(&id) {
+                    Option::Some(_) => {
+                        self.add_edge(parent, &id);
+                        return Result::Ok(id);
+                    }
+                    Option::None => {}
+                }
+
+                let resolved = ResolvedPackage {
+                    id: id.clone(),
+                    source: ResolvedSource::Git {
+                        url: git_url.clone(),
+                        reference: Option::None,
+                        revision: "HEAD".to_string(),
+                    },
+                    features: req.features.clone(),
+                };
+
+                self.resolution.packages.push(resolved);
+                self.resolution.to_fetch.push(id.clone());
+                self.add_edge(parent, &id);
+
+                return Result::Ok(id);
+            }
+            Option::None => {}
+        }
+
+        // Handle registry dependency
+        let version_req = match &req.version {
+            Option::Some(v) => v,
+            Option::None => {
+                return Result::Err(ResolveError::InvalidDependency {
+                    name: name.to_string(),
+                    reason: "no version, git, or path specified".to_string(),
+                });
+            }
+        };
+
+        // Try to use locked version first
+        match existing_lock {
+            Option::Some(lockfile) => {
+                let locked_versions = lockfile.get_package_versions(name);
+                let mut i: USize = 0;
+                while i < locked_versions.len() {
+                    let locked = locked_versions[i];
+                    if version_req.matches(&locked.version) {
+                        let id = PackageId::new(name.to_string(), locked.version.clone());
+
+                        match self.resolution.get(&id) {
+                            Option::Some(_) => {
+                                self.add_edge(parent, &id);
+                                return Result::Ok(id);
+                            }
+                            Option::None => {}
+                        }
+
+                        let source = match locked.parse_source() {
+                            Option::Some(PackageSource::Registry(url)) => {
+                                ResolvedSource::Registry {
+                                    url,
+                                    checksum: locked.checksum.clone(),
+                                }
+                            }
+                            Option::Some(PackageSource::Git { url, reference, revision }) => {
+                                ResolvedSource::Git { url, reference, revision }
+                            }
+                            Option::Some(PackageSource::Path(path)) => {
+                                ResolvedSource::Path { path }
+                            }
+                            Option::None => {
+                                ResolvedSource::Registry {
+                                    url: PackageSource::default_registry(),
+                                    checksum: locked.checksum.clone(),
+                                }
+                            }
+                        };
+
+                        let resolved = ResolvedPackage {
+                            id: id.clone(),
+                            source,
+                            features: req.features.clone(),
+                        };
+
+                        self.resolution.packages.push(resolved);
+                        self.resolution.available.push(id.clone());
+                        self.add_edge(parent, &id);
+
+                        return Result::Ok(id);
+                    }
+                    i = i + 1;
+                }
+            }
+            Option::None => {}
+        }
+
+        // Find available versions
+        match self.available_versions.get(name) {
+            Option::Some(versions) => {
+                // Find best matching version (newest that satisfies constraint)
+                let mut best: Option<&PackageMetadata> = Option::None;
+                let mut i: USize = 0;
+                while i < versions.len() {
+                    if !versions[i].yanked && version_req.matches(&versions[i].version) {
+                        match best {
+                            Option::Some(b) => {
+                                if versions[i].version > b.version {
+                                    best = Option::Some(&versions[i]);
+                                }
+                            }
+                            Option::None => {
+                                best = Option::Some(&versions[i]);
+                            }
+                        }
+                    }
+                    i = i + 1;
+                }
+
+                match best {
+                    Option::Some(b) => {
+                        let id = PackageId::new(name.to_string(), b.version.clone());
+
+                        match self.resolution.get(&id) {
+                            Option::Some(_) => {
+                                self.add_edge(parent, &id);
+                                return Result::Ok(id);
+                            }
+                            Option::None => {}
+                        }
+
+                        let resolved = ResolvedPackage {
+                            id: id.clone(),
+                            source: ResolvedSource::Registry {
+                                url: PackageSource::default_registry(),
+                                checksum: Option::None,
+                            },
+                            features: req.features.clone(),
+                        };
+
+                        self.resolution.packages.push(resolved);
+                        self.resolution.to_fetch.push(id.clone());
+                        self.add_edge(parent, &id);
+
+                        // Recursively resolve dependencies of this package
+                        let dependencies = b.dependencies.clone();
+                        let mut j: USize = 0;
+                        while j < dependencies.len() {
+                            let dep = &dependencies[j];
+                            if dep.optional && !req.features.contains(&dep.name) {
+                                j = j + 1;
+                                continue;
+                            }
+
+                            let dep_req = DependencyReq {
+                                version: Option::Some(dep.req.clone()),
+                                git: Option::None,
+                                path: Option::None,
+                                features: dep.features.clone(),
+                                optional: dep.optional,
+                            };
+
+                            match self.resolve_dependency(&dep.name, &dep_req, &id, existing_lock) {
+                                Result::Ok(_) => {}
+                                Result::Err(e) => return Result::Err(e),
+                            }
+                            j = j + 1;
+                        }
+
+                        return Result::Ok(id);
+                    }
+                    Option::None => {}
+                }
+            }
+            Option::None => {}
+        }
+
+        // No version found - create a placeholder
+        let placeholder_version = Version::new(0, 0, 0);
+        let id = PackageId::new(name.to_string(), placeholder_version);
+
+        match self.resolution.get(&id) {
+            Option::None => {
+                let resolved = ResolvedPackage {
+                    id: id.clone(),
+                    source: ResolvedSource::Registry {
+                        url: PackageSource::default_registry(),
+                        checksum: Option::None,
+                    },
+                    features: req.features.clone(),
+                };
+
+                self.resolution.packages.push(resolved);
+                self.resolution.to_fetch.push(id.clone());
+            }
+            Option::Some(_) => {}
+        }
+
+        self.add_edge(parent, &id);
+        Result::Ok(id)
+    }
+
+    fn add_edge(&mut self, from: &PackageId, to: &PackageId) {
+        let entry = self.resolution.graph.entry(from.clone()).or_insert(Vec::new());
+        entry.push(to.clone());
+    }
+
+    /// Get the current resolution.
+    pub fn resolution(&self) -> &Resolution {
+        &self.resolution
+    }
+
+    /// Take the resolution.
+    pub fn take_resolution(&mut self) -> Resolution {
+        let result = self.resolution.clone();
+        self.resolution = Resolution::new();
+        result
+    }
+
+    /// Clear the resolution state.
+    pub fn clear(&mut self) {
+        self.resolution = Resolution::new();
+        self.resolving.clear();
+    }
+}
+
+impl Default for Resolver {
+    fn default() -> Resolver {
+        Resolver::new()
+    }
+}
+
+impl Clone for Resolver {
+    fn clone(&self) -> Resolver {
+        Resolver {
+            available_versions: self.available_versions.clone(),
+            resolution: self.resolution.clone(),
+            resolving: self.resolving.clone(),
+        }
+    }
+}
+
+// ============================================================
+// Resolve Error
+// ============================================================
+
+/// Errors that can occur during resolution.
+pub enum ResolveError {
+    /// Manifest error.
+    ManifestError(String),
+    /// Invalid version.
+    InvalidVersion(String),
+    /// Invalid dependency.
+    InvalidDependency { name: String, reason: String },
+    /// Cyclic dependency detected.
+    CyclicDependency { package: String },
+    /// No matching version found.
+    NoMatchingVersion { package: String, requirement: String },
+    /// Version conflict.
+    VersionConflict { package: String, existing: String, requested: String },
+    /// Fetch error.
+    FetchError(String),
+}
+
+impl ResolveError {
+    /// Get the error message.
+    pub fn message(&self) -> String {
+        match self {
+            ResolveError::ManifestError(e) => format!("manifest error: {}", e),
+            ResolveError::InvalidVersion(e) => format!("invalid version: {}", e),
+            ResolveError::InvalidDependency { name, reason } => {
+                format!("invalid dependency '{}': {}", name, reason)
+            }
+            ResolveError::CyclicDependency { package } => {
+                format!("cyclic dependency detected: {}", package)
+            }
+            ResolveError::NoMatchingVersion { package, requirement } => {
+                format!("no matching version for {}: {}", package, requirement)
+            }
+            ResolveError::VersionConflict { package, existing, requested } => {
+                format!("version conflict for {}: {} vs {}", package, existing, requested)
+            }
+            ResolveError::FetchError(e) => format!("fetch error: {}", e),
+        }
+    }
+}
+
+impl Clone for ResolveError {
+    fn clone(&self) -> ResolveError {
+        match self {
+            ResolveError::ManifestError(e) => ResolveError::ManifestError(e.clone()),
+            ResolveError::InvalidVersion(e) => ResolveError::InvalidVersion(e.clone()),
+            ResolveError::InvalidDependency { name, reason } => {
+                ResolveError::InvalidDependency { name: name.clone(), reason: reason.clone() }
+            }
+            ResolveError::CyclicDependency { package } => {
+                ResolveError::CyclicDependency { package: package.clone() }
+            }
+            ResolveError::NoMatchingVersion { package, requirement } => {
+                ResolveError::NoMatchingVersion { package: package.clone(), requirement: requirement.clone() }
+            }
+            ResolveError::VersionConflict { package, existing, requested } => {
+                ResolveError::VersionConflict {
+                    package: package.clone(),
+                    existing: existing.clone(),
+                    requested: requested.clone(),
+                }
+            }
+            ResolveError::FetchError(e) => ResolveError::FetchError(e.clone()),
+        }
+    }
+}
+
+// ============================================================
+// Tests
+// ============================================================
+
+#[test]
+fn test_package_id_new() {
+    let id = PackageId::new("test".to_string(), Version::parse("1.0.0").unwrap());
+    assert(id.name == "test");
+    assert(id.version == Version::parse("1.0.0").unwrap());
+}
+
+#[test]
+fn test_package_id_to_string() {
+    let id = PackageId::new("test".to_string(), Version::parse("1.0.0").unwrap());
+    assert(id.to_string() == "test v1.0.0");
+}
+
+#[test]
+fn test_resolution_new() {
+    let res = Resolution::new();
+    assert(res.packages.is_empty());
+    assert(res.to_fetch.is_empty());
+    assert(res.available.is_empty());
+}
+
+#[test]
+fn test_resolver_new() {
+    let resolver = Resolver::new();
+    assert(resolver.available_versions.is_empty());
+}
+
+#[test]
+fn test_resolver_register_versions() {
+    let mut resolver = Resolver::new();
+
+    let versions = vec![PackageMetadata {
+        name: "test".to_string(),
+        version: Version::parse("1.0.0").unwrap(),
+        dependencies: Vec::new(),
+        features: HashMap::new(),
+        yanked: false,
+    }];
+
+    resolver.register_versions("test", versions);
+    assert(resolver.available_versions.contains_key("test"));
+}
+
+#[test]
+fn test_dependency_req_from_version() {
+    let req = DependencyReq::from_version("^1.0.0").unwrap();
+    assert(req.version.is_some());
+    assert(req.git.is_none());
+    assert(req.path.is_none());
+}
+
+#[test]
+fn test_dependency_req_from_git() {
+    let req = DependencyReq::from_git("https://github.com/test/test".to_string());
+    assert(req.git.is_some());
+    assert(req.version.is_none());
+}
+
+#[test]
+fn test_dependency_req_from_path() {
+    let req = DependencyReq::from_path("/local/path".to_string());
+    assert(req.path.is_some());
+    assert(req.version.is_none());
+}
+
+#[test]
+fn test_resolution_to_lockfile() {
+    let mut resolution = Resolution::new();
+
+    let id = PackageId::new("test".to_string(), Version::parse("1.0.0").unwrap());
+
+    resolution.packages.push(ResolvedPackage {
+        id: id.clone(),
+        source: ResolvedSource::Registry {
+            url: "https://blood-lang.org/packages".to_string(),
+            checksum: Option::Some("sha256:abc".to_string()),
+        },
+        features: vec!["feature1".to_string()],
+    });
+
+    let lockfile = resolution.to_lockfile();
+    assert(lockfile.packages.len() == 1);
+    assert(lockfile.packages[0].name == "test");
+}

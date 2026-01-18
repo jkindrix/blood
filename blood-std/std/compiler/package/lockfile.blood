@@ -1,0 +1,706 @@
+/// Lock file (Blood.lock) for recording resolved dependency versions.
+///
+/// The lock file ensures reproducible builds by recording the exact versions
+/// of all dependencies that were resolved. This file should be:
+/// - Committed for applications (ensures reproducible builds)
+/// - Not committed for libraries (allows flexibility for consumers)
+///
+/// # Format
+///
+/// ```toml
+/// # Blood.lock - auto-generated, do not edit manually
+/// version = 1
+///
+/// [[package]]
+/// name = "my_package"
+/// version = "0.1.0"
+/// source = "registry+https://blood-lang.org/packages"
+/// checksum = "sha256:abc123..."
+///
+/// [[package]]
+/// name = "json"
+/// version = "1.2.3"
+/// source = "registry+https://blood-lang.org/packages"
+/// checksum = "sha256:def456..."
+/// dependencies = ["unicode 1.0.0"]
+/// ```
+
+use std.option.Option;
+use std.result.Result;
+use std.string::String;
+use std.collections::{Vec, HashMap};
+use super.version::Version;
+
+/// The current lock file format version.
+pub const LOCKFILE_VERSION: U32 = 1;
+
+/// Default registry URL.
+pub const DEFAULT_REGISTRY: &str = "https://blood-lang.org/packages";
+
+// ============================================================
+// Lockfile
+// ============================================================
+
+/// A lock file recording resolved dependency versions.
+#[derive(Clone)]
+pub struct Lockfile {
+    /// Lock file format version.
+    pub version: U32,
+    /// Resolved packages.
+    pub packages: Vec<LockedPackage>,
+}
+
+impl Lockfile {
+    /// Create a new empty lockfile.
+    pub fn new() -> Lockfile {
+        Lockfile {
+            version: LOCKFILE_VERSION,
+            packages: Vec::new(),
+        }
+    }
+
+    /// Parse a lockfile from TOML content.
+    pub fn from_str(content: &str) -> Result<Lockfile, LockfileError> {
+        // Simple TOML parser for lockfile format
+        let mut lockfile = Lockfile::new();
+        let mut current_package: Option<LockedPackage> = Option::None;
+
+        let lines: Vec<&str> = content.lines().collect();
+        let mut i: USize = 0;
+
+        while i < lines.len() {
+            let line = lines[i].trim();
+
+            // Skip comments and empty lines
+            if line.is_empty() || line.starts_with('#') {
+                i = i + 1;
+                continue;
+            }
+
+            // Check for version
+            if line.starts_with("version = ") {
+                let value = &line[10..].trim();
+                match value.parse::<U32>() {
+                    Option::Some(v) => {
+                        if v != LOCKFILE_VERSION {
+                            return Result::Err(LockfileError::VersionMismatch {
+                                expected: LOCKFILE_VERSION,
+                                found: v,
+                            });
+                        }
+                        lockfile.version = v;
+                    }
+                    Option::None => {}
+                }
+                i = i + 1;
+                continue;
+            }
+
+            // Check for package section
+            if line == "[[package]]" {
+                // Save previous package if any
+                match current_package {
+                    Option::Some(pkg) => lockfile.packages.push(pkg),
+                    Option::None => {}
+                }
+                current_package = Option::Some(LockedPackage::empty());
+                i = i + 1;
+                continue;
+            }
+
+            // Parse package fields
+            match &mut current_package {
+                Option::Some(pkg) => {
+                    if line.starts_with("name = ") {
+                        let value = parse_toml_string(&line[7..]);
+                        pkg.name = value;
+                    } else if line.starts_with("version = ") {
+                        let value = parse_toml_string(&line[10..]);
+                        match Version::parse(&value) {
+                            Result::Ok(v) => pkg.version = v,
+                            Result::Err(_) => {}
+                        }
+                    } else if line.starts_with("source = ") {
+                        let value = parse_toml_string(&line[9..]);
+                        pkg.source = Option::Some(value);
+                    } else if line.starts_with("checksum = ") {
+                        let value = parse_toml_string(&line[11..]);
+                        pkg.checksum = Option::Some(value);
+                    } else if line.starts_with("content-hash = ") {
+                        let value = parse_toml_string(&line[15..]);
+                        pkg.content_hash = Option::Some(value);
+                    } else if line.starts_with("dependencies = ") {
+                        let value = &line[15..].trim();
+                        pkg.dependencies = parse_toml_array(value);
+                    } else if line.starts_with("features = ") {
+                        let value = &line[11..].trim();
+                        pkg.features = parse_toml_array(value);
+                    }
+                }
+                Option::None => {}
+            }
+
+            i = i + 1;
+        }
+
+        // Save last package
+        match current_package {
+            Option::Some(pkg) => lockfile.packages.push(pkg),
+            Option::None => {}
+        }
+
+        Result::Ok(lockfile)
+    }
+
+    /// Serialize the lockfile to TOML.
+    pub fn to_toml(&self) -> String {
+        let mut output = String::new();
+        output.push_str("# Blood.lock - auto-generated, do not edit manually\n\n");
+        output.push_str(&format!("version = {}\n\n", self.version));
+
+        let mut i: USize = 0;
+        while i < self.packages.len() {
+            let pkg = &self.packages[i];
+            output.push_str("[[package]]\n");
+            output.push_str(&format!("name = \"{}\"\n", pkg.name));
+            output.push_str(&format!("version = \"{}\"\n", pkg.version.to_string()));
+
+            match &pkg.source {
+                Option::Some(source) => {
+                    output.push_str(&format!("source = \"{}\"\n", source));
+                }
+                Option::None => {}
+            }
+
+            match &pkg.checksum {
+                Option::Some(checksum) => {
+                    output.push_str(&format!("checksum = \"{}\"\n", checksum));
+                }
+                Option::None => {}
+            }
+
+            match &pkg.content_hash {
+                Option::Some(hash) => {
+                    output.push_str(&format!("content-hash = \"{}\"\n", hash));
+                }
+                Option::None => {}
+            }
+
+            if !pkg.dependencies.is_empty() {
+                let deps: Vec<String> = pkg.dependencies.iter()
+                    .map(|d| format!("\"{}\"", d))
+                    .collect();
+                output.push_str(&format!("dependencies = [{}]\n", deps.join(", ")));
+            }
+
+            if !pkg.features.is_empty() {
+                let features: Vec<String> = pkg.features.iter()
+                    .map(|f| format!("\"{}\"", f))
+                    .collect();
+                output.push_str(&format!("features = [{}]\n", features.join(", ")));
+            }
+
+            output.push('\n');
+            i = i + 1;
+        }
+
+        output
+    }
+
+    /// Add a package to the lockfile.
+    pub fn add_package(&mut self, package: LockedPackage) {
+        // Remove existing entry with same name and version
+        let mut i: USize = 0;
+        while i < self.packages.len() {
+            if self.packages[i].name == package.name && self.packages[i].version == package.version {
+                self.packages.remove(i);
+            } else {
+                i = i + 1;
+            }
+        }
+        self.packages.push(package);
+    }
+
+    /// Get a package by name and version.
+    pub fn get_package(&self, name: &str, version: &Version) -> Option<&LockedPackage> {
+        let mut i: USize = 0;
+        while i < self.packages.len() {
+            if self.packages[i].name == name && self.packages[i].version == *version {
+                return Option::Some(&self.packages[i]);
+            }
+            i = i + 1;
+        }
+        Option::None
+    }
+
+    /// Get all versions of a package.
+    pub fn get_package_versions(&self, name: &str) -> Vec<&LockedPackage> {
+        let mut result: Vec<&LockedPackage> = Vec::new();
+        let mut i: USize = 0;
+        while i < self.packages.len() {
+            if self.packages[i].name == name {
+                result.push(&self.packages[i]);
+            }
+            i = i + 1;
+        }
+        result
+    }
+
+    /// Build a lookup map by package name.
+    pub fn by_name(&self) -> HashMap<String, Vec<&LockedPackage>> {
+        let mut map: HashMap<String, Vec<&LockedPackage>> = HashMap::new();
+        let mut i: USize = 0;
+        while i < self.packages.len() {
+            let pkg = &self.packages[i];
+            let entry = map.entry(pkg.name.clone()).or_insert(Vec::new());
+            entry.push(pkg);
+            i = i + 1;
+        }
+        map
+    }
+
+    /// Sort packages for deterministic output.
+    pub fn sort(&mut self) {
+        // Simple bubble sort for stability
+        let n = self.packages.len();
+        let mut i: USize = 0;
+        while i < n {
+            let mut j: USize = 0;
+            while j < n - i - 1 {
+                let should_swap = if self.packages[j].name > self.packages[j + 1].name {
+                    true
+                } else if self.packages[j].name == self.packages[j + 1].name {
+                    self.packages[j].version > self.packages[j + 1].version
+                } else {
+                    false
+                };
+
+                if should_swap {
+                    self.packages.swap(j, j + 1);
+                }
+                j = j + 1;
+            }
+            i = i + 1;
+        }
+    }
+}
+
+impl Default for Lockfile {
+    fn default() -> Lockfile {
+        Lockfile::new()
+    }
+}
+
+// ============================================================
+// Locked Package
+// ============================================================
+
+/// A locked package with its exact resolved version.
+#[derive(Clone)]
+pub struct LockedPackage {
+    /// Package name.
+    pub name: String,
+    /// Resolved version.
+    pub version: Version,
+    /// Package source (registry, git, path).
+    pub source: Option<String>,
+    /// Content checksum (SHA-256 of tarball).
+    pub checksum: Option<String>,
+    /// Blood content hash for reproducibility.
+    pub content_hash: Option<String>,
+    /// Resolved dependencies (as "name version" strings).
+    pub dependencies: Vec<String>,
+    /// Enabled features.
+    pub features: Vec<String>,
+}
+
+impl LockedPackage {
+    /// Create an empty locked package.
+    fn empty() -> LockedPackage {
+        LockedPackage {
+            name: String::new(),
+            version: Version::default(),
+            source: Option::None,
+            checksum: Option::None,
+            content_hash: Option::None,
+            dependencies: Vec::new(),
+            features: Vec::new(),
+        }
+    }
+
+    /// Create a new locked package.
+    pub fn new(name: String, version: Version) -> LockedPackage {
+        LockedPackage {
+            name,
+            version,
+            source: Option::None,
+            checksum: Option::None,
+            content_hash: Option::None,
+            dependencies: Vec::new(),
+            features: Vec::new(),
+        }
+    }
+
+    /// Create a locked package from a registry source.
+    pub fn from_registry(
+        name: String,
+        version: Version,
+        registry: &str,
+        checksum: Option<String>,
+    ) -> LockedPackage {
+        LockedPackage {
+            name,
+            version,
+            source: Option::Some(format!("registry+{}", registry)),
+            checksum,
+            content_hash: Option::None,
+            dependencies: Vec::new(),
+            features: Vec::new(),
+        }
+    }
+
+    /// Create a locked package from a git source.
+    pub fn from_git(
+        name: String,
+        version: Version,
+        url: &str,
+        reference: Option<&str>,
+        revision: &str,
+    ) -> LockedPackage {
+        let source = match reference {
+            Option::Some(r) => format!("git+{}?{}#{}", url, r, revision),
+            Option::None => format!("git+{}#{}", url, revision),
+        };
+
+        LockedPackage {
+            name,
+            version,
+            source: Option::Some(source),
+            checksum: Option::None,
+            content_hash: Option::None,
+            dependencies: Vec::new(),
+            features: Vec::new(),
+        }
+    }
+
+    /// Create a locked package from a local path.
+    pub fn from_path(name: String, version: Version, path: &str) -> LockedPackage {
+        LockedPackage {
+            name,
+            version,
+            source: Option::Some(format!("path+{}", path)),
+            checksum: Option::None,
+            content_hash: Option::None,
+            dependencies: Vec::new(),
+            features: Vec::new(),
+        }
+    }
+
+    /// Add a dependency.
+    pub fn add_dependency(&mut self, name: &str, version: &Version) {
+        self.dependencies.push(format!("{} {}", name, version.to_string()));
+    }
+
+    /// Parse the source to get the package source type.
+    pub fn parse_source(&self) -> Option<PackageSource> {
+        let source = match &self.source {
+            Option::Some(s) => s,
+            Option::None => return Option::None,
+        };
+
+        // Registry source
+        if source.starts_with("registry+") {
+            let registry = &source[9..];
+            return Option::Some(PackageSource::Registry(registry.to_string()));
+        }
+
+        // Git source
+        if source.starts_with("git+") {
+            let git_part = &source[4..];
+            match git_part.find('#') {
+                Option::Some(hash_idx) => {
+                    let url_ref = &git_part[0..hash_idx];
+                    let revision = &git_part[hash_idx + 1..];
+
+                    let (url, reference) = match url_ref.find('?') {
+                        Option::Some(q_idx) => {
+                            let u = &url_ref[0..q_idx];
+                            let r = &url_ref[q_idx + 1..];
+                            (u.to_string(), Option::Some(r.to_string()))
+                        }
+                        Option::None => (url_ref.to_string(), Option::None),
+                    };
+
+                    return Option::Some(PackageSource::Git {
+                        url,
+                        reference,
+                        revision: revision.to_string(),
+                    });
+                }
+                Option::None => {}
+            }
+        }
+
+        // Path source
+        if source.starts_with("path+") {
+            let path = &source[5..];
+            return Option::Some(PackageSource::Path(path.to_string()));
+        }
+
+        Option::None
+    }
+}
+
+// ============================================================
+// Package Source
+// ============================================================
+
+/// Package source type.
+#[derive(Clone, PartialEq, Eq)]
+pub enum PackageSource {
+    /// Registry source (e.g., "https://blood-lang.org/packages").
+    Registry(String),
+    /// Git repository source.
+    Git {
+        /// Repository URL.
+        url: String,
+        /// Reference (branch, tag, etc.).
+        reference: Option<String>,
+        /// Commit revision.
+        revision: String,
+    },
+    /// Local path.
+    Path(String),
+}
+
+impl PackageSource {
+    /// Get the default registry URL.
+    pub fn default_registry() -> String {
+        DEFAULT_REGISTRY.to_string()
+    }
+}
+
+// ============================================================
+// Lockfile Error
+// ============================================================
+
+/// Errors that can occur with lock files.
+pub enum LockfileError {
+    /// IO error.
+    Io(String),
+    /// TOML parse error.
+    Parse(String),
+    /// Lock file version mismatch.
+    VersionMismatch { expected: U32, found: U32 },
+    /// Serialization error.
+    Serialization(String),
+}
+
+impl LockfileError {
+    /// Get the error message.
+    pub fn message(&self) -> String {
+        match self {
+            LockfileError::Io(e) => format!("IO error: {}", e),
+            LockfileError::Parse(e) => format!("parse error: {}", e),
+            LockfileError::VersionMismatch { expected, found } => {
+                format!("lock file version mismatch: expected {}, found {}", expected, found)
+            }
+            LockfileError::Serialization(e) => format!("serialization error: {}", e),
+        }
+    }
+}
+
+impl Clone for LockfileError {
+    fn clone(&self) -> LockfileError {
+        match self {
+            LockfileError::Io(e) => LockfileError::Io(e.clone()),
+            LockfileError::Parse(e) => LockfileError::Parse(e.clone()),
+            LockfileError::VersionMismatch { expected, found } => {
+                LockfileError::VersionMismatch { expected: *expected, found: *found }
+            }
+            LockfileError::Serialization(e) => LockfileError::Serialization(e.clone()),
+        }
+    }
+}
+
+// ============================================================
+// TOML Parsing Helpers
+// ============================================================
+
+/// Parse a TOML string value.
+fn parse_toml_string(s: &str) -> String {
+    let s = s.trim();
+    if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
+        s[1..s.len() - 1].to_string()
+    } else {
+        s.to_string()
+    }
+}
+
+/// Parse a TOML array of strings.
+fn parse_toml_array(s: &str) -> Vec<String> {
+    let s = s.trim();
+    if !s.starts_with('[') || !s.ends_with(']') {
+        return Vec::new();
+    }
+
+    let inner = &s[1..s.len() - 1];
+    let parts: Vec<&str> = inner.split(',').collect();
+    let mut result: Vec<String> = Vec::new();
+
+    let mut i: USize = 0;
+    while i < parts.len() {
+        let part = parts[i].trim();
+        if !part.is_empty() {
+            result.push(parse_toml_string(part));
+        }
+        i = i + 1;
+    }
+
+    result
+}
+
+// ============================================================
+// Tests
+// ============================================================
+
+#[test]
+fn test_lockfile_new() {
+    let lockfile = Lockfile::new();
+    assert(lockfile.version == LOCKFILE_VERSION);
+    assert(lockfile.packages.is_empty());
+}
+
+#[test]
+fn test_lockfile_add_package() {
+    let mut lockfile = Lockfile::new();
+    let pkg = LockedPackage::new("test".to_string(), Version::parse("1.0.0").unwrap());
+    lockfile.add_package(pkg);
+    assert(lockfile.packages.len() == 1);
+}
+
+#[test]
+fn test_lockfile_get_package() {
+    let mut lockfile = Lockfile::new();
+    let pkg = LockedPackage::new("test".to_string(), Version::parse("1.0.0").unwrap());
+    lockfile.add_package(pkg);
+
+    let found = lockfile.get_package("test", &Version::parse("1.0.0").unwrap());
+    assert(found.is_some());
+    assert(found.unwrap().name == "test");
+
+    let not_found = lockfile.get_package("other", &Version::parse("1.0.0").unwrap());
+    assert(not_found.is_none());
+}
+
+#[test]
+fn test_lockfile_to_toml() {
+    let mut lockfile = Lockfile::new();
+    let mut pkg = LockedPackage::new("test".to_string(), Version::parse("1.0.0").unwrap());
+    pkg.source = Option::Some("registry+https://blood-lang.org/packages".to_string());
+    lockfile.add_package(pkg);
+
+    let toml = lockfile.to_toml();
+    assert(toml.contains("name = \"test\""));
+    assert(toml.contains("version = \"1.0.0\""));
+}
+
+#[test]
+fn test_locked_package_new() {
+    let pkg = LockedPackage::new("test".to_string(), Version::parse("1.0.0").unwrap());
+    assert(pkg.name == "test");
+    assert(pkg.version == Version::parse("1.0.0").unwrap());
+}
+
+#[test]
+fn test_locked_package_from_registry() {
+    let pkg = LockedPackage::from_registry(
+        "test".to_string(),
+        Version::parse("1.0.0").unwrap(),
+        "https://blood-lang.org/packages",
+        Option::Some("sha256:abc".to_string()),
+    );
+
+    assert(pkg.source == Option::Some("registry+https://blood-lang.org/packages".to_string()));
+    assert(pkg.checksum == Option::Some("sha256:abc".to_string()));
+}
+
+#[test]
+fn test_locked_package_parse_source_registry() {
+    let pkg = LockedPackage::from_registry(
+        "test".to_string(),
+        Version::parse("1.0.0").unwrap(),
+        "https://blood-lang.org/packages",
+        Option::None,
+    );
+
+    match pkg.parse_source() {
+        Option::Some(PackageSource::Registry(url)) => {
+            assert(url == "https://blood-lang.org/packages");
+        }
+        _ => panic("expected Registry source"),
+    }
+}
+
+#[test]
+fn test_locked_package_parse_source_git() {
+    let pkg = LockedPackage::from_git(
+        "test".to_string(),
+        Version::parse("1.0.0").unwrap(),
+        "https://github.com/test/test",
+        Option::Some("v1.0.0"),
+        "abc123",
+    );
+
+    match pkg.parse_source() {
+        Option::Some(PackageSource::Git { url, reference, revision }) => {
+            assert(url == "https://github.com/test/test");
+            assert(reference == Option::Some("v1.0.0".to_string()));
+            assert(revision == "abc123");
+        }
+        _ => panic("expected Git source"),
+    }
+}
+
+#[test]
+fn test_locked_package_parse_source_path() {
+    let pkg = LockedPackage::from_path(
+        "test".to_string(),
+        Version::parse("1.0.0").unwrap(),
+        "/local/path",
+    );
+
+    match pkg.parse_source() {
+        Option::Some(PackageSource::Path(path)) => {
+            assert(path == "/local/path");
+        }
+        _ => panic("expected Path source"),
+    }
+}
+
+#[test]
+fn test_lockfile_sort() {
+    let mut lockfile = Lockfile::new();
+    lockfile.add_package(LockedPackage::new("zebra".to_string(), Version::parse("1.0.0").unwrap()));
+    lockfile.add_package(LockedPackage::new("alpha".to_string(), Version::parse("1.0.0").unwrap()));
+
+    lockfile.sort();
+
+    assert(lockfile.packages[0].name == "alpha");
+    assert(lockfile.packages[1].name == "zebra");
+}
+
+#[test]
+fn test_parse_toml_string() {
+    assert(parse_toml_string("\"hello\"") == "hello");
+    assert(parse_toml_string("  \"world\"  ") == "world");
+}
+
+#[test]
+fn test_parse_toml_array() {
+    let arr = parse_toml_array("[\"a\", \"b\", \"c\"]");
+    assert(arr.len() == 3);
+    assert(arr[0] == "a");
+    assert(arr[1] == "b");
+    assert(arr[2] == "c");
+}

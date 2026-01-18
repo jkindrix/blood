@@ -1,0 +1,680 @@
+/// Semantic versioning for Blood packages.
+///
+/// This module implements semver parsing and constraint matching following
+/// the semantic versioning 2.0.0 specification.
+///
+/// # Version Format
+///
+/// `MAJOR.MINOR.PATCH[-PRERELEASE][+BUILD]`
+///
+/// # Version Constraints
+///
+/// | Syntax | Meaning |
+/// |--------|---------|
+/// | `1.2.3` | Exactly 1.2.3 |
+/// | `^1.2.3` | Compatible: >=1.2.3, <2.0.0 |
+/// | `~1.2.3` | Approximately: >=1.2.3, <1.3.0 |
+/// | `>=1.0, <2.0` | Range constraint |
+/// | `*` | Any version |
+
+use std.option.Option;
+use std.result.Result;
+use std.string::String;
+use std.collections::Vec;
+use std.cmp::Ordering;
+
+// ============================================================
+// Version
+// ============================================================
+
+/// A semantic version.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct Version {
+    /// Major version (breaking changes).
+    pub major: U64,
+    /// Minor version (new features, backwards compatible).
+    pub minor: U64,
+    /// Patch version (bug fixes).
+    pub patch: U64,
+    /// Pre-release identifier (e.g., "alpha", "beta.1").
+    pub pre: Option<String>,
+    /// Build metadata (e.g., "build.123").
+    pub build: Option<String>,
+}
+
+impl Version {
+    /// Create a new version.
+    pub fn new(major: U64, minor: U64, patch: U64) -> Version {
+        Version {
+            major,
+            minor,
+            patch,
+            pre: Option::None,
+            build: Option::None,
+        }
+    }
+
+    /// Create a new version with pre-release.
+    pub fn with_pre(major: U64, minor: U64, patch: U64, pre: String) -> Version {
+        Version {
+            major,
+            minor,
+            patch,
+            pre: Option::Some(pre),
+            build: Option::None,
+        }
+    }
+
+    /// Parse a version string.
+    pub fn parse(s: &str) -> Result<Version, ParseVersionError> {
+        let s = s.trim();
+        if s.is_empty() {
+            return Result::Err(ParseVersionError::Empty);
+        }
+
+        // Split off build metadata first
+        let (version_pre, build) = match s.find('+') {
+            Option::Some(idx) => {
+                let vp = &s[0..idx];
+                let b = &s[idx + 1..];
+                (vp, Option::Some(b.to_string()))
+            }
+            Option::None => (s, Option::None),
+        };
+
+        // Split off pre-release
+        let (version, pre) = match version_pre.find('-') {
+            Option::Some(idx) => {
+                let v = &version_pre[0..idx];
+                let p = &version_pre[idx + 1..];
+                (v, Option::Some(p.to_string()))
+            }
+            Option::None => (version_pre, Option::None),
+        };
+
+        // Parse version numbers
+        let parts: Vec<&str> = version.split('.').collect();
+        if parts.len() != 3 {
+            return Result::Err(ParseVersionError::InvalidFormat(s.to_string()));
+        }
+
+        let major = match parts[0].parse::<U64>() {
+            Option::Some(v) => v,
+            Option::None => return Result::Err(ParseVersionError::InvalidNumber(parts[0].to_string())),
+        };
+
+        let minor = match parts[1].parse::<U64>() {
+            Option::Some(v) => v,
+            Option::None => return Result::Err(ParseVersionError::InvalidNumber(parts[1].to_string())),
+        };
+
+        let patch = match parts[2].parse::<U64>() {
+            Option::Some(v) => v,
+            Option::None => return Result::Err(ParseVersionError::InvalidNumber(parts[2].to_string())),
+        };
+
+        Result::Ok(Version {
+            major,
+            minor,
+            patch,
+            pre,
+            build,
+        })
+    }
+
+    /// Check if this is a pre-release version.
+    pub fn is_prerelease(&self) -> Bool {
+        self.pre.is_some()
+    }
+
+    /// Get the base version (without pre-release or build metadata).
+    pub fn base(&self) -> Version {
+        Version {
+            major: self.major,
+            minor: self.minor,
+            patch: self.patch,
+            pre: Option::None,
+            build: Option::None,
+        }
+    }
+
+    /// Format as a string.
+    pub fn to_string(&self) -> String {
+        let mut result = format!("{}.{}.{}", self.major, self.minor, self.patch);
+        match &self.pre {
+            Option::Some(p) => {
+                result.push('-');
+                result.push_str(p);
+            }
+            Option::None => {}
+        }
+        match &self.build {
+            Option::Some(b) => {
+                result.push('+');
+                result.push_str(b);
+            }
+            Option::None => {}
+        }
+        result
+    }
+}
+
+impl Default for Version {
+    fn default() -> Version {
+        Version::new(0, 0, 0)
+    }
+}
+
+impl Ord for Version {
+    fn cmp(&self, other: &Version) -> Ordering {
+        // Compare major, minor, patch first
+        match self.major.cmp(&other.major) {
+            Ordering::Equal => {}
+            ord => return ord,
+        }
+        match self.minor.cmp(&other.minor) {
+            Ordering::Equal => {}
+            ord => return ord,
+        }
+        match self.patch.cmp(&other.patch) {
+            Ordering::Equal => {}
+            ord => return ord,
+        }
+
+        // Pre-release versions have lower precedence than normal versions
+        match (&self.pre, &other.pre) {
+            (Option::None, Option::None) => Ordering::Equal,
+            (Option::Some(_), Option::None) => Ordering::Less,    // 1.0.0-alpha < 1.0.0
+            (Option::None, Option::Some(_)) => Ordering::Greater, // 1.0.0 > 1.0.0-alpha
+            (Option::Some(a), Option::Some(b)) => a.cmp(b),       // Compare pre-release identifiers
+        }
+        // Build metadata is ignored for version precedence
+    }
+}
+
+impl PartialOrd for Version {
+    fn partial_cmp(&self, other: &Version) -> Option<Ordering> {
+        Option::Some(self.cmp(other))
+    }
+}
+
+// ============================================================
+// Version Parse Error
+// ============================================================
+
+/// Errors that can occur parsing a version.
+pub enum ParseVersionError {
+    /// Empty version string.
+    Empty,
+    /// Invalid version format.
+    InvalidFormat(String),
+    /// Invalid version number.
+    InvalidNumber(String),
+}
+
+impl ParseVersionError {
+    /// Get the error message.
+    pub fn message(&self) -> String {
+        match self {
+            ParseVersionError::Empty => "empty version string".to_string(),
+            ParseVersionError::InvalidFormat(s) => format!("invalid version format: {}", s),
+            ParseVersionError::InvalidNumber(s) => format!("invalid version number: {}", s),
+        }
+    }
+}
+
+impl Clone for ParseVersionError {
+    fn clone(&self) -> ParseVersionError {
+        match self {
+            ParseVersionError::Empty => ParseVersionError::Empty,
+            ParseVersionError::InvalidFormat(s) => ParseVersionError::InvalidFormat(s.clone()),
+            ParseVersionError::InvalidNumber(s) => ParseVersionError::InvalidNumber(s.clone()),
+        }
+    }
+}
+
+// ============================================================
+// Version Requirement
+// ============================================================
+
+/// A version requirement (constraint).
+#[derive(Clone, PartialEq, Eq)]
+pub struct VersionReq {
+    /// The constraints that make up this requirement.
+    pub constraints: Vec<VersionConstraint>,
+}
+
+impl VersionReq {
+    /// Create a requirement that matches any version.
+    pub fn any() -> VersionReq {
+        VersionReq {
+            constraints: vec![VersionConstraint::Any],
+        }
+    }
+
+    /// Create a requirement that matches exactly one version.
+    pub fn exact(version: Version) -> VersionReq {
+        VersionReq {
+            constraints: vec![VersionConstraint::Comparator(Comparator {
+                op: Op::Exact,
+                version,
+            })],
+        }
+    }
+
+    /// Parse a version requirement string.
+    pub fn parse(s: &str) -> Result<VersionReq, ParseVersionReqError> {
+        let s = s.trim();
+        if s.is_empty() || s == "*" {
+            return Result::Ok(VersionReq::any());
+        }
+
+        // Handle comma-separated constraints
+        let parts: Vec<&str> = s.split(',').collect();
+        let mut constraints: Vec<VersionConstraint> = Vec::new();
+
+        let mut i: USize = 0;
+        while i < parts.len() {
+            match VersionConstraint::parse(parts[i].trim()) {
+                Result::Ok(c) => constraints.push(c),
+                Result::Err(e) => return Result::Err(e),
+            }
+            i = i + 1;
+        }
+
+        Result::Ok(VersionReq { constraints })
+    }
+
+    /// Check if a version matches this requirement.
+    pub fn matches(&self, version: &Version) -> Bool {
+        let mut i: USize = 0;
+        while i < self.constraints.len() {
+            if !self.constraints[i].matches(version) {
+                return false;
+            }
+            i = i + 1;
+        }
+        true
+    }
+
+    /// Format as a string.
+    pub fn to_string(&self) -> String {
+        if self.constraints.is_empty() {
+            return "*".to_string();
+        }
+
+        let mut result = String::new();
+        let mut i: USize = 0;
+        while i < self.constraints.len() {
+            if i > 0 {
+                result.push_str(", ");
+            }
+            result.push_str(&self.constraints[i].to_string());
+            i = i + 1;
+        }
+        result
+    }
+}
+
+impl Default for VersionReq {
+    fn default() -> VersionReq {
+        VersionReq::any()
+    }
+}
+
+// ============================================================
+// Version Constraint
+// ============================================================
+
+/// A single version constraint.
+#[derive(Clone, PartialEq, Eq)]
+pub enum VersionConstraint {
+    /// Match any version.
+    Any,
+    /// A comparator constraint.
+    Comparator(Comparator),
+    /// Caret constraint: ^X.Y.Z means >=X.Y.Z, <(X+1).0.0 for X>0.
+    Caret(Version),
+    /// Tilde constraint: ~X.Y.Z means >=X.Y.Z, <X.(Y+1).0.
+    Tilde(Version),
+}
+
+impl VersionConstraint {
+    /// Parse a version constraint string.
+    pub fn parse(s: &str) -> Result<VersionConstraint, ParseVersionReqError> {
+        let s = s.trim();
+        if s.is_empty() || s == "*" {
+            return Result::Ok(VersionConstraint::Any);
+        }
+
+        // Check for caret
+        if s.starts_with('^') {
+            let rest = &s[1..];
+            match Version::parse(rest) {
+                Result::Ok(v) => return Result::Ok(VersionConstraint::Caret(v)),
+                Result::Err(e) => return Result::Err(ParseVersionReqError::Version(e)),
+            }
+        }
+
+        // Check for tilde
+        if s.starts_with('~') {
+            let rest = &s[1..];
+            match Version::parse(rest) {
+                Result::Ok(v) => return Result::Ok(VersionConstraint::Tilde(v)),
+                Result::Err(e) => return Result::Err(ParseVersionReqError::Version(e)),
+            }
+        }
+
+        // Check for comparison operators
+        if s.starts_with(">=") {
+            let rest = &s[2..].trim();
+            match Version::parse(rest) {
+                Result::Ok(v) => return Result::Ok(VersionConstraint::Comparator(Comparator {
+                    op: Op::GreaterEq,
+                    version: v,
+                })),
+                Result::Err(e) => return Result::Err(ParseVersionReqError::Version(e)),
+            }
+        }
+
+        if s.starts_with("<=") {
+            let rest = &s[2..].trim();
+            match Version::parse(rest) {
+                Result::Ok(v) => return Result::Ok(VersionConstraint::Comparator(Comparator {
+                    op: Op::LessEq,
+                    version: v,
+                })),
+                Result::Err(e) => return Result::Err(ParseVersionReqError::Version(e)),
+            }
+        }
+
+        if s.starts_with('>') {
+            let rest = &s[1..].trim();
+            match Version::parse(rest) {
+                Result::Ok(v) => return Result::Ok(VersionConstraint::Comparator(Comparator {
+                    op: Op::Greater,
+                    version: v,
+                })),
+                Result::Err(e) => return Result::Err(ParseVersionReqError::Version(e)),
+            }
+        }
+
+        if s.starts_with('<') {
+            let rest = &s[1..].trim();
+            match Version::parse(rest) {
+                Result::Ok(v) => return Result::Ok(VersionConstraint::Comparator(Comparator {
+                    op: Op::Less,
+                    version: v,
+                })),
+                Result::Err(e) => return Result::Err(ParseVersionReqError::Version(e)),
+            }
+        }
+
+        if s.starts_with('=') {
+            let rest = &s[1..].trim();
+            match Version::parse(rest) {
+                Result::Ok(v) => return Result::Ok(VersionConstraint::Comparator(Comparator {
+                    op: Op::Exact,
+                    version: v,
+                })),
+                Result::Err(e) => return Result::Err(ParseVersionReqError::Version(e)),
+            }
+        }
+
+        // Bare version is treated as exact match
+        match Version::parse(s) {
+            Result::Ok(v) => Result::Ok(VersionConstraint::Comparator(Comparator {
+                op: Op::Exact,
+                version: v,
+            })),
+            Result::Err(e) => Result::Err(ParseVersionReqError::Version(e)),
+        }
+    }
+
+    /// Check if a version matches this constraint.
+    pub fn matches(&self, version: &Version) -> Bool {
+        match self {
+            VersionConstraint::Any => true,
+            VersionConstraint::Comparator(cmp) => cmp.matches(version),
+            VersionConstraint::Caret(base) => {
+                // ^X.Y.Z: Compatible versions
+                // For X > 0: >=X.Y.Z, <(X+1).0.0
+                // For X = 0, Y > 0: >=0.Y.Z, <0.(Y+1).0
+                // For X = 0, Y = 0: >=0.0.Z, <0.0.(Z+1)
+                if *version < *base {
+                    return false;
+                }
+
+                if base.major > 0 {
+                    version.major == base.major
+                } else if base.minor > 0 {
+                    version.major == 0 && version.minor == base.minor
+                } else {
+                    version.major == 0 && version.minor == 0 && version.patch == base.patch
+                }
+            }
+            VersionConstraint::Tilde(base) => {
+                // ~X.Y.Z: >=X.Y.Z, <X.(Y+1).0
+                if *version < *base {
+                    return false;
+                }
+                version.major == base.major && version.minor == base.minor
+            }
+        }
+    }
+
+    /// Format as a string.
+    pub fn to_string(&self) -> String {
+        match self {
+            VersionConstraint::Any => "*".to_string(),
+            VersionConstraint::Comparator(cmp) => cmp.to_string(),
+            VersionConstraint::Caret(v) => format!("^{}", v.to_string()),
+            VersionConstraint::Tilde(v) => format!("~{}", v.to_string()),
+        }
+    }
+}
+
+// ============================================================
+// Comparator
+// ============================================================
+
+/// A version comparator.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Comparator {
+    /// The comparison operator.
+    pub op: Op,
+    /// The version to compare against.
+    pub version: Version,
+}
+
+impl Comparator {
+    /// Check if a version matches this comparator.
+    pub fn matches(&self, version: &Version) -> Bool {
+        match self.op {
+            Op::Exact => *version == self.version,
+            Op::Greater => *version > self.version,
+            Op::GreaterEq => *version >= self.version,
+            Op::Less => *version < self.version,
+            Op::LessEq => *version <= self.version,
+        }
+    }
+
+    /// Format as a string.
+    pub fn to_string(&self) -> String {
+        let op_str = match self.op {
+            Op::Exact => "=",
+            Op::Greater => ">",
+            Op::GreaterEq => ">=",
+            Op::Less => "<",
+            Op::LessEq => "<=",
+        };
+        format!("{}{}", op_str, self.version.to_string())
+    }
+}
+
+// ============================================================
+// Comparison Operator
+// ============================================================
+
+/// Comparison operator.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Op {
+    /// Exact match.
+    Exact,
+    /// Greater than.
+    Greater,
+    /// Greater than or equal.
+    GreaterEq,
+    /// Less than.
+    Less,
+    /// Less than or equal.
+    LessEq,
+}
+
+// ============================================================
+// Version Requirement Parse Error
+// ============================================================
+
+/// Errors that can occur parsing a version requirement.
+pub enum ParseVersionReqError {
+    /// Version parse error.
+    Version(ParseVersionError),
+    /// Invalid constraint format.
+    InvalidFormat(String),
+}
+
+impl ParseVersionReqError {
+    /// Get the error message.
+    pub fn message(&self) -> String {
+        match self {
+            ParseVersionReqError::Version(e) => format!("version parse error: {}", e.message()),
+            ParseVersionReqError::InvalidFormat(s) => format!("invalid constraint format: {}", s),
+        }
+    }
+}
+
+impl Clone for ParseVersionReqError {
+    fn clone(&self) -> ParseVersionReqError {
+        match self {
+            ParseVersionReqError::Version(e) => ParseVersionReqError::Version(e.clone()),
+            ParseVersionReqError::InvalidFormat(s) => ParseVersionReqError::InvalidFormat(s.clone()),
+        }
+    }
+}
+
+// ============================================================
+// Tests
+// ============================================================
+
+#[test]
+fn test_version_new() {
+    let v = Version::new(1, 2, 3);
+    assert(v.major == 1);
+    assert(v.minor == 2);
+    assert(v.patch == 3);
+    assert(v.pre.is_none());
+    assert(v.build.is_none());
+}
+
+#[test]
+fn test_version_parse() {
+    let v = Version::parse("1.2.3").unwrap();
+    assert(v.major == 1);
+    assert(v.minor == 2);
+    assert(v.patch == 3);
+}
+
+#[test]
+fn test_version_parse_prerelease() {
+    let v = Version::parse("1.0.0-alpha").unwrap();
+    assert(v.major == 1);
+    assert(v.minor == 0);
+    assert(v.patch == 0);
+    assert(v.pre == Option::Some("alpha".to_string()));
+}
+
+#[test]
+fn test_version_parse_build() {
+    let v = Version::parse("1.0.0+build.123").unwrap();
+    assert(v.major == 1);
+    assert(v.build == Option::Some("build.123".to_string()));
+}
+
+#[test]
+fn test_version_ordering() {
+    let v1 = Version::parse("1.0.0").unwrap();
+    let v2 = Version::parse("1.0.1").unwrap();
+    let v3 = Version::parse("1.1.0").unwrap();
+    let v4 = Version::parse("2.0.0").unwrap();
+
+    assert(v1 < v2);
+    assert(v2 < v3);
+    assert(v3 < v4);
+}
+
+#[test]
+fn test_version_prerelease_ordering() {
+    let v1 = Version::parse("1.0.0-alpha").unwrap();
+    let v2 = Version::parse("1.0.0-beta").unwrap();
+    let v3 = Version::parse("1.0.0").unwrap();
+
+    assert(v1 < v2);
+    assert(v2 < v3);
+}
+
+#[test]
+fn test_version_to_string() {
+    let v = Version::parse("1.2.3-beta+build").unwrap();
+    assert(v.to_string() == "1.2.3-beta+build");
+}
+
+#[test]
+fn test_version_req_any() {
+    let req = VersionReq::any();
+    assert(req.matches(&Version::parse("0.0.1").unwrap()));
+    assert(req.matches(&Version::parse("1.0.0").unwrap()));
+    assert(req.matches(&Version::parse("99.99.99").unwrap()));
+}
+
+#[test]
+fn test_version_req_exact() {
+    let req = VersionReq::parse("1.2.3").unwrap();
+    assert(req.matches(&Version::parse("1.2.3").unwrap()));
+    assert(!req.matches(&Version::parse("1.2.4").unwrap()));
+}
+
+#[test]
+fn test_version_req_caret() {
+    let req = VersionReq::parse("^1.2.3").unwrap();
+    assert(req.matches(&Version::parse("1.2.3").unwrap()));
+    assert(req.matches(&Version::parse("1.2.4").unwrap()));
+    assert(req.matches(&Version::parse("1.9.0").unwrap()));
+    assert(!req.matches(&Version::parse("2.0.0").unwrap()));
+    assert(!req.matches(&Version::parse("1.2.2").unwrap()));
+}
+
+#[test]
+fn test_version_req_tilde() {
+    let req = VersionReq::parse("~1.2.3").unwrap();
+    assert(req.matches(&Version::parse("1.2.3").unwrap()));
+    assert(req.matches(&Version::parse("1.2.9").unwrap()));
+    assert(!req.matches(&Version::parse("1.3.0").unwrap()));
+    assert(!req.matches(&Version::parse("1.2.2").unwrap()));
+}
+
+#[test]
+fn test_version_req_greater() {
+    let req = VersionReq::parse(">1.0.0").unwrap();
+    assert(!req.matches(&Version::parse("1.0.0").unwrap()));
+    assert(req.matches(&Version::parse("1.0.1").unwrap()));
+    assert(req.matches(&Version::parse("2.0.0").unwrap()));
+}
+
+#[test]
+fn test_version_req_range() {
+    let req = VersionReq::parse(">=1.0.0, <2.0.0").unwrap();
+    assert(req.matches(&Version::parse("1.0.0").unwrap()));
+    assert(req.matches(&Version::parse("1.9.9").unwrap()));
+    assert(!req.matches(&Version::parse("0.9.9").unwrap()));
+    assert(!req.matches(&Version::parse("2.0.0").unwrap()));
+}

@@ -1,0 +1,62 @@
+/// Package management for Blood projects.
+///
+/// This module provides dependency management functionality for Blood:
+/// - Semantic versioning (semver 2.0.0 compliant)
+/// - Version constraint parsing and matching
+/// - Dependency resolution
+/// - Lock file support for reproducible builds
+///
+/// # Overview
+///
+/// ## Version Constraints
+///
+/// | Syntax | Meaning |
+/// |--------|---------|
+/// | `1.2.3` | Exactly 1.2.3 |
+/// | `^1.2.3` | Compatible: >=1.2.3, <2.0.0 |
+/// | `~1.2.3` | Approximately: >=1.2.3, <1.3.0 |
+/// | `>=1.0, <2.0` | Range constraint |
+/// | `*` | Any version |
+///
+/// ## Dependency Sources
+///
+/// - **Registry**: Packages from the Blood package registry
+/// - **Git**: Packages from git repositories
+/// - **Path**: Local packages
+///
+/// # Example
+///
+/// ```blood
+/// use std.compiler.package::{Version, VersionReq, Resolver}
+///
+/// // Parse versions
+/// let v = Version::parse("1.2.3").unwrap()
+/// let req = VersionReq::parse("^1.0.0").unwrap()
+///
+/// // Check compatibility
+/// if req.matches(&v) {
+///     println("Version {} satisfies {}", v.to_string(), req.to_string())
+/// }
+/// ```
+
+// Sub-modules
+pub mod version;
+pub mod lockfile;
+pub mod resolver;
+
+// Re-export commonly used types
+pub use version::{
+    Version, VersionReq, VersionConstraint, Comparator, Op,
+    ParseVersionError, ParseVersionReqError,
+};
+
+pub use lockfile::{
+    Lockfile, LockedPackage, PackageSource, LockfileError,
+    LOCKFILE_VERSION, DEFAULT_REGISTRY,
+};
+
+pub use resolver::{
+    Resolver, Resolution, ResolvedPackage, ResolvedSource,
+    PackageId, PackageMetadata, DependencySpec, DependencyReq,
+    ResolveError,
+};
