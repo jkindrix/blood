@@ -1,0 +1,1148 @@
+/// Macro expansion engine for user-defined declarative macros.
+///
+/// This module handles the expansion of user-defined macros. The expansion
+/// process happens after parsing and before type checking.
+///
+/// # Expansion Pipeline
+///
+/// 1. **Collection**: Gather all macro definitions from the AST
+/// 2. **Matching**: Match macro invocations against patterns
+/// 3. **Capture**: Extract values for pattern captures
+/// 4. **Substitution**: Replace captures in the expansion template
+/// 5. **Hygiene**: Apply fresh scopes to prevent variable capture
+/// 6. **Re-parse**: Convert token stream back to AST nodes
+///
+/// # Example
+///
+/// ```blood
+/// macro my_macro {
+///     ($x:expr) => { $x + 1 }
+/// }
+///
+/// let result = my_macro!(42);  // expands to: 42 + 1
+/// ```
+
+use std.option.Option;
+use std.result.Result;
+use std.collections::{Vec, HashMap};
+use std.compiler.ast.expr::{Expr, ExprKind, MacroCallKind, MacroDelimiter};
+use std.compiler.ast.decl::{
+    MacroDecl, MacroRule, MacroPattern, MacroPatternPart,
+    MacroExpansion, MacroExpansionPart, MacroToken, HygieneId,
+    FragmentKind, RepetitionKind,
+};
+use std.compiler.ast.stmt::{Block, Statement};
+use std.compiler.lexer::TokenKind;
+use std.compiler.parser::Span;
+
+// ============================================================
+// Constants
+// ============================================================
+
+/// Maximum recursion depth for macro expansion to prevent infinite loops.
+const MAX_EXPANSION_DEPTH: U32 = 256;
+
+// ============================================================
+// Token Stream Types
+// ============================================================
+
+/// A stream of tokens for macro processing.
+pub struct TokenStream {
+    /// The tokens in this stream.
+    pub tokens: Vec<TokenTree>,
+}
+
+impl TokenStream {
+    /// Create an empty token stream.
+    pub fn new() -> TokenStream {
+        TokenStream { tokens: Vec::new() }
+    }
+
+    /// Create a token stream from a vector of token trees.
+    pub fn from_vec(tokens: Vec<TokenTree>) -> TokenStream {
+        TokenStream { tokens }
+    }
+
+    /// Check if the stream is empty.
+    pub fn is_empty(&self) -> Bool {
+        self.tokens.is_empty()
+    }
+
+    /// Get the number of tokens.
+    pub fn len(&self) -> USize {
+        self.tokens.len()
+    }
+
+    /// Push a token tree.
+    pub fn push(&mut self, tree: TokenTree) {
+        self.tokens.push(tree);
+    }
+
+    /// Get a token at an index.
+    pub fn get(&self, index: USize) -> Option<&TokenTree> {
+        if index < self.tokens.len() {
+            Option::Some(&self.tokens[index])
+        } else {
+            Option::None
+        }
+    }
+}
+
+impl Clone for TokenStream {
+    fn clone(&self) -> TokenStream {
+        TokenStream { tokens: self.tokens.clone() }
+    }
+}
+
+/// A single token or a delimited group of tokens.
+pub enum TokenTree {
+    /// A single token.
+    Token(MacroToken),
+    /// A delimited group of tokens.
+    Group {
+        delimiter: MacroDelimiter,
+        stream: TokenStream,
+        span: Span,
+    },
+}
+
+impl Clone for TokenTree {
+    fn clone(&self) -> TokenTree {
+        match self {
+            TokenTree::Token(t) => TokenTree::Token(t.clone()),
+            TokenTree::Group { delimiter, stream, span } => {
+                TokenTree::Group {
+                    delimiter: *delimiter,
+                    stream: stream.clone(),
+                    span: span.clone(),
+                }
+            }
+        }
+    }
+}
+
+// ============================================================
+// Captured Values
+// ============================================================
+
+/// Captured values from pattern matching.
+pub enum CapturedValue {
+    /// Single captured expression/type/pattern/etc. with tokens and source text.
+    Single {
+        /// The captured token stream.
+        tokens: TokenStream,
+        /// The original source text that produced these tokens.
+        source: String,
+    },
+    /// Repeated captures from a repetition pattern.
+    Repeated(Vec<CapturedValue>),
+}
+
+impl Clone for CapturedValue {
+    fn clone(&self) -> CapturedValue {
+        match self {
+            CapturedValue::Single { tokens, source } => {
+                CapturedValue::Single {
+                    tokens: tokens.clone(),
+                    source: source.clone(),
+                }
+            }
+            CapturedValue::Repeated(items) => {
+                CapturedValue::Repeated(items.clone())
+            }
+        }
+    }
+}
+
+// ============================================================
+// Macro Expander
+// ============================================================
+
+/// Context for macro expansion.
+pub struct MacroExpander {
+    /// Map from macro name to its definition.
+    macros: HashMap<String, MacroDecl>,
+    /// Source code for re-parsing (needed for Parser construction).
+    source: String,
+    /// Current macro content being processed (for text extraction).
+    current_content: String,
+    /// Next hygiene ID for fresh scopes.
+    next_hygiene: U32,
+    /// Current expansion depth.
+    depth: U32,
+    /// Collected errors during expansion.
+    errors: Vec<String>,
+}
+
+impl MacroExpander {
+    /// Create a new macro expander.
+    pub fn new() -> MacroExpander {
+        MacroExpander {
+            macros: HashMap::new(),
+            source: String::new(),
+            current_content: String::new(),
+            next_hygiene: 1, // 0 is the default/no hygiene
+            depth: 0,
+            errors: Vec::new(),
+        }
+    }
+
+    /// Create a new macro expander with source code for re-parsing.
+    pub fn with_source(source: &str) -> MacroExpander {
+        MacroExpander {
+            macros: HashMap::new(),
+            source: source.to_string(),
+            current_content: String::new(),
+            next_hygiene: 1,
+            depth: 0,
+            errors: Vec::new(),
+        }
+    }
+
+    /// Register a macro definition.
+    pub fn register_macro(&mut self, name: String, decl: MacroDecl) {
+        self.macros.insert(name, decl);
+    }
+
+    /// Check if a macro is registered.
+    pub fn has_macro(&self, name: &str) -> Bool {
+        self.macros.contains_key(name)
+    }
+
+    /// Get a macro definition.
+    pub fn get_macro(&self, name: &str) -> Option<&MacroDecl> {
+        self.macros.get(name)
+    }
+
+    /// Get all errors.
+    pub fn errors(&self) -> &[String] {
+        &self.errors
+    }
+
+    /// Clear errors.
+    pub fn clear_errors(&mut self) {
+        self.errors.clear();
+    }
+
+    // ---- Expansion Entry Points ----
+
+    /// Expand a macro invocation to source text (for re-parsing).
+    pub fn expand_to_source(
+        &mut self,
+        macro_name: &str,
+        content: &str,
+        span: Span,
+    ) -> Result<String, String> {
+        // Look up the macro
+        let macro_def = match self.macros.get(macro_name) {
+            Option::Some(def) => def.clone(),
+            Option::None => {
+                return Result::Err(format!("undefined macro: {}", macro_name));
+            }
+        };
+
+        // Check recursion depth
+        if self.depth >= MAX_EXPANSION_DEPTH {
+            return Result::Err(format!(
+                "macro expansion exceeded maximum depth of {}",
+                MAX_EXPANSION_DEPTH
+            ));
+        }
+        self.depth = self.depth + 1;
+
+        // Store content for capture extraction
+        self.current_content = content.to_string();
+
+        // Convert content to token stream
+        let input = self.content_to_token_stream(content, span);
+
+        // Try each rule in order
+        let mut i: USize = 0;
+        while i < macro_def.rules.len() {
+            let rule = &macro_def.rules[i];
+            match self.match_pattern(&rule.pattern, &input) {
+                Option::Some(captures) => {
+                    // Substitute to source text
+                    match self.substitute_to_source(&rule.expansion, &captures) {
+                        Result::Ok(source) => {
+                            self.depth = self.depth - 1;
+                            return Result::Ok(source);
+                        }
+                        Result::Err(e) => {
+                            self.depth = self.depth - 1;
+                            return Result::Err(e);
+                        }
+                    }
+                }
+                Option::None => {}
+            }
+            i = i + 1;
+        }
+
+        self.depth = self.depth - 1;
+        Result::Err(format!(
+            "no matching rule for macro `{}` invocation",
+            macro_name
+        ))
+    }
+
+    // ---- Token Stream Conversion ----
+
+    /// Convert a content string to a token stream.
+    fn content_to_token_stream(&self, content: &str, _span: Span) -> TokenStream {
+        // Simple tokenization - in a full implementation, use the lexer
+        let mut tokens: Vec<TokenTree> = Vec::new();
+        let mut pos: USize = 0;
+        let chars: Vec<Char> = content.chars().collect();
+
+        while pos < chars.len() {
+            // Skip whitespace
+            while pos < chars.len() && is_whitespace(chars[pos]) {
+                pos = pos + 1;
+            }
+
+            if pos >= chars.len() {
+                break;
+            }
+
+            let start = pos;
+            let c = chars[pos];
+
+            // Identify token type and extract
+            let (kind, end) = self.lex_token(&chars, pos);
+
+            if end > start {
+                let token_span = Span::from_offsets(start, end);
+                tokens.push(TokenTree::Token(MacroToken {
+                    kind,
+                    span: token_span,
+                    hygiene: HygieneId::root(),
+                }));
+                pos = end;
+            } else {
+                // Skip unknown character
+                pos = pos + 1;
+            }
+        }
+
+        TokenStream::from_vec(tokens)
+    }
+
+    /// Lex a single token from the character array.
+    fn lex_token(&self, chars: &[Char], start: USize) -> (TokenKind, USize) {
+        if start >= chars.len() {
+            return (TokenKind::Eof, start);
+        }
+
+        let c = chars[start];
+
+        // Identifiers
+        if is_ident_start(c) {
+            let mut end = start + 1;
+            while end < chars.len() && is_ident_continue(chars[end]) {
+                end = end + 1;
+            }
+            return (TokenKind::Ident, end);
+        }
+
+        // Numbers
+        if c.is_ascii_digit() {
+            let mut end = start + 1;
+            while end < chars.len() && (chars[end].is_ascii_digit() || chars[end] == '_') {
+                end = end + 1;
+            }
+            // Check for float
+            if end < chars.len() && chars[end] == '.' {
+                end = end + 1;
+                while end < chars.len() && chars[end].is_ascii_digit() {
+                    end = end + 1;
+                }
+                return (TokenKind::FloatLit, end);
+            }
+            return (TokenKind::IntLit, end);
+        }
+
+        // String literals
+        if c == '"' {
+            let mut end = start + 1;
+            while end < chars.len() && chars[end] != '"' {
+                if chars[end] == '\\' && end + 1 < chars.len() {
+                    end = end + 2;
+                } else {
+                    end = end + 1;
+                }
+            }
+            if end < chars.len() {
+                end = end + 1; // Include closing quote
+            }
+            return (TokenKind::StringLit, end);
+        }
+
+        // Character literals
+        if c == '\'' {
+            let mut end = start + 1;
+            if end < chars.len() && chars[end] == '\\' && end + 1 < chars.len() {
+                end = end + 2;
+            } else if end < chars.len() {
+                end = end + 1;
+            }
+            if end < chars.len() && chars[end] == '\'' {
+                end = end + 1;
+            }
+            return (TokenKind::CharLit, end);
+        }
+
+        // Multi-character operators
+        if start + 1 < chars.len() {
+            let c2 = chars[start + 1];
+
+            // Two-character operators
+            match (c, c2) {
+                ('=', '=') => return (TokenKind::EqEq, start + 2),
+                ('!', '=') => return (TokenKind::NotEq, start + 2),
+                ('<', '=') => return (TokenKind::LtEq, start + 2),
+                ('>', '=') => return (TokenKind::GtEq, start + 2),
+                ('&', '&') => return (TokenKind::And, start + 2),
+                ('|', '|') => return (TokenKind::Or, start + 2),
+                ('<', '<') => return (TokenKind::Shl, start + 2),
+                ('>', '>') => return (TokenKind::Shr, start + 2),
+                ('-', '>') => return (TokenKind::Arrow, start + 2),
+                ('=', '>') => return (TokenKind::FatArrow, start + 2),
+                (':', ':') => return (TokenKind::ColonColon, start + 2),
+                ('.', '.') => return (TokenKind::DotDot, start + 2),
+                _ => {}
+            }
+        }
+
+        // Single-character operators and delimiters
+        match c {
+            '+' => (TokenKind::Plus, start + 1),
+            '-' => (TokenKind::Minus, start + 1),
+            '*' => (TokenKind::Star, start + 1),
+            '/' => (TokenKind::Slash, start + 1),
+            '%' => (TokenKind::Percent, start + 1),
+            '=' => (TokenKind::Eq, start + 1),
+            '<' => (TokenKind::Lt, start + 1),
+            '>' => (TokenKind::Gt, start + 1),
+            '!' => (TokenKind::Not, start + 1),
+            '&' => (TokenKind::Amp, start + 1),
+            '|' => (TokenKind::Pipe, start + 1),
+            '^' => (TokenKind::Caret, start + 1),
+            ',' => (TokenKind::Comma, start + 1),
+            ':' => (TokenKind::Colon, start + 1),
+            ';' => (TokenKind::Semi, start + 1),
+            '.' => (TokenKind::Dot, start + 1),
+            '(' => (TokenKind::LParen, start + 1),
+            ')' => (TokenKind::RParen, start + 1),
+            '[' => (TokenKind::LBracket, start + 1),
+            ']' => (TokenKind::RBracket, start + 1),
+            '{' => (TokenKind::LBrace, start + 1),
+            '}' => (TokenKind::RBrace, start + 1),
+            '@' => (TokenKind::At, start + 1),
+            '#' => (TokenKind::Hash, start + 1),
+            '$' => (TokenKind::Dollar, start + 1),
+            '?' => (TokenKind::Question, start + 1),
+            _ => (TokenKind::Unknown, start + 1),
+        }
+    }
+
+    // ---- Pattern Matching ----
+
+    /// Match input tokens against a pattern.
+    fn match_pattern(
+        &self,
+        pattern: &MacroPattern,
+        input: &TokenStream,
+    ) -> Option<HashMap<String, CapturedValue>> {
+        let mut captures: HashMap<String, CapturedValue> = HashMap::new();
+        let mut input_pos: USize = 0;
+
+        let mut i: USize = 0;
+        while i < pattern.parts.len() {
+            let part = &pattern.parts[i];
+            match part {
+                MacroPatternPart::Group { pattern: inner, .. } => {
+                    // For the outer group, match contents directly
+                    if !self.match_pattern_parts(inner, input, &mut input_pos, &mut captures) {
+                        return Option::None;
+                    }
+                }
+                _ => {
+                    if !self.match_single_part(part, input, &mut input_pos, &mut captures) {
+                        return Option::None;
+                    }
+                }
+            }
+            i = i + 1;
+        }
+
+        Option::Some(captures)
+    }
+
+    /// Match pattern parts against input tokens.
+    fn match_pattern_parts(
+        &self,
+        parts: &[MacroPatternPart],
+        input: &TokenStream,
+        pos: &mut USize,
+        captures: &mut HashMap<String, CapturedValue>,
+    ) -> Bool {
+        let mut i: USize = 0;
+        while i < parts.len() {
+            if !self.match_single_part(&parts[i], input, pos, captures) {
+                return false;
+            }
+            i = i + 1;
+        }
+        true
+    }
+
+    /// Match a single pattern part.
+    fn match_single_part(
+        &self,
+        part: &MacroPatternPart,
+        input: &TokenStream,
+        pos: &mut USize,
+        captures: &mut HashMap<String, CapturedValue>,
+    ) -> Bool {
+        match part {
+            MacroPatternPart::Token { kind, .. } => {
+                if *pos >= input.len() {
+                    return false;
+                }
+                match input.get(*pos) {
+                    Option::Some(TokenTree::Token(t)) => {
+                        if t.kind == *kind {
+                            *pos = *pos + 1;
+                            return true;
+                        }
+                    }
+                    _ => {}
+                }
+                false
+            }
+
+            MacroPatternPart::Capture { name, fragment, .. } => {
+                let name_str = name.name.clone();
+
+                // Capture tokens based on fragment type
+                match self.capture_fragment(*fragment, input, pos) {
+                    Option::Some(captured) => {
+                        captures.insert(name_str, captured);
+                        true
+                    }
+                    Option::None => false,
+                }
+            }
+
+            MacroPatternPart::Repetition { pattern, separator, kind, .. } => {
+                let mut repeated: Vec<(String, CapturedValue)> = Vec::new();
+                let mut first = true;
+
+                loop {
+                    // Check if we need a separator
+                    if !first {
+                        match separator {
+                            Option::Some(sep) => {
+                                if *pos < input.len() {
+                                    match input.get(*pos) {
+                                        Option::Some(TokenTree::Token(t)) => {
+                                            if t.kind == *sep {
+                                                *pos = *pos + 1;
+                                            } else {
+                                                break;
+                                            }
+                                        }
+                                        _ => break,
+                                    }
+                                } else {
+                                    break;
+                                }
+                            }
+                            Option::None => {}
+                        }
+                    }
+
+                    // Try to match the pattern
+                    let start_pos = *pos;
+                    let mut inner_captures: HashMap<String, CapturedValue> = HashMap::new();
+                    if self.match_pattern_parts(pattern, input, pos, &mut inner_captures) {
+                        // Collect captures from this iteration
+                        for (k, v) in inner_captures {
+                            repeated.push((k, v));
+                        }
+                        first = false;
+                    } else {
+                        *pos = start_pos;
+                        break;
+                    }
+                }
+
+                // Check repetition constraints
+                let count = repeated.len();
+                match kind {
+                    RepetitionKind::ZeroOrMore => {} // Always ok
+                    RepetitionKind::OneOrMore => {
+                        if count == 0 {
+                            return false;
+                        }
+                    }
+                    RepetitionKind::ZeroOrOne => {
+                        if count > 1 {
+                            return false;
+                        }
+                    }
+                }
+
+                // Store repeated captures grouped by name
+                for (name, value) in repeated {
+                    let entry = captures.entry(name.clone())
+                        .or_insert(CapturedValue::Repeated(Vec::new()));
+                    match entry {
+                        CapturedValue::Repeated(vec) => vec.push(value),
+                        CapturedValue::Single { .. } => {
+                            // Convert single to repeated
+                            let old = entry.clone();
+                            *entry = CapturedValue::Repeated(vec![old, value]);
+                        }
+                    }
+                }
+
+                true
+            }
+
+            MacroPatternPart::Group { delimiter, pattern, .. } => {
+                // Match a delimited group
+                if *pos >= input.len() {
+                    return false;
+                }
+
+                match input.get(*pos) {
+                    Option::Some(TokenTree::Group { delimiter: d, stream, .. }) => {
+                        if *d == *delimiter {
+                            let mut inner_pos: USize = 0;
+                            if self.match_pattern_parts(pattern, stream, &mut inner_pos, captures) {
+                                *pos = *pos + 1;
+                                return true;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                false
+            }
+        }
+    }
+
+    /// Capture a fragment based on its type.
+    fn capture_fragment(
+        &self,
+        fragment: FragmentKind,
+        input: &TokenStream,
+        pos: &mut USize,
+    ) -> Option<CapturedValue> {
+        if *pos >= input.len() {
+            return Option::None;
+        }
+
+        match fragment {
+            FragmentKind::Expr => {
+                // Capture a single token or group for now
+                // A proper implementation would parse expressions
+                match input.get(*pos) {
+                    Option::Some(tree) => {
+                        let source = self.tree_to_source(tree);
+                        *pos = *pos + 1;
+                        Option::Some(CapturedValue::Single {
+                            tokens: TokenStream::from_vec(vec![tree.clone()]),
+                            source,
+                        })
+                    }
+                    Option::None => Option::None,
+                }
+            }
+
+            FragmentKind::Ident => {
+                match input.get(*pos) {
+                    Option::Some(TokenTree::Token(t)) => {
+                        if t.kind == TokenKind::Ident || t.kind == TokenKind::TypeIdent {
+                            let source = self.token_to_source(t);
+                            *pos = *pos + 1;
+                            return Option::Some(CapturedValue::Single {
+                                tokens: TokenStream::from_vec(vec![TokenTree::Token(t.clone())]),
+                                source,
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+                Option::None
+            }
+
+            FragmentKind::Literal => {
+                match input.get(*pos) {
+                    Option::Some(TokenTree::Token(t)) => {
+                        let is_literal = t.kind == TokenKind::IntLit
+                            || t.kind == TokenKind::FloatLit
+                            || t.kind == TokenKind::StringLit
+                            || t.kind == TokenKind::CharLit;
+                        if is_literal {
+                            let source = self.token_to_source(t);
+                            *pos = *pos + 1;
+                            return Option::Some(CapturedValue::Single {
+                                tokens: TokenStream::from_vec(vec![TokenTree::Token(t.clone())]),
+                                source,
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+                Option::None
+            }
+
+            FragmentKind::TokenTree => {
+                match input.get(*pos) {
+                    Option::Some(tree) => {
+                        let source = self.tree_to_source(tree);
+                        *pos = *pos + 1;
+                        Option::Some(CapturedValue::Single {
+                            tokens: TokenStream::from_vec(vec![tree.clone()]),
+                            source,
+                        })
+                    }
+                    Option::None => Option::None,
+                }
+            }
+
+            // For complex fragments, capture a single token tree for now
+            FragmentKind::Ty
+            | FragmentKind::Pat
+            | FragmentKind::Block
+            | FragmentKind::Stmt
+            | FragmentKind::Item => {
+                match input.get(*pos) {
+                    Option::Some(tree) => {
+                        let source = self.tree_to_source(tree);
+                        *pos = *pos + 1;
+                        Option::Some(CapturedValue::Single {
+                            tokens: TokenStream::from_vec(vec![tree.clone()]),
+                            source,
+                        })
+                    }
+                    Option::None => Option::None,
+                }
+            }
+        }
+    }
+
+    // ---- Source Text Conversion ----
+
+    /// Convert a token to its source text representation.
+    fn token_to_source(&self, token: &MacroToken) -> String {
+        let start = token.span.start;
+        let end = token.span.end;
+
+        // Try to extract from current_content first
+        if !self.current_content.is_empty() && start < self.current_content.len() && end <= self.current_content.len() {
+            return self.current_content[start..end].to_string();
+        }
+
+        // Try original source
+        if !self.source.is_empty() && start < self.source.len() && end <= self.source.len() {
+            return self.source[start..end].to_string();
+        }
+
+        // Fallback to token kind representation
+        match token.kind {
+            TokenKind::Plus => "+".to_string(),
+            TokenKind::Minus => "-".to_string(),
+            TokenKind::Star => "*".to_string(),
+            TokenKind::Slash => "/".to_string(),
+            TokenKind::Percent => "%".to_string(),
+            TokenKind::Eq => "=".to_string(),
+            TokenKind::EqEq => "==".to_string(),
+            TokenKind::NotEq => "!=".to_string(),
+            TokenKind::Lt => "<".to_string(),
+            TokenKind::LtEq => "<=".to_string(),
+            TokenKind::Gt => ">".to_string(),
+            TokenKind::GtEq => ">=".to_string(),
+            TokenKind::And => "&&".to_string(),
+            TokenKind::Or => "||".to_string(),
+            TokenKind::Not => "!".to_string(),
+            TokenKind::Comma => ",".to_string(),
+            TokenKind::Colon => ":".to_string(),
+            TokenKind::ColonColon => "::".to_string(),
+            TokenKind::Semi => ";".to_string(),
+            TokenKind::Dot => ".".to_string(),
+            TokenKind::DotDot => "..".to_string(),
+            TokenKind::Arrow => "->".to_string(),
+            TokenKind::FatArrow => "=>".to_string(),
+            TokenKind::LParen => "(".to_string(),
+            TokenKind::RParen => ")".to_string(),
+            TokenKind::LBracket => "[".to_string(),
+            TokenKind::RBracket => "]".to_string(),
+            TokenKind::LBrace => "{".to_string(),
+            TokenKind::RBrace => "}".to_string(),
+            TokenKind::At => "@".to_string(),
+            TokenKind::Hash => "#".to_string(),
+            TokenKind::Dollar => "$".to_string(),
+            TokenKind::Question => "?".to_string(),
+            TokenKind::Amp => "&".to_string(),
+            TokenKind::Pipe => "|".to_string(),
+            TokenKind::Caret => "^".to_string(),
+            TokenKind::Shl => "<<".to_string(),
+            TokenKind::Shr => ">>".to_string(),
+            _ => "_".to_string(),
+        }
+    }
+
+    /// Convert a token tree to source text.
+    fn tree_to_source(&self, tree: &TokenTree) -> String {
+        match tree {
+            TokenTree::Token(t) => self.token_to_source(t),
+            TokenTree::Group { delimiter, stream, .. } => {
+                let (open, close) = match delimiter {
+                    MacroDelimiter::Paren => ("(", ")"),
+                    MacroDelimiter::Bracket => ("[", "]"),
+                    MacroDelimiter::Brace => ("{", "}"),
+                };
+                let mut inner = String::new();
+                let mut i: USize = 0;
+                while i < stream.len() {
+                    if i > 0 {
+                        inner.push(' ');
+                    }
+                    match stream.get(i) {
+                        Option::Some(t) => inner.push_str(&self.tree_to_source(t)),
+                        Option::None => {}
+                    }
+                    i = i + 1;
+                }
+                format!("{}{}{}", open, inner, close)
+            }
+        }
+    }
+
+    // ---- Substitution ----
+
+    /// Substitute captures into expansion template, producing source code.
+    fn substitute_to_source(
+        &self,
+        expansion: &MacroExpansion,
+        captures: &HashMap<String, CapturedValue>,
+    ) -> Result<String, String> {
+        let mut result = String::new();
+
+        let mut i: USize = 0;
+        while i < expansion.parts.len() {
+            match self.substitute_part_to_source(&expansion.parts[i], captures, &mut result) {
+                Result::Ok(()) => {}
+                Result::Err(e) => return Result::Err(e),
+            }
+            i = i + 1;
+        }
+
+        Result::Ok(result)
+    }
+
+    /// Substitute a single expansion part to source.
+    fn substitute_part_to_source(
+        &self,
+        part: &MacroExpansionPart,
+        captures: &HashMap<String, CapturedValue>,
+        result: &mut String,
+    ) -> Result<(), String> {
+        match part {
+            MacroExpansionPart::Tokens(tokens) => {
+                let mut i: USize = 0;
+                while i < tokens.len() {
+                    result.push_str(&self.token_to_source(&tokens[i]));
+                    result.push(' ');
+                    i = i + 1;
+                }
+                Result::Ok(())
+            }
+
+            MacroExpansionPart::Substitution { name, .. } => {
+                let name_str = &name.name;
+
+                match captures.get(name_str) {
+                    Option::Some(captured) => {
+                        match captured {
+                            CapturedValue::Single { source, .. } => {
+                                result.push_str(source);
+                                result.push(' ');
+                            }
+                            CapturedValue::Repeated(items) => {
+                                let mut i: USize = 0;
+                                while i < items.len() {
+                                    match &items[i] {
+                                        CapturedValue::Single { source, .. } => {
+                                            result.push_str(source);
+                                            result.push(' ');
+                                        }
+                                        _ => {}
+                                    }
+                                    i = i + 1;
+                                }
+                            }
+                        }
+                        Result::Ok(())
+                    }
+                    Option::None => {
+                        Result::Err(format!("undefined capture: ${}", name_str))
+                    }
+                }
+            }
+
+            MacroExpansionPart::Repetition { parts, separator, .. } => {
+                // Find the repeat count from captured values
+                let mut repeat_count: USize = 0;
+                let mut i: USize = 0;
+                while i < parts.len() {
+                    match &parts[i] {
+                        MacroExpansionPart::Substitution { name, .. } => {
+                            match captures.get(&name.name) {
+                                Option::Some(CapturedValue::Repeated(items)) => {
+                                    if items.len() > repeat_count {
+                                        repeat_count = items.len();
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        _ => {}
+                    }
+                    i = i + 1;
+                }
+
+                // Emit the repetition
+                i = 0;
+                while i < repeat_count {
+                    if i > 0 {
+                        match separator {
+                            Option::Some(sep) => {
+                                result.push_str(&self.token_to_source(sep));
+                                result.push(' ');
+                            }
+                            Option::None => {}
+                        }
+                    }
+
+                    // Create captures for this iteration
+                    let mut iter_captures: HashMap<String, CapturedValue> = HashMap::new();
+                    for (name, value) in captures.iter() {
+                        match value {
+                            CapturedValue::Single { tokens, source } => {
+                                iter_captures.insert(name.clone(), CapturedValue::Single {
+                                    tokens: tokens.clone(),
+                                    source: source.clone(),
+                                });
+                            }
+                            CapturedValue::Repeated(items) => {
+                                if i < items.len() {
+                                    iter_captures.insert(name.clone(), items[i].clone());
+                                } else {
+                                    iter_captures.insert(name.clone(), CapturedValue::Single {
+                                        tokens: TokenStream::new(),
+                                        source: String::new(),
+                                    });
+                                }
+                            }
+                        }
+                    }
+
+                    // Substitute parts for this iteration
+                    let mut j: USize = 0;
+                    while j < parts.len() {
+                        match self.substitute_part_to_source(&parts[j], &iter_captures, result) {
+                            Result::Ok(()) => {}
+                            Result::Err(e) => return Result::Err(e),
+                        }
+                        j = j + 1;
+                    }
+
+                    i = i + 1;
+                }
+
+                Result::Ok(())
+            }
+
+            MacroExpansionPart::Group { delimiter, parts, .. } => {
+                let (open, close) = match delimiter {
+                    MacroDelimiter::Paren => ("(", ")"),
+                    MacroDelimiter::Bracket => ("[", "]"),
+                    MacroDelimiter::Brace => ("{", "}"),
+                };
+                result.push_str(open);
+
+                let mut i: USize = 0;
+                while i < parts.len() {
+                    match self.substitute_part_to_source(&parts[i], captures, result) {
+                        Result::Ok(()) => {}
+                        Result::Err(e) => return Result::Err(e),
+                    }
+                    i = i + 1;
+                }
+
+                result.push_str(close);
+                Result::Ok(())
+            }
+        }
+    }
+
+    // ---- Hygiene ----
+
+    /// Apply hygiene scope to a token stream.
+    pub fn apply_hygiene(&self, stream: &mut TokenStream, scope: HygieneId) {
+        let mut i: USize = 0;
+        while i < stream.tokens.len() {
+            match &mut stream.tokens[i] {
+                TokenTree::Token(t) => {
+                    // Apply scope to identifiers
+                    if t.kind == TokenKind::Ident || t.kind == TokenKind::TypeIdent {
+                        t.hygiene = scope;
+                    }
+                }
+                TokenTree::Group { stream: inner, .. } => {
+                    self.apply_hygiene(inner, scope);
+                }
+            }
+            i = i + 1;
+        }
+    }
+
+    /// Generate a fresh hygiene scope.
+    pub fn fresh_hygiene(&mut self) -> HygieneId {
+        let id = HygieneId::new(self.next_hygiene);
+        self.next_hygiene = self.next_hygiene + 1;
+        id
+    }
+}
+
+impl Clone for MacroExpander {
+    fn clone(&self) -> MacroExpander {
+        MacroExpander {
+            macros: self.macros.clone(),
+            source: self.source.clone(),
+            current_content: self.current_content.clone(),
+            next_hygiene: self.next_hygiene,
+            depth: self.depth,
+            errors: self.errors.clone(),
+        }
+    }
+}
+
+// ============================================================
+// Helper Functions
+// ============================================================
+
+/// Check if a character is whitespace.
+fn is_whitespace(c: Char) -> Bool {
+    c == ' ' || c == '\t' || c == '\n' || c == '\r'
+}
+
+/// Check if a character can start an identifier.
+fn is_ident_start(c: Char) -> Bool {
+    c.is_ascii_alphabetic() || c == '_'
+}
+
+/// Check if a character can continue an identifier.
+fn is_ident_continue(c: Char) -> Bool {
+    c.is_ascii_alphanumeric() || c == '_'
+}
+
+// ============================================================
+// Tests
+// ============================================================
+
+#[test]
+fn test_token_stream_new() {
+    let stream = TokenStream::new();
+    assert(stream.is_empty());
+    assert(stream.len() == 0);
+}
+
+#[test]
+fn test_token_stream_push() {
+    let mut stream = TokenStream::new();
+    let token = MacroToken {
+        kind: TokenKind::Ident,
+        span: Span::dummy(),
+        hygiene: HygieneId::root(),
+    };
+    stream.push(TokenTree::Token(token));
+    assert(!stream.is_empty());
+    assert(stream.len() == 1);
+}
+
+#[test]
+fn test_macro_expander_new() {
+    let expander = MacroExpander::new();
+    assert(expander.macros.is_empty());
+    assert(expander.depth == 0);
+}
+
+#[test]
+fn test_macro_expander_with_source() {
+    let expander = MacroExpander::with_source("let x = 42;");
+    assert(expander.source == "let x = 42;");
+}
+
+#[test]
+fn test_is_whitespace() {
+    assert(is_whitespace(' '));
+    assert(is_whitespace('\t'));
+    assert(is_whitespace('\n'));
+    assert(!is_whitespace('a'));
+    assert(!is_whitespace('0'));
+}
+
+#[test]
+fn test_is_ident_start() {
+    assert(is_ident_start('a'));
+    assert(is_ident_start('Z'));
+    assert(is_ident_start('_'));
+    assert(!is_ident_start('0'));
+    assert(!is_ident_start(' '));
+}
+
+#[test]
+fn test_is_ident_continue() {
+    assert(is_ident_continue('a'));
+    assert(is_ident_continue('Z'));
+    assert(is_ident_continue('_'));
+    assert(is_ident_continue('0'));
+    assert(!is_ident_continue(' '));
+}
+
+#[test]
+fn test_hygiene_id() {
+    let root = HygieneId::root();
+    assert(root.0 == 0);
+
+    let id = HygieneId::new(42);
+    assert(id.0 == 42);
+}
+
+#[test]
+fn test_captured_value_clone() {
+    let single = CapturedValue::Single {
+        tokens: TokenStream::new(),
+        source: "test".to_string(),
+    };
+    let cloned = single.clone();
+    match cloned {
+        CapturedValue::Single { source, .. } => assert(source == "test"),
+        _ => panic("expected Single"),
+    }
+}
+
+#[test]
+fn test_fresh_hygiene() {
+    let mut expander = MacroExpander::new();
+    let h1 = expander.fresh_hygiene();
+    let h2 = expander.fresh_hygiene();
+    assert(h1.0 == 1);
+    assert(h2.0 == 2);
+}
