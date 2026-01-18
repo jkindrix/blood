@@ -889,6 +889,8 @@ pub enum TypeArg {
     Type(Type),
     Lifetime(Spanned<Symbol>),
     Const(Expr),
+    /// Associated type binding: `Item = T` in `Iterator<Item = T>`
+    AssocType { name: Spanned<Symbol>, ty: Type },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

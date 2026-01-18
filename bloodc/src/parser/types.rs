@@ -319,8 +319,17 @@ impl<'src> Parser<'src> {
             };
 
             // Parse optional type arguments
+            // Check for fn-trait syntax: Fn(...) -> T, FnMut(...) -> T, FnOnce(...) -> T
             let args = if self.check(TokenKind::Lt) {
                 Some(self.parse_type_args())
+            } else if self.check(TokenKind::LParen) {
+                // Check if this looks like fn-trait syntax by examining the name
+                let name_str = self.interner.resolve(name.node).map(|s| s.to_string());
+                if matches!(name_str.as_deref(), Some("Fn" | "FnMut" | "FnOnce")) {
+                    Some(self.parse_fn_trait_args())
+                } else {
+                    None
+                }
             } else {
                 None
             };
@@ -350,10 +359,19 @@ impl<'src> Parser<'src> {
 
         // Use check_closing_angle() to handle `>`, `>>`, and `>>=`
         while !self.check_closing_angle() && !self.is_at_end() {
-            // Could be a type, lifetime, or const
+            // Could be a type, lifetime, const, or associated type binding
             let arg = if self.check(TokenKind::Lifetime) {
                 self.advance();
                 TypeArg::Lifetime(self.spanned_symbol())
+            } else if (self.check(TokenKind::Ident) || self.check(TokenKind::TypeIdent))
+                && self.check_next(TokenKind::Eq)
+            {
+                // Associated type binding: `Item = T`
+                self.advance(); // consume name
+                let name = self.spanned_symbol();
+                self.advance(); // consume `=`
+                let ty = self.parse_type();
+                TypeArg::AssocType { name, ty }
             } else {
                 TypeArg::Type(self.parse_type())
             };
@@ -375,6 +393,44 @@ impl<'src> Parser<'src> {
 
         // Use expect_closing_angle() to properly split `>>` tokens
         self.expect_closing_angle();
+
+        TypeArgs {
+            args,
+            span: start.merge(self.previous.span),
+        }
+    }
+
+    /// Parse fn-trait style type arguments: `(T1, T2) -> R`
+    ///
+    /// This handles syntax like `FnMut(&T) -> bool` which is parsed as
+    /// `FnMut<((&T,)), bool>` internally.
+    fn parse_fn_trait_args(&mut self) -> TypeArgs {
+        let start = self.current.span;
+        self.expect(TokenKind::LParen);
+
+        // Parse parameter types
+        let mut params = Vec::new();
+        while !self.check(TokenKind::RParen) && !self.is_at_end() {
+            params.push(self.parse_type());
+            if !self.try_consume(TokenKind::Comma) {
+                break;
+            }
+        }
+        self.expect(TokenKind::RParen);
+
+        // Create a tuple type for the parameters
+        let params_tuple = Type {
+            kind: TypeKind::Tuple(params),
+            span: start.merge(self.previous.span),
+        };
+
+        let mut args = vec![TypeArg::Type(params_tuple)];
+
+        // Parse optional return type
+        if self.try_consume(TokenKind::Arrow) {
+            let return_type = self.parse_type();
+            args.push(TypeArg::Type(return_type));
+        }
 
         TypeArgs {
             args,
