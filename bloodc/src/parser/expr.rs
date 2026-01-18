@@ -964,10 +964,11 @@ impl<'src> Parser<'src> {
         let kind = match macro_name.as_str() {
             // Format-style macros: format!("...", args), println!("...", args), etc.
             // Also includes todo! and unimplemented! which behave like panic! with default messages
-            "format" | "println" | "print" | "eprintln" | "eprint" | "panic" | "write" | "writeln"
-            | "todo" | "unimplemented" => {
-                self.parse_format_macro_args(delim, close_kind)
-            }
+            "format" | "println" | "print" | "eprintln" | "eprint" | "panic" | "todo"
+            | "unimplemented" => self.parse_format_macro_args(delim, close_kind),
+
+            // Write macros: write!(dest, "...", args) - destination first, then format string
+            "write" | "writeln" => self.parse_write_macro_args(close_kind),
 
             // Vec macro: vec![1, 2, 3] or vec![0; 10]
             "vec" => {
@@ -1061,6 +1062,98 @@ impl<'src> Parser<'src> {
         }
 
         MacroCallKind::Format { format_str, args }
+    }
+
+    /// Parse write! macro arguments: `dest, "format string", arg1, arg2, ...`
+    fn parse_write_macro_args(&mut self, close_kind: TokenKind) -> crate::ast::MacroCallKind {
+        use crate::ast::MacroCallKind;
+        use crate::span::Spanned;
+
+        // Empty macro call is an error for write!
+        if self.check(close_kind) {
+            self.error_at_current(
+                "write! requires at least a destination",
+                crate::diagnostics::ErrorCode::UnexpectedToken,
+            );
+            self.advance();
+            return MacroCallKind::Write {
+                dest: Box::new(Expr {
+                    span: self.previous.span,
+                    kind: ExprKind::Tuple(Vec::new()),
+                }),
+                format_str: Spanned {
+                    node: String::new(),
+                    span: self.previous.span,
+                },
+                args: Vec::new(),
+            };
+        }
+
+        // First argument is the destination
+        let dest = Box::new(self.parse_expr());
+
+        // Expect comma after destination
+        if !self.check(TokenKind::Comma) {
+            self.error_at_current(
+                "expected `,` after write! destination",
+                crate::diagnostics::ErrorCode::UnexpectedToken,
+            );
+            // Try to recover
+            if self.check(close_kind) {
+                self.advance();
+            }
+            return MacroCallKind::Write {
+                dest,
+                format_str: Spanned {
+                    node: String::new(),
+                    span: self.previous.span,
+                },
+                args: Vec::new(),
+            };
+        }
+        self.advance(); // consume comma
+
+        // Second argument should be a string literal (format string)
+        let format_str = if self.check(TokenKind::StringLit) {
+            let span = self.current.span;
+            let s = self.parse_string_literal_content();
+            Spanned { node: s, span }
+        } else {
+            self.error_at_current(
+                "expected string literal as format string",
+                crate::diagnostics::ErrorCode::UnexpectedToken,
+            );
+            Spanned {
+                node: String::new(),
+                span: self.current.span,
+            }
+        };
+
+        // Parse remaining arguments
+        let mut args = Vec::new();
+        while self.check(TokenKind::Comma) {
+            self.advance(); // consume comma
+            if self.check(close_kind) {
+                break; // trailing comma
+            }
+            args.push(self.parse_expr());
+        }
+
+        // Consume closing delimiter
+        if !self.check(close_kind) {
+            self.error_at_current(
+                &format!("expected `{}` to close macro", close_kind.description()),
+                crate::diagnostics::ErrorCode::UnexpectedToken,
+            );
+        } else {
+            self.advance();
+        }
+
+        MacroCallKind::Write {
+            dest,
+            format_str,
+            args,
+        }
     }
 
     /// Parse vec! macro arguments: `[1, 2, 3]` or `[0; 10]`

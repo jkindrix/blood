@@ -1147,6 +1147,12 @@ pub enum MacroCallKind {
         format_str: Spanned<String>,
         args: Vec<Expr>,
     },
+    /// Built-in write macro: `write!(dest, "...", args)`, `writeln!(dest, "...", args)`
+    Write {
+        dest: Box<Expr>,
+        format_str: Spanned<String>,
+        args: Vec<Expr>,
+    },
     /// Built-in vec macro: `vec![1, 2, 3]` or `vec![0; 10]`
     Vec(VecMacroArgs),
     /// Built-in assert macro: `assert!(cond)` or `assert!(cond, "message")`
