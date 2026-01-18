@@ -12,7 +12,7 @@
 //!
 //! This allows imports like `use std.compiler.lexer::Token` to work.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -337,12 +337,185 @@ impl StdlibLoader {
         Ok(())
     }
 
+    /// Build a dependency graph for glob re-exports.
+    ///
+    /// Returns a map from module path to the list of module paths it depends on
+    /// (i.e., modules it glob-reexports from with `pub use X::*`).
+    fn build_reexport_graph(&self) -> HashMap<String, Vec<String>> {
+        let mut deps: HashMap<String, Vec<String>> = HashMap::new();
+
+        for (module_path, module) in &self.modules {
+            let mut module_deps = Vec::new();
+
+            for import in &module.ast.imports {
+                // Only glob imports with public visibility create dependencies
+                if let ast::Import::Glob { visibility, path, .. } = import {
+                    if *visibility == ast::Visibility::Public {
+                        // Build the full path string from the import path
+                        let dep_path: String = path.segments
+                            .iter()
+                            .filter_map(|seg| module.interner.resolve(seg.node))
+                            .collect::<Vec<_>>()
+                            .join(".");
+
+                        // Only add if this is a known module
+                        if self.modules.contains_key(&dep_path) {
+                            module_deps.push(dep_path);
+                        }
+                    }
+                }
+            }
+
+            deps.insert(module_path.clone(), module_deps);
+        }
+
+        deps
+    }
+
+    /// Sort modules in dependency order for re-export processing.
+    ///
+    /// Returns modules ordered so that dependencies are processed before dependents.
+    /// Returns Err with cycle path if circular dependencies exist.
+    fn topological_sort_modules(
+        &self,
+        deps: &HashMap<String, Vec<String>>,
+    ) -> Result<Vec<String>, StdlibError> {
+        // Build in-degree map (how many modules each module depends on)
+        let mut in_degree: HashMap<&String, usize> = HashMap::new();
+
+        // Initialize all modules with in-degree 0
+        for path in deps.keys() {
+            in_degree.insert(path, 0);
+        }
+
+        // Count dependencies for each module
+        for (path, path_deps) in deps {
+            in_degree.insert(path, path_deps.len());
+        }
+
+        // Build reverse map: module -> modules that depend on it (dependents)
+        let mut dependents: HashMap<&String, Vec<&String>> = HashMap::new();
+        for path in deps.keys() {
+            dependents.insert(path, Vec::new());
+        }
+        for (dependent, dep_list) in deps {
+            for dep in dep_list {
+                if let Some(dep_dependents) = dependents.get_mut(dep) {
+                    dep_dependents.push(dependent);
+                }
+            }
+        }
+
+        // Start with modules that have no dependencies (in-degree 0)
+        let mut queue: VecDeque<&String> = in_degree
+            .iter()
+            .filter(|(_, &deg)| deg == 0)
+            .map(|(&path, _)| path)
+            .collect();
+
+        let mut sorted = Vec::new();
+
+        while let Some(path) = queue.pop_front() {
+            sorted.push(path.clone());
+
+            // Decrease in-degree for all modules that depend on this one
+            if let Some(path_dependents) = dependents.get(path) {
+                for dependent in path_dependents {
+                    if let Some(deg) = in_degree.get_mut(*dependent) {
+                        *deg -= 1;
+                        if *deg == 0 {
+                            queue.push_back(*dependent);
+                        }
+                    }
+                }
+            }
+        }
+
+        // If not all modules processed, there's a cycle
+        if sorted.len() < deps.len() {
+            let cycle = self.find_reexport_cycle(deps);
+            return Err(StdlibError::CyclicReexport { cycle });
+        }
+
+        Ok(sorted)
+    }
+
+    /// Find a cycle in the re-export dependency graph using DFS.
+    fn find_reexport_cycle(&self, deps: &HashMap<String, Vec<String>>) -> Vec<String> {
+        let mut visited = HashSet::new();
+        let mut rec_stack = HashSet::new();
+        let mut path = Vec::new();
+
+        for start in deps.keys() {
+            if let Some(cycle) = self.dfs_find_cycle(start, deps, &mut visited, &mut rec_stack, &mut path) {
+                return cycle;
+            }
+        }
+
+        // Fallback if we couldn't find the exact cycle
+        vec!["unknown cycle".to_string()]
+    }
+
+    /// DFS helper for cycle detection.
+    fn dfs_find_cycle(
+        &self,
+        node: &String,
+        deps: &HashMap<String, Vec<String>>,
+        visited: &mut HashSet<String>,
+        rec_stack: &mut HashSet<String>,
+        path: &mut Vec<String>,
+    ) -> Option<Vec<String>> {
+        if rec_stack.contains(node) {
+            // Found a cycle - extract from path
+            let cycle_start = path.iter().position(|n| n == node).unwrap_or(0);
+            let mut cycle: Vec<_> = path[cycle_start..].to_vec();
+            cycle.push(node.clone());
+            return Some(cycle);
+        }
+
+        if visited.contains(node) {
+            return None;
+        }
+
+        visited.insert(node.clone());
+        rec_stack.insert(node.clone());
+        path.push(node.clone());
+
+        if let Some(node_deps) = deps.get(node) {
+            for dep in node_deps {
+                if let Some(cycle) = self.dfs_find_cycle(dep, deps, visited, rec_stack, path) {
+                    return Some(cycle);
+                }
+            }
+        }
+
+        path.pop();
+        rec_stack.remove(node);
+        None
+    }
+
     /// Process pub use re-exports for all stdlib modules.
     ///
     /// This handles declarations like `pub use node::Span;` in mod.blood files,
     /// allowing parent modules to re-export items from child modules.
+    ///
+    /// Modules are processed in topological order based on their glob re-export
+    /// dependencies, ensuring that when processing `pub use A::*`, module A's
+    /// re-exports have already been resolved.
     fn process_reexports<'a>(&self, ctx: &mut TypeContext<'a>) -> Result<(), Vec<StdlibError>> {
-        for (module_path, module) in &self.modules {
+        // Build dependency graph and get topologically sorted order
+        let deps = self.build_reexport_graph();
+        let sorted = match self.topological_sort_modules(&deps) {
+            Ok(s) => s,
+            Err(e) => return Err(vec![e]),
+        };
+
+        // Process in dependency order (dependencies first)
+        for module_path in sorted {
+            let module = match self.modules.get(&module_path) {
+                Some(m) => m,
+                None => continue,
+            };
             let module_def_id = match module.def_id {
                 Some(id) => id,
                 None => continue,
@@ -360,7 +533,7 @@ impl StdlibLoader {
                     ast::Import::Glob { visibility, path, .. } => {
                         // Glob re-exports need special handling
                         if *visibility == ast::Visibility::Public {
-                            self.process_glob_reexport(ctx, module_def_id, module_path, &module.interner, path);
+                            self.process_glob_reexport(ctx, module_def_id, &module_path, &module.interner, path);
                         }
                         continue;
                     }
@@ -373,10 +546,10 @@ impl StdlibLoader {
                 // Resolve the import path relative to this module
                 if let Some(items) = items_opt {
                     // Group import: pub use path::{Item1, Item2};
-                    self.process_group_reexport(ctx, module_def_id, module_path, &module.interner, path, items);
+                    self.process_group_reexport(ctx, module_def_id, &module_path, &module.interner, path, items);
                 } else {
                     // Simple import: pub use path::Item;
-                    self.process_simple_reexport(ctx, module_def_id, module_path, &module.interner, path, alias_opt);
+                    self.process_simple_reexport(ctx, module_def_id, &module_path, &module.interner, path, alias_opt);
                 }
             }
         }
@@ -630,6 +803,11 @@ pub enum StdlibError {
     PathNotFound(PathBuf),
     IoError(String),
     ParseError { file: PathBuf, message: String },
+    /// Circular dependency detected in glob re-exports.
+    CyclicReexport {
+        /// The cycle path (e.g., ["std.a", "std.b", "std.a"])
+        cycle: Vec<String>,
+    },
 }
 
 impl std::fmt::Display for StdlibError {
@@ -641,6 +819,9 @@ impl std::fmt::Display for StdlibError {
             StdlibError::IoError(msg) => write!(f, "I/O error: {}", msg),
             StdlibError::ParseError { file, message } => {
                 write!(f, "parse error in {}: {}", file.display(), message)
+            }
+            StdlibError::CyclicReexport { cycle } => {
+                write!(f, "circular dependency in glob re-exports: {}", cycle.join(" -> "))
             }
         }
     }
@@ -982,5 +1163,138 @@ pub fn tokenize(source: &str) -> [Token] {
         // Check that parsing succeeded
         let lexer_module = loader.get_module("std.compiler.lexer").unwrap();
         assert!(!lexer_module.ast.declarations.is_empty());
+    }
+
+    #[test]
+    fn test_build_reexport_graph_no_deps() {
+        // A module with no glob re-exports should have empty dependencies
+        let temp = TempDir::new().unwrap();
+        let std_dir = temp.path().join("std");
+        fs::create_dir_all(&std_dir).unwrap();
+
+        fs::write(
+            std_dir.join("lib.blood"),
+            "pub const X: i32 = 1;",
+        ).unwrap();
+
+        let mut loader = StdlibLoader::new(std_dir);
+        loader.discover().unwrap();
+        loader.parse_all().unwrap();
+
+        let deps = loader.build_reexport_graph();
+        assert!(deps.get("std").map_or(true, |d| d.is_empty()));
+    }
+
+    #[test]
+    fn test_build_reexport_graph_with_deps() {
+        // Module with `pub use child::*` should have child as dependency
+        let temp = TempDir::new().unwrap();
+        let std_dir = temp.path().join("std");
+        let child_dir = std_dir.join("child");
+        fs::create_dir_all(&child_dir).unwrap();
+
+        fs::write(
+            std_dir.join("lib.blood"),
+            "pub use std.child::*;",
+        ).unwrap();
+
+        fs::write(
+            child_dir.join("mod.blood"),
+            "pub const Y: i32 = 2;",
+        ).unwrap();
+
+        let mut loader = StdlibLoader::new(std_dir);
+        loader.discover().unwrap();
+        loader.parse_all().unwrap();
+
+        let deps = loader.build_reexport_graph();
+        let std_deps = deps.get("std").unwrap();
+        assert!(std_deps.contains(&"std.child".to_string()));
+    }
+
+    #[test]
+    fn test_topological_sort_simple_chain() {
+        // c -> b -> a (a depends on nothing, b depends on a, c depends on b)
+        // Should sort as: a, b, c
+        let mut deps: HashMap<String, Vec<String>> = HashMap::new();
+        deps.insert("a".to_string(), Vec::new());
+        deps.insert("b".to_string(), vec!["a".to_string()]);
+        deps.insert("c".to_string(), vec!["b".to_string()]);
+
+        let loader = StdlibLoader::new(PathBuf::new());
+        let sorted = loader.topological_sort_modules(&deps).unwrap();
+
+        // a should come before b, b before c
+        let pos_a = sorted.iter().position(|x| x == "a").unwrap();
+        let pos_b = sorted.iter().position(|x| x == "b").unwrap();
+        let pos_c = sorted.iter().position(|x| x == "c").unwrap();
+
+        assert!(pos_a < pos_b, "a should be processed before b");
+        assert!(pos_b < pos_c, "b should be processed before c");
+    }
+
+    #[test]
+    fn test_topological_sort_parallel_deps() {
+        // d has no deps
+        // c depends on d
+        // b depends on d
+        // a depends on b and c
+        let mut deps: HashMap<String, Vec<String>> = HashMap::new();
+        deps.insert("d".to_string(), Vec::new());
+        deps.insert("c".to_string(), vec!["d".to_string()]);
+        deps.insert("b".to_string(), vec!["d".to_string()]);
+        deps.insert("a".to_string(), vec!["b".to_string(), "c".to_string()]);
+
+        let loader = StdlibLoader::new(PathBuf::new());
+        let sorted = loader.topological_sort_modules(&deps).unwrap();
+
+        let pos_d = sorted.iter().position(|x| x == "d").unwrap();
+        let pos_c = sorted.iter().position(|x| x == "c").unwrap();
+        let pos_b = sorted.iter().position(|x| x == "b").unwrap();
+        let pos_a = sorted.iter().position(|x| x == "a").unwrap();
+
+        // d must come before b and c
+        assert!(pos_d < pos_b, "d should be processed before b");
+        assert!(pos_d < pos_c, "d should be processed before c");
+        // b and c must come before a
+        assert!(pos_b < pos_a, "b should be processed before a");
+        assert!(pos_c < pos_a, "c should be processed before a");
+    }
+
+    #[test]
+    fn test_topological_sort_detects_cycle() {
+        // a -> b -> a (cycle)
+        let mut deps: HashMap<String, Vec<String>> = HashMap::new();
+        deps.insert("a".to_string(), vec!["b".to_string()]);
+        deps.insert("b".to_string(), vec!["a".to_string()]);
+
+        let loader = StdlibLoader::new(PathBuf::new());
+        let result = loader.topological_sort_modules(&deps);
+
+        assert!(result.is_err(), "Should detect cycle");
+        if let Err(StdlibError::CyclicReexport { cycle }) = result {
+            // Cycle should contain both a and b
+            assert!(cycle.contains(&"a".to_string()) || cycle.contains(&"b".to_string()));
+        } else {
+            panic!("Expected CyclicReexport error");
+        }
+    }
+
+    #[test]
+    fn test_topological_sort_detects_longer_cycle() {
+        // a -> b -> c -> a (3-way cycle)
+        let mut deps: HashMap<String, Vec<String>> = HashMap::new();
+        deps.insert("a".to_string(), vec!["b".to_string()]);
+        deps.insert("b".to_string(), vec!["c".to_string()]);
+        deps.insert("c".to_string(), vec!["a".to_string()]);
+
+        let loader = StdlibLoader::new(PathBuf::new());
+        let result = loader.topological_sort_modules(&deps);
+
+        assert!(result.is_err(), "Should detect cycle");
+        match result {
+            Err(StdlibError::CyclicReexport { .. }) => { /* expected */ }
+            _ => panic!("Expected CyclicReexport error"),
+        }
     }
 }
