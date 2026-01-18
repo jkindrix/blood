@@ -73,25 +73,25 @@ use std.traits.cmp.Eq;
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Span {
     /// Start byte offset (inclusive).
-    pub start: U32,
+    pub start: u32,
     /// End byte offset (exclusive).
-    pub end: U32,
+    pub end: u32,
     /// Line number (1-indexed).
-    pub line: U32,
+    pub line: u32,
     /// Column number (1-indexed).
-    pub column: U32,
+    pub column: u32,
 }
 
 impl Span {
     /// Create a new span from start and end positions with line/column info.
-    pub fn new(start: U32, end: U32, line: U32, column: U32) -> Span {
+    pub fn new(start: u32, end: u32, line: u32, column: u32) -> Span {
         Span { start, end, line, column }
     }
 
     /// Create a span from byte offsets only (line/column will be 0).
     ///
     /// Use this when line/column information is not available.
-    pub fn from_offsets(start: U32, end: U32) -> Span {
+    pub fn from_offsets(start: u32, end: u32) -> Span {
         Span { start, end, line: 0, column: 0 }
     }
 
@@ -103,17 +103,17 @@ impl Span {
     }
 
     /// Check if this is a dummy span.
-    pub fn is_dummy(self) -> Bool {
+    pub fn is_dummy(self) -> bool {
         self.start == 0 && self.end == 0
     }
 
     /// Get the length of the span in bytes.
-    pub fn len(self) -> U32 {
+    pub fn len(self) -> u32 {
         self.end - self.start
     }
 
     /// Check if the span is empty.
-    pub fn is_empty(self) -> Bool {
+    pub fn is_empty(self) -> bool {
         self.start >= self.end
     }
 
@@ -146,17 +146,17 @@ impl Span {
     }
 
     /// Check if this span contains a byte offset.
-    pub fn contains(self, offset: U32) -> Bool {
+    pub fn contains(self, offset: u32) -> bool {
         offset >= self.start && offset < self.end
     }
 
     /// Check if this span contains another span entirely.
-    pub fn contains_span(self, other: Span) -> Bool {
+    pub fn contains_span(self, other: Span) -> bool {
         other.start >= self.start && other.end <= self.end
     }
 
     /// Shrink the span by removing bytes from both ends.
-    pub fn shrink(self, amount: U32) -> Span {
+    pub fn shrink(self, amount: u32) -> Span {
         let new_start = self.start + amount;
         let new_end = if self.end > amount { self.end - amount } else { self.start };
         Span {
@@ -265,27 +265,27 @@ impl<T: Debug> Debug for Spanned<T> {
 /// ```
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NodeId {
-    id: U32,
+    id: u32,
 }
 
 impl NodeId {
     /// Create a new node ID.
-    pub fn new(id: U32) -> NodeId {
+    pub fn new(id: u32) -> NodeId {
         NodeId { id }
     }
 
     /// Get the dummy node ID (used for synthetic nodes).
     pub fn dummy() -> NodeId {
-        NodeId { id: U32::MAX }
+        NodeId { id: u32::MAX }
     }
 
     /// Check if this is a dummy node ID.
-    pub fn is_dummy(self) -> Bool {
-        self.id == U32::MAX
+    pub fn is_dummy(self) -> bool {
+        self.id == u32::MAX
     }
 
     /// Get the raw u32 value.
-    pub fn as_u32(self) -> U32 {
+    pub fn as_u32(self) -> u32 {
         self.id
     }
 }
@@ -321,28 +321,28 @@ impl Debug for NodeId {
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Symbol {
     /// Index into the string interner.
-    index: U32,
+    index: u32,
 }
 
 impl Symbol {
     /// Create a symbol from an interner index.
-    pub fn from_index(index: U32) -> Symbol {
+    pub fn from_index(index: u32) -> Symbol {
         Symbol { index }
     }
 
     /// Get the interner index.
-    pub fn index(self) -> U32 {
+    pub fn index(self) -> u32 {
         self.index
     }
 
     /// Create a dummy symbol.
     pub fn dummy() -> Symbol {
-        Symbol { index: U32::MAX }
+        Symbol { index: u32::MAX }
     }
 
     /// Check if this is a dummy symbol.
-    pub fn is_dummy(self) -> Bool {
-        self.index == U32::MAX
+    pub fn is_dummy(self) -> bool {
+        self.index == u32::MAX
     }
 }
 
@@ -456,17 +456,17 @@ impl Program {
     }
 
     /// Check if the program has a module declaration.
-    pub fn has_module(self) -> Bool {
+    pub fn has_module(self) -> bool {
         self.mod_decl.is_some()
     }
 
     /// Get the number of imports.
-    pub fn import_count(self) -> USize {
+    pub fn import_count(self) -> usize {
         self.imports.len()
     }
 
     /// Get the number of declarations.
-    pub fn declaration_count(self) -> USize {
+    pub fn declaration_count(self) -> usize {
         self.declarations.len()
     }
 }
@@ -514,12 +514,12 @@ impl ModulePath {
     }
 
     /// Check if the path is empty.
-    pub fn is_empty(self) -> Bool {
+    pub fn is_empty(self) -> bool {
         self.segments.is_empty()
     }
 
     /// Get the number of segments.
-    pub fn len(self) -> USize {
+    pub fn len(self) -> usize {
         self.segments.len()
     }
 
@@ -604,7 +604,7 @@ impl Import {
     }
 
     /// Check if this is a public import (pub use).
-    pub fn is_public(self) -> Bool {
+    pub fn is_public(self) -> bool {
         match self.visibility() {
             Visibility::Public => true,
             _ => false,
@@ -659,7 +659,7 @@ pub enum Visibility {
 
 impl Visibility {
     /// Check if this visibility is public (any form).
-    pub fn is_public(self) -> Bool {
+    pub fn is_public(self) -> bool {
         match self {
             Visibility::Private => false,
             _ => true,
@@ -667,7 +667,7 @@ impl Visibility {
     }
 
     /// Check if this is fully public (visible everywhere).
-    pub fn is_fully_public(self) -> Bool {
+    pub fn is_fully_public(self) -> bool {
         match self {
             Visibility::Public => true,
             _ => false,
