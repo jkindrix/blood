@@ -814,18 +814,15 @@ impl<'a> TypeContext<'a> {
             "string_clear",
         );
 
-        // String.char_at(&self, index: usize) -> Option<char>
-        // Helper for accessing character at byte index (alternative to chars().nth())
-        let option_char = Type::adt(
-            self.option_def_id.expect("BUG: option_def_id not set"),
-            vec![Type::char()],
-        );
+        // String.char_at(&self, index: usize) -> char
+        // Access character at byte index (panics on out of bounds)
+        // Blood code typically does bounds check before calling this
         self.register_builtin_method(
             BuiltinMethodType::String,
             "char_at",
             false,
             vec![Type::reference(string_ty.clone(), false), usize_ty.clone()],
-            option_char,
+            Type::char(),
             "string_char_at",
         );
 
@@ -952,6 +949,80 @@ impl<'a> TypeContext<'a> {
         );
 
         // =========================================================================
+        // Array [T; N] methods
+        // =========================================================================
+
+        // Array types in Blood are growable (like Vec in semantic terms)
+        // [T; N].len(&self) -> usize
+        let array_elem_t = self.unifier.fresh_var();
+        let array_ty = Type::array(array_elem_t.clone(), 0); // Size 0 as placeholder
+        self.register_builtin_method(
+            BuiltinMethodType::Array,
+            "len",
+            false,
+            vec![Type::reference(array_ty.clone(), false)],
+            usize_ty.clone(),
+            "array_len",
+        );
+
+        // [T; N].push(&mut self, value: T)
+        self.register_builtin_method(
+            BuiltinMethodType::Array,
+            "push",
+            false,
+            vec![Type::reference(array_ty.clone(), true), array_elem_t.clone()],
+            Type::unit(),
+            "array_push",
+        );
+
+        // [T; N].is_empty(&self) -> bool
+        self.register_builtin_method(
+            BuiltinMethodType::Array,
+            "is_empty",
+            false,
+            vec![Type::reference(array_ty.clone(), false)],
+            bool_ty.clone(),
+            "array_is_empty",
+        );
+
+        // =========================================================================
+        // Slice [T] methods
+        // =========================================================================
+
+        let slice_elem_t = self.unifier.fresh_var();
+        let slice_ty = Type::slice(slice_elem_t.clone());
+
+        // [T].len(&self) -> usize
+        self.register_builtin_method(
+            BuiltinMethodType::Slice,
+            "len",
+            false,
+            vec![Type::reference(slice_ty.clone(), false)],
+            usize_ty.clone(),
+            "slice_len",
+        );
+
+        // [T].push(&mut self, value: T)
+        self.register_builtin_method(
+            BuiltinMethodType::Slice,
+            "push",
+            false,
+            vec![Type::reference(slice_ty.clone(), true), slice_elem_t.clone()],
+            Type::unit(),
+            "slice_push",
+        );
+
+        // [T].is_empty(&self) -> bool
+        self.register_builtin_method(
+            BuiltinMethodType::Slice,
+            "is_empty",
+            false,
+            vec![Type::reference(slice_ty.clone(), false)],
+            bool_ty.clone(),
+            "slice_is_empty",
+        );
+
+        // =========================================================================
         // Range<T> methods
         // =========================================================================
 
@@ -1009,6 +1080,8 @@ impl<'a> TypeContext<'a> {
                 super::BuiltinMethodType::Vec => "Vec",
                 super::BuiltinMethodType::Range => "Range",
                 super::BuiltinMethodType::RangeInclusive => "RangeInclusive",
+                super::BuiltinMethodType::Slice => "Slice",
+                super::BuiltinMethodType::Array => "Array",
             },
             name
         );

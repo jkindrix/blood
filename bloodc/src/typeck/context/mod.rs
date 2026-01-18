@@ -346,6 +346,10 @@ pub enum BuiltinMethodType {
     Range,
     /// Matches `RangeInclusive<T>` type.
     RangeInclusive,
+    /// Matches `[T]` slice type.
+    Slice,
+    /// Matches `[T; N]` array type.
+    Array,
 }
 
 /// Information about a builtin method for primitive/builtin types.
