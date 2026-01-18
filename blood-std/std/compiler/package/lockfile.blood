@@ -32,7 +32,7 @@ use std.collections::{Vec, HashMap};
 use super.version::Version;
 
 /// The current lock file format version.
-pub const LOCKFILE_VERSION: U32 = 1;
+pub const LOCKFILE_VERSION: u32 = 1;
 
 /// Default registry URL.
 pub const DEFAULT_REGISTRY: &str = "https://blood-lang.org/packages";
@@ -45,7 +45,7 @@ pub const DEFAULT_REGISTRY: &str = "https://blood-lang.org/packages";
 #[derive(Clone)]
 pub struct Lockfile {
     /// Lock file format version.
-    pub version: U32,
+    pub version: u32,
     /// Resolved packages.
     pub packages: Vec<LockedPackage>,
 }
@@ -80,7 +80,7 @@ impl Lockfile {
             // Check for version
             if line.starts_with("version = ") {
                 let value = &line[10..].trim();
-                match value.parse::<U32>() {
+                match value.parse::<u32>() {
                     Option::Some(v) => {
                         if v != LOCKFILE_VERSION {
                             return Result::Err(LockfileError::VersionMismatch {
@@ -491,7 +491,7 @@ pub enum LockfileError {
     /// TOML parse error.
     Parse(String),
     /// Lock file version mismatch.
-    VersionMismatch { expected: U32, found: U32 },
+    VersionMismatch { expected: u32, found: u32 },
     /// Serialization error.
     Serialization(String),
 }

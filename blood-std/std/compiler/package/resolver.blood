@@ -77,7 +77,7 @@ impl Resolution {
 
     /// Get a resolved package by ID.
     pub fn get(&self, id: &PackageId) -> Option<&ResolvedPackage> {
-        let mut i: USize = 0;
+        let mut i: usize = 0;
         while i < self.packages.len() {
             if self.packages[i].id == *id {
                 return Option::Some(&self.packages[i]);
@@ -88,12 +88,13 @@ impl Resolution {
     }
 
     /// Get all packages in topological order (dependencies before dependents).
-    pub fn topological_order(&self) -> Vec<&ResolvedPackage> {
-        let mut result: Vec<&ResolvedPackage> = Vec::new();
+    /// Returns cloned PackageIds in order.
+    pub fn topological_order(&self) -> Vec<PackageId> {
+        let mut result: Vec<PackageId> = Vec::new();
         let mut visited: HashSet<PackageId> = HashSet::new();
         let mut visiting: HashSet<PackageId> = HashSet::new();
 
-        let mut i: USize = 0;
+        let mut i: usize = 0;
         while i < self.packages.len() {
             self.topo_visit(&self.packages[i].id, &mut visited, &mut visiting, &mut result);
             i = i + 1;
@@ -102,12 +103,12 @@ impl Resolution {
         result
     }
 
-    fn topo_visit<'a>(
-        &'a self,
+    fn topo_visit(
+        &self,
         id: &PackageId,
         visited: &mut HashSet<PackageId>,
         visiting: &mut HashSet<PackageId>,
-        result: &mut Vec<&'a ResolvedPackage>,
+        result: &mut Vec<PackageId>,
     ) {
         if visited.contains(id) {
             return;
@@ -121,7 +122,7 @@ impl Resolution {
 
         match self.graph.get(id) {
             Option::Some(deps) => {
-                let mut i: USize = 0;
+                let mut i: usize = 0;
                 while i < deps.len() {
                     self.topo_visit(&deps[i], visited, visiting, result);
                     i = i + 1;
@@ -133,17 +134,14 @@ impl Resolution {
         visiting.remove(id);
         visited.insert(id.clone());
 
-        match self.get(id) {
-            Option::Some(pkg) => result.push(pkg),
-            Option::None => {}
-        }
+        result.push(id.clone());
     }
 
     /// Generate a lockfile from this resolution.
     pub fn to_lockfile(&self) -> Lockfile {
         let mut lockfile = Lockfile::new();
 
-        let mut i: USize = 0;
+        let mut i: usize = 0;
         while i < self.packages.len() {
             let pkg = &self.packages[i];
             let mut locked = LockedPackage::new(pkg.id.name.clone(), pkg.id.version.clone());
@@ -168,7 +166,7 @@ impl Resolution {
             // Add dependencies
             match self.graph.get(&pkg.id) {
                 Option::Some(deps) => {
-                    let mut j: USize = 0;
+                    let mut j: usize = 0;
                     while j < deps.len() {
                         locked.add_dependency(&deps[j].name, &deps[j].version);
                         j = j + 1;
@@ -252,7 +250,7 @@ pub struct PackageMetadata {
     /// Available features.
     pub features: HashMap<String, Vec<String>>,
     /// Is this version yanked?
-    pub yanked: Bool,
+    pub yanked: bool,
 }
 
 /// A dependency specification.
@@ -263,7 +261,7 @@ pub struct DependencySpec {
     /// Version requirement.
     pub req: VersionReq,
     /// Is this optional?
-    pub optional: Bool,
+    pub optional: bool,
     /// Required features.
     pub features: Vec<String>,
 }
@@ -284,7 +282,7 @@ pub struct DependencyReq {
     /// Requested features.
     pub features: Vec<String>,
     /// Is this optional?
-    pub optional: Bool,
+    pub optional: bool,
 }
 
 impl DependencyReq {
@@ -461,7 +459,7 @@ impl Resolver {
         match existing_lock {
             Option::Some(lockfile) => {
                 let locked_versions = lockfile.get_package_versions(name);
-                let mut i: USize = 0;
+                let mut i: usize = 0;
                 while i < locked_versions.len() {
                     let locked = locked_versions[i];
                     if version_req.matches(&locked.version) {
@@ -519,7 +517,7 @@ impl Resolver {
             Option::Some(versions) => {
                 // Find best matching version (newest that satisfies constraint)
                 let mut best: Option<&PackageMetadata> = Option::None;
-                let mut i: USize = 0;
+                let mut i: usize = 0;
                 while i < versions.len() {
                     if !versions[i].yanked && version_req.matches(&versions[i].version) {
                         match best {
@@ -563,7 +561,7 @@ impl Resolver {
 
                         // Recursively resolve dependencies of this package
                         let dependencies = b.dependencies.clone();
-                        let mut j: USize = 0;
+                        let mut j: usize = 0;
                         while j < dependencies.len() {
                             let dep = &dependencies[j];
                             if dep.optional && !req.features.contains(&dep.name) {

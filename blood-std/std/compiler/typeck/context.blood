@@ -27,22 +27,25 @@ use std.option.Option;
 use std.result.Result;
 
 // Parser types
-use crate.compiler.parser.{
+use crate.compiler.parser::{
     Program, Declaration, FnDecl, StructDecl, EnumDecl, TraitDecl, ImplBlock,
     EffectDecl, TypeDecl, ConstDecl, StaticDecl, HandlerDecl, ModItemDecl,
-    TypeParams, Param, Type as AstType, TypeKind as AstTypeKind,
+    TypeParams, Param,
     Expr, ExprKind, Pattern, PatternKind, Block, Stmt, StmtKind,
-    Span, Spanned, ModulePath, Visibility, StructField, EnumVariant,
+    Spanned, ModulePath, Visibility, StructField, EnumVariant,
 };
+use crate.compiler.parser::Span;
+use crate.compiler.parser::Type as parser_type;
+use crate.compiler.parser::TypeKind as parser_type_kind;
 
 // Type system types
-use super.types.{Type, TypeKind, PrimitiveTy, TyVarId, DefId, EffectRow, EffectInstance};
-use super.errors.{TypeError, TypeErrorKind, TypeErrors, Span as TypeSpan};
-use super.resolve.{Scope, TypeDef, TypeDefKind, FnDef, EffectDef, EffectOpDef, StructFieldDef, EnumVariantDef, DefRegistry};
+use super.types::{Type, TypeKind, PrimitiveTy, TyVarId, DefId, EffectRow, EffectInstance, Mutability};
+use super.errors::{TypeError, TypeErrorKind, TypeErrors};
+use super.resolve::{Scope, TypeDef, TypeDefKind, FnDef, EffectDef, EffectOpDef, StructFieldDef, EnumVariantDef, DefRegistry};
 use super.unify.Unifier;
-use super.traits.{TraitResolver, TraitDef, TraitMethodDef, ImplDef, ImplMethodDef, TraitBound};
-use super.effects.{EffectContext, HandlerStack};
-use super.{TypeChecker, TypeCheckResult};
+use super.traits::{TraitResolver, TraitDef, TraitMethodDef, ImplDef, ImplMethodDef, TraitBound};
+use super.effects::{EffectContext, HandlerStack};
+use super::{TypeChecker, TypeCheckResult};
 
 // ============================================================================
 // Program Context
@@ -200,7 +203,7 @@ impl ProgramContext {
         };
 
         // Get effect row if present
-        let effect = match &fn_decl.effects {
+        let effect_row = match &fn_decl.effects {
             Option::Some(row) => Option::Some(self.ast_effect_row_to_effect_row(row)),
             Option::None => Option::None,
         };
@@ -433,7 +436,7 @@ impl ProgramContext {
             Option::None => Type::unit(),
         };
 
-        let effect = match &method.effects {
+        let effect_row = match &method.effects {
             Option::Some(row) => Option::Some(self.ast_effect_row_to_effect_row(row)),
             Option::None => Option::None,
         };
@@ -466,18 +469,18 @@ impl ProgramContext {
         let mut operations: [EffectOpDef] = vec![];
         let mut i: usize = 0;
         while i < effect_decl.operations.len() {
-            let op = &effect_decl.operations[i];
+            let operation = &effect_decl.operations[i];
             let mut param_types: [Type] = vec![];
             let mut j: usize = 0;
-            while j < op.params.len() {
-                param_types.push(self.ast_type_to_type(&op.params[j].ty));
+            while j < operation.params.len() {
+                param_types.push(self.ast_type_to_type(&operation.params[j].ty));
                 j = j + 1;
             }
-            let ret_ty = match &op.return_type {
+            let ret_ty = match &operation.return_type {
                 Option::Some(ty) => self.ast_type_to_type(ty),
                 Option::None => Type::unit(),
             };
-            operations.push(EffectOpDef::new(op.name.value.clone(), param_types, ret_ty));
+            operations.push(EffectOpDef::new(operation.name.value.clone(), param_types, ret_ty));
             i = i + 1;
         }
 
@@ -891,9 +894,9 @@ impl ProgramContext {
                 Type::new(TypeKind::Ref {
                     inner: Box::new(inner_ty),
                     mutability: if *mutable {
-                        super.types.Mutability::Mut
+                        Mutability::Mut
                     } else {
-                        super.types.Mutability::Immut
+                        Mutability::Immut
                     },
                 })
             }
@@ -1263,9 +1266,9 @@ impl ProgramContext {
     }
 
     /// Check a binary operation.
-    fn check_binary_op(&mut self, op: &BinOp, left: &Type, right: &Type, span: &Span) -> Type {
+    fn check_binary_op(&mut self, bin_op: &BinOp, left: &Type, right: &Type, span: &Span) -> Type {
         // TODO: Implement full binary operator type checking
-        match op {
+        match bin_op {
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
                 let ts = self.ast_span_to_type_span(span);
                 self.checker.unify_or_error(left, right, ts);
@@ -1291,8 +1294,8 @@ impl ProgramContext {
     }
 
     /// Check a unary operation.
-    fn check_unary_op(&mut self, op: &UnaryOp, operand: &Type, span: &Span) -> Type {
-        match op {
+    fn check_unary_op(&mut self, unary_op: &UnaryOp, operand: &Type, span: &Span) -> Type {
+        match unary_op {
             UnaryOp::Neg => operand.clone(),
             UnaryOp::Not => {
                 let ts = self.ast_span_to_type_span(span);
@@ -1313,13 +1316,13 @@ impl ProgramContext {
             UnaryOp::Ref => {
                 Type::new(TypeKind::Ref {
                     inner: Box::new(operand.clone()),
-                    mutability: super.types.Mutability::Immut,
+                    mutability: Mutability::Immut,
                 })
             }
             UnaryOp::RefMut => {
                 Type::new(TypeKind::Ref {
                     inner: Box::new(operand.clone()),
-                    mutability: super.types.Mutability::Mut,
+                    mutability: Mutability::Mut,
                 })
             }
         }
@@ -1464,9 +1467,9 @@ impl ProgramContext {
                 Type::new(TypeKind::Ref {
                     inner: Box::new(inner_ty),
                     mutability: if *mutable {
-                        super.types.Mutability::Mut
+                        Mutability::Mut
                     } else {
-                        super.types.Mutability::Immut
+                        Mutability::Immut
                     },
                 })
             }
@@ -1475,9 +1478,9 @@ impl ProgramContext {
                 Type::new(TypeKind::Ptr {
                     inner: Box::new(inner_ty),
                     mutability: if *mutable {
-                        super.types.Mutability::Mut
+                        Mutability::Mut
                     } else {
-                        super.types.Mutability::Immut
+                        Mutability::Immut
                     },
                 })
             }
@@ -1489,7 +1492,7 @@ impl ProgramContext {
                     i = i + 1;
                 }
                 let ret_ty = self.ast_type_to_type(ret);
-                let effect = match effects {
+                let effect_row = match effects {
                     Option::Some(row) => Option::Some(self.ast_effect_row_to_effect_row(row)),
                     Option::None => Option::None,
                 };

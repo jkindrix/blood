@@ -31,11 +31,11 @@ use std.cmp::Ordering;
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Version {
     /// Major version (breaking changes).
-    pub major: U64,
+    pub major: u64,
     /// Minor version (new features, backwards compatible).
-    pub minor: U64,
+    pub minor: u64,
     /// Patch version (bug fixes).
-    pub patch: U64,
+    pub patch: u64,
     /// Pre-release identifier (e.g., "alpha", "beta.1").
     pub pre: Option<String>,
     /// Build metadata (e.g., "build.123").
@@ -44,7 +44,7 @@ pub struct Version {
 
 impl Version {
     /// Create a new version.
-    pub fn new(major: U64, minor: U64, patch: U64) -> Version {
+    pub fn new(major: u64, minor: u64, patch: u64) -> Version {
         Version {
             major,
             minor,
@@ -55,7 +55,7 @@ impl Version {
     }
 
     /// Create a new version with pre-release.
-    pub fn with_pre(major: U64, minor: U64, patch: U64, pre: String) -> Version {
+    pub fn with_pre(major: u64, minor: u64, patch: u64, pre: String) -> Version {
         Version {
             major,
             minor,
@@ -98,17 +98,17 @@ impl Version {
             return Result::Err(ParseVersionError::InvalidFormat(s.to_string()));
         }
 
-        let major = match parts[0].parse::<U64>() {
+        let major = match parts[0].parse::<u64>() {
             Option::Some(v) => v,
             Option::None => return Result::Err(ParseVersionError::InvalidNumber(parts[0].to_string())),
         };
 
-        let minor = match parts[1].parse::<U64>() {
+        let minor = match parts[1].parse::<u64>() {
             Option::Some(v) => v,
             Option::None => return Result::Err(ParseVersionError::InvalidNumber(parts[1].to_string())),
         };
 
-        let patch = match parts[2].parse::<U64>() {
+        let patch = match parts[2].parse::<u64>() {
             Option::Some(v) => v,
             Option::None => return Result::Err(ParseVersionError::InvalidNumber(parts[2].to_string())),
         };
@@ -123,7 +123,7 @@ impl Version {
     }
 
     /// Check if this is a pre-release version.
-    pub fn is_prerelease(&self) -> Bool {
+    pub fn is_prerelease(&self) -> bool {
         self.pre.is_some()
     }
 
@@ -286,7 +286,7 @@ impl VersionReq {
     }
 
     /// Check if a version matches this requirement.
-    pub fn matches(&self, version: &Version) -> Bool {
+    pub fn matches(&self, version: &Version) -> bool {
         let mut i: USize = 0;
         while i < self.constraints.len() {
             if !self.constraints[i].matches(version) {
@@ -432,7 +432,7 @@ impl VersionConstraint {
     }
 
     /// Check if a version matches this constraint.
-    pub fn matches(&self, version: &Version) -> Bool {
+    pub fn matches(&self, version: &Version) -> bool {
         match self {
             VersionConstraint::Any => true,
             VersionConstraint::Comparator(cmp) => cmp.matches(version),
@@ -489,7 +489,7 @@ pub struct Comparator {
 
 impl Comparator {
     /// Check if a version matches this comparator.
-    pub fn matches(&self, version: &Version) -> Bool {
+    pub fn matches(&self, version: &Version) -> bool {
         match self.op {
             Op::Exact => *version == self.version,
             Op::Greater => *version > self.version,

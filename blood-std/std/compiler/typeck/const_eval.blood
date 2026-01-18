@@ -32,27 +32,27 @@ use super.errors::{TypeError, TypeErrorKind};
 /// Result of const evaluation - a compile-time known value.
 pub enum ConstResult {
     /// A signed integer value.
-    Int(I128),
+    Int(i128),
     /// An unsigned integer value.
-    Uint(U128),
+    Uint(u128),
     /// A boolean value.
-    Bool(Bool),
+    Bool(bool),
 }
 
 impl ConstResult {
-    /// Try to get as U64 for array sizes.
-    pub fn as_u64(&self) -> Option<U64> {
+    /// Try to get as u64 for array sizes.
+    pub fn as_u64(&self) -> Option<u64> {
         match self {
             ConstResult::Int(v) => {
                 if *v >= 0 && *v <= 18446744073709551615i128 {
-                    Option::Some(*v as U64)
+                    Option::Some(*v as u64)
                 } else {
                     Option::None
                 }
             }
             ConstResult::Uint(v) => {
                 if *v <= 18446744073709551615u128 {
-                    Option::Some(*v as U64)
+                    Option::Some(*v as u64)
                 } else {
                     Option::None
                 }
@@ -62,13 +62,13 @@ impl ConstResult {
     }
 
     /// Get the signed integer value.
-    pub fn as_i128(&self) -> Option<I128> {
+    pub fn as_i128(&self) -> Option<i128> {
         match self {
             ConstResult::Int(v) => Option::Some(*v),
             ConstResult::Uint(v) => {
                 // Check if value fits in i128 (max i128 = 2^127 - 1)
                 if *v <= 170141183460469231731687303715884105727u128 {
-                    Option::Some(*v as I128)
+                    Option::Some(*v as i128)
                 } else {
                     Option::None
                 }
@@ -78,7 +78,7 @@ impl ConstResult {
     }
 
     /// Get the boolean value.
-    pub fn as_bool(&self) -> Option<Bool> {
+    pub fn as_bool(&self) -> Option<bool> {
         match self {
             ConstResult::Bool(b) => Option::Some(*b),
             ConstResult::Int(_) => Option::None,
@@ -109,15 +109,15 @@ pub fn eval_const_expr(expr: &Expr) -> Result<ConstResult, TypeError> {
     match &expr.kind {
         ExprKind::Literal(lit) => eval_literal(lit, expr.span),
 
-        ExprKind::Binary { left, op, right } => {
+        ExprKind::Binary { left, bin_op, right } => {
             let left_val = eval_const_expr(left)?;
             let right_val = eval_const_expr(right)?;
-            eval_binary_op(*op, left_val, right_val, expr.span)
+            eval_binary_op(*bin_op, left_val, right_val, expr.span)
         }
 
-        ExprKind::Unary { op, operand } => {
+        ExprKind::Unary { op: unary_op, operand } => {
             let val = eval_const_expr(operand)?;
-            eval_unary_op(*op, val, expr.span)
+            eval_unary_op(*unary_op, val, expr.span)
         }
 
         ExprKind::Paren(inner) => eval_const_expr(inner),
@@ -501,9 +501,9 @@ fn eval_literal(lit: &Literal, span: Span) -> Result<ConstResult, TypeError> {
             };
 
             if is_unsigned {
-                Result::Ok(ConstResult::Uint(*value as U128))
+                Result::Ok(ConstResult::Uint(*value as u128))
             } else {
-                Result::Ok(ConstResult::Int(*value as I128))
+                Result::Ok(ConstResult::Int(*value as i128))
             }
         }
         LiteralKind::Bool(b) => Result::Ok(ConstResult::Bool(*b)),
@@ -556,13 +556,13 @@ fn eval_literal(lit: &Literal, span: Span) -> Result<ConstResult, TypeError> {
 
 /// Evaluate a binary operation.
 fn eval_binary_op(
-    op: BinOp,
+    bin_op: BinOp,
     left: ConstResult,
     right: ConstResult,
     span: Span,
 ) -> Result<ConstResult, TypeError> {
     // For logical operators, handle separately since they work on bools
-    match op {
+    match bin_op {
         BinOp::And => {
             return eval_logical_and(left, right, span);
         }
@@ -597,7 +597,7 @@ fn eval_binary_op(
         }
     };
 
-    match op {
+    match bin_op {
         BinOp::Add => {
             match checked_add_i128(l, r) {
                 Option::Some(result) => Result::Ok(ConstResult::Int(result)),
@@ -683,7 +683,7 @@ fn eval_binary_op(
                     span,
                 ))
             } else {
-                match checked_shl_i128(l, r as U32) {
+                match checked_shl_i128(l, r as u32) {
                     Option::Some(result) => Result::Ok(ConstResult::Int(result)),
                     Option::None => Result::Err(TypeError::new(
                         TypeErrorKind::ConstEvalError {
@@ -703,7 +703,7 @@ fn eval_binary_op(
                     span,
                 ))
             } else {
-                match checked_shr_i128(l, r as U32) {
+                match checked_shr_i128(l, r as u32) {
                     Option::Some(result) => Result::Ok(ConstResult::Int(result)),
                     Option::None => Result::Err(TypeError::new(
                         TypeErrorKind::ConstEvalError {
@@ -798,8 +798,8 @@ fn eval_logical_or(left: ConstResult, right: ConstResult, span: Span) -> Result<
 // ============================================================
 
 /// Evaluate a unary operation.
-fn eval_unary_op(op: UnaryOp, val: ConstResult, span: Span) -> Result<ConstResult, TypeError> {
-    match op {
+fn eval_unary_op(unary_op: UnaryOp, val: ConstResult, span: Span) -> Result<ConstResult, TypeError> {
+    match unary_op {
         UnaryOp::Neg => {
             let v = match val.as_i128() {
                 Option::Some(v) => v,
@@ -862,7 +862,7 @@ fn eval_unary_op(op: UnaryOp, val: ConstResult, span: Span) -> Result<ConstResul
 // ============================================================
 
 /// Checked addition for I128.
-fn checked_add_i128(a: I128, b: I128) -> Option<I128> {
+fn checked_add_i128(a: I128, b: I128) -> Option<i128> {
     // Check for overflow
     // For signed addition: overflow if signs are same and result has different sign
     let result = a + b;
@@ -874,7 +874,7 @@ fn checked_add_i128(a: I128, b: I128) -> Option<I128> {
 }
 
 /// Checked subtraction for I128.
-fn checked_sub_i128(a: I128, b: I128) -> Option<I128> {
+fn checked_sub_i128(a: I128, b: I128) -> Option<i128> {
     let result = a - b;
     if (b > 0 && result > a) || (b < 0 && result < a) {
         Option::None
@@ -884,7 +884,7 @@ fn checked_sub_i128(a: I128, b: I128) -> Option<I128> {
 }
 
 /// Checked multiplication for I128.
-fn checked_mul_i128(a: I128, b: I128) -> Option<I128> {
+fn checked_mul_i128(a: I128, b: I128) -> Option<i128> {
     if a == 0 || b == 0 {
         return Option::Some(0);
     }
@@ -900,7 +900,7 @@ fn checked_mul_i128(a: I128, b: I128) -> Option<I128> {
 }
 
 /// Checked division for I128.
-fn checked_div_i128(a: I128, b: I128) -> Option<I128> {
+fn checked_div_i128(a: I128, b: I128) -> Option<i128> {
     // Division overflow only occurs for MIN / -1
     if a == -170141183460469231731687303715884105728i128 && b == -1 {
         Option::None
@@ -910,7 +910,7 @@ fn checked_div_i128(a: I128, b: I128) -> Option<I128> {
 }
 
 /// Checked remainder for I128.
-fn checked_rem_i128(a: I128, b: I128) -> Option<I128> {
+fn checked_rem_i128(a: I128, b: I128) -> Option<i128> {
     // Remainder overflow only occurs for MIN % -1
     if a == -170141183460469231731687303715884105728i128 && b == -1 {
         Option::None
@@ -920,7 +920,7 @@ fn checked_rem_i128(a: I128, b: I128) -> Option<I128> {
 }
 
 /// Checked left shift for I128.
-fn checked_shl_i128(a: I128, shift: U32) -> Option<I128> {
+fn checked_shl_i128(a: I128, shift: U32) -> Option<i128> {
     if shift >= 128 {
         Option::None
     } else {
@@ -929,7 +929,7 @@ fn checked_shl_i128(a: I128, shift: U32) -> Option<I128> {
 }
 
 /// Checked right shift for I128.
-fn checked_shr_i128(a: I128, shift: U32) -> Option<I128> {
+fn checked_shr_i128(a: I128, shift: U32) -> Option<i128> {
     if shift >= 128 {
         Option::None
     } else {
@@ -938,7 +938,7 @@ fn checked_shr_i128(a: I128, shift: U32) -> Option<I128> {
 }
 
 /// Checked negation for I128.
-fn checked_neg_i128(a: I128) -> Option<I128> {
+fn checked_neg_i128(a: I128) -> Option<i128> {
     // Negation overflow only occurs for MIN
     if a == -170141183460469231731687303715884105728i128 {
         Option::None
