@@ -342,6 +342,10 @@ pub enum BuiltinMethodType {
     Vec,
     /// Matches `&str` type.
     StrRef,
+    /// Matches `Range<T>` type.
+    Range,
+    /// Matches `RangeInclusive<T>` type.
+    RangeInclusive,
 }
 
 /// Information about a builtin method for primitive/builtin types.
