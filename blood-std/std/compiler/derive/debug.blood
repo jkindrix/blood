@@ -1,0 +1,331 @@
+//! Debug Derive Implementation
+//!
+//! Generates `fn debug(&self) -> String` for structs and enums.
+//!
+//! # Generated Code Example
+//!
+//! ```blood
+//! #[derive(Debug)]
+//! struct Point { x: i32, y: i32 }
+//!
+//! // Generates:
+//! impl Point {
+//!     fn debug(&self) -> String {
+//!         "Point { x: " + self.x.debug() + ", y: " + self.y.debug() + " }"
+//!     }
+//! }
+//! ```
+
+module std.compiler.derive.debug;
+
+use std.collections.Vec;
+use std.option.Option;
+
+use crate.compiler.hir.{
+    Body, BodyId, LocalId, Expr, ExprKind, Stmt, FnSig,
+    Pattern, PatternKind, MatchArm, Span, LiteralValue, BinOp,
+};
+use crate.compiler.typeck.types.{DefId, Type, TypeKind};
+use crate.compiler.derive.{
+    DeriveExpander, DeriveRequest, StructInfo, EnumInfo, FieldInfo, VariantInfo,
+    literal_expr, local_expr, string_literal,
+};
+
+// ============================================================================
+// Debug for Structs
+// ============================================================================
+
+/// Expand Debug derive for a struct.
+pub fn expand_struct(expander: &mut DeriveExpander, request: &DeriveRequest) {
+    let struct_info = match expander.get_struct_info(request) {
+        Option::Some(info) => info.clone(),
+        Option::None => return,
+    };
+
+    let method_def_id = expander.alloc_def_id();
+    let body_id = expander.alloc_body_id();
+
+    let self_ty = expander.get_self_type(request);
+    let self_ref_ty = Type::reference(self_ty.clone(), false);
+
+    // fn debug(&self) -> String
+    let sig = FnSig {
+        params: vec![self_ref_ty.clone()],
+        ret: Type::string(),
+        effect: Option::None,
+        is_unsafe: false,
+    };
+
+    let body = generate_struct_debug_body(&struct_info, &self_ty, body_id, request.span.clone());
+
+    expander.register_fn_sig(method_def_id.clone(), sig);
+    expander.register_body(body_id.clone(), body);
+    expander.register_fn_body(method_def_id.clone(), body_id);
+    expander.register_method_self_type(method_def_id.clone(), self_ty);
+    expander.create_impl_block(request, method_def_id, "debug".to_string(), false);
+}
+
+/// Generate the body of a struct debug method.
+fn generate_struct_debug_body(
+    struct_info: &StructInfo,
+    self_ty: &Type,
+    body_id: BodyId,
+    span: Span,
+) -> Body {
+    let return_local = LocalId::new(0);
+    let self_local = LocalId::new(1);
+    let self_ref_ty = Type::reference(self_ty.clone(), false);
+
+    // Build string: "StructName { field1: value1, field2: value2 }"
+    // Start with "StructName { "
+    let mut result = string_literal(struct_info.name.clone() + " { ", span.clone());
+
+    let mut i: usize = 0;
+    while i < struct_info.fields.len() {
+        let field = &struct_info.fields[i];
+
+        // Add separator if not first field
+        if i > 0 {
+            result = string_concat(result, string_literal(", ".to_string(), span.clone()), &span);
+        }
+
+        // Add "fieldname: "
+        result = string_concat(
+            result,
+            string_literal(field.name.clone() + ": ", span.clone()),
+            &span,
+        );
+
+        // Add self.field.debug()
+        let field_access = Expr::new(
+            ExprKind::Field {
+                base: Box::new(local_expr(self_local.clone(), self_ref_ty.clone(), span.clone())),
+                field: field.name.clone(),
+                field_idx: field.index,
+            },
+            field.ty.clone(),
+            span.clone(),
+        );
+
+        let field_debug = Expr::new(
+            ExprKind::MethodCall {
+                receiver: Box::new(field_access),
+                method: "debug".to_string(),
+                args: Vec::new(),
+            },
+            Type::string(),
+            span.clone(),
+        );
+
+        result = string_concat(result, field_debug, &span);
+
+        i = i + 1;
+    }
+
+    // Add closing " }"
+    result = string_concat(result, string_literal(" }".to_string(), span.clone()), &span);
+
+    Body {
+        id: body_id,
+        params: vec![self_local],
+        locals: Vec::new(),
+        stmts: Vec::new(),
+        value: Option::Some(result),
+        span,
+    }
+}
+
+/// Concatenate two string expressions.
+fn string_concat(lhs: Expr, rhs: Expr, span: &Span) -> Expr {
+    Expr::new(
+        ExprKind::Binary {
+            op: BinOp::Add,  // String concatenation uses +
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+        },
+        Type::string(),
+        span.clone(),
+    )
+}
+
+// ============================================================================
+// Debug for Enums
+// ============================================================================
+
+/// Expand Debug derive for an enum.
+pub fn expand_enum(expander: &mut DeriveExpander, request: &DeriveRequest) {
+    let enum_info = match expander.get_enum_info(request) {
+        Option::Some(info) => info.clone(),
+        Option::None => return,
+    };
+
+    let method_def_id = expander.alloc_def_id();
+    let body_id = expander.alloc_body_id();
+
+    let self_ty = expander.get_self_type(request);
+    let self_ref_ty = Type::reference(self_ty.clone(), false);
+
+    let sig = FnSig {
+        params: vec![self_ref_ty.clone()],
+        ret: Type::string(),
+        effect: Option::None,
+        is_unsafe: false,
+    };
+
+    let body = generate_enum_debug_body(&enum_info, &self_ty, body_id, request.span.clone());
+
+    expander.register_fn_sig(method_def_id.clone(), sig);
+    expander.register_body(body_id.clone(), body);
+    expander.register_fn_body(method_def_id.clone(), body_id);
+    expander.register_method_self_type(method_def_id.clone(), self_ty);
+    expander.create_impl_block(request, method_def_id, "debug".to_string(), false);
+}
+
+/// Generate the body of an enum debug method.
+fn generate_enum_debug_body(
+    enum_info: &EnumInfo,
+    self_ty: &Type,
+    body_id: BodyId,
+    span: Span,
+) -> Body {
+    let return_local = LocalId::new(0);
+    let self_local = LocalId::new(1);
+    let self_ref_ty = Type::reference(self_ty.clone(), false);
+
+    // Build match arms for each variant
+    let mut arms: Vec<MatchArm> = Vec::new();
+
+    let mut i: usize = 0;
+    while i < enum_info.variants.len() {
+        let variant = &enum_info.variants[i];
+        let arm = generate_debug_match_arm(enum_info, variant, &self_ref_ty, &span);
+        arms.push(arm);
+        i = i + 1;
+    }
+
+    let match_expr = Expr::new(
+        ExprKind::Match {
+            scrutinee: Box::new(local_expr(self_local.clone(), self_ref_ty, span.clone())),
+            arms,
+        },
+        Type::string(),
+        span.clone(),
+    );
+
+    Body {
+        id: body_id,
+        params: vec![self_local],
+        locals: Vec::new(),
+        stmts: Vec::new(),
+        value: Option::Some(match_expr),
+        span,
+    }
+}
+
+/// Generate a match arm for debugging a variant.
+fn generate_debug_match_arm(
+    enum_info: &EnumInfo,
+    variant: &VariantInfo,
+    self_ref_ty: &Type,
+    span: &Span,
+) -> MatchArm {
+    let enum_name = &enum_info.name;
+    let variant_name = &variant.name;
+
+    if variant.fields.len() == 0 {
+        // Unit variant: "EnumName::VariantName"
+        let pattern = Pattern::new(
+            PatternKind::Variant {
+                enum_def_id: enum_info.def_id.clone(),
+                variant_name: variant_name.clone(),
+                fields: Vec::new(),
+            },
+            self_ref_ty.clone(),
+            span.clone(),
+        );
+
+        let debug_str = format!("{}::{}", enum_name, variant_name);
+        let body = string_literal(debug_str, span.clone());
+
+        MatchArm {
+            pattern,
+            guard: Option::None,
+            body,
+            span: span.clone(),
+        }
+    } else {
+        // Tuple variant: "EnumName::VariantName(v0.debug(), v1.debug())"
+        let mut bindings: Vec<Pattern> = Vec::new();
+
+        let mut j: usize = 0;
+        while j < variant.fields.len() {
+            let field_ty = &variant.fields[j];
+            bindings.push(Pattern::new(
+                PatternKind::Binding {
+                    name: format!("__v{}", j),
+                    mutable: false,
+                    subpattern: Option::None,
+                },
+                field_ty.clone(),
+                span.clone(),
+            ));
+            j = j + 1;
+        }
+
+        let pattern = Pattern::new(
+            PatternKind::Variant {
+                enum_def_id: enum_info.def_id.clone(),
+                variant_name: variant_name.clone(),
+                fields: bindings,
+            },
+            self_ref_ty.clone(),
+            span.clone(),
+        );
+
+        // Build debug string: "EnumName::VariantName(" + v0.debug() + ", " + v1.debug() + ")"
+        let prefix = format!("{}::{}(", enum_name, variant_name);
+        let mut result = string_literal(prefix, span.clone());
+
+        j = 0;
+        while j < variant.fields.len() {
+            let field_ty = &variant.fields[j];
+            let binding_local = LocalId::new((2 + j) as u32);
+
+            if j > 0 {
+                result = string_concat(result, string_literal(", ".to_string(), span.clone()), span);
+            }
+
+            let field_debug = Expr::new(
+                ExprKind::MethodCall {
+                    receiver: Box::new(local_expr(binding_local, field_ty.clone(), span.clone())),
+                    method: "debug".to_string(),
+                    args: Vec::new(),
+                },
+                Type::string(),
+                span.clone(),
+            );
+
+            result = string_concat(result, field_debug, span);
+            j = j + 1;
+        }
+
+        result = string_concat(result, string_literal(")".to_string(), span.clone()), span);
+
+        MatchArm {
+            pattern,
+            guard: Option::None,
+            body: result,
+            span: span.clone(),
+        }
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[test]
+fn test_debug_method_name() {
+    let kind = crate.compiler.derive.DeriveKind::Debug;
+    assert(kind.method_name() == "debug");
+}

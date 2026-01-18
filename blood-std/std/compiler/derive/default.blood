@@ -1,0 +1,290 @@
+//! Default Derive Implementation
+//!
+//! Generates `fn default() -> Self` for structs.
+//!
+//! # Generated Code Example
+//!
+//! ```blood
+//! #[derive(Default)]
+//! struct Config {
+//!     enabled: bool,
+//!     count: i32,
+//! }
+//!
+//! // Generates:
+//! impl Config {
+//!     fn default() -> Config {
+//!         Config {
+//!             enabled: bool::default(),
+//!             count: i32::default(),
+//!         }
+//!     }
+//! }
+//! ```
+//!
+//! # Note on Enums
+//!
+//! Default for enums requires a `#[default]` attribute on one variant.
+//! Without it, derive(Default) on an enum is an error.
+
+module std.compiler.derive.default;
+
+use std.collections.Vec;
+use std.option.Option;
+
+use crate.compiler.hir.{
+    Body, BodyId, LocalId, Expr, ExprKind, Stmt, FnSig,
+    Pattern, PatternKind, RecordFieldExpr, Span, LiteralValue,
+};
+use crate.compiler.typeck.types.{DefId, Type, TypeKind};
+use crate.compiler.derive.{
+    DeriveExpander, DeriveRequest, StructInfo, EnumInfo, FieldInfo, VariantInfo,
+    literal_expr, local_expr,
+};
+
+// ============================================================================
+// Default for Structs
+// ============================================================================
+
+/// Expand Default derive for a struct.
+pub fn expand_struct(expander: &mut DeriveExpander, request: &DeriveRequest) {
+    let struct_info = match expander.get_struct_info(request) {
+        Option::Some(info) => info.clone(),
+        Option::None => return,
+    };
+
+    let method_def_id = expander.alloc_def_id();
+    let body_id = expander.alloc_body_id();
+
+    let self_ty = expander.get_self_type(request);
+
+    // fn default() -> Self (static method, no &self)
+    let sig = FnSig {
+        params: Vec::new(),
+        ret: self_ty.clone(),
+        effect: Option::None,
+        is_unsafe: false,
+    };
+
+    let body = generate_struct_default_body(&struct_info, &self_ty, body_id, request.span.clone());
+
+    expander.register_fn_sig(method_def_id.clone(), sig);
+    expander.register_body(body_id.clone(), body);
+    expander.register_fn_body(method_def_id.clone(), body_id);
+    // Note: No self type registration for static methods
+    expander.create_impl_block(request, method_def_id, "default".to_string(), true);
+}
+
+/// Generate the body of a struct default method.
+fn generate_struct_default_body(
+    struct_info: &StructInfo,
+    self_ty: &Type,
+    body_id: BodyId,
+    span: Span,
+) -> Body {
+    let return_local = LocalId::new(0);
+
+    // Build field initializers calling default() on each field type
+    let mut field_inits: Vec<RecordFieldExpr> = Vec::new();
+
+    let mut i: usize = 0;
+    while i < struct_info.fields.len() {
+        let field = &struct_info.fields[i];
+
+        // T::default() for the field type
+        let default_call = Expr::new(
+            ExprKind::Call {
+                callee: Box::new(Expr::new(
+                    ExprKind::TypeMethod {
+                        ty: field.ty.clone(),
+                        method: "default".to_string(),
+                    },
+                    Type::fn_type(Vec::new(), field.ty.clone()),
+                    span.clone(),
+                )),
+                args: Vec::new(),
+            },
+            field.ty.clone(),
+            span.clone(),
+        );
+
+        field_inits.push(RecordFieldExpr {
+            name: field.name.clone(),
+            value: default_call,
+            span: span.clone(),
+        });
+
+        i = i + 1;
+    }
+
+    // Struct construction
+    let struct_expr = Expr::new(
+        ExprKind::Struct {
+            def_id: struct_info.def_id.clone(),
+            fields: field_inits,
+            base: Option::None,
+        },
+        self_ty.clone(),
+        span.clone(),
+    );
+
+    Body {
+        id: body_id,
+        params: Vec::new(),
+        locals: Vec::new(),
+        stmts: Vec::new(),
+        value: Option::Some(struct_expr),
+        span,
+    }
+}
+
+// ============================================================================
+// Default for Enums
+// ============================================================================
+
+/// Expand Default derive for an enum.
+///
+/// For enums, this requires a variant marked with `#[default]`.
+/// Without such a variant, the derive is skipped (error should be reported elsewhere).
+pub fn expand_enum(expander: &mut DeriveExpander, request: &DeriveRequest) {
+    let enum_info = match expander.get_enum_info(request) {
+        Option::Some(info) => info.clone(),
+        Option::None => return,
+    };
+
+    // Find the default variant (would need #[default] attribute)
+    // For now, we'll use the first unit variant if any
+    let default_variant = find_default_variant(&enum_info);
+
+    let variant = match default_variant {
+        Option::Some(v) => v,
+        Option::None => {
+            // No suitable default variant found
+            // In a real implementation, this should emit an error
+            return;
+        }
+    };
+
+    let method_def_id = expander.alloc_def_id();
+    let body_id = expander.alloc_body_id();
+
+    let self_ty = expander.get_self_type(request);
+
+    let sig = FnSig {
+        params: Vec::new(),
+        ret: self_ty.clone(),
+        effect: Option::None,
+        is_unsafe: false,
+    };
+
+    let body = generate_enum_default_body(&enum_info, &variant, &self_ty, body_id, request.span.clone());
+
+    expander.register_fn_sig(method_def_id.clone(), sig);
+    expander.register_body(body_id.clone(), body);
+    expander.register_fn_body(method_def_id.clone(), body_id);
+    expander.create_impl_block(request, method_def_id, "default".to_string(), true);
+}
+
+/// Find a suitable default variant.
+/// Prefers unit variants (no fields) since they can be constructed without arguments.
+fn find_default_variant(enum_info: &EnumInfo) -> Option<VariantInfo> {
+    // First, look for a unit variant
+    let mut i: usize = 0;
+    while i < enum_info.variants.len() {
+        let variant = &enum_info.variants[i];
+        if variant.fields.len() == 0 {
+            return Option::Some(variant.clone());
+        }
+        i = i + 1;
+    }
+
+    // No unit variant found - would need #[default] attribute handling
+    Option::None
+}
+
+/// Generate the body of an enum default method.
+fn generate_enum_default_body(
+    enum_info: &EnumInfo,
+    variant: &VariantInfo,
+    self_ty: &Type,
+    body_id: BodyId,
+    span: Span,
+) -> Body {
+    let return_local = LocalId::new(0);
+
+    // Construct the default variant
+    let variant_expr = if variant.fields.len() == 0 {
+        // Unit variant: just return it
+        Expr::new(
+            ExprKind::EnumVariant {
+                enum_def_id: enum_info.def_id.clone(),
+                variant_name: variant.name.clone(),
+                fields: Vec::new(),
+            },
+            self_ty.clone(),
+            span.clone(),
+        )
+    } else {
+        // Variant with fields: call default() on each field
+        let mut field_defaults: Vec<Expr> = Vec::new();
+
+        let mut i: usize = 0;
+        while i < variant.fields.len() {
+            let field_ty = &variant.fields[i];
+
+            let default_call = Expr::new(
+                ExprKind::Call {
+                    callee: Box::new(Expr::new(
+                        ExprKind::TypeMethod {
+                            ty: field_ty.clone(),
+                            method: "default".to_string(),
+                        },
+                        Type::fn_type(Vec::new(), field_ty.clone()),
+                        span.clone(),
+                    )),
+                    args: Vec::new(),
+                },
+                field_ty.clone(),
+                span.clone(),
+            );
+
+            field_defaults.push(default_call);
+            i = i + 1;
+        }
+
+        Expr::new(
+            ExprKind::EnumVariant {
+                enum_def_id: enum_info.def_id.clone(),
+                variant_name: variant.name.clone(),
+                fields: field_defaults,
+            },
+            self_ty.clone(),
+            span.clone(),
+        )
+    };
+
+    Body {
+        id: body_id,
+        params: Vec::new(),
+        locals: Vec::new(),
+        stmts: Vec::new(),
+        value: Option::Some(variant_expr),
+        span,
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[test]
+fn test_default_method_name() {
+    let kind = crate.compiler.derive.DeriveKind::Default;
+    assert(kind.method_name() == "default");
+}
+
+#[test]
+fn test_default_is_static() {
+    let kind = crate.compiler.derive.DeriveKind::Default;
+    assert(!kind.takes_self());
+}

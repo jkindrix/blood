@@ -1,0 +1,372 @@
+//! Clone Derive Implementation
+//!
+//! Generates `fn clone(&self) -> Self` for structs and enums.
+//!
+//! # Generated Code Example
+//!
+//! For a struct:
+//! ```blood
+//! #[derive(Clone)]
+//! struct Point { x: i32, y: i32 }
+//!
+//! // Generates:
+//! impl Point {
+//!     fn clone(&self) -> Point {
+//!         Point {
+//!             x: self.x.clone(),
+//!             y: self.y.clone(),
+//!         }
+//!     }
+//! }
+//! ```
+//!
+//! For an enum:
+//! ```blood
+//! #[derive(Clone)]
+//! enum Option[T] { Some(T), None }
+//!
+//! // Generates:
+//! impl[T: Clone] Option[T] {
+//!     fn clone(&self) -> Option[T] {
+//!         match self {
+//!             Option::Some(v) => Option::Some(v.clone()),
+//!             Option::None => Option::None,
+//!         }
+//!     }
+//! }
+//! ```
+
+module std.compiler.derive.clone;
+
+use std.collections.Vec;
+use std.option.Option;
+
+use crate.compiler.hir.{
+    Body, BodyId, LocalId, Expr, ExprKind, Stmt, StmtKind,
+    Pattern, PatternKind, FnSig, MatchArm, FieldExpr, RecordFieldExpr,
+    Span, LiteralValue,
+};
+use crate.compiler.typeck.types.{DefId, Type, TypeKind};
+use crate.compiler.derive.{
+    DeriveExpander, DeriveRequest, StructInfo, EnumInfo, FieldInfo, VariantInfo,
+    literal_expr, local_expr, string_literal,
+};
+
+// ============================================================================
+// Clone for Structs
+// ============================================================================
+
+/// Expand Clone derive for a struct.
+pub fn expand_struct(expander: &mut DeriveExpander, request: &DeriveRequest) {
+    let struct_info = match expander.get_struct_info(request) {
+        Option::Some(info) => info.clone(),
+        Option::None => return,
+    };
+
+    // Allocate DefId and BodyId for the clone method
+    let method_def_id = expander.alloc_def_id();
+    let body_id = expander.alloc_body_id();
+
+    // Get Self type
+    let self_ty = expander.get_self_type(request);
+    let self_ref_ty = Type::reference(self_ty.clone(), false); // &Self
+
+    // Create function signature: fn clone(&self) -> Self
+    let sig = FnSig {
+        params: vec![self_ref_ty.clone()],
+        ret: self_ty.clone(),
+        effect: Option::None,
+        is_unsafe: false,
+    };
+
+    // Create the body
+    let body = generate_struct_clone_body(&struct_info, &self_ty, body_id, request.span.clone());
+
+    // Register with expander
+    expander.register_fn_sig(method_def_id.clone(), sig);
+    expander.register_body(body_id.clone(), body);
+    expander.register_fn_body(method_def_id.clone(), body_id);
+    expander.register_method_self_type(method_def_id.clone(), self_ty);
+    expander.create_impl_block(request, method_def_id, "clone".to_string(), false);
+}
+
+/// Generate the body of a struct clone method.
+fn generate_struct_clone_body(
+    struct_info: &StructInfo,
+    self_ty: &Type,
+    body_id: BodyId,
+    span: Span,
+) -> Body {
+    // Local 0: _0 (return place)
+    // Local 1: self (parameter)
+    let return_local = LocalId::new(0);
+    let self_local = LocalId::new(1);
+
+    // Build field clone expressions
+    let mut field_inits: Vec<RecordFieldExpr> = Vec::new();
+    let mut i: usize = 0;
+    while i < struct_info.fields.len() {
+        let field = &struct_info.fields[i];
+
+        // Expression: self.field_name.clone()
+        let field_access = Expr::new(
+            ExprKind::Field {
+                base: Box::new(local_expr(self_local.clone(), Type::reference(self_ty.clone(), false), span.clone())),
+                field: field.name.clone(),
+                field_idx: field.index,
+            },
+            field.ty.clone(),
+            span.clone(),
+        );
+
+        // Call clone on the field
+        let clone_call = Expr::new(
+            ExprKind::MethodCall {
+                receiver: Box::new(field_access),
+                method: "clone".to_string(),
+                args: Vec::new(),
+            },
+            field.ty.clone(),
+            span.clone(),
+        );
+
+        field_inits.push(RecordFieldExpr {
+            name: field.name.clone(),
+            value: clone_call,
+            span: span.clone(),
+        });
+
+        i = i + 1;
+    }
+
+    // Build struct construction expression
+    let struct_expr = Expr::new(
+        ExprKind::Struct {
+            def_id: struct_info.def_id.clone(),
+            fields: field_inits,
+            base: Option::None,
+        },
+        self_ty.clone(),
+        span.clone(),
+    );
+
+    // Create body with the struct expression as the return value
+    Body {
+        id: body_id,
+        params: vec![self_local],
+        locals: vec![
+            LocalInfo { ty: self_ty.clone(), name: Option::Some("_0".to_string()), is_mutable: false },
+            LocalInfo { ty: Type::reference(self_ty.clone(), false), name: Option::Some("self".to_string()), is_mutable: false },
+        ],
+        stmts: Vec::new(),
+        value: Option::Some(struct_expr),
+        span,
+    }
+}
+
+// ============================================================================
+// Clone for Enums
+// ============================================================================
+
+/// Expand Clone derive for an enum.
+pub fn expand_enum(expander: &mut DeriveExpander, request: &DeriveRequest) {
+    let enum_info = match expander.get_enum_info(request) {
+        Option::Some(info) => info.clone(),
+        Option::None => return,
+    };
+
+    // Allocate DefId and BodyId for the clone method
+    let method_def_id = expander.alloc_def_id();
+    let body_id = expander.alloc_body_id();
+
+    // Get Self type
+    let self_ty = expander.get_self_type(request);
+    let self_ref_ty = Type::reference(self_ty.clone(), false); // &Self
+
+    // Create function signature: fn clone(&self) -> Self
+    let sig = FnSig {
+        params: vec![self_ref_ty.clone()],
+        ret: self_ty.clone(),
+        effect: Option::None,
+        is_unsafe: false,
+    };
+
+    // Create the body (match on self)
+    let body = generate_enum_clone_body(&enum_info, &self_ty, body_id, request.span.clone());
+
+    // Register with expander
+    expander.register_fn_sig(method_def_id.clone(), sig);
+    expander.register_body(body_id.clone(), body);
+    expander.register_fn_body(method_def_id.clone(), body_id);
+    expander.register_method_self_type(method_def_id.clone(), self_ty);
+    expander.create_impl_block(request, method_def_id, "clone".to_string(), false);
+}
+
+/// Generate the body of an enum clone method.
+fn generate_enum_clone_body(
+    enum_info: &EnumInfo,
+    self_ty: &Type,
+    body_id: BodyId,
+    span: Span,
+) -> Body {
+    // Local 0: _0 (return place)
+    // Local 1: self (parameter)
+    let return_local = LocalId::new(0);
+    let self_local = LocalId::new(1);
+
+    // Build match arms for each variant
+    let mut arms: Vec<MatchArm> = Vec::new();
+    let mut i: usize = 0;
+    while i < enum_info.variants.len() {
+        let variant = &enum_info.variants[i];
+        let arm = generate_clone_match_arm(enum_info, variant, self_ty, &span);
+        arms.push(arm);
+        i = i + 1;
+    }
+
+    // Build match expression
+    let match_expr = Expr::new(
+        ExprKind::Match {
+            scrutinee: Box::new(local_expr(self_local.clone(), Type::reference(self_ty.clone(), false), span.clone())),
+            arms,
+        },
+        self_ty.clone(),
+        span.clone(),
+    );
+
+    Body {
+        id: body_id,
+        params: vec![self_local],
+        locals: vec![
+            LocalInfo { ty: self_ty.clone(), name: Option::Some("_0".to_string()), is_mutable: false },
+            LocalInfo { ty: Type::reference(self_ty.clone(), false), name: Option::Some("self".to_string()), is_mutable: false },
+        ],
+        stmts: Vec::new(),
+        value: Option::Some(match_expr),
+        span,
+    }
+}
+
+/// Generate a match arm for cloning a variant.
+fn generate_clone_match_arm(
+    enum_info: &EnumInfo,
+    variant: &VariantInfo,
+    self_ty: &Type,
+    span: &Span,
+) -> MatchArm {
+    if variant.fields.len() == 0 {
+        // Unit variant: Pattern::Variant(EnumName::VariantName)
+        // Body: EnumName::VariantName
+        let pattern = Pattern::new(
+            PatternKind::Variant {
+                enum_def_id: enum_info.def_id.clone(),
+                variant_name: variant.name.clone(),
+                fields: Vec::new(),
+            },
+            self_ty.clone(),
+            span.clone(),
+        );
+
+        let body = Expr::new(
+            ExprKind::EnumVariant {
+                enum_def_id: enum_info.def_id.clone(),
+                variant_name: variant.name.clone(),
+                fields: Vec::new(),
+            },
+            self_ty.clone(),
+            span.clone(),
+        );
+
+        MatchArm {
+            pattern,
+            guard: Option::None,
+            body,
+            span: span.clone(),
+        }
+    } else {
+        // Tuple variant: Pattern::Variant(EnumName::VariantName(v0, v1, ...))
+        // Body: EnumName::VariantName(v0.clone(), v1.clone(), ...)
+        let mut field_patterns: Vec<Pattern> = Vec::new();
+        let mut cloned_fields: Vec<Expr> = Vec::new();
+
+        let mut j: usize = 0;
+        while j < variant.fields.len() {
+            let field_ty = &variant.fields[j];
+            let binding_name = format!("__v{}", j);
+
+            // Pattern for binding
+            field_patterns.push(Pattern::new(
+                PatternKind::Binding {
+                    name: binding_name.clone(),
+                    mutable: false,
+                    subpattern: Option::None,
+                },
+                field_ty.clone(),
+                span.clone(),
+            ));
+
+            // Clone expression for body
+            let binding_local = LocalId::new((2 + j) as u32); // After return and self
+            let clone_call = Expr::new(
+                ExprKind::MethodCall {
+                    receiver: Box::new(local_expr(binding_local, field_ty.clone(), span.clone())),
+                    method: "clone".to_string(),
+                    args: Vec::new(),
+                },
+                field_ty.clone(),
+                span.clone(),
+            );
+            cloned_fields.push(clone_call);
+
+            j = j + 1;
+        }
+
+        let pattern = Pattern::new(
+            PatternKind::Variant {
+                enum_def_id: enum_info.def_id.clone(),
+                variant_name: variant.name.clone(),
+                fields: field_patterns,
+            },
+            self_ty.clone(),
+            span.clone(),
+        );
+
+        let body = Expr::new(
+            ExprKind::EnumVariant {
+                enum_def_id: enum_info.def_id.clone(),
+                variant_name: variant.name.clone(),
+                fields: cloned_fields,
+            },
+            self_ty.clone(),
+            span.clone(),
+        );
+
+        MatchArm {
+            pattern,
+            guard: Option::None,
+            body,
+            span: span.clone(),
+        }
+    }
+}
+
+// ============================================================================
+// Helper Types
+// ============================================================================
+
+/// Local variable info for body construction.
+struct LocalInfo {
+    ty: Type,
+    name: Option<String>,
+    is_mutable: bool,
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[test]
+fn test_clone_method_name() {
+    let kind = crate.compiler.derive.DeriveKind::Clone;
+    assert(kind.method_name() == "clone");
+}
