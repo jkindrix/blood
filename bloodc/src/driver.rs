@@ -361,19 +361,13 @@ impl CompilationDriver {
     }
 
     /// Type check all modules in the given order.
-    fn type_check_modules(self, _order: &[ModuleId]) -> Result<CompilationResult, Vec<DriverError>> {
+    fn type_check_modules(mut self, order: &[ModuleId]) -> Result<CompilationResult, Vec<DriverError>> {
         let mut errors = Vec::new();
         let mut diagnostics = Vec::new();
 
-        // For now, we type check each module independently
-        // The full implementation will share a TypeContext across modules
-
-        // Take ownership of parsed modules
-        let parsed_modules = self.parsed_modules;
-
-        // Get the root module for unified type checking
+        // Get the root module for the type context
         let root_id = self.module_tree.root();
-        let root_module = match parsed_modules.get(&root_id) {
+        let root_module = match self.parsed_modules.get(&root_id) {
             Some(m) => m,
             None => {
                 errors.push(DriverError::ModuleResolution {
@@ -383,10 +377,13 @@ impl CompilationDriver {
             }
         };
 
-        // Create type context for the root module
-        // TODO: Extend TypeContext to handle multiple modules
-        let mut ctx = TypeContext::new(&root_module.source, self.interner)
-            .with_source_path(&root_module.file_path);
+        // Create type context with the root module's source as the primary source
+        // Take the interner out of self to satisfy the borrow checker
+        let interner = std::mem::take(&mut self.interner);
+        let root_source = root_module.source.clone();
+        let root_path = root_module.file_path.clone();
+        let mut ctx = TypeContext::new(&root_source, interner)
+            .with_source_path(&root_path);
 
         // Load and register standard library modules if a stdlib path is provided
         if let Some(ref stdlib_path) = self.stdlib_path {
@@ -421,15 +418,39 @@ impl CompilationDriver {
             }
         }
 
-        // Resolve the root module's program
-        if let Err(type_errors) = ctx.resolve_program(&root_module.ast) {
-            diagnostics.extend(type_errors);
+        // Phase 1: Resolve declarations from all modules in topological order
+        // This ensures parent modules are processed before children
+        for &module_id in order {
+            if let Some(parsed) = self.parsed_modules.get(&module_id) {
+                // Get module info for this module
+                let module_info = self.module_tree.get(module_id);
+                let is_root = module_id == root_id;
+
+                if is_root {
+                    // Root module uses the main resolve_program
+                    if let Err(type_errors) = ctx.resolve_program(&parsed.ast) {
+                        diagnostics.extend(type_errors);
+                    }
+                } else {
+                    // Non-root modules are registered as external modules
+                    // and their declarations are collected
+                    // Clone data needed to avoid borrow checker issues
+                    let source_clone = parsed.source.clone();
+                    let module_name = module_info.map(|i| i.name.clone()).unwrap_or_else(|| "mod".to_string());
+                    let module_path = if let Some(info) = module_info {
+                        build_module_path(&self.module_tree, module_id, info)
+                    } else {
+                        "unknown".to_string()
+                    };
+                    register_submodule(&mut ctx, &source_clone, &module_name, &module_path);
+                }
+            }
         }
 
-        // Expand derives
+        // Phase 2: Expand derives for all modules
         ctx.expand_derives();
 
-        // Type check all function bodies
+        // Phase 3: Type check all function bodies
         if let Err(type_errors) = ctx.check_all_bodies() {
             diagnostics.extend(type_errors);
         }
@@ -451,9 +472,141 @@ impl CompilationDriver {
         Ok(CompilationResult {
             hir_crate,
             diagnostics,
-            module_count: parsed_modules.len(),
+            module_count: self.parsed_modules.len(),
         })
     }
+}
+
+/// Register a submodule in the type context.
+///
+/// This processes a non-root module and registers its declarations
+/// so they can be imported from other modules.
+fn register_submodule(
+    ctx: &mut TypeContext<'_>,
+    source: &str,
+    module_name: &str,
+    module_path: &str,
+) {
+    use crate::hir::DefKind;
+    use crate::span::Span;
+
+    // Create a DefId for this module
+    let module_def_id = match ctx.resolver.define_item(
+        module_name.to_string(),
+        DefKind::Mod,
+        Span::dummy(),
+    ) {
+        Ok(id) => id,
+        Err(_) => return, // Module might already be defined
+    };
+
+    // Collect declarations from the module's AST
+    let mut item_def_ids = Vec::new();
+
+    // Re-parse to get a fresh interner for this module
+    let mut parser = Parser::new(source);
+    if let Ok(ast) = parser.parse_program() {
+        let interner = parser.take_interner();
+
+        for decl in &ast.declarations {
+            if let Some(def_id) = create_item_def_id(ctx, &interner, decl) {
+                item_def_ids.push(def_id);
+            }
+        }
+    }
+
+    // Register the module with its items
+    ctx.register_external_module(
+        module_path.to_string(),
+        module_def_id,
+        item_def_ids,
+        Span::dummy(),
+    );
+}
+
+/// Build the full module path for a module.
+fn build_module_path(module_tree: &ModuleTree, _module_id: ModuleId, info: &crate::project::Module) -> String {
+    let mut path_parts = vec![info.name.clone()];
+
+    // Walk up the tree to build the full path
+    let mut current_id = info.parent;
+    while let Some(parent_id) = current_id {
+        if let Some(parent) = module_tree.get(parent_id) {
+            path_parts.push(parent.name.clone());
+            current_id = parent.parent;
+        } else {
+            break;
+        }
+    }
+
+    // Reverse to get root-first order
+    path_parts.reverse();
+
+    // Skip the crate root name (e.g., "main") and prefix with "crate"
+    if path_parts.len() > 1 {
+        path_parts[0] = "crate".to_string();
+        path_parts.join(".")
+    } else {
+        // Single segment - this is the crate root
+        "crate".to_string()
+    }
+}
+
+/// Create a DefId for a declaration.
+fn create_item_def_id(
+    ctx: &mut TypeContext<'_>,
+    interner: &DefaultStringInterner,
+    decl: &ast::Declaration,
+) -> Option<hir::DefId> {
+    use crate::hir::DefKind;
+    use crate::span::Span;
+
+    let resolve_symbol = |sym: ast::Symbol| -> String {
+        interner.resolve(sym).map(|s| s.to_string()).unwrap_or_else(|| "unknown".to_string())
+    };
+
+    let (name, kind) = match decl {
+        ast::Declaration::Function(f) => {
+            let name = resolve_symbol(f.name.node);
+            (name, DefKind::Fn)
+        }
+        ast::Declaration::Struct(s) => {
+            let name = resolve_symbol(s.name.node);
+            (name, DefKind::Struct)
+        }
+        ast::Declaration::Enum(e) => {
+            let name = resolve_symbol(e.name.node);
+            (name, DefKind::Enum)
+        }
+        ast::Declaration::Trait(t) => {
+            let name = resolve_symbol(t.name.node);
+            (name, DefKind::Trait)
+        }
+        ast::Declaration::Type(t) => {
+            let name = resolve_symbol(t.name.node);
+            (name, DefKind::TypeAlias)
+        }
+        ast::Declaration::Effect(e) => {
+            let name = resolve_symbol(e.name.node);
+            (name, DefKind::Effect)
+        }
+        ast::Declaration::Const(c) => {
+            let name = resolve_symbol(c.name.node);
+            (name, DefKind::Const)
+        }
+        ast::Declaration::Static(s) => {
+            let name = resolve_symbol(s.name.node);
+            (name, DefKind::Static)
+        }
+        // These don't create named items at the module level
+        ast::Declaration::Handler(_) => return None,
+        ast::Declaration::Impl(_) => return None,
+        ast::Declaration::Bridge(_) => return None,
+        ast::Declaration::Module(_) => return None,
+        ast::Declaration::Macro(_) => return None,
+    };
+
+    ctx.resolver.define_item(name, kind, Span::dummy()).ok()
 }
 
 /// Result of a successful compilation.
