@@ -57,8 +57,8 @@ pub fn check_exhaustiveness(
 
     let patterns: Vec<_> = arms.iter().map(|a| &a.pattern).collect();
 
-    // Check for unreachable arms
-    let unreachable_arms = find_unreachable_arms(&patterns);
+    // Check for unreachable arms (must consider guards)
+    let unreachable_arms = find_unreachable_arms_with_guards(arms);
 
     // Check exhaustiveness
     let (is_exhaustive, missing) = is_exhaustive(&patterns, scrutinee_ty, enum_info);
@@ -459,6 +459,30 @@ fn check_array_exhaustiveness(
 }
 
 /// Find unreachable arms (arms that can never match).
+/// This version considers guards: a pattern with a guard is not irrefutable
+/// because the guard can fail, allowing subsequent arms to match.
+fn find_unreachable_arms_with_guards(arms: &[hir::MatchArm]) -> Vec<usize> {
+    let mut unreachable = vec![];
+
+    // Track if we've seen an irrefutable pattern WITHOUT a guard.
+    // A pattern with a guard is NOT irrefutable because the guard can fail.
+    let mut seen_irrefutable_without_guard = false;
+
+    for (i, arm) in arms.iter().enumerate() {
+        if seen_irrefutable_without_guard {
+            unreachable.push(i);
+        } else if is_irrefutable(&arm.pattern) && arm.guard.is_none() {
+            // Only mark as irrefutable if there's no guard
+            seen_irrefutable_without_guard = true;
+        }
+    }
+
+    unreachable
+}
+
+/// Find unreachable arms (arms that can never match).
+/// This is the legacy version that doesn't consider guards.
+#[allow(dead_code)]
 fn find_unreachable_arms(patterns: &[&Pattern]) -> Vec<usize> {
     let mut unreachable = vec![];
 
