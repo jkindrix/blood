@@ -279,6 +279,11 @@ pub fn generate_c_runtime() -> String {
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <dirent.h>
+#include <errno.h>
 
 // ============================================================================
 // Constants
@@ -440,6 +445,28 @@ BloodStr blood_str_concat(BloodStr a, BloodStr b) {
     return result;
 }
 
+BloodStr string_substring(BloodStr s, int64_t start, int64_t end) {
+    BloodStr result;
+    // Clamp bounds to valid range
+    if (start < 0) start = 0;
+    if (end > s.len) end = s.len;
+    if (start >= end || start >= s.len) {
+        result.ptr = NULL;
+        result.len = 0;
+        return result;
+    }
+    result.len = end - start;
+    result.ptr = (char*)malloc((size_t)result.len);
+    if (!result.ptr) {
+        fprintf(stderr, "BLOOD RUNTIME ERROR: String allocation failed\n");
+        abort();
+    }
+    if (s.ptr) {
+        memcpy(result.ptr, s.ptr + start, (size_t)result.len);
+    }
+    return result;
+}
+
 BloodStr int_to_string(int32_t n) {
     BloodStr result;
     // Max int32 is ~10 digits + sign + null
@@ -467,6 +494,159 @@ BloodStr bool_to_string(int32_t b) {
         result.len = 5;
     }
     return result;
+}
+
+// ============================================================================
+// Char Methods
+// ============================================================================
+
+// char_is_whitespace(char: i32) -> bool
+// Checks if the Unicode code point is whitespace.
+// Supports ASCII space, tab, newline, carriage return, form feed, and vertical tab.
+int32_t char_is_whitespace(int32_t c) {
+    // ASCII whitespace characters
+    if (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\x0C' || c == '\x0B') {
+        return 1;
+    }
+    // Unicode whitespace (common cases)
+    // U+00A0 No-Break Space, U+2000-U+200A, U+2028, U+2029, U+202F, U+205F, U+3000
+    if (c == 0x00A0 || c == 0x1680 || (c >= 0x2000 && c <= 0x200A) ||
+        c == 0x2028 || c == 0x2029 || c == 0x202F || c == 0x205F || c == 0x3000) {
+        return 1;
+    }
+    return 0;
+}
+
+// char_is_alphabetic(char: i32) -> bool
+// Checks if the Unicode code point is alphabetic (letters).
+int32_t char_is_alphabetic(int32_t c) {
+    // ASCII letters
+    if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) {
+        return 1;
+    }
+    // Extended Latin (common accented characters)
+    if ((c >= 0x00C0 && c <= 0x00FF) && c != 0x00D7 && c != 0x00F7) {
+        return 1;
+    }
+    // Other Unicode letter ranges (simplified - covers common cases)
+    // Full Unicode alphabetic check would require ICU or similar
+    if (c >= 0x0100 && c <= 0x017F) return 1;  // Latin Extended-A
+    if (c >= 0x0180 && c <= 0x024F) return 1;  // Latin Extended-B
+    if (c >= 0x0370 && c <= 0x03FF) return 1;  // Greek
+    if (c >= 0x0400 && c <= 0x04FF) return 1;  // Cyrillic
+    if (c >= 0x3040 && c <= 0x309F) return 1;  // Hiragana
+    if (c >= 0x30A0 && c <= 0x30FF) return 1;  // Katakana
+    if (c >= 0x4E00 && c <= 0x9FFF) return 1;  // CJK Unified Ideographs
+    return 0;
+}
+
+// char_is_alphanumeric(char: i32) -> bool
+// Checks if the Unicode code point is alphanumeric.
+int32_t char_is_alphanumeric(int32_t c) {
+    if (char_is_alphabetic(c)) return 1;
+    if (c >= '0' && c <= '9') return 1;
+    return 0;
+}
+
+// char_is_ascii_digit(char: i32) -> bool
+// Checks if the character is an ASCII digit 0-9.
+int32_t char_is_ascii_digit(int32_t c) {
+    return (c >= '0' && c <= '9') ? 1 : 0;
+}
+
+// char_is_ascii_hexdigit(char: i32) -> bool
+// Checks if the character is an ASCII hexadecimal digit (0-9, a-f, A-F).
+int32_t char_is_ascii_hexdigit(int32_t c) {
+    if (c >= '0' && c <= '9') return 1;
+    if (c >= 'a' && c <= 'f') return 1;
+    if (c >= 'A' && c <= 'F') return 1;
+    return 0;
+}
+
+// char_is_ascii_uppercase(char: i32) -> bool
+// Checks if the character is an ASCII uppercase letter A-Z.
+int32_t char_is_ascii_uppercase(int32_t c) {
+    return (c >= 'A' && c <= 'Z') ? 1 : 0;
+}
+
+// char_is_ascii_lowercase(char: i32) -> bool
+// Checks if the character is an ASCII lowercase letter a-z.
+int32_t char_is_ascii_lowercase(int32_t c) {
+    return (c >= 'a' && c <= 'z') ? 1 : 0;
+}
+
+// char_to_string_owned(char: i32) -> BloodStr
+// Converts a Unicode code point to a UTF-8 encoded string.
+BloodStr char_to_string_owned(int32_t c) {
+    BloodStr result;
+    // Determine UTF-8 byte count and allocate
+    int len;
+    if (c < 0x80) {
+        len = 1;
+    } else if (c < 0x800) {
+        len = 2;
+    } else if (c < 0x10000) {
+        len = 3;
+    } else if (c <= 0x10FFFF) {
+        len = 4;
+    } else {
+        // Invalid Unicode code point - return empty string
+        result.ptr = NULL;
+        result.len = 0;
+        return result;
+    }
+
+    result.ptr = (char*)malloc((size_t)len);
+    if (!result.ptr) {
+        fprintf(stderr, "BLOOD RUNTIME ERROR: String allocation failed\n");
+        abort();
+    }
+    result.len = (int64_t)len;
+
+    // Encode UTF-8
+    if (c < 0x80) {
+        result.ptr[0] = (char)c;
+    } else if (c < 0x800) {
+        result.ptr[0] = (char)(0xC0 | (c >> 6));
+        result.ptr[1] = (char)(0x80 | (c & 0x3F));
+    } else if (c < 0x10000) {
+        result.ptr[0] = (char)(0xE0 | (c >> 12));
+        result.ptr[1] = (char)(0x80 | ((c >> 6) & 0x3F));
+        result.ptr[2] = (char)(0x80 | (c & 0x3F));
+    } else {
+        result.ptr[0] = (char)(0xF0 | (c >> 18));
+        result.ptr[1] = (char)(0x80 | ((c >> 12) & 0x3F));
+        result.ptr[2] = (char)(0x80 | ((c >> 6) & 0x3F));
+        result.ptr[3] = (char)(0x80 | (c & 0x3F));
+    }
+
+    return result;
+}
+
+// char_len_utf8(char: i32) -> i64
+// Returns the number of bytes required to encode this code point in UTF-8.
+int64_t char_len_utf8(int32_t c) {
+    if (c < 0x80) return 1;
+    if (c < 0x800) return 2;
+    if (c < 0x10000) return 3;
+    if (c <= 0x10FFFF) return 4;
+    return 0; // Invalid code point
+}
+
+// ============================================================================
+// Range Methods
+// ============================================================================
+
+// range_contains(start: i64, end: i64, item: i64) -> bool
+// Checks if item is in [start, end) - exclusive end.
+int32_t range_contains(int64_t start, int64_t end, int64_t item) {
+    return (item >= start && item < end) ? 1 : 0;
+}
+
+// range_inclusive_contains(start: i64, end: i64, item: i64) -> bool
+// Checks if item is in [start, end] - inclusive end.
+int32_t range_inclusive_contains(int64_t start, int64_t end, int64_t item) {
+    return (item >= start && item <= end) ? 1 : 0;
 }
 
 // ============================================================================
@@ -1001,6 +1181,341 @@ void blood_panic(BloodStr msg) {
 // Also provide legacy panic that takes a C string pointer
 void panic(BloodStr msg) {
     blood_panic(msg);
+}
+
+// ============================================================================
+// File I/O Functions
+// ============================================================================
+
+// File open: __builtin_file_open(path: &str, flags: i32, mode: u32) -> i64
+// Returns fd on success, -1 on error
+int64_t __builtin_file_open(BloodStr path, int32_t flags, uint32_t mode) {
+    // Null-terminate the path
+    char* path_cstr = (char*)malloc((size_t)path.len + 1);
+    if (!path_cstr) return -1;
+    if (path.ptr && path.len > 0) {
+        memcpy(path_cstr, path.ptr, (size_t)path.len);
+    }
+    path_cstr[path.len] = '\0';
+
+    int fd = open(path_cstr, flags, mode);
+    free(path_cstr);
+
+    return (int64_t)fd;
+}
+
+// File read: __builtin_file_read(fd: i64, buf_ptr: u64, buf_len: u64) -> i64
+// Returns bytes read, or -1 on error
+int64_t __builtin_file_read(int64_t fd, uint64_t buf_ptr, uint64_t buf_len) {
+    ssize_t n = read((int)fd, (void*)buf_ptr, (size_t)buf_len);
+    return (int64_t)n;
+}
+
+// File write: __builtin_file_write(fd: i64, buf_ptr: u64, buf_len: u64) -> i64
+// Returns bytes written, or -1 on error
+int64_t __builtin_file_write(int64_t fd, uint64_t buf_ptr, uint64_t buf_len) {
+    ssize_t n = write((int)fd, (void*)buf_ptr, (size_t)buf_len);
+    return (int64_t)n;
+}
+
+// File close: __builtin_file_close(fd: i64) -> i32
+// Returns 0 on success, -1 on error
+int32_t __builtin_file_close(int64_t fd) {
+    return close((int)fd);
+}
+
+// File flush: __builtin_file_flush(fd: i64) -> i32
+// Returns 0 on success, -1 on error
+int32_t __builtin_file_flush(int64_t fd) {
+    return fsync((int)fd);
+}
+
+// File seek: __builtin_file_seek(fd: i64, offset: i64, whence: i32) -> u64
+// Returns new position, or (u64)-1 on error
+uint64_t __builtin_file_seek(int64_t fd, int64_t offset, int32_t whence) {
+    off_t pos = lseek((int)fd, (off_t)offset, whence);
+    return (uint64_t)pos;
+}
+
+// File sync all: __builtin_file_sync_all(fd: i64) -> i32
+int32_t __builtin_file_sync_all(int64_t fd) {
+    return fsync((int)fd);
+}
+
+// File sync data: __builtin_file_sync_data(fd: i64) -> i32
+int32_t __builtin_file_sync_data(int64_t fd) {
+#ifdef __linux__
+    return fdatasync((int)fd);
+#else
+    return fsync((int)fd);
+#endif
+}
+
+// File set length: __builtin_file_set_len(fd: i64, len: u64) -> i32
+int32_t __builtin_file_set_len(int64_t fd, uint64_t len) {
+    return ftruncate((int)fd, (off_t)len);
+}
+
+// Remove file: __builtin_remove_file(path: &str) -> i32
+int32_t __builtin_remove_file(BloodStr path) {
+    char* path_cstr = (char*)malloc((size_t)path.len + 1);
+    if (!path_cstr) return -1;
+    if (path.ptr && path.len > 0) {
+        memcpy(path_cstr, path.ptr, (size_t)path.len);
+    }
+    path_cstr[path.len] = '\0';
+
+    int result = unlink(path_cstr);
+    free(path_cstr);
+    return result;
+}
+
+// Rename: __builtin_rename(from: &str, to: &str) -> i32
+int32_t __builtin_rename(BloodStr from, BloodStr to) {
+    char* from_cstr = (char*)malloc((size_t)from.len + 1);
+    char* to_cstr = (char*)malloc((size_t)to.len + 1);
+    if (!from_cstr || !to_cstr) {
+        free(from_cstr);
+        free(to_cstr);
+        return -1;
+    }
+
+    if (from.ptr && from.len > 0) memcpy(from_cstr, from.ptr, (size_t)from.len);
+    from_cstr[from.len] = '\0';
+    if (to.ptr && to.len > 0) memcpy(to_cstr, to.ptr, (size_t)to.len);
+    to_cstr[to.len] = '\0';
+
+    int result = rename(from_cstr, to_cstr);
+    free(from_cstr);
+    free(to_cstr);
+    return result;
+}
+
+// Create directory: __builtin_create_dir(path: &str, mode: u32) -> i32
+int32_t __builtin_create_dir(BloodStr path, uint32_t mode) {
+    char* path_cstr = (char*)malloc((size_t)path.len + 1);
+    if (!path_cstr) return -1;
+    if (path.ptr && path.len > 0) {
+        memcpy(path_cstr, path.ptr, (size_t)path.len);
+    }
+    path_cstr[path.len] = '\0';
+
+    int result = mkdir(path_cstr, (mode_t)mode);
+    free(path_cstr);
+    return result;
+}
+
+// Create directory (recursive): __builtin_create_dir_all(path: &str, mode: u32) -> i32
+int32_t __builtin_create_dir_all(BloodStr path, uint32_t mode) {
+    char* path_cstr = (char*)malloc((size_t)path.len + 1);
+    if (!path_cstr) return -1;
+    if (path.ptr && path.len > 0) {
+        memcpy(path_cstr, path.ptr, (size_t)path.len);
+    }
+    path_cstr[path.len] = '\0';
+
+    // Create parent directories as needed
+    char* p = path_cstr;
+    while (*p) {
+        p++;
+        while (*p && *p != '/') p++;
+        char c = *p;
+        *p = '\0';
+        if (strlen(path_cstr) > 0) {
+            mkdir(path_cstr, (mode_t)mode);  // Ignore errors for existing dirs
+        }
+        *p = c;
+    }
+
+    int result = mkdir(path_cstr, (mode_t)mode);
+    // Return success if directory already exists
+    if (result == -1 && errno == EEXIST) result = 0;
+    free(path_cstr);
+    return result;
+}
+
+// Remove directory: __builtin_remove_dir(path: &str) -> i32
+int32_t __builtin_remove_dir(BloodStr path) {
+    char* path_cstr = (char*)malloc((size_t)path.len + 1);
+    if (!path_cstr) return -1;
+    if (path.ptr && path.len > 0) {
+        memcpy(path_cstr, path.ptr, (size_t)path.len);
+    }
+    path_cstr[path.len] = '\0';
+
+    int result = rmdir(path_cstr);
+    free(path_cstr);
+    return result;
+}
+
+// Remove directory (recursive) - simplified version
+int32_t __builtin_remove_dir_all(BloodStr path) {
+    // For safety, this simplified version just calls rmdir
+    // A full implementation would recursively remove contents
+    return __builtin_remove_dir(path);
+}
+
+// Read directory: __builtin_read_dir(path: &str) -> i64
+// Returns DIR* handle as i64, or -1 on error
+int64_t __builtin_read_dir(BloodStr path) {
+    char* path_cstr = (char*)malloc((size_t)path.len + 1);
+    if (!path_cstr) return -1;
+    if (path.ptr && path.len > 0) {
+        memcpy(path_cstr, path.ptr, (size_t)path.len);
+    }
+    path_cstr[path.len] = '\0';
+
+    DIR* dir = opendir(path_cstr);
+    free(path_cstr);
+
+    return dir ? (int64_t)(uintptr_t)dir : -1;
+}
+
+// Close directory: __builtin_close_dir(handle: i64) -> i32
+int32_t __builtin_close_dir(int64_t handle) {
+    if (handle <= 0) return -1;
+    return closedir((DIR*)(uintptr_t)handle);
+}
+
+// Get current directory: __builtin_current_dir() -> String
+BloodStr __builtin_current_dir(void) {
+    BloodStr result;
+    char buf[4096];
+    if (getcwd(buf, sizeof(buf))) {
+        size_t len = strlen(buf);
+        result.ptr = (char*)malloc(len);
+        if (result.ptr) {
+            memcpy(result.ptr, buf, len);
+            result.len = (int64_t)len;
+        } else {
+            result.len = 0;
+        }
+    } else {
+        result.ptr = NULL;
+        result.len = 0;
+    }
+    return result;
+}
+
+// Set current directory: __builtin_set_current_dir(path: &str) -> i32
+int32_t __builtin_set_current_dir(BloodStr path) {
+    char* path_cstr = (char*)malloc((size_t)path.len + 1);
+    if (!path_cstr) return -1;
+    if (path.ptr && path.len > 0) {
+        memcpy(path_cstr, path.ptr, (size_t)path.len);
+    }
+    path_cstr[path.len] = '\0';
+
+    int result = chdir(path_cstr);
+    free(path_cstr);
+    return result;
+}
+
+// Hard link: __builtin_hard_link(original: &str, link: &str) -> i32
+int32_t __builtin_hard_link(BloodStr original, BloodStr linkpath) {
+    char* orig_cstr = (char*)malloc((size_t)original.len + 1);
+    char* link_cstr = (char*)malloc((size_t)linkpath.len + 1);
+    if (!orig_cstr || !link_cstr) {
+        free(orig_cstr);
+        free(link_cstr);
+        return -1;
+    }
+
+    if (original.ptr && original.len > 0) memcpy(orig_cstr, original.ptr, (size_t)original.len);
+    orig_cstr[original.len] = '\0';
+    if (linkpath.ptr && linkpath.len > 0) memcpy(link_cstr, linkpath.ptr, (size_t)linkpath.len);
+    link_cstr[linkpath.len] = '\0';
+
+    int result = link(orig_cstr, link_cstr);
+    free(orig_cstr);
+    free(link_cstr);
+    return result;
+}
+
+// Symlink: __builtin_symlink(original: &str, link: &str) -> i32
+int32_t __builtin_symlink(BloodStr original, BloodStr linkpath) {
+    char* orig_cstr = (char*)malloc((size_t)original.len + 1);
+    char* link_cstr = (char*)malloc((size_t)linkpath.len + 1);
+    if (!orig_cstr || !link_cstr) {
+        free(orig_cstr);
+        free(link_cstr);
+        return -1;
+    }
+
+    if (original.ptr && original.len > 0) memcpy(orig_cstr, original.ptr, (size_t)original.len);
+    orig_cstr[original.len] = '\0';
+    if (linkpath.ptr && linkpath.len > 0) memcpy(link_cstr, linkpath.ptr, (size_t)linkpath.len);
+    link_cstr[linkpath.len] = '\0';
+
+    int result = symlink(orig_cstr, link_cstr);
+    free(orig_cstr);
+    free(link_cstr);
+    return result;
+}
+
+// Read symlink: __builtin_read_link(path: &str) -> String
+BloodStr __builtin_read_link(BloodStr path) {
+    BloodStr result;
+    result.ptr = NULL;
+    result.len = 0;
+
+    char* path_cstr = (char*)malloc((size_t)path.len + 1);
+    if (!path_cstr) return result;
+    if (path.ptr && path.len > 0) {
+        memcpy(path_cstr, path.ptr, (size_t)path.len);
+    }
+    path_cstr[path.len] = '\0';
+
+    char buf[4096];
+    ssize_t len = readlink(path_cstr, buf, sizeof(buf) - 1);
+    free(path_cstr);
+
+    if (len > 0) {
+        result.ptr = (char*)malloc((size_t)len);
+        if (result.ptr) {
+            memcpy(result.ptr, buf, (size_t)len);
+            result.len = (int64_t)len;
+        }
+    }
+    return result;
+}
+
+// Canonicalize path: __builtin_canonicalize(path: &str) -> String
+BloodStr __builtin_canonicalize(BloodStr path) {
+    BloodStr result;
+    result.ptr = NULL;
+    result.len = 0;
+
+    char* path_cstr = (char*)malloc((size_t)path.len + 1);
+    if (!path_cstr) return result;
+    if (path.ptr && path.len > 0) {
+        memcpy(path_cstr, path.ptr, (size_t)path.len);
+    }
+    path_cstr[path.len] = '\0';
+
+    char* resolved = realpath(path_cstr, NULL);
+    free(path_cstr);
+
+    if (resolved) {
+        size_t len = strlen(resolved);
+        result.ptr = resolved;  // realpath allocates with malloc
+        result.len = (int64_t)len;
+    }
+    return result;
+}
+
+// Set permissions: __builtin_set_permissions(path: &str, mode: u32) -> i32
+int32_t __builtin_set_permissions(BloodStr path, uint32_t mode) {
+    char* path_cstr = (char*)malloc((size_t)path.len + 1);
+    if (!path_cstr) return -1;
+    if (path.ptr && path.len > 0) {
+        memcpy(path_cstr, path.ptr, (size_t)path.len);
+    }
+    path_cstr[path.len] = '\0';
+
+    int result = chmod(path_cstr, (mode_t)mode);
+    free(path_cstr);
+    return result;
 }
 
 // ============================================================================

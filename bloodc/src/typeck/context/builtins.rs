@@ -267,6 +267,92 @@ impl<'a> TypeContext<'a> {
 
         // pow(f64, f64) -> f64 - power
         self.register_builtin_fn("pow", vec![f64_ty.clone(), f64_ty.clone()], f64_ty.clone());
+
+        // === File I/O Functions ===
+        // These map to the __builtin_* functions used in std::fs
+
+        // File operations using file descriptors (i64)
+        // __builtin_file_open(path: &str, flags: i32, mode: u32) -> Result<i64, Error>
+        // Returns fd on success (simplified to i64 for bootstrap)
+        self.register_builtin_fn("__builtin_file_open", vec![ref_str_ty.clone(), i32_ty.clone(), Type::u32()], i64_ty.clone());
+
+        // __builtin_file_read(fd: i64, buf: &mut [u8]) -> Result<usize, Error>
+        // Returns bytes read (simplified to i64)
+        self.register_builtin_fn("__builtin_file_read", vec![i64_ty.clone(), u64_ty.clone(), u64_ty.clone()], i64_ty.clone());
+
+        // __builtin_file_write(fd: i64, buf: &[u8]) -> Result<usize, Error>
+        // Returns bytes written (simplified to i64)
+        self.register_builtin_fn("__builtin_file_write", vec![i64_ty.clone(), u64_ty.clone(), u64_ty.clone()], i64_ty.clone());
+
+        // __builtin_file_close(fd: i64) -> Result<(), Error>
+        // Returns 0 on success, -1 on error
+        self.register_builtin_fn("__builtin_file_close", vec![i64_ty.clone()], i32_ty.clone());
+
+        // __builtin_file_flush(fd: i64) -> Result<(), Error>
+        self.register_builtin_fn("__builtin_file_flush", vec![i64_ty.clone()], i32_ty.clone());
+
+        // __builtin_file_seek(fd: i64, offset: i64, whence: i32) -> Result<u64, Error>
+        // Returns new position
+        self.register_builtin_fn("__builtin_file_seek", vec![i64_ty.clone(), i64_ty.clone(), i32_ty.clone()], u64_ty.clone());
+
+        // __builtin_file_sync_all(fd: i64) -> Result<(), Error>
+        self.register_builtin_fn("__builtin_file_sync_all", vec![i64_ty.clone()], i32_ty.clone());
+
+        // __builtin_file_sync_data(fd: i64) -> Result<(), Error>
+        self.register_builtin_fn("__builtin_file_sync_data", vec![i64_ty.clone()], i32_ty.clone());
+
+        // __builtin_file_set_len(fd: i64, len: u64) -> Result<(), Error>
+        self.register_builtin_fn("__builtin_file_set_len", vec![i64_ty.clone(), u64_ty.clone()], i32_ty.clone());
+
+        // Path-based file operations
+        // __builtin_remove_file(path: &str) -> Result<(), Error>
+        self.register_builtin_fn("__builtin_remove_file", vec![ref_str_ty.clone()], i32_ty.clone());
+
+        // __builtin_rename(from: &str, to: &str) -> Result<(), Error>
+        self.register_builtin_fn("__builtin_rename", vec![ref_str_ty.clone(), ref_str_ty.clone()], i32_ty.clone());
+
+        // Directory operations
+        // __builtin_create_dir(path: &str, mode: u32) -> Result<(), Error>
+        self.register_builtin_fn("__builtin_create_dir", vec![ref_str_ty.clone(), Type::u32()], i32_ty.clone());
+
+        // __builtin_create_dir_all(path: &str, mode: u32) -> Result<(), Error>
+        self.register_builtin_fn("__builtin_create_dir_all", vec![ref_str_ty.clone(), Type::u32()], i32_ty.clone());
+
+        // __builtin_remove_dir(path: &str) -> Result<(), Error>
+        self.register_builtin_fn("__builtin_remove_dir", vec![ref_str_ty.clone()], i32_ty.clone());
+
+        // __builtin_remove_dir_all(path: &str) -> Result<(), Error>
+        self.register_builtin_fn("__builtin_remove_dir_all", vec![ref_str_ty.clone()], i32_ty.clone());
+
+        // __builtin_read_dir(path: &str) -> Result<DirHandle, Error>
+        // Returns directory handle (i64)
+        self.register_builtin_fn("__builtin_read_dir", vec![ref_str_ty.clone()], i64_ty.clone());
+
+        // __builtin_close_dir(handle: i64) -> Result<(), Error>
+        self.register_builtin_fn("__builtin_close_dir", vec![i64_ty.clone()], i32_ty.clone());
+
+        // __builtin_current_dir() -> Result<String, Error>
+        self.register_builtin_fn("__builtin_current_dir", vec![], Type::string());
+
+        // __builtin_set_current_dir(path: &str) -> Result<(), Error>
+        self.register_builtin_fn("__builtin_set_current_dir", vec![ref_str_ty.clone()], i32_ty.clone());
+
+        // Symlinks and hard links
+        // __builtin_hard_link(original: &str, link: &str) -> Result<(), Error>
+        self.register_builtin_fn("__builtin_hard_link", vec![ref_str_ty.clone(), ref_str_ty.clone()], i32_ty.clone());
+
+        // __builtin_symlink(original: &str, link: &str) -> Result<(), Error>
+        self.register_builtin_fn("__builtin_symlink", vec![ref_str_ty.clone(), ref_str_ty.clone()], i32_ty.clone());
+
+        // __builtin_read_link(path: &str) -> Result<String, Error>
+        self.register_builtin_fn("__builtin_read_link", vec![ref_str_ty.clone()], Type::string());
+
+        // __builtin_canonicalize(path: &str) -> Result<String, Error>
+        self.register_builtin_fn("__builtin_canonicalize", vec![ref_str_ty.clone()], Type::string());
+
+        // Permissions
+        // __builtin_set_permissions(path: &str, mode: u32) -> Result<(), Error>
+        self.register_builtin_fn("__builtin_set_permissions", vec![ref_str_ty.clone(), Type::u32()], i32_ty.clone());
     }
 
     /// Register a single built-in function.
@@ -643,7 +729,7 @@ impl<'a> TypeContext<'a> {
             false,
             vec![Type::char()],
             string_ty.clone(),
-            "char_to_string_owned",
+            "char_to_string",
         );
 
         // char.len_utf8(self) -> usize
@@ -743,10 +829,20 @@ impl<'a> TypeContext<'a> {
             "string_char_at",
         );
 
+        // String.substring(&self, start: usize, end: usize) -> String
+        // Extract a substring from start to end (exclusive)
+        self.register_builtin_method(
+            BuiltinMethodType::String,
+            "substring",
+            false,
+            vec![Type::reference(string_ty.clone(), false), usize_ty.clone(), usize_ty.clone()],
+            string_ty.clone(),
+            "string_substring",
+        );
+
         // === Option methods ===
         // Note: Option<T>.unwrap(self) -> T requires generic handling,
         // which is done in find_builtin_method with type substitution.
-        // We register a placeholder here for method discovery.
 
         // Get the Option and Vec DefIds
         let option_def_id = self.option_def_id
@@ -789,7 +885,6 @@ impl<'a> TypeContext<'a> {
         );
 
         // Option<T>.try_(self) -> T (for ? operator desugaring)
-        // This unwraps the Option, propagating None via early return
         self.register_builtin_method(
             BuiltinMethodType::Option,
             "try_",
@@ -800,9 +895,9 @@ impl<'a> TypeContext<'a> {
         );
 
         // === Vec methods ===
+        let vec_t = Type::adt(vec_def_id, vec![t_ty.clone()]);
 
         // Vec<T>::new() -> Vec<T> (static method)
-        let vec_t = Type::adt(vec_def_id, vec![t_ty.clone()]);
         self.register_builtin_method(
             BuiltinMethodType::Vec,
             "new",
@@ -845,15 +940,51 @@ impl<'a> TypeContext<'a> {
         // Vec<T>.get(&self, index: usize) -> Option<&T>
         let option_ref_t = Type::adt(
             self.option_def_id.expect("BUG: option_def_id not set"),
-            vec![Type::reference(t_ty.clone(), false)],
+            vec![Type::reference(t_ty, false)],
         );
         self.register_builtin_method(
             BuiltinMethodType::Vec,
             "get",
             false,
-            vec![Type::reference(vec_t.clone(), false), usize_ty.clone()],
+            vec![Type::reference(vec_t, false), usize_ty.clone()],
             option_ref_t,
             "vec_get",
+        );
+
+        // =========================================================================
+        // Range<T> methods
+        // =========================================================================
+
+        // Range<T>.contains(&self, item: &T) -> bool
+        // Note: For simplicity, we use a fresh type variable for T.
+        // The actual implementation will be specialized per element type.
+        let range_elem_t = self.unifier.fresh_var();
+        let range_ty = Type::new(hir::TypeKind::Range {
+            element: range_elem_t.clone(),
+            inclusive: false,
+        });
+        self.register_builtin_method(
+            BuiltinMethodType::Range,
+            "contains",
+            false,
+            vec![Type::reference(range_ty.clone(), false), Type::reference(range_elem_t.clone(), false)],
+            bool_ty.clone(),
+            "range_contains",
+        );
+
+        // RangeInclusive<T>.contains(&self, item: &T) -> bool
+        let range_incl_elem_t = self.unifier.fresh_var();
+        let range_incl_ty = Type::new(hir::TypeKind::Range {
+            element: range_incl_elem_t.clone(),
+            inclusive: true,
+        });
+        self.register_builtin_method(
+            BuiltinMethodType::RangeInclusive,
+            "contains",
+            false,
+            vec![Type::reference(range_incl_ty.clone(), false), Type::reference(range_incl_elem_t.clone(), false)],
+            bool_ty.clone(),
+            "range_inclusive_contains",
         );
     }
 
@@ -876,6 +1007,8 @@ impl<'a> TypeContext<'a> {
                 super::BuiltinMethodType::String => "String",
                 super::BuiltinMethodType::Option => "Option",
                 super::BuiltinMethodType::Vec => "Vec",
+                super::BuiltinMethodType::Range => "Range",
+                super::BuiltinMethodType::RangeInclusive => "RangeInclusive",
             },
             name
         );
