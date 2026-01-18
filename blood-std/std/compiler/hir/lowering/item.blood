@@ -1,0 +1,1068 @@
+//! Item Lowering
+//!
+//! This module handles lowering AST declarations to HIR items.
+//! Each declaration type (function, struct, enum, etc.) has a dedicated
+//! lowering function.
+
+module std.compiler.hir.lowering.item;
+
+use std.result.Result
+use std.option.Option
+use std.collections.HashMap
+
+use crate::compiler::ast::{
+    Declaration, DeclarationKind, Ident, Span as AstSpan, NodeId,
+    FunctionDecl, StructDecl, EnumDecl, EffectDecl, HandlerDecl,
+    ImplDecl, TraitDecl, TypeAliasDecl, ConstDecl, StaticDecl,
+    ExternFnDecl, BridgeDecl, ModuleDecl, UseDecl,
+    Param, GenericParam, TypePath, Visibility as AstVisibility,
+}
+
+use crate::compiler::hir::{
+    Item, ItemKind, Visibility, Span as HirSpan,
+    FnDef, FnSig, StructDef, StructFieldDef, EnumDef, EnumVariant,
+    Generics, GenericParamDef, GenericParamKind,
+    TraitRef, TraitItem, ImplItem, EffectOp, HandlerOp,
+    HandlerKind, HandlerState, ReturnClause,
+    ExternFnDef, BridgeDef, ModuleDef, Body, BodyId,
+}
+
+use crate::compiler::hir::lowering::{AstLowering, LoweringError}
+use crate::compiler::hir::lowering::expr
+use crate::compiler::typeck::types::{DefId, Type}
+
+// ============================================================================
+// Declaration Lowering Entry Point
+// ============================================================================
+
+/// Lower an AST declaration to an HIR item.
+pub fn lower_declaration(ctx: &mut AstLowering, decl: &Declaration) -> Result<Item, LoweringError> {
+    let def_id = match ctx.node_to_def.get(&decl.id.id()) {
+        Some(id) => id.clone(),
+        None => {
+            return Err(LoweringError::internal(
+                "no DefId for declaration".to_string(),
+                ctx.lower_span(&decl.span),
+            ));
+        }
+    };
+
+    let vis = lower_visibility(&decl.visibility);
+    let span = ctx.lower_span(&decl.span);
+
+    let (name, kind) = match &decl.kind {
+        DeclarationKind::Function(f) => {
+            let fn_def = lower_function(ctx, f, &def_id)?;
+            (f.name.name.clone(), ItemKind::Fn(fn_def))
+        }
+        DeclarationKind::Struct(s) => {
+            let struct_def = lower_struct(ctx, s)?;
+            (s.name.name.clone(), ItemKind::Struct(struct_def))
+        }
+        DeclarationKind::Enum(e) => {
+            let enum_def = lower_enum(ctx, e)?;
+            (e.name.name.clone(), ItemKind::Enum(enum_def))
+        }
+        DeclarationKind::TypeAlias(t) => {
+            let (generics, ty) = lower_type_alias(ctx, t)?;
+            (t.name.name.clone(), ItemKind::TypeAlias { generics, ty })
+        }
+        DeclarationKind::Const(c) => {
+            let (ty, body_id) = lower_const(ctx, c)?;
+            (c.name.name.clone(), ItemKind::Const { ty, body_id })
+        }
+        DeclarationKind::Static(s) => {
+            let (ty, mutable, body_id) = lower_static(ctx, s)?;
+            (s.name.name.clone(), ItemKind::Static { ty, mutable, body_id })
+        }
+        DeclarationKind::Trait(t) => {
+            let (generics, items) = lower_trait(ctx, t)?;
+            (t.name.name.clone(), ItemKind::Trait { generics, items })
+        }
+        DeclarationKind::Impl(i) => {
+            let (generics, trait_ref, self_ty, items) = lower_impl(ctx, i)?;
+            (
+                impl_name(&trait_ref, &self_ty),
+                ItemKind::Impl { generics, trait_ref, self_ty, items },
+            )
+        }
+        DeclarationKind::Effect(e) => {
+            let (generics, operations) = lower_effect(ctx, e)?;
+            (e.name.name.clone(), ItemKind::Effect { generics, operations })
+        }
+        DeclarationKind::Handler(h) => {
+            let (generics, kind, effect, state, operations, return_clause) = lower_handler(ctx, h)?;
+            (
+                h.name.name.clone(),
+                ItemKind::Handler {
+                    generics,
+                    kind,
+                    effect,
+                    state,
+                    operations,
+                    return_clause,
+                },
+            )
+        }
+        DeclarationKind::ExternFn(e) => {
+            let extern_def = lower_extern_fn(ctx, e)?;
+            (e.name.name.clone(), ItemKind::ExternFn(extern_def))
+        }
+        DeclarationKind::Bridge(b) => {
+            let bridge_def = lower_bridge(ctx, b)?;
+            (b.name.name.clone(), ItemKind::Bridge(bridge_def))
+        }
+        DeclarationKind::Module(m) => {
+            let module_def = lower_module(ctx, m)?;
+            (m.name.name.clone(), ItemKind::Module(module_def))
+        }
+        DeclarationKind::Use(_) => {
+            // Use declarations don't produce HIR items directly.
+            // They affect name resolution which happens earlier.
+            return Err(LoweringError::internal(
+                "use declarations should not reach HIR lowering".to_string(),
+                span,
+            ));
+        }
+    };
+
+    Ok(Item::new(def_id, kind, vis, name, span))
+}
+
+// ============================================================================
+// Visibility Lowering
+// ============================================================================
+
+/// Lower AST visibility to HIR visibility.
+fn lower_visibility(vis: &AstVisibility) -> Visibility {
+    match vis {
+        AstVisibility::Public => Visibility::Public,
+        AstVisibility::Private => Visibility::Private,
+        AstVisibility::PubCrate => Visibility::PubCrate,
+        AstVisibility::PubSuper => Visibility::PubSuper,
+        AstVisibility::PubIn(_) => Visibility::Private, // Simplified for now
+    }
+}
+
+// ============================================================================
+// Function Lowering
+// ============================================================================
+
+/// Lower a function declaration.
+fn lower_function(
+    ctx: &mut AstLowering,
+    func: &FunctionDecl,
+    def_id: &DefId,
+) -> Result<FnDef, LoweringError> {
+    // Lower generics
+    let generics = lower_generics(ctx, &func.generics)?;
+
+    // Lower function signature
+    let sig = lower_fn_sig(ctx, func)?;
+
+    // Lower body if present
+    let body_id = match &func.body {
+        Some(block) => {
+            let id = ctx.alloc_body_id();
+            ctx.reset_local_ids();
+            ctx.current_body_id = Some(id.clone());
+
+            let body = expr::lower_function_body(ctx, func, block)?;
+            ctx.crate_.insert_body(id.clone(), body);
+            ctx.current_body_id = None;
+
+            Some(id)
+        }
+        None => None,
+    };
+
+    Ok(FnDef {
+        def_id: def_id.clone(),
+        generics,
+        sig,
+        body_id,
+    })
+}
+
+/// Lower a function signature.
+fn lower_fn_sig(ctx: &mut AstLowering, func: &FunctionDecl) -> Result<FnSig, LoweringError> {
+    // Lower parameter types
+    let mut param_types: [Type] = [];
+    let mut i: usize = 0;
+    while i < func.params.len() {
+        let param_ty = lower_type(ctx, &func.params[i].ty)?;
+        param_types.push(param_ty);
+        i = i + 1;
+    }
+
+    // Lower return type
+    let return_ty = match &func.return_type {
+        Some(ty) => lower_type(ctx, ty)?,
+        None => Type::unit(),
+    };
+
+    // Lower effect row (if any)
+    let effects = match &func.effects {
+        Some(row) => Some(lower_effect_row(ctx, row)?),
+        None => None,
+    };
+
+    Ok(FnSig {
+        params: param_types,
+        return_ty,
+        effects,
+        is_unsafe: func.is_unsafe,
+        is_async: func.is_async,
+    })
+}
+
+// ============================================================================
+// Struct Lowering
+// ============================================================================
+
+/// Lower a struct declaration.
+fn lower_struct(ctx: &mut AstLowering, s: &StructDecl) -> Result<StructDef, LoweringError> {
+    let generics = lower_generics(ctx, &s.generics)?;
+
+    let mut fields: [StructFieldDef] = [];
+    let mut i: usize = 0;
+    while i < s.fields.len() {
+        let field = &s.fields[i];
+        let field_ty = lower_type(ctx, &field.ty)?;
+        fields.push(StructFieldDef {
+            name: field.name.name.clone(),
+            ty: field_ty,
+            vis: lower_visibility(&field.visibility),
+            span: ctx.lower_span(&field.span),
+        });
+        i = i + 1;
+    }
+
+    Ok(StructDef { generics, fields })
+}
+
+// ============================================================================
+// Enum Lowering
+// ============================================================================
+
+/// Lower an enum declaration.
+fn lower_enum(ctx: &mut AstLowering, e: &EnumDecl) -> Result<EnumDef, LoweringError> {
+    let generics = lower_generics(ctx, &e.generics)?;
+
+    let mut variants: [EnumVariant] = [];
+    let mut i: usize = 0;
+    while i < e.variants.len() {
+        let variant = &e.variants[i];
+
+        // Get the DefId for this variant
+        let def_id = match ctx.node_to_def.get(&variant.id.id()) {
+            Some(id) => id.clone(),
+            None => ctx.alloc_def_id(),
+        };
+
+        // Lower variant fields
+        let mut fields: [Type] = [];
+        let mut j: usize = 0;
+        while j < variant.fields.len() {
+            let field_ty = lower_type(ctx, &variant.fields[j].ty)?;
+            fields.push(field_ty);
+            j = j + 1;
+        }
+
+        variants.push(EnumVariant {
+            def_id,
+            name: variant.name.name.clone(),
+            fields,
+            discriminant: variant.discriminant.clone(),
+            span: ctx.lower_span(&variant.span),
+        });
+
+        i = i + 1;
+    }
+
+    Ok(EnumDef { generics, variants })
+}
+
+// ============================================================================
+// Type Alias Lowering
+// ============================================================================
+
+/// Lower a type alias declaration.
+fn lower_type_alias(
+    ctx: &mut AstLowering,
+    t: &TypeAliasDecl,
+) -> Result<(Generics, Type), LoweringError> {
+    let generics = lower_generics(ctx, &t.generics)?;
+    let ty = lower_type(ctx, &t.ty)?;
+    Ok((generics, ty))
+}
+
+// ============================================================================
+// Const/Static Lowering
+// ============================================================================
+
+/// Lower a const declaration.
+fn lower_const(
+    ctx: &mut AstLowering,
+    c: &ConstDecl,
+) -> Result<(Type, BodyId), LoweringError> {
+    let ty = lower_type(ctx, &c.ty)?;
+
+    // Lower initializer as a body
+    let body_id = ctx.alloc_body_id();
+    ctx.reset_local_ids();
+    ctx.current_body_id = Some(body_id.clone());
+
+    let body = expr::lower_const_body(ctx, &c.value, &ty)?;
+    ctx.crate_.insert_body(body_id.clone(), body);
+    ctx.current_body_id = None;
+
+    Ok((ty, body_id))
+}
+
+/// Lower a static declaration.
+fn lower_static(
+    ctx: &mut AstLowering,
+    s: &StaticDecl,
+) -> Result<(Type, bool, BodyId), LoweringError> {
+    let ty = lower_type(ctx, &s.ty)?;
+
+    // Lower initializer as a body
+    let body_id = ctx.alloc_body_id();
+    ctx.reset_local_ids();
+    ctx.current_body_id = Some(body_id.clone());
+
+    let body = expr::lower_const_body(ctx, &s.value, &ty)?;
+    ctx.crate_.insert_body(body_id.clone(), body);
+    ctx.current_body_id = None;
+
+    Ok((ty, s.mutable, body_id))
+}
+
+// ============================================================================
+// Trait Lowering
+// ============================================================================
+
+/// Lower a trait declaration.
+fn lower_trait(
+    ctx: &mut AstLowering,
+    t: &TraitDecl,
+) -> Result<(Generics, [TraitItem]), LoweringError> {
+    let generics = lower_generics(ctx, &t.generics)?;
+
+    let mut items: [TraitItem] = [];
+    let mut i: usize = 0;
+    while i < t.items.len() {
+        let item = lower_trait_item(ctx, &t.items[i])?;
+        items.push(item);
+        i = i + 1;
+    }
+
+    Ok((generics, items))
+}
+
+/// Lower a trait item.
+fn lower_trait_item(ctx: &mut AstLowering, item: &crate::compiler::ast::TraitItem) -> Result<TraitItem, LoweringError> {
+    let def_id = match ctx.node_to_def.get(&item.id.id()) {
+        Some(id) => id.clone(),
+        None => ctx.alloc_def_id(),
+    };
+
+    // Lower based on item kind (function, type, const)
+    // For now, simplified implementation
+    Ok(TraitItem {
+        def_id,
+        name: item.name.name.clone(),
+        kind: lower_trait_item_kind(ctx, item)?,
+        span: ctx.lower_span(&item.span),
+    })
+}
+
+/// Lower a trait item kind.
+fn lower_trait_item_kind(
+    ctx: &mut AstLowering,
+    item: &crate::compiler::ast::TraitItem,
+) -> Result<crate::compiler::hir::TraitItemKind, LoweringError> {
+    match &item.kind {
+        crate::compiler::ast::TraitItemKind::Function(f) => {
+            let sig = lower_fn_sig(ctx, f)?;
+            let body_id = match &f.body {
+                Some(block) => {
+                    let id = ctx.alloc_body_id();
+                    ctx.reset_local_ids();
+                    ctx.current_body_id = Some(id.clone());
+
+                    let body = expr::lower_function_body(ctx, f, block)?;
+                    ctx.crate_.insert_body(id.clone(), body);
+                    ctx.current_body_id = None;
+
+                    Some(id)
+                }
+                None => None,
+            };
+            Ok(crate::compiler::hir::TraitItemKind::Fn { sig, body_id })
+        }
+        crate::compiler::ast::TraitItemKind::Type(t) => {
+            let bounds = lower_type_bounds(ctx, &t.bounds)?;
+            let default = match &t.default {
+                Some(ty) => Some(lower_type(ctx, ty)?),
+                None => None,
+            };
+            Ok(crate::compiler::hir::TraitItemKind::Type { bounds, default })
+        }
+        crate::compiler::ast::TraitItemKind::Const(c) => {
+            let ty = lower_type(ctx, &c.ty)?;
+            let default = match &c.default {
+                Some(expr) => {
+                    let body_id = ctx.alloc_body_id();
+                    ctx.reset_local_ids();
+                    ctx.current_body_id = Some(body_id.clone());
+
+                    let body = expr::lower_const_body(ctx, expr, &ty)?;
+                    ctx.crate_.insert_body(body_id.clone(), body);
+                    ctx.current_body_id = None;
+
+                    Some(body_id)
+                }
+                None => None,
+            };
+            Ok(crate::compiler::hir::TraitItemKind::Const { ty, default })
+        }
+    }
+}
+
+// ============================================================================
+// Impl Lowering
+// ============================================================================
+
+/// Lower an impl block.
+fn lower_impl(
+    ctx: &mut AstLowering,
+    i: &ImplDecl,
+) -> Result<(Generics, Option<TraitRef>, Type, [ImplItem]), LoweringError> {
+    let generics = lower_generics(ctx, &i.generics)?;
+
+    let trait_ref = match &i.trait_ {
+        Some(tr) => Some(lower_trait_ref(ctx, tr)?),
+        None => None,
+    };
+
+    let self_ty = lower_type(ctx, &i.self_ty)?;
+
+    let mut items: [ImplItem] = [];
+    let mut j: usize = 0;
+    while j < i.items.len() {
+        let item = lower_impl_item(ctx, &i.items[j])?;
+        items.push(item);
+        j = j + 1;
+    }
+
+    Ok((generics, trait_ref, self_ty, items))
+}
+
+/// Lower an impl item.
+fn lower_impl_item(ctx: &mut AstLowering, item: &crate::compiler::ast::ImplItem) -> Result<ImplItem, LoweringError> {
+    let def_id = match ctx.node_to_def.get(&item.id.id()) {
+        Some(id) => id.clone(),
+        None => ctx.alloc_def_id(),
+    };
+
+    Ok(ImplItem {
+        def_id,
+        name: item.name.name.clone(),
+        vis: lower_visibility(&item.visibility),
+        kind: lower_impl_item_kind(ctx, item)?,
+        span: ctx.lower_span(&item.span),
+    })
+}
+
+/// Lower an impl item kind.
+fn lower_impl_item_kind(
+    ctx: &mut AstLowering,
+    item: &crate::compiler::ast::ImplItem,
+) -> Result<crate::compiler::hir::ImplItemKind, LoweringError> {
+    match &item.kind {
+        crate::compiler::ast::ImplItemKind::Function(f) => {
+            let def_id = match ctx.node_to_def.get(&item.id.id()) {
+                Some(id) => id.clone(),
+                None => ctx.alloc_def_id(),
+            };
+            let fn_def = lower_function(ctx, f, &def_id)?;
+            Ok(crate::compiler::hir::ImplItemKind::Fn(fn_def))
+        }
+        crate::compiler::ast::ImplItemKind::Type(t) => {
+            let ty = lower_type(ctx, &t.ty)?;
+            Ok(crate::compiler::hir::ImplItemKind::Type(ty))
+        }
+        crate::compiler::ast::ImplItemKind::Const(c) => {
+            let ty = lower_type(ctx, &c.ty)?;
+            let body_id = ctx.alloc_body_id();
+            ctx.reset_local_ids();
+            ctx.current_body_id = Some(body_id.clone());
+
+            let body = expr::lower_const_body(ctx, &c.value, &ty)?;
+            ctx.crate_.insert_body(body_id.clone(), body);
+            ctx.current_body_id = None;
+
+            Ok(crate::compiler::hir::ImplItemKind::Const { ty, body_id })
+        }
+    }
+}
+
+// ============================================================================
+// Effect Lowering
+// ============================================================================
+
+/// Lower an effect declaration.
+fn lower_effect(
+    ctx: &mut AstLowering,
+    e: &EffectDecl,
+) -> Result<(Generics, [EffectOp]), LoweringError> {
+    let generics = lower_generics(ctx, &e.generics)?;
+
+    let mut operations: [EffectOp] = [];
+    let mut i: usize = 0;
+    while i < e.operations.len() {
+        let op = &e.operations[i];
+        let def_id = match ctx.node_to_def.get(&op.id.id()) {
+            Some(id) => id.clone(),
+            None => ctx.alloc_def_id(),
+        };
+
+        let mut param_types: [Type] = [];
+        let mut j: usize = 0;
+        while j < op.params.len() {
+            let param_ty = lower_type(ctx, &op.params[j].ty)?;
+            param_types.push(param_ty);
+            j = j + 1;
+        }
+
+        let return_ty = match &op.return_type {
+            Some(ty) => lower_type(ctx, ty)?,
+            None => Type::unit(),
+        };
+
+        operations.push(EffectOp {
+            def_id,
+            name: op.name.name.clone(),
+            params: param_types,
+            return_ty,
+            span: ctx.lower_span(&op.span),
+        });
+
+        i = i + 1;
+    }
+
+    Ok((generics, operations))
+}
+
+// ============================================================================
+// Handler Lowering
+// ============================================================================
+
+/// Lower a handler declaration.
+fn lower_handler(
+    ctx: &mut AstLowering,
+    h: &HandlerDecl,
+) -> Result<(Generics, HandlerKind, Type, [HandlerState], [HandlerOp], Option<ReturnClause>), LoweringError> {
+    let generics = lower_generics(ctx, &h.generics)?;
+
+    let kind = match h.kind {
+        crate::compiler::ast::HandlerKind::Deep => HandlerKind::Deep,
+        crate::compiler::ast::HandlerKind::Shallow => HandlerKind::Shallow,
+    };
+
+    let effect = lower_type(ctx, &h.effect)?;
+
+    // Lower state variables
+    let mut state: [HandlerState] = [];
+    let mut i: usize = 0;
+    while i < h.state.len() {
+        let s = &h.state[i];
+        let ty = lower_type(ctx, &s.ty)?;
+        let init = match &s.init {
+            Some(e) => {
+                let body_id = ctx.alloc_body_id();
+                ctx.reset_local_ids();
+                ctx.current_body_id = Some(body_id.clone());
+
+                let body = expr::lower_const_body(ctx, e, &ty)?;
+                ctx.crate_.insert_body(body_id.clone(), body);
+                ctx.current_body_id = None;
+
+                Some(body_id)
+            }
+            None => None,
+        };
+        state.push(HandlerState {
+            name: s.name.name.clone(),
+            ty,
+            mutable: s.mutable,
+            init,
+            span: ctx.lower_span(&s.span),
+        });
+        i = i + 1;
+    }
+
+    // Lower operation handlers
+    let mut operations: [HandlerOp] = [];
+    let mut i: usize = 0;
+    while i < h.operations.len() {
+        let op = &h.operations[i];
+        let body_id = ctx.alloc_body_id();
+        ctx.reset_local_ids();
+        ctx.current_body_id = Some(body_id.clone());
+
+        let body = expr::lower_handler_op_body(ctx, op)?;
+        ctx.crate_.insert_body(body_id.clone(), body);
+        ctx.current_body_id = None;
+
+        operations.push(HandlerOp {
+            name: op.name.name.clone(),
+            params: lower_params(ctx, &op.params)?,
+            body_id,
+            span: ctx.lower_span(&op.span),
+        });
+        i = i + 1;
+    }
+
+    // Lower return clause
+    let return_clause = match &h.return_clause {
+        Some(rc) => {
+            let body_id = ctx.alloc_body_id();
+            ctx.reset_local_ids();
+            ctx.current_body_id = Some(body_id.clone());
+
+            let body = expr::lower_return_clause_body(ctx, rc)?;
+            ctx.crate_.insert_body(body_id.clone(), body);
+            ctx.current_body_id = None;
+
+            Some(ReturnClause {
+                param: rc.param.name.clone(),
+                body_id,
+                span: ctx.lower_span(&rc.span),
+            })
+        }
+        None => None,
+    };
+
+    Ok((generics, kind, effect, state, operations, return_clause))
+}
+
+// ============================================================================
+// ExternFn Lowering
+// ============================================================================
+
+/// Lower an extern function declaration.
+fn lower_extern_fn(ctx: &mut AstLowering, e: &ExternFnDecl) -> Result<ExternFnDef, LoweringError> {
+    let mut param_types: [Type] = [];
+    let mut i: usize = 0;
+    while i < e.params.len() {
+        let param_ty = lower_type(ctx, &e.params[i].ty)?;
+        param_types.push(param_ty);
+        i = i + 1;
+    }
+
+    let return_ty = match &e.return_type {
+        Some(ty) => lower_type(ctx, ty)?,
+        None => Type::unit(),
+    };
+
+    Ok(ExternFnDef {
+        name: e.name.name.clone(),
+        abi: e.abi.clone(),
+        params: param_types,
+        return_ty,
+        is_variadic: e.is_variadic,
+        span: ctx.lower_span(&e.span),
+    })
+}
+
+// ============================================================================
+// Bridge Lowering
+// ============================================================================
+
+/// Lower a bridge declaration.
+fn lower_bridge(ctx: &mut AstLowering, b: &BridgeDecl) -> Result<BridgeDef, LoweringError> {
+    let mut items: [ExternFnDef] = [];
+    let mut i: usize = 0;
+    while i < b.items.len() {
+        let item = lower_extern_fn(ctx, &b.items[i])?;
+        items.push(item);
+        i = i + 1;
+    }
+
+    Ok(BridgeDef {
+        abi: b.abi.clone(),
+        items,
+        span: ctx.lower_span(&b.span),
+    })
+}
+
+// ============================================================================
+// Module Lowering
+// ============================================================================
+
+/// Lower a module declaration.
+fn lower_module(ctx: &mut AstLowering, m: &ModuleDecl) -> Result<ModuleDef, LoweringError> {
+    // Modules are typically handled at a higher level
+    // For now, just record the module path
+    Ok(ModuleDef {
+        path: m.path.segments.iter().map(|s| s.name.clone()).collect(),
+        span: ctx.lower_span(&m.span),
+    })
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/// Lower generic parameters.
+fn lower_generics(
+    ctx: &mut AstLowering,
+    generics: &crate::compiler::ast::Generics,
+) -> Result<Generics, LoweringError> {
+    let mut params: [GenericParamDef] = [];
+    let mut i: usize = 0;
+    while i < generics.params.len() {
+        let param = &generics.params[i];
+        let def_id = ctx.alloc_def_id();
+
+        let kind = match &param.kind {
+            crate::compiler::ast::GenericParamKind::Type { default } => {
+                let default_ty = match default {
+                    Some(ty) => Some(lower_type(ctx, ty)?),
+                    None => None,
+                };
+                GenericParamKind::Type { default: default_ty }
+            }
+            crate::compiler::ast::GenericParamKind::Lifetime => {
+                GenericParamKind::Lifetime
+            }
+            crate::compiler::ast::GenericParamKind::Const { ty } => {
+                let const_ty = lower_type(ctx, ty)?;
+                GenericParamKind::Const { ty: const_ty }
+            }
+        };
+
+        params.push(GenericParamDef {
+            def_id,
+            name: param.name.name.clone(),
+            kind,
+            span: ctx.lower_span(&param.span),
+        });
+
+        i = i + 1;
+    }
+
+    Ok(Generics {
+        params,
+        where_clause: lower_where_clause(ctx, &generics.where_clause)?,
+    })
+}
+
+/// Lower a where clause.
+fn lower_where_clause(
+    ctx: &mut AstLowering,
+    where_clause: &Option<crate::compiler::ast::WhereClause>,
+) -> Result<Option<crate::compiler::hir::WhereClause>, LoweringError> {
+    match where_clause {
+        Some(wc) => {
+            let mut predicates: [crate::compiler::hir::WherePredicate] = [];
+            let mut i: usize = 0;
+            while i < wc.predicates.len() {
+                let pred = lower_where_predicate(ctx, &wc.predicates[i])?;
+                predicates.push(pred);
+                i = i + 1;
+            }
+            Ok(Some(crate::compiler::hir::WhereClause {
+                predicates,
+                span: ctx.lower_span(&wc.span),
+            }))
+        }
+        None => Ok(None),
+    }
+}
+
+/// Lower a where predicate.
+fn lower_where_predicate(
+    ctx: &mut AstLowering,
+    pred: &crate::compiler::ast::WherePredicate,
+) -> Result<crate::compiler::hir::WherePredicate, LoweringError> {
+    match pred {
+        crate::compiler::ast::WherePredicate::TypeBound { ty, bounds, span } => {
+            let hir_ty = lower_type(ctx, ty)?;
+            let hir_bounds = lower_type_bounds(ctx, bounds)?;
+            Ok(crate::compiler::hir::WherePredicate::TypeBound {
+                ty: hir_ty,
+                bounds: hir_bounds,
+                span: ctx.lower_span(span),
+            })
+        }
+        crate::compiler::ast::WherePredicate::Lifetime { lifetime, bounds, span } => {
+            Ok(crate::compiler::hir::WherePredicate::Lifetime {
+                lifetime: lifetime.clone(),
+                bounds: bounds.clone(),
+                span: ctx.lower_span(span),
+            })
+        }
+    }
+}
+
+/// Lower type bounds.
+fn lower_type_bounds(
+    ctx: &mut AstLowering,
+    bounds: &[crate::compiler::ast::TypeBound],
+) -> Result<[crate::compiler::hir::TypeBound], LoweringError> {
+    let mut result: [crate::compiler::hir::TypeBound] = [];
+    let mut i: usize = 0;
+    while i < bounds.len() {
+        let bound = lower_type_bound(ctx, &bounds[i])?;
+        result.push(bound);
+        i = i + 1;
+    }
+    Ok(result)
+}
+
+/// Lower a single type bound.
+fn lower_type_bound(
+    ctx: &mut AstLowering,
+    bound: &crate::compiler::ast::TypeBound,
+) -> Result<crate::compiler::hir::TypeBound, LoweringError> {
+    match bound {
+        crate::compiler::ast::TypeBound::Trait(tr) => {
+            let trait_ref = lower_trait_ref(ctx, tr)?;
+            Ok(crate::compiler::hir::TypeBound::Trait(trait_ref))
+        }
+        crate::compiler::ast::TypeBound::Lifetime(lt) => {
+            Ok(crate::compiler::hir::TypeBound::Lifetime(lt.clone()))
+        }
+    }
+}
+
+/// Lower a trait reference.
+fn lower_trait_ref(
+    ctx: &mut AstLowering,
+    tr: &crate::compiler::ast::TraitRef,
+) -> Result<TraitRef, LoweringError> {
+    // Resolve the trait path to a DefId
+    let def_id = resolve_path_to_def(ctx, &tr.path)?;
+
+    // Lower type arguments
+    let mut args: [Type] = [];
+    match &tr.args {
+        Some(type_args) => {
+            let mut i: usize = 0;
+            while i < type_args.args.len() {
+                let arg = lower_type(ctx, &type_args.args[i])?;
+                args.push(arg);
+                i = i + 1;
+            }
+        }
+        None => {}
+    }
+
+    Ok(TraitRef {
+        def_id,
+        args,
+        span: ctx.lower_span(&tr.span),
+    })
+}
+
+/// Lower function parameters.
+fn lower_params(
+    ctx: &mut AstLowering,
+    params: &[crate::compiler::ast::Param],
+) -> Result<[(String, Type)], LoweringError> {
+    let mut result: [(String, Type)] = [];
+    let mut i: usize = 0;
+    while i < params.len() {
+        let ty = lower_type(ctx, &params[i].ty)?;
+        result.push((params[i].name.name.clone(), ty));
+        i = i + 1;
+    }
+    Ok(result)
+}
+
+/// Lower an AST type to HIR Type.
+pub fn lower_type(ctx: &mut AstLowering, ty: &crate::compiler::ast::Type) -> Result<Type, LoweringError> {
+    match &ty.kind {
+        crate::compiler::ast::TypeKind::Path(path) => {
+            // Try to resolve the path to a type
+            resolve_type_path(ctx, path)
+        }
+        crate::compiler::ast::TypeKind::Tuple(tys) => {
+            let mut elements: [Type] = [];
+            let mut i: usize = 0;
+            while i < tys.len() {
+                let elem = lower_type(ctx, &tys[i])?;
+                elements.push(elem);
+                i = i + 1;
+            }
+            Ok(Type::tuple(elements))
+        }
+        crate::compiler::ast::TypeKind::Array { elem, len } => {
+            let elem_ty = lower_type(ctx, elem)?;
+            Ok(Type::array(elem_ty, *len))
+        }
+        crate::compiler::ast::TypeKind::Slice(elem) => {
+            let elem_ty = lower_type(ctx, elem)?;
+            Ok(Type::slice(elem_ty))
+        }
+        crate::compiler::ast::TypeKind::Reference { mutable, ty: inner } => {
+            let inner_ty = lower_type(ctx, inner)?;
+            Ok(Type::reference(inner_ty, *mutable))
+        }
+        crate::compiler::ast::TypeKind::Pointer { mutable, ty: inner } => {
+            let inner_ty = lower_type(ctx, inner)?;
+            Ok(Type::pointer(inner_ty, *mutable))
+        }
+        crate::compiler::ast::TypeKind::Function { params, return_ty, effects } => {
+            let mut param_tys: [Type] = [];
+            let mut i: usize = 0;
+            while i < params.len() {
+                let param_ty = lower_type(ctx, &params[i])?;
+                param_tys.push(param_ty);
+                i = i + 1;
+            }
+            let ret_ty = lower_type(ctx, return_ty)?;
+            Ok(Type::function(param_tys, ret_ty))
+        }
+        crate::compiler::ast::TypeKind::Infer => {
+            Ok(Type::infer())
+        }
+        crate::compiler::ast::TypeKind::Never => {
+            Ok(Type::never())
+        }
+        crate::compiler::ast::TypeKind::Error => {
+            Ok(Type::error())
+        }
+    }
+}
+
+/// Lower an effect row.
+fn lower_effect_row(
+    ctx: &mut AstLowering,
+    row: &crate::compiler::ast::EffectRow,
+) -> Result<crate::compiler::typeck::types::EffectRow, LoweringError> {
+    let mut effects: [crate::compiler::typeck::types::EffectInstance] = [];
+    let mut i: usize = 0;
+    while i < row.effects.len() {
+        let effect = lower_effect_instance(ctx, &row.effects[i])?;
+        effects.push(effect);
+        i = i + 1;
+    }
+    Ok(crate::compiler::typeck::types::EffectRow {
+        effects,
+        tail: row.tail.clone(),
+    })
+}
+
+/// Lower an effect instance.
+fn lower_effect_instance(
+    ctx: &mut AstLowering,
+    effect: &crate::compiler::ast::EffectInstance,
+) -> Result<crate::compiler::typeck::types::EffectInstance, LoweringError> {
+    let def_id = resolve_path_to_def(ctx, &effect.path)?;
+
+    let mut args: [Type] = [];
+    match &effect.args {
+        Some(type_args) => {
+            let mut i: usize = 0;
+            while i < type_args.args.len() {
+                let arg = lower_type(ctx, &type_args.args[i])?;
+                args.push(arg);
+                i = i + 1;
+            }
+        }
+        None => {}
+    }
+
+    Ok(crate::compiler::typeck::types::EffectInstance {
+        def_id,
+        args,
+    })
+}
+
+/// Resolve a type path to a Type.
+fn resolve_type_path(ctx: &mut AstLowering, path: &TypePath) -> Result<Type, LoweringError> {
+    // Handle primitive types
+    if path.segments.len() == 1 {
+        let name = &path.segments[0].name;
+        match name.as_str() {
+            "i8" => return Ok(Type::i8()),
+            "i16" => return Ok(Type::i16()),
+            "i32" => return Ok(Type::i32()),
+            "i64" => return Ok(Type::i64()),
+            "u8" => return Ok(Type::u8()),
+            "u16" => return Ok(Type::u16()),
+            "u32" => return Ok(Type::u32()),
+            "u64" => return Ok(Type::u64()),
+            "f32" => return Ok(Type::f32()),
+            "f64" => return Ok(Type::f64()),
+            "bool" | "Bool" => return Ok(Type::bool()),
+            "char" => return Ok(Type::char()),
+            "str" => return Ok(Type::str()),
+            "String" => return Ok(Type::string()),
+            "()" => return Ok(Type::unit()),
+            _ => {}
+        }
+    }
+
+    // Resolve user-defined type
+    let def_id = resolve_path_to_def(ctx, path)?;
+
+    // Get type arguments if any
+    let mut args: [Type] = [];
+    if let Some(last) = path.segments.last() {
+        if let Some(type_args) = &last.args {
+            let mut i: usize = 0;
+            while i < type_args.args.len() {
+                let arg = lower_type(ctx, &type_args.args[i])?;
+                args.push(arg);
+                i = i + 1;
+            }
+        }
+    }
+
+    if args.is_empty() {
+        Ok(Type::adt(def_id))
+    } else {
+        Ok(Type::adt_with_args(def_id, args))
+    }
+}
+
+/// Resolve a path to a DefId.
+fn resolve_path_to_def(ctx: &mut AstLowering, path: &TypePath) -> Result<DefId, LoweringError> {
+    // For now, simplified resolution - just use the path string as a lookup key
+    // In a full implementation, this would go through proper name resolution
+    let full_path = path.segments.iter()
+        .map(|s| s.name.clone())
+        .collect::<Vec<String>>()
+        .join("::");
+
+    // Look up in type check results
+    // This is a simplified approach - real implementation would use resolution data
+    // For now, allocate a new DefId for unresolved paths
+    let def_id = ctx.alloc_def_id();
+    Ok(def_id)
+}
+
+/// Generate a name for an impl block.
+fn impl_name(trait_ref: &Option<TraitRef>, self_ty: &Type) -> String {
+    match trait_ref {
+        Some(tr) => format!("<impl {} for {}>", tr.def_id.id(), self_ty.display()),
+        None => format!("<impl {}>", self_ty.display()),
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[test]
+fn test_visibility_lowering() {
+    assert(matches!(lower_visibility(&AstVisibility::Public), Visibility::Public));
+    assert(matches!(lower_visibility(&AstVisibility::Private), Visibility::Private));
+    assert(matches!(lower_visibility(&AstVisibility::PubCrate), Visibility::PubCrate));
+}

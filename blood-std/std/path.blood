@@ -1,0 +1,1061 @@
+// Blood Standard Library - Path Module
+// ====================================
+//
+// Cross-platform path manipulation for the Blood programming language.
+//
+// This module provides two main types:
+// - `PathBuf`: An owned, mutable path (similar to String)
+// - `Path`: A borrowed reference to a path (similar to &str)
+//
+// # Design Notes
+//
+// Blood paths are always UTF-8. This simplifies the API and ensures
+// consistent behavior across platforms. Non-UTF-8 paths are not supported.
+//
+// Path separators are unified: forward slash '/' works on all platforms.
+// On Windows, both '/' and '\' are recognized as separators.
+
+use crate::core::{Option, Result, String};
+use crate::collections::Vec;
+use crate::traits::{Clone, Debug, Default, Display, Eq, Hash, PartialEq, PartialOrd, Ord, Ordering};
+use crate::traits::fmt::{self, Formatter};
+
+// ===========================================================================
+// Constants
+// ===========================================================================
+
+/// The main path separator for the current platform
+#[cfg(unix)]
+pub const MAIN_SEPARATOR: char = '/';
+
+#[cfg(windows)]
+pub const MAIN_SEPARATOR: char = '\\';
+
+/// String version of the main separator
+#[cfg(unix)]
+pub const MAIN_SEPARATOR_STR: &str = "/";
+
+#[cfg(windows)]
+pub const MAIN_SEPARATOR_STR: &str = "\\";
+
+// ===========================================================================
+// PathBuf - Owned Path
+// ===========================================================================
+
+/// An owned, mutable path.
+///
+/// This type provides methods to manipulate path values and is the owned
+/// counterpart to `Path`.
+///
+/// # Examples
+///
+/// ```blood
+/// use std::path::PathBuf;
+///
+/// let mut path = PathBuf::from("/usr/bin");
+/// path.push("rustc");
+/// assert_eq!(path.as_str(), "/usr/bin/rustc");
+/// ```
+pub struct PathBuf {
+    inner: String,
+}
+
+impl PathBuf {
+    // -------------------------------------------------------------------------
+    // Constructors
+    // -------------------------------------------------------------------------
+
+    /// Creates a new empty `PathBuf`.
+    ///
+    /// # Examples
+    ///
+    /// ```blood
+    /// let path = PathBuf::new();
+    /// assert!(path.as_str().is_empty());
+    /// ```
+    pub fn new() -> PathBuf / pure {
+        PathBuf { inner: String::new() }
+    }
+
+    /// Creates a new `PathBuf` with the given capacity.
+    pub fn with_capacity(capacity: usize) -> PathBuf / pure {
+        PathBuf { inner: String::with_capacity(capacity) }
+    }
+
+    /// Creates a `PathBuf` from a string slice.
+    ///
+    /// # Examples
+    ///
+    /// ```blood
+    /// let path = PathBuf::from("/home/user");
+    /// assert_eq!(path.as_str(), "/home/user");
+    /// ```
+    pub fn from(s: &str) -> PathBuf / pure {
+        PathBuf { inner: String::from(s) }
+    }
+
+    /// Creates a `PathBuf` from an owned `String`.
+    pub fn from_string(s: String) -> PathBuf / pure {
+        PathBuf { inner: s }
+    }
+
+    // -------------------------------------------------------------------------
+    // Accessors
+    // -------------------------------------------------------------------------
+
+    /// Returns the path as a string slice.
+    pub fn as_str(self: &Self) -> &str / pure {
+        self.inner.as_str()
+    }
+
+    /// Returns a `Path` slice referencing this `PathBuf`.
+    pub fn as_path(self: &Self) -> &Path / pure {
+        Path::new(self.inner.as_str())
+    }
+
+    /// Consumes the `PathBuf` and returns the underlying `String`.
+    pub fn into_string(self: Self) -> String / pure {
+        self.inner
+    }
+
+    /// Returns the capacity of the internal buffer in bytes.
+    pub fn capacity(self: &Self) -> usize / pure {
+        self.inner.capacity()
+    }
+
+    // -------------------------------------------------------------------------
+    // Mutation
+    // -------------------------------------------------------------------------
+
+    /// Extends `self` with `path`.
+    ///
+    /// If `path` is absolute, it replaces the current path.
+    /// Otherwise, it is appended with a path separator.
+    ///
+    /// # Examples
+    ///
+    /// ```blood
+    /// let mut path = PathBuf::from("/usr");
+    /// path.push("bin");
+    /// assert_eq!(path.as_str(), "/usr/bin");
+    ///
+    /// path.push("/etc");  // Absolute path replaces
+    /// assert_eq!(path.as_str(), "/etc");
+    /// ```
+    pub fn push(self: &mut Self, path: &str) / pure {
+        if path.is_empty() {
+            return;
+        }
+
+        // If the path being pushed is absolute, replace entirely
+        if is_absolute_path(path) {
+            self.inner = String::from(path);
+            return;
+        }
+
+        // Add separator if needed
+        if !self.inner.is_empty() && !self.ends_with_separator() {
+            self.inner.push(MAIN_SEPARATOR);
+        }
+
+        self.inner.push_str(path);
+    }
+
+    /// Truncates `self` to `self.parent()`.
+    ///
+    /// Returns `false` and does nothing if `self.parent()` is `None`.
+    /// Otherwise, returns `true`.
+    ///
+    /// # Examples
+    ///
+    /// ```blood
+    /// let mut path = PathBuf::from("/usr/bin/rustc");
+    /// assert!(path.pop());
+    /// assert_eq!(path.as_str(), "/usr/bin");
+    /// ```
+    pub fn pop(self: &mut Self) -> bool / pure {
+        match self.parent_str() {
+            Some(parent) => {
+                self.inner = String::from(parent);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Updates `self.file_name()` to `file_name`.
+    ///
+    /// If `self.file_name()` was `None`, appends `file_name`.
+    ///
+    /// # Examples
+    ///
+    /// ```blood
+    /// let mut path = PathBuf::from("/usr/bin/foo");
+    /// path.set_file_name("bar");
+    /// assert_eq!(path.as_str(), "/usr/bin/bar");
+    /// ```
+    pub fn set_file_name(self: &mut Self, file_name: &str) / pure {
+        if self.file_name().is_some() {
+            self.pop();
+        }
+        self.push(file_name);
+    }
+
+    /// Updates `self.extension()` to `extension`.
+    ///
+    /// Returns `false` and does nothing if `self.file_name()` is `None`,
+    /// returns `true` and updates the extension otherwise.
+    ///
+    /// If `extension` is `None`, the extension is removed.
+    ///
+    /// # Examples
+    ///
+    /// ```blood
+    /// let mut path = PathBuf::from("/usr/bin/foo.txt");
+    /// path.set_extension("rs");
+    /// assert_eq!(path.as_str(), "/usr/bin/foo.rs");
+    /// ```
+    pub fn set_extension(self: &mut Self, extension: &str) -> bool / pure {
+        let file_name = match self.file_name() {
+            Some(name) => name,
+            None => return false,
+        };
+
+        // Find the stem (file name without extension)
+        let stem = match file_stem(file_name) {
+            Some(s) => s,
+            None => file_name,
+        };
+
+        // Build new file name
+        let new_name = if extension.is_empty() {
+            String::from(stem)
+        } else {
+            let mut s = String::from(stem);
+            s.push('.');
+            s.push_str(extension);
+            s
+        };
+
+        self.set_file_name(new_name.as_str());
+        true
+    }
+
+    /// Clears the path, making it empty.
+    pub fn clear(self: &mut Self) / pure {
+        self.inner.clear();
+    }
+
+    /// Reserves capacity for at least `additional` more bytes.
+    pub fn reserve(self: &mut Self, additional: usize) / pure {
+        self.inner.reserve(additional);
+    }
+
+    /// Shrinks the capacity to match the current length.
+    pub fn shrink_to_fit(self: &mut Self) / pure {
+        self.inner.shrink_to_fit();
+    }
+
+    // -------------------------------------------------------------------------
+    // Path Component Queries
+    // -------------------------------------------------------------------------
+
+    /// Returns the parent directory of this path.
+    ///
+    /// Returns `None` if the path has no parent (is a root or empty).
+    pub fn parent(self: &Self) -> Option<PathBuf> / pure {
+        self.parent_str().map(|s| PathBuf::from(s))
+    }
+
+    /// Returns the parent directory as a string slice.
+    fn parent_str(self: &Self) -> Option<&str> / pure {
+        let s = self.inner.as_str();
+        if s.is_empty() {
+            return None;
+        }
+
+        // Find the last separator
+        let mut last_sep = None;
+        let mut i = 0;
+        for ch in s.chars() {
+            if is_separator(ch) {
+                last_sep = Some(i);
+            }
+            i += ch.len_utf8();
+        }
+
+        match last_sep {
+            Some(pos) => {
+                if pos == 0 {
+                    // Root directory
+                    if s.len() == 1 {
+                        None
+                    } else {
+                        Some(&s[..1])
+                    }
+                } else {
+                    Some(&s[..pos])
+                }
+            }
+            None => None,
+        }
+    }
+
+    /// Returns the final component of the path, if there is one.
+    ///
+    /// Returns `None` if the path terminates in `..`.
+    pub fn file_name(self: &Self) -> Option<&str> / pure {
+        let s = self.inner.as_str();
+        if s.is_empty() {
+            return None;
+        }
+
+        // Remove trailing separators
+        let s = s.trim_end_matches(|c: char| is_separator(c));
+        if s.is_empty() {
+            return None;
+        }
+
+        // Find the last separator
+        match s.rfind(|c: char| is_separator(c)) {
+            Some(pos) => {
+                let name = &s[pos + 1..];
+                if name == ".." {
+                    None
+                } else {
+                    Some(name)
+                }
+            }
+            None => {
+                if s == ".." {
+                    None
+                } else {
+                    Some(s)
+                }
+            }
+        }
+    }
+
+    /// Returns the stem (file name without extension) of the path.
+    pub fn file_stem(self: &Self) -> Option<&str> / pure {
+        self.file_name().and_then(|name| file_stem(name))
+    }
+
+    /// Returns the extension of the path.
+    pub fn extension(self: &Self) -> Option<&str> / pure {
+        self.file_name().and_then(|name| file_extension(name))
+    }
+
+    /// Returns `true` if the path is absolute.
+    pub fn is_absolute(self: &Self) -> bool / pure {
+        is_absolute_path(self.inner.as_str())
+    }
+
+    /// Returns `true` if the path is relative.
+    pub fn is_relative(self: &Self) -> bool / pure {
+        !self.is_absolute()
+    }
+
+    /// Returns `true` if the path has a root.
+    pub fn has_root(self: &Self) -> bool / pure {
+        let s = self.inner.as_str();
+        !s.is_empty() && is_separator(s.chars().next().unwrap())
+    }
+
+    /// Returns `true` if the path starts with the given prefix.
+    pub fn starts_with(self: &Self, prefix: &str) -> bool / pure {
+        self.inner.starts_with(prefix)
+    }
+
+    /// Returns `true` if the path ends with the given suffix.
+    pub fn ends_with(self: &Self, suffix: &str) -> bool / pure {
+        self.inner.ends_with(suffix)
+    }
+
+    // -------------------------------------------------------------------------
+    // Path Manipulation
+    // -------------------------------------------------------------------------
+
+    /// Creates an owned `PathBuf` with `path` joined to `self`.
+    ///
+    /// # Examples
+    ///
+    /// ```blood
+    /// let path = PathBuf::from("/usr");
+    /// let joined = path.join("bin");
+    /// assert_eq!(joined.as_str(), "/usr/bin");
+    /// ```
+    pub fn join(self: &Self, path: &str) -> PathBuf / pure {
+        let mut result = self.clone();
+        result.push(path);
+        result
+    }
+
+    /// Creates an owned `PathBuf` like `self` but with the given file name.
+    pub fn with_file_name(self: &Self, file_name: &str) -> PathBuf / pure {
+        let mut result = self.clone();
+        result.set_file_name(file_name);
+        result
+    }
+
+    /// Creates an owned `PathBuf` like `self` but with the given extension.
+    pub fn with_extension(self: &Self, extension: &str) -> PathBuf / pure {
+        let mut result = self.clone();
+        result.set_extension(extension);
+        result
+    }
+
+    // -------------------------------------------------------------------------
+    // Iteration
+    // -------------------------------------------------------------------------
+
+    /// Returns an iterator over the components of the path.
+    pub fn components(self: &Self) -> Components / pure {
+        Components::new(self.inner.as_str())
+    }
+
+    /// Returns an iterator over the path's ancestors.
+    pub fn ancestors(self: &Self) -> Ancestors / pure {
+        Ancestors { path: Some(self.clone()) }
+    }
+
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
+
+    fn ends_with_separator(self: &Self) -> bool / pure {
+        let s = self.inner.as_str();
+        !s.is_empty() && is_separator(s.chars().last().unwrap())
+    }
+}
+
+impl Clone for PathBuf {
+    fn clone(self: &Self) -> Self / pure {
+        PathBuf { inner: self.inner.clone() }
+    }
+}
+
+impl PartialEq for PathBuf {
+    fn eq(self: &Self, other: &Self) -> bool / pure {
+        self.inner == other.inner
+    }
+}
+
+impl Eq for PathBuf {}
+
+impl PartialOrd for PathBuf {
+    fn partial_cmp(self: &Self, other: &Self) -> Option<Ordering> / pure {
+        self.inner.partial_cmp(&other.inner)
+    }
+}
+
+impl Ord for PathBuf {
+    fn cmp(self: &Self, other: &Self) -> Ordering / pure {
+        self.inner.cmp(&other.inner)
+    }
+}
+
+impl Hash for PathBuf {
+    fn hash<H: Hasher>(self: &Self, state: &mut H) / pure {
+        self.inner.hash(state);
+    }
+}
+
+impl Default for PathBuf {
+    fn default() -> Self / pure {
+        PathBuf::new()
+    }
+}
+
+impl Debug for PathBuf {
+    fn fmt(self: &Self, f: &mut Formatter) -> fmt::Result / {IO} {
+        f.debug_tuple("PathBuf")
+            .field(&self.inner)
+            .finish()
+    }
+}
+
+impl Display for PathBuf {
+    fn fmt(self: &Self, f: &mut Formatter) -> fmt::Result / {IO} {
+        f.write_str(self.inner.as_str())
+    }
+}
+
+impl From<&str> for PathBuf {
+    fn from(s: &str) -> Self / pure {
+        PathBuf::from(s)
+    }
+}
+
+impl From<String> for PathBuf {
+    fn from(s: String) -> Self / pure {
+        PathBuf::from_string(s)
+    }
+}
+
+impl AsRef<Path> for PathBuf {
+    fn as_ref(self: &Self) -> &Path / pure {
+        self.as_path()
+    }
+}
+
+impl AsRef<str> for PathBuf {
+    fn as_ref(self: &Self) -> &str / pure {
+        self.as_str()
+    }
+}
+
+// ===========================================================================
+// Path - Borrowed Path
+// ===========================================================================
+
+/// A borrowed reference to a path.
+///
+/// This is the unsized type corresponding to `PathBuf`. It is always
+/// accessed by reference, like `str`.
+///
+/// # Examples
+///
+/// ```blood
+/// use std::path::Path;
+///
+/// let path = Path::new("/usr/bin");
+/// assert_eq!(path.file_name(), Some("bin"));
+/// ```
+pub struct Path {
+    inner: str,
+}
+
+impl Path {
+    /// Wraps a string slice as a `Path`.
+    pub fn new(s: &str) -> &Path / pure {
+        // SAFETY: Path is a transparent wrapper around str
+        unsafe { &*(s as *const str as *const Path) }
+    }
+
+    /// Returns the path as a string slice.
+    pub fn as_str(self: &Self) -> &str / pure {
+        &self.inner
+    }
+
+    /// Converts to a `str` if the path is valid UTF-8.
+    ///
+    /// Since Blood paths are always UTF-8, this always succeeds.
+    pub fn to_str(self: &Self) -> Option<&str> / pure {
+        Some(&self.inner)
+    }
+
+    /// Converts the path to an owned `PathBuf`.
+    pub fn to_path_buf(self: &Self) -> PathBuf / pure {
+        PathBuf::from(&self.inner)
+    }
+
+    /// Returns `true` if the path is absolute.
+    pub fn is_absolute(self: &Self) -> bool / pure {
+        is_absolute_path(&self.inner)
+    }
+
+    /// Returns `true` if the path is relative.
+    pub fn is_relative(self: &Self) -> bool / pure {
+        !self.is_absolute()
+    }
+
+    /// Returns `true` if the path has a root.
+    pub fn has_root(self: &Self) -> bool / pure {
+        !self.inner.is_empty() && is_separator(self.inner.chars().next().unwrap())
+    }
+
+    /// Returns the parent directory of this path.
+    pub fn parent(self: &Self) -> Option<&Path> / pure {
+        let s = &self.inner;
+        if s.is_empty() {
+            return None;
+        }
+
+        // Find the last separator
+        let mut last_sep = None;
+        let mut i = 0;
+        for ch in s.chars() {
+            if is_separator(ch) {
+                last_sep = Some(i);
+            }
+            i += ch.len_utf8();
+        }
+
+        match last_sep {
+            Some(pos) => {
+                if pos == 0 {
+                    if s.len() == 1 {
+                        None
+                    } else {
+                        Some(Path::new(&s[..1]))
+                    }
+                } else {
+                    Some(Path::new(&s[..pos]))
+                }
+            }
+            None => None,
+        }
+    }
+
+    /// Returns the final component of the path.
+    pub fn file_name(self: &Self) -> Option<&str> / pure {
+        let s = &self.inner;
+        if s.is_empty() {
+            return None;
+        }
+
+        let s = s.trim_end_matches(|c: char| is_separator(c));
+        if s.is_empty() {
+            return None;
+        }
+
+        match s.rfind(|c: char| is_separator(c)) {
+            Some(pos) => {
+                let name = &s[pos + 1..];
+                if name == ".." {
+                    None
+                } else {
+                    Some(name)
+                }
+            }
+            None => {
+                if s == ".." {
+                    None
+                } else {
+                    Some(s)
+                }
+            }
+        }
+    }
+
+    /// Returns the stem (file name without extension).
+    pub fn file_stem(self: &Self) -> Option<&str> / pure {
+        self.file_name().and_then(|name| file_stem(name))
+    }
+
+    /// Returns the extension of the path.
+    pub fn extension(self: &Self) -> Option<&str> / pure {
+        self.file_name().and_then(|name| file_extension(name))
+    }
+
+    /// Creates an owned `PathBuf` with `path` joined to `self`.
+    pub fn join(self: &Self, path: &str) -> PathBuf / pure {
+        self.to_path_buf().join(path)
+    }
+
+    /// Creates an owned `PathBuf` like `self` but with the given file name.
+    pub fn with_file_name(self: &Self, file_name: &str) -> PathBuf / pure {
+        self.to_path_buf().with_file_name(file_name)
+    }
+
+    /// Creates an owned `PathBuf` like `self` but with the given extension.
+    pub fn with_extension(self: &Self, extension: &str) -> PathBuf / pure {
+        self.to_path_buf().with_extension(extension)
+    }
+
+    /// Returns `true` if the path starts with the given prefix.
+    pub fn starts_with(self: &Self, prefix: &str) -> bool / pure {
+        self.inner.starts_with(prefix)
+    }
+
+    /// Returns `true` if the path ends with the given suffix.
+    pub fn ends_with(self: &Self, suffix: &str) -> bool / pure {
+        self.inner.ends_with(suffix)
+    }
+
+    /// Returns an iterator over the components of the path.
+    pub fn components(self: &Self) -> Components / pure {
+        Components::new(&self.inner)
+    }
+
+    /// Returns an iterator over the path's ancestors.
+    pub fn ancestors(self: &Self) -> Ancestors / pure {
+        Ancestors { path: Some(self.to_path_buf()) }
+    }
+}
+
+impl Debug for Path {
+    fn fmt(self: &Self, f: &mut Formatter) -> fmt::Result / {IO} {
+        f.debug_tuple("Path")
+            .field(&self.inner)
+            .finish()
+    }
+}
+
+impl Display for Path {
+    fn fmt(self: &Self, f: &mut Formatter) -> fmt::Result / {IO} {
+        f.write_str(&self.inner)
+    }
+}
+
+impl PartialEq for Path {
+    fn eq(self: &Self, other: &Self) -> bool / pure {
+        self.inner == other.inner
+    }
+}
+
+impl Eq for Path {}
+
+impl PartialOrd for Path {
+    fn partial_cmp(self: &Self, other: &Self) -> Option<Ordering> / pure {
+        self.inner.partial_cmp(&other.inner)
+    }
+}
+
+impl Ord for Path {
+    fn cmp(self: &Self, other: &Self) -> Ordering / pure {
+        self.inner.cmp(&other.inner)
+    }
+}
+
+impl Hash for Path {
+    fn hash<H: Hasher>(self: &Self, state: &mut H) / pure {
+        self.inner.hash(state);
+    }
+}
+
+impl AsRef<Path> for Path {
+    fn as_ref(self: &Self) -> &Path / pure {
+        self
+    }
+}
+
+impl AsRef<str> for Path {
+    fn as_ref(self: &Self) -> &str / pure {
+        &self.inner
+    }
+}
+
+impl AsRef<Path> for str {
+    fn as_ref(self: &Self) -> &Path / pure {
+        Path::new(self)
+    }
+}
+
+impl AsRef<Path> for String {
+    fn as_ref(self: &Self) -> &Path / pure {
+        Path::new(self.as_str())
+    }
+}
+
+// ===========================================================================
+// Components Iterator
+// ===========================================================================
+
+/// An iterator over the components of a path.
+///
+/// Created by the `components` method on `Path` and `PathBuf`.
+pub struct Components<'a> {
+    path: &'a str,
+    pos: usize,
+}
+
+impl<'a> Components<'a> {
+    fn new(path: &'a str) -> Self / pure {
+        Components { path, pos: 0 }
+    }
+}
+
+impl<'a> Iterator for Components<'a> {
+    type Item = Component<'a>;
+
+    fn next(self: &mut Self) -> Option<Component<'a>> / pure {
+        if self.pos >= self.path.len() {
+            return None;
+        }
+
+        let remaining = &self.path[self.pos..];
+
+        // Handle root
+        if self.pos == 0 && !remaining.is_empty() {
+            if is_separator(remaining.chars().next().unwrap()) {
+                self.pos = 1;
+                return Some(Component::RootDir);
+            }
+        }
+
+        // Skip leading separators
+        let start = self.pos;
+        while self.pos < self.path.len() {
+            if !is_separator(self.path.chars().nth(self.pos).unwrap()) {
+                break;
+            }
+            self.pos += 1;
+        }
+
+        if self.pos >= self.path.len() {
+            return None;
+        }
+
+        // Find end of component
+        let comp_start = self.pos;
+        while self.pos < self.path.len() {
+            if is_separator(self.path.chars().nth(self.pos).unwrap()) {
+                break;
+            }
+            self.pos += 1;
+        }
+
+        let component = &self.path[comp_start..self.pos];
+
+        match component {
+            "." => Some(Component::CurDir),
+            ".." => Some(Component::ParentDir),
+            name => Some(Component::Normal(name)),
+        }
+    }
+}
+
+/// A single component of a path.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Component<'a> {
+    /// A Windows prefix component (e.g., `C:` or `\\server\share`)
+    Prefix(PrefixComponent<'a>),
+    /// The root directory component (`/` on Unix, `\` on Windows)
+    RootDir,
+    /// A reference to the current directory (`.`)
+    CurDir,
+    /// A reference to the parent directory (`..`)
+    ParentDir,
+    /// A normal path component (e.g., `foo` in `/foo/bar`)
+    Normal(&'a str),
+}
+
+impl<'a> Component<'a> {
+    /// Returns the component as a string slice.
+    pub fn as_str(self: &Self) -> &'a str / pure {
+        match self {
+            Component::Prefix(p) => p.as_str(),
+            Component::RootDir => MAIN_SEPARATOR_STR,
+            Component::CurDir => ".",
+            Component::ParentDir => "..",
+            Component::Normal(s) => s,
+        }
+    }
+}
+
+/// A Windows path prefix.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct PrefixComponent<'a> {
+    raw: &'a str,
+}
+
+impl<'a> PrefixComponent<'a> {
+    /// Returns the prefix as a string slice.
+    pub fn as_str(self: &Self) -> &'a str / pure {
+        self.raw
+    }
+}
+
+// ===========================================================================
+// Ancestors Iterator
+// ===========================================================================
+
+/// An iterator over a path's ancestors.
+///
+/// Created by the `ancestors` method on `Path` and `PathBuf`.
+pub struct Ancestors {
+    path: Option<PathBuf>,
+}
+
+impl Iterator for Ancestors {
+    type Item = PathBuf;
+
+    fn next(self: &mut Self) -> Option<PathBuf> / pure {
+        let path = self.path.take()?;
+        self.path = path.parent();
+        Some(path)
+    }
+}
+
+// ===========================================================================
+// Helper Functions
+// ===========================================================================
+
+/// Returns `true` if the character is a path separator.
+fn is_separator(c: char) -> bool / pure {
+    c == '/' || (cfg!(windows) && c == '\\')
+}
+
+/// Returns `true` if the path is absolute.
+fn is_absolute_path(path: &str) -> bool / pure {
+    if path.is_empty() {
+        return false;
+    }
+
+    // Unix: starts with /
+    if is_separator(path.chars().next().unwrap()) {
+        return true;
+    }
+
+    // Windows: check for drive letter (e.g., C:\)
+    #[cfg(windows)]
+    {
+        if path.len() >= 3 {
+            let mut chars = path.chars();
+            let first = chars.next().unwrap();
+            let second = chars.next().unwrap();
+            let third = chars.next().unwrap();
+            if first.is_ascii_alphabetic() && second == ':' && is_separator(third) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Extracts the stem from a file name.
+fn file_stem(file_name: &str) -> Option<&str> / pure {
+    if file_name.is_empty() {
+        return None;
+    }
+
+    // Handle hidden files (e.g., .gitignore -> .gitignore, not "" with ext gitignore)
+    if file_name.starts_with('.') && !file_name[1..].contains('.') {
+        return Some(file_name);
+    }
+
+    match file_name.rfind('.') {
+        Some(0) => Some(file_name), // Hidden file without extension
+        Some(pos) => Some(&file_name[..pos]),
+        None => Some(file_name),
+    }
+}
+
+/// Extracts the extension from a file name.
+fn file_extension(file_name: &str) -> Option<&str> / pure {
+    if file_name.is_empty() {
+        return None;
+    }
+
+    // Handle hidden files
+    if file_name.starts_with('.') && !file_name[1..].contains('.') {
+        return None;
+    }
+
+    match file_name.rfind('.') {
+        Some(0) => None, // Hidden file without extension
+        Some(pos) => Some(&file_name[pos + 1..]),
+        None => None,
+    }
+}
+
+// ===========================================================================
+// Tests
+// ===========================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pathbuf_new() {
+        let path = PathBuf::new();
+        assert!(path.as_str().is_empty());
+    }
+
+    #[test]
+    fn test_pathbuf_from() {
+        let path = PathBuf::from("/usr/bin");
+        assert_eq!(path.as_str(), "/usr/bin");
+    }
+
+    #[test]
+    fn test_pathbuf_push() {
+        let mut path = PathBuf::from("/usr");
+        path.push("bin");
+        assert_eq!(path.as_str(), "/usr/bin");
+    }
+
+    #[test]
+    fn test_pathbuf_push_absolute() {
+        let mut path = PathBuf::from("/usr");
+        path.push("/etc");
+        assert_eq!(path.as_str(), "/etc");
+    }
+
+    #[test]
+    fn test_pathbuf_pop() {
+        let mut path = PathBuf::from("/usr/bin/rustc");
+        assert!(path.pop());
+        assert_eq!(path.as_str(), "/usr/bin");
+        assert!(path.pop());
+        assert_eq!(path.as_str(), "/usr");
+        assert!(path.pop());
+        assert_eq!(path.as_str(), "/");
+        assert!(!path.pop());
+    }
+
+    #[test]
+    fn test_pathbuf_join() {
+        let path = PathBuf::from("/usr");
+        let joined = path.join("bin");
+        assert_eq!(joined.as_str(), "/usr/bin");
+    }
+
+    #[test]
+    fn test_file_name() {
+        let path = PathBuf::from("/usr/bin/rustc");
+        assert_eq!(path.file_name(), Some("rustc"));
+
+        let path = PathBuf::from("/");
+        assert_eq!(path.file_name(), None);
+
+        let path = PathBuf::from("foo.txt");
+        assert_eq!(path.file_name(), Some("foo.txt"));
+    }
+
+    #[test]
+    fn test_file_stem() {
+        let path = PathBuf::from("/usr/bin/rustc.exe");
+        assert_eq!(path.file_stem(), Some("rustc"));
+
+        let path = PathBuf::from(".gitignore");
+        assert_eq!(path.file_stem(), Some(".gitignore"));
+
+        let path = PathBuf::from("foo.tar.gz");
+        assert_eq!(path.file_stem(), Some("foo.tar"));
+    }
+
+    #[test]
+    fn test_extension() {
+        let path = PathBuf::from("/usr/bin/rustc.exe");
+        assert_eq!(path.extension(), Some("exe"));
+
+        let path = PathBuf::from(".gitignore");
+        assert_eq!(path.extension(), None);
+
+        let path = PathBuf::from("foo.tar.gz");
+        assert_eq!(path.extension(), Some("gz"));
+    }
+
+    #[test]
+    fn test_parent() {
+        let path = PathBuf::from("/usr/bin/rustc");
+        assert_eq!(path.parent().map(|p| p.as_str().to_string()), Some("/usr/bin".to_string()));
+    }
+
+    #[test]
+    fn test_is_absolute() {
+        assert!(PathBuf::from("/usr/bin").is_absolute());
+        assert!(!PathBuf::from("usr/bin").is_absolute());
+        assert!(!PathBuf::from("").is_absolute());
+    }
+
+    #[test]
+    fn test_set_extension() {
+        let mut path = PathBuf::from("/usr/bin/foo.txt");
+        path.set_extension("rs");
+        assert_eq!(path.as_str(), "/usr/bin/foo.rs");
+
+        let mut path = PathBuf::from("/usr/bin/foo");
+        path.set_extension("rs");
+        assert_eq!(path.as_str(), "/usr/bin/foo.rs");
+
+        let mut path = PathBuf::from("/usr/bin/foo.txt");
+        path.set_extension("");
+        assert_eq!(path.as_str(), "/usr/bin/foo");
+    }
+}

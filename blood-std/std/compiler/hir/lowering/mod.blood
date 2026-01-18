@@ -1,0 +1,640 @@
+//! AST to HIR Lowering
+//!
+//! This module transforms the Abstract Syntax Tree (AST) into High-level
+//! Intermediate Representation (HIR). The key transformations are:
+//!
+//! 1. **Type attachment**: Every HIR expression carries its resolved type
+//! 2. **Name resolution**: Paths are resolved to Local or Def references
+//! 3. **Desugaring**: Syntactic sugar is expanded to core constructs
+//!
+//! # Desugaring Transformations
+//!
+//! | AST Construct | HIR Result |
+//! |---------------|------------|
+//! | `for pat in iter { body }` | `loop { match iter.next() { Some(pat) => body, None => break } }` |
+//! | `if let pat = e { a } else { b }` | `match e { pat => a, _ => b }` |
+//! | `while let pat = e { body }` | `loop { match e { pat => body, _ => break } }` |
+//! | `x += y` | `x = x + y` |
+//! | `(e)` | `e` (parentheses removed) |
+//!
+//! # Usage
+//!
+//! ```blood
+//! use std.compiler.hir.lowering.{AstLowering, LoweringResult}
+//! use std.compiler.parser.Parser
+//! use std.compiler.typeck.{TypeChecker, TypeCheckResult}
+//!
+//! // Parse source to AST
+//! let mut parser = Parser::new(source)
+//! let program = parser.parse_program()?
+//!
+//! // Type check AST
+//! let mut checker = TypeChecker::new()
+//! let type_result = checker.check(&program)?
+//!
+//! // Lower AST to HIR
+//! let mut lowering = AstLowering::new(type_result)
+//! let hir_crate = lowering.lower_program(&program)?
+//! ```
+//!
+//! # Architecture
+//!
+//! The lowering process is split across several files:
+//!
+//! - `mod.blood`: Entry point, `AstLowering` struct, and `lower_program`
+//! - `item.blood`: Lower declarations to HIR items
+//! - `expr.blood`: Lower expressions with desugaring
+//! - `pattern.blood`: Lower patterns to HIR patterns
+//! - `stmt.blood`: Lower statements
+//!
+//! # Design Principles
+//!
+//! Based on [Rust's AST lowering](https://rustc-dev-guide.rust-lang.org/hir/lowering.html):
+//!
+//! 1. Every created HirId/BodyId must be used
+//! 2. Lowering must occur within the scope of the owning item
+//! 3. New nodes require fresh IDs
+//! 4. Desugaring happens during lowering, not before
+
+module std.compiler.hir.lowering;
+
+pub mod item
+pub mod expr
+pub mod pattern
+pub mod stmt
+
+use std.collections.HashMap
+use std.result.Result
+use std.option.Option
+
+use crate::compiler::ast::{
+    Program, Declaration, DeclarationKind,
+    Expr as AstExpr, ExprKind as AstExprKind,
+    Stmt as AstStmt, StmtKind as AstStmtKind,
+    Pattern as AstPattern, PatternKind as AstPatternKind,
+    Type as AstType, TypeKind as AstTypeKind,
+    Block as AstBlock, Ident, NodeId, Span as AstSpan,
+    FunctionDecl, StructDecl, EnumDecl, EffectDecl,
+    ImplDecl, TraitDecl, TypeAliasDecl, ConstDecl,
+}
+
+use crate::compiler::hir::{
+    Crate, Item, ItemKind, Body, BodyId,
+    Expr as HirExpr, ExprKind as HirExprKind,
+    Stmt as HirStmt,
+    Pattern as HirPattern, PatternKind as HirPatternKind,
+    Local, LocalId, Span as HirSpan,
+    Visibility, FnDef, StructDef, EnumDef, Generics,
+    BinOp as HirBinOp, UnaryOp as HirUnaryOp,
+    LiteralValue as HirLiteral, MatchArm as HirMatchArm,
+}
+
+use crate::compiler::typeck::{TypeCheckResult, TypeErrors}
+use crate::compiler::typeck::types::{DefId, Type}
+
+// ============================================================================
+// Error Types
+// ============================================================================
+
+/// Errors that can occur during AST to HIR lowering.
+pub enum LoweringError {
+    /// Type information not found for a node.
+    MissingType {
+        node_id: u32,
+        description: String,
+        span: HirSpan,
+    },
+
+    /// Name resolution failed.
+    UnresolvedName {
+        name: String,
+        span: HirSpan,
+    },
+
+    /// Invalid desugaring context.
+    InvalidDesugaring {
+        construct: String,
+        reason: String,
+        span: HirSpan,
+    },
+
+    /// Internal lowering error.
+    Internal {
+        message: String,
+        span: HirSpan,
+    },
+}
+
+impl LoweringError {
+    /// Create a missing type error.
+    pub fn missing_type(node_id: u32, description: String, span: HirSpan) -> LoweringError {
+        LoweringError::MissingType { node_id, description, span }
+    }
+
+    /// Create an unresolved name error.
+    pub fn unresolved(name: String, span: HirSpan) -> LoweringError {
+        LoweringError::UnresolvedName { name, span }
+    }
+
+    /// Create an invalid desugaring error.
+    pub fn invalid_desugar(construct: String, reason: String, span: HirSpan) -> LoweringError {
+        LoweringError::InvalidDesugaring { construct, reason, span }
+    }
+
+    /// Create an internal error.
+    pub fn internal(message: String, span: HirSpan) -> LoweringError {
+        LoweringError::Internal { message, span }
+    }
+
+    /// Get a human-readable error message.
+    pub fn message(&self) -> String {
+        match self {
+            LoweringError::MissingType { node_id, description, span: _ } => {
+                "missing type for node " ++ node_id.to_string() ++ ": " ++ description.clone()
+            }
+            LoweringError::UnresolvedName { name, span: _ } => {
+                "unresolved name: " ++ name.clone()
+            }
+            LoweringError::InvalidDesugaring { construct, reason, span: _ } => {
+                "cannot desugar " ++ construct.clone() ++ ": " ++ reason.clone()
+            }
+            LoweringError::Internal { message, span: _ } => {
+                "internal lowering error: " ++ message.clone()
+            }
+        }
+    }
+
+    /// Get the span where the error occurred.
+    pub fn span(&self) -> &HirSpan {
+        match self {
+            LoweringError::MissingType { node_id: _, description: _, span } => span,
+            LoweringError::UnresolvedName { name: _, span } => span,
+            LoweringError::InvalidDesugaring { construct: _, reason: _, span } => span,
+            LoweringError::Internal { message: _, span } => span,
+        }
+    }
+}
+
+impl Clone for LoweringError {
+    fn clone(&self) -> LoweringError {
+        match self {
+            LoweringError::MissingType { node_id, description, span } => {
+                LoweringError::MissingType {
+                    node_id: *node_id,
+                    description: description.clone(),
+                    span: span.clone(),
+                }
+            }
+            LoweringError::UnresolvedName { name, span } => {
+                LoweringError::UnresolvedName {
+                    name: name.clone(),
+                    span: span.clone(),
+                }
+            }
+            LoweringError::InvalidDesugaring { construct, reason, span } => {
+                LoweringError::InvalidDesugaring {
+                    construct: construct.clone(),
+                    reason: reason.clone(),
+                    span: span.clone(),
+                }
+            }
+            LoweringError::Internal { message, span } => {
+                LoweringError::Internal {
+                    message: message.clone(),
+                    span: span.clone(),
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Result Type
+// ============================================================================
+
+/// The result of lowering AST to HIR.
+pub struct LoweringResult {
+    /// The lowered HIR crate.
+    pub crate_: Crate,
+    /// Any errors encountered during lowering.
+    pub errors: [LoweringError],
+    /// Whether lowering succeeded without errors.
+    pub success: bool,
+}
+
+impl LoweringResult {
+    /// Create a successful result.
+    pub fn success(crate_: Crate) -> LoweringResult {
+        LoweringResult {
+            crate_,
+            errors: [],
+            success: true,
+        }
+    }
+
+    /// Create a failed result.
+    pub fn failure(crate_: Crate, errors: [LoweringError]) -> LoweringResult {
+        LoweringResult {
+            crate_,
+            errors,
+            success: false,
+        }
+    }
+
+    /// Check if lowering succeeded.
+    pub fn is_success(&self) -> bool {
+        self.success
+    }
+
+    /// Get the HIR crate (may be partial if errors occurred).
+    pub fn into_crate(self) -> Crate {
+        self.crate_
+    }
+}
+
+// ============================================================================
+// Lowering Context
+// ============================================================================
+
+/// The main AST to HIR lowering context.
+///
+/// This struct maintains all state needed during the lowering process,
+/// including type information, ID allocation, and scope tracking.
+pub struct AstLowering {
+    /// Type information from type checking.
+    types: TypeCheckResult,
+
+    /// The HIR crate being built.
+    crate_: Crate,
+
+    /// Mapping from AST NodeId to HIR DefId.
+    node_to_def: HashMap<u32, DefId>,
+
+    /// Mapping from AST NodeId to HIR LocalId (within current body).
+    node_to_local: HashMap<u32, LocalId>,
+
+    /// Next DefId to allocate.
+    next_def_id: u32,
+
+    /// Next BodyId to allocate.
+    next_body_id: u32,
+
+    /// Next LocalId to allocate (reset per body).
+    next_local_id: u32,
+
+    /// Next LoopId to allocate (reset per body).
+    next_loop_id: u32,
+
+    /// Current body being lowered (if any).
+    current_body_id: Option<BodyId>,
+
+    /// Stack of loop labels for break/continue resolution.
+    loop_stack: [(Option<String>, u32)],
+
+    /// Collected errors.
+    errors: [LoweringError],
+}
+
+impl AstLowering {
+    /// Create a new lowering context with type check results.
+    pub fn new(types: TypeCheckResult) -> AstLowering {
+        AstLowering {
+            types,
+            crate_: Crate::new(),
+            node_to_def: HashMap::new(),
+            node_to_local: HashMap::new(),
+            next_def_id: 1, // 0 is reserved for error/unknown
+            next_body_id: 0,
+            next_local_id: 0,
+            next_loop_id: 0,
+            current_body_id: None,
+            loop_stack: [],
+            errors: [],
+        }
+    }
+
+    /// Lower an AST Program to a HIR Crate.
+    pub fn lower_program(&mut self, program: &Program) -> LoweringResult {
+        // First pass: collect all definitions and assign DefIds
+        self.collect_definitions(program);
+
+        // Second pass: lower all items
+        let mut i: usize = 0;
+        while i < program.declarations.len() {
+            match self.lower_declaration(&program.declarations[i]) {
+                Ok(item) => {
+                    self.crate_.insert_item(item.def_id.clone(), item);
+                }
+                Err(e) => {
+                    self.errors.push(e);
+                }
+            }
+            i = i + 1;
+        }
+
+        // Find entry point (main function)
+        self.find_entry_point(program);
+
+        // Build result
+        if self.errors.is_empty() {
+            LoweringResult::success(self.crate_.clone())
+        } else {
+            LoweringResult::failure(self.crate_.clone(), self.errors.clone())
+        }
+    }
+
+    // ========================================================================
+    // ID Allocation
+    // ========================================================================
+
+    /// Allocate a new DefId.
+    fn alloc_def_id(&mut self) -> DefId {
+        let id = self.next_def_id;
+        self.next_def_id = self.next_def_id + 1;
+        DefId::new(id)
+    }
+
+    /// Allocate a new BodyId.
+    fn alloc_body_id(&mut self) -> BodyId {
+        let id = self.next_body_id;
+        self.next_body_id = self.next_body_id + 1;
+        BodyId::new(id)
+    }
+
+    /// Allocate a new LocalId.
+    fn alloc_local_id(&mut self) -> LocalId {
+        let id = self.next_local_id;
+        self.next_local_id = self.next_local_id + 1;
+        LocalId::new(id)
+    }
+
+    /// Reset local ID counter for a new body.
+    fn reset_local_ids(&mut self) {
+        self.next_local_id = 0;
+        self.next_loop_id = 0;
+        self.node_to_local.clear();
+        self.loop_stack.clear();
+    }
+
+    // ========================================================================
+    // Definition Collection (First Pass)
+    // ========================================================================
+
+    /// Collect all definitions and assign DefIds.
+    fn collect_definitions(&mut self, program: &Program) {
+        let mut i: usize = 0;
+        while i < program.declarations.len() {
+            self.collect_declaration(&program.declarations[i]);
+            i = i + 1;
+        }
+    }
+
+    /// Collect a single declaration.
+    fn collect_declaration(&mut self, decl: &Declaration) {
+        let def_id = self.alloc_def_id();
+        self.node_to_def.insert(decl.id.id(), def_id);
+
+        // For nested items (struct fields, enum variants, etc.), allocate DefIds
+        match &decl.kind {
+            DeclarationKind::Struct(s) => {
+                self.collect_struct_fields(s);
+            }
+            DeclarationKind::Enum(e) => {
+                self.collect_enum_variants(e);
+            }
+            DeclarationKind::Trait(t) => {
+                self.collect_trait_items(t);
+            }
+            DeclarationKind::Impl(i) => {
+                self.collect_impl_items(i);
+            }
+            DeclarationKind::Effect(e) => {
+                self.collect_effect_operations(e);
+            }
+            DeclarationKind::Function(_) => {}
+            DeclarationKind::Const(_) => {}
+            DeclarationKind::Static(_) => {}
+            DeclarationKind::TypeAlias(_) => {}
+            DeclarationKind::Handler(_) => {}
+            DeclarationKind::Bridge(_) => {}
+            DeclarationKind::ExternFn(_) => {}
+            DeclarationKind::Module(_) => {}
+            DeclarationKind::Use(_) => {}
+        }
+    }
+
+    /// Collect struct field DefIds.
+    fn collect_struct_fields(&mut self, _s: &StructDecl) {
+        // Fields don't need separate DefIds in most designs,
+        // they are accessed by index. Skip for now.
+    }
+
+    /// Collect enum variant DefIds.
+    fn collect_enum_variants(&mut self, e: &EnumDecl) {
+        let mut i: usize = 0;
+        while i < e.variants.len() {
+            let def_id = self.alloc_def_id();
+            self.node_to_def.insert(e.variants[i].id.id(), def_id);
+            i = i + 1;
+        }
+    }
+
+    /// Collect trait item DefIds.
+    fn collect_trait_items(&mut self, t: &TraitDecl) {
+        let mut i: usize = 0;
+        while i < t.items.len() {
+            let def_id = self.alloc_def_id();
+            self.node_to_def.insert(t.items[i].id.id(), def_id);
+            i = i + 1;
+        }
+    }
+
+    /// Collect impl item DefIds.
+    fn collect_impl_items(&mut self, impl_: &ImplDecl) {
+        let mut i: usize = 0;
+        while i < impl_.items.len() {
+            let def_id = self.alloc_def_id();
+            self.node_to_def.insert(impl_.items[i].id.id(), def_id);
+            i = i + 1;
+        }
+    }
+
+    /// Collect effect operation DefIds.
+    fn collect_effect_operations(&mut self, e: &EffectDecl) {
+        let mut i: usize = 0;
+        while i < e.operations.len() {
+            let def_id = self.alloc_def_id();
+            self.node_to_def.insert(e.operations[i].id.id(), def_id);
+            i = i + 1;
+        }
+    }
+
+    // ========================================================================
+    // Entry Point Detection
+    // ========================================================================
+
+    /// Find and set the entry point (main function).
+    fn find_entry_point(&mut self, program: &Program) {
+        let mut i: usize = 0;
+        while i < program.declarations.len() {
+            match &program.declarations[i].kind {
+                DeclarationKind::Function(f) => {
+                    if f.name.name == "main" {
+                        match self.node_to_def.get(&program.declarations[i].id.id()) {
+                            Some(def_id) => {
+                                self.crate_.set_entry(def_id.clone());
+                            }
+                            None => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+            i = i + 1;
+        }
+    }
+
+    // ========================================================================
+    // Type Lookup
+    // ========================================================================
+
+    /// Get the type for a DefId from type check results.
+    fn get_type(&self, def_id: &DefId) -> Option<&Type> {
+        self.types.get_type(def_id)
+    }
+
+    /// Get the type for an AST node by its NodeId.
+    fn get_node_type(&self, node_id: &NodeId) -> Option<&Type> {
+        match self.node_to_def.get(&node_id.id()) {
+            Some(def_id) => self.get_type(def_id),
+            None => None,
+        }
+    }
+
+    // ========================================================================
+    // Span Conversion
+    // ========================================================================
+
+    /// Convert an AST span to a HIR span.
+    fn lower_span(&self, span: &AstSpan) -> HirSpan {
+        HirSpan::new(span.start(), span.end())
+    }
+
+    // ========================================================================
+    // Error Reporting
+    // ========================================================================
+
+    /// Record an error.
+    fn error(&mut self, err: LoweringError) {
+        self.errors.push(err);
+    }
+
+    // ========================================================================
+    // Declaration Lowering (delegates to item.blood)
+    // ========================================================================
+
+    /// Lower a declaration to an HIR item.
+    fn lower_declaration(&mut self, decl: &Declaration) -> Result<Item, LoweringError> {
+        item::lower_declaration(self, decl)
+    }
+}
+
+// ============================================================================
+// Public API
+// ============================================================================
+
+/// Lower an AST program to HIR using type check results.
+///
+/// This is the main entry point for AST to HIR lowering.
+pub fn lower_to_hir(program: &Program, types: TypeCheckResult) -> LoweringResult {
+    let mut lowering = AstLowering::new(types);
+    lowering.lower_program(program)
+}
+
+/// Create a new lowering context.
+pub fn new_lowering(types: TypeCheckResult) -> AstLowering {
+    AstLowering::new(types)
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[test]
+fn test_lowering_context_creation() {
+    let types = TypeCheckResult::success(HashMap::new());
+    let lowering = AstLowering::new(types);
+
+    assert(lowering.next_def_id == 1);
+    assert(lowering.next_body_id == 0);
+    assert(lowering.errors.is_empty());
+}
+
+#[test]
+fn test_def_id_allocation() {
+    let types = TypeCheckResult::success(HashMap::new());
+    let mut lowering = AstLowering::new(types);
+
+    let id1 = lowering.alloc_def_id();
+    let id2 = lowering.alloc_def_id();
+    let id3 = lowering.alloc_def_id();
+
+    assert(id1.id() == 1);
+    assert(id2.id() == 2);
+    assert(id3.id() == 3);
+}
+
+#[test]
+fn test_body_id_allocation() {
+    let types = TypeCheckResult::success(HashMap::new());
+    let mut lowering = AstLowering::new(types);
+
+    let id1 = lowering.alloc_body_id();
+    let id2 = lowering.alloc_body_id();
+
+    assert(id1.id() == 0);
+    assert(id2.id() == 1);
+}
+
+#[test]
+fn test_local_id_reset() {
+    let types = TypeCheckResult::success(HashMap::new());
+    let mut lowering = AstLowering::new(types);
+
+    let local1 = lowering.alloc_local_id();
+    let local2 = lowering.alloc_local_id();
+    assert(local1.index() == 0);
+    assert(local2.index() == 1);
+
+    lowering.reset_local_ids();
+    let local3 = lowering.alloc_local_id();
+    assert(local3.index() == 0);
+}
+
+#[test]
+fn test_lowering_error_messages() {
+    let span = HirSpan::dummy();
+
+    let err1 = LoweringError::missing_type(42, "test node".to_string(), span.clone());
+    assert(err1.message().contains("missing type"));
+
+    let err2 = LoweringError::unresolved("foo".to_string(), span.clone());
+    assert(err2.message().contains("unresolved"));
+
+    let err3 = LoweringError::invalid_desugar("for".to_string(), "no iterator".to_string(), span.clone());
+    assert(err3.message().contains("cannot desugar"));
+}
+
+#[test]
+fn test_lowering_result() {
+    let crate_ = Crate::new();
+
+    let success = LoweringResult::success(crate_.clone());
+    assert(success.is_success());
+    assert(success.errors.is_empty());
+
+    let err = LoweringError::internal("test".to_string(), HirSpan::dummy());
+    let failure = LoweringResult::failure(crate_, [err]);
+    assert(!failure.is_success());
+    assert(failure.errors.len() == 1);
+}

@@ -1,0 +1,371 @@
+//! Pattern Lowering
+//!
+//! This module handles lowering AST patterns to HIR patterns.
+//! Patterns are used in let bindings, match arms, function parameters, etc.
+
+module std.compiler.hir.lowering.pattern;
+
+use std.result.Result
+use std.option.Option
+
+use crate::compiler::ast::{
+    Pattern as AstPattern, PatternKind as AstPatternKind,
+    Literal, Ident, Span as AstSpan,
+    FieldPattern as AstFieldPattern,
+}
+
+use crate::compiler::hir::{
+    Pattern as HirPattern, PatternKind as HirPatternKind,
+    LocalId, Span as HirSpan,
+    FieldPattern as HirFieldPattern,
+}
+
+use crate::compiler::hir::lowering::{AstLowering, LoweringError}
+use crate::compiler::hir::lowering::item::lower_type
+use crate::compiler::typeck::types::{DefId, Type}
+
+// ============================================================================
+// Pattern Lowering
+// ============================================================================
+
+/// Lower an AST pattern to HIR pattern.
+pub fn lower_pattern(ctx: &mut AstLowering, pattern: &AstPattern) -> Result<HirPattern, LoweringError> {
+    let span = ctx.lower_span(&pattern.span);
+    let ty = Type::infer(); // Type filled in during type checking
+
+    let kind = match &pattern.kind {
+        AstPatternKind::Wildcard => {
+            HirPatternKind::Wildcard
+        }
+
+        AstPatternKind::Binding { name, mutable, subpattern } => {
+            let local_id = ctx.alloc_local_id();
+            ctx.node_to_local.insert(pattern.id.id(), local_id.clone());
+
+            let sub = match subpattern {
+                Some(p) => Some(Box::new(lower_pattern(ctx, p)?)),
+                None => None,
+            };
+
+            HirPatternKind::Binding {
+                name: name.name.clone(),
+                local_id,
+                mutable: *mutable,
+                subpattern: sub,
+            }
+        }
+
+        AstPatternKind::Literal(lit) => {
+            HirPatternKind::Literal(lower_literal(lit))
+        }
+
+        AstPatternKind::Tuple(patterns) => {
+            let mut hir_patterns: [HirPattern] = [];
+            let mut i: usize = 0;
+            while i < patterns.len() {
+                let p = lower_pattern(ctx, &patterns[i])?;
+                hir_patterns.push(p);
+                i = i + 1;
+            }
+            HirPatternKind::Tuple(hir_patterns)
+        }
+
+        AstPatternKind::Struct { path, fields, rest } => {
+            // Resolve struct path to DefId
+            let def_id = ctx.alloc_def_id(); // Placeholder
+
+            let mut hir_fields: [HirFieldPattern] = [];
+            let mut i: usize = 0;
+            while i < fields.len() {
+                let field = &fields[i];
+                let field_pattern = match &field.pattern {
+                    Some(p) => lower_pattern(ctx, p)?,
+                    None => {
+                        // Shorthand: `field` means `field: field`
+                        let local_id = ctx.alloc_local_id();
+                        ctx.node_to_local.insert(field.name.id.id(), local_id.clone());
+                        HirPattern::new(
+                            HirPatternKind::Binding {
+                                name: field.name.name.clone(),
+                                local_id,
+                                mutable: false,
+                                subpattern: None,
+                            },
+                            Type::infer(),
+                            span.clone(),
+                        )
+                    }
+                };
+                hir_fields.push(HirFieldPattern {
+                    name: field.name.name.clone(),
+                    field_idx: i as u32, // Placeholder
+                    pattern: field_pattern,
+                    span: ctx.lower_span(&field.span),
+                });
+                i = i + 1;
+            }
+
+            HirPatternKind::Struct {
+                def_id,
+                fields: hir_fields,
+                rest: *rest,
+            }
+        }
+
+        AstPatternKind::TupleStruct { path, fields } => {
+            // Resolve path to DefId (could be struct or enum variant)
+            let def_id = ctx.alloc_def_id(); // Placeholder
+
+            let mut hir_fields: [HirPattern] = [];
+            let mut i: usize = 0;
+            while i < fields.len() {
+                let p = lower_pattern(ctx, &fields[i])?;
+                hir_fields.push(p);
+                i = i + 1;
+            }
+
+            // Check if this is an enum variant or tuple struct
+            // For now, assume enum variant if path has ::
+            HirPatternKind::Variant {
+                def_id,
+                variant_idx: 0, // Placeholder
+                fields: hir_fields,
+            }
+        }
+
+        AstPatternKind::Path(path) => {
+            // Could be:
+            // 1. A unit variant: Option::None
+            // 2. A constant: MAX_SIZE
+            // For now, treat as variant with no fields
+            let def_id = ctx.alloc_def_id(); // Placeholder
+            HirPatternKind::Variant {
+                def_id,
+                variant_idx: 0, // Placeholder
+                fields: [],
+            }
+        }
+
+        AstPatternKind::Ref { mutable, pattern: inner } => {
+            let hir_inner = lower_pattern(ctx, inner)?;
+            HirPatternKind::Ref {
+                mutable: *mutable,
+                pattern: Box::new(hir_inner),
+            }
+        }
+
+        AstPatternKind::Box(inner) => {
+            let hir_inner = lower_pattern(ctx, inner)?;
+            HirPatternKind::Box(Box::new(hir_inner))
+        }
+
+        AstPatternKind::Range { start, end, inclusive } => {
+            let hir_start = match start {
+                Some(e) => Some(Box::new(lower_range_end(ctx, e)?)),
+                None => None,
+            };
+            let hir_end = match end {
+                Some(e) => Some(Box::new(lower_range_end(ctx, e)?)),
+                None => None,
+            };
+            HirPatternKind::Range {
+                start: hir_start,
+                end: hir_end,
+                inclusive: *inclusive,
+            }
+        }
+
+        AstPatternKind::Slice { prefix, rest, suffix } => {
+            let mut hir_prefix: [HirPattern] = [];
+            let mut i: usize = 0;
+            while i < prefix.len() {
+                let p = lower_pattern(ctx, &prefix[i])?;
+                hir_prefix.push(p);
+                i = i + 1;
+            }
+
+            let hir_rest = match rest {
+                Some(p) => Some(Box::new(lower_pattern(ctx, p)?)),
+                None => None,
+            };
+
+            let mut hir_suffix: [HirPattern] = [];
+            let mut j: usize = 0;
+            while j < suffix.len() {
+                let p = lower_pattern(ctx, &suffix[j])?;
+                hir_suffix.push(p);
+                j = j + 1;
+            }
+
+            HirPatternKind::Slice {
+                prefix: hir_prefix,
+                rest: hir_rest,
+                suffix: hir_suffix,
+            }
+        }
+
+        AstPatternKind::Or(patterns) => {
+            let mut hir_patterns: [HirPattern] = [];
+            let mut i: usize = 0;
+            while i < patterns.len() {
+                let p = lower_pattern(ctx, &patterns[i])?;
+                hir_patterns.push(p);
+                i = i + 1;
+            }
+            HirPatternKind::Or(hir_patterns)
+        }
+
+        AstPatternKind::Paren(inner) => {
+            // Remove parentheses
+            return lower_pattern(ctx, inner);
+        }
+
+        AstPatternKind::Rest => {
+            // `..` in slice patterns
+            HirPatternKind::Rest
+        }
+
+        AstPatternKind::Error => {
+            HirPatternKind::Error
+        }
+    };
+
+    Ok(HirPattern::new(kind, ty, span))
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/// Lower a literal in a pattern.
+fn lower_literal(lit: &Literal) -> crate::compiler::hir::LiteralValue {
+    match lit {
+        Literal::Integer(v, suffix) => crate::compiler::hir::LiteralValue::Integer(*v, suffix.clone()),
+        Literal::Float(v, suffix) => crate::compiler::hir::LiteralValue::Float(*v, suffix.clone()),
+        Literal::String(s) => crate::compiler::hir::LiteralValue::String(s.clone()),
+        Literal::Char(c) => crate::compiler::hir::LiteralValue::Char(*c),
+        Literal::Bool(b) => crate::compiler::hir::LiteralValue::Bool(*b),
+        Literal::Byte(b) => crate::compiler::hir::LiteralValue::Byte(*b),
+        Literal::ByteString(bs) => crate::compiler::hir::LiteralValue::ByteString(bs.clone()),
+    }
+}
+
+/// Lower a range endpoint (for range patterns).
+fn lower_range_end(
+    ctx: &mut AstLowering,
+    end: &crate::compiler::ast::RangeEnd,
+) -> Result<HirPattern, LoweringError> {
+    match end {
+        crate::compiler::ast::RangeEnd::Literal(lit) => {
+            Ok(HirPattern::new(
+                HirPatternKind::Literal(lower_literal(lit)),
+                Type::infer(),
+                HirSpan::dummy(),
+            ))
+        }
+        crate::compiler::ast::RangeEnd::Path(path) => {
+            let def_id = ctx.alloc_def_id(); // Placeholder
+            Ok(HirPattern::new(
+                HirPatternKind::Constant(def_id),
+                Type::infer(),
+                HirSpan::dummy(),
+            ))
+        }
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[test]
+fn test_wildcard_pattern() {
+    use crate::compiler::typeck::TypeCheckResult;
+    use std.collections.HashMap;
+
+    let types = TypeCheckResult::success(HashMap::new());
+    let mut ctx = AstLowering::new(types);
+
+    let ast_pattern = AstPattern {
+        id: crate::compiler::ast::NodeId::new(1),
+        kind: AstPatternKind::Wildcard,
+        span: AstSpan::dummy(),
+    };
+
+    let result = lower_pattern(&mut ctx, &ast_pattern);
+    assert(result.is_ok());
+
+    let hir_pattern = result.unwrap();
+    match hir_pattern.kind {
+        HirPatternKind::Wildcard => assert(true),
+        _ => assert(false),
+    }
+}
+
+#[test]
+fn test_binding_pattern() {
+    use crate::compiler::typeck::TypeCheckResult;
+    use std.collections.HashMap;
+
+    let types = TypeCheckResult::success(HashMap::new());
+    let mut ctx = AstLowering::new(types);
+
+    let ast_pattern = AstPattern {
+        id: crate::compiler::ast::NodeId::new(1),
+        kind: AstPatternKind::Binding {
+            name: Ident::new("x".to_string(), AstSpan::dummy()),
+            mutable: false,
+            subpattern: None,
+        },
+        span: AstSpan::dummy(),
+    };
+
+    let result = lower_pattern(&mut ctx, &ast_pattern);
+    assert(result.is_ok());
+
+    let hir_pattern = result.unwrap();
+    match hir_pattern.kind {
+        HirPatternKind::Binding { name, mutable, .. } => {
+            assert(name == "x");
+            assert(!mutable);
+        }
+        _ => assert(false),
+    }
+}
+
+#[test]
+fn test_tuple_pattern() {
+    use crate::compiler::typeck::TypeCheckResult;
+    use std.collections.HashMap;
+
+    let types = TypeCheckResult::success(HashMap::new());
+    let mut ctx = AstLowering::new(types);
+
+    let ast_pattern = AstPattern {
+        id: crate::compiler::ast::NodeId::new(1),
+        kind: AstPatternKind::Tuple([
+            AstPattern {
+                id: crate::compiler::ast::NodeId::new(2),
+                kind: AstPatternKind::Wildcard,
+                span: AstSpan::dummy(),
+            },
+            AstPattern {
+                id: crate::compiler::ast::NodeId::new(3),
+                kind: AstPatternKind::Wildcard,
+                span: AstSpan::dummy(),
+            },
+        ]),
+        span: AstSpan::dummy(),
+    };
+
+    let result = lower_pattern(&mut ctx, &ast_pattern);
+    assert(result.is_ok());
+
+    let hir_pattern = result.unwrap();
+    match hir_pattern.kind {
+        HirPatternKind::Tuple(elements) => {
+            assert(elements.len() == 2);
+        }
+        _ => assert(false),
+    }
+}
