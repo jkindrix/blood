@@ -145,6 +145,12 @@ impl Unifier {
                 self.unify(e1, e2, span)
             }
 
+            // Array to slice coercion: [T; N] coerces to [T]
+            (TypeKind::Array { element: e1, .. }, TypeKind::Slice { element: e2 }) |
+            (TypeKind::Slice { element: e1 }, TypeKind::Array { element: e2, .. }) => {
+                self.unify(e1, e2, span)
+            }
+
             // References with same mutability
             (
                 TypeKind::Ref { inner: i1, mutable: m1 },
@@ -939,14 +945,18 @@ mod tests {
     }
 
     #[test]
-    fn test_unify_array_slice_different() {
+    fn test_unify_array_slice_coercion() {
         let mut u = Unifier::new();
         let span = Span::dummy();
 
-        // Array and slice of same element type should NOT unify
+        // Array and slice of same element type CAN unify (coercion)
         let arr = Type::array(Type::i32(), 5);
         let slice = Type::slice(Type::i32());
-        assert!(u.unify(&arr, &slice, span).is_err());
+        assert!(u.unify(&arr, &slice, span).is_ok());
+
+        // But different element types should NOT unify
+        let arr_i64 = Type::array(Type::i64(), 5);
+        assert!(u.unify(&arr_i64, &slice, span).is_err());
     }
 
     // ============================================================
@@ -2408,11 +2418,10 @@ mod tests {
         let span = Span::dummy();
 
         // Create one representative of each type constructor
+        // Note: Array and Slice are NOT included because they can unify (coercion)
         let constructors = vec![
             ("Primitive", Type::i32()),
             ("Tuple", Type::tuple(vec![Type::i32()])),
-            ("Array", Type::array(Type::i32(), 5)),
-            ("Slice", Type::slice(Type::i32())),
             ("RefMut", Type::reference(Type::i32(), true)),
             ("RefImm", Type::reference(Type::i32(), false)),
             ("Function", Type::function(vec![Type::i32()], Type::i32())),
@@ -2432,6 +2441,14 @@ mod tests {
                     name1, name2
                 );
             }
+        }
+
+        // Array and Slice CAN unify due to coercion, test separately
+        {
+            let arr = Type::array(Type::i32(), 5);
+            let slice = Type::slice(Type::i32());
+            let mut u = Unifier::new();
+            assert!(u.unify(&arr, &slice, span).is_ok(), "Array should coerce to Slice");
         }
     }
 
