@@ -206,6 +206,11 @@ impl TypeError {
     pub fn unsupported_type_syntax(description: String, span: Span) -> TypeError {
         TypeError::new(TypeErrorKind::UnsupportedTypeSyntax { description }, span)
     }
+
+    /// Create a const evaluation error.
+    pub fn const_eval_error(reason: String, span: Span) -> TypeError {
+        TypeError::new(TypeErrorKind::ConstEvalError { reason }, span)
+    }
 }
 
 impl Clone for TypeError {
@@ -457,6 +462,15 @@ pub enum TypeErrorKind {
     UnsupportedTypeSyntax {
         description: String,
     },
+
+    // --------------------------------------------------------
+    // Const Evaluation Errors
+    // --------------------------------------------------------
+
+    /// Const evaluation error (expression cannot be evaluated at compile time).
+    ConstEvalError {
+        reason: String,
+    },
 }
 
 impl Clone for TypeErrorKind {
@@ -587,6 +601,9 @@ impl Clone for TypeErrorKind {
             TypeErrorKind::UnsupportedTypeSyntax { description } => {
                 TypeErrorKind::UnsupportedTypeSyntax { description: description.clone() }
             }
+            TypeErrorKind::ConstEvalError { reason } => {
+                TypeErrorKind::ConstEvalError { reason: reason.clone() }
+            }
         }
     }
 }
@@ -705,6 +722,9 @@ impl TypeErrorKind {
             }
             TypeErrorKind::UnsupportedTypeSyntax { description } => {
                 format!("unsupported type syntax: {}", description)
+            }
+            TypeErrorKind::ConstEvalError { reason } => {
+                format!("cannot evaluate at compile time: {}", reason)
             }
         }
     }

@@ -1,0 +1,1715 @@
+//! Type Checking Context
+//!
+//! This module provides the main entry point for type checking Blood programs.
+//! It walks the AST, collecting type information for all definitions and
+//! performing type inference and checking.
+//!
+//! # Design
+//!
+//! The type checking process happens in two phases:
+//!
+//! 1. **Collection**: Walk the AST and collect all type declarations,
+//!    registering them with the type checker. This builds the environment
+//!    needed for type checking.
+//!
+//! 2. **Checking**: Type check all function bodies and expressions,
+//!    inferring types where needed and reporting errors.
+//!
+//! # Module Path Resolution
+//!
+//! This module implements resolution of qualified paths like `std::foo::Bar`
+//! in type expressions.
+
+module std.compiler.typeck.context;
+
+use std.collections.HashMap;
+use std.option.Option;
+use std.result.Result;
+
+// Parser types
+use crate.compiler.parser.{
+    Program, Declaration, FnDecl, StructDecl, EnumDecl, TraitDecl, ImplBlock,
+    EffectDecl, TypeDecl, ConstDecl, StaticDecl, HandlerDecl, ModItemDecl,
+    TypeParams, Param, Type as AstType, TypeKind as AstTypeKind,
+    Expr, ExprKind, Pattern, PatternKind, Block, Stmt, StmtKind,
+    Span, Spanned, ModulePath, Visibility, StructField, EnumVariant,
+};
+
+// Type system types
+use super.types.{Type, TypeKind, PrimitiveTy, TyVarId, DefId, EffectRow, EffectInstance};
+use super.errors.{TypeError, TypeErrorKind, TypeErrors, Span as TypeSpan};
+use super.resolve.{Scope, TypeDef, TypeDefKind, FnDef, EffectDef, EffectOpDef, StructFieldDef, EnumVariantDef, DefRegistry};
+use super.unify.Unifier;
+use super.traits.{TraitResolver, TraitDef, TraitMethodDef, ImplDef, ImplMethodDef, TraitBound};
+use super.effects.{EffectContext, HandlerStack};
+use super.{TypeChecker, TypeCheckResult};
+
+// ============================================================================
+// Program Context
+// ============================================================================
+
+/// Context for type checking an entire program.
+///
+/// This struct maintains state across the type checking process, including
+/// module path information needed for resolving qualified names.
+pub struct ProgramContext {
+    /// The main type checker
+    checker: TypeChecker,
+    /// Current module path (for resolving relative paths)
+    current_module: ModulePath,
+    /// Imported modules and their mappings
+    imports: HashMap<String, ModulePath>,
+    /// All collected definition types
+    def_types: HashMap<DefId, Type>,
+    /// Module registry mapping module paths to their definitions
+    module_registry: ModuleRegistry,
+}
+
+impl ProgramContext {
+    /// Create a new program context.
+    pub fn new() -> ProgramContext {
+        ProgramContext {
+            checker: TypeChecker::new(),
+            current_module: ModulePath::empty(),
+            imports: HashMap::new(),
+            def_types: HashMap::new(),
+            module_registry: ModuleRegistry::new(),
+        }
+    }
+
+    /// Type check a program and return the result.
+    pub fn check(&mut self, program: &Program) -> TypeCheckResult {
+        // Phase 1: Collect all declarations
+        self.collect_program(program);
+
+        // Phase 2: Type check all function bodies
+        self.check_program(program);
+
+        // Build the result
+        if self.checker.has_errors() {
+            TypeCheckResult::failure(
+                self.def_types.clone(),
+                self.checker.errors.clone(),
+            )
+        } else {
+            TypeCheckResult::success(self.def_types.clone())
+        }
+    }
+
+    // ========================================================================
+    // Collection Phase
+    // ========================================================================
+
+    /// Collect all declarations from a program.
+    fn collect_program(&mut self, program: &Program) {
+        // Set current module if declared
+        match &program.mod_decl {
+            Option::Some(mod_decl) => {
+                self.current_module = mod_decl.path.clone();
+            }
+            Option::None => {}
+        }
+
+        // Process imports
+        self.collect_imports(program);
+
+        // Collect all declarations
+        let mut i: usize = 0;
+        while i < program.declarations.len() {
+            self.collect_declaration(&program.declarations[i]);
+            i = i + 1;
+        }
+    }
+
+    /// Collect imports from a program.
+    fn collect_imports(&mut self, program: &Program) {
+        let mut i: usize = 0;
+        while i < program.imports.len() {
+            self.collect_import(&program.imports[i]);
+            i = i + 1;
+        }
+    }
+
+    /// Collect a single import.
+    fn collect_import(&mut self, import: &Import) {
+        match import {
+            Import::Simple { path, alias, span: _ } => {
+                // Import `path` with optional alias
+                let name = match alias {
+                    Option::Some(a) => a.value.clone(),
+                    Option::None => path.last_segment(),
+                };
+                self.imports.insert(name, path.clone());
+            }
+            Import::Group { path, items, span: _ } => {
+                // Import multiple items from `path`
+                let mut j: usize = 0;
+                while j < items.len() {
+                    let item = &items[j];
+                    let name = match &item.alias {
+                        Option::Some(a) => a.value.clone(),
+                        Option::None => item.name.value.clone(),
+                    };
+                    let full_path = path.with_segment(&item.name.value);
+                    self.imports.insert(name, full_path);
+                    j = j + 1;
+                }
+            }
+            Import::Glob { path, span: _ } => {
+                // Import all public items from `path`
+                // This requires knowing what's in the module - deferred to linking
+            }
+        }
+    }
+
+    /// Collect a declaration.
+    fn collect_declaration(&mut self, decl: &Declaration) {
+        match decl {
+            Declaration::Function(fn_decl) => self.collect_function(fn_decl),
+            Declaration::Struct(struct_decl) => self.collect_struct(struct_decl),
+            Declaration::Enum(enum_decl) => self.collect_enum(enum_decl),
+            Declaration::Trait(trait_decl) => self.collect_trait(trait_decl),
+            Declaration::Impl(impl_block) => self.collect_impl(impl_block),
+            Declaration::Effect(effect_decl) => self.collect_effect(effect_decl),
+            Declaration::TypeAlias(type_decl) => self.collect_type_alias(type_decl),
+            Declaration::Const(const_decl) => self.collect_const(const_decl),
+            Declaration::Static(static_decl) => self.collect_static(static_decl),
+            Declaration::Handler(handler_decl) => self.collect_handler(handler_decl),
+            Declaration::Module(mod_decl) => self.collect_module(mod_decl),
+        }
+    }
+
+    /// Collect a function declaration.
+    fn collect_function(&mut self, fn_decl: &FnDecl) {
+        let def_id = self.checker.fresh_def_id();
+        let name = fn_decl.name.value.clone();
+
+        // Convert parameters to types
+        let mut param_types: [Type] = vec![];
+        let mut i: usize = 0;
+        while i < fn_decl.params.len() {
+            let param_ty = self.ast_type_to_type(&fn_decl.params[i].ty);
+            param_types.push(param_ty);
+            i = i + 1;
+        }
+
+        // Get return type
+        let ret_type = match &fn_decl.return_type {
+            Option::Some(ty) => self.ast_type_to_type(ty),
+            Option::None => Type::unit(),
+        };
+
+        // Get effect row if present
+        let effect = match &fn_decl.effects {
+            Option::Some(row) => Option::Some(self.ast_effect_row_to_effect_row(row)),
+            Option::None => Option::None,
+        };
+
+        // Build function type
+        let fn_type = Type::new(TypeKind::Fn {
+            params: param_types.clone(),
+            ret: Box::new(ret_type.clone()),
+            effect: effect.clone(),
+        });
+
+        // Register function
+        self.checker.scope.define_fn(name.clone(), def_id.clone());
+        self.def_types.insert(def_id.clone(), fn_type);
+
+        // Build FnDef for the registry
+        let type_params = self.collect_type_params(&fn_decl.type_params);
+        let fn_def = FnDef::new(name, type_params, param_types, ret_type, effect);
+        self.checker.registry.register_fn(def_id, fn_def);
+    }
+
+    /// Collect a struct declaration.
+    fn collect_struct(&mut self, struct_decl: &StructDecl) {
+        let def_id = self.checker.fresh_def_id();
+        let name = struct_decl.name.value.clone();
+
+        // Collect fields
+        let mut fields: [StructFieldDef] = vec![];
+        let mut i: usize = 0;
+        while i < struct_decl.fields.len() {
+            let field = &struct_decl.fields[i];
+            let field_ty = self.ast_type_to_type(&field.ty);
+            fields.push(StructFieldDef {
+                name: field.name.value.clone(),
+                ty: field_ty,
+            });
+            i = i + 1;
+        }
+
+        // Build struct type
+        let struct_ty = Type::new(TypeKind::Adt {
+            def_id: def_id.clone(),
+            type_args: vec![],
+        });
+
+        // Register type
+        self.checker.scope.define_type(name.clone(), def_id.clone());
+        self.def_types.insert(def_id.clone(), struct_ty);
+
+        // Build TypeDef for the registry
+        let type_params = self.collect_type_params(&struct_decl.type_params);
+        let type_def = TypeDef::new_struct(name, type_params, fields);
+        self.checker.registry.register_type(def_id, type_def);
+    }
+
+    /// Collect an enum declaration.
+    fn collect_enum(&mut self, enum_decl: &EnumDecl) {
+        let def_id = self.checker.fresh_def_id();
+        let name = enum_decl.name.value.clone();
+
+        // Collect variants
+        let mut variants: [EnumVariantDef] = vec![];
+        let mut i: usize = 0;
+        while i < enum_decl.variants.len() {
+            let variant = &enum_decl.variants[i];
+            let payload = match &variant.payload {
+                Option::Some(tys) => {
+                    if tys.len() == 1 {
+                        Option::Some(self.ast_type_to_type(&tys[0]))
+                    } else {
+                        // Tuple payload
+                        let mut tuple_tys: [Type] = vec![];
+                        let mut j: usize = 0;
+                        while j < tys.len() {
+                            tuple_tys.push(self.ast_type_to_type(&tys[j]));
+                            j = j + 1;
+                        }
+                        Option::Some(Type::new(TypeKind::Tuple(tuple_tys)))
+                    }
+                }
+                Option::None => Option::None,
+            };
+            variants.push(EnumVariantDef {
+                name: variant.name.value.clone(),
+                payload,
+            });
+            i = i + 1;
+        }
+
+        // Build enum type
+        let enum_ty = Type::new(TypeKind::Adt {
+            def_id: def_id.clone(),
+            type_args: vec![],
+        });
+
+        // Register type
+        self.checker.scope.define_type(name.clone(), def_id.clone());
+        self.def_types.insert(def_id.clone(), enum_ty);
+
+        // Build TypeDef for the registry
+        let type_params = self.collect_type_params(&enum_decl.type_params);
+        let type_def = TypeDef::new_enum(name, type_params, variants);
+        self.checker.registry.register_type(def_id, type_def);
+    }
+
+    /// Collect a trait declaration.
+    fn collect_trait(&mut self, trait_decl: &TraitDecl) {
+        let def_id = self.checker.fresh_def_id();
+        let name = trait_decl.name.value.clone();
+
+        // Collect methods
+        let mut methods: [TraitMethodDef] = vec![];
+        let mut i: usize = 0;
+        while i < trait_decl.methods.len() {
+            let method = &trait_decl.methods[i];
+            let method_def = self.collect_trait_method(method);
+            methods.push(method_def);
+            i = i + 1;
+        }
+
+        // Register trait
+        self.checker.scope.define_trait(name.clone(), def_id.clone());
+
+        // Build TraitDef
+        let type_params = self.collect_type_params(&trait_decl.type_params);
+        let trait_def = TraitDef {
+            name,
+            def_id: def_id.clone(),
+            type_params,
+            supertraits: vec![], // TODO: Parse supertraits
+            methods,
+            assoc_types: vec![], // TODO: Parse associated types
+        };
+        self.checker.trait_resolver.register_trait(trait_def);
+    }
+
+    /// Collect a trait method definition.
+    fn collect_trait_method(&mut self, method: &FnDecl) -> TraitMethodDef {
+        let mut param_types: [Type] = vec![];
+        let mut i: usize = 0;
+        while i < method.params.len() {
+            let param_ty = self.ast_type_to_type(&method.params[i].ty);
+            param_types.push(param_ty);
+            i = i + 1;
+        }
+
+        let ret_type = match &method.return_type {
+            Option::Some(ty) => self.ast_type_to_type(ty),
+            Option::None => Type::unit(),
+        };
+
+        let type_params = self.collect_type_params(&method.type_params);
+
+        TraitMethodDef {
+            name: method.name.value.clone(),
+            type_params,
+            params: param_types,
+            ret: ret_type,
+            has_default: method.body.is_some(),
+        }
+    }
+
+    /// Collect an impl block.
+    fn collect_impl(&mut self, impl_block: &ImplBlock) {
+        // Get the Self type
+        let self_ty = self.ast_type_to_type(&impl_block.self_ty);
+
+        // If this is a trait impl
+        match &impl_block.trait_path {
+            Option::Some(trait_path) => {
+                // Resolve trait
+                let trait_name = trait_path.last_segment();
+                match self.checker.scope.lookup_trait(&trait_name) {
+                    Option::Some(trait_id) => {
+                        // Collect method implementations
+                        let mut methods: [ImplMethodDef] = vec![];
+                        let mut i: usize = 0;
+                        while i < impl_block.methods.len() {
+                            let method = &impl_block.methods[i];
+                            let fn_def_id = self.checker.fresh_def_id();
+                            self.collect_impl_method(method, fn_def_id.clone());
+                            methods.push(ImplMethodDef {
+                                name: method.name.value.clone(),
+                                fn_def_id,
+                            });
+                            i = i + 1;
+                        }
+
+                        // Register impl
+                        let impl_def = ImplDef {
+                            trait_id,
+                            type_params: vec![],
+                            self_ty,
+                            methods,
+                            assoc_types: vec![],
+                        };
+                        self.checker.trait_resolver.register_impl(impl_def);
+                    }
+                    Option::None => {
+                        let span = self.ast_span_to_type_span(&impl_block.span);
+                        self.checker.error(TypeError::unresolved_type(trait_name, span));
+                    }
+                }
+            }
+            Option::None => {
+                // Inherent impl - just collect the methods
+                let mut i: usize = 0;
+                while i < impl_block.methods.len() {
+                    let method = &impl_block.methods[i];
+                    let fn_def_id = self.checker.fresh_def_id();
+                    self.collect_impl_method(method, fn_def_id);
+                    i = i + 1;
+                }
+            }
+        }
+    }
+
+    /// Collect an impl method.
+    fn collect_impl_method(&mut self, method: &FnDecl, def_id: DefId) {
+        let mut param_types: [Type] = vec![];
+        let mut i: usize = 0;
+        while i < method.params.len() {
+            let param_ty = self.ast_type_to_type(&method.params[i].ty);
+            param_types.push(param_ty);
+            i = i + 1;
+        }
+
+        let ret_type = match &method.return_type {
+            Option::Some(ty) => self.ast_type_to_type(ty),
+            Option::None => Type::unit(),
+        };
+
+        let effect = match &method.effects {
+            Option::Some(row) => Option::Some(self.ast_effect_row_to_effect_row(row)),
+            Option::None => Option::None,
+        };
+
+        let fn_type = Type::new(TypeKind::Fn {
+            params: param_types.clone(),
+            ret: Box::new(ret_type.clone()),
+            effect: effect.clone(),
+        });
+
+        self.def_types.insert(def_id.clone(), fn_type);
+
+        let type_params = self.collect_type_params(&method.type_params);
+        let fn_def = FnDef::new(
+            method.name.value.clone(),
+            type_params,
+            param_types,
+            ret_type,
+            effect,
+        );
+        self.checker.registry.register_fn(def_id, fn_def);
+    }
+
+    /// Collect an effect declaration.
+    fn collect_effect(&mut self, effect_decl: &EffectDecl) {
+        let def_id = self.checker.fresh_def_id();
+        let name = effect_decl.name.value.clone();
+
+        // Collect operations
+        let mut operations: [EffectOpDef] = vec![];
+        let mut i: usize = 0;
+        while i < effect_decl.operations.len() {
+            let op = &effect_decl.operations[i];
+            let mut param_types: [Type] = vec![];
+            let mut j: usize = 0;
+            while j < op.params.len() {
+                param_types.push(self.ast_type_to_type(&op.params[j].ty));
+                j = j + 1;
+            }
+            let ret_ty = match &op.return_type {
+                Option::Some(ty) => self.ast_type_to_type(ty),
+                Option::None => Type::unit(),
+            };
+            operations.push(EffectOpDef::new(op.name.value.clone(), param_types, ret_ty));
+            i = i + 1;
+        }
+
+        // Register effect
+        self.checker.scope.define_effect(name.clone(), def_id.clone());
+
+        let type_params = self.collect_type_params(&effect_decl.type_params);
+        let effect_def = EffectDef::new(name, type_params, operations);
+        self.checker.registry.register_effect(def_id, effect_def);
+    }
+
+    /// Collect a type alias declaration.
+    fn collect_type_alias(&mut self, type_decl: &TypeDecl) {
+        let def_id = self.checker.fresh_def_id();
+        let name = type_decl.name.value.clone();
+        let aliased_ty = self.ast_type_to_type(&type_decl.ty);
+
+        self.checker.scope.define_type(name, def_id.clone());
+        self.def_types.insert(def_id, aliased_ty);
+    }
+
+    /// Collect a const declaration.
+    fn collect_const(&mut self, const_decl: &ConstDecl) {
+        let def_id = self.checker.fresh_def_id();
+        let name = const_decl.name.value.clone();
+        let const_ty = self.ast_type_to_type(&const_decl.ty);
+
+        self.checker.scope.define_var(name, const_ty.clone());
+        self.def_types.insert(def_id, const_ty);
+    }
+
+    /// Collect a static declaration.
+    fn collect_static(&mut self, static_decl: &StaticDecl) {
+        let def_id = self.checker.fresh_def_id();
+        let name = static_decl.name.value.clone();
+        let static_ty = self.ast_type_to_type(&static_decl.ty);
+
+        self.checker.scope.define_var(name, static_ty.clone());
+        self.def_types.insert(def_id, static_ty);
+    }
+
+    /// Collect a handler declaration.
+    fn collect_handler(&mut self, handler_decl: &HandlerDecl) {
+        // Handler type checking is deferred to the checking phase
+    }
+
+    /// Collect a module item declaration.
+    fn collect_module(&mut self, mod_decl: &ModItemDecl) {
+        // Module declarations are processed separately
+    }
+
+    /// Collect type parameters.
+    fn collect_type_params(&mut self, type_params: &Option<TypeParams>) -> [TyVarId] {
+        match type_params {
+            Option::Some(params) => {
+                let mut result: [TyVarId] = vec![];
+                let mut i: usize = 0;
+                while i < params.params.len() {
+                    let param = &params.params[i];
+                    let var_id = self.checker.unifier.fresh_var_id();
+                    result.push(var_id);
+                    i = i + 1;
+                }
+                result
+            }
+            Option::None => vec![],
+        }
+    }
+
+    // ========================================================================
+    // Type Checking Phase
+    // ========================================================================
+
+    /// Type check all function bodies in a program.
+    fn check_program(&mut self, program: &Program) {
+        let mut i: usize = 0;
+        while i < program.declarations.len() {
+            self.check_declaration(&program.declarations[i]);
+            i = i + 1;
+        }
+    }
+
+    /// Type check a declaration.
+    fn check_declaration(&mut self, decl: &Declaration) {
+        match decl {
+            Declaration::Function(fn_decl) => self.check_function(fn_decl),
+            Declaration::Impl(impl_block) => self.check_impl(impl_block),
+            Declaration::Handler(handler_decl) => self.check_handler(handler_decl),
+            // Other declarations don't have bodies to check
+            Declaration::Struct(_) => {}
+            Declaration::Enum(_) => {}
+            Declaration::Trait(_) => {}
+            Declaration::Effect(_) => {}
+            Declaration::TypeAlias(_) => {}
+            Declaration::Const(const_decl) => self.check_const(const_decl),
+            Declaration::Static(static_decl) => self.check_static(static_decl),
+            Declaration::Module(_) => {}
+        }
+    }
+
+    /// Type check a function body.
+    fn check_function(&mut self, fn_decl: &FnDecl) {
+        match &fn_decl.body {
+            Option::Some(body) => {
+                // Enter a new scope for the function
+                self.checker.enter_scope();
+
+                // Define parameters in scope
+                let mut i: usize = 0;
+                while i < fn_decl.params.len() {
+                    let param = &fn_decl.params[i];
+                    let param_ty = self.ast_type_to_type(&param.ty);
+                    self.define_pattern(&param.pattern, &param_ty);
+                    i = i + 1;
+                }
+
+                // Get expected return type
+                let expected_ret = match &fn_decl.return_type {
+                    Option::Some(ty) => self.ast_type_to_type(ty),
+                    Option::None => Type::unit(),
+                };
+
+                // Check the body
+                let body_ty = self.check_block(body);
+
+                // Unify body type with return type
+                let span = self.ast_span_to_type_span(&body.span);
+                self.checker.unify_or_error(&body_ty, &expected_ret, span);
+
+                // Exit scope
+                self.checker.exit_scope();
+            }
+            Option::None => {
+                // Function without body (declaration only)
+            }
+        }
+    }
+
+    /// Type check an impl block.
+    fn check_impl(&mut self, impl_block: &ImplBlock) {
+        let mut i: usize = 0;
+        while i < impl_block.methods.len() {
+            self.check_function(&impl_block.methods[i]);
+            i = i + 1;
+        }
+    }
+
+    /// Type check a handler.
+    fn check_handler(&mut self, handler_decl: &HandlerDecl) {
+        // TODO: Implement handler type checking
+    }
+
+    /// Type check a const declaration.
+    fn check_const(&mut self, const_decl: &ConstDecl) {
+        let expected_ty = self.ast_type_to_type(&const_decl.ty);
+        let init_ty = self.check_expr(&const_decl.value);
+        let span = self.ast_span_to_type_span(&const_decl.span);
+        self.checker.unify_or_error(&init_ty, &expected_ty, span);
+    }
+
+    /// Type check a static declaration.
+    fn check_static(&mut self, static_decl: &StaticDecl) {
+        let expected_ty = self.ast_type_to_type(&static_decl.ty);
+        let init_ty = self.check_expr(&static_decl.value);
+        let span = self.ast_span_to_type_span(&static_decl.span);
+        self.checker.unify_or_error(&init_ty, &expected_ty, span);
+    }
+
+    /// Type check a block and return its type.
+    fn check_block(&mut self, block: &Block) -> Type {
+        self.checker.enter_scope();
+
+        // Check all statements
+        let mut i: usize = 0;
+        while i < block.stmts.len() {
+            self.check_stmt(&block.stmts[i]);
+            i = i + 1;
+        }
+
+        // The block's type is its tail expression's type, or unit if none
+        let result = match &block.expr {
+            Option::Some(expr) => self.check_expr(expr),
+            Option::None => Type::unit(),
+        };
+
+        self.checker.exit_scope();
+        result
+    }
+
+    /// Type check a statement.
+    fn check_stmt(&mut self, stmt: &Stmt) {
+        match &stmt.kind {
+            StmtKind::Let { pattern, ty, init } => {
+                let expected_ty = match ty {
+                    Option::Some(t) => self.ast_type_to_type(t),
+                    Option::None => self.checker.fresh_var(),
+                };
+
+                let init_ty = self.check_expr(init);
+                let span = self.ast_span_to_type_span(&stmt.span);
+                self.checker.unify_or_error(&init_ty, &expected_ty, span);
+
+                // Define the pattern bindings
+                self.define_pattern(pattern, &expected_ty);
+            }
+            StmtKind::Expr { expr } => {
+                self.check_expr(expr);
+            }
+            StmtKind::Semi { expr } => {
+                self.check_expr(expr);
+            }
+        }
+    }
+
+    /// Type check an expression and return its type.
+    fn check_expr(&mut self, expr: &Expr) -> Type {
+        match &expr.kind {
+            ExprKind::Literal(lit) => self.check_literal(lit),
+            ExprKind::Path(path) => self.check_path(path, &expr.span),
+            ExprKind::Block(block) => self.check_block(block),
+            ExprKind::If { cond, then_branch, else_branch } => {
+                let cond_ty = self.check_expr(cond);
+                let span = self.ast_span_to_type_span(&expr.span);
+                self.checker.unify_or_error(&cond_ty, &Type::bool(), span.clone());
+
+                let then_ty = self.check_block(then_branch);
+                match else_branch {
+                    Option::Some(else_expr) => {
+                        let else_ty = self.check_expr(else_expr);
+                        self.checker.unify_or_error(&then_ty, &else_ty, span);
+                        then_ty
+                    }
+                    Option::None => {
+                        // If without else has type ()
+                        self.checker.unify_or_error(&then_ty, &Type::unit(), span);
+                        Type::unit()
+                    }
+                }
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                let scrutinee_ty = self.check_expr(scrutinee);
+                let result_ty = self.checker.fresh_var();
+
+                let mut i: usize = 0;
+                while i < arms.len() {
+                    let arm = &arms[i];
+                    self.checker.enter_scope();
+
+                    // Check pattern and define bindings
+                    self.define_pattern(&arm.pattern, &scrutinee_ty);
+
+                    // Check guard if present
+                    match &arm.guard {
+                        Option::Some(guard) => {
+                            let guard_ty = self.check_expr(guard);
+                            let span = self.ast_span_to_type_span(&guard.span);
+                            self.checker.unify_or_error(&guard_ty, &Type::bool(), span);
+                        }
+                        Option::None => {}
+                    }
+
+                    // Check body
+                    let body_ty = self.check_expr(&arm.body);
+                    let span = self.ast_span_to_type_span(&arm.body.span);
+                    self.checker.unify_or_error(&body_ty, &result_ty, span);
+
+                    self.checker.exit_scope();
+                    i = i + 1;
+                }
+
+                result_ty
+            }
+            ExprKind::Call { func, args } => {
+                let func_ty = self.check_expr(func);
+                let mut arg_types: [Type] = vec![];
+                let mut i: usize = 0;
+                while i < args.len() {
+                    arg_types.push(self.check_expr(&args[i]));
+                    i = i + 1;
+                }
+
+                // Create expected function type
+                let result_ty = self.checker.fresh_var();
+                let expected_fn_ty = Type::new(TypeKind::Fn {
+                    params: arg_types,
+                    ret: Box::new(result_ty.clone()),
+                    effect: Option::None,
+                });
+
+                let span = self.ast_span_to_type_span(&expr.span);
+                self.checker.unify_or_error(&func_ty, &expected_fn_ty, span);
+
+                result_ty
+            }
+            ExprKind::MethodCall { receiver, method, args } => {
+                let receiver_ty = self.check_expr(receiver);
+                let mut arg_types: [Type] = vec![];
+                let mut i: usize = 0;
+                while i < args.len() {
+                    arg_types.push(self.check_expr(&args[i]));
+                    i = i + 1;
+                }
+
+                // Look up method on receiver type
+                match self.checker.lookup_method(&receiver_ty, &method.value) {
+                    Option::Some((impl_def, method_def)) => {
+                        // Get method's function type from registry
+                        match self.checker.registry.get_fn(&method_def.fn_def_id) {
+                            Option::Some(fn_def) => fn_def.ret.clone(),
+                            Option::None => {
+                                let span = self.ast_span_to_type_span(&expr.span);
+                                self.checker.error(TypeError::unresolved_name(
+                                    method.value.clone(),
+                                    span,
+                                ));
+                                Type::error()
+                            }
+                        }
+                    }
+                    Option::None => {
+                        let span = self.ast_span_to_type_span(&expr.span);
+                        self.checker.error(TypeError::cannot_access_field(
+                            receiver_ty,
+                            method.value.clone(),
+                            span,
+                        ));
+                        Type::error()
+                    }
+                }
+            }
+            ExprKind::Field { base, field } => {
+                let base_ty = self.check_expr(base);
+                self.check_field_access(&base_ty, &field.value, &expr.span)
+            }
+            ExprKind::Index { base, index } => {
+                let base_ty = self.check_expr(base);
+                let index_ty = self.check_expr(index);
+
+                // Expect index to be usize
+                let span = self.ast_span_to_type_span(&index.span);
+                self.checker.unify_or_error(&index_ty, &Type::usize(), span);
+
+                // Get element type
+                self.check_index_type(&base_ty, &expr.span)
+            }
+            ExprKind::Binary { op, left, right } => {
+                let left_ty = self.check_expr(left);
+                let right_ty = self.check_expr(right);
+                self.check_binary_op(op, &left_ty, &right_ty, &expr.span)
+            }
+            ExprKind::Unary { op, operand } => {
+                let operand_ty = self.check_expr(operand);
+                self.check_unary_op(op, &operand_ty, &expr.span)
+            }
+            ExprKind::Struct { path, fields } => {
+                let struct_name = path.last_segment();
+                match self.checker.scope.lookup_type(&struct_name) {
+                    Option::Some(def_id) => {
+                        // Check field types
+                        let mut i: usize = 0;
+                        while i < fields.len() {
+                            let field = &fields[i];
+                            self.check_expr(&field.value);
+                            i = i + 1;
+                        }
+                        Type::new(TypeKind::Adt {
+                            def_id,
+                            type_args: vec![],
+                        })
+                    }
+                    Option::None => {
+                        let span = self.ast_span_to_type_span(&expr.span);
+                        self.checker.error(TypeError::unresolved_type(struct_name, span));
+                        Type::error()
+                    }
+                }
+            }
+            ExprKind::Tuple(elements) => {
+                let mut elem_types: [Type] = vec![];
+                let mut i: usize = 0;
+                while i < elements.len() {
+                    elem_types.push(self.check_expr(&elements[i]));
+                    i = i + 1;
+                }
+                Type::new(TypeKind::Tuple(elem_types))
+            }
+            ExprKind::Array(elements) => {
+                if elements.len() == 0 {
+                    let elem_ty = self.checker.fresh_var();
+                    Type::new(TypeKind::Array {
+                        element: Box::new(elem_ty),
+                        size: 0,
+                    })
+                } else {
+                    let first_ty = self.check_expr(&elements[0]);
+                    let mut i: usize = 1;
+                    while i < elements.len() {
+                        let elem_ty = self.check_expr(&elements[i]);
+                        let span = self.ast_span_to_type_span(&elements[i].span);
+                        self.checker.unify_or_error(&elem_ty, &first_ty, span);
+                        i = i + 1;
+                    }
+                    Type::new(TypeKind::Array {
+                        element: Box::new(first_ty),
+                        size: elements.len() as u64,
+                    })
+                }
+            }
+            ExprKind::Ref { inner, mutable } => {
+                let inner_ty = self.check_expr(inner);
+                Type::new(TypeKind::Ref {
+                    inner: Box::new(inner_ty),
+                    mutability: if *mutable {
+                        super.types.Mutability::Mut
+                    } else {
+                        super.types.Mutability::Immut
+                    },
+                })
+            }
+            ExprKind::Deref { inner } => {
+                let inner_ty = self.check_expr(inner);
+                match inner_ty.kind() {
+                    TypeKind::Ref { inner, mutability: _ } => inner.clone(),
+                    TypeKind::Ptr { inner, mutability: _ } => inner.clone(),
+                    _ => {
+                        let span = self.ast_span_to_type_span(&expr.span);
+                        self.checker.error(TypeError::cannot_deref(inner_ty, span));
+                        Type::error()
+                    }
+                }
+            }
+            ExprKind::Closure { params, ret_ty, body } => {
+                self.checker.enter_scope();
+
+                let mut param_types: [Type] = vec![];
+                let mut i: usize = 0;
+                while i < params.len() {
+                    let param_ty = self.ast_type_to_type(&params[i].ty);
+                    self.define_pattern(&params[i].pattern, &param_ty);
+                    param_types.push(param_ty);
+                    i = i + 1;
+                }
+
+                let body_ty = self.check_expr(body);
+
+                let ret_type = match ret_ty {
+                    Option::Some(ty) => {
+                        let expected = self.ast_type_to_type(ty);
+                        let span = self.ast_span_to_type_span(&body.span);
+                        self.checker.unify_or_error(&body_ty, &expected, span);
+                        expected
+                    }
+                    Option::None => body_ty,
+                };
+
+                self.checker.exit_scope();
+
+                Type::new(TypeKind::Closure {
+                    params: param_types,
+                    ret: Box::new(ret_type),
+                    effect: Option::None,
+                    captures: vec![], // TODO: Capture analysis
+                })
+            }
+            ExprKind::Return { value } => {
+                match value {
+                    Option::Some(v) => {
+                        self.check_expr(v);
+                    }
+                    Option::None => {}
+                }
+                Type::never()
+            }
+            ExprKind::Break { value } => {
+                match value {
+                    Option::Some(v) => {
+                        self.check_expr(v);
+                    }
+                    Option::None => {}
+                }
+                Type::never()
+            }
+            ExprKind::Continue => Type::never(),
+            ExprKind::Assign { place, value } => {
+                let place_ty = self.check_expr(place);
+                let value_ty = self.check_expr(value);
+                let span = self.ast_span_to_type_span(&expr.span);
+                self.checker.unify_or_error(&value_ty, &place_ty, span);
+                Type::unit()
+            }
+            ExprKind::Range { start, end, inclusive } => {
+                let start_ty = self.check_expr(start);
+                let end_ty = self.check_expr(end);
+                let span = self.ast_span_to_type_span(&expr.span);
+                self.checker.unify_or_error(&start_ty, &end_ty, span);
+                Type::new(TypeKind::Range {
+                    element: Box::new(start_ty),
+                    inclusive: *inclusive,
+                })
+            }
+            ExprKind::Loop { body } => {
+                self.check_block(body);
+                // Loop returns ! (never) unless broken out of
+                Type::never()
+            }
+            ExprKind::While { cond, body } => {
+                let cond_ty = self.check_expr(cond);
+                let span = self.ast_span_to_type_span(&cond.span);
+                self.checker.unify_or_error(&cond_ty, &Type::bool(), span);
+                self.check_block(body);
+                Type::unit()
+            }
+            ExprKind::For { pattern, iter, body } => {
+                let iter_ty = self.check_expr(iter);
+                // TODO: Get element type from iterator
+                let elem_ty = self.checker.fresh_var();
+                self.checker.enter_scope();
+                self.define_pattern(pattern, &elem_ty);
+                self.check_block(body);
+                self.checker.exit_scope();
+                Type::unit()
+            }
+            ExprKind::Perform { effect, op, args } => {
+                // TODO: Implement effect operation type checking
+                Type::unit()
+            }
+            ExprKind::Handle { expr: inner, handlers } => {
+                // TODO: Implement handler type checking
+                self.check_expr(inner)
+            }
+            ExprKind::Try { expr: inner } => {
+                // TODO: Implement try expression type checking
+                self.check_expr(inner)
+            }
+            ExprKind::Await { expr: inner } => {
+                // TODO: Implement await expression type checking
+                self.check_expr(inner)
+            }
+            ExprKind::Cast { expr: inner, ty } => {
+                self.check_expr(inner);
+                self.ast_type_to_type(ty)
+            }
+        }
+    }
+
+    /// Check a literal and return its type.
+    fn check_literal(&self, lit: &Literal) -> Type {
+        match lit {
+            Literal::Int(_) => Type::i32(), // Default integer type
+            Literal::Float(_) => Type::f64(), // Default float type
+            Literal::Bool(_) => Type::bool(),
+            Literal::Char(_) => Type::char(),
+            Literal::String(_) => Type::string(),
+            Literal::Unit => Type::unit(),
+        }
+    }
+
+    /// Check a path expression and return its type.
+    fn check_path(&mut self, path: &ModulePath, span: &Span) -> Type {
+        if path.segments.len() == 1 {
+            // Simple variable reference
+            let name = &path.segments[0].value;
+            match self.checker.scope.lookup_var(name) {
+                Option::Some(ty) => ty,
+                Option::None => {
+                    // Try looking up as a function
+                    match self.checker.scope.lookup_fn(name) {
+                        Option::Some(def_id) => {
+                            match self.def_types.get(&def_id) {
+                                Option::Some(ty) => ty.clone(),
+                                Option::None => {
+                                    let ts = self.ast_span_to_type_span(span);
+                                    self.checker.error(TypeError::unresolved_name(name.clone(), ts));
+                                    Type::error()
+                                }
+                            }
+                        }
+                        Option::None => {
+                            let ts = self.ast_span_to_type_span(span);
+                            self.checker.error(TypeError::unresolved_name(name.clone(), ts));
+                            Type::error()
+                        }
+                    }
+                }
+            }
+        } else {
+            // Module path - resolve qualified name
+            self.resolve_module_path(path, span)
+        }
+    }
+
+    /// Resolve a module-qualified path.
+    fn resolve_module_path(&mut self, path: &ModulePath, span: &Span) -> Type {
+        // Check if first segment is an imported module
+        let first = &path.segments[0].value;
+
+        match self.imports.get(first) {
+            Option::Some(import_path) => {
+                // The path starts with an imported name
+                // Build the full path
+                let mut full_path = import_path.clone();
+                let mut i: usize = 1;
+                while i < path.segments.len() {
+                    full_path = full_path.with_segment(&path.segments[i].value);
+                    i = i + 1;
+                }
+
+                // Look up in module registry
+                self.resolve_in_module_registry(&full_path, span)
+            }
+            Option::None => {
+                // Try resolving as absolute path (std, crate, etc.)
+                if first == "crate" || first == "self" || first == "super" {
+                    self.resolve_relative_path(path, span)
+                } else if first == "std" {
+                    // Standard library path
+                    self.resolve_in_module_registry(path, span)
+                } else {
+                    // Unknown path
+                    let ts = self.ast_span_to_type_span(span);
+                    self.checker.error(TypeError::unresolved_name(first.clone(), ts));
+                    Type::error()
+                }
+            }
+        }
+    }
+
+    /// Resolve a relative path (crate::, self::, super::).
+    fn resolve_relative_path(&mut self, path: &ModulePath, span: &Span) -> Type {
+        let first = &path.segments[0].value;
+        let base_path = if first == "crate" {
+            ModulePath::empty()
+        } else if first == "self" {
+            self.current_module.clone()
+        } else if first == "super" {
+            self.current_module.parent()
+        } else {
+            self.current_module.clone()
+        };
+
+        // Build full path from base
+        let mut full_path = base_path;
+        let mut i: usize = 1;
+        while i < path.segments.len() {
+            full_path = full_path.with_segment(&path.segments[i].value);
+            i = i + 1;
+        }
+
+        self.resolve_in_module_registry(&full_path, span)
+    }
+
+    /// Look up a path in the module registry.
+    fn resolve_in_module_registry(&mut self, path: &ModulePath, span: &Span) -> Type {
+        // Get the last segment as the item name
+        let item_name = path.last_segment();
+
+        // Look up in current definitions first
+        match self.checker.scope.lookup_var(&item_name) {
+            Option::Some(ty) => return ty,
+            Option::None => {}
+        }
+
+        match self.checker.scope.lookup_fn(&item_name) {
+            Option::Some(def_id) => {
+                match self.def_types.get(&def_id) {
+                    Option::Some(ty) => return ty.clone(),
+                    Option::None => {}
+                }
+            }
+            Option::None => {}
+        }
+
+        match self.checker.scope.lookup_type(&item_name) {
+            Option::Some(def_id) => {
+                return Type::new(TypeKind::Adt {
+                    def_id,
+                    type_args: vec![],
+                });
+            }
+            Option::None => {}
+        }
+
+        // Not found - report error
+        let ts = self.ast_span_to_type_span(span);
+        self.checker.error(TypeError::unresolved_name(item_name, ts));
+        Type::error()
+    }
+
+    /// Check field access on a type.
+    fn check_field_access(&mut self, base_ty: &Type, field: &str, span: &Span) -> Type {
+        match base_ty.kind() {
+            TypeKind::Adt { def_id, type_args: _ } => {
+                match self.checker.registry.get_type(def_id) {
+                    Option::Some(type_def) => {
+                        match &type_def.kind {
+                            TypeDefKind::Struct { fields } => {
+                                let mut i: usize = 0;
+                                while i < fields.len() {
+                                    if fields[i].name == field {
+                                        return fields[i].ty.clone();
+                                    }
+                                    i = i + 1;
+                                }
+                                let ts = self.ast_span_to_type_span(span);
+                                self.checker.error(TypeError::unknown_field(
+                                    type_def.name.clone(),
+                                    field.to_string(),
+                                    ts,
+                                ));
+                                Type::error()
+                            }
+                            TypeDefKind::Enum { variants: _ } => {
+                                let ts = self.ast_span_to_type_span(span);
+                                self.checker.error(TypeError::cannot_access_field(
+                                    base_ty.clone(),
+                                    field.to_string(),
+                                    ts,
+                                ));
+                                Type::error()
+                            }
+                        }
+                    }
+                    Option::None => {
+                        let ts = self.ast_span_to_type_span(span);
+                        self.checker.error(TypeError::cannot_access_field(
+                            base_ty.clone(),
+                            field.to_string(),
+                            ts,
+                        ));
+                        Type::error()
+                    }
+                }
+            }
+            TypeKind::Tuple(elements) => {
+                // Tuple field access by number
+                match field.parse::<usize>() {
+                    Ok(index) => {
+                        if index < elements.len() {
+                            elements[index].clone()
+                        } else {
+                            let ts = self.ast_span_to_type_span(span);
+                            self.checker.error(TypeError::tuple_field_out_of_bounds(
+                                index as u32,
+                                elements.len() as u32,
+                                ts,
+                            ));
+                            Type::error()
+                        }
+                    }
+                    Err(_) => {
+                        let ts = self.ast_span_to_type_span(span);
+                        self.checker.error(TypeError::tuple_field_not_numeric(
+                            field.to_string(),
+                            ts,
+                        ));
+                        Type::error()
+                    }
+                }
+            }
+            _ => {
+                let ts = self.ast_span_to_type_span(span);
+                self.checker.error(TypeError::cannot_access_field(
+                    base_ty.clone(),
+                    field.to_string(),
+                    ts,
+                ));
+                Type::error()
+            }
+        }
+    }
+
+    /// Check indexing type.
+    fn check_index_type(&mut self, base_ty: &Type, span: &Span) -> Type {
+        match base_ty.kind() {
+            TypeKind::Array { element, size: _ } => element.clone(),
+            TypeKind::Slice { element } => element.clone(),
+            _ => {
+                let ts = self.ast_span_to_type_span(span);
+                self.checker.error(TypeError::cannot_index(base_ty.clone(), ts));
+                Type::error()
+            }
+        }
+    }
+
+    /// Check a binary operation.
+    fn check_binary_op(&mut self, op: &BinOp, left: &Type, right: &Type, span: &Span) -> Type {
+        // TODO: Implement full binary operator type checking
+        match op {
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
+                let ts = self.ast_span_to_type_span(span);
+                self.checker.unify_or_error(left, right, ts);
+                left.clone()
+            }
+            BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
+                let ts = self.ast_span_to_type_span(span);
+                self.checker.unify_or_error(left, right, ts);
+                Type::bool()
+            }
+            BinOp::And | BinOp::Or => {
+                let ts = self.ast_span_to_type_span(span);
+                self.checker.unify_or_error(left, &Type::bool(), ts.clone());
+                self.checker.unify_or_error(right, &Type::bool(), ts);
+                Type::bool()
+            }
+            BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
+                let ts = self.ast_span_to_type_span(span);
+                self.checker.unify_or_error(left, right, ts);
+                left.clone()
+            }
+        }
+    }
+
+    /// Check a unary operation.
+    fn check_unary_op(&mut self, op: &UnaryOp, operand: &Type, span: &Span) -> Type {
+        match op {
+            UnaryOp::Neg => operand.clone(),
+            UnaryOp::Not => {
+                let ts = self.ast_span_to_type_span(span);
+                self.checker.unify_or_error(operand, &Type::bool(), ts);
+                Type::bool()
+            }
+            UnaryOp::Deref => {
+                match operand.kind() {
+                    TypeKind::Ref { inner, mutability: _ } => inner.clone(),
+                    TypeKind::Ptr { inner, mutability: _ } => inner.clone(),
+                    _ => {
+                        let ts = self.ast_span_to_type_span(span);
+                        self.checker.error(TypeError::cannot_deref(operand.clone(), ts));
+                        Type::error()
+                    }
+                }
+            }
+            UnaryOp::Ref => {
+                Type::new(TypeKind::Ref {
+                    inner: Box::new(operand.clone()),
+                    mutability: super.types.Mutability::Immut,
+                })
+            }
+            UnaryOp::RefMut => {
+                Type::new(TypeKind::Ref {
+                    inner: Box::new(operand.clone()),
+                    mutability: super.types.Mutability::Mut,
+                })
+            }
+        }
+    }
+
+    /// Define pattern bindings in the current scope.
+    fn define_pattern(&mut self, pattern: &Pattern, ty: &Type) {
+        match &pattern.kind {
+            PatternKind::Ident { name, mutable: _ } => {
+                self.checker.scope.define_var(name.value.clone(), ty.clone());
+            }
+            PatternKind::Tuple(patterns) => {
+                match ty.kind() {
+                    TypeKind::Tuple(types) => {
+                        let mut i: usize = 0;
+                        while i < patterns.len() && i < types.len() {
+                            self.define_pattern(&patterns[i], &types[i]);
+                            i = i + 1;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            PatternKind::Struct { path: _, fields } => {
+                // TODO: Get field types from struct definition
+                let mut i: usize = 0;
+                while i < fields.len() {
+                    let field = &fields[i];
+                    // Use fresh variable for now
+                    let field_ty = self.checker.fresh_var();
+                    self.define_pattern(&field.pattern, &field_ty);
+                    i = i + 1;
+                }
+            }
+            PatternKind::Wildcard => {
+                // No binding
+            }
+            PatternKind::Literal(_) => {
+                // No binding
+            }
+            PatternKind::Or(patterns) => {
+                // All alternatives must bind same names with same types
+                if patterns.len() > 0 {
+                    self.define_pattern(&patterns[0], ty);
+                }
+            }
+            PatternKind::Ref { inner, mutable: _ } => {
+                match ty.kind() {
+                    TypeKind::Ref { inner: inner_ty, mutability: _ } => {
+                        self.define_pattern(inner, inner_ty);
+                    }
+                    _ => self.define_pattern(inner, ty),
+                }
+            }
+            PatternKind::Range { start: _, end: _, inclusive: _ } => {
+                // No binding
+            }
+            PatternKind::Slice { elements, rest } => {
+                // TODO: Implement slice pattern bindings
+            }
+        }
+    }
+
+    // ========================================================================
+    // Type Conversion
+    // ========================================================================
+
+    /// Convert AST type to internal type representation.
+    fn ast_type_to_type(&mut self, ast_ty: &AstType) -> Type {
+        match &ast_ty.kind {
+            AstTypeKind::Path(path) => {
+                let name = path.last_segment();
+
+                // Check for primitive types
+                match name.as_str() {
+                    "i8" => Type::i8(),
+                    "i16" => Type::i16(),
+                    "i32" => Type::i32(),
+                    "i64" => Type::i64(),
+                    "i128" => Type::i128(),
+                    "isize" => Type::isize(),
+                    "u8" => Type::u8(),
+                    "u16" => Type::u16(),
+                    "u32" => Type::u32(),
+                    "u64" => Type::u64(),
+                    "u128" => Type::u128(),
+                    "usize" => Type::usize(),
+                    "f32" => Type::f32(),
+                    "f64" => Type::f64(),
+                    "bool" => Type::bool(),
+                    "char" => Type::char(),
+                    "str" => Type::str(),
+                    "String" => Type::string(),
+                    "()" => Type::unit(),
+                    "!" => Type::never(),
+                    _ => {
+                        // Look up user-defined type
+                        if path.segments.len() == 1 {
+                            match self.checker.scope.lookup_type(&name) {
+                                Option::Some(def_id) => {
+                                    Type::new(TypeKind::Adt {
+                                        def_id,
+                                        type_args: vec![],
+                                    })
+                                }
+                                Option::None => {
+                                    // Type parameter or unknown type
+                                    self.checker.fresh_var()
+                                }
+                            }
+                        } else {
+                            // Module-qualified type
+                            self.resolve_module_path(path, &ast_ty.span)
+                        }
+                    }
+                }
+            }
+            AstTypeKind::Tuple(types) => {
+                let mut tys: [Type] = vec![];
+                let mut i: usize = 0;
+                while i < types.len() {
+                    tys.push(self.ast_type_to_type(&types[i]));
+                    i = i + 1;
+                }
+                Type::new(TypeKind::Tuple(tys))
+            }
+            AstTypeKind::Array { element, size } => {
+                let elem_ty = self.ast_type_to_type(element);
+                Type::new(TypeKind::Array {
+                    element: Box::new(elem_ty),
+                    size: *size,
+                })
+            }
+            AstTypeKind::Slice { element } => {
+                let elem_ty = self.ast_type_to_type(element);
+                Type::new(TypeKind::Slice {
+                    element: Box::new(elem_ty),
+                })
+            }
+            AstTypeKind::Ref { inner, mutable } => {
+                let inner_ty = self.ast_type_to_type(inner);
+                Type::new(TypeKind::Ref {
+                    inner: Box::new(inner_ty),
+                    mutability: if *mutable {
+                        super.types.Mutability::Mut
+                    } else {
+                        super.types.Mutability::Immut
+                    },
+                })
+            }
+            AstTypeKind::Ptr { inner, mutable } => {
+                let inner_ty = self.ast_type_to_type(inner);
+                Type::new(TypeKind::Ptr {
+                    inner: Box::new(inner_ty),
+                    mutability: if *mutable {
+                        super.types.Mutability::Mut
+                    } else {
+                        super.types.Mutability::Immut
+                    },
+                })
+            }
+            AstTypeKind::Fn { params, ret, effects } => {
+                let mut param_tys: [Type] = vec![];
+                let mut i: usize = 0;
+                while i < params.len() {
+                    param_tys.push(self.ast_type_to_type(&params[i]));
+                    i = i + 1;
+                }
+                let ret_ty = self.ast_type_to_type(ret);
+                let effect = match effects {
+                    Option::Some(row) => Option::Some(self.ast_effect_row_to_effect_row(row)),
+                    Option::None => Option::None,
+                };
+                Type::new(TypeKind::Fn {
+                    params: param_tys,
+                    ret: Box::new(ret_ty),
+                    effect,
+                })
+            }
+            AstTypeKind::Generic { base, args } => {
+                let base_ty = self.ast_type_to_type(base);
+                match base_ty.kind() {
+                    TypeKind::Adt { def_id, type_args: _ } => {
+                        let mut arg_tys: [Type] = vec![];
+                        let mut i: usize = 0;
+                        while i < args.len() {
+                            arg_tys.push(self.ast_type_to_type(&args[i]));
+                            i = i + 1;
+                        }
+                        Type::new(TypeKind::Adt {
+                            def_id: def_id.clone(),
+                            type_args: arg_tys,
+                        })
+                    }
+                    _ => base_ty,
+                }
+            }
+            AstTypeKind::Infer => self.checker.fresh_var(),
+            AstTypeKind::Never => Type::never(),
+        }
+    }
+
+    /// Convert AST effect row to internal representation.
+    fn ast_effect_row_to_effect_row(&mut self, ast_row: &AstEffectRow) -> EffectRow {
+        let mut effects: [EffectInstance] = vec![];
+        let mut i: usize = 0;
+        while i < ast_row.effects.len() {
+            let effect_path = &ast_row.effects[i];
+            let effect_name = effect_path.last_segment();
+            match self.checker.scope.lookup_effect(&effect_name) {
+                Option::Some(def_id) => {
+                    effects.push(EffectInstance {
+                        def_id,
+                        type_args: vec![],
+                    });
+                }
+                Option::None => {
+                    // Effect not found - error will be reported elsewhere
+                }
+            }
+            i = i + 1;
+        }
+        EffectRow::new(effects)
+    }
+
+    /// Convert AST span to type system span.
+    fn ast_span_to_type_span(&self, span: &Span) -> TypeSpan {
+        TypeSpan::new(span.start, span.end, span.line, span.column)
+    }
+}
+
+// ============================================================================
+// Module Registry
+// ============================================================================
+
+/// Registry for module information.
+///
+/// Maps module paths to their exported definitions.
+pub struct ModuleRegistry {
+    /// Modules and their exported types
+    modules: HashMap<String, ModuleInfo>,
+}
+
+impl ModuleRegistry {
+    /// Create a new empty registry.
+    pub fn new() -> ModuleRegistry {
+        ModuleRegistry {
+            modules: HashMap::new(),
+        }
+    }
+
+    /// Register a module.
+    pub fn register(&mut self, path: ModulePath, info: ModuleInfo) {
+        self.modules.insert(path.to_string(), info);
+    }
+
+    /// Look up a module.
+    pub fn get(&self, path: &ModulePath) -> Option<&ModuleInfo> {
+        self.modules.get(&path.to_string())
+    }
+}
+
+/// Information about a module's exports.
+pub struct ModuleInfo {
+    /// Exported types
+    pub types: HashMap<String, DefId>,
+    /// Exported functions
+    pub functions: HashMap<String, DefId>,
+    /// Exported effects
+    pub effects: HashMap<String, DefId>,
+    /// Exported traits
+    pub traits: HashMap<String, DefId>,
+}
+
+impl ModuleInfo {
+    /// Create empty module info.
+    pub fn new() -> ModuleInfo {
+        ModuleInfo {
+            types: HashMap::new(),
+            functions: HashMap::new(),
+            effects: HashMap::new(),
+            traits: HashMap::new(),
+        }
+    }
+}
+
+// ============================================================================
+// Module Path Extensions
+// ============================================================================
+
+impl ModulePath {
+    /// Create an empty module path.
+    pub fn empty() -> ModulePath {
+        ModulePath {
+            segments: vec![],
+            span: Span::dummy(),
+        }
+    }
+
+    /// Get the last segment of the path.
+    pub fn last_segment(&self) -> String {
+        if self.segments.len() > 0 {
+            self.segments[self.segments.len() - 1].value.clone()
+        } else {
+            "".to_string()
+        }
+    }
+
+    /// Create a new path with an additional segment.
+    pub fn with_segment(&self, segment: &str) -> ModulePath {
+        let mut new_segments = self.segments.clone();
+        new_segments.push(Spanned {
+            value: segment.to_string(),
+            span: Span::dummy(),
+        });
+        ModulePath {
+            segments: new_segments,
+            span: self.span.clone(),
+        }
+    }
+
+    /// Get the parent path.
+    pub fn parent(&self) -> ModulePath {
+        if self.segments.len() <= 1 {
+            ModulePath::empty()
+        } else {
+            let mut new_segments = self.segments.clone();
+            new_segments.pop();
+            ModulePath {
+                segments: new_segments,
+                span: self.span.clone(),
+            }
+        }
+    }
+
+    /// Convert to a string representation.
+    pub fn to_string(&self) -> String {
+        let mut result = "".to_string();
+        let mut i: usize = 0;
+        while i < self.segments.len() {
+            if i > 0 {
+                result = result + ".";
+            }
+            result = result + &self.segments[i].value;
+            i = i + 1;
+        }
+        result
+    }
+}
+
+// ============================================================================
+// Entry Point
+// ============================================================================
+
+/// Type check a program and return the result.
+///
+/// This is the main entry point for type checking.
+pub fn check_program(program: &Program) -> TypeCheckResult {
+    let mut ctx = ProgramContext::new();
+    ctx.check(program)
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[test]
+fn test_program_context_new() {
+    let ctx = ProgramContext::new();
+    assert!(!ctx.checker.has_errors());
+}
+
+#[test]
+fn test_module_path_empty() {
+    let path = ModulePath::empty();
+    assert!(path.segments.len() == 0);
+    assert!(path.last_segment() == "");
+}
+
+#[test]
+fn test_module_path_with_segment() {
+    let path = ModulePath::empty();
+    let path2 = path.with_segment("std");
+    assert!(path2.segments.len() == 1);
+    assert!(path2.last_segment() == "std");
+}
+
+#[test]
+fn test_module_registry_new() {
+    let registry = ModuleRegistry::new();
+    let path = ModulePath::empty().with_segment("test");
+    assert!(registry.get(&path).is_none());
+}
