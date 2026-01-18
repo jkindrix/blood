@@ -264,6 +264,9 @@ impl StdlibLoader {
         // Build module hierarchy (parent modules contain child modules)
         self.register_module_hierarchy(ctx)?;
 
+        // Process pub use re-exports (after all modules are registered)
+        self.process_reexports(ctx)?;
+
         if errors.is_empty() {
             Ok(())
         } else {
@@ -332,6 +335,277 @@ impl StdlibLoader {
         }
 
         Ok(())
+    }
+
+    /// Process pub use re-exports for all stdlib modules.
+    ///
+    /// This handles declarations like `pub use node::Span;` in mod.blood files,
+    /// allowing parent modules to re-export items from child modules.
+    fn process_reexports<'a>(&self, ctx: &mut TypeContext<'a>) -> Result<(), Vec<StdlibError>> {
+        for (module_path, module) in &self.modules {
+            let module_def_id = match module.def_id {
+                Some(id) => id,
+                None => continue,
+            };
+
+            for import in &module.ast.imports {
+                // Only process pub use (public re-exports)
+                let (visibility, path, items_opt, alias_opt) = match import {
+                    ast::Import::Simple { visibility, path, alias, .. } => {
+                        (*visibility, path, None, alias.as_ref())
+                    }
+                    ast::Import::Group { visibility, path, items, .. } => {
+                        (*visibility, path, Some(items.as_slice()), None)
+                    }
+                    ast::Import::Glob { visibility, path, .. } => {
+                        // Glob re-exports need special handling
+                        if *visibility == ast::Visibility::Public {
+                            self.process_glob_reexport(ctx, module_def_id, module_path, &module.interner, path);
+                        }
+                        continue;
+                    }
+                };
+
+                if visibility != ast::Visibility::Public {
+                    continue;
+                }
+
+                // Resolve the import path relative to this module
+                if let Some(items) = items_opt {
+                    // Group import: pub use path::{Item1, Item2};
+                    self.process_group_reexport(ctx, module_def_id, module_path, &module.interner, path, items);
+                } else {
+                    // Simple import: pub use path::Item;
+                    self.process_simple_reexport(ctx, module_def_id, module_path, &module.interner, path, alias_opt);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Process a simple pub use re-export.
+    fn process_simple_reexport<'a>(
+        &self,
+        ctx: &mut TypeContext<'a>,
+        module_def_id: DefId,
+        _module_path: &str,
+        interner: &DefaultStringInterner,
+        path: &ast::ModulePath,
+        alias: Option<&crate::span::Spanned<ast::Symbol>>,
+    ) {
+        let resolve_symbol = |sym: ast::Symbol| -> String {
+            interner.resolve(sym).map(|s| s.to_string()).unwrap_or_else(|| "unknown".to_string())
+        };
+
+        // Try to resolve the path to find the target item
+        if let Some(def_id) = self.resolve_import_path(ctx, interner, path) {
+            // Determine the local name
+            let local_name = if let Some(alias_spanned) = alias {
+                resolve_symbol(alias_spanned.node)
+            } else if let Some(last) = path.segments.last() {
+                resolve_symbol(last.node)
+            } else {
+                return;
+            };
+
+            // Add to the module's re-exports
+            if let Some(module_info) = ctx.module_defs.get_mut(&module_def_id) {
+                module_info.reexports.push((local_name, def_id));
+            }
+        }
+    }
+
+    /// Process a group pub use re-export.
+    fn process_group_reexport<'a>(
+        &self,
+        ctx: &mut TypeContext<'a>,
+        module_def_id: DefId,
+        _module_path: &str,
+        interner: &DefaultStringInterner,
+        base_path: &ast::ModulePath,
+        items: &[ast::ImportItem],
+    ) {
+        let resolve_symbol = |sym: ast::Symbol| -> String {
+            interner.resolve(sym).map(|s| s.to_string()).unwrap_or_else(|| "unknown".to_string())
+        };
+
+        // Resolve the base path to a module
+        let base_module_id = match self.resolve_module_path(ctx, interner, base_path) {
+            Some(id) => id,
+            None => return,
+        };
+
+        for item in items {
+            let item_name = resolve_symbol(item.name.node);
+            let local_name = item.alias
+                .as_ref()
+                .map(|a| resolve_symbol(a.node))
+                .unwrap_or_else(|| item_name.clone());
+
+            // Look up the item in the base module
+            if let Some(item_def_id) = self.lookup_in_module(ctx, base_module_id, &item_name) {
+                if let Some(module_info) = ctx.module_defs.get_mut(&module_def_id) {
+                    module_info.reexports.push((local_name, item_def_id));
+                }
+            }
+        }
+    }
+
+    /// Process a glob pub use re-export.
+    fn process_glob_reexport<'a>(
+        &self,
+        ctx: &mut TypeContext<'a>,
+        module_def_id: DefId,
+        _module_path: &str,
+        interner: &DefaultStringInterner,
+        path: &ast::ModulePath,
+    ) {
+        // Resolve the path to a module
+        let source_module_id = match self.resolve_module_path(ctx, interner, path) {
+            Some(id) => id,
+            None => return,
+        };
+
+        // Get all public items from the source module
+        let items = self.get_module_public_items(ctx, source_module_id);
+
+        for (name, def_id) in items {
+            if let Some(module_info) = ctx.module_defs.get_mut(&module_def_id) {
+                module_info.reexports.push((name, def_id));
+            }
+        }
+    }
+
+    /// Resolve an import path to find the target item.
+    fn resolve_import_path(
+        &self,
+        ctx: &TypeContext<'_>,
+        interner: &DefaultStringInterner,
+        path: &ast::ModulePath,
+    ) -> Option<DefId> {
+        let resolve_symbol = |sym: ast::Symbol| -> String {
+            interner.resolve(sym).map(|s| s.to_string()).unwrap_or_else(|| "unknown".to_string())
+        };
+
+        if path.segments.is_empty() {
+            return None;
+        }
+
+        // Walk path segments to find the final item
+        let first_segment = resolve_symbol(path.segments[0].node);
+
+        // Find the starting module
+        let mut current_id = match first_segment.as_str() {
+            // "std" -> look up the std module
+            "std" => {
+                self.modules.get("std").and_then(|m| m.def_id)?
+            }
+            // Other starting points could be added (crate, super, etc.)
+            _ => return None,
+        };
+
+        // Walk remaining segments
+        for (i, segment) in path.segments.iter().enumerate().skip(1) {
+            let segment_name = resolve_symbol(segment.node);
+
+            if i < path.segments.len() - 1 {
+                // Intermediate segment - should be a module
+                current_id = self.lookup_in_module(ctx, current_id, &segment_name)?;
+            } else {
+                // Last segment - should be an item
+                return self.lookup_in_module(ctx, current_id, &segment_name);
+            }
+        }
+
+        Some(current_id)
+    }
+
+    /// Resolve a module path to find the module DefId.
+    fn resolve_module_path(
+        &self,
+        ctx: &TypeContext<'_>,
+        interner: &DefaultStringInterner,
+        path: &ast::ModulePath,
+    ) -> Option<DefId> {
+        let resolve_symbol = |sym: ast::Symbol| -> String {
+            interner.resolve(sym).map(|s| s.to_string()).unwrap_or_else(|| "unknown".to_string())
+        };
+
+        if path.segments.is_empty() {
+            return None;
+        }
+
+        // Build full path string
+        let full_path: String = path.segments.iter()
+            .map(|s| resolve_symbol(s.node))
+            .collect::<Vec<_>>()
+            .join(".");
+
+        // Look up in our modules
+        self.modules.get(&full_path).and_then(|m| m.def_id)
+            .or_else(|| {
+                // Try to find by walking the path
+                let first_segment = resolve_symbol(path.segments[0].node);
+                let mut current_id = match first_segment.as_str() {
+                    "std" => self.modules.get("std").and_then(|m| m.def_id)?,
+                    _ => return None,
+                };
+
+                for segment in path.segments.iter().skip(1) {
+                    let segment_name = resolve_symbol(segment.node);
+                    current_id = self.lookup_in_module(ctx, current_id, &segment_name)?;
+                }
+
+                Some(current_id)
+            })
+    }
+
+    /// Look up an item in a module.
+    fn lookup_in_module(&self, ctx: &TypeContext<'_>, module_id: DefId, name: &str) -> Option<DefId> {
+        if let Some(module_def) = ctx.module_defs.get(&module_id) {
+            // Check items
+            for &item_id in &module_def.items {
+                if let Some(info) = ctx.resolver.def_info.get(&item_id) {
+                    if info.name == name {
+                        return Some(item_id);
+                    }
+                }
+            }
+
+            // Check re-exports
+            for (reexport_name, def_id) in &module_def.reexports {
+                if reexport_name == name {
+                    return Some(*def_id);
+                }
+            }
+        }
+        None
+    }
+
+    /// Get all public items from a module.
+    fn get_module_public_items(&self, ctx: &TypeContext<'_>, module_id: DefId) -> Vec<(String, DefId)> {
+        let mut items = Vec::new();
+
+        if let Some(module_def) = ctx.module_defs.get(&module_id) {
+            for &item_id in &module_def.items {
+                if let Some(info) = ctx.resolver.def_info.get(&item_id) {
+                    match info.visibility {
+                        ast::Visibility::Public | ast::Visibility::PublicCrate => {
+                            items.push((info.name.clone(), item_id));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            // Include existing re-exports
+            for (name, def_id) in &module_def.reexports {
+                items.push((name.clone(), *def_id));
+            }
+        }
+
+        items
     }
 
     /// Get a loaded module by path.
