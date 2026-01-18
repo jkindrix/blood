@@ -13,7 +13,7 @@ mod file_cache;
 mod compiler;
 
 pub use manifest::{Manifest, Package, BinTarget, LibTarget, Edition, ManifestError, Dependency, DetailedDependency};
-pub use resolve::{ModuleResolver, ModuleTree, ModuleId, Module};
+pub use resolve::{ModuleResolver, ModuleTree, ModuleId, Module, ModulePath, Visibility};
 pub use graph::{DependencyGraph, GraphError};
 pub use file_cache::{FileCache, FileCacheEntry, FileCacheStats, FileCacheError, FileStatus};
 pub use compiler::{ProjectCompiler, ProjectCompilerBuilder, IncrementalAnalysis, IncrementalStats};
