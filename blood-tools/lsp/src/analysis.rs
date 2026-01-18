@@ -792,6 +792,12 @@ impl SemanticAnalyzer {
                     ast::MacroCallKind::Custom { .. } => {
                         // Custom macros are opaque - no symbols to collect
                     }
+                    ast::MacroCallKind::Write { dest, args, .. } => {
+                        self.collect_expr_symbols(dest, source, interner, symbols, symbol_at_offset);
+                        for arg in args {
+                            self.collect_expr_symbols(arg, source, interner, symbols, symbol_at_offset);
+                        }
+                    }
                 }
             }
             // Terminal expressions with no nested symbols
