@@ -1445,9 +1445,30 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse an expression path.
+    /// Blood uses `.` for module paths and `::` for type/item access:
+    /// `crate.compiler.ast.expr.BinOp::Add`
+    ///
+    /// IMPORTANT: Only "path roots" can use `.` for module path continuation:
+    /// - `crate.xxx` - module path
+    /// - `super.xxx` - module path
+    /// - `Self.xxx` - type path (Self is a type)
+    /// - `TypeIdent.xxx` - type/module path (starts with uppercase)
+    ///
+    /// Lowercase identifiers (local variables, parameters) use `.` for field/method
+    /// access, which is handled by postfix parsing, NOT path parsing.
+    /// - `foo.bar()` - foo is a variable, .bar() is a method call
+    /// - `self.field` - self is the receiver, .field is field access
     fn parse_expr_path(&mut self) -> ExprPath {
         let start = self.current.span;
         let mut segments = Vec::new();
+
+        // Determine if the first token is a "path root" that can use `.` continuation.
+        // Path roots: crate, super, Self (uppercase), TypeIdent (uppercase identifiers)
+        // Non-path-roots: self (lowercase), Ident (lowercase variables/params)
+        let is_path_root = matches!(
+            self.current.kind,
+            TokenKind::Crate | TokenKind::Super | TokenKind::SelfUpper | TokenKind::TypeIdent
+        );
 
         loop {
             // Allow contextual keywords as path segments
@@ -1480,9 +1501,19 @@ impl<'src> Parser<'src> {
             }
 
             // Check for path continuation
-            if !self.try_consume(TokenKind::ColonColon) {
-                break;
+            // `::` is always valid for path continuation (e.g., Option::Some)
+            if self.try_consume(TokenKind::ColonColon) {
+                continue;
             }
+
+            // `.` is only valid for path roots (crate, super, Self, TypeIdent)
+            // For lowercase identifiers, `.` should be field/method access (postfix)
+            if is_path_root && self.try_consume(TokenKind::Dot) {
+                continue;
+            }
+
+            // No valid continuation - end of path
+            break;
         }
 
         ExprPath {
