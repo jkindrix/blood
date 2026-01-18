@@ -154,7 +154,18 @@ impl<'src> Parser<'src> {
             self.advance();
         }
         while self.check(TokenKind::Use) || (self.check(TokenKind::Pub) && self.check_next(TokenKind::Use)) {
+            // Track position to detect stuck parsing (error recovery)
+            let pos_before = self.current.span.start;
+
             imports.push(self.parse_import());
+
+            // If we haven't advanced (likely due to missing semicolon), skip to next line
+            // to prevent infinite loop. This handles cases like `pub use foo.Bar` without semicolon.
+            if self.current.span.start == pos_before && !self.is_at_end() {
+                // Advance past the problematic token to prevent infinite loop
+                self.advance();
+            }
+
             // Skip doc comments between use statements
             while self.check(TokenKind::DocComment) {
                 self.advance();
@@ -163,8 +174,13 @@ impl<'src> Parser<'src> {
 
         // Parse declarations
         while !self.is_at_end() {
+            let pos_before = self.current.span.start;
             if let Some(decl) = self.parse_declaration() {
                 declarations.push(decl);
+            }
+            // Detect stuck parsing - advance to prevent infinite loop
+            if self.current.span.start == pos_before && !self.is_at_end() {
+                self.advance();
             }
         }
 
@@ -216,6 +232,38 @@ impl<'src> Parser<'src> {
                 | TokenKind::Deep
                 | TokenKind::Shallow
         )
+    }
+
+    /// Check if a token kind is a keyword that can be used as a module path segment.
+    /// Keywords like `bridge`, `super`, `crate`, and `self` are valid in module paths.
+    fn is_path_keyword(kind: TokenKind) -> bool {
+        matches!(
+            kind,
+            // Path navigation keywords
+            TokenKind::Super
+                | TokenKind::Crate
+                | TokenKind::SelfLower
+                // Module name keywords (used as actual module names in stdlib)
+                | TokenKind::Bridge
+                | TokenKind::Effect
+                | TokenKind::Handler
+                | TokenKind::Op
+                | TokenKind::Default
+                | TokenKind::Handle
+                | TokenKind::Deep
+                | TokenKind::Shallow
+                | TokenKind::Type
+                | TokenKind::Mod
+                | TokenKind::Module
+        )
+    }
+
+    /// Check if the current token can be used as a module path segment.
+    /// This includes identifiers, type identifiers, and keywords that are valid module names.
+    fn check_path_segment(&self) -> bool {
+        self.current.kind == TokenKind::Ident
+            || self.current.kind == TokenKind::TypeIdent
+            || Self::is_path_keyword(self.current.kind)
     }
 
     /// Check if the current token is an identifier or a contextual keyword.
@@ -636,12 +684,12 @@ impl<'src> Parser<'src> {
         let start = self.current.span;
         let mut segments = Vec::new();
 
-        // First segment
-        if self.check(TokenKind::Ident) || self.check(TokenKind::TypeIdent) {
+        // First segment - accept identifiers, type identifiers, and path keywords (like `bridge`)
+        if self.check_path_segment() {
             self.advance();
             segments.push(self.spanned_symbol());
         } else {
-            self.error_expected("identifier");
+            self.error_expected("identifier or module name");
         }
 
         // Additional segments - accept both `.` and `::` as separators
@@ -649,11 +697,11 @@ impl<'src> Parser<'src> {
         loop {
             if self.try_consume(TokenKind::Dot) {
                 // `.` is always a path separator
-                if self.check(TokenKind::Ident) || self.check(TokenKind::TypeIdent) {
+                if self.check_path_segment() {
                     self.advance();
                     segments.push(self.spanned_symbol());
                 } else {
-                    self.error_expected("identifier");
+                    self.error_expected("identifier or module name");
                     break;
                 }
             } else if self.check(TokenKind::ColonColon) {
@@ -662,11 +710,11 @@ impl<'src> Parser<'src> {
                     break;
                 }
                 self.advance(); // consume `::`
-                if self.check(TokenKind::Ident) || self.check(TokenKind::TypeIdent) {
+                if self.check_path_segment() {
                     self.advance();
                     segments.push(self.spanned_symbol());
                 } else {
-                    self.error_expected("identifier");
+                    self.error_expected("identifier or module name");
                     break;
                 }
             } else {
