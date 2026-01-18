@@ -929,3 +929,35 @@ fn test_at_unsafe_block() {
     let source = "fn f() { let x = @unsafe { foo() }; }";
     insta::assert_snapshot!(parse_to_debug(source));
 }
+
+// ============================================================
+// HRTB and Associated Type Tests
+// ============================================================
+
+#[test]
+fn test_fn_trait_syntax() {
+    // FnMut(&T) -> bool style syntax
+    let source = "fn filter<F: FnMut(&T) -> bool>(f: F) {}";
+    insta::assert_snapshot!(parse_to_debug(source));
+}
+
+#[test]
+fn test_fn_trait_no_return() {
+    // FnMut() style without return type
+    let source = "fn resize_with<F: FnMut() -> T>(f: F) {}";
+    insta::assert_snapshot!(parse_to_debug(source));
+}
+
+#[test]
+fn test_fn_trait_multiple_params() {
+    // FnMut(&T, &T) -> Ordering style
+    let source = "fn sort_by<F: FnMut(&T, &T) -> Ordering>(compare: F) {}";
+    insta::assert_snapshot!(parse_to_debug(source));
+}
+
+#[test]
+fn test_associated_type_binding() {
+    // Iterator<Item = T> style associated type binding
+    let source = "fn collect<I: Iterator<Item = T>>(iter: I) {}";
+    insta::assert_snapshot!(parse_to_debug(source));
+}
