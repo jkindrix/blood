@@ -21,6 +21,10 @@ impl<'src> Parser<'src> {
                 }
             }
             TokenKind::Async => Some(Declaration::Function(self.parse_fn_decl(attrs, vis))),
+            TokenKind::Unsafe | TokenKind::AtUnsafe => {
+                // unsafe fn or @unsafe fn
+                Some(Declaration::Function(self.parse_fn_decl(attrs, vis)))
+            }
             TokenKind::Struct => Some(Declaration::Struct(self.parse_struct_decl(attrs, vis))),
             TokenKind::Enum => Some(Declaration::Enum(self.parse_enum_decl(attrs, vis))),
             TokenKind::Effect => Some(Declaration::Effect(self.parse_effect_decl(attrs))),
@@ -42,7 +46,7 @@ impl<'src> Parser<'src> {
                 self.error_expected_one_of(&[
                     "`fn`", "`struct`", "`enum`", "`trait`", "`impl`",
                     "`effect`", "`handler`", "`type`", "`const`", "`static`",
-                    "`bridge`", "`extern`", "`mod`", "`macro`",
+                    "`bridge`", "`extern`", "`mod`", "`macro`", "`unsafe`",
                 ]);
                 // Skip past the use statement to avoid infinite loop
                 while !self.is_at_end()
@@ -62,6 +66,8 @@ impl<'src> Parser<'src> {
                             | TokenKind::Module
                             | TokenKind::Extern
                             | TokenKind::Macro
+                            | TokenKind::Unsafe
+                            | TokenKind::AtUnsafe
                     )
                 {
                     self.advance();
@@ -72,7 +78,7 @@ impl<'src> Parser<'src> {
                 self.error_expected_one_of(&[
                     "`fn`", "`struct`", "`enum`", "`trait`", "`impl`",
                     "`effect`", "`handler`", "`type`", "`const`", "`static`",
-                    "`bridge`", "`extern`", "`mod`", "`macro`",
+                    "`bridge`", "`extern`", "`mod`", "`macro`", "`unsafe`",
                 ]);
                 self.synchronize();
                 None
@@ -96,11 +102,12 @@ impl<'src> Parser<'src> {
         let start = self.current.span;
 
         // Parse qualifiers
+        // Note: Both `unsafe fn` and `@unsafe fn` are accepted for Rust compatibility
         let mut qualifiers = FnQualifiers::default();
 
         while matches!(
             self.current.kind,
-            TokenKind::Const | TokenKind::Async | TokenKind::AtUnsafe
+            TokenKind::Const | TokenKind::Async | TokenKind::AtUnsafe | TokenKind::Unsafe
         ) {
             match self.current.kind {
                 TokenKind::Const => {
@@ -111,7 +118,7 @@ impl<'src> Parser<'src> {
                     qualifiers.is_async = true;
                     self.advance();
                 }
-                TokenKind::AtUnsafe => {
+                TokenKind::AtUnsafe | TokenKind::Unsafe => {
                     qualifiers.is_unsafe = true;
                     self.advance();
                 }

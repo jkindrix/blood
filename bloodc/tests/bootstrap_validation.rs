@@ -312,6 +312,74 @@ fn main() {
     eprintln!("Bootstrap stdlib types test complete");
 }
 
+/// Test that all Blood compiler stdlib modules parse correctly.
+/// This is a comprehensive parse check for the entire stdlib compiler.
+#[test]
+#[ignore = "Blood stdlib has syntax differences that need to be fixed"]
+fn test_all_compiler_modules_parse() {
+    use std::collections::VecDeque;
+
+    let stdlib_compiler_path = Path::new("../blood-std/std/compiler");
+    let mut parsed_count = 0;
+    let mut error_count = 0;
+    let mut errors: Vec<(String, String)> = Vec::new();
+
+    // Use iterative approach instead of recursive to avoid stack overflow
+    let mut dirs_to_visit: VecDeque<std::path::PathBuf> = VecDeque::new();
+    dirs_to_visit.push_back(stdlib_compiler_path.to_path_buf());
+
+    while let Some(dir) = dirs_to_visit.pop_front() {
+        if let Ok(entries) = fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    dirs_to_visit.push_back(path);
+                } else if path.extension().map_or(false, |ext| ext == "blood") {
+                    if let Ok(content) = fs::read_to_string(&path) {
+                        let mut parser = Parser::new(&content);
+                        match parser.parse_program() {
+                            Ok(_) => parsed_count += 1,
+                            Err(parse_errors) => {
+                                error_count += 1;
+                                let path_str = path.display().to_string();
+                                let error_msg = parse_errors
+                                    .iter()
+                                    .take(3)  // Limit errors per file
+                                    .map(|e| format!("  L{}:{}: {}", e.span.start_line, e.span.start_col, e.message))
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+                                errors.push((path_str, error_msg));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    println!("=== Blood Compiler Parse Results ===");
+    println!("Successfully parsed: {}", parsed_count);
+    println!("Failed to parse: {}", error_count);
+
+    if !errors.is_empty() {
+        println!("\n=== Parse Errors ===");
+        for (path, err) in errors.iter().take(10) {  // Limit output
+            println!("\n{}:\n{}", path, err);
+        }
+        if errors.len() > 10 {
+            println!("\n... and {} more files with errors", errors.len() - 10);
+        }
+        println!("======================================");
+    }
+
+    // All modules should parse - no tolerance for parse errors
+    assert!(
+        error_count == 0,
+        "All Blood compiler modules should parse. {} modules failed.",
+        error_count
+    );
+}
+
 /// Future test: Stage 1 - Blood compiler compiles itself
 /// This will be enabled once Phase 3 (type system) is complete.
 #[test]

@@ -586,7 +586,9 @@ impl<'src> Parser<'src> {
                 | TokenKind::Static
                 | TokenKind::Pub
                 | TokenKind::Use
-                | TokenKind::Module => return,
+                | TokenKind::Module
+                | TokenKind::Unsafe
+                | TokenKind::AtUnsafe => return,
                 // When we encounter an opening brace, skip the entire block
                 // This prevents getting stuck inside function bodies during error recovery
                 TokenKind::LBrace => {
@@ -693,10 +695,14 @@ impl<'src> Parser<'src> {
         }
 
         // Additional segments - accept both `.` and `::` as separators
-        // For `::`, don't consume if followed by `{` or `*` (import target markers)
+        // Don't consume separator if followed by `{` or `*` (import target markers)
         loop {
-            if self.try_consume(TokenKind::Dot) {
-                // `.` is always a path separator
+            if self.check(TokenKind::Dot) {
+                // Don't consume `.` if it's followed by `{` or `*` (import syntax)
+                if self.check_next(TokenKind::LBrace) || self.check_next(TokenKind::Star) {
+                    break;
+                }
+                self.advance(); // consume `.`
                 if self.check_path_segment() {
                     self.advance();
                     segments.push(self.spanned_symbol());
@@ -742,8 +748,9 @@ impl<'src> Parser<'src> {
 
         let path = self.parse_module_path();
 
-        // Check for `::` for grouped imports or single item imports
-        if self.try_consume(TokenKind::ColonColon) {
+        // Check for `::` or `.` for grouped imports or single item imports
+        // Blood supports both `use path.{a, b}` and `use path::{a, b}` syntax
+        if self.try_consume(TokenKind::ColonColon) || self.try_consume(TokenKind::Dot) {
             if self.try_consume(TokenKind::Star) {
                 // Glob import
                 self.expect(TokenKind::Semi);
@@ -765,8 +772,14 @@ impl<'src> Parser<'src> {
                         self.advance();
                         let name = self.spanned_symbol();
                         let alias = if self.try_consume(TokenKind::As) {
-                            self.expect(TokenKind::Ident);
-                            Some(self.spanned_symbol())
+                            // Accept both Ident and TypeIdent for aliases
+                            if self.check(TokenKind::Ident) || self.check(TokenKind::TypeIdent) {
+                                self.advance();
+                                Some(self.spanned_symbol())
+                            } else {
+                                self.error_expected("identifier");
+                                None
+                            }
                         } else {
                             None
                         };
@@ -791,12 +804,18 @@ impl<'src> Parser<'src> {
                     span: start.merge(self.previous.span),
                 }
             } else if self.check(TokenKind::Ident) || self.check(TokenKind::TypeIdent) {
-                // Single item import: use path::item;
+                // Single item import: use path::item or use path.item
                 self.advance();
                 let name = self.spanned_symbol();
                 let alias = if self.try_consume(TokenKind::As) {
-                    self.expect(TokenKind::Ident);
-                    Some(self.spanned_symbol())
+                    // Accept both Ident and TypeIdent for aliases
+                    if self.check(TokenKind::Ident) || self.check(TokenKind::TypeIdent) {
+                        self.advance();
+                        Some(self.spanned_symbol())
+                    } else {
+                        self.error_expected("identifier");
+                        None
+                    }
                 } else {
                     None
                 };
@@ -821,8 +840,14 @@ impl<'src> Parser<'src> {
         } else {
             // Simple import with optional alias
             let alias = if self.try_consume(TokenKind::As) {
-                self.expect(TokenKind::Ident);
-                Some(self.spanned_symbol())
+                // Accept both Ident and TypeIdent for aliases
+                if self.check(TokenKind::Ident) || self.check(TokenKind::TypeIdent) {
+                    self.advance();
+                    Some(self.spanned_symbol())
+                } else {
+                    self.error_expected("identifier");
+                    None
+                }
             } else {
                 None
             };
