@@ -53,6 +53,8 @@ pub enum TokenKind {
     Crate,
     #[token("deep")]
     Deep,
+    #[token("defer")]
+    Defer,
     #[token("dyn")]
     Dyn,
     #[token("effect")]
@@ -225,8 +227,8 @@ pub enum TokenKind {
     #[regex(r###"r##"([^"]|"[^#]|"#[^#])*"##"###)]
     RawStringLitHash2,
 
-    /// Character literal
-    #[regex(r"'([^'\\]|\\.)'")]
+    /// Character literal (supports \xNN hex and \u{XXXX} Unicode escapes)
+    #[regex(r"'([^'\\]|\\u\{[0-9a-fA-F]+\}|\\x[0-9a-fA-F]{2}|\\.)'")]
     CharLit,
 
     /// Byte character literal (b'a')
@@ -486,6 +488,7 @@ impl TokenKind {
             TokenKind::Continue => Some("continue"),
             TokenKind::Crate => Some("crate"),
             TokenKind::Deep => Some("deep"),
+            TokenKind::Defer => Some("defer"),
             TokenKind::Dyn => Some("dyn"),
             TokenKind::Effect => Some("effect"),
             TokenKind::Else => Some("else"),
@@ -546,6 +549,7 @@ impl TokenKind {
             TokenKind::Continue => "keyword `continue`",
             TokenKind::Crate => "keyword `crate`",
             TokenKind::Deep => "keyword `deep`",
+            TokenKind::Defer => "keyword `defer`",
             TokenKind::Dyn => "keyword `dyn`",
             TokenKind::Effect => "keyword `effect`",
             TokenKind::Else => "keyword `else`",
@@ -729,6 +733,14 @@ impl TokenKind {
                 | TokenKind::Region
                 | TokenKind::Perform
                 | TokenKind::With
+                | TokenKind::Resume  // Contextual keyword usable as identifier/function name
+                | TokenKind::Catch   // Contextual keyword usable as identifier/function name
+                | TokenKind::Try     // Contextual keyword usable as identifier/function name
+                | TokenKind::Finally // Contextual keyword usable as identifier/function name
+                | TokenKind::Throw   // Contextual keyword usable as identifier/function name
+                | TokenKind::Yield   // Contextual keyword usable as identifier/function name
+                | TokenKind::Crate   // Path root
+                | TokenKind::Super   // Path root
         )
     }
 }
