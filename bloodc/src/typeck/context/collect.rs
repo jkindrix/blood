@@ -2278,6 +2278,14 @@ impl<'a> TypeContext<'a> {
                 self.current_module = saved_module;
                 self.resolver.pop_scope();
 
+                // Build index for O(1) lookup by name
+                let mut items_by_name = std::collections::HashMap::new();
+                for &item_id in &item_def_ids {
+                    if let Some(info) = self.resolver.def_info.get(&item_id) {
+                        items_by_name.insert(info.name.clone(), item_id);
+                    }
+                }
+
                 // Store module info
                 self.module_defs.insert(def_id, super::ModuleInfo {
                     name,
@@ -2285,6 +2293,7 @@ impl<'a> TypeContext<'a> {
                     reexports: Vec::new(),
                     is_external: false,
                     span: module.span,
+                    items_by_name,
                 });
             }
             None => {
@@ -2389,6 +2398,14 @@ impl<'a> TypeContext<'a> {
                 self.current_module = saved_module;
                 self.resolver.pop_scope();
 
+                // Build index for O(1) lookup by name
+                let mut items_by_name = std::collections::HashMap::new();
+                for &item_id in &item_def_ids {
+                    if let Some(info) = self.resolver.def_info.get(&item_id) {
+                        items_by_name.insert(info.name.clone(), item_id);
+                    }
+                }
+
                 // Store module info
                 self.module_defs.insert(def_id, super::ModuleInfo {
                     name,
@@ -2396,6 +2413,7 @@ impl<'a> TypeContext<'a> {
                     reexports: Vec::new(),
                     is_external: true,
                     span: module.span,
+                    items_by_name,
                 });
             }
         }

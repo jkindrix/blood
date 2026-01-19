@@ -622,6 +622,9 @@ pub struct ModuleInfo {
     pub is_external: bool,
     /// Source span.
     pub span: Span,
+    /// Index for O(1) lookup of items by name.
+    /// Populated lazily or during module registration.
+    pub items_by_name: HashMap<String, DefId>,
 }
 
 impl<'a> TypeContext<'a> {
@@ -813,12 +816,21 @@ impl<'a> TypeContext<'a> {
         items: Vec<DefId>,
         span: Span,
     ) {
+        // Build index for O(1) lookup by name
+        let mut items_by_name = HashMap::new();
+        for &item_id in &items {
+            if let Some(info) = self.resolver.def_info.get(&item_id) {
+                items_by_name.insert(info.name.clone(), item_id);
+            }
+        }
+
         self.module_defs.insert(def_id, ModuleInfo {
             name: module_name,
             items,
             reexports: Vec::new(),
             is_external: true,
             span,
+            items_by_name,
         });
     }
 

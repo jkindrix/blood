@@ -15,7 +15,10 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::Instant;
 
+use rayon::prelude::*;
 use string_interner::DefaultStringInterner;
 
 use crate::ast;
@@ -180,35 +183,68 @@ impl StdlibLoader {
     }
 
     /// Parse all discovered modules.
+    ///
+    /// Uses batched parallel parsing to balance speed and memory usage.
+    /// Parsing 188 modules in parallel would consume excessive memory,
+    /// so we process in batches of ~20 modules at a time.
     pub fn parse_all(&mut self) -> Result<(), Vec<StdlibError>> {
-        let mut errors = Vec::new();
+        let start = Instant::now();
 
-        // Get list of module paths to parse
-        let paths: Vec<String> = self.modules.keys().cloned().collect();
+        // Take all modules out of the HashMap for processing
+        let mut modules: Vec<(String, LoadedModule)> = self.modules.drain().collect();
+        let module_count = modules.len();
 
-        for module_path in paths {
-            // Need to temporarily take the module out to parse it
-            if let Some(mut module) = self.modules.remove(&module_path) {
+        // Thread-safe error collection
+        let errors: Mutex<Vec<StdlibError>> = Mutex::new(Vec::new());
+
+        // Process in batches to limit memory usage
+        // Each batch is parsed in parallel, but batches are sequential
+        // Small batch size to avoid OOM on large codebases
+        const BATCH_SIZE: usize = 10;
+
+        for chunk in modules.chunks_mut(BATCH_SIZE) {
+            // Parse this batch in parallel
+            chunk.par_iter_mut().for_each(|(_module_path, module)| {
+                // Skip empty source (virtual modules for directories)
+                if module.source.is_empty() {
+                    return;
+                }
+
                 let mut parser = Parser::new(&module.source);
                 match parser.parse_program() {
                     Ok(ast) => {
                         module.ast = ast;
                         module.interner = parser.take_interner();
-                        self.modules.insert(module_path, module);
                     }
                     Err(parse_errors) => {
-                        for err in parse_errors {
-                            errors.push(StdlibError::ParseError {
-                                file: module.file_path.clone(),
-                                message: err.message,
-                            });
+                        // Collect errors thread-safely
+                        if let Ok(mut errs) = errors.lock() {
+                            for err in parse_errors {
+                                errs.push(StdlibError::ParseError {
+                                    file: module.file_path.clone(),
+                                    message: err.message,
+                                });
+                            }
                         }
-                        // Still insert the module (with empty AST) so we don't lose track
+                        // Still keep the module (with empty AST) so we don't lose track
                         module.interner = parser.take_interner();
-                        self.modules.insert(module_path, module);
                     }
                 }
-            }
+            });
+        }
+
+        // Put all modules back
+        for (path, module) in modules {
+            self.modules.insert(path, module);
+        }
+
+        // Extract errors
+        let errors = errors.into_inner().unwrap_or_else(|e| e.into_inner());
+
+        let verbose = std::env::var("BLOOD_STDLIB_VERBOSE").is_ok();
+        if verbose {
+            eprintln!("  Parsed {} modules in {:.2}s (batched parallel, batch_size={})",
+                      module_count, start.elapsed().as_secs_f64(), BATCH_SIZE);
         }
 
         if errors.is_empty() {
@@ -223,33 +259,63 @@ impl StdlibLoader {
     /// This creates DefIds for each module and collects their declarations,
     /// allowing imports like `use std.compiler.lexer::Token` to resolve.
     pub fn register_in_context<'a>(&mut self, ctx: &mut TypeContext<'a>) -> Result<(), Vec<StdlibError>> {
+        let start = Instant::now();
         let errors: Vec<StdlibError> = Vec::new();
+        let verbose = std::env::var("BLOOD_STDLIB_VERBOSE").is_ok();
 
         // First, create DefIds for all modules
+        if verbose {
+            eprintln!("  Creating module DefIds...");
+        }
         self.create_module_def_ids(ctx)?;
+        if verbose {
+            eprintln!("    DefIds created in {:.2}s", start.elapsed().as_secs_f64());
+        }
 
         // Then, collect declarations for each module
+        let decl_start = Instant::now();
+        let mut decl_count = 0;
+        let mut skipped_no_decls = 0;
+        let mut skipped_no_defid = 0;
         for (module_path, module) in &mut self.modules {
             // Skip modules that failed to parse
             if module.ast.declarations.is_empty() && !module.source.is_empty() {
+                if verbose {
+                    eprintln!("    Skipping '{}': no declarations but has source", module_path);
+                }
+                skipped_no_decls += 1;
                 continue;
             }
 
             let def_id = match module.def_id {
                 Some(id) => id,
-                None => continue,
+                None => {
+                    if verbose {
+                        eprintln!("    Skipping '{}': no DefId assigned", module_path);
+                    }
+                    skipped_no_defid += 1;
+                    continue;
+                }
             };
 
             // Collect declarations from this module's AST
             // We need to run the collection phase for each module
             // For now, we'll extract just the top-level item names
 
+            let ast_decl_count = module.ast.declarations.len();
+            let mut module_decl_count = 0;
             for decl in &module.ast.declarations {
-                if let Some(item_def_id) = create_item_def_id(ctx, &module.interner, decl) {
+                if let Some(item_def_id) = create_item_def_id(ctx, &module.interner, decl, verbose) {
                     module.items.push(item_def_id);
                     // Register struct/enum type info for type system integration
                     register_type_info(ctx, &module.interner, item_def_id, decl);
+                    decl_count += 1;
+                    module_decl_count += 1;
                 }
+            }
+            if verbose {
+                eprintln!("    Module '{}': {} AST decls, {} items created",
+                          module_path, ast_decl_count, module_decl_count);
             }
 
             // Register the module with its items
@@ -260,12 +326,31 @@ impl StdlibLoader {
                 Span::dummy(),
             );
         }
+        if verbose {
+            eprintln!("    Collected {} declarations in {:.2}s", decl_count, decl_start.elapsed().as_secs_f64());
+            eprintln!("    Skipped: {} (no decls), {} (no DefId)", skipped_no_decls, skipped_no_defid);
+        }
 
         // Build module hierarchy (parent modules contain child modules)
+        if verbose {
+            eprintln!("  Building module hierarchy...");
+        }
+        let hierarchy_start = Instant::now();
         self.register_module_hierarchy(ctx)?;
+        if verbose {
+            eprintln!("    Hierarchy built in {:.2}s", hierarchy_start.elapsed().as_secs_f64());
+        }
 
         // Process pub use re-exports (after all modules are registered)
+        if verbose {
+            eprintln!("  Processing re-exports...");
+        }
+        let reexport_start = Instant::now();
         self.process_reexports(ctx)?;
+        if verbose {
+            eprintln!("    Re-exports processed in {:.2}s", reexport_start.elapsed().as_secs_f64());
+            eprintln!("  Total registration time: {:.2}s", start.elapsed().as_secs_f64());
+        }
 
         if errors.is_empty() {
             Ok(())
@@ -280,6 +365,11 @@ impl StdlibLoader {
         let mut paths: Vec<String> = self.modules.keys().cloned().collect();
         paths.sort_by_key(|p| p.matches('.').count());
 
+        let verbose = std::env::var("BLOOD_STDLIB_VERBOSE").is_ok();
+        if verbose {
+            eprintln!("    Processing {} modules for DefId creation", paths.len());
+        }
+
         for module_path in paths {
             if let Some(module) = self.modules.get_mut(&module_path) {
                 // Extract just the last segment of the path for the item name
@@ -292,12 +382,22 @@ impl StdlibLoader {
 
                 // Create a DefId for this module
                 let def_id = match ctx.resolver.define_item(
-                    simple_name,
+                    simple_name.clone(),
                     DefKind::Mod,
                     Span::dummy(),
                 ) {
-                    Ok(id) => id,
-                    Err(_) => {
+                    Ok(id) => {
+                        if verbose {
+                            eprintln!("      ✓ Created DefId({}) for module '{}' (name: '{}')",
+                                      id.index(), module_path, simple_name);
+                        }
+                        id
+                    }
+                    Err(e) => {
+                        if verbose {
+                            eprintln!("      ✗ Failed to create DefId for module '{}' (name: '{}'): {:?}",
+                                      module_path, simple_name, e);
+                        }
                         // Module might already be defined, try to look it up
                         continue;
                     }
@@ -735,18 +835,17 @@ impl StdlibLoader {
     }
 
     /// Look up an item in a module.
+    ///
+    /// Uses O(1) HashMap lookup when the items_by_name index is populated,
+    /// falling back to linear search for re-exports.
     fn lookup_in_module(&self, ctx: &TypeContext<'_>, module_id: DefId, name: &str) -> Option<DefId> {
         if let Some(module_def) = ctx.module_defs.get(&module_id) {
-            // Check items
-            for &item_id in &module_def.items {
-                if let Some(info) = ctx.resolver.def_info.get(&item_id) {
-                    if info.name == name {
-                        return Some(item_id);
-                    }
-                }
+            // O(1) lookup in items index
+            if let Some(&def_id) = module_def.items_by_name.get(name) {
+                return Some(def_id);
             }
 
-            // Check re-exports
+            // Check re-exports (still linear, but typically much smaller)
             for (reexport_name, def_id) in &module_def.reexports {
                 if reexport_name == name {
                     return Some(*def_id);
@@ -831,48 +930,52 @@ impl std::error::Error for StdlibError {}
 
 /// Create a DefId for a declaration.
 /// This is a free function to avoid borrow checker issues when iterating over modules.
+///
+/// If the item already exists as a builtin, returns the existing DefId.
+/// This allows stdlib modules to extend or shadow builtins.
 fn create_item_def_id<'a>(
     ctx: &mut TypeContext<'a>,
     interner: &DefaultStringInterner,
     decl: &ast::Declaration,
+    verbose: bool,
 ) -> Option<DefId> {
     // Helper to resolve a symbol using the module's interner
     let resolve_symbol = |sym: crate::ast::Symbol| -> String {
         interner.resolve(sym).map(|s| s.to_string()).unwrap_or_else(|| "unknown".to_string())
     };
 
-    let (name, kind) = match decl {
+    let (name, kind, kind_str) = match decl {
         ast::Declaration::Function(f) => {
             let name = resolve_symbol(f.name.node);
-            (name, DefKind::Fn)
+            (name, DefKind::Fn, "fn")
         }
         ast::Declaration::Struct(s) => {
             let name = resolve_symbol(s.name.node);
-            (name, DefKind::Struct)
+            (name, DefKind::Struct, "struct")
         }
         ast::Declaration::Enum(e) => {
             let name = resolve_symbol(e.name.node);
-            (name, DefKind::Enum)
+            (name, DefKind::Enum, "enum")
         }
         ast::Declaration::Trait(t) => {
             let name = resolve_symbol(t.name.node);
-            (name, DefKind::Trait)
+            (name, DefKind::Trait, "trait")
         }
         ast::Declaration::Type(t) => {
             let name = resolve_symbol(t.name.node);
-            (name, DefKind::TypeAlias)
+            (name, DefKind::TypeAlias, "type")
         }
         ast::Declaration::Effect(e) => {
             let name = resolve_symbol(e.name.node);
-            (name, DefKind::Effect)
+            (name, DefKind::Effect, "effect")
         }
         ast::Declaration::Const(c) => {
             let name = resolve_symbol(c.name.node);
-            (name, DefKind::Const)
+            (name, DefKind::Const, "const")
         }
         ast::Declaration::Static(s) => {
             let name = resolve_symbol(s.name.node);
-            (name, DefKind::Static)
+            (name, DefKind::Static, "static")
         }
         // These don't create named items at the module level
         ast::Declaration::Handler(_) => return None,
@@ -882,7 +985,29 @@ fn create_item_def_id<'a>(
         ast::Declaration::Macro(_) => return None,
     };
 
-    ctx.resolver.define_item(name, kind, Span::dummy()).ok()
+    match ctx.resolver.define_item(name.clone(), kind, Span::dummy()) {
+        Ok(def_id) => {
+            if verbose {
+                eprintln!("        ✓ {} {} -> DefId({})", kind_str, name, def_id.index());
+            }
+            Some(def_id)
+        }
+        Err(_) => {
+            // Item already exists - this is expected for builtins like Option, Result, etc.
+            // Try to look up the existing DefId and use it.
+            if let Some(crate::typeck::resolve::Binding::Def(def_id)) = ctx.resolver.lookup(&name) {
+                if verbose {
+                    eprintln!("        ~ {} {} -> existing DefId({}) (builtin)", kind_str, name, def_id.index());
+                }
+                Some(def_id)
+            } else {
+                if verbose {
+                    eprintln!("        ✗ {} {} failed: duplicate but not found in scope", kind_str, name);
+                }
+                None
+            }
+        }
+    }
 }
 
 /// Register type information for a declaration.
