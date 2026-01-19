@@ -186,11 +186,16 @@ impl<'src> Parser<'src> {
         }
 
         // Parse optional qualifier
-        let qualifier = if self.try_consume(TokenKind::Linear) {
+        // Only consume qualifier keyword if it's NOT followed by `:` (which would make it a parameter name)
+        // e.g., `linear x: T` has qualifier `linear` and name `x`, but `linear: bool` has no qualifier and name `linear`
+        let qualifier = if self.check(TokenKind::Linear) && !self.check_next(TokenKind::Colon) {
+            self.advance();
             Some(ParamQualifier::Linear)
-        } else if self.try_consume(TokenKind::Affine) {
+        } else if self.check(TokenKind::Affine) && !self.check_next(TokenKind::Colon) {
+            self.advance();
             Some(ParamQualifier::Affine)
-        } else if self.try_consume(TokenKind::Mut) {
+        } else if self.check(TokenKind::Mut) && !self.check_next(TokenKind::Colon) {
+            self.advance();
             Some(ParamQualifier::Mut)
         } else {
             None
@@ -1914,7 +1919,12 @@ impl<'src> Parser<'src> {
         let start = self.current.span;
         self.advance(); // consume 'mod'
 
-        let name = if self.check(TokenKind::Ident) || self.check(TokenKind::TypeIdent) {
+        // Module names can be regular identifiers, type identifiers, or keywords used as module names
+        // (e.g., `handler`, `effect`, etc. in the stdlib)
+        let name = if self.check(TokenKind::Ident)
+            || self.check(TokenKind::TypeIdent)
+            || Self::is_path_keyword(self.current.kind)
+        {
             self.advance();
             self.spanned_symbol()
         } else {

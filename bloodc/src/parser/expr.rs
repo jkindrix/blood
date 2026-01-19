@@ -441,6 +441,33 @@ impl<'src> Parser<'src> {
         )
     }
 
+    /// Try to convert an expression that looks like a field access chain into path segments.
+    /// Returns None if the expression is not a valid path (e.g., contains method calls, indexing).
+    /// This is used to handle `.TypeIdent::` patterns where field access was incorrectly parsed.
+    fn expr_to_path_segments(expr: &Expr) -> Option<Vec<ExprPathSegment>> {
+        match &expr.kind {
+            ExprKind::Path(path) => {
+                // Already a path - clone its segments
+                Some(path.segments.clone())
+            }
+            ExprKind::Field { base, field } => {
+                // Recursively convert base, then append this field name
+                let mut segments = Self::expr_to_path_segments(base)?;
+                if let FieldAccess::Named(name) = field {
+                    segments.push(ExprPathSegment {
+                        name: name.clone(),
+                        args: None,
+                    });
+                    Some(segments)
+                } else {
+                    // Tuple index - not convertible to path
+                    None
+                }
+            }
+            _ => None, // Other expression kinds can't be converted to paths
+        }
+    }
+
     /// Continue parsing postfix operators on an already-parsed expression.
     fn parse_postfix_continuation(&mut self, mut expr: Expr) -> Expr {
         loop {
@@ -534,6 +561,63 @@ impl<'src> Parser<'src> {
                                 },
                                 span,
                             };
+                        }
+                    } else if self.check(TokenKind::TypeIdent) {
+                        // TypeIdent after dot indicates a path continuation, not field access.
+                        // Field names are always lowercase, so `.TypeIdent` must be a path.
+                        // Convert the expression-so-far to path segments and continue as path.
+                        if let Some(mut segments) = Self::expr_to_path_segments(&expr) {
+                            let start = expr.span;
+                            // Parse the remaining path segments starting with this TypeIdent
+                            loop {
+                                // Parse the segment name (TypeIdent or ident after ::)
+                                if self.check(TokenKind::TypeIdent)
+                                    || self.check_ident()
+                                    || self.check(TokenKind::SelfUpper)
+                                {
+                                    self.advance();
+                                    let name = self.spanned_symbol();
+
+                                    // Parse optional turbofish
+                                    let has_turbofish =
+                                        self.check(TokenKind::ColonColon) && self.check_next(TokenKind::Lt);
+                                    let args = if has_turbofish {
+                                        self.advance(); // consume ::
+                                        Some(self.parse_type_args())
+                                    } else {
+                                        None
+                                    };
+
+                                    segments.push(ExprPathSegment { name, args });
+
+                                    if has_turbofish {
+                                        break;
+                                    }
+
+                                    // Continue on `::` or `.TypeIdent`
+                                    if self.try_consume(TokenKind::ColonColon) {
+                                        continue;
+                                    }
+                                    if self.check(TokenKind::Dot)
+                                        && self.next.kind == TokenKind::TypeIdent
+                                    {
+                                        self.advance(); // consume `.`
+                                        continue;
+                                    }
+                                    break;
+                                } else {
+                                    break;
+                                }
+                            }
+
+                            let span = start.merge(self.previous.span);
+                            expr = Expr {
+                                kind: ExprKind::Path(ExprPath { segments, span }),
+                                span,
+                            };
+                        } else {
+                            // Can't convert to path, give error
+                            self.error_expected("field name or index");
                         }
                     } else {
                         self.error_expected("field name or index");
@@ -1626,15 +1710,18 @@ impl<'src> Parser<'src> {
                 continue;
             }
 
-            // Special case for non-path-roots: allow `.` continuation if we see
-            // `.ident::` which unambiguously indicates a module path (e.g., std.cmp::min)
-            // This distinguishes module paths from field access - field access never has `::`.
+            // Special case for non-path-roots: allow `.` continuation if we see:
+            // 1. `.ident::` which unambiguously indicates a module path (e.g., std.cmp::min)
+            // 2. `.TypeIdent` since TypeIdents (uppercase) are never field names (e.g., std.option.Option)
+            // This distinguishes module paths from field access - field names are always lowercase.
             if !is_path_root && self.check(TokenKind::Dot) {
+                let next_is_type_ident = self.next.kind == TokenKind::TypeIdent;
                 let next_is_ident = matches!(
                     self.next.kind,
                     TokenKind::Ident | TokenKind::TypeIdent
                 );
-                if next_is_ident && self.check_after_next(TokenKind::ColonColon) {
+                // Continue if TypeIdent (never a field) or if followed by ::
+                if next_is_type_ident || (next_is_ident && self.check_after_next(TokenKind::ColonColon)) {
                     self.advance(); // consume the `.`
                     continue;
                 }
