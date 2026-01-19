@@ -1,0 +1,54 @@
+//! Result type for the bootstrap stdlib.
+
+module std.result;
+
+/// Result type for error handling.
+pub enum Result<T, E> {
+    /// Success value.
+    Ok(T),
+    /// Error value.
+    Err(E),
+}
+
+impl<T, E> Result<T, E> {
+    /// Returns true if the result is Ok.
+    pub fn is_ok(&self) -> bool {
+        match self {
+            Result::Ok(_) => true,
+            Result::Err(_) => false,
+        }
+    }
+
+    /// Returns true if the result is Err.
+    pub fn is_err(&self) -> bool {
+        match self {
+            Result::Ok(_) => false,
+            Result::Err(_) => true,
+        }
+    }
+
+    /// Maps a Result<T, E> to Result<U, E>.
+    pub fn map<U, F: Fn(T) -> U>(self, f: F) -> Result<U, E> {
+        match self {
+            Result::Ok(v) => Result::Ok(f(v)),
+            Result::Err(e) => Result::Err(e),
+        }
+    }
+
+    /// Maps a Result<T, E> to Result<T, F>.
+    pub fn map_err<F, O: Fn(E) -> F>(self, operation: O) -> Result<T, F> {
+        match self {
+            Result::Ok(v) => Result::Ok(v),
+            Result::Err(e) => Result::Err(operation(e)),
+        }
+    }
+}
+
+impl<T: Clone, E: Clone> Clone for Result<T, E> {
+    fn clone(&self) -> Result<T, E> {
+        match self {
+            Result::Ok(v) => Result::Ok(v.clone()),
+            Result::Err(e) => Result::Err(e.clone()),
+        }
+    }
+}

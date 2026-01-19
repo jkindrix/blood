@@ -1,0 +1,95 @@
+//! Vec type for the bootstrap stdlib.
+
+module std.collections.vec;
+
+use std.option.Option;
+
+/// Growable array type.
+pub struct Vec<T> {
+    /// Pointer to data.
+    data: *mut T,
+    /// Current length.
+    len: usize,
+    /// Allocated capacity.
+    capacity: usize,
+}
+
+impl<T> Vec<T> {
+    /// Create a new empty vector.
+    pub fn new() -> Vec<T> {
+        Vec {
+            data: 0 as *mut T,
+            len: 0,
+            capacity: 0,
+        }
+    }
+
+    /// Create a new vector with the given capacity.
+    pub fn with_capacity(capacity: usize) -> Vec<T> {
+        Vec {
+            data: 0 as *mut T,
+            len: 0,
+            capacity,
+        }
+    }
+
+    /// Push a value onto the end.
+    pub fn push(self: &mut Self, value: T) {
+        // Bootstrap implementation - actual impl in runtime
+    }
+
+    /// Pop a value from the end.
+    pub fn pop(self: &mut Self) -> Option<T> {
+        // Bootstrap implementation
+        Option::None
+    }
+
+    /// Get the length.
+    pub fn len(self: &Self) -> usize {
+        self.len
+    }
+
+    /// Check if empty.
+    pub fn is_empty(self: &Self) -> bool {
+        self.len == 0
+    }
+
+    /// Get a reference to an element.
+    pub fn get(self: &Self, index: usize) -> Option<&T> {
+        if index < self.len {
+            // Bootstrap implementation
+            Option::None
+        } else {
+            Option::None
+        }
+    }
+
+    /// Get a mutable reference to an element.
+    pub fn get_mut(self: &mut Self, index: usize) -> Option<&mut T> {
+        if index < self.len {
+            // Bootstrap implementation
+            Option::None
+        } else {
+            Option::None
+        }
+    }
+
+    /// Clear the vector.
+    pub fn clear(self: &mut Self) {
+        self.len = 0;
+    }
+}
+
+impl<T: Clone> Clone for Vec<T> {
+    fn clone(self: &Self) -> Vec<T> {
+        let mut new_vec = Vec::with_capacity(self.len);
+        let mut i: usize = 0;
+        while i < self.len {
+            if let Option::Some(v) = self.get(i) {
+                new_vec.push(v.clone());
+            }
+            i = i + 1;
+        }
+        new_vec
+    }
+}
