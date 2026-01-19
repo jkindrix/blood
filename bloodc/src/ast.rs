@@ -864,6 +864,14 @@ pub enum TypeKind {
 
     /// Parenthesized: `(T)`
     Paren(Box<Type>),
+
+    /// Impl trait: `impl Trait`, `impl Trait + Bound`
+    ///
+    /// Used for existential types, typically in return position.
+    ImplTrait {
+        /// The trait bounds that the type must implement
+        bounds: Vec<TypePath>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

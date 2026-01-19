@@ -2180,6 +2180,7 @@ impl<'a> TypeContext<'a> {
                         return self.resolve_effect_type(inner);
                     }
                     ast::TypeKind::Forall { .. } => "forall type",
+                    ast::TypeKind::ImplTrait { .. } => "impl trait type",
                     ast::TypeKind::Path(_) => unreachable!("Path type should be handled by the match above")
                 };
                 Err(TypeError::new(

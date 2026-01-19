@@ -886,6 +886,15 @@ impl SemanticAnalyzer {
                     .collect();
                 format!("forall<{}>. {}", param_strs.join(", "), self.type_to_string(body, interner))
             }
+            ast::TypeKind::ImplTrait { bounds } => {
+                let bound_strs: Vec<_> = bounds.iter()
+                    .map(|path| path.segments.iter()
+                        .map(|seg| self.resolve_symbol(&seg.name.node, interner))
+                        .collect::<Vec<_>>()
+                        .join("::"))
+                    .collect();
+                format!("impl {}", bound_strs.join(" + "))
+            }
         }
     }
 

@@ -252,6 +252,22 @@ impl<'src> Parser<'src> {
             // Record type
             TokenKind::LBrace => self.parse_record_type(),
 
+            // Impl trait: `impl Trait`, `impl Trait + Bound`
+            TokenKind::Impl => {
+                self.advance();
+                let mut bounds = vec![self.parse_type_path()];
+
+                // Parse additional bounds with `+`
+                while self.try_consume(TokenKind::Plus) {
+                    bounds.push(self.parse_type_path());
+                }
+
+                Type {
+                    kind: TypeKind::ImplTrait { bounds },
+                    span: start.merge(self.previous.span),
+                }
+            }
+
             // Type path
             TokenKind::TypeIdent
             | TokenKind::Ident
@@ -339,8 +355,9 @@ impl<'src> Parser<'src> {
 
             segments.push(TypePathSegment { name, args });
 
-            // Check for path continuation
-            if !self.try_consume(TokenKind::ColonColon) {
+            // Check for path continuation (both `::` and `.` are valid)
+            // Blood uses `.` for module paths (Java-style), but `::` is also supported
+            if !self.try_consume(TokenKind::ColonColon) && !self.try_consume(TokenKind::Dot) {
                 break;
             }
         }

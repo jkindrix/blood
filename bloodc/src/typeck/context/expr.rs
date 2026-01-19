@@ -1761,6 +1761,22 @@ impl<'a> TypeContext<'a> {
                 let inner_ty = self.ast_type_to_hir_type(inner)?;
                 Ok(Type::ownership(hir_qualifier, inner_ty))
             }
+            ast::TypeKind::ImplTrait { bounds } => {
+                // For now, impl Trait is converted to a fresh type variable with trait bounds
+                // Full impl Trait support requires existential type handling
+                if bounds.is_empty() {
+                    return Err(TypeError::new(
+                        TypeErrorKind::UnsupportedFeature {
+                            feature: "impl Trait without bounds".to_string(),
+                        },
+                        ty.span,
+                    ));
+                }
+
+                // TODO: Full impl Trait support would add trait bounds as constraints
+                // For now, just create a fresh type variable
+                Ok(self.unifier.fresh_var())
+            }
         }
     }
 

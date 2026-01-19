@@ -231,6 +231,13 @@ impl<'src> Parser<'src> {
                 | TokenKind::Op
                 | TokenKind::Deep
                 | TokenKind::Shallow
+                // Additional keywords used as identifiers in Blood stdlib
+                | TokenKind::Ref
+                | TokenKind::Pure
+                | TokenKind::Extends
+                | TokenKind::Linear
+                | TokenKind::Affine
+                | TokenKind::Region
         )
     }
 
