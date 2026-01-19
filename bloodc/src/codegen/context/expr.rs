@@ -280,6 +280,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             hir::LiteralValue::Char(val) => {
                 Ok(self.context.i32_type().const_int(*val as u64, false).into())
             }
+            hir::LiteralValue::Byte(val) => {
+                Ok(self.context.i8_type().const_int(*val as u64, false).into())
+            }
             hir::LiteralValue::String(s) => {
                 // Create global string constant and str slice {ptr, len}
                 let global = self.builder.build_global_string_ptr(s, "str")
@@ -406,7 +409,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())]);
                 }
                 // Comparison, logical, and bitwise ops are handled in the second match below
-                Eq | Ne | Lt | Le | Gt | Ge | And | Or | BitAnd | BitOr | BitXor | Shl | Shr | Pipe => {
+                // Concat is for strings, not floats, so error
+                Eq | Ne | Lt | Le | Gt | Ge | And | Or | BitAnd | BitOr | BitXor | Shl | Shr | Pipe | Concat => {
                     // Fall through to comparison/error handling below
                 }
             }
@@ -420,9 +424,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 Gt => self.builder.build_float_compare(FloatPredicate::OGT, lhs_float, rhs_float, "fgt"),
                 Ge => self.builder.build_float_compare(FloatPredicate::OGE, lhs_float, rhs_float, "fge"),
                 // Bitwise and logical ops don't make sense for floats
-                And | Or | BitAnd | BitOr | BitXor | Shl | Shr => {
+                // Concat is for strings, not floats
+                And | Or | BitAnd | BitOr | BitXor | Shl | Shr | Concat => {
                     return Err(vec![Diagnostic::error(
-                        "Bitwise/logical operations not supported for float types",
+                        "Bitwise/logical/concat operations not supported for float types",
                         left.span,
                     )]);
                 }
@@ -500,6 +505,13 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 }
                 // Pipe is handled specially at the start of compile_binary
                 Pipe => unreachable!("Pipe operator handled before operand compilation"),
+                // Concat is for strings, not integers
+                Concat => {
+                    return Err(vec![Diagnostic::error(
+                        "Concat operator (++) is only supported for string types",
+                        left.span,
+                    )]);
+                }
             };
 
             result

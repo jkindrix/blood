@@ -1431,6 +1431,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // Chars are u32 in Blood/Rust
                 Ok(self.context.i32_type().const_int(*c as u64, false).into())
             }
+            LiteralValue::Byte(b) => {
+                // Bytes are u8
+                Ok(self.context.i8_type().const_int(*b as u64, false).into())
+            }
             LiteralValue::String(s) => {
                 // Create a global string constant and str slice {ptr, len}
                 let bytes = s.as_bytes();

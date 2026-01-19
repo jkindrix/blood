@@ -487,6 +487,12 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // Pointer offset - treat as add for now
                 self.builder.build_int_add(lhs_int, rhs_int, "offset")
             }
+            BinOp::Concat => {
+                return Err(vec![Diagnostic::error(
+                    "Concat operator (++) is only supported for string types, not integers",
+                    Span::dummy(),
+                )]);
+            }
         }.map_err(|e| vec![Diagnostic::error(
             format!("LLVM binary op error: {}", e), Span::dummy()
         )])?;
@@ -544,6 +550,13 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr | BinOp::Offset => {
                 return Err(vec![Diagnostic::error(
                     format!("bitwise operation {:?} not supported for floating-point types", op),
+                    Span::dummy(),
+                )]);
+            }
+            // Concat is for strings, not floats
+            BinOp::Concat => {
+                return Err(vec![Diagnostic::error(
+                    "Concat operator (++) is only supported for string types, not floats",
                     Span::dummy(),
                 )]);
             }
@@ -1177,6 +1190,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
             ConstantKind::Char(v) => {
                 Ok(self.context.i32_type().const_int(*v as u64, false).into())
+            }
+
+            ConstantKind::Byte(v) => {
+                Ok(self.context.i8_type().const_int(*v as u64, false).into())
             }
 
             ConstantKind::String(s) => {

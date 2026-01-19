@@ -709,20 +709,89 @@ impl StdlibLoader {
             None => return,
         };
 
-        for item in items {
-            let item_name = resolve_symbol(item.name.node);
-            let local_name = item.alias
-                .as_ref()
-                .map(|a| resolve_symbol(a.node))
-                .unwrap_or_else(|| item_name.clone());
+        self.process_import_items_reexport(
+            ctx,
+            module_def_id,
+            interner,
+            base_module_id,
+            items,
+            &resolve_symbol,
+        );
+    }
 
-            // Look up the item in the base module
-            if let Some(item_def_id) = self.lookup_in_module(ctx, base_module_id, &item_name) {
-                if let Some(module_info) = ctx.module_defs.get_mut(&module_def_id) {
-                    module_info.reexports.push((local_name, item_def_id));
+    /// Recursively process import items (handles both simple and nested items).
+    fn process_import_items_reexport<'a, F>(
+        &self,
+        ctx: &mut TypeContext<'a>,
+        module_def_id: DefId,
+        interner: &DefaultStringInterner,
+        base_module_id: DefId,
+        items: &[ast::ImportItem],
+        resolve_symbol: &F,
+    )
+    where
+        F: Fn(ast::Symbol) -> String,
+    {
+        for item in items {
+            match item {
+                ast::ImportItem::Simple { name, alias } => {
+                    let item_name = resolve_symbol(name.node);
+                    let local_name = alias
+                        .as_ref()
+                        .map(|a| resolve_symbol(a.node))
+                        .unwrap_or_else(|| item_name.clone());
+
+                    // Look up the item in the base module
+                    if let Some(item_def_id) = self.lookup_in_module(ctx, base_module_id, &item_name) {
+                        if let Some(module_info) = ctx.module_defs.get_mut(&module_def_id) {
+                            module_info.reexports.push((local_name, item_def_id));
+                        }
+                    }
+                }
+                ast::ImportItem::Nested { path, items: nested_items } => {
+                    // Resolve the nested path from the base module
+                    if let Some(nested_base_id) = self.resolve_nested_path(ctx, interner, base_module_id, path) {
+                        self.process_import_items_reexport(
+                            ctx,
+                            module_def_id,
+                            interner,
+                            nested_base_id,
+                            nested_items,
+                            resolve_symbol,
+                        );
+                    }
                 }
             }
         }
+    }
+
+    /// Resolve a nested path starting from a base module.
+    fn resolve_nested_path(
+        &self,
+        ctx: &TypeContext<'_>,
+        interner: &DefaultStringInterner,
+        base_module_id: DefId,
+        path_segments: &[crate::Spanned<ast::Symbol>],
+    ) -> Option<DefId> {
+        let mut current_id = base_module_id;
+
+        for segment in path_segments {
+            let segment_name = interner.resolve(segment.node)
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+
+            // Look up the segment as a submodule
+            current_id = self.lookup_submodule(ctx, current_id, &segment_name)?;
+        }
+
+        Some(current_id)
+    }
+
+    /// Look up a submodule within a parent module.
+    /// Uses the existing lookup_in_module which checks items_by_name.
+    fn lookup_submodule(&self, ctx: &TypeContext<'_>, parent_id: DefId, name: &str) -> Option<DefId> {
+        // Use the same mechanism as lookup_in_module - submodules are registered as items
+        self.lookup_in_module(ctx, parent_id, name)
     }
 
     /// Process a glob pub use re-export.
@@ -983,6 +1052,8 @@ fn create_item_def_id<'a>(
         ast::Declaration::Bridge(_) => return None,
         ast::Declaration::Module(_) => return None,
         ast::Declaration::Macro(_) => return None,
+        ast::Declaration::MacroInvocation(_) => return None,
+        ast::Declaration::Use(_) => return None,
     };
 
     match ctx.resolver.define_item(name.clone(), kind, Span::dummy()) {
@@ -1043,12 +1114,12 @@ fn register_type_info<'a>(
                         })
                         .collect()
                 }
-                ast::StructBody::Tuple(types) => {
-                    types
+                ast::StructBody::Tuple(fields) => {
+                    fields
                         .iter()
                         .enumerate()
-                        .map(|(i, ty)| {
-                            let ty = ast_type_to_basic_type(interner, ty);
+                        .map(|(i, field)| {
+                            let ty = ast_type_to_basic_type(interner, &field.ty);
                             FieldInfo {
                                 name: format!("{i}"),
                                 ty,
@@ -1087,14 +1158,14 @@ fn register_type_info<'a>(
                 let variant_name = resolve_symbol(v.name.node);
                 let fields = match &v.body {
                     ast::StructBody::Unit => Vec::new(),
-                    ast::StructBody::Tuple(types) => {
-                        types
+                    ast::StructBody::Tuple(fields) => {
+                        fields
                             .iter()
                             .enumerate()
-                            .map(|(fi, ty)| {
+                            .map(|(fi, field)| {
                                 FieldInfo {
                                     name: format!("{fi}"),
-                                    ty: ast_type_to_basic_type(interner, ty),
+                                    ty: ast_type_to_basic_type(interner, &field.ty),
                                     index: fi as u32,
                                 }
                             })

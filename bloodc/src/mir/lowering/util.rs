@@ -61,6 +61,7 @@ pub fn convert_binop(op: BinOp) -> MirBinOp {
         BinOp::And => MirBinOp::BitAnd, // Logical and
         BinOp::Or => MirBinOp::BitOr,   // Logical or
         BinOp::Pipe => MirBinOp::BitOr, // Pipe operator (placeholder)
+        BinOp::Concat => MirBinOp::Concat, // String concatenation
     }
 }
 
@@ -95,6 +96,7 @@ pub fn lower_literal_to_constant(lit: &LiteralValue, ty: &Type) -> Constant {
         LiteralValue::Float(v) => ConstantKind::Float(*v),
         LiteralValue::Bool(v) => ConstantKind::Bool(*v),
         LiteralValue::Char(v) => ConstantKind::Char(*v),
+        LiteralValue::Byte(v) => ConstantKind::Byte(*v),
         LiteralValue::String(v) => ConstantKind::String(v.clone()),
         LiteralValue::ByteString(v) => ConstantKind::ByteString(v.clone()),
     };
@@ -556,6 +558,7 @@ pub trait ExprLowering {
             LiteralValue::Float(v) => ConstantKind::Float(*v),
             LiteralValue::Bool(v) => ConstantKind::Bool(*v),
             LiteralValue::Char(v) => ConstantKind::Char(*v),
+            LiteralValue::Byte(v) => ConstantKind::Byte(*v),
             LiteralValue::String(v) => ConstantKind::String(v.clone()),
             LiteralValue::ByteString(v) => ConstantKind::ByteString(v.clone()),
         };

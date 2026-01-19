@@ -136,7 +136,9 @@ impl MacroExpander {
             | Declaration::Static(_)
             | Declaration::Bridge(_)
             | Declaration::Module(_)
-            | Declaration::Macro(_) => {
+            | Declaration::Macro(_)
+            | Declaration::MacroInvocation(_)
+            | Declaration::Use(_) => {
                 // TODO: Expand macros in these contexts when needed
             }
         }

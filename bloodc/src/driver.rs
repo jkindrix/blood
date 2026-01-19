@@ -604,6 +604,8 @@ fn create_item_def_id(
         ast::Declaration::Bridge(_) => return None,
         ast::Declaration::Module(_) => return None,
         ast::Declaration::Macro(_) => return None,
+        ast::Declaration::MacroInvocation(_) => return None,
+        ast::Declaration::Use(_) => return None,
     };
 
     ctx.resolver.define_item(name, kind, Span::dummy()).ok()

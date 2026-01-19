@@ -1777,6 +1777,12 @@ impl<'a> TypeContext<'a> {
                 // For now, just create a fresh type variable
                 Ok(self.unifier.fresh_var())
             }
+            ast::TypeKind::MaybeUnsized { inner } => {
+                // ?Sized is used to relax the implicit Sized bound
+                // For now, just convert the inner type - actual bound relaxation
+                // would be handled during trait bound checking
+                self.ast_type_to_hir_type(inner)
+            }
         }
     }
 
@@ -1942,6 +1948,11 @@ impl<'a> TypeContext<'a> {
                 let u8_ty = Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U8)));
                 let slice_ty = Type::slice(u8_ty);
                 (hir::LiteralValue::ByteString(bytes.clone()), Type::reference(slice_ty, false))
+            }
+            ast::LiteralKind::Byte(b) => {
+                // Byte literals are u8
+                let u8_ty = Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U8)));
+                (hir::LiteralValue::Byte(*b), u8_ty)
             }
         };
 
@@ -2608,6 +2619,12 @@ impl<'a> TypeContext<'a> {
                         ));
                     }
                 }
+            }
+            ast::BinOp::Concat => {
+                // String concatenation - both operands should be strings, result is string
+                // For now, assume String type and unify both operands
+                self.unifier.unify(&left_expr.ty, &right_expr.ty, span)?;
+                left_expr.ty.clone()
             }
         };
 

@@ -1222,6 +1222,10 @@ fn hash_literal(lit: &hir::LiteralValue, hasher: &mut ContentHasher) {
             hasher.update_u8(0x05);
             hasher.update_u32(*c as u32);
         }
+        hir::LiteralValue::Byte(b) => {
+            hasher.update_u8(0x08);
+            hasher.update_u8(*b);
+        }
         hir::LiteralValue::String(s) => {
             hasher.update_u8(0x06);
             hasher.update_str(s);

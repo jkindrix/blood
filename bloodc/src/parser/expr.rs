@@ -79,7 +79,7 @@ fn binary_precedence(kind: TokenKind) -> Option<Precedence> {
         TokenKind::Caret => Some(Precedence::BitXor),
         TokenKind::And => Some(Precedence::BitAnd),
         TokenKind::Shl | TokenKind::Shr => Some(Precedence::Shift),
-        TokenKind::Plus | TokenKind::Minus => Some(Precedence::Term),
+        TokenKind::Plus | TokenKind::Minus | TokenKind::PlusPlus => Some(Precedence::Term),
         TokenKind::Star | TokenKind::Slash | TokenKind::Percent => Some(Precedence::Factor),
         TokenKind::As => Some(Precedence::Cast),
         _ => None,
@@ -108,6 +108,7 @@ fn token_to_binop(kind: TokenKind) -> Option<BinOp> {
         TokenKind::Shl => Some(BinOp::Shl),
         TokenKind::Shr => Some(BinOp::Shr),
         TokenKind::Pipe => Some(BinOp::Pipe),
+        TokenKind::PlusPlus => Some(BinOp::Concat),
         _ => None,
     }
 }
@@ -565,8 +566,7 @@ impl<'src> Parser<'src> {
 
     /// Check if the next token after current is `<`.
     fn peek_is_lt(&self) -> bool {
-        // We need lookahead here, but for simplicity, assume turbofish is always followed by <
-        self.check(TokenKind::ColonColon)
+        self.check_next(TokenKind::Lt)
     }
 
     /// Parse call arguments.
@@ -703,6 +703,7 @@ impl<'src> Parser<'src> {
             | TokenKind::RawStringLitHash1
             | TokenKind::RawStringLitHash2
             | TokenKind::CharLit
+            | TokenKind::ByteCharLit
             | TokenKind::True
             | TokenKind::False => {
                 let lit = self.parse_literal();
@@ -713,10 +714,14 @@ impl<'src> Parser<'src> {
             }
 
             // Identifiers and paths (including contextual keywords usable as identifiers)
-            // Note: Default and Handle can be identifiers in names (fn default, field handle)
+            // Note: Contextual keywords can be identifiers in names (fn default, field handle)
             // They are parsed as identifiers/paths first, not as special expressions.
+            // Crate and Super can start paths (crate.module.Type, super.module.Type)
             TokenKind::Ident | TokenKind::TypeIdent | TokenKind::SelfLower | TokenKind::SelfUpper
-            | TokenKind::Handle | TokenKind::Default => {
+            | TokenKind::Handle | TokenKind::Default | TokenKind::Crate | TokenKind::Super
+            | TokenKind::Op | TokenKind::Module | TokenKind::Ref | TokenKind::Pure
+            | TokenKind::Region | TokenKind::Linear | TokenKind::Affine | TokenKind::Extends
+            | TokenKind::Handler | TokenKind::Effect | TokenKind::Deep | TokenKind::Shallow => {
                 self.parse_path_or_struct_expr()
             }
 
@@ -1514,7 +1519,10 @@ impl<'src> Parser<'src> {
         if matches!(
             self.current.kind,
             TokenKind::Ident | TokenKind::TypeIdent | TokenKind::SelfLower | TokenKind::SelfUpper
-            | TokenKind::Handle | TokenKind::Default
+            | TokenKind::Handle | TokenKind::Default | TokenKind::Op | TokenKind::Module
+            | TokenKind::Ref | TokenKind::Pure | TokenKind::Region | TokenKind::Linear
+            | TokenKind::Affine | TokenKind::Extends | TokenKind::Handler | TokenKind::Effect
+            | TokenKind::Deep | TokenKind::Shallow | TokenKind::Crate | TokenKind::Super
         ) {
             let path = self.parse_expr_path();
 
@@ -1575,10 +1583,13 @@ impl<'src> Parser<'src> {
 
         loop {
             // Allow contextual keywords as path segments
+            // Also allow crate and super as path roots
             let name = if self.check_ident()
                 || self.check(TokenKind::TypeIdent)
                 || self.check(TokenKind::SelfLower)
                 || self.check(TokenKind::SelfUpper)
+                || self.check(TokenKind::Crate)
+                || self.check(TokenKind::Super)
             {
                 self.advance();
                 self.spanned_symbol()
@@ -1613,6 +1624,20 @@ impl<'src> Parser<'src> {
             // For lowercase identifiers, `.` should be field/method access (postfix)
             if is_path_root && self.try_consume(TokenKind::Dot) {
                 continue;
+            }
+
+            // Special case for non-path-roots: allow `.` continuation if we see
+            // `.ident::` which unambiguously indicates a module path (e.g., std.cmp::min)
+            // This distinguishes module paths from field access - field access never has `::`.
+            if !is_path_root && self.check(TokenKind::Dot) {
+                let next_is_ident = matches!(
+                    self.next.kind,
+                    TokenKind::Ident | TokenKind::TypeIdent
+                );
+                if next_is_ident && self.check_after_next(TokenKind::ColonColon) {
+                    self.advance(); // consume the `.`
+                    continue;
+                }
             }
 
             // No valid continuation - end of path
@@ -1795,8 +1820,10 @@ impl<'src> Parser<'src> {
         while !self.check(TokenKind::RBrace) && !self.is_at_end() {
             arms.push(self.parse_match_arm());
 
-            // Allow trailing comma
-            self.try_consume(TokenKind::Comma);
+            // Allow trailing comma or semicolon (Blood allows both)
+            if !self.try_consume(TokenKind::Comma) {
+                self.try_consume(TokenKind::Semi);
+            }
         }
 
         self.expect(TokenKind::RBrace);
@@ -2224,12 +2251,14 @@ impl<'src> Parser<'src> {
                 }
             }
 
-            // Items in blocks
+            // Items in blocks (local definitions)
             TokenKind::Fn
             | TokenKind::Struct
             | TokenKind::Enum
             | TokenKind::Type
-            | TokenKind::Const => {
+            | TokenKind::Const
+            | TokenKind::Use
+            | TokenKind::Impl => {
                 if let Some(decl) = self.parse_declaration() {
                     Statement::Item(decl)
                 } else {

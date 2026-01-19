@@ -77,7 +77,7 @@ impl<'src> Parser<'src> {
                         // Only Int and Float literals can be preceded by minus.
                         // We already checked for IntLit/FloatLit token, so other variants
                         // should never occur here.
-                        LiteralKind::String(_) | LiteralKind::ByteString(_) | LiteralKind::Char(_) | LiteralKind::Bool(_) => {
+                        LiteralKind::String(_) | LiteralKind::ByteString(_) | LiteralKind::Char(_) | LiteralKind::Byte(_) | LiteralKind::Bool(_) => {
                             // Unreachable: we check for IntLit/FloatLit before calling parse_literal
                         }
                     }
@@ -99,6 +99,7 @@ impl<'src> Parser<'src> {
             | TokenKind::FloatLit
             | TokenKind::StringLit
             | TokenKind::CharLit
+            | TokenKind::ByteCharLit
             | TokenKind::True
             | TokenKind::False => {
                 let lit = self.parse_literal();
@@ -111,6 +112,7 @@ impl<'src> Parser<'src> {
                     let end = if self.check(TokenKind::IntLit)
                         || self.check(TokenKind::FloatLit)
                         || self.check(TokenKind::CharLit)
+                        || self.check(TokenKind::ByteCharLit)
                     {
                         let end_lit = self.parse_literal();
                         Some(Box::new(Pattern {
@@ -217,7 +219,10 @@ impl<'src> Parser<'src> {
             // Identifier, path, struct, or tuple struct pattern
             // Also include contextual keywords that can be used as identifiers
             TokenKind::Ident | TokenKind::TypeIdent | TokenKind::SelfLower | TokenKind::SelfUpper
-            | TokenKind::Default | TokenKind::Handle => {
+            | TokenKind::Default | TokenKind::Handle | TokenKind::Op | TokenKind::Crate
+            | TokenKind::Module | TokenKind::Handler | TokenKind::Effect | TokenKind::Pure
+            | TokenKind::Extends | TokenKind::Linear | TokenKind::Affine
+            | TokenKind::Region | TokenKind::Deep | TokenKind::Shallow => {
                 self.parse_ident_or_path_pattern()
             }
 
@@ -347,6 +352,12 @@ impl<'src> Parser<'src> {
             }
 
             let field_start = self.current.span;
+
+            // Handle ref/mut bindings: `ref name` or `ref mut name`
+            // These are shorthand for `name: ref name` patterns
+            let by_ref = self.try_consume(TokenKind::Ref);
+            let mutable = self.try_consume(TokenKind::Mut);
+
             // Allow contextual keywords as field names
             let name = if self.check_ident() {
                 self.advance();
@@ -359,6 +370,17 @@ impl<'src> Parser<'src> {
             // Check for pattern (name: pattern) or shorthand (name)
             let pattern = if self.try_consume(TokenKind::Colon) {
                 Some(self.parse_pattern())
+            } else if by_ref || mutable {
+                // Shorthand with ref/mut: `ref name` => `name: ref name`
+                Some(Pattern {
+                    kind: PatternKind::Ident {
+                        by_ref,
+                        mutable,
+                        name: name.clone(),
+                        subpattern: None,
+                    },
+                    span: field_start.merge(self.previous.span),
+                })
             } else {
                 None
             };

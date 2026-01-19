@@ -422,6 +422,7 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
             LiteralValue::Float(v) => ConstantKind::Float(*v),
             LiteralValue::Bool(v) => ConstantKind::Bool(*v),
             LiteralValue::Char(v) => ConstantKind::Char(*v),
+            LiteralValue::Byte(v) => ConstantKind::Byte(*v),
             LiteralValue::String(v) => ConstantKind::String(v.clone()),
             LiteralValue::ByteString(v) => ConstantKind::ByteString(v.clone()),
         };

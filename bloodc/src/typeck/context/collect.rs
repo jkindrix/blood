@@ -256,45 +256,99 @@ impl<'a> TypeContext<'a> {
         // and then import each item from that module
         let base_module_id = self.resolve_module_path(path)?;
 
+        self.resolve_import_items(visibility, base_module_id, items, span)
+    }
+
+    /// Recursively resolve import items (handles both simple and nested items).
+    fn resolve_import_items(
+        &mut self,
+        visibility: ast::Visibility,
+        base_module_id: DefId,
+        items: &[ast::ImportItem],
+        span: crate::span::Span,
+    ) -> Result<(), TypeError> {
         for item in items {
-            let item_name = self.symbol_to_string(item.name.node);
+            match item {
+                ast::ImportItem::Simple { name, alias } => {
+                    let item_name = self.symbol_to_string(name.node);
 
-            // Look up the item in the module
-            if let Some(def_id) = self.lookup_in_module(base_module_id, &item_name) {
-                let local_name = if let Some(alias) = &item.alias {
-                    self.symbol_to_string(alias.node)
-                } else {
-                    item_name.clone()
-                };
+                    // Look up the item in the module
+                    if let Some(def_id) = self.lookup_in_module(base_module_id, &item_name) {
+                        let local_name = if let Some(a) = alias {
+                            self.symbol_to_string(a.node)
+                        } else {
+                            item_name.clone()
+                        };
 
-                // Import based on def kind
-                if let Some(info) = self.resolver.def_info.get(&def_id) {
-                    match info.kind {
-                        hir::DefKind::Struct | hir::DefKind::Enum | hir::DefKind::TypeAlias
-                        | hir::DefKind::Effect | hir::DefKind::Trait => {
-                            self.resolver.import_type_binding(local_name.clone(), def_id, span)?;
+                        // Import based on def kind
+                        if let Some(info) = self.resolver.def_info.get(&def_id) {
+                            match info.kind {
+                                hir::DefKind::Struct | hir::DefKind::Enum | hir::DefKind::TypeAlias
+                                | hir::DefKind::Effect | hir::DefKind::Trait => {
+                                    self.resolver.import_type_binding(local_name.clone(), def_id, span)?;
+                                }
+                                _ => {
+                                    self.resolver.import_binding(local_name.clone(), def_id, span)?;
+                                }
+                            }
                         }
-                        _ => {
-                            self.resolver.import_binding(local_name.clone(), def_id, span)?;
+
+                        // Track public re-exports
+                        if visibility == ast::Visibility::Public {
+                            self.add_reexport_to_current_module(local_name, def_id);
                         }
+                    } else {
+                        return Err(TypeError::new(
+                            TypeErrorKind::ImportError {
+                                message: format!("cannot find `{}` in module", item_name),
+                            },
+                            span,
+                        ));
                     }
                 }
-
-                // Track public re-exports
-                if visibility == ast::Visibility::Public {
-                    self.add_reexport_to_current_module(local_name, def_id);
+                ast::ImportItem::Nested { path: nested_path, items: nested_items } => {
+                    // Resolve the nested path from the base module
+                    let nested_module_id = self.resolve_nested_import_path(base_module_id, nested_path, span)?;
+                    self.resolve_import_items(visibility, nested_module_id, nested_items, span)?;
                 }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Resolve a nested import path from a base module.
+    fn resolve_nested_import_path(
+        &self,
+        base_module_id: DefId,
+        path_segments: &[crate::Spanned<ast::Symbol>],
+        span: crate::span::Span,
+    ) -> Result<DefId, TypeError> {
+        let mut current_id = base_module_id;
+
+        for segment in path_segments {
+            let segment_name = self.symbol_to_string(segment.node);
+
+            if let Some(child_id) = self.lookup_submodule(current_id, &segment_name) {
+                current_id = child_id;
             } else {
                 return Err(TypeError::new(
                     TypeErrorKind::ImportError {
-                        message: format!("cannot find `{}` in module", item_name),
+                        message: format!("cannot find module `{}`", segment_name),
                     },
                     span,
                 ));
             }
         }
 
-        Ok(())
+        Ok(current_id)
+    }
+
+    /// Look up a submodule within a parent module.
+    /// Uses the existing lookup_in_module which checks module items.
+    fn lookup_submodule(&self, parent_id: DefId, name: &str) -> Option<DefId> {
+        // Submodules are registered as items in their parent module
+        self.lookup_in_module(parent_id, name)
     }
 
     /// Resolve a glob import: `use std.ops::*;`
@@ -536,6 +590,10 @@ impl<'a> TypeContext<'a> {
             ast::Declaration::Bridge(b) => self.collect_bridge(b),
             ast::Declaration::Module(m) => self.collect_module(m),
             ast::Declaration::Macro(m) => self.collect_macro(m),
+            // Macro invocations should be expanded before type checking
+            ast::Declaration::MacroInvocation(_) => Ok(()),
+            // Use declarations are handled during import resolution
+            ast::Declaration::Use(_) => Ok(()),
         }
     }
 
@@ -1107,12 +1165,12 @@ impl<'a> TypeContext<'a> {
                     })
                     .collect::<Result<Vec<_>, TypeError>>()?
             }
-            ast::StructBody::Tuple(types) => {
-                types
+            ast::StructBody::Tuple(fields) => {
+                fields
                     .iter()
                     .enumerate()
-                    .map(|(i, ty)| {
-                        let ty = self.ast_type_to_hir_type(ty)?;
+                    .map(|(i, field)| {
+                        let ty = self.ast_type_to_hir_type(&field.ty)?;
                         Ok(FieldInfo {
                             name: format!("{i}"),
                             ty,
@@ -1202,7 +1260,15 @@ impl<'a> TypeContext<'a> {
         }
 
         // Convert the aliased type (now with generics in scope)
-        let aliased_ty = self.ast_type_to_hir_type(&type_decl.ty)?;
+        // For associated type declarations without a definition, skip
+        let Some(ref ty) = type_decl.ty else {
+            // Restore previous generic params scope
+            self.generic_params = saved_generic_params;
+            self.const_params = saved_const_params;
+            self.lifetime_params = saved_lifetime_params;
+            return Ok(());
+        };
+        let aliased_ty = self.ast_type_to_hir_type(ty)?;
 
         // Restore previous generic params scope
         self.generic_params = saved_generic_params;
@@ -1305,12 +1371,12 @@ impl<'a> TypeContext<'a> {
                         })
                         .collect::<Result<Vec<_>, TypeError>>()?
                 }
-                ast::StructBody::Tuple(types) => {
-                    types
+                ast::StructBody::Tuple(fields) => {
+                    fields
                         .iter()
                         .enumerate()
-                        .map(|(j, ty)| {
-                            let ty = self.ast_type_to_hir_type(ty)?;
+                        .map(|(j, field)| {
+                            let ty = self.ast_type_to_hir_type(&field.ty)?;
                             Ok(FieldInfo {
                                 name: format!("{j}"),
                                 ty,
@@ -1819,7 +1885,18 @@ impl<'a> TypeContext<'a> {
                 }
                 ast::ImplItem::Type(type_decl) => {
                     let type_name = self.symbol_to_string(type_decl.name.node);
-                    let ty = self.ast_type_to_hir_type(&type_decl.ty)?;
+                    // Associated types in impl blocks must have a type value
+                    let Some(ref ast_ty) = type_decl.ty else {
+                        return Err(TypeError {
+                            kind: TypeErrorKind::MissingAssocType {
+                                trait_name: "impl".to_string(),
+                                type_name: type_name.clone(),
+                            },
+                            span: type_decl.span,
+                            help: Some("associated types in impl blocks must have a value".to_string()),
+                        });
+                    };
+                    let ty = self.ast_type_to_hir_type(ast_ty)?;
                     assoc_types.push(ImplAssocTypeInfo {
                         name: type_name,
                         ty,
@@ -2038,11 +2115,10 @@ impl<'a> TypeContext<'a> {
                 }
                 ast::TraitItem::Type(type_decl) => {
                     let type_name = self.symbol_to_string(type_decl.name.node);
-                    // For associated types, the `ty` field in TypeDecl is the default
-                    // Check if it's meaningful (not just a placeholder)
-                    let default = if type_decl.type_params.is_none() {
+                    // For associated types, the `ty` field in TypeDecl is the default (if present)
+                    let default = if let Some(ref ast_ty) = type_decl.ty {
                         // Try to convert the type - if it's just a name binding, there's no default
-                        match self.ast_type_to_hir_type(&type_decl.ty) {
+                        match self.ast_type_to_hir_type(ast_ty) {
                             Ok(ty) if !ty.is_error() => Some(ty),
                             _ => None,
                         }
@@ -2181,6 +2257,7 @@ impl<'a> TypeContext<'a> {
                     }
                     ast::TypeKind::Forall { .. } => "forall type",
                     ast::TypeKind::ImplTrait { .. } => "impl trait type",
+                    ast::TypeKind::MaybeUnsized { .. } => "relaxed bound type",
                     ast::TypeKind::Path(_) => unreachable!("Path type should be handled by the match above")
                 };
                 Err(TypeError::new(

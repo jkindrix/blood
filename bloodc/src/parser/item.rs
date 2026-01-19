@@ -39,40 +39,18 @@ impl<'src> Parser<'src> {
             TokenKind::Extern => Some(Declaration::Bridge(self.parse_extern_block(attrs))),
             TokenKind::Mod => Some(Declaration::Module(self.parse_mod_decl(attrs, vis))),
             TokenKind::Macro => Some(Declaration::Macro(self.parse_macro_decl(attrs, vis))),
-            // Handle `use` encountered after declarations have started
-            // This is an error (imports must come before declarations) but we
-            // need to handle it to avoid infinite loops in error recovery
+            // Handle `macro_rules!` (Rust-style macro declaration)
+            TokenKind::Ident if self.text(&self.current.span) == "macro_rules" => {
+                Some(Declaration::Macro(self.parse_macro_rules_decl(attrs, vis)))
+            }
+            // Handle macro invocations at declaration level: `name! { ... }`
+            TokenKind::Ident | TokenKind::TypeIdent if self.peek_is_macro_invocation() => {
+                Some(Declaration::MacroInvocation(self.parse_macro_invocation_decl(attrs)))
+            }
+            // Handle `use` / `pub use` (re-exports can appear among declarations)
             TokenKind::Use => {
-                self.error_expected_one_of(&[
-                    "`fn`", "`struct`", "`enum`", "`trait`", "`impl`",
-                    "`effect`", "`handler`", "`type`", "`const`", "`static`",
-                    "`bridge`", "`extern`", "`mod`", "`macro`", "`unsafe`",
-                ]);
-                // Skip past the use statement to avoid infinite loop
-                while !self.is_at_end()
-                    && !matches!(
-                        self.current.kind,
-                        TokenKind::Fn
-                            | TokenKind::Struct
-                            | TokenKind::Enum
-                            | TokenKind::Effect
-                            | TokenKind::Handler
-                            | TokenKind::Trait
-                            | TokenKind::Impl
-                            | TokenKind::Type
-                            | TokenKind::Const
-                            | TokenKind::Static
-                            | TokenKind::Pub
-                            | TokenKind::Module
-                            | TokenKind::Extern
-                            | TokenKind::Macro
-                            | TokenKind::Unsafe
-                            | TokenKind::AtUnsafe
-                    )
-                {
-                    self.advance();
-                }
-                None
+                let import = self.parse_import();
+                Some(Declaration::Use(import))
             }
             _ => {
                 self.error_expected_one_of(&[
@@ -552,9 +530,17 @@ impl<'src> Parser<'src> {
             Vec::new()
         };
 
+        // Parse optional default type: `= Type`
+        let default = if self.try_consume(TokenKind::Eq) {
+            Some(self.parse_type())
+        } else {
+            None
+        };
+
         GenericParam::Type(TypeParam {
             name,
             bounds,
+            default,
             span: start.merge(self.previous.span),
         })
     }
@@ -671,18 +657,28 @@ impl<'src> Parser<'src> {
         }
     }
 
-    fn parse_tuple_fields(&mut self) -> Vec<Type> {
-        let mut types = Vec::new();
+    fn parse_tuple_fields(&mut self) -> Vec<TupleField> {
+        let mut fields = Vec::new();
 
         while !self.check(TokenKind::RParen) && !self.is_at_end() {
-            types.push(self.parse_type());
+            let start = self.current.span;
+            let attrs = self.parse_attributes();
+            let vis = self.parse_visibility();
+            let ty = self.parse_type();
+
+            fields.push(TupleField {
+                attrs,
+                vis,
+                ty,
+                span: start.merge(self.previous.span),
+            });
 
             if !self.try_consume(TokenKind::Comma) {
                 break;
             }
         }
 
-        types
+        fields
     }
 
     fn parse_struct_fields(&mut self) -> Vec<StructField> {
@@ -797,10 +793,18 @@ impl<'src> Parser<'src> {
             StructBody::Unit
         };
 
+        // Parse optional discriminant: `= expr`
+        let discriminant = if self.try_consume(TokenKind::Eq) {
+            Some(Box::new(self.parse_expr()))
+        } else {
+            None
+        };
+
         EnumVariant {
             attrs,
             name,
             body,
+            discriminant,
             span: start.merge(self.previous.span),
         }
     }
@@ -1182,11 +1186,18 @@ impl<'src> Parser<'src> {
 
             match self.current.kind {
                 TokenKind::Fn
-                | TokenKind::Const
                 | TokenKind::Async
                 | TokenKind::Unsafe
                 | TokenKind::AtUnsafe => {
                     items.push(ImplItem::Function(self.parse_fn_decl(attrs, vis)));
+                }
+                TokenKind::Const => {
+                    // Distinguish `const fn` from `const NAME: Type = expr`
+                    if self.check_next(TokenKind::Fn) {
+                        items.push(ImplItem::Function(self.parse_fn_decl(attrs, vis)));
+                    } else {
+                        items.push(ImplItem::Const(self.parse_const_decl(attrs, vis)));
+                    }
                 }
                 TokenKind::Type => {
                     items.push(ImplItem::Type(self.parse_type_decl(attrs, vis)));
@@ -1204,7 +1215,7 @@ impl<'src> Parser<'src> {
                     break;
                 }
                 _ => {
-                    self.error_expected_one_of(&["`fn`", "`type`", "`unsafe`", "`}`"]);
+                    self.error_expected_one_of(&["`fn`", "`const`", "`type`", "`unsafe`", "`}`"]);
                     self.synchronize();
                     // After synchronize, check if we're at a top-level keyword and should break
                     if matches!(
@@ -1255,8 +1266,20 @@ impl<'src> Parser<'src> {
 
         let type_params = self.parse_optional_type_params();
 
-        self.expect(TokenKind::Eq);
-        let ty = self.parse_type();
+        // Parse optional bounds: `type Output: Display + Debug;`
+        let bounds = if self.try_consume(TokenKind::Colon) {
+            self.parse_type_bounds()
+        } else {
+            Vec::new()
+        };
+
+        // Parse optional type: `= Type`
+        let ty = if self.try_consume(TokenKind::Eq) {
+            Some(self.parse_type())
+        } else {
+            None
+        };
+
         self.expect(TokenKind::Semi);
 
         TypeDecl {
@@ -1265,6 +1288,7 @@ impl<'src> Parser<'src> {
             name,
             type_params,
             ty,
+            bounds,
             span: start.merge(self.previous.span),
         }
     }
@@ -1981,6 +2005,117 @@ impl<'src> Parser<'src> {
         }
     }
 
+    /// Parse a Rust-style `macro_rules! name { ... }` declaration.
+    fn parse_macro_rules_decl(&mut self, attrs: Vec<Attribute>, vis: Visibility) -> MacroDecl {
+        let start = self.current.span;
+        self.advance(); // consume 'macro_rules'
+
+        // Expect `!` after macro_rules
+        self.expect(TokenKind::Not);
+
+        // Parse macro name
+        let name = if self.check(TokenKind::Ident) || self.check(TokenKind::TypeIdent) {
+            self.advance();
+            self.spanned_symbol()
+        } else {
+            self.error_expected("macro name");
+            Spanned::new(self.intern(""), self.current.span)
+        };
+
+        let rules = if self.check(TokenKind::LBrace) {
+            self.advance(); // consume '{'
+            self.parse_macro_rules()
+        } else {
+            self.error_expected_one_of(&["`{`"]);
+            Vec::new()
+        };
+
+        MacroDecl {
+            attrs,
+            vis,
+            name,
+            rules,
+            span: start.merge(self.previous.span),
+        }
+    }
+
+    /// Check if the next token after current identifier is `!` (macro invocation).
+    fn peek_is_macro_invocation(&self) -> bool {
+        self.check_next(TokenKind::Not)
+    }
+
+    /// Parse a macro invocation at declaration level: `name! { ... }` or `name!(...)`
+    fn parse_macro_invocation_decl(&mut self, attrs: Vec<Attribute>) -> MacroInvocationDecl {
+        let start = self.current.span;
+
+        // Parse the macro name (simple identifier for now)
+        let name_ident = self.spanned_symbol();
+        self.advance();
+
+        // Consume `!`
+        self.expect(TokenKind::Not);
+
+        // Parse the token tree
+        let tokens = self.parse_macro_token_tree();
+
+        let name_span = name_ident.span;
+        MacroInvocationDecl {
+            attrs,
+            name: TypePath {
+                segments: vec![TypePathSegment {
+                    name: name_ident,
+                    args: None,
+                }],
+                span: name_span,
+            },
+            tokens,
+            span: start.merge(self.previous.span),
+        }
+    }
+
+    /// Parse a macro token tree: `{ ... }`, `( ... )`, or `[ ... ]`.
+    fn parse_macro_token_tree(&mut self) -> Vec<MacroToken> {
+        let close_kind = if self.try_consume(TokenKind::LBrace) {
+            TokenKind::RBrace
+        } else if self.try_consume(TokenKind::LParen) {
+            TokenKind::RParen
+        } else if self.try_consume(TokenKind::LBracket) {
+            TokenKind::RBracket
+        } else {
+            self.error_expected_one_of(&["`{`", "`(`", "`[`"]);
+            return Vec::new();
+        };
+
+        let mut tokens = Vec::new();
+        let mut depth = 1;
+
+        while depth > 0 && !self.is_at_end() {
+            let token = MacroToken {
+                kind: self.current.kind,
+                span: self.current.span,
+                hygiene: HygieneId::default(),
+            };
+
+            // Track nesting
+            match self.current.kind {
+                TokenKind::LBrace | TokenKind::LParen | TokenKind::LBracket => depth += 1,
+                TokenKind::RBrace | TokenKind::RParen | TokenKind::RBracket => {
+                    if self.current.kind == close_kind && depth == 1 {
+                        self.advance();
+                        break;
+                    }
+                    depth -= 1;
+                }
+                _ => {}
+            }
+
+            tokens.push(token);
+            self.advance();
+        }
+
+        tokens
+    }
+
     /// Parse multiple macro rules inside `{ ... }`.
     fn parse_macro_rules(&mut self) -> Vec<MacroRule> {
         let mut rules = Vec::new();
@@ -1989,8 +2124,8 @@ impl<'src> Parser<'src> {
             let rule = self.parse_single_macro_rule();
             rules.push(rule);
 
-            // Allow trailing comma
-            if !self.try_consume(TokenKind::Comma) {
+            // Allow either comma or semicolon between rules (Rust uses semicolons)
+            if !self.try_consume(TokenKind::Comma) && !self.try_consume(TokenKind::Semi) {
                 break;
             }
         }

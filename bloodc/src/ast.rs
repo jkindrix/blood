@@ -140,10 +140,32 @@ pub enum Import {
     },
 }
 
+impl Import {
+    pub fn span(&self) -> Span {
+        match self {
+            Import::Simple { span, .. } => *span,
+            Import::Group { span, .. } => *span,
+            Import::Glob { span, .. } => *span,
+        }
+    }
+}
+
+/// An item within a grouped import statement.
+/// Supports both simple items (`name as alias`) and nested groups (`path::{items}`).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ImportItem {
-    pub name: Spanned<Symbol>,
-    pub alias: Option<Spanned<Symbol>>,
+pub enum ImportItem {
+    /// Simple item: `name` or `name as alias`
+    Simple {
+        name: Spanned<Symbol>,
+        alias: Option<Spanned<Symbol>>,
+    },
+    /// Nested group: `path::{items}` or `path.{items}`
+    Nested {
+        /// The path prefix (e.g., `context` in `context::{create, dispose}`)
+        path: Vec<Spanned<Symbol>>,
+        /// The items within the nested group
+        items: Vec<ImportItem>,
+    },
 }
 
 /// Top-level declarations.
@@ -163,6 +185,21 @@ pub enum Declaration {
     Module(ModItemDecl),
     /// Declarative macro definition: `macro name!(...) { ... }`
     Macro(MacroDecl),
+    /// Macro invocation at declaration level: `some_macro! { ... }`
+    MacroInvocation(MacroInvocationDecl),
+    /// Use/re-export declaration: `pub use foo::*;`
+    Use(Import),
+}
+
+/// A macro invocation at declaration level.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MacroInvocationDecl {
+    pub attrs: Vec<Attribute>,
+    /// The macro name (path)
+    pub name: TypePath,
+    /// The token stream inside the invocation
+    pub tokens: Vec<MacroToken>,
+    pub span: Span,
 }
 
 impl Declaration {
@@ -181,6 +218,8 @@ impl Declaration {
             Declaration::Bridge(d) => d.span,
             Declaration::Module(d) => d.span,
             Declaration::Macro(d) => d.span,
+            Declaration::MacroInvocation(d) => d.span,
+            Declaration::Use(d) => d.span(),
         }
     }
 }
@@ -301,7 +340,10 @@ pub struct TypeDecl {
     pub vis: Visibility,
     pub name: Spanned<Symbol>,
     pub type_params: Option<TypeParams>,
-    pub ty: Type,
+    /// The type value. None for associated type declarations (e.g., `type Output;`)
+    pub ty: Option<Type>,
+    /// Optional type bounds for associated types (e.g., `type Output: Display;`)
+    pub bounds: Vec<Type>,
     pub span: Span,
 }
 
@@ -319,10 +361,19 @@ pub struct StructDecl {
 pub enum StructBody {
     /// `struct Foo { x: i32, y: i32 }`
     Record(Vec<StructField>),
-    /// `struct Foo(i32, i32);`
-    Tuple(Vec<Type>),
+    /// `struct Foo(pub i32, i32);`
+    Tuple(Vec<TupleField>),
     /// `struct Foo;`
     Unit,
+}
+
+/// A field in a tuple struct: `pub i32` in `struct Point(pub i32, pub i32);`
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TupleField {
+    pub attrs: Vec<Attribute>,
+    pub vis: Visibility,
+    pub ty: Type,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -349,6 +400,8 @@ pub struct EnumVariant {
     pub attrs: Vec<Attribute>,
     pub name: Spanned<Symbol>,
     pub body: StructBody,
+    /// Optional discriminant value (e.g., `Variant = 1`)
+    pub discriminant: Option<Box<Expr>>,
     pub span: Span,
 }
 
@@ -741,6 +794,8 @@ pub enum GenericParam {
 pub struct TypeParam {
     pub name: Spanned<Symbol>,
     pub bounds: Vec<Type>,
+    /// Default type: `T = Default`
+    pub default: Option<Type>,
     pub span: Span,
 }
 
@@ -871,6 +926,14 @@ pub enum TypeKind {
     ImplTrait {
         /// The trait bounds that the type must implement
         bounds: Vec<TypePath>,
+    },
+
+    /// Relaxed bound: `?Sized`
+    ///
+    /// Used to relax the implicit Sized bound on type parameters.
+    MaybeUnsized {
+        /// The trait being relaxed (typically Sized)
+        inner: Box<Type>,
     },
 }
 
@@ -1301,6 +1364,8 @@ pub enum BinOp {
     Shr,
     // Pipe
     Pipe,
+    // String concatenation
+    Concat,
 }
 
 impl BinOp {
@@ -1325,6 +1390,7 @@ impl BinOp {
             BinOp::Shl => "<<",
             BinOp::Shr => ">>",
             BinOp::Pipe => "|>",
+            BinOp::Concat => "++",
         }
     }
 }
@@ -1375,6 +1441,8 @@ pub enum LiteralKind {
     /// Byte string literal (b"...")
     ByteString(Vec<u8>),
     Char(char),
+    /// Byte character literal (b'a')
+    Byte(u8),
     Bool(bool),
 }
 

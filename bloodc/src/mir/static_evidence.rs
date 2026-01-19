@@ -528,6 +528,7 @@ fn literal_to_bytes(lit: &LiteralValue) -> Vec<u8> {
             let s = c.encode_utf8(&mut buf);
             s.as_bytes().to_vec()
         }
+        LiteralValue::Byte(b) => vec![*b],
         LiteralValue::String(s) => s.as_bytes().to_vec(),
         LiteralValue::ByteString(bytes) => bytes.clone(),
     }

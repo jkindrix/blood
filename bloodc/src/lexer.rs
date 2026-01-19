@@ -229,6 +229,10 @@ pub enum TokenKind {
     #[regex(r"'([^'\\]|\\.)'")]
     CharLit,
 
+    /// Byte character literal (b'a')
+    #[regex(r"b'([^'\\]|\\.)'")]
+    ByteCharLit,
+
     // ============================================================
     // Identifiers and Lifetimes
     // ============================================================
@@ -252,6 +256,8 @@ pub enum TokenKind {
     // Arithmetic
     #[token("+")]
     Plus,
+    #[token("++")]
+    PlusPlus,
     #[token("-")]
     Minus,
     #[token("*")]
@@ -462,6 +468,7 @@ impl TokenKind {
                 | TokenKind::RawStringLitHash1
                 | TokenKind::RawStringLitHash2
                 | TokenKind::CharLit
+                | TokenKind::ByteCharLit
                 | TokenKind::Ident
                 | TokenKind::TypeIdent
                 | TokenKind::Lifetime
@@ -612,10 +619,12 @@ impl TokenKind {
             TokenKind::RawStringLitHash1 => "raw string literal",
             TokenKind::RawStringLitHash2 => "raw string literal",
             TokenKind::CharLit => "character literal",
+            TokenKind::ByteCharLit => "byte character literal",
             TokenKind::Ident => "identifier",
             TokenKind::TypeIdent => "type identifier",
             TokenKind::Lifetime => "lifetime",
             TokenKind::Plus => "`+`",
+            TokenKind::PlusPlus => "`++`",
             TokenKind::Minus => "`-`",
             TokenKind::Star => "`*`",
             TokenKind::Slash => "`/`",
@@ -689,6 +698,7 @@ impl TokenKind {
                 | TokenKind::RawStringLitHash1
                 | TokenKind::RawStringLitHash2
                 | TokenKind::CharLit
+                | TokenKind::ByteCharLit
                 | TokenKind::True
                 | TokenKind::False
                 | TokenKind::Ident

@@ -10,6 +10,17 @@ impl<'src> Parser<'src> {
     pub fn parse_type(&mut self) -> Type {
         let start = self.current.span;
 
+        // Check for relaxed bounds: `?Sized`
+        if self.try_consume(TokenKind::Question) {
+            let inner = self.parse_type();
+            return Type {
+                kind: TypeKind::MaybeUnsized {
+                    inner: Box::new(inner),
+                },
+                span: start.merge(self.previous.span),
+            };
+        }
+
         // Check for ownership qualifiers
         if self.try_consume(TokenKind::Linear) {
             let inner = self.parse_type();
@@ -252,14 +263,19 @@ impl<'src> Parser<'src> {
             // Record type
             TokenKind::LBrace => self.parse_record_type(),
 
-            // Impl trait: `impl Trait`, `impl Trait + Bound`
+            // Impl trait: `impl Trait`, `impl Trait + Bound`, `impl Trait + '_`
             TokenKind::Impl => {
                 self.advance();
                 let mut bounds = vec![self.parse_type_path()];
 
                 // Parse additional bounds with `+`
                 while self.try_consume(TokenKind::Plus) {
-                    bounds.push(self.parse_type_path());
+                    // Skip lifetime bounds (e.g., `+ '_`) - the AST doesn't support them yet
+                    if self.check(TokenKind::Lifetime) {
+                        self.advance(); // consume the lifetime
+                    } else {
+                        bounds.push(self.parse_type_path());
+                    }
                 }
 
                 Type {

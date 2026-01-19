@@ -402,6 +402,8 @@ pub enum LiteralValue {
     Bool(bool),
     /// Character literal.
     Char(char),
+    /// Byte character literal (b'a').
+    Byte(u8),
     /// String literal.
     String(String),
     /// Byte string literal.
@@ -433,6 +435,7 @@ impl LiteralValue {
             LiteralKind::Char(c) => LiteralValue::Char(*c),
             LiteralKind::String(s) => LiteralValue::String(s.clone()),
             LiteralKind::ByteString(bytes) => LiteralValue::ByteString(bytes.clone()),
+            LiteralKind::Byte(b) => LiteralValue::Byte(*b),
         }
     }
 }

@@ -238,6 +238,10 @@ impl<'src> Parser<'src> {
                 | TokenKind::Linear
                 | TokenKind::Affine
                 | TokenKind::Region
+                | TokenKind::Module
+                | TokenKind::Union
+                // Note: Crate and Super are NOT contextual keywords - they are path roots
+                // and should be handled specially in path parsing, not as identifiers
         )
     }
 
@@ -768,38 +772,7 @@ impl<'src> Parser<'src> {
                 }
             } else if self.try_consume(TokenKind::LBrace) {
                 // Group import
-                let mut items = Vec::new();
-
-                loop {
-                    if self.check(TokenKind::RBrace) {
-                        break;
-                    }
-
-                    if self.check(TokenKind::Ident) || self.check(TokenKind::TypeIdent) {
-                        self.advance();
-                        let name = self.spanned_symbol();
-                        let alias = if self.try_consume(TokenKind::As) {
-                            // Accept both Ident and TypeIdent for aliases
-                            if self.check(TokenKind::Ident) || self.check(TokenKind::TypeIdent) {
-                                self.advance();
-                                Some(self.spanned_symbol())
-                            } else {
-                                self.error_expected("identifier");
-                                None
-                            }
-                        } else {
-                            None
-                        };
-                        items.push(ImportItem { name, alias });
-                    } else {
-                        self.error_expected("identifier");
-                        break;
-                    }
-
-                    if !self.try_consume(TokenKind::Comma) {
-                        break;
-                    }
-                }
+                let items = self.parse_import_items();
 
                 self.expect(TokenKind::RBrace);
                 self.expect(TokenKind::Semi);
@@ -831,7 +804,7 @@ impl<'src> Parser<'src> {
                 Import::Group {
                     visibility,
                     path,
-                    items: vec![ImportItem { name, alias }],
+                    items: vec![ImportItem::Simple { name, alias }],
                     span: start.merge(self.previous.span),
                 }
             } else {
@@ -868,6 +841,104 @@ impl<'src> Parser<'src> {
                 span: start.merge(self.previous.span),
             }
         }
+    }
+
+    /// Parse import items within braces `{...}`.
+    /// Supports simple items (`name`, `name as alias`) and nested groups (`path::{items}`).
+    fn parse_import_items(&mut self) -> Vec<ImportItem> {
+        let mut items = Vec::new();
+
+        loop {
+            if self.check(TokenKind::RBrace) {
+                break;
+            }
+
+            if self.check_ident() || self.check(TokenKind::TypeIdent) {
+                // Parse the first segment of the path
+                // Note: check_ident() includes contextual keywords like `module`, `op`, etc.
+                self.advance();
+                let first_name = self.spanned_symbol();
+
+                // Check for nested path continuation: `::` or `.`
+                if self.check(TokenKind::ColonColon) || self.check(TokenKind::Dot) {
+                    // This is a nested path, collect all segments
+                    let mut path_segments = vec![first_name];
+
+                    while self.try_consume(TokenKind::ColonColon) || self.try_consume(TokenKind::Dot) {
+                        if self.try_consume(TokenKind::LBrace) {
+                            // Nested group: `path::{items}`
+                            let nested_items = self.parse_import_items();
+                            self.expect(TokenKind::RBrace);
+                            items.push(ImportItem::Nested {
+                                path: path_segments,
+                                items: nested_items,
+                            });
+                            path_segments = Vec::new(); // Mark as consumed
+                            break;
+                        } else if self.check_ident() || self.check(TokenKind::TypeIdent) {
+                            // Continue path: `path::segment`
+                            self.advance();
+                            path_segments.push(self.spanned_symbol());
+                        } else {
+                            self.error_expected("identifier or `{`");
+                            break;
+                        }
+                    }
+
+                    // If path_segments is not empty, it's a simple nested path without braces
+                    // e.g., `use foo::{bar::baz}` - treat as simple item with full path
+                    // For now, we don't support this - the path must end with braces
+                    if !path_segments.is_empty() && path_segments.len() > 1 {
+                        // We have a path like `context::create_context` - treat as error for now
+                        // In Rust, this would be `use foo::{bar::baz}` which imports `baz`
+                        // For simplicity, require braces for nested groups
+                        let name = path_segments.pop().unwrap();
+                        items.push(ImportItem::Nested {
+                            path: path_segments,
+                            items: vec![ImportItem::Simple { name, alias: None }],
+                        });
+                    } else if path_segments.len() == 1 {
+                        // Single name after `::` that doesn't have braces - simple item
+                        let alias = if self.try_consume(TokenKind::As) {
+                            if self.check_ident() || self.check(TokenKind::TypeIdent) {
+                                self.advance();
+                                Some(self.spanned_symbol())
+                            } else {
+                                self.error_expected("identifier");
+                                None
+                            }
+                        } else {
+                            None
+                        };
+                        items.push(ImportItem::Simple { name: path_segments.remove(0), alias });
+                    }
+                    // else: path_segments is empty, nested item was already added
+                } else {
+                    // Simple item (possibly with alias)
+                    let alias = if self.try_consume(TokenKind::As) {
+                        if self.check_ident() || self.check(TokenKind::TypeIdent) {
+                            self.advance();
+                            Some(self.spanned_symbol())
+                        } else {
+                            self.error_expected("identifier");
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                    items.push(ImportItem::Simple { name: first_name, alias });
+                }
+            } else {
+                self.error_expected("identifier");
+                break;
+            }
+
+            if !self.try_consume(TokenKind::Comma) {
+                break;
+            }
+        }
+
+        items
     }
 
     // ============================================================
@@ -963,13 +1034,13 @@ impl<'src> Parser<'src> {
 
         let mut path = Vec::new();
 
-        // Parse attribute path
-        if self.check(TokenKind::Ident) || self.check(TokenKind::TypeIdent) {
+        // Parse attribute path (including contextual keywords like `default`)
+        if self.check_ident() || self.check(TokenKind::TypeIdent) {
             self.advance();
             path.push(self.spanned_symbol());
 
             while self.try_consume(TokenKind::ColonColon) {
-                if self.check(TokenKind::Ident) || self.check(TokenKind::TypeIdent) {
+                if self.check_ident() || self.check(TokenKind::TypeIdent) {
                     self.advance();
                     path.push(self.spanned_symbol());
                 } else {
@@ -992,7 +1063,7 @@ impl<'src> Parser<'src> {
                     break;
                 }
 
-                let arg = if self.check(TokenKind::Ident) || self.check(TokenKind::TypeIdent) {
+                let arg = if self.check_ident() || self.check(TokenKind::TypeIdent) {
                     self.advance();
                     let name = self.spanned_symbol();
                     if self.try_consume(TokenKind::Eq) {
@@ -1072,6 +1143,10 @@ impl<'src> Parser<'src> {
             TokenKind::CharLit => {
                 let c = self.parse_char_literal(text);
                 LiteralKind::Char(c)
+            }
+            TokenKind::ByteCharLit => {
+                let b = self.parse_byte_char_literal(text);
+                LiteralKind::Byte(b)
             }
             TokenKind::True => LiteralKind::Bool(true),
             TokenKind::False => LiteralKind::Bool(false),
@@ -1337,6 +1412,38 @@ impl<'src> Parser<'src> {
             },
             Some(c) => c,
             None => '\0',
+        }
+    }
+
+    fn parse_byte_char_literal(&self, text: &str) -> u8 {
+        // text is b'X' - skip "b'" prefix and trailing "'"
+        let inner = &text[2..text.len() - 1];
+        let mut chars = inner.chars();
+
+        match chars.next() {
+            Some('\\') => match chars.next() {
+                Some('n') => b'\n',
+                Some('r') => b'\r',
+                Some('t') => b'\t',
+                Some('\\') => b'\\',
+                Some('\'') => b'\'',
+                Some('"') => b'"',
+                Some('0') => b'\0',
+                Some('x') => {
+                    // Hex escape \xNN
+                    let mut hex = String::new();
+                    for _ in 0..2 {
+                        if let Some(h) = chars.next() {
+                            hex.push(h);
+                        }
+                    }
+                    u8::from_str_radix(&hex, 16).unwrap_or(0)
+                }
+                Some(c) => c as u8,
+                None => 0,
+            },
+            Some(c) => c as u8,
+            None => 0,
         }
     }
 }

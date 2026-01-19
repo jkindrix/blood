@@ -729,6 +729,7 @@ pub enum BinOp {
     Shl, Shr,
     Eq, Ne, Lt, Le, Gt, Ge,
     Offset, // Pointer offset
+    Concat, // String concatenation
 }
 
 /// Unary operations.
@@ -813,6 +814,8 @@ pub enum ConstantKind {
     Bool(bool),
     /// Character constant.
     Char(char),
+    /// Byte character constant.
+    Byte(u8),
     /// String constant (interned).
     String(String),
     /// Byte string constant.
