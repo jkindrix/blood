@@ -97,7 +97,7 @@ pub fn emit_generation_check(
     let address = ctx.llvm_builder().build_ptr_to_int(ptr, i64_ty, "ptr_addr\0");
 
     // Call blood_validate_generation(address: i64, expected_gen: i32) -> i32
-    // Returns: 0 = valid, 1 = stale (generation mismatch)
+    // Returns: 0 = valid, 1 = stale (generation mismatch);
     let is_stale = ctx.llvm_builder().build_call(
         validate_fn,
         &[address, expected_gen],
@@ -112,7 +112,7 @@ pub fn emit_generation_check(
     let valid_bb = append_basic_block(ctx.llvm_context_ref(), fn_value, "gen_valid\0");
     let stale_bb = append_basic_block(ctx.llvm_context_ref(), fn_value, "gen_stale\0");
 
-    // Compare: is_stale == 0 (valid if result is 0)
+    // Compare: is_stale == 0 (valid if result is 0);
     let zero = const_int(i32_ty, 0, false);
     let is_valid = ctx.llvm_builder().build_icmp_eq(is_stale, zero, "is_valid\0");
 

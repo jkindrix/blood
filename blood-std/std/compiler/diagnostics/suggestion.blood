@@ -408,7 +408,7 @@ impl Suggestion {
             };
             // Reverse order (higher positions first)
             b_pos.cmp(a_pos);
-        })
+        });
 
         let mut result = source;
         for sub in sorted {
@@ -496,7 +496,7 @@ fn test_substitution_remove() {
         std.compiler.diagnostics.span.FileId::dummy(),
         5,
         11,
-    )
+    );
     let sub = Substitution::remove(span);
     let result = sub.apply("hello world!");
 
@@ -509,7 +509,7 @@ fn test_substitution_replace() {
         std.compiler.diagnostics.span.FileId::dummy(),
         6,
         11,
-    )
+    );
     let sub = Substitution::replace(span, "Blood");
     let result = sub.apply("hello world!");
 
@@ -539,13 +539,13 @@ fn test_suggestion_insert_after() {
         std.compiler.diagnostics.span.FileId::dummy(),
         0,
         5,
-    )
+    );
     let suggestion = Suggestion::insert_after(
         "add `.unwrap()`",
         span,
         ".unwrap()",
         Applicability::MaybeIncorrect,
-    )
+    );
 
     assert(suggestion.message() == "add `.unwrap()`");
     assert(suggestion.applicability() == Applicability::MaybeIncorrect);
@@ -558,13 +558,13 @@ fn test_suggestion_replace() {
         std.compiler.diagnostics.span.FileId::dummy(),
         4,
         5,
-    )
+    );
     let suggestion = Suggestion::replace(
         "use `==` for comparison",
         span,
         "==",
         Applicability::MachineApplicable,
-    )
+    );
 
     assert(suggestion.is_machine_applicable());
     assert(suggestion.is_primary());
@@ -587,12 +587,12 @@ fn test_suggestion_apply_multiple() {
         std.compiler.diagnostics.span.FileId::dummy(),
         5,
         5,  // After "let x"
-    )
+    );
     let span2 = Span::from_offsets(
         std.compiler.diagnostics.span.FileId::dummy(),
         11,
         11,  // After "foo"
-    )
+    );
 
     let suggestion = Suggestion::with_substitutions(
         "add type annotation and call",

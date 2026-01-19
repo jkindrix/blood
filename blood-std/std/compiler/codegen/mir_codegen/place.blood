@@ -66,7 +66,7 @@ pub fn compile_mir_place(
     let mut current_ty = base_ty.clone();
     let mut current_ptr = base_ptr;
 
-    // Track if we're inside an enum variant: (enum_def_id, variant_index)
+    // Track if we're inside an enum variant: (enum_def_id, variant_index);
     let mut variant_ctx: Option<(DefId, u32)> = None;
 
     // Handle closure __env local with Field projections
@@ -177,7 +177,7 @@ fn emit_generation_validation(
     // Convert pointer to address for validation
     let address = ctx.llvm_builder().build_ptr_to_int(ptr_val, i64_ty, "ptr_addr\0");
 
-    // Call blood_validate_generation(address, expected_gen)
+    // Call blood_validate_generation(address, expected_gen);
     let validate_fn = ctx.get_runtime_fn("blood_validate_generation")
         .ok_or_else(|| vec![Diagnostic::error(
             "blood_validate_generation not declared",
@@ -186,7 +186,7 @@ fn emit_generation_validation(
 
     let result = ctx.llvm_builder().build_call(validate_fn, &[address, expected_gen], "gen_check\0");
 
-    // Check if stale (result != 0)
+    // Check if stale (result != 0);
     let zero = const_int(i32_ty, 0, false);
     let is_stale = ctx.llvm_builder().build_icmp_ne(result, zero, "is_stale\0");
 
@@ -290,7 +290,7 @@ fn compile_enum_variant_field(
                 };
                 let actual_field_ty = ctx.substitute_type_params(variant_field_ty, &args);
 
-                // Get pointer to payload area (field 1 of enum struct)
+                // Get pointer to payload area (field 1 of enum struct);
                 let enum_ty = lower_type(ctx, current_ty);
                 let payload_ptr = ctx.llvm_builder().build_struct_gep(enum_ty, current_ptr, 1, "payload_ptr\0");
 

@@ -98,7 +98,7 @@ fn generate_struct_clone_body(
     span: Span,
 ) -> Body {
     // Local 0: _0 (return place)
-    // Local 1: self (parameter)
+    // Local 1: self (parameter);
     let return_local = LocalId::new(0);
     let self_local = LocalId::new(1);
 
@@ -108,7 +108,7 @@ fn generate_struct_clone_body(
     while i < struct_info.fields.len() {
         let field = &struct_info.fields[i];
 
-        // Expression: self.field_name.clone()
+        // Expression: self.field_name.clone();
         let field_access = Expr::new(
             ExprKind::Field {
                 base: Box::new(local_expr(self_local.clone(), Type::reference(self_ty.clone(), false), span.clone())),
@@ -191,7 +191,7 @@ pub fn expand_enum(expander: &mut DeriveExpander, request: &DeriveRequest) {
         is_unsafe: false,
     };
 
-    // Create the body (match on self)
+    // Create the body (match on self);
     let body = generate_enum_clone_body(&enum_info, &self_ty, body_id, request.span.clone());
 
     // Register with expander
@@ -210,7 +210,7 @@ fn generate_enum_clone_body(
     span: Span,
 ) -> Body {
     // Local 0: _0 (return place)
-    // Local 1: self (parameter)
+    // Local 1: self (parameter);
     let return_local = LocalId::new(0);
     let self_local = LocalId::new(1);
 
@@ -285,7 +285,7 @@ fn generate_clone_match_arm(
         }
     } else {
         // Tuple variant: Pattern::Variant(EnumName::VariantName(v0, v1, ...))
-        // Body: EnumName::VariantName(v0.clone(), v1.clone(), ...)
+        // Body: EnumName::VariantName(v0.clone(), v1.clone(), ...);
         let mut field_patterns: Vec<Pattern> = Vec::new();
         let mut cloned_fields: Vec<Expr> = Vec::new();
 

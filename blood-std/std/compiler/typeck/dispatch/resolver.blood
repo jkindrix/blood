@@ -173,7 +173,7 @@ impl DispatchResolver {
         candidates: &[MethodCandidate],
         context_effects: Option<&EffectRow>,
     ) -> DispatchResult {
-        // Step 1: Filter to applicable methods (including effect check)
+        // Step 1: Filter to applicable methods (including effect check);
         let applicable = self.filter_applicable_with_effects(
             candidates,
             arg_types,
@@ -291,7 +291,7 @@ impl DispatchResolver {
             }
         };
 
-        // Check each argument against parameter (non-generic case)
+        // Check each argument against parameter (non-generic case);
         let mut i: usize = 0;
         while i < arg_types.len() {
             if !self.is_subtype(&arg_types[i], &method.param_types[i]) {
@@ -761,11 +761,11 @@ impl DispatchResolver {
         // Never is a subtype of everything (bottom type)
         match b.kind() {
             TypeKind::Never => return false, // Nothing is subtype of never except never
-            _ => {};
+            _ => {}
         };
         match a.kind() {
             TypeKind::Never => return true, // never is subtype of everything
-            _ => {};
+            _ => {}
         };
 
         // Integer promotion: narrower integers are subtypes of wider
@@ -775,14 +775,14 @@ impl DispatchResolver {
                     return true;
                 }
             }
-            _ => {};
+            _ => {}
         };
 
         // Type parameter check: if b is a type variable, need to check constraints
         match b.kind() {
             TypeKind::Infer(_) => return true,
             TypeKind::Param(_) => return true,
-            _ => {};
+            _ => {}
         };
 
         // Variance rules for compound types
@@ -910,7 +910,7 @@ impl DispatchResolver {
                 return true;
             }
 
-            _ => {};
+            _ => {}
         }
 
         false
@@ -1322,7 +1322,7 @@ mod tests {
         assert!(resolver.is_subtype(&Type::never(), &Type::i32()));
         assert!(resolver.is_subtype(&Type::never(), &Type::bool()));
 
-        // nothing is subtype of never (except never itself)
+        // nothing is subtype of never (except never itself);
         assert!(!resolver.is_subtype(&Type::i32(), &Type::never()));
     }
 
@@ -1355,7 +1355,7 @@ mod tests {
 
         let maximal = resolver.find_maximal(&[m1, m2]);
 
-        // Both are maximal (neither more specific than the other)
+        // Both are maximal (neither more specific than the other);
         assert_eq!(maximal.len(), 2);
     }
 
@@ -1363,7 +1363,7 @@ mod tests {
     fn test_effect_specificity_pure_vs_effectful() {
         let resolver = DispatchResolver::new();
 
-        // None (pure) is more specific than Some (effectful)
+        // None (pure) is more specific than Some (effectful);
         let pure_effects: Option<EffectRow> = None;
         let effectful = Some(EffectRow::pure());
 

@@ -260,7 +260,7 @@ fn compile_checked_binary_op(
         // For operations without overflow intrinsics, fall back to unchecked
         _ => {
             let result = compile_binary_op(ctx, op, lhs, rhs, false)?;
-            // Build struct with result and false (no overflow)
+            // Build struct with result and false (no overflow);
             let i1_ty = i1_type(ctx.llvm_context_ref());
             let no_overflow = const_int(i1_ty, 0, false);
             let lhs_ty = ctx.llvm_builder().get_value_type(lhs);
@@ -753,7 +753,7 @@ fn compile_read_generation(
     if ctx.llvm_builder().is_struct_value(blood_ptr_val) {
         Ok(ctx.llvm_builder().build_extract_value(blood_ptr_val, 1, "generation\0"))
     } else {
-        // Not a BloodPtr struct - return generation::FIRST (1)
+        // Not a BloodPtr struct - return generation::FIRST (1);
         let i32_ty = i32_type(ctx.llvm_context_ref());
         Ok(const_int(i32_ty, 1, false))
     }

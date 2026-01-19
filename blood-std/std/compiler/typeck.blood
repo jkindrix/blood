@@ -1059,7 +1059,7 @@ impl EffectContext {
                     i = i + 1;
                 }
             };
-            None => {};
+            None => {}
         };
 
         // Check if handled by an enclosing handler
@@ -1247,7 +1247,7 @@ impl TraitResolver {
                     i = i + 1;
                     continue;
                 };
-                None => {};
+                None => {}
             }
 
             // Check if the type matches
@@ -1340,10 +1340,10 @@ impl TraitResolver {
             Some(impl_def) => {
                 match impl_def.methods.get(method_name) {
                     Some(method) => return Some((impl_def.clone(), method.clone())),
-                    None => {};
+                    None => {}
                 }
             };
-            None => {};
+            None => {}
         };
 
         // Then, check trait impls
@@ -1353,7 +1353,7 @@ impl TraitResolver {
             if self.type_matches(&impl_def.self_type, ty, unifier) {
                 match impl_def.methods.get(method_name) {
                     Some(method) => return Some((impl_def.clone(), method.clone())),
-                    None => {};
+                    None => {}
                 }
             };
             i = i + 1;
@@ -1785,7 +1785,7 @@ impl TypeContext {
                                 j = j + 1;
                             }
                         };
-                        None => {};
+                        None => {}
                     };
                     effects.push(EffectInstance { def_id, args });
                 };
@@ -1883,7 +1883,7 @@ impl TypeContext {
                                 Err(e) => self.error(e),
                             }
                         };
-                        None => {};
+                        None => {}
                     };
 
                     // Check arm body
@@ -2018,7 +2018,7 @@ impl TypeContext {
                 // TODO: check against enclosing function's return type
                 match value {
                     Some(v) => { self.infer_expr(v); }
-                    None => {};
+                    None => {}
                 }
                 Type::never()
             }
@@ -2027,7 +2027,7 @@ impl TypeContext {
                 // TODO: check against enclosing loop's expected type
                 match value {
                     Some(v) => { self.infer_expr(v); }
-                    None => {};
+                    None => {}
                 }
                 Type::never()
             }
@@ -2118,7 +2118,7 @@ impl TypeContext {
                         let expected = self.lower_type(ret_ty);
                         self.unifier.unify(&body_ty, &expected, expr.span);
                     };
-                    None => {};
+                    None => {}
                 };
 
                 // Restore scope
@@ -2271,7 +2271,7 @@ impl TypeContext {
                         let value_ty = self.infer_expr(expr);
                         self.unifier.unify(&expected_ty, &value_ty, *span);
                     };
-                    None => {};
+                    None => {}
                 };
 
                 // Bind pattern
@@ -2414,7 +2414,7 @@ impl TypeContext {
                                                             }
                                                         }
                                                     };
-                                                    None => {};
+                                                    None => {}
                                                 }
                                             };
                                             None => {
@@ -2491,7 +2491,7 @@ impl TypeContext {
                             Err(e) => self.error(e),
                         }
                     };
-                    None => {};
+                    None => {}
                 }
             }
 
@@ -2662,7 +2662,7 @@ impl TypeContext {
         // Look up method using trait resolver
         match self.trait_resolver.lookup_method(&base_ty, method, &self.unifier) {
             Some((impl_def, method_def)) => {
-                // Check argument count (method_def.params includes self)
+                // Check argument count (method_def.params includes self);
                 let expected_args = if method_def.params.len() > 0 {
                     method_def.params.len() - 1  // Exclude self
                 } else {
@@ -2846,7 +2846,7 @@ impl TypeContext {
         // Push handled effects onto stack
         self.handled_effects.push(handled_row);
 
-        // Infer the type of the inner expression (with handlers in scope)
+        // Infer the type of the inner expression (with handlers in scope);
         let inner_ty = self.infer_expr(inner);
 
         // Pop handled effects
@@ -2929,7 +2929,7 @@ impl TypeContext {
                         });
                         self.scope.define_var(resume_name.value.clone(), resume_ty);
                     };
-                    None => {};
+                    None => {}
                 };
 
                 // Check handler body
@@ -3158,7 +3158,7 @@ impl TypeContext {
                 Declaration::Impl(impl_block) => {
                     self.check_impl_block(impl_block);
                 }
-                _ => {};
+                _ => {}
             };
             i = i + 1;
         }
@@ -3285,7 +3285,7 @@ impl TypeContext {
         let old_scope = self.scope.clone();
         self.scope = self.scope.child();
 
-        // Add parameters to scope (including self)
+        // Add parameters to scope (including self);
         let mut i: usize = 0;
         while i < method.params.len() {
             let param = &method.params[i];
@@ -3318,7 +3318,7 @@ impl TypeContext {
                     Err(e) => self.error(e),
                 }
             };
-            None => {};
+            None => {}
         };
 
         // Restore state
@@ -3503,7 +3503,7 @@ impl ExhaustivenessChecker {
         while i < patterns.len() {
             match &patterns[i] {
                 PatternMatrix::Wild => return vec![],
-                _ => {};
+                _ => {}
             };
             i = i + 1;
         };
@@ -3564,12 +3564,12 @@ impl ExhaustivenessChecker {
                                 has_true = true;
                                 has_false = true;
                             }
-                            _ => {};
+                            _ => {}
                         };
                         j = j + 1;
                     }
                 }
-                _ => {};
+                _ => {}
             };
             i = i + 1;
         };
@@ -3625,12 +3625,12 @@ impl ExhaustivenessChecker {
                             PatternMatrix::Constructor { name, args: _ } => {
                                 covered.insert(name.clone());
                             }
-                            _ => {};
+                            _ => {}
                         };
                         j = j + 1;
                     }
                 }
-                _ => {};
+                _ => {}
             };
             i = i + 1;
         };

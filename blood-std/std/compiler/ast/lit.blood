@@ -435,26 +435,26 @@ pub fn process_escapes(s: &str) -> Result<String, String> {
                 Some('0') => result.push('\0'),
                 Some('x') => {
                     // Byte escape: \xNN
-                    let hex = collect_hex_digits(&mut chars, 2)?
+                    let hex = collect_hex_digits(&mut chars, 2)?;
                     let byte = u8::from_str_radix(&hex, 16)
-                        .map_err(|_| format!("invalid hex escape: \\x{}", hex))?
+                        .map_err(|_| format!("invalid hex escape: \\x{}", hex))?;
                     result.push(byte as Char);
-                };
+                }
                 Some('u') => {
                     // Unicode escape: \u{NNNN}
                     if chars.next() != Some('{') {
                         return Err("expected '{' after \\u".to_string());
-                    };
-                    let hex = collect_until(&mut chars, '}')?
+                    }
+                    let hex = collect_until(&mut chars, '}')?;
                     let codepoint = u32::from_str_radix(&hex, 16)
-                        .map_err(|_| format!("invalid unicode escape: \\u{{{}}}", hex))?
+                        .map_err(|_| format!("invalid unicode escape: \\u{{{}}}", hex))?;
                     let ch = char::from_u32(codepoint)
-                        .ok_or_else(|| format!("invalid unicode codepoint: {}", codepoint))?
+                        .ok_or_else(|| format!("invalid unicode codepoint: {}", codepoint))?;
                     result.push(ch);
-                };
+                }
                 Some(c) => {
                     return Err(format!("unknown escape sequence: \\{}", c));
-                };
+                }
                 None => {
                     return Err("unexpected end of string after backslash".to_string());
                 }
