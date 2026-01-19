@@ -241,6 +241,7 @@ impl<'src> Parser<'src> {
                 | TokenKind::Module
                 | TokenKind::Union
                 | TokenKind::Resume
+                | TokenKind::Catch
                 // Note: Crate and Super are NOT contextual keywords - they are path roots
                 // and should be handled specially in path parsing, not as identifiers
         )
@@ -1058,37 +1059,7 @@ impl<'src> Parser<'src> {
         let args = if self.try_consume(TokenKind::Eq) {
             Some(AttributeArgs::Eq(self.parse_literal()))
         } else if self.try_consume(TokenKind::LParen) {
-            let mut args = Vec::new();
-
-            loop {
-                if self.check(TokenKind::RParen) {
-                    break;
-                }
-
-                let arg = if self.check_ident() || self.check(TokenKind::TypeIdent) {
-                    self.advance();
-                    let name = self.spanned_symbol();
-                    if self.try_consume(TokenKind::Eq) {
-                        AttributeArg::KeyValue(name, self.parse_literal())
-                    } else if self.try_consume(TokenKind::LParen) {
-                        // Nested attribute like #[repr(align(N))]
-                        let inner = self.parse_literal();
-                        self.expect(TokenKind::RParen);
-                        AttributeArg::Call(name, inner)
-                    } else {
-                        AttributeArg::Ident(name)
-                    }
-                } else {
-                    AttributeArg::Literal(self.parse_literal())
-                };
-
-                args.push(arg);
-
-                if !self.try_consume(TokenKind::Comma) {
-                    break;
-                }
-            }
-
+            let args = self.parse_attribute_args_list();
             self.expect(TokenKind::RParen);
             Some(AttributeArgs::List(args))
         } else {
@@ -1103,6 +1074,42 @@ impl<'src> Parser<'src> {
             args,
             span: start.merge(self.previous.span),
         }
+    }
+
+    /// Parse a list of attribute arguments (handles nested calls recursively)
+    fn parse_attribute_args_list(&mut self) -> Vec<AttributeArg> {
+        let mut args = Vec::new();
+
+        loop {
+            if self.check(TokenKind::RParen) {
+                break;
+            }
+
+            let arg = if self.check_ident() || self.check(TokenKind::TypeIdent) {
+                self.advance();
+                let name = self.spanned_symbol();
+                if self.try_consume(TokenKind::Eq) {
+                    AttributeArg::KeyValue(name, self.parse_literal())
+                } else if self.try_consume(TokenKind::LParen) {
+                    // Nested attribute like #[repr(align(N))] or #[cfg(not(debug_assertions))]
+                    let inner_args = self.parse_attribute_args_list();
+                    self.expect(TokenKind::RParen);
+                    AttributeArg::Call(name, inner_args)
+                } else {
+                    AttributeArg::Ident(name)
+                }
+            } else {
+                AttributeArg::Literal(self.parse_literal())
+            };
+
+            args.push(arg);
+
+            if !self.try_consume(TokenKind::Comma) {
+                break;
+            }
+        }
+
+        args
     }
 
     // ============================================================

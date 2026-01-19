@@ -222,7 +222,7 @@ impl<'src> Parser<'src> {
             | TokenKind::Default | TokenKind::Handle | TokenKind::Op | TokenKind::Crate
             | TokenKind::Module | TokenKind::Handler | TokenKind::Effect | TokenKind::Pure
             | TokenKind::Extends | TokenKind::Linear | TokenKind::Affine
-            | TokenKind::Region | TokenKind::Deep | TokenKind::Shallow => {
+            | TokenKind::Region | TokenKind::Deep | TokenKind::Shallow | TokenKind::Resume => {
                 self.parse_ident_or_path_pattern()
             }
 

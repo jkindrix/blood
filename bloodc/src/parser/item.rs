@@ -22,10 +22,18 @@ impl<'src> Parser<'src> {
             }
             TokenKind::Async => Some(Declaration::Function(self.parse_fn_decl(attrs, vis))),
             TokenKind::Unsafe | TokenKind::AtUnsafe => {
-                // unsafe fn or @unsafe fn
-                Some(Declaration::Function(self.parse_fn_decl(attrs, vis)))
+                // Check what follows unsafe: fn, trait, or impl
+                if self.check_next(TokenKind::Trait) {
+                    Some(Declaration::Trait(self.parse_trait_decl(attrs, vis)))
+                } else if self.check_next(TokenKind::Impl) {
+                    Some(Declaration::Impl(self.parse_impl_block(attrs)))
+                } else {
+                    // unsafe fn or @unsafe fn
+                    Some(Declaration::Function(self.parse_fn_decl(attrs, vis)))
+                }
             }
-            TokenKind::Struct => Some(Declaration::Struct(self.parse_struct_decl(attrs, vis))),
+            TokenKind::Struct => Some(Declaration::Struct(self.parse_struct_decl(attrs, vis, false))),
+            TokenKind::Union => Some(Declaration::Struct(self.parse_struct_decl(attrs, vis, true))),
             TokenKind::Enum => Some(Declaration::Enum(self.parse_enum_decl(attrs, vis))),
             TokenKind::Effect => Some(Declaration::Effect(self.parse_effect_decl(attrs))),
             TokenKind::Deep | TokenKind::Shallow | TokenKind::Handler => {
@@ -54,7 +62,7 @@ impl<'src> Parser<'src> {
             }
             _ => {
                 self.error_expected_one_of(&[
-                    "`fn`", "`struct`", "`enum`", "`trait`", "`impl`",
+                    "`fn`", "`struct`", "`union`", "`enum`", "`trait`", "`impl`",
                     "`effect`", "`handler`", "`type`", "`const`", "`static`",
                     "`bridge`", "`extern`", "`mod`", "`macro`", "`unsafe`",
                 ]);
@@ -551,10 +559,21 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_type_bounds(&mut self) -> Vec<Type> {
-        let mut bounds = vec![self.parse_type()];
+        // First bound could be a type or lifetime
+        let mut bounds = if self.check(TokenKind::Lifetime) {
+            self.advance(); // consume the lifetime - AST doesn't support lifetime bounds yet
+            Vec::new()
+        } else {
+            vec![self.parse_type()]
+        };
 
         while self.try_consume(TokenKind::Plus) {
-            bounds.push(self.parse_type());
+            // Handle lifetime bounds (e.g., `+ 'a`) - skip them for now
+            if self.check(TokenKind::Lifetime) {
+                self.advance(); // consume the lifetime
+            } else {
+                bounds.push(self.parse_type());
+            }
         }
 
         bounds
@@ -620,9 +639,9 @@ impl<'src> Parser<'src> {
     // Struct Declaration
     // ============================================================
 
-    fn parse_struct_decl(&mut self, attrs: Vec<Attribute>, vis: Visibility) -> StructDecl {
+    fn parse_struct_decl(&mut self, attrs: Vec<Attribute>, vis: Visibility, is_union: bool) -> StructDecl {
         let start = self.current.span;
-        self.advance(); // consume 'struct'
+        self.advance(); // consume 'struct' or 'union'
 
         let name = if self.check(TokenKind::TypeIdent) {
             self.advance();
@@ -633,6 +652,9 @@ impl<'src> Parser<'src> {
         };
 
         let type_params = self.parse_optional_type_params();
+
+        // Parse optional where clause before the body
+        let _where_clause = self.parse_optional_where_clause();
 
         let body = if self.try_consume(TokenKind::Semi) {
             StructBody::Unit
@@ -659,6 +681,7 @@ impl<'src> Parser<'src> {
             type_params,
             body,
             span: start.merge(self.previous.span),
+            is_union,
         }
     }
 
@@ -851,18 +874,22 @@ impl<'src> Parser<'src> {
                 self.advance();
             }
 
-            // Check if we're at a valid operation start
+            // Check if we're at a valid operation start - effects can have both `op` and `fn` members
             if self.check(TokenKind::Op) {
                 operations.push(self.parse_operation_decl());
+            } else if self.check(TokenKind::Fn) {
+                // `fn` in an effect is syntactic sugar for an operation
+                operations.push(self.parse_effect_fn_decl());
             } else if self.check(TokenKind::RBrace) {
                 // Done with operations
                 break;
             } else {
                 // Error recovery: skip invalid token and report error
-                self.error_expected("keyword `op`");
+                self.error_expected("keyword `op` or `fn`");
                 // Skip past this invalid item to prevent infinite loop
-                // Advance until we hit `op`, `}`, or end of file
+                // Advance until we hit `op`, `fn`, `}`, or end of file
                 while !self.check(TokenKind::Op)
+                    && !self.check(TokenKind::Fn)
                     && !self.check(TokenKind::RBrace)
                     && !self.is_at_end()
                 {
@@ -916,6 +943,47 @@ impl<'src> Parser<'src> {
         }
     }
 
+    /// Parse a function declaration within an effect (syntactic sugar for operation)
+    fn parse_effect_fn_decl(&mut self) -> OperationDecl {
+        let start = self.current.span;
+        self.expect(TokenKind::Fn);
+
+        // Allow contextual keywords as function names
+        let name = if self.check_ident() {
+            self.advance();
+            self.spanned_symbol()
+        } else {
+            self.error_expected("function name");
+            Spanned::new(self.intern(""), self.current.span)
+        };
+
+        let type_params = self.parse_optional_type_params();
+
+        self.expect(TokenKind::LParen);
+        let params = self.parse_params();
+        self.expect(TokenKind::RParen);
+
+        // Return type is optional for fn syntax (defaults to unit if not specified)
+        let return_type = if self.try_consume(TokenKind::Arrow) {
+            self.parse_type()
+        } else {
+            Type {
+                kind: TypeKind::Tuple(Vec::new()),
+                span: self.previous.span,
+            }
+        };
+
+        self.expect(TokenKind::Semi);
+
+        OperationDecl {
+            name,
+            type_params,
+            params,
+            return_type,
+            span: start.merge(self.previous.span),
+        }
+    }
+
     // ============================================================
     // Handler Declaration
     // ============================================================
@@ -944,7 +1012,16 @@ impl<'src> Parser<'src> {
         let type_params = self.parse_optional_type_params();
 
         self.expect(TokenKind::For);
-        let effect = self.parse_type();
+        // Handle wildcard effect: `handler Foo for * { ... }`
+        let effect = if self.try_consume(TokenKind::Star) {
+            // Create a wildcard/any type to represent `*`
+            Type {
+                kind: TypeKind::Wildcard,
+                span: self.previous.span,
+            }
+        } else {
+            self.parse_type()
+        };
 
         let where_clause = self.parse_optional_where_clause();
 
@@ -956,17 +1033,43 @@ impl<'src> Parser<'src> {
             state.push(self.parse_handler_state());
         }
 
-        // Parse return clause
-        let return_clause = if self.check(TokenKind::Return) {
-            Some(self.parse_return_clause())
-        } else {
-            None
-        };
-
-        // Parse operation implementations
+        // Parse handler body items: return clause, fn methods, and op handlers
+        // These can be interleaved in any order
+        let mut return_clause = None;
         let mut operations = Vec::new();
-        while self.check(TokenKind::Op) {
-            operations.push(self.parse_operation_impl());
+        let mut methods = Vec::new();
+
+        while !self.check(TokenKind::RBrace) && !self.is_at_end() {
+            if self.check(TokenKind::Return) {
+                return_clause = Some(self.parse_return_clause());
+            } else if self.check(TokenKind::Op) {
+                operations.push(self.parse_operation_impl());
+            } else if self.check(TokenKind::Fn) || self.check(TokenKind::Pub) {
+                // Parse fn method (with optional pub visibility)
+                let attrs = Vec::new();
+                let vis = self.parse_visibility();
+                if self.check(TokenKind::Fn) {
+                    methods.push(self.parse_fn_decl(attrs, vis));
+                } else {
+                    self.error_expected("`fn`, `op`, or `return`");
+                    self.advance();
+                }
+            } else if self.check(TokenKind::Type) {
+                // Associated type: `type Output = T;`
+                // Skip for now - just parse and discard
+                self.advance(); // consume 'type'
+                if self.check_ident() || self.check(TokenKind::TypeIdent) {
+                    self.advance(); // consume name
+                }
+                if self.try_consume(TokenKind::Eq) {
+                    let _ty = self.parse_type();
+                }
+                self.try_consume(TokenKind::Semi);
+            } else {
+                // Unknown item in handler body
+                self.error_expected("`fn`, `op`, `return`, `type`, or `}`");
+                self.advance();
+            }
         }
 
         self.expect(TokenKind::RBrace);
@@ -981,6 +1084,7 @@ impl<'src> Parser<'src> {
             state,
             return_clause,
             operations,
+            methods,
             span: start.merge(self.previous.span),
         }
     }
@@ -1026,14 +1130,14 @@ impl<'src> Parser<'src> {
         self.advance(); // consume 'return'
 
         self.expect(TokenKind::LParen);
-        // Allow contextual keywords as parameter names
-        let param = if self.check_ident() {
-            self.advance();
-            self.spanned_symbol()
-        } else {
-            self.error_expected("parameter name");
-            Spanned::new(self.intern(""), self.current.span)
-        };
+        // Parse pattern (allows `return(x)`, `return(())`, `return((a, b))`, etc.)
+        let param = self.parse_pattern();
+
+        // Optional type annotation: `return(x: T)` - skip the type for now
+        if self.try_consume(TokenKind::Colon) {
+            let _ty = self.parse_type();
+        }
+
         self.expect(TokenKind::RParen);
 
         let body = self.parse_block();
@@ -1058,10 +1162,21 @@ impl<'src> Parser<'src> {
             Spanned::new(self.intern(""), self.current.span)
         };
 
+        // Optional generic parameters: `op spawn<T, F: FnOnce() -> T>(...)`
+        let _generics = self.parse_optional_type_params();
+
         self.expect(TokenKind::LParen);
         let mut params = Vec::new();
         while !self.check(TokenKind::RParen) && !self.is_at_end() {
+            // Parse pattern
             params.push(self.parse_pattern());
+
+            // Handle optional type annotation: `param: Type`
+            // This is needed for handler operations like `op raise(e: E)`
+            if self.try_consume(TokenKind::Colon) {
+                let _ty = self.parse_type(); // Parse and discard for now
+            }
+
             if !self.try_consume(TokenKind::Comma) {
                 break;
             }
@@ -1084,6 +1199,11 @@ impl<'src> Parser<'src> {
 
     fn parse_trait_decl(&mut self, attrs: Vec<Attribute>, vis: Visibility) -> TraitDecl {
         let start = self.current.span;
+
+        // Handle optional `unsafe` prefix
+        let is_unsafe = self.try_consume(TokenKind::Unsafe) || self.try_consume(TokenKind::AtUnsafe);
+        let _ = is_unsafe; // TODO: Store in TraitDecl when AST supports it
+
         self.advance(); // consume 'trait'
 
         let name = if self.check(TokenKind::TypeIdent) {
@@ -1166,6 +1286,11 @@ impl<'src> Parser<'src> {
 
     fn parse_impl_block(&mut self, attrs: Vec<Attribute>) -> ImplBlock {
         let start = self.current.span;
+
+        // Handle optional `unsafe` prefix
+        let is_unsafe = self.try_consume(TokenKind::Unsafe) || self.try_consume(TokenKind::AtUnsafe);
+        let _ = is_unsafe; // TODO: Store in ImplBlock when AST supports it
+
         self.advance(); // consume 'impl'
 
         let type_params = self.parse_optional_type_params();
@@ -2055,7 +2180,7 @@ impl<'src> Parser<'src> {
         self.check_next(TokenKind::Not)
     }
 
-    /// Parse a macro invocation at declaration level: `name! { ... }` or `name!(...)`
+    /// Parse a macro invocation at declaration level: `name! { ... }` or `name!(...);`
     fn parse_macro_invocation_decl(&mut self, attrs: Vec<Attribute>) -> MacroInvocationDecl {
         let start = self.current.span;
 
@@ -2066,8 +2191,17 @@ impl<'src> Parser<'src> {
         // Consume `!`
         self.expect(TokenKind::Not);
 
+        // Check if using braces (no semicolon required) or parens/brackets (semicolon required)
+        let uses_braces = self.check(TokenKind::LBrace);
+
         // Parse the token tree
         let tokens = self.parse_macro_token_tree();
+
+        // Macro invocations with () or [] require trailing semicolon at declaration level
+        // e.g., `foo!(bar);` or `foo![bar];` but `foo! { bar }` doesn't need one
+        if !uses_braces {
+            self.try_consume(TokenKind::Semi);
+        }
 
         let name_span = name_ident.span;
         MacroInvocationDecl {

@@ -503,10 +503,11 @@ impl<'src> Parser<'src> {
         }
     }
 
-    /// Parse fn-trait style type arguments: `(T1, T2) -> R`
+    /// Parse fn-trait style type arguments: `(T1, T2) -> R / E`
     ///
     /// This handles syntax like `FnMut(&T) -> bool` which is parsed as
-    /// `FnMut<((&T,)), bool>` internally.
+    /// `FnMut<((&T,)), bool>` internally, and `FnOnce() -> T / {IO}` which
+    /// is parsed as `FnOnce<((),), T, {IO}>`.
     fn parse_fn_trait_args(&mut self) -> TypeArgs {
         let start = self.current.span;
         self.expect(TokenKind::LParen);
@@ -533,6 +534,12 @@ impl<'src> Parser<'src> {
         if self.try_consume(TokenKind::Arrow) {
             let return_type = self.parse_type();
             args.push(TypeArg::Type(return_type));
+        }
+
+        // Parse optional effect annotation: `/ E` or `/ {IO}` or `/ pure`
+        if self.try_consume(TokenKind::Slash) {
+            let effect = self.parse_effect_row();
+            args.push(TypeArg::Effect(effect));
         }
 
         TypeArgs {

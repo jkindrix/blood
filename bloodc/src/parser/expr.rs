@@ -162,6 +162,13 @@ impl<'src> Parser<'src> {
                 break;
             }
 
+            // Check for `&mut` which is unary borrow, not binary AND
+            // This handles cases like: `if x { return &mut []; } &mut self.buffer[0..1]`
+            // where the `&` after the if block is a new unary expression, not binary AND
+            if self.current.kind == TokenKind::And && self.check_next(TokenKind::Mut) {
+                break;
+            }
+
             let op_token = self.current.kind;
             self.advance();
 
@@ -797,15 +804,41 @@ impl<'src> Parser<'src> {
                 }
             }
 
+            // Handle expression: `handle expr { clauses }` or `handle expr with handler { clauses }`
+            // Note: `handle` can also be used as an identifier (variable name or function name)
+            TokenKind::Handle => {
+                // Check if this is a handle expression or just an identifier
+                // `handle` is an identifier when followed by:
+                //   - Expression terminators: `)`, `,`, `;`, `}`
+                //   - Field access: `.` (e.g., `handle.id`)
+                //   - Function call: `(` (e.g., `handle(args)` as function call)
+                // `handle` starts a handle expression otherwise (parses handle expr { ... })
+                if self.check_next(TokenKind::RParen)
+                    || self.check_next(TokenKind::Comma)
+                    || self.check_next(TokenKind::Semi)
+                    || self.check_next(TokenKind::RBrace)
+                    || self.check_next(TokenKind::Dot)
+                    || self.check_next(TokenKind::LParen)
+                {
+                    // `handle` used as identifier (e.g., `foo(handle)`, `handle.field`, `handle(args)`)
+                    self.parse_path_or_struct_expr()
+                } else {
+                    // Handle expression: `handle expr { ... }` or `handle expr with handler ...`
+                    self.parse_handle_expr()
+                }
+            }
+
             // Identifiers and paths (including contextual keywords usable as identifiers)
             // Note: Contextual keywords can be identifiers in names (fn default, field handle)
             // They are parsed as identifiers/paths first, not as special expressions.
             // Crate and Super can start paths (crate.module.Type, super.module.Type)
+            // Reserved keywords (catch, try, finally, throw, yield) can be used as function names
             TokenKind::Ident | TokenKind::TypeIdent | TokenKind::SelfLower | TokenKind::SelfUpper
-            | TokenKind::Handle | TokenKind::Default | TokenKind::Crate | TokenKind::Super
+            | TokenKind::Default | TokenKind::Crate | TokenKind::Super
             | TokenKind::Op | TokenKind::Module | TokenKind::Ref | TokenKind::Pure
-            | TokenKind::Region | TokenKind::Linear | TokenKind::Affine | TokenKind::Extends
-            | TokenKind::Handler | TokenKind::Effect | TokenKind::Deep | TokenKind::Shallow => {
+            | TokenKind::Linear | TokenKind::Affine | TokenKind::Extends
+            | TokenKind::Handler | TokenKind::Effect | TokenKind::Deep | TokenKind::Shallow | TokenKind::Resume
+            | TokenKind::Catch | TokenKind::Try | TokenKind::Finally | TokenKind::Throw | TokenKind::Yield => {
                 self.parse_path_or_struct_expr()
             }
 
@@ -904,16 +937,9 @@ impl<'src> Parser<'src> {
             TokenKind::Try => self.parse_try_with_expr(),
             TokenKind::With => self.parse_with_handle_expr(),
             TokenKind::Perform => self.parse_perform_expr(),
-            TokenKind::Resume => {
-                self.advance();
-                self.expect(TokenKind::LParen);
-                let value = self.parse_expr();
-                self.expect(TokenKind::RParen);
-                Expr {
-                    kind: ExprKind::Resume(Box::new(value)),
-                    span: start.merge(self.previous.span),
-                }
-            }
+            // Note: `resume` is handled as an identifier in the path case above.
+            // When followed by `(`, it gets parsed as a function call which is then
+            // converted to ExprKind::Resume during postfix parsing.
 
             // Unsafe block
             TokenKind::AtUnsafe => {
@@ -961,27 +987,6 @@ impl<'src> Parser<'src> {
                         kind: ExprKind::Tuple(Vec::new()),
                         span: start.merge(self.previous.span),
                     }
-                }
-            }
-
-            // Some keywords can be used as identifiers in expression context
-            TokenKind::Handler | TokenKind::Effect | TokenKind::Deep | TokenKind::Shallow => {
-                // Treat as identifier
-                self.advance();
-                let name = self.spanned_symbol();
-                let path = ExprPath {
-                    segments: vec![ExprPathSegment { name, args: None }],
-                    span: start.merge(self.previous.span),
-                };
-
-                // Check for struct literal
-                if self.check(TokenKind::LBrace) && !self.is_statement_context() {
-                    return self.parse_struct_literal(Some(self.path_to_type_path(&path)));
-                }
-
-                Expr {
-                    span: path.span,
-                    kind: ExprKind::Path(path),
                 }
             }
 
@@ -1603,8 +1608,8 @@ impl<'src> Parser<'src> {
         if matches!(
             self.current.kind,
             TokenKind::Ident | TokenKind::TypeIdent | TokenKind::SelfLower | TokenKind::SelfUpper
-            | TokenKind::Handle | TokenKind::Default | TokenKind::Op | TokenKind::Module
-            | TokenKind::Ref | TokenKind::Pure | TokenKind::Region | TokenKind::Linear
+            | TokenKind::Default | TokenKind::Op | TokenKind::Module
+            | TokenKind::Ref | TokenKind::Pure | TokenKind::Linear
             | TokenKind::Affine | TokenKind::Extends | TokenKind::Handler | TokenKind::Effect
             | TokenKind::Deep | TokenKind::Shallow | TokenKind::Crate | TokenKind::Super
         ) {
@@ -2123,6 +2128,86 @@ impl<'src> Parser<'src> {
         }
     }
 
+    /// Parse a handle expression: `handle expr { clauses }` or `handle expr with handler { clauses }`
+    ///
+    /// Clauses can be:
+    /// - `return(v) { body }` - return handler
+    /// - `op_name(params) { body }` - operation handler
+    fn parse_handle_expr(&mut self) -> Expr {
+        use crate::ast::{InlineHandlerClause, InlineHandlerClauseKind};
+
+        let start = self.current.span;
+        self.advance(); // consume 'handle'
+
+        // Parse the expression to handle
+        let body = self.parse_expr_prec_no_struct(Precedence::None);
+
+        // Parse optional `with handler`
+        let handler = if self.try_consume(TokenKind::With) {
+            if !self.check(TokenKind::LBrace) {
+                // `with handler` form - parse handler expression
+                Some(Box::new(self.parse_expr_prec_no_struct(Precedence::None)))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Parse handler clauses in braces
+        self.expect(TokenKind::LBrace);
+
+        let mut clauses = Vec::new();
+        while !self.check(TokenKind::RBrace) && !self.is_at_end() {
+            let clause_start = self.current.span;
+
+            // Determine if this is `return(...)` or `op_name(...)`
+            let kind = if self.try_consume(TokenKind::Return) {
+                InlineHandlerClauseKind::Return
+            } else if self.check_ident() || self.check(TokenKind::TypeIdent) {
+                self.advance();
+                let name = self.spanned_symbol();
+                InlineHandlerClauseKind::Operation(name)
+            } else {
+                self.error_expected("`return` or operation name");
+                self.advance();
+                continue;
+            };
+
+            // Parse parameters
+            self.expect(TokenKind::LParen);
+            let mut params = Vec::new();
+            while !self.check(TokenKind::RParen) && !self.is_at_end() {
+                params.push(self.parse_pattern());
+                if !self.try_consume(TokenKind::Comma) {
+                    break;
+                }
+            }
+            self.expect(TokenKind::RParen);
+
+            // Parse body
+            let body = self.parse_block();
+
+            clauses.push(InlineHandlerClause {
+                kind,
+                params,
+                body,
+                span: clause_start.merge(self.previous.span),
+            });
+        }
+
+        self.expect(TokenKind::RBrace);
+
+        Expr {
+            kind: ExprKind::Handle {
+                body: Box::new(body),
+                handler,
+                clauses,
+            },
+            span: start.merge(self.previous.span),
+        }
+    }
+
     /// Parse a try-with expression: `try { body } with { handlers }`
     fn parse_try_with_expr(&mut self) -> Expr {
         use crate::ast::TryWithHandler;
@@ -2334,6 +2419,17 @@ impl<'src> Parser<'src> {
                     pattern,
                     ty,
                     value,
+                    span: start.merge(self.previous.span),
+                }
+            }
+
+            // Defer statement: `defer { ... };`
+            TokenKind::Defer => {
+                self.advance();
+                let body = self.parse_block();
+                self.try_consume(TokenKind::Semi);
+                Statement::Defer {
+                    body,
                     span: start.merge(self.previous.span),
                 }
             }

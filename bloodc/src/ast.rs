@@ -285,8 +285,8 @@ pub enum AttributeArg {
     KeyValue(Spanned<Symbol>, Literal),
     /// Literal: `#[attr("value")]`
     Literal(Literal),
-    /// Call-style nested attribute: `#[repr(align(N))]`
-    Call(Spanned<Symbol>, Literal),
+    /// Call-style nested attribute: `#[repr(align(N))]` or `#[cfg(not(debug_assertions))]`
+    Call(Spanned<Symbol>, Vec<AttributeArg>),
 }
 
 // ============================================================
@@ -355,6 +355,8 @@ pub struct StructDecl {
     pub type_params: Option<TypeParams>,
     pub body: StructBody,
     pub span: Span,
+    /// True if this is actually a `union` declaration
+    pub is_union: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -439,6 +441,8 @@ pub struct HandlerDecl {
     pub state: Vec<HandlerState>,
     pub return_clause: Option<ReturnClause>,
     pub operations: Vec<OperationImpl>,
+    /// Regular methods on the handler type (e.g., constructors, helpers)
+    pub methods: Vec<FnDecl>,
     pub span: Span,
 }
 
@@ -460,7 +464,7 @@ pub struct HandlerState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReturnClause {
-    pub param: Spanned<Symbol>,
+    pub param: Pattern,
     pub body: Block,
     pub span: Span,
 }
@@ -486,6 +490,27 @@ pub struct TryWithHandler {
     /// The handler body
     pub body: Block,
     pub span: Span,
+}
+
+/// Handler clause in an inline handle expression.
+/// Example: `return(v) { v }` or `get() { resume(state) }`
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InlineHandlerClause {
+    /// The clause kind: return or operation
+    pub kind: InlineHandlerClauseKind,
+    /// Parameter patterns
+    pub params: Vec<Pattern>,
+    /// The handler body
+    pub body: Block,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InlineHandlerClauseKind {
+    /// Return handler: `return(v) { ... }`
+    Return,
+    /// Operation handler: `get() { ... }`, `put(s) { ... }`
+    Operation(Spanned<Symbol>),
 }
 
 // ============================================================
@@ -943,6 +968,11 @@ pub enum TypeKind {
         /// The trait being relaxed (typically Sized)
         inner: Box<Type>,
     },
+
+    /// Wildcard type: `*` (used in `handler Foo for * { ... }`)
+    ///
+    /// Represents "any effect" in handler declarations.
+    Wildcard,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -970,6 +1000,8 @@ pub enum TypeArg {
     Const(Expr),
     /// Associated type binding: `Item = T` in `Iterator<Item = T>`
     AssocType { name: Spanned<Symbol>, ty: Type },
+    /// Effect annotation: `/ {IO}` in `FnOnce() -> T / {IO}`
+    Effect(EffectRow),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1200,6 +1232,14 @@ pub enum ExprKind {
     TryWith {
         body: Block,
         handlers: Vec<TryWithHandler>,
+    },
+
+    /// Handle expression with inline clauses: `handle expr() { return(v) { } op() { } }`
+    /// or `handle expr() with handler { return(v) { } op() { } }`
+    Handle {
+        body: Box<Expr>,
+        handler: Option<Box<Expr>>,
+        clauses: Vec<InlineHandlerClause>,
     },
 
     /// Unsafe block: `@unsafe { }`
@@ -1590,6 +1630,13 @@ pub enum Statement {
 
     /// Item (function, struct, etc. inside a block)
     Item(Declaration),
+
+    /// Defer statement: `defer { ... };`
+    /// Executes the block when the enclosing scope exits.
+    Defer {
+        body: Block,
+        span: Span,
+    },
 }
 
 impl Statement {
@@ -1598,6 +1645,7 @@ impl Statement {
             Statement::Let { span, .. } => *span,
             Statement::Expr { expr, .. } => expr.span,
             Statement::Item(decl) => decl.span(),
+            Statement::Defer { span, .. } => *span,
         }
     }
 }
