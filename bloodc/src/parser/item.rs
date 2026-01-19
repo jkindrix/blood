@@ -2291,8 +2291,9 @@ impl<'src> Parser<'src> {
                 kind,
                 span: start.merge(self.previous.span),
             }
-        } else if self.check(TokenKind::Ident) {
+        } else if self.check(TokenKind::Ident) || Self::is_contextual_keyword(self.current.kind) {
             // Capture: $name:frag
+            // Allow contextual keywords as capture names since they're in a meta-context
             self.advance();
             let name = self.spanned_symbol();
 

@@ -236,7 +236,9 @@ fn collect_deps_from_decl(
         | Declaration::Static(_)
         | Declaration::Bridge(_)
         | Declaration::Module(_)
-        | Declaration::Macro(_) => {}
+        | Declaration::Macro(_)
+        | Declaration::MacroInvocation(_)
+        | Declaration::Use(_) => {}
     }
 }
 

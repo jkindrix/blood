@@ -317,7 +317,9 @@ impl SemanticAnalyzer {
             }
             Declaration::Type(type_decl) => {
                 let name = self.resolve_symbol(&type_decl.name.node, interner);
-                let aliased = self.type_to_string(&type_decl.ty, interner);
+                let aliased = type_decl.ty.as_ref()
+                    .map(|ty| self.type_to_string(ty, interner))
+                    .unwrap_or_else(|| "<unknown>".to_string());
                 let description = format!("type {} = {}", name, aliased);
                 let doc = self.extract_doc_comment(source, self.get_decl_span_start(decl));
 
@@ -476,6 +478,12 @@ impl SemanticAnalyzer {
                 for offset in macro_decl.name.span.start..macro_decl.name.span.end {
                     symbol_at_offset.insert(offset, idx);
                 }
+            }
+            Declaration::MacroInvocation(_) => {
+                // Macro invocations don't define new symbols
+            }
+            Declaration::Use(_) => {
+                // Use declarations re-export symbols but don't define new ones
             }
         }
     }
@@ -894,6 +902,9 @@ impl SemanticAnalyzer {
                         .join("::"))
                     .collect();
                 format!("impl {}", bound_strs.join(" + "))
+            }
+            ast::TypeKind::MaybeUnsized { inner } => {
+                format!("?{}", self.type_to_string(inner, interner))
             }
         }
     }

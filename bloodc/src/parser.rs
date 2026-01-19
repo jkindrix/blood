@@ -240,6 +240,7 @@ impl<'src> Parser<'src> {
                 | TokenKind::Region
                 | TokenKind::Module
                 | TokenKind::Union
+                | TokenKind::Resume
                 // Note: Crate and Super are NOT contextual keywords - they are path roots
                 // and should be handled specially in path parsing, not as identifiers
         )
