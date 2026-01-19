@@ -234,11 +234,12 @@ fn compile_field_projection(
     let actual_idx = idx;
 
     // Check if this is a reference to a struct
-    let is_ref_to_struct = matches!(
-        current_ty.kind(),
-        TypeKind::Ref { inner, .. } | TypeKind::Ptr { inner, .. }
-            if matches!(inner.kind(), TypeKind::Adt { .. } | TypeKind::Tuple(_))
-    );
+    let is_ref_to_struct = match current_ty.kind() {
+        TypeKind::Ref { inner, .. } | TypeKind::Ptr { inner, .. } => {
+            matches!(inner.kind(), TypeKind::Adt { .. } | TypeKind::Tuple(_))
+        }
+        _ => false,
+    };
 
     // Update current_ty to the field type
     let effective_ty = match current_ty.kind() {
