@@ -81,16 +81,17 @@ impl<'a> TypeContext<'a> {
             }
         }
 
-        // Phase 2: Collect all top-level definitions (now that all type names are known)
-        for decl in &program.declarations {
-            if let Err(e) = self.collect_declaration(decl) {
+        // Phase 2: Resolve imports (BEFORE collecting declarations)
+        // This ensures imported types are available when resolving struct field types.
+        for import in &program.imports {
+            if let Err(e) = self.resolve_import(import) {
                 self.errors.push(e);
             }
         }
 
-        // Phase 3: Resolve imports (after all declarations are collected)
-        for import in &program.imports {
-            if let Err(e) = self.resolve_import(import) {
+        // Phase 3: Collect all top-level definitions (now that all type names and imports are known)
+        for decl in &program.declarations {
+            if let Err(e) = self.collect_declaration(decl) {
                 self.errors.push(e);
             }
         }

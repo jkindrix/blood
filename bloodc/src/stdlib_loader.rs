@@ -58,6 +58,8 @@ pub struct StdlibLoader {
     modules: HashMap<String, LoadedModule>,
     /// Module hierarchy: parent -> children
     children: HashMap<String, Vec<String>>,
+    /// File path to exclude from loading (the file being checked)
+    excluded_path: Option<PathBuf>,
 }
 
 impl StdlibLoader {
@@ -67,7 +69,14 @@ impl StdlibLoader {
             stdlib_root,
             modules: HashMap::new(),
             children: HashMap::new(),
+            excluded_path: None,
         }
+    }
+
+    /// Set a file path to exclude from stdlib loading.
+    /// This should be the file being directly compiled/checked.
+    pub fn exclude_file(&mut self, path: PathBuf) {
+        self.excluded_path = Some(path.canonicalize().unwrap_or(path));
     }
 
     /// Discover all modules in the stdlib.
@@ -101,7 +110,26 @@ impl StdlibLoader {
                     continue;
                 }
 
-                let child_prefix = format!("{}.{}", module_prefix, dir_name);
+                // Skip non-module directories at the top level (src, bootstrap-std, etc.)
+                // Only descend into the "std" directory when at the root
+                if module_prefix == "std" && dir_name != "std" && dir_name != "compiler"
+                    && dir_name != "collections" && dir_name != "io" && dir_name != "net"
+                    && dir_name != "ops" && dir_name != "effects" && dir_name != "traits"
+                    && dir_name != "prelude" && dir_name != "sync" && dir_name != "iter"
+                    && dir_name != "fmt" && dir_name != "mem" && dir_name != "ptr"
+                    && dir_name != "alloc" && dir_name != "core" {
+                    // Check if this is a known non-module directory
+                    if dir_name == "src" || dir_name == "bootstrap-std" {
+                        continue;
+                    }
+                }
+
+                // If the directory is named "std" and prefix is "std", recurse without doubling
+                let child_prefix = if dir_name == "std" && module_prefix == "std" {
+                    "std".to_string()
+                } else {
+                    format!("{}.{}", module_prefix, dir_name)
+                };
                 self.discover_directory(&path, &child_prefix)?;
 
                 // Create a virtual module for this directory if it doesn't have a mod.blood
@@ -131,6 +159,15 @@ impl StdlibLoader {
                     .push(child_prefix);
 
             } else if path.extension().map_or(false, |ext| ext == "blood") {
+                // Skip the file being directly compiled/checked
+                if let Some(ref excluded) = self.excluded_path {
+                    if let Ok(canonical) = path.canonicalize() {
+                        if canonical == *excluded {
+                            continue;
+                        }
+                    }
+                }
+
                 // Load .blood file
                 let file_name = path.file_stem()
                     .and_then(|n| n.to_str())
@@ -380,28 +417,19 @@ impl StdlibLoader {
                     .unwrap_or(&module_path)
                     .to_string();
 
-                // Create a DefId for this module
-                let def_id = match ctx.resolver.define_item(
+                // Create a DefId for this module WITHOUT adding to root scope.
+                // Stdlib modules should only be accessible via their full paths (e.g., std.io.effects),
+                // not by their simple names in root scope. This prevents collisions when multiple
+                // modules share the same simple name (e.g., std.compiler.effects and std.io.effects).
+                let def_id = ctx.resolver.define_namespaced_item(
                     simple_name.clone(),
                     DefKind::Mod,
                     Span::dummy(),
-                ) {
-                    Ok(id) => {
-                        if verbose {
-                            eprintln!("      ✓ Created DefId({}) for module '{}' (name: '{}')",
-                                      id.index(), module_path, simple_name);
-                        }
-                        id
-                    }
-                    Err(e) => {
-                        if verbose {
-                            eprintln!("      ✗ Failed to create DefId for module '{}' (name: '{}'): {:?}",
-                                      module_path, simple_name, e);
-                        }
-                        // Module might already be defined, try to look it up
-                        continue;
-                    }
-                };
+                );
+                if verbose {
+                    eprintln!("      ✓ Created DefId({}) for module '{}' (name: '{}')",
+                              def_id.index(), module_path, simple_name);
+                }
 
                 module.def_id = Some(def_id);
             }
@@ -1056,29 +1084,24 @@ fn create_item_def_id<'a>(
         ast::Declaration::Use(_) => return None,
     };
 
-    match ctx.resolver.define_item(name.clone(), kind, Span::dummy()) {
-        Ok(def_id) => {
-            if verbose {
-                eprintln!("        ✓ {} {} -> DefId({})", kind_str, name, def_id.index());
-            }
-            Some(def_id)
+    // Check if item already exists (e.g., builtins like Option, Result)
+    // If so, reuse the existing DefId
+    if let Some(crate::typeck::resolve::Binding::Def(def_id)) = ctx.resolver.lookup(&name) {
+        if verbose {
+            eprintln!("        ~ {} {} -> existing DefId({}) (builtin)", kind_str, name, def_id.index());
         }
-        Err(_) => {
-            // Item already exists - this is expected for builtins like Option, Result, etc.
-            // Try to look up the existing DefId and use it.
-            if let Some(crate::typeck::resolve::Binding::Def(def_id)) = ctx.resolver.lookup(&name) {
-                if verbose {
-                    eprintln!("        ~ {} {} -> existing DefId({}) (builtin)", kind_str, name, def_id.index());
-                }
-                Some(def_id)
-            } else {
-                if verbose {
-                    eprintln!("        ✗ {} {} failed: duplicate but not found in scope", kind_str, name);
-                }
-                None
-            }
-        }
+        return Some(def_id);
     }
+
+    // Use define_namespaced_item to create DefId WITHOUT adding to root scope.
+    // Stdlib items should only be accessible through their module paths (e.g., std.compiler.lexer::Token),
+    // not directly in the root scope. This prevents name collisions when checking files
+    // that define their own types with the same names.
+    let def_id = ctx.resolver.define_namespaced_item(name.clone(), kind, Span::dummy());
+    if verbose {
+        eprintln!("        ✓ {} {} -> DefId({}) (namespaced)", kind_str, name, def_id.index());
+    }
+    Some(def_id)
 }
 
 /// Register type information for a declaration.
@@ -1095,6 +1118,11 @@ fn register_type_info<'a>(
 
     match decl {
         ast::Declaration::Struct(s) => {
+            // Skip if struct info already exists (e.g., from builtins)
+            if ctx.struct_defs.contains_key(&def_id) {
+                return;
+            }
+
             let name = resolve_symbol(s.name.node);
 
             // Convert fields
@@ -1150,6 +1178,11 @@ fn register_type_info<'a>(
             });
         }
         ast::Declaration::Enum(e) => {
+            // Skip if enum info already exists (e.g., from builtins like Option, Result)
+            if ctx.enum_defs.contains_key(&def_id) {
+                return;
+            }
+
             let name = resolve_symbol(e.name.node);
 
             // Convert variants - we need to create DefIds for each variant
@@ -1186,12 +1219,14 @@ fn register_type_info<'a>(
                     }
                 };
 
-                // Create a DefId for this variant
-                let variant_def_id = ctx.resolver.define_item(
+                // Create a DefId for this variant WITHOUT adding to root scope.
+                // Stdlib enum variants should only be accessible via their enum type
+                // (e.g., LLVMTypeKind::Token), not directly in root scope.
+                let variant_def_id = ctx.resolver.define_namespaced_item(
                     variant_name.clone(),
                     DefKind::Variant,
                     Span::dummy(),
-                ).unwrap_or(DefId::new(0)); // Fallback if already defined
+                );
 
                 variants.push(VariantInfo {
                     name: variant_name,

@@ -395,12 +395,24 @@ impl<'a> Resolver<'a> {
         def_id: DefId,
         span: Span,
     ) -> Result<(), TypeError> {
-        // Check for duplicates in current scope
-        if self.current_scope().bindings.contains_key(&name) {
-            return Err(TypeError::new(
-                TypeErrorKind::DuplicateDefinition { name },
-                span,
-            ));
+        // Check for duplicates in current scope - allow if same DefId (re-import)
+        if let Some(existing) = self.current_scope().bindings.get(&name) {
+            if let Binding::Def(existing_id) = existing {
+                if *existing_id != def_id {
+                    return Err(TypeError::new(
+                        TypeErrorKind::DuplicateDefinition { name },
+                        span,
+                    ));
+                }
+                // Same DefId - already imported, nothing to do
+                return Ok(());
+            } else {
+                // Different kind of binding, that's a real conflict
+                return Err(TypeError::new(
+                    TypeErrorKind::DuplicateDefinition { name },
+                    span,
+                ));
+            }
         }
 
         // Add as a Def binding (it's an alias to an existing definition)
@@ -423,12 +435,16 @@ impl<'a> Resolver<'a> {
         def_id: DefId,
         span: Span,
     ) -> Result<(), TypeError> {
-        // Check for duplicates in current scope
-        if self.current_scope().type_bindings.contains_key(&name) {
-            return Err(TypeError::new(
-                TypeErrorKind::DuplicateDefinition { name },
-                span,
-            ));
+        // Check for duplicates in current scope - allow if same DefId (re-import)
+        if let Some(&existing_id) = self.current_scope().type_bindings.get(&name) {
+            if existing_id != def_id {
+                return Err(TypeError::new(
+                    TypeErrorKind::DuplicateDefinition { name },
+                    span,
+                ));
+            }
+            // Same DefId - already imported, nothing to do
+            return Ok(());
         }
 
         self.current_scope_mut()

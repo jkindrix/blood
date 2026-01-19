@@ -388,6 +388,8 @@ impl CompilationDriver {
         // Load and register standard library modules if a stdlib path is provided
         if let Some(ref stdlib_path) = self.stdlib_path {
             let mut stdlib_loader = StdlibLoader::new(stdlib_path.clone());
+            // Exclude the root file from stdlib loading to prevent double-loading
+            stdlib_loader.exclude_file(root_path.clone());
 
             // Discover all stdlib modules
             if let Err(e) = stdlib_loader.discover() {

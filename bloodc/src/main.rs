@@ -686,6 +686,8 @@ fn cmd_check(args: &FileArgs, verbosity: u8) -> ExitCode {
             eprintln!("Loading stdlib from: {}", stdlib_path.display());
         }
         let mut stdlib_loader = StdlibLoader::new(stdlib_path.clone());
+        // Exclude the file being checked from stdlib loading to prevent double-loading
+        stdlib_loader.exclude_file(args.file.clone());
 
         if verbosity > 1 {
             eprintln!("  Discovering stdlib modules...");
@@ -911,6 +913,8 @@ fn cmd_build(args: &FileArgs, verbosity: u8) -> ExitCode {
     // Load and register standard library modules if a stdlib path is provided
     if let Some(ref stdlib_path) = args.stdlib_path {
         let mut stdlib_loader = StdlibLoader::new(stdlib_path.clone());
+        // Exclude the file being built from stdlib loading to prevent double-loading
+        stdlib_loader.exclude_file(args.file.clone());
 
         if let Err(e) = stdlib_loader.discover() {
             eprintln!("Stdlib error: {}", e);
