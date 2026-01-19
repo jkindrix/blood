@@ -1549,8 +1549,9 @@ impl<'src> Parser<'src> {
         let start = self.current.span;
         self.advance(); // consume 'fn'
 
-        // Allow contextual keywords as function names
-        let name = if self.check_ident() {
+        // Allow contextual keywords and type identifiers as function names
+        // (FFI functions like LLVM use PascalCase: LLVMCreateBuilder)
+        let name = if self.check_ident() || self.check(TokenKind::TypeIdent) {
             self.advance();
             self.spanned_symbol()
         } else {

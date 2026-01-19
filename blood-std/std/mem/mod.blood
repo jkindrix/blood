@@ -34,7 +34,7 @@ pub const fn needs_drop<T>() -> bool / pure {
 
 /// Swaps two values in memory
 pub fn swap<T>(x: &mut T, y: &mut T) / pure {
-    unsafe {
+    @unsafe {
         let temp = ptr::read(x);
         ptr::copy_nonoverlapping(y, x, 1);
         ptr::write(y, temp);
@@ -43,7 +43,7 @@ pub fn swap<T>(x: &mut T, y: &mut T) / pure {
 
 /// Replaces a value with a new one, returning the old value
 pub fn replace<T>(dest: &mut T, src: T) -> T / pure {
-    unsafe {
+    @unsafe {
         let result = ptr::read(dest);
         ptr::write(dest, src);
         result
@@ -57,7 +57,7 @@ pub fn take<T: Default>(dest: &mut T) -> T / pure {
 
 /// Drops a value without running its destructor
 pub fn forget<T>(t: T) / pure {
-    unsafe {
+    @unsafe {
         __builtin_forget(t);
     }
 }
@@ -125,7 +125,7 @@ impl<T> MaybeUninit<T> {
 
     /// Creates zeroed memory
     pub fn zeroed() -> Self / pure {
-        unsafe {
+        @unsafe {
             let mut u = Self::uninit();
             ptr::write_bytes(u.as_mut_ptr(), 0, 1);
             u
@@ -134,12 +134,12 @@ impl<T> MaybeUninit<T> {
 
     /// Returns a raw pointer to the value
     pub fn as_ptr(self: &Self) -> *const T / pure {
-        unsafe { &self.value as *const ManuallyDrop<T> as *const T }
+        @unsafe { &self.value as *const ManuallyDrop<T> as *const T }
     }
 
     /// Returns a raw mutable pointer to the value
     pub fn as_mut_ptr(self: &mut Self) -> *mut T / pure {
-        unsafe { &mut self.value as *mut ManuallyDrop<T> as *mut T }
+        @unsafe { &mut self.value as *mut ManuallyDrop<T> as *mut T }
     }
 
     /// Extracts the value from the MaybeUninit
@@ -168,7 +168,7 @@ impl<T> MaybeUninit<T> {
 
     /// Writes a value to the MaybeUninit
     pub fn write(self: &mut Self, value: T) -> &mut T / pure {
-        unsafe {
+        @unsafe {
             ptr::write(self.as_mut_ptr(), value);
             self.assume_init_mut()
         }

@@ -571,7 +571,7 @@ impl<'a, T> Iterator for IterMut<'a, T> {
             let idx = self.deque.wrap_index(self.deque.head + self.front);
             self.front += 1;
             // Safety: We're iterating without overlap
-            unsafe {
+            @unsafe {
                 let ptr = self.deque.buffer.as_mut_ptr().add(idx);
                 (*ptr).as_mut()
             }
@@ -591,7 +591,7 @@ impl<'a, T> DoubleEndedIterator for IterMut<'a, T> {
         } else {
             self.back -= 1;
             let idx = self.deque.wrap_index(self.deque.head + self.back);
-            unsafe {
+            @unsafe {
                 let ptr = self.deque.buffer.as_mut_ptr().add(idx);
                 (*ptr).as_mut()
             }

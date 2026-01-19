@@ -284,6 +284,27 @@ impl<'src> Parser<'src> {
                 }
             }
 
+            // Dynamic trait object: `dyn Trait`, `dyn Trait + Send`
+            TokenKind::Dyn => {
+                self.advance();
+                let mut bounds = vec![self.parse_type_path()];
+
+                // Parse additional bounds with `+`
+                while self.try_consume(TokenKind::Plus) {
+                    // Skip lifetime bounds (e.g., `+ '_`)
+                    if self.check(TokenKind::Lifetime) {
+                        self.advance(); // consume the lifetime
+                    } else {
+                        bounds.push(self.parse_type_path());
+                    }
+                }
+
+                Type {
+                    kind: TypeKind::DynTrait { bounds },
+                    span: start.merge(self.previous.span),
+                }
+            }
+
             // Type path
             TokenKind::TypeIdent
             | TokenKind::Ident

@@ -1777,6 +1777,23 @@ impl<'a> TypeContext<'a> {
                 // For now, just create a fresh type variable
                 Ok(self.unifier.fresh_var())
             }
+            ast::TypeKind::DynTrait { bounds } => {
+                // dyn Trait is a dynamically-dispatched trait object
+                // For now, converted to a fresh type variable similar to impl Trait
+                // Full dyn Trait support requires vtable handling
+                if bounds.is_empty() {
+                    return Err(TypeError::new(
+                        TypeErrorKind::UnsupportedFeature {
+                            feature: "dyn Trait without bounds".to_string(),
+                        },
+                        ty.span,
+                    ));
+                }
+
+                // TODO: Full dyn Trait support would create a proper trait object type
+                // For now, just create a fresh type variable
+                Ok(self.unifier.fresh_var())
+            }
             ast::TypeKind::MaybeUnsized { inner } => {
                 // ?Sized is used to relax the implicit Sized bound
                 // For now, just convert the inner type - actual bound relaxation

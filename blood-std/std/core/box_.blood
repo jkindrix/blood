@@ -45,18 +45,18 @@ impl<T> Box<T> {
 
     /// Returns a reference to the contained value
     pub fn as_ref(self: &Self) -> &T / pure {
-        unsafe { &*self.ptr }
+        @unsafe { &*self.ptr }
     }
 
     /// Returns a mutable reference to the contained value
     pub fn as_mut(self: &mut Self) -> &mut T / pure {
-        unsafe { &mut *self.ptr }
+        @unsafe { &mut *self.ptr }
     }
 
     /// Leaks the Box, returning a mutable reference with 'static lifetime
     pub fn leak(b: Box<T>) -> &'static mut T / pure {
         let ptr = Box::into_raw(b);
-        unsafe { &mut *ptr }
+        @unsafe { &mut *ptr }
     }
 }
 
@@ -90,7 +90,7 @@ impl<T> DerefMut for Box<T> {
 
 impl<T> Drop for Box<T> {
     fn drop(self: &mut Self) / pure {
-        unsafe {
+        @unsafe {
             // Drop the contained value
             mem::drop_in_place(self.ptr);
             // Deallocate the memory

@@ -58,22 +58,22 @@ impl<T> LinkedList<T> {
 
     /// Returns a reference to the front element
     pub fn front(self: &Self) -> Option<&T> / pure {
-        self.head.map(|node| unsafe { &(*node.as_ptr()).element })
+        self.head.map(|node| @unsafe { &(*node.as_ptr()).element })
     }
 
     /// Returns a mutable reference to the front element
     pub fn front_mut(self: &mut Self) -> Option<&mut T> / pure {
-        self.head.map(|node| unsafe { &mut (*node.as_ptr()).element })
+        self.head.map(|node| @unsafe { &mut (*node.as_ptr()).element })
     }
 
     /// Returns a reference to the back element
     pub fn back(self: &Self) -> Option<&T> / pure {
-        self.tail.map(|node| unsafe { &(*node.as_ptr()).element })
+        self.tail.map(|node| @unsafe { &(*node.as_ptr()).element })
     }
 
     /// Returns a mutable reference to the back element
     pub fn back_mut(self: &mut Self) -> Option<&mut T> / pure {
-        self.tail.map(|node| unsafe { &mut (*node.as_ptr()).element })
+        self.tail.map(|node| @unsafe { &mut (*node.as_ptr()).element })
     }
 
     /// Adds an element to the front
@@ -85,7 +85,7 @@ impl<T> LinkedList<T> {
         let node_ptr = NonNull::new(Box::into_raw(node)).unwrap();
 
         match self.head {
-            Some(head) => unsafe { (*head.as_ptr()).prev = Some(node_ptr) },
+            Some(head) => @unsafe { (*head.as_ptr()).prev = Some(node_ptr) },
             None => self.tail = Some(node_ptr),
         }
 
@@ -102,7 +102,7 @@ impl<T> LinkedList<T> {
         let node_ptr = NonNull::new(Box::into_raw(node)).unwrap();
 
         match self.tail {
-            Some(tail) => unsafe { (*tail.as_ptr()).next = Some(node_ptr) },
+            Some(tail) => @unsafe { (*tail.as_ptr()).next = Some(node_ptr) },
             None => self.head = Some(node_ptr),
         }
 
@@ -113,11 +113,11 @@ impl<T> LinkedList<T> {
     /// Removes and returns the front element
     pub fn pop_front(self: &mut Self) -> Option<T> / pure {
         self.head.map(|node| {
-            let node = unsafe { Box::from_raw(node.as_ptr()) };
+            let node = @unsafe { Box::from_raw(node.as_ptr()) };
             self.head = node.next;
 
             match self.head {
-                Some(head) => unsafe { (*head.as_ptr()).prev = None },
+                Some(head) => @unsafe { (*head.as_ptr()).prev = None },
                 None => self.tail = None,
             }
 
@@ -129,11 +129,11 @@ impl<T> LinkedList<T> {
     /// Removes and returns the back element
     pub fn pop_back(self: &mut Self) -> Option<T> / pure {
         self.tail.map(|node| {
-            let node = unsafe { Box::from_raw(node.as_ptr()) };
+            let node = @unsafe { Box::from_raw(node.as_ptr()) };
             self.tail = node.prev;
 
             match self.tail {
-                Some(tail) => unsafe { (*tail.as_ptr()).next = None },
+                Some(tail) => @unsafe { (*tail.as_ptr()).next = None },
                 None => self.head = None,
             }
 
@@ -159,7 +159,7 @@ impl<T> LinkedList<T> {
             }
             Some(tail) => {
                 if let Some(other_head) = other.head.take() {
-                    unsafe {
+                    @unsafe {
                         (*tail.as_ptr()).next = Some(other_head);
                         (*other_head.as_ptr()).prev = Some(tail);
                     }
@@ -186,19 +186,19 @@ impl<T> LinkedList<T> {
         // Find the split point
         let mut current = self.head;
         for _ in 0..at {
-            current = unsafe { (*current.unwrap().as_ptr()).next };
+            current = @unsafe { (*current.unwrap().as_ptr()).next };
         }
 
         let split_node = current.unwrap();
 
         // Get the node before split point
-        let prev_node = unsafe { (*split_node.as_ptr()).prev };
+        let prev_node = @unsafe { (*split_node.as_ptr()).prev };
 
         // Disconnect at split point
         if let Some(prev) = prev_node {
-            unsafe { (*prev.as_ptr()).next = None };
+            @unsafe { (*prev.as_ptr()).next = None };
         }
-        unsafe { (*split_node.as_ptr()).prev = None };
+        @unsafe { (*split_node.as_ptr()).prev = None };
 
         let second_half = LinkedList {
             head: Some(split_node),
@@ -353,7 +353,7 @@ impl<'a, T> Iterator for Iter<'a, T> {
 
         self.head.map(|node| {
             self.len -= 1;
-            unsafe {
+            @unsafe {
                 let node = &*node.as_ptr();
                 self.head = node.next;
                 &node.element
@@ -374,7 +374,7 @@ impl<'a, T> DoubleEndedIterator for Iter<'a, T> {
 
         self.tail.map(|node| {
             self.len -= 1;
-            unsafe {
+            @unsafe {
                 let node = &*node.as_ptr();
                 self.tail = node.prev;
                 &node.element
@@ -403,7 +403,7 @@ impl<'a, T> Iterator for IterMut<'a, T> {
 
         self.head.map(|node| {
             self.len -= 1;
-            unsafe {
+            @unsafe {
                 let node = &mut *node.as_ptr();
                 self.head = node.next;
                 &mut node.element
@@ -424,7 +424,7 @@ impl<'a, T> DoubleEndedIterator for IterMut<'a, T> {
 
         self.tail.map(|node| {
             self.len -= 1;
-            unsafe {
+            @unsafe {
                 let node = &mut *node.as_ptr();
                 self.tail = node.prev;
                 &mut node.element
@@ -471,13 +471,13 @@ pub struct Cursor<'a, T> {
 impl<'a, T> Cursor<'a, T> {
     /// Returns a reference to the current element
     pub fn current(self: &Self) -> Option<&'a T> / pure {
-        self.current.map(|node| unsafe { &(*node.as_ptr()).element })
+        self.current.map(|node| @unsafe { &(*node.as_ptr()).element })
     }
 
     /// Moves to the next element
     pub fn move_next(self: &mut Self) / pure {
         if let Some(current) = self.current {
-            self.current = unsafe { (*current.as_ptr()).next };
+            self.current = @unsafe { (*current.as_ptr()).next };
         } else {
             self.current = self.list.head;
         }
@@ -486,7 +486,7 @@ impl<'a, T> Cursor<'a, T> {
     /// Moves to the previous element
     pub fn move_prev(self: &mut Self) / pure {
         if let Some(current) = self.current {
-            self.current = unsafe { (*current.as_ptr()).prev };
+            self.current = @unsafe { (*current.as_ptr()).prev };
         } else {
             self.current = self.list.tail;
         }
@@ -501,7 +501,7 @@ impl<'a, T> Cursor<'a, T> {
             if n == current {
                 return Some(index);
             }
-            node = unsafe { (*n.as_ptr()).next };
+            node = @unsafe { (*n.as_ptr()).next };
             index += 1;
         }
         None
@@ -517,18 +517,18 @@ pub struct CursorMut<'a, T> {
 impl<'a, T> CursorMut<'a, T> {
     /// Returns a reference to the current element
     pub fn current(self: &Self) -> Option<&T> / pure {
-        self.current.map(|node| unsafe { &(*node.as_ptr()).element })
+        self.current.map(|node| @unsafe { &(*node.as_ptr()).element })
     }
 
     /// Returns a mutable reference to the current element
     pub fn current_mut(self: &mut Self) -> Option<&mut T> / pure {
-        self.current.map(|node| unsafe { &mut (*node.as_ptr()).element })
+        self.current.map(|node| @unsafe { &mut (*node.as_ptr()).element })
     }
 
     /// Moves to the next element
     pub fn move_next(self: &mut Self) / pure {
         if let Some(current) = self.current {
-            self.current = unsafe { (*current.as_ptr()).next };
+            self.current = @unsafe { (*current.as_ptr()).next };
         } else {
             self.current = self.list.head;
         }
@@ -537,7 +537,7 @@ impl<'a, T> CursorMut<'a, T> {
     /// Moves to the previous element
     pub fn move_prev(self: &mut Self) / pure {
         if let Some(current) = self.current {
-            self.current = unsafe { (*current.as_ptr()).prev };
+            self.current = @unsafe { (*current.as_ptr()).prev };
         } else {
             self.current = self.list.tail;
         }
@@ -551,7 +551,7 @@ impl<'a, T> CursorMut<'a, T> {
             }
             Some(current) => {
                 let mut node = Box::new(Node::new(element));
-                unsafe {
+                @unsafe {
                     node.prev = Some(current);
                     node.next = (*current.as_ptr()).next;
 
@@ -578,7 +578,7 @@ impl<'a, T> CursorMut<'a, T> {
             }
             Some(current) => {
                 let mut node = Box::new(Node::new(element));
-                unsafe {
+                @unsafe {
                     node.next = Some(current);
                     node.prev = (*current.as_ptr()).prev;
 
@@ -601,7 +601,7 @@ impl<'a, T> CursorMut<'a, T> {
     pub fn remove_current(self: &mut Self) -> Option<T> / pure {
         let current = self.current?;
 
-        unsafe {
+        @unsafe {
             let node = Box::from_raw(current.as_ptr());
 
             // Update links

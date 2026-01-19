@@ -1035,13 +1035,14 @@ impl<'src> Parser<'src> {
 
         let mut path = Vec::new();
 
-        // Parse attribute path (including contextual keywords like `default`)
-        if self.check_ident() || self.check(TokenKind::TypeIdent) {
+        // Parse attribute path (including contextual keywords like `default`, `macro`)
+        // Also accept reserved keywords like `macro` as attribute names: #[macro]
+        if self.check_ident() || self.check(TokenKind::TypeIdent) || self.check(TokenKind::Macro) {
             self.advance();
             path.push(self.spanned_symbol());
 
             while self.try_consume(TokenKind::ColonColon) {
-                if self.check_ident() || self.check(TokenKind::TypeIdent) {
+                if self.check_ident() || self.check(TokenKind::TypeIdent) || self.check(TokenKind::Macro) {
                     self.advance();
                     path.push(self.spanned_symbol());
                 } else {

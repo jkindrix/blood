@@ -143,12 +143,12 @@ impl String {
 
     /// Returns a string slice containing the entire string
     pub fn as_str(self: &Self) -> &str / pure {
-        unsafe { str::from_utf8_unchecked(&self.vec) }
+        @unsafe { str::from_utf8_unchecked(&self.vec) }
     }
 
     /// Returns a mutable string slice
     pub fn as_mut_str(self: &mut Self) -> &mut str / pure {
-        unsafe { str::from_utf8_unchecked_mut(&mut self.vec) }
+        @unsafe { str::from_utf8_unchecked_mut(&mut self.vec) }
     }
 
     /// Returns the underlying byte vector
@@ -429,7 +429,7 @@ impl String {
 
     /// Consumes the String and returns the owned string
     pub fn into_str(self: Self) -> str / pure {
-        unsafe { str::from_utf8_unchecked(self.vec.into_boxed_slice()) }
+        @unsafe { str::from_utf8_unchecked(self.vec.into_boxed_slice()) }
     }
 }
 
@@ -451,11 +451,8 @@ impl PartialEq<str> for String {
     }
 }
 
-impl PartialEq<&str> for String {
-    fn eq(self: &Self, other: &&str) -> bool / pure {
-        self.as_str() == *other
-    }
-}
+// Note: PartialEq<&str> for String removed - double reference not supported in Blood
+// Use string.as_str() == other_str instead
 
 impl Eq for String {}
 

@@ -171,8 +171,8 @@ impl f32 {
     pub fn is_sign_positive(self: Self) -> bool / pure { self.to_bits() & 0x80000000 == 0 }
     pub fn is_sign_negative(self: Self) -> bool / pure { self.to_bits() & 0x80000000 != 0 }
 
-    pub fn to_bits(self: Self) -> u32 / pure { unsafe { mem::transmute(self) } }
-    pub fn from_bits(bits: u32) -> Self / pure { unsafe { mem::transmute(bits) } }
+    pub fn to_bits(self: Self) -> u32 / pure { @unsafe { mem::transmute(self) } }
+    pub fn from_bits(bits: u32) -> Self / pure { @unsafe { mem::transmute(bits) } }
 
     pub fn abs(self: Self) -> Self / pure { __builtin_fabsf(self) }
     pub fn floor(self: Self) -> Self / pure { __builtin_floorf(self) }
@@ -214,8 +214,8 @@ impl f64 {
     pub fn is_sign_positive(self: Self) -> bool / pure { self.to_bits() & 0x8000000000000000 == 0 }
     pub fn is_sign_negative(self: Self) -> bool / pure { self.to_bits() & 0x8000000000000000 != 0 }
 
-    pub fn to_bits(self: Self) -> u64 / pure { unsafe { mem::transmute(self) } }
-    pub fn from_bits(bits: u64) -> Self / pure { unsafe { mem::transmute(bits) } }
+    pub fn to_bits(self: Self) -> u64 / pure { @unsafe { mem::transmute(self) } }
+    pub fn from_bits(bits: u64) -> Self / pure { @unsafe { mem::transmute(bits) } }
 
     pub fn abs(self: Self) -> Self / pure { __builtin_fabs(self) }
     pub fn floor(self: Self) -> Self / pure { __builtin_floor(self) }
@@ -258,7 +258,7 @@ impl char {
         if i > 0x10FFFF || (i >= 0xD800 && i <= 0xDFFF) {
             None
         } else {
-            Some(unsafe { mem::transmute(i) })
+            Some(@unsafe { mem::transmute(i) })
         }
     }
 
@@ -361,7 +361,7 @@ impl char {
             }
             _ => unreachable!(),
         }
-        unsafe { str::from_utf8_unchecked_mut(&mut dst[..len]) }
+        @unsafe { str::from_utf8_unchecked_mut(&mut dst[..len]) }
     }
 }
 

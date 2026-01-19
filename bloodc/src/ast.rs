@@ -928,6 +928,14 @@ pub enum TypeKind {
         bounds: Vec<TypePath>,
     },
 
+    /// Dynamic trait object: `dyn Trait`, `dyn Trait + Send`
+    ///
+    /// Used for runtime polymorphism via trait objects.
+    DynTrait {
+        /// The trait bounds that the type must implement
+        bounds: Vec<TypePath>,
+    },
+
     /// Relaxed bound: `?Sized`
     ///
     /// Used to relax the implicit Sized bound on type parameters.
