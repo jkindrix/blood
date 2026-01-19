@@ -603,8 +603,18 @@ impl<'src> Parser<'src> {
 
                     // Continue parsing path segments if we see ::
                     // Allow contextual keywords as path segments
+                    // Handle turbofish syntax (e.g., func::<T>)
                     while self.try_consume(TokenKind::ColonColon) {
-                        if self.check_ident()
+                        // Check for turbofish: ::<TypeArgs>
+                        if self.check(TokenKind::Lt) {
+                            // Turbofish - parse type arguments for the last segment
+                            let type_args = self.parse_type_args();
+                            if let Some(last) = segments.last_mut() {
+                                last.args = Some(type_args);
+                            }
+                            path_end = self.previous.span;
+                            break; // Turbofish ends path parsing
+                        } else if self.check_ident()
                             || self.check(TokenKind::TypeIdent)
                             || self.check(TokenKind::SelfLower)
                             || self.check(TokenKind::SelfUpper)
@@ -617,7 +627,7 @@ impl<'src> Parser<'src> {
                                 args: None,
                             });
                         } else {
-                            self.error_expected("identifier after `::`");
+                            self.error_expected("identifier or `<` after `::`");
                             break;
                         }
                     }

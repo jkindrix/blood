@@ -320,8 +320,11 @@ impl<'src> Parser<'src> {
 
             // Parse optional type arguments
             // Check for fn-trait syntax: Fn(...) -> T, FnMut(...) -> T, FnOnce(...) -> T
+            // Also handle bracket-style generics: Option[T], Vec[T], etc.
             let args = if self.check(TokenKind::Lt) {
                 Some(self.parse_type_args())
+            } else if self.check(TokenKind::LBracket) {
+                Some(self.parse_type_args_brackets())
             } else if self.check(TokenKind::LParen) {
                 // Check if this looks like fn-trait syntax by examining the name
                 let name_str = self.interner.resolve(name.node).map(|s| s.to_string());
@@ -393,6 +396,52 @@ impl<'src> Parser<'src> {
 
         // Use expect_closing_angle() to properly split `>>` tokens
         self.expect_closing_angle();
+
+        TypeArgs {
+            args,
+            span: start.merge(self.previous.span),
+        }
+    }
+
+    /// Parse type arguments using bracket syntax: [T, U, ...].
+    /// This is an alternative to angle bracket syntax <T, U, ...>.
+    #[must_use = "parsing has no effect if the result is not used"]
+    pub fn parse_type_args_brackets(&mut self) -> TypeArgs {
+        let start = self.current.span;
+        self.expect(TokenKind::LBracket);
+
+        let mut args = Vec::new();
+
+        while !self.check(TokenKind::RBracket) && !self.is_at_end() {
+            // Could be a type, lifetime, const, or associated type binding
+            let arg = if self.check(TokenKind::Lifetime) {
+                self.advance();
+                TypeArg::Lifetime(self.spanned_symbol())
+            } else if (self.check(TokenKind::Ident) || self.check(TokenKind::TypeIdent))
+                && self.check_next(TokenKind::Eq)
+            {
+                // Associated type binding: `Item = T`
+                self.advance(); // consume name
+                let name = self.spanned_symbol();
+                self.advance(); // consume `=`
+                let ty = self.parse_type();
+                TypeArg::AssocType { name, ty }
+            } else {
+                TypeArg::Type(self.parse_type())
+            };
+
+            args.push(arg);
+
+            if self.check(TokenKind::RBracket) {
+                break;
+            }
+
+            if !self.try_consume(TokenKind::Comma) {
+                break;
+            }
+        }
+
+        self.expect(TokenKind::RBracket);
 
         TypeArgs {
             args,

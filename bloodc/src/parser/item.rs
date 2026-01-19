@@ -1121,7 +1121,7 @@ impl<'src> Parser<'src> {
                     break;
                 }
                 _ => {
-                    self.error_expected_one_of(&["`fn`", "`type`", "`}`"]);
+                    self.error_expected_one_of(&["`fn`", "`type`", "`unsafe`", "`}`"]);
                     self.synchronize();
                     // After synchronize, check if we're at a top-level keyword and should break
                     if matches!(
@@ -1181,7 +1181,11 @@ impl<'src> Parser<'src> {
             let vis = self.parse_visibility();
 
             match self.current.kind {
-                TokenKind::Fn | TokenKind::Const | TokenKind::Async => {
+                TokenKind::Fn
+                | TokenKind::Const
+                | TokenKind::Async
+                | TokenKind::Unsafe
+                | TokenKind::AtUnsafe => {
                     items.push(ImplItem::Function(self.parse_fn_decl(attrs, vis)));
                 }
                 TokenKind::Type => {
@@ -1200,7 +1204,7 @@ impl<'src> Parser<'src> {
                     break;
                 }
                 _ => {
-                    self.error_expected_one_of(&["`fn`", "`type`", "`}`"]);
+                    self.error_expected_one_of(&["`fn`", "`type`", "`unsafe`", "`}`"]);
                     self.synchronize();
                     // After synchronize, check if we're at a top-level keyword and should break
                     if matches!(
