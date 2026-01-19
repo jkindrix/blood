@@ -367,6 +367,9 @@ impl<'a> MacroExpander<'a> {
             hir::Stmt::Item(def_id) => {
                 hir::Stmt::Item(def_id)
             }
+            hir::Stmt::Defer { body } => {
+                hir::Stmt::Defer { body: self.expand_expr(body) }
+            }
         }
     }
 

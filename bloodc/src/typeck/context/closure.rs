@@ -311,6 +311,9 @@ impl<'a> TypeContext<'a> {
                             // Item declarations don't directly capture variables
                             // (nested functions have their own capture analysis)
                         }
+                        hir::Stmt::Defer { body } => {
+                            self.collect_captures(body, is_move, captures, seen);
+                        }
                     }
                 }
                 if let Some(tail_expr) = tail {

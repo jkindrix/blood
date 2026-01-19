@@ -470,6 +470,10 @@ pub enum Stmt {
     Expr(Expr),
     /// Item declaration (nested function, etc.)
     Item(DefId),
+    /// Defer statement: execute body at scope exit.
+    Defer {
+        body: Expr,
+    },
 }
 
 /// A match arm.

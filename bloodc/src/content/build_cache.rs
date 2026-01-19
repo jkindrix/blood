@@ -1263,6 +1263,10 @@ fn hash_stmt(stmt: &hir::Stmt, items: &HashMap<DefId, hir::Item>, hasher: &mut C
                 hasher.update_u32(def_id.index);
             }
         }
+        hir::Stmt::Defer { body } => {
+            hasher.update_u8(0x04);
+            hash_expr(body, items, hasher);
+        }
     }
 }
 
@@ -1812,6 +1816,9 @@ fn extract_stmt_deps(stmt: &hir::Stmt, deps: &mut HashSet<DefId>) {
         }
         hir::Stmt::Item(def_id) => {
             deps.insert(*def_id);
+        }
+        hir::Stmt::Defer { body } => {
+            extract_expr_deps(body, deps);
         }
     }
 }

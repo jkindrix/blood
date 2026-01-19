@@ -1358,6 +1358,10 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
             hir::Stmt::Item(_) => {
                 // Nested items handled at crate level
             }
+            hir::Stmt::Defer { body: _ } => {
+                // TODO: Implement defer semantics in MIR lowering
+                // Defer requires cleanup blocks and scope tracking
+            }
         }
         Ok(())
     }

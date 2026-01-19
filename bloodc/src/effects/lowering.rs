@@ -472,6 +472,7 @@ impl EffectLowering {
                     // Let without init and Item statements don't contain row-polymorphic calls
                     Stmt::Let { init: None, .. } => false,
                     Stmt::Item(_) => false,
+                    Stmt::Defer { body } => self.detect_row_poly_recursive(body),
                 }) || tail.as_ref().is_some_and(|e| self.detect_row_poly_recursive(e))
             }
             ExprKind::If { condition, then_branch, else_branch } => {
@@ -607,6 +608,9 @@ impl EffectLowering {
                         // Let without init and Item statements don't contain effect operations
                         Stmt::Let { init: None, .. } => {}
                         Stmt::Item(_) => {}
+                        Stmt::Defer { body } => {
+                            self.collect_effects_recursive(body, effects);
+                        }
                     }
                 }
                 if let Some(e) = tail {

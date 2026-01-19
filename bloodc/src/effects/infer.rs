@@ -398,6 +398,10 @@ impl EffectInferencer {
             Stmt::Item(_) => {
                 // Nested items have their own effect inference
             }
+            Stmt::Defer { body } => {
+                // Infer effects from the deferred expression
+                self.infer_expr(body, ctx);
+            }
         }
     }
 

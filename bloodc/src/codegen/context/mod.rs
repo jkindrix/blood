@@ -1191,6 +1191,13 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         hir::Stmt::Item(_) => {
                             // Item statements (inner functions, etc.) are ignored in const eval
                         }
+                        hir::Stmt::Defer { .. } => {
+                            // Defer statements are not allowed in const context
+                            return Err(vec![Diagnostic::error(
+                                "defer statements are not allowed in const context",
+                                expr.span,
+                            )]);
+                        }
                     }
                 }
 

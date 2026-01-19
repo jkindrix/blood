@@ -718,6 +718,10 @@ pub trait ExprLowering {
             Stmt::Item(_) => {
                 // Item statements are handled elsewhere
             }
+            Stmt::Defer { body: _ } => {
+                // TODO: Implement defer semantics in MIR lowering
+                // Defer requires cleanup blocks and scope tracking
+            }
         }
         Ok(())
     }

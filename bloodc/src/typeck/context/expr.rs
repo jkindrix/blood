@@ -131,6 +131,9 @@ impl<'a> TypeContext<'a> {
             ast::ExprKind::TryWith { body, handlers } => {
                 self.infer_try_with(body, handlers, expr.span)
             }
+            ast::ExprKind::Handle { body, handler, clauses } => {
+                self.infer_handle(body, handler.as_deref(), clauses, expr.span)
+            }
             ast::ExprKind::Perform { effect, operation, args } => {
                 self.infer_perform(effect.as_ref(), operation, args, expr.span)
             }
@@ -553,6 +556,44 @@ impl<'a> TypeContext<'a> {
                 handlers: hir_handlers,
             },
             ty: resolved_ty,
+            span,
+        })
+    }
+
+    /// Infer type of a handle expression with inline handler clauses.
+    ///
+    /// `handle expr() { return(v) { body } op(x) { handler } }`
+    /// or `handle expr() with handler { return(v) { body } op(x) { handler } }`
+    fn infer_handle(
+        &mut self,
+        body: &ast::Expr,
+        handler: Option<&ast::Expr>,
+        clauses: &[ast::InlineHandlerClause],
+        span: Span,
+    ) -> Result<hir::Expr, TypeError> {
+        // For now, return a placeholder - full implementation would be similar to infer_try_with
+        // but with simpler handler clauses (no effect path, just return/op names)
+        let _body_expr = self.infer_expr(body)?;
+
+        if let Some(h) = handler {
+            let _handler_expr = self.infer_expr(h)?;
+        }
+
+        // Type check each clause body
+        for clause in clauses {
+            let expected = self.unifier.fresh_var();
+            let _clause_body = self.check_block(&clause.body, &expected)?;
+        }
+
+        // The result type is the return clause's body type
+        let ty = self.unifier.fresh_var();
+
+        Ok(hir::Expr {
+            kind: hir::ExprKind::InlineHandle {
+                body: Box::new(self.infer_expr(body)?),
+                handlers: Vec::new(), // Simplified for now
+            },
+            ty,
             span,
         })
     }
@@ -1799,6 +1840,11 @@ impl<'a> TypeContext<'a> {
                 // For now, just convert the inner type - actual bound relaxation
                 // would be handled during trait bound checking
                 self.ast_type_to_hir_type(inner)
+            }
+            ast::TypeKind::Wildcard => {
+                // Wildcard type `*` is used in handler declarations (for * { ... })
+                // In a type context, treat it as a fresh type variable
+                Ok(self.unifier.fresh_var())
             }
         }
     }

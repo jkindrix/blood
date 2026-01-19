@@ -176,6 +176,9 @@ impl MacroExpander {
             Statement::Item(decl) => {
                 self.expand_declaration(decl);
             }
+            Statement::Defer { body, .. } => {
+                self.expand_block(body);
+            }
         }
     }
 
@@ -380,6 +383,15 @@ impl MacroExpander {
                 self.expand_block(body);
                 for handler in handlers {
                     self.expand_block(&mut handler.body);
+                }
+            }
+            ExprKind::Handle { body, handler, clauses } => {
+                self.expand_expr(body);
+                if let Some(h) = handler {
+                    self.expand_expr(h);
+                }
+                for clause in clauses {
+                    self.expand_block(&mut clause.body);
                 }
             }
             ExprKind::Record { fields, base, .. } => {

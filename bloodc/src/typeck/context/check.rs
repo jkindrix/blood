@@ -711,19 +711,29 @@ impl<'a> TypeContext<'a> {
             });
 
             // Add the result parameter (the input to the return clause)
-            let param_name = self.symbol_to_string(ret_clause.param.node);
+            // Extract name from pattern - supports identifier patterns like `return(x)` and
+            // unit patterns like `return(())` (uses placeholder "_" for non-identifier patterns)
+            let (param_name, param_span) = match &ret_clause.param.kind {
+                ast::PatternKind::Ident { name, .. } => {
+                    (self.symbol_to_string(name.node), name.span)
+                }
+                _ => {
+                    // For patterns like `()`, use placeholder name
+                    ("_".to_string(), ret_clause.param.span)
+                }
+            };
             let local_id = self.resolver.define_local(
                 param_name.clone(),
                 input_ty.clone(),
                 false,
-                ret_clause.param.span,
+                param_span,
             )?;
             self.locals.push(hir::Local {
                 id: local_id,
                 ty: input_ty,
                 mutable: false,
                 name: Some(param_name),
-                span: ret_clause.param.span,
+                span: param_span,
             });
 
             // Add handler state fields to scope (same as in operation bodies)
@@ -843,6 +853,11 @@ impl<'a> TypeContext<'a> {
                 }
                 ast::Statement::Item(_) => {
                     // Already handled in first pass - skip
+                }
+                ast::Statement::Defer { body, .. } => {
+                    // Defer body should type-check to unit
+                    let body_expr = self.check_block(body, &Type::unit())?;
+                    stmts.push(hir::Stmt::Defer { body: body_expr });
                 }
             }
         }

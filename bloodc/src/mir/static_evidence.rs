@@ -349,6 +349,7 @@ fn contains_nested_handle_stmt(stmt: &crate::hir::Stmt) -> bool {
         Stmt::Let { init, .. } => init.as_ref().map_or(false, |e| contains_nested_handle(e)),
         Stmt::Expr(expr) => contains_nested_handle(expr),
         Stmt::Item(_) => false,
+        Stmt::Defer { body } => contains_nested_handle(body),
     }
 }
 
@@ -815,6 +816,9 @@ fn contains_escaping_control_flow_stmt(stmt: &crate::hir::Stmt) -> bool {
             contains_escaping_control_flow(expr)
         }
         Stmt::Item(_) => false,
+        Stmt::Defer { body } => {
+            contains_escaping_control_flow(body)
+        }
     }
 }
 

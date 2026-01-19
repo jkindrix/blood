@@ -326,6 +326,9 @@ impl HandlerLintContext {
             crate::hir::expr::Stmt::Item(_) => {
                 // Item declarations don't contain expressions to check at this level
             }
+            crate::hir::expr::Stmt::Defer { body } => {
+                self.check_handler_nesting(body, depth);
+            }
         }
     }
 }

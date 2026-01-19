@@ -52,6 +52,12 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 hir::Stmt::Item(_) => {
                     // Nested items handled separately
                 }
+                hir::Stmt::Defer { body } => {
+                    // TODO: Proper defer semantics (execute at scope exit)
+                    // For now, just record the deferred expression
+                    // Full implementation requires cleanup blocks and scope tracking
+                    let _ = body; // Silence unused warning
+                }
             }
         }
 

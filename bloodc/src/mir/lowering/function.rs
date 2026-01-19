@@ -95,6 +95,9 @@ pub fn collect_local_refs(expr: &Expr, refs: &mut Vec<CaptureCandidate>, in_muta
                         collect_local_refs(e, refs, false);
                     }
                     hir::Stmt::Item(_) => {}
+                    hir::Stmt::Defer { body } => {
+                        collect_local_refs(body, refs, false);
+                    }
                 }
             }
             if let Some(tail) = tail {
@@ -1416,6 +1419,10 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
             }
             Stmt::Item(_) => {
                 // Nested items are handled at crate level
+            }
+            Stmt::Defer { body: _ } => {
+                // TODO: Implement defer semantics in MIR lowering
+                // Defer requires cleanup blocks and scope tracking
             }
         }
         Ok(())

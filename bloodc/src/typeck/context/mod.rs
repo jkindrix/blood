@@ -1274,6 +1274,9 @@ impl<'a> TypeContext<'a> {
             }
             hir::Stmt::Expr(expr) => hir::Stmt::Expr(Self::zonk_expr_with_unifier(unifier, expr)),
             hir::Stmt::Item(def_id) => hir::Stmt::Item(def_id),
+            hir::Stmt::Defer { body } => hir::Stmt::Defer {
+                body: Self::zonk_expr_with_unifier(unifier, body),
+            },
         }
     }
 

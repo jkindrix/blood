@@ -2259,6 +2259,7 @@ impl<'a> TypeContext<'a> {
                     ast::TypeKind::ImplTrait { .. } => "impl trait type",
                     ast::TypeKind::DynTrait { .. } => "dyn trait type",
                     ast::TypeKind::MaybeUnsized { .. } => "relaxed bound type",
+                    ast::TypeKind::Wildcard => "wildcard type",
                     ast::TypeKind::Path(_) => unreachable!("Path type should be handled by the match above")
                 };
                 Err(TypeError::new(
