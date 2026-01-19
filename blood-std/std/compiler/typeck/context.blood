@@ -111,7 +111,7 @@ impl ProgramContext {
                 self.current_module = mod_decl.path.clone();
             }
             Option::None => {}
-        }
+        };
 
         // Process imports
         self.collect_imports(program);
@@ -194,7 +194,7 @@ impl ProgramContext {
             let param_ty = self.ast_type_to_type(&fn_decl.params[i].ty);
             param_types.push(param_ty);
             i = i + 1;
-        }
+        };
 
         // Get return type
         let ret_type = match &fn_decl.return_type {
@@ -241,7 +241,7 @@ impl ProgramContext {
                 ty: field_ty,
             });
             i = i + 1;
-        }
+        };
 
         // Build struct type
         let struct_ty = Type::new(TypeKind::Adt {
@@ -291,7 +291,7 @@ impl ProgramContext {
                 payload,
             });
             i = i + 1;
-        }
+        };
 
         // Build enum type
         let enum_ty = Type::new(TypeKind::Adt {
@@ -322,7 +322,7 @@ impl ProgramContext {
             let method_def = self.collect_trait_method(method);
             methods.push(method_def);
             i = i + 1;
-        }
+        };
 
         // Register trait
         self.checker.scope.define_trait(name.clone(), def_id.clone());
@@ -348,7 +348,7 @@ impl ProgramContext {
             let param_ty = self.ast_type_to_type(&method.params[i].ty);
             param_types.push(param_ty);
             i = i + 1;
-        }
+        };
 
         let ret_type = match &method.return_type {
             Option::Some(ty) => self.ast_type_to_type(ty),
@@ -390,7 +390,7 @@ impl ProgramContext {
                                 fn_def_id,
                             });
                             i = i + 1;
-                        }
+                        };
 
                         // Register impl
                         let impl_def = ImplDef {
@@ -429,7 +429,7 @@ impl ProgramContext {
             let param_ty = self.ast_type_to_type(&method.params[i].ty);
             param_types.push(param_ty);
             i = i + 1;
-        }
+        };
 
         let ret_type = match &method.return_type {
             Option::Some(ty) => self.ast_type_to_type(ty),
@@ -475,14 +475,14 @@ impl ProgramContext {
             while j < operation.params.len() {
                 param_types.push(self.ast_type_to_type(&operation.params[j].ty));
                 j = j + 1;
-            }
+            };
             let ret_ty = match &operation.return_type {
                 Option::Some(ty) => self.ast_type_to_type(ty),
                 Option::None => Type::unit(),
             };
             operations.push(EffectOpDef::new(operation.name.value.clone(), param_types, ret_ty));
             i = i + 1;
-        }
+        };
 
         // Register effect
         self.checker.scope.define_effect(name.clone(), def_id.clone());
@@ -595,7 +595,7 @@ impl ProgramContext {
                     let param_ty = self.ast_type_to_type(&param.ty);
                     self.define_pattern(&param.pattern, &param_ty);
                     i = i + 1;
-                }
+                };
 
                 // Get expected return type
                 let expected_ret = match &fn_decl.return_type {
@@ -658,7 +658,7 @@ impl ProgramContext {
         while i < block.stmts.len() {
             self.check_stmt(&block.stmts[i]);
             i = i + 1;
-        }
+        };
 
         // The block's type is its tail expression's type, or unit if none
         let result = match &block.expr {
@@ -740,7 +740,7 @@ impl ProgramContext {
                             self.checker.unify_or_error(&guard_ty, &Type::bool(), span);
                         }
                         Option::None => {}
-                    }
+                    };
 
                     // Check body
                     let body_ty = self.check_expr(&arm.body);
@@ -760,7 +760,7 @@ impl ProgramContext {
                 while i < args.len() {
                     arg_types.push(self.check_expr(&args[i]));
                     i = i + 1;
-                }
+                };
 
                 // Create expected function type
                 let result_ty = self.checker.fresh_var();
@@ -782,7 +782,7 @@ impl ProgramContext {
                 while i < args.len() {
                     arg_types.push(self.check_expr(&args[i]));
                     i = i + 1;
-                }
+                };
 
                 // Look up method on receiver type
                 match self.checker.lookup_method(&receiver_ty, &method.value) {
@@ -813,7 +813,7 @@ impl ProgramContext {
             }
             ExprKind::Field { base, field } => {
                 let base_ty = self.check_expr(base);
-                self.check_field_access(&base_ty, &field.value, &expr.span)
+                self.check_field_access(&base_ty, &field.value, &expr.span);
             }
             ExprKind::Index { base, index } => {
                 let base_ty = self.check_expr(base);
@@ -824,16 +824,16 @@ impl ProgramContext {
                 self.checker.unify_or_error(&index_ty, &Type::usize(), span);
 
                 // Get element type
-                self.check_index_type(&base_ty, &expr.span)
+                self.check_index_type(&base_ty, &expr.span);
             }
             ExprKind::Binary { op, left, right } => {
                 let left_ty = self.check_expr(left);
                 let right_ty = self.check_expr(right);
-                self.check_binary_op(op, &left_ty, &right_ty, &expr.span)
+                self.check_binary_op(op, &left_ty, &right_ty, &expr.span);
             }
             ExprKind::Unary { op, operand } => {
                 let operand_ty = self.check_expr(operand);
-                self.check_unary_op(op, &operand_ty, &expr.span)
+                self.check_unary_op(op, &operand_ty, &expr.span);
             }
             ExprKind::Struct { path, fields } => {
                 let struct_name = path.last_segment();
@@ -922,7 +922,7 @@ impl ProgramContext {
                     self.define_pattern(&params[i].pattern, &param_ty);
                     param_types.push(param_ty);
                     i = i + 1;
-                }
+                };
 
                 let body_ty = self.check_expr(body);
 
@@ -1009,19 +1009,19 @@ impl ProgramContext {
             }
             ExprKind::Handle { expr: inner, handlers } => {
                 // TODO: Implement handler type checking
-                self.check_expr(inner)
+                self.check_expr(inner);
             }
             ExprKind::Try { expr: inner } => {
                 // TODO: Implement try expression type checking
-                self.check_expr(inner)
+                self.check_expr(inner);
             }
             ExprKind::Await { expr: inner } => {
                 // TODO: Implement await expression type checking
-                self.check_expr(inner)
+                self.check_expr(inner);
             }
             ExprKind::Cast { expr: inner, ty } => {
                 self.check_expr(inner);
-                self.ast_type_to_type(ty)
+                self.ast_type_to_type(ty);
             }
         }
     }
@@ -1068,7 +1068,7 @@ impl ProgramContext {
             }
         } else {
             // Module path - resolve qualified name
-            self.resolve_module_path(path, span)
+            self.resolve_module_path(path, span);
         }
     }
 
@@ -1086,18 +1086,18 @@ impl ProgramContext {
                 while i < path.segments.len() {
                     full_path = full_path.with_segment(&path.segments[i].value);
                     i = i + 1;
-                }
+                };
 
                 // Look up in module registry
-                self.resolve_in_module_registry(&full_path, span)
+                self.resolve_in_module_registry(&full_path, span);
             }
             Option::None => {
                 // Try resolving as absolute path (std, crate, etc.)
                 if first == "crate" || first == "self" || first == "super" {
-                    self.resolve_relative_path(path, span)
+                    self.resolve_relative_path(path, span);
                 } else if first == "std" {
                     // Standard library path
-                    self.resolve_in_module_registry(path, span)
+                    self.resolve_in_module_registry(path, span);
                 } else {
                     // Unknown path
                     let ts = self.ast_span_to_type_span(span);
@@ -1114,11 +1114,11 @@ impl ProgramContext {
         let base_path = if first == "crate" {
             ModulePath::empty()
         } else if first == "self" {
-            self.current_module.clone()
+            self.current_module.clone();
         } else if first == "super" {
-            self.current_module.parent()
+            self.current_module.parent();
         } else {
-            self.current_module.clone()
+            self.current_module.clone();
         };
 
         // Build full path from base
@@ -1127,9 +1127,9 @@ impl ProgramContext {
         while i < path.segments.len() {
             full_path = full_path.with_segment(&path.segments[i].value);
             i = i + 1;
-        }
+        };
 
-        self.resolve_in_module_registry(&full_path, span)
+        self.resolve_in_module_registry(&full_path, span);
     }
 
     /// Look up a path in the module registry.
@@ -1141,7 +1141,7 @@ impl ProgramContext {
         match self.checker.scope.lookup_var(&item_name) {
             Option::Some(ty) => return ty,
             Option::None => {}
-        }
+        };
 
         match self.checker.scope.lookup_fn(&item_name) {
             Option::Some(def_id) => {
@@ -1151,7 +1151,7 @@ impl ProgramContext {
                 }
             }
             Option::None => {}
-        }
+        };
 
         match self.checker.scope.lookup_type(&item_name) {
             Option::Some(def_id) => {
@@ -1161,7 +1161,7 @@ impl ProgramContext {
                 });
             }
             Option::None => {}
-        }
+        };
 
         // Not found - report error
         let ts = self.ast_span_to_type_span(span);
@@ -1181,9 +1181,9 @@ impl ProgramContext {
                                 while i < fields.len() {
                                     if fields[i].name == field {
                                         return fields[i].ty.clone();
-                                    }
+                                    };
                                     i = i + 1;
-                                }
+                                };
                                 let ts = self.ast_span_to_type_span(span);
                                 self.checker.error(TypeError::unknown_field(
                                     type_def.name.clone(),
@@ -1229,7 +1229,7 @@ impl ProgramContext {
                             ));
                             Type::error()
                         }
-                    }
+                    };
                     Err(_) => {
                         let ts = self.ast_span_to_type_span(span);
                         self.checker.error(TypeError::tuple_field_not_numeric(
@@ -1272,7 +1272,7 @@ impl ProgramContext {
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
                 let ts = self.ast_span_to_type_span(span);
                 self.checker.unify_or_error(left, right, ts);
-                left.clone()
+                left.clone();
             }
             BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
                 let ts = self.ast_span_to_type_span(span);
@@ -1288,7 +1288,7 @@ impl ProgramContext {
             BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
                 let ts = self.ast_span_to_type_span(span);
                 self.checker.unify_or_error(left, right, ts);
-                left.clone()
+                left.clone();
             }
         }
     }
@@ -1343,7 +1343,7 @@ impl ProgramContext {
                             i = i + 1;
                         }
                     }
-                    _ => {}
+                    _ => {};
                 }
             }
             PatternKind::Struct { path: _, fields } => {
@@ -1430,12 +1430,12 @@ impl ProgramContext {
                                 }
                                 Option::None => {
                                     // Type parameter or unknown type
-                                    self.checker.fresh_var()
+                                    self.checker.fresh_var();
                                 }
                             }
                         } else {
                             // Module-qualified type
-                            self.resolve_module_path(path, &ast_ty.span)
+                            self.resolve_module_path(path, &ast_ty.span);
                         }
                     }
                 }
@@ -1490,7 +1490,7 @@ impl ProgramContext {
                 while i < params.len() {
                     param_tys.push(self.ast_type_to_type(&params[i]));
                     i = i + 1;
-                }
+                };
                 let ret_ty = self.ast_type_to_type(ret);
                 let effect_row = match effects {
                     Option::Some(row) => Option::Some(self.ast_effect_row_to_effect_row(row)),
@@ -1542,7 +1542,7 @@ impl ProgramContext {
                 Option::None => {
                     // Effect not found - error will be reported elsewhere
                 }
-            }
+            };
             i = i + 1;
         }
         EffectRow::new(effects)
@@ -1581,7 +1581,7 @@ impl ModuleRegistry {
 
     /// Look up a module.
     pub fn get(&self, path: &ModulePath) -> Option<&ModuleInfo> {
-        self.modules.get(&path.to_string())
+        self.modules.get(&path.to_string());
     }
 }
 
@@ -1625,7 +1625,7 @@ impl ModulePath {
     /// Get the last segment of the path.
     pub fn last_segment(&self) -> String {
         if self.segments.len() > 0 {
-            self.segments[self.segments.len() - 1].value.clone()
+            self.segments[self.segments.len() - 1].value.clone();
         } else {
             "".to_string()
         }
@@ -1665,7 +1665,7 @@ impl ModulePath {
         while i < self.segments.len() {
             if i > 0 {
                 result = result + ".";
-            }
+            };
             result = result + &self.segments[i].value;
             i = i + 1;
         }
@@ -1682,7 +1682,7 @@ impl ModulePath {
 /// This is the main entry point for type checking.
 pub fn check_program(program: &Program) -> TypeCheckResult {
     let mut ctx = ProgramContext::new();
-    ctx.check(program)
+    ctx.check(program);
 }
 
 // ============================================================================

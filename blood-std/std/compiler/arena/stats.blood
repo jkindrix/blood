@@ -147,7 +147,7 @@ impl ArenaStats {
 
     /// Check if the arena is empty (no allocations).
     pub fn is_empty(self) -> Bool {
-        self.num_items == 0
+        self.num_items == 0;
     }
 
     /// Merge stats from another arena (for aggregate reporting).
@@ -185,7 +185,7 @@ impl PartialEq for ArenaStats {
         self.num_chunks == other.num_chunks &&
         self.total_capacity == other.total_capacity &&
         self.total_used == other.total_used &&
-        self.num_items == other.num_items
+        self.num_items == other.num_items;
     }
 }
 
@@ -198,7 +198,7 @@ impl Debug for ArenaStats {
             .field("total_capacity", self.total_capacity)
             .field("total_used", self.total_used)
             .field("num_items", self.num_items)
-            .finish()
+            .finish();
     }
 }
 
@@ -255,7 +255,7 @@ impl ArenaReport {
         self.total = self.ast_arena
             .merge(self.hir_arena)
             .merge(self.type_arena)
-            .merge(self.string_arena)
+            .merge(self.string_arena);
     }
 
     /// Get total memory used across all arenas.
@@ -283,7 +283,7 @@ impl Debug for ArenaReport {
             .field("type_arena", self.type_arena)
             .field("string_arena", self.string_arena)
             .field("total", self.total)
-            .finish()
+            .finish();
     }
 }
 
@@ -293,19 +293,19 @@ impl Debug for ArenaReport {
 
 #[test]
 fn test_arena_stats_new() {
-    let stats = ArenaStats::new()
+    let stats = ArenaStats::new();
 
-    assert(stats.num_chunks == 0)
-    assert(stats.total_capacity == 0)
-    assert(stats.total_used == 0)
-    assert(stats.num_items == 0)
+    assert(stats.num_chunks == 0);
+    assert(stats.total_capacity == 0);
+    assert(stats.total_used == 0);
+    assert(stats.num_items == 0);
 }
 
 #[test]
 fn test_arena_stats_utilization_empty() {
-    let stats = ArenaStats::new()
+    let stats = ArenaStats::new();
 
-    assert(stats.utilization() == 0.0)
+    assert(stats.utilization() == 0.0);
 }
 
 #[test]
@@ -315,9 +315,9 @@ fn test_arena_stats_utilization() {
         total_capacity: 1000,
         total_used: 500,
         num_items: 10,
-    }
+    };
 
-    assert(stats.utilization() == 50.0)
+    assert(stats.utilization() == 50.0);
 }
 
 #[test]
@@ -327,9 +327,9 @@ fn test_arena_stats_utilization_full() {
         total_capacity: 1000,
         total_used: 1000,
         num_items: 100,
-    }
+    };
 
-    assert(stats.utilization() == 100.0)
+    assert(stats.utilization() == 100.0);
 }
 
 #[test]
@@ -339,9 +339,9 @@ fn test_arena_stats_avg_item_size() {
         total_capacity: 1000,
         total_used: 800,
         num_items: 100,
-    }
+    };
 
-    assert(stats.avg_item_size() == 8)
+    assert(stats.avg_item_size() == 8);
 }
 
 #[test]
@@ -351,9 +351,9 @@ fn test_arena_stats_wasted() {
         total_capacity: 2000,
         total_used: 1500,
         num_items: 150,
-    }
+    };
 
-    assert(stats.wasted() == 500)
+    assert(stats.wasted() == 500);
 }
 
 #[test]
@@ -363,9 +363,9 @@ fn test_arena_stats_fragmentation() {
         total_capacity: 1000,
         total_used: 750,
         num_items: 75,
-    }
+    };
 
-    assert(stats.fragmentation() == 0.25)
+    assert(stats.fragmentation() == 0.25);
 }
 
 #[test]
@@ -375,35 +375,35 @@ fn test_arena_stats_merge() {
         total_capacity: 1000,
         total_used: 500,
         num_items: 50,
-    }
+    };
 
     let stats2 = ArenaStats {
         num_chunks: 2,
         total_capacity: 2000,
         total_used: 1000,
         num_items: 100,
-    }
+    };
 
-    let merged = stats1.merge(stats2)
+    let merged = stats1.merge(stats2);
 
-    assert(merged.num_chunks == 3)
-    assert(merged.total_capacity == 3000)
-    assert(merged.total_used == 1500)
-    assert(merged.num_items == 150)
+    assert(merged.num_chunks == 3);
+    assert(merged.total_capacity == 3000);
+    assert(merged.total_used == 1500);
+    assert(merged.num_items == 150);
 }
 
 #[test]
 fn test_arena_stats_is_empty() {
-    let empty = ArenaStats::new()
+    let empty = ArenaStats::new();
     let non_empty = ArenaStats {
         num_chunks: 1,
         total_capacity: 100,
         total_used: 50,
         num_items: 5,
-    }
+    };
 
-    assert(empty.is_empty())
-    assert(!non_empty.is_empty())
+    assert(empty.is_empty());
+    assert(!non_empty.is_empty());
 }
 
 #[test]
@@ -413,48 +413,48 @@ fn test_arena_stats_equality() {
         total_capacity: 1000,
         total_used: 500,
         num_items: 50,
-    }
+    };
 
     let stats2 = ArenaStats {
         num_chunks: 1,
         total_capacity: 1000,
         total_used: 500,
         num_items: 50,
-    }
+    };
 
     let stats3 = ArenaStats {
         num_chunks: 2,
         total_capacity: 1000,
         total_used: 500,
         num_items: 50,
-    }
+    };
 
-    assert(stats1 == stats2)
-    assert(stats1 != stats3)
+    assert(stats1 == stats2);
+    assert(stats1 != stats3);
 }
 
 #[test]
 fn test_arena_report() {
-    let mut report = ArenaReport::new()
+    let mut report = ArenaReport::new();
 
     report.ast_arena = ArenaStats {
         num_chunks: 1,
         total_capacity: 1000,
         total_used: 500,
         num_items: 50,
-    }
+    };
 
     report.string_arena = ArenaStats {
         num_chunks: 1,
         total_capacity: 2000,
         total_used: 1500,
         num_items: 100,
-    }
+    };
 
-    report.compute_total()
+    report.compute_total();
 
-    assert(report.total.num_chunks == 2)
-    assert(report.total.total_capacity == 3000)
-    assert(report.total.total_used == 2000)
-    assert(report.total.num_items == 150)
+    assert(report.total.num_chunks == 2);
+    assert(report.total.total_capacity == 3000);
+    assert(report.total.total_used == 2000);
+    assert(report.total.num_items == 150);
 }

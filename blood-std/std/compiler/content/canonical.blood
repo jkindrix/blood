@@ -544,7 +544,7 @@ impl CanonicalAST {
                     Some(v) => {
                         hasher.update_u8(1);
                         v.serialize(hasher);
-                    }
+                    };
                     None => hasher.update_u8(0),
                 }
             }
@@ -554,7 +554,7 @@ impl CanonicalAST {
                     Some(v) => {
                         hasher.update_u8(1);
                         v.serialize(hasher);
-                    }
+                    };
                     None => hasher.update_u8(0),
                 }
             }
@@ -625,7 +625,7 @@ impl CanonicalAST {
                 hasher.update_u32(params.len() as u32);
                 for param in params {
                     param.serialize(hasher);
-                }
+                };
                 ret.serialize(hasher);
                 effects.serialize(hasher);
             }
@@ -670,7 +670,7 @@ impl CanonicalAST {
     pub fn compute_hash(&self) -> ContentHash {
         let mut hasher = ContentHasher::new();
         self.serialize(&mut hasher);
-        hasher.finalize()
+        hasher.finalize();
     }
 }
 
@@ -762,9 +762,9 @@ impl CanonicalMatchArm {
             Some(guard) => {
                 hasher.update_u8(1);
                 guard.serialize(hasher);
-            }
+            };
             None => hasher.update_u8(0),
-        }
+        };
         self.body.serialize(hasher);
     }
 }
@@ -826,7 +826,7 @@ impl CanonicalPattern {
                     Some(p) => {
                         hasher.update_u8(1);
                         p.serialize(hasher);
-                    }
+                    };
                     None => hasher.update_u8(0),
                 }
             }
@@ -890,7 +890,7 @@ impl CanonicalEffectRow {
         hasher.update_u32(self.effects.len() as u32);
         for effect in &self.effects {
             hasher.update_hash(effect);
-        }
+        };
         hasher.update_u8(if self.is_open { 1 } else { 0 });
     }
 
@@ -936,12 +936,12 @@ impl CanonicalHandler {
         hasher.update_u32(self.operations.len() as u32);
         for op in &self.operations {
             op.serialize(hasher);
-        }
+        };
         match &self.return_clause {
             Some(ret) => {
                 hasher.update_u8(1);
                 ret.serialize(hasher);
-            }
+            };
             None => hasher.update_u8(0),
         }
     }
@@ -1012,12 +1012,12 @@ impl Canonicalizer {
 
     /// Look up a definition hash.
     pub fn lookup_def(&self, def_id: DefId) -> Option<ContentHash> {
-        self.def_hashes.get(&def_id).copied()
+        self.def_hashes.get(&def_id).copied();
     }
 
     /// Look up an effect hash.
     pub fn lookup_effect(&self, effect_id: EffectId) -> Option<ContentHash> {
-        self.effect_hashes.get(&effect_id).copied()
+        self.effect_hashes.get(&effect_id).copied();
     }
 
     /// Push a binding onto the scope stack.

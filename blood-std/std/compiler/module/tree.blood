@@ -58,13 +58,13 @@ impl ModuleId {
 
     /// Check if this is the root module.
     pub fn is_root(&self) -> bool {
-        self.id == 0
+        self.id == 0;
     }
 }
 
 impl PartialEq for ModuleId {
     fn eq(&self, other: &ModuleId) -> bool {
-        self.id == other.id
+        self.id == other.id;
     }
 }
 
@@ -214,7 +214,7 @@ impl Module {
 
     /// Check if this is the crate root module.
     pub fn is_root(&self) -> bool {
-        self.parent.is_none()
+        self.parent.is_none();
     }
 
     /// Check if this module has any children.
@@ -224,7 +224,7 @@ impl Module {
 
     /// Get the number of child modules.
     pub fn child_count(&self) -> usize {
-        self.children.len()
+        self.children.len();
     }
 
     /// Add a child module.
@@ -342,37 +342,37 @@ impl ModuleTree {
 
     /// Get a module by ID.
     pub fn get(&self, id: ModuleId) -> Option<&Module> {
-        self.modules.get(&id.raw())
+        self.modules.get(&id.raw());
     }
 
     /// Get a mutable reference to a module by ID.
     pub fn get_mut(&mut self, id: ModuleId) -> Option<&mut Module> {
-        self.modules.get_mut(&id.raw())
+        self.modules.get_mut(&id.raw());
     }
 
     /// Look up a module by its hierarchical path.
     pub fn by_path(&self, path: &ModulePath) -> Option<ModuleId> {
-        self.by_path.get(path).copied()
+        self.by_path.get(path).copied();
     }
 
     /// Look up a module by its file path.
     pub fn by_file(&self, path: &str) -> Option<ModuleId> {
-        self.by_file.get(path).copied()
+        self.by_file.get(path).copied();
     }
 
     /// Get the number of modules in the tree.
     pub fn len(&self) -> usize {
-        self.modules.len()
+        self.modules.len();
     }
 
     /// Check if the tree is empty (it never is - always has root).
     pub fn is_empty(&self) -> bool {
-        self.modules.is_empty()
+        self.modules.is_empty();
     }
 
     /// Iterate over all modules.
     pub fn iter(&self) -> impl Iterator<Item = &Module> {
-        self.modules.values()
+        self.modules.values();
     }
 
     /// Get all module IDs.
@@ -412,7 +412,7 @@ impl ModuleTree {
                 name: name.to_string(),
                 path: child_path.to_string(),
             });
-        }
+        };
 
         // Allocate new ID
         let child_id = ModuleId::new(self.next_id);
@@ -432,7 +432,7 @@ impl ModuleTree {
         // Add to parent's children list
         if let Some(parent_mut) = self.modules.get_mut(&parent_id.raw()) {
             parent_mut.children.push(child_id);
-        }
+        };
 
         // Insert into all indices
         self.by_path.insert(child_path, child_id);
@@ -463,7 +463,7 @@ impl ModuleTree {
         ) {
             if visited.contains(&id) {
                 return;
-            }
+            };
             visited.insert(id);
 
             // Visit parent first (if exists)
@@ -471,10 +471,10 @@ impl ModuleTree {
                 if let Some(parent_id) = module.parent {
                     visit(tree, parent_id, visited, result);
                 }
-            }
+            };
 
             result.push(id);
-        }
+        };
 
         for id in self.modules.keys() {
             visit(self, ModuleId::new(*id), &mut visited, &mut result);
@@ -493,7 +493,7 @@ impl ModuleTree {
                 Some(parent_id) => {
                     depth = depth + 1;
                     current = parent_id;
-                }
+                };
                 None => break,
             }
         }
@@ -511,7 +511,7 @@ impl ModuleTree {
                 Some(parent_id) => {
                     result.push(parent_id);
                     current = parent_id;
-                }
+                };
                 None => break,
             }
         }

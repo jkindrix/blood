@@ -44,7 +44,7 @@ impl FileId {
 
     /// Check if this is a dummy file ID.
     pub fn is_dummy(self) -> Bool {
-        self.id == 0
+        self.id == 0;
     }
 }
 
@@ -75,15 +75,15 @@ impl LineIndex {
     ///
     /// This is an O(n) operation that should be done once per file.
     pub fn new(source: String) -> LineIndex {
-        let mut line_starts = Vec::new()
-        line_starts.push(0)  // Line 1 starts at byte 0
+        let mut line_starts = Vec::new();
+        line_starts.push(0);  // Line 1 starts at byte 0
 
-        let mut offset: USize = 0
+        let mut offset: USize = 0;
         for ch in source.chars() {
             if ch == '\n' {
-                line_starts.push(offset + 1)  // Next line starts after newline
-            }
-            offset = offset + ch.len_utf8()
+                line_starts.push(offset + 1);  // Next line starts after newline
+            };
+            offset = offset + ch.len_utf8();
         }
 
         LineIndex { line_starts }
@@ -95,37 +95,37 @@ impl LineIndex {
     /// Uses binary search for O(log n) lookup.
     pub fn line_col(self, offset: USize) -> (U32, U32) {
         // Binary search for the line containing this offset
-        let line_idx = self.binary_search_line(offset)
-        let line = (line_idx + 1) as U32  // 1-indexed
-        let col = (offset - self.line_starts.get(line_idx).unwrap_or(0) + 1) as U32  // 1-indexed
+        let line_idx = self.binary_search_line(offset);
+        let line = (line_idx + 1) as U32;  // 1-indexed
+        let col = (offset - self.line_starts.get(line_idx).unwrap_or(0) + 1) as U32;  // 1-indexed
         (line, col)
     }
 
     /// Binary search for the line index containing offset.
     fn binary_search_line(self, offset: USize) -> USize {
-        let mut low: USize = 0
-        let mut high = self.line_starts.len()
+        let mut low: USize = 0;
+        let mut high = self.line_starts.len();
 
         while low < high {
-            let mid = low + (high - low) / 2
-            let start = self.line_starts.get(mid).unwrap_or(0)
+            let mid = low + (high - low) / 2;
+            let start = self.line_starts.get(mid).unwrap_or(0);
 
             if start <= offset {
                 // Check if this is the right line (offset < next line start)
-                let next_start = self.line_starts.get(mid + 1)
+                let next_start = self.line_starts.get(mid + 1);
                 match next_start {
                     Option::Some(ns) if offset < *ns => {
-                        return mid
+                        return mid;
                     }
                     Option::Some(_) => {
-                        low = mid + 1
+                        low = mid + 1;
                     }
                     Option::None => {
-                        return mid  // Last line
+                        return mid;  // Last line
                     }
                 }
             } else {
-                high = mid
+                high = mid;
             }
         }
 
@@ -138,14 +138,14 @@ impl LineIndex {
     /// Line numbers are 1-indexed.
     pub fn line_start(self, line: U32) -> Option<USize> {
         if line == 0 {
-            return Option::None
-        }
-        self.line_starts.get((line - 1) as USize).map(|s| *s)
+            return Option::None;
+        };
+        self.line_starts.get((line - 1) as USize).map(|s| *s);
     }
 
     /// Get the number of lines in the source.
     pub fn line_count(self) -> USize {
-        self.line_starts.len()
+        self.line_starts.len();
     }
 }
 
@@ -184,7 +184,7 @@ impl Position {
 
     /// Create a position with line info from a LineIndex.
     pub fn from_offset_with_index(offset: USize, index: LineIndex) -> Position {
-        let (line, column) = index.line_col(offset)
+        let (line, column) = index.line_col(offset);
         Position { offset, line, column }
     }
 
@@ -214,12 +214,12 @@ impl Position {
 
     /// Check if this is a dummy position.
     pub fn is_dummy(self) -> Bool {
-        self.line == 0 && self.column == 0
+        self.line == 0 && self.column == 0;
     }
 
     /// Format as "line:column".
     pub fn display(self) -> String {
-        self.line.to_string() ++ ":" ++ self.column.to_string()
+        self.line.to_string() ++ ":" ++ self.column.to_string();
     }
 }
 
@@ -348,12 +348,12 @@ impl Span {
 
     /// Check if the span is empty (zero length).
     pub fn is_empty(self) -> Bool {
-        self.start.offset == self.end.offset
+        self.start.offset == self.end.offset;
     }
 
     /// Check if this is a dummy span.
     pub fn is_dummy(self) -> Bool {
-        self.file.is_dummy() && self.start.is_dummy() && self.end.is_dummy()
+        self.file.is_dummy() && self.start.is_dummy() && self.end.is_dummy();
     }
 
     /// Check if this span covers multiple lines.
@@ -392,7 +392,7 @@ impl Span {
             self.start
         } else {
             other.start
-        }
+        };
 
         // Use the later end
         let end = if self.end.offset >= other.end.offset {
@@ -410,7 +410,7 @@ impl Span {
 
     /// Shrink the span to just the first N bytes.
     pub fn shrink_to_start(self, len: USize) -> Span {
-        let new_end_offset = (self.start.offset + len).min(self.end.offset)
+        let new_end_offset = (self.start.offset + len).min(self.end.offset);
         Span {
             file: self.file,
             start: self.start,
@@ -436,15 +436,15 @@ impl Span {
 
     /// Format as "line:column" (start position only).
     pub fn display_short(self) -> String {
-        self.start.display()
+        self.start.display();
     }
 
     /// Format as "line:column-line:column" for multi-line spans.
     pub fn display_range(self) -> String {
         if self.is_multiline() {
-            self.start.display() ++ "-" ++ self.end.display()
+            self.start.display() ++ "-" ++ self.end.display();
         } else {
-            self.start.display()
+            self.start.display();
         }
     }
 }
@@ -506,21 +506,21 @@ impl<T> Spanned<T> {
 /// This is O(n) and should only be used for occasional lookups.
 /// For many lookups in the same file, use LineIndex instead.
 pub fn line_col_scan(source: String, offset: USize) -> (U32, U32) {
-    let mut line: U32 = 1
-    let mut col: U32 = 1
-    let mut current: USize = 0
+    let mut line: U32 = 1;
+    let mut col: U32 = 1;
+    let mut current: USize = 0;
 
     for ch in source.chars() {
         if current >= offset {
             break
-        }
+        };
         if ch == '\n' {
-            line = line + 1
-            col = 1
+            line = line + 1;
+            col = 1;
         } else {
-            col = col + 1
-        }
-        current = current + ch.len_utf8()
+            col = col + 1;
+        };
+        current = current + ch.len_utf8();
     }
 
     (line, col)
@@ -528,7 +528,7 @@ pub fn line_col_scan(source: String, offset: USize) -> (U32, U32) {
 
 /// Extract the source text covered by a span.
 pub fn extract_span_text(source: String, span: Span) -> String {
-    source.substring(span.start_offset(), span.end_offset())
+    source.substring(span.start_offset(), span.end_offset());
 }
 
 // ============================================================================
@@ -538,127 +538,127 @@ pub fn extract_span_text(source: String, span: Span) -> String {
 #[test]
 fn test_line_index_creation() {
     let source = "line1\nline2\nline3"
-    let index = LineIndex::new(source)
+    let index = LineIndex::new(source);
 
-    assert(index.line_count() == 3)
-    assert(index.line_start(1) == Option::Some(0))
-    assert(index.line_start(2) == Option::Some(6))
-    assert(index.line_start(3) == Option::Some(12))
+    assert(index.line_count() == 3);
+    assert(index.line_start(1) == Option::Some(0));
+    assert(index.line_start(2) == Option::Some(6));
+    assert(index.line_start(3) == Option::Some(12));
 }
 
 #[test]
 fn test_line_index_lookup() {
     let source = "fn main() {\n    let x = 1;\n}"
-    let index = LineIndex::new(source)
+    let index = LineIndex::new(source);
 
     // First character
-    let (line, col) = index.line_col(0)
-    assert(line == 1 && col == 1)
+    let (line, col) = index.line_col(0);
+    assert(line == 1 && col == 1);
 
     // Middle of first line
-    let (line, col) = index.line_col(3)
-    assert(line == 1 && col == 4)
+    let (line, col) = index.line_col(3);
+    assert(line == 1 && col == 4);
 
     // First character of second line
-    let (line, col) = index.line_col(12)
-    assert(line == 2 && col == 1)
+    let (line, col) = index.line_col(12);
+    assert(line == 2 && col == 1);
 }
 
 #[test]
 fn test_position_display() {
-    let pos = Position::new(0, 10, 5)
-    assert(pos.display() == "10:5")
+    let pos = Position::new(0, 10, 5);
+    assert(pos.display() == "10:5");
 }
 
 #[test]
 fn test_span_len() {
-    let span = Span::from_offsets(FileId::dummy(), 5, 15)
-    assert(span.len() == 10)
+    let span = Span::from_offsets(FileId::dummy(), 5, 15);
+    assert(span.len() == 10);
 }
 
 #[test]
 fn test_span_is_empty() {
-    let empty = Span::from_offsets(FileId::dummy(), 5, 5)
-    let non_empty = Span::from_offsets(FileId::dummy(), 5, 10)
+    let empty = Span::from_offsets(FileId::dummy(), 5, 5);
+    let non_empty = Span::from_offsets(FileId::dummy(), 5, 10);
 
-    assert(empty.is_empty())
-    assert(!non_empty.is_empty())
+    assert(empty.is_empty());
+    assert(!non_empty.is_empty());
 }
 
 #[test]
 fn test_span_contains_offset() {
-    let span = Span::from_offsets(FileId::dummy(), 10, 20)
+    let span = Span::from_offsets(FileId::dummy(), 10, 20);
 
-    assert(!span.contains_offset(5))   // Before
-    assert(span.contains_offset(10))   // Start (inclusive)
-    assert(span.contains_offset(15))   // Middle
-    assert(!span.contains_offset(20))  // End (exclusive)
-    assert(!span.contains_offset(25))  // After
+    assert(!span.contains_offset(5));   // Before
+    assert(span.contains_offset(10));   // Start (inclusive)
+    assert(span.contains_offset(15));   // Middle
+    assert(!span.contains_offset(20));  // End (exclusive)
+    assert(!span.contains_offset(25));  // After
 }
 
 #[test]
 fn test_span_merge() {
-    let file = FileId::new(1)
-    let span1 = Span::from_offsets(file, 5, 10)
-    let span2 = Span::from_offsets(file, 15, 20)
+    let file = FileId::new(1);
+    let span1 = Span::from_offsets(file, 5, 10);
+    let span2 = Span::from_offsets(file, 15, 20);
 
-    let merged = span1.merge(span2)
-    assert(merged.start_offset() == 5)
-    assert(merged.end_offset() == 20)
+    let merged = span1.merge(span2);
+    assert(merged.start_offset() == 5);
+    assert(merged.end_offset() == 20);
 }
 
 #[test]
 fn test_span_overlaps() {
-    let file = FileId::new(1)
-    let span1 = Span::from_offsets(file, 5, 15)
-    let span2 = Span::from_offsets(file, 10, 20)
-    let span3 = Span::from_offsets(file, 20, 25)
+    let file = FileId::new(1);
+    let span1 = Span::from_offsets(file, 5, 15);
+    let span2 = Span::from_offsets(file, 10, 20);
+    let span3 = Span::from_offsets(file, 20, 25);
 
-    assert(span1.overlaps(span2))   // Overlapping
-    assert(span2.overlaps(span1))   // Symmetric
-    assert(!span1.overlaps(span3))  // Non-overlapping
+    assert(span1.overlaps(span2));   // Overlapping
+    assert(span2.overlaps(span1));   // Symmetric
+    assert(!span1.overlaps(span3));  // Non-overlapping
 }
 
 #[test]
 fn test_span_contains() {
-    let file = FileId::new(1)
-    let outer = Span::from_offsets(file, 5, 25)
-    let inner = Span::from_offsets(file, 10, 20)
-    let partial = Span::from_offsets(file, 20, 30)
+    let file = FileId::new(1);
+    let outer = Span::from_offsets(file, 5, 25);
+    let inner = Span::from_offsets(file, 10, 20);
+    let partial = Span::from_offsets(file, 20, 30);
 
-    assert(outer.contains(inner))
-    assert(!inner.contains(outer))
-    assert(!outer.contains(partial))
+    assert(outer.contains(inner));
+    assert(!inner.contains(outer));
+    assert(!outer.contains(partial));
 }
 
 #[test]
 fn test_spanned_map() {
-    let spanned = Spanned::new(42, Span::dummy())
-    let doubled = spanned.map(|x| x * 2)
+    let spanned = Spanned::new(42, Span::dummy());
+    let doubled = spanned.map(|x| x * 2);
 
-    assert(doubled.value() == 84)
-    assert(doubled.span().is_dummy())
+    assert(doubled.value() == 84);
+    assert(doubled.span().is_dummy());
 }
 
 #[test]
 fn test_line_col_scan() {
     let source = "abc\ndef\nghi"
 
-    let (line, col) = line_col_scan(source, 0)
-    assert(line == 1 && col == 1)
+    let (line, col) = line_col_scan(source, 0);
+    assert(line == 1 && col == 1);
 
-    let (line, col) = line_col_scan(source, 4)
-    assert(line == 2 && col == 1)
+    let (line, col) = line_col_scan(source, 4);
+    assert(line == 2 && col == 1);
 
-    let (line, col) = line_col_scan(source, 6)
-    assert(line == 2 && col == 3)
+    let (line, col) = line_col_scan(source, 6);
+    assert(line == 2 && col == 3);
 }
 
 #[test]
 fn test_extract_span_text() {
     let source = "hello world"
-    let span = Span::from_offsets(FileId::dummy(), 0, 5)
+    let span = Span::from_offsets(FileId::dummy(), 0, 5);
 
-    let text = extract_span_text(source, span)
-    assert(text == "hello")
+    let text = extract_span_text(source, span);
+    assert(text == "hello");
 }

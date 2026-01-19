@@ -163,7 +163,7 @@ impl<'hir> ClosureLowering<'hir> {
             Result::Err(_) => {
                 self.terminate(TerminatorKind::Unreachable);
             }
-        }
+        };
 
         // Step 5: Build and return
         let mir_body = self.builder.build();
@@ -241,10 +241,10 @@ impl<'hir> ClosureLowering<'hir> {
                 };
                 let mir_id = self.builder.push_local(mir_local);
                 self.local_map.insert(hir_local.id.index(), mir_id);
-            }
+            };
 
             i = i + 1;
-        }
+        };
 
         // If body has no parameters, we still need the env parameter
         if self.body.param_count == 0 && self.body.locals.len() <= 1 {
@@ -270,7 +270,7 @@ impl<'hir> ClosureLowering<'hir> {
                 types.push(Type::reference(ty.clone(), cap.mutable));
             } else {
                 types.push(ty.clone());
-            }
+            };
             i = i + 1;
         }
         Type::tuple(types)
@@ -297,12 +297,12 @@ impl<'hir> ClosureLowering<'hir> {
 
     /// Check if a HIR local is captured.
     fn is_captured(&self, hir_id: &HirLocalId) -> bool {
-        self.capture_map.contains_key(&hir_id.index())
+        self.capture_map.contains_key(&hir_id.index());
     }
 
     /// Get the capture field index for a captured variable.
     fn get_capture_field(&self, hir_id: &HirLocalId) -> Option<u32> {
-        self.capture_map.get(&hir_id.index()).cloned()
+        self.capture_map.get(&hir_id.index()).cloned();
     }
 
     /// Get the place for accessing a captured variable.
@@ -325,7 +325,7 @@ impl<'hir> ClosureLowering<'hir> {
             name: Option::None,
             span,
         };
-        self.builder.push_local(mir_local)
+        self.builder.push_local(mir_local);
     }
 
     // ========================================================================
@@ -351,7 +351,7 @@ impl<'hir> ClosureLowering<'hir> {
     }
 
     fn is_terminated(&self) -> bool {
-        self.builder.is_block_terminated(self.current_block.clone())
+        self.builder.is_block_terminated(self.current_block.clone());
     }
 
     // ========================================================================
@@ -444,135 +444,135 @@ impl<'hir> ClosureLowering<'hir> {
             }
 
             ExprKind::Binary { op, left, right } => {
-                self.lower_binary(op, left, right, &expr.ty, expr.span.clone())
+                self.lower_binary(op, left, right, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Unary { op, operand } => {
-                self.lower_unary(op, operand, &expr.ty, expr.span.clone())
+                self.lower_unary(op, operand, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Call { callee, args } => {
-                self.lower_call(callee, args, &expr.ty, expr.span.clone())
+                self.lower_call(callee, args, &expr.ty, expr.span.clone());
             }
 
             ExprKind::MethodCall { receiver, method, args } => {
-                self.lower_method_call(receiver, method, args, &expr.ty, expr.span.clone())
+                self.lower_method_call(receiver, method, args, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Field { base, field_idx } => {
-                self.lower_field(base, *field_idx, &expr.ty, expr.span.clone())
+                self.lower_field(base, *field_idx, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Index { base, index } => {
-                self.lower_index(base, index, &expr.ty, expr.span.clone())
+                self.lower_index(base, index, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Tuple(elems) => {
-                self.lower_tuple(elems, &expr.ty, expr.span.clone())
+                self.lower_tuple(elems, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Array(elems) => {
-                self.lower_array(elems, &expr.ty, expr.span.clone())
+                self.lower_array(elems, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Repeat { value, count } => {
-                self.lower_repeat(value, *count, &expr.ty, expr.span.clone())
+                self.lower_repeat(value, *count, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Struct { def_id, fields, base } => {
-                self.lower_struct(def_id, fields, base, &expr.ty, expr.span.clone())
+                self.lower_struct(def_id, fields, base, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Record { fields } => {
-                self.lower_record(fields, &expr.ty, expr.span.clone())
+                self.lower_record(fields, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Variant { def_id, variant_idx, fields } => {
-                self.lower_variant(def_id, *variant_idx, fields, &expr.ty, expr.span.clone())
+                self.lower_variant(def_id, *variant_idx, fields, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Cast { expr: inner, target_ty } => {
-                self.lower_cast(inner, target_ty, expr.span.clone())
+                self.lower_cast(inner, target_ty, expr.span.clone());
             }
 
             ExprKind::Assign { target, value } => {
-                self.lower_assign(target, value, expr.span.clone())
+                self.lower_assign(target, value, expr.span.clone());
             }
 
             ExprKind::Block { stmts, expr: maybe_expr } => {
-                self.lower_block(stmts, maybe_expr, &expr.ty, expr.span.clone())
+                self.lower_block(stmts, maybe_expr, &expr.ty, expr.span.clone());
             }
 
             ExprKind::If { condition, then_branch, else_branch } => {
-                self.lower_if(condition, then_branch, else_branch, &expr.ty, expr.span.clone())
+                self.lower_if(condition, then_branch, else_branch, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Match { scrutinee, arms } => {
-                self.lower_match(scrutinee, arms, &expr.ty, expr.span.clone())
+                self.lower_match(scrutinee, arms, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Loop { body, label } => {
-                self.lower_loop(body, label, &expr.ty, expr.span.clone())
+                self.lower_loop(body, label, &expr.ty, expr.span.clone());
             }
 
             ExprKind::While { condition, body, label } => {
-                self.lower_while(condition, body, label, &expr.ty, expr.span.clone())
+                self.lower_while(condition, body, label, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Return(value) => {
-                self.lower_return(value, expr.span.clone())
+                self.lower_return(value, expr.span.clone());
             }
 
             ExprKind::Break { label, value } => {
-                self.lower_break(label, value, expr.span.clone())
+                self.lower_break(label, value, expr.span.clone());
             }
 
             ExprKind::Continue { label } => {
-                self.lower_continue(label, expr.span.clone())
+                self.lower_continue(label, expr.span.clone());
             }
 
             ExprKind::Closure { body_id, captures } => {
-                self.lower_nested_closure(body_id, captures, &expr.ty, expr.span.clone())
+                self.lower_nested_closure(body_id, captures, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Borrow { expr: inner, mutable } => {
-                self.lower_borrow(inner, *mutable, &expr.ty, expr.span.clone())
+                self.lower_borrow(inner, *mutable, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Deref(inner) => {
-                self.lower_deref(inner, &expr.ty, expr.span.clone())
+                self.lower_deref(inner, &expr.ty, expr.span.clone());
             }
 
             ExprKind::AddrOf { expr: inner, mutable } => {
-                self.lower_addr_of(inner, *mutable, &expr.ty, expr.span.clone())
+                self.lower_addr_of(inner, *mutable, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Let { pattern, init } => {
-                self.lower_let(pattern, init, expr.span.clone())
+                self.lower_let(pattern, init, expr.span.clone());
             }
 
             ExprKind::Unsafe(inner) => {
-                self.lower_expr(inner)
+                self.lower_expr(inner);
             }
 
             ExprKind::Perform { effect_id, op_index, args } => {
-                self.lower_perform(effect_id, *op_index, args, &expr.ty, expr.span.clone())
+                self.lower_perform(effect_id, *op_index, args, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Resume { value } => {
-                self.lower_resume(value, expr.span.clone())
+                self.lower_resume(value, expr.span.clone());
             }
 
             ExprKind::Handle { body, handler_id, handler_instance } => {
-                self.lower_handle(body, handler_id, handler_instance, &expr.ty, expr.span.clone())
+                self.lower_handle(body, handler_id, handler_instance, &expr.ty, expr.span.clone());
             }
 
             ExprKind::InlineHandle { body, handlers } => {
-                self.lower_inline_handle(body, handlers, &expr.ty, expr.span.clone())
+                self.lower_inline_handle(body, handlers, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Range { start, end, inclusive } => {
-                self.lower_range(start, end, *inclusive, &expr.ty, expr.span.clone())
+                self.lower_range(start, end, *inclusive, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Default => {
@@ -614,8 +614,8 @@ impl<'hir> ClosureLowering<'hir> {
         match op {
             HirBinOp::And => return self.lower_short_circuit_and(left, right, ty, span),
             HirBinOp::Or => return self.lower_short_circuit_or(left, right, ty, span),
-            _ => {}
-        }
+            _ => {};
+        };
 
         let left_op = self.lower_expr(left)?;
         let right_op = self.lower_expr(right)?;
@@ -730,7 +730,7 @@ impl<'hir> ClosureLowering<'hir> {
             let op = self.lower_expr(&args[i])?;
             arg_ops.push(op);
             i = i + 1;
-        }
+        };
 
         let dest = self.new_temp(ty.clone(), span);
         let dest_place = Place::local(dest.clone());
@@ -767,7 +767,7 @@ impl<'hir> ClosureLowering<'hir> {
         while i < args.len() {
             arg_ops.push(self.lower_expr(&args[i])?);
             i = i + 1;
-        }
+        };
 
         let dest = self.new_temp(ty.clone(), span);
         let dest_place = Place::local(dest.clone());
@@ -898,7 +898,7 @@ impl<'hir> ClosureLowering<'hir> {
         while i < elems.len() {
             operands.push(self.lower_expr(&elems[i])?);
             i = i + 1;
-        }
+        };
         let temp = self.new_temp(ty.clone(), span);
         self.push_assign(Place::local(temp.clone()), Rvalue::Aggregate { kind: AggregateKind::Tuple, operands });
         Result::Ok(Operand::copy(Place::local(temp)))
@@ -910,7 +910,7 @@ impl<'hir> ClosureLowering<'hir> {
         while i < elems.len() {
             operands.push(self.lower_expr(&elems[i])?);
             i = i + 1;
-        }
+        };
         let elem_ty = if elems.len() > 0 { elems[0].ty.clone() } else { Type::unit() };
         let temp = self.new_temp(ty.clone(), span);
         self.push_assign(Place::local(temp.clone()), Rvalue::Aggregate { kind: AggregateKind::Array { element_ty: elem_ty }, operands });
@@ -924,7 +924,7 @@ impl<'hir> ClosureLowering<'hir> {
         while i < count {
             operands.push(value_op.clone());
             i = i + 1;
-        }
+        };
         let temp = self.new_temp(ty.clone(), span);
         self.push_assign(Place::local(temp.clone()), Rvalue::Aggregate { kind: AggregateKind::Array { element_ty: value.ty.clone() }, operands });
         Result::Ok(Operand::copy(Place::local(temp)))
@@ -936,14 +936,14 @@ impl<'hir> ClosureLowering<'hir> {
         while i < fields.len() {
             indexed.push((fields[i].field_idx, self.lower_expr(&fields[i].value)?));
             i = i + 1;
-        }
+        };
         indexed.sort_by_key(|(idx, _)| *idx);
         let mut operands: [Operand] = [];
         let mut j: usize = 0;
         while j < indexed.len() {
             operands.push(indexed[j].1.clone());
             j = j + 1;
-        }
+        };
         let temp = self.new_temp(ty.clone(), span);
         self.push_assign(Place::local(temp.clone()), Rvalue::Aggregate { kind: AggregateKind::Adt { def_id: def_id.clone(), variant_idx: Option::None, type_args: [] }, operands });
         Result::Ok(Operand::copy(Place::local(temp)))
@@ -955,7 +955,7 @@ impl<'hir> ClosureLowering<'hir> {
         while i < fields.len() {
             operands.push(self.lower_expr(&fields[i].value)?);
             i = i + 1;
-        }
+        };
         let temp = self.new_temp(ty.clone(), span);
         self.push_assign(Place::local(temp.clone()), Rvalue::Aggregate { kind: AggregateKind::Record, operands });
         Result::Ok(Operand::copy(Place::local(temp)))
@@ -967,7 +967,7 @@ impl<'hir> ClosureLowering<'hir> {
         while i < fields.len() {
             operands.push(self.lower_expr(&fields[i])?);
             i = i + 1;
-        }
+        };
         let temp = self.new_temp(ty.clone(), span);
         self.push_assign(Place::local(temp.clone()), Rvalue::Aggregate { kind: AggregateKind::Adt { def_id: def_id.clone(), variant_idx: Option::Some(variant_idx), type_args: [] }, operands });
         Result::Ok(Operand::copy(Place::local(temp)))
@@ -1048,7 +1048,7 @@ impl<'hir> ClosureLowering<'hir> {
         while i < stmts.len() {
             self.lower_stmt(&stmts[i])?;
             i = i + 1;
-        }
+        };
         match expr {
             Option::Some(e) => self.lower_expr(e),
             Option::None => Result::Ok(Operand::constant(Constant::unit(Type::unit()))),
@@ -1157,7 +1157,7 @@ impl<'hir> ClosureLowering<'hir> {
                 if let Option::Some(v) = value {
                     let val = self.lower_expr(v)?;
                     if let Option::Some(rp) = result_place { self.push_assign(rp, Rvalue::Use { operand: val }); }
-                }
+                };
                 self.terminate(TerminatorKind::Goto { target: break_block });
                 let next = self.builder.new_block();
                 self.current_block = next;
@@ -1196,7 +1196,7 @@ impl<'hir> ClosureLowering<'hir> {
             let cap_ty = self.get_local_type_or_capture(&cap.local_id);
             capture_pairs.push((cap.clone(), cap_ty));
             i = i + 1;
-        }
+        };
 
         self.pending_closures.push((body_id.clone(), closure_def_id.clone(), capture_pairs));
 
@@ -1228,7 +1228,7 @@ impl<'hir> ClosureLowering<'hir> {
             };
             capture_ops.push(cap_op);
             j = j + 1;
-        }
+        };
 
         let temp = self.new_temp(ty.clone(), span);
         self.push_assign(Place::local(temp.clone()), Rvalue::Aggregate { kind: AggregateKind::Closure { def_id: closure_def_id }, operands: capture_ops });
@@ -1239,7 +1239,7 @@ impl<'hir> ClosureLowering<'hir> {
         match self.capture_map.get(&local_id.index()) {
             Option::Some(idx) => {
                 let (_, ty) = &self.captures[*idx as usize];
-                ty.clone()
+                ty.clone();
             }
             Option::None => {
                 // Try body locals
@@ -1260,11 +1260,11 @@ impl<'hir> ClosureLowering<'hir> {
         match start {
             Option::Some(s) => operands.push(self.lower_expr(s)?),
             Option::None => operands.push(Operand::constant(Constant::int(0, Type::i64()))),
-        }
+        };
         match end {
             Option::Some(e) => operands.push(self.lower_expr(e)?),
             Option::None => operands.push(Operand::constant(Constant::int(i64::MAX as i128, Type::i64()))),
-        }
+        };
         if inclusive { operands.push(Operand::constant(Constant::bool(false, Type::bool()))); }
 
         let elem_ty = match start {
@@ -1283,7 +1283,7 @@ impl<'hir> ClosureLowering<'hir> {
         while i < args.len() {
             arg_ops.push(self.lower_expr(&args[i])?);
             i = i + 1;
-        }
+        };
         let dest = self.new_temp(ty.clone(), span);
         let next_block = self.builder.new_block();
         self.terminate(TerminatorKind::Perform { effect_id: effect_id.clone(), op_index, args: arg_ops, destination: Place::local(dest.clone()), target: next_block.clone(), is_tail_resumptive: false });
@@ -1358,7 +1358,7 @@ impl<'hir> ClosureLowering<'hir> {
             self.terminate(TerminatorKind::SwitchInt { discr: matches, targets: SwitchTargets::new([(1, arm_block)], next_test_block.clone()) });
             current_test_block = next_test_block;
             j = j + 1;
-        }
+        };
 
         self.current_block = fallthrough_block;
         self.terminate(TerminatorKind::Unreachable);
@@ -1376,12 +1376,12 @@ impl<'hir> ClosureLowering<'hir> {
                     self.current_block = guard_pass;
                 }
                 Option::None => {}
-            }
+            };
             let arm_val = self.lower_expr(&arms[k].body)?;
             self.push_assign(Place::local(result.clone()), Rvalue::Use { operand: arm_val });
             self.terminate(TerminatorKind::Goto { target: join_block.clone() });
             k = k + 1;
-        }
+        };
 
         self.current_block = join_block;
         Result::Ok(Operand::copy(Place::local(result)))
@@ -1415,7 +1415,7 @@ impl<'hir> ClosureLowering<'hir> {
                     self.push_assign(Place::local(mir_local.clone()), Rvalue::Ref { place: place.clone(), mutable: *mutable });
                 } else {
                     self.push_assign(Place::local(mir_local.clone()), Rvalue::Use { operand: Operand::copy(place.clone()) });
-                }
+                };
                 match subpattern { Option::Some(sub) => self.bind_pattern(sub, &Place::local(mir_local)), Option::None => Result::Ok(()) }
             }
             PatternKind::Tuple(pats) => {

@@ -137,7 +137,7 @@ impl<'hir> FunctionLowering<'hir> {
                 // Error during lowering - terminate with unreachable
                 self.terminate(TerminatorKind::Unreachable);
             }
-        }
+        };
 
         // Step 5: Build and return
         let mir_body = self.builder.build();
@@ -195,7 +195,7 @@ impl<'hir> FunctionLowering<'hir> {
             name: Option::None,
             span,
         };
-        self.builder.push_local(mir_local)
+        self.builder.push_local(mir_local);
     }
 
     // ========================================================================
@@ -225,7 +225,7 @@ impl<'hir> FunctionLowering<'hir> {
 
     /// Check if the current block has a terminator.
     fn is_terminated(&self) -> bool {
-        self.builder.is_block_terminated(self.current_block.clone())
+        self.builder.is_block_terminated(self.current_block.clone());
     }
 
     // ========================================================================
@@ -301,136 +301,136 @@ impl<'hir> FunctionLowering<'hir> {
             }
 
             ExprKind::Binary { op, left, right } => {
-                self.lower_binary(op, left, right, &expr.ty, expr.span.clone())
+                self.lower_binary(op, left, right, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Unary { op, operand } => {
-                self.lower_unary(op, operand, &expr.ty, expr.span.clone())
+                self.lower_unary(op, operand, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Call { callee, args } => {
-                self.lower_call(callee, args, &expr.ty, expr.span.clone())
+                self.lower_call(callee, args, &expr.ty, expr.span.clone());
             }
 
             ExprKind::MethodCall { receiver, method, args } => {
-                self.lower_method_call(receiver, method, args, &expr.ty, expr.span.clone())
+                self.lower_method_call(receiver, method, args, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Field { base, field_idx } => {
-                self.lower_field(base, *field_idx, &expr.ty, expr.span.clone())
+                self.lower_field(base, *field_idx, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Index { base, index } => {
-                self.lower_index(base, index, &expr.ty, expr.span.clone())
+                self.lower_index(base, index, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Tuple(elems) => {
-                self.lower_tuple(elems, &expr.ty, expr.span.clone())
+                self.lower_tuple(elems, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Array(elems) => {
-                self.lower_array(elems, &expr.ty, expr.span.clone())
+                self.lower_array(elems, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Repeat { value, count } => {
-                self.lower_repeat(value, *count, &expr.ty, expr.span.clone())
+                self.lower_repeat(value, *count, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Struct { def_id, fields, base } => {
-                self.lower_struct(def_id, fields, base, &expr.ty, expr.span.clone())
+                self.lower_struct(def_id, fields, base, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Record { fields } => {
-                self.lower_record(fields, &expr.ty, expr.span.clone())
+                self.lower_record(fields, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Variant { def_id, variant_idx, fields } => {
-                self.lower_variant(def_id, *variant_idx, fields, &expr.ty, expr.span.clone())
+                self.lower_variant(def_id, *variant_idx, fields, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Cast { expr: inner, target_ty } => {
-                self.lower_cast(inner, target_ty, expr.span.clone())
+                self.lower_cast(inner, target_ty, expr.span.clone());
             }
 
             ExprKind::Assign { target, value } => {
-                self.lower_assign(target, value, expr.span.clone())
+                self.lower_assign(target, value, expr.span.clone());
             }
 
             ExprKind::Block { stmts, expr: maybe_expr } => {
-                self.lower_block(stmts, maybe_expr, &expr.ty, expr.span.clone())
+                self.lower_block(stmts, maybe_expr, &expr.ty, expr.span.clone());
             }
 
             ExprKind::If { condition, then_branch, else_branch } => {
-                self.lower_if(condition, then_branch, else_branch, &expr.ty, expr.span.clone())
+                self.lower_if(condition, then_branch, else_branch, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Match { scrutinee, arms } => {
-                self.lower_match(scrutinee, arms, &expr.ty, expr.span.clone())
+                self.lower_match(scrutinee, arms, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Loop { body, label } => {
-                self.lower_loop(body, label, &expr.ty, expr.span.clone())
+                self.lower_loop(body, label, &expr.ty, expr.span.clone());
             }
 
             ExprKind::While { condition, body, label } => {
-                self.lower_while(condition, body, label, &expr.ty, expr.span.clone())
+                self.lower_while(condition, body, label, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Return(value) => {
-                self.lower_return(value, expr.span.clone())
+                self.lower_return(value, expr.span.clone());
             }
 
             ExprKind::Break { label, value } => {
-                self.lower_break(label, value, expr.span.clone())
+                self.lower_break(label, value, expr.span.clone());
             }
 
             ExprKind::Continue { label } => {
-                self.lower_continue(label, expr.span.clone())
+                self.lower_continue(label, expr.span.clone());
             }
 
             ExprKind::Closure { body_id, captures } => {
-                self.lower_closure(body_id, captures, &expr.ty, expr.span.clone())
+                self.lower_closure(body_id, captures, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Borrow { expr: inner, mutable } => {
-                self.lower_borrow(inner, *mutable, &expr.ty, expr.span.clone())
+                self.lower_borrow(inner, *mutable, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Deref(inner) => {
-                self.lower_deref(inner, &expr.ty, expr.span.clone())
+                self.lower_deref(inner, &expr.ty, expr.span.clone());
             }
 
             ExprKind::AddrOf { expr: inner, mutable } => {
-                self.lower_addr_of(inner, *mutable, &expr.ty, expr.span.clone())
+                self.lower_addr_of(inner, *mutable, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Let { pattern, init } => {
-                self.lower_let(pattern, init, expr.span.clone())
+                self.lower_let(pattern, init, expr.span.clone());
             }
 
             ExprKind::Unsafe(inner) => {
                 // Unsafe blocks are transparent at MIR level
-                self.lower_expr(inner)
+                self.lower_expr(inner);
             }
 
             ExprKind::Perform { effect_id, op_index, args } => {
-                self.lower_perform(effect_id, *op_index, args, &expr.ty, expr.span.clone())
+                self.lower_perform(effect_id, *op_index, args, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Resume { value } => {
-                self.lower_resume(value, expr.span.clone())
+                self.lower_resume(value, expr.span.clone());
             }
 
             ExprKind::Handle { body, handler_id, handler_instance } => {
-                self.lower_handle(body, handler_id, handler_instance, &expr.ty, expr.span.clone())
+                self.lower_handle(body, handler_id, handler_instance, &expr.ty, expr.span.clone());
             }
 
             ExprKind::InlineHandle { body, handlers } => {
-                self.lower_inline_handle(body, handlers, &expr.ty, expr.span.clone())
+                self.lower_inline_handle(body, handlers, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Range { start, end, inclusive } => {
-                self.lower_range(start, end, *inclusive, &expr.ty, expr.span.clone())
+                self.lower_range(start, end, *inclusive, &expr.ty, expr.span.clone());
             }
 
             ExprKind::Default => {
@@ -470,8 +470,8 @@ impl<'hir> FunctionLowering<'hir> {
             HirBinOp::Or => {
                 return self.lower_short_circuit_or(left, right, ty, span);
             }
-            _ => {}
-        }
+            _ => {};
+        };
 
         // Lower operands
         let left_op = self.lower_expr(left)?;
@@ -595,13 +595,13 @@ impl<'hir> FunctionLowering<'hir> {
     ) -> Result<Operand, [String]> {
         match op {
             HirUnaryOp::Deref => {
-                self.lower_deref(operand, ty, span)
+                self.lower_deref(operand, ty, span);
             }
             HirUnaryOp::Ref => {
-                self.lower_borrow(operand, false, ty, span)
+                self.lower_borrow(operand, false, ty, span);
             }
             HirUnaryOp::RefMut => {
-                self.lower_borrow(operand, true, ty, span)
+                self.lower_borrow(operand, true, ty, span);
             }
             HirUnaryOp::Neg | HirUnaryOp::Not => {
                 let inner = self.lower_expr(operand)?;
@@ -637,7 +637,7 @@ impl<'hir> FunctionLowering<'hir> {
             let arg_op = self.lower_expr(&args[i])?;
             arg_ops.push(arg_op);
             i = i + 1;
-        }
+        };
 
         // Create destination
         let dest = self.new_temp(ty.clone(), span.clone());
@@ -683,7 +683,7 @@ impl<'hir> FunctionLowering<'hir> {
             let arg_op = self.lower_expr(&args[i])?;
             arg_ops.push(arg_op);
             i = i + 1;
-        }
+        };
 
         // Create destination and call
         let dest = self.new_temp(ty.clone(), span.clone());
@@ -825,7 +825,7 @@ impl<'hir> FunctionLowering<'hir> {
             let op = self.lower_expr(&elems[i])?;
             operands.push(op);
             i = i + 1;
-        }
+        };
 
         let temp = self.new_temp(ty.clone(), span);
         self.push_assign(
@@ -847,7 +847,7 @@ impl<'hir> FunctionLowering<'hir> {
             let op = self.lower_expr(&elems[i])?;
             operands.push(op);
             i = i + 1;
-        }
+        };
 
         // Extract element type
         let elem_ty = if elems.len() > 0 {
@@ -882,7 +882,7 @@ impl<'hir> FunctionLowering<'hir> {
         while i < count {
             operands.push(value_op.clone());
             i = i + 1;
-        }
+        };
 
         let temp = self.new_temp(ty.clone(), span);
         self.push_assign(
@@ -910,7 +910,7 @@ impl<'hir> FunctionLowering<'hir> {
             let op = self.lower_expr(&fields[i].value)?;
             indexed_fields.push((fields[i].field_idx, op));
             i = i + 1;
-        }
+        };
 
         // Sort by field index
         indexed_fields.sort_by_key(|(idx, _)| *idx);
@@ -921,7 +921,7 @@ impl<'hir> FunctionLowering<'hir> {
             let (_, op) = &indexed_fields[j];
             operands.push(op.clone());
             j = j + 1;
-        }
+        };
 
         let temp = self.new_temp(ty.clone(), span);
         self.push_assign(
@@ -950,7 +950,7 @@ impl<'hir> FunctionLowering<'hir> {
             let op = self.lower_expr(&fields[i].value)?;
             operands.push(op);
             i = i + 1;
-        }
+        };
 
         let temp = self.new_temp(ty.clone(), span);
         self.push_assign(
@@ -974,7 +974,7 @@ impl<'hir> FunctionLowering<'hir> {
             let op = self.lower_expr(&fields[i])?;
             operands.push(op);
             i = i + 1;
-        }
+        };
 
         let temp = self.new_temp(ty.clone(), span);
         self.push_assign(
@@ -1133,7 +1133,7 @@ impl<'hir> FunctionLowering<'hir> {
         while i < stmts.len() {
             self.lower_stmt(&stmts[i])?;
             i = i + 1;
-        }
+        };
 
         // Lower final expression or return unit
         match expr {
@@ -1195,7 +1195,7 @@ impl<'hir> FunctionLowering<'hir> {
         );
         if !self.is_terminated() {
             self.terminate(TerminatorKind::Goto { target: join_block.clone() });
-        }
+        };
 
         // Else branch
         self.current_block = else_block;
@@ -1209,7 +1209,7 @@ impl<'hir> FunctionLowering<'hir> {
         );
         if !self.is_terminated() {
             self.terminate(TerminatorKind::Goto { target: join_block.clone() });
-        }
+        };
 
         // Continue at join
         self.current_block = join_block;
@@ -1248,7 +1248,7 @@ impl<'hir> FunctionLowering<'hir> {
         // Loop back
         if !self.is_terminated() {
             self.terminate(TerminatorKind::Goto { target: loop_block.clone() });
-        }
+        };
 
         // Pop context
         self.pop_loop_context();
@@ -1301,7 +1301,7 @@ impl<'hir> FunctionLowering<'hir> {
         let _ = self.lower_expr(body)?;
         if !self.is_terminated() {
             self.terminate(TerminatorKind::Goto { target: cond_block });
-        }
+        };
 
         // Pop context
         self.pop_loop_context();
@@ -1350,7 +1350,7 @@ impl<'hir> FunctionLowering<'hir> {
                     if let Option::Some(rp) = result_place {
                         self.push_assign(rp, Rvalue::Use { operand: val });
                     }
-                }
+                };
 
                 self.terminate(TerminatorKind::Goto { target: break_block });
 
@@ -1410,7 +1410,7 @@ impl<'hir> FunctionLowering<'hir> {
             let cap_ty = self.get_local_type(&cap.local_id);
             capture_pairs.push((cap.clone(), cap_ty));
             i = i + 1;
-        }
+        };
 
         self.pending_closures.push((body_id.clone(), closure_def_id.clone(), capture_pairs));
 
@@ -1435,7 +1435,7 @@ impl<'hir> FunctionLowering<'hir> {
             };
             capture_ops.push(cap_op);
             j = j + 1;
-        }
+        };
 
         let temp = self.new_temp(ty.clone(), span);
         self.push_assign(
@@ -1478,7 +1478,7 @@ impl<'hir> FunctionLowering<'hir> {
             Option::None => {
                 operands.push(Operand::constant(Constant::int(0, Type::i64())));
             }
-        }
+        };
 
         // Lower end
         match end {
@@ -1489,12 +1489,12 @@ impl<'hir> FunctionLowering<'hir> {
             Option::None => {
                 operands.push(Operand::constant(Constant::int(i64::MAX as i128, Type::i64())));
             }
-        }
+        };
 
         // For inclusive ranges, add exhausted flag
         if inclusive {
             operands.push(Operand::constant(Constant::bool(false, Type::bool())));
-        }
+        };
 
         let elem_ty = match start {
             Option::Some(s) => s.ty.clone(),
@@ -1533,7 +1533,7 @@ impl<'hir> FunctionLowering<'hir> {
             let op = self.lower_expr(&args[i])?;
             arg_ops.push(op);
             i = i + 1;
-        }
+        };
 
         let dest = self.new_temp(ty.clone(), span);
         let dest_place = Place::local(dest.clone());
@@ -1681,7 +1681,7 @@ impl<'hir> FunctionLowering<'hir> {
         while i < arms.len() {
             arm_blocks.push(self.builder.new_block());
             i = i + 1;
-        }
+        };
         let fallthrough_block = self.builder.new_block();
 
         // Lower pattern tests
@@ -1691,9 +1691,9 @@ impl<'hir> FunctionLowering<'hir> {
             let arm = &arms[j];
             let arm_block = arm_blocks[j].clone();
             let next_test_block = if j + 1 < arms.len() {
-                self.builder.new_block()
+                self.builder.new_block();
             } else {
-                fallthrough_block.clone()
+                fallthrough_block.clone();
             };
 
             self.current_block = current_test_block.clone();
@@ -1710,7 +1710,7 @@ impl<'hir> FunctionLowering<'hir> {
 
             current_test_block = next_test_block;
             j = j + 1;
-        }
+        };
 
         // Fallthrough unreachable
         self.current_block = fallthrough_block;
@@ -1731,7 +1731,7 @@ impl<'hir> FunctionLowering<'hir> {
                     let guard_fail = if k + 1 < arms.len() {
                         arm_blocks[k + 1].clone()
                     } else {
-                        fallthrough_block.clone()
+                        fallthrough_block.clone();
                     };
 
                     let guard_result = self.lower_expr(guard)?;
@@ -1746,7 +1746,7 @@ impl<'hir> FunctionLowering<'hir> {
                     self.current_block = guard_pass;
                 }
                 Option::None => {}
-            }
+            };
 
             let arm_val = self.lower_expr(&arm.body)?;
             self.push_assign(
@@ -1756,7 +1756,7 @@ impl<'hir> FunctionLowering<'hir> {
             self.terminate(TerminatorKind::Goto { target: join_block.clone() });
 
             k = k + 1;
-        }
+        };
 
         self.current_block = join_block;
 
@@ -1795,32 +1795,32 @@ impl<'hir> FunctionLowering<'hir> {
             }
 
             PatternKind::Tuple(pats) => {
-                self.test_pattern_tuple(pats, place, pattern.span.clone())
+                self.test_pattern_tuple(pats, place, pattern.span.clone());
             }
 
             PatternKind::Variant { variant_idx, fields, def_id: _ } => {
-                self.test_pattern_variant(*variant_idx, fields, place, pattern.span.clone())
+                self.test_pattern_variant(*variant_idx, fields, place, pattern.span.clone());
             }
 
             PatternKind::Struct { fields, def_id: _ } => {
-                self.test_pattern_struct(fields, place, pattern.span.clone())
+                self.test_pattern_struct(fields, place, pattern.span.clone());
             }
 
             PatternKind::Or(alts) => {
-                self.test_pattern_or(alts, place, pattern.span.clone())
+                self.test_pattern_or(alts, place, pattern.span.clone());
             }
 
             PatternKind::Slice { prefix, slice, suffix } => {
-                self.test_pattern_slice(prefix, slice, suffix, place, pattern.span.clone())
+                self.test_pattern_slice(prefix, slice, suffix, place, pattern.span.clone());
             }
 
             PatternKind::Range { start, end, inclusive } => {
-                self.test_pattern_range(start, end, *inclusive, place, &pattern.ty, pattern.span.clone())
+                self.test_pattern_range(start, end, *inclusive, place, &pattern.ty, pattern.span.clone());
             }
 
             PatternKind::Ref { inner, mutable: _ } => {
                 let deref_place = place.project(PlaceElem::Deref);
-                self.test_pattern(inner, &deref_place)
+                self.test_pattern(inner, &deref_place);
             }
         }
     }
@@ -1833,7 +1833,7 @@ impl<'hir> FunctionLowering<'hir> {
     ) -> Result<Operand, [String]> {
         if pats.len() == 0 {
             return Result::Ok(Operand::constant(Constant::bool(true, Type::bool())));
-        }
+        };
 
         let field_place = place.project(PlaceElem::Field { index: 0 });
         let mut result = self.test_pattern(&pats[0], &field_place)?;
@@ -1887,7 +1887,7 @@ impl<'hir> FunctionLowering<'hir> {
 
         if fields.len() == 0 {
             return Result::Ok(Operand::copy(Place::local(discr_matches)));
-        }
+        };
 
         // Check fields
         let variant_place = place.project(PlaceElem::Downcast { variant: variant_idx });
@@ -1922,7 +1922,7 @@ impl<'hir> FunctionLowering<'hir> {
     ) -> Result<Operand, [String]> {
         if fields.len() == 0 {
             return Result::Ok(Operand::constant(Constant::bool(true, Type::bool())));
-        }
+        };
 
         let field_place = place.project(PlaceElem::Field { index: fields[0].field_idx });
         let mut result = self.test_pattern(&fields[0].pattern, &field_place)?;
@@ -1956,7 +1956,7 @@ impl<'hir> FunctionLowering<'hir> {
     ) -> Result<Operand, [String]> {
         if alts.len() == 0 {
             return Result::Ok(Operand::constant(Constant::bool(false, Type::bool())));
-        }
+        };
 
         let mut result = self.test_pattern(&alts[0], place)?;
 
@@ -2052,7 +2052,7 @@ impl<'hir> FunctionLowering<'hir> {
             );
             result = Operand::copy(Place::local(combined));
             i = i + 1;
-        }
+        };
 
         // Check suffix patterns
         let mut j: usize = 0;
@@ -2110,11 +2110,11 @@ impl<'hir> FunctionLowering<'hir> {
                         );
                         result = Option::Some(Operand::copy(Place::local(start_check)));
                     }
-                    _ => {}
+                    _ => {};
                 }
             }
             Option::None => {}
-        }
+        };
 
         // Check end bound
         match end {
@@ -2151,11 +2151,11 @@ impl<'hir> FunctionLowering<'hir> {
                             }
                         }
                     }
-                    _ => {}
+                    _ => {};
                 }
             }
             Option::None => {}
-        }
+        };
 
         match result {
             Option::Some(r) => Result::Ok(r),
@@ -2185,7 +2185,7 @@ impl<'hir> FunctionLowering<'hir> {
                         Place::local(mir_local.clone()),
                         Rvalue::Use { operand: Operand::copy(place.clone()) },
                     );
-                }
+                };
 
                 match subpattern {
                     Option::Some(sub) => self.bind_pattern(sub, &Place::local(mir_local)),
@@ -2241,7 +2241,7 @@ impl<'hir> FunctionLowering<'hir> {
                     });
                     self.bind_pattern(&prefix[i], &idx_place)?;
                     i = i + 1;
-                }
+                };
 
                 let mut j: usize = 0;
                 while j < suffix.len() {
@@ -2253,7 +2253,7 @@ impl<'hir> FunctionLowering<'hir> {
                     });
                     self.bind_pattern(&suffix[j], &idx_place)?;
                     j = j + 1;
-                }
+                };
 
                 match slice {
                     Option::Some(rest_pat) => {
@@ -2280,7 +2280,7 @@ impl<'hir> FunctionLowering<'hir> {
 
             PatternKind::Ref { inner, mutable: _ } => {
                 let deref_place = place.project(PlaceElem::Deref);
-                self.bind_pattern(inner, &deref_place)
+                self.bind_pattern(inner, &deref_place);
             }
 
             PatternKind::Range { start: _, end: _, inclusive: _ } => {

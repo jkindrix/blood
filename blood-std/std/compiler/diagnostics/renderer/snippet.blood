@@ -88,26 +88,26 @@ impl SnippetConfig {
 
     /// Set context lines.
     pub fn with_context(mut self, before: U32, after: U32) -> SnippetConfig {
-        self.context_lines_before = before
-        self.context_lines_after = after
+        self.context_lines_before = before;
+        self.context_lines_after = after;
         self
     }
 
     /// Set tab width.
     pub fn with_tab_width(mut self, width: U32) -> SnippetConfig {
-        self.tab_width = width
+        self.tab_width = width;
         self
     }
 
     /// Enable/disable line numbers.
     pub fn with_line_numbers(mut self, show: Bool) -> SnippetConfig {
-        self.show_line_numbers = show
+        self.show_line_numbers = show;
         self
     }
 
     /// Enable/disable Unicode.
     pub fn with_unicode(mut self, use_unicode: Bool) -> SnippetConfig {
-        self.use_unicode = use_unicode
+        self.use_unicode = use_unicode;
         self
     }
 
@@ -240,27 +240,27 @@ impl Snippet {
 
     /// Add a line to the snippet.
     pub fn add_line(mut self, line: SnippetLine) -> Unit {
-        self.lines.push(line)
+        self.lines.push(line);
     }
 
     /// Get the file name.
     pub fn file_name(self) -> String {
-        self.file_name.clone()
+        self.file_name.clone();
     }
 
     /// Get the primary location string.
     pub fn primary_location(self) -> String {
-        self.primary_location.clone()
+        self.primary_location.clone();
     }
 
     /// Get all lines.
     pub fn lines(self) -> Vec<SnippetLine> {
-        self.lines.clone()
+        self.lines.clone();
     }
 
     /// Check if empty.
     pub fn is_empty(self) -> Bool {
-        self.lines.is_empty()
+        self.lines.is_empty();
     }
 }
 
@@ -288,34 +288,34 @@ impl SnippetBuilder {
 
     /// Build a snippet for a single span.
     pub fn build_for_span(self, file: SourceFile, span: Span) -> Snippet {
-        let primary_location = file.name() ++ ":" ++ span.display_short()
-        let mut snippet = Snippet::new(file.name(), primary_location)
+        let primary_location = file.name() ++ ":" ++ span.display_short();
+        let mut snippet = Snippet::new(file.name(), primary_location);
 
         // Get the line range
-        let start_line = span.start_line()
-        let end_line = span.end_line()
+        let start_line = span.start_line();
+        let end_line = span.end_line();
 
         // Add context before
         let context_start = if start_line > self.config.context_lines_before {
             start_line - self.config.context_lines_before
         } else {
             1
-        }
+        };
 
         // Add context after
-        let context_end = end_line + self.config.context_lines_after
+        let context_end = end_line + self.config.context_lines_after;
 
         // Add source lines
-        let mut line = context_start
+        let mut line = context_start;
         while line <= context_end {
             match file.get_line(line) {
                 Option::Some(content) => {
-                    let is_highlighted = line >= start_line && line <= end_line
-                    snippet.add_line(SnippetLine::source(line, content, is_highlighted))
+                    let is_highlighted = line >= start_line && line <= end_line;
+                    snippet.add_line(SnippetLine::source(line, content, is_highlighted));
                 }
                 Option::None => break,
-            }
-            line = line + 1
+            };
+            line = line + 1;
         }
 
         snippet
@@ -324,43 +324,43 @@ impl SnippetBuilder {
     /// Build a snippet with labels.
     pub fn build_with_labels(self, file: SourceFile, labels: LabelCollection) -> Snippet {
         // Get the line range from labels
-        let range = labels.line_range()
+        let range = labels.line_range();
         match range {
             Option::None => {
-                return Snippet::new(file.name(), file.name())
+                return Snippet::new(file.name(), file.name());
             }
             Option::Some((min_line, max_line)) => {
-                let primary_location = file.name() ++ ":" ++ min_line.to_string()
-                let mut snippet = Snippet::new(file.name(), primary_location)
+                let primary_location = file.name() ++ ":" ++ min_line.to_string();
+                let mut snippet = Snippet::new(file.name(), primary_location);
 
                 // Add context before
                 let context_start = if min_line > self.config.context_lines_before {
                     min_line - self.config.context_lines_before
                 } else {
                     1
-                }
+                };
 
                 // Add context after
-                let context_end = max_line + self.config.context_lines_after
+                let context_end = max_line + self.config.context_lines_after;
 
                 // Add source lines with annotations
-                let mut line = context_start
+                let mut line = context_start;
                 while line <= context_end {
                     match file.get_line(line) {
                         Option::Some(content) => {
-                            let is_highlighted = line >= min_line && line <= max_line
-                            snippet.add_line(SnippetLine::source(line, content, is_highlighted))
+                            let is_highlighted = line >= min_line && line <= max_line;
+                            snippet.add_line(SnippetLine::source(line, content, is_highlighted));
 
                             // Add annotation lines for labels on this line
-                            let line_labels = labels.labels_on_line(line)
+                            let line_labels = labels.labels_on_line(line);
                             if !line_labels.is_empty() {
-                                let annotation = self.build_annotation_line(content, line_labels, line)
-                                snippet.add_line(SnippetLine::annotation(annotation))
+                                let annotation = self.build_annotation_line(content, line_labels, line);
+                                snippet.add_line(SnippetLine::annotation(annotation));
                             }
                         }
                         Option::None => break,
-                    }
-                    line = line + 1
+                    };
+                    line = line + 1;
                 }
 
                 snippet
@@ -372,37 +372,37 @@ impl SnippetBuilder {
     fn build_annotation_line(self, source_line: String, labels: Vec<Label>, line_number: U32) -> String {
         // For now, create a simple annotation
         // A full implementation would handle overlapping labels, multi-line, etc.
-        let mut annotation = String::new()
+        let mut annotation = String::new();
 
         // Sort labels by start column
-        let mut sorted_labels = labels.clone()
-        sorted_labels.sort_by(|a, b| a.span().start_column().cmp(b.span().start_column()))
+        let mut sorted_labels = labels.clone();
+        sorted_labels.sort_by(|a, b| a.span().start_column().cmp(b.span().start_column()));
 
-        let mut current_col: U32 = 1
+        let mut current_col: U32 = 1;
         for label in sorted_labels {
-            let start_col = label.span().start_column()
-            let end_col = label.span().end_column()
+            let start_col = label.span().start_column();
+            let end_col = label.span().end_column();
 
             // Add spaces to reach this label
             while current_col < start_col {
                 annotation = annotation ++ " "
-                current_col = current_col + 1
-            }
+                current_col = current_col + 1;
+            };
 
             // Add underline characters
-            let underline_char = label.underline_char()
-            let label_width = if end_col > start_col { end_col - start_col } else { 1 }
-            let mut i: U32 = 0
+            let underline_char = label.underline_char();
+            let label_width = if end_col > start_col { end_col - start_col } else { 1 };
+            let mut i: U32 = 0;
             while i < label_width {
-                annotation = annotation ++ underline_char.to_string()
-                i = i + 1
-            }
-            current_col = current_col + label_width
+                annotation = annotation ++ underline_char.to_string();
+                i = i + 1;
+            };
+            current_col = current_col + label_width;
 
             // Add message if present
             match label.message() {
                 Option::Some(msg) => {
-                    annotation = annotation ++ " " ++ msg
+                    annotation = annotation ++ " " ++ msg;
                 }
                 Option::None => {}
             }
@@ -413,7 +413,7 @@ impl SnippetBuilder {
 
     /// Get the configuration.
     pub fn config(self) -> SnippetConfig {
-        self.config.clone()
+        self.config.clone();
     }
 }
 
@@ -423,22 +423,22 @@ impl SnippetBuilder {
 
 /// Expand tabs in a string to spaces.
 pub fn expand_tabs(line: String, tab_width: U32) -> String {
-    let mut result = String::new()
-    let mut col: U32 = 0
+    let mut result = String::new();
+    let mut col: U32 = 0;
 
     for ch in line.chars() {
         if ch == '\t' {
             // Add spaces to next tab stop
-            let spaces_to_add = tab_width - (col % tab_width)
-            let mut i: U32 = 0
+            let spaces_to_add = tab_width - (col % tab_width);
+            let mut i: U32 = 0;
             while i < spaces_to_add {
                 result = result ++ " "
-                i = i + 1
-            }
-            col = col + spaces_to_add
+                i = i + 1;
+            };
+            col = col + spaces_to_add;
         } else {
-            result = result ++ ch.to_string()
-            col = col + 1
+            result = result ++ ch.to_string();
+            col = col + 1;
         }
     }
 
@@ -452,14 +452,14 @@ pub fn display_width(line: String, tab_width: U32) -> USize {
 
 /// Pad a number with spaces on the left.
 pub fn pad_number(n: U32, width: USize) -> String {
-    let s = n.to_string()
-    let pad = if width > s.len() { width - s.len() } else { 0 }
+    let s = n.to_string();
+    let pad = if width > s.len() { width - s.len() } else { 0 };
 
-    let mut result = String::new()
-    let mut i: USize = 0
+    let mut result = String::new();
+    let mut i: USize = 0;
     while i < pad {
         result = result ++ " "
-        i = i + 1
+        i = i + 1;
     }
     result ++ s
 }
@@ -470,106 +470,106 @@ pub fn pad_number(n: U32, width: USize) -> String {
 
 #[test]
 fn test_snippet_config_default() {
-    let config = SnippetConfig::default()
+    let config = SnippetConfig::default();
 
-    assert(config.context_lines_before == 1)
-    assert(config.context_lines_after == 1)
-    assert(config.tab_width == 4)
-    assert(config.show_line_numbers)
-    assert(config.use_unicode)
+    assert(config.context_lines_before == 1);
+    assert(config.context_lines_after == 1);
+    assert(config.tab_width == 4);
+    assert(config.show_line_numbers);
+    assert(config.use_unicode);
 }
 
 #[test]
 fn test_snippet_config_ascii() {
-    let config = SnippetConfig::ascii()
+    let config = SnippetConfig::ascii();
 
-    assert(!config.use_unicode)
-    assert(config.vertical_line() == "|")
+    assert(!config.use_unicode);
+    assert(config.vertical_line() == "|");
 }
 
 #[test]
 fn test_snippet_config_unicode() {
-    let config = SnippetConfig::default()
+    let config = SnippetConfig::default();
 
-    assert(config.vertical_line() == "│")
-    assert(config.arrow() == "→")
+    assert(config.vertical_line() == "│");
+    assert(config.arrow() == "→");
 }
 
 #[test]
 fn test_snippet_line_variants() {
-    let source = SnippetLine::source(10, "let x = 42", true)
-    let annotation = SnippetLine::annotation("    ^^^^^^")
-    let fold = SnippetLine::fold(5)
-    let empty = SnippetLine::empty()
+    let source = SnippetLine::source(10, "let x = 42", true);
+    let annotation = SnippetLine::annotation("    ^^^^^^");
+    let fold = SnippetLine::fold(5);
+    let empty = SnippetLine::empty();
 
-    assert(source.is_source())
-    assert(!annotation.is_source())
-    assert(!fold.is_source())
-    assert(!empty.is_source())
+    assert(source.is_source());
+    assert(!annotation.is_source());
+    assert(!fold.is_source());
+    assert(!empty.is_source());
 }
 
 #[test]
 fn test_snippet_creation() {
-    let snippet = Snippet::new("test.blood", "test.blood:10:5")
+    let snippet = Snippet::new("test.blood", "test.blood:10:5");
 
-    assert(snippet.file_name() == "test.blood")
-    assert(snippet.primary_location() == "test.blood:10:5")
-    assert(snippet.is_empty())
+    assert(snippet.file_name() == "test.blood");
+    assert(snippet.primary_location() == "test.blood:10:5");
+    assert(snippet.is_empty());
 }
 
 #[test]
 fn test_snippet_add_line() {
-    let mut snippet = Snippet::new("test.blood", "test.blood:1:1")
-    snippet.add_line(SnippetLine::source(1, "fn main() {}", false))
+    let mut snippet = Snippet::new("test.blood", "test.blood:1:1");
+    snippet.add_line(SnippetLine::source(1, "fn main() {}", false));
 
-    assert(!snippet.is_empty())
-    assert(snippet.lines().len() == 1)
+    assert(!snippet.is_empty());
+    assert(snippet.lines().len() == 1);
 }
 
 #[test]
 fn test_expand_tabs() {
     let line = "a\tb\tc"
-    let expanded = expand_tabs(line, 4)
+    let expanded = expand_tabs(line, 4);
 
     // 'a' at col 0, tab to col 4, 'b' at col 4, tab to col 8, 'c' at col 8
-    assert(expanded == "a   b   c")
+    assert(expanded == "a   b   c");
 }
 
 #[test]
 fn test_expand_tabs_at_start() {
     let line = "\thello"
-    let expanded = expand_tabs(line, 4)
+    let expanded = expand_tabs(line, 4);
 
-    assert(expanded == "    hello")
+    assert(expanded == "    hello");
 }
 
 #[test]
 fn test_display_width() {
     let line = "hello\tworld"
-    let width = display_width(line, 4)
+    let width = display_width(line, 4);
 
     // "hello" (5) + spaces to tab (3) + "world" (5) = 13
-    assert(width == 13)
+    assert(width == 13);
 }
 
 #[test]
 fn test_pad_number() {
-    assert(pad_number(5, 3) == "  5")
-    assert(pad_number(42, 3) == " 42")
-    assert(pad_number(123, 3) == "123")
-    assert(pad_number(1234, 3) == "1234")
+    assert(pad_number(5, 3) == "  5");
+    assert(pad_number(42, 3) == " 42");
+    assert(pad_number(123, 3) == "123");
+    assert(pad_number(1234, 3) == "1234");
 }
 
 #[test]
 fn test_snippet_builder_creation() {
-    let builder = SnippetBuilder::new()
-    assert(builder.config().context_lines_before == 1)
+    let builder = SnippetBuilder::new();
+    assert(builder.config().context_lines_before == 1);
 }
 
 #[test]
 fn test_snippet_builder_with_config() {
-    let config = SnippetConfig::compact()
-    let builder = SnippetBuilder::with_config(config)
+    let config = SnippetConfig::compact();
+    let builder = SnippetBuilder::with_config(config);
 
-    assert(builder.config().context_lines_before == 0)
+    assert(builder.config().context_lines_before == 0);
 }

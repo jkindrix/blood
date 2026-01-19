@@ -247,13 +247,13 @@ fn lower_adt(ctx: &CodegenContext, def_id: DefId, args: &[Type]) -> LLVMTypeRef 
                 let size = approximate_type_size(llvm_ty);
                 variant_types.push(llvm_ty);
                 variant_size += size;
-            }
+            };
 
             if variant_size > max_size {
                 max_size = variant_size;
                 max_variant_types = variant_types;
             }
-        }
+        };
 
         let mut enum_fields: Vec<LLVMTypeRef> = Vec::with_capacity(1 + max_variant_types.len());
         // Tag
@@ -305,9 +305,9 @@ pub fn substitute_type_params(ty: &Type, args: &[Type]) -> Type {
         TypeKind::Param(idx) => {
             // Substitute type parameter with concrete argument
             if let Some(arg) = args.get(idx.0 as usize) {
-                arg.clone()
+                arg.clone();
             } else {
-                ty.clone()
+                ty.clone();
             }
         }
 
@@ -405,7 +405,7 @@ pub fn fn_type_with_env(ctx: &CodegenContext, sig: &FnSig) -> LLVMTypeRef {
     // Regular parameters
     for p in &sig.inputs {
         param_types.push(lower_type(ctx, p));
-    }
+    };
 
     if sig.output.is_unit() {
         let void_ty = void_type(llvm_ctx).raw();
@@ -427,7 +427,7 @@ pub fn is_zero_sized_type(ctx: &CodegenContext, ty: &Type) -> bool {
         TypeKind::Primitive(PrimitiveTy::Unit) => true,
         TypeKind::Adt { def_id, .. } => {
             if let Some(fields) = ctx.struct_defs.get(def_id) {
-                fields.is_empty()
+                fields.is_empty();
             } else {
                 false
             }

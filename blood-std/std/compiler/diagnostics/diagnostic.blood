@@ -159,7 +159,7 @@ impl Diagnostic {
             Severity::Warning
         } else {
             Severity::Error
-        }
+        };
 
         let mut diag = Diagnostic {
             severity,
@@ -171,12 +171,12 @@ impl Diagnostic {
             help_messages: Vec::new(),
             related: Vec::new(),
             group: Option::Some(code.group()),
-        }
+        };
 
         // Add help message if available
         match code.help() {
             Option::Some(help_text) => {
-                diag.help_messages.push(Help::new(help_text))
+                diag.help_messages.push(Help::new(help_text));
             }
             Option::None => {}
         }
@@ -190,18 +190,18 @@ impl Diagnostic {
 
     /// Set the error code.
     pub fn with_code(mut self, code: ErrorCode) -> Diagnostic {
-        self.code = Option::Some(code)
+        self.code = Option::Some(code);
 
         // Set group from code if not already set
         if self.group.is_none() {
-            self.group = Option::Some(code.group())
-        }
+            self.group = Option::Some(code.group());
+        };
 
         // Add help from code if not already present
         if self.help_messages.is_empty() {
             match code.help() {
                 Option::Some(help_text) => {
-                    self.help_messages.push(Help::new(help_text))
+                    self.help_messages.push(Help::new(help_text));
                 }
                 Option::None => {}
             }
@@ -212,61 +212,61 @@ impl Diagnostic {
 
     /// Add a label.
     pub fn with_label(mut self, label: Label) -> Diagnostic {
-        self.labels.push(label)
+        self.labels.push(label);
         self
     }
 
     /// Add a primary label with a message.
     pub fn with_primary_label(mut self, span: Span, message: String) -> Diagnostic {
-        self.labels.push(Label::primary(span, message))
+        self.labels.push(Label::primary(span, message));
         self
     }
 
     /// Add a secondary label with a message.
     pub fn with_secondary_label(mut self, span: Span, message: String) -> Diagnostic {
-        self.labels.push(Label::secondary(span, message))
+        self.labels.push(Label::secondary(span, message));
         self
     }
 
     /// Add a suggestion.
     pub fn with_suggestion(mut self, suggestion: Suggestion) -> Diagnostic {
-        self.suggestions.push(suggestion)
+        self.suggestions.push(suggestion);
         self
     }
 
     /// Add a help message.
     pub fn with_help(mut self, message: String) -> Diagnostic {
-        self.help_messages.push(Help::new(message))
+        self.help_messages.push(Help::new(message));
         self
     }
 
     /// Add a related diagnostic (note, sub-error).
     pub fn with_related(mut self, related: Diagnostic) -> Diagnostic {
-        self.related.push(related)
+        self.related.push(related);
         self
     }
 
     /// Add a note as a related diagnostic.
     pub fn with_note(mut self, message: String, span: Span) -> Diagnostic {
-        self.related.push(Diagnostic::note(message, span))
+        self.related.push(Diagnostic::note(message, span));
         self
     }
 
     /// Set the diagnostic group.
     pub fn with_group(mut self, group: DiagnosticGroup) -> Diagnostic {
-        self.group = Option::Some(group)
+        self.group = Option::Some(group);
         self
     }
 
     /// Override the message.
     pub fn with_message(mut self, message: String) -> Diagnostic {
-        self.message = message
+        self.message = message;
         self
     }
 
     /// Override the severity.
     pub fn with_severity(mut self, severity: Severity) -> Diagnostic {
-        self.severity = severity
+        self.severity = severity;
         self
     }
 
@@ -281,7 +281,7 @@ impl Diagnostic {
 
     /// Get the message.
     pub fn message(self) -> String {
-        self.message.clone()
+        self.message.clone();
     }
 
     /// Get the primary span.
@@ -296,27 +296,27 @@ impl Diagnostic {
 
     /// Get the code as a string (e.g., "E0100").
     pub fn code_str(self) -> Option<String> {
-        self.code.map(|c| c.as_str())
+        self.code.map(|c| c.as_str());
     }
 
     /// Get all labels.
     pub fn labels(self) -> Vec<Label> {
-        self.labels.clone()
+        self.labels.clone();
     }
 
     /// Get all suggestions.
     pub fn suggestions(self) -> Vec<Suggestion> {
-        self.suggestions.clone()
+        self.suggestions.clone();
     }
 
     /// Get all help messages.
     pub fn help_messages(self) -> Vec<Help> {
-        self.help_messages.clone()
+        self.help_messages.clone();
     }
 
     /// Get related diagnostics.
     pub fn related(self) -> Vec<Diagnostic> {
-        self.related.clone()
+        self.related.clone();
     }
 
     /// Get the diagnostic group.
@@ -330,22 +330,22 @@ impl Diagnostic {
 
     /// Check if this is an error.
     pub fn is_error(self) -> Bool {
-        self.severity.is_error()
+        self.severity.is_error();
     }
 
     /// Check if this is a warning.
     pub fn is_warning(self) -> Bool {
-        self.severity.is_warning()
+        self.severity.is_warning();
     }
 
     /// Check if this is fatal.
     pub fn is_fatal(self) -> Bool {
-        self.severity.is_fatal()
+        self.severity.is_fatal();
     }
 
     /// Check if this has an error code.
     pub fn has_code(self) -> Bool {
-        self.code.is_some()
+        self.code.is_some();
     }
 
     /// Check if this has labels.
@@ -370,12 +370,12 @@ impl Diagnostic {
 
     /// Get the file ID from the primary span.
     pub fn file(self) -> FileId {
-        self.span.file()
+        self.span.file();
     }
 
     /// Get the start line from the primary span.
     pub fn start_line(self) -> U32 {
-        self.span.start_line()
+        self.span.start_line();
     }
 
     /// Get a label collection for rendering.
@@ -391,7 +391,7 @@ impl Diagnostic {
     ///
     /// Example: "error[E0308]: type mismatch"
     pub fn format_header(self) -> String {
-        let severity_str = self.severity.name()
+        let severity_str = self.severity.name();
 
         match self.code {
             Option::Some(code) => {
@@ -446,49 +446,49 @@ impl DiagnosticBuilder {
 
     /// Set the error code.
     pub fn code(mut self, code: ErrorCode) -> DiagnosticBuilder {
-        self.diagnostic = self.diagnostic.with_code(code)
+        self.diagnostic = self.diagnostic.with_code(code);
         self
     }
 
     /// Add a label.
     pub fn label(mut self, label: Label) -> DiagnosticBuilder {
-        self.diagnostic = self.diagnostic.with_label(label)
+        self.diagnostic = self.diagnostic.with_label(label);
         self
     }
 
     /// Add a primary label.
     pub fn primary(mut self, span: Span, message: String) -> DiagnosticBuilder {
-        self.diagnostic = self.diagnostic.with_primary_label(span, message)
+        self.diagnostic = self.diagnostic.with_primary_label(span, message);
         self
     }
 
     /// Add a secondary label.
     pub fn secondary(mut self, span: Span, message: String) -> DiagnosticBuilder {
-        self.diagnostic = self.diagnostic.with_secondary_label(span, message)
+        self.diagnostic = self.diagnostic.with_secondary_label(span, message);
         self
     }
 
     /// Add a suggestion.
     pub fn suggest(mut self, suggestion: Suggestion) -> DiagnosticBuilder {
-        self.diagnostic = self.diagnostic.with_suggestion(suggestion)
+        self.diagnostic = self.diagnostic.with_suggestion(suggestion);
         self
     }
 
     /// Add a help message.
     pub fn help(mut self, message: String) -> DiagnosticBuilder {
-        self.diagnostic = self.diagnostic.with_help(message)
+        self.diagnostic = self.diagnostic.with_help(message);
         self
     }
 
     /// Add a related diagnostic.
     pub fn related(mut self, diagnostic: Diagnostic) -> DiagnosticBuilder {
-        self.diagnostic = self.diagnostic.with_related(diagnostic)
+        self.diagnostic = self.diagnostic.with_related(diagnostic);
         self
     }
 
     /// Add a note.
     pub fn note(mut self, message: String, span: Span) -> DiagnosticBuilder {
-        self.diagnostic = self.diagnostic.with_note(message, span)
+        self.diagnostic = self.diagnostic.with_note(message, span);
         self
     }
 
@@ -501,7 +501,7 @@ impl DiagnosticBuilder {
     ///
     /// Note: Requires a DiagnosticContext (defined in context.blood).
     pub fn emit(self, ctx: DiagnosticContext) -> Unit {
-        ctx.emit(self.diagnostic)
+        ctx.emit(self.diagnostic);
     }
 }
 
@@ -511,58 +511,58 @@ impl DiagnosticBuilder {
 
 #[test]
 fn test_diagnostic_error() {
-    let span = Span::dummy()
-    let diag = Diagnostic::error("something went wrong", span)
+    let span = Span::dummy();
+    let diag = Diagnostic::error("something went wrong", span);
 
-    assert(diag.is_error())
-    assert(!diag.is_warning())
-    assert(diag.message() == "something went wrong")
+    assert(diag.is_error());
+    assert(!diag.is_warning());
+    assert(diag.message() == "something went wrong");
 }
 
 #[test]
 fn test_diagnostic_warning() {
-    let span = Span::dummy()
-    let diag = Diagnostic::warning("potential issue", span)
+    let span = Span::dummy();
+    let diag = Diagnostic::warning("potential issue", span);
 
-    assert(!diag.is_error())
-    assert(diag.is_warning())
+    assert(!diag.is_error());
+    assert(diag.is_warning());
 }
 
 #[test]
 fn test_diagnostic_with_code() {
-    let span = Span::dummy()
+    let span = Span::dummy();
     let diag = Diagnostic::error("type mismatch", span)
-        .with_code(ErrorCode::TypeMismatch)
+        .with_code(ErrorCode::TypeMismatch);
 
-    assert(diag.has_code())
-    assert(diag.code_str() == Option::Some("E0300"))
+    assert(diag.has_code());
+    assert(diag.code_str() == Option::Some("E0300"));
 }
 
 #[test]
 fn test_diagnostic_from_code() {
-    let span = Span::dummy()
-    let diag = Diagnostic::from_code(ErrorCode::TypeMismatch, span)
+    let span = Span::dummy();
+    let diag = Diagnostic::from_code(ErrorCode::TypeMismatch, span);
 
-    assert(diag.has_code())
-    assert(diag.message() == "type mismatch")
+    assert(diag.has_code());
+    assert(diag.message() == "type mismatch");
     // Should have group set
-    assert(diag.group().is_some())
+    assert(diag.group().is_some());
 }
 
 #[test]
 fn test_diagnostic_with_labels() {
-    let span = Span::dummy()
+    let span = Span::dummy();
     let diag = Diagnostic::error("type mismatch", span)
         .with_primary_label(span, "expected `Int`")
-        .with_secondary_label(span, "found `String`")
+        .with_secondary_label(span, "found `String`");
 
-    assert(diag.has_labels())
-    assert(diag.labels().len() == 2)
+    assert(diag.has_labels());
+    assert(diag.labels().len() == 2);
 }
 
 #[test]
 fn test_diagnostic_with_suggestion() {
-    let span = Span::dummy()
+    let span = Span::dummy();
     let suggestion = Suggestion::replace(
         "use `==` instead",
         span,
@@ -570,98 +570,98 @@ fn test_diagnostic_with_suggestion() {
         std.compiler.diagnostics.suggestion.Applicability::MachineApplicable,
     )
     let diag = Diagnostic::error("invalid operator", span)
-        .with_suggestion(suggestion)
+        .with_suggestion(suggestion);
 
-    assert(diag.has_suggestions())
-    assert(diag.suggestions().len() == 1)
+    assert(diag.has_suggestions());
+    assert(diag.suggestions().len() == 1);
 }
 
 #[test]
 fn test_diagnostic_with_help() {
-    let span = Span::dummy()
+    let span = Span::dummy();
     let diag = Diagnostic::error("missing semicolon", span)
-        .with_help("add `;` at the end of the statement")
+        .with_help("add `;` at the end of the statement");
 
-    assert(diag.has_help())
-    assert(diag.help_messages().len() == 1)
+    assert(diag.has_help());
+    assert(diag.help_messages().len() == 1);
 }
 
 #[test]
 fn test_diagnostic_with_related() {
-    let span = Span::dummy()
-    let note = Diagnostic::note("type defined here", span)
+    let span = Span::dummy();
+    let note = Diagnostic::note("type defined here", span);
     let diag = Diagnostic::error("type mismatch", span)
-        .with_related(note)
+        .with_related(note);
 
-    assert(diag.has_related())
-    assert(diag.related().len() == 1)
+    assert(diag.has_related());
+    assert(diag.related().len() == 1);
 }
 
 #[test]
 fn test_diagnostic_with_note() {
-    let span = Span::dummy()
+    let span = Span::dummy();
     let diag = Diagnostic::error("undefined variable", span)
-        .with_note("did you mean `foo`?", span)
+        .with_note("did you mean `foo`?", span);
 
-    assert(diag.has_related())
-    let notes = diag.related()
-    assert(notes.len() == 1)
-    assert(notes.get(0).unwrap().severity() == Severity::Note)
+    assert(diag.has_related());
+    let notes = diag.related();
+    assert(notes.len() == 1);
+    assert(notes.get(0).unwrap().severity() == Severity::Note);
 }
 
 #[test]
 fn test_diagnostic_format_header() {
-    let span = Span::dummy()
+    let span = Span::dummy();
     let diag = Diagnostic::error("type mismatch", span)
-        .with_code(ErrorCode::TypeMismatch)
+        .with_code(ErrorCode::TypeMismatch);
 
-    let header = diag.format_header()
-    assert(header.contains("error"))
-    assert(header.contains("E0300"))
-    assert(header.contains("type mismatch"))
+    let header = diag.format_header();
+    assert(header.contains("error"));
+    assert(header.contains("E0300"));
+    assert(header.contains("type mismatch"));
 }
 
 #[test]
 fn test_diagnostic_format_header_no_code() {
-    let span = Span::dummy()
-    let diag = Diagnostic::error("something wrong", span)
+    let span = Span::dummy();
+    let diag = Diagnostic::error("something wrong", span);
 
-    let header = diag.format_header()
-    assert(header == "error: something wrong")
+    let header = diag.format_header();
+    assert(header == "error: something wrong");
 }
 
 #[test]
 fn test_diagnostic_builder() {
-    let span = Span::dummy()
+    let span = Span::dummy();
     let diag = DiagnosticBuilder::error("type mismatch", span)
         .code(ErrorCode::TypeMismatch)
         .primary(span, "expected `Int`")
         .help("check your types")
-        .build()
+        .build();
 
-    assert(diag.is_error())
-    assert(diag.has_code())
-    assert(diag.has_labels())
-    assert(diag.has_help())
+    assert(diag.is_error());
+    assert(diag.has_code());
+    assert(diag.has_labels());
+    assert(diag.has_help());
 }
 
 #[test]
 fn test_diagnostic_builder_from_code() {
-    let span = Span::dummy()
+    let span = Span::dummy();
     let diag = DiagnosticBuilder::from_code(ErrorCode::UnusedVariable, span)
         .primary(span, "this variable is never used")
-        .build()
+        .build();
 
-    assert(diag.is_warning())
-    assert(diag.code_str() == Option::Some("W0100"))
+    assert(diag.is_warning());
+    assert(diag.code_str() == Option::Some("W0100"));
 }
 
 #[test]
 fn test_warning_from_code() {
-    let span = Span::dummy()
-    let diag = Diagnostic::from_code(ErrorCode::UnusedVariable, span)
+    let span = Span::dummy();
+    let diag = Diagnostic::from_code(ErrorCode::UnusedVariable, span);
 
     // Warning code should create a warning, not an error
-    assert(diag.is_warning())
-    assert(!diag.is_error())
+    assert(diag.is_warning());
+    assert(!diag.is_error());
 }

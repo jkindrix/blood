@@ -81,7 +81,7 @@ impl Resolution {
         while i < self.packages.len() {
             if self.packages[i].id == *id {
                 return Option::Some(&self.packages[i]);
-            }
+            };
             i = i + 1;
         }
         Option::None
@@ -112,11 +112,11 @@ impl Resolution {
     ) {
         if visited.contains(id) {
             return;
-        }
+        };
         if visiting.contains(id) {
             // Cycle detected
             return;
-        }
+        };
 
         visiting.insert(id.clone());
 
@@ -129,7 +129,7 @@ impl Resolution {
                 }
             }
             Option::None => {}
-        }
+        };
 
         visiting.remove(id);
         visited.insert(id.clone());
@@ -161,7 +161,7 @@ impl Resolution {
                 ResolvedSource::Path { path } => {
                     locked.source = Option::Some(format!("path+{}", path));
                 }
-            }
+            };
 
             // Add dependencies
             match self.graph.get(&pkg.id) {
@@ -173,14 +173,14 @@ impl Resolution {
                     }
                 }
                 Option::None => {}
-            }
+            };
 
             // Add features
             locked.features = pkg.features.clone();
 
             lockfile.add_package(locked);
             i = i + 1;
-        }
+        };
 
         lockfile.sort();
         lockfile
@@ -365,7 +365,7 @@ impl Resolver {
             return Result::Err(ResolveError::CyclicDependency {
                 package: name.to_string(),
             });
-        }
+        };
         self.resolving.insert(name.to_string());
 
         let result = self.do_resolve_dependency(name, req, parent, existing_lock);
@@ -394,7 +394,7 @@ impl Resolver {
                         return Result::Ok(id);
                     }
                     Option::None => {}
-                }
+                };
 
                 let resolved = ResolvedPackage {
                     id: id.clone(),
@@ -409,7 +409,7 @@ impl Resolver {
                 return Result::Ok(id);
             }
             Option::None => {}
-        }
+        };
 
         // Handle git dependency
         match &req.git {
@@ -423,7 +423,7 @@ impl Resolver {
                         return Result::Ok(id);
                     }
                     Option::None => {}
-                }
+                };
 
                 let resolved = ResolvedPackage {
                     id: id.clone(),
@@ -442,7 +442,7 @@ impl Resolver {
                 return Result::Ok(id);
             }
             Option::None => {}
-        }
+        };
 
         // Handle registry dependency
         let version_req = match &req.version {
@@ -471,7 +471,7 @@ impl Resolver {
                                 return Result::Ok(id);
                             }
                             Option::None => {}
-                        }
+                        };
 
                         let source = match locked.parse_source() {
                             Option::Some(PackageSource::Registry(url)) => {
@@ -505,12 +505,12 @@ impl Resolver {
                         self.add_edge(parent, &id);
 
                         return Result::Ok(id);
-                    }
+                    };
                     i = i + 1;
                 }
             }
             Option::None => {}
-        }
+        };
 
         // Find available versions
         match self.available_versions.get(name) {
@@ -530,9 +530,9 @@ impl Resolver {
                                 best = Option::Some(&versions[i]);
                             }
                         }
-                    }
+                    };
                     i = i + 1;
-                }
+                };
 
                 match best {
                     Option::Some(b) => {
@@ -544,7 +544,7 @@ impl Resolver {
                                 return Result::Ok(id);
                             }
                             Option::None => {}
-                        }
+                        };
 
                         let resolved = ResolvedPackage {
                             id: id.clone(),
@@ -567,7 +567,7 @@ impl Resolver {
                             if dep.optional && !req.features.contains(&dep.name) {
                                 j = j + 1;
                                 continue;
-                            }
+                            };
 
                             let dep_req = DependencyReq {
                                 version: Option::Some(dep.req.clone()),
@@ -580,9 +580,9 @@ impl Resolver {
                             match self.resolve_dependency(&dep.name, &dep_req, &id, existing_lock) {
                                 Result::Ok(_) => {}
                                 Result::Err(e) => return Result::Err(e),
-                            }
+                            };
                             j = j + 1;
-                        }
+                        };
 
                         return Result::Ok(id);
                     }
@@ -590,7 +590,7 @@ impl Resolver {
                 }
             }
             Option::None => {}
-        }
+        };
 
         // No version found - create a placeholder
         let placeholder_version = Version::new(0, 0, 0);
@@ -611,7 +611,7 @@ impl Resolver {
                 self.resolution.to_fetch.push(id.clone());
             }
             Option::Some(_) => {}
-        }
+        };
 
         self.add_edge(parent, &id);
         Result::Ok(id)

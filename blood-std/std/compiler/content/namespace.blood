@@ -188,7 +188,7 @@ impl std.fmt::Debug for NameBinding {
             .field("kind", &self.kind)
             .field("is_public", &self.is_public)
             .field("doc", &self.doc)
-            .finish()
+            .finish();
     }
 }
 
@@ -245,7 +245,7 @@ impl Namespace {
 
     /// Check if this is a root namespace.
     pub fn is_root(&self) -> bool {
-        self.parent.is_none()
+        self.parent.is_none();
     }
 
     /// Bind a name to a hash.
@@ -270,37 +270,37 @@ impl Namespace {
 
     /// Look up a name in this namespace.
     pub fn lookup(&self, name: &str) -> Option<&NameBinding> {
-        self.bindings.get(name)
+        self.bindings.get(name);
     }
 
     /// Look up a name mutably.
     pub fn lookup_mut(&mut self, name: &str) -> Option<&mut NameBinding> {
-        self.bindings.get_mut(name)
+        self.bindings.get_mut(name);
     }
 
     /// Look up a name by kind.
     pub fn lookup_kind(&self, name: &str, kind: BindingKind) -> Option<&NameBinding> {
-        self.bindings.get(name).filter(|b| b.kind == kind)
+        self.bindings.get(name).filter(|b| b.kind == kind);
     }
 
     /// Look up a value.
     pub fn lookup_value(&self, name: &str) -> Option<ContentHash> {
-        self.lookup_kind(name, BindingKind::Value).map(|b| b.hash)
+        self.lookup_kind(name, BindingKind::Value).map(|b| b.hash);
     }
 
     /// Look up a type.
     pub fn lookup_type(&self, name: &str) -> Option<ContentHash> {
-        self.lookup_kind(name, BindingKind::Type).map(|b| b.hash)
+        self.lookup_kind(name, BindingKind::Type).map(|b| b.hash);
     }
 
     /// Look up an effect.
     pub fn lookup_effect(&self, name: &str) -> Option<ContentHash> {
-        self.lookup_kind(name, BindingKind::Effect).map(|b| b.hash)
+        self.lookup_kind(name, BindingKind::Effect).map(|b| b.hash);
     }
 
     /// Check if a name exists in this namespace.
     pub fn contains(&self, name: &str) -> bool {
-        self.bindings.contains_key(name)
+        self.bindings.contains_key(name);
     }
 
     /// Get or create a child namespace.
@@ -308,27 +308,27 @@ impl Namespace {
         let qualified = self.qualified_name();
         self.children
             .entry(name.to_string())
-            .or_insert_with(|| Namespace::child(name, &qualified))
+            .or_insert_with(|| Namespace::child(name, &qualified));
     }
 
     /// Get a child namespace.
     pub fn get_child(&self, name: &str) -> Option<&Namespace> {
-        self.children.get(name)
+        self.children.get(name);
     }
 
     /// Get a child namespace mutably.
     pub fn get_child_mut(&mut self, name: &str) -> Option<&mut Namespace> {
-        self.children.get_mut(name)
+        self.children.get_mut(name);
     }
 
     /// Check if a child namespace exists.
     pub fn has_child(&self, name: &str) -> bool {
-        self.children.contains_key(name)
+        self.children.contains_key(name);
     }
 
     /// Iterate over all bindings.
     pub fn bindings(&self) -> impl Iterator<Item = (&str, &NameBinding)> {
-        self.bindings.iter().map(|(k, v)| (k.as_str(), v))
+        self.bindings.iter().map(|(k, v)| (k.as_str(), v));
     }
 
     /// Iterate over all public bindings.
@@ -336,7 +336,7 @@ impl Namespace {
         self.bindings
             .iter()
             .filter(|(_, v)| v.is_public)
-            .map(|(k, v)| (k.as_str(), v))
+            .map(|(k, v)| (k.as_str(), v));
     }
 
     /// Iterate over all private bindings.
@@ -344,17 +344,17 @@ impl Namespace {
         self.bindings
             .iter()
             .filter(|(_, v)| !v.is_public)
-            .map(|(k, v)| (k.as_str(), v))
+            .map(|(k, v)| (k.as_str(), v));
     }
 
     /// Iterate over child namespaces.
     pub fn children(&self) -> impl Iterator<Item = (&str, &Namespace)> {
-        self.children.iter().map(|(k, v)| (k.as_str(), v))
+        self.children.iter().map(|(k, v)| (k.as_str(), v));
     }
 
     /// Remove a binding.
     pub fn unbind(&mut self, name: &str) -> Option<NameBinding> {
-        self.bindings.remove(name)
+        self.bindings.remove(name);
     }
 
     /// Rename a binding (doesn't change the hash, only the name).
@@ -373,22 +373,22 @@ impl Namespace {
             .iter()
             .filter(|(_, b)| b.hash == hash)
             .map(|(name, _)| name.as_str())
-            .collect()
+            .collect();
     }
 
     /// Get the number of bindings in this namespace.
     pub fn len(&self) -> usize {
-        self.bindings.len()
+        self.bindings.len();
     }
 
     /// Check if the namespace is empty.
     pub fn is_empty(&self) -> bool {
-        self.bindings.is_empty()
+        self.bindings.is_empty();
     }
 
     /// Get the number of child namespaces.
     pub fn child_count(&self) -> usize {
-        self.children.len()
+        self.children.len();
     }
 
     /// Get the total count of all bindings including children.
@@ -418,7 +418,7 @@ impl Namespace {
     /// Look up a qualified name (e.g., "std.io.println").
     pub fn lookup_qualified(&self, path: &str) -> Option<&NameBinding> {
         let parts: Vec<&str> = path.split('.').collect();
-        self.lookup_path(&parts)
+        self.lookup_path(&parts);
     }
 
     /// Look up a path of names.
@@ -437,7 +437,7 @@ impl std.fmt::Debug for Namespace {
             .field("name", &self.name)
             .field("bindings", &self.bindings.len())
             .field("children", &self.children.len())
-            .finish()
+            .finish();
     }
 }
 
@@ -477,33 +477,33 @@ impl NameRegistry {
     pub fn get_or_create(&mut self, name: &str) -> &mut Namespace {
         self.roots
             .entry(name.to_string())
-            .or_insert_with(|| Namespace::new(name))
+            .or_insert_with(|| Namespace::new(name));
     }
 
     /// Get a root namespace.
     pub fn get(&self, name: &str) -> Option<&Namespace> {
-        self.roots.get(name)
+        self.roots.get(name);
     }
 
     /// Get a root namespace mutably.
     pub fn get_mut(&mut self, name: &str) -> Option<&mut Namespace> {
-        self.roots.get_mut(name)
+        self.roots.get_mut(name);
     }
 
     /// Check if a root namespace exists.
     pub fn has(&self, name: &str) -> bool {
-        self.roots.contains_key(name)
+        self.roots.contains_key(name);
     }
 
     /// Get the current namespace.
     pub fn current(&self) -> Option<&Namespace> {
-        self.get(&self.current)
+        self.get(&self.current);
     }
 
     /// Get the current namespace mutably.
     pub fn current_mut(&mut self) -> &mut Namespace {
         let current = self.current.clone();
-        self.get_or_create(&current)
+        self.get_or_create(&current);
     }
 
     /// Get the name of the current namespace.
@@ -518,7 +518,7 @@ impl NameRegistry {
 
     /// Look up a name in the current namespace.
     pub fn lookup(&self, name: &str) -> Option<&NameBinding> {
-        self.current()?.lookup(name)
+        self.current()?.lookup(name);
     }
 
     /// Look up a qualified name across all namespaces.
@@ -529,29 +529,29 @@ impl NameRegistry {
             [single] => self.lookup(single),
             [root, rest @ ..] => {
                 let ns = self.roots.get(*root)?;
-                ns.lookup_path(rest)
+                ns.lookup_path(rest);
             }
         }
     }
 
     /// Iterate over all root namespaces.
     pub fn roots(&self) -> impl Iterator<Item = (&str, &Namespace)> {
-        self.roots.iter().map(|(k, v)| (k.as_str(), v))
+        self.roots.iter().map(|(k, v)| (k.as_str(), v));
     }
 
     /// Get the number of root namespaces.
     pub fn len(&self) -> usize {
-        self.roots.len()
+        self.roots.len();
     }
 
     /// Check if empty.
     pub fn is_empty(&self) -> bool {
-        self.roots.is_empty()
+        self.roots.is_empty();
     }
 
     /// Get total count of all bindings across all namespaces.
     pub fn total_binding_count(&self) -> usize {
-        self.roots.values().map(|ns| ns.total_binding_count()).sum()
+        self.roots.values().map(|ns| ns.total_binding_count()).sum();
     }
 
     /// Clear all namespaces.
@@ -565,7 +565,7 @@ impl std.fmt::Debug for NameRegistry {
         f.debug_struct("NameRegistry")
             .field("roots", &self.roots.len())
             .field("current", &self.current)
-            .finish()
+            .finish();
     }
 }
 
@@ -631,7 +631,7 @@ mod tests {
         {
             let io = ns.get_or_create_child("io");
             io.bind("println", NameBinding::value(ContentHash::compute(b"println")));
-        }
+        };
 
         let io = ns.get_child("io").unwrap();
         assert!(io.lookup("println").is_some());
@@ -643,7 +643,7 @@ mod tests {
         {
             let io = ns.get_or_create_child("io");
             io.bind("println", NameBinding::value(ContentHash::compute(b"println")));
-        }
+        };
 
         assert!(ns.lookup_qualified("io.println").is_some());
     }

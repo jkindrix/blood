@@ -28,13 +28,13 @@ use std.ptr.RawPtr;
 // ============================================================================
 
 /// Default chunk size (8KB).
-pub const DEFAULT_CHUNK_SIZE: USize = 8 * 1024
+pub const DEFAULT_CHUNK_SIZE: USize = 8 * 1024;
 
 /// Maximum chunk size (16MB) to prevent unbounded growth.
-pub const MAX_CHUNK_SIZE: USize = 16 * 1024 * 1024
+pub const MAX_CHUNK_SIZE: USize = 16 * 1024 * 1024;
 
 /// Default alignment for arena allocations.
-pub const DEFAULT_ALIGNMENT: USize = 16
+pub const DEFAULT_ALIGNMENT: USize = 16;
 
 // ============================================================================
 // Chunk
@@ -84,15 +84,15 @@ impl Chunk {
     /// ```
     pub fn new(capacity: USize) -> Chunk {
         // Ensure minimum size and alignment
-        let aligned_capacity = align_up(capacity.max(64), DEFAULT_ALIGNMENT)
+        let aligned_capacity = align_up(capacity.max(64), DEFAULT_ALIGNMENT);
 
         // Allocate the memory block
-        let data = unsafe {
-            __builtin_alloc(aligned_capacity, DEFAULT_ALIGNMENT)
-        }
+        let data = @unsafe {
+            __builtin_alloc(aligned_capacity, DEFAULT_ALIGNMENT);
+        };
 
         if data.is_null() {
-            panic("FATAL: arena chunk allocation failed - system out of memory")
+            panic("FATAL: arena chunk allocation failed - system out of memory");
         }
 
         Chunk {
@@ -129,7 +129,7 @@ impl Chunk {
 
     /// Check if the chunk has any allocations.
     pub fn is_empty(self) -> Bool {
-        self.offset == 0
+        self.offset == 0;
     }
 
     /// Check if the chunk is full (cannot fit more allocations).
@@ -162,21 +162,21 @@ impl Chunk {
     /// ```
     pub fn try_alloc(mut self, size: USize, align: USize) -> Option[RawPtr<U8>] {
         // Calculate aligned offset
-        let aligned_offset = align_up(self.offset, align)
-        let new_offset = aligned_offset + size
+        let aligned_offset = align_up(self.offset, align);
+        let new_offset = aligned_offset + size;
 
         // Check if we have enough space
         if new_offset > self.capacity {
-            return Option::None
-        }
+            return Option::None;
+        };
 
         // Calculate the pointer to the allocated region
-        let ptr = unsafe {
-            self.data.offset(aligned_offset as ISize)
-        }
+        let ptr = @unsafe {
+            self.data.offset(aligned_offset as ISize);
+        };
 
         // Update the offset
-        self.offset = new_offset
+        self.offset = new_offset;
 
         Option::Some(ptr)
     }
@@ -216,7 +216,7 @@ impl Chunk {
     /// All references to arena-allocated values become invalid.
     /// The caller must ensure no references are used after calling this.
     pub unsafe fn reset(mut self) {
-        self.offset = 0
+        self.offset = 0;
     }
 
     /// Zero-fill the entire chunk and reset.
@@ -227,8 +227,8 @@ impl Chunk {
     ///
     /// All references to arena-allocated values become invalid.
     pub unsafe fn clear(mut self) {
-        __builtin_memset(self.data, 0, self.capacity)
-        self.offset = 0
+        __builtin_memset(self.data, 0, self.capacity);
+        self.offset = 0;
     }
 }
 
@@ -236,8 +236,8 @@ impl Drop for Chunk {
     /// Free the chunk's memory when dropped.
     fn drop(mut self) {
         if !self.data.is_null() {
-            unsafe {
-                __builtin_dealloc(self.data, self.capacity, DEFAULT_ALIGNMENT)
+            @unsafe {
+                __builtin_dealloc(self.data, self.capacity, DEFAULT_ALIGNMENT);
             }
         }
     }
@@ -246,11 +246,11 @@ impl Drop for Chunk {
 impl Clone for Chunk {
     /// Clone creates a new chunk with the same capacity and copies the data.
     fn clone(self) -> Chunk {
-        let new_chunk = Chunk::new(self.capacity)
+        let new_chunk = Chunk::new(self.capacity);
 
         if self.offset > 0 {
-            unsafe {
-                __builtin_memcpy(new_chunk.data, self.data, self.offset)
+            @unsafe {
+                __builtin_memcpy(new_chunk.data, self.data, self.offset);
             }
             // Note: We need to update offset, but Chunk is not mut here
             // This is a limitation - cloned chunk starts empty
@@ -276,7 +276,7 @@ impl Clone for Chunk {
 /// assert(align_up(9, 8) == 16)
 /// ```
 pub fn align_up(value: USize, align: USize) -> USize {
-    debug_assert(align > 0 && (align & (align - 1)) == 0, "alignment must be a power of 2")
+    debug_assert(align > 0 && (align & (align - 1)) == 0, "alignment must be a power of 2");
     (value + align - 1) & !(align - 1)
 }
 
@@ -284,7 +284,7 @@ pub fn align_up(value: USize, align: USize) -> USize {
 ///
 /// The alignment must be a power of 2.
 pub fn align_down(value: USize, align: USize) -> USize {
-    debug_assert(align > 0 && (align & (align - 1)) == 0, "alignment must be a power of 2")
+    debug_assert(align > 0 && (align & (align - 1)) == 0, "alignment must be a power of 2");
     value & !(align - 1)
 }
 
@@ -299,115 +299,115 @@ pub fn is_aligned(value: USize, align: USize) -> Bool {
 
 #[test]
 fn test_chunk_creation() {
-    let chunk = Chunk::new(1024)
+    let chunk = Chunk::new(1024);
 
-    assert(chunk.capacity() >= 1024)
-    assert(chunk.offset() == 0)
-    assert(chunk.is_empty())
-    assert(!chunk.is_full())
+    assert(chunk.capacity() >= 1024);
+    assert(chunk.offset() == 0);
+    assert(chunk.is_empty());
+    assert(!chunk.is_full());
 }
 
 #[test]
 fn test_chunk_default_creation() {
-    let chunk = Chunk::default()
+    let chunk = Chunk::default();
 
-    assert(chunk.capacity() >= DEFAULT_CHUNK_SIZE)
-    assert(chunk.is_empty())
+    assert(chunk.capacity() >= DEFAULT_CHUNK_SIZE);
+    assert(chunk.is_empty());
 }
 
 #[test]
 fn test_chunk_allocation() {
-    let mut chunk = Chunk::new(1024)
+    let mut chunk = Chunk::new(1024);
 
     // First allocation
     match chunk.try_alloc(64, 8) {
         Option::Some(ptr) => {
-            assert(!ptr.is_null())
+            assert(!ptr.is_null());
         }
         Option::None => {
-            panic("expected allocation to succeed")
+            panic("expected allocation to succeed");
         }
-    }
+    };
 
-    assert(chunk.offset() >= 64)
-    assert(!chunk.is_empty())
+    assert(chunk.offset() >= 64);
+    assert(!chunk.is_empty());
 }
 
 #[test]
 fn test_chunk_alignment() {
-    let mut chunk = Chunk::new(1024)
+    let mut chunk = Chunk::new(1024);
 
     // Allocate 1 byte, then request 16-byte aligned allocation
-    let _ = chunk.try_alloc(1, 1)
+    let _ = chunk.try_alloc(1, 1);
 
     match chunk.try_alloc(32, 16) {
         Option::Some(ptr) => {
-            let addr = ptr.as_usize()
-            assert(is_aligned(addr, 16))
+            let addr = ptr.as_usize();
+            assert(is_aligned(addr, 16));
         }
         Option::None => {
-            panic("expected allocation to succeed")
+            panic("expected allocation to succeed");
         }
     }
 }
 
 #[test]
 fn test_chunk_exhaustion() {
-    let mut chunk = Chunk::new(128)
+    let mut chunk = Chunk::new(128);
 
     // Fill the chunk
-    let first = chunk.try_alloc(64, 8)
-    assert(first.is_some())
+    let first = chunk.try_alloc(64, 8);
+    assert(first.is_some());
 
-    let second = chunk.try_alloc(64, 8)
-    assert(second.is_some())
+    let second = chunk.try_alloc(64, 8);
+    assert(second.is_some());
 
     // Should fail - no space left
-    let third = chunk.try_alloc(64, 8)
-    assert(third.is_none())
+    let third = chunk.try_alloc(64, 8);
+    assert(third.is_none());
 }
 
 #[test]
 fn test_chunk_reset() {
-    let mut chunk = Chunk::new(1024)
+    let mut chunk = Chunk::new(1024);
 
-    let _ = chunk.try_alloc(256, 8)
-    assert(!chunk.is_empty())
+    let _ = chunk.try_alloc(256, 8);
+    assert(!chunk.is_empty());
 
-    unsafe {
-        chunk.reset()
-    }
+    @unsafe {
+        chunk.reset();
+    };
 
-    assert(chunk.is_empty())
-    assert(chunk.offset() == 0)
+    assert(chunk.is_empty());
+    assert(chunk.offset() == 0);
 }
 
 #[test]
 fn test_align_up() {
-    assert(align_up(0, 8) == 0)
-    assert(align_up(1, 8) == 8)
-    assert(align_up(7, 8) == 8)
-    assert(align_up(8, 8) == 8)
-    assert(align_up(9, 8) == 16)
-    assert(align_up(15, 16) == 16)
-    assert(align_up(16, 16) == 16)
-    assert(align_up(17, 16) == 32)
+    assert(align_up(0, 8) == 0);
+    assert(align_up(1, 8) == 8);
+    assert(align_up(7, 8) == 8);
+    assert(align_up(8, 8) == 8);
+    assert(align_up(9, 8) == 16);
+    assert(align_up(15, 16) == 16);
+    assert(align_up(16, 16) == 16);
+    assert(align_up(17, 16) == 32);
 }
 
 #[test]
 fn test_align_down() {
-    assert(align_down(0, 8) == 0)
-    assert(align_down(7, 8) == 0)
-    assert(align_down(8, 8) == 8)
-    assert(align_down(15, 8) == 8)
-    assert(align_down(16, 8) == 16)
+    assert(align_down(0, 8) == 0);
+    assert(align_down(7, 8) == 0);
+    assert(align_down(8, 8) == 8);
+    assert(align_down(15, 8) == 8);
+    assert(align_down(16, 8) == 16);
 }
 
 #[test]
 fn test_is_aligned() {
-    assert(is_aligned(0, 8))
-    assert(is_aligned(8, 8))
-    assert(is_aligned(16, 8))
-    assert(!is_aligned(1, 8))
-    assert(!is_aligned(7, 8))
+    assert(is_aligned(0, 8));
+    assert(is_aligned(8, 8));
+    assert(is_aligned(16, 8));
+    assert(!is_aligned(1, 8));
+    assert(!is_aligned(7, 8));
 }

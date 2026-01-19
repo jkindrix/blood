@@ -198,7 +198,7 @@ impl Unifier {
                 while i < params.len() {
                     applied_params.push(self.apply(&params[i]));
                     i = i + 1;
-                }
+                };
                 let mut applied_captures: [Type] = vec![];
                 i = 0;
                 while i < captures.len() {
@@ -299,12 +299,12 @@ impl Unifier {
             (TypeKind::Tuple(ts1), TypeKind::Tuple(ts2)) => {
                 if ts1.len() != ts2.len() {
                     return Err(TypeError::mismatch(t1.clone(), t2.clone(), span));
-                }
+                };
                 let mut i: usize = 0;
                 while i < ts1.len() {
                     self.unify(&ts1[i], &ts2[i], span)?;
                     i = i + 1;
-                }
+                };
                 Ok(())
             }
 
@@ -312,43 +312,43 @@ impl Unifier {
             (TypeKind::Array { element: e1, size: s1 }, TypeKind::Array { element: e2, size: s2 }) => {
                 if s1 != s2 {
                     return Err(TypeError::mismatch(t1.clone(), t2.clone(), span));
-                }
-                self.unify(e1, e2, span)
+                };
+                self.unify(e1, e2, span);
             }
 
             // Slices
             (TypeKind::Slice { element: e1 }, TypeKind::Slice { element: e2 }) => {
-                self.unify(e1, e2, span)
+                self.unify(e1, e2, span);
             }
 
             // References with same mutability
             (TypeKind::Ref { inner: i1, mutability: m1 }, TypeKind::Ref { inner: i2, mutability: m2 }) => {
                 if !self.mutability_eq(m1, m2) {
                     return Err(TypeError::mismatch(t1.clone(), t2.clone(), span));
-                }
-                self.unify(i1, i2, span)
+                };
+                self.unify(i1, i2, span);
             }
 
             // Pointers with same mutability
             (TypeKind::Ptr { inner: i1, mutability: m1 }, TypeKind::Ptr { inner: i2, mutability: m2 }) => {
                 if !self.mutability_eq(m1, m2) {
                     return Err(TypeError::mismatch(t1.clone(), t2.clone(), span));
-                }
-                self.unify(i1, i2, span)
+                };
+                self.unify(i1, i2, span);
             }
 
             // Function types
             (TypeKind::Fn { params: p1, ret: r1, effect: e1 }, TypeKind::Fn { params: p2, ret: r2, effect: e2 }) => {
                 if p1.len() != p2.len() {
                     return Err(TypeError::mismatch(t1.clone(), t2.clone(), span));
-                }
+                };
                 let mut i: usize = 0;
                 while i < p1.len() {
                     self.unify(&p1[i], &p2[i], span)?;
                     i = i + 1;
-                }
+                };
                 self.unify(r1, r2, span)?;
-                self.unify_effects(e1, e2, span)
+                self.unify_effects(e1, e2, span);
             }
 
             // Closure types
@@ -356,37 +356,37 @@ impl Unifier {
              TypeKind::Closure { params: p2, ret: r2, effect: e2, captures: c2 }) => {
                 if p1.len() != p2.len() {
                     return Err(TypeError::mismatch(t1.clone(), t2.clone(), span));
-                }
+                };
                 if c1.len() != c2.len() {
                     return Err(TypeError::mismatch(t1.clone(), t2.clone(), span));
-                }
+                };
                 let mut i: usize = 0;
                 while i < p1.len() {
                     self.unify(&p1[i], &p2[i], span)?;
                     i = i + 1;
-                }
+                };
                 self.unify(r1, r2, span)?;
                 i = 0;
                 while i < c1.len() {
                     self.unify(&c1[i], &c2[i], span)?;
                     i = i + 1;
-                }
-                self.unify_effects(e1, e2, span)
+                };
+                self.unify_effects(e1, e2, span);
             }
 
             // ADTs with same def_id and unifiable type args
             (TypeKind::Adt { def_id: d1, type_args: a1 }, TypeKind::Adt { def_id: d2, type_args: a2 }) => {
                 if !d1.eq(d2) {
                     return Err(TypeError::mismatch(t1.clone(), t2.clone(), span));
-                }
+                };
                 if a1.len() != a2.len() {
                     return Err(TypeError::wrong_arity(a1.len() as u32, a2.len() as u32, span));
-                }
+                };
                 let mut i: usize = 0;
                 while i < a1.len() {
                     self.unify(&a1[i], &a2[i], span)?;
                     i = i + 1;
-                }
+                };
                 Ok(())
             }
 
@@ -394,15 +394,15 @@ impl Unifier {
             (TypeKind::Range { element: e1, inclusive: i1 }, TypeKind::Range { element: e2, inclusive: i2 }) => {
                 if i1 != i2 {
                     return Err(TypeError::mismatch(t1.clone(), t2.clone(), span));
-                }
-                self.unify(e1, e2, span)
+                };
+                self.unify(e1, e2, span);
             }
 
             // DynTrait types
             (TypeKind::DynTrait { trait_id: t1_id }, TypeKind::DynTrait { trait_id: t2_id }) => {
                 if !t1_id.eq(t2_id) {
                     return Err(TypeError::mismatch(t1.clone(), t2.clone(), span));
-                }
+                };
                 Ok(())
             }
 
@@ -412,15 +412,15 @@ impl Unifier {
                 // Full row polymorphism would need more sophisticated handling
                 if f1.len() != f2.len() {
                     return Err(TypeError::mismatch(t1.clone(), t2.clone(), span));
-                }
+                };
                 let mut i: usize = 0;
                 while i < f1.len() {
                     if f1[i].name != f2[i].name {
                         return Err(TypeError::mismatch(t1.clone(), t2.clone(), span));
-                    }
+                    };
                     self.unify(&f1[i].ty, &f2[i].ty, span)?;
                     i = i + 1;
-                }
+                };
                 // Row variables would need unification here
                 match (r1, r2) {
                     (None, None) => Ok(()),
@@ -434,16 +434,16 @@ impl Unifier {
             (TypeKind::Forall { params: p1, body: b1 }, TypeKind::Forall { params: p2, body: b2 }) => {
                 if p1.len() != p2.len() {
                     return Err(TypeError::mismatch(t1.clone(), t2.clone(), span));
-                }
+                };
                 // Would need alpha-renaming for proper comparison
-                self.unify(b1, b2, span)
+                self.unify(b1, b2, span);
             }
 
             // Type variable on left - bind it
             (TypeKind::Infer(id), _) => {
                 if self.occurs_in(id, &t2) {
                     return Err(TypeError::occurs_check(id.clone(), t2.clone(), span));
-                }
+                };
                 self.substitutions.insert(id.id(), t2.clone());
                 Ok(())
             }
@@ -452,7 +452,7 @@ impl Unifier {
             (_, TypeKind::Infer(id)) => {
                 if self.occurs_in(id, &t1) {
                     return Err(TypeError::occurs_check(id.clone(), t1.clone(), span));
-                }
+                };
                 self.substitutions.insert(id.id(), t1.clone());
                 Ok(())
             }
@@ -470,8 +470,8 @@ impl Unifier {
             (TypeKind::Ownership { inner: i1, ownership: o1 }, TypeKind::Ownership { inner: i2, ownership: o2 }) => {
                 if !self.ownership_eq(o1, o2) {
                     return Err(TypeError::mismatch(t1.clone(), t2.clone(), span));
-                }
-                self.unify(i1, i2, span)
+                };
+                self.unify(i1, i2, span);
             }
 
             // Explicit non-matching cases
@@ -721,7 +721,7 @@ impl Unifier {
                 while i < tys.len() {
                     if self.occurs_in(var, &tys[i]) {
                         return true;
-                    }
+                    };
                     i = i + 1;
                 }
                 false
@@ -735,27 +735,27 @@ impl Unifier {
                 while i < params.len() {
                     if self.occurs_in(var, &params[i]) {
                         return true;
-                    }
+                    };
                     i = i + 1;
-                }
-                self.occurs_in(var, ret)
+                };
+                self.occurs_in(var, ret);
             }
             TypeKind::Closure { params, ret, effect: _, captures } => {
                 let mut i: usize = 0;
                 while i < params.len() {
                     if self.occurs_in(var, &params[i]) {
                         return true;
-                    }
+                    };
                     i = i + 1;
-                }
+                };
                 if self.occurs_in(var, ret) {
                     return true;
-                }
+                };
                 i = 0;
                 while i < captures.len() {
                     if self.occurs_in(var, &captures[i]) {
                         return true;
-                    }
+                    };
                     i = i + 1;
                 }
                 false
@@ -765,7 +765,7 @@ impl Unifier {
                 while i < type_args.len() {
                     if self.occurs_in(var, &type_args[i]) {
                         return true;
-                    }
+                    };
                     i = i + 1;
                 }
                 false
@@ -777,7 +777,7 @@ impl Unifier {
                 while i < fields.len() {
                     if self.occurs_in(var, &fields[i].ty) {
                         return true;
-                    }
+                    };
                     i = i + 1;
                 }
                 false
@@ -913,7 +913,7 @@ impl Unifier {
                 r2.effects().len() as u32,
                 span,
             ));
-        }
+        };
 
         // Check that all effects in r1 are in r2
         let mut i: usize = 0;
@@ -923,9 +923,9 @@ impl Unifier {
                     format!("effect#{}", r1.effects()[i].def_id.id()),
                     span,
                 ));
-            }
+            };
             i = i + 1;
-        }
+        };
 
         Ok(())
     }
@@ -938,7 +938,7 @@ impl Unifier {
                 // For full correctness, should also check type args match
                 // but simplified for now
                 return true;
-            }
+            };
             i = i + 1;
         }
         false

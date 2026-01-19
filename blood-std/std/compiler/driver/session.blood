@@ -63,7 +63,7 @@ impl SourceFile {
 
     /// Get the number of lines.
     pub fn line_count(self) -> USize {
-        self.line_starts.len()
+        self.line_starts.len();
     }
 
     /// Get the byte offset of a line start.
@@ -71,7 +71,7 @@ impl SourceFile {
     /// Line numbers are 1-indexed.
     pub fn line_start(self, line: U32) -> Option<U32> {
         if line == 0 || line as USize > self.line_starts.len() {
-            return Option::None
+            return Option::None;
         }
         Option::Some(self.line_starts[(line - 1) as USize])
     }
@@ -125,7 +125,7 @@ impl SourceFile {
         let mut end_pos = end as USize;
         if end_pos > 0 && self.content.as_bytes()[end_pos - 1] == b'\n' {
             end_pos -= 1;
-        }
+        };
         if end_pos > 0 && self.content.as_bytes()[end_pos - 1] == b'\r' {
             end_pos -= 1;
         }
@@ -137,7 +137,7 @@ impl SourceFile {
     pub fn slice(self, start: U32, end: U32) -> String {
         let s = start as USize;
         let e = (end as USize).min(self.content.len());
-        self.content[s..e].to_string()
+        self.content[s..e].to_string();
     }
 }
 
@@ -184,7 +184,7 @@ impl FileId {
 
     /// Check if this is a dummy file ID.
     pub fn is_dummy(self) -> Bool {
-        self.id == U32::MAX
+        self.id == U32::MAX;
     }
 }
 
@@ -237,8 +237,8 @@ impl Session {
     pub fn load_file(mut self, path: String) -> Result<SourceFile, String> {
         // Check if already loaded
         if let Option::Some(&id) = self.file_map.get(&path) {
-            return Result::Ok(self.files[id.as_u32() as USize].clone())
-        }
+            return Result::Ok(self.files[id.as_u32() as USize].clone());
+        };
 
         // Read file content
         let content = match std.fs.read_to_string(&path) {
@@ -273,11 +273,11 @@ impl Session {
     /// Get a source file by ID.
     pub fn get_file(self, id: FileId) -> Option<&SourceFile> {
         if id.is_dummy() {
-            return Option::None
-        }
+            return Option::None;
+        };
         let idx = id.as_u32() as USize;
         if idx >= self.files.len() {
-            return Option::None
+            return Option::None;
         }
         Option::Some(&self.files[idx])
     }
@@ -361,8 +361,8 @@ fn test_source_file_from_string() {
         "fn main() {\n    println(\"hello\")\n}\n".to_string()
     );
 
-    assert(file.name == "test.blood")
-    assert(file.line_count() == 4) // 3 lines + empty after final newline
+    assert(file.name == "test.blood");
+    assert(file.line_count() == 4); // 3 lines + empty after final newline
 }
 
 #[test]
@@ -372,11 +372,11 @@ fn test_source_file_line_lookup() {
         "line1\nline2\nline3\n".to_string()
     );
 
-    assert(file.line_for_offset(0) == 1)
-    assert(file.line_for_offset(5) == 1) // '\n' at end of line 1
-    assert(file.line_for_offset(6) == 2) // Start of line 2
-    assert(file.line_for_offset(11) == 2) // '\n' at end of line 2
-    assert(file.line_for_offset(12) == 3) // Start of line 3
+    assert(file.line_for_offset(0) == 1);
+    assert(file.line_for_offset(5) == 1); // '\n' at end of line 1
+    assert(file.line_for_offset(6) == 2); // Start of line 2
+    assert(file.line_for_offset(11) == 2); // '\n' at end of line 2
+    assert(file.line_for_offset(12) == 3); // Start of line 3
 }
 
 #[test]
@@ -386,11 +386,11 @@ fn test_source_file_get_line() {
         "first line\nsecond line\nthird line\n".to_string()
     );
 
-    assert(file.get_line(1) == Option::Some("first line".to_string()))
-    assert(file.get_line(2) == Option::Some("second line".to_string()))
-    assert(file.get_line(3) == Option::Some("third line".to_string()))
-    assert(file.get_line(0).is_none())
-    assert(file.get_line(5).is_none())
+    assert(file.get_line(1) == Option::Some("first line".to_string()));
+    assert(file.get_line(2) == Option::Some("second line".to_string()));
+    assert(file.get_line(3) == Option::Some("third line".to_string()));
+    assert(file.get_line(0).is_none());
+    assert(file.get_line(5).is_none());
 }
 
 #[test]
@@ -400,10 +400,10 @@ fn test_source_file_column() {
         "abcdef\nghijkl\n".to_string()
     );
 
-    assert(file.column_for_offset(0) == 1) // 'a'
-    assert(file.column_for_offset(3) == 4) // 'd'
-    assert(file.column_for_offset(7) == 1) // 'g' (start of line 2)
-    assert(file.column_for_offset(10) == 4) // 'j'
+    assert(file.column_for_offset(0) == 1); // 'a'
+    assert(file.column_for_offset(3) == 4); // 'd'
+    assert(file.column_for_offset(7) == 1); // 'g' (start of line 2)
+    assert(file.column_for_offset(10) == 4); // 'j'
 }
 
 #[test]
@@ -412,10 +412,10 @@ fn test_file_id() {
     let id2 = FileId::new(1);
     let dummy = FileId::dummy();
 
-    assert(id1 != id2)
-    assert(id1.as_u32() == 0)
-    assert(dummy.is_dummy())
-    assert(!id1.is_dummy())
+    assert(id1 != id2);
+    assert(id1.as_u32() == 0);
+    assert(dummy.is_dummy());
+    assert(!id1.is_dummy());
 }
 
 #[test]
@@ -426,8 +426,8 @@ fn test_session_add_source() {
     let file1 = session.add_source("a.blood".to_string(), "fn a() {}".to_string());
     let file2 = session.add_source("b.blood".to_string(), "fn b() {}".to_string());
 
-    assert(file1.id != file2.id)
-    assert(session.files().len() == 2)
+    assert(file1.id != file2.id);
+    assert(session.files().len() == 2);
 }
 
 #[test]
@@ -437,10 +437,10 @@ fn test_session_get_file() {
 
     let file = session.add_source("test.blood".to_string(), "fn test() {}".to_string());
 
-    assert(session.get_file(file.id).is_some())
-    assert(session.get_file_by_path(&"test.blood".to_string()).is_some())
-    assert(session.get_file(FileId::dummy()).is_none())
-    assert(session.get_file_by_path(&"nonexistent.blood".to_string()).is_none())
+    assert(session.get_file(file.id).is_some());
+    assert(session.get_file_by_path(&"test.blood".to_string()).is_some());
+    assert(session.get_file(FileId::dummy()).is_none());
+    assert(session.get_file_by_path(&"nonexistent.blood".to_string()).is_none());
 }
 
 #[test]
@@ -448,12 +448,12 @@ fn test_session_error_tracking() {
     let config = CompilerConfig::default();
     let mut session = Session::new(config);
 
-    assert(!session.has_errors())
-    assert(session.error_count() == 0)
+    assert(!session.has_errors());
+    assert(session.error_count() == 0);
 
     session.record_error();
-    assert(session.has_errors())
-    assert(session.error_count() == 1)
+    assert(session.has_errors());
+    assert(session.error_count() == 1);
 }
 
 #[test]
@@ -464,8 +464,8 @@ fn test_session_error_limit() {
 
     session.record_error();
     session.record_error();
-    assert(!session.should_stop())
+    assert(!session.should_stop());
 
     session.record_error();
-    assert(session.should_stop())
+    assert(session.should_stop());
 }

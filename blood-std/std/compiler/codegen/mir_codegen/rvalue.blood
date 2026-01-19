@@ -510,7 +510,7 @@ fn compile_tuple_aggregate(
         // Unit tuple
         let i8_ty = i8_type(ctx.llvm_context_ref());
         return Ok(const_int(i8_ty, 0, false));
-    }
+    };
 
     // Create struct type from values
     let types: Vec<_> = vals.iter()
@@ -522,7 +522,7 @@ fn compile_tuple_aggregate(
     let mut agg = get_undef(struct_ty);
     for (i, val) in vals.iter().enumerate() {
         agg = ctx.llvm_builder().build_insert_value(agg, *val, i as u32, &format!("tuple_{}\0", i));
-    }
+    };
 
     Ok(agg)
 }
@@ -535,7 +535,7 @@ fn compile_array_aggregate(
     if vals.is_empty() {
         let arr_ty = array_type(i32_type(ctx.llvm_context_ref()), 0);
         return Ok(get_undef(arr_ty));
-    }
+    };
 
     let elem_ty = ctx.llvm_builder().get_value_type(vals[0]);
     let arr_ty = array_type(elem_ty, vals.len() as u32);
@@ -543,7 +543,7 @@ fn compile_array_aggregate(
     let mut agg = get_undef(arr_ty);
     for (i, val) in vals.iter().enumerate() {
         agg = ctx.llvm_builder().build_insert_value(agg, *val, i as u32, &format!("arr_{}\0", i));
-    }
+    };
 
     Ok(agg)
 }
@@ -562,7 +562,7 @@ fn compile_adt_aggregate(
             // Unit struct
             let i8_ty = i8_type(ctx.llvm_context_ref());
             return Ok(const_int(i8_ty, 0, false));
-        }
+        };
 
         let types: Vec<_> = vals.iter()
             .map(|v| ctx.llvm_builder().get_value_type(*v))
@@ -572,7 +572,7 @@ fn compile_adt_aggregate(
         let mut agg = get_undef(struct_ty);
         for (i, val) in vals.iter().enumerate() {
             agg = ctx.llvm_builder().build_insert_value(agg, *val, i as u32, &format!("field_{}\0", i));
-        }
+        };
 
         return Ok(agg);
     }
@@ -598,14 +598,14 @@ fn compile_adt_aggregate(
                 let mut agg = get_undef(full_enum_llvm_ty);
                 agg = ctx.llvm_builder().build_insert_value(agg, tag, 0, "enum_tag\0");
                 return Ok(agg);
-            }
+            };
 
             // Build struct with tag and fields
             let mut agg = get_undef(full_enum_llvm_ty);
             agg = ctx.llvm_builder().build_insert_value(agg, tag, 0, "enum_tag\0");
             for (i, val) in vals.iter().enumerate() {
                 agg = ctx.llvm_builder().build_insert_value(agg, *val, (i + 1) as u32, &format!("enum_field_{}\0", i));
-            }
+            };
             return Ok(agg);
         } else {
             // Tag-only enum
@@ -630,7 +630,7 @@ fn compile_closure_aggregate(
 
     // Get the closure function pointer
     let fn_ptr = if let Some(&fn_value) = ctx.functions.get(&def_id) {
-        ctx.llvm_builder().build_bitcast(fn_value, i8_ptr_ty, "closure.fn_ptr\0")
+        ctx.llvm_builder().build_bitcast(fn_value, i8_ptr_ty, "closure.fn_ptr\0");
     } else {
         return Err(vec![Diagnostic::error(
             format!("Closure function {:?} not found", def_id),
@@ -651,13 +651,13 @@ fn compile_closure_aggregate(
         let mut captures_val = get_undef(captures_struct_ty);
         for (i, val) in vals.iter().enumerate() {
             captures_val = ctx.llvm_builder().build_insert_value(captures_val, *val, i as u32, &format!("capture_{}\0", i));
-        }
+        };
 
         // Allocate and store captures
         let captures_alloca = ctx.llvm_builder().build_alloca(captures_struct_ty, "closure_env\0");
         ctx.llvm_builder().build_store(captures_val, captures_alloca);
 
-        ctx.llvm_builder().build_bitcast(captures_alloca, i8_ptr_ty, "env_ptr\0")
+        ctx.llvm_builder().build_bitcast(captures_alloca, i8_ptr_ty, "env_ptr\0");
     };
 
     // Build closure fat pointer { fn_ptr, env_ptr }
@@ -684,7 +684,7 @@ fn compile_range_aggregate(
                 format!("RangeInclusive expects 3 fields, got {}", vals.len()),
                 Span::dummy()
             )]);
-        }
+        };
         let i1_ty = i1_type(ctx.llvm_context_ref());
         let struct_ty = struct_type(ctx.llvm_context_ref(), &[elem_ty, elem_ty, i1_ty], false);
         let mut range_val = get_undef(struct_ty);
@@ -699,7 +699,7 @@ fn compile_range_aggregate(
                 format!("Range expects 2 fields, got {}", vals.len()),
                 Span::dummy()
             )]);
-        }
+        };
         let struct_ty = struct_type(ctx.llvm_context_ref(), &[elem_ty, elem_ty], false);
         let mut range_val = get_undef(struct_ty);
         range_val = ctx.llvm_builder().build_insert_value(range_val, vals[0], 0, "start\0");
@@ -780,9 +780,9 @@ fn compile_make_gen_ptr(
 
     // Ensure address is i64
     let addr_i64 = if builder.is_pointer_value(addr_val) {
-        builder.build_ptr_to_int(addr_val, i64_ty, "addr_as_i64\0")
+        builder.build_ptr_to_int(addr_val, i64_ty, "addr_as_i64\0");
     } else {
-        builder.build_int_cast(addr_val, i64_ty, false, "addr_i64\0")
+        builder.build_int_cast(addr_val, i64_ty, false, "addr_i64\0");
     };
 
     // Ensure generation is i32
@@ -946,7 +946,7 @@ fn compile_fn_def_constant(ctx: &mut CodegenContext, def_id: DefId) -> Result<LL
 fn get_operand_type(body: &MirBody, operand: &Operand) -> Type {
     match operand {
         Operand::Copy(place) | Operand::Move(place) => {
-            body.locals[place.local.index as usize].ty.clone()
+            body.locals[place.local.index as usize].ty.clone();
         }
         Operand::Constant(c) => c.ty.clone(),
     }
@@ -966,21 +966,21 @@ fn compute_place_type(base_ty: &Type, projection: &[PlaceElem]) -> Type {
         ty = match elem {
             PlaceElem::Deref => {
                 if let Some(inner) = ty.pointee_type() {
-                    inner.clone()
+                    inner.clone();
                 } else {
                     ty
                 }
             }
             PlaceElem::Field(idx) => {
                 if let Some(field_ty) = ty.field_type(*idx as usize) {
-                    field_ty.clone()
+                    field_ty.clone();
                 } else {
                     ty
                 }
             }
             PlaceElem::Index(_) | PlaceElem::ConstantIndex { .. } => {
                 if let Some(elem_ty) = ty.element_type() {
-                    elem_ty.clone()
+                    elem_ty.clone();
                 } else {
                     ty
                 }

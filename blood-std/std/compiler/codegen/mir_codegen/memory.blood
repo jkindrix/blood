@@ -134,7 +134,7 @@ pub fn emit_generation_check(
     } else {
         // blood_get_generation not available - use expected as fallback
         ctx.llvm_builder().build_call(panic_fn, &[expected_gen, expected_gen], "\0");
-    }
+    };
 
     ctx.llvm_builder().build_unreachable();
 
@@ -340,7 +340,7 @@ pub fn type_may_contain_genref(ty: &crate.compiler.hir.Type) -> bool {
         TypeKind::Ref { .. } => true,
         TypeKind::Ptr { .. } => true,
         TypeKind::Tuple(fields) => {
-            fields.iter().any(|f| type_may_contain_genref(f))
+            fields.iter().any(|f| type_may_contain_genref(f));
         }
         TypeKind::Array { element, .. } => {
             type_may_contain_genref(element)

@@ -77,7 +77,7 @@ impl TraitDef {
         while i < self.methods.len() {
             if self.methods[i].name.eq(name) {
                 return true;
-            }
+            };
             i = i + 1;
         }
         false
@@ -89,7 +89,7 @@ impl TraitDef {
         while i < self.methods.len() {
             if self.methods[i].name.eq(name) {
                 return Some(&self.methods[i]);
-            }
+            };
             i = i + 1;
         }
         None
@@ -101,7 +101,7 @@ impl TraitDef {
         while i < self.assoc_types.len() {
             if self.assoc_types[i].name.eq(name) {
                 return true;
-            }
+            };
             i = i + 1;
         }
         false
@@ -289,12 +289,12 @@ impl ImplDef {
 
     /// Check if this is an inherent impl (not a trait impl).
     pub fn is_inherent(&self) -> bool {
-        self.trait_id.is_none()
+        self.trait_id.is_none();
     }
 
     /// Check if this is a trait impl.
     pub fn is_trait_impl(&self) -> bool {
-        self.trait_id.is_some()
+        self.trait_id.is_some();
     }
 
     /// Add a method implementation.
@@ -309,12 +309,12 @@ impl ImplDef {
 
     /// Get a method by name.
     pub fn get_method(&self, name: &str) -> Option<&ImplMethodDef> {
-        self.methods.get(name)
+        self.methods.get(name);
     }
 
     /// Get an associated type by name.
     pub fn get_assoc_type(&self, name: &str) -> Option<&Type> {
-        self.assoc_types.get(name)
+        self.assoc_types.get(name);
     }
 }
 
@@ -455,7 +455,7 @@ impl TraitResolver {
 
     /// Get a trait definition by ID.
     pub fn get_trait(&self, def_id: &DefId) -> Option<&TraitDef> {
-        self.trait_defs.get(&def_id.id())
+        self.trait_defs.get(&def_id.id());
     }
 
     /// Find an implementation of a trait for a type.
@@ -473,7 +473,7 @@ impl TraitResolver {
                         i = i + 1;
                         continue;
                     }
-                }
+                };
                 None => {
                     // This is an inherent impl, skip it
                     i = i + 1;
@@ -484,7 +484,7 @@ impl TraitResolver {
             // Check if the type matches
             if self.type_matches(&impl_def.self_type, ty, unifier) {
                 return Some(impl_def.clone());
-            }
+            };
 
             i = i + 1;
         }
@@ -504,14 +504,14 @@ impl TraitResolver {
                 Some(_) => {
                     i = i + 1;
                     continue;
-                }
-                None => {}
+                };
+                None => {};
             }
 
             // Check if the type matches
             if self.type_matches(&impl_def.self_type, ty, unifier) {
                 return Some(impl_def.clone());
-            }
+            };
 
             i = i + 1;
         }
@@ -529,22 +529,22 @@ impl TraitResolver {
         match (&resolved_impl.kind(), &resolved_concrete.kind()) {
             // Primitives must match exactly
             (TypeKind::Primitive(p1), TypeKind::Primitive(p2)) => {
-                self.primitives_equal(p1, p2)
+                self.primitives_equal(p1, p2);
             }
 
             // ADTs must have same def_id and matching type arguments
             (TypeKind::Adt { def_id: d1, type_args: a1 }, TypeKind::Adt { def_id: d2, type_args: a2 }) => {
                 if d1.id() != d2.id() {
                     return false;
-                }
+                };
                 if a1.len() != a2.len() {
                     return false;
-                }
+                };
                 let mut i: usize = 0;
                 while i < a1.len() {
                     if !self.type_matches(&a1[i], &a2[i], unifier) {
                         return false;
-                    }
+                    };
                     i = i + 1;
                 }
                 true
@@ -554,12 +554,12 @@ impl TraitResolver {
             (TypeKind::Tuple(t1), TypeKind::Tuple(t2)) => {
                 if t1.len() != t2.len() {
                     return false;
-                }
+                };
                 let mut i: usize = 0;
                 while i < t1.len() {
                     if !self.type_matches(&t1[i], &t2[i], unifier) {
                         return false;
-                    }
+                    };
                     i = i + 1;
                 }
                 true
@@ -567,22 +567,22 @@ impl TraitResolver {
 
             // References must have same mutability and matching inner types
             (TypeKind::Ref { inner: i1, mutability: m1 }, TypeKind::Ref { inner: i2, mutability: m2 }) => {
-                self.mutability_equal(m1, m2) && self.type_matches(i1, i2, unifier)
+                self.mutability_equal(m1, m2) && self.type_matches(i1, i2, unifier);
             }
 
             // Pointers must have same mutability and matching inner types
             (TypeKind::Ptr { inner: i1, mutability: m1 }, TypeKind::Ptr { inner: i2, mutability: m2 }) => {
-                self.mutability_equal(m1, m2) && self.type_matches(i1, i2, unifier)
+                self.mutability_equal(m1, m2) && self.type_matches(i1, i2, unifier);
             }
 
             // Arrays must have same element type and size
             (TypeKind::Array { element: e1, size: s1 }, TypeKind::Array { element: e2, size: s2 }) => {
-                s1 == s2 && self.type_matches(e1, e2, unifier)
+                s1 == s2 && self.type_matches(e1, e2, unifier);
             }
 
             // Slices must have matching element types
             (TypeKind::Slice { element: e1 }, TypeKind::Slice { element: e2 }) => {
-                self.type_matches(e1, e2, unifier)
+                self.type_matches(e1, e2, unifier);
             }
 
             // Type parameter in impl - matches any type
@@ -604,56 +604,56 @@ impl TraitResolver {
             (TypeKind::Fn { params: p1, ret: r1, effect: _ }, TypeKind::Fn { params: p2, ret: r2, effect: _ }) => {
                 if p1.len() != p2.len() {
                     return false;
-                }
+                };
                 let mut i: usize = 0;
                 while i < p1.len() {
                     if !self.type_matches(&p1[i], &p2[i], unifier) {
                         return false;
-                    }
+                    };
                     i = i + 1;
-                }
-                self.type_matches(r1, r2, unifier)
+                };
+                self.type_matches(r1, r2, unifier);
             }
 
             // Closures - match by signature
             (TypeKind::Closure { params: p1, ret: r1, effect: _, captures: _ }, TypeKind::Closure { params: p2, ret: r2, effect: _, captures: _ }) => {
                 if p1.len() != p2.len() {
                     return false;
-                }
+                };
                 let mut i: usize = 0;
                 while i < p1.len() {
                     if !self.type_matches(&p1[i], &p2[i], unifier) {
                         return false;
-                    }
+                    };
                     i = i + 1;
-                }
-                self.type_matches(r1, r2, unifier)
+                };
+                self.type_matches(r1, r2, unifier);
             }
 
             // Range types - match by element type and inclusivity
             (TypeKind::Range { element: e1, inclusive: inc1 }, TypeKind::Range { element: e2, inclusive: inc2 }) => {
-                inc1 == inc2 && self.type_matches(e1, e2, unifier)
+                inc1 == inc2 && self.type_matches(e1, e2, unifier);
             }
 
             // Dynamic trait objects - match by trait ID
             (TypeKind::DynTrait { trait_id: t1 }, TypeKind::DynTrait { trait_id: t2 }) => {
-                t1.id() == t2.id()
+                t1.id() == t2.id();
             }
 
             // Record types - structural match (simplified, ignores row vars for now)
             (TypeKind::Record { fields: f1, row_var: _ }, TypeKind::Record { fields: f2, row_var: _ }) => {
                 if f1.len() != f2.len() {
                     return false;
-                }
+                };
                 // Check all fields match (order-sensitive for now)
                 let mut i: usize = 0;
                 while i < f1.len() {
                     if !f1[i].name.eq(&f2[i].name) {
                         return false;
-                    }
+                    };
                     if !self.type_matches(&f1[i].ty, &f2[i].ty, unifier) {
                         return false;
-                    }
+                    };
                     i = i + 1;
                 }
                 true
@@ -661,12 +661,12 @@ impl TraitResolver {
 
             // Forall types - match body types
             (TypeKind::Forall { params: _, body: b1 }, TypeKind::Forall { params: _, body: b2 }) => {
-                self.type_matches(b1, b2, unifier)
+                self.type_matches(b1, b2, unifier);
             }
 
             // Ownership-qualified types - match inner types
             (TypeKind::Ownership { inner: i1, ownership: o1 }, TypeKind::Ownership { inner: i2, ownership: o2 }) => {
-                self.ownership_equal(o1, o2) && self.type_matches(i1, i2, unifier)
+                self.ownership_equal(o1, o2) && self.type_matches(i1, i2, unifier);
             }
 
             // Mismatched type kinds don't match
@@ -766,11 +766,11 @@ impl TraitResolver {
             Some(impl_def) => {
                 match impl_def.methods.get(method_name) {
                     Some(method) => return Some((impl_def.clone(), method.clone())),
-                    None => {}
+                    None => {};
                 }
-            }
-            None => {}
-        }
+            };
+            None => {};
+        };
 
         // Then, check all trait impls
         let mut i: usize = 0;
@@ -779,9 +779,9 @@ impl TraitResolver {
             if self.type_matches(&impl_def.self_type, ty, unifier) {
                 match impl_def.methods.get(method_name) {
                     Some(method) => return Some((impl_def.clone(), method.clone())),
-                    None => {}
+                    None => {};
                 }
-            }
+            };
             i = i + 1;
         }
 
@@ -805,7 +805,7 @@ impl TraitResolver {
         while i < bounds.len() {
             if !self.satisfies_bound(ty, &bounds[i], unifier) {
                 unsatisfied.push(bounds[i].trait_id.clone());
-            }
+            };
             i = i + 1;
         }
         unsatisfied
@@ -821,9 +821,9 @@ impl TraitResolver {
                     if tid.id() == trait_id.id() {
                         result.push(&self.impl_defs[i]);
                     }
-                }
-                None => {}
-            }
+                };
+                None => {};
+            };
             i = i + 1;
         }
         result
@@ -837,13 +837,13 @@ impl TraitResolver {
             match &self.impl_defs[i].trait_id {
                 Some(_) => {
                     // Skip trait impls
-                }
+                };
                 None => {
                     if self.type_matches(&self.impl_defs[i].self_type, ty, unifier) {
                         result.push(&self.impl_defs[i]);
                     }
                 }
-            }
+            };
             i = i + 1;
         }
         result

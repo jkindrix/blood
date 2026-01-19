@@ -260,14 +260,14 @@ impl NoMatchError {
     fn format_arg_types(&self) -> String {
         if self.arg_types.is_empty() {
             return "".to_string();
-        }
+        };
 
         let mut result = String::new();
         let mut i: usize = 0;
         while i < self.arg_types.len() {
             if i > 0 {
                 result = format!("{}, ", result);
-            }
+            };
             result = format!("{}{:?}", result, self.arg_types[i].kind());
             i = i + 1;
         }
@@ -368,7 +368,7 @@ impl AmbiguityError {
         format!(
             "ambiguous call to method `{}`: {} candidates match equally well",
             self.method_name,
-            self.candidates.len()
+            self.candidates.len();
         )
     }
 
@@ -379,7 +379,7 @@ impl AmbiguityError {
             "ambiguous call to `{}` with arguments ({}): {} candidates",
             self.method_name,
             arg_type_strs,
-            self.candidates.len()
+            self.candidates.len();
         )
     }
 
@@ -387,14 +387,14 @@ impl AmbiguityError {
     fn format_arg_types(&self) -> String {
         if self.arg_types.is_empty() {
             return "".to_string();
-        }
+        };
 
         let mut result = String::new();
         let mut i: usize = 0;
         while i < self.arg_types.len() {
             if i > 0 {
                 result = format!("{}, ", result);
-            }
+            };
             result = format!("{}{:?}", result, self.arg_types[i].kind());
             i = i + 1;
         }
@@ -433,12 +433,12 @@ impl AmbiguityError {
                         found = true;
                         break;
                     }
-                }
+                };
                 if !found {
                     trait_ids.push(trait_id.clone());
                 }
             }
-        }
+        };
 
         // Diamond conflict requires at least 2 different traits
         trait_ids.len() >= 2
@@ -460,12 +460,12 @@ impl AmbiguityError {
                         found = true;
                         break;
                     }
-                }
+                };
                 if !found {
                     trait_ids.push(trait_id.clone());
                 }
             }
-        }
+        };
 
         // Sort by ID for deterministic ordering
         self.sort_def_ids(&mut trait_ids);
@@ -520,7 +520,7 @@ impl AmbiguityError {
 
         if conflicting.is_empty() {
             return self.suggestion();
-        }
+        };
 
         // Get trait names for the conflicting IDs
         let mut names: [String] = vec![];
@@ -529,7 +529,7 @@ impl AmbiguityError {
                 Some(name) => names.push(name.clone()),
                 None => names.push(format!("Trait{}", trait_id.id())),
             }
-        }
+        };
 
         if names.len() >= 2 {
             format!(
@@ -546,13 +546,13 @@ impl AmbiguityError {
                 self.method_name
             )
         } else {
-            self.suggestion()
+            self.suggestion();
         }
     }
 
     /// Get the number of ambiguous candidates.
     pub fn candidate_count(&self) -> usize {
-        self.candidates.len()
+        self.candidates.len();
     }
 
     /// Check if all ambiguous candidates are from traits (vs inherent methods).

@@ -103,10 +103,10 @@ impl TypeStabilityError {
         while i < self.method1.param_types.len() {
             if i > 0 {
                 msg = format!("{}, ", msg);
-            }
+            };
             msg = format!("{}{:?}", msg, self.method1.param_types[i].kind());
             i = i + 1;
-        }
+        };
         msg = format!("{}) -> {:?}\n", msg, self.method1.return_type.kind());
 
         // Format second method
@@ -115,10 +115,10 @@ impl TypeStabilityError {
         while i < self.method2.param_types.len() {
             if i > 0 {
                 msg = format!("{}, ", msg);
-            }
+            };
             msg = format!("{}{:?}", msg, self.method2.param_types[i].kind());
             i = i + 1;
-        }
+        };
         msg = format!("{}) -> {:?}\n", msg, self.method2.return_type.kind());
 
         // Format conflict inputs if known
@@ -129,14 +129,14 @@ impl TypeStabilityError {
                 while i < inputs.len() {
                     if i > 0 {
                         msg = format!("{}, ", msg);
-                    }
+                    };
                     msg = format!("{}{:?}", msg, inputs[i].kind());
                     i = i + 1;
-                }
+                };
                 msg = format!("{})\n", msg);
-            }
-            None => {}
-        }
+            };
+            None => {};
+        };
 
         msg = format!("{}\nexplanation: {}\n", msg, self.explanation);
         msg = format!(
@@ -198,7 +198,7 @@ impl TypeStabilityResult {
 
     /// Get the number of instability errors.
     pub fn error_count(&self) -> usize {
-        self.errors.len()
+        self.errors.len();
     }
 }
 
@@ -261,10 +261,10 @@ impl TypeStabilityChecker {
             while j < candidates.len() {
                 match self.check_type_stability(family_name, &candidates[i], &candidates[j]) {
                     Some(error) => errors.push(error),
-                    None => {}
-                }
+                    None => {};
+                };
                 j = j + 1;
-            }
+            };
             i = i + 1;
         }
 
@@ -287,17 +287,17 @@ impl TypeStabilityChecker {
         // Different arities can't conflict
         if m1.param_types.len() != m2.param_types.len() {
             return None;
-        }
+        };
 
         // Check if input types overlap
         if !self.inputs_overlap(m1, m2) {
             return None;
-        }
+        };
 
         // Check if return types are compatible
         if self.return_types_compatible(&m1.return_type, &m2.return_type, m1, m2) {
             return None;
-        }
+        };
 
         // Type instability detected
         let explanation = self.generate_explanation(m1, m2);
@@ -321,7 +321,7 @@ impl TypeStabilityChecker {
         while i < m1.param_types.len() {
             if !self.types_could_overlap(&m1.param_types[i], &m2.param_types[i]) {
                 return false;
-            }
+            };
             i = i + 1;
         }
         true
@@ -332,10 +332,10 @@ impl TypeStabilityChecker {
         // Type variables can overlap with anything
         if self.is_type_variable(t1) {
             return true;
-        }
+        };
         if self.is_type_variable(t2) {
             return true;
-        }
+        };
 
         // Check structural overlap
         match (t1.kind(), t2.kind()) {
@@ -349,15 +349,15 @@ impl TypeStabilityChecker {
             ) => {
                 if !d1.eq(d2) {
                     return false;
-                }
+                };
                 if a1.len() != a2.len() {
                     return false;
-                }
+                };
                 let mut i: usize = 0;
                 while i < a1.len() {
                     if !self.types_could_overlap(&a1[i], &a2[i]) {
                         return false;
-                    }
+                    };
                     i = i + 1;
                 }
                 true
@@ -367,12 +367,12 @@ impl TypeStabilityChecker {
             (TypeKind::Tuple(ts1), TypeKind::Tuple(ts2)) => {
                 if ts1.len() != ts2.len() {
                     return false;
-                }
+                };
                 let mut i: usize = 0;
                 while i < ts1.len() {
                     if !self.types_could_overlap(&ts1[i], &ts2[i]) {
                         return false;
-                    }
+                    };
                     i = i + 1;
                 }
                 true
@@ -386,7 +386,7 @@ impl TypeStabilityChecker {
 
             // Slices
             (TypeKind::Slice { element: e1 }, TypeKind::Slice { element: e2 }) => {
-                self.types_could_overlap(e1, e2)
+                self.types_could_overlap(e1, e2);
             }
 
             // References with same mutability
@@ -402,15 +402,15 @@ impl TypeStabilityChecker {
             ) => {
                 if p1.len() != p2.len() {
                     return false;
-                }
+                };
                 let mut i: usize = 0;
                 while i < p1.len() {
                     if !self.types_could_overlap(&p1[i], &p2[i]) {
                         return false;
-                    }
+                    };
                     i = i + 1;
-                }
-                self.types_could_overlap(r1, r2)
+                };
+                self.types_could_overlap(r1, r2);
             }
 
             // Never overlaps with concrete types (bottom type)
@@ -450,7 +450,7 @@ impl TypeStabilityChecker {
         // Check structural equality
         if self.types_equal(ret1, ret2) {
             return true;
-        }
+        };
 
         // Check if both are generic return types that depend on input types
         // in compatible ways
@@ -469,12 +469,12 @@ impl TypeStabilityChecker {
             (TypeKind::Tuple(as_), TypeKind::Tuple(bs)) => {
                 if as_.len() != bs.len() {
                     return false;
-                }
+                };
                 let mut i: usize = 0;
                 while i < as_.len() {
                     if !self.types_equal(&as_[i], &bs[i]) {
                         return false;
-                    }
+                    };
                     i = i + 1;
                 }
                 true
@@ -501,15 +501,15 @@ impl TypeStabilityChecker {
             ) => {
                 if a_params.len() != b_params.len() {
                     return false;
-                }
+                };
                 let mut i: usize = 0;
                 while i < a_params.len() {
                     if !self.types_equal(&a_params[i], &b_params[i]) {
                         return false;
-                    }
+                    };
                     i = i + 1;
-                }
-                self.types_equal(a_ret, b_ret)
+                };
+                self.types_equal(a_ret, b_ret);
             }
 
             (
@@ -518,15 +518,15 @@ impl TypeStabilityChecker {
             ) => {
                 if !a_def.eq(b_def) {
                     return false;
-                }
+                };
                 if a_args.len() != b_args.len() {
                     return false;
-                }
+                };
                 let mut i: usize = 0;
                 while i < a_args.len() {
                     if !self.types_equal(&a_args[i], &b_args[i]) {
                         return false;
-                    }
+                    };
                     i = i + 1;
                 }
                 true
@@ -556,7 +556,7 @@ impl TypeStabilityChecker {
         // Check if both methods have type parameters
         if m1.type_params.is_empty() || m2.type_params.is_empty() {
             return false;
-        }
+        };
 
         // Check if return types are type parameters
         let ret1_is_param = self.is_type_variable(ret1);
@@ -565,7 +565,7 @@ impl TypeStabilityChecker {
         // If both are type parameters, check if they're determined by inputs
         if ret1_is_param && ret2_is_param {
             return self.type_params_correspond(ret1, ret2, m1, m2);
-        }
+        };
 
         // If neither is a type parameter, check structural equality
         if !ret1_is_param && !ret2_is_param {
@@ -588,7 +588,7 @@ impl TypeStabilityChecker {
         // and they have the same arity, we consider them compatible.
         // A more sophisticated analysis would track which parameter positions
         // each type parameter comes from.
-        m1.param_types.len() == m2.param_types.len()
+        m1.param_types.len() == m2.param_types.len();
     }
 
     /// Find example input types where the methods overlap.
@@ -615,9 +615,9 @@ impl TypeStabilityChecker {
             } else {
                 // Both generic, use first
                 types.push(t1.clone());
-            }
+            };
             i = i + 1;
-        }
+        };
 
         // Only return if we have at least one concrete type
         if has_concrete {
@@ -634,7 +634,7 @@ impl TypeStabilityChecker {
              `{:?}` vs `{:?}`. The return type must be uniquely determined by \
              the input types for type stability.",
             m1.return_type.kind(),
-            m2.return_type.kind()
+            m2.return_type.kind();
         )
     }
 }

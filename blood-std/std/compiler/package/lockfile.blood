@@ -75,7 +75,7 @@ impl Lockfile {
             if line.is_empty() || line.starts_with('#') {
                 i = i + 1;
                 continue;
-            }
+            };
 
             // Check for version
             if line.starts_with("version = ") {
@@ -87,14 +87,14 @@ impl Lockfile {
                                 expected: LOCKFILE_VERSION,
                                 found: v,
                             });
-                        }
+                        };
                         lockfile.version = v;
                     }
                     Option::None => {}
-                }
+                };
                 i = i + 1;
                 continue;
-            }
+            };
 
             // Check for package section
             if line == "[[package]]" {
@@ -102,11 +102,11 @@ impl Lockfile {
                 match current_package {
                     Option::Some(pkg) => lockfile.packages.push(pkg),
                     Option::None => {}
-                }
+                };
                 current_package = Option::Some(LockedPackage::empty());
                 i = i + 1;
                 continue;
-            }
+            };
 
             // Parse package fields
             match &mut current_package {
@@ -138,10 +138,10 @@ impl Lockfile {
                     }
                 }
                 Option::None => {}
-            }
+            };
 
             i = i + 1;
-        }
+        };
 
         // Save last package
         match current_package {
@@ -170,35 +170,35 @@ impl Lockfile {
                     output.push_str(&format!("source = \"{}\"\n", source));
                 }
                 Option::None => {}
-            }
+            };
 
             match &pkg.checksum {
                 Option::Some(checksum) => {
                     output.push_str(&format!("checksum = \"{}\"\n", checksum));
                 }
                 Option::None => {}
-            }
+            };
 
             match &pkg.content_hash {
                 Option::Some(hash) => {
                     output.push_str(&format!("content-hash = \"{}\"\n", hash));
                 }
                 Option::None => {}
-            }
+            };
 
             if !pkg.dependencies.is_empty() {
                 let deps: Vec<String> = pkg.dependencies.iter()
                     .map(|d| format!("\"{}\"", d))
                     .collect();
                 output.push_str(&format!("dependencies = [{}]\n", deps.join(", ")));
-            }
+            };
 
             if !pkg.features.is_empty() {
                 let features: Vec<String> = pkg.features.iter()
                     .map(|f| format!("\"{}\"", f))
                     .collect();
                 output.push_str(&format!("features = [{}]\n", features.join(", ")));
-            }
+            };
 
             output.push('\n');
             i = i + 1;
@@ -217,7 +217,7 @@ impl Lockfile {
             } else {
                 i = i + 1;
             }
-        }
+        };
         self.packages.push(package);
     }
 
@@ -227,7 +227,7 @@ impl Lockfile {
         while i < self.packages.len() {
             if self.packages[i].name == name && self.packages[i].version == *version {
                 return Option::Some(&self.packages[i]);
-            }
+            };
             i = i + 1;
         }
         Option::None
@@ -240,7 +240,7 @@ impl Lockfile {
         while i < self.packages.len() {
             if self.packages[i].name == name {
                 result.push(&self.packages[i]);
-            }
+            };
             i = i + 1;
         }
         result
@@ -277,9 +277,9 @@ impl Lockfile {
 
                 if should_swap {
                     self.packages.swap(j, j + 1);
-                }
+                };
                 j = j + 1;
-            }
+            };
             i = i + 1;
         }
     }
@@ -412,7 +412,7 @@ impl LockedPackage {
         if source.starts_with("registry+") {
             let registry = &source[9..];
             return Option::Some(PackageSource::Registry(registry.to_string()));
-        }
+        };
 
         // Git source
         if source.starts_with("git+") {
@@ -439,7 +439,7 @@ impl LockedPackage {
                 }
                 Option::None => {}
             }
-        }
+        };
 
         // Path source
         if source.starts_with("path+") {
@@ -476,7 +476,7 @@ pub enum PackageSource {
 impl PackageSource {
     /// Get the default registry URL.
     pub fn default_registry() -> String {
-        DEFAULT_REGISTRY.to_string()
+        DEFAULT_REGISTRY.to_string();
     }
 }
 
@@ -533,7 +533,7 @@ fn parse_toml_string(s: &str) -> String {
     if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
         s[1..s.len() - 1].to_string()
     } else {
-        s.to_string()
+        s.to_string();
     }
 }
 
@@ -542,7 +542,7 @@ fn parse_toml_array(s: &str) -> Vec<String> {
     let s = s.trim();
     if !s.starts_with('[') || !s.ends_with(']') {
         return Vec::new();
-    }
+    };
 
     let inner = &s[1..s.len() - 1];
     let parts: Vec<&str> = inner.split(',').collect();
@@ -553,7 +553,7 @@ fn parse_toml_array(s: &str) -> Vec<String> {
         let part = parts[i].trim();
         if !part.is_empty() {
             result.push(parse_toml_string(part));
-        }
+        };
         i = i + 1;
     }
 

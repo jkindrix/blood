@@ -173,25 +173,25 @@ impl Label {
 
     /// Set the priority (lower = shown first when overlapping).
     pub fn with_priority(mut self, priority: U32) -> Label {
-        self.priority = priority
+        self.priority = priority;
         self
     }
 
     /// Set a custom color for this label.
     pub fn with_color(mut self, color: AnsiColor) -> Label {
-        self.color = Option::Some(color)
+        self.color = Option::Some(color);
         self
     }
 
     /// Set the message.
     pub fn with_message(mut self, message: String) -> Label {
-        self.message = Option::Some(message)
+        self.message = Option::Some(message);
         self
     }
 
     /// Clear the message (show just the underline).
     pub fn without_message(mut self) -> Label {
-        self.message = Option::None
+        self.message = Option::None;
         self
     }
 
@@ -204,7 +204,7 @@ impl Label {
 
     /// Get the message.
     pub fn message(self) -> Option<String> {
-        self.message.clone()
+        self.message.clone();
     }
 
     /// Get the label kind.
@@ -219,17 +219,17 @@ impl Label {
 
     /// Check if this is a primary label.
     pub fn is_primary(self) -> Bool {
-        self.kind.is_primary()
+        self.kind.is_primary();
     }
 
     /// Check if this is a secondary label.
     pub fn is_secondary(self) -> Bool {
-        self.kind.is_secondary()
+        self.kind.is_secondary();
     }
 
     /// Check if this label has a message.
     pub fn has_message(self) -> Bool {
-        self.message.is_some()
+        self.message.is_some();
     }
 
     /// Get the color for this label (custom or default).
@@ -242,24 +242,24 @@ impl Label {
 
     /// Get the underline character for this label.
     pub fn underline_char(self) -> Char {
-        self.kind.underline_char()
+        self.kind.underline_char();
     }
 
     // === Span Properties ===
 
     /// Get the start line of this label's span.
     pub fn start_line(self) -> U32 {
-        self.span.start_line()
+        self.span.start_line();
     }
 
     /// Get the end line of this label's span.
     pub fn end_line(self) -> U32 {
-        self.span.end_line()
+        self.span.end_line();
     }
 
     /// Check if this label spans multiple lines.
     pub fn is_multiline(self) -> Bool {
-        self.span.is_multiline()
+        self.span.is_multiline();
     }
 }
 
@@ -288,30 +288,30 @@ impl LabelCollection {
 
     /// Add a label to the collection.
     pub fn add(mut self, label: Label) -> Unit {
-        self.labels.push(label)
+        self.labels.push(label);
     }
 
     /// Get the number of labels.
     pub fn len(self) -> USize {
-        self.labels.len()
+        self.labels.len();
     }
 
     /// Check if the collection is empty.
     pub fn is_empty(self) -> Bool {
-        self.labels.is_empty()
+        self.labels.is_empty();
     }
 
     /// Get all labels.
     pub fn labels(self) -> Vec<Label> {
-        self.labels.clone()
+        self.labels.clone();
     }
 
     /// Get primary labels only.
     pub fn primary_labels(self) -> Vec<Label> {
-        let mut result = Vec::new()
+        let mut result = Vec::new();
         for label in self.labels.clone() {
             if label.is_primary() {
-                result.push(label)
+                result.push(label);
             }
         }
         result
@@ -319,10 +319,10 @@ impl LabelCollection {
 
     /// Get secondary labels only.
     pub fn secondary_labels(self) -> Vec<Label> {
-        let mut result = Vec::new()
+        let mut result = Vec::new();
         for label in self.labels.clone() {
             if label.is_secondary() {
-                result.push(label)
+                result.push(label);
             }
         }
         result
@@ -332,9 +332,9 @@ impl LabelCollection {
     pub fn sorted(mut self) -> LabelCollection {
         self.labels.sort_by(|a, b| {
             if a.priority != b.priority {
-                a.priority.cmp(b.priority)
+                a.priority.cmp(b.priority);
             } else {
-                a.span.start_offset().cmp(b.span.start_offset())
+                a.span.start_offset().cmp(b.span.start_offset());
             }
         })
         self
@@ -342,10 +342,10 @@ impl LabelCollection {
 
     /// Get labels that overlap with a given line.
     pub fn labels_on_line(self, line: U32) -> Vec<Label> {
-        let mut result = Vec::new()
+        let mut result = Vec::new();
         for label in self.labels.clone() {
             if label.start_line() <= line && label.end_line() >= line {
-                result.push(label)
+                result.push(label);
             }
         }
         result
@@ -356,21 +356,21 @@ impl LabelCollection {
     /// Returns (min_line, max_line) or None if empty.
     pub fn line_range(self) -> Option[(U32, U32)] {
         if self.labels.is_empty() {
-            return Option::None
-        }
+            return Option::None;
+        };
 
-        let mut min_line = U32::MAX
-        let mut max_line: U32 = 0
+        let mut min_line = U32::MAX;
+        let mut max_line: U32 = 0;
 
         for label in self.labels.clone() {
-            let start = label.start_line()
-            let end = label.end_line()
+            let start = label.start_line();
+            let end = label.end_line();
 
             if start < min_line {
-                min_line = start
-            }
+                min_line = start;
+            };
             if end > max_line {
-                max_line = end
+                max_line = end;
             }
         }
 
@@ -381,7 +381,7 @@ impl LabelCollection {
     pub fn has_multiline(self) -> Bool {
         for label in self.labels.clone() {
             if label.is_multiline() {
-                return true
+                return true;
             }
         }
         false
@@ -394,89 +394,89 @@ impl LabelCollection {
 
 #[test]
 fn test_label_kind_properties() {
-    assert(LabelKind::Primary.is_primary())
-    assert(!LabelKind::Primary.is_secondary())
-    assert(!LabelKind::Secondary.is_primary())
-    assert(LabelKind::Secondary.is_secondary())
+    assert(LabelKind::Primary.is_primary());
+    assert(!LabelKind::Primary.is_secondary());
+    assert(!LabelKind::Secondary.is_primary());
+    assert(LabelKind::Secondary.is_secondary());
 }
 
 #[test]
 fn test_label_kind_underline() {
-    assert(LabelKind::Primary.underline_char() == '^')
-    assert(LabelKind::Secondary.underline_char() == '-')
+    assert(LabelKind::Primary.underline_char() == '^');
+    assert(LabelKind::Secondary.underline_char() == '-');
 }
 
 #[test]
 fn test_label_primary() {
-    let span = Span::dummy()
-    let label = Label::primary(span, "expected `Int`")
+    let span = Span::dummy();
+    let label = Label::primary(span, "expected `Int`");
 
-    assert(label.is_primary())
-    assert(!label.is_secondary())
-    assert(label.has_message())
-    assert(label.message().unwrap() == "expected `Int`")
-    assert(label.priority() == 0)
+    assert(label.is_primary());
+    assert(!label.is_secondary());
+    assert(label.has_message());
+    assert(label.message().unwrap() == "expected `Int`");
+    assert(label.priority() == 0);
 }
 
 #[test]
 fn test_label_secondary() {
-    let span = Span::dummy()
-    let label = Label::secondary(span, "defined here")
+    let span = Span::dummy();
+    let label = Label::secondary(span, "defined here");
 
-    assert(!label.is_primary())
-    assert(label.is_secondary())
-    assert(label.has_message())
-    assert(label.priority() == 100)
+    assert(!label.is_primary());
+    assert(label.is_secondary());
+    assert(label.has_message());
+    assert(label.priority() == 100);
 }
 
 #[test]
 fn test_label_without_message() {
-    let span = Span::dummy()
-    let label = Label::primary_span(span)
+    let span = Span::dummy();
+    let label = Label::primary_span(span);
 
-    assert(label.is_primary())
-    assert(!label.has_message())
+    assert(label.is_primary());
+    assert(!label.has_message());
 }
 
 #[test]
 fn test_label_builder() {
-    let span = Span::dummy()
+    let span = Span::dummy();
     let label = Label::secondary(span, "note")
         .with_priority(50)
-        .with_color(AnsiColor::Green)
+        .with_color(AnsiColor::Green);
 
-    assert(label.priority() == 50)
-    assert(label.effective_color().code() == AnsiColor::Green.code())
+    assert(label.priority() == 50);
+    assert(label.effective_color().code() == AnsiColor::Green.code());
 }
 
 #[test]
 fn test_label_collection_empty() {
-    let collection = LabelCollection::new()
+    let collection = LabelCollection::new();
 
-    assert(collection.is_empty())
-    assert(collection.len() == 0)
+    assert(collection.is_empty());
+    assert(collection.len() == 0);
 }
 
 #[test]
 fn test_label_collection_add() {
-    let mut collection = LabelCollection::new()
-    collection.add(Label::primary(Span::dummy(), "error"))
-    collection.add(Label::secondary(Span::dummy(), "note"))
+    let mut collection = LabelCollection::new();
+    collection.add(Label::primary(Span::dummy(), "error"));
+    collection.add(Label::secondary(Span::dummy(), "note"));
 
-    assert(collection.len() == 2)
-    assert(!collection.is_empty())
+    assert(collection.len() == 2);
+    assert(!collection.is_empty());
 }
 
 #[test]
 fn test_label_collection_filter() {
-    let mut collection = LabelCollection::new()
-    collection.add(Label::primary(Span::dummy(), "error 1"))
-    collection.add(Label::secondary(Span::dummy(), "note 1"))
-    collection.add(Label::primary(Span::dummy(), "error 2"))
+    let mut collection = LabelCollection::new();
+    collection.add(Label::primary(Span::dummy(), "error 1"));
+    collection.add(Label::secondary(Span::dummy(), "note 1"));
+    collection.add(Label::primary(Span::dummy(), "error 2"));
 
-    let primary = collection.primary_labels()
-    let secondary = collection.secondary_labels()
+    let primary = collection.primary_labels();
+    let secondary = collection.secondary_labels();
 
-    assert(primary.len() == 2)
-    assert(secondary.len() == 1)
+    assert(primary.len() == 2);
+    assert(secondary.len() == 1);
 }

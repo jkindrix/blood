@@ -192,7 +192,7 @@ fn compile_storage_dead(
                 "\0"
             );
         }
-    }
+    };
 
     Ok(())
 }
@@ -241,7 +241,7 @@ fn compile_drop(
             // Call blood_free(address, size)
             ctx.llvm_builder().build_call(free_fn, &[address, size], "\0");
         }
-    }
+    };
     // For non-reference types, no deallocation needed
 
     Ok(())
@@ -287,7 +287,7 @@ fn compile_validate_generation(
     // because the reference is guaranteed valid within the scope.
     let should_skip = if let Some(results) = escape_results {
         let local = ptr.local;
-        results.stack_promotable.contains(&local)
+        results.stack_promotable.contains(&local);
     } else {
         false
     };
@@ -297,7 +297,7 @@ fn compile_validate_generation(
         let expected = compile_mir_operand(ctx, expected_gen, body, escape_results)?;
 
         memory::emit_generation_check(ctx, ptr_val, expected, span)?;
-    }
+    };
 
     Ok(())
 }
@@ -512,7 +512,7 @@ fn compile_push_inline_handler(
             // Handler body not found - use null pointer
             compiled_ops.push(const_null(i8_ptr_ty));
         }
-    }
+    };
 
     // Restore insertion point
     ctx.llvm_builder().position_at_end(saved_block);
@@ -533,7 +533,7 @@ fn compile_push_inline_handler(
             let elem_ptr = ctx.llvm_builder().build_gep(array_ty, ops_array, &indices, &format!("op_ptr_{}\0", i));
             let fn_as_ptr = ctx.llvm_builder().build_bitcast(*fn_ptr, i8_ptr_ty, &format!("fn_ptr_{}\0", i));
             ctx.llvm_builder().build_store(fn_as_ptr, elem_ptr);
-        }
+        };
 
         // Cast array pointer to **void
         let ptr_ptr_ty = ptr_type(ctx.llvm_context_ref());
@@ -548,7 +548,7 @@ fn compile_push_inline_handler(
             &[ev, effect_id_val, ops_ptr, op_count_val],
             "\0"
         );
-    }
+    };
 
     // Build captures struct for handler state
     let all_captures = collect_unique_captures(operations);
@@ -563,7 +563,7 @@ fn compile_push_inline_handler(
     if !all_captures.is_empty() {
         let ev_set_state = ctx.get_or_declare_evidence_fn("blood_evidence_set_state");
         ctx.llvm_builder().build_call(ev_set_state, &[ev, state_ptr], "\0");
-    }
+    };
 
     Ok(())
 }
@@ -615,7 +615,7 @@ fn compile_captures_struct(
 
         let local_as_ptr = ctx.llvm_builder().build_bitcast(*local_ptr, i8_ptr_ty, &format!("capture_{}_ptr\0", idx));
         ctx.llvm_builder().build_store(local_as_ptr, elem_ptr);
-    }
+    };
 
     Ok(ctx.llvm_builder().build_bitcast(captures_alloca, i8_ptr_ty, "captures_ptr\0"))
 }
@@ -770,34 +770,34 @@ fn apply_projection_type(ty: &Type, elem: &crate.compiler.mir.PlaceElem) -> Type
         PlaceElem::Deref => {
             // Dereference: get the pointee type
             if let Some(inner) = ty.pointee_type() {
-                inner.clone()
+                inner.clone();
             } else {
-                ty.clone()
+                ty.clone();
             }
         }
         PlaceElem::Field(idx) => {
             // Field access: get the field type
             if let Some(field_ty) = ty.field_type(*idx as usize) {
-                field_ty.clone()
+                field_ty.clone();
             } else {
-                ty.clone()
+                ty.clone();
             }
         }
         PlaceElem::Index(_) | PlaceElem::ConstantIndex { .. } => {
             // Array/slice indexing: get element type
             if let Some(elem_ty) = ty.element_type() {
-                elem_ty.clone()
+                elem_ty.clone();
             } else {
-                ty.clone()
+                ty.clone();
             }
         }
         PlaceElem::Subslice { .. } => {
             // Subslice: same type
-            ty.clone()
+            ty.clone();
         }
         PlaceElem::Downcast(_) => {
             // Enum downcast: same type (variant-specific access comes from field)
-            ty.clone()
+            ty.clone();
         }
     }
 }
@@ -852,7 +852,7 @@ fn compile_constant(
             } else {
                 Err(vec![Diagnostic::error(
                     format!("Function {:?} not found", def_id),
-                    crate.compiler.span.Span::dummy()
+                    crate.compiler.span.Span::dummy();
                 )])
             }
         }
@@ -863,7 +863,7 @@ fn compile_constant(
             } else {
                 Err(vec![Diagnostic::error(
                     format!("Constant/static {:?} not found", def_id),
-                    crate.compiler.span.Span::dummy()
+                    crate.compiler.span.Span::dummy();
                 )])
             }
         }

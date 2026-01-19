@@ -121,7 +121,7 @@ impl ContentHash {
 
     /// Check if this is the zero hash.
     pub fn is_zero(&self) -> bool {
-        self.bytes == [0u8; 32]
+        self.bytes == [0u8; 32];
     }
 }
 
@@ -160,7 +160,7 @@ impl TryFrom<String> for ContentHash {
     fn try_from(s: String) -> Result<ContentHash, String> {
         if s.len() != 64 {
             return Err(format!("expected 64 hex characters, got {}", s.len()));
-        }
+        };
 
         let mut bytes = [0u8; 32];
         let chars: Vec<char> = s.chars().collect();
@@ -171,7 +171,7 @@ impl TryFrom<String> for ContentHash {
                 Ok(byte) => bytes[i] = byte,
                 Err(_) => return Err(format!("invalid hex at position {}", i * 2)),
             }
-        }
+        };
 
         Ok(ContentHash { bytes })
     }
@@ -206,7 +206,7 @@ impl std.fmt::Display for HashDisplay {
             let mut acc: u64 = 0;
             for (j, &b) in chunk.iter().enumerate() {
                 acc |= (b as u64) << (32 - j * 8);
-            }
+            };
 
             // Extract 5-bit groups
             let bits = chunk_len * 8;
@@ -217,7 +217,7 @@ impl std.fmt::Display for HashDisplay {
             }
 
             i += 5;
-        }
+        };
 
         // Truncate to max_chars
         let display = if output.len() > self.max_chars {
@@ -335,7 +335,7 @@ impl ContentHasher {
             Some(v) => {
                 self.update_u8(1);
                 hash_fn(self, v);
-            }
+            };
             None => {
                 self.update_u8(0);
             }
@@ -482,7 +482,7 @@ mod tests {
             let hash1 = ContentHash::builtin(name);
             let hash2 = ContentHash::builtin(name);
             assert_eq!(hash1, hash2);
-        }
+        };
 
         // Different builtins should have different hashes
         assert_ne!(

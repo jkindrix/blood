@@ -156,7 +156,7 @@ impl EffectContext {
 
     /// Get the declared effects.
     pub fn declared(&self) -> Option<&EffectRow> {
-        self.declared.as_ref()
+        self.declared.as_ref();
     }
 
     /// Get the used effects.
@@ -178,9 +178,9 @@ impl EffectContext {
                 // Effect already recorded, check if type args match
                 // For now, just skip duplicates
                 return;
-            }
+            };
             i = i + 1;
-        }
+        };
         self.used.push(effect);
     }
 
@@ -198,12 +198,12 @@ impl EffectContext {
                 while i < effects.len() {
                     if effects[i].def_id.eq(effect_id) {
                         return true;
-                    }
+                    };
                     i = i + 1;
-                }
+                };
                 // Also check if row is open (has row variable)
-                row.row_var().is_some()
-            }
+                row.row_var().is_some();
+            };
             None => false,
         }
     }
@@ -213,7 +213,7 @@ impl EffectContext {
         // Check if declared in current function
         if self.is_declared(effect_id) {
             return true;
-        }
+        };
 
         // Check if handled by an enclosing handler
         let mut i: usize = 0;
@@ -223,9 +223,9 @@ impl EffectContext {
             while j < effects.len() {
                 if effects[j].def_id.eq(effect_id) {
                     return true;
-                }
+                };
                 j = j + 1;
-            }
+            };
             i = i + 1;
         }
 
@@ -238,14 +238,14 @@ impl EffectContext {
     pub fn check_effects(&self, handled: &[EffectRow]) -> [EffectInstance] {
         if !self.checking_enabled {
             return vec![];
-        }
+        };
 
         let mut unhandled: [EffectInstance] = vec![];
         let mut i: usize = 0;
         while i < self.used.len() {
             if !self.is_effect_available(&self.used[i].def_id, handled) {
                 unhandled.push(self.used[i].clone());
-            }
+            };
             i = i + 1;
         }
         unhandled
@@ -377,7 +377,7 @@ impl HandlerStack {
 
     /// Get the number of handlers on the stack.
     pub fn len(&self) -> usize {
-        self.handlers.len()
+        self.handlers.len();
     }
 
     /// Check if the stack is empty.
@@ -410,9 +410,9 @@ impl HandlerStack {
             while j < effects.len() {
                 if effects[j].def_id.eq(effect_id) {
                     return true;
-                }
+                };
                 j = j + 1;
-            }
+            };
             i = i + 1;
         }
         false
@@ -430,7 +430,7 @@ impl HandlerStack {
             while j < effects.len() {
                 if effects[j].def_id.eq(effect_id) {
                     return Some(&self.handlers[i]);
-                }
+                };
                 j = j + 1;
             }
         }
@@ -449,7 +449,7 @@ impl HandlerStack {
             while j < effects.len() {
                 if effects[j].def_id.eq(effect_id) {
                     return Some(self.handlers.len() - i - 1);
-                }
+                };
                 j = j + 1;
             }
         }
@@ -471,14 +471,14 @@ impl HandlerStack {
                     if all[k].def_id.eq(&effects[j].def_id) {
                         found = true;
                         break;
-                    }
+                    };
                     k = k + 1;
-                }
+                };
                 if !found {
                     all.push(effects[j].clone());
-                }
+                };
                 j = j + 1;
-            }
+            };
             i = i + 1;
         }
         all
@@ -532,7 +532,7 @@ fn effect_in_refs(effect: &EffectInstance, refs: &[EffectRef]) -> bool {
     while i < refs.len() {
         if refs[i].def_id.eq(&effect.def_id) {
             return true;
-        }
+        };
         i = i + 1;
     }
     false
@@ -639,12 +639,12 @@ impl EffectChecker {
 
     /// Exit a handler scope.
     pub fn exit_handler(&mut self) -> Option<HandlerInfo> {
-        self.handlers.pop()
+        self.handlers.pop();
     }
 
     /// Check if an effect is available.
     pub fn is_effect_available(&self, effect_id: &DefId) -> bool {
-        self.context.is_effect_available(effect_id, &self.handlers.all_rows())
+        self.context.is_effect_available(effect_id, &self.handlers.all_rows());
     }
 
     /// Perform final effect checking.

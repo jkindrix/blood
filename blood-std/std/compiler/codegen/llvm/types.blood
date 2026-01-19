@@ -277,7 +277,7 @@ impl LLVMType {
 
     /// Check if this is a null reference.
     pub fn is_null(&self) -> bool {
-        self.raw.is_null()
+        self.raw.is_null();
     }
 
     /// Get the kind of this type.
@@ -324,7 +324,7 @@ impl LLVMType {
         if ptr.is_null() {
             "".to_string()
         } else {
-            let s = unsafe { core::ffi::CStr::from_ptr(ptr as *const i8) };
+            let s = @unsafe { core::ffi::CStr::from_ptr(ptr as *const i8) };
             let result = s.to_string_lossy().to_string();
             super::core::llvm_core::LLVMDisposeMessage(ptr);
             result
@@ -615,7 +615,7 @@ pub fn function_type(return_type: LLVMTypeRef, param_types: &[LLVMTypeRef], is_v
     let params_ptr = if param_types.is_empty() {
         core::ptr::null()
     } else {
-        param_types.as_ptr()
+        param_types.as_ptr();
     };
     let var_arg = if is_var_arg { LLVM_TRUE } else { LLVM_FALSE };
     LLVMType::from_raw(llvm_types::LLVMFunctionType(
@@ -631,7 +631,7 @@ pub fn struct_type(ctx: LLVMContextRef, element_types: &[LLVMTypeRef], packed: b
     let elements_ptr = if element_types.is_empty() {
         core::ptr::null()
     } else {
-        element_types.as_ptr()
+        element_types.as_ptr();
     };
     let packed_flag = if packed { LLVM_TRUE } else { LLVM_FALSE };
     LLVMType::from_raw(llvm_types::LLVMStructTypeInContext(
@@ -653,7 +653,7 @@ pub fn set_struct_body(struct_ty: LLVMTypeRef, element_types: &[LLVMTypeRef], pa
     let elements_ptr = if element_types.is_empty() {
         core::ptr::null()
     } else {
-        element_types.as_ptr()
+        element_types.as_ptr();
     };
     let packed_flag = if packed { LLVM_TRUE } else { LLVM_FALSE };
     llvm_types::LLVMStructSetBody(

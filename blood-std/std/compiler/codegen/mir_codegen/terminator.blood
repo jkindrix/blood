@@ -139,7 +139,7 @@ fn compile_switch_int(
             let val_const = const_int(discr_ty, *val as u64, false);
             cases.push((val_const, bb));
         }
-    }
+    };
 
     ctx.llvm_builder().build_switch(discr_val, otherwise_bb, &cases);
     Ok(())
@@ -177,7 +177,7 @@ fn compile_return(
         ctx.llvm_builder().build_ret(Some(zero));
     } else {
         ctx.llvm_builder().build_ret(None);
-    }
+    };
 
     Ok(())
 }
@@ -211,7 +211,7 @@ fn compile_call(
         // Convert closure to fn pointer if needed
         let converted_val = convert_arg_if_needed(ctx, val, &arg_ty, expected_ty, span)?;
         arg_vals.push(converted_val);
-    }
+    };
 
     // Handle different function operand types
     let call_result = match func {
@@ -235,7 +235,7 @@ fn compile_call(
     let dest_ptr = compile_mir_place(ctx, destination, body, escape_results)?;
     if let Some(ret_val) = call_result {
         ctx.llvm_builder().build_store(ret_val, dest_ptr);
-    }
+    };
 
     // Branch to continuation
     if let Some(target_bb_id) = target {
@@ -243,7 +243,7 @@ fn compile_call(
             vec![Diagnostic::error("Call target block not found", span)]
         })?;
         ctx.llvm_builder().build_br(target_bb);
-    }
+    };
 
     Ok(())
 }
@@ -253,7 +253,7 @@ fn get_function_param_types(func: &Operand) -> Vec<Type> {
     match func {
         Operand::Constant(Constant { kind: ConstantKind::FnDef(_), ty }) => {
             if let TypeKind::Fn { params, .. } = ty.kind() {
-                params.clone()
+                params.clone();
             } else {
                 Vec::new()
             }
@@ -266,7 +266,7 @@ fn get_function_param_types(func: &Operand) -> Vec<Type> {
 fn get_operand_type(ctx: &CodegenContext, operand: &Operand, body: &MirBody) -> Type {
     match operand {
         Operand::Copy(place) | Operand::Move(place) => {
-            body.locals[place.local.index as usize].ty.clone()
+            body.locals[place.local.index as usize].ty.clone();
         }
         Operand::Constant(c) => c.ty.clone(),
     }
@@ -305,12 +305,12 @@ fn compile_direct_call(
     if let Some(&fn_value) = ctx.functions.get(&def_id) {
         let result = ctx.llvm_builder().build_call(fn_value, args, "call_result\0");
         return Ok(Some(result));
-    }
+    };
 
     // Check if it's a builtin function
     if let Some(builtin_name) = ctx.builtin_fns.get(&def_id).cloned() {
         return compile_builtin_call(ctx, &builtin_name, args, span);
-    }
+    };
 
     // Try to monomorphize generic function
     if let TypeKind::Fn { params, ret, .. } = fn_ty.kind() {
@@ -318,7 +318,7 @@ fn compile_direct_call(
             let result = ctx.llvm_builder().build_call(mono_fn, args, "mono_call\0");
             return Ok(Some(result));
         }
-    }
+    };
 
     Err(vec![Diagnostic::error(
         format!("Function {:?} not found", def_id),
@@ -336,21 +336,21 @@ fn compile_builtin_call(
     // Check for pointer intrinsics
     if builtin_name.starts_with("ptr_read_") {
         return compile_ptr_read_intrinsic(ctx, builtin_name, args, span);
-    }
+    };
     if builtin_name.starts_with("ptr_write_") {
         return compile_ptr_write_intrinsic(ctx, builtin_name, args, span);
-    }
+    };
 
     // Check for math intrinsics
     if let Some(intrinsic) = get_math_intrinsic(builtin_name) {
         return compile_math_intrinsic(ctx, intrinsic, args, span);
-    }
+    };
 
     // Look up runtime function
     if let Some(fn_value) = ctx.get_runtime_fn(builtin_name) {
         let result = ctx.llvm_builder().build_call(fn_value, args, "builtin_call\0");
         return Ok(Some(result));
-    }
+    };
 
     Err(vec![Diagnostic::error(
         format!("Runtime function '{}' not declared", builtin_name),
@@ -367,7 +367,7 @@ fn compile_ptr_read_intrinsic(
 ) -> Result<Option<LLVMValueRef>, Vec<Diagnostic>> {
     if args.is_empty() {
         return Err(vec![Diagnostic::error("ptr_read requires a pointer argument", span)]);
-    }
+    };
 
     let ptr_arg = args[0];
 
@@ -399,7 +399,7 @@ fn compile_ptr_write_intrinsic(
 ) -> Result<Option<LLVMValueRef>, Vec<Diagnostic>> {
     if args.len() < 2 {
         return Err(vec![Diagnostic::error("ptr_write requires pointer and value arguments", span)]);
-    }
+    };
 
     let ptr_arg = args[0];
     let value_arg = args[1];
@@ -458,7 +458,7 @@ fn compile_indirect_call(
     // Check for closure call
     if let Some(closure_def_id) = get_closure_def_id(place, body) {
         return compile_closure_call(ctx, closure_def_id, func, args, body, escape_results, span);
-    }
+    };
 
     // Indirect call through function pointer (fn() type is fat pointer { fn_ptr, env_ptr })
     let func_val = compile_mir_operand(ctx, func, body, escape_results)?;
@@ -517,7 +517,7 @@ fn compile_closure_call(
         full_args.extend_from_slice(args);
         full_args
     } else {
-        args.to_vec()
+        args.to_vec();
     };
 
     let result = ctx.llvm_builder().build_call(fn_value, &full_args, "closure_call\0");
@@ -534,7 +534,7 @@ fn build_closure_fn_type(ctx: &CodegenContext, func_ty: &Type) -> Result<LLVMTyp
 
         for p in params {
             param_types.push(lower_type(ctx, p));
-        }
+        };
 
         if ret.is_unit() {
             Ok(function_type(void_type(ctx.llvm_context_ref()), &param_types, false))
@@ -671,7 +671,7 @@ fn compile_perform(
     // Add entries to snapshot for effect-captured locals
     if let Some(escape) = escape_results {
         add_snapshot_entries(ctx, body, escape, snapshot, span)?;
-    }
+    };
 
     // Build arguments array for perform call
     let args_ptr = build_perform_args_array(ctx, &arg_vals, span)?;
@@ -753,7 +753,7 @@ fn add_snapshot_entries(
                 );
             }
         }
-    }
+    };
 
     Ok(())
 }
@@ -768,7 +768,7 @@ fn build_perform_args_array(
 
     if args.is_empty() {
         return Ok(const_null(ptr_type(ctx.llvm_context_ref())));
-    }
+    };
 
     let array_ty = array_type(i64_ty, args.len() as u32);
     let args_alloca = ctx.llvm_builder().build_alloca(array_ty, "perform_args\0");
@@ -779,7 +779,7 @@ fn build_perform_args_array(
         let gep = ctx.llvm_builder().build_gep(array_ty, args_alloca, &[zero, idx], &format!("arg_{}\0", i));
         let val_i64 = ctx.llvm_builder().build_int_cast(*val, i64_ty, false, "arg_i64\0");
         ctx.llvm_builder().build_store(val_i64, gep);
-    }
+    };
 
     Ok(ctx.llvm_builder().build_bitcast(args_alloca, ptr_type(ctx.llvm_context_ref()), "args_ptr\0"))
 }
@@ -798,7 +798,7 @@ fn store_perform_result(
     // Skip storing for unit type
     if dest_local.ty.is_unit() {
         return Ok(());
-    }
+    };
 
     let dest_ptr = compile_mir_place(ctx, destination, body, escape_results)?;
     let dest_llvm_ty = lower_type(ctx, &dest_local.ty);
@@ -897,7 +897,7 @@ fn compile_resume(
         if let Some(&ret_ptr) = ctx.locals.get(&LocalId::new(0)) {
             ctx.llvm_builder().build_store(val, ret_ptr);
         }
-    }
+    };
 
     // Get snapshot from effect context
     let get_snapshot_fn = ctx.get_runtime_fn("blood_effect_context_get_snapshot")

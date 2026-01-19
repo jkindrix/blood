@@ -133,7 +133,7 @@ impl DispatchResolver {
                 arg_types.to_vec(),
                 candidates.to_vec(),
             ));
-        }
+        };
 
         // Step 3: Find maximally specific methods
         let maximal = self.find_maximal(&applicable);
@@ -187,7 +187,7 @@ impl DispatchResolver {
                 arg_types.to_vec(),
                 candidates.to_vec(),
             ));
-        }
+        };
 
         // Step 3: Find maximally specific methods
         let maximal = self.find_maximal(&applicable);
@@ -263,7 +263,7 @@ impl DispatchResolver {
         // Check arity
         if method.param_types.len() != arg_types.len() {
             return false;
-        }
+        };
 
         // For generic methods, try to instantiate
         if method.is_generic() {
@@ -274,9 +274,9 @@ impl DispatchResolver {
                     while i < arg_types.len() {
                         if !self.is_subtype(&arg_types[i], &candidate.param_types[i]) {
                             return false;
-                        }
+                        };
                         i = i + 1;
-                    }
+                    };
                     return true;
                 }
                 InstantiationResult::TypeMismatch { param_id: _, expected: _, found: _ } => {
@@ -289,14 +289,14 @@ impl DispatchResolver {
                     return false;
                 }
             }
-        }
+        };
 
         // Check each argument against parameter (non-generic case)
         let mut i: usize = 0;
         while i < arg_types.len() {
             if !self.is_subtype(&arg_types[i], &method.param_types[i]) {
                 return false;
-            }
+            };
             i = i + 1;
         }
 
@@ -316,10 +316,10 @@ impl DispatchResolver {
         // First check basic type applicability
         if !self.is_applicable(method, arg_types) {
             return false;
-        }
+        };
 
         // Then check effect compatibility
-        self.effects_compatible(&method.effects, context_effects)
+        self.effects_compatible(&method.effects, context_effects);
     }
 
     /// Check if method effects are compatible with a context.
@@ -344,7 +344,7 @@ impl DispatchResolver {
             (Some(method_row), Some(context_row)) => {
                 let method_dispatch_row = DispatchEffectRow::from_row(method_row.clone());
                 let context_dispatch_row = DispatchEffectRow::from_row(context_row.clone());
-                method_dispatch_row.is_subset_of(&context_dispatch_row)
+                method_dispatch_row.is_subset_of(&context_dispatch_row);
             }
         }
     }
@@ -378,13 +378,13 @@ impl DispatchResolver {
                 expected: method.param_types.len(),
                 found: arg_types.len(),
             };
-        }
+        };
 
         // Build a set of valid type parameter IDs for this method
         let mut valid_params: HashSet<u32> = HashSet::new();
         for param in method.type_params.iter() {
             valid_params.insert(param.id.id());
-        }
+        };
 
         // Accumulate substitutions
         let mut substitutions: HashMap<u32, Type> = HashMap::new();
@@ -399,10 +399,10 @@ impl DispatchResolver {
                 &mut substitutions,
             ) {
                 Some(mismatch) => return mismatch,
-                None => { /* continue */ }
-            }
+                None => { /* continue */ };
+            };
             i = i + 1;
-        }
+        };
 
         // Check type parameter constraints
         let has_constraints = self.any_param_has_constraints(&method.type_params);
@@ -415,7 +415,7 @@ impl DispatchResolver {
                             return InstantiationResult::ConstraintNotSatisfied { error };
                         }
                     }
-                }
+                };
                 None => {
                     // No constraint checker - create a default one
                     let default_checker = ConstraintChecker::new();
@@ -427,13 +427,13 @@ impl DispatchResolver {
                     }
                 }
             }
-        }
+        };
 
         // Apply substitutions to create instantiated candidate
         let mut instantiated_params: [Type] = vec![];
         for param_type in method.param_types.iter() {
             instantiated_params.push(self.apply_substitutions(param_type, &substitutions));
-        }
+        };
 
         let instantiated_return = self.apply_substitutions(&method.return_type, &substitutions);
 
@@ -489,7 +489,7 @@ impl DispatchResolver {
                                     found: arg_type.clone(),
                                 });
                             }
-                        }
+                        };
                         None => {
                             // First occurrence - record substitution
                             substitutions.insert(param_id.id(), arg_type.clone());
@@ -507,8 +507,8 @@ impl DispatchResolver {
                         if *param_mut && !arg_mut {
                             // Mutable param requires mutable arg
                             return None; // Let subtype checking handle this
-                        }
-                        self.try_match_type_param(param_inner, arg_inner, valid_params, substitutions)
+                        };
+                        self.try_match_type_param(param_inner, arg_inner, valid_params, substitutions);
                     }
                     _ => None, // Structure mismatch - defer to subtyping
                 }
@@ -519,7 +519,7 @@ impl DispatchResolver {
                 match arg_type.kind() {
                     TypeKind::Ptr { inner: arg_inner, mutable: arg_mut } => {
                         if param_mut == arg_mut {
-                            self.try_match_type_param(param_inner, arg_inner, valid_params, substitutions)
+                            self.try_match_type_param(param_inner, arg_inner, valid_params, substitutions);
                         } else {
                             None
                         }
@@ -533,7 +533,7 @@ impl DispatchResolver {
                 match arg_type.kind() {
                     TypeKind::Array { element: arg_elem, size: arg_size } => {
                         if param_size == arg_size {
-                            self.try_match_type_param(param_elem, arg_elem, valid_params, substitutions)
+                            self.try_match_type_param(param_elem, arg_elem, valid_params, substitutions);
                         } else {
                             None
                         }
@@ -546,7 +546,7 @@ impl DispatchResolver {
             TypeKind::Slice { element: param_elem } => {
                 match arg_type.kind() {
                     TypeKind::Slice { element: arg_elem } => {
-                        self.try_match_type_param(param_elem, arg_elem, valid_params, substitutions)
+                        self.try_match_type_param(param_elem, arg_elem, valid_params, substitutions);
                     }
                     _ => None,
                 }
@@ -566,7 +566,7 @@ impl DispatchResolver {
                                     substitutions,
                                 ) {
                                     return Some(mismatch);
-                                }
+                                };
                                 i = i + 1;
                             }
                             None
@@ -592,10 +592,10 @@ impl DispatchResolver {
                                     substitutions,
                                 ) {
                                     return Some(mismatch);
-                                }
+                                };
                                 i = i + 1;
-                            }
-                            self.try_match_type_param(param_ret, arg_ret, valid_params, substitutions)
+                            };
+                            self.try_match_type_param(param_ret, arg_ret, valid_params, substitutions);
                         } else {
                             None
                         }
@@ -618,7 +618,7 @@ impl DispatchResolver {
                                     substitutions,
                                 ) {
                                     return Some(mismatch);
-                                }
+                                };
                                 i = i + 1;
                             }
                             None
@@ -635,7 +635,7 @@ impl DispatchResolver {
                 match arg_type.kind() {
                     TypeKind::Range { element: arg_elem, inclusive: arg_incl } => {
                         if param_incl == arg_incl {
-                            self.try_match_type_param(param_elem, arg_elem, valid_params, substitutions)
+                            self.try_match_type_param(param_elem, arg_elem, valid_params, substitutions);
                         } else {
                             None
                         }
@@ -703,7 +703,7 @@ impl DispatchResolver {
                 let mut new_params: [Type] = vec![];
                 for param in params.iter() {
                     new_params.push(self.apply_substitutions(param, substitutions));
-                }
+                };
                 let new_ret = self.apply_substitutions(ret, substitutions);
                 Type::function(new_params, new_ret)
             }
@@ -725,7 +725,7 @@ impl DispatchResolver {
                 let mut new_params: [Type] = vec![];
                 for param in params.iter() {
                     new_params.push(self.apply_substitutions(param, substitutions));
-                }
+                };
                 let new_ret = self.apply_substitutions(ret, substitutions);
                 Type::closure(def_id.clone(), new_params, new_ret)
             }
@@ -756,17 +756,17 @@ impl DispatchResolver {
         // Any type is a subtype of itself
         if self.types_equal(a, b) {
             return true;
-        }
+        };
 
         // Never is a subtype of everything (bottom type)
         match b.kind() {
             TypeKind::Never => return false, // Nothing is subtype of never except never
-            _ => {}
-        }
+            _ => {};
+        };
         match a.kind() {
             TypeKind::Never => return true, // never is subtype of everything
-            _ => {}
-        }
+            _ => {};
+        };
 
         // Integer promotion: narrower integers are subtypes of wider
         match (a.kind(), b.kind()) {
@@ -775,15 +775,15 @@ impl DispatchResolver {
                     return true;
                 }
             }
-            _ => {}
-        }
+            _ => {};
+        };
 
         // Type parameter check: if b is a type variable, need to check constraints
         match b.kind() {
             TypeKind::Infer(_) => return true,
             TypeKind::Param(_) => return true,
-            _ => {}
-        }
+            _ => {};
+        };
 
         // Variance rules for compound types
         match (a.kind(), b.kind()) {
@@ -839,14 +839,14 @@ impl DispatchResolver {
             (TypeKind::Tuple(a_elems), TypeKind::Tuple(b_elems)) => {
                 if a_elems.len() != b_elems.len() {
                     return false;
-                }
+                };
                 let mut i: usize = 0;
                 while i < a_elems.len() {
                     if !self.is_subtype(&a_elems[i], &b_elems[i]) {
                         return false;
-                    }
+                    };
                     i = i + 1;
-                }
+                };
                 return true;
             }
 
@@ -858,15 +858,15 @@ impl DispatchResolver {
                 // Same arity required
                 if a_params.len() != b_params.len() {
                     return false;
-                }
+                };
                 // Contravariant in parameters: b_param <: a_param
                 let mut i: usize = 0;
                 while i < a_params.len() {
                     if !self.is_subtype(&b_params[i], &a_params[i]) {
                         return false;
-                    }
+                    };
                     i = i + 1;
-                }
+                };
                 // Covariant in return type: a_ret <: b_ret
                 return self.is_subtype(a_ret, b_ret);
             }
@@ -902,15 +902,15 @@ impl DispatchResolver {
                             found = true;
                             break;
                         }
-                    }
+                    };
                     if !found {
                         return false;
                     }
-                }
+                };
                 return true;
             }
 
-            _ => {}
+            _ => {};
         }
 
         false
@@ -931,12 +931,12 @@ impl DispatchResolver {
             (TypeKind::Tuple(as_), TypeKind::Tuple(bs)) => {
                 if as_.len() != bs.len() {
                     return false;
-                }
+                };
                 let mut i: usize = 0;
                 while i < as_.len() {
                     if !self.types_equal(&as_[i], &bs[i]) {
                         return false;
-                    }
+                    };
                     i = i + 1;
                 }
                 true
@@ -968,15 +968,15 @@ impl DispatchResolver {
             ) => {
                 if a_params.len() != b_params.len() {
                     return false;
-                }
+                };
                 let mut i: usize = 0;
                 while i < a_params.len() {
                     if !self.types_equal(&a_params[i], &b_params[i]) {
                         return false;
-                    }
+                    };
                     i = i + 1;
-                }
-                self.types_equal(a_ret, b_ret)
+                };
+                self.types_equal(a_ret, b_ret);
             }
 
             (
@@ -985,15 +985,15 @@ impl DispatchResolver {
             ) => {
                 if !a_def.eq(b_def) {
                     return false;
-                }
+                };
                 if a_args.len() != b_args.len() {
                     return false;
-                }
+                };
                 let mut i: usize = 0;
                 while i < a_args.len() {
                     if !self.types_equal(&a_args[i], &b_args[i]) {
                         return false;
-                    }
+                    };
                     i = i + 1;
                 }
                 true
@@ -1010,18 +1010,18 @@ impl DispatchResolver {
             ) => {
                 if !a_def.eq(b_def) {
                     return false;
-                }
+                };
                 if a_params.len() != b_params.len() {
                     return false;
-                }
+                };
                 let mut i: usize = 0;
                 while i < a_params.len() {
                     if !self.types_equal(&a_params[i], &b_params[i]) {
                         return false;
-                    }
+                    };
                     i = i + 1;
-                }
-                self.types_equal(a_ret, b_ret)
+                };
+                self.types_equal(a_ret, b_ret);
             }
 
             (
@@ -1035,10 +1035,10 @@ impl DispatchResolver {
             ) => {
                 if !a_trait.eq(b_trait) {
                     return false;
-                }
+                };
                 if a_auto.len() != b_auto.len() {
                     return false;
-                }
+                };
                 // Check all a_auto are in b_auto (order independent)
                 for a_at in a_auto.iter() {
                     let mut found = false;
@@ -1047,7 +1047,7 @@ impl DispatchResolver {
                             found = true;
                             break;
                         }
-                    }
+                    };
                     if !found {
                         return false;
                     }
@@ -1082,13 +1082,13 @@ impl DispatchResolver {
                         is_maximal = false;
                         break;
                     }
-                }
+                };
                 j = j + 1;
-            }
+            };
 
             if is_maximal {
                 maximal.push(m.clone());
-            }
+            };
             i = i + 1;
         }
 
@@ -1105,7 +1105,7 @@ impl DispatchResolver {
         // Must have same arity
         if m1.param_types.len() != m2.param_types.len() {
             return false;
-        }
+        };
 
         let mut all_at_least = true;
         let mut some_strictly = false;
@@ -1119,20 +1119,20 @@ impl DispatchResolver {
             if !self.is_subtype(p1, p2) {
                 all_at_least = false;
                 break;
-            }
+            };
 
             // Check if p1 is strictly more specific (p1 <: p2 but not p2 <: p1)
             if self.is_subtype(p1, p2) && !self.is_subtype(p2, p1) {
                 some_strictly = true;
-            }
+            };
 
             i = i + 1;
-        }
+        };
 
         // If parameter types make m1 strictly more specific, we're done
         if all_at_least && some_strictly {
             return true;
-        }
+        };
 
         // If parameter types are at least as specific but not strictly more specific,
         // use effect specificity as a tiebreaker
@@ -1170,7 +1170,7 @@ impl DispatchResolver {
             (Some(row1), Some(row2)) => {
                 let dispatch_row1 = DispatchEffectRow::from_row(row1.clone());
                 let dispatch_row2 = DispatchEffectRow::from_row(row2.clone());
-                dispatch_row1.compare_specificity(&dispatch_row2)
+                dispatch_row1.compare_specificity(&dispatch_row2);
             }
         }
     }

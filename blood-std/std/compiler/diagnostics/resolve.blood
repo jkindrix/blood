@@ -113,7 +113,7 @@ impl SpannedResolveError {
 
     /// Get the error.
     pub fn error(self) -> ResolveErrorAdapter {
-        self.error.clone()
+        self.error.clone();
     }
 
     /// Get the span.
@@ -128,28 +128,28 @@ impl SpannedResolveError {
 
 impl IntoDiagnostic for SpannedResolveError {
     fn into_diagnostic(self, ctx: DiagnosticConverter) -> Diagnostic {
-        let diag_span = ctx.convert_span(self.span)
-        let error = self.error.clone()
-        let message = error.message()
-        let code = error.error_code()
+        let diag_span = ctx.convert_span(self.span);
+        let error = self.error.clone();
+        let message = error.message();
+        let code = error.error_code();
 
         let mut diagnostic = Diagnostic::error(message)
             .with_span(diag_span.clone())
-            .with_code(code)
+            .with_code(code);
 
         match error {
             ResolveErrorAdapter::ModuleNotFound { name, searched } => {
                 diagnostic = diagnostic
-                    .with_label(Label::primary(diag_span.clone(), "not found"))
+                    .with_label(Label::primary(diag_span.clone(), "not found"));
 
                 // Add help showing searched paths
                 if !searched.is_empty() {
                     let mut help_msg = "searched locations:"
                     for path in searched {
-                        help_msg = help_msg ++ "\n  - " ++ path
-                    }
-                    diagnostic = diagnostic.with_help_message(help_msg)
-                }
+                        help_msg = help_msg ++ "\n  - " ++ path;
+                    };
+                    diagnostic = diagnostic.with_help_message(help_msg);
+                };
 
                 // Suggest creating the module file
                 diagnostic = diagnostic.with_help_message(
@@ -159,13 +159,13 @@ impl IntoDiagnostic for SpannedResolveError {
 
             ResolveErrorAdapter::InvalidPath { message } => {
                 diagnostic = diagnostic
-                    .with_label(Label::primary(diag_span.clone(), "invalid path"))
+                    .with_label(Label::primary(diag_span.clone(), "invalid path"));
             }
 
             ResolveErrorAdapter::IoError { message } => {
                 diagnostic = diagnostic
                     .with_label(Label::primary(diag_span.clone(), "I/O error"))
-                    .with_help_message("check file permissions and disk availability")
+                    .with_help_message("check file permissions and disk availability");
             }
         }
 
@@ -255,49 +255,49 @@ impl SpannedImportError {
 
 impl IntoDiagnostic for SpannedImportError {
     fn into_diagnostic(self, ctx: DiagnosticConverter) -> Diagnostic {
-        let diag_span = ctx.convert_span(self.span)
-        let error = self.error.clone()
-        let message = error.message()
-        let code = error.error_code()
+        let diag_span = ctx.convert_span(self.span);
+        let error = self.error.clone();
+        let message = error.message();
+        let code = error.error_code();
 
         let mut diagnostic = Diagnostic::error(message)
             .with_span(diag_span.clone())
-            .with_code(code)
+            .with_code(code);
 
         match error {
             ImportErrorAdapter::UnresolvedImport { path } => {
                 diagnostic = diagnostic
                     .with_label(Label::primary(diag_span.clone(), "not found"))
-                    .with_help_message("check the module path or add the missing dependency")
+                    .with_help_message("check the module path or add the missing dependency");
             }
 
             ImportErrorAdapter::AmbiguousImport { name, candidates } => {
                 diagnostic = diagnostic
-                    .with_label(Label::primary(diag_span.clone(), "ambiguous"))
+                    .with_label(Label::primary(diag_span.clone(), "ambiguous"));
 
                 let mut help_msg = "possible candidates:"
                 for candidate in candidates {
-                    help_msg = help_msg ++ "\n  - " ++ candidate
-                }
-                diagnostic = diagnostic.with_help_message(help_msg)
+                    help_msg = help_msg ++ "\n  - " ++ candidate;
+                };
+                diagnostic = diagnostic.with_help_message(help_msg);
             }
 
             ImportErrorAdapter::CyclicImport { cycle } => {
                 diagnostic = diagnostic
                     .with_label(Label::primary(diag_span.clone(), "cyclic import"))
-                    .with_help_message("break the cycle by restructuring module dependencies")
+                    .with_help_message("break the cycle by restructuring module dependencies");
             }
 
             ImportErrorAdapter::PrivateImport { item, module } => {
                 diagnostic = diagnostic
                     .with_label(Label::primary(diag_span.clone(), "private item"))
-                    .with_help_message("make the item public with `pub` or access it through a public API")
+                    .with_help_message("make the item public with `pub` or access it through a public API");
             }
 
             ImportErrorAdapter::InvalidGlobImport { path } => {
                 diagnostic = diagnostic
                     .with_label(Label::primary(diag_span.clone(), "invalid glob"))
-                    .with_help_message("glob imports should end with `.*` or specify explicit items")
+                    .with_help_message("glob imports should end with `.*` or specify explicit items");
             }
         }
 
@@ -319,11 +319,11 @@ fn test_module_not_found_diagnostic() {
         SimpleSpan::new(5, 10),
     )
 
-    let ctx = DiagnosticConverter::empty()
-    let diagnostic = error.into_diagnostic(ctx)
+    let ctx = DiagnosticConverter::empty();
+    let diagnostic = error.into_diagnostic(ctx);
 
-    assert(diagnostic.severity() == Severity::Error)
-    assert(diagnostic.message().contains("utils"))
+    assert(diagnostic.severity() == Severity::Error);
+    assert(diagnostic.message().contains("utils"));
 }
 
 #[test]
@@ -333,10 +333,10 @@ fn test_invalid_path_diagnostic() {
         SimpleSpan::new(0, 20),
     )
 
-    let ctx = DiagnosticConverter::empty()
-    let diagnostic = error.into_diagnostic(ctx)
+    let ctx = DiagnosticConverter::empty();
+    let diagnostic = error.into_diagnostic(ctx);
 
-    assert(diagnostic.message().contains("invalid"))
+    assert(diagnostic.message().contains("invalid"));
 }
 
 #[test]
@@ -346,10 +346,10 @@ fn test_io_error_diagnostic() {
         SimpleSpan::new(0, 10),
     )
 
-    let ctx = DiagnosticConverter::empty()
-    let diagnostic = error.into_diagnostic(ctx)
+    let ctx = DiagnosticConverter::empty();
+    let diagnostic = error.into_diagnostic(ctx);
 
-    assert(diagnostic.message().contains("I/O error"))
+    assert(diagnostic.message().contains("I/O error"));
 }
 
 #[test]
@@ -361,10 +361,10 @@ fn test_cyclic_import_diagnostic() {
         SimpleSpan::new(0, 5),
     )
 
-    let ctx = DiagnosticConverter::empty()
-    let diagnostic = error.into_diagnostic(ctx)
+    let ctx = DiagnosticConverter::empty();
+    let diagnostic = error.into_diagnostic(ctx);
 
-    assert(diagnostic.message().contains("cyclic"))
+    assert(diagnostic.message().contains("cyclic"));
 }
 
 #[test]
@@ -377,8 +377,8 @@ fn test_ambiguous_import_diagnostic() {
         SimpleSpan::new(10, 15),
     )
 
-    let ctx = DiagnosticConverter::empty()
-    let diagnostic = error.into_diagnostic(ctx)
+    let ctx = DiagnosticConverter::empty();
+    let diagnostic = error.into_diagnostic(ctx);
 
-    assert(diagnostic.message().contains("ambiguous"))
+    assert(diagnostic.message().contains("ambiguous"));
 }

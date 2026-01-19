@@ -131,14 +131,14 @@ impl StringArena {
     /// let arena = StringArena::with_capacity(64 * 1024)
     /// ```
     pub fn with_capacity(byte_capacity: USize) -> StringArena {
-        let chunk_size = byte_capacity.max(DEFAULT_CHUNK_SIZE)
+        let chunk_size = byte_capacity.max(DEFAULT_CHUNK_SIZE);
 
         let mut arena = StringArena {
             chunks: Vec::with_capacity(1),
             interned: HashMap::new(),
-        }
+        };
 
-        arena.chunks.push(Chunk::new(chunk_size))
+        arena.chunks.push(Chunk::new(chunk_size));
         arena
     }
 
@@ -169,14 +169,14 @@ impl StringArena {
     pub fn alloc(mut self, s: &str) -> &str {
         // Check if already interned
         if let Option::Some(existing) = self.interned.get(s) {
-            return *existing
-        }
+            return *existing;
+        };
 
         // Allocate new string
-        let allocated = self.alloc_raw(s)
+        let allocated = self.alloc_raw(s);
 
         // Store in intern map
-        self.interned.insert(s.to_string(), allocated)
+        self.interned.insert(s.to_string(), allocated);
 
         allocated
     }
@@ -206,7 +206,7 @@ impl StringArena {
     /// assert(!ptr::eq(a.as_ptr(), b.as_ptr()))
     /// ```
     pub fn alloc_unique(mut self, s: &str) -> &str {
-        self.alloc_raw(s)
+        self.alloc_raw(s);
     }
 
     /// Allocate a string from owned String.
@@ -221,7 +221,7 @@ impl StringArena {
     /// let interned = arena.alloc_string(owned)
     /// ```
     pub fn alloc_string(mut self, s: String) -> &str {
-        self.alloc(s.as_str())
+        self.alloc(s.as_str());
     }
 
     /// Check if a string is already interned.
@@ -236,7 +236,7 @@ impl StringArena {
     /// assert(!arena.contains("world"))
     /// ```
     pub fn contains(self, s: &str) -> Bool {
-        self.interned.contains_key(s)
+        self.interned.contains_key(s);
     }
 
     /// Get an existing interned string, if present.
@@ -255,17 +255,17 @@ impl StringArena {
     /// }
     /// ```
     pub fn get(self, s: &str) -> Option[&str] {
-        self.interned.get(s).copied()
+        self.interned.get(s).copied();
     }
 
     /// Get the number of interned strings.
     pub fn len(self) -> USize {
-        self.interned.len()
+        self.interned.len();
     }
 
     /// Check if the arena is empty.
     pub fn is_empty(self) -> Bool {
-        self.interned.is_empty()
+        self.interned.is_empty();
     }
 
     /// Get statistics about arena usage.
@@ -282,13 +282,13 @@ impl StringArena {
     ///     stats.num_items, stats.total_used)
     /// ```
     pub fn stats(self) -> ArenaStats {
-        let num_chunks = self.chunks.len()
-        let mut total_capacity: USize = 0
-        let mut total_used: USize = 0
+        let num_chunks = self.chunks.len();
+        let mut total_capacity: USize = 0;
+        let mut total_used: USize = 0;
 
         for chunk in self.chunks.iter() {
-            total_capacity = total_capacity + chunk.capacity()
-            total_used = total_used + chunk.offset()
+            total_capacity = total_capacity + chunk.capacity();
+            total_used = total_used + chunk.offset();
         }
 
         ArenaStats {
@@ -313,7 +313,7 @@ impl StringArena {
     /// }
     /// ```
     pub fn iter(self) -> impl Iterator[Item = &str] {
-        self.interned.values().copied()
+        self.interned.values().copied();
     }
 
     /// Clear all strings and reset the arena.
@@ -331,7 +331,7 @@ impl StringArena {
     /// let mut arena = StringArena::new()
     /// let _ = arena.alloc("hello")
     ///
-    /// unsafe {
+    /// @unsafe {
     ///     arena.clear()
     /// }
     ///
@@ -339,9 +339,9 @@ impl StringArena {
     /// ```
     pub unsafe fn clear(mut self) {
         for chunk in self.chunks.iter_mut() {
-            chunk.reset()
-        }
-        self.interned.clear()
+            chunk.reset();
+        };
+        self.interned.clear();
     }
 
     // ========================================================================
@@ -350,24 +350,24 @@ impl StringArena {
 
     /// Allocate a string without interning.
     fn alloc_raw(mut self, s: &str) -> &str {
-        let len = s.len()
+        let len = s.len();
 
         // Handle empty string specially
         if len == 0 {
             return ""
-        }
+        };
 
         // Try to allocate in the current chunk
-        let ptr = self.alloc_bytes(len)
+        let ptr = self.alloc_bytes(len);
 
         // Copy the string data
-        unsafe {
-            __builtin_memcpy(ptr, s.as_ptr(), len)
+        @unsafe {
+            __builtin_memcpy(ptr, s.as_ptr(), len);
         }
 
         // Create a string reference from the allocated memory
-        unsafe {
-            __builtin_str_from_raw_parts(ptr, len)
+        @unsafe {
+            __builtin_str_from_raw_parts(ptr, len);
         }
     }
 
@@ -376,18 +376,18 @@ impl StringArena {
         // Try current chunk first
         if let Some(chunk) = self.chunks.last_mut() {
             if let Option::Some(ptr) = chunk.try_alloc(len, 1) {
-                return ptr
+                return ptr;
             }
-        }
+        };
 
         // Need a new chunk
-        let chunk_size = len.max(DEFAULT_CHUNK_SIZE)
-        let mut new_chunk = Chunk::new(chunk_size)
+        let chunk_size = len.max(DEFAULT_CHUNK_SIZE);
+        let mut new_chunk = Chunk::new(chunk_size);
 
         let ptr = new_chunk.try_alloc(len, 1)
-            .expect("BUG: fresh chunk must have space")
+            .expect("BUG: fresh chunk must have space");
 
-        self.chunks.push(new_chunk)
+        self.chunks.push(new_chunk);
         ptr
     }
 }
@@ -433,14 +433,14 @@ impl Drop for StringArena {
 /// let fn_name2 = symbols.intern_symbol("main")
 /// assert(ptr::eq(fn_name.as_ptr(), fn_name2.as_ptr()))
 /// ```
-pub type SymbolArena = StringArena
+pub type SymbolArena = StringArena;
 
 impl SymbolArena {
     /// Intern a symbol (identifier).
     ///
     /// This is an alias for `alloc` with semantic meaning for symbols.
     pub fn intern_symbol(mut self, name: &str) -> &str {
-        self.alloc(name)
+        self.alloc(name);
     }
 
     /// Intern a symbol, creating a new copy if a symbol with the same
@@ -450,7 +450,7 @@ impl SymbolArena {
     /// This is useful for keeping symbols from different namespaces
     /// separate even if they have the same name.
     pub fn intern_symbol_unique(mut self, name: &str) -> &str {
-        self.alloc_unique(name)
+        self.alloc_unique(name);
     }
 }
 
@@ -460,72 +460,72 @@ impl SymbolArena {
 
 #[test]
 fn test_string_arena_new() {
-    let arena = StringArena::new()
+    let arena = StringArena::new();
 
-    assert(arena.is_empty())
-    assert(arena.len() == 0)
+    assert(arena.is_empty());
+    assert(arena.len() == 0);
 }
 
 #[test]
 fn test_string_arena_alloc() {
-    let arena = StringArena::new()
+    let arena = StringArena::new();
 
-    let s = arena.alloc("hello")
+    let s = arena.alloc("hello");
 
-    assert(s == "hello")
-    assert(!arena.is_empty())
-    assert(arena.len() == 1)
+    assert(s == "hello");
+    assert(!arena.is_empty());
+    assert(arena.len() == 1);
 }
 
 #[test]
 fn test_string_arena_interning() {
-    let arena = StringArena::new()
+    let arena = StringArena::new();
 
-    let a = arena.alloc("hello")
-    let b = arena.alloc("hello")
-    let c = arena.alloc("world")
+    let a = arena.alloc("hello");
+    let b = arena.alloc("hello");
+    let c = arena.alloc("world");
 
     // Same content returns same pointer
-    assert(a.as_ptr() == b.as_ptr())
+    assert(a.as_ptr() == b.as_ptr());
 
     // Different content returns different pointer
-    assert(a.as_ptr() != c.as_ptr())
+    assert(a.as_ptr() != c.as_ptr());
 
     // Only 2 unique strings
-    assert(arena.len() == 2)
+    assert(arena.len() == 2);
 }
 
 #[test]
 fn test_string_arena_unique() {
-    let arena = StringArena::new()
+    let arena = StringArena::new();
 
-    let a = arena.alloc_unique("test")
-    let b = arena.alloc_unique("test")
+    let a = arena.alloc_unique("test");
+    let b = arena.alloc_unique("test");
 
     // Unique allocation - different pointers
-    assert(a.as_ptr() != b.as_ptr())
+    assert(a.as_ptr() != b.as_ptr());
 }
 
 #[test]
 fn test_string_arena_contains() {
-    let arena = StringArena::new()
+    let arena = StringArena::new();
 
-    let _ = arena.alloc("hello")
+    let _ = arena.alloc("hello");
 
-    assert(arena.contains("hello"))
-    assert(!arena.contains("world"))
+    assert(arena.contains("hello"));
+    assert(!arena.contains("world"));
 }
 
 #[test]
 fn test_string_arena_get() {
-    let arena = StringArena::new()
+    let arena = StringArena::new();
 
-    let _ = arena.alloc("hello")
+    let _ = arena.alloc("hello");
 
     match arena.get("hello") {
         Option::Some(s) => assert(s == "hello"),
         Option::None => panic("expected string to be found"),
-    }
+    };
 
     match arena.get("world") {
         Option::Some(_) => panic("expected string not to be found"),
@@ -535,94 +535,94 @@ fn test_string_arena_get() {
 
 #[test]
 fn test_string_arena_stats() {
-    let arena = StringArena::new()
+    let arena = StringArena::new();
 
-    let _ = arena.alloc("hello")
-    let _ = arena.alloc("world")
-    let _ = arena.alloc("hello")  // Interned, not new allocation
+    let _ = arena.alloc("hello");
+    let _ = arena.alloc("world");
+    let _ = arena.alloc("hello");  // Interned, not new allocation
 
-    let stats = arena.stats()
+    let stats = arena.stats();
 
-    assert(stats.num_items == 2)
-    assert(stats.total_used >= 10)  // "hello" + "world" = 10 bytes
+    assert(stats.num_items == 2);
+    assert(stats.total_used >= 10);  // "hello" + "world" = 10 bytes
 }
 
 #[test]
 fn test_string_arena_clear() {
-    let mut arena = StringArena::new()
+    let mut arena = StringArena::new();
 
-    let _ = arena.alloc("hello")
-    let _ = arena.alloc("world")
+    let _ = arena.alloc("hello");
+    let _ = arena.alloc("world");
 
-    unsafe {
-        arena.clear()
-    }
+    @unsafe {
+        arena.clear();
+    };
 
-    assert(arena.is_empty())
-    assert(arena.len() == 0)
+    assert(arena.is_empty());
+    assert(arena.len() == 0);
 }
 
 #[test]
 fn test_string_arena_many_strings() {
-    let arena = StringArena::new()
-    let mut strings: Vec[&str] = Vec::new()
+    let arena = StringArena::new();
+    let mut strings: Vec[&str] = Vec::new();
 
     for i in 0..1000 {
-        let s = format!("string_{}", i)
-        strings.push(arena.alloc(s.as_str()))
-    }
+        let s = format!("string_{}", i);
+        strings.push(arena.alloc(s.as_str()));
+    };
 
     // Verify all strings
     for i in 0..1000 {
-        let expected = format!("string_{}", i)
-        assert(strings[i] == expected.as_str())
-    }
+        let expected = format!("string_{}", i);
+        assert(strings[i] == expected.as_str());
+    };
 
     // Verify interning
     for i in 0..1000 {
-        let s = format!("string_{}", i)
-        let interned = arena.get(s.as_str())
-        assert(interned.is_some())
-        assert(interned.unwrap().as_ptr() == strings[i].as_ptr())
+        let s = format!("string_{}", i);
+        let interned = arena.get(s.as_str());
+        assert(interned.is_some());
+        assert(interned.unwrap().as_ptr() == strings[i].as_ptr());
     }
 }
 
 #[test]
 fn test_string_arena_empty_string() {
-    let arena = StringArena::new()
+    let arena = StringArena::new();
 
-    let empty1 = arena.alloc("")
-    let empty2 = arena.alloc("")
+    let empty1 = arena.alloc("");
+    let empty2 = arena.alloc("");
 
-    assert(empty1 == "")
-    assert(empty2 == "")
-    assert(empty1.len() == 0)
+    assert(empty1 == "");
+    assert(empty2 == "");
+    assert(empty1.len() == 0);
 }
 
 #[test]
 fn test_string_arena_unicode() {
-    let arena = StringArena::new()
+    let arena = StringArena::new();
 
-    let s1 = arena.alloc("hello")
-    let s2 = arena.alloc("こんにちは")  // Japanese
-    let s3 = arena.alloc("🎉🚀")  // Emoji
+    let s1 = arena.alloc("hello");
+    let s2 = arena.alloc("こんにちは");  // Japanese
+    let s3 = arena.alloc("🎉🚀");  // Emoji
 
-    assert(s1 == "hello")
-    assert(s2 == "こんにちは")
-    assert(s3 == "🎉🚀")
+    assert(s1 == "hello");
+    assert(s2 == "こんにちは");
+    assert(s3 == "🎉🚀");
 }
 
 #[test]
 fn test_symbol_arena() {
-    let symbols: SymbolArena = SymbolArena::new()
+    let symbols: SymbolArena = SymbolArena::new();
 
-    let main = symbols.intern_symbol("main")
-    let foo = symbols.intern_symbol("foo")
-    let main2 = symbols.intern_symbol("main")
+    let main = symbols.intern_symbol("main");
+    let foo = symbols.intern_symbol("foo");
+    let main2 = symbols.intern_symbol("main");
 
     // Same symbol returns same pointer
-    assert(main.as_ptr() == main2.as_ptr())
+    assert(main.as_ptr() == main2.as_ptr());
 
     // Different symbols have different pointers
-    assert(main.as_ptr() != foo.as_ptr())
+    assert(main.as_ptr() != foo.as_ptr());
 }

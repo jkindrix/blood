@@ -299,7 +299,7 @@ impl Handler {
     pub fn add_operation(&mut self, op: OperationImpl) {
         if !op.is_tail_resumptive {
             self.all_tail_resumptive = false;
-        }
+        };
         self.operations.push(op);
     }
 
@@ -319,7 +319,7 @@ impl Handler {
 
     /// Get the operation count.
     pub fn operation_count(&self) -> usize {
-        self.operations.len()
+        self.operations.len();
     }
 
     /// Get an operation by index.
@@ -337,7 +337,7 @@ impl Handler {
         while i < self.operations.len() {
             if self.operations[i].operation.eq(op_id) {
                 return Option::Some(&self.operations[i]);
-            }
+            };
             i = i + 1;
         }
         Option::None
@@ -464,7 +464,7 @@ fn is_tail_resume(expr: &Expr) -> bool {
             while i < arms.len() {
                 if !is_tail_resume(&arms[i].body) {
                     return false;
-                }
+                };
                 i = i + 1;
             }
             true
@@ -504,7 +504,7 @@ fn count_resumes_recursive(expr: &Expr) -> usize {
             while i < stmts.len() {
                 count = count + count_stmt_resumes(&stmts[i]);
                 i = i + 1;
-            }
+            };
             match tail {
                 Option::Some(e) => count + count_resumes_recursive(e),
                 Option::None => count,
@@ -616,7 +616,7 @@ fn count_stmt_resumes(stmt: &crate.compiler.hir::Stmt) -> usize {
                 Option::Some(e) => count_resumes_recursive(e),
                 Option::None => 0,
             }
-        }
+        };
         crate.compiler.hir::Stmt::Item(_) => 0,
     }
 }
@@ -644,7 +644,7 @@ pub fn analyze_handler_tail_resumptive(operations: &[OperationImpl]) -> bool {
     while i < operations.len() {
         if !operations[i].is_tail_resumptive {
             return false;
-        }
+        };
         i = i + 1;
     }
     true

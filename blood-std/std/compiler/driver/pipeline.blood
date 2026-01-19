@@ -93,12 +93,12 @@ impl CompilationResult {
 
     /// Check if the output is empty.
     pub fn is_empty(self) -> Bool {
-        self.output.is_empty()
+        self.output.is_empty();
     }
 
     /// Get the output size in bytes.
     pub fn output_size(self) -> USize {
-        self.output.len()
+        self.output.len();
     }
 }
 
@@ -185,7 +185,7 @@ impl CompilationError {
         let location = if self.line > 0 {
             format!("{}:{}:{}", self.file, self.line, self.column)
         } else {
-            self.file.clone()
+            self.file.clone();
         };
 
         let phase_name = match self.phase {
@@ -252,8 +252,8 @@ pub fn compile_source(session: &mut Session, file: SourceFile) -> Result<Compila
             for err in parse_errors {
                 errors.push(CompilationError::from_parse_error(err, file.name.clone()));
                 session.record_error();
-            }
-            return Result::Err(errors)
+            };
+            return Result::Err(errors);
         }
     };
 
@@ -264,22 +264,22 @@ pub fn compile_source(session: &mut Session, file: SourceFile) -> Result<Compila
             for err in type_errors {
                 errors.push(CompilationError::from_type_error(err, file.name.clone()));
                 session.record_error();
-            }
-            return Result::Err(errors)
+            };
+            return Result::Err(errors);
         }
     };
 
     // Check if we should stop early
     if session.should_stop() {
-        return Result::Err(errors)
-    }
+        return Result::Err(errors);
+    };
 
     // Phase 4: HIR Lowering
     let hir = match lower_to_hir(session, &ast, type_result) {
         Result::Ok(h) => h,
         Result::Err(e) => {
             errors.push(e);
-            return Result::Err(errors)
+            return Result::Err(errors);
         }
     };
 
@@ -288,7 +288,7 @@ pub fn compile_source(session: &mut Session, file: SourceFile) -> Result<Compila
         Result::Ok(m) => m,
         Result::Err(e) => {
             errors.push(e);
-            return Result::Err(errors)
+            return Result::Err(errors);
         }
     };
 
@@ -297,7 +297,7 @@ pub fn compile_source(session: &mut Session, file: SourceFile) -> Result<Compila
         Result::Ok(o) => o,
         Result::Err(e) => {
             errors.push(e);
-            return Result::Err(errors)
+            return Result::Err(errors);
         }
     };
 
@@ -323,8 +323,8 @@ pub fn check_source(session: &mut Session, file: SourceFile) -> Result<(), Vec<C
             for err in parse_errors {
                 errors.push(CompilationError::from_parse_error(err, file.name.clone()));
                 session.record_error();
-            }
-            return Result::Err(errors)
+            };
+            return Result::Err(errors);
         }
     };
 
@@ -431,9 +431,9 @@ fn lower_to_mir(session: &mut Session, hir: &HirCrate) -> Result<MirLoweringResu
         if diagnostics[i].is_error {
             has_error = true;
             break;
-        }
+        };
         i = i + 1;
-    }
+    };
 
     if has_error {
         let err = &diagnostics[0];
@@ -444,7 +444,7 @@ fn lower_to_mir(session: &mut Session, hir: &HirCrate) -> Result<MirLoweringResu
             err.span.line(),
             err.span.column(),
         ));
-    }
+    };
 
     // Run escape analysis on all MIR bodies
     let mut escape_results: EscapeAnalysisMap = HashMap::new();
@@ -544,17 +544,17 @@ fn test_compilation_result_new() {
         "test.blood".to_string()
     );
 
-    assert(!result.is_empty())
-    assert(result.output_size() == 3)
-    assert(result.source_name == "test.blood")
+    assert(!result.is_empty());
+    assert(result.output_size() == 3);
+    assert(result.source_name == "test.blood");
 }
 
 #[test]
 fn test_compilation_result_empty() {
     let result = CompilationResult::empty("test.blood".to_string());
 
-    assert(result.is_empty())
-    assert(result.output_size() == 0)
+    assert(result.is_empty());
+    assert(result.output_size() == 0);
 }
 
 #[test]
@@ -568,9 +568,9 @@ fn test_compilation_error_format() {
     );
 
     let formatted = error.format();
-    assert(formatted.contains("parser"))
-    assert(formatted.contains("unexpected token"))
-    assert(formatted.contains("test.blood:10:5"))
+    assert(formatted.contains("parser"));
+    assert(formatted.contains("unexpected token"));
+    assert(formatted.contains("test.blood:10:5"));
 }
 
 #[test]
@@ -584,8 +584,8 @@ fn test_compilation_error_with_help() {
     ).with_help("expected Int, found String".to_string());
 
     let formatted = error.format();
-    assert(formatted.contains("help"))
-    assert(formatted.contains("expected Int"))
+    assert(formatted.contains("help"));
+    assert(formatted.contains("expected Int"));
 }
 
 #[test]
@@ -595,12 +595,12 @@ fn test_compilation_error_io() {
         "file not found".to_string()
     );
 
-    assert(error.phase == CompilationPhase::IO)
-    assert(error.line == 0)
+    assert(error.phase == CompilationPhase::IO);
+    assert(error.line == 0);
 }
 
 #[test]
 fn test_compilation_phase_equality() {
-    assert(CompilationPhase::Parser == CompilationPhase::Parser)
-    assert(CompilationPhase::Parser != CompilationPhase::TypeCheck)
+    assert(CompilationPhase::Parser == CompilationPhase::Parser);
+    assert(CompilationPhase::Parser != CompilationPhase::TypeCheck);
 }

@@ -392,7 +392,7 @@ impl ExprPath {
 
     /// Create a simple single-segment path.
     pub fn simple(name: Ident) -> ExprPath {
-        let span = name.span
+        let span = name.span;
         ExprPath {
             segments: vec![ExprPathSegment { name, args: Option::None }],
             span,
@@ -401,12 +401,12 @@ impl ExprPath {
 
     /// Check if this is a single-segment path.
     pub fn is_simple(self) -> Bool {
-        self.segments.len() == 1 && self.segments[0].args.is_none()
+        self.segments.len() == 1 && self.segments[0].args.is_none();
     }
 
     /// Get the number of segments.
     pub fn len(self) -> USize {
-        self.segments.len()
+        self.segments.len();
     }
 }
 
@@ -445,7 +445,7 @@ pub struct CallArg {
 impl CallArg {
     /// Create a positional argument.
     pub fn positional(value: Expr) -> CallArg {
-        let span = value.span
+        let span = value.span;
         CallArg {
             name: Option::None,
             value,
@@ -464,7 +464,7 @@ impl CallArg {
 
     /// Check if this is a named argument.
     pub fn is_named(self) -> Bool {
-        self.name.is_some()
+        self.name.is_some();
     }
 }
 
@@ -533,7 +533,7 @@ pub struct RecordExprField {
 impl RecordExprField {
     /// Check if this uses shorthand syntax.
     pub fn is_shorthand(self) -> Bool {
-        self.value.is_none()
+        self.value.is_none();
     }
 }
 
@@ -590,7 +590,7 @@ pub struct MatchArm {
 impl MatchArm {
     /// Check if this arm has a guard.
     pub fn has_guard(self) -> Bool {
-        self.guard.is_some()
+        self.guard.is_some();
     }
 }
 
@@ -880,43 +880,43 @@ impl MacroDelimiter {
 
 #[test]
 fn test_expr_literal() {
-    let lit = Literal::int(42, Span::dummy())
-    let expr = Expr::new(ExprKind::Literal(lit), Span::dummy())
+    let lit = Literal::int(42, Span::dummy());
+    let expr = Expr::new(ExprKind::Literal(lit), Span::dummy());
 
-    assert(expr.is_literal())
-    assert(!expr.is_path())
-    assert(!expr.is_block())
+    assert(expr.is_literal());
+    assert(!expr.is_path());
+    assert(!expr.is_block());
 }
 
 #[test]
 fn test_expr_requires_semi() {
     // Block-like expressions don't require semicolons
-    let block_expr = Expr::new(ExprKind::Block(Block::empty(Span::dummy())), Span::dummy())
-    assert(!block_expr.requires_semi())
+    let block_expr = Expr::new(ExprKind::Block(Block::empty(Span::dummy())), Span::dummy());
+    assert(!block_expr.requires_semi());
 
     // Most expressions require semicolons
-    let lit_expr = Expr::new(ExprKind::Literal(Literal::int(1, Span::dummy())), Span::dummy())
-    assert(lit_expr.requires_semi())
+    let lit_expr = Expr::new(ExprKind::Literal(Literal::int(1, Span::dummy())), Span::dummy());
+    assert(lit_expr.requires_semi());
 }
 
 #[test]
 fn test_expr_path_simple() {
-    let name = Ident::dummy()
-    let path = ExprPath::simple(name)
+    let name = Ident::dummy();
+    let path = ExprPath::simple(name);
 
-    assert(path.is_simple())
-    assert(path.len() == 1)
+    assert(path.is_simple());
+    assert(path.len() == 1);
 }
 
 #[test]
 fn test_call_arg() {
-    let value = Expr::new(ExprKind::Literal(Literal::int(1, Span::dummy())), Span::dummy())
-    let pos_arg = CallArg::positional(value)
-    assert(!pos_arg.is_named())
+    let value = Expr::new(ExprKind::Literal(Literal::int(1, Span::dummy())), Span::dummy());
+    let pos_arg = CallArg::positional(value);
+    assert(!pos_arg.is_named());
 
-    let value2 = Expr::new(ExprKind::Literal(Literal::int(2, Span::dummy())), Span::dummy())
-    let named_arg = CallArg::named(Ident::dummy(), value2, Span::dummy())
-    assert(named_arg.is_named())
+    let value2 = Expr::new(ExprKind::Literal(Literal::int(2, Span::dummy())), Span::dummy());
+    let named_arg = CallArg::named(Ident::dummy(), value2, Span::dummy());
+    assert(named_arg.is_named());
 }
 
 #[test]
@@ -925,15 +925,15 @@ fn test_record_field_shorthand() {
         name: Ident::dummy(),
         value: Option::None,
         span: Span::dummy(),
-    }
-    assert(shorthand.is_shorthand())
+    };
+    assert(shorthand.is_shorthand());
 
     let explicit = RecordExprField {
         name: Ident::dummy(),
         value: Option::Some(Expr::new(ExprKind::Literal(Literal::int(1, Span::dummy())), Span::dummy())),
         span: Span::dummy(),
-    }
-    assert(!explicit.is_shorthand())
+    };
+    assert(!explicit.is_shorthand());
 }
 
 #[test]
@@ -943,68 +943,68 @@ fn test_match_arm_guard() {
         guard: Option::Some(Expr::new(ExprKind::Literal(Literal::bool(true, Span::dummy())), Span::dummy())),
         body: Expr::new(ExprKind::Literal(Literal::int(1, Span::dummy())), Span::dummy()),
         span: Span::dummy(),
-    }
-    assert(with_guard.has_guard())
+    };
+    assert(with_guard.has_guard());
 
     let without_guard = MatchArm {
         pattern: Pattern::wildcard(Span::dummy()),
         guard: Option::None,
         body: Expr::new(ExprKind::Literal(Literal::int(0, Span::dummy())), Span::dummy()),
         span: Span::dummy(),
-    }
-    assert(!without_guard.has_guard())
+    };
+    assert(!without_guard.has_guard());
 }
 
 #[test]
 fn test_binop_as_str() {
-    assert(BinOp::Add.as_str() == "+")
-    assert(BinOp::Sub.as_str() == "-")
-    assert(BinOp::Mul.as_str() == "*")
-    assert(BinOp::Eq.as_str() == "==")
-    assert(BinOp::And.as_str() == "&&")
-    assert(BinOp::Pipe.as_str() == "|>")
+    assert(BinOp::Add.as_str() == "+");
+    assert(BinOp::Sub.as_str() == "-");
+    assert(BinOp::Mul.as_str() == "*");
+    assert(BinOp::Eq.as_str() == "==");
+    assert(BinOp::And.as_str() == "&&");
+    assert(BinOp::Pipe.as_str() == "|>");
 }
 
 #[test]
 fn test_binop_categories() {
-    assert(BinOp::Add.is_arithmetic())
-    assert(!BinOp::Add.is_comparison())
+    assert(BinOp::Add.is_arithmetic());
+    assert(!BinOp::Add.is_comparison());
 
-    assert(BinOp::Eq.is_comparison())
-    assert(!BinOp::Eq.is_arithmetic())
+    assert(BinOp::Eq.is_comparison());
+    assert(!BinOp::Eq.is_arithmetic());
 
-    assert(BinOp::And.is_logical())
-    assert(!BinOp::And.is_bitwise())
+    assert(BinOp::And.is_logical());
+    assert(!BinOp::And.is_bitwise());
 
-    assert(BinOp::BitOr.is_bitwise())
-    assert(!BinOp::BitOr.is_logical())
+    assert(BinOp::BitOr.is_bitwise());
+    assert(!BinOp::BitOr.is_logical());
 }
 
 #[test]
 fn test_binop_precedence() {
     // Multiplication should have higher precedence than addition
-    assert(BinOp::Mul.precedence() > BinOp::Add.precedence())
+    assert(BinOp::Mul.precedence() > BinOp::Add.precedence());
     // Addition should have higher precedence than comparison
-    assert(BinOp::Add.precedence() > BinOp::Eq.precedence())
+    assert(BinOp::Add.precedence() > BinOp::Eq.precedence());
     // Comparison should have higher precedence than logical and
-    assert(BinOp::Eq.precedence() > BinOp::And.precedence())
+    assert(BinOp::Eq.precedence() > BinOp::And.precedence());
 }
 
 #[test]
 fn test_unaryop_as_str() {
-    assert(UnaryOp::Neg.as_str() == "-")
-    assert(UnaryOp::Not.as_str() == "!")
-    assert(UnaryOp::Deref.as_str() == "*")
-    assert(UnaryOp::Ref.as_str() == "&")
-    assert(UnaryOp::RefMut.as_str() == "&mut")
+    assert(UnaryOp::Neg.as_str() == "-");
+    assert(UnaryOp::Not.as_str() == "!");
+    assert(UnaryOp::Deref.as_str() == "*");
+    assert(UnaryOp::Ref.as_str() == "&");
+    assert(UnaryOp::RefMut.as_str() == "&mut");
 }
 
 #[test]
 fn test_macro_delimiter() {
-    assert(MacroDelimiter::Paren.open() == "(")
-    assert(MacroDelimiter::Paren.close() == ")")
-    assert(MacroDelimiter::Bracket.open() == "[")
-    assert(MacroDelimiter::Bracket.close() == "]")
-    assert(MacroDelimiter::Brace.open() == "{")
-    assert(MacroDelimiter::Brace.close() == "}")
+    assert(MacroDelimiter::Paren.open() == "(");
+    assert(MacroDelimiter::Paren.close() == ")");
+    assert(MacroDelimiter::Bracket.open() == "[");
+    assert(MacroDelimiter::Bracket.close() == "]");
+    assert(MacroDelimiter::Brace.open() == "{");
+    assert(MacroDelimiter::Brace.close() == "}");
 }

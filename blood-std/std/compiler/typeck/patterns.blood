@@ -68,7 +68,7 @@ impl PatternCheckResult {
         while i < other.bindings.len() {
             self.bindings.push(other.bindings[i].clone());
             i = i + 1;
-        }
+        };
         i = 0;
         while i < other.errors.len() {
             self.errors.push(other.errors[i].clone());
@@ -180,7 +180,7 @@ impl PatternChecker {
                         span,
                     ));
                     return;
-                }
+                };
                 let mut i: usize = 0;
                 while i < patterns.len() {
                     let sub_result = self.check_pattern(&patterns[i], &tys[i], type_defs);
@@ -267,7 +267,7 @@ impl PatternChecker {
                                         Some(fty) => {
                                             let sub_result = self.check_pattern(&field_pat.pattern, fty, type_defs);
                                             result.merge(sub_result);
-                                        }
+                                        };
                                         None => {
                                             result.add_error(TypeError::unknown_field(
                                                 type_def.name.clone(),
@@ -275,7 +275,7 @@ impl PatternChecker {
                                                 span,
                                             ));
                                         }
-                                    }
+                                    };
                                     i = i + 1;
                                 }
                             }
@@ -287,10 +287,10 @@ impl PatternChecker {
                                 ));
                             }
                         }
-                    }
+                    };
                     None => {
                         let type_name = if name.segments.len() > 0 {
-                            name.segments[0].value.clone()
+                            name.segments[0].value.clone();
                         } else {
                             "<unknown>".to_string()
                         };
@@ -371,7 +371,7 @@ impl PatternChecker {
                                                     Some(payload_ty) => {
                                                         let sub_result = self.check_pattern(payload_pat, payload_ty, type_defs);
                                                         result.merge(sub_result);
-                                                    }
+                                                    };
                                                     None => {
                                                         result.add_error(TypeError::new(
                                                             TypeErrorKind::UnsupportedExpression {
@@ -381,7 +381,7 @@ impl PatternChecker {
                                                         ));
                                                     }
                                                 }
-                                            }
+                                            };
                                             None => {
                                                 // No payload in pattern
                                                 if vdef.payload.is_some() {
@@ -394,7 +394,7 @@ impl PatternChecker {
                                                 }
                                             }
                                         }
-                                    }
+                                    };
                                     None => {
                                         result.add_error(TypeError::new(
                                             TypeErrorKind::UnsupportedExpression {
@@ -413,10 +413,10 @@ impl PatternChecker {
                                 ));
                             }
                         }
-                    }
+                    };
                     None => {
                         let type_name = if name.segments.len() > 0 {
-                            name.segments[0].value.clone()
+                            name.segments[0].value.clone();
                         } else {
                             "<unknown>".to_string()
                         };
@@ -510,7 +510,7 @@ impl PatternChecker {
                 while j < sub_result.errors.len() {
                     result.add_error(sub_result.errors[j].clone());
                     j = j + 1;
-                }
+                };
                 i = i + 1;
             }
         }
@@ -528,7 +528,7 @@ impl PatternChecker {
         let start_ty = infer_literal_type(start);
         if !types_compatible(&start_ty, expected) {
             result.add_error(TypeError::pattern_mismatch(expected.clone(), start_ty.clone(), span));
-        }
+        };
 
         match end {
             Some(end_lit) => {
@@ -536,8 +536,8 @@ impl PatternChecker {
                 if !types_compatible(&start_ty, &end_ty) {
                     result.add_error(TypeError::pattern_mismatch(start_ty, end_ty, span));
                 }
-            }
-            None => {}
+            };
+            None => {};
         }
     }
 }
@@ -552,7 +552,7 @@ fn find_struct_field<'a>(fields: &'a [StructFieldDef], name: &str) -> Option<&'a
     while i < fields.len() {
         if fields[i].name == name {
             return Some(&fields[i].ty);
-        }
+        };
         i = i + 1;
     }
     None
@@ -564,7 +564,7 @@ fn find_enum_variant<'a>(variants: &'a [EnumVariantDef], name: &str) -> Option<&
     while i < variants.len() {
         if variants[i].name == name {
             return Some(&variants[i]);
-        }
+        };
         i = i + 1;
     }
     None
@@ -591,7 +591,7 @@ fn infer_literal_type(lit: &Literal) -> Type {
                         "usize" => Type::new(TypeKind::Primitive(PrimitiveTy::Usize)),
                         _ => Type::i32(), // Default to i32
                     }
-                }
+                };
                 None => Type::i32(), // Default to i32
             }
         }
@@ -603,7 +603,7 @@ fn infer_literal_type(lit: &Literal) -> Type {
                         "f64" => Type::new(TypeKind::Primitive(PrimitiveTy::F64)),
                         _ => Type::f64(), // Default to f64
                     }
-                }
+                };
                 None => Type::f64(), // Default to f64
             }
         }
@@ -635,12 +635,12 @@ fn types_compatible(t1: &Type, t2: &Type) -> bool {
         (TypeKind::Tuple(t1s), TypeKind::Tuple(t2s)) => {
             if t1s.len() != t2s.len() {
                 return false;
-            }
+            };
             let mut i: usize = 0;
             while i < t1s.len() {
                 if !types_compatible(&t1s[i], &t2s[i]) {
                     return false;
-                }
+                };
                 i = i + 1;
             }
             true
@@ -651,7 +651,7 @@ fn types_compatible(t1: &Type, t2: &Type) -> bool {
 
         // Arrays must have compatible elements and same size
         (TypeKind::Array { element: e1, size: s1 }, TypeKind::Array { element: e2, size: s2 }) => {
-            s1 == s2 && types_compatible(e1, e2)
+            s1 == s2 && types_compatible(e1, e2);
         }
 
         // Slices must have compatible elements
@@ -659,26 +659,26 @@ fn types_compatible(t1: &Type, t2: &Type) -> bool {
 
         // References must have same mutability and compatible inner types
         (TypeKind::Ref { inner: i1, mutability: m1 }, TypeKind::Ref { inner: i2, mutability: m2 }) => {
-            m1.eq(m2) && types_compatible(i1, i2)
+            m1.eq(m2) && types_compatible(i1, i2);
         }
 
         // Pointers must have same mutability and compatible inner types
         (TypeKind::Ptr { inner: i1, mutability: m1 }, TypeKind::Ptr { inner: i2, mutability: m2 }) => {
-            m1.eq(m2) && types_compatible(i1, i2)
+            m1.eq(m2) && types_compatible(i1, i2);
         }
 
         // Functions must have compatible signatures
         (TypeKind::Fn { params: p1, ret: r1, effect: _ }, TypeKind::Fn { params: p2, ret: r2, effect: _ }) => {
             if p1.len() != p2.len() {
                 return false;
-            }
+            };
             let mut i: usize = 0;
             while i < p1.len() {
                 if !types_compatible(&p1[i], &p2[i]) {
                     return false;
-                }
+                };
                 i = i + 1;
-            }
+            };
             types_compatible(r1, r2)
         }
 
@@ -686,20 +686,20 @@ fn types_compatible(t1: &Type, t2: &Type) -> bool {
         (TypeKind::Closure { params: p1, ret: r1, effect: _, captures: _ }, TypeKind::Closure { params: p2, ret: r2, effect: _, captures: _ }) => {
             if p1.len() != p2.len() {
                 return false;
-            }
+            };
             let mut i: usize = 0;
             while i < p1.len() {
                 if !types_compatible(&p1[i], &p2[i]) {
                     return false;
-                }
+                };
                 i = i + 1;
-            }
+            };
             types_compatible(r1, r2)
         }
 
         // Ranges must have same inclusivity and compatible elements
         (TypeKind::Range { element: e1, inclusive: inc1 }, TypeKind::Range { element: e2, inclusive: inc2 }) => {
-            inc1 == inc2 && types_compatible(e1, e2)
+            inc1 == inc2 && types_compatible(e1, e2);
         }
 
         // Dynamic trait objects must have same trait
@@ -707,7 +707,7 @@ fn types_compatible(t1: &Type, t2: &Type) -> bool {
 
         // Records - simplified, just check field count
         (TypeKind::Record { fields: f1, row_var: _ }, TypeKind::Record { fields: f2, row_var: _ }) => {
-            f1.len() == f2.len()
+            f1.len() == f2.len();
         }
 
         // Forall types - compare bodies (simplified)
@@ -720,7 +720,7 @@ fn types_compatible(t1: &Type, t2: &Type) -> bool {
 
         // Ownership-qualified types - compare inner
         (TypeKind::Ownership { inner: i1, ownership: o1 }, TypeKind::Ownership { inner: i2, ownership: o2 }) => {
-            o1.eq(o2) && types_compatible(i1, i2)
+            o1.eq(o2) && types_compatible(i1, i2);
         }
 
         // Different type kinds are not compatible

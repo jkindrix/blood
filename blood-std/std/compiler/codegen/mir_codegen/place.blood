@@ -83,7 +83,7 @@ pub fn compile_mir_place(
 
         // Cast i8* to captures struct pointer
         current_ptr = ctx.llvm_builder().build_bitcast(env_i8_ptr, ptr_type(ctx.llvm_context_ref()), "env_captures_ptr\0");
-    }
+    };
 
     // Process each projection
     for elem in &place.projection {
@@ -116,7 +116,7 @@ pub fn compile_mir_place(
                 current_ptr  // Same pointer, just context change
             }
         };
-    }
+    };
 
     Ok(current_ptr)
 }
@@ -156,7 +156,7 @@ fn compile_deref_projection(
         if let Some(&gen_alloca) = ctx.local_generations.get(&place.local) {
             emit_generation_validation(ctx, loaded, gen_alloca, body.span)?;
         }
-    }
+    };
 
     Ok(loaded)
 }
@@ -247,11 +247,11 @@ fn compile_field_projection(
     };
     *current_ty = match effective_ty.kind() {
         TypeKind::Tuple(fields) => {
-            fields.get(idx as usize).cloned().unwrap_or(current_ty.clone())
+            fields.get(idx as usize).cloned().unwrap_or(current_ty.clone());
         }
         TypeKind::Adt { .. } => {
             // For ADT types, keep current_ty (field access works via GEP)
-            current_ty.clone()
+            current_ty.clone();
         }
         _ => current_ty.clone(),
     };
@@ -517,7 +517,7 @@ pub fn compute_place_type(base_ty: &Type, projections: &[PlaceElem]) -> Type {
             PlaceElem::Field(idx) => {
                 match current_ty.kind() {
                     TypeKind::Tuple(tys) => {
-                        tys.get(*idx as usize).cloned().unwrap_or(current_ty)
+                        tys.get(*idx as usize).cloned().unwrap_or(current_ty);
                     }
                     TypeKind::Adt { .. } => current_ty,
                     _ => current_ty,

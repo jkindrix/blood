@@ -153,7 +153,7 @@ impl Target {
         let parts: Vec<String> = triple.split('-').collect();
 
         if parts.len() < 3 {
-            return Option::None
+            return Option::None;
         }
 
         Option::Some(Target {
@@ -190,7 +190,7 @@ impl Target {
 
     /// Check if this is a WebAssembly target.
     pub fn is_wasm(self) -> Bool {
-        self.arch.starts_with("wasm")
+        self.arch.starts_with("wasm");
     }
 }
 
@@ -288,7 +288,7 @@ impl CompilerConfig {
         CompilerConfig {
             opt_level: OptLevel::None,
             debug_info: true,
-            ..CompilerConfig::default()
+            ..CompilerConfig::default();
         }
     }
 
@@ -298,7 +298,7 @@ impl CompilerConfig {
             opt_level: OptLevel::Release,
             debug_info: false,
             lto: true,
-            ..CompilerConfig::default()
+            ..CompilerConfig::default();
         }
     }
 
@@ -352,12 +352,12 @@ impl CompilerConfig {
 
     /// Check if this configuration is for debug mode.
     pub fn is_debug(self) -> Bool {
-        self.opt_level == OptLevel::None && self.debug_info
+        self.opt_level == OptLevel::None && self.debug_info;
     }
 
     /// Check if this configuration is for release mode.
     pub fn is_release(self) -> Bool {
-        self.opt_level == OptLevel::Release
+        self.opt_level == OptLevel::Release;
     }
 }
 
@@ -397,62 +397,62 @@ impl Default for CompilerConfig {
 #[test]
 fn test_opt_level_default() {
     let level: OptLevel = OptLevel::default();
-    assert(level == OptLevel::None)
-    assert(level.as_level() == 0)
+    assert(level == OptLevel::None);
+    assert(level.as_level() == 0);
 }
 
 #[test]
 fn test_opt_level_inlining() {
-    assert(!OptLevel::None.enables_inlining())
-    assert(!OptLevel::Basic.enables_inlining())
-    assert(OptLevel::Standard.enables_inlining())
-    assert(OptLevel::Release.enables_inlining())
+    assert(!OptLevel::None.enables_inlining());
+    assert(!OptLevel::Basic.enables_inlining());
+    assert(OptLevel::Standard.enables_inlining());
+    assert(OptLevel::Release.enables_inlining());
 }
 
 #[test]
 fn test_target_parse() {
     let target = Target::parse("x86_64-unknown-linux-gnu".to_string());
-    assert(target.is_some())
+    assert(target.is_some());
 
     let t = target.unwrap();
-    assert(t.arch == "x86_64")
-    assert(t.os == "linux")
-    assert(t.is_64bit())
-    assert(!t.is_wasm())
+    assert(t.arch == "x86_64");
+    assert(t.os == "linux");
+    assert(t.is_64bit());
+    assert(!t.is_wasm());
 }
 
 #[test]
 fn test_target_wasm() {
     let target = Target::parse("wasm32-unknown-unknown".to_string());
-    assert(target.is_some())
+    assert(target.is_some());
 
     let t = target.unwrap();
-    assert(t.is_wasm())
-    assert(!t.is_64bit())
+    assert(t.is_wasm());
+    assert(!t.is_64bit());
 }
 
 #[test]
 fn test_config_default() {
     let config = CompilerConfig::default();
-    assert(config.opt_level == OptLevel::None)
-    assert(config.output_type == OutputType::Executable)
-    assert(!config.debug_info)
+    assert(config.opt_level == OptLevel::None);
+    assert(config.output_type == OutputType::Executable);
+    assert(!config.debug_info);
 }
 
 #[test]
 fn test_config_debug() {
     let config = CompilerConfig::debug();
-    assert(config.is_debug())
-    assert(config.debug_info)
-    assert(config.opt_level == OptLevel::None)
+    assert(config.is_debug());
+    assert(config.debug_info);
+    assert(config.opt_level == OptLevel::None);
 }
 
 #[test]
 fn test_config_release() {
     let config = CompilerConfig::release();
-    assert(config.is_release())
-    assert(config.lto)
-    assert(config.opt_level == OptLevel::Release)
+    assert(config.is_release());
+    assert(config.lto);
+    assert(config.opt_level == OptLevel::Release);
 }
 
 #[test]
@@ -462,7 +462,7 @@ fn test_config_builder() {
         .with_debug_info(true)
         .add_include_path("/usr/include".to_string());
 
-    assert(config.opt_level == OptLevel::Standard)
-    assert(config.debug_info)
-    assert(config.include_paths.len() == 1)
+    assert(config.opt_level == OptLevel::Standard);
+    assert(config.debug_info);
+    assert(config.include_paths.len() == 1);
 }

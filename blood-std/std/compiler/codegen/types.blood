@@ -219,7 +219,7 @@ pub fn type_alignment(ty: &Type) -> usize {
                 let align = type_alignment(&types[i]);
                 if align > max_align {
                     max_align = align;
-                }
+                };
                 i = i + 1;
             }
             max_align
@@ -245,7 +245,7 @@ pub fn type_alignment(ty: &Type) -> usize {
                 let align = type_alignment(&fields[i].ty);
                 if align > max_align {
                     max_align = align;
-                }
+                };
                 i = i + 1;
             }
             max_align
@@ -285,7 +285,7 @@ fn primitive_alignment(prim: &PrimitiveTy) -> usize {
 pub fn align_up(value: usize, alignment: usize) -> usize {
     if alignment == 0 {
         return value;
-    }
+    };
     let mask = alignment - 1;
     (value + mask) & !mask
 }
@@ -353,10 +353,10 @@ pub fn compute_struct_layout(field_types: &[Type]) -> ([FieldLayout], usize) {
 
         if field_align > max_align {
             max_align = field_align;
-        }
+        };
 
         i = i + 1;
-    }
+    };
 
     // Pad to struct alignment
     let total_size = align_up(current_offset, max_align);
@@ -408,13 +408,13 @@ pub fn compute_enum_layout(variant_field_types: &[[Type]]) -> EnumLayout {
         if !variant_field_types[i].is_empty() {
             all_unit = false;
             break;
-        }
+        };
         i = i + 1;
-    }
+    };
 
     if all_unit {
         return EnumLayout::Unit { discriminant_size };
-    }
+    };
 
     // Calculate max variant size and alignment
     let mut max_payload_size: usize = 0;
@@ -431,19 +431,19 @@ pub fn compute_enum_layout(variant_field_types: &[[Type]]) -> EnumLayout {
             let align = type_alignment(&variant_field_types[i][j]);
             if align > variant_align {
                 variant_align = align;
-            }
+            };
             j = j + 1;
-        }
+        };
 
         if variant_size > max_payload_size {
             max_payload_size = variant_size;
-        }
+        };
         if variant_align > max_payload_align {
             max_payload_align = variant_align;
-        }
+        };
 
         i = i + 1;
-    }
+    };
 
     // Calculate total enum layout
     // Layout: [discriminant] [padding] [payload]
@@ -530,7 +530,7 @@ pub fn type_may_contain_genref(ty: &Type) -> bool {
             while i < fields.len() {
                 if type_may_contain_genref(&fields[i]) {
                     return true;
-                }
+                };
                 i = i + 1;
             }
             false
@@ -551,7 +551,7 @@ pub fn type_may_contain_genref(ty: &Type) -> bool {
             while i < fields.len() {
                 if type_may_contain_genref(&fields[i].ty) {
                     return true;
-                }
+                };
                 i = i + 1;
             }
             false

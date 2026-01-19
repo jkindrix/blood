@@ -237,18 +237,18 @@ impl Substitution {
     pub fn apply(self, source: String) -> String {
         match self {
             Substitution::Insert { position, text } => {
-                let before = source.substring(0, position)
-                let after = source.substring(position, source.len())
+                let before = source.substring(0, position);
+                let after = source.substring(position, source.len());
                 before ++ text ++ after
             }
             Substitution::Remove { span } => {
-                let before = source.substring(0, span.start_offset())
-                let after = source.substring(span.end_offset(), source.len())
+                let before = source.substring(0, span.start_offset());
+                let after = source.substring(span.end_offset(), source.len());
                 before ++ after
             }
             Substitution::Replace { span, replacement } => {
-                let before = source.substring(0, span.start_offset())
-                let after = source.substring(span.end_offset(), source.len())
+                let before = source.substring(0, span.start_offset());
+                let after = source.substring(span.end_offset(), source.len());
                 before ++ replacement ++ after
             }
         }
@@ -292,8 +292,8 @@ pub struct Suggestion {
 impl Suggestion {
     /// Create a new suggestion with a single substitution.
     pub fn new(message: String, substitution: Substitution, applicability: Applicability) -> Suggestion {
-        let mut substitutions = Vec::new()
-        substitutions.push(substitution)
+        let mut substitutions = Vec::new();
+        substitutions.push(substitution);
 
         Suggestion {
             message,
@@ -344,13 +344,13 @@ impl Suggestion {
 
     /// Mark this as an alternative (not primary) suggestion.
     pub fn as_alternative(mut self) -> Suggestion {
-        self.primary = false
+        self.primary = false;
         self
     }
 
     /// Add another substitution to this suggestion.
     pub fn and_substitute(mut self, substitution: Substitution) -> Suggestion {
-        self.substitutions.push(substitution)
+        self.substitutions.push(substitution);
         self
     }
 
@@ -358,12 +358,12 @@ impl Suggestion {
 
     /// Get the suggestion message.
     pub fn message(self) -> String {
-        self.message.clone()
+        self.message.clone();
     }
 
     /// Get the substitutions.
     pub fn substitutions(self) -> Vec<Substitution> {
-        self.substitutions.clone()
+        self.substitutions.clone();
     }
 
     /// Get the applicability level.
@@ -378,12 +378,12 @@ impl Suggestion {
 
     /// Check if this suggestion is machine-applicable.
     pub fn is_machine_applicable(self) -> Bool {
-        self.applicability.is_machine_applicable()
+        self.applicability.is_machine_applicable();
     }
 
     /// Check if this suggestion has placeholders.
     pub fn has_placeholders(self) -> Bool {
-        self.applicability.has_placeholders()
+        self.applicability.has_placeholders();
     }
 
     // === Application ===
@@ -394,25 +394,25 @@ impl Suggestion {
     /// to avoid offset invalidation.
     pub fn apply(self, source: String) -> String {
         // Sort substitutions by position (descending) to apply from end to start
-        let mut sorted = self.substitutions.clone()
+        let mut sorted = self.substitutions.clone();
         sorted.sort_by(|a, b| {
             let a_pos = match a {
                 Substitution::Insert { position, .. } => *position,
                 Substitution::Remove { span } => span.start_offset(),
                 Substitution::Replace { span, .. } => span.start_offset(),
-            }
+            };
             let b_pos = match b {
                 Substitution::Insert { position, .. } => *position,
                 Substitution::Remove { span } => span.start_offset(),
                 Substitution::Replace { span, .. } => span.start_offset(),
-            }
+            };
             // Reverse order (higher positions first)
-            b_pos.cmp(a_pos)
+            b_pos.cmp(a_pos);
         })
 
-        let mut result = source
+        let mut result = source;
         for sub in sorted {
-            result = sub.apply(result)
+            result = sub.apply(result);
         }
         result
     }
@@ -438,7 +438,7 @@ impl Help {
 
     /// Get the message.
     pub fn message(self) -> String {
-        self.message.clone()
+        self.message.clone();
     }
 }
 
@@ -448,46 +448,46 @@ impl Help {
 
 #[test]
 fn test_applicability_machine_applicable() {
-    let app = Applicability::MachineApplicable
+    let app = Applicability::MachineApplicable;
 
-    assert(app.is_machine_applicable())
-    assert(!app.has_placeholders())
-    assert(!app.might_be_incorrect())
+    assert(app.is_machine_applicable());
+    assert(!app.has_placeholders());
+    assert(!app.might_be_incorrect());
 }
 
 #[test]
 fn test_applicability_has_placeholders() {
-    let app = Applicability::HasPlaceholders
+    let app = Applicability::HasPlaceholders;
 
-    assert(!app.is_machine_applicable())
-    assert(app.has_placeholders())
-    assert(!app.might_be_incorrect())
+    assert(!app.is_machine_applicable());
+    assert(app.has_placeholders());
+    assert(!app.might_be_incorrect());
 }
 
 #[test]
 fn test_applicability_maybe_incorrect() {
-    let app = Applicability::MaybeIncorrect
+    let app = Applicability::MaybeIncorrect;
 
-    assert(!app.is_machine_applicable())
-    assert(!app.has_placeholders())
-    assert(app.might_be_incorrect())
+    assert(!app.is_machine_applicable());
+    assert(!app.has_placeholders());
+    assert(app.might_be_incorrect());
 }
 
 #[test]
 fn test_applicability_unspecified() {
-    let app = Applicability::Unspecified
+    let app = Applicability::Unspecified;
 
-    assert(!app.is_machine_applicable())
-    assert(!app.has_placeholders())
-    assert(app.might_be_incorrect())  // Unknown = might be incorrect
+    assert(!app.is_machine_applicable());
+    assert(!app.has_placeholders());
+    assert(app.might_be_incorrect());  // Unknown = might be incorrect
 }
 
 #[test]
 fn test_substitution_insert() {
-    let sub = Substitution::insert(5, " world")
-    let result = sub.apply("hello!")
+    let sub = Substitution::insert(5, " world");
+    let result = sub.apply("hello!");
 
-    assert(result == "hello world!")
+    assert(result == "hello world!");
 }
 
 #[test]
@@ -497,10 +497,10 @@ fn test_substitution_remove() {
         5,
         11,
     )
-    let sub = Substitution::remove(span)
-    let result = sub.apply("hello world!")
+    let sub = Substitution::remove(span);
+    let result = sub.apply("hello world!");
 
-    assert(result == "hello!")
+    assert(result == "hello!");
 }
 
 #[test]
@@ -510,27 +510,27 @@ fn test_substitution_replace() {
         6,
         11,
     )
-    let sub = Substitution::replace(span, "Blood")
-    let result = sub.apply("hello world!")
+    let sub = Substitution::replace(span, "Blood");
+    let result = sub.apply("hello world!");
 
-    assert(result == "hello Blood!")
+    assert(result == "hello Blood!");
 }
 
 #[test]
 fn test_substitution_is_checks() {
-    let insert = Substitution::insert(0, "x")
-    let remove = Substitution::remove(Span::dummy())
-    let replace = Substitution::replace(Span::dummy(), "x")
+    let insert = Substitution::insert(0, "x");
+    let remove = Substitution::remove(Span::dummy());
+    let replace = Substitution::replace(Span::dummy(), "x");
 
-    assert(insert.is_insert())
-    assert(!insert.is_remove())
-    assert(!insert.is_replace())
+    assert(insert.is_insert());
+    assert(!insert.is_remove());
+    assert(!insert.is_replace());
 
-    assert(remove.is_remove())
-    assert(!remove.is_insert())
+    assert(remove.is_remove());
+    assert(!remove.is_insert());
 
-    assert(replace.is_replace())
-    assert(!replace.is_remove())
+    assert(replace.is_replace());
+    assert(!replace.is_remove());
 }
 
 #[test]
@@ -547,9 +547,9 @@ fn test_suggestion_insert_after() {
         Applicability::MaybeIncorrect,
     )
 
-    assert(suggestion.message() == "add `.unwrap()`")
-    assert(suggestion.applicability() == Applicability::MaybeIncorrect)
-    assert(!suggestion.is_machine_applicable())
+    assert(suggestion.message() == "add `.unwrap()`");
+    assert(suggestion.applicability() == Applicability::MaybeIncorrect);
+    assert(!suggestion.is_machine_applicable());
 }
 
 #[test]
@@ -566,17 +566,17 @@ fn test_suggestion_replace() {
         Applicability::MachineApplicable,
     )
 
-    assert(suggestion.is_machine_applicable())
-    assert(suggestion.is_primary())
+    assert(suggestion.is_machine_applicable());
+    assert(suggestion.is_primary());
 }
 
 #[test]
 fn test_suggestion_as_alternative() {
-    let span = Span::dummy()
+    let span = Span::dummy();
     let suggestion = Suggestion::remove("remove unused code", span, Applicability::MachineApplicable)
-        .as_alternative()
+        .as_alternative();
 
-    assert(!suggestion.is_primary())
+    assert(!suggestion.is_primary());
 }
 
 #[test]
@@ -604,11 +604,11 @@ fn test_suggestion_apply_multiple() {
     )
 
     // Note: positions need careful handling in real usage
-    assert(suggestion.substitutions().len() == 2)
+    assert(suggestion.substitutions().len() == 2);
 }
 
 #[test]
 fn test_help_message() {
-    let help = Help::new("consider using `match` instead")
-    assert(help.message() == "consider using `match` instead")
+    let help = Help::new("consider using `match` instead");
+    assert(help.message() == "consider using `match` instead");
 }

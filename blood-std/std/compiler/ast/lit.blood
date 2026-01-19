@@ -151,7 +151,7 @@ impl Literal {
 
     /// Check if this is a numeric literal (int or float).
     pub fn is_numeric(self) -> Bool {
-        self.is_int() || self.is_float()
+        self.is_int() || self.is_float();
     }
 
     /// Try to get as an integer value.
@@ -420,8 +420,8 @@ pub struct EscapeInfo {
 ///
 /// Converts escape sequences like `\n` to their actual characters.
 pub fn process_escapes(s: &str) -> Result<String, String> {
-    let mut result = String::new()
-    let mut chars = s.chars().peekable()
+    let mut result = String::new();
+    let mut chars = s.chars().peekable();
 
     while let Some(c) = chars.next() {
         if c == '\\' {
@@ -438,51 +438,51 @@ pub fn process_escapes(s: &str) -> Result<String, String> {
                     let hex = collect_hex_digits(&mut chars, 2)?
                     let byte = u8::from_str_radix(&hex, 16)
                         .map_err(|_| format!("invalid hex escape: \\x{}", hex))?
-                    result.push(byte as Char)
-                }
+                    result.push(byte as Char);
+                };
                 Some('u') => {
                     // Unicode escape: \u{NNNN}
                     if chars.next() != Some('{') {
-                        return Err("expected '{' after \\u".to_string())
-                    }
+                        return Err("expected '{' after \\u".to_string());
+                    };
                     let hex = collect_until(&mut chars, '}')?
                     let codepoint = u32::from_str_radix(&hex, 16)
                         .map_err(|_| format!("invalid unicode escape: \\u{{{}}}", hex))?
                     let ch = char::from_u32(codepoint)
                         .ok_or_else(|| format!("invalid unicode codepoint: {}", codepoint))?
-                    result.push(ch)
-                }
+                    result.push(ch);
+                };
                 Some(c) => {
-                    return Err(format!("unknown escape sequence: \\{}", c))
-                }
+                    return Err(format!("unknown escape sequence: \\{}", c));
+                };
                 None => {
-                    return Err("unexpected end of string after backslash".to_string())
+                    return Err("unexpected end of string after backslash".to_string());
                 }
             }
         } else {
-            result.push(c)
+            result.push(c);
         }
-    }
+    };
 
     Ok(result)
 }
 
 /// Collect a specific number of hex digits.
 fn collect_hex_digits(chars: &mut impl Iterator[Item = Char], count: USize) -> Result<String, String> {
-    let mut result = String::new()
+    let mut result = String::new();
     for _ in 0..count {
         match chars.next() {
             Some(c) if c.is_ascii_hexdigit() => result.push(c),
             Some(c) => return Err(format!("expected hex digit, found '{}'", c)),
             None => return Err("unexpected end of string in escape".to_string()),
         }
-    }
+    };
     Ok(result)
 }
 
 /// Collect characters until a delimiter.
 fn collect_until(chars: &mut impl Iterator[Item = Char], delim: Char) -> Result<String, String> {
-    let mut result = String::new()
+    let mut result = String::new();
     loop {
         match chars.next() {
             Some(c) if c == delim => return Ok(result),
@@ -498,23 +498,23 @@ fn collect_until(chars: &mut impl Iterator[Item = Char], delim: Char) -> Result<
 
 #[test]
 fn test_literal_int() {
-    let lit = Literal::int(42, Option::None, Span::dummy())
+    let lit = Literal::int(42, Option::None, Span::dummy());
 
-    assert(lit.is_int())
-    assert(!lit.is_float())
-    assert(lit.is_numeric())
-    assert(lit.as_int() == Option::Some(42))
+    assert(lit.is_int());
+    assert(!lit.is_float());
+    assert(lit.is_numeric());
+    assert(lit.as_int() == Option::Some(42));
 }
 
 #[test]
 fn test_literal_int_with_suffix() {
-    let lit = Literal::int(100, Option::Some(IntSuffix::I32), Span::dummy())
+    let lit = Literal::int(100, Option::Some(IntSuffix::I32), Span::dummy());
 
-    assert(lit.is_int())
+    assert(lit.is_int());
     match lit.kind {
         LiteralKind::Int { value, suffix } => {
-            assert(value == 100)
-            assert(suffix == Option::Some(IntSuffix::I32))
+            assert(value == 100);
+            assert(suffix == Option::Some(IntSuffix::I32));
         }
         _ => panic("expected int literal"),
     }
@@ -522,34 +522,34 @@ fn test_literal_int_with_suffix() {
 
 #[test]
 fn test_literal_float() {
-    let lit = Literal::float(3.14, Option::None, Span::dummy())
+    let lit = Literal::float(3.14, Option::None, Span::dummy());
 
-    assert(lit.is_float())
-    assert(!lit.is_int())
-    assert(lit.is_numeric())
+    assert(lit.is_float());
+    assert(!lit.is_int());
+    assert(lit.is_numeric());
 }
 
 #[test]
 fn test_literal_string() {
-    let lit = Literal::string("hello", Span::dummy())
+    let lit = Literal::string("hello", Span::dummy());
 
-    assert(lit.is_string())
-    assert(lit.as_string() == Option::Some(&"hello".to_string()))
+    assert(lit.is_string());
+    assert(lit.as_string() == Option::Some(&"hello".to_string()));
 }
 
 #[test]
 fn test_literal_bool() {
-    let true_lit = Literal::bool(true, Span::dummy())
-    let false_lit = Literal::bool(false, Span::dummy())
+    let true_lit = Literal::bool(true, Span::dummy());
+    let false_lit = Literal::bool(false, Span::dummy());
 
-    assert(true_lit.is_bool())
-    assert(true_lit.as_bool() == Option::Some(true))
-    assert(false_lit.as_bool() == Option::Some(false))
+    assert(true_lit.is_bool());
+    assert(true_lit.as_bool() == Option::Some(true));
+    assert(false_lit.as_bool() == Option::Some(false));
 }
 
 #[test]
 fn test_literal_char() {
-    let lit = Literal::char('a', Span::dummy())
+    let lit = Literal::char('a', Span::dummy());
 
     match lit.kind {
         LiteralKind::Char(c) => assert(c == 'a'),
@@ -559,45 +559,45 @@ fn test_literal_char() {
 
 #[test]
 fn test_int_suffix_signed() {
-    assert(IntSuffix::I32.is_signed())
-    assert(IntSuffix::I64.is_signed())
-    assert(!IntSuffix::U32.is_signed())
-    assert(!IntSuffix::U64.is_signed())
+    assert(IntSuffix::I32.is_signed());
+    assert(IntSuffix::I64.is_signed());
+    assert(!IntSuffix::U32.is_signed());
+    assert(!IntSuffix::U64.is_signed());
 }
 
 #[test]
 fn test_int_suffix_as_str() {
-    assert(IntSuffix::I32.as_str() == "i32")
-    assert(IntSuffix::U64.as_str() == "u64")
-    assert(IntSuffix::USize.as_str() == "usize")
+    assert(IntSuffix::I32.as_str() == "i32");
+    assert(IntSuffix::U64.as_str() == "u64");
+    assert(IntSuffix::USize.as_str() == "usize");
 }
 
 #[test]
 fn test_int_suffix_from_str() {
-    assert(IntSuffix::from_str("i32") == Option::Some(IntSuffix::I32))
-    assert(IntSuffix::from_str("u64") == Option::Some(IntSuffix::U64))
-    assert(IntSuffix::from_str("invalid").is_none())
+    assert(IntSuffix::from_str("i32") == Option::Some(IntSuffix::I32));
+    assert(IntSuffix::from_str("u64") == Option::Some(IntSuffix::U64));
+    assert(IntSuffix::from_str("invalid").is_none());
 }
 
 #[test]
 fn test_float_suffix() {
-    assert(FloatSuffix::F32.as_str() == "f32")
-    assert(FloatSuffix::F64.as_str() == "f64")
-    assert(FloatSuffix::from_str("f32") == Option::Some(FloatSuffix::F32))
+    assert(FloatSuffix::F32.as_str() == "f32");
+    assert(FloatSuffix::F64.as_str() == "f64");
+    assert(FloatSuffix::from_str("f32") == Option::Some(FloatSuffix::F32));
 }
 
 #[test]
 fn test_int_base_radix() {
-    assert(IntBase::Decimal.radix() == 10)
-    assert(IntBase::Binary.radix() == 2)
-    assert(IntBase::Octal.radix() == 8)
-    assert(IntBase::Hexadecimal.radix() == 16)
+    assert(IntBase::Decimal.radix() == 10);
+    assert(IntBase::Binary.radix() == 2);
+    assert(IntBase::Octal.radix() == 8);
+    assert(IntBase::Hexadecimal.radix() == 16);
 }
 
 #[test]
 fn test_int_base_prefix() {
-    assert(IntBase::Decimal.prefix() == "")
-    assert(IntBase::Binary.prefix() == "0b")
-    assert(IntBase::Octal.prefix() == "0o")
-    assert(IntBase::Hexadecimal.prefix() == "0x")
+    assert(IntBase::Decimal.prefix() == "");
+    assert(IntBase::Binary.prefix() == "0b");
+    assert(IntBase::Octal.prefix() == "0o");
+    assert(IntBase::Hexadecimal.prefix() == "0x");
 }

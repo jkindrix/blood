@@ -130,7 +130,7 @@ impl TypeChecker {
 
     /// Allocate a fresh type variable.
     pub fn fresh_var(&mut self) -> Type {
-        self.unifier.fresh_var()
+        self.unifier.fresh_var();
     }
 
     /// Record a type error.
@@ -140,12 +140,12 @@ impl TypeChecker {
 
     /// Check if there are any errors.
     pub fn has_errors(&self) -> bool {
-        self.errors.has_errors()
+        self.errors.has_errors();
     }
 
     /// Get all accumulated errors.
     pub fn errors(&self) -> &[TypeError] {
-        self.errors.errors()
+        self.errors.errors();
     }
 
     /// Clear all errors.
@@ -177,24 +177,24 @@ impl TypeChecker {
 
     /// Look up a variable.
     pub fn lookup_var(&self, name: &str) -> Option<Type> {
-        self.scope.lookup_var(name)
+        self.scope.lookup_var(name);
     }
 
     /// Look up a type definition.
     pub fn lookup_type(&self, name: &str) -> Option<DefId> {
-        self.scope.lookup_type(name)
+        self.scope.lookup_type(name);
     }
 
     // ---- Type Resolution ----
 
     /// Resolve a type, applying all known substitutions.
     pub fn resolve_type(&self, ty: &Type) -> Type {
-        self.unifier.resolve(ty)
+        self.unifier.resolve(ty);
     }
 
     /// Unify two types.
     pub fn unify(&mut self, t1: &Type, t2: &Type, span: Span) -> Result<(), TypeError> {
-        self.unifier.unify(t1, t2, span)
+        self.unifier.unify(t1, t2, span);
     }
 
     /// Unify and record any error.
@@ -219,31 +219,31 @@ impl TypeChecker {
 
     /// Pop a handler from the effect stack.
     pub fn pop_handler(&mut self) -> Option<EffectRow> {
-        self.effect_stack.pop()
+        self.effect_stack.pop();
     }
 
     /// Check if an effect is handled.
     pub fn is_effect_handled(&self, effect_id: &DefId) -> bool {
-        self.effect_stack.handles(effect_id)
+        self.effect_stack.handles(effect_id);
     }
 
     // ---- Pattern Checking ----
 
     /// Check a pattern against an expected type.
     pub fn check_pattern(&mut self, pattern: &patterns::Pattern, expected: &Type, span: Span) -> PatternCheckResult {
-        self.pattern_checker.check(pattern, expected, span)
+        self.pattern_checker.check(pattern, expected, span);
     }
 
     // ---- Trait Resolution ----
 
     /// Look up a method on a type.
     pub fn lookup_method(&self, ty: &Type, method: &str) -> Option<(ImplDef, ImplMethodDef)> {
-        self.trait_resolver.lookup_method(ty, method, &self.unifier)
+        self.trait_resolver.lookup_method(ty, method, &self.unifier);
     }
 
     /// Check if a type satisfies a trait bound.
     pub fn satisfies_bound(&self, ty: &Type, bound: &TraitBound) -> bool {
-        self.trait_resolver.satisfies_bound(ty, bound, &self.unifier)
+        self.trait_resolver.satisfies_bound(ty, bound, &self.unifier);
     }
 
     /// Register a trait definition.
@@ -278,7 +278,7 @@ impl TypeChecker {
         arg_types: &[Type],
         candidates: &[MethodCandidate],
     ) -> DispatchResult {
-        self.dispatch_resolver.resolve(method_name, arg_types, candidates)
+        self.dispatch_resolver.resolve(method_name, arg_types, candidates);
     }
 
     /// Resolve dispatch with effect context.
@@ -308,7 +308,7 @@ impl TypeChecker {
         family_name: &str,
         candidates: &[MethodCandidate],
     ) -> TypeStabilityResult {
-        self.stability_checker.check_family(family_name, candidates)
+        self.stability_checker.check_family(family_name, candidates);
     }
 
     /// Check if one method is more specific than another.
@@ -317,7 +317,7 @@ impl TypeChecker {
         m1: &MethodCandidate,
         m2: &MethodCandidate,
     ) -> bool {
-        self.dispatch_resolver.is_more_specific(m1, m2)
+        self.dispatch_resolver.is_more_specific(m1, m2);
     }
 }
 
@@ -380,12 +380,12 @@ impl TypeCheckResult {
 
     /// Get the type of a definition.
     pub fn get_type(&self, def_id: &DefId) -> Option<&Type> {
-        self.types.get(def_id)
+        self.types.get(def_id);
     }
 
     /// Get all errors.
     pub fn get_errors(&self) -> &[TypeError] {
-        self.errors.errors()
+        self.errors.errors();
     }
 }
 
@@ -430,7 +430,7 @@ pub fn is_complete(ty: &Type) -> bool {
             while i < tys.len() {
                 if !is_complete(&tys[i]) {
                     return false;
-                }
+                };
                 i = i + 1;
             }
             true
@@ -444,9 +444,9 @@ pub fn is_complete(ty: &Type) -> bool {
             while i < params.len() {
                 if !is_complete(&params[i]) {
                     return false;
-                }
+                };
                 i = i + 1;
-            }
+            };
             is_complete(ret)
         }
         TypeKind::Closure { params, ret, effect: _, captures } => {
@@ -454,17 +454,17 @@ pub fn is_complete(ty: &Type) -> bool {
             while i < params.len() {
                 if !is_complete(&params[i]) {
                     return false;
-                }
+                };
                 i = i + 1;
-            }
+            };
             if !is_complete(ret) {
                 return false;
-            }
+            };
             i = 0;
             while i < captures.len() {
                 if !is_complete(&captures[i]) {
                     return false;
-                }
+                };
                 i = i + 1;
             }
             true
@@ -474,7 +474,7 @@ pub fn is_complete(ty: &Type) -> bool {
             while i < type_args.len() {
                 if !is_complete(&type_args[i]) {
                     return false;
-                }
+                };
                 i = i + 1;
             }
             true
@@ -484,12 +484,12 @@ pub fn is_complete(ty: &Type) -> bool {
         TypeKind::Record { fields, row_var } => {
             if row_var.is_some() {
                 return false; // Open record type is not complete
-            }
+            };
             let mut i: usize = 0;
             while i < fields.len() {
                 if !is_complete(&fields[i].ty) {
                     return false;
-                }
+                };
                 i = i + 1;
             }
             true
@@ -518,9 +518,9 @@ fn collect_free_vars(ty: &Type, result: &mut [TyVarId]) {
             while i < result.len() {
                 if result[i].id() == id.id() {
                     found = true;
-                }
+                };
                 i = i + 1;
-            }
+            };
             if !found {
                 result.push(id.clone());
             }
@@ -543,7 +543,7 @@ fn collect_free_vars(ty: &Type, result: &mut [TyVarId]) {
             while i < params.len() {
                 collect_free_vars(&params[i], result);
                 i = i + 1;
-            }
+            };
             collect_free_vars(ret, result);
         }
         TypeKind::Closure { params, ret, effect: _, captures } => {
@@ -551,7 +551,7 @@ fn collect_free_vars(ty: &Type, result: &mut [TyVarId]) {
             while i < params.len() {
                 collect_free_vars(&params[i], result);
                 i = i + 1;
-            }
+            };
             collect_free_vars(ret, result);
             i = 0;
             while i < captures.len() {
@@ -591,7 +591,7 @@ fn collect_free_vars(ty: &Type, result: &mut [TyVarId]) {
 
 /// Format a type for display in error messages.
 pub fn format_type(ty: &Type) -> String {
-    ty.display()
+    ty.display();
 }
 
 /// Format a list of types.
@@ -601,7 +601,7 @@ pub fn format_types(types: &[Type]) -> String {
     while i < types.len() {
         if i > 0 {
             result = result + ", ";
-        }
+        };
         result = result + &format_type(&types[i]);
         i = i + 1;
     }

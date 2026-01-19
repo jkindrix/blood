@@ -27,9 +27,9 @@ use crate.compiler.hir.{
     ExternFnDef, BridgeDef, ModuleDef, Body, BodyId,
 }
 
-use crate.compiler.hir.lowering.{AstLowering, LoweringError}
+use crate.compiler.hir.lowering.{AstLowering, LoweringError};
 use crate.compiler.hir.lowering.expr;
-use crate.compiler.typeck.types.{DefId, Type}
+use crate.compiler.typeck.types.{DefId, Type};
 
 // ============================================================================
 // Declaration Lowering Entry Point
@@ -172,7 +172,7 @@ fn lower_function(
             ctx.current_body_id = None;
 
             Some(id)
-        }
+        };
         None => None,
     };
 
@@ -193,7 +193,7 @@ fn lower_fn_sig(ctx: &mut AstLowering, func: &FunctionDecl) -> Result<FnSig, Low
         let param_ty = lower_type(ctx, &func.params[i].ty)?;
         param_types.push(param_ty);
         i = i + 1;
-    }
+    };
 
     // Lower return type
     let return_ty = match &func.return_type {
@@ -236,7 +236,7 @@ fn lower_struct(ctx: &mut AstLowering, s: &StructDecl) -> Result<StructDef, Lowe
             span: ctx.lower_span(&field.span),
         });
         i = i + 1;
-    }
+    };
 
     Ok(StructDef { generics, fields })
 }
@@ -267,7 +267,7 @@ fn lower_enum(ctx: &mut AstLowering, e: &EnumDecl) -> Result<EnumDef, LoweringEr
             let field_ty = lower_type(ctx, &variant.fields[j].ty)?;
             fields.push(field_ty);
             j = j + 1;
-        }
+        };
 
         variants.push(EnumVariant {
             def_id,
@@ -278,7 +278,7 @@ fn lower_enum(ctx: &mut AstLowering, e: &EnumDecl) -> Result<EnumDef, LoweringEr
         });
 
         i = i + 1;
-    }
+    };
 
     Ok(EnumDef { generics, variants })
 }
@@ -356,7 +356,7 @@ fn lower_trait(
         let item = lower_trait_item(ctx, &t.items[i])?;
         items.push(item);
         i = i + 1;
-    }
+    };
 
     Ok((generics, items))
 }
@@ -397,11 +397,11 @@ fn lower_trait_item_kind(
                     ctx.current_body_id = None;
 
                     Some(id)
-                }
+                };
                 None => None,
             };
             Ok(crate.compiler.hir::TraitItemKind::Fn { sig, body_id })
-        }
+        };
         crate.compiler.ast::TraitItemKind::Type(t) => {
             let bounds = lower_type_bounds(ctx, &t.bounds)?;
             let default = match &t.default {
@@ -409,7 +409,7 @@ fn lower_trait_item_kind(
                 None => None,
             };
             Ok(crate.compiler.hir::TraitItemKind::Type { bounds, default })
-        }
+        };
         crate.compiler.ast::TraitItemKind::Const(c) => {
             let ty = lower_type(ctx, &c.ty)?;
             let default = match &c.default {
@@ -423,7 +423,7 @@ fn lower_trait_item_kind(
                     ctx.current_body_id = None;
 
                     Some(body_id)
-                }
+                };
                 None => None,
             };
             Ok(crate.compiler.hir::TraitItemKind::Const { ty, default })
@@ -455,7 +455,7 @@ fn lower_impl(
         let item = lower_impl_item(ctx, &i.items[j])?;
         items.push(item);
         j = j + 1;
-    }
+    };
 
     Ok((generics, trait_ref, self_ty, items))
 }
@@ -489,11 +489,11 @@ fn lower_impl_item_kind(
             };
             let fn_def = lower_function(ctx, f, &def_id)?;
             Ok(crate.compiler.hir::ImplItemKind::Fn(fn_def))
-        }
+        };
         crate.compiler.ast::ImplItemKind::Type(t) => {
             let ty = lower_type(ctx, &t.ty)?;
             Ok(crate.compiler.hir::ImplItemKind::Type(ty))
-        }
+        };
         crate.compiler.ast::ImplItemKind::Const(c) => {
             let ty = lower_type(ctx, &c.ty)?;
             let body_id = ctx.alloc_body_id();
@@ -535,7 +535,7 @@ fn lower_effect(
             let param_ty = lower_type(ctx, &op.params[j].ty)?;
             param_types.push(param_ty);
             j = j + 1;
-        }
+        };
 
         let return_ty = match &op.return_type {
             Some(ty) => lower_type(ctx, ty)?,
@@ -551,7 +551,7 @@ fn lower_effect(
         });
 
         i = i + 1;
-    }
+    };
 
     Ok((generics, operations))
 }
@@ -591,7 +591,7 @@ fn lower_handler(
                 ctx.current_body_id = None;
 
                 Some(body_id)
-            }
+            };
             None => None,
         };
         state.push(HandlerState {
@@ -602,7 +602,7 @@ fn lower_handler(
             span: ctx.lower_span(&s.span),
         });
         i = i + 1;
-    }
+    };
 
     // Lower operation handlers
     let mut operations: [HandlerOp] = [];
@@ -624,7 +624,7 @@ fn lower_handler(
             span: ctx.lower_span(&op.span),
         });
         i = i + 1;
-    }
+    };
 
     // Lower return clause
     let return_clause = match &h.return_clause {
@@ -642,7 +642,7 @@ fn lower_handler(
                 body_id,
                 span: ctx.lower_span(&rc.span),
             })
-        }
+        };
         None => None,
     };
 
@@ -661,7 +661,7 @@ fn lower_extern_fn(ctx: &mut AstLowering, e: &ExternFnDecl) -> Result<ExternFnDe
         let param_ty = lower_type(ctx, &e.params[i].ty)?;
         param_types.push(param_ty);
         i = i + 1;
-    }
+    };
 
     let return_ty = match &e.return_type {
         Some(ty) => lower_type(ctx, ty)?,
@@ -690,7 +690,7 @@ fn lower_bridge(ctx: &mut AstLowering, b: &BridgeDecl) -> Result<BridgeDef, Lowe
         let item = lower_extern_fn(ctx, &b.items[i])?;
         items.push(item);
         i = i + 1;
-    }
+    };
 
     Ok(BridgeDef {
         abi: b.abi.clone(),
@@ -735,10 +735,10 @@ fn lower_generics(
                     None => None,
                 };
                 GenericParamKind::Type { default: default_ty }
-            }
+            };
             crate.compiler.ast::GenericParamKind::Lifetime => {
                 GenericParamKind::Lifetime
-            }
+            };
             crate.compiler.ast::GenericParamKind::Const { ty } => {
                 let const_ty = lower_type(ctx, ty)?;
                 GenericParamKind::Const { ty: const_ty }
@@ -753,7 +753,7 @@ fn lower_generics(
         });
 
         i = i + 1;
-    }
+    };
 
     Ok(Generics {
         params,
@@ -774,12 +774,12 @@ fn lower_where_clause(
                 let pred = lower_where_predicate(ctx, &wc.predicates[i])?;
                 predicates.push(pred);
                 i = i + 1;
-            }
+            };
             Ok(Some(crate.compiler.hir::WhereClause {
                 predicates,
                 span: ctx.lower_span(&wc.span),
             }))
-        }
+        };
         None => Ok(None),
     }
 }
@@ -798,7 +798,7 @@ fn lower_where_predicate(
                 bounds: hir_bounds,
                 span: ctx.lower_span(span),
             })
-        }
+        };
         crate.compiler.ast::WherePredicate::Lifetime { lifetime, bounds, span } => {
             Ok(crate.compiler.hir::WherePredicate::Lifetime {
                 lifetime: lifetime.clone(),
@@ -820,7 +820,7 @@ fn lower_type_bounds(
         let bound = lower_type_bound(ctx, &bounds[i])?;
         result.push(bound);
         i = i + 1;
-    }
+    };
     Ok(result)
 }
 
@@ -833,7 +833,7 @@ fn lower_type_bound(
         crate.compiler.ast::TypeBound::Trait(tr) => {
             let trait_ref = lower_trait_ref(ctx, tr)?;
             Ok(crate.compiler.hir::TypeBound::Trait(trait_ref))
-        }
+        };
         crate.compiler.ast::TypeBound::Lifetime(lt) => {
             Ok(crate.compiler.hir::TypeBound::Lifetime(lt.clone()))
         }
@@ -858,9 +858,9 @@ fn lower_trait_ref(
                 args.push(arg);
                 i = i + 1;
             }
-        }
-        None => {}
-    }
+        };
+        None => {};
+    };
 
     Ok(TraitRef {
         def_id,
@@ -880,7 +880,7 @@ fn lower_params(
         let ty = lower_type(ctx, &params[i].ty)?;
         result.push((params[i].name.name.clone(), ty));
         i = i + 1;
-    }
+    };
     Ok(result)
 }
 
@@ -890,7 +890,7 @@ pub fn lower_type(ctx: &mut AstLowering, ty: &crate.compiler.ast::Type) -> Resul
         crate.compiler.ast::TypeKind::Path(path) => {
             // Try to resolve the path to a type
             resolve_type_path(ctx, path)
-        }
+        };
         crate.compiler.ast::TypeKind::Tuple(tys) => {
             let mut elements: [Type] = [];
             let mut i: usize = 0;
@@ -898,25 +898,25 @@ pub fn lower_type(ctx: &mut AstLowering, ty: &crate.compiler.ast::Type) -> Resul
                 let elem = lower_type(ctx, &tys[i])?;
                 elements.push(elem);
                 i = i + 1;
-            }
+            };
             Ok(Type::tuple(elements))
-        }
+        };
         crate.compiler.ast::TypeKind::Array { elem, len } => {
             let elem_ty = lower_type(ctx, elem)?;
             Ok(Type::array(elem_ty, *len))
-        }
+        };
         crate.compiler.ast::TypeKind::Slice(elem) => {
             let elem_ty = lower_type(ctx, elem)?;
             Ok(Type::slice(elem_ty))
-        }
+        };
         crate.compiler.ast::TypeKind::Reference { mutable, ty: inner } => {
             let inner_ty = lower_type(ctx, inner)?;
             Ok(Type::reference(inner_ty, *mutable))
-        }
+        };
         crate.compiler.ast::TypeKind::Pointer { mutable, ty: inner } => {
             let inner_ty = lower_type(ctx, inner)?;
             Ok(Type::pointer(inner_ty, *mutable))
-        }
+        };
         crate.compiler.ast::TypeKind::Function { params, return_ty, effects } => {
             let mut param_tys: [Type] = [];
             let mut i: usize = 0;
@@ -924,16 +924,16 @@ pub fn lower_type(ctx: &mut AstLowering, ty: &crate.compiler.ast::Type) -> Resul
                 let param_ty = lower_type(ctx, &params[i])?;
                 param_tys.push(param_ty);
                 i = i + 1;
-            }
+            };
             let ret_ty = lower_type(ctx, return_ty)?;
             Ok(Type::function(param_tys, ret_ty))
-        }
+        };
         crate.compiler.ast::TypeKind::Infer => {
             Ok(Type::infer())
-        }
+        };
         crate.compiler.ast::TypeKind::Never => {
             Ok(Type::never())
-        }
+        };
         crate.compiler.ast::TypeKind::Error => {
             Ok(Type::error())
         }
@@ -951,7 +951,7 @@ fn lower_effect_row(
         let effect = lower_effect_instance(ctx, &row.effects[i])?;
         effects.push(effect);
         i = i + 1;
-    }
+    };
     Ok(crate.compiler.typeck::types::EffectRow {
         effects,
         tail: row.tail.clone(),
@@ -974,9 +974,9 @@ fn lower_effect_instance(
                 args.push(arg);
                 i = i + 1;
             }
-        }
-        None => {}
-    }
+        };
+        None => {};
+    };
 
     Ok(crate.compiler.typeck::types::EffectInstance {
         def_id,
@@ -1005,9 +1005,9 @@ fn resolve_type_path(ctx: &mut AstLowering, path: &TypePath) -> Result<Type, Low
             "str" => return Ok(Type::str()),
             "String" => return Ok(Type::string()),
             "()" => return Ok(Type::unit()),
-            _ => {}
+            _ => {};
         }
-    }
+    };
 
     // Resolve user-defined type
     let def_id = resolve_path_to_def(ctx, path)?;
@@ -1023,7 +1023,7 @@ fn resolve_type_path(ctx: &mut AstLowering, path: &TypePath) -> Result<Type, Low
                 i = i + 1;
             }
         }
-    }
+    };
 
     if args.is_empty() {
         Ok(Type::adt(def_id))

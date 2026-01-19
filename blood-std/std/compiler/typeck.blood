@@ -152,7 +152,7 @@ impl PrimitiveTy {
 
     /// Check if this is a numeric type (integer or float).
     fn is_numeric(&self) -> bool {
-        self.is_integer() || self.is_float()
+        self.is_integer() || self.is_float();
     }
 }
 
@@ -380,7 +380,7 @@ impl EffectRow {
 
     /// Check if this effect row is pure (no effects).
     fn is_pure(&self) -> bool {
-        self.effects.len() == 0 && self.row_var.is_none()
+        self.effects.len() == 0 && self.row_var.is_none();
     }
 }
 
@@ -561,18 +561,18 @@ impl Unifier {
                         TypeErrorKind::Mismatch { expected: t1.clone(), found: t2.clone() },
                         span,
                     ));
-                }
+                };
                 if a1.len() != a2.len() {
                     return Err(TypeError::new(
                         TypeErrorKind::WrongArity { expected: a1.len() as u32, found: a2.len() as u32 },
                         span,
                     ));
-                }
+                };
                 let mut i: usize = 0;
                 while i < a1.len() {
                     self.unify(&a1[i], &a2[i], span)?;
                     i = i + 1;
-                }
+                };
                 Ok(())
             }
 
@@ -583,12 +583,12 @@ impl Unifier {
                         TypeErrorKind::Mismatch { expected: t1.clone(), found: t2.clone() },
                         span,
                     ));
-                }
+                };
                 let mut i: usize = 0;
                 while i < ts1.len() {
                     self.unify(&ts1[i], &ts2[i], span)?;
                     i = i + 1;
-                }
+                };
                 Ok(())
             }
 
@@ -599,13 +599,13 @@ impl Unifier {
                         TypeErrorKind::Mismatch { expected: t1.clone(), found: t2.clone() },
                         span,
                     ));
-                }
-                self.unify(e1, e2, span)
+                };
+                self.unify(e1, e2, span);
             }
 
             // Slices
             (TypeKind::Slice { element: e1 }, TypeKind::Slice { element: e2 }) => {
-                self.unify(e1, e2, span)
+                self.unify(e1, e2, span);
             }
 
             // References with same mutability
@@ -615,8 +615,8 @@ impl Unifier {
                         TypeErrorKind::Mismatch { expected: t1.clone(), found: t2.clone() },
                         span,
                     ));
-                }
-                self.unify(i1, i2, span)
+                };
+                self.unify(i1, i2, span);
             }
 
             // Pointers with same mutability
@@ -626,8 +626,8 @@ impl Unifier {
                         TypeErrorKind::Mismatch { expected: t1.clone(), found: t2.clone() },
                         span,
                     ));
-                }
-                self.unify(i1, i2, span)
+                };
+                self.unify(i1, i2, span);
             }
 
             // Function types
@@ -637,14 +637,14 @@ impl Unifier {
                         TypeErrorKind::Mismatch { expected: t1.clone(), found: t2.clone() },
                         span,
                     ));
-                }
+                };
                 let mut i: usize = 0;
                 while i < p1.len() {
                     self.unify(&p1[i], &p2[i], span)?;
                     i = i + 1;
-                }
+                };
                 self.unify(r1, r2, span)?;
-                self.unify_effects(e1, e2, span)
+                self.unify_effects(e1, e2, span);
             }
 
             // Type variable on left - bind it
@@ -654,7 +654,7 @@ impl Unifier {
                         TypeErrorKind::OccursCheck { var: id.clone(), ty: t2.clone() },
                         span,
                     ));
-                }
+                };
                 self.substitutions.insert(id.id, t2.clone());
                 Ok(())
             }
@@ -666,7 +666,7 @@ impl Unifier {
                         TypeErrorKind::OccursCheck { var: id.clone(), ty: t1.clone() },
                         span,
                     ));
-                }
+                };
                 self.substitutions.insert(id.id, t1.clone());
                 Ok(())
             }
@@ -699,7 +699,7 @@ impl Unifier {
                 while i < tys.len() {
                     if self.occurs_in(var, &tys[i]) {
                         return true;
-                    }
+                    };
                     i = i + 1;
                 }
                 false
@@ -713,27 +713,27 @@ impl Unifier {
                 while i < params.len() {
                     if self.occurs_in(var, &params[i]) {
                         return true;
-                    }
+                    };
                     i = i + 1;
-                }
-                self.occurs_in(var, ret)
+                };
+                self.occurs_in(var, ret);
             }
             TypeKind::Closure { params, ret, effect: _, captures } => {
                 let mut i: usize = 0;
                 while i < params.len() {
                     if self.occurs_in(var, &params[i]) {
                         return true;
-                    }
+                    };
                     i = i + 1;
-                }
+                };
                 if self.occurs_in(var, ret) {
                     return true;
-                }
+                };
                 i = 0;
                 while i < captures.len() {
                     if self.occurs_in(var, &captures[i]) {
                         return true;
-                    }
+                    };
                     i = i + 1;
                 }
                 false
@@ -743,7 +743,7 @@ impl Unifier {
                 while i < args.len() {
                     if self.occurs_in(var, &args[i]) {
                         return true;
-                    }
+                    };
                     i = i + 1;
                 }
                 false
@@ -755,7 +755,7 @@ impl Unifier {
                 while i < fields.len() {
                     if self.occurs_in(var, &fields[i].ty) {
                         return true;
-                    }
+                    };
                     i = i + 1;
                 }
                 false
@@ -828,7 +828,7 @@ impl Unifier {
                 TypeErrorKind::Other { message: "Effect row length mismatch".to_string() },
                 span,
             ));
-        }
+        };
 
         // Check that all effects in r1 are in r2
         let mut i: usize = 0;
@@ -838,9 +838,9 @@ impl Unifier {
                     TypeErrorKind::Other { message: "Effect not found in row".to_string() },
                     span,
                 ));
-            }
+            };
             i = i + 1;
-        }
+        };
 
         Ok(())
     }
@@ -852,7 +852,7 @@ impl Unifier {
             if row.effects[i].def_id.id == effect.def_id.id {
                 // TODO: also check type args match
                 return true;
-            }
+            };
             i = i + 1;
         }
         false
@@ -1055,12 +1055,12 @@ impl EffectContext {
                 while i < row.effects.len() {
                     if row.effects[i].def_id.id == effect_id.id {
                         return true;
-                    }
+                    };
                     i = i + 1;
                 }
-            }
-            None => {}
-        }
+            };
+            None => {};
+        };
 
         // Check if handled by an enclosing handler
         let mut i: usize = 0;
@@ -1069,9 +1069,9 @@ impl EffectContext {
             while j < handled[i].effects.len() {
                 if handled[i].effects[j].def_id.id == effect_id.id {
                     return true;
-                }
+                };
                 j = j + 1;
-            }
+            };
             i = i + 1;
         }
 
@@ -1218,7 +1218,7 @@ impl TraitResolver {
                         i = i + 1;
                         continue;
                     }
-                }
+                };
                 None => {
                     i = i + 1;
                     continue;
@@ -1228,7 +1228,7 @@ impl TraitResolver {
             // Check if the type matches
             if self.type_matches(&impl_def.self_type, ty, unifier) {
                 return Some(impl_def.clone());
-            }
+            };
 
             i = i + 1;
         }
@@ -1246,14 +1246,14 @@ impl TraitResolver {
                 Some(_) => {
                     i = i + 1;
                     continue;
-                }
-                None => {}
+                };
+                None => {};
             }
 
             // Check if the type matches
             if self.type_matches(&impl_def.self_type, ty, unifier) {
                 return Some(impl_def.clone());
-            }
+            };
 
             i = i + 1;
         }
@@ -1267,20 +1267,20 @@ impl TraitResolver {
 
         match (&resolved_impl.kind, &resolved_concrete.kind) {
             (TypeKind::Primitive(p1), TypeKind::Primitive(p2)) => {
-                self.primitives_equal(p1, p2)
+                self.primitives_equal(p1, p2);
             }
             (TypeKind::Adt { def_id: d1, args: a1 }, TypeKind::Adt { def_id: d2, args: a2 }) => {
                 if d1.id != d2.id {
                     return false;
-                }
+                };
                 if a1.len() != a2.len() {
                     return false;
-                }
+                };
                 let mut i: usize = 0;
                 while i < a1.len() {
                     if !self.type_matches(&a1[i], &a2[i], unifier) {
                         return false;
-                    }
+                    };
                     i = i + 1;
                 }
                 true
@@ -1288,18 +1288,18 @@ impl TraitResolver {
             (TypeKind::Tuple(t1), TypeKind::Tuple(t2)) => {
                 if t1.len() != t2.len() {
                     return false;
-                }
+                };
                 let mut i: usize = 0;
                 while i < t1.len() {
                     if !self.type_matches(&t1[i], &t2[i], unifier) {
                         return false;
-                    }
+                    };
                     i = i + 1;
                 }
                 true
             }
             (TypeKind::Ref { inner: i1, mutable: m1 }, TypeKind::Ref { inner: i2, mutable: m2 }) => {
-                m1 == m2 && self.type_matches(i1, i2, unifier)
+                m1 == m2 && self.type_matches(i1, i2, unifier);
             }
             (TypeKind::Param(_), _) => {
                 // Type parameter in impl - matches any type
@@ -1340,11 +1340,11 @@ impl TraitResolver {
             Some(impl_def) => {
                 match impl_def.methods.get(method_name) {
                     Some(method) => return Some((impl_def.clone(), method.clone())),
-                    None => {}
+                    None => {};
                 }
-            }
-            None => {}
-        }
+            };
+            None => {};
+        };
 
         // Then, check trait impls
         let mut i: usize = 0;
@@ -1353,9 +1353,9 @@ impl TraitResolver {
             if self.type_matches(&impl_def.self_type, ty, unifier) {
                 match impl_def.methods.get(method_name) {
                     Some(method) => return Some((impl_def.clone(), method.clone())),
-                    None => {}
+                    None => {};
                 }
-            }
+            };
             i = i + 1;
         }
 
@@ -1377,7 +1377,7 @@ impl TraitResolver {
         while i < bounds.len() {
             if !self.satisfies_bound(ty, &bounds[i], unifier) {
                 unsatisfied.push(bounds[i].trait_id.clone());
-            }
+            };
             i = i + 1;
         }
         unsatisfied
@@ -1412,7 +1412,7 @@ impl TypeContext {
 
     /// Create a fresh type variable.
     fn fresh_var(&mut self) -> Type {
-        self.unifier.fresh_var()
+        self.unifier.fresh_var();
     }
 
     /// Record an error.
@@ -1464,7 +1464,7 @@ impl TypeContext {
         while i < fn_decl.params.len() {
             params.push(self.lower_type(&fn_decl.params[i].ty));
             i = i + 1;
-        }
+        };
 
         // Collect return type
         let ret = match &fn_decl.return_type {
@@ -1504,7 +1504,7 @@ impl TypeContext {
                     i = i + 1;
                 }
                 ids
-            }
+            };
             None => vec![],
         }
     }
@@ -1583,7 +1583,7 @@ impl TypeContext {
                 },
             });
             i = i + 1;
-        }
+        };
 
         // Store the type definition
         self.type_defs.insert(def_id.id, TypeDef {
@@ -1612,7 +1612,7 @@ impl TypeContext {
             while j < op.params.len() {
                 params.push(self.lower_type(&op.params[j].ty));
                 j = j + 1;
-            }
+            };
             operations.push(EffectOpDef {
                 name: op.name.value.clone(),
                 params,
@@ -1622,7 +1622,7 @@ impl TypeContext {
                 },
             });
             i = i + 1;
-        }
+        };
 
         // Store the effect definition
         self.effect_defs.insert(def_id.id, EffectDef {
@@ -1651,7 +1651,7 @@ impl TypeContext {
                 // Check for primitive types
                 if let Some(prim) = self.lookup_primitive(name) {
                     return Type::new(TypeKind::Primitive(prim));
-                }
+                };
 
                 // Look up user-defined type
                 match self.scope.lookup_type(name) {
@@ -1665,11 +1665,11 @@ impl TypeContext {
                                     i = i + 1;
                                 }
                                 args
-                            }
+                            };
                             None => vec![],
                         };
                         Type::new(TypeKind::Adt { def_id, args: type_args })
-                    }
+                    };
                     None => {
                         self.error(TypeError::new(
                             TypeErrorKind::UnresolvedType { name: name.clone() },
@@ -1717,7 +1717,7 @@ impl TypeContext {
                 while i < params.len() {
                     param_tys.push(self.lower_type(&params[i]));
                     i = i + 1;
-                }
+                };
                 let ret_ty = match ret {
                     Some(ty) => self.lower_type(ty),
                     None => Type::unit(),
@@ -1784,20 +1784,20 @@ impl TypeContext {
                                 args.push(self.lower_type(&arg_list[j]));
                                 j = j + 1;
                             }
-                        }
-                        None => {}
-                    }
+                        };
+                        None => {};
+                    };
                     effects.push(EffectInstance { def_id, args });
-                }
+                };
                 None => {
                     self.error(TypeError::new(
                         TypeErrorKind::UnresolvedType { name: effect.name.value.clone() },
                         effect.span,
                     ));
                 }
-            }
+            };
             i = i + 1;
-        }
+        };
 
         let row_var = match &row.row_var {
             Some(_) => Some(self.unifier.fresh_effect_row_var()),
@@ -1828,15 +1828,15 @@ impl TypeContext {
             ExprKind::Binary { op, left, right } => {
                 let left_ty = self.infer_expr(left);
                 let right_ty = self.infer_expr(right);
-                self.check_binary_op(op, &left_ty, &right_ty, expr.span)
+                self.check_binary_op(op, &left_ty, &right_ty, expr.span);
             }
             ExprKind::Unary { op, operand } => {
                 let operand_ty = self.infer_expr(operand);
-                self.check_unary_op(op, &operand_ty, expr.span)
+                self.check_unary_op(op, &operand_ty, expr.span);
             }
             ExprKind::Call { callee, args } => {
                 let callee_ty = self.infer_expr(callee);
-                self.check_call(&callee_ty, args, expr.span)
+                self.check_call(&callee_ty, args, expr.span);
             }
             ExprKind::If { condition, then_branch, else_branch } => {
                 let cond_ty = self.infer_expr(condition);
@@ -1848,7 +1848,7 @@ impl TypeContext {
                         let else_ty = self.check_block(else_block);
                         self.unifier.unify(&then_ty, &else_ty, expr.span);
                         then_ty
-                    }
+                    };
                     None => {
                         self.unifier.unify(&then_ty, &Type::unit(), expr.span);
                         Type::unit()
@@ -1882,21 +1882,21 @@ impl TypeContext {
                                 Ok(()) => {}
                                 Err(e) => self.error(e),
                             }
-                        }
-                        None => {}
-                    }
+                        };
+                        None => {};
+                    };
 
                     // Check arm body
                     let arm_ty = self.infer_expr(&arm.body);
                     match self.unifier.unify(&result_ty, &arm_ty, arm.body.span) {
                         Ok(()) => {}
                         Err(e) => self.error(e),
-                    }
+                    };
 
                     // Restore scope
                     self.scope = old_scope;
                     i = i + 1;
-                }
+                };
 
                 // Check pattern exhaustiveness
                 let mut patterns: [Pattern] = vec![];
@@ -1904,7 +1904,7 @@ impl TypeContext {
                 while i < arms.len() {
                     patterns.push(arms[i].pattern.clone());
                     i = i + 1;
-                }
+                };
                 self.check_match_exhaustiveness(&patterns, &scrutinee_ty, expr.span);
 
                 result_ty
@@ -1915,7 +1915,7 @@ impl TypeContext {
                 match self.unifier.unify(&cond_ty, &Type::bool_type(), condition.span) {
                     Ok(()) => {}
                     Err(e) => self.error(e),
-                }
+                };
                 self.check_block(body);
                 Type::unit()
             }
@@ -1947,18 +1947,18 @@ impl TypeContext {
 
             ExprKind::FieldAccess { object, field } => {
                 let obj_ty = self.infer_expr(object);
-                self.check_field_access(&obj_ty, &field.value, expr.span)
+                self.check_field_access(&obj_ty, &field.value, expr.span);
             }
 
             ExprKind::MethodCall { object, method, args } => {
                 let obj_ty = self.infer_expr(object);
-                self.check_method_call(&obj_ty, &method.value, args, expr.span)
+                self.check_method_call(&obj_ty, &method.value, args, expr.span);
             }
 
             ExprKind::Index { object, index } => {
                 let obj_ty = self.infer_expr(object);
                 let idx_ty = self.infer_expr(index);
-                self.check_index(&obj_ty, &idx_ty, expr.span)
+                self.check_index(&obj_ty, &idx_ty, expr.span);
             }
 
             ExprKind::Range { start, end, inclusive } => {
@@ -1981,7 +1981,7 @@ impl TypeContext {
             }
 
             ExprKind::Struct { name, fields } => {
-                self.check_struct_construction(name, fields, expr.span)
+                self.check_struct_construction(name, fields, expr.span);
             }
 
             ExprKind::Tuple(elements) => {
@@ -2007,7 +2007,7 @@ impl TypeContext {
                         match self.unifier.unify(&first_ty, &elem_ty, elements[i].span) {
                             Ok(()) => {}
                             Err(e) => self.error(e),
-                        }
+                        };
                         i = i + 1;
                     }
                     Type::new(TypeKind::Array { element: first_ty, size: elements.len() as u64 })
@@ -2018,7 +2018,7 @@ impl TypeContext {
                 // TODO: check against enclosing function's return type
                 match value {
                     Some(v) => { self.infer_expr(v); }
-                    None => {}
+                    None => {};
                 }
                 Type::never()
             }
@@ -2027,7 +2027,7 @@ impl TypeContext {
                 // TODO: check against enclosing loop's expected type
                 match value {
                     Some(v) => { self.infer_expr(v); }
-                    None => {}
+                    None => {};
                 }
                 Type::never()
             }
@@ -2082,16 +2082,16 @@ impl TypeContext {
             }
 
             ExprKind::Handle { expr: inner, handlers } => {
-                self.check_effect_handle(inner, handlers, expr.span)
+                self.check_effect_handle(inner, handlers, expr.span);
             }
 
             ExprKind::Perform { effect, operation, args } => {
-                self.check_effect_perform(&effect.value, &operation.value, args, expr.span)
+                self.check_effect_perform(&effect.value, &operation.value, args, expr.span);
             }
 
             ExprKind::Path(path) => {
                 // Could be an enum variant or module path
-                self.resolve_path(path, expr.span)
+                self.resolve_path(path, expr.span);
             }
 
             ExprKind::Closure { params, return_type, body, effects } => {
@@ -2107,7 +2107,7 @@ impl TypeContext {
                     self.scope.define_var(params[i].pattern.name.value.clone(), param_ty.clone());
                     param_tys.push(param_ty);
                     i = i + 1;
-                }
+                };
 
                 // Infer body type
                 let body_ty = self.infer_expr(body);
@@ -2117,9 +2117,9 @@ impl TypeContext {
                     Some(ret_ty) => {
                         let expected = self.lower_type(ret_ty);
                         self.unifier.unify(&body_ty, &expected, expr.span);
-                    }
-                    None => {}
-                }
+                    };
+                    None => {};
+                };
 
                 // Restore scope
                 self.scope = old_scope;
@@ -2162,12 +2162,12 @@ impl TypeContext {
         // For now, just unify the operands and return the left type
         // A full implementation would check operator overloading
         self.unifier.unify(left, right, span);
-        left.clone()
+        left.clone();
     }
 
     /// Check a unary operation.
     fn check_unary_op(&mut self, op: &UnOp, operand: &Type, span: Span) -> Type {
-        operand.clone()
+        operand.clone();
     }
 
     /// Check a function call.
@@ -2183,16 +2183,16 @@ impl TypeContext {
                         span,
                     ));
                     return Type::error();
-                }
+                };
 
                 let mut i: usize = 0;
                 while i < args.len() {
                     let arg_ty = self.infer_expr(&args[i]);
                     self.unifier.unify(&params[i], &arg_ty, args[i].span);
                     i = i + 1;
-                }
+                };
 
-                ret.clone()
+                ret.clone();
             }
             TypeKind::Infer(_) => {
                 // Create fresh variables for params and return
@@ -2201,7 +2201,7 @@ impl TypeContext {
                 while i < args.len() {
                     param_tys.push(self.fresh_var());
                     i = i + 1;
-                }
+                };
                 let ret_ty = self.fresh_var();
 
                 // Unify callee with function type
@@ -2243,7 +2243,7 @@ impl TypeContext {
         while i < block.statements.len() {
             self.check_statement(&block.statements[i]);
             i = i + 1;
-        }
+        };
 
         // Get type of final expression
         let result_ty = match &block.result {
@@ -2270,9 +2270,9 @@ impl TypeContext {
                     Some(expr) => {
                         let value_ty = self.infer_expr(expr);
                         self.unifier.unify(&expected_ty, &value_ty, *span);
-                    }
-                    None => {}
-                }
+                    };
+                    None => {};
+                };
 
                 // Bind pattern
                 self.bind_pattern(pattern, &expected_ty);
@@ -2307,7 +2307,7 @@ impl TypeContext {
                                 pattern.span,
                             ));
                             return;
-                        }
+                        };
                         let mut i: usize = 0;
                         while i < patterns.len() {
                             self.bind_pattern(&patterns[i], &tys[i]);
@@ -2342,7 +2342,7 @@ impl TypeContext {
                                             match field_ty {
                                                 Some(fty) => {
                                                     self.bind_pattern(&field_pat.pattern, &fty);
-                                                }
+                                                };
                                                 None => {
                                                     self.error(TypeError::new(
                                                         TypeErrorKind::UnknownField {
@@ -2352,7 +2352,7 @@ impl TypeContext {
                                                         pattern.span,
                                                     ));
                                                 }
-                                            }
+                                            };
                                             i = i + 1;
                                         }
                                     }
@@ -2366,7 +2366,7 @@ impl TypeContext {
                                         ));
                                     }
                                 }
-                            }
+                            };
                             None => {
                                 self.error(TypeError::new(
                                     TypeErrorKind::UnresolvedType { name: name.segments[0].value.clone() },
@@ -2403,7 +2403,7 @@ impl TypeContext {
                                                         match &vdef.payload {
                                                             Some(payload_ty) => {
                                                                 self.bind_pattern(payload_pat, payload_ty);
-                                                            }
+                                                            };
                                                             None => {
                                                                 self.error(TypeError::new(
                                                                     TypeErrorKind::Other {
@@ -2413,10 +2413,10 @@ impl TypeContext {
                                                                 ));
                                                             }
                                                         }
-                                                    }
-                                                    None => {}
+                                                    };
+                                                    None => {};
                                                 }
-                                            }
+                                            };
                                             None => {
                                                 self.error(TypeError::new(
                                                     TypeErrorKind::Other {
@@ -2437,7 +2437,7 @@ impl TypeContext {
                                         ));
                                     }
                                 }
-                            }
+                            };
                             None => {
                                 self.error(TypeError::new(
                                     TypeErrorKind::UnresolvedType { name: name.segments[0].value.clone() },
@@ -2482,7 +2482,7 @@ impl TypeContext {
                 match self.unifier.unify(ty, &start_ty, pattern.span) {
                     Ok(()) => {}
                     Err(e) => self.error(e),
-                }
+                };
                 match end {
                     Some(end_lit) => {
                         let end_ty = self.infer_literal(end_lit);
@@ -2490,8 +2490,8 @@ impl TypeContext {
                             Ok(()) => {}
                             Err(e) => self.error(e),
                         }
-                    }
-                    None => {}
+                    };
+                    None => {};
                 }
             }
 
@@ -2514,7 +2514,7 @@ impl TypeContext {
         while i < fields.len() {
             if fields[i].name == name {
                 return Some(fields[i].ty.clone());
-            }
+            };
             i = i + 1;
         }
         None
@@ -2526,7 +2526,7 @@ impl TypeContext {
         while i < variants.len() {
             if variants[i].name == name {
                 return Some(variants[i].clone());
-            }
+            };
             i = i + 1;
         }
         None
@@ -2545,12 +2545,12 @@ impl TypeContext {
                 if args.len() > 0 {
                     args[0].clone()
                 } else {
-                    self.fresh_var()
+                    self.fresh_var();
                 }
             }
             TypeKind::Infer(_) => {
                 // Can't determine element type yet
-                self.fresh_var()
+                self.fresh_var();
             }
             _ => {
                 self.error(TypeError::new(
@@ -2575,7 +2575,7 @@ impl TypeContext {
                                     Some(field_ty) => {
                                         // TODO: substitute type args
                                         field_ty
-                                    }
+                                    };
                                     None => {
                                         self.error(TypeError::new(
                                             TypeErrorKind::UnknownField {
@@ -2596,7 +2596,7 @@ impl TypeContext {
                                 Type::error()
                             }
                         }
-                    }
+                    };
                     None => {
                         self.error(TypeError::new(
                             TypeErrorKind::Other { message: "Unknown type".to_string() },
@@ -2621,7 +2621,7 @@ impl TypeContext {
                             ));
                             Type::error()
                         }
-                    }
+                    };
                     Err(_) => {
                         self.error(TypeError::new(
                             TypeErrorKind::Other { message: "Tuple fields must be numeric".to_string() },
@@ -2633,11 +2633,11 @@ impl TypeContext {
             }
             TypeKind::Ref { inner, mutable: _ } => {
                 // Auto-deref
-                self.check_field_access(inner, field, span)
+                self.check_field_access(inner, field, span);
             }
             TypeKind::Infer(_) => {
                 // Can't resolve field access on inference variable yet
-                self.fresh_var()
+                self.fresh_var();
             }
             _ => {
                 self.error(TypeError::new(
@@ -2678,7 +2678,7 @@ impl TypeContext {
                         span,
                     ));
                     return Type::error();
-                }
+                };
 
                 // Check argument types
                 let mut i: usize = 0;
@@ -2690,12 +2690,12 @@ impl TypeContext {
                             Ok(()) => {}
                             Err(e) => self.error(e),
                         }
-                    }
+                    };
                     i = i + 1;
-                }
+                };
 
-                method_def.ret.clone()
-            }
+                method_def.ret.clone();
+            };
             None => {
                 // Method not found - report error
                 self.error(TypeError::new(
@@ -2726,19 +2726,19 @@ impl TypeContext {
                 match self.unifier.unify(idx_ty, &Type::new(TypeKind::Primitive(PrimitiveTy::Usize)), span) {
                     Ok(()) => {}
                     Err(e) => self.error(e),
-                }
-                element.clone()
+                };
+                element.clone();
             }
             TypeKind::Slice { element } => {
                 match self.unifier.unify(idx_ty, &Type::new(TypeKind::Primitive(PrimitiveTy::Usize)), span) {
                     Ok(()) => {}
                     Err(e) => self.error(e),
-                }
-                element.clone()
+                };
+                element.clone();
             }
             TypeKind::Ref { inner, mutable: _ } => {
                 // Auto-deref
-                self.check_index(inner, idx_ty, span)
+                self.check_index(inner, idx_ty, span);
             }
             TypeKind::Infer(_) => self.fresh_var(),
             _ => {
@@ -2772,7 +2772,7 @@ impl TypeContext {
                                                 Ok(()) => {}
                                                 Err(e) => self.error(e),
                                             }
-                                        }
+                                        };
                                         None => {
                                             self.error(TypeError::new(
                                                 TypeErrorKind::UnknownField {
@@ -2782,7 +2782,7 @@ impl TypeContext {
                                                 span,
                                             ));
                                         }
-                                    }
+                                    };
                                     i = i + 1;
                                 }
 
@@ -2799,7 +2799,7 @@ impl TypeContext {
                                 Type::error()
                             }
                         }
-                    }
+                    };
                     None => {
                         self.error(TypeError::new(
                             TypeErrorKind::UnresolvedType { name: struct_name.clone() },
@@ -2808,7 +2808,7 @@ impl TypeContext {
                         Type::error()
                     }
                 }
-            }
+            };
             None => {
                 self.error(TypeError::new(
                     TypeErrorKind::UnresolvedType { name: struct_name.clone() },
@@ -2832,16 +2832,16 @@ impl TypeContext {
                         def_id,
                         args: vec![], // TODO: track type args
                     });
-                }
+                };
                 None => {
                     self.error(TypeError::new(
                         TypeErrorKind::UnresolvedType { name: handler.effect.value.clone() },
                         handler.span,
                     ));
                 }
-            }
+            };
             i = i + 1;
-        }
+        };
 
         // Push handled effects onto stack
         self.handled_effects.push(handled_row);
@@ -2878,7 +2878,7 @@ impl TypeContext {
                             self.check_op_handler(effect_def, op_handler);
                             i = i + 1;
                         }
-                    }
+                    };
                     None => {
                         self.error(TypeError::new(
                             TypeErrorKind::UnresolvedType { name: handler.effect.value.clone() },
@@ -2886,7 +2886,7 @@ impl TypeContext {
                         ));
                     }
                 }
-            }
+            };
             None => {
                 self.error(TypeError::new(
                     TypeErrorKind::UnresolvedType { name: handler.effect.value.clone() },
@@ -2914,9 +2914,9 @@ impl TypeContext {
                             op_handler.params[i].name.value.clone(),
                             opdef.params[i].clone(),
                         );
-                    }
+                    };
                     i = i + 1;
-                }
+                };
 
                 // Bind resume continuation if present
                 match &op_handler.resume {
@@ -2928,16 +2928,16 @@ impl TypeContext {
                             effect: None,
                         });
                         self.scope.define_var(resume_name.value.clone(), resume_ty);
-                    }
-                    None => {}
-                }
+                    };
+                    None => {};
+                };
 
                 // Check handler body
                 self.infer_expr(&op_handler.body);
 
                 // Restore scope
                 self.scope = old_scope;
-            }
+            };
             None => {
                 self.error(TypeError::new(
                     TypeErrorKind::InvalidEffectOp {
@@ -2956,7 +2956,7 @@ impl TypeContext {
         while i < effect_def.operations.len() {
             if effect_def.operations[i].name == name {
                 return Some(effect_def.operations[i].clone());
-            }
+            };
             i = i + 1;
         }
         None
@@ -2987,7 +2987,7 @@ impl TypeContext {
                                         span,
                                     ));
                                     return Type::error();
-                                }
+                                };
 
                                 // Check argument types
                                 let mut i: usize = 0;
@@ -2996,12 +2996,12 @@ impl TypeContext {
                                     match self.unifier.unify(&op_def.params[i], &arg_ty, args[i].span) {
                                         Ok(()) => {}
                                         Err(e) => self.error(e),
-                                    }
+                                    };
                                     i = i + 1;
-                                }
+                                };
 
-                                op_def.ret.clone()
-                            }
+                                op_def.ret.clone();
+                            };
                             None => {
                                 self.error(TypeError::new(
                                     TypeErrorKind::InvalidEffectOp {
@@ -3013,7 +3013,7 @@ impl TypeContext {
                                 Type::error()
                             }
                         }
-                    }
+                    };
                     None => {
                         self.error(TypeError::new(
                             TypeErrorKind::UnresolvedType { name: effect.to_string() },
@@ -3022,7 +3022,7 @@ impl TypeContext {
                         Type::error()
                     }
                 }
-            }
+            };
             None => {
                 self.error(TypeError::new(
                     TypeErrorKind::UnresolvedType { name: effect.to_string() },
@@ -3059,7 +3059,7 @@ impl TypeContext {
                                             Type::error()
                                         }
                                     }
-                                }
+                                };
                                 None => {
                                     self.error(TypeError::new(
                                         TypeErrorKind::UnresolvedName { name: name.clone() },
@@ -3068,7 +3068,7 @@ impl TypeContext {
                                     Type::error()
                                 }
                             }
-                        }
+                        };
                         None => {
                             self.error(TypeError::new(
                                 TypeErrorKind::UnresolvedName { name: name.clone() },
@@ -3094,7 +3094,7 @@ impl TypeContext {
                                         Some(variant) => {
                                             // Return enum type - variant carries the payload info
                                             Type::new(TypeKind::Adt { def_id, args: vec![] })
-                                        }
+                                        };
                                         None => {
                                             self.error(TypeError::new(
                                                 TypeErrorKind::Other {
@@ -3116,7 +3116,7 @@ impl TypeContext {
                                     Type::error()
                                 }
                             }
-                        }
+                        };
                         None => {
                             self.error(TypeError::new(
                                 TypeErrorKind::UnresolvedType { name: type_name.clone() },
@@ -3125,7 +3125,7 @@ impl TypeContext {
                             Type::error()
                         }
                     }
-                }
+                };
                 None => {
                     // Could be module::item - not yet implemented
                     self.error(TypeError::new(
@@ -3158,8 +3158,8 @@ impl TypeContext {
                 Declaration::Impl(impl_block) => {
                     self.check_impl_block(impl_block);
                 }
-                _ => {}
-            }
+                _ => {};
+            };
             i = i + 1;
         }
     }
@@ -3177,7 +3177,7 @@ impl TypeContext {
             let param_ty = self.lower_type(&param.ty);
             self.bind_pattern(&param.pattern, &param_ty);
             i = i + 1;
-        }
+        };
 
         // Get expected return type
         let expected_ret = match &fn_decl.return_type {
@@ -3205,15 +3205,15 @@ impl TypeContext {
                 match self.unifier.unify(&expected_ret, &body_ty, fn_decl.span) {
                     Ok(()) => {}
                     Err(e) => self.error(e),
-                }
+                };
 
                 // Verify all used effects are declared
                 self.verify_effects_declared(fn_decl.span);
-            }
+            };
             None => {
                 // External function - no body to check
             }
-        }
+        };
 
         // Restore state
         self.current_return_type = old_expected_ret;
@@ -3237,7 +3237,7 @@ impl TypeContext {
                     TypeErrorKind::UnhandledEffect { effect: effect.clone() },
                     span,
                 ));
-            }
+            };
             i = i + 1;
         }
     }
@@ -3271,9 +3271,9 @@ impl TypeContext {
                         Err(e) => self.error(e),
                     }
                 }
-            }
+            };
             i = i + 1;
-        }
+        };
 
         // Restore scope
         self.scope = old_scope;
@@ -3295,9 +3295,9 @@ impl TypeContext {
             } else {
                 let param_ty = self.lower_type(&param.ty);
                 self.bind_pattern(&param.pattern, &param_ty);
-            }
+            };
             i = i + 1;
-        }
+        };
 
         // Get expected return type
         let expected_ret = match &method.return_type {
@@ -3317,9 +3317,9 @@ impl TypeContext {
                     Ok(()) => {}
                     Err(e) => self.error(e),
                 }
-            }
-            None => {}
-        }
+            };
+            None => {};
+        };
 
         // Restore state
         self.current_return_type = old_expected_ret;
@@ -3344,9 +3344,9 @@ impl TypeContext {
                 match self.unifier.unify(left, right, span) {
                     Ok(()) => {}
                     Err(e) => self.error(e),
-                }
+                };
                 // TODO: verify left is numeric
-                left.clone()
+                left.clone();
             }
 
             // Comparison operators: require same type, return bool
@@ -3363,7 +3363,7 @@ impl TypeContext {
                 match self.unifier.unify(left, &Type::bool_type(), span) {
                     Ok(()) => {}
                     Err(e) => self.error(e),
-                }
+                };
                 match self.unifier.unify(right, &Type::bool_type(), span) {
                     Ok(()) => {}
                     Err(e) => self.error(e),
@@ -3376,9 +3376,9 @@ impl TypeContext {
                 match self.unifier.unify(left, right, span) {
                     Ok(()) => {}
                     Err(e) => self.error(e),
-                }
+                };
                 // TODO: verify left is integer
-                left.clone()
+                left.clone();
             }
 
             // Compound assignment operators
@@ -3400,12 +3400,12 @@ impl TypeContext {
             UnOp::Neg => {
                 // Negation requires signed numeric type
                 // TODO: verify operand is signed numeric
-                operand.clone()
+                operand.clone();
             }
             UnOp::Not => {
                 // Logical not requires bool, bitwise not requires integer
                 // For now, return the same type
-                operand.clone()
+                operand.clone();
             }
             UnOp::Deref => {
                 // Already handled in ExprKind::Dereference
@@ -3503,15 +3503,15 @@ impl ExhaustivenessChecker {
         while i < patterns.len() {
             match &patterns[i] {
                 PatternMatrix::Wild => return vec![],
-                _ => {}
-            }
+                _ => {};
+            };
             i = i + 1;
-        }
+        };
 
         // Check based on type
         match &ty.kind {
             TypeKind::Primitive(PrimitiveTy::Bool) => {
-                self.check_bool_exhaustiveness(patterns)
+                self.check_bool_exhaustiveness(patterns);
             }
             TypeKind::Primitive(PrimitiveTy::Unit) => {
                 // Unit has exactly one value
@@ -3522,10 +3522,10 @@ impl ExhaustivenessChecker {
                 }
             }
             TypeKind::Adt { def_id, args: _ } => {
-                self.check_adt_exhaustiveness(patterns, def_id)
+                self.check_adt_exhaustiveness(patterns, def_id);
             }
             TypeKind::Tuple(tys) => {
-                self.check_tuple_exhaustiveness(patterns, tys)
+                self.check_tuple_exhaustiveness(patterns, tys);
             }
             _ => {
                 // For types like integers, strings, etc., require a wildcard
@@ -3564,15 +3564,15 @@ impl ExhaustivenessChecker {
                                 has_true = true;
                                 has_false = true;
                             }
-                            _ => {}
-                        }
+                            _ => {};
+                        };
                         j = j + 1;
                     }
                 }
-                _ => {}
-            }
+                _ => {};
+            };
             i = i + 1;
-        }
+        };
 
         let mut missing: [String] = vec![];
         if !has_true { missing.push("true".to_string()); }
@@ -3594,11 +3594,11 @@ impl ExhaustivenessChecker {
                         }
                     }
                     TypeDefKind::Enum { variants } => {
-                        self.check_enum_exhaustiveness(patterns, &type_def.name, variants)
+                        self.check_enum_exhaustiveness(patterns, &type_def.name, variants);
                     }
                 }
-            }
-            None => vec![]
+            };
+            None => vec![];
         }
     }
 
@@ -3625,15 +3625,15 @@ impl ExhaustivenessChecker {
                             PatternMatrix::Constructor { name, args: _ } => {
                                 covered.insert(name.clone());
                             }
-                            _ => {}
-                        }
+                            _ => {};
+                        };
                         j = j + 1;
                     }
                 }
-                _ => {}
-            }
+                _ => {};
+            };
             i = i + 1;
-        }
+        };
 
         // Find missing variants
         let mut missing: [String] = vec![];
@@ -3645,7 +3645,7 @@ impl ExhaustivenessChecker {
                     None => format!("{}::{}", enum_name, variants[i].name),
                 };
                 missing.push(pattern_str);
-            }
+            };
             i = i + 1;
         }
 
@@ -3749,7 +3749,7 @@ impl TypeContext {
         while i < patterns.len() {
             matrix.push(checker.pattern_to_matrix(&patterns[i], self));
             i = i + 1;
-        }
+        };
 
         // Check exhaustiveness
         let missing = checker.check_exhaustiveness(&matrix, scrutinee_ty);
@@ -3770,5 +3770,5 @@ impl TypeContext {
 /// Type check a program and return errors if any.
 pub fn check_program(program: &Program) -> Result<(), [TypeError]> {
     let mut ctx = TypeContext::new();
-    ctx.check_program(program)
+    ctx.check_program(program);
 }

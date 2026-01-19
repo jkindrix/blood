@@ -444,10 +444,10 @@ pub enum ErrorCode {
 impl ErrorCode {
     /// Get the formatted code string (e.g., "E0001" or "W0001").
     pub fn as_str(self) -> String {
-        let code = self as U16
+        let code = self as U16;
         if code >= 10000 {
             // Warnings: W prefix, subtract 10000
-            let warning_code = code - 10000
+            let warning_code = code - 10000;
             "W" ++ Self::format_number(warning_code)
         } else {
             // Errors: E prefix
@@ -464,7 +464,7 @@ impl ErrorCode {
         } else if n < 1000 {
             "0" ++ n.to_string()
         } else {
-            n.to_string()
+            n.to_string();
         }
     }
 
@@ -480,7 +480,7 @@ impl ErrorCode {
 
     /// Check if this is an internal compiler error.
     pub fn is_ice(self) -> Bool {
-        let code = self as U16
+        let code = self as U16;
         code >= 9000 && code < 10000
     }
 
@@ -766,7 +766,7 @@ impl DiagnosticGroup {
 
     /// Get the group for an error code.
     pub fn for_code(code: ErrorCode) -> DiagnosticGroup {
-        let n = code as U16
+        let n = code as U16;
         if n < 100 {
             DiagnosticGroup::Lexer
         } else if n < 200 {
@@ -811,73 +811,73 @@ impl ErrorCode {
 
 #[test]
 fn test_error_code_as_str() {
-    assert(ErrorCode::UnexpectedCharacter.as_str() == "E0001")
-    assert(ErrorCode::UnexpectedToken.as_str() == "E0100")
-    assert(ErrorCode::TypeMismatch.as_str() == "E0300")
-    assert(ErrorCode::InternalError.as_str() == "E9000")
+    assert(ErrorCode::UnexpectedCharacter.as_str() == "E0001");
+    assert(ErrorCode::UnexpectedToken.as_str() == "E0100");
+    assert(ErrorCode::TypeMismatch.as_str() == "E0300");
+    assert(ErrorCode::InternalError.as_str() == "E9000");
 }
 
 #[test]
 fn test_warning_code_as_str() {
-    assert(ErrorCode::UnusedVariable.as_str() == "W0100")
-    assert(ErrorCode::DeeplyNestedBox.as_str() == "W0001")
-    assert(ErrorCode::Deprecated.as_str() == "W0400")
+    assert(ErrorCode::UnusedVariable.as_str() == "W0100");
+    assert(ErrorCode::DeeplyNestedBox.as_str() == "W0001");
+    assert(ErrorCode::Deprecated.as_str() == "W0400");
 }
 
 #[test]
 fn test_is_warning() {
-    assert(!ErrorCode::TypeMismatch.is_warning())
-    assert(!ErrorCode::InternalError.is_warning())
-    assert(ErrorCode::UnusedVariable.is_warning())
-    assert(ErrorCode::DeeplyNestedBox.is_warning())
+    assert(!ErrorCode::TypeMismatch.is_warning());
+    assert(!ErrorCode::InternalError.is_warning());
+    assert(ErrorCode::UnusedVariable.is_warning());
+    assert(ErrorCode::DeeplyNestedBox.is_warning());
 }
 
 #[test]
 fn test_is_error() {
-    assert(ErrorCode::TypeMismatch.is_error())
-    assert(ErrorCode::InternalError.is_error())
-    assert(!ErrorCode::UnusedVariable.is_error())
+    assert(ErrorCode::TypeMismatch.is_error());
+    assert(ErrorCode::InternalError.is_error());
+    assert(!ErrorCode::UnusedVariable.is_error());
 }
 
 #[test]
 fn test_is_ice() {
-    assert(!ErrorCode::TypeMismatch.is_ice())
-    assert(ErrorCode::InternalError.is_ice())
-    assert(ErrorCode::AssertionFailed.is_ice())
-    assert(!ErrorCode::UnusedVariable.is_ice())
+    assert(!ErrorCode::TypeMismatch.is_ice());
+    assert(ErrorCode::InternalError.is_ice());
+    assert(ErrorCode::AssertionFailed.is_ice());
+    assert(!ErrorCode::UnusedVariable.is_ice());
 }
 
 #[test]
 fn test_description_not_empty() {
     // All error codes should have descriptions
-    assert(ErrorCode::UnexpectedCharacter.description().len() > 0)
-    assert(ErrorCode::TypeMismatch.description().len() > 0)
-    assert(ErrorCode::UnusedVariable.description().len() > 0)
+    assert(ErrorCode::UnexpectedCharacter.description().len() > 0);
+    assert(ErrorCode::TypeMismatch.description().len() > 0);
+    assert(ErrorCode::UnusedVariable.description().len() > 0);
 }
 
 #[test]
 fn test_help_messages() {
     // Some codes have help, some don't
-    assert(ErrorCode::UnclosedString.help().is_some())
-    assert(ErrorCode::EmptyChar.help().is_some())
+    assert(ErrorCode::UnclosedString.help().is_some());
+    assert(ErrorCode::EmptyChar.help().is_some());
     // Type mismatch has help
-    assert(ErrorCode::TypeMismatch.help().is_some())
+    assert(ErrorCode::TypeMismatch.help().is_some());
 }
 
 #[test]
 fn test_diagnostic_group_for_code() {
-    assert(ErrorCode::UnexpectedCharacter.group().name() == "Lexer")
-    assert(ErrorCode::UnexpectedToken.group().name() == "Syntax")
-    assert(ErrorCode::UndefinedIdentifier.group().name() == "Resolution")
-    assert(ErrorCode::TypeMismatch.group().name() == "Types")
-    assert(ErrorCode::UnhandledEffect.group().name() == "Effects")
-    assert(ErrorCode::NonExhaustivePatterns.group().name() == "Patterns")
+    assert(ErrorCode::UnexpectedCharacter.group().name() == "Lexer");
+    assert(ErrorCode::UnexpectedToken.group().name() == "Syntax");
+    assert(ErrorCode::UndefinedIdentifier.group().name() == "Resolution");
+    assert(ErrorCode::TypeMismatch.group().name() == "Types");
+    assert(ErrorCode::UnhandledEffect.group().name() == "Effects");
+    assert(ErrorCode::NonExhaustivePatterns.group().name() == "Patterns");
 }
 
 #[test]
 fn test_warning_groups() {
-    assert(ErrorCode::DeeplyNestedBox.group().name() == "Memory")
-    assert(ErrorCode::UnusedVariable.group().name() == "Style")
-    assert(ErrorCode::UnnecessaryAllocation.group().name() == "Performance")
-    assert(ErrorCode::Deprecated.group().name() == "Deprecation")
+    assert(ErrorCode::DeeplyNestedBox.group().name() == "Memory");
+    assert(ErrorCode::UnusedVariable.group().name() == "Style");
+    assert(ErrorCode::UnnecessaryAllocation.group().name() == "Performance");
+    assert(ErrorCode::Deprecated.group().name() == "Deprecation");
 }

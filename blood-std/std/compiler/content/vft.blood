@@ -147,19 +147,19 @@ pub struct EffectMask {
 
 impl EffectMask {
     /// No effects (pure function).
-    pub const NONE: EffectMask = EffectMask { bits: 0 }
+    pub const NONE: EffectMask = EffectMask { bits: 0 };
 
     /// IO effects (file, network, console).
-    pub const IO: EffectMask = EffectMask { bits: 1 }
+    pub const IO: EffectMask = EffectMask { bits: 1 };
 
     /// State effects (mutable state, references).
-    pub const STATE: EffectMask = EffectMask { bits: 2 }
+    pub const STATE: EffectMask = EffectMask { bits: 2 };
 
     /// Exception effects (exceptions, panics).
-    pub const EXCEPTION: EffectMask = EffectMask { bits: 4 }
+    pub const EXCEPTION: EffectMask = EffectMask { bits: 4 };
 
     /// Async effects (async/await, futures).
-    pub const ASYNC: EffectMask = EffectMask { bits: 8 }
+    pub const ASYNC: EffectMask = EffectMask { bits: 8 };
 
     /// Create an effect mask with the given bits.
     pub fn from_bits(bits: U32) -> EffectMask {
@@ -194,27 +194,27 @@ impl EffectMask {
 
     /// Check if this function is pure (no effects).
     pub fn is_pure(self) -> Bool {
-        self.bits == 0
+        self.bits == 0;
     }
 
     /// Check if this mask has IO effects.
     pub fn has_io(self) -> Bool {
-        self.contains(EffectMask::IO)
+        self.contains(EffectMask::IO);
     }
 
     /// Check if this mask has state effects.
     pub fn has_state(self) -> Bool {
-        self.contains(EffectMask::STATE)
+        self.contains(EffectMask::STATE);
     }
 
     /// Check if this mask has exception effects.
     pub fn has_exception(self) -> Bool {
-        self.contains(EffectMask::EXCEPTION)
+        self.contains(EffectMask::EXCEPTION);
     }
 
     /// Check if this mask has async effects.
     pub fn has_async(self) -> Bool {
-        self.contains(EffectMask::ASYNC)
+        self.contains(EffectMask::ASYNC);
     }
 
     /// Check if the new mask is a valid replacement for this mask.
@@ -231,23 +231,23 @@ impl EffectMask {
     pub fn describe(self) -> String {
         if self.is_pure() {
             return "pure"
-        }
+        };
 
-        let mut parts = Vec::new()
+        let mut parts = Vec::new();
         if self.has_io() {
-            parts.push("IO")
-        }
+            parts.push("IO");
+        };
         if self.has_state() {
-            parts.push("State")
-        }
+            parts.push("State");
+        };
         if self.has_exception() {
-            parts.push("Exception")
-        }
+            parts.push("Exception");
+        };
         if self.has_async() {
-            parts.push("Async")
-        }
+            parts.push("Async");
+        };
 
-        parts.join(", ")
+        parts.join(", ");
     }
 }
 
@@ -337,25 +337,25 @@ impl VFTEntry {
 
     /// Set the calling convention.
     pub fn with_convention(mut self, convention: CallingConvention) -> VFTEntry {
-        self.calling_convention = convention
+        self.calling_convention = convention;
         self
     }
 
     /// Set the effect mask.
     pub fn with_effects(mut self, effects: EffectMask) -> VFTEntry {
-        self.effects = effects
+        self.effects = effects;
         self
     }
 
     /// Set the compiled code size.
     pub fn with_size(mut self, size: U32) -> VFTEntry {
-        self.compiled_size = size
+        self.compiled_size = size;
         self
     }
 
     /// Set the generation number.
     pub fn with_generation(mut self, generation: U64) -> VFTEntry {
-        self.generation = generation
+        self.generation = generation;
         self
     }
 
@@ -363,7 +363,7 @@ impl VFTEntry {
 
     /// Check if this function is pure (no effects).
     pub fn is_pure(self) -> Bool {
-        self.effects.is_pure()
+        self.effects.is_pure();
     }
 
     /// Check if this function uses tail-call optimization.
@@ -388,7 +388,7 @@ impl VFTEntry {
 
     /// Check if this function is an FFI callback.
     pub fn is_foreign(self) -> Bool {
-        self.calling_convention.is_foreign()
+        self.calling_convention.is_foreign();
     }
 }
 
@@ -578,7 +578,7 @@ impl VFTUpdate {
 // ============================================================================
 
 /// Maximum redirect chain depth to prevent infinite loops.
-const MAX_REDIRECT_DEPTH: USize = 10
+const MAX_REDIRECT_DEPTH: USize = 10;
 
 /// The Virtual Function Table.
 ///
@@ -622,23 +622,23 @@ impl VFT {
     ///
     /// If an entry with the same hash already exists, it is replaced.
     pub fn register(mut self, entry: VFTEntry) -> Unit {
-        let hash = entry.hash
+        let hash = entry.hash;
 
         // Track in all_entries if new
         if !self.entries.contains_key(hash) {
-            self.all_entries.push(hash)
-        }
+            self.all_entries.push(hash);
+        };
 
-        self.entries.insert(hash, entry)
+        self.entries.insert(hash, entry);
     }
 
     /// Unregister an entry from the VFT.
     ///
     /// Also removes any redirects pointing to or from this hash.
     pub fn unregister(mut self, hash: ContentHash) -> Unit {
-        self.entries.remove(hash)
-        self.all_entries.retain(|h| *h != hash)
-        self.redirects.remove(hash)
+        self.entries.remove(hash);
+        self.all_entries.retain(|h| *h != hash);
+        self.redirects.remove(hash);
     }
 
     // === Lookup ===
@@ -647,8 +647,8 @@ impl VFT {
     ///
     /// Returns None if the hash is not found (even after following redirects).
     pub fn lookup(self, hash: ContentHash) -> Option<VFTEntry> {
-        let actual_hash = self.resolve_redirect(hash)
-        self.entries.get(actual_hash)
+        let actual_hash = self.resolve_redirect(hash);
+        self.entries.get(actual_hash);
     }
 
     /// Resolve redirects to find the actual hash.
@@ -656,17 +656,17 @@ impl VFT {
     /// Follows the redirect chain up to MAX_REDIRECT_DEPTH to prevent
     /// infinite loops from circular redirects.
     fn resolve_redirect(self, hash: ContentHash) -> ContentHash {
-        let mut current = hash
-        let mut depth: USize = 0
+        let mut current = hash;
+        let mut depth: USize = 0;
 
         while depth < MAX_REDIRECT_DEPTH {
             match self.redirects.get(current) {
                 Option::Some(next) => {
-                    current = *next
-                    depth = depth + 1
+                    current = *next;
+                    depth = depth + 1;
                 }
                 Option::None => {
-                    return current
+                    return current;
                 }
             }
         }
@@ -677,7 +677,7 @@ impl VFT {
 
     /// Check if an entry exists (directly or via redirect).
     pub fn contains(self, hash: ContentHash) -> Bool {
-        self.entries.contains_key(hash) || self.redirects.contains_key(hash)
+        self.entries.contains_key(hash) || self.redirects.contains_key(hash);
     }
 
     /// Get the entry point address for a hash.
@@ -710,58 +710,58 @@ impl VFT {
 
     /// Advance to the next epoch, executing any scheduled updates.
     pub fn advance_epoch(mut self) -> Unit {
-        let next_epoch = self.version + 1
+        let next_epoch = self.version + 1;
 
         // Partition updates: those for this epoch vs. remaining
-        let mut to_execute = Vec::new()
-        let mut remaining = Vec::new()
+        let mut to_execute = Vec::new();
+        let mut remaining = Vec::new();
 
         for update in self.pending_updates {
             match update.target_epoch {
                 Option::Some(epoch) if epoch == next_epoch => {
-                    to_execute.push(update)
+                    to_execute.push(update);
                 }
                 _ => {
-                    remaining.push(update)
+                    remaining.push(update);
                 }
             }
-        }
+        };
 
-        self.pending_updates = remaining
+        self.pending_updates = remaining;
 
         // Execute scheduled updates
         for update in to_execute {
-            self.immediate_swap_internal(update.old_hash, update.new_hash)
-        }
+            self.immediate_swap_internal(update.old_hash, update.new_hash);
+        };
 
         // Bump the epoch
-        self.version = next_epoch
+        self.version = next_epoch;
     }
 
     // === Hot-Swap ===
 
     /// Prepare a hot-swap update (adds to pending queue).
     pub fn prepare_swap(mut self, old_hash: ContentHash, new_hash: ContentHash, mode: SwapMode) -> Unit {
-        self.pending_updates.push(VFTUpdate::new(old_hash, new_hash, mode))
+        self.pending_updates.push(VFTUpdate::new(old_hash, new_hash, mode));
     }
 
     /// Execute all pending swaps.
     pub fn commit_pending_swaps(mut self) -> Unit {
-        let updates = self.pending_updates
-        self.pending_updates = Vec::new()
+        let updates = self.pending_updates;
+        self.pending_updates = Vec::new();
 
         for update in updates {
             match update.mode {
                 SwapMode::Immediate => {
-                    self.immediate_swap_internal(update.old_hash, update.new_hash)
+                    self.immediate_swap_internal(update.old_hash, update.new_hash);
                 }
                 SwapMode::Barrier => {
                     // In a full implementation, would wait for in-flight calls
-                    self.immediate_swap_internal(update.old_hash, update.new_hash)
+                    self.immediate_swap_internal(update.old_hash, update.new_hash);
                 }
                 SwapMode::Epoch => {
                     // Already handled by advance_epoch
-                    self.immediate_swap_internal(update.old_hash, update.new_hash)
+                    self.immediate_swap_internal(update.old_hash, update.new_hash);
                 }
             }
         }
@@ -769,13 +769,13 @@ impl VFT {
 
     /// Execute an immediate swap (internal helper).
     fn immediate_swap_internal(mut self, old_hash: ContentHash, new_hash: ContentHash) -> Unit {
-        self.redirects.insert(old_hash, new_hash)
-        self.version = self.version + 1
+        self.redirects.insert(old_hash, new_hash);
+        self.version = self.version + 1;
     }
 
     /// Execute an immediate swap (public API).
     pub fn immediate_swap(mut self, old_hash: ContentHash, new_hash: ContentHash) -> Unit {
-        self.immediate_swap_internal(old_hash, new_hash)
+        self.immediate_swap_internal(old_hash, new_hash);
     }
 
     /// Validate compatibility between old and new entries for hot-swap.
@@ -788,12 +788,12 @@ impl VFT {
         let old_entry = match self.entries.get(old_hash) {
             Option::Some(e) => e,
             Option::None => return Result::Err(HotSwapError::OldHashNotFound),
-        }
+        };
 
         let new_entry = match self.entries.get(new_hash) {
             Option::Some(e) => e,
             Option::None => return Result::Err(HotSwapError::NewHashNotRegistered),
-        }
+        };
 
         // Check arity (must match exactly)
         if old_entry.arity != new_entry.arity {
@@ -801,7 +801,7 @@ impl VFT {
                 old_arity: old_entry.arity,
                 new_arity: new_entry.arity,
             })
-        }
+        };
 
         // Check effects: new must be subset of old
         if !old_entry.effects.is_compatible_replacement(new_entry.effects) {
@@ -809,7 +809,7 @@ impl VFT {
                 old_effects: old_entry.effects,
                 new_effects: new_entry.effects,
             })
-        }
+        };
 
         // Check calling convention (must match)
         // Compare using names since we can't directly compare enum variants
@@ -834,11 +834,11 @@ impl VFT {
         match self.validate_swap_compatibility(old_hash, new_hash) {
             Result::Err(e) => return HotSwapResult::Error(e),
             Result::Ok(_) => {}
-        }
+        };
 
         match mode {
             SwapMode::Immediate => {
-                self.immediate_swap_internal(old_hash, new_hash)
+                self.immediate_swap_internal(old_hash, new_hash);
                 HotSwapResult::Success {
                     old_hash,
                     new_hash,
@@ -851,7 +851,7 @@ impl VFT {
                 // 2. Wait for in-flight calls
                 // 3. Then swap
                 // For now, treat as immediate
-                self.immediate_swap_internal(old_hash, new_hash)
+                self.immediate_swap_internal(old_hash, new_hash);
                 HotSwapResult::Success {
                     old_hash,
                     new_hash,
@@ -859,8 +859,8 @@ impl VFT {
                 }
             }
             SwapMode::Epoch => {
-                let target_epoch = self.version + 1
-                self.pending_updates.push(VFTUpdate::for_epoch(old_hash, new_hash, target_epoch))
+                let target_epoch = self.version + 1;
+                self.pending_updates.push(VFTUpdate::for_epoch(old_hash, new_hash, target_epoch));
                 HotSwapResult::Scheduled { target_epoch }
             }
         }
@@ -870,39 +870,39 @@ impl VFT {
 
     /// Get the number of entries.
     pub fn len(self) -> USize {
-        self.entries.len()
+        self.entries.len();
     }
 
     /// Check if empty.
     pub fn is_empty(self) -> Bool {
-        self.entries.is_empty()
+        self.entries.is_empty();
     }
 
     /// Get the number of pending updates.
     pub fn pending_count(self) -> USize {
-        self.pending_updates.len()
+        self.pending_updates.len();
     }
 
     /// Get the number of active redirects.
     pub fn redirect_count(self) -> USize {
-        self.redirects.len()
+        self.redirects.len();
     }
 
     // === Maintenance ===
 
     /// Clear stale redirects (redirects pointing to non-existent entries).
     pub fn cleanup_redirects(mut self) -> Unit {
-        self.redirects.retain(|_, target| self.entries.contains_key(*target))
+        self.redirects.retain(|_, target| self.entries.contains_key(*target));
     }
 
     /// Get all entry hashes.
     pub fn all_hashes(self) -> Vec<ContentHash> {
-        self.all_entries.clone()
+        self.all_entries.clone();
     }
 
     /// Iterate over all entries.
     pub fn iter(self) -> impl Iterator[Item = VFTEntry] {
-        self.entries.values()
+        self.entries.values();
     }
 }
 
@@ -936,7 +936,7 @@ impl TypePattern {
             TypePattern::Concrete(h) => h == type_hash,
             TypePattern::Applied { constructor, .. } => {
                 // Simplified: just check constructor
-                constructor == type_hash
+                constructor == type_hash;
             }
         }
     }
@@ -950,9 +950,9 @@ impl TypePattern {
             TypePattern::Any => 0,
             TypePattern::Concrete(_) => 10,
             TypePattern::Applied { args, .. } => {
-                let mut sum: U32 = 10
+                let mut sum: U32 = 10;
                 for arg in args {
-                    sum = sum + arg.specificity()
+                    sum = sum + arg.specificity();
                 }
                 sum
             }
@@ -973,7 +973,7 @@ pub struct DispatchEntry {
 impl DispatchEntry {
     /// Create a new dispatch entry.
     pub fn new(type_pattern: TypePattern, impl_hash: ContentHash) -> DispatchEntry {
-        let specificity = type_pattern.specificity()
+        let specificity = type_pattern.specificity();
         DispatchEntry {
             type_pattern,
             specificity,
@@ -1015,12 +1015,12 @@ impl DispatchTable {
     pub fn register(mut self, method_hash: ContentHash, entry: DispatchEntry) -> Unit {
         match self.methods.get_mut(method_hash) {
             Option::Some(entries) => {
-                entries.push(entry)
+                entries.push(entry);
             }
             Option::None => {
-                let mut entries = Vec::new()
-                entries.push(entry)
-                self.methods.insert(method_hash, entries)
+                let mut entries = Vec::new();
+                entries.push(entry);
+                self.methods.insert(method_hash, entries);
             }
         }
     }
@@ -1033,19 +1033,19 @@ impl DispatchTable {
         let entries = match self.methods.get(method_hash) {
             Option::Some(e) => e,
             Option::None => return Option::None,
-        }
+        };
 
-        let mut best: Option<DispatchEntry> = Option::None
-        let mut best_specificity: U32 = 0
+        let mut best: Option<DispatchEntry> = Option::None;
+        let mut best_specificity: U32 = 0;
 
         for entry in entries {
             if entry.type_pattern.matches(arg_type) {
                 if entry.specificity > best_specificity {
-                    best = Option::Some(*entry)
-                    best_specificity = entry.specificity
+                    best = Option::Some(*entry);
+                    best_specificity = entry.specificity;
                 }
             }
-        }
+        };
 
         match best {
             Option::Some(entry) => Option::Some(entry.impl_hash),
@@ -1055,19 +1055,19 @@ impl DispatchTable {
 
     /// Get all registered methods.
     pub fn methods(self) -> Vec<ContentHash> {
-        self.methods.keys().collect()
+        self.methods.keys().collect();
     }
 
     /// Get the number of registered methods.
     pub fn method_count(self) -> USize {
-        self.methods.len()
+        self.methods.len();
     }
 
     /// Get the total number of implementations across all methods.
     pub fn impl_count(self) -> USize {
-        let mut count: USize = 0
+        let mut count: USize = 0;
         for (_, entries) in self.methods {
-            count = count + entries.len()
+            count = count + entries.len();
         }
         count
     }
@@ -1080,429 +1080,429 @@ impl DispatchTable {
 #[test]
 fn test_calling_convention_properties() {
     // Blood is standard
-    assert(CallingConvention::Blood.is_standard())
-    assert(!CallingConvention::Blood.supports_tco())
-    assert(!CallingConvention::Blood.captures_continuation())
+    assert(CallingConvention::Blood.is_standard());
+    assert(!CallingConvention::Blood.supports_tco());
+    assert(!CallingConvention::Blood.captures_continuation());
 
     // Tail supports TCO
-    assert(!CallingConvention::Tail.is_standard())
-    assert(CallingConvention::Tail.supports_tco())
+    assert(!CallingConvention::Tail.is_standard());
+    assert(CallingConvention::Tail.supports_tco());
 
     // Effect captures continuations
-    assert(CallingConvention::Effect.captures_continuation())
+    assert(CallingConvention::Effect.captures_continuation());
 
     // Foreign is FFI
-    assert(CallingConvention::Foreign.is_foreign())
+    assert(CallingConvention::Foreign.is_foreign());
 }
 
 #[test]
 fn test_effect_mask_operations() {
-    let io = EffectMask::IO
-    let state = EffectMask::STATE
-    let combined = io.union(state)
+    let io = EffectMask::IO;
+    let state = EffectMask::STATE;
+    let combined = io.union(state);
 
     // Contains checks
-    assert(combined.contains(EffectMask::IO))
-    assert(combined.contains(EffectMask::STATE))
-    assert(!combined.contains(EffectMask::EXCEPTION))
+    assert(combined.contains(EffectMask::IO));
+    assert(combined.contains(EffectMask::STATE));
+    assert(!combined.contains(EffectMask::EXCEPTION));
 
     // Pure check
-    assert(!combined.is_pure())
-    assert(EffectMask::NONE.is_pure())
+    assert(!combined.is_pure());
+    assert(EffectMask::NONE.is_pure());
 }
 
 #[test]
 fn test_effect_mask_compatibility() {
-    let io_state = EffectMask::IO.union(EffectMask::STATE)
-    let io_only = EffectMask::IO
-    let pure = EffectMask::NONE
+    let io_state = EffectMask::IO.union(EffectMask::STATE);
+    let io_only = EffectMask::IO;
+    let pure = EffectMask::NONE;
 
     // Can remove effects (fewer is OK)
-    assert(io_state.is_compatible_replacement(io_only))
-    assert(io_state.is_compatible_replacement(pure))
+    assert(io_state.is_compatible_replacement(io_only));
+    assert(io_state.is_compatible_replacement(pure));
 
     // Cannot add effects
-    assert(!io_only.is_compatible_replacement(io_state))
-    assert(!pure.is_compatible_replacement(io_only))
+    assert(!io_only.is_compatible_replacement(io_state));
+    assert(!pure.is_compatible_replacement(io_only));
 }
 
 #[test]
 fn test_vft_entry_builder() {
-    let hash = ContentHash::compute("test_fn".as_bytes())
+    let hash = ContentHash::compute("test_fn".as_bytes());
 
     let entry = VFTEntry::new(hash, 0x1000, 2)
         .with_convention(CallingConvention::Effect)
         .with_effects(EffectMask::IO)
         .with_size(64)
-        .with_generation(5)
+        .with_generation(5);
 
-    assert(entry.arity() == 2)
-    assert(entry.entry_point() == 0x1000)
-    assert(entry.effects().has_io())
-    assert(entry.compiled_size() == 64)
-    assert(entry.generation() == 5)
-    assert(entry.is_effectful())
+    assert(entry.arity() == 2);
+    assert(entry.entry_point() == 0x1000);
+    assert(entry.effects().has_io());
+    assert(entry.compiled_size() == 64);
+    assert(entry.generation() == 5);
+    assert(entry.is_effectful());
 }
 
 #[test]
 fn test_vft_entry_purity() {
-    let hash = ContentHash::compute("pure_fn".as_bytes())
+    let hash = ContentHash::compute("pure_fn".as_bytes());
 
-    let pure_entry = VFTEntry::new(hash, 0x1000, 1)
-    assert(pure_entry.is_pure())
+    let pure_entry = VFTEntry::new(hash, 0x1000, 1);
+    assert(pure_entry.is_pure());
 
-    let impure_entry = pure_entry.with_effects(EffectMask::IO)
-    assert(!impure_entry.is_pure())
+    let impure_entry = pure_entry.with_effects(EffectMask::IO);
+    assert(!impure_entry.is_pure());
 }
 
 #[test]
 fn test_vft_register_lookup() {
-    let mut vft = VFT::new()
-    let hash = ContentHash::compute("add".as_bytes())
-    let entry = VFTEntry::new(hash, 0x1000, 2)
+    let mut vft = VFT::new();
+    let hash = ContentHash::compute("add".as_bytes());
+    let entry = VFTEntry::new(hash, 0x1000, 2);
 
-    vft.register(entry)
+    vft.register(entry);
 
-    let found = vft.lookup(hash)
-    assert(found.is_some())
+    let found = vft.lookup(hash);
+    assert(found.is_some());
 
-    let e = found.unwrap()
-    assert(e.arity() == 2)
-    assert(e.entry_point() == 0x1000)
+    let e = found.unwrap();
+    assert(e.arity() == 2);
+    assert(e.entry_point() == 0x1000);
 }
 
 #[test]
 fn test_vft_immediate_swap() {
-    let mut vft = VFT::new()
+    let mut vft = VFT::new();
 
-    let old_hash = ContentHash::compute("v1".as_bytes())
-    let new_hash = ContentHash::compute("v2".as_bytes())
+    let old_hash = ContentHash::compute("v1".as_bytes());
+    let new_hash = ContentHash::compute("v2".as_bytes());
 
-    vft.register(VFTEntry::new(old_hash, 0x1000, 1))
-    vft.register(VFTEntry::new(new_hash, 0x2000, 1))
+    vft.register(VFTEntry::new(old_hash, 0x1000, 1));
+    vft.register(VFTEntry::new(new_hash, 0x2000, 1));
 
-    vft.immediate_swap(old_hash, new_hash)
+    vft.immediate_swap(old_hash, new_hash);
 
     // Looking up old hash should redirect to new
-    let entry = vft.lookup(old_hash).unwrap()
-    assert(entry.hash() == new_hash)
+    let entry = vft.lookup(old_hash).unwrap();
+    assert(entry.hash() == new_hash);
 }
 
 #[test]
 fn test_vft_version_increment() {
-    let mut vft = VFT::new()
-    let initial = vft.version()
+    let mut vft = VFT::new();
+    let initial = vft.version();
 
-    let old_hash = ContentHash::compute("v1".as_bytes())
-    let new_hash = ContentHash::compute("v2".as_bytes())
-    vft.register(VFTEntry::new(old_hash, 0x1000, 1))
-    vft.register(VFTEntry::new(new_hash, 0x2000, 1))
+    let old_hash = ContentHash::compute("v1".as_bytes());
+    let new_hash = ContentHash::compute("v2".as_bytes());
+    vft.register(VFTEntry::new(old_hash, 0x1000, 1));
+    vft.register(VFTEntry::new(new_hash, 0x2000, 1));
 
-    vft.immediate_swap(old_hash, new_hash)
+    vft.immediate_swap(old_hash, new_hash);
 
-    assert(vft.version() == initial + 1)
+    assert(vft.version() == initial + 1);
 }
 
 #[test]
 fn test_vft_unregister() {
-    let mut vft = VFT::new()
-    let hash = ContentHash::compute("remove_me".as_bytes())
+    let mut vft = VFT::new();
+    let hash = ContentHash::compute("remove_me".as_bytes());
 
-    vft.register(VFTEntry::new(hash, 0x1000, 0))
-    assert(vft.contains(hash))
+    vft.register(VFTEntry::new(hash, 0x1000, 0));
+    assert(vft.contains(hash));
 
-    vft.unregister(hash)
-    assert(!vft.contains(hash))
+    vft.unregister(hash);
+    assert(!vft.contains(hash));
 }
 
 #[test]
 fn test_vft_pending_swaps() {
-    let mut vft = VFT::new()
+    let mut vft = VFT::new();
 
-    let old = ContentHash::compute("old".as_bytes())
-    let new = ContentHash::compute("new".as_bytes())
-    vft.register(VFTEntry::new(old, 0x1000, 1))
-    vft.register(VFTEntry::new(new, 0x2000, 1))
+    let old = ContentHash::compute("old".as_bytes());
+    let new = ContentHash::compute("new".as_bytes());
+    vft.register(VFTEntry::new(old, 0x1000, 1));
+    vft.register(VFTEntry::new(new, 0x2000, 1));
 
-    vft.prepare_swap(old, new, SwapMode::Immediate)
-    assert(vft.pending_count() == 1)
+    vft.prepare_swap(old, new, SwapMode::Immediate);
+    assert(vft.pending_count() == 1);
 
-    vft.commit_pending_swaps()
-    assert(vft.pending_count() == 0)
-    assert(vft.redirect_count() == 1)
+    vft.commit_pending_swaps();
+    assert(vft.pending_count() == 0);
+    assert(vft.redirect_count() == 1);
 }
 
 #[test]
 fn test_validate_swap_compatibility_success() {
-    let mut vft = VFT::new()
+    let mut vft = VFT::new();
 
-    let old = ContentHash::compute("fn_v1".as_bytes())
-    let new = ContentHash::compute("fn_v2".as_bytes())
+    let old = ContentHash::compute("fn_v1".as_bytes());
+    let new = ContentHash::compute("fn_v2".as_bytes());
 
     // Same arity, new has fewer effects (valid)
-    vft.register(VFTEntry::new(old, 0x1000, 2).with_effects(EffectMask::IO))
-    vft.register(VFTEntry::new(new, 0x2000, 2).with_effects(EffectMask::NONE))
+    vft.register(VFTEntry::new(old, 0x1000, 2).with_effects(EffectMask::IO));
+    vft.register(VFTEntry::new(new, 0x2000, 2).with_effects(EffectMask::NONE));
 
-    let result = vft.validate_swap_compatibility(old, new)
-    assert(result.is_ok())
+    let result = vft.validate_swap_compatibility(old, new);
+    assert(result.is_ok());
 }
 
 #[test]
 fn test_validate_swap_arity_mismatch() {
-    let mut vft = VFT::new()
+    let mut vft = VFT::new();
 
-    let old = ContentHash::compute("fn_v1".as_bytes())
-    let new = ContentHash::compute("fn_v2".as_bytes())
+    let old = ContentHash::compute("fn_v1".as_bytes());
+    let new = ContentHash::compute("fn_v2".as_bytes());
 
-    vft.register(VFTEntry::new(old, 0x1000, 2))
-    vft.register(VFTEntry::new(new, 0x2000, 3))  // Different arity
+    vft.register(VFTEntry::new(old, 0x1000, 2));
+    vft.register(VFTEntry::new(new, 0x2000, 3));  // Different arity
 
-    let result = vft.validate_swap_compatibility(old, new)
-    assert(result.is_err())
+    let result = vft.validate_swap_compatibility(old, new);
+    assert(result.is_err());
 
     match result {
         Result::Err(HotSwapError::ArityMismatch { old_arity, new_arity }) => {
-            assert(old_arity == 2)
-            assert(new_arity == 3)
+            assert(old_arity == 2);
+            assert(new_arity == 3);
         }
-        _ => assert(false)  // Wrong error type
+        _ => assert(false);  // Wrong error type
     }
 }
 
 #[test]
 fn test_validate_swap_effect_mismatch() {
-    let mut vft = VFT::new()
+    let mut vft = VFT::new();
 
-    let old = ContentHash::compute("fn_v1".as_bytes())
-    let new = ContentHash::compute("fn_v2".as_bytes())
+    let old = ContentHash::compute("fn_v1".as_bytes());
+    let new = ContentHash::compute("fn_v2".as_bytes());
 
     // Old has no effects, new adds IO (not allowed)
-    vft.register(VFTEntry::new(old, 0x1000, 1).with_effects(EffectMask::NONE))
-    vft.register(VFTEntry::new(new, 0x2000, 1).with_effects(EffectMask::IO))
+    vft.register(VFTEntry::new(old, 0x1000, 1).with_effects(EffectMask::NONE));
+    vft.register(VFTEntry::new(new, 0x2000, 1).with_effects(EffectMask::IO));
 
-    let result = vft.validate_swap_compatibility(old, new)
-    assert(result.is_err())
+    let result = vft.validate_swap_compatibility(old, new);
+    assert(result.is_err());
 
     match result {
         Result::Err(HotSwapError::EffectMismatch { .. }) => {}
-        _ => assert(false)
+        _ => assert(false);
     }
 }
 
 #[test]
 fn test_validate_swap_convention_mismatch() {
-    let mut vft = VFT::new()
+    let mut vft = VFT::new();
 
-    let old = ContentHash::compute("fn_v1".as_bytes())
-    let new = ContentHash::compute("fn_v2".as_bytes())
+    let old = ContentHash::compute("fn_v1".as_bytes());
+    let new = ContentHash::compute("fn_v2".as_bytes());
 
-    vft.register(VFTEntry::new(old, 0x1000, 1).with_convention(CallingConvention::Blood))
-    vft.register(VFTEntry::new(new, 0x2000, 1).with_convention(CallingConvention::Tail))
+    vft.register(VFTEntry::new(old, 0x1000, 1).with_convention(CallingConvention::Blood));
+    vft.register(VFTEntry::new(new, 0x2000, 1).with_convention(CallingConvention::Tail));
 
-    let result = vft.validate_swap_compatibility(old, new)
-    assert(result.is_err())
+    let result = vft.validate_swap_compatibility(old, new);
+    assert(result.is_err());
 
     match result {
         Result::Err(HotSwapError::ConventionMismatch { .. }) => {}
-        _ => assert(false)
+        _ => assert(false);
     }
 }
 
 #[test]
 fn test_validate_swap_old_not_found() {
-    let mut vft = VFT::new()
+    let mut vft = VFT::new();
 
-    let old = ContentHash::compute("missing".as_bytes())
-    let new = ContentHash::compute("fn_v2".as_bytes())
+    let old = ContentHash::compute("missing".as_bytes());
+    let new = ContentHash::compute("fn_v2".as_bytes());
 
-    vft.register(VFTEntry::new(new, 0x2000, 1))
+    vft.register(VFTEntry::new(new, 0x2000, 1));
 
-    let result = vft.validate_swap_compatibility(old, new)
+    let result = vft.validate_swap_compatibility(old, new);
     match result {
         Result::Err(HotSwapError::OldHashNotFound) => {}
-        _ => assert(false)
+        _ => assert(false);
     }
 }
 
 #[test]
 fn test_validate_swap_new_not_registered() {
-    let mut vft = VFT::new()
+    let mut vft = VFT::new();
 
-    let old = ContentHash::compute("fn_v1".as_bytes())
-    let new = ContentHash::compute("missing".as_bytes())
+    let old = ContentHash::compute("fn_v1".as_bytes());
+    let new = ContentHash::compute("missing".as_bytes());
 
-    vft.register(VFTEntry::new(old, 0x1000, 1))
+    vft.register(VFTEntry::new(old, 0x1000, 1));
 
-    let result = vft.validate_swap_compatibility(old, new)
+    let result = vft.validate_swap_compatibility(old, new);
     match result {
         Result::Err(HotSwapError::NewHashNotRegistered) => {}
-        _ => assert(false)
+        _ => assert(false);
     }
 }
 
 #[test]
 fn test_hot_swap_immediate_success() {
-    let mut vft = VFT::new()
+    let mut vft = VFT::new();
 
-    let old = ContentHash::compute("fn_v1".as_bytes())
-    let new = ContentHash::compute("fn_v2".as_bytes())
+    let old = ContentHash::compute("fn_v1".as_bytes());
+    let new = ContentHash::compute("fn_v2".as_bytes());
 
-    vft.register(VFTEntry::new(old, 0x1000, 1))
-    vft.register(VFTEntry::new(new, 0x2000, 1))
+    vft.register(VFTEntry::new(old, 0x1000, 1));
+    vft.register(VFTEntry::new(new, 0x2000, 1));
 
-    let result = vft.hot_swap(old, new, SwapMode::Immediate)
+    let result = vft.hot_swap(old, new, SwapMode::Immediate);
 
-    assert(result.is_success())
+    assert(result.is_success());
 
     // Verify redirect works
-    let entry = vft.lookup(old).unwrap()
-    assert(entry.hash() == new)
+    let entry = vft.lookup(old).unwrap();
+    assert(entry.hash() == new);
 }
 
 #[test]
 fn test_hot_swap_epoch_scheduled() {
-    let mut vft = VFT::new()
+    let mut vft = VFT::new();
 
-    let old = ContentHash::compute("fn_v1".as_bytes())
-    let new = ContentHash::compute("fn_v2".as_bytes())
+    let old = ContentHash::compute("fn_v1".as_bytes());
+    let new = ContentHash::compute("fn_v2".as_bytes());
 
-    vft.register(VFTEntry::new(old, 0x1000, 1))
-    vft.register(VFTEntry::new(new, 0x2000, 1))
+    vft.register(VFTEntry::new(old, 0x1000, 1));
+    vft.register(VFTEntry::new(new, 0x2000, 1));
 
-    let current = vft.current_epoch()
-    let result = vft.hot_swap(old, new, SwapMode::Epoch)
+    let current = vft.current_epoch();
+    let result = vft.hot_swap(old, new, SwapMode::Epoch);
 
-    assert(result.is_scheduled())
+    assert(result.is_scheduled());
 
     // Swap not yet applied
-    let entry = vft.lookup(old).unwrap()
-    assert(entry.hash() == old)
+    let entry = vft.lookup(old).unwrap();
+    assert(entry.hash() == old);
 
     // Advance epoch
-    vft.advance_epoch()
+    vft.advance_epoch();
 
     // Now swap should be applied
-    let entry = vft.lookup(old).unwrap()
-    assert(entry.hash() == new)
+    let entry = vft.lookup(old).unwrap();
+    assert(entry.hash() == new);
 }
 
 #[test]
 fn test_hot_swap_validation_error() {
-    let mut vft = VFT::new()
+    let mut vft = VFT::new();
 
-    let old = ContentHash::compute("fn_v1".as_bytes())
-    let new = ContentHash::compute("fn_v2".as_bytes())
+    let old = ContentHash::compute("fn_v1".as_bytes());
+    let new = ContentHash::compute("fn_v2".as_bytes());
 
     // Different arities - should fail validation
-    vft.register(VFTEntry::new(old, 0x1000, 1))
-    vft.register(VFTEntry::new(new, 0x2000, 2))
+    vft.register(VFTEntry::new(old, 0x1000, 1));
+    vft.register(VFTEntry::new(new, 0x2000, 2));
 
-    let result = vft.hot_swap(old, new, SwapMode::Immediate)
+    let result = vft.hot_swap(old, new, SwapMode::Immediate);
 
-    assert(result.is_error())
+    assert(result.is_error());
 }
 
 #[test]
 fn test_advance_epoch_no_updates() {
-    let mut vft = VFT::new()
+    let mut vft = VFT::new();
 
-    let initial = vft.current_epoch()
-    vft.advance_epoch()
-    assert(vft.current_epoch() == initial + 1)
+    let initial = vft.current_epoch();
+    vft.advance_epoch();
+    assert(vft.current_epoch() == initial + 1);
 }
 
 #[test]
 fn test_advance_epoch_with_multiple_updates() {
-    let mut vft = VFT::new()
+    let mut vft = VFT::new();
 
-    let old1 = ContentHash::compute("fn1_v1".as_bytes())
-    let new1 = ContentHash::compute("fn1_v2".as_bytes())
-    let old2 = ContentHash::compute("fn2_v1".as_bytes())
-    let new2 = ContentHash::compute("fn2_v2".as_bytes())
+    let old1 = ContentHash::compute("fn1_v1".as_bytes());
+    let new1 = ContentHash::compute("fn1_v2".as_bytes());
+    let old2 = ContentHash::compute("fn2_v1".as_bytes());
+    let new2 = ContentHash::compute("fn2_v2".as_bytes());
 
-    vft.register(VFTEntry::new(old1, 0x1000, 1))
-    vft.register(VFTEntry::new(new1, 0x2000, 1))
-    vft.register(VFTEntry::new(old2, 0x3000, 2))
-    vft.register(VFTEntry::new(new2, 0x4000, 2))
+    vft.register(VFTEntry::new(old1, 0x1000, 1));
+    vft.register(VFTEntry::new(new1, 0x2000, 1));
+    vft.register(VFTEntry::new(old2, 0x3000, 2));
+    vft.register(VFTEntry::new(new2, 0x4000, 2));
 
     // Schedule both for epoch swap
-    let r1 = vft.hot_swap(old1, new1, SwapMode::Epoch)
-    let r2 = vft.hot_swap(old2, new2, SwapMode::Epoch)
-    assert(r1.is_scheduled())
-    assert(r2.is_scheduled())
-    assert(vft.pending_count() == 2)
+    let r1 = vft.hot_swap(old1, new1, SwapMode::Epoch);
+    let r2 = vft.hot_swap(old2, new2, SwapMode::Epoch);
+    assert(r1.is_scheduled());
+    assert(r2.is_scheduled());
+    assert(vft.pending_count() == 2);
 
     // Advance epoch
-    vft.advance_epoch()
+    vft.advance_epoch();
 
-    assert(vft.pending_count() == 0)
+    assert(vft.pending_count() == 0);
 
     // Both swaps applied
-    assert(vft.lookup(old1).unwrap().hash() == new1)
-    assert(vft.lookup(old2).unwrap().hash() == new2)
+    assert(vft.lookup(old1).unwrap().hash() == new1);
+    assert(vft.lookup(old2).unwrap().hash() == new2);
 }
 
 #[test]
 fn test_cleanup_redirects() {
-    let mut vft = VFT::new()
+    let mut vft = VFT::new();
 
-    let old = ContentHash::compute("fn_v1".as_bytes())
-    let new = ContentHash::compute("fn_v2".as_bytes())
+    let old = ContentHash::compute("fn_v1".as_bytes());
+    let new = ContentHash::compute("fn_v2".as_bytes());
 
-    vft.register(VFTEntry::new(old, 0x1000, 1))
-    vft.register(VFTEntry::new(new, 0x2000, 1))
+    vft.register(VFTEntry::new(old, 0x1000, 1));
+    vft.register(VFTEntry::new(new, 0x2000, 1));
 
-    vft.immediate_swap(old, new)
-    assert(vft.redirect_count() == 1)
+    vft.immediate_swap(old, new);
+    assert(vft.redirect_count() == 1);
 
     // Remove the target entry
-    vft.unregister(new)
+    vft.unregister(new);
 
     // Cleanup stale redirects
-    vft.cleanup_redirects()
-    assert(vft.redirect_count() == 0)
+    vft.cleanup_redirects();
+    assert(vft.redirect_count() == 0);
 }
 
 #[test]
 fn test_type_pattern_specificity() {
-    let any = TypePattern::Any
-    let concrete = TypePattern::Concrete(ContentHash::compute("Int".as_bytes()))
+    let any = TypePattern::Any;
+    let concrete = TypePattern::Concrete(ContentHash::compute("Int".as_bytes()));
     let applied = TypePattern::Applied {
         constructor: ContentHash::compute("List".as_bytes()),
         args: vec![TypePattern::Concrete(ContentHash::compute("Int".as_bytes()))],
-    }
+    };
 
-    assert(any.specificity() == 0)
-    assert(concrete.specificity() == 10)
-    assert(applied.specificity() == 20)  // 10 + 10 for arg
+    assert(any.specificity() == 0);
+    assert(concrete.specificity() == 10);
+    assert(applied.specificity() == 20);  // 10 + 10 for arg
 }
 
 #[test]
 fn test_type_pattern_matching() {
-    let int_hash = ContentHash::compute("Int".as_bytes())
-    let string_hash = ContentHash::compute("String".as_bytes())
+    let int_hash = ContentHash::compute("Int".as_bytes());
+    let string_hash = ContentHash::compute("String".as_bytes());
 
-    let any = TypePattern::Any
-    let int_pattern = TypePattern::Concrete(int_hash)
+    let any = TypePattern::Any;
+    let int_pattern = TypePattern::Concrete(int_hash);
 
     // Any matches everything
-    assert(any.matches(int_hash))
-    assert(any.matches(string_hash))
+    assert(any.matches(int_hash));
+    assert(any.matches(string_hash));
 
     // Concrete matches only specific type
-    assert(int_pattern.matches(int_hash))
-    assert(!int_pattern.matches(string_hash))
+    assert(int_pattern.matches(int_hash));
+    assert(!int_pattern.matches(string_hash));
 }
 
 #[test]
 fn test_dispatch_table() {
-    let mut table = DispatchTable::new()
+    let mut table = DispatchTable::new();
 
-    let method = ContentHash::compute("show".as_bytes())
-    let int_impl = ContentHash::compute("show_int".as_bytes())
-    let string_impl = ContentHash::compute("show_string".as_bytes())
-    let int_type = ContentHash::compute("Int".as_bytes())
-    let string_type = ContentHash::compute("String".as_bytes())
+    let method = ContentHash::compute("show".as_bytes());
+    let int_impl = ContentHash::compute("show_int".as_bytes());
+    let string_impl = ContentHash::compute("show_string".as_bytes());
+    let int_type = ContentHash::compute("Int".as_bytes());
+    let string_type = ContentHash::compute("String".as_bytes());
 
     table.register(method, DispatchEntry::new(
         TypePattern::Concrete(int_type),
@@ -1513,18 +1513,18 @@ fn test_dispatch_table() {
         string_impl,
     ))
 
-    assert(table.dispatch(method, int_type) == Option::Some(int_impl))
-    assert(table.dispatch(method, string_type) == Option::Some(string_impl))
+    assert(table.dispatch(method, int_type) == Option::Some(int_impl));
+    assert(table.dispatch(method, string_type) == Option::Some(string_impl));
 }
 
 #[test]
 fn test_dispatch_table_most_specific() {
-    let mut table = DispatchTable::new()
+    let mut table = DispatchTable::new();
 
-    let method = ContentHash::compute("process".as_bytes())
-    let generic_impl = ContentHash::compute("process_any".as_bytes())
-    let int_impl = ContentHash::compute("process_int".as_bytes())
-    let int_type = ContentHash::compute("Int".as_bytes())
+    let method = ContentHash::compute("process".as_bytes());
+    let generic_impl = ContentHash::compute("process_any".as_bytes());
+    let int_impl = ContentHash::compute("process_int".as_bytes());
+    let int_type = ContentHash::compute("Int".as_bytes());
 
     // Register generic first
     table.register(method, DispatchEntry::new(
@@ -1538,27 +1538,27 @@ fn test_dispatch_table_most_specific() {
     ))
 
     // Should dispatch to most specific (int_impl)
-    assert(table.dispatch(method, int_type) == Option::Some(int_impl))
+    assert(table.dispatch(method, int_type) == Option::Some(int_impl));
 
     // Unknown type should get generic
-    let unknown = ContentHash::compute("Unknown".as_bytes())
-    assert(table.dispatch(method, unknown) == Option::Some(generic_impl))
+    let unknown = ContentHash::compute("Unknown".as_bytes());
+    assert(table.dispatch(method, unknown) == Option::Some(generic_impl));
 }
 
 #[test]
 fn test_dispatch_table_statistics() {
-    let mut table = DispatchTable::new()
+    let mut table = DispatchTable::new();
 
-    let method1 = ContentHash::compute("show".as_bytes())
-    let method2 = ContentHash::compute("parse".as_bytes())
-    let impl1 = ContentHash::compute("impl1".as_bytes())
-    let impl2 = ContentHash::compute("impl2".as_bytes())
-    let impl3 = ContentHash::compute("impl3".as_bytes())
+    let method1 = ContentHash::compute("show".as_bytes());
+    let method2 = ContentHash::compute("parse".as_bytes());
+    let impl1 = ContentHash::compute("impl1".as_bytes());
+    let impl2 = ContentHash::compute("impl2".as_bytes());
+    let impl3 = ContentHash::compute("impl3".as_bytes());
 
-    table.register(method1, DispatchEntry::new(TypePattern::Any, impl1))
-    table.register(method1, DispatchEntry::new(TypePattern::Any, impl2))
-    table.register(method2, DispatchEntry::new(TypePattern::Any, impl3))
+    table.register(method1, DispatchEntry::new(TypePattern::Any, impl1));
+    table.register(method1, DispatchEntry::new(TypePattern::Any, impl2));
+    table.register(method2, DispatchEntry::new(TypePattern::Any, impl3));
 
-    assert(table.method_count() == 2)
-    assert(table.impl_count() == 3)
+    assert(table.method_count() == 2);
+    assert(table.impl_count() == 3);
 }

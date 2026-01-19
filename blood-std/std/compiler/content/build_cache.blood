@@ -51,15 +51,15 @@ use std.compiler.content.hash.ContentHasher;
 /// Note: This version covers cache structure changes. For codegen changes
 /// that affect compiled output, see `CODEGEN_ABI_VERSION` and `CODEGEN_HASH`
 /// which are incorporated into the cache directory path automatically.
-pub const CACHE_VERSION: U32 = 2
+pub const CACHE_VERSION: U32 = 2;
 
 /// ABI version for code generation compatibility.
 /// Increment when making intentional ABI-breaking changes.
-pub const CODEGEN_ABI_VERSION: U32 = 1
+pub const CODEGEN_ABI_VERSION: U32 = 1;
 
 /// Hash of codegen source for automatic invalidation.
 /// This is computed from the codegen module source code.
-pub const CODEGEN_HASH: String = "dev"
+pub const CODEGEN_HASH: String = "dev";
 
 // ============================================================================
 // Error Types
@@ -146,7 +146,7 @@ impl CacheStats {
 
     /// Calculate the hit rate as a percentage.
     pub fn hit_rate(self) -> F64 {
-        let total = self.hits + self.misses
+        let total = self.hits + self.misses;
         if total == 0 {
             0.0
         } else {
@@ -156,12 +156,12 @@ impl CacheStats {
 
     /// Record a cache hit.
     pub fn record_hit(mut self) -> Unit {
-        self.hits = self.hits + 1
+        self.hits = self.hits + 1;
     }
 
     /// Record a cache miss.
     pub fn record_miss(mut self) -> Unit {
-        self.misses = self.misses + 1
+        self.misses = self.misses + 1;
     }
 }
 
@@ -195,24 +195,24 @@ impl CacheIndex {
         json = json ++ "  \"version\": " ++ self.version.to_string() ++ ",\n"
         json = json ++ "  \"dependencies\": {\n"
 
-        let mut first = true
+        let mut first = true;
         for (hash, deps) in self.dependencies {
             if !first {
                 json = json ++ ",\n"
-            }
-            first = false
+            };
+            first = false;
 
             json = json ++ "    \"" ++ hash.full_display() ++ "\": ["
-            let mut first_dep = true
+            let mut first_dep = true;
             for dep in deps {
                 if !first_dep {
                     json = json ++ ", "
-                }
-                first_dep = false
+                };
+                first_dep = false;
                 json = json ++ "\"" ++ dep.full_display() ++ "\""
-            }
+            };
             json = json ++ "]"
-        }
+        };
 
         json = json ++ "\n  }\n"
         json = json ++ "}"
@@ -261,7 +261,7 @@ impl BuildCache {
     ///
     /// Uses `~/.blood/cache` by default, or `$BLOOD_CACHE` if set.
     pub fn new() -> BuildCache {
-        let cache_dir = BuildCache::default_cache_dir()
+        let cache_dir = BuildCache::default_cache_dir();
         BuildCache {
             cache_dir,
             object_cache: HashMap::new(),
@@ -307,7 +307,7 @@ impl BuildCache {
         match env::var("BLOOD_CACHE") {
             Option::Some(cache) => return Path::new(cache),
             Option::None => {}
-        }
+        };
 
         // Check home directory
         match env::home_dir() {
@@ -326,7 +326,7 @@ impl BuildCache {
 
     /// Get the cache directory.
     pub fn cache_dir(self) -> Path {
-        self.cache_dir.clone()
+        self.cache_dir.clone();
     }
 
     // === Version Directory ===
@@ -344,7 +344,7 @@ impl BuildCache {
         let version_name = "v" ++ CACHE_VERSION.to_string() ++
                           "_abi" ++ CODEGEN_ABI_VERSION.to_string() ++
                           "_" ++ CODEGEN_HASH
-        self.cache_dir.join(version_name)
+        self.cache_dir.join(version_name);
     }
 
     /// Get the path for an object file by hash.
@@ -352,31 +352,31 @@ impl BuildCache {
     /// Uses a two-character prefix for sharding:
     /// `objects/a7/f2k9m3...`
     fn object_path(self, hash: ContentHash) -> Path {
-        let hash_str = hash.full_display()
-        let prefix = hash_str.substring(0, 2)
-        let suffix = hash_str.substring(2, hash_str.len())
+        let hash_str = hash.full_display();
+        let prefix = hash_str.substring(0, 2);
+        let suffix = hash_str.substring(2, hash_str.len());
 
         self.version_dir()
             .join("objects")
             .join(prefix)
-            .join(suffix)
+            .join(suffix);
     }
 
     /// Get the path for an IR file by hash.
     fn ir_path(self, hash: ContentHash) -> Path {
-        let hash_str = hash.full_display()
-        let prefix = hash_str.substring(0, 2)
-        let suffix = hash_str.substring(2, hash_str.len())
+        let hash_str = hash.full_display();
+        let prefix = hash_str.substring(0, 2);
+        let suffix = hash_str.substring(2, hash_str.len());
 
         self.version_dir()
             .join("ir")
             .join(prefix)
-            .join(suffix ++ ".ll")
+            .join(suffix ++ ".ll");
     }
 
     /// Get the path to the dependency index file.
     fn deps_path(self) -> Path {
-        self.version_dir().join("deps.json")
+        self.version_dir().join("deps.json");
     }
 
     // === Initialization ===
@@ -388,16 +388,16 @@ impl BuildCache {
     /// - `{version}/ir/` for debugging IR dumps
     pub fn init(self) -> Result<Unit, CacheError> {
         if !self.enabled {
-            return Result::Ok(())
-        }
+            return Result::Ok(());
+        };
 
-        let version_dir = self.version_dir()
+        let version_dir = self.version_dir();
 
         // Create directory structure
         match File::create_dir_all(version_dir.join("objects")) {
             Result::Err(e) => return Result::Err(CacheError::Io(e)),
             Result::Ok(_) => {}
-        }
+        };
 
         match File::create_dir_all(version_dir.join("ir")) {
             Result::Err(e) => return Result::Err(CacheError::Io(e)),
@@ -415,8 +415,8 @@ impl BuildCache {
         match self.init() {
             Result::Err(e) => return Result::Err(e),
             Result::Ok(_) => {}
-        }
-        self.load_index()
+        };
+        self.load_index();
     }
 
     // === Object Storage ===
@@ -424,16 +424,16 @@ impl BuildCache {
     /// Check if a compiled object exists for a hash.
     pub fn has_object(mut self, hash: ContentHash) -> Bool {
         if !self.enabled {
-            return false
-        }
+            return false;
+        };
 
         // Check in-memory cache first
         if self.object_cache.contains_key(hash) {
-            return true
-        }
+            return true;
+        };
 
         // Check filesystem
-        self.object_path(hash).exists()
+        self.object_path(hash).exists();
     }
 
     /// Get a compiled object by hash.
@@ -441,19 +441,19 @@ impl BuildCache {
     /// Returns the object data if found, or None if not cached.
     pub fn get_object(mut self, hash: ContentHash) -> Result<Option[Vec<U8>>, CacheError] {
         if !self.enabled {
-            return Result::Ok(Option::None)
-        }
+            return Result::Ok(Option::None);
+        };
 
-        let path = self.object_path(hash)
+        let path = self.object_path(hash);
         if !path.exists() {
-            self.stats.record_miss()
-            return Result::Ok(Option::None)
-        }
+            self.stats.record_miss();
+            return Result::Ok(Option::None);
+        };
 
         match File::read_bytes(path) {
             Result::Err(e) => Result::Err(CacheError::Io(e)),
             Result::Ok(data) => {
-                self.stats.record_hit()
+                self.stats.record_hit();
                 Result::Ok(Option::Some(data))
             }
         }
@@ -464,10 +464,10 @@ impl BuildCache {
     /// Returns the path where the object was stored.
     pub fn store_object(mut self, hash: ContentHash, data: Vec<U8>) -> Result<Path, CacheError> {
         if !self.enabled {
-            return Result::Ok(Path::new(""))
-        }
+            return Result::Ok(Path::new(""));
+        };
 
-        let path = self.object_path(hash)
+        let path = self.object_path(hash);
 
         // Ensure parent directory exists
         match path.parent() {
@@ -478,16 +478,16 @@ impl BuildCache {
                 }
             }
             Option::None => {}
-        }
+        };
 
         // Write the object
         match File::write_bytes(path.clone(), data) {
             Result::Err(e) => return Result::Err(CacheError::Io(e)),
             Result::Ok(_) => {}
-        }
+        };
 
         // Update in-memory cache
-        self.object_cache.insert(hash, path.clone())
+        self.object_cache.insert(hash, path.clone());
 
         Result::Ok(path)
     }
@@ -506,10 +506,10 @@ impl BuildCache {
     /// Store IR for debugging.
     pub fn store_ir(self, hash: ContentHash, ir: String) -> Result<Path, CacheError> {
         if !self.enabled {
-            return Result::Ok(Path::new(""))
-        }
+            return Result::Ok(Path::new(""));
+        };
 
-        let path = self.ir_path(hash)
+        let path = self.ir_path(hash);
 
         // Ensure parent directory exists
         match path.parent() {
@@ -520,7 +520,7 @@ impl BuildCache {
                 }
             }
             Option::None => {}
-        }
+        };
 
         // Write the IR
         match File::write_string(path.clone(), ir) {
@@ -538,13 +538,13 @@ impl BuildCache {
     /// This enables automatic invalidation when dependencies change.
     pub fn record_dependencies(mut self, hash: ContentHash, deps: Vec<ContentHash>) -> Unit {
         if self.enabled {
-            self.dependencies.insert(hash, deps)
+            self.dependencies.insert(hash, deps);
         }
     }
 
     /// Get dependencies for a hash.
     pub fn get_dependencies(self, hash: ContentHash) -> Option[Vec<ContentHash>] {
-        self.dependencies.get(hash).map(|v| v.clone())
+        self.dependencies.get(hash).map(|v| v.clone());
     }
 
     /// Invalidate all dependents of a changed hash.
@@ -555,38 +555,38 @@ impl BuildCache {
     /// Returns the list of invalidated hashes.
     pub fn invalidate(mut self, changed_hash: ContentHash) -> Result<Vec<ContentHash>, CacheError> {
         if !self.enabled {
-            return Result::Ok(Vec::new())
-        }
+            return Result::Ok(Vec::new());
+        };
 
-        let mut invalidated = Vec::new()
-        let mut to_check = Vec::new()
-        to_check.push(changed_hash)
+        let mut invalidated = Vec::new();
+        let mut to_check = Vec::new();
+        to_check.push(changed_hash);
 
         while !to_check.is_empty() {
-            let hash = to_check.pop().unwrap()
+            let hash = to_check.pop().unwrap();
 
             // Find all hashes that depend on this one
-            let mut dependents = Vec::new()
+            let mut dependents = Vec::new();
             for (h, deps) in self.dependencies.clone() {
                 if deps.contains(hash) {
-                    dependents.push(h)
+                    dependents.push(h);
                 }
-            }
+            };
 
             for dep in dependents {
                 if !invalidated.contains(dep) {
-                    invalidated.push(dep)
-                    to_check.push(dep)
+                    invalidated.push(dep);
+                    to_check.push(dep);
 
                     // Remove cached object
-                    let path = self.object_path(dep)
+                    let path = self.object_path(dep);
                     if path.exists() {
                         match File::remove(path) {
                             Result::Err(e) => return Result::Err(CacheError::Io(e)),
                             Result::Ok(_) => {}
                         }
-                    }
-                    self.object_cache.remove(dep)
+                    };
+                    self.object_cache.remove(dep);
                 }
             }
         }
@@ -602,16 +602,16 @@ impl BuildCache {
     /// can use it for incremental invalidation.
     pub fn save_index(self) -> Result<Unit, CacheError> {
         if !self.enabled {
-            return Result::Ok(())
-        }
+            return Result::Ok(());
+        };
 
         let index = CacheIndex {
             version: CACHE_VERSION,
             dependencies: self.dependencies.clone(),
-        }
+        };
 
-        let json = index.to_json()
-        let path = self.deps_path()
+        let json = index.to_json();
+        let path = self.deps_path();
 
         // Ensure parent directory exists
         match path.parent() {
@@ -622,7 +622,7 @@ impl BuildCache {
                 }
             }
             Option::None => {}
-        }
+        };
 
         match File::write_string(path, json) {
             Result::Err(e) => Result::Err(CacheError::Io(e)),
@@ -636,13 +636,13 @@ impl BuildCache {
     /// `Ok(false)` if no index exists (fresh cache), or an error.
     pub fn load_index(mut self) -> Result<Bool, CacheError> {
         if !self.enabled {
-            return Result::Ok(false)
-        }
+            return Result::Ok(false);
+        };
 
-        let path = self.deps_path()
+        let path = self.deps_path();
         if !path.exists() {
-            return Result::Ok(false)
-        }
+            return Result::Ok(false);
+        };
 
         match File::read_string(path) {
             Result::Err(e) => return Result::Err(CacheError::Io(e)),
@@ -656,8 +656,8 @@ impl BuildCache {
                                 expected: CACHE_VERSION,
                                 found: index.version,
                             })
-                        }
-                        self.dependencies = index.dependencies
+                        };
+                        self.dependencies = index.dependencies;
                         Result::Ok(true)
                     }
                 }
@@ -670,41 +670,41 @@ impl BuildCache {
     /// Clear all cached objects.
     pub fn clear(mut self) -> Result<Unit, CacheError> {
         if !self.enabled {
-            return Result::Ok(())
-        }
+            return Result::Ok(());
+        };
 
-        let version_dir = self.version_dir()
+        let version_dir = self.version_dir();
         if version_dir.exists() {
             match File::remove_dir_all(version_dir) {
                 Result::Err(e) => return Result::Err(CacheError::Io(e)),
                 Result::Ok(_) => {}
             }
-        }
+        };
 
-        self.object_cache.clear()
-        self.dependencies.clear()
-        self.init()
+        self.object_cache.clear();
+        self.dependencies.clear();
+        self.init();
     }
 
     /// Get cache statistics.
     pub fn stats(self) -> CacheStats {
         // For accurate stats, would need to walk the directory
         // For now, return the runtime stats
-        self.stats.clone()
+        self.stats.clone();
     }
 
     /// Calculate full cache statistics by walking the directory.
     pub fn calculate_stats(self) -> Result<CacheStats, CacheError> {
         if !self.enabled {
-            return Result::Ok(CacheStats::new())
-        }
+            return Result::Ok(CacheStats::new());
+        };
 
-        let objects_dir = self.version_dir().join("objects")
+        let objects_dir = self.version_dir().join("objects");
         if !objects_dir.exists() {
-            return Result::Ok(CacheStats::new())
-        }
+            return Result::Ok(CacheStats::new());
+        };
 
-        let mut stats = self.stats.clone()
+        let mut stats = self.stats.clone();
 
         // Walk directory and count files/sizes
         match File::walk_dir(objects_dir) {
@@ -712,10 +712,10 @@ impl BuildCache {
             Result::Ok(entries) => {
                 for entry in entries {
                     if entry.is_file() {
-                        stats.cached_count = stats.cached_count + 1
+                        stats.cached_count = stats.cached_count + 1;
                         match entry.size() {
                             Option::Some(size) => {
-                                stats.cached_size = stats.cached_size + size
+                                stats.cached_size = stats.cached_size + size;
                             }
                             Option::None => {}
                         }
@@ -763,10 +763,10 @@ pub enum HirItemKind {
 /// This produces a hash based on the canonical form of the item,
 /// suitable for incremental compilation cache keys.
 pub fn hash_hir_item(item: HirItem) -> ContentHash {
-    let mut hasher = ContentHasher::new()
+    let mut hasher = ContentHasher::new();
 
     // Hash item name
-    hasher.update_str(item.name)
+    hasher.update_str(item.name);
 
     // Hash item kind tag
     let kind_tag: U8 = match item.kind {
@@ -783,10 +783,10 @@ pub fn hash_hir_item(item: HirItem) -> ContentHash {
         HirItemKind::ExternFn => 0x0B,
         HirItemKind::Bridge => 0x0C,
         HirItemKind::Module => 0x0D,
-    }
-    hasher.update_u8(kind_tag)
+    };
+    hasher.update_u8(kind_tag);
 
-    hasher.finalize()
+    hasher.finalize();
 }
 
 // ============================================================================
@@ -795,143 +795,143 @@ pub fn hash_hir_item(item: HirItem) -> ContentHash {
 
 #[test]
 fn test_cache_stats_new() {
-    let stats = CacheStats::new()
-    assert(stats.hits() == 0)
-    assert(stats.misses() == 0)
-    assert(stats.cached_size() == 0)
-    assert(stats.cached_count() == 0)
+    let stats = CacheStats::new();
+    assert(stats.hits() == 0);
+    assert(stats.misses() == 0);
+    assert(stats.cached_size() == 0);
+    assert(stats.cached_count() == 0);
 }
 
 #[test]
 fn test_cache_stats_hit_rate() {
-    let mut stats = CacheStats::new()
+    let mut stats = CacheStats::new();
 
     // No operations = 0% hit rate
-    assert(stats.hit_rate() == 0.0)
+    assert(stats.hit_rate() == 0.0);
 
     // Record some hits and misses
-    stats.record_hit()
-    stats.record_hit()
-    stats.record_hit()
-    stats.record_miss()
+    stats.record_hit();
+    stats.record_hit();
+    stats.record_hit();
+    stats.record_miss();
 
     // 3 hits, 1 miss = 75% hit rate
-    let rate = stats.hit_rate()
-    assert(rate > 74.9 && rate < 75.1)  // Allow floating point tolerance
+    let rate = stats.hit_rate();
+    assert(rate > 74.9 && rate < 75.1);  // Allow floating point tolerance
 }
 
 #[test]
 fn test_cache_index_new() {
-    let index = CacheIndex::new()
-    assert(index.version == CACHE_VERSION)
-    assert(index.dependencies.is_empty())
+    let index = CacheIndex::new();
+    assert(index.version == CACHE_VERSION);
+    assert(index.dependencies.is_empty());
 }
 
 #[test]
 fn test_cache_index_to_json() {
-    let mut index = CacheIndex::new()
+    let mut index = CacheIndex::new();
 
-    let hash1 = ContentHash::compute("item1".as_bytes())
-    let hash2 = ContentHash::compute("item2".as_bytes())
-    let hash3 = ContentHash::compute("item3".as_bytes())
+    let hash1 = ContentHash::compute("item1".as_bytes());
+    let hash2 = ContentHash::compute("item2".as_bytes());
+    let hash3 = ContentHash::compute("item3".as_bytes());
 
     // item1 depends on item2 and item3
-    let mut deps = Vec::new()
-    deps.push(hash2)
-    deps.push(hash3)
-    index.dependencies.insert(hash1, deps)
+    let mut deps = Vec::new();
+    deps.push(hash2);
+    deps.push(hash3);
+    index.dependencies.insert(hash1, deps);
 
-    let json = index.to_json()
+    let json = index.to_json();
 
     // Should contain version
-    assert(json.contains("\"version\":"))
+    assert(json.contains("\"version\":"));
     // Should contain dependencies section
-    assert(json.contains("\"dependencies\":"))
+    assert(json.contains("\"dependencies\":"));
 }
 
 #[test]
 fn test_build_cache_disabled() {
-    let cache = BuildCache::disabled()
-    assert(!cache.is_enabled())
+    let cache = BuildCache::disabled();
+    assert(!cache.is_enabled());
 
-    let hash = ContentHash::compute("test".as_bytes())
-    assert(!cache.has_object(hash))
+    let hash = ContentHash::compute("test".as_bytes());
+    assert(!cache.has_object(hash));
 }
 
 #[test]
 fn test_build_cache_default_dir() {
-    let dir = BuildCache::default_cache_dir()
+    let dir = BuildCache::default_cache_dir();
     // Should return a non-empty path
-    assert(!dir.to_string().is_empty())
+    assert(!dir.to_string().is_empty());
 }
 
 #[test]
 fn test_build_cache_version_dir() {
-    let cache = BuildCache::with_dir(Path::new("/tmp/test-cache"))
-    let version_dir = cache.version_dir()
+    let cache = BuildCache::with_dir(Path::new("/tmp/test-cache"));
+    let version_dir = cache.version_dir();
 
     // Should contain version info
-    let dir_str = version_dir.to_string()
-    assert(dir_str.contains("v" ++ CACHE_VERSION.to_string()))
-    assert(dir_str.contains("abi" ++ CODEGEN_ABI_VERSION.to_string()))
+    let dir_str = version_dir.to_string();
+    assert(dir_str.contains("v" ++ CACHE_VERSION.to_string()));
+    assert(dir_str.contains("abi" ++ CODEGEN_ABI_VERSION.to_string()));
 }
 
 #[test]
 fn test_build_cache_object_path_sharding() {
-    let cache = BuildCache::with_dir(Path::new("/tmp/test-cache"))
+    let cache = BuildCache::with_dir(Path::new("/tmp/test-cache"));
 
-    let hash = ContentHash::compute("test object".as_bytes())
-    let path = cache.object_path(hash)
+    let hash = ContentHash::compute("test object".as_bytes());
+    let path = cache.object_path(hash);
 
-    let path_str = path.to_string()
+    let path_str = path.to_string();
 
     // Should be sharded by first two characters of hash
-    assert(path_str.contains("/objects/"))
+    assert(path_str.contains("/objects/"));
 
     // Path should contain hash
-    let hash_str = hash.full_display()
-    assert(path_str.contains(hash_str.substring(2, hash_str.len())))
+    let hash_str = hash.full_display();
+    assert(path_str.contains(hash_str.substring(2, hash_str.len())));
 }
 
 #[test]
 fn test_build_cache_dependencies() {
-    let mut cache = BuildCache::with_dir(Path::new("/tmp/test-cache"))
+    let mut cache = BuildCache::with_dir(Path::new("/tmp/test-cache"));
 
-    let hash_a = ContentHash::compute("a".as_bytes())
-    let hash_b = ContentHash::compute("b".as_bytes())
-    let hash_c = ContentHash::compute("c".as_bytes())
+    let hash_a = ContentHash::compute("a".as_bytes());
+    let hash_b = ContentHash::compute("b".as_bytes());
+    let hash_c = ContentHash::compute("c".as_bytes());
 
     // Record: B depends on A, C depends on B
-    let mut deps_b = Vec::new()
-    deps_b.push(hash_a)
-    cache.record_dependencies(hash_b, deps_b)
+    let mut deps_b = Vec::new();
+    deps_b.push(hash_a);
+    cache.record_dependencies(hash_b, deps_b);
 
-    let mut deps_c = Vec::new()
-    deps_c.push(hash_b)
-    cache.record_dependencies(hash_c, deps_c)
+    let mut deps_c = Vec::new();
+    deps_c.push(hash_b);
+    cache.record_dependencies(hash_c, deps_c);
 
     // Verify dependencies
-    let got_b = cache.get_dependencies(hash_b).unwrap()
-    assert(got_b.len() == 1)
-    assert(got_b.contains(hash_a))
+    let got_b = cache.get_dependencies(hash_b).unwrap();
+    assert(got_b.len() == 1);
+    assert(got_b.contains(hash_a));
 
-    let got_c = cache.get_dependencies(hash_c).unwrap()
-    assert(got_c.len() == 1)
-    assert(got_c.contains(hash_b))
+    let got_c = cache.get_dependencies(hash_c).unwrap();
+    assert(got_c.len() == 1);
+    assert(got_c.contains(hash_b));
 }
 
 #[test]
 fn test_cache_error_describe() {
-    let err1 = CacheError::Corrupted("bad data")
-    assert(err1.describe().contains("corrupted"))
+    let err1 = CacheError::Corrupted("bad data");
+    assert(err1.describe().contains("corrupted"));
 
-    let err2 = CacheError::VersionMismatch { expected: 2, found: 1 }
-    assert(err2.describe().contains("version mismatch"))
-    assert(err2.describe().contains("expected 2"))
-    assert(err2.describe().contains("found 1"))
+    let err2 = CacheError::VersionMismatch { expected: 2, found: 1 };
+    assert(err2.describe().contains("version mismatch"));
+    assert(err2.describe().contains("expected 2"));
+    assert(err2.describe().contains("found 1"));
 
-    let err3 = CacheError::Json("parse error")
-    assert(err3.describe().contains("JSON"))
+    let err3 = CacheError::Json("parse error");
+    assert(err3.describe().contains("JSON"));
 }
 
 #[test]
@@ -939,32 +939,32 @@ fn test_hir_item_hash_determinism() {
     let item = HirItem {
         name: "my_function",
         kind: HirItemKind::Function,
-    }
+    };
 
-    let hash1 = hash_hir_item(item)
+    let hash1 = hash_hir_item(item);
     let hash2 = hash_hir_item(HirItem {
         name: "my_function",
         kind: HirItemKind::Function,
     })
 
     // Same item should produce same hash
-    assert(hash1 == hash2)
+    assert(hash1 == hash2);
 
     // Different name should produce different hash
     let item2 = HirItem {
         name: "other_function",
         kind: HirItemKind::Function,
-    }
-    let hash3 = hash_hir_item(item2)
-    assert(hash1 != hash3)
+    };
+    let hash3 = hash_hir_item(item2);
+    assert(hash1 != hash3);
 
     // Different kind should produce different hash
     let item3 = HirItem {
         name: "my_function",
         kind: HirItemKind::Struct,
-    }
-    let hash4 = hash_hir_item(item3)
-    assert(hash1 != hash4)
+    };
+    let hash4 = hash_hir_item(item3);
+    assert(hash1 != hash4);
 }
 
 #[test]
@@ -986,18 +986,18 @@ fn test_hir_item_kind_tags() {
         HirItemKind::Module,
     ]
 
-    let mut hashes = Vec::new()
+    let mut hashes = Vec::new();
     for kind in kinds {
         let item = HirItem {
             name: "same_name",
             kind: kind,
-        }
-        let hash = hash_hir_item(item)
+        };
+        let hash = hash_hir_item(item);
 
         // Each hash should be unique
         for existing in hashes.clone() {
-            assert(hash != existing)
-        }
-        hashes.push(hash)
+            assert(hash != existing);
+        };
+        hashes.push(hash);
     }
 }

@@ -147,7 +147,7 @@ impl ModuleResolver {
             return Err(ResolveError::InvalidPath {
                 message: "empty module path".to_string(),
             });
-        }
+        };
 
         // Get segments, skipping "crate" prefix
         let segments = path.segments();
@@ -160,7 +160,7 @@ impl ModuleResolver {
         // If no segments after "crate", this is the crate root
         if start_index >= segments.len() {
             return self.find_crate_root();
-        }
+        };
 
         // Build the directory path
         let mut dir_path = self.source_root.clone();
@@ -168,7 +168,7 @@ impl ModuleResolver {
         while i < segments.len() - 1 {
             dir_path = format!("{}/{}", dir_path, segments[i]);
             i = i + 1;
-        }
+        };
 
         // The last segment is the module name
         let last = &segments[segments.len() - 1];
@@ -221,9 +221,9 @@ impl ModuleResolver {
         while i < chars.len() {
             if chars[i] == '/' {
                 last_slash = Some(i);
-            }
+            };
             i = i + 1;
-        }
+        };
 
         match last_slash {
             Some(pos) => {
@@ -232,7 +232,7 @@ impl ModuleResolver {
                 } else {
                     file_path[0..pos].to_string()
                 }
-            }
+            };
             None => ".".to_string(),
         }
     }
@@ -251,9 +251,9 @@ impl ModuleResolver {
         while i < chars.len() {
             if chars[i] == '/' {
                 last_slash = Some(i);
-            }
+            };
             i = i + 1;
-        }
+        };
 
         match last_slash {
             Some(pos) => path[pos + 1..].to_string(),
@@ -272,7 +272,7 @@ impl ModuleResolver {
         if file_name == "mod.blood" {
             // Get the parent directory name
             let parent = self.get_parent_dir(file_path);
-            self.file_name(&parent)
+            self.file_name(&parent);
         } else if file_name.ends_with(".blood") {
             // Strip the .blood extension
             file_name[0..file_name.len() - 6].to_string()

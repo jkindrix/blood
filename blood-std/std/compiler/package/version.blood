@@ -70,7 +70,7 @@ impl Version {
         let s = s.trim();
         if s.is_empty() {
             return Result::Err(ParseVersionError::Empty);
-        }
+        };
 
         // Split off build metadata first
         let (version_pre, build) = match s.find('+') {
@@ -96,7 +96,7 @@ impl Version {
         let parts: Vec<&str> = version.split('.').collect();
         if parts.len() != 3 {
             return Result::Err(ParseVersionError::InvalidFormat(s.to_string()));
-        }
+        };
 
         let major = match parts[0].parse::<u64>() {
             Option::Some(v) => v,
@@ -124,7 +124,7 @@ impl Version {
 
     /// Check if this is a pre-release version.
     pub fn is_prerelease(&self) -> bool {
-        self.pre.is_some()
+        self.pre.is_some();
     }
 
     /// Get the base version (without pre-release or build metadata).
@@ -147,7 +147,7 @@ impl Version {
                 result.push_str(p);
             }
             Option::None => {}
-        }
+        };
         match &self.build {
             Option::Some(b) => {
                 result.push('+');
@@ -171,15 +171,15 @@ impl Ord for Version {
         match self.major.cmp(&other.major) {
             Ordering::Equal => {}
             ord => return ord,
-        }
+        };
         match self.minor.cmp(&other.minor) {
             Ordering::Equal => {}
             ord => return ord,
-        }
+        };
         match self.patch.cmp(&other.patch) {
             Ordering::Equal => {}
             ord => return ord,
-        }
+        };
 
         // Pre-release versions have lower precedence than normal versions
         match (&self.pre, &other.pre) {
@@ -267,7 +267,7 @@ impl VersionReq {
         let s = s.trim();
         if s.is_empty() || s == "*" {
             return Result::Ok(VersionReq::any());
-        }
+        };
 
         // Handle comma-separated constraints
         let parts: Vec<&str> = s.split(',').collect();
@@ -278,7 +278,7 @@ impl VersionReq {
             match VersionConstraint::parse(parts[i].trim()) {
                 Result::Ok(c) => constraints.push(c),
                 Result::Err(e) => return Result::Err(e),
-            }
+            };
             i = i + 1;
         }
 
@@ -291,7 +291,7 @@ impl VersionReq {
         while i < self.constraints.len() {
             if !self.constraints[i].matches(version) {
                 return false;
-            }
+            };
             i = i + 1;
         }
         true
@@ -301,14 +301,14 @@ impl VersionReq {
     pub fn to_string(&self) -> String {
         if self.constraints.is_empty() {
             return "*".to_string();
-        }
+        };
 
         let mut result = String::new();
         let mut i: USize = 0;
         while i < self.constraints.len() {
             if i > 0 {
                 result.push_str(", ");
-            }
+            };
             result.push_str(&self.constraints[i].to_string());
             i = i + 1;
         }
@@ -345,7 +345,7 @@ impl VersionConstraint {
         let s = s.trim();
         if s.is_empty() || s == "*" {
             return Result::Ok(VersionConstraint::Any);
-        }
+        };
 
         // Check for caret
         if s.starts_with('^') {
@@ -354,7 +354,7 @@ impl VersionConstraint {
                 Result::Ok(v) => return Result::Ok(VersionConstraint::Caret(v)),
                 Result::Err(e) => return Result::Err(ParseVersionReqError::Version(e)),
             }
-        }
+        };
 
         // Check for tilde
         if s.starts_with('~') {
@@ -363,7 +363,7 @@ impl VersionConstraint {
                 Result::Ok(v) => return Result::Ok(VersionConstraint::Tilde(v)),
                 Result::Err(e) => return Result::Err(ParseVersionReqError::Version(e)),
             }
-        }
+        };
 
         // Check for comparison operators
         if s.starts_with(">=") {
@@ -375,7 +375,7 @@ impl VersionConstraint {
                 })),
                 Result::Err(e) => return Result::Err(ParseVersionReqError::Version(e)),
             }
-        }
+        };
 
         if s.starts_with("<=") {
             let rest = &s[2..].trim();
@@ -386,7 +386,7 @@ impl VersionConstraint {
                 })),
                 Result::Err(e) => return Result::Err(ParseVersionReqError::Version(e)),
             }
-        }
+        };
 
         if s.starts_with('>') {
             let rest = &s[1..].trim();
@@ -397,7 +397,7 @@ impl VersionConstraint {
                 })),
                 Result::Err(e) => return Result::Err(ParseVersionReqError::Version(e)),
             }
-        }
+        };
 
         if s.starts_with('<') {
             let rest = &s[1..].trim();
@@ -408,7 +408,7 @@ impl VersionConstraint {
                 })),
                 Result::Err(e) => return Result::Err(ParseVersionReqError::Version(e)),
             }
-        }
+        };
 
         if s.starts_with('=') {
             let rest = &s[1..].trim();
@@ -419,7 +419,7 @@ impl VersionConstraint {
                 })),
                 Result::Err(e) => return Result::Err(ParseVersionReqError::Version(e)),
             }
-        }
+        };
 
         // Bare version is treated as exact match
         match Version::parse(s) {
@@ -443,22 +443,22 @@ impl VersionConstraint {
                 // For X = 0, Y = 0: >=0.0.Z, <0.0.(Z+1)
                 if *version < *base {
                     return false;
-                }
+                };
 
                 if base.major > 0 {
-                    version.major == base.major
+                    version.major == base.major;
                 } else if base.minor > 0 {
-                    version.major == 0 && version.minor == base.minor
+                    version.major == 0 && version.minor == base.minor;
                 } else {
-                    version.major == 0 && version.minor == 0 && version.patch == base.patch
+                    version.major == 0 && version.minor == 0 && version.patch == base.patch;
                 }
             }
             VersionConstraint::Tilde(base) => {
                 // ~X.Y.Z: >=X.Y.Z, <X.(Y+1).0
                 if *version < *base {
                     return false;
-                }
-                version.major == base.major && version.minor == base.minor
+                };
+                version.major == base.major && version.minor == base.minor;
             }
         }
     }

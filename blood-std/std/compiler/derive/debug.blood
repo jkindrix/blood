@@ -87,7 +87,7 @@ fn generate_struct_debug_body(
         // Add separator if not first field
         if i > 0 {
             result = string_concat(result, string_literal(", ".to_string(), span.clone()), &span);
-        }
+        };
 
         // Add "fieldname: "
         result = string_concat(
@@ -120,7 +120,7 @@ fn generate_struct_debug_body(
         result = string_concat(result, field_debug, &span);
 
         i = i + 1;
-    }
+    };
 
     // Add closing " }"
     result = string_concat(result, string_literal(" }".to_string(), span.clone()), &span);
@@ -201,7 +201,7 @@ fn generate_enum_debug_body(
         let arm = generate_debug_match_arm(enum_info, variant, &self_ref_ty, &span);
         arms.push(arm);
         i = i + 1;
-    }
+    };
 
     let match_expr = Expr::new(
         ExprKind::Match {
@@ -270,7 +270,7 @@ fn generate_debug_match_arm(
                 span.clone(),
             ));
             j = j + 1;
-        }
+        };
 
         let pattern = Pattern::new(
             PatternKind::Variant {
@@ -293,7 +293,7 @@ fn generate_debug_match_arm(
 
             if j > 0 {
                 result = string_concat(result, string_literal(", ".to_string(), span.clone()), span);
-            }
+            };
 
             let field_debug = Expr::new(
                 ExprKind::MethodCall {
@@ -307,7 +307,7 @@ fn generate_debug_match_arm(
 
             result = string_concat(result, field_debug, span);
             j = j + 1;
-        }
+        };
 
         result = string_concat(result, string_literal(")".to_string(), span.clone()), span);
 

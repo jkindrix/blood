@@ -109,25 +109,25 @@ impl Clone for EscapeState {
 
 impl PartialEq for EscapeState {
     fn eq(&self, other: &EscapeState) -> bool {
-        self.ordinal() == other.ordinal()
+        self.ordinal() == other.ordinal();
     }
 }
 
 impl PartialOrd for EscapeState {
     fn lt(&self, other: &EscapeState) -> bool {
-        self.ordinal() < other.ordinal()
+        self.ordinal() < other.ordinal();
     }
 
     fn le(&self, other: &EscapeState) -> bool {
-        self.ordinal() <= other.ordinal()
+        self.ordinal() <= other.ordinal();
     }
 
     fn gt(&self, other: &EscapeState) -> bool {
-        self.ordinal() > other.ordinal()
+        self.ordinal() > other.ordinal();
     }
 
     fn ge(&self, other: &EscapeState) -> bool {
-        self.ordinal() >= other.ordinal()
+        self.ordinal() >= other.ordinal();
     }
 }
 
@@ -177,7 +177,7 @@ impl EscapeResults {
 
     /// Check if a local can be stack-allocated.
     pub fn can_stack_allocate(&self, local: &LocalId) -> bool {
-        self.stack_promotable.contains(&local.index())
+        self.stack_promotable.contains(&local.index());
     }
 
     /// Mark a local as stack-promotable.
@@ -187,7 +187,7 @@ impl EscapeResults {
 
     /// Check if a local is captured by an effect operation.
     pub fn is_effect_captured(&self, local: &LocalId) -> bool {
-        self.effect_captured.contains(&local.index())
+        self.effect_captured.contains(&local.index());
     }
 
     /// Mark a local as effect-captured.
@@ -197,7 +197,7 @@ impl EscapeResults {
 
     /// Check if a local is captured by a closure.
     pub fn is_closure_captured(&self, local: &LocalId) -> bool {
-        self.captured_by_closure.contains(&local.index())
+        self.captured_by_closure.contains(&local.index());
     }
 
     /// Mark a local as captured by a closure.
@@ -212,7 +212,7 @@ impl EscapeResults {
 
     /// Get the captures for a specific closure.
     pub fn get_captures(&self, closure: &LocalId) -> Option<&[u32]> {
-        self.closure_captures.get(&closure.index())
+        self.closure_captures.get(&closure.index());
     }
 
     /// Get recommended memory tier for a local.
@@ -220,12 +220,12 @@ impl EscapeResults {
         // Stack-promotable locals can always use stack allocation.
         if self.can_stack_allocate(local) {
             return MemoryTier::Stack;
-        }
+        };
 
         // Effect-captured values need region allocation for snapshot
         if self.is_effect_captured(local) {
             return MemoryTier::Region;
-        }
+        };
 
         // Closure-captured values need region allocation if the closure escapes
         if self.is_closure_captured(local) {
@@ -244,16 +244,16 @@ impl EscapeResults {
                         if closure_state != EscapeState::NoEscape {
                             found_escaping = true;
                         }
-                    }
+                    };
                     i = i + 1;
                 }
-            }
+            };
             if found_escaping {
                 return MemoryTier::Region;
             }
-        }
+        };
 
-        self.get(local).recommended_tier()
+        self.get(local).recommended_tier();
     }
 }
 
@@ -318,7 +318,7 @@ impl EscapeAnalyzer {
             let local = locals[i].id();
             self.states.insert(local.index(), EscapeState::NoEscape);
             i = i + 1;
-        }
+        };
 
         // Return place always escapes (returned to caller)
         self.states.insert(0, EscapeState::ArgEscape);
@@ -335,12 +335,12 @@ impl EscapeAnalyzer {
                     StatementKind::Assign { place, rvalue } => {
                         self.collect_closure_captures(place, rvalue);
                     }
-                    _ => {}
-                }
+                    _ => {};
+                };
                 si = si + 1;
-            }
+            };
             bi = bi + 1;
-        }
+        };
 
         // Iterate to fixed point
         let mut changed = true;
@@ -358,9 +358,9 @@ impl EscapeAnalyzer {
                 while si < stmts.len() {
                     if self.analyze_statement(stmts[si].kind()) {
                         changed = true;
-                    }
+                    };
                     si = si + 1;
-                }
+                };
 
                 // Analyze terminator
                 match block.terminator() {
@@ -370,35 +370,35 @@ impl EscapeAnalyzer {
                         }
                     }
                     Option::None => {}
-                }
+                };
 
                 bi = bi + 1;
-            }
+            };
 
             // Phase 2: Closure propagation
             if self.propagate_closure_escapes() {
                 changed = true;
             }
-        }
+        };
 
         // Build results
         let mut results = EscapeResults::new();
 
         for (local_idx, state) in self.states.iter() {
             results.states.insert(*local_idx, state.clone());
-        }
+        };
 
         for local_idx in self.effect_captured.iter() {
             results.effect_captured.insert(*local_idx);
-        }
+        };
 
         for (closure_idx, captures) in self.closure_captures.iter() {
             results.closure_captures.insert(*closure_idx, captures.clone());
-        }
+        };
 
         for local_idx in self.captured_by_closure.iter() {
             results.captured_by_closure.insert(*local_idx);
-        }
+        };
 
         // Determine stack-promotable allocations
         for (local_idx, state) in self.states.iter() {
@@ -417,7 +417,7 @@ impl EscapeAnalyzer {
     fn is_captured_by_escaping_closure(&self, local_idx: u32) -> bool {
         if !self.captured_by_closure.contains(&local_idx) {
             return false;
-        }
+        };
 
         for (closure_idx, captures) in self.closure_captures.iter() {
             let mut i = 0;
@@ -430,7 +430,7 @@ impl EscapeAnalyzer {
                     if closure_state != EscapeState::NoEscape {
                         return true;
                     }
-                }
+                };
                 i = i + 1;
             }
         }
@@ -456,16 +456,16 @@ impl EscapeAnalyzer {
                                     self.captured_by_closure.insert(captured);
                                 }
                                 Option::None => {}
-                            }
+                            };
                             i = i + 1;
-                        }
+                        };
 
                         self.closure_captures.insert(closure_local, captures);
                     }
-                    _ => {}
+                    _ => {};
                 }
             }
-            _ => {}
+            _ => {};
         }
     }
 
@@ -473,7 +473,7 @@ impl EscapeAnalyzer {
     fn analyze_statement(&mut self, kind: &StatementKind) -> bool {
         match kind {
             StatementKind::Assign { place, rvalue } => {
-                self.analyze_assignment(place, rvalue)
+                self.analyze_assignment(place, rvalue);
             }
             StatementKind::CaptureSnapshot { local } => {
                 // Effect snapshots capture references
@@ -518,7 +518,7 @@ impl EscapeAnalyzer {
             Rvalue::BinaryOp { op: _, left, right } => {
                 if self.propagate_to_operand(left, &target_state) {
                     changed = true;
-                }
+                };
                 if self.propagate_to_operand(right, &target_state) {
                     changed = true;
                 }
@@ -526,7 +526,7 @@ impl EscapeAnalyzer {
             Rvalue::CheckedBinaryOp { op: _, left, right } => {
                 if self.propagate_to_operand(left, &target_state) {
                     changed = true;
-                }
+                };
                 if self.propagate_to_operand(right, &target_state) {
                     changed = true;
                 }
@@ -546,7 +546,7 @@ impl EscapeAnalyzer {
                 while i < operands.len() {
                     if self.propagate_to_operand(&operands[i], &target_state) {
                         changed = true;
-                    }
+                    };
                     i = i + 1;
                 }
             }
@@ -576,7 +576,7 @@ impl EscapeAnalyzer {
                 while i < args.len() {
                     if self.propagate_to_operand(&args[i], &EscapeState::ArgEscape) {
                         changed = true;
-                    }
+                    };
                     i = i + 1;
                 }
             }
@@ -593,7 +593,7 @@ impl EscapeAnalyzer {
                             }
                         }
                         Option::None => {}
-                    }
+                    };
                     i = i + 1;
                 }
             }
@@ -626,7 +626,7 @@ impl EscapeAnalyzer {
 
             if closure_state == EscapeState::NoEscape {
                 continue;
-            }
+            };
 
             // Propagate escape state to all captured locals
             let mut i = 0;
@@ -641,7 +641,7 @@ impl EscapeAnalyzer {
                 if joined != current {
                     self.states.insert(captured, joined);
                     changed = true;
-                }
+                };
                 i = i + 1;
             }
         }
@@ -665,8 +665,8 @@ impl EscapeAnalyzer {
                     // Dereferencing a pointer: the pointee's escape is determined by the pointer
                     return EscapeState::GlobalEscape;
                 }
-                _ => {}
-            }
+                _ => {};
+            };
             i = i + 1;
         }
 
@@ -761,7 +761,7 @@ impl EscapeStatistics {
 
     /// Calculate the heap allocation percentage.
     pub fn heap_percentage(&self) -> f64 {
-        100.0 - self.stack_percentage()
+        100.0 - self.stack_percentage();
     }
 
     /// Check if the ">95% stack allocation" claim holds.

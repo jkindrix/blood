@@ -193,7 +193,7 @@ pub struct FnDecl {
 impl FnDecl {
     /// Check if this function has a body.
     pub fn has_body(self) -> Bool {
-        self.body.is_some()
+        self.body.is_some();
     }
 
     /// Check if this is a const function.
@@ -213,7 +213,7 @@ impl FnDecl {
 
     /// Check if this function has generic parameters.
     pub fn is_generic(self) -> Bool {
-        self.type_params.is_some()
+        self.type_params.is_some();
     }
 }
 
@@ -822,12 +822,12 @@ pub struct ImplBlock {
 impl ImplBlock {
     /// Check if this is a trait implementation.
     pub fn is_trait_impl(self) -> Bool {
-        self.trait_ty.is_some()
+        self.trait_ty.is_some();
     }
 
     /// Check if this is an inherent implementation.
     pub fn is_inherent(self) -> Bool {
-        self.trait_ty.is_none()
+        self.trait_ty.is_none();
     }
 }
 
@@ -949,12 +949,12 @@ pub struct ModItemDecl {
 impl ModItemDecl {
     /// Check if this is an external module reference.
     pub fn is_external(self) -> Bool {
-        self.body.is_none()
+        self.body.is_none();
     }
 
     /// Check if this is an inline module.
     pub fn is_inline(self) -> Bool {
-        self.body.is_some()
+        self.body.is_some();
     }
 }
 
@@ -1200,7 +1200,7 @@ pub struct MacroToken {
 }
 
 /// Token kind placeholder (will reference lexer tokens).
-pub type TokenKind = crate.compiler.lexer.TokenKind
+pub type TokenKind = crate.compiler.lexer.TokenKind;
 
 /// Hygiene context identifier for macro expansion.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -1237,31 +1237,31 @@ fn test_declaration_span() {
         where_clause: Option::None,
         body: Option::None,
         span: Span::new(0, 10),
-    }
+    };
 
-    let decl = Declaration::Function(fn_decl)
-    assert(decl.span() == Span::new(0, 10))
+    let decl = Declaration::Function(fn_decl);
+    assert(decl.span() == Span::new(0, 10));
 }
 
 #[test]
 fn test_fn_qualifiers() {
-    let none = FnQualifiers::none()
-    assert(!none.any())
+    let none = FnQualifiers::none();
+    assert(!none.any());
 
     let async_fn = FnQualifiers {
         is_const: false,
         is_async: true,
         is_unsafe: false,
-    }
-    assert(async_fn.any())
-    assert(async_fn.is_async)
+    };
+    assert(async_fn.any());
+    assert(async_fn.is_async);
 }
 
 #[test]
 fn test_struct_body_variants() {
-    let unit = StructBody::Unit
-    let tuple = StructBody::Tuple(Vec::new())
-    let record = StructBody::Record(Vec::new())
+    let unit = StructBody::Unit;
+    let tuple = StructBody::Tuple(Vec::new());
+    let record = StructBody::Record(Vec::new());
 
     // Create struct decls to test is_* methods
     let unit_struct = StructDecl {
@@ -1273,13 +1273,13 @@ fn test_struct_body_variants() {
         body: unit,
         span: Span::dummy(),
     }
-    assert(unit_struct.is_unit())
+    assert(unit_struct.is_unit());
 }
 
 #[test]
 fn test_handler_kind() {
-    assert(HandlerKind::Deep.as_str() == "deep")
-    assert(HandlerKind::Shallow.as_str() == "shallow")
+    assert(HandlerKind::Deep.as_str() == "deep");
+    assert(HandlerKind::Shallow.as_str() == "shallow");
 }
 
 #[test]
@@ -1293,40 +1293,40 @@ fn test_impl_block_kind() {
         where_clause: Option::None,
         items: Vec::new(),
         span: Span::dummy(),
-    }
-    assert(inherent.is_inherent())
-    assert(!inherent.is_trait_impl())
+    };
+    assert(inherent.is_inherent());
+    assert(!inherent.is_trait_impl());
 }
 
 #[test]
 fn test_fragment_kind() {
-    assert(FragmentKind::Expr.as_str() == "expr")
-    assert(FragmentKind::from_str("ty") == Option::Some(FragmentKind::Ty))
-    assert(FragmentKind::from_str("invalid").is_none())
+    assert(FragmentKind::Expr.as_str() == "expr");
+    assert(FragmentKind::from_str("ty") == Option::Some(FragmentKind::Ty));
+    assert(FragmentKind::from_str("invalid").is_none());
 }
 
 #[test]
 fn test_repetition_kind() {
-    assert(RepetitionKind::ZeroOrMore.as_str() == "*")
-    assert(RepetitionKind::OneOrMore.as_str() == "+")
-    assert(RepetitionKind::ZeroOrOne.as_str() == "?")
+    assert(RepetitionKind::ZeroOrMore.as_str() == "*");
+    assert(RepetitionKind::OneOrMore.as_str() == "+");
+    assert(RepetitionKind::ZeroOrOne.as_str() == "?");
 }
 
 #[test]
 fn test_macro_delimiter() {
-    assert(MacroDelimiter::Paren.open() == "(")
-    assert(MacroDelimiter::Paren.close() == ")")
-    assert(MacroDelimiter::Bracket.open() == "[")
-    assert(MacroDelimiter::Bracket.close() == "]")
-    assert(MacroDelimiter::Brace.open() == "{")
-    assert(MacroDelimiter::Brace.close() == "}")
+    assert(MacroDelimiter::Paren.open() == "(");
+    assert(MacroDelimiter::Paren.close() == ")");
+    assert(MacroDelimiter::Bracket.open() == "[");
+    assert(MacroDelimiter::Bracket.close() == "]");
+    assert(MacroDelimiter::Brace.open() == "{");
+    assert(MacroDelimiter::Brace.close() == "}");
 }
 
 #[test]
 fn test_param_qualifier() {
-    assert(ParamQualifier::Linear.as_str() == "linear")
-    assert(ParamQualifier::Affine.as_str() == "affine")
-    assert(ParamQualifier::Mut.as_str() == "mut")
+    assert(ParamQualifier::Linear.as_str() == "linear");
+    assert(ParamQualifier::Affine.as_str() == "affine");
+    assert(ParamQualifier::Mut.as_str() == "mut");
 }
 
 #[test]
@@ -1338,9 +1338,9 @@ fn test_mod_item_decl() {
         name: Ident::dummy(),
         body: Option::None,
         span: Span::dummy(),
-    }
-    assert(external.is_external())
-    assert(!external.is_inline())
+    };
+    assert(external.is_external());
+    assert(!external.is_inline());
 
     let inline = ModItemDecl {
         id: NodeId::dummy(),
@@ -1349,7 +1349,7 @@ fn test_mod_item_decl() {
         name: Ident::dummy(),
         body: Option::Some(Vec::new()),
         span: Span::dummy(),
-    }
-    assert(!inline.is_external())
-    assert(inline.is_inline())
+    };
+    assert(!inline.is_external());
+    assert(inline.is_inline());
 }

@@ -117,7 +117,7 @@ impl ExhaustivenessChecker {
     /// Check if a set of patterns is exhaustive for a given type.
     /// Returns a list of missing pattern descriptions if not exhaustive.
     pub fn check_exhaustiveness(&self, patterns: &[PatternMatrix], ty: &Type) -> [String] {
-        self.find_missing_patterns(patterns, ty)
+        self.find_missing_patterns(patterns, ty);
     }
 
     /// Find patterns that are not covered.
@@ -139,19 +139,19 @@ impl ExhaustivenessChecker {
                             PatternMatrix::Literal(_) => {}
                             PatternMatrix::Or(_) => {}
                             PatternMatrix::Missing => {}
-                        }
+                        };
                         j = j + 1;
                     }
                 }
                 PatternMatrix::Missing => {}
-            }
+            };
             i = i + 1;
-        }
+        };
 
         // Check based on type
         match &ty.kind {
             TypeKind::Primitive(PrimitiveTy::Bool) => {
-                self.check_bool_exhaustiveness(patterns)
+                self.check_bool_exhaustiveness(patterns);
             }
             TypeKind::Primitive(PrimitiveTy::Unit) => {
                 // Unit has exactly one value
@@ -178,20 +178,20 @@ impl ExhaustivenessChecker {
             TypeKind::Primitive(PrimitiveTy::Char) => self.check_char_exhaustiveness(patterns),
             TypeKind::Primitive(PrimitiveTy::Str) => self.check_string_exhaustiveness(patterns),
             TypeKind::Adt { def_id, type_args: _ } => {
-                self.check_adt_exhaustiveness(patterns, def_id)
+                self.check_adt_exhaustiveness(patterns, def_id);
             }
             TypeKind::Tuple(tys) => {
-                self.check_tuple_exhaustiveness(patterns, tys)
+                self.check_tuple_exhaustiveness(patterns, tys);
             }
             TypeKind::Never => {
                 // Never type has no values, always exhaustive
                 vec![]
             }
             TypeKind::Array { element: _, size: _ } => {
-                self.check_array_exhaustiveness(patterns)
+                self.check_array_exhaustiveness(patterns);
             }
             TypeKind::Slice { element: _ } => {
-                self.check_slice_exhaustiveness(patterns)
+                self.check_slice_exhaustiveness(patterns);
             }
             TypeKind::Ref { inner: _, mutability: _ } => {
                 // References require a wildcard for exhaustiveness
@@ -246,7 +246,7 @@ impl ExhaustivenessChecker {
             }
             TypeKind::Forall { params: _, body } => {
                 // For polymorphic types, check the body
-                self.find_missing_patterns(patterns, body)
+                self.find_missing_patterns(patterns, body);
             }
             TypeKind::Infer(_) => {
                 // Inference variable - assume exhaustive
@@ -262,7 +262,7 @@ impl ExhaustivenessChecker {
             }
             TypeKind::Ownership { inner, ownership: _ } => {
                 // Check the inner type
-                self.find_missing_patterns(patterns, inner)
+                self.find_missing_patterns(patterns, inner);
             }
             TypeKind::Error => {
                 // Error type - assume exhaustive for recovery
@@ -280,7 +280,7 @@ impl ExhaustivenessChecker {
         while i < patterns.len() {
             self.check_bool_pattern(&patterns[i], &mut has_true, &mut has_false);
             i = i + 1;
-        }
+        };
 
         let mut missing: [String] = vec![];
         if !has_true { missing.push("true".to_string()); }
@@ -333,14 +333,14 @@ impl ExhaustivenessChecker {
                                 PatternMatrix::Literal(_) => {}
                                 PatternMatrix::Or(_) => {}
                                 PatternMatrix::Missing => {}
-                            }
+                            };
                             j = j + 1;
                         }
                     }
                     PatternMatrix::Constructor { name: _, args: _ } => {}
                     PatternMatrix::Literal(_) => {}
                     PatternMatrix::Missing => {}
-                }
+                };
                 i = i + 1;
             }
             vec!["_".to_string()]
@@ -391,11 +391,11 @@ impl ExhaustivenessChecker {
                         }
                     }
                     TypeDefKind::Enum { variants } => {
-                        self.check_enum_exhaustiveness(patterns, &type_def.name, variants)
+                        self.check_enum_exhaustiveness(patterns, &type_def.name, variants);
                     }
                 }
-            }
-            None => vec![]
+            };
+            None => vec![];
         }
     }
 
@@ -409,9 +409,9 @@ impl ExhaustivenessChecker {
             self.collect_covered_variants(&patterns[i], &mut covered);
             if covered.len() >= variants.len() {
                 return vec![]; // All variants covered
-            }
+            };
             i = i + 1;
-        }
+        };
 
         // Find missing variants
         let mut missing: [String] = vec![];
@@ -423,7 +423,7 @@ impl ExhaustivenessChecker {
                     None => format!("{}::{}", enum_name, variants[i].name),
                 };
                 missing.push(pattern_str);
-            }
+            };
             i = i + 1;
         }
 
@@ -506,9 +506,9 @@ impl ExhaustivenessChecker {
                 while i < fields.len() {
                     args.push(self.pattern_to_matrix(&fields[i].pattern));
                     i = i + 1;
-                }
+                };
                 let struct_name = if name.segments.len() > 0 {
-                    name.segments[0].value.clone()
+                    name.segments[0].value.clone();
                 } else {
                     "<unknown>".to_string()
                 };
@@ -531,7 +531,7 @@ impl ExhaustivenessChecker {
                 PatternMatrix::Or(alts)
             }
             PatternKind::Range { start, end, inclusive } => {
-                self.range_to_pattern(start, end, *inclusive)
+                self.range_to_pattern(start, end, *inclusive);
             }
             PatternKind::Rest => PatternMatrix::Wild,
         }
@@ -559,7 +559,7 @@ impl ExhaustivenessChecker {
                             end: *e,
                             inclusive,
                         })
-                    }
+                    };
                     Some(Literal::Float { value: _, suffix: _ }) => PatternMatrix::Wild,
                     Some(Literal::Bool(_)) => PatternMatrix::Wild,
                     Some(Literal::Char(_)) => PatternMatrix::Wild,
@@ -593,8 +593,8 @@ pub fn check_exhaustiveness(
     while i < patterns.len() {
         matrix.push(checker.pattern_to_matrix(&patterns[i]));
         i = i + 1;
-    }
+    };
 
     // Check exhaustiveness
-    checker.check_exhaustiveness(&matrix, scrutinee_ty)
+    checker.check_exhaustiveness(&matrix, scrutinee_ty);
 }

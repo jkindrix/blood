@@ -20,7 +20,7 @@ use crate.compiler.hir.{
     Local, LocalId, Span as HirSpan,
 }
 
-use crate.compiler.hir.lowering.{AstLowering, LoweringError}
+use crate.compiler.hir.lowering.{AstLowering, LoweringError};
 use crate.compiler.hir.lowering.expr.lower_expr;
 use crate.compiler.hir.lowering.pattern.lower_pattern;
 use crate.compiler.hir.lowering.item.lower_type;
@@ -126,52 +126,52 @@ fn register_pattern_bindings(
             if let Some(sub) = subpattern {
                 register_pattern_bindings(ctx, sub, ty, span)?;
             }
-        }
+        };
 
         crate.compiler.hir::PatternKind::Tuple(patterns) => {
             for p in patterns {
                 register_pattern_bindings(ctx, p, &None, span)?;
             }
-        }
+        };
 
         crate.compiler.hir::PatternKind::Struct { def_id: _, fields, rest: _ } => {
             for field in fields {
                 register_pattern_bindings(ctx, &field.pattern, &None, span)?;
             }
-        }
+        };
 
         crate.compiler.hir::PatternKind::Variant { def_id: _, variant_idx: _, fields } => {
             for p in fields {
                 register_pattern_bindings(ctx, p, &None, span)?;
             }
-        }
+        };
 
         crate.compiler.hir::PatternKind::Ref { mutable: _, pattern: inner } => {
             register_pattern_bindings(ctx, inner, &None, span)?;
-        }
+        };
 
         crate.compiler.hir::PatternKind::Box(inner) => {
             register_pattern_bindings(ctx, inner, &None, span)?;
-        }
+        };
 
         crate.compiler.hir::PatternKind::Slice { prefix, rest, suffix } => {
             for p in prefix {
                 register_pattern_bindings(ctx, p, &None, span)?;
-            }
+            };
             if let Some(r) = rest {
                 register_pattern_bindings(ctx, r, &None, span)?;
-            }
+            };
             for p in suffix {
                 register_pattern_bindings(ctx, p, &None, span)?;
             }
-        }
+        };
 
         crate.compiler.hir::PatternKind::Or(patterns) => {
             // All alternatives must bind the same names
             for p in patterns {
                 register_pattern_bindings(ctx, p, &None, span)?;
             }
-        }
+        };
 
         // These patterns don't introduce bindings
         crate.compiler.hir::PatternKind::Wildcard => {}
@@ -180,7 +180,7 @@ fn register_pattern_bindings(
         crate.compiler.hir::PatternKind::Range { .. } => {}
         crate.compiler.hir::PatternKind::Rest => {}
         crate.compiler.hir::PatternKind::Error => {}
-    }
+    };
 
     Ok(())
 }
@@ -204,7 +204,7 @@ fn test_lower_expr_stmt() {
         kind: AstStmtKind::Semi(AstExpr {
             id: NodeId::new(2),
             kind: crate.compiler.ast::ExprKind::Literal(
-                crate.compiler.ast::Literal::Integer(42, None)
+                crate.compiler.ast::Literal::Integer(42, None);
             ),
             span: Span::dummy(),
         }),
@@ -247,7 +247,7 @@ fn test_lower_let_stmt() {
             init: Some(AstExpr {
                 id: NodeId::new(3),
                 kind: crate.compiler.ast::ExprKind::Literal(
-                    crate.compiler.ast::Literal::Integer(42, None)
+                    crate.compiler.ast::Literal::Integer(42, None);
                 ),
                 span: Span::dummy(),
             }),

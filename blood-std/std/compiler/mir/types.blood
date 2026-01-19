@@ -73,7 +73,7 @@ impl Clone for LocalId {
 
 impl PartialEq for LocalId {
     fn eq(&self, other: &LocalId) -> bool {
-        self.index == other.index
+        self.index == other.index;
     }
 }
 
@@ -111,7 +111,7 @@ impl Clone for BasicBlockId {
 
 impl PartialEq for BasicBlockId {
     fn eq(&self, other: &BasicBlockId) -> bool {
-        self.id == other.id
+        self.id == other.id;
     }
 }
 
@@ -343,7 +343,7 @@ impl Terminator {
 
     /// Get all successor blocks.
     pub fn successors(&self) -> [BasicBlockId] {
-        self.kind.successors()
+        self.kind.successors();
     }
 }
 
@@ -458,7 +458,7 @@ impl TerminatorKind {
                 match target {
                     Option::Some(t) => succs.push(t.clone()),
                     Option::None => {}
-                }
+                };
                 match unwind {
                     Option::Some(u) => succs.push(u.clone()),
                     Option::None => {}
@@ -611,7 +611,7 @@ impl SwitchTargets {
             let (_, target) = &self.branches[i];
             targets.push(target.clone());
             i = i + 1;
-        }
+        };
         targets.push(self.otherwise.clone());
         targets
     }
@@ -623,10 +623,10 @@ impl SwitchTargets {
             let (v, target) = &self.branches[i];
             if *v == value {
                 return target.clone();
-            }
+            };
             i = i + 1;
-        }
-        self.otherwise.clone()
+        };
+        self.otherwise.clone();
     }
 }
 
@@ -706,15 +706,15 @@ impl PartialEq for Place {
     fn eq(&self, other: &Place) -> bool {
         if self.local != other.local {
             return false;
-        }
+        };
         if self.projection.len() != other.projection.len() {
             return false;
-        }
+        };
         let mut i = 0;
         while i < self.projection.len() {
             if self.projection[i] != other.projection[i] {
                 return false;
-            }
+            };
             i = i + 1;
         }
         true
@@ -1278,7 +1278,7 @@ fn test_operand_place() {
     match copy_op.place() {
         Option::Some(_) => {}
         Option::None => panic("Expected Some"),
-    }
+    };
     match move_op.place() {
         Option::Some(_) => {}
         Option::None => panic("Expected Some"),

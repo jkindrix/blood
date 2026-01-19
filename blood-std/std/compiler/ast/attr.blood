@@ -105,17 +105,17 @@ impl Attribute {
 
     /// Check if this is a simple attribute (no arguments).
     pub fn is_simple(self) -> Bool {
-        self.args.is_none()
+        self.args.is_none();
     }
 
     /// Check if this attribute has a specific path.
     pub fn has_path(self, name: &str) -> Bool {
-        self.path.is_word(name)
+        self.path.is_word(name);
     }
 
     /// Get the first path segment name.
     pub fn name(self) -> Option[&Ident] {
-        self.path.segments.first()
+        self.path.segments.first();
     }
 }
 
@@ -145,7 +145,7 @@ impl AttrPath {
 
     /// Create a single-segment path.
     pub fn simple(ident: Ident) -> AttrPath {
-        let span = ident.span
+        let span = ident.span;
         AttrPath {
             segments: vec![ident],
             span,
@@ -161,12 +161,12 @@ impl AttrPath {
 
     /// Get the number of segments.
     pub fn len(self) -> USize {
-        self.segments.len()
+        self.segments.len();
     }
 
     /// Check if the path is empty.
     pub fn is_empty(self) -> Bool {
-        self.segments.is_empty()
+        self.segments.is_empty();
     }
 }
 
@@ -334,42 +334,42 @@ impl Attrs {
 
     /// Check if any attribute exists.
     pub fn is_empty(self) -> Bool {
-        self.attrs.is_empty()
+        self.attrs.is_empty();
     }
 
     /// Get the number of attributes.
     pub fn len(self) -> USize {
-        self.attrs.len()
+        self.attrs.len();
     }
 
     /// Check if an attribute with the given name exists.
     pub fn has(self, name: &str) -> Bool {
-        self.attrs.iter().any(|a| a.has_path(name))
+        self.attrs.iter().any(|a| a.has_path(name));
     }
 
     /// Get all outer attributes.
     pub fn outer(self) -> Vec[&Attribute] {
-        self.attrs.iter().filter(|a| a.is_outer()).collect()
+        self.attrs.iter().filter(|a| a.is_outer()).collect();
     }
 
     /// Get all inner attributes.
     pub fn inner(self) -> Vec[&Attribute] {
-        self.attrs.iter().filter(|a| a.is_inner).collect()
+        self.attrs.iter().filter(|a| a.is_inner).collect();
     }
 
     /// Find an attribute by name.
     pub fn find(self, name: &str) -> Option[&Attribute] {
-        self.attrs.iter().find(|a| a.has_path(name))
+        self.attrs.iter().find(|a| a.has_path(name));
     }
 
     /// Find all attributes with a given name.
     pub fn find_all(self, name: &str) -> Vec[&Attribute] {
-        self.attrs.iter().filter(|a| a.has_path(name)).collect()
+        self.attrs.iter().filter(|a| a.has_path(name)).collect();
     }
 
     /// Iterate over all attributes.
     pub fn iter(self) -> impl Iterator[Item = &Attribute] {
-        self.attrs.iter()
+        self.attrs.iter();
     }
 }
 
@@ -394,41 +394,41 @@ impl Clone for Attrs {
 /// These constants help avoid typos when checking for specific attributes.
 pub mod attr_names {
     /// Derive trait implementations.
-    pub const DERIVE: &str = "derive"
+    pub const DERIVE: &str = "derive";
     /// Mark as test function.
-    pub const TEST: &str = "test"
+    pub const TEST: &str = "test";
     /// Control representation.
-    pub const REPR: &str = "repr"
+    pub const REPR: &str = "repr";
     /// Inlining hint.
-    pub const INLINE: &str = "inline"
+    pub const INLINE: &str = "inline";
     /// Documentation.
-    pub const DOC: &str = "doc"
+    pub const DOC: &str = "doc";
     /// Conditional compilation.
-    pub const CFG: &str = "cfg"
+    pub const CFG: &str = "cfg";
     /// Allow lint.
-    pub const ALLOW: &str = "allow"
+    pub const ALLOW: &str = "allow";
     /// Warn on lint.
-    pub const WARN: &str = "warn"
+    pub const WARN: &str = "warn";
     /// Deny lint.
-    pub const DENY: &str = "deny"
+    pub const DENY: &str = "deny";
     /// Forbid lint.
-    pub const FORBID: &str = "forbid"
+    pub const FORBID: &str = "forbid";
     /// Deprecated item.
-    pub const DEPRECATED: &str = "deprecated"
+    pub const DEPRECATED: &str = "deprecated";
     /// Must use result.
-    pub const MUST_USE: &str = "must_use"
+    pub const MUST_USE: &str = "must_use";
     /// Cold path hint.
-    pub const COLD: &str = "cold"
+    pub const COLD: &str = "cold";
     /// No mangle name.
-    pub const NO_MANGLE: &str = "no_mangle"
+    pub const NO_MANGLE: &str = "no_mangle";
     /// Link name.
-    pub const LINK_NAME: &str = "link_name"
+    pub const LINK_NAME: &str = "link_name";
     /// Link section.
-    pub const LINK_SECTION: &str = "link_section"
+    pub const LINK_SECTION: &str = "link_section";
     /// Export name.
-    pub const EXPORT_NAME: &str = "export_name"
+    pub const EXPORT_NAME: &str = "export_name";
     /// Track caller.
-    pub const TRACK_CALLER: &str = "track_caller"
+    pub const TRACK_CALLER: &str = "track_caller";
 }
 
 // ============================================================================
@@ -437,55 +437,55 @@ pub mod attr_names {
 
 #[test]
 fn test_attribute_outer() {
-    let path = AttrPath::new(Vec::new(), Span::dummy())
-    let attr = Attribute::outer(path, Option::None, Span::dummy())
+    let path = AttrPath::new(Vec::new(), Span::dummy());
+    let attr = Attribute::outer(path, Option::None, Span::dummy());
 
-    assert(!attr.is_inner)
-    assert(attr.is_outer())
-    assert(attr.is_simple())
+    assert(!attr.is_inner);
+    assert(attr.is_outer());
+    assert(attr.is_simple());
 }
 
 #[test]
 fn test_attribute_inner() {
-    let path = AttrPath::new(Vec::new(), Span::dummy())
-    let attr = Attribute::inner(path, Option::None, Span::dummy())
+    let path = AttrPath::new(Vec::new(), Span::dummy());
+    let attr = Attribute::inner(path, Option::None, Span::dummy());
 
-    assert(attr.is_inner)
-    assert(!attr.is_outer())
+    assert(attr.is_inner);
+    assert(!attr.is_outer());
 }
 
 #[test]
 fn test_attr_args_eq() {
-    let value = Literal::string("test", Span::dummy())
-    let args = AttrArgs::Eq { value, span: Span::dummy() }
+    let value = Literal::string("test", Span::dummy());
+    let args = AttrArgs::Eq { value, span: Span::dummy() };
 
-    assert(args.is_eq())
-    assert(!args.is_list())
+    assert(args.is_eq());
+    assert(!args.is_list());
 }
 
 #[test]
 fn test_attr_args_list() {
-    let args = AttrArgs::List { args: Vec::new(), span: Span::dummy() }
+    let args = AttrArgs::List { args: Vec::new(), span: Span::dummy() };
 
-    assert(!args.is_eq())
-    assert(args.is_list())
+    assert(!args.is_eq());
+    assert(args.is_list());
 }
 
 #[test]
 fn test_attr_path_simple() {
-    let ident = Ident::dummy()
-    let path = AttrPath::simple(ident)
+    let ident = Ident::dummy();
+    let path = AttrPath::simple(ident);
 
-    assert(path.len() == 1)
-    assert(!path.is_empty())
+    assert(path.len() == 1);
+    assert(!path.is_empty());
 }
 
 #[test]
 fn test_attrs_collection() {
-    let attrs = Attrs::empty()
+    let attrs = Attrs::empty();
 
-    assert(attrs.is_empty())
-    assert(attrs.len() == 0)
+    assert(attrs.is_empty());
+    assert(attrs.len() == 0);
 }
 
 #[test]
@@ -493,8 +493,8 @@ fn test_attr_arg_variants() {
     let ident_arg = AttrArg::Ident {
         ident: Ident::dummy(),
         span: Span::dummy(),
-    }
+    };
 
-    assert(ident_arg.is_ident())
-    assert(!ident_arg.is_key_value())
+    assert(ident_arg.is_ident());
+    assert(!ident_arg.is_key_value());
 }

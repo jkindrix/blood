@@ -121,7 +121,7 @@ impl Pattern {
             }
             PatternKind::Ref { ref inner, .. } => inner.is_irrefutable(),
             PatternKind::Tuple { ref fields, .. } => {
-                fields.iter().all(|p| p.is_irrefutable())
+                fields.iter().all(|p| p.is_irrefutable());
             }
             PatternKind::Paren(ref inner) => inner.is_irrefutable(),
             // All other patterns are potentially refutable
@@ -146,16 +146,16 @@ impl Pattern {
                 })
             }
             PatternKind::TupleStruct { ref fields, .. } => {
-                fields.iter().any(|p| p.binds_variables())
+                fields.iter().any(|p| p.binds_variables());
             }
             PatternKind::Tuple { ref fields, .. } => {
-                fields.iter().any(|p| p.binds_variables())
+                fields.iter().any(|p| p.binds_variables());
             }
             PatternKind::Slice { ref elements, .. } => {
-                elements.iter().any(|p| p.binds_variables())
+                elements.iter().any(|p| p.binds_variables());
             }
             PatternKind::Or(ref patterns) => {
-                patterns.iter().any(|p| p.binds_variables())
+                patterns.iter().any(|p| p.binds_variables());
             }
             PatternKind::Range { .. } => false,
             PatternKind::Path(_) => false,
@@ -284,7 +284,7 @@ pub struct StructPatternField {
 impl StructPatternField {
     /// Check if this uses shorthand syntax.
     pub fn is_shorthand(self) -> Bool {
-        self.pattern.is_none()
+        self.pattern.is_none();
     }
 }
 
@@ -294,7 +294,7 @@ impl StructPatternField {
 
 /// Collect all identifiers bound by a pattern.
 pub fn collect_bindings(pattern: &Pattern) -> Vec<Ident> {
-    let mut bindings = Vec::new()
+    let mut bindings = Vec::new();
     collect_bindings_inner(pattern, &mut bindings)
     bindings
 }
@@ -306,7 +306,7 @@ fn collect_bindings_inner(pattern: &Pattern, bindings: &mut Vec<Ident>) {
         PatternKind::Literal(_) => {}
 
         PatternKind::Ident { ref name, ref subpattern, .. } => {
-            bindings.push(name.clone())
+            bindings.push(name.clone());
             if let Option::Some(ref sub) = subpattern {
                 collect_bindings_inner(sub, bindings)
             }
@@ -366,32 +366,32 @@ fn collect_bindings_inner(pattern: &Pattern, bindings: &mut Vec<Ident>) {
 
 #[test]
 fn test_pattern_wildcard() {
-    let pat = Pattern::wildcard(Span::dummy())
-    assert(pat.is_wildcard())
-    assert(pat.is_irrefutable())
-    assert(!pat.binds_variables())
+    let pat = Pattern::wildcard(Span::dummy());
+    assert(pat.is_wildcard());
+    assert(pat.is_irrefutable());
+    assert(!pat.binds_variables());
 }
 
 #[test]
 fn test_pattern_rest() {
-    let pat = Pattern::rest(Span::dummy())
-    assert(pat.is_rest())
-    assert(pat.is_irrefutable())
+    let pat = Pattern::rest(Span::dummy());
+    assert(pat.is_rest());
+    assert(pat.is_irrefutable());
 }
 
 #[test]
 fn test_pattern_ident() {
-    let name = Ident::dummy()
-    let pat = Pattern::ident(name, Span::dummy())
+    let name = Ident::dummy();
+    let pat = Pattern::ident(name, Span::dummy());
 
-    assert(pat.is_irrefutable())
-    assert(pat.binds_variables())
+    assert(pat.is_irrefutable());
+    assert(pat.binds_variables());
 }
 
 #[test]
 fn test_pattern_ident_with_subpattern() {
-    let name = Ident::dummy()
-    let sub = Pattern::wildcard(Span::dummy())
+    let name = Ident::dummy();
+    let sub = Pattern::wildcard(Span::dummy());
     let pat = Pattern::new(
         PatternKind::Ident {
             by_ref: false,
@@ -402,23 +402,23 @@ fn test_pattern_ident_with_subpattern() {
         Span::dummy(),
     )
 
-    assert(pat.is_irrefutable())
-    assert(pat.binds_variables())
+    assert(pat.is_irrefutable());
+    assert(pat.binds_variables());
 }
 
 #[test]
 fn test_pattern_literal_refutable() {
-    let lit = Literal::int(42, Span::dummy())
-    let pat = Pattern::new(PatternKind::Literal(lit), Span::dummy())
+    let lit = Literal::int(42, Span::dummy());
+    let pat = Pattern::new(PatternKind::Literal(lit), Span::dummy());
 
-    assert(!pat.is_irrefutable())
-    assert(!pat.binds_variables())
+    assert(!pat.is_irrefutable());
+    assert(!pat.binds_variables());
 }
 
 #[test]
 fn test_pattern_tuple_irrefutable() {
-    let a = Pattern::ident(Ident::dummy(), Span::dummy())
-    let b = Pattern::wildcard(Span::dummy())
+    let a = Pattern::ident(Ident::dummy(), Span::dummy());
+    let b = Pattern::wildcard(Span::dummy());
     let pat = Pattern::new(
         PatternKind::Tuple {
             fields: vec![a, b],
@@ -427,17 +427,17 @@ fn test_pattern_tuple_irrefutable() {
         Span::dummy(),
     )
 
-    assert(pat.is_irrefutable())
-    assert(pat.binds_variables())
+    assert(pat.is_irrefutable());
+    assert(pat.binds_variables());
 }
 
 #[test]
 fn test_pattern_or_refutable() {
-    let a = Pattern::new(PatternKind::Literal(Literal::int(1, Span::dummy())), Span::dummy())
-    let b = Pattern::new(PatternKind::Literal(Literal::int(2, Span::dummy())), Span::dummy())
-    let pat = Pattern::new(PatternKind::Or(vec![a, b]), Span::dummy())
+    let a = Pattern::new(PatternKind::Literal(Literal::int(1, Span::dummy())), Span::dummy());
+    let b = Pattern::new(PatternKind::Literal(Literal::int(2, Span::dummy())), Span::dummy());
+    let pat = Pattern::new(PatternKind::Or(vec![a, b]), Span::dummy());
 
-    assert(!pat.is_irrefutable())
+    assert(!pat.is_irrefutable());
 }
 
 #[test]
@@ -446,31 +446,31 @@ fn test_struct_pattern_field_shorthand() {
         name: Ident::dummy(),
         pattern: Option::None,
         span: Span::dummy(),
-    }
-    assert(shorthand.is_shorthand())
+    };
+    assert(shorthand.is_shorthand());
 
     let explicit = StructPatternField {
         name: Ident::dummy(),
         pattern: Option::Some(Pattern::wildcard(Span::dummy())),
         span: Span::dummy(),
-    }
-    assert(!explicit.is_shorthand())
+    };
+    assert(!explicit.is_shorthand());
 }
 
 #[test]
 fn test_collect_bindings_simple() {
-    let name = Ident::new_for_test("x")
-    let pat = Pattern::ident(name, Span::dummy())
+    let name = Ident::new_for_test("x");
+    let pat = Pattern::ident(name, Span::dummy());
 
-    let bindings = collect_bindings(&pat)
-    assert(bindings.len() == 1)
+    let bindings = collect_bindings(&pat);
+    assert(bindings.len() == 1);
 }
 
 #[test]
 fn test_collect_bindings_tuple() {
-    let a = Pattern::ident(Ident::new_for_test("a"), Span::dummy())
-    let b = Pattern::ident(Ident::new_for_test("b"), Span::dummy())
-    let c = Pattern::wildcard(Span::dummy())
+    let a = Pattern::ident(Ident::new_for_test("a"), Span::dummy());
+    let b = Pattern::ident(Ident::new_for_test("b"), Span::dummy());
+    let c = Pattern::wildcard(Span::dummy());
     let pat = Pattern::new(
         PatternKind::Tuple {
             fields: vec![a, b, c],
@@ -479,13 +479,13 @@ fn test_collect_bindings_tuple() {
         Span::dummy(),
     )
 
-    let bindings = collect_bindings(&pat)
-    assert(bindings.len() == 2) // a and b, not wildcard
+    let bindings = collect_bindings(&pat);
+    assert(bindings.len() == 2); // a and b, not wildcard
 }
 
 #[test]
 fn test_collect_bindings_nested() {
-    let inner = Pattern::ident(Ident::new_for_test("inner"), Span::dummy())
+    let inner = Pattern::ident(Ident::new_for_test("inner"), Span::dummy());
     let outer = Pattern::new(
         PatternKind::Ident {
             by_ref: false,
@@ -496,6 +496,6 @@ fn test_collect_bindings_nested() {
         Span::dummy(),
     )
 
-    let bindings = collect_bindings(&outer)
-    assert(bindings.len() == 2) // outer and inner
+    let bindings = collect_bindings(&outer);
+    assert(bindings.len() == 2); // outer and inner
 }

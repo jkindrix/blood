@@ -81,11 +81,11 @@ use crate.compiler.hir.{
     FieldExpr, RecordFieldExpr, Capture, InlineOpHandler,
 }
 
-use crate.compiler.hir.lowering.{AstLowering, LoweringError}
+use crate.compiler.hir.lowering.{AstLowering, LoweringError};
 use crate.compiler.hir.lowering.pattern;
 use crate.compiler.hir.lowering.stmt;
 use crate.compiler.hir.lowering.item.lower_type;
-use crate.compiler.typeck.types.{DefId, Type}
+use crate.compiler.typeck.types.{DefId, Type};
 
 // ============================================================================
 // Function Body Lowering
@@ -133,7 +133,7 @@ pub fn lower_function_body(
         });
         param_count = param_count + 1;
         i = i + 1;
-    }
+    };
 
     // Lower the block expression
     let expr = lower_block(ctx, block)?;
@@ -215,7 +215,7 @@ pub fn lower_handler_op_body(
         });
         param_count = param_count + 1;
         i = i + 1;
-    }
+    };
 
     // Add resume continuation parameter
     let resume_id = ctx.alloc_local_id();
@@ -420,7 +420,7 @@ pub fn lower_expr(ctx: &mut AstLowering, expr: &AstExpr) -> Result<HirExpr, Lowe
                         fields: hir_fields,
                         base: hir_base,
                     }
-                }
+                };
                 None => {
                     let hir_fields = lower_anonymous_record_fields(ctx, fields)?;
                     HirExprKind::Record { fields: hir_fields }
@@ -696,7 +696,7 @@ pub fn lower_block(ctx: &mut AstLowering, block: &AstBlock) -> Result<HirExpr, L
         let hir_stmt = stmt::lower_stmt(ctx, &block.stmts[i])?;
         stmts.push(hir_stmt);
         i = i + 1;
-    }
+    };
 
     let expr = match &block.expr {
         Some(e) => Some(Box::new(lower_expr(ctx, e)?)),
@@ -756,7 +756,7 @@ fn lower_if_let(
                 body: else_body,
                 span: span.clone(),
             }
-        }
+        };
         None => {
             // No else branch - wildcard returns unit
             HirMatchArm {
@@ -1028,7 +1028,7 @@ fn lower_try_with(
         });
 
         i = i + 1;
-    }
+    };
 
     Ok(HirExprKind::InlineHandle {
         body: Box::new(hir_body),
@@ -1058,7 +1058,7 @@ fn lower_path(ctx: &mut AstLowering, path: &ExprPath) -> Result<HirExprKind, Low
         for (node_id, local_id) in ctx.node_to_local.iter() {
             // Simplified: would need proper scope tracking
         }
-    }
+    };
 
     // Assume it's a definition reference
     let def_id = ctx.alloc_def_id();
@@ -1121,7 +1121,7 @@ fn lower_else_branch(
     match else_branch {
         crate.compiler.ast::ElseBranch::Block(block) => {
             lower_block(ctx, block)
-        }
+        };
         crate.compiler.ast::ElseBranch::ElseIf(if_expr) => {
             lower_expr(ctx, if_expr)
         }
@@ -1152,7 +1152,7 @@ fn lower_match_arms(
         });
 
         i = i + 1;
-    }
+    };
     Ok(result)
 }
 
@@ -1173,7 +1173,7 @@ fn lower_record_fields(
             span: ctx.lower_span(&field.span),
         });
         i = i + 1;
-    }
+    };
     Ok(result)
 }
 
@@ -1193,7 +1193,7 @@ fn lower_anonymous_record_fields(
             span: ctx.lower_span(&field.span),
         });
         i = i + 1;
-    }
+    };
     Ok(result)
 }
 
@@ -1212,14 +1212,14 @@ fn resolve_loop_label(
                     Some(name) if *name == l.name => {
                         return Ok(Some(LoopId::new(ctx.loop_stack[i].1)));
                     }
-                    _ => {}
+                    _ => {};
                 }
-            }
+            };
             Err(LoweringError::unresolved(
                 l.name.clone(),
                 HirSpan::dummy(),
             ))
-        }
+        };
         None => {
             // No label - use innermost loop
             if ctx.loop_stack.is_empty() {
@@ -1283,7 +1283,7 @@ fn lower_closure_body(
         });
         param_count = param_count + 1;
         i = i + 1;
-    }
+    };
 
     // Lower body
     let expr = lower_expr(ctx, body)?;

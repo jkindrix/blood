@@ -85,7 +85,7 @@ impl Block {
 
     /// Create a block with just an expression.
     pub fn expr(e: Expr) -> Block {
-        let span = e.span
+        let span = e.span;
         Block {
             id: NodeId::dummy(),
             statements: Vec::new(),
@@ -106,22 +106,22 @@ impl Block {
 
     /// Check if the block is empty (no statements and no expression).
     pub fn is_empty(self) -> Bool {
-        self.statements.is_empty() && self.expr.is_none()
+        self.statements.is_empty() && self.expr.is_none();
     }
 
     /// Check if the block has a trailing expression.
     pub fn has_expr(self) -> Bool {
-        self.expr.is_some()
+        self.expr.is_some();
     }
 
     /// Get the number of statements.
     pub fn statement_count(self) -> USize {
-        self.statements.len()
+        self.statements.len();
     }
 
     /// Check if this block returns unit (no trailing expression).
     pub fn returns_unit(self) -> Bool {
-        self.expr.is_none()
+        self.expr.is_none();
     }
 }
 
@@ -282,23 +282,23 @@ pub fn uninit_let(name: crate.compiler.ast.node.Ident, ty: Type, span: Span) -> 
 
 #[test]
 fn test_block_empty() {
-    let block = Block::empty(Span::dummy())
+    let block = Block::empty(Span::dummy());
 
-    assert(block.is_empty())
-    assert(!block.has_expr())
-    assert(block.statement_count() == 0)
-    assert(block.returns_unit())
+    assert(block.is_empty());
+    assert(!block.has_expr());
+    assert(block.statement_count() == 0);
+    assert(block.returns_unit());
 }
 
 #[test]
 fn test_block_with_expr() {
-    let expr = Expr::new(ExprKind::Literal(Literal::int(42, Span::dummy())), Span::dummy())
-    let block = Block::expr(expr)
+    let expr = Expr::new(ExprKind::Literal(Literal::int(42, Span::dummy())), Span::dummy());
+    let block = Block::expr(expr);
 
-    assert(!block.is_empty())
-    assert(block.has_expr())
-    assert(block.statement_count() == 0)
-    assert(!block.returns_unit())
+    assert(!block.is_empty());
+    assert(block.has_expr());
+    assert(block.statement_count() == 0);
+    assert(!block.returns_unit());
 }
 
 #[test]
@@ -306,55 +306,55 @@ fn test_block_with_statements() {
     let stmt = Statement::expr_stmt(
         Expr::new(ExprKind::Literal(Literal::int(1, Span::dummy())), Span::dummy())
     )
-    let block = Block::new(vec![stmt], Option::None, Span::dummy())
+    let block = Block::new(vec![stmt], Option::None, Span::dummy());
 
-    assert(!block.is_empty())
-    assert(!block.has_expr())
-    assert(block.statement_count() == 1)
-    assert(block.returns_unit())
+    assert(!block.is_empty());
+    assert(!block.has_expr());
+    assert(block.statement_count() == 1);
+    assert(block.returns_unit());
 }
 
 #[test]
 fn test_statement_let() {
-    let pattern = Pattern::wildcard(Span::dummy())
-    let stmt = Statement::let_stmt(pattern, Option::None, Option::None, Span::dummy())
+    let pattern = Pattern::wildcard(Span::dummy());
+    let stmt = Statement::let_stmt(pattern, Option::None, Option::None, Span::dummy());
 
-    assert(stmt.is_let())
-    assert(!stmt.is_expr())
-    assert(!stmt.is_item())
-    assert(stmt.has_semicolon())
+    assert(stmt.is_let());
+    assert(!stmt.is_expr());
+    assert(!stmt.is_item());
+    assert(stmt.has_semicolon());
 }
 
 #[test]
 fn test_statement_expr_with_semi() {
-    let expr = Expr::new(ExprKind::Literal(Literal::int(1, Span::dummy())), Span::dummy())
-    let stmt = Statement::expr_stmt(expr)
+    let expr = Expr::new(ExprKind::Literal(Literal::int(1, Span::dummy())), Span::dummy());
+    let stmt = Statement::expr_stmt(expr);
 
-    assert(!stmt.is_let())
-    assert(stmt.is_expr())
-    assert(stmt.has_semicolon())
+    assert(!stmt.is_let());
+    assert(stmt.is_expr());
+    assert(stmt.has_semicolon());
 }
 
 #[test]
 fn test_statement_expr_no_semi() {
-    let expr = Expr::new(ExprKind::Literal(Literal::int(1, Span::dummy())), Span::dummy())
-    let stmt = Statement::expr_no_semi(expr)
+    let expr = Expr::new(ExprKind::Literal(Literal::int(1, Span::dummy())), Span::dummy());
+    let stmt = Statement::expr_no_semi(expr);
 
-    assert(stmt.is_expr())
-    assert(!stmt.has_semicolon())
+    assert(stmt.is_expr());
+    assert(!stmt.has_semicolon());
 }
 
 #[test]
 fn test_simple_let_helper() {
-    let name = Ident::new_for_test("x")
-    let value = Expr::new(ExprKind::Literal(Literal::int(42, Span::dummy())), Span::dummy())
-    let stmt = simple_let(name, value, Span::dummy())
+    let name = Ident::new_for_test("x");
+    let value = Expr::new(ExprKind::Literal(Literal::int(42, Span::dummy())), Span::dummy());
+    let stmt = simple_let(name, value, Span::dummy());
 
-    assert(stmt.is_let())
+    assert(stmt.is_let());
     match stmt {
         Statement::Let { ref ty, ref value, .. } => {
-            assert(ty.is_none())
-            assert(value.is_some())
+            assert(ty.is_none());
+            assert(value.is_some());
         }
         _ => assert(false),
     }
@@ -362,16 +362,16 @@ fn test_simple_let_helper() {
 
 #[test]
 fn test_typed_let_helper() {
-    let name = Ident::new_for_test("x")
-    let ty = Type::unit(Span::dummy())
-    let value = Expr::new(ExprKind::Tuple(Vec::new()), Span::dummy())
-    let stmt = typed_let(name, ty, value, Span::dummy())
+    let name = Ident::new_for_test("x");
+    let ty = Type::unit(Span::dummy());
+    let value = Expr::new(ExprKind::Tuple(Vec::new()), Span::dummy());
+    let stmt = typed_let(name, ty, value, Span::dummy());
 
-    assert(stmt.is_let())
+    assert(stmt.is_let());
     match stmt {
         Statement::Let { ref ty, ref value, .. } => {
-            assert(ty.is_some())
-            assert(value.is_some())
+            assert(ty.is_some());
+            assert(value.is_some());
         }
         _ => assert(false),
     }
@@ -379,15 +379,15 @@ fn test_typed_let_helper() {
 
 #[test]
 fn test_uninit_let_helper() {
-    let name = Ident::new_for_test("x")
-    let ty = Type::unit(Span::dummy())
-    let stmt = uninit_let(name, ty, Span::dummy())
+    let name = Ident::new_for_test("x");
+    let ty = Type::unit(Span::dummy());
+    let stmt = uninit_let(name, ty, Span::dummy());
 
-    assert(stmt.is_let())
+    assert(stmt.is_let());
     match stmt {
         Statement::Let { ref ty, ref value, .. } => {
-            assert(ty.is_some())
-            assert(value.is_none())
+            assert(ty.is_some());
+            assert(value.is_none());
         }
         _ => assert(false),
     }

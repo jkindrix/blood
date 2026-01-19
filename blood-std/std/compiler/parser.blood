@@ -711,7 +711,7 @@ impl Parser {
             if self.check(TokenKind::Semi) {
                 self.advance();
                 return;
-            }
+            };
 
             // Stop at declaration keywords
             match self.current().kind {
@@ -719,8 +719,8 @@ impl Parser {
                 TokenKind::KwTrait | TokenKind::KwImpl | TokenKind::KwType |
                 TokenKind::KwEffect | TokenKind::KwHandler | TokenKind::KwConst |
                 TokenKind::KwStatic | TokenKind::KwPub | TokenKind::KwMod => return,
-                _ => {}
-            }
+                _ => {};
+            };
 
             self.advance();
         }
@@ -736,7 +736,7 @@ impl Parser {
         while self.check(TokenKind::Whitespace) || self.check(TokenKind::Newline) ||
               self.check(TokenKind::Comment) || self.check(TokenKind::DocComment) {
             self.advance();
-        }
+        };
 
         let start = self.token_span(self.current());
         let mut mod_decl = None;
@@ -747,7 +747,7 @@ impl Parser {
         if self.check(TokenKind::KwMod) && self.peek().kind == TokenKind::Ident {
             // Check if this is `mod name;` at top level
             // For now, skip module declaration parsing
-        }
+        };
 
         // Parse imports
         while self.check(TokenKind::KwUse) {
@@ -755,7 +755,7 @@ impl Parser {
                 Some(import) => imports.push(import),
                 None => self.synchronize(),
             }
-        }
+        };
 
         // Parse declarations
         while !self.is_at_end() {
@@ -763,7 +763,7 @@ impl Parser {
                 Some(decl) => declarations.push(decl),
                 None => self.synchronize(),
             }
-        }
+        };
 
         if self.errors.is_empty() {
             let end = self.token_span(self.current());
@@ -794,7 +794,7 @@ impl Parser {
                 self.expect(TokenKind::Semi, "expected ';' after glob import");
                 let end = self.token_span(self.current());
                 return Some(Import::Glob { path, span: start.merge(&end) });
-            }
+            };
 
             // Group import: `use path::{a, b};`
             if self.check(TokenKind::LBrace) {
@@ -803,14 +803,14 @@ impl Parser {
                 let end = self.token_span(self.current());
                 return Some(Import::Group { path, items, span: start.merge(&end) });
             }
-        }
+        };
 
         // Simple import with optional alias
         let alias = if self.consume(TokenKind::KwAs) {
             let tok = self.current().clone();
             if !self.expect(TokenKind::Ident, "expected identifier after 'as'") {
                 return None;
-            }
+            };
             Some(self.spanned_ident(&tok))
         } else {
             None
@@ -829,7 +829,7 @@ impl Parser {
         if !self.check(TokenKind::Ident) {
             self.error("expected module path");
             return None;
-        }
+        };
         let tok = self.current().clone();
         self.advance();
         segments.push(self.spanned_ident(&tok));
@@ -838,11 +838,11 @@ impl Parser {
         while self.consume(TokenKind::Dot) || self.consume(TokenKind::ColonColon) {
             if !self.check(TokenKind::Ident) {
                 break;
-            }
+            };
             let tok = self.current().clone();
             self.advance();
             segments.push(self.spanned_ident(&tok));
-        }
+        };
 
         let end = segments[segments.len() - 1].span;
         Some(ModulePath { segments, span: start.merge(&end) })
@@ -856,14 +856,14 @@ impl Parser {
             let tok = self.current().clone();
             if !self.expect(TokenKind::Ident, "expected identifier") {
                 break;
-            }
+            };
             let name = self.spanned_ident(&tok);
 
             let alias = if self.consume(TokenKind::KwAs) {
                 let tok = self.current().clone();
                 if !self.expect(TokenKind::Ident, "expected identifier after 'as'") {
                     break;
-                }
+                };
                 Some(self.spanned_ident(&tok))
             } else {
                 None
@@ -874,7 +874,7 @@ impl Parser {
             if !self.consume(TokenKind::Comma) {
                 break;
             }
-        }
+        };
 
         self.expect(TokenKind::RBrace, "expected '}'");
         Some(items)
@@ -901,7 +901,7 @@ impl Parser {
             TokenKind::KwType => self.parse_type_decl(vis).map(Declaration::TypeAlias),
             TokenKind::KwEffect => self.parse_effect_decl().map(Declaration::Effect),
             TokenKind::KwHandler | TokenKind::KwDeep | TokenKind::KwShallow => {
-                self.parse_handler_decl().map(Declaration::Handler)
+                self.parse_handler_decl().map(Declaration::Handler);
             }
             TokenKind::KwConst => self.parse_const_decl(vis).map(Declaration::Const),
             TokenKind::KwStatic => self.parse_static_decl(vis).map(Declaration::Static),
@@ -921,12 +921,12 @@ impl Parser {
         let name_tok = self.current().clone();
         if !self.expect(TokenKind::Ident, "expected function name") {
             return None;
-        }
+        };
         let name = self.spanned_ident(&name_tok);
 
         // Optional type parameters
         let type_params = if self.check(TokenKind::Lt) {
-            self.parse_type_params()
+            self.parse_type_params();
         } else {
             None
         };
@@ -988,7 +988,7 @@ impl Parser {
             if !self.consume(TokenKind::Comma) {
                 break;
             }
-        }
+        };
 
         Some(params)
     }
@@ -1004,7 +1004,7 @@ impl Parser {
         let name = self.spanned_ident(&name_tok);
 
         let type_params = if self.check(TokenKind::Lt) {
-            self.parse_type_params()
+            self.parse_type_params();
         } else {
             None
         };
@@ -1038,7 +1038,7 @@ impl Parser {
             let name_tok = self.current().clone();
             if !self.expect(TokenKind::Ident, "expected field name") {
                 break;
-            }
+            };
             let name = self.spanned_ident(&name_tok);
 
             self.expect(TokenKind::Colon, "expected ':'");
@@ -1050,7 +1050,7 @@ impl Parser {
             if !self.consume(TokenKind::Comma) {
                 break;
             }
-        }
+        };
 
         self.expect(TokenKind::RBrace, "expected '}'");
         Some(StructBody::Record(fields))
@@ -1065,7 +1065,7 @@ impl Parser {
             if !self.consume(TokenKind::Comma) {
                 break;
             }
-        }
+        };
 
         self.expect(TokenKind::RParen, "expected ')'");
         self.expect(TokenKind::Semi, "expected ';'");
@@ -1083,7 +1083,7 @@ impl Parser {
         let name = self.spanned_ident(&name_tok);
 
         let type_params = if self.check(TokenKind::Lt) {
-            self.parse_type_params()
+            self.parse_type_params();
         } else {
             None
         };
@@ -1097,7 +1097,7 @@ impl Parser {
             let var_name_tok = self.current().clone();
             if !self.expect(TokenKind::Ident, "expected variant name") {
                 break;
-            }
+            };
             let var_name = self.spanned_ident(&var_name_tok);
 
             let body = if self.check(TokenKind::LBrace) {
@@ -1114,7 +1114,7 @@ impl Parser {
             if !self.consume(TokenKind::Comma) {
                 break;
             }
-        }
+        };
 
         self.expect(TokenKind::RBrace, "expected '}'");
         let end = self.token_span(self.current());
@@ -1130,7 +1130,7 @@ impl Parser {
             if !self.consume(TokenKind::Comma) {
                 break;
             }
-        }
+        };
 
         self.expect(TokenKind::RParen, "expected ')'");
         Some(StructBody::Tuple(types))
@@ -1147,7 +1147,7 @@ impl Parser {
         let name = self.spanned_ident(&name_tok);
 
         let type_params = if self.check(TokenKind::Lt) {
-            self.parse_type_params()
+            self.parse_type_params();
         } else {
             None
         };
@@ -1190,7 +1190,7 @@ impl Parser {
                     break;
                 }
             }
-        }
+        };
 
         self.expect(TokenKind::RBrace, "expected '}'");
         let end = self.token_span(self.current());
@@ -1203,7 +1203,7 @@ impl Parser {
 
         while self.consume(TokenKind::Plus) {
             bounds.push(self.parse_type()?);
-        }
+        };
 
         Some(bounds)
     }
@@ -1213,7 +1213,7 @@ impl Parser {
         self.expect(TokenKind::KwImpl, "expected 'impl'");
 
         let type_params = if self.check(TokenKind::Lt) {
-            self.parse_type_params()
+            self.parse_type_params();
         } else {
             None
         };
@@ -1259,7 +1259,7 @@ impl Parser {
                     break;
                 }
             }
-        }
+        };
 
         self.expect(TokenKind::RBrace, "expected '}'");
         let end = self.token_span(self.current());
@@ -1273,11 +1273,11 @@ impl Parser {
         let name_tok = self.current().clone();
         if !self.expect(TokenKind::Ident, "expected type name") {
             return None;
-        }
+        };
         let name = self.spanned_ident(&name_tok);
 
         let type_params = if self.check(TokenKind::Lt) {
-            self.parse_type_params()
+            self.parse_type_params();
         } else {
             None
         };
@@ -1297,11 +1297,11 @@ impl Parser {
         let name_tok = self.current().clone();
         if !self.expect(TokenKind::Ident, "expected effect name") {
             return None;
-        }
+        };
         let name = self.spanned_ident(&name_tok);
 
         let type_params = if self.check(TokenKind::Lt) {
-            self.parse_type_params()
+            self.parse_type_params();
         } else {
             None
         };
@@ -1315,7 +1315,7 @@ impl Parser {
             } else {
                 break;
             }
-        }
+        };
 
         self.expect(TokenKind::RBrace, "expected '}'");
         let end = self.token_span(self.current());
@@ -1329,7 +1329,7 @@ impl Parser {
         let name_tok = self.current().clone();
         if !self.expect(TokenKind::Ident, "expected operation name") {
             return None;
-        }
+        };
         let name = self.spanned_ident(&name_tok);
 
         self.expect(TokenKind::LParen, "expected '('");
@@ -1361,11 +1361,11 @@ impl Parser {
         let name_tok = self.current().clone();
         if !self.expect(TokenKind::Ident, "expected handler name") {
             return None;
-        }
+        };
         let name = self.spanned_ident(&name_tok);
 
         let type_params = if self.check(TokenKind::Lt) {
-            self.parse_type_params()
+            self.parse_type_params();
         } else {
             None
         };
@@ -1397,7 +1397,7 @@ impl Parser {
                 self.error("expected handler item");
                 break;
             }
-        }
+        };
 
         self.expect(TokenKind::RBrace, "expected '}'");
         let end = self.token_span(self.current());
@@ -1422,7 +1422,7 @@ impl Parser {
         let name_tok = self.current().clone();
         if !self.expect(TokenKind::Ident, "expected state variable name") {
             return None;
-        }
+        };
         let name = self.spanned_ident(&name_tok);
 
         self.expect(TokenKind::Colon, "expected ':'");
@@ -1446,7 +1446,7 @@ impl Parser {
         let param_tok = self.current().clone();
         if !self.expect(TokenKind::Ident, "expected parameter name") {
             return None;
-        }
+        };
         let param = self.spanned_ident(&param_tok);
 
         let body = self.parse_block()?;
@@ -1461,7 +1461,7 @@ impl Parser {
         let name_tok = self.current().clone();
         if !self.expect(TokenKind::Ident, "expected operation name") {
             return None;
-        }
+        };
         let name = self.spanned_ident(&name_tok);
 
         self.expect(TokenKind::LParen, "expected '('");
@@ -1471,7 +1471,7 @@ impl Parser {
             if !self.consume(TokenKind::Comma) {
                 break;
             }
-        }
+        };
         self.expect(TokenKind::RParen, "expected ')'");
 
         let body = self.parse_block()?;
@@ -1486,7 +1486,7 @@ impl Parser {
         let name_tok = self.current().clone();
         if !self.expect(TokenKind::Ident, "expected constant name") {
             return None;
-        }
+        };
         let name = self.spanned_ident(&name_tok);
 
         self.expect(TokenKind::Colon, "expected ':'");
@@ -1508,7 +1508,7 @@ impl Parser {
         let name_tok = self.current().clone();
         if !self.expect(TokenKind::Ident, "expected static name") {
             return None;
-        }
+        };
         let name = self.spanned_ident(&name_tok);
 
         self.expect(TokenKind::Colon, "expected ':'");
@@ -1528,7 +1528,7 @@ impl Parser {
         let name_tok = self.current().clone();
         if !self.expect(TokenKind::Ident, "expected module name") {
             return None;
-        }
+        };
         let name = self.spanned_ident(&name_tok);
 
         let body = if self.check(TokenKind::LBrace) {
@@ -1539,7 +1539,7 @@ impl Parser {
                     Some(d) => decls.push(d),
                     None => self.synchronize(),
                 }
-            }
+            };
             self.expect(TokenKind::RBrace, "expected '}'");
             Some(decls)
         } else {
@@ -1603,9 +1603,9 @@ impl Parser {
                         while self.consume(TokenKind::Comma) {
                             if self.check(TokenKind::RParen) {
                                 break;
-                            }
+                            };
                             types.push(self.parse_type()?);
-                        }
+                        };
                         self.expect(TokenKind::RParen, "expected ')'");
                         let end = self.token_span(self.current());
                         Some(Type { kind: TypeKind::Tuple(types), span: start.merge(&end) })
@@ -1660,7 +1660,7 @@ impl Parser {
                     if !self.consume(TokenKind::Comma) {
                         break;
                     }
-                }
+                };
                 self.expect(TokenKind::RParen, "expected ')'");
 
                 let return_type = if self.consume(TokenKind::Arrow) {
@@ -1704,7 +1704,7 @@ impl Parser {
             let name_tok = self.current().clone();
             if !self.expect(TokenKind::Ident, "expected type name") {
                 return None;
-            }
+            };
             let name = self.spanned_ident(&name_tok);
 
             let args = if self.check(TokenKind::Lt) {
@@ -1718,7 +1718,7 @@ impl Parser {
             if !self.consume(TokenKind::ColonColon) {
                 break;
             }
-        }
+        };
 
         let end = segments[segments.len() - 1].name.span;
         let path = TypePath { segments, span: start.merge(&end) };
@@ -1736,7 +1736,7 @@ impl Parser {
             if !self.consume(TokenKind::Comma) {
                 break;
             }
-        }
+        };
 
         self.expect(TokenKind::Gt, "expected '>'");
         let end = self.token_span(self.current());
@@ -1754,7 +1754,7 @@ impl Parser {
                 let name_tok = self.current().clone();
                 if !self.expect(TokenKind::Ident, "expected parameter name") {
                     break;
-                }
+                };
                 let name = self.spanned_ident(&name_tok);
                 self.expect(TokenKind::Colon, "expected ':'");
                 let ty = self.parse_type()?;
@@ -1765,7 +1765,7 @@ impl Parser {
                 let name_tok = self.current().clone();
                 if !self.expect(TokenKind::Ident, "expected type parameter") {
                     break;
-                }
+                };
                 let name = self.spanned_ident(&name_tok);
 
                 let bounds = if self.consume(TokenKind::Colon) {
@@ -1776,12 +1776,12 @@ impl Parser {
 
                 let end = name.span;
                 params.push(GenericParam::TypeParam { name, bounds, span: start.merge(&end) });
-            }
+            };
 
             if !self.consume(TokenKind::Comma) {
                 break;
             }
-        }
+        };
 
         self.expect(TokenKind::Gt, "expected '>'");
         let end = self.token_span(self.current());
@@ -1793,14 +1793,14 @@ impl Parser {
 
         if self.consume(TokenKind::KwPure) {
             return Some(EffectRow { kind: EffectRowKind::Pure, span: start });
-        }
+        };
 
         if self.check(TokenKind::LBrace) {
             self.advance();
             if self.check(TokenKind::RBrace) {
                 self.advance();
                 return Some(EffectRow { kind: EffectRowKind::Pure, span: start });
-            }
+            };
 
             let mut effects = [];
             let mut rest = None;
@@ -1812,13 +1812,13 @@ impl Parser {
                     let tok = self.current().clone();
                     if self.expect(TokenKind::Ident, "expected effect variable") {
                         rest = Some(self.spanned_ident(&tok));
-                    }
+                    };
                     break;
-                }
+                };
                 if !self.consume(TokenKind::Comma) {
                     break;
                 }
-            }
+            };
 
             self.expect(TokenKind::RBrace, "expected '}'");
             let end = self.token_span(self.current());
@@ -1826,7 +1826,7 @@ impl Parser {
                 kind: EffectRowKind::Effects { effects, rest },
                 span: start.merge(&end),
             });
-        }
+        };
 
         // Just an effect variable
         if self.check(TokenKind::Ident) {
@@ -1836,7 +1836,7 @@ impl Parser {
                 kind: EffectRowKind::Var(self.spanned_ident(&tok)),
                 span: start,
             });
-        }
+        };
 
         self.error("expected effect row");
         None
@@ -1847,7 +1847,7 @@ impl Parser {
     // ============================================================
 
     fn parse_expr(&mut self) -> Option<Expr> {
-        self.parse_expr_prec(0)
+        self.parse_expr_prec(0);
     }
 
     fn parse_expr_prec(&mut self, min_prec: u8) -> Option<Expr> {
@@ -1868,7 +1868,7 @@ impl Parser {
                 }
                 _ => break,
             }
-        }
+        };
 
         Some(left)
     }
@@ -1969,7 +1969,7 @@ impl Parser {
                         let name_tok = self.current().clone();
                         if !self.expect(TokenKind::Ident, "expected field or method name") {
                             break;
-                        }
+                        };
                         let name = self.spanned_ident(&name_tok);
 
                         if self.check(TokenKind::LParen) {
@@ -2024,7 +2024,7 @@ impl Parser {
                 }
                 _ => break,
             }
-        }
+        };
 
         Some(expr)
     }
@@ -2037,7 +2037,7 @@ impl Parser {
             if !self.consume(TokenKind::Comma) {
                 break;
             }
-        }
+        };
 
         self.expect(TokenKind::RParen, "expected ')'");
         Some(args)
@@ -2100,7 +2100,7 @@ impl Parser {
                         _ => s.chars().nth(1).unwrap_or('\0'),
                     }
                 } else {
-                    s.chars().next().unwrap_or('\0')
+                    s.chars().next().unwrap_or('\0');
                 };
                 Some(Expr {
                     kind: ExprKind::Literal(Literal {
@@ -2147,9 +2147,9 @@ impl Parser {
                         while self.consume(TokenKind::Comma) {
                             if self.check(TokenKind::RParen) {
                                 break;
-                            }
+                            };
                             exprs.push(self.parse_expr()?);
-                        }
+                        };
                         self.expect(TokenKind::RParen, "expected ')'");
                         let end = self.token_span(self.current());
                         Some(Expr { kind: ExprKind::Tuple(exprs), span: start.merge(&end) })
@@ -2186,9 +2186,9 @@ impl Parser {
                         while self.consume(TokenKind::Comma) {
                             if self.check(TokenKind::RBracket) {
                                 break;
-                            }
+                            };
                             exprs.push(self.parse_expr()?);
-                        }
+                        };
                         self.expect(TokenKind::RBracket, "expected ']'");
                         let end = self.token_span(self.current());
                         Some(Expr { kind: ExprKind::Array(exprs), span: start.merge(&end) })
@@ -2308,7 +2308,7 @@ impl Parser {
                     statements.push(Statement::Expr { expr: e, has_semi: false });
                 }
             }
-        }
+        };
 
         self.expect(TokenKind::RBrace, "expected '}'");
         let end = self.token_span(self.current());
@@ -2375,7 +2375,7 @@ impl Parser {
                 kind: ExprKind::IfLet { pattern, scrutinee: Box::new(scrutinee), then_branch, else_branch },
                 span: start.merge(&end),
             });
-        }
+        };
 
         let condition = self.parse_expr()?;
         let then_branch = self.parse_block()?;
@@ -2424,7 +2424,7 @@ impl Parser {
             if !self.consume(TokenKind::Comma) {
                 break;
             }
-        }
+        };
 
         self.expect(TokenKind::RBrace, "expected '}'");
         let end = self.token_span(self.current());
@@ -2462,7 +2462,7 @@ impl Parser {
                 kind: ExprKind::WhileLet { label: None, pattern, scrutinee: Box::new(scrutinee), body },
                 span: start.merge(&end),
             });
-        }
+        };
 
         let condition = self.parse_expr()?;
         let body = self.parse_block()?;
@@ -2510,7 +2510,7 @@ impl Parser {
             if !self.consume(TokenKind::Comma) {
                 break;
             }
-        }
+        };
 
         self.expect(TokenKind::Pipe, "expected '|'");
 
@@ -2536,7 +2536,7 @@ impl Parser {
         let name_tok = self.current().clone();
         if !self.expect(TokenKind::Ident, "expected operation name") {
             return None;
-        }
+        };
 
         let (eff_path, operation) = if self.consume(TokenKind::ColonColon) {
             // Full path: `Effect::operation`
@@ -2591,7 +2591,7 @@ impl Parser {
             let name_tok = self.current().clone();
             if !self.expect(TokenKind::Ident, "expected identifier") {
                 return None;
-            }
+            };
             let name = self.spanned_ident(&name_tok);
 
             let args = if self.check(TokenKind::ColonColon) && self.peek().kind == TokenKind::Lt {
@@ -2609,7 +2609,7 @@ impl Parser {
             } else {
                 break;
             }
-        }
+        };
 
         // Check for record expression: `Point { x: 1, y: 2 }`
         if self.check(TokenKind::LBrace) && segments.len() == 1 {
@@ -2623,7 +2623,7 @@ impl Parser {
                 span: start,
             };
             return self.parse_record_expr(Some(path));
-        }
+        };
 
         let end = segments[segments.len() - 1].name.span;
         Some(Expr {
@@ -2643,7 +2643,7 @@ impl Parser {
             let name_tok = self.current().clone();
             if !self.expect(TokenKind::Ident, "expected field name") {
                 break;
-            }
+            };
             let name = self.spanned_ident(&name_tok);
 
             let value = if self.consume(TokenKind::Colon) {
@@ -2658,7 +2658,7 @@ impl Parser {
             if !self.consume(TokenKind::Comma) {
                 break;
             }
-        }
+        };
 
         self.expect(TokenKind::RBrace, "expected '}'");
         let end = self.token_span(self.current());
@@ -2673,7 +2673,7 @@ impl Parser {
     // ============================================================
 
     fn parse_pattern(&mut self) -> Option<Pattern> {
-        self.parse_pattern_or()
+        self.parse_pattern_or();
     }
 
     fn parse_pattern_or(&mut self) -> Option<Pattern> {
@@ -2686,7 +2686,7 @@ impl Parser {
                 kind: PatternKind::Or([left, right]),
                 span,
             };
-        }
+        };
 
         Some(left)
     }
@@ -2783,7 +2783,7 @@ impl Parser {
                     if !self.consume(TokenKind::Comma) {
                         break;
                     }
-                }
+                };
                 self.expect(TokenKind::RParen, "expected ')'");
                 let end = self.token_span(self.current());
                 Some(Pattern { kind: PatternKind::Tuple(patterns), span: start.merge(&end) })
@@ -2797,7 +2797,7 @@ impl Parser {
                     if !self.consume(TokenKind::Comma) {
                         break;
                     }
-                }
+                };
                 self.expect(TokenKind::RBracket, "expected ']'");
                 let end = self.token_span(self.current());
                 Some(Pattern { kind: PatternKind::Slice(patterns), span: start.merge(&end) })
@@ -2809,13 +2809,13 @@ impl Parser {
                 let name_tok = self.current().clone();
                 if !self.expect(TokenKind::Ident, "expected identifier") {
                     return None;
-                }
+                };
                 let name = self.spanned_ident(&name_tok);
 
                 // Check for path: `Foo::Bar`
                 if self.check(TokenKind::ColonColon) {
                     return self.parse_path_pattern(name);
-                }
+                };
 
                 // Check for struct pattern: `Point { x, y }`
                 if self.check(TokenKind::LBrace) {
@@ -2855,9 +2855,9 @@ impl Parser {
             let name_tok = self.current().clone();
             if !self.expect(TokenKind::Ident, "expected identifier") {
                 break;
-            }
+            };
             segments.push(TypePathSegment { name: self.spanned_ident(&name_tok), args: None });
-        }
+        };
 
         let end = segments[segments.len() - 1].name.span;
         let path = TypePath { segments, span: start.merge(&end) };
@@ -2871,7 +2871,7 @@ impl Parser {
                 if !self.consume(TokenKind::Comma) {
                     break;
                 }
-            }
+            };
             self.expect(TokenKind::RParen, "expected ')'");
             let end = self.token_span(self.current());
             return Some(Pattern {
@@ -2894,7 +2894,7 @@ impl Parser {
             segments: [TypePathSegment { name: name.clone(), args: None }],
             span: name.span,
         };
-        self.parse_struct_pattern_with_path(path)
+        self.parse_struct_pattern_with_path(path);
     }
 
     fn parse_struct_pattern_with_path(&mut self, path: TypePath) -> Option<Pattern> {
@@ -2908,13 +2908,13 @@ impl Parser {
             if self.consume(TokenKind::DotDot) {
                 rest = true;
                 break;
-            }
+            };
 
             let field_start = self.token_span(self.current());
             let name_tok = self.current().clone();
             if !self.expect(TokenKind::Ident, "expected field name") {
                 break;
-            }
+            };
             let name = self.spanned_ident(&name_tok);
 
             let pattern = if self.consume(TokenKind::Colon) {
@@ -2929,7 +2929,7 @@ impl Parser {
             if !self.consume(TokenKind::Comma) {
                 break;
             }
-        }
+        };
 
         self.expect(TokenKind::RBrace, "expected '}'");
         let end = self.token_span(self.current());
@@ -2953,7 +2953,7 @@ impl Parser {
             if !self.consume(TokenKind::Comma) {
                 break;
             }
-        }
+        };
         self.expect(TokenKind::RParen, "expected ')'");
 
         let end = self.token_span(self.current());
@@ -2971,7 +2971,7 @@ impl Parser {
 /// Parse a Blood source string into an AST.
 fn parse(source: String) -> Result<Program, [ParseError]> {
     let mut parser = Parser::new(source);
-    parser.parse_program()
+    parser.parse_program();
 }
 
 /// Parse an expression from a string.
@@ -2980,8 +2980,8 @@ fn parse_expr(source: String) -> Option<Expr> {
     // Skip initial whitespace
     while parser.check(TokenKind::Whitespace) || parser.check(TokenKind::Newline) {
         parser.advance();
-    }
-    parser.parse_expr()
+    };
+    parser.parse_expr();
 }
 
 /// Parse a type from a string.
@@ -2989,6 +2989,6 @@ fn parse_type(source: String) -> Option<Type> {
     let mut parser = Parser::new(source);
     while parser.check(TokenKind::Whitespace) || parser.check(TokenKind::Newline) {
         parser.advance();
-    }
-    parser.parse_type()
+    };
+    parser.parse_type();
 }

@@ -200,15 +200,15 @@ impl DiagCtxt {
 
     /// Create a context with buffered emission.
     pub fn buffered(source_map: SourceMap) -> DiagCtxt {
-        let mut ctx = DiagCtxt::new(source_map)
-        ctx.mode = EmissionMode::Buffered
+        let mut ctx = DiagCtxt::new(source_map);
+        ctx.mode = EmissionMode::Buffered;
         ctx
     }
 
     /// Create a context with silent mode.
     pub fn silent(source_map: SourceMap) -> DiagCtxt {
-        let mut ctx = DiagCtxt::new(source_map)
-        ctx.mode = EmissionMode::Silent
+        let mut ctx = DiagCtxt::new(source_map);
+        ctx.mode = EmissionMode::Silent;
         ctx
     }
 
@@ -216,54 +216,54 @@ impl DiagCtxt {
 
     /// Set the emission mode.
     pub fn with_mode(mut self, mode: EmissionMode) -> DiagCtxt {
-        self.mode = mode
+        self.mode = mode;
         self
     }
 
     /// Set the output format.
     pub fn with_format(mut self, format: OutputFormat) -> DiagCtxt {
-        self.format = format
+        self.format = format;
         self
     }
 
     /// Set the emitter configuration.
     pub fn with_config(mut self, config: EmitterConfig) -> DiagCtxt {
-        self.config = config
+        self.config = config;
         self
     }
 
     /// Enable/disable deduplication.
     pub fn with_deduplication(mut self, enabled: Bool) -> DiagCtxt {
-        self.deduplicate = enabled
+        self.deduplicate = enabled;
         self
     }
 
     /// Suppress a diagnostic group.
     pub fn suppress_group(mut self, group: DiagnosticGroup) -> DiagCtxt {
-        self.suppressed_groups.push(group)
+        self.suppressed_groups.push(group);
         self
     }
 
     /// Set the current file.
     pub fn set_current_file(mut self, file_id: FileId) -> Unit {
-        self.current_file = file_id
+        self.current_file = file_id;
     }
 
     // === Source Map Access ===
 
     /// Get the source map.
     pub fn source_map(self) -> SourceMap {
-        self.source_map.clone()
+        self.source_map.clone();
     }
 
     /// Get a mutable reference to the source map.
     pub fn source_map_mut(mut self) -> SourceMap {
-        self.source_map.clone()
+        self.source_map.clone();
     }
 
     /// Add a file to the source map.
     pub fn add_file(mut self, name: String, content: String) -> FileId {
-        self.source_map.add(name, content)
+        self.source_map.add(name, content);
     }
 
     /// Get the current file ID.
@@ -295,16 +295,16 @@ impl DiagCtxt {
         // Check if suppressed
         if self.is_suppressed(diagnostic.clone()) {
             return
-        }
+        };
 
         // Check for deduplication
         if self.deduplicate {
-            let hash = self.diagnostic_hash(diagnostic.clone())
+            let hash = self.diagnostic_hash(diagnostic.clone());
             if self.seen_hashes.contains(hash) {
                 return
-            }
-            self.seen_hashes.insert(hash)
-        }
+            };
+            self.seen_hashes.insert(hash);
+        };
 
         // Update counts
         match diagnostic.severity() {
@@ -314,16 +314,16 @@ impl DiagCtxt {
             Severity::Note => self.note_count = self.note_count + 1,
             Severity::Help => {},
             Severity::Remark => {},
-        }
+        };
 
         // Handle based on mode
         match self.mode {
             EmissionMode::Immediate => {
-                let formatted = self.format_diagnostic(diagnostic)
-                self.output = self.output ++ formatted
+                let formatted = self.format_diagnostic(diagnostic);
+                self.output = self.output ++ formatted;
             }
             EmissionMode::Buffered => {
-                self.diagnostics.push(diagnostic)
+                self.diagnostics.push(diagnostic);
             }
             EmissionMode::Silent => {
                 // Just track counts
@@ -333,67 +333,67 @@ impl DiagCtxt {
 
     /// Emit a diagnostic converted from an error type.
     pub fn emit_converted<E: IntoDiagnostic>(mut self, error: E) -> Unit {
-        let converter = self.converter()
-        let diagnostic = error.into_diagnostic(converter)
-        self.emit(diagnostic)
+        let converter = self.converter();
+        let diagnostic = error.into_diagnostic(converter);
+        self.emit(diagnostic);
     }
 
     /// Emit an error diagnostic.
     pub fn emit_error(mut self, message: String, span: Span) -> Unit {
-        let diagnostic = Diagnostic::error(message).with_span(span)
-        self.emit(diagnostic)
+        let diagnostic = Diagnostic::error(message).with_span(span);
+        self.emit(diagnostic);
     }
 
     /// Emit an error with a code.
     pub fn emit_error_with_code(mut self, message: String, span: Span, code: ErrorCode) -> Unit {
         let diagnostic = Diagnostic::error(message)
             .with_span(span)
-            .with_code(code)
-        self.emit(diagnostic)
+            .with_code(code);
+        self.emit(diagnostic);
     }
 
     /// Emit a warning diagnostic.
     pub fn emit_warning(mut self, message: String, span: Span) -> Unit {
-        let diagnostic = Diagnostic::warning(message).with_span(span)
-        self.emit(diagnostic)
+        let diagnostic = Diagnostic::warning(message).with_span(span);
+        self.emit(diagnostic);
     }
 
     /// Emit a warning with a code.
     pub fn emit_warning_with_code(mut self, message: String, span: Span, code: WarningCode) -> Unit {
         let diagnostic = Diagnostic::warning(message)
             .with_span(span)
-            .with_warning_code(code)
-        self.emit(diagnostic)
+            .with_warning_code(code);
+        self.emit(diagnostic);
     }
 
     /// Emit a note diagnostic.
     pub fn emit_note(mut self, message: String, span: Span) -> Unit {
-        let diagnostic = Diagnostic::note(message).with_span(span)
-        self.emit(diagnostic)
+        let diagnostic = Diagnostic::note(message).with_span(span);
+        self.emit(diagnostic);
     }
 
     /// Emit a help diagnostic.
     pub fn emit_help(mut self, message: String) -> Unit {
-        let diagnostic = Diagnostic::help(message)
-        self.emit(diagnostic)
+        let diagnostic = Diagnostic::help(message);
+        self.emit(diagnostic);
     }
 
     /// Emit a fatal error and return immediately.
     ///
     /// Fatal errors indicate the compiler cannot continue.
     pub fn emit_fatal(mut self, message: String, span: Span) -> Unit {
-        let diagnostic = Diagnostic::fatal(message).with_span(span)
-        self.emit(diagnostic)
+        let diagnostic = Diagnostic::fatal(message).with_span(span);
+        self.emit(diagnostic);
     }
 
     /// Emit an internal compiler error (ICE).
     ///
     /// These indicate bugs in the compiler itself.
     pub fn emit_ice(mut self, message: String) -> Unit {
-        let ice_message = "internal compiler error: " ++ message
+        let ice_message = "internal compiler error: " ++ message;
         let diagnostic = Diagnostic::fatal(ice_message)
-            .with_code(ErrorCode::InternalError)
-        self.emit(diagnostic)
+            .with_code(ErrorCode::InternalError);
+        self.emit(diagnostic);
     }
 
     // === Buffered Emission ===
@@ -404,22 +404,22 @@ impl DiagCtxt {
     pub fn flush(mut self) -> String {
         if self.mode.is_silent() {
             return ""
-        }
+        };
 
-        let mut result = String::new()
+        let mut result = String::new();
 
         for diagnostic in self.diagnostics.clone() {
-            result = result ++ self.format_diagnostic(diagnostic)
+            result = result ++ self.format_diagnostic(diagnostic);
             result = result ++ "\n"
-        }
+        };
 
-        self.diagnostics = Vec::new()
+        self.diagnostics = Vec::new();
         result
     }
 
     /// Get all buffered diagnostics without clearing.
     pub fn buffered_diagnostics(self) -> Vec<Diagnostic> {
-        self.diagnostics.clone()
+        self.diagnostics.clone();
     }
 
     // === Status Methods ===
@@ -451,44 +451,44 @@ impl DiagCtxt {
 
     /// Get the accumulated output (for immediate mode).
     pub fn output(self) -> String {
-        self.output.clone()
+        self.output.clone();
     }
 
     // === Summary ===
 
     /// Emit a summary of diagnostics.
     pub fn emit_summary(self) -> String {
-        let mut summary = String::new()
+        let mut summary = String::new();
 
         if self.has_errors() {
             summary = summary ++ "error: aborting due to "
 
-            let err_count = self.error_count()
+            let err_count = self.error_count();
             if err_count == 1 {
                 summary = summary ++ "previous error"
             } else {
                 summary = summary ++ err_count.to_string() ++ " previous errors"
-            }
+            };
 
             if self.has_warnings() {
                 summary = summary ++ "; "
-                summary = summary ++ self.warning_count.to_string()
+                summary = summary ++ self.warning_count.to_string();
                 if self.warning_count == 1 {
                     summary = summary ++ " warning emitted"
                 } else {
                     summary = summary ++ " warnings emitted"
                 }
-            }
+            };
 
             summary = summary ++ "\n"
         } else if self.has_warnings() {
             summary = summary ++ "warning: "
-            summary = summary ++ self.warning_count.to_string()
+            summary = summary ++ self.warning_count.to_string();
             if self.warning_count == 1 {
                 summary = summary ++ " warning emitted"
             } else {
                 summary = summary ++ " warnings emitted"
-            }
+            };
             summary = summary ++ "\n"
         }
 
@@ -503,7 +503,7 @@ impl DiagCtxt {
             Option::Some(group) => {
                 for suppressed in self.suppressed_groups.clone() {
                     if suppressed == group {
-                        return true
+                        return true;
                     }
                 }
                 false
@@ -515,18 +515,18 @@ impl DiagCtxt {
     /// Compute a hash for deduplication.
     fn diagnostic_hash(self, diagnostic: Diagnostic) -> U64 {
         // Simple hash based on message and span
-        let mut hash: U64 = 0
-        let msg = diagnostic.message()
-        let span = diagnostic.span()
+        let mut hash: U64 = 0;
+        let msg = diagnostic.message();
+        let span = diagnostic.span();
 
         // Hash message characters
         for ch in msg.chars() {
-            hash = hash * 31 + (ch as U64)
-        }
+            hash = hash * 31 + (ch as U64);
+        };
 
         // Include span info
-        hash = hash * 31 + (span.start_offset() as U64)
-        hash = hash * 31 + (span.end_offset() as U64)
+        hash = hash * 31 + (span.start_offset() as U64);
+        hash = hash * 31 + (span.end_offset() as U64);
 
         hash
     }
@@ -535,20 +535,20 @@ impl DiagCtxt {
     fn format_diagnostic(self, diagnostic: Diagnostic) -> String {
         match self.format {
             OutputFormat::Terminal => {
-                let emitter = TerminalEmitter::with_config(self.config.clone(), self.source_map.clone())
-                emitter.emit(diagnostic)
+                let emitter = TerminalEmitter::with_config(self.config.clone(), self.source_map.clone());
+                emitter.emit(diagnostic);
             }
             OutputFormat::Plain => {
-                let emitter = PlainEmitter::with_config(self.config.clone(), self.source_map.clone())
-                emitter.emit(diagnostic)
+                let emitter = PlainEmitter::with_config(self.config.clone(), self.source_map.clone());
+                emitter.emit(diagnostic);
             }
             OutputFormat::Json => {
-                let emitter = JsonEmitter::new(self.source_map.clone())
-                emitter.emit(diagnostic)
+                let emitter = JsonEmitter::new(self.source_map.clone());
+                emitter.emit(diagnostic);
             }
             OutputFormat::JsonPretty => {
-                let emitter = JsonEmitter::pretty(self.source_map.clone())
-                emitter.emit(diagnostic)
+                let emitter = JsonEmitter::pretty(self.source_map.clone());
+                emitter.emit(diagnostic);
             }
         }
     }
@@ -578,7 +578,7 @@ pub struct ScopedDiagCtxt {
 impl ScopedDiagCtxt {
     /// Create a scoped context from a parent.
     pub fn new(parent: DiagCtxt, file_id: FileId) -> ScopedDiagCtxt {
-        let previous_file = parent.current_file()
+        let previous_file = parent.current_file();
         ScopedDiagCtxt {
             parent,
             local_diagnostics: Vec::new(),
@@ -588,20 +588,20 @@ impl ScopedDiagCtxt {
 
     /// Emit a diagnostic locally.
     pub fn emit(mut self, diagnostic: Diagnostic) -> Unit {
-        self.local_diagnostics.push(diagnostic)
+        self.local_diagnostics.push(diagnostic);
     }
 
     /// Get local diagnostics.
     pub fn local_diagnostics(self) -> Vec<Diagnostic> {
-        self.local_diagnostics.clone()
+        self.local_diagnostics.clone();
     }
 
     /// Flush local diagnostics to parent.
     pub fn flush_to_parent(mut self) -> Unit {
         for diag in self.local_diagnostics.clone() {
-            self.parent.emit(diag)
-        }
-        self.local_diagnostics = Vec::new()
+            self.parent.emit(diag);
+        };
+        self.local_diagnostics = Vec::new();
     }
 
     /// Check if local scope has errors.
@@ -626,173 +626,173 @@ impl ScopedDiagCtxt {
 
 #[test]
 fn test_diag_ctx_creation() {
-    let source_map = SourceMap::new()
-    let ctx = DiagCtxt::new(source_map)
+    let source_map = SourceMap::new();
+    let ctx = DiagCtxt::new(source_map);
 
-    assert(!ctx.has_errors())
-    assert(!ctx.has_warnings())
-    assert(ctx.error_count() == 0)
-    assert(ctx.warning_count() == 0)
+    assert(!ctx.has_errors());
+    assert(!ctx.has_warnings());
+    assert(ctx.error_count() == 0);
+    assert(ctx.warning_count() == 0);
 }
 
 #[test]
 fn test_diag_ctx_buffered() {
-    let source_map = SourceMap::new()
-    let ctx = DiagCtxt::buffered(source_map)
+    let source_map = SourceMap::new();
+    let ctx = DiagCtxt::buffered(source_map);
 
-    assert(ctx.mode.is_buffered())
+    assert(ctx.mode.is_buffered());
 }
 
 #[test]
 fn test_diag_ctx_silent() {
-    let source_map = SourceMap::new()
-    let ctx = DiagCtxt::silent(source_map)
+    let source_map = SourceMap::new();
+    let ctx = DiagCtxt::silent(source_map);
 
-    assert(ctx.mode.is_silent())
+    assert(ctx.mode.is_silent());
 }
 
 #[test]
 fn test_emit_error_counts() {
-    let source_map = SourceMap::new()
-    let mut ctx = DiagCtxt::silent(source_map)
+    let source_map = SourceMap::new();
+    let mut ctx = DiagCtxt::silent(source_map);
 
-    let diagnostic = Diagnostic::error("test error")
-    ctx.emit(diagnostic)
+    let diagnostic = Diagnostic::error("test error");
+    ctx.emit(diagnostic);
 
-    assert(ctx.has_errors())
-    assert(ctx.error_count() == 1)
+    assert(ctx.has_errors());
+    assert(ctx.error_count() == 1);
 }
 
 #[test]
 fn test_emit_warning_counts() {
-    let source_map = SourceMap::new()
-    let mut ctx = DiagCtxt::silent(source_map)
+    let source_map = SourceMap::new();
+    let mut ctx = DiagCtxt::silent(source_map);
 
-    let diagnostic = Diagnostic::warning("test warning")
-    ctx.emit(diagnostic)
+    let diagnostic = Diagnostic::warning("test warning");
+    ctx.emit(diagnostic);
 
-    assert(!ctx.has_errors())
-    assert(ctx.has_warnings())
-    assert(ctx.warning_count() == 1)
+    assert(!ctx.has_errors());
+    assert(ctx.has_warnings());
+    assert(ctx.warning_count() == 1);
 }
 
 #[test]
 fn test_deduplication() {
-    let source_map = SourceMap::new()
-    let mut ctx = DiagCtxt::silent(source_map).with_deduplication(true)
+    let source_map = SourceMap::new();
+    let mut ctx = DiagCtxt::silent(source_map).with_deduplication(true);
 
     // Emit same error twice
-    let diag1 = Diagnostic::error("duplicate error")
-    let diag2 = Diagnostic::error("duplicate error")
+    let diag1 = Diagnostic::error("duplicate error");
+    let diag2 = Diagnostic::error("duplicate error");
 
-    ctx.emit(diag1)
-    ctx.emit(diag2)
+    ctx.emit(diag1);
+    ctx.emit(diag2);
 
     // Should only count once
-    assert(ctx.error_count() == 1)
+    assert(ctx.error_count() == 1);
 }
 
 #[test]
 fn test_no_deduplication() {
-    let source_map = SourceMap::new()
-    let mut ctx = DiagCtxt::silent(source_map).with_deduplication(false)
+    let source_map = SourceMap::new();
+    let mut ctx = DiagCtxt::silent(source_map).with_deduplication(false);
 
-    let diag1 = Diagnostic::error("duplicate error")
-    let diag2 = Diagnostic::error("duplicate error")
+    let diag1 = Diagnostic::error("duplicate error");
+    let diag2 = Diagnostic::error("duplicate error");
 
-    ctx.emit(diag1)
-    ctx.emit(diag2)
+    ctx.emit(diag1);
+    ctx.emit(diag2);
 
     // Should count both
-    assert(ctx.error_count() == 2)
+    assert(ctx.error_count() == 2);
 }
 
 #[test]
 fn test_add_file() {
-    let source_map = SourceMap::new()
-    let mut ctx = DiagCtxt::new(source_map)
+    let source_map = SourceMap::new();
+    let mut ctx = DiagCtxt::new(source_map);
 
-    let file_id = ctx.add_file("test.blood", "fn main() {}")
+    let file_id = ctx.add_file("test.blood", "fn main() {}");
 
-    assert(!file_id.is_dummy())
+    assert(!file_id.is_dummy());
 }
 
 #[test]
 fn test_summary_errors() {
-    let source_map = SourceMap::new()
-    let mut ctx = DiagCtxt::silent(source_map)
+    let source_map = SourceMap::new();
+    let mut ctx = DiagCtxt::silent(source_map);
 
-    ctx.emit(Diagnostic::error("error 1"))
-    ctx.emit(Diagnostic::error("error 2"))
-    ctx.emit(Diagnostic::warning("warning 1"))
+    ctx.emit(Diagnostic::error("error 1"));
+    ctx.emit(Diagnostic::error("error 2"));
+    ctx.emit(Diagnostic::warning("warning 1"));
 
-    let summary = ctx.emit_summary()
-    assert(summary.contains("2 previous errors"))
-    assert(summary.contains("1 warning emitted"))
+    let summary = ctx.emit_summary();
+    assert(summary.contains("2 previous errors"));
+    assert(summary.contains("1 warning emitted"));
 }
 
 #[test]
 fn test_summary_single_error() {
-    let source_map = SourceMap::new()
-    let mut ctx = DiagCtxt::silent(source_map)
+    let source_map = SourceMap::new();
+    let mut ctx = DiagCtxt::silent(source_map);
 
-    ctx.emit(Diagnostic::error("single error"))
+    ctx.emit(Diagnostic::error("single error"));
 
-    let summary = ctx.emit_summary()
-    assert(summary.contains("previous error"))
-    assert(!summary.contains("errors"))
+    let summary = ctx.emit_summary();
+    assert(summary.contains("previous error"));
+    assert(!summary.contains("errors"));
 }
 
 #[test]
 fn test_summary_warnings_only() {
-    let source_map = SourceMap::new()
-    let mut ctx = DiagCtxt::silent(source_map)
+    let source_map = SourceMap::new();
+    let mut ctx = DiagCtxt::silent(source_map);
 
-    ctx.emit(Diagnostic::warning("warning 1"))
-    ctx.emit(Diagnostic::warning("warning 2"))
+    ctx.emit(Diagnostic::warning("warning 1"));
+    ctx.emit(Diagnostic::warning("warning 2"));
 
-    let summary = ctx.emit_summary()
-    assert(summary.contains("2 warnings emitted"))
-    assert(!summary.contains("error"))
+    let summary = ctx.emit_summary();
+    assert(summary.contains("2 warnings emitted"));
+    assert(!summary.contains("error"));
 }
 
 #[test]
 fn test_buffered_flush() {
-    let source_map = SourceMap::new()
+    let source_map = SourceMap::new();
     let mut ctx = DiagCtxt::buffered(source_map)
-        .with_format(OutputFormat::Plain)
+        .with_format(OutputFormat::Plain);
 
-    ctx.emit(Diagnostic::error("buffered error"))
+    ctx.emit(Diagnostic::error("buffered error"));
 
-    assert(ctx.buffered_diagnostics().len() == 1)
+    assert(ctx.buffered_diagnostics().len() == 1);
 
-    let output = ctx.flush()
+    let output = ctx.flush();
 
-    assert(output.contains("buffered error"))
-    assert(ctx.buffered_diagnostics().len() == 0)
+    assert(output.contains("buffered error"));
+    assert(ctx.buffered_diagnostics().len() == 0);
 }
 
 #[test]
 fn test_converter_integration() {
-    let mut source_map = SourceMap::new()
-    let file_id = source_map.add("test.blood", "let x = 42")
+    let mut source_map = SourceMap::new();
+    let file_id = source_map.add("test.blood", "let x = 42");
 
-    let mut ctx = DiagCtxt::new(source_map)
-    ctx.set_current_file(file_id)
+    let mut ctx = DiagCtxt::new(source_map);
+    ctx.set_current_file(file_id);
 
-    let converter = ctx.converter()
-    assert(converter.current_file() == file_id)
+    let converter = ctx.converter();
+    assert(converter.current_file() == file_id);
 }
 
 #[test]
 fn test_emission_mode_checks() {
-    assert(EmissionMode::Immediate.is_immediate())
-    assert(!EmissionMode::Immediate.is_buffered())
-    assert(!EmissionMode::Immediate.is_silent())
+    assert(EmissionMode::Immediate.is_immediate());
+    assert(!EmissionMode::Immediate.is_buffered());
+    assert(!EmissionMode::Immediate.is_silent());
 
-    assert(EmissionMode::Buffered.is_buffered())
-    assert(!EmissionMode::Buffered.is_immediate())
+    assert(EmissionMode::Buffered.is_buffered());
+    assert(!EmissionMode::Buffered.is_immediate());
 
-    assert(EmissionMode::Silent.is_silent())
-    assert(!EmissionMode::Silent.is_immediate())
+    assert(EmissionMode::Silent.is_silent());
+    assert(!EmissionMode::Silent.is_immediate());
 }

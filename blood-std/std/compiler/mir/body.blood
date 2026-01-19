@@ -301,7 +301,7 @@ impl MirBody {
 
     /// Allocate a new temporary local.
     pub fn new_temp(&mut self, ty: Type, span: Span) -> LocalId {
-        self.new_local(ty, LocalKind::Temp, span)
+        self.new_local(ty, LocalKind::Temp, span);
     }
 
     /// Get all basic blocks.
@@ -347,7 +347,7 @@ impl MirBody {
         while i < self.basic_blocks.len() {
             if !self.basic_blocks[i].is_terminated() {
                 return false;
-            }
+            };
             i = i + 1;
         }
         true
@@ -378,7 +378,7 @@ impl MirBody {
         while i < self.basic_blocks.len() {
             preds.insert(i as u32, []);
             i = i + 1;
-        }
+        };
 
         // Populate predecessors from successors
         i = 0;
@@ -393,9 +393,9 @@ impl MirBody {
                         pred_list.push(id.clone());
                     }
                     Option::None => {}
-                }
+                };
                 j = j + 1;
-            }
+            };
             i = i + 1;
         }
 
@@ -409,7 +409,7 @@ impl MirBody {
         while i < self.basic_blocks.len() {
             visited.push(false);
             i = i + 1;
-        }
+        };
 
         let mut worklist: [BasicBlockId] = [BasicBlockId::entry()];
 
@@ -417,7 +417,7 @@ impl MirBody {
             let bb = worklist.pop().unwrap();
             if bb == *target {
                 return true;
-            }
+            };
             let idx = bb.index() as usize;
             if visited[idx] {
                 continue;
@@ -432,7 +432,7 @@ impl MirBody {
                         let succ_idx = succs[j].index() as usize;
                         if !visited[succ_idx] {
                             worklist.push(succs[j].clone());
-                        }
+                        };
                         j = j + 1;
                     }
                 }
@@ -450,7 +450,7 @@ impl MirBody {
         while i < self.basic_blocks.len() {
             visited.push(false);
             i = i + 1;
-        }
+        };
 
         let mut postorder: [BasicBlockId] = [];
         self.visit_postorder(BasicBlockId::entry(), &mut visited, &mut postorder);
@@ -487,7 +487,7 @@ impl MirBody {
                 }
             }
             Option::None => {}
-        }
+        };
 
         postorder.push(bb);
     }
@@ -555,7 +555,7 @@ impl MirBodyBuilder {
         match name {
             Option::Some(n) => local.set_name(n),
             Option::None => {}
-        }
+        };
         self.body.locals.push(local);
         self.body.param_count = self.body.param_count + 1;
         id
@@ -563,7 +563,7 @@ impl MirBodyBuilder {
 
     /// Create a new temporary.
     pub fn new_temp(&mut self, ty: Type, span: Span) -> LocalId {
-        self.body.new_temp(ty, span)
+        self.body.new_temp(ty, span);
     }
 
     /// Update a local's type.
@@ -586,12 +586,12 @@ impl MirBodyBuilder {
 
     /// Create a new basic block.
     pub fn new_block(&mut self) -> BasicBlockId {
-        self.body.new_block()
+        self.body.new_block();
     }
 
     /// Get the current block.
     pub fn current_block(&self) -> BasicBlockId {
-        self.current_block.clone()
+        self.current_block.clone();
     }
 
     /// Switch to a different block.

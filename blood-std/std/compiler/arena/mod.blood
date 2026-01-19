@@ -151,37 +151,37 @@ module std.compiler.arena;
 // ============================================================================
 
 // Memory chunk management
-pub use chunk.Chunk
-pub use chunk.DEFAULT_CHUNK_SIZE
-pub use chunk.MAX_CHUNK_SIZE
-pub use chunk.DEFAULT_ALIGNMENT
-pub use chunk.align_up
-pub use chunk.align_down
-pub use chunk.is_aligned
+pub use chunk.Chunk;
+pub use chunk.DEFAULT_CHUNK_SIZE;
+pub use chunk.MAX_CHUNK_SIZE;
+pub use chunk.DEFAULT_ALIGNMENT;
+pub use chunk.align_up;
+pub use chunk.align_down;
+pub use chunk.is_aligned;
 
 // Typed arena allocator
-pub use typed.TypedArena
+pub use typed.TypedArena;
 
 // String arena with interning
-pub use string.StringArena
-pub use string.SymbolArena
+pub use string.StringArena;
+pub use string.SymbolArena;
 
 // Statistics
-pub use stats.ArenaStats
-pub use stats.ArenaReport
+pub use stats.ArenaStats;
+pub use stats.ArenaReport;
 
 // ============================================================================
 // Convenience Type Aliases
 // ============================================================================
 
 /// Arena for AST nodes (alias for common use case).
-pub type AstArena<T> = TypedArena<T>
+pub type AstArena<T> = TypedArena<T>;
 
 /// Arena for HIR nodes (alias for common use case).
-pub type HirArena<T> = TypedArena<T>
+pub type HirArena<T> = TypedArena<T>;
 
 /// Arena for type information (alias for common use case).
-pub type TypeArena<T> = TypedArena<T>
+pub type TypeArena<T> = TypedArena<T>;
 
 // ============================================================================
 // Arena Collection
@@ -255,13 +255,13 @@ impl<AstNode, HirNode, TypeInfo> CompilerArenas[AstNode, HirNode, TypeInfo] {
 
     /// Get a report of arena usage.
     pub fn stats(self) -> ArenaReport {
-        let mut report = ArenaReport::new()
+        let mut report = ArenaReport::new();
 
-        report.ast_arena = self.ast.stats()
-        report.hir_arena = self.hir.stats()
-        report.type_arena = self.types.stats()
-        report.string_arena = self.strings.stats()
-        report.compute_total()
+        report.ast_arena = self.ast.stats();
+        report.hir_arena = self.hir.stats();
+        report.type_arena = self.types.stats();
+        report.string_arena = self.strings.stats();
+        report.compute_total();
 
         report
     }
@@ -272,10 +272,10 @@ impl<AstNode, HirNode, TypeInfo> CompilerArenas[AstNode, HirNode, TypeInfo] {
     ///
     /// All references to arena-allocated values become invalid.
     pub unsafe fn clear(mut self) {
-        self.ast.clear()
-        self.hir.clear()
-        self.types.clear()
-        self.strings.clear()
+        self.ast.clear();
+        self.hir.clear();
+        self.types.clear();
+        self.strings.clear();
     }
 }
 
@@ -292,10 +292,10 @@ impl<AstNode, HirNode, TypeInfo> Default for CompilerArenas[AstNode, HirNode, Ty
 #[test]
 fn test_module_exports() {
     // Verify that all expected types are accessible
-    let _: TypedArena<Int> = TypedArena::new()
-    let _: StringArena = StringArena::new()
-    let _: ArenaStats = ArenaStats::new()
-    let _: ArenaReport = ArenaReport::new()
+    let _: TypedArena<Int> = TypedArena::new();
+    let _: StringArena = StringArena::new();
+    let _: ArenaStats = ArenaStats::new();
+    let _: ArenaReport = ArenaReport::new();
 }
 
 #[test]
@@ -304,49 +304,49 @@ fn test_compiler_arenas() {
     struct MockHir { value: Int }
     struct MockType { value: Int }
 
-    let arenas: CompilerArenas[MockAst, MockHir, MockType] = CompilerArenas::new()
+    let arenas: CompilerArenas[MockAst, MockHir, MockType] = CompilerArenas::new();
 
-    let ast = arenas.ast.alloc(MockAst { value: 1 })
-    let hir = arenas.hir.alloc(MockHir { value: 2 })
-    let ty = arenas.types.alloc(MockType { value: 3 })
-    let name = arenas.strings.alloc("test")
+    let ast = arenas.ast.alloc(MockAst { value: 1 });
+    let hir = arenas.hir.alloc(MockHir { value: 2 });
+    let ty = arenas.types.alloc(MockType { value: 3 });
+    let name = arenas.strings.alloc("test");
 
-    assert(ast.value == 1)
-    assert(hir.value == 2)
-    assert(ty.value == 3)
-    assert(name == "test")
+    assert(ast.value == 1);
+    assert(hir.value == 2);
+    assert(ty.value == 3);
+    assert(name == "test");
 }
 
 #[test]
 fn test_compiler_arenas_stats() {
     struct MockNode { value: Int }
 
-    let arenas: CompilerArenas[MockNode, MockNode, MockNode] = CompilerArenas::new()
+    let arenas: CompilerArenas[MockNode, MockNode, MockNode] = CompilerArenas::new();
 
-    let _ = arenas.ast.alloc(MockNode { value: 1 })
-    let _ = arenas.ast.alloc(MockNode { value: 2 })
-    let _ = arenas.strings.alloc("hello")
+    let _ = arenas.ast.alloc(MockNode { value: 1 });
+    let _ = arenas.ast.alloc(MockNode { value: 2 });
+    let _ = arenas.strings.alloc("hello");
 
-    let report = arenas.stats()
+    let report = arenas.stats();
 
-    assert(report.ast_arena.num_items == 2)
-    assert(report.string_arena.num_items == 1)
-    assert(report.total.num_items >= 3)
+    assert(report.ast_arena.num_items == 2);
+    assert(report.string_arena.num_items == 1);
+    assert(report.total.num_items >= 3);
 }
 
 #[test]
 fn test_alignment_helpers() {
-    assert(align_up(0, 8) == 0)
-    assert(align_up(1, 8) == 8)
-    assert(align_up(8, 8) == 8)
-    assert(align_up(9, 8) == 16)
+    assert(align_up(0, 8) == 0);
+    assert(align_up(1, 8) == 8);
+    assert(align_up(8, 8) == 8);
+    assert(align_up(9, 8) == 16);
 
-    assert(align_down(7, 8) == 0)
-    assert(align_down(8, 8) == 8)
-    assert(align_down(15, 8) == 8)
+    assert(align_down(7, 8) == 0);
+    assert(align_down(8, 8) == 8);
+    assert(align_down(15, 8) == 8);
 
-    assert(is_aligned(0, 8))
-    assert(is_aligned(8, 8))
-    assert(is_aligned(16, 8))
-    assert(!is_aligned(7, 8))
+    assert(is_aligned(0, 8));
+    assert(is_aligned(8, 8));
+    assert(is_aligned(16, 8));
+    assert(!is_aligned(7, 8));
 }

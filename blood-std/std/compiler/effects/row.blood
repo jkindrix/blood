@@ -65,7 +65,7 @@ impl Clone for RowVar {
 
 impl PartialEq for RowVar {
     fn eq(&self, other: &RowVar) -> bool {
-        self.id == other.id
+        self.id == other.id;
     }
 }
 
@@ -124,7 +124,7 @@ impl EffectRef {
     /// This is useful for handler matching where the handler handles all
     /// instantiations of an effect regardless of type arguments.
     pub fn same_effect(&self, other: &EffectRef) -> bool {
-        self.def_id.eq(&other.def_id)
+        self.def_id.eq(&other.def_id);
     }
 }
 
@@ -141,7 +141,7 @@ impl PartialEq for EffectRef {
     fn eq(&self, other: &EffectRef) -> bool {
         if !self.def_id.eq(&other.def_id) {
             return false;
-        }
+        };
         if self.type_args.len() != other.type_args.len() {
             return false;
         }
@@ -217,9 +217,9 @@ impl EffectRow {
         while i < self.effects.len() {
             if self.effects[i].same_effect(&effect) {
                 return; // Already present
-            }
+            };
             i = i + 1;
-        }
+        };
         self.effects.push(effect);
     }
 
@@ -230,17 +230,17 @@ impl EffectRow {
 
     /// Check if this row is pure (no effects and no row variable).
     pub fn is_pure(&self) -> bool {
-        self.effects.len() == 0 && self.row_var.is_none()
+        self.effects.len() == 0 && self.row_var.is_none();
     }
 
     /// Check if this row is closed (no row variable).
     pub fn is_closed(&self) -> bool {
-        self.row_var.is_none()
+        self.row_var.is_none();
     }
 
     /// Check if this row is polymorphic (has a row variable).
     pub fn is_polymorphic(&self) -> bool {
-        self.row_var.is_some()
+        self.row_var.is_some();
     }
 
     /// Get the concrete effects in this row.
@@ -250,7 +250,7 @@ impl EffectRow {
 
     /// Get the row variable if present.
     pub fn row_var(&self) -> Option<&RowVar> {
-        self.row_var.as_ref()
+        self.row_var.as_ref();
     }
 
     /// Check if this row contains a specific effect (by DefId).
@@ -259,7 +259,7 @@ impl EffectRow {
         while i < self.effects.len() {
             if self.effects[i].def_id.eq(effect_id) {
                 return true;
-            }
+            };
             i = i + 1;
         }
         false
@@ -271,7 +271,7 @@ impl EffectRow {
         while i < self.effects.len() {
             if self.effects[i].same_effect(effect) {
                 return true;
-            }
+            };
             i = i + 1;
         }
         false
@@ -279,7 +279,7 @@ impl EffectRow {
 
     /// Get the number of effects in this row.
     pub fn len(&self) -> usize {
-        self.effects.len()
+        self.effects.len();
     }
 
     /// Extend this row with effects from another row.
@@ -290,7 +290,7 @@ impl EffectRow {
         while i < other.effects.len() {
             self.add_effect(other.effects[i].clone());
             i = i + 1;
-        }
+        };
         // Take row variable from other if we don't have one
         if self.row_var.is_none() && other.row_var.is_some() {
             self.row_var = other.row_var.clone();
@@ -306,7 +306,7 @@ impl EffectRow {
             if self.effects[i].def_id.eq(effect_id) {
                 self.effects.remove(i);
                 return true;
-            }
+            };
             i = i + 1;
         }
         false
@@ -326,15 +326,15 @@ impl PartialEq for EffectRow {
     fn eq(&self, other: &EffectRow) -> bool {
         if self.effects.len() != other.effects.len() {
             return false;
-        }
+        };
         // Check all effects in self are in other
         let mut i: usize = 0;
         while i < self.effects.len() {
             if !other.contains_effect(&self.effects[i]) {
                 return false;
-            }
+            };
             i = i + 1;
-        }
+        };
         // Check row variables match
         match (&self.row_var, &other.row_var) {
             (Option::None, Option::None) => true,
@@ -372,7 +372,7 @@ pub fn row_difference(source: &EffectRow, target: &EffectRow) -> [EffectRef] {
     while i < source.effects.len() {
         if !target.contains_effect(&source.effects[i]) {
             diff.push(source.effects[i].clone());
-        }
+        };
         i = i + 1;
     }
     diff
@@ -396,14 +396,14 @@ pub fn is_subset(subset: &EffectRow, superset: &EffectRow) -> bool {
     // If superset is polymorphic, it can contain any effects
     if superset.is_polymorphic() {
         return true;
-    }
+    };
 
     // Check that every effect in subset is in superset
     let mut i: usize = 0;
     while i < subset.effects.len() {
         if !superset.contains_effect(&subset.effects[i]) {
             return false;
-        }
+        };
         i = i + 1;
     }
     true
@@ -418,9 +418,9 @@ pub fn intersect_rows(r1: &EffectRow, r2: &EffectRow) -> EffectRow {
     while i < r1.effects.len() {
         if r2.contains_effect(&r1.effects[i]) {
             effects.push(r1.effects[i].clone());
-        }
+        };
         i = i + 1;
-    }
+    };
 
     // Result is polymorphic only if both inputs are
     let row_var = match (&r1.row_var, &r2.row_var) {

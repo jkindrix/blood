@@ -214,7 +214,7 @@ impl std.fmt::Debug for DefinitionMetadata {
             .field("names", &self.names)
             .field("documentation", &self.documentation)
             .field("source_location", &self.source_location)
-            .finish()
+            .finish();
     }
 }
 
@@ -303,7 +303,7 @@ impl DefinitionRecord {
 
     /// Get the primary name (first name in the list).
     pub fn primary_name(&self) -> Option<&str> {
-        self.metadata.names.first().map(|s| s.as_str())
+        self.metadata.names.first().map(|s| s.as_str());
     }
 
     /// Check if this definition has any references.
@@ -313,13 +313,13 @@ impl DefinitionRecord {
 
     /// Get the number of references.
     pub fn reference_count(&self) -> usize {
-        self.references.len()
+        self.references.len();
     }
 }
 
 impl PartialEq for DefinitionRecord {
     fn eq(&self, other: &DefinitionRecord) -> bool {
-        self.hash == other.hash
+        self.hash == other.hash;
     }
 }
 
@@ -333,7 +333,7 @@ impl std.fmt::Debug for DefinitionRecord {
             .field("effect_hash", &self.effect_hash)
             .field("references", &self.references.len())
             .field("names", &self.metadata.names)
-            .finish()
+            .finish();
     }
 }
 
@@ -379,10 +379,10 @@ impl Codebase {
                     existing_summary: format!("{:?}", existing.ast),
                     new_summary: format!("{:?}", record.ast),
                 });
-            }
+            };
             // Same AST, just return existing hash
             return Ok(hash);
-        }
+        };
 
         // Update dependency graph
         for dep_hash in &record.references {
@@ -390,7 +390,7 @@ impl Codebase {
                 .entry(*dep_hash)
                 .or_default()
                 .insert(hash);
-        }
+        };
 
         self.definitions.insert(hash, record);
         Ok(hash)
@@ -398,22 +398,22 @@ impl Codebase {
 
     /// Get a definition by hash.
     pub fn get(&self, hash: ContentHash) -> Option<&DefinitionRecord> {
-        self.definitions.get(&hash)
+        self.definitions.get(&hash);
     }
 
     /// Get a definition mutably by hash.
     pub fn get_mut(&mut self, hash: ContentHash) -> Option<&mut DefinitionRecord> {
-        self.definitions.get_mut(&hash)
+        self.definitions.get_mut(&hash);
     }
 
     /// Check if a definition exists.
     pub fn contains(&self, hash: ContentHash) -> bool {
-        self.definitions.contains_key(&hash)
+        self.definitions.contains_key(&hash);
     }
 
     /// Remove a definition by hash.
     pub fn remove(&mut self, hash: ContentHash) -> Option<DefinitionRecord> {
-        self.definitions.remove(&hash)
+        self.definitions.remove(&hash);
     }
 
     /// Get all definitions that depend on a given hash.
@@ -421,7 +421,7 @@ impl Codebase {
         self.dependents
             .get(&hash)
             .map(|set| set.iter().copied().collect())
-            .unwrap_or_default()
+            .unwrap_or_default();
     }
 
     /// Get the transitive closure of dependents.
@@ -432,13 +432,13 @@ impl Codebase {
         while let Some(current) = stack.pop() {
             if visited.contains(&current) {
                 continue;
-            }
+            };
             visited.insert(current);
 
             if let Some(deps) = self.dependents.get(&current) {
                 stack.extend(deps.iter());
             }
-        }
+        };
 
         visited.remove(&hash);
         visited
@@ -461,17 +461,17 @@ impl Codebase {
 
     /// Get compiled code for a definition.
     pub fn get_compiled(&self, hash: ContentHash) -> Option<&[u8]> {
-        self.compiled.get(&hash).map(|v| v.as_slice())
+        self.compiled.get(&hash).map(|v| v.as_slice());
     }
 
     /// Check if compiled code exists.
     pub fn has_compiled(&self, hash: ContentHash) -> bool {
-        self.compiled.contains_key(&hash)
+        self.compiled.contains_key(&hash);
     }
 
     /// Remove compiled code for a definition.
     pub fn remove_compiled(&mut self, hash: ContentHash) -> Option<Vec<u8>> {
-        self.compiled.remove(&hash)
+        self.compiled.remove(&hash);
     }
 
     /// Add a type definition.
@@ -483,7 +483,7 @@ impl Codebase {
 
     /// Get a type definition.
     pub fn get_type(&self, hash: ContentHash) -> Option<&DefinitionRecord> {
-        self.types.get(&hash)
+        self.types.get(&hash);
     }
 
     /// Add an effect definition.
@@ -495,27 +495,27 @@ impl Codebase {
 
     /// Get an effect definition.
     pub fn get_effect(&self, hash: ContentHash) -> Option<&DefinitionRecord> {
-        self.effects.get(&hash)
+        self.effects.get(&hash);
     }
 
     /// Get all definition hashes.
     pub fn all_hashes(&self) -> impl Iterator<Item = ContentHash> + '_ {
-        self.definitions.keys().copied()
+        self.definitions.keys().copied();
     }
 
     /// Iterate over all definitions.
     pub fn iter(&self) -> impl Iterator<Item = (&ContentHash, &DefinitionRecord)> {
-        self.definitions.iter()
+        self.definitions.iter();
     }
 
     /// Get count of definitions.
     pub fn len(&self) -> usize {
-        self.definitions.len()
+        self.definitions.len();
     }
 
     /// Check if empty.
     pub fn is_empty(&self) -> bool {
-        self.definitions.is_empty()
+        self.definitions.is_empty();
     }
 
     /// Garbage collect unreferenced definitions.
@@ -548,7 +548,7 @@ impl Codebase {
         while let Some(hash) = stack.pop() {
             if visited.contains(&hash) {
                 continue;
-            }
+            };
             visited.insert(hash);
 
             if let Some(record) = self.definitions.get(&hash) {
@@ -588,7 +588,7 @@ impl std.fmt::Debug for Codebase {
             .field("types", &self.types.len())
             .field("effects", &self.effects.len())
             .field("compiled", &self.compiled.len())
-            .finish()
+            .finish();
     }
 }
 
@@ -636,7 +636,7 @@ impl std.fmt::Debug for CodebaseStats {
             .field("effects", &self.effect_count)
             .field("compiled", &self.compiled_count)
             .field("compiled_size", &self.total_compiled_size)
-            .finish()
+            .finish();
     }
 }
 

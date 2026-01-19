@@ -60,7 +60,7 @@ impl TypeErrorAdapter {
 
     /// Get the error kind.
     pub fn kind(self) -> TypeErrorKindAdapter {
-        self.kind.clone()
+        self.kind.clone();
     }
 
     /// Get the span.
@@ -297,41 +297,41 @@ impl TypeErrorKindAdapter {
 impl IntoDiagnostic for TypeErrorAdapter {
     /// Convert this type error into a rich diagnostic.
     fn into_diagnostic(self, ctx: DiagnosticConverter) -> Diagnostic {
-        let diag_span = ctx.convert_span(self.span)
-        let kind = self.kind.clone()
-        let message = kind.message()
-        let code = kind.error_code()
+        let diag_span = ctx.convert_span(self.span);
+        let kind = self.kind.clone();
+        let message = kind.message();
+        let code = kind.error_code();
 
         // Start building the diagnostic
         let mut diagnostic = Diagnostic::error(message)
             .with_span(diag_span.clone())
-            .with_code(code)
+            .with_code(code);
 
         // Add error-specific labels, suggestions, and help
         match kind {
             TypeErrorKindAdapter::Mismatch { expected, found } => {
                 diagnostic = diagnostic
                     .with_label(Label::primary(diag_span.clone(), "expected `" ++ expected.clone() ++ "`, found `" ++ found.clone() ++ "`"))
-                    .with_help_message("consider using a type cast or changing the expression")
+                    .with_help_message("consider using a type cast or changing the expression");
             }
 
             TypeErrorKindAdapter::PatternMismatch { expected, found } => {
                 diagnostic = diagnostic
                     .with_label(Label::primary(diag_span.clone(), "expected `" ++ expected.clone() ++ "`"))
-                    .with_help_message("patterns must match the type of the scrutinee")
+                    .with_help_message("patterns must match the type of the scrutinee");
             }
 
             TypeErrorKindAdapter::UnresolvedName { name } => {
                 diagnostic = diagnostic
                     .with_label(Label::primary(diag_span.clone(), "not found in this scope"))
-                    .with_help_message("check for typos or ensure the value is in scope")
+                    .with_help_message("check for typos or ensure the value is in scope");
                 // TODO: Add suggestions for similar names
             }
 
             TypeErrorKindAdapter::UnresolvedType { name } => {
                 diagnostic = diagnostic
                     .with_label(Label::primary(diag_span.clone(), "not found in this scope"))
-                    .with_help_message("check for typos or add the appropriate import")
+                    .with_help_message("check for typos or add the appropriate import");
             }
 
             TypeErrorKindAdapter::WrongArity { expected, found } => {
@@ -339,26 +339,26 @@ impl IntoDiagnostic for TypeErrorAdapter {
                     "missing " ++ (expected - found).to_string() ++ " argument(s)"
                 } else {
                     (found - expected).to_string() ++ " extra argument(s)"
-                }
+                };
                 diagnostic = diagnostic
-                    .with_label(Label::primary(diag_span.clone(), label_msg))
+                    .with_label(Label::primary(diag_span.clone(), label_msg));
             }
 
             TypeErrorKindAdapter::OccursCheck { var_id, ty } => {
                 diagnostic = diagnostic
                     .with_label(Label::primary(diag_span.clone(), "recursive type"))
-                    .with_help_message("recursive types need explicit indirection with `Box` or similar")
+                    .with_help_message("recursive types need explicit indirection with `Box` or similar");
             }
 
             TypeErrorKindAdapter::UnhandledEffect { effect } => {
                 diagnostic = diagnostic
                     .with_label(Label::primary(diag_span.clone(), "effect not handled"))
-                    .with_help_message("wrap in a handler block: `handle { ... } with EffectHandler`")
+                    .with_help_message("wrap in a handler block: `handle { ... } with EffectHandler`");
             }
 
             TypeErrorKindAdapter::InvalidEffectOp { effect, op } => {
                 diagnostic = diagnostic
-                    .with_label(Label::primary(diag_span.clone(), "unknown operation"))
+                    .with_label(Label::primary(diag_span.clone(), "unknown operation"));
             }
 
             TypeErrorKindAdapter::EffectMismatch { expected_pure } => {
@@ -366,132 +366,132 @@ impl IntoDiagnostic for TypeErrorAdapter {
                     "effectful expression in pure context"
                 } else {
                     "pure expression where effect expected"
-                }
-                diagnostic = diagnostic.with_label(Label::primary(diag_span.clone(), label_msg))
+                };
+                diagnostic = diagnostic.with_label(Label::primary(diag_span.clone(), label_msg));
             }
 
             TypeErrorKindAdapter::EffectRowMismatch { expected_count, found_count } => {
-                diagnostic = diagnostic.with_label(Label::primary(diag_span.clone(), "effect count mismatch"))
+                diagnostic = diagnostic.with_label(Label::primary(diag_span.clone(), "effect count mismatch"));
             }
 
             TypeErrorKindAdapter::EffectNotInRow { effect } => {
-                diagnostic = diagnostic.with_label(Label::primary(diag_span.clone(), "effect not available"))
+                diagnostic = diagnostic.with_label(Label::primary(diag_span.clone(), "effect not available"));
             }
 
             TypeErrorKindAdapter::DuplicateDefinition { name } => {
                 diagnostic = diagnostic
                     .with_label(Label::primary(diag_span.clone(), "duplicate definition"))
-                    .with_help_message("remove the duplicate or rename one of the definitions")
+                    .with_help_message("remove the duplicate or rename one of the definitions");
                 // TODO: Add secondary label pointing to first definition
             }
 
             TypeErrorKindAdapter::MissingField { struct_name, field } => {
                 diagnostic = diagnostic
                     .with_label(Label::primary(diag_span.clone(), "missing field"))
-                    .with_help_message("add the missing field: `" ++ field ++ ": ...`")
+                    .with_help_message("add the missing field: `" ++ field ++ ": ...`");
             }
 
             TypeErrorKindAdapter::UnknownField { struct_name, field } => {
                 diagnostic = diagnostic
-                    .with_label(Label::primary(diag_span.clone(), "unknown field"))
+                    .with_label(Label::primary(diag_span.clone(), "unknown field"));
                 // TODO: Suggest similar field names
             }
 
             TypeErrorKindAdapter::CannotAccessField { ty, field } => {
                 diagnostic = diagnostic
-                    .with_label(Label::primary(diag_span.clone(), "not a struct or record type"))
+                    .with_label(Label::primary(diag_span.clone(), "not a struct or record type"));
             }
 
             TypeErrorKindAdapter::NonExhaustive { missing } => {
                 diagnostic = diagnostic
                     .with_label(Label::primary(diag_span.clone(), "non-exhaustive"))
-                    .with_help_message("ensure all patterns are covered or add a catch-all `_` pattern")
+                    .with_help_message("ensure all patterns are covered or add a catch-all `_` pattern");
             }
 
             TypeErrorKindAdapter::CannotDeref { ty } => {
                 diagnostic = diagnostic
-                    .with_label(Label::primary(diag_span.clone(), "cannot dereference"))
+                    .with_label(Label::primary(diag_span.clone(), "cannot dereference"));
             }
 
             TypeErrorKindAdapter::CannotCall { ty } => {
                 diagnostic = diagnostic
                     .with_label(Label::primary(diag_span.clone(), "not a function"))
-                    .with_help_message("ensure this is a function or closure")
+                    .with_help_message("ensure this is a function or closure");
             }
 
             TypeErrorKindAdapter::CannotIndex { ty } => {
                 diagnostic = diagnostic
-                    .with_label(Label::primary(diag_span.clone(), "not indexable"))
+                    .with_label(Label::primary(diag_span.clone(), "not indexable"));
             }
 
             TypeErrorKindAdapter::NotIterable { ty } => {
                 diagnostic = diagnostic
                     .with_label(Label::primary(diag_span.clone(), "not iterable"))
-                    .with_help_message("consider implementing `Iterator` or using a different loop construct")
+                    .with_help_message("consider implementing `Iterator` or using a different loop construct");
             }
 
             TypeErrorKindAdapter::TupleFieldNotNumeric { field } => {
                 diagnostic = diagnostic
                     .with_label(Label::primary(diag_span.clone(), "use numeric index"))
-                    .with_help_message("tuple fields are accessed by number: `.0`, `.1`, etc.")
+                    .with_help_message("tuple fields are accessed by number: `.0`, `.1`, etc.");
             }
 
             TypeErrorKindAdapter::TupleFieldOutOfBounds { index, tuple_len } => {
                 diagnostic = diagnostic
                     .with_label(Label::primary(diag_span.clone(), "index out of bounds"))
-                    .with_help_message("valid indices are 0 to " ++ (tuple_len - 1).to_string())
+                    .with_help_message("valid indices are 0 to " ++ (tuple_len - 1).to_string());
             }
 
             TypeErrorKindAdapter::CannotConstructEnum { name } => {
                 diagnostic = diagnostic
                     .with_label(Label::primary(diag_span.clone(), "enum type"))
-                    .with_help_message("use variant syntax: `EnumName::Variant { ... }`")
+                    .with_help_message("use variant syntax: `EnumName::Variant { ... }`");
             }
 
             TypeErrorKindAdapter::EnumUsedAsValue { name } => {
                 diagnostic = diagnostic
                     .with_label(Label::primary(diag_span.clone(), "enum type, not value"))
-                    .with_help_message("use a specific variant of the enum")
+                    .with_help_message("use a specific variant of the enum");
             }
 
             TypeErrorKindAdapter::BinaryOpTypeError { op, left, right } => {
                 diagnostic = diagnostic
-                    .with_label(Label::primary(diag_span.clone(), "operator not supported for these types"))
+                    .with_label(Label::primary(diag_span.clone(), "operator not supported for these types"));
             }
 
             TypeErrorKindAdapter::UnaryOpTypeError { op, operand } => {
                 diagnostic = diagnostic
-                    .with_label(Label::primary(diag_span.clone(), "operator not supported for this type"))
+                    .with_label(Label::primary(diag_span.clone(), "operator not supported for this type"));
             }
 
             TypeErrorKindAdapter::ReturnOutsideFunction => {
                 diagnostic = diagnostic
-                    .with_label(Label::primary(diag_span.clone(), "not in a function"))
+                    .with_label(Label::primary(diag_span.clone(), "not in a function"));
             }
 
             TypeErrorKindAdapter::BreakOutsideLoop => {
                 diagnostic = diagnostic
-                    .with_label(Label::primary(diag_span.clone(), "not in a loop"))
+                    .with_label(Label::primary(diag_span.clone(), "not in a loop"));
             }
 
             TypeErrorKindAdapter::ContinueOutsideLoop => {
                 diagnostic = diagnostic
-                    .with_label(Label::primary(diag_span.clone(), "not in a loop"))
+                    .with_label(Label::primary(diag_span.clone(), "not in a loop"));
             }
 
             TypeErrorKindAdapter::ModulePathNotImplemented => {
                 diagnostic = diagnostic
-                    .with_label(Label::primary(diag_span.clone(), "not yet implemented"))
+                    .with_label(Label::primary(diag_span.clone(), "not yet implemented"));
             }
 
             TypeErrorKindAdapter::UnsupportedExpression { description } => {
                 diagnostic = diagnostic
-                    .with_label(Label::primary(diag_span.clone(), "unsupported"))
+                    .with_label(Label::primary(diag_span.clone(), "unsupported"));
             }
 
             TypeErrorKindAdapter::UnsupportedTypeSyntax { description } => {
                 diagnostic = diagnostic
-                    .with_label(Label::primary(diag_span.clone(), "unsupported syntax"))
+                    .with_label(Label::primary(diag_span.clone(), "unsupported syntax"));
             }
         }
 
@@ -508,10 +508,10 @@ pub fn convert_type_errors(
     errors: Vec<TypeErrorAdapter>,
     ctx: DiagnosticConverter,
 ) -> Vec<Diagnostic> {
-    let mut diagnostics = Vec::new()
+    let mut diagnostics = Vec::new();
 
     for error in errors {
-        diagnostics.push(error.into_diagnostic(ctx.clone()))
+        diagnostics.push(error.into_diagnostic(ctx.clone()));
     }
 
     diagnostics
@@ -531,12 +531,12 @@ fn test_type_mismatch_diagnostic() {
         SimpleSpan::new(10, 20),
     )
 
-    let ctx = DiagnosticConverter::empty()
-    let diagnostic = error.into_diagnostic(ctx)
+    let ctx = DiagnosticConverter::empty();
+    let diagnostic = error.into_diagnostic(ctx);
 
-    assert(diagnostic.severity() == Severity::Error)
-    assert(diagnostic.message().contains("type mismatch"))
-    assert(diagnostic.code().is_some())
+    assert(diagnostic.severity() == Severity::Error);
+    assert(diagnostic.message().contains("type mismatch"));
+    assert(diagnostic.code().is_some());
 }
 
 #[test]
@@ -546,11 +546,11 @@ fn test_unresolved_name_diagnostic() {
         SimpleSpan::new(5, 8),
     )
 
-    let ctx = DiagnosticConverter::empty()
-    let diagnostic = error.into_diagnostic(ctx)
+    let ctx = DiagnosticConverter::empty();
+    let diagnostic = error.into_diagnostic(ctx);
 
-    assert(diagnostic.message().contains("cannot find value"))
-    assert(diagnostic.message().contains("foo"))
+    assert(diagnostic.message().contains("cannot find value"));
+    assert(diagnostic.message().contains("foo"));
 }
 
 #[test]
@@ -560,10 +560,10 @@ fn test_wrong_arity_diagnostic() {
         SimpleSpan::new(0, 10),
     )
 
-    let ctx = DiagnosticConverter::empty()
-    let diagnostic = error.into_diagnostic(ctx)
+    let ctx = DiagnosticConverter::empty();
+    let diagnostic = error.into_diagnostic(ctx);
 
-    assert(diagnostic.message().contains("wrong number of arguments"))
+    assert(diagnostic.message().contains("wrong number of arguments"));
 }
 
 #[test]
@@ -571,9 +571,9 @@ fn test_error_code_mapping() {
     let kind = TypeErrorKindAdapter::Mismatch {
         expected: "Int",
         found: "Bool",
-    }
+    };
 
-    assert(kind.error_code() == ErrorCode::TypeMismatch)
+    assert(kind.error_code() == ErrorCode::TypeMismatch);
 }
 
 #[test]
@@ -589,10 +589,10 @@ fn test_convert_multiple_errors() {
         ),
     ]
 
-    let ctx = DiagnosticConverter::empty()
-    let diagnostics = convert_type_errors(errors, ctx)
+    let ctx = DiagnosticConverter::empty();
+    let diagnostics = convert_type_errors(errors, ctx);
 
-    assert(diagnostics.len() == 2)
+    assert(diagnostics.len() == 2);
 }
 
 #[test]
@@ -604,10 +604,10 @@ fn test_non_exhaustive_diagnostic() {
         SimpleSpan::new(10, 50),
     )
 
-    let ctx = DiagnosticConverter::empty()
-    let diagnostic = error.into_diagnostic(ctx)
+    let ctx = DiagnosticConverter::empty();
+    let diagnostic = error.into_diagnostic(ctx);
 
-    assert(diagnostic.message().contains("non-exhaustive"))
+    assert(diagnostic.message().contains("non-exhaustive"));
 }
 
 #[test]
@@ -617,9 +617,9 @@ fn test_effect_error_diagnostic() {
         SimpleSpan::new(20, 30),
     )
 
-    let ctx = DiagnosticConverter::empty()
-    let diagnostic = error.into_diagnostic(ctx)
+    let ctx = DiagnosticConverter::empty();
+    let diagnostic = error.into_diagnostic(ctx);
 
-    assert(diagnostic.message().contains("unhandled effect"))
-    assert(diagnostic.message().contains("IO"))
+    assert(diagnostic.message().contains("unhandled effect"));
+    assert(diagnostic.message().contains("IO"));
 }

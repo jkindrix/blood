@@ -132,12 +132,12 @@ impl EvidenceVector {
 
     /// Look up evidence for an effect.
     pub fn lookup(&self, effect_id: &DefId) -> Option<&EvidenceEntry> {
-        self.entries.get(&effect_id.index)
+        self.entries.get(&effect_id.index);
     }
 
     /// Get the number of entries in the vector.
     pub fn len(&self) -> usize {
-        self.ordered.len()
+        self.ordered.len();
     }
 
     /// Check if the vector is empty.
@@ -157,7 +157,7 @@ impl EvidenceVector {
 
     /// Check if this vector contains an entry for an effect.
     pub fn contains(&self, effect_id: &DefId) -> bool {
-        self.entries.contains_key(&effect_id.index)
+        self.entries.contains_key(&effect_id.index);
     }
 
     /// Get the evidence index for an effect.
@@ -217,7 +217,7 @@ impl Evidence {
                     combined.add(entry.effect.clone(), entry.handler_id.clone());
                 }
                 Option::None => {}
-            }
+            };
             i = i + 1;
         }
         Evidence {
@@ -228,12 +228,12 @@ impl Evidence {
 
     /// Get the evidence entry for an effect.
     pub fn get(&self, effect_id: &DefId) -> Option<&EvidenceEntry> {
-        self.vector.lookup(effect_id)
+        self.vector.lookup(effect_id);
     }
 
     /// Get the evidence index for an effect.
     pub fn index_of(&self, effect_id: &DefId) -> Option<usize> {
-        self.vector.index_of(effect_id)
+        self.vector.index_of(effect_id);
     }
 
     /// Get the handler depth.
@@ -243,7 +243,7 @@ impl Evidence {
 
     /// Check if this evidence handles an effect.
     pub fn handles(&self, effect_id: &DefId) -> bool {
-        self.vector.contains(effect_id)
+        self.vector.contains(effect_id);
     }
 }
 
@@ -330,7 +330,7 @@ impl EvidenceContext {
                     effect_indices.insert(effect_id.index, entry.index);
                 }
                 Option::None => {}
-            }
+            };
             i = i + 1;
         }
         EvidenceContext {
@@ -361,7 +361,7 @@ impl EvidenceContext {
 
     /// Get the number of effects in the context.
     pub fn effect_count(&self) -> usize {
-        self.effect_indices.len()
+        self.effect_indices.len();
     }
 }
 
@@ -405,7 +405,7 @@ impl HandlerPattern {
                     bindings.push((effect_id.clone(), entry.handler_id.clone()));
                 }
                 Option::None => {}
-            }
+            };
             i = i + 1;
         }
         HandlerPattern { bindings }
@@ -418,7 +418,7 @@ impl HandlerPattern {
 
     /// Get the number of bindings in the pattern.
     pub fn len(&self) -> usize {
-        self.bindings.len()
+        self.bindings.len();
     }
 
     /// Check if the pattern is empty.
@@ -457,14 +457,14 @@ impl PartialEq for HandlerPattern {
     fn eq(&self, other: &HandlerPattern) -> bool {
         if self.bindings.len() != other.bindings.len() {
             return false;
-        }
+        };
         let mut i: usize = 0;
         while i < self.bindings.len() {
             let (e1, h1) = &self.bindings[i];
             let (e2, h2) = &other.bindings[i];
             if !e1.eq(e2) || !h1.eq(h2) {
                 return false;
-            }
+            };
             i = i + 1;
         }
         true
@@ -556,7 +556,7 @@ impl EvidenceCache {
         let hash = pattern.hash_value();
         if self.cache.contains_key(&hash) {
             self.stats.hits = self.stats.hits + 1;
-            self.cache.get(&hash)
+            self.cache.get(&hash);
         } else {
             self.stats.misses = self.stats.misses + 1;
             Option::None
@@ -573,7 +573,7 @@ impl EvidenceCache {
     /// Check if a pattern is already cached.
     pub fn contains(&self, pattern: &HandlerPattern) -> bool {
         let hash = pattern.hash_value();
-        self.cache.contains_key(&hash)
+        self.cache.contains_key(&hash);
     }
 
     /// Clear all cached evidence vectors.
@@ -584,7 +584,7 @@ impl EvidenceCache {
 
     /// Get the number of cached patterns.
     pub fn len(&self) -> usize {
-        self.cache.len()
+        self.cache.len();
     }
 
     /// Check if the cache is empty.
@@ -639,7 +639,7 @@ impl Clone for StaticEvidenceId {
 
 impl PartialEq for StaticEvidenceId {
     fn eq(&self, other: &StaticEvidenceId) -> bool {
-        self.id == other.id
+        self.id == other.id;
     }
 }
 
@@ -769,13 +769,13 @@ impl StaticEvidence {
     pub fn add_entry(&mut self, entry: StaticEvidenceEntry) {
         if !entry.state_kind.is_static() {
             self.fully_static = false;
-        }
+        };
         self.entries.push(entry);
     }
 
     /// Get the number of handlers in this evidence.
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.entries.len();
     }
 
     /// Check if this evidence is empty.
@@ -785,7 +785,7 @@ impl StaticEvidence {
 
     /// Check if this evidence can be fully emitted as static data.
     pub fn can_emit_static(&self) -> bool {
-        self.fully_static && !self.is_empty()
+        self.fully_static && !self.is_empty();
     }
 }
 
@@ -837,7 +837,7 @@ impl StaticEvidenceRegistry {
         match self.pattern_lookup.get(&hash) {
             Option::Some(id) => {
                 self.pattern_reuses = self.pattern_reuses + 1;
-                id.clone()
+                id.clone();
             }
             Option::None => {
                 let id = StaticEvidenceId::new(self.next_id);
@@ -863,17 +863,17 @@ impl StaticEvidenceRegistry {
 
     /// Check if a pattern is already registered.
     pub fn contains(&self, pattern: &HandlerPattern) -> bool {
-        self.pattern_lookup.contains_key(&pattern.hash_value())
+        self.pattern_lookup.contains_key(&pattern.hash_value());
     }
 
     /// Get the ID for a registered pattern.
     pub fn lookup(&self, pattern: &HandlerPattern) -> Option<&StaticEvidenceId> {
-        self.pattern_lookup.get(&pattern.hash_value())
+        self.pattern_lookup.get(&pattern.hash_value());
     }
 
     /// Get the number of registered patterns.
     pub fn len(&self) -> usize {
-        self.patterns.len()
+        self.patterns.len();
     }
 
     /// Check if the registry is empty.
@@ -959,7 +959,7 @@ fn test_evidence_vector_lookup() {
     match entry1 {
         Option::Some(e) => assert!(e.handler_id.index == 10),
         Option::None => assert!(false),
-    }
+    };
 
     let entry2 = ev.lookup(&DefId::new(2));
     assert!(entry2.is_some());
@@ -995,12 +995,12 @@ fn test_evidence_index_of() {
     match evidence.index_of(&DefId::new(1)) {
         Option::Some(idx) => assert!(idx == 0),
         Option::None => assert!(false),
-    }
+    };
 
     match evidence.index_of(&DefId::new(2)) {
         Option::Some(idx) => assert!(idx == 1),
         Option::None => assert!(false),
-    }
+    };
 
     assert!(evidence.index_of(&DefId::new(99)).is_none());
 }

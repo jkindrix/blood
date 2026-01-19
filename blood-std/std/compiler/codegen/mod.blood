@@ -195,7 +195,7 @@ pub type MirBodiesMap = Map<DefId, MirBody>;
 pub fn optimize_module(module: LLVMModuleRef, opt_level: BloodOptLevel) {
     if opt_level == BloodOptLevel::None {
         return;
-    }
+    };
 
     // Create a module pass manager
     let mpm = create_pass_manager();
@@ -254,7 +254,7 @@ pub fn optimize_module(module: LLVMModuleRef, opt_level: BloodOptLevel) {
     if opt_level == BloodOptLevel::Aggressive {
         // More aggressive loop opts for -O3 equivalent
         add_loop_unroll_pass(mpm);
-    }
+    };
 
     // === Phase 5: Interprocedural Optimizations ===
     // These work across function boundaries
@@ -277,7 +277,7 @@ pub fn optimize_module(module: LLVMModuleRef, opt_level: BloodOptLevel) {
 
         // Tail call elimination
         add_tail_call_elimination_pass(mpm);
-    }
+    };
 
     // === Phase 6: Vectorization ===
     // SLP and loop vectorization for SIMD
@@ -285,7 +285,7 @@ pub fn optimize_module(module: LLVMModuleRef, opt_level: BloodOptLevel) {
     if opt_level == BloodOptLevel::Aggressive {
         add_slp_vectorize_pass(mpm);
         add_loop_vectorize_pass(mpm);
-    }
+    };
 
     // === Phase 7: Final Cleanup ===
     // Clean up after all transformations
@@ -326,11 +326,11 @@ pub fn get_native_target_machine_with_opt(
     // Initialize native target and assembler
     if !initialize_native_target() {
         return Err("Failed to initialize native target".to_string());
-    }
+    };
 
     if !initialize_native_asm_printer() {
         return Err("Failed to initialize native ASM printer".to_string());
-    }
+    };
 
     // Get the default target triple for this platform
     let triple = get_default_target_triple();
@@ -358,7 +358,7 @@ pub fn get_native_target_machine_with_opt(
 
     if machine.is_null() {
         return Err("Failed to create target machine".to_string());
-    }
+    };
 
     Ok(machine)
 }
@@ -445,13 +445,13 @@ pub fn compile_mir_to_object_with_opt(
         if def_id.index() >= 0xFFFF_0000 {
             ctx.declare_closure_from_mir(*def_id, mir_body);
         }
-    }
+    };
 
     // Pass 3: Compile MIR function bodies
     for (def_id, mir_body) in mir_bodies.iter() {
         let escape_results = escape_analysis.get(def_id);
         ctx.compile_mir_body(*def_id, mir_body, escape_results)?;
-    }
+    };
 
     // Pass 4: Compile handler operation bodies (from HIR)
     ctx.compile_handler_operations(hir_crate)?;
@@ -466,7 +466,7 @@ pub fn compile_mir_to_object_with_opt(
             format!("LLVM verification failed: {}", verify_result.message),
             Span::dummy(),
         )]);
-    }
+    };
 
     // Run LLVM optimization passes
     optimize_module(module, opt_level);
@@ -488,7 +488,7 @@ pub fn compile_mir_to_object_with_opt(
             format!("Failed to write object file: {}", emit_result.message),
             Span::dummy(),
         )]);
-    }
+    };
 
     // Clean up LLVM resources
     dispose_target_machine(target_machine);
@@ -534,12 +534,12 @@ pub fn compile_definition_to_object(
         let mut escape_map = Map::new();
         escape_map.insert(def_id, results.clone());
         ctx.set_escape_analysis(escape_map);
-    }
+    };
 
     // Set up inline handler bodies if provided
     if let Some(handlers) = inline_handler_bodies {
         ctx.set_inline_handler_bodies(handlers.clone());
-    }
+    };
 
     // Declare all types and external functions from the crate
     ctx.compile_crate_declarations(hir_crate)?;
@@ -554,7 +554,7 @@ pub fn compile_definition_to_object(
                 ctx.declare_closure_from_mir(*closure_def_id, mir_body);
             }
         }
-    }
+    };
 
     // Compile const and static items
     ctx.compile_const_items(hir_crate)?;
@@ -576,7 +576,7 @@ pub fn compile_definition_to_object(
                 // Type declarations are already handled in compile_crate_declarations
             }
         }
-    }
+    };
 
     // Verify the module
     let verify_result = verify_module(module);
@@ -585,7 +585,7 @@ pub fn compile_definition_to_object(
             format!("LLVM verification failed for def {:?}: {}", def_id, verify_result.message),
             Span::dummy(),
         )]);
-    }
+    };
 
     // Run LLVM optimization passes
     optimize_module(module, BloodOptLevel::Aggressive);
@@ -607,7 +607,7 @@ pub fn compile_definition_to_object(
             format!("Failed to write object file: {}", emit_result.message),
             Span::dummy(),
         )]);
-    }
+    };
 
     // Clean up LLVM resources
     dispose_target_machine(target_machine);
@@ -648,7 +648,7 @@ pub fn compile_handler_registration_to_object(
             format!("LLVM verification failed for handler registration: {}", verify_result.message),
             Span::dummy(),
         )]);
-    }
+    };
 
     // Run LLVM optimization passes
     optimize_module(module, BloodOptLevel::Aggressive);
@@ -670,7 +670,7 @@ pub fn compile_handler_registration_to_object(
             format!("Failed to write handler registration object: {}", emit_result.message),
             Span::dummy(),
         )]);
-    }
+    };
 
     // Clean up LLVM resources
     dispose_target_machine(target_machine);
@@ -715,12 +715,12 @@ pub fn compile_definitions_to_objects(
         ) {
             Ok(()) => {
                 results.push((*def_id, output_path));
-            }
+            };
             Err(errs) => {
                 errors.extend(errs);
             }
         }
-    }
+    };
 
     if errors.is_empty() {
         Ok(results)
@@ -755,7 +755,7 @@ pub fn link_objects(
     // Add all object files
     for obj in object_files.iter() {
         cmd.arg(obj);
-    }
+    };
 
     // Link with runtime
     cmd.arg(runtime_lib);
@@ -827,13 +827,13 @@ pub fn compile_mir_to_ir_with_opt(
         if def_id.index() >= 0xFFFF_0000 {
             ctx.declare_closure_from_mir(*def_id, mir_body);
         }
-    }
+    };
 
     // Pass 3: Compile MIR function bodies
     for (def_id, mir_body) in mir_bodies.iter() {
         let escape_results = escape_analysis.get(def_id);
         ctx.compile_mir_body(*def_id, mir_body, escape_results)?;
-    }
+    };
 
     // Pass 4: Compile handler operation bodies (from HIR)
     ctx.compile_handler_operations(hir_crate)?;

@@ -89,8 +89,8 @@ use crate.compiler.hir.{
     LiteralValue as HirLiteral, MatchArm as HirMatchArm,
 }
 
-use crate.compiler.typeck.{TypeCheckResult, TypeErrors}
-use crate.compiler.typeck.types.{DefId, Type}
+use crate.compiler.typeck.{TypeCheckResult, TypeErrors};
+use crate.compiler.typeck.types.{DefId, Type};
 
 // ============================================================================
 // Error Types
@@ -324,13 +324,13 @@ impl AstLowering {
             match self.lower_declaration(&program.declarations[i]) {
                 Ok(item) => {
                     self.crate_.insert_item(item.def_id.clone(), item);
-                }
+                };
                 Err(e) => {
                     self.errors.push(e);
                 }
-            }
+            };
             i = i + 1;
-        }
+        };
 
         // Find entry point (main function)
         self.find_entry_point(program);
@@ -483,13 +483,13 @@ impl AstLowering {
                         match self.node_to_def.get(&program.declarations[i].id.id()) {
                             Some(def_id) => {
                                 self.crate_.set_entry(def_id.clone());
-                            }
-                            None => {}
+                            };
+                            None => {};
                         }
                     }
                 }
-                _ => {}
-            }
+                _ => {};
+            };
             i = i + 1;
         }
     }
@@ -500,7 +500,7 @@ impl AstLowering {
 
     /// Get the type for a DefId from type check results.
     fn get_type(&self, def_id: &DefId) -> Option<&Type> {
-        self.types.get_type(def_id)
+        self.types.get_type(def_id);
     }
 
     /// Get the type for an AST node by its NodeId.
@@ -548,7 +548,7 @@ impl AstLowering {
 /// This is the main entry point for AST to HIR lowering.
 pub fn lower_to_hir(program: &Program, types: TypeCheckResult) -> LoweringResult {
     let mut lowering = AstLowering::new(types);
-    lowering.lower_program(program)
+    lowering.lower_program(program);
 }
 
 /// Create a new lowering context.

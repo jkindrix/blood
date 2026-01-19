@@ -83,12 +83,12 @@ impl DispatchEffectRow {
 
     /// Check if this effect row is pure (no effects and closed).
     pub fn is_pure(&self) -> bool {
-        self.row.is_pure()
+        self.row.is_pure();
     }
 
     /// Check if this effect row is closed (no row variable).
     pub fn is_closed(&self) -> bool {
-        self.row.is_closed()
+        self.row.is_closed();
     }
 
     /// Check if this effect row is open (has a row variable).
@@ -98,7 +98,7 @@ impl DispatchEffectRow {
 
     /// Count the number of concrete effects.
     pub fn effect_count(&self) -> usize {
-        self.row.effects().len()
+        self.row.effects().len();
     }
 
     // ========================================================================
@@ -127,9 +127,9 @@ impl DispatchEffectRow {
             let self_effect = &self_effects[i];
             if !self.contains_effect_id(other_effects, &self_effect.def_id) {
                 return false;
-            }
+            };
             i = i + 1;
-        }
+        };
 
         // If self is open, other must also be open
         // (because the row variable could expand to anything)
@@ -144,7 +144,7 @@ impl DispatchEffectRow {
     ///
     /// This is the inverse of `is_subset_of`.
     pub fn is_superset_of(&self, other: &DispatchEffectRow) -> bool {
-        other.is_subset_of(self)
+        other.is_subset_of(self);
     }
 
     /// Check if this row and another have any overlap.
@@ -158,9 +158,9 @@ impl DispatchEffectRow {
         while i < self_effects.len() {
             if self.contains_effect_id(other_effects, &self_effects[i].def_id) {
                 return true;
-            }
+            };
             i = i + 1;
-        }
+        };
 
         // Open rows may overlap via their row variables
         if self.is_open() && other.is_open() {
@@ -176,7 +176,7 @@ impl DispatchEffectRow {
         while i < effects.len() {
             if effects[i].def_id.eq(def_id) {
                 return true;
-            }
+            };
             i = i + 1;
         }
         false
@@ -206,13 +206,13 @@ impl DispatchEffectRow {
 
         if self_pure && !other_pure {
             return Ordering::Less; // self is more specific
-        }
+        };
         if !self_pure && other_pure {
             return Ordering::Greater; // other is more specific
-        }
+        };
         if self_pure && other_pure {
             return Ordering::Equal; // both pure
-        }
+        };
 
         // Rule 2: Closed rows are more specific than open rows
         let self_open = self.is_open();
@@ -220,10 +220,10 @@ impl DispatchEffectRow {
 
         if !self_open && other_open {
             return Ordering::Less; // closed is more specific
-        }
+        };
         if self_open && !other_open {
             return Ordering::Greater; // open is less specific
-        }
+        };
 
         // Rule 3: Fewer effects = more specific
         let self_count = self.effect_count();
@@ -231,13 +231,13 @@ impl DispatchEffectRow {
 
         if self_count < other_count {
             return Ordering::Less; // fewer effects = more specific
-        }
+        };
         if self_count > other_count {
             return Ordering::Greater;
-        }
+        };
 
         // Rule 4: Same count, compare lexicographically for determinism
-        self.compare_effects_lexicographically(other)
+        self.compare_effects_lexicographically(other);
     }
 
     /// Compare effects lexicographically by effect name.
@@ -250,10 +250,10 @@ impl DispatchEffectRow {
 
         for effect in self.row.effects().iter() {
             self_ids.push(effect.def_id.id());
-        }
+        };
         for effect in other.row.effects().iter() {
             other_ids.push(effect.def_id.id());
-        }
+        };
 
         // Sort for comparison
         self.sort_u32(&mut self_ids);
@@ -261,19 +261,19 @@ impl DispatchEffectRow {
 
         // Compare element by element
         let len = if self_ids.len() < other_ids.len() {
-            self_ids.len()
+            self_ids.len();
         } else {
-            other_ids.len()
+            other_ids.len();
         };
 
         let mut i: usize = 0;
         while i < len {
             if self_ids[i] < other_ids[i] {
                 return Ordering::Less;
-            }
+            };
             if self_ids[i] > other_ids[i] {
                 return Ordering::Greater;
-            }
+            };
             i = i + 1;
         }
 

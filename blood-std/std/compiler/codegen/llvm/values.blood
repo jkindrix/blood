@@ -491,7 +491,7 @@ impl LLVMValue {
 
     /// Check if this is a null reference.
     pub fn is_null_ref(&self) -> bool {
-        self.raw.is_null()
+        self.raw.is_null();
     }
 
     /// Get the type of this value.
@@ -506,7 +506,7 @@ impl LLVMValue {
         if ptr.is_null() || len == 0 {
             "".to_string()
         } else {
-            let slice = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
+            let slice = @unsafe { core::slice::from_raw_parts(ptr, len as usize) };
             String::from_utf8_lossy(slice).to_string()
         }
     }
@@ -522,7 +522,7 @@ impl LLVMValue {
         if ptr.is_null() {
             "".to_string()
         } else {
-            let s = unsafe { core::ffi::CStr::from_ptr(ptr as *const i8) };
+            let s = @unsafe { core::ffi::CStr::from_ptr(ptr as *const i8) };
             let result = s.to_string_lossy().to_string();
             super::core::llvm_core::LLVMDisposeMessage(ptr);
             result
@@ -581,7 +581,7 @@ impl LLVMBasicBlock {
 
     /// Check if this is a null reference.
     pub fn is_null(&self) -> bool {
-        self.raw.is_null()
+        self.raw.is_null();
     }
 
     /// Get the parent function of this basic block.
@@ -721,7 +721,7 @@ pub fn const_struct(ctx: LLVMContextRef, values: &[LLVMValueRef], packed: bool) 
     let vals_ptr = if values.is_empty() {
         core::ptr::null()
     } else {
-        values.as_ptr()
+        values.as_ptr();
     };
     let packed_flag = if packed { LLVM_TRUE } else { LLVM_FALSE };
     LLVMValue::from_raw(llvm_values::LLVMConstStructInContext(
@@ -737,7 +737,7 @@ pub fn const_named_struct(struct_ty: LLVMTypeRef, values: &[LLVMValueRef]) -> LL
     let vals_ptr = if values.is_empty() {
         core::ptr::null()
     } else {
-        values.as_ptr()
+        values.as_ptr();
     };
     LLVMValue::from_raw(llvm_values::LLVMConstNamedStruct(
         struct_ty,
@@ -751,7 +751,7 @@ pub fn const_array(element_ty: LLVMTypeRef, values: &[LLVMValueRef]) -> LLVMValu
     let vals_ptr = if values.is_empty() {
         core::ptr::null()
     } else {
-        values.as_ptr()
+        values.as_ptr();
     };
     LLVMValue::from_raw(llvm_values::LLVMConstArray2(
         element_ty,
@@ -765,7 +765,7 @@ pub fn const_vector(values: &[LLVMValueRef]) -> LLVMValue {
     let vals_ptr = if values.is_empty() {
         core::ptr::null()
     } else {
-        values.as_ptr()
+        values.as_ptr();
     };
     LLVMValue::from_raw(llvm_values::LLVMConstVector(vals_ptr, values.len() as u32))
 }
@@ -784,7 +784,7 @@ pub fn append_basic_block(ctx: LLVMContextRef, func: LLVMValueRef, name: &str) -
     LLVMBasicBlock::from_raw(llvm_values::LLVMAppendBasicBlockInContext(
         ctx,
         func,
-        name.as_ptr()
+        name.as_ptr();
     ))
 }
 
@@ -793,7 +793,7 @@ pub fn insert_basic_block(ctx: LLVMContextRef, before: LLVMBasicBlockRef, name: 
     LLVMBasicBlock::from_raw(llvm_values::LLVMInsertBasicBlockInContext(
         ctx,
         before,
-        name.as_ptr()
+        name.as_ptr();
     ))
 }
 

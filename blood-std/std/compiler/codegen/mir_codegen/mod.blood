@@ -97,7 +97,7 @@ pub fn compile_mir_body(
         let name = format!("bb{}\0", bb_id.0);
         let llvm_bb = append_basic_block(ctx.llvm_context_ref(), fn_value, &name);
         llvm_blocks.insert(bb_id, llvm_bb.raw());
-    }
+    };
 
     // Position at entry block
     let entry_bb = match llvm_blocks.get(&BasicBlockId::ENTRY) {
@@ -126,7 +126,7 @@ pub fn compile_mir_body(
         let alloca = match tier {
             MemoryTier::Stack => {
                 // Stack allocation - no generation checks needed
-                ctx.llvm_builder().build_alloca(llvm_ty, &name)
+                ctx.llvm_builder().build_alloca(llvm_ty, &name);
             }
             MemoryTier::Region | MemoryTier::Persistent => {
                 // Region allocation - use blood_alloc for generation tracking
@@ -135,7 +135,7 @@ pub fn compile_mir_body(
         };
 
         ctx.locals.insert(local.id, alloca);
-    }
+    };
 
     // Store function parameters
     for (i, param_id) in body.param_ids().enumerate() {
@@ -143,12 +143,12 @@ pub fn compile_mir_body(
             let param_value = super::llvm::values::get_param(fn_value, i as u32).raw();
             ctx.llvm_builder().build_store(param_value, alloca);
         }
-    }
+    };
 
     // Compile each basic block
     for (bb_id, _) in body.blocks() {
         compile_mir_block(ctx, body, bb_id, &llvm_blocks, escape_results)?;
-    }
+    };
 
     ctx.clear_current_function();
     Ok(())
@@ -187,7 +187,7 @@ fn compile_mir_block(
     // Compile statements
     for stmt in &block_data.statements {
         statement::compile_mir_statement(ctx, stmt, body, escape_results)?;
-    }
+    };
 
     // Compile terminator
     if let Some(term) = &block_data.terminator {
@@ -195,7 +195,7 @@ fn compile_mir_block(
     } else {
         // Unterminated block - add unreachable
         ctx.llvm_builder().build_unreachable();
-    }
+    };
 
     Ok(())
 }
@@ -211,7 +211,7 @@ pub fn get_local_tier(
     escape_results: Option<&EscapeResults>,
 ) -> MemoryTier {
     if let Some(results) = escape_results {
-        results.recommended_tier(local)
+        results.recommended_tier(local);
     } else {
         // Default to Region if no escape analysis available
         MemoryTier::Region
@@ -226,7 +226,7 @@ pub fn should_skip_gen_check(
 ) -> bool {
     if let Some(results) = escape_results {
         let state = results.get_escape_state(local);
-        state == EscapeState::NoEscape && !results.is_effect_captured(local)
+        state == EscapeState::NoEscape && !results.is_effect_captured(local);
     } else {
         false  // Conservative: always check if no analysis
     }
@@ -253,18 +253,18 @@ pub fn type_may_contain_genref(ty: &Type) -> bool {
         crate.compiler.hir.TypeKind::Ref { .. } => true,
         crate.compiler.hir.TypeKind::Ptr { .. } => true,
         crate.compiler.hir.TypeKind::Tuple(fields) => {
-            fields.iter().any(|f| type_may_contain_genref(f))
-        }
+            fields.iter().any(|f| type_may_contain_genref(f));
+        };
         crate.compiler.hir.TypeKind::Array { element, .. } => {
             type_may_contain_genref(element)
-        }
+        };
         crate.compiler.hir.TypeKind::Slice { element } => {
             type_may_contain_genref(element)
-        }
+        };
         crate.compiler.hir.TypeKind::Adt { .. } => {
             // ADTs may contain references - conservative
             true
-        }
+        };
         crate.compiler.hir.TypeKind::Closure { .. } => {
             // Closures may capture references
             true

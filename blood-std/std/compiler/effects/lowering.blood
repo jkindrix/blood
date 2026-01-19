@@ -114,7 +114,7 @@ impl EffectInfo {
         while i < self.operations.len() {
             if self.operations[i].name == name {
                 return Option::Some(&self.operations[i]);
-            }
+            };
             i = i + 1;
         }
         Option::None
@@ -122,7 +122,7 @@ impl EffectInfo {
 
     /// Get the number of operations.
     pub fn operation_count(&self) -> usize {
-        self.operations.len()
+        self.operations.len();
     }
 }
 
@@ -285,7 +285,7 @@ impl HandlerInfo {
     pub fn add_op_impl(&mut self, op: OpImplInfo) {
         if !op.is_tail_resumptive {
             self.all_tail_resumptive = false;
-        }
+        };
         self.op_impls.push(op);
     }
 }
@@ -435,12 +435,12 @@ impl EffectLowering {
 
     /// Get effect info by DefId.
     pub fn get_effect(&self, effect_id: &DefId) -> Option<&EffectInfo> {
-        self.effects.get(&effect_id.index)
+        self.effects.get(&effect_id.index);
     }
 
     /// Check if an effect is registered.
     pub fn has_effect(&self, effect_id: &DefId) -> bool {
-        self.effects.contains_key(&effect_id.index)
+        self.effects.contains_key(&effect_id.index);
     }
 
     // ========================================================================
@@ -454,7 +454,7 @@ impl EffectLowering {
 
     /// Get handler info by DefId.
     pub fn get_handler(&self, handler_id: &DefId) -> Option<&HandlerInfo> {
-        self.handlers.get(&handler_id.index)
+        self.handlers.get(&handler_id.index);
     }
 
     /// Find all handlers for a given effect.
@@ -479,7 +479,7 @@ impl EffectLowering {
 
     /// Get evidence requirements for a function.
     pub fn get_evidence_req(&self, def_id: &DefId) -> Option<&EvidenceRequirement> {
-        self.evidence_reqs.get(&def_id.index)
+        self.evidence_reqs.get(&def_id.index);
     }
 
     /// Check if a function requires evidence.
@@ -513,7 +513,7 @@ impl EffectLowering {
                     );
                     info.add_operation(op_info);
                     i = i + 1;
-                }
+                };
 
                 self.register_effect(info.clone());
                 Option::Some(info)
@@ -560,7 +560,7 @@ impl EffectLowering {
                     );
                     info.add_op_impl(op_impl);
                     i = i + 1;
-                }
+                };
 
                 self.register_handler(info.clone());
                 Ok(info)
@@ -599,12 +599,12 @@ impl EffectLowering {
                     format!("No handler found for effect {:?}", effect_id),
                     Span::dummy(),
                 ));
-            }
+            };
 
             let handler = handlers[0];
             ev.add(EffectRef::new(effect_id.clone()), handler.def_id.clone());
             i = i + 1;
-        }
+        };
         Ok(ev)
     }
 

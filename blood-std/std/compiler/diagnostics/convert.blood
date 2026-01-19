@@ -70,7 +70,7 @@ impl SimpleSpan {
 
     /// Check if this is a dummy span.
     pub fn is_dummy(self) -> Bool {
-        self.start == 0 && self.end == 0
+        self.start == 0 && self.end == 0;
     }
 
     /// Create a dummy span.
@@ -118,7 +118,7 @@ impl DiagnosticConverter {
 
     /// Get the source map.
     pub fn source_map(self) -> SourceMap {
-        self.source_map.clone()
+        self.source_map.clone();
     }
 
     /// Get the current file ID.
@@ -131,16 +131,16 @@ impl DiagnosticConverter {
     /// Uses the current file and source map to resolve line/column info.
     pub fn convert_span(self, span: SimpleSpan) -> DiagSpan {
         if span.is_dummy() {
-            return DiagSpan::dummy()
-        }
+            return DiagSpan::dummy();
+        };
 
-        let file_id = self.current_file
+        let file_id = self.current_file;
 
         // Try to get line/column info from source map
         match self.source_map.get(file_id) {
             Option::Some(file) => {
-                let (start_line, start_col) = file.line_col(span.start() as USize)
-                let (end_line, end_col) = file.line_col(span.end() as USize)
+                let (start_line, start_col) = file.line_col(span.start() as USize);
+                let (end_line, end_col) = file.line_col(span.end() as USize);
 
                 DiagSpan::new(
                     file_id,
@@ -158,13 +158,13 @@ impl DiagnosticConverter {
     /// Convert a span with a specific file ID.
     pub fn convert_span_with_file(self, span: SimpleSpan, file_id: FileId) -> DiagSpan {
         if span.is_dummy() {
-            return DiagSpan::dummy()
-        }
+            return DiagSpan::dummy();
+        };
 
         match self.source_map.get(file_id) {
             Option::Some(file) => {
-                let (start_line, start_col) = file.line_col(span.start() as USize)
-                let (end_line, end_col) = file.line_col(span.end() as USize)
+                let (start_line, start_col) = file.line_col(span.start() as USize);
+                let (end_line, end_col) = file.line_col(span.end() as USize);
 
                 DiagSpan::new(
                     file_id,
@@ -190,7 +190,7 @@ impl DiagnosticConverter {
 
     /// Set the current file for subsequent conversions.
     pub fn with_file(mut self, file_id: FileId) -> DiagnosticConverter {
-        self.current_file = file_id
+        self.current_file = file_id;
         self
     }
 }
@@ -271,14 +271,14 @@ impl Diagnostic {
 
     /// Add a primary label using a simple span.
     pub fn with_simple_primary_label(mut self, span: SimpleSpan, message: String, ctx: DiagnosticConverter) -> Diagnostic {
-        let diag_span = ctx.convert_span(span)
-        self.with_label(Label::primary(diag_span, message))
+        let diag_span = ctx.convert_span(span);
+        self.with_label(Label::primary(diag_span, message));
     }
 
     /// Add a secondary label using a simple span.
     pub fn with_simple_secondary_label(mut self, span: SimpleSpan, message: String, ctx: DiagnosticConverter) -> Diagnostic {
-        let diag_span = ctx.convert_span(span)
-        self.with_label(Label::secondary(diag_span, message))
+        let diag_span = ctx.convert_span(span);
+        self.with_label(Label::secondary(diag_span, message));
     }
 }
 
@@ -288,99 +288,99 @@ impl Diagnostic {
 
 #[test]
 fn test_simple_span_creation() {
-    let span = SimpleSpan::new(10, 20)
+    let span = SimpleSpan::new(10, 20);
 
-    assert(span.start() == 10)
-    assert(span.end() == 20)
-    assert(!span.is_dummy())
+    assert(span.start() == 10);
+    assert(span.end() == 20);
+    assert(!span.is_dummy());
 }
 
 #[test]
 fn test_simple_span_dummy() {
-    let span = SimpleSpan::dummy()
+    let span = SimpleSpan::dummy();
 
-    assert(span.is_dummy())
-    assert(span.start() == 0)
-    assert(span.end() == 0)
+    assert(span.is_dummy());
+    assert(span.start() == 0);
+    assert(span.end() == 0);
 }
 
 #[test]
 fn test_diagnostic_converter_empty() {
-    let ctx = DiagnosticConverter::empty()
+    let ctx = DiagnosticConverter::empty();
 
-    assert(ctx.current_file().is_dummy())
+    assert(ctx.current_file().is_dummy());
 }
 
 #[test]
 fn test_diagnostic_converter_with_source() {
-    let mut source_map = SourceMap::new()
-    let file_id = source_map.add("test.blood", "fn main() {\n    let x = 42\n}")
+    let mut source_map = SourceMap::new();
+    let file_id = source_map.add("test.blood", "fn main() {\n    let x = 42\n}");
 
-    let ctx = DiagnosticConverter::new(source_map, file_id)
+    let ctx = DiagnosticConverter::new(source_map, file_id);
 
-    assert(!ctx.current_file().is_dummy())
+    assert(!ctx.current_file().is_dummy());
 }
 
 #[test]
 fn test_convert_span_with_source() {
-    let mut source_map = SourceMap::new()
-    let file_id = source_map.add("test.blood", "fn main() {\n    let x = 42\n}")
+    let mut source_map = SourceMap::new();
+    let file_id = source_map.add("test.blood", "fn main() {\n    let x = 42\n}");
 
-    let ctx = DiagnosticConverter::new(source_map, file_id)
+    let ctx = DiagnosticConverter::new(source_map, file_id);
 
     // Span pointing to "main"
-    let simple = SimpleSpan::new(3, 7)
-    let diag_span = ctx.convert_span(simple)
+    let simple = SimpleSpan::new(3, 7);
+    let diag_span = ctx.convert_span(simple);
 
-    assert(diag_span.start_line() == 1)
-    assert(diag_span.start_column() == 4)  // "main" starts at column 4 (1-indexed)
+    assert(diag_span.start_line() == 1);
+    assert(diag_span.start_column() == 4);  // "main" starts at column 4 (1-indexed)
 }
 
 #[test]
 fn test_convert_span_dummy() {
-    let ctx = DiagnosticConverter::empty()
+    let ctx = DiagnosticConverter::empty();
 
-    let simple = SimpleSpan::dummy()
-    let diag_span = ctx.convert_span(simple)
+    let simple = SimpleSpan::dummy();
+    let diag_span = ctx.convert_span(simple);
 
-    assert(diag_span.is_dummy())
+    assert(diag_span.is_dummy());
 }
 
 #[test]
 fn test_primary_label_creation() {
-    let mut source_map = SourceMap::new()
-    let file_id = source_map.add("test.blood", "let x = 42")
+    let mut source_map = SourceMap::new();
+    let file_id = source_map.add("test.blood", "let x = 42");
 
-    let ctx = DiagnosticConverter::new(source_map, file_id)
-    let span = SimpleSpan::new(4, 5)
+    let ctx = DiagnosticConverter::new(source_map, file_id);
+    let span = SimpleSpan::new(4, 5);
 
-    let label = ctx.primary_label(span, "this is x")
+    let label = ctx.primary_label(span, "this is x");
 
-    assert(label.kind() == LabelKind::Primary)
+    assert(label.kind() == LabelKind::Primary);
 }
 
 #[test]
 fn test_secondary_label_creation() {
-    let mut source_map = SourceMap::new()
-    let file_id = source_map.add("test.blood", "let x = 42")
+    let mut source_map = SourceMap::new();
+    let file_id = source_map.add("test.blood", "let x = 42");
 
-    let ctx = DiagnosticConverter::new(source_map, file_id)
-    let span = SimpleSpan::new(8, 10)
+    let ctx = DiagnosticConverter::new(source_map, file_id);
+    let span = SimpleSpan::new(8, 10);
 
-    let label = ctx.secondary_label(span, "value here")
+    let label = ctx.secondary_label(span, "value here");
 
-    assert(label.kind() == LabelKind::Secondary)
+    assert(label.kind() == LabelKind::Secondary);
 }
 
 #[test]
 fn test_with_file() {
-    let mut source_map = SourceMap::new()
-    let file1 = source_map.add("a.blood", "content a")
-    let file2 = source_map.add("b.blood", "content b")
+    let mut source_map = SourceMap::new();
+    let file1 = source_map.add("a.blood", "content a");
+    let file2 = source_map.add("b.blood", "content b");
 
-    let ctx = DiagnosticConverter::new(source_map, file1)
-    assert(ctx.current_file() == file1)
+    let ctx = DiagnosticConverter::new(source_map, file1);
+    assert(ctx.current_file() == file1);
 
-    let ctx2 = ctx.with_file(file2)
-    assert(ctx2.current_file() == file2)
+    let ctx2 = ctx.with_file(file2);
+    assert(ctx2.current_file() == file2);
 }

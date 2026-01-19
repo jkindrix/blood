@@ -93,7 +93,7 @@ impl ConstraintChecker {
             // Skip parameters with no constraints
             if !param.has_constraints() {
                 continue;
-            }
+            };
 
             // Get the concrete type for this parameter
             let concrete_type = match substitutions.get(&param.id.id()) {
@@ -116,7 +116,7 @@ impl ConstraintChecker {
                     ));
                 }
             }
-        }
+        };
 
         Ok(())
     }
@@ -124,7 +124,7 @@ impl ConstraintChecker {
     /// Check if a concrete type satisfies a constraint.
     fn type_satisfies_constraint(&self, ty: &Type, constraint: &Constraint) -> bool {
         // Use built-in heuristics for well-known traits
-        self.builtin_constraint_check(ty, &constraint.trait_name)
+        self.builtin_constraint_check(ty, &constraint.trait_name);
     }
 
     /// Check constraints using built-in heuristics for well-known traits.
@@ -251,7 +251,7 @@ impl ConstraintChecker {
         // Everything that is Copy is also Clone
         if self.type_is_copy(ty) {
             return true;
-        }
+        };
 
         match ty.kind() {
             // Slices can be cloned if element is Clone
@@ -297,7 +297,7 @@ impl ConstraintChecker {
         match ty.kind() {
             TypeKind::Primitive(_) => true,
             TypeKind::Ref { inner, mutable: _ } => {
-                self.type_is_send(inner) && self.type_is_sync(inner)
+                self.type_is_send(inner) && self.type_is_sync(inner);
             }
             TypeKind::Ptr { inner, mutable: _ } => self.type_is_send(inner),
             TypeKind::Array { element, size: _ } => self.type_is_send(element),
@@ -425,7 +425,7 @@ impl ConstraintChecker {
         // Everything that is Ord is also PartialOrd
         if self.type_is_ord(ty) {
             return true;
-        }
+        };
 
         // Floats implement PartialOrd but not Ord
         match ty.kind() {
@@ -480,7 +480,7 @@ impl ConstraintChecker {
         // Everything that is Eq is also PartialEq
         if self.type_is_eq(ty) {
             return true;
-        }
+        };
 
         // Floats implement PartialEq but not Eq
         match ty.kind() {
@@ -634,7 +634,7 @@ impl ConstraintChecker {
         // Everything that is Iterator is also IntoIterator
         if self.type_is_iterator(ty) {
             return true;
-        }
+        };
 
         match ty.kind() {
             TypeKind::Array { element: _, size: _ } => true,

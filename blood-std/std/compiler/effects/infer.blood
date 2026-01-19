@@ -90,9 +90,9 @@ impl InferenceContext {
         while i < self.performed.len() {
             if self.performed[i].same_effect(&effect) {
                 return;
-            }
+            };
             i = i + 1;
-        }
+        };
         self.performed.push(effect);
     }
 
@@ -103,7 +103,7 @@ impl InferenceContext {
 
     /// Check if an effect is handled.
     pub fn is_handled(&self, effect_id: &DefId) -> bool {
-        self.handled.contains(&effect_id.index)
+        self.handled.contains(&effect_id.index);
     }
 
     /// Set this context as polymorphic.
@@ -140,9 +140,9 @@ impl InferenceContext {
             let effect = &child.performed[i];
             if !child.is_handled(&effect.def_id) && !self.is_handled(&effect.def_id) {
                 self.add_performed(effect.clone());
-            }
+            };
             i = i + 1;
-        }
+        };
 
         if child.is_polymorphic {
             self.is_polymorphic = true;
@@ -192,7 +192,7 @@ impl EffectInferencer {
     pub fn infer_effects(&mut self, body: &Body) -> EffectRow {
         let mut ctx = InferenceContext::new();
         self.infer_expr(&body.expr, &mut ctx);
-        self.build_effect_row(&ctx)
+        self.build_effect_row(&ctx);
     }
 
     /// Infer effects from an expression.
@@ -237,7 +237,7 @@ impl EffectInferencer {
                 while i < handlers.len() {
                     ctx.add_handled(&handlers[i].effect_id);
                     i = i + 1;
-                }
+                };
 
                 // Merge child effects
                 ctx.merge_child(&child_ctx);
@@ -256,7 +256,7 @@ impl EffectInferencer {
                 while i < stmts.len() {
                     self.infer_stmt(&stmts[i], ctx);
                     i = i + 1;
-                }
+                };
                 match tail {
                     Option::Some(e) => self.infer_expr(e, ctx),
                     Option::None => {}
@@ -280,7 +280,7 @@ impl EffectInferencer {
                     match &arms[i].guard {
                         Option::Some(g) => self.infer_expr(g, ctx),
                         Option::None => {}
-                    }
+                    };
                     self.infer_expr(&arms[i].body, ctx);
                     i = i + 1;
                 }
@@ -300,8 +300,8 @@ impl EffectInferencer {
                 // If calling a local (higher-order function), we may be polymorphic
                 match &callee.kind {
                     ExprKind::Local(_) => ctx.set_polymorphic(),
-                    _ => {}
-                }
+                    _ => {};
+                };
                 self.infer_expr(callee, ctx);
                 let mut i: usize = 0;
                 while i < args.len() {
@@ -355,7 +355,7 @@ impl EffectInferencer {
                 while i < fields.len() {
                     self.infer_expr(&fields[i].value, ctx);
                     i = i + 1;
-                }
+                };
                 match base {
                     Option::Some(e) => self.infer_expr(e, ctx),
                     Option::None => {}
@@ -437,7 +437,7 @@ impl EffectInferencer {
                 match start {
                     Option::Some(s) => self.infer_expr(s, ctx),
                     Option::None => {}
-                }
+                };
                 match end {
                     Option::Some(e) => self.infer_expr(e, ctx),
                     Option::None => {}
@@ -531,9 +531,9 @@ impl EffectInferencer {
             let effect = &ctx.performed[i];
             if !ctx.is_handled(&effect.def_id) {
                 remaining.push(effect.clone());
-            }
+            };
             i = i + 1;
-        }
+        };
 
         if remaining.len() == 0 && !ctx.is_polymorphic() {
             // Pure function
@@ -607,7 +607,7 @@ impl Clone for InferenceResult {
 /// This is a convenience function that creates an inferencer and runs inference.
 pub fn infer_effects(body: &Body) -> EffectRow {
     let mut inferencer = EffectInferencer::new();
-    inferencer.infer_effects(body)
+    inferencer.infer_effects(body);
 }
 
 /// Verify that inferred effects are a subset of declared effects.
@@ -626,9 +626,9 @@ pub fn verify_effects_subset(
         // Check if this effect is declared or if declared is polymorphic
         if !declared.contains(&effect.def_id) && !declared.is_polymorphic() {
             undeclared.push(effect.clone());
-        }
+        };
         i = i + 1;
-    }
+    };
 
     if undeclared.len() == 0 {
         Option::None
@@ -682,7 +682,7 @@ impl DetailedEffectInferencer {
                 }
                 Option::None => {}
             }
-        }
+        };
 
         let row = self.inner.build_effect_row(&ctx);
 
@@ -696,7 +696,7 @@ impl DetailedEffectInferencer {
 
     /// Generate a fresh row variable.
     pub fn fresh_row_var(&mut self) -> RowVar {
-        self.inner.fresh_row_var()
+        self.inner.fresh_row_var();
     }
 }
 

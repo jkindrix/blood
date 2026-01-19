@@ -65,12 +65,12 @@ impl TokenStream {
 
     /// Check if the stream is empty.
     pub fn is_empty(&self) -> Bool {
-        self.tokens.is_empty()
+        self.tokens.is_empty();
     }
 
     /// Get the number of tokens.
     pub fn len(&self) -> USize {
-        self.tokens.len()
+        self.tokens.len();
     }
 
     /// Push a token tree.
@@ -206,12 +206,12 @@ impl MacroExpander {
 
     /// Check if a macro is registered.
     pub fn has_macro(&self, name: &str) -> Bool {
-        self.macros.contains_key(name)
+        self.macros.contains_key(name);
     }
 
     /// Get a macro definition.
     pub fn get_macro(&self, name: &str) -> Option<&MacroDecl> {
-        self.macros.get(name)
+        self.macros.get(name);
     }
 
     /// Get all errors.
@@ -247,7 +247,7 @@ impl MacroExpander {
                 "macro expansion exceeded maximum depth of {}",
                 MAX_EXPANSION_DEPTH
             ));
-        }
+        };
         self.depth = self.depth + 1;
 
         // Store content for capture extraction
@@ -275,9 +275,9 @@ impl MacroExpander {
                     }
                 }
                 Option::None => {}
-            }
+            };
             i = i + 1;
-        }
+        };
 
         self.depth = self.depth - 1;
         Result::Err(format!(
@@ -299,11 +299,11 @@ impl MacroExpander {
             // Skip whitespace
             while pos < chars.len() && is_whitespace(chars[pos]) {
                 pos = pos + 1;
-            }
+            };
 
             if pos >= chars.len() {
                 break;
-            }
+            };
 
             let start = pos;
             let c = chars[pos];
@@ -332,7 +332,7 @@ impl MacroExpander {
     fn lex_token(&self, chars: &[Char], start: USize) -> (TokenKind, USize) {
         if start >= chars.len() {
             return (TokenKind::Eof, start);
-        }
+        };
 
         let c = chars[start];
 
@@ -341,26 +341,26 @@ impl MacroExpander {
             let mut end = start + 1;
             while end < chars.len() && is_ident_continue(chars[end]) {
                 end = end + 1;
-            }
+            };
             return (TokenKind::Ident, end);
-        }
+        };
 
         // Numbers
         if c.is_ascii_digit() {
             let mut end = start + 1;
             while end < chars.len() && (chars[end].is_ascii_digit() || chars[end] == '_') {
                 end = end + 1;
-            }
+            };
             // Check for float
             if end < chars.len() && chars[end] == '.' {
                 end = end + 1;
                 while end < chars.len() && chars[end].is_ascii_digit() {
                     end = end + 1;
-                }
+                };
                 return (TokenKind::FloatLit, end);
-            }
+            };
             return (TokenKind::IntLit, end);
-        }
+        };
 
         // String literals
         if c == '"' {
@@ -371,12 +371,12 @@ impl MacroExpander {
                 } else {
                     end = end + 1;
                 }
-            }
+            };
             if end < chars.len() {
                 end = end + 1; // Include closing quote
-            }
+            };
             return (TokenKind::StringLit, end);
-        }
+        };
 
         // Character literals
         if c == '\'' {
@@ -385,12 +385,12 @@ impl MacroExpander {
                 end = end + 2;
             } else if end < chars.len() {
                 end = end + 1;
-            }
+            };
             if end < chars.len() && chars[end] == '\'' {
                 end = end + 1;
-            }
+            };
             return (TokenKind::CharLit, end);
-        }
+        };
 
         // Multi-character operators
         if start + 1 < chars.len() {
@@ -410,9 +410,9 @@ impl MacroExpander {
                 ('=', '>') => return (TokenKind::FatArrow, start + 2),
                 (':', ':') => return (TokenKind::ColonColon, start + 2),
                 ('.', '.') => return (TokenKind::DotDot, start + 2),
-                _ => {}
+                _ => {};
             }
-        }
+        };
 
         // Single-character operators and delimiters
         match c {
@@ -472,7 +472,7 @@ impl MacroExpander {
                         return Option::None;
                     }
                 }
-            }
+            };
             i = i + 1;
         }
 
@@ -491,7 +491,7 @@ impl MacroExpander {
         while i < parts.len() {
             if !self.match_single_part(&parts[i], input, pos, captures) {
                 return false;
-            }
+            };
             i = i + 1;
         }
         true
@@ -509,7 +509,7 @@ impl MacroExpander {
             MacroPatternPart::Token { kind, .. } => {
                 if *pos >= input.len() {
                     return false;
-                }
+                };
                 match input.get(*pos) {
                     Option::Some(TokenTree::Token(t)) => {
                         if t.kind == *kind {
@@ -517,7 +517,7 @@ impl MacroExpander {
                             return true;
                         }
                     }
-                    _ => {}
+                    _ => {};
                 }
                 false
             }
@@ -561,7 +561,7 @@ impl MacroExpander {
                             }
                             Option::None => {}
                         }
-                    }
+                    };
 
                     // Try to match the pattern
                     let start_pos = *pos;
@@ -570,13 +570,13 @@ impl MacroExpander {
                         // Collect captures from this iteration
                         for (k, v) in inner_captures {
                             repeated.push((k, v));
-                        }
+                        };
                         first = false;
                     } else {
                         *pos = start_pos;
                         break;
                     }
-                }
+                };
 
                 // Check repetition constraints
                 let count = repeated.len();
@@ -592,7 +592,7 @@ impl MacroExpander {
                             return false;
                         }
                     }
-                }
+                };
 
                 // Store repeated captures grouped by name
                 for (name, value) in repeated {
@@ -615,7 +615,7 @@ impl MacroExpander {
                 // Match a delimited group
                 if *pos >= input.len() {
                     return false;
-                }
+                };
 
                 match input.get(*pos) {
                     Option::Some(TokenTree::Group { delimiter: d, stream, .. }) => {
@@ -627,7 +627,7 @@ impl MacroExpander {
                             }
                         }
                     }
-                    _ => {}
+                    _ => {};
                 }
                 false
             }
@@ -643,7 +643,7 @@ impl MacroExpander {
     ) -> Option<CapturedValue> {
         if *pos >= input.len() {
             return Option::None;
-        }
+        };
 
         match fragment {
             FragmentKind::Expr => {
@@ -674,7 +674,7 @@ impl MacroExpander {
                             });
                         }
                     }
-                    _ => {}
+                    _ => {};
                 }
                 Option::None
             }
@@ -682,7 +682,7 @@ impl MacroExpander {
             FragmentKind::Literal => {
                 match input.get(*pos) {
                     Option::Some(TokenTree::Token(t)) => {
-                        let is_literal = t.kind == TokenKind::IntLit
+                        let is_literal = t.kind == TokenKind::IntLit;
                             || t.kind == TokenKind::FloatLit
                             || t.kind == TokenKind::StringLit
                             || t.kind == TokenKind::CharLit;
@@ -695,7 +695,7 @@ impl MacroExpander {
                             });
                         }
                     }
-                    _ => {}
+                    _ => {};
                 }
                 Option::None
             }
@@ -745,12 +745,12 @@ impl MacroExpander {
         // Try to extract from current_content first
         if !self.current_content.is_empty() && start < self.current_content.len() && end <= self.current_content.len() {
             return self.current_content[start..end].to_string();
-        }
+        };
 
         // Try original source
         if !self.source.is_empty() && start < self.source.len() && end <= self.source.len() {
             return self.source[start..end].to_string();
-        }
+        };
 
         // Fallback to token kind representation
         match token.kind {
@@ -811,11 +811,11 @@ impl MacroExpander {
                 while i < stream.len() {
                     if i > 0 {
                         inner.push(' ');
-                    }
+                    };
                     match stream.get(i) {
                         Option::Some(t) => inner.push_str(&self.tree_to_source(t)),
                         Option::None => {}
-                    }
+                    };
                     i = i + 1;
                 }
                 format!("{}{}{}", open, inner, close)
@@ -838,7 +838,7 @@ impl MacroExpander {
             match self.substitute_part_to_source(&expansion.parts[i], captures, &mut result) {
                 Result::Ok(()) => {}
                 Result::Err(e) => return Result::Err(e),
-            }
+            };
             i = i + 1;
         }
 
@@ -881,8 +881,8 @@ impl MacroExpander {
                                             result.push_str(source);
                                             result.push(' ');
                                         }
-                                        _ => {}
-                                    }
+                                        _ => {};
+                                    };
                                     i = i + 1;
                                 }
                             }
@@ -908,13 +908,13 @@ impl MacroExpander {
                                         repeat_count = items.len();
                                     }
                                 }
-                                _ => {}
+                                _ => {};
                             }
                         }
-                        _ => {}
-                    }
+                        _ => {};
+                    };
                     i = i + 1;
-                }
+                };
 
                 // Emit the repetition
                 i = 0;
@@ -927,7 +927,7 @@ impl MacroExpander {
                             }
                             Option::None => {}
                         }
-                    }
+                    };
 
                     // Create captures for this iteration
                     let mut iter_captures: HashMap<String, CapturedValue> = HashMap::new();
@@ -950,7 +950,7 @@ impl MacroExpander {
                                 }
                             }
                         }
-                    }
+                    };
 
                     // Substitute parts for this iteration
                     let mut j: USize = 0;
@@ -958,9 +958,9 @@ impl MacroExpander {
                         match self.substitute_part_to_source(&parts[j], &iter_captures, result) {
                             Result::Ok(()) => {}
                             Result::Err(e) => return Result::Err(e),
-                        }
+                        };
                         j = j + 1;
-                    }
+                    };
 
                     i = i + 1;
                 }
@@ -981,9 +981,9 @@ impl MacroExpander {
                     match self.substitute_part_to_source(&parts[i], captures, result) {
                         Result::Ok(()) => {}
                         Result::Err(e) => return Result::Err(e),
-                    }
+                    };
                     i = i + 1;
-                }
+                };
 
                 result.push_str(close);
                 Result::Ok(())
@@ -1007,7 +1007,7 @@ impl MacroExpander {
                 TokenTree::Group { stream: inner, .. } => {
                     self.apply_hygiene(inner, scope);
                 }
-            }
+            };
             i = i + 1;
         }
     }

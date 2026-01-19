@@ -105,12 +105,12 @@ impl ModulePath {
 
     /// Get the number of segments in this path.
     pub fn len(&self) -> usize {
-        self.segments.len()
+        self.segments.len();
     }
 
     /// Check if this path is empty.
     pub fn is_empty(&self) -> bool {
-        self.segments.is_empty()
+        self.segments.is_empty();
     }
 
     /// Get the first segment, if any.
@@ -162,7 +162,7 @@ impl ModulePath {
 
     /// Check if this is the crate root path.
     pub fn is_crate_root(&self) -> bool {
-        self.segments.len() == 1 && self.is_absolute()
+        self.segments.len() == 1 && self.is_absolute();
     }
 
     /// Check if this path starts with "super" (parent module reference).
@@ -199,7 +199,7 @@ impl ModulePath {
 
     /// Remove and return the last segment.
     pub fn pop(&mut self) -> Option<String> {
-        self.segments.pop()
+        self.segments.pop();
     }
 
     /// Get the parent path (all segments except the last).
@@ -221,7 +221,7 @@ impl ModulePath {
     /// Otherwise, the segments of `other` are appended.
     pub fn join(&self, other: &ModulePath) -> ModulePath {
         if other.is_absolute() {
-            other.clone()
+            other.clone();
         } else {
             let mut segments = self.segments.clone();
             for seg in other.segments.iter() {
@@ -237,7 +237,7 @@ impl ModulePath {
     pub fn subpath(&self, start: usize, end: usize) -> ModulePath {
         let mut segments: [String] = vec![];
         let actual_end = if end > self.segments.len() {
-            self.segments.len()
+            self.segments.len();
         } else {
             end
         };
@@ -254,13 +254,13 @@ impl ModulePath {
     pub fn starts_with(&self, prefix: &ModulePath) -> bool {
         if prefix.len() > self.len() {
             return false;
-        }
+        };
 
         let mut i: usize = 0;
         while i < prefix.len() {
             if self.segments[i] != prefix.segments[i] {
                 return false;
-            }
+            };
             i = i + 1;
         }
         true
@@ -272,7 +272,7 @@ impl ModulePath {
     pub fn strip_prefix(&self, prefix: &ModulePath) -> Option<ModulePath> {
         if !self.starts_with(prefix) {
             return None;
-        }
+        };
         Some(self.subpath(prefix.len(), self.len()))
     }
 
@@ -284,14 +284,14 @@ impl ModulePath {
     ///
     /// This is the canonical internal format.
     pub fn to_string(&self) -> String {
-        self.segments.join("::")
+        self.segments.join("::");
     }
 
     /// Format as a `.` separated string (e.g., "crate.foo.bar").
     ///
     /// This matches the Blood source syntax for module declarations.
     pub fn to_dotted_string(&self) -> String {
-        self.segments.join(".")
+        self.segments.join(".");
     }
 
     /// Format for display in error messages.
@@ -301,7 +301,7 @@ impl ModulePath {
         if self.is_empty() {
             "<empty path>".to_string()
         } else {
-            self.to_string()
+            self.to_string();
         }
     }
 }
@@ -318,13 +318,13 @@ impl PartialEq for ModulePath {
     fn eq(&self, other: &ModulePath) -> bool {
         if self.segments.len() != other.segments.len() {
             return false;
-        }
+        };
 
         let mut i: usize = 0;
         while i < self.segments.len() {
             if self.segments[i] != other.segments[i] {
                 return false;
-            }
+            };
             i = i + 1;
         }
         true
