@@ -96,8 +96,8 @@ impl StdlibLoader {
                     .and_then(|n| n.to_str())
                     .unwrap_or("unknown");
 
-                // Skip hidden directories and build artifacts
-                if dir_name.starts_with('.') || dir_name.ends_with("_objs") {
+                // Skip hidden directories, build artifacts, and test directories
+                if dir_name.starts_with('.') || dir_name.ends_with("_objs") || dir_name == "tests" {
                     continue;
                 }
 
