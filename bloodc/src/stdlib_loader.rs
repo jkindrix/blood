@@ -1954,7 +1954,28 @@ fn register_type_info<'a>(
 
             let name = resolve_symbol(s.name.node);
 
-            // Convert fields
+            // Build generic params map: param name -> TyVarId
+            // This allows field types to reference generic type parameters correctly
+            let mut generic_params_map: HashMap<String, TyVarId> = HashMap::new();
+            let generics: Vec<TyVarId> = if let Some(ref params) = s.type_params {
+                let mut type_param_index = 0u32;
+                params.params.iter().filter_map(|p| {
+                    match p {
+                        ast::GenericParam::Type(type_param) => {
+                            let param_name = resolve_symbol(type_param.name.node);
+                            let tyvar_id = TyVarId(type_param_index);
+                            type_param_index += 1;
+                            generic_params_map.insert(param_name, tyvar_id);
+                            Some(tyvar_id)
+                        }
+                        _ => None,
+                    }
+                }).collect()
+            } else {
+                Vec::new()
+            };
+
+            // Convert fields, using the generic params map for proper type variable handling
             let fields = match &s.body {
                 ast::StructBody::Record(fields) => {
                     fields
@@ -1962,7 +1983,7 @@ fn register_type_info<'a>(
                         .enumerate()
                         .map(|(i, f)| {
                             let field_name = resolve_symbol(f.name.node);
-                            let ty = ast_type_to_basic_type(interner, &f.ty);
+                            let ty = ast_type_to_basic_type_with_generics(interner, &f.ty, &generic_params_map);
                             FieldInfo {
                                 name: field_name,
                                 ty,
@@ -1976,7 +1997,7 @@ fn register_type_info<'a>(
                         .iter()
                         .enumerate()
                         .map(|(i, field)| {
-                            let ty = ast_type_to_basic_type(interner, &field.ty);
+                            let ty = ast_type_to_basic_type_with_generics(interner, &field.ty, &generic_params_map);
                             FieldInfo {
                                 name: format!("{i}"),
                                 ty,
@@ -1986,18 +2007,6 @@ fn register_type_info<'a>(
                         .collect()
                 }
                 ast::StructBody::Unit => Vec::new(),
-            };
-
-            // Extract generics (simplified - just track count for now)
-            let generics: Vec<TyVarId> = if let Some(ref params) = s.type_params {
-                params.params.iter().enumerate().filter_map(|(i, p)| {
-                    match p {
-                        ast::GenericParam::Type(_) => Some(TyVarId(i as u32)),
-                        _ => None,
-                    }
-                }).collect()
-            } else {
-                Vec::new()
             };
 
             ctx.struct_defs.insert(def_id, StructInfo {
@@ -2014,6 +2023,27 @@ fn register_type_info<'a>(
 
             let name = resolve_symbol(e.name.node);
 
+            // Build generic params map: param name -> TyVarId
+            // This allows variant field types to reference generic type parameters correctly
+            let mut generic_params_map: HashMap<String, TyVarId> = HashMap::new();
+            let generics: Vec<TyVarId> = if let Some(ref params) = e.type_params {
+                let mut type_param_index = 0u32;
+                params.params.iter().filter_map(|p| {
+                    match p {
+                        ast::GenericParam::Type(type_param) => {
+                            let param_name = resolve_symbol(type_param.name.node);
+                            let tyvar_id = TyVarId(type_param_index);
+                            type_param_index += 1;
+                            generic_params_map.insert(param_name, tyvar_id);
+                            Some(tyvar_id)
+                        }
+                        _ => None,
+                    }
+                }).collect()
+            } else {
+                Vec::new()
+            };
+
             // Convert variants - we need to create DefIds for each variant
             let mut variants = Vec::new();
             for (i, v) in e.variants.iter().enumerate() {
@@ -2027,7 +2057,7 @@ fn register_type_info<'a>(
                             .map(|(fi, field)| {
                                 FieldInfo {
                                     name: format!("{fi}"),
-                                    ty: ast_type_to_basic_type(interner, &field.ty),
+                                    ty: ast_type_to_basic_type_with_generics(interner, &field.ty, &generic_params_map),
                                     index: fi as u32,
                                 }
                             })
@@ -2040,7 +2070,7 @@ fn register_type_info<'a>(
                             .map(|(fi, f)| {
                                 FieldInfo {
                                     name: resolve_symbol(f.name.node),
-                                    ty: ast_type_to_basic_type(interner, &f.ty),
+                                    ty: ast_type_to_basic_type_with_generics(interner, &f.ty, &generic_params_map),
                                     index: fi as u32,
                                 }
                             })
@@ -2064,18 +2094,6 @@ fn register_type_info<'a>(
                     def_id: variant_def_id,
                 });
             }
-
-            // Extract generics
-            let generics: Vec<TyVarId> = if let Some(ref params) = e.type_params {
-                params.params.iter().enumerate().filter_map(|(i, p)| {
-                    match p {
-                        ast::GenericParam::Type(_) => Some(TyVarId(i as u32)),
-                        _ => None,
-                    }
-                }).collect()
-            } else {
-                Vec::new()
-            };
 
             ctx.enum_defs.insert(def_id, EnumInfo {
                 name,
@@ -2346,6 +2364,16 @@ fn ast_type_to_basic_type(
     interner: &DefaultStringInterner,
     ty: &ast::Type,
 ) -> Type {
+    ast_type_to_basic_type_with_generics(interner, ty, &HashMap::new())
+}
+
+/// Convert an AST type to a basic HIR type, handling generic type parameters.
+/// The `generic_params` map contains the generic parameter names mapped to their TyVarIds.
+fn ast_type_to_basic_type_with_generics(
+    interner: &DefaultStringInterner,
+    ty: &ast::Type,
+    generic_params: &HashMap<String, TyVarId>,
+) -> Type {
     let resolve_symbol = |sym: crate::ast::Symbol| -> String {
         interner.resolve(sym).map(|s| s.to_string()).unwrap_or_else(|| "unknown".to_string())
     };
@@ -2354,6 +2382,11 @@ fn ast_type_to_basic_type(
         ast::TypeKind::Path(path) => {
             if path.segments.len() == 1 && path.segments[0].args.is_none() {
                 let name = resolve_symbol(path.segments[0].name.node);
+
+                // Check if this is a generic type parameter first
+                if let Some(&tyvar_id) = generic_params.get(&name) {
+                    return Type::param(tyvar_id);
+                }
 
                 // Handle primitive types
                 match name.as_str() {
@@ -2386,14 +2419,14 @@ fn ast_type_to_basic_type(
             }
         }
         ast::TypeKind::Reference { inner, mutable, .. } => {
-            let inner_ty = ast_type_to_basic_type(interner, inner);
+            let inner_ty = ast_type_to_basic_type_with_generics(interner, inner, generic_params);
             Type::new(TypeKind::Ref {
                 inner: inner_ty,
                 mutable: *mutable
             })
         }
         ast::TypeKind::Pointer { inner, mutable } => {
-            let inner_ty = ast_type_to_basic_type(interner, inner);
+            let inner_ty = ast_type_to_basic_type_with_generics(interner, inner, generic_params);
             Type::new(TypeKind::Ptr {
                 inner: inner_ty,
                 mutable: *mutable
@@ -2402,12 +2435,12 @@ fn ast_type_to_basic_type(
         ast::TypeKind::Tuple(types) => {
             let tys: Vec<Type> = types
                 .iter()
-                .map(|t| ast_type_to_basic_type(interner, t))
+                .map(|t| ast_type_to_basic_type_with_generics(interner, t, generic_params))
                 .collect();
             Type::new(TypeKind::Tuple(tys))
         }
         ast::TypeKind::Slice { element } => {
-            let elem_ty = ast_type_to_basic_type(interner, element);
+            let elem_ty = ast_type_to_basic_type_with_generics(interner, element, generic_params);
             Type::new(TypeKind::Slice { element: elem_ty })
         }
         // For other complex types, use a placeholder
