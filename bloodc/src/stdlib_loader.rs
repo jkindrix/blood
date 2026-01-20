@@ -455,6 +455,19 @@ impl StdlibLoader {
         }
         let reexport_start = Instant::now();
         self.process_reexports(ctx)?;
+
+        // Populate items_by_name with re-exported items for O(1) lookup.
+        // This ensures that types accessed through re-export paths resolve to the same DefId
+        // as when accessed through their original definition path.
+        for module_info in ctx.module_defs.values_mut() {
+            for (name, def_id) in &module_info.reexports {
+                // Only add if not already present (original definitions take precedence)
+                if !module_info.items_by_name.contains_key(name) {
+                    module_info.items_by_name.insert(name.clone(), *def_id);
+                }
+            }
+        }
+
         if verbose {
             eprintln!("    Re-exports processed in {:.2}s", reexport_start.elapsed().as_secs_f64());
         }

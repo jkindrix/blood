@@ -1778,24 +1778,20 @@ fn test_visitor_can_be_implemented() {
         }
     }
 
-    // TODO: Fix type resolution issue in stdlib_loader.rs
-    // Types from the same module (std.compiler.ast.node.Span) are being assigned
-    // different DefIds when loaded through different import paths, causing
-    // type mismatch errors even though semantically they're the same type.
-    //
-    // let lit_left = Literal::int(1i64, Option::None, Span::dummy());
-    // let lit_right = Literal::int(2i64, Option::None, Span::dummy());
-    // let expr_left = Expr::new(ExprKind::Literal(lit_left), Span::dummy());
-    // let expr_right = Expr::new(ExprKind::Literal(lit_right), Span::dummy());
-    // let expr = Expr::new(
-    //     ExprKind::Binary {
-    //         op: BinOp::Add,
-    //         left: Box::new(expr_left),
-    //         right: Box::new(expr_right),
-    //     },
-    //     Span::dummy(),
-    // );
-    // let mut counter = CountExpressions { count: 0 };
-    // counter.visit_expr(&expr);
-    // assert(counter.count == 3);
+    // Test visitor pattern with expressions
+    let lit_left = Literal::int(1i64, Option::None, Span::dummy());
+    let lit_right = Literal::int(2i64, Option::None, Span::dummy());
+    let expr_left = Expr::new(ExprKind::Literal(lit_left), Span::dummy());
+    let expr_right = Expr::new(ExprKind::Literal(lit_right), Span::dummy());
+    let expr = Expr::new(
+        ExprKind::Binary {
+            op: BinOp::Add,
+            left: Box::new(expr_left),
+            right: Box::new(expr_right),
+        },
+        Span::dummy(),
+    );
+    let mut counter = CountExpressions { count: 0 };
+    counter.visit_expr(&expr);
+    assert(counter.count == 3);
 }
