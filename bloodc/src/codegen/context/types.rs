@@ -29,16 +29,21 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 let elem_type = self.lower_type(element);
                 elem_type.array_type(*size as u32).into()
             }
-            TypeKind::Slice { element } => {
+            TypeKind::Slice { element: _ } => {
                 // Slices are { ptr, len }
-                let elem_type = self.lower_type(element);
-                let ptr_type = elem_type.ptr_type(AddressSpace::default());
+                // Use opaque pointer (i8*) for the element pointer to avoid recursive
+                // type lowering. This is correct because slices store a pointer to
+                // elements, not the elements themselves, and modern LLVM uses opaque
+                // pointers anyway.
+                let ptr_type = self.context.i8_type().ptr_type(AddressSpace::default());
                 let len_type = self.context.i64_type();
                 self.context.struct_type(&[ptr_type.into(), len_type.into()], false).into()
             }
-            TypeKind::Ref { inner, .. } | TypeKind::Ptr { inner, .. } => {
-                let inner_type = self.lower_type(inner);
-                inner_type.ptr_type(AddressSpace::default()).into()
+            TypeKind::Ref { .. } | TypeKind::Ptr { .. } => {
+                // Use opaque pointer (i8*) for all reference and pointer types.
+                // This avoids infinite recursion for recursive types like linked lists
+                // and is consistent with modern LLVM's opaque pointer semantics.
+                self.context.i8_type().ptr_type(AddressSpace::default()).into()
             }
             TypeKind::Adt { def_id, args } => {
                 // Look up struct or enum definition
