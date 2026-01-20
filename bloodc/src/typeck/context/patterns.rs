@@ -16,18 +16,25 @@ impl<'a> TypeContext<'a> {
     /// Define a pattern, returning the local ID for simple patterns.
     pub(crate) fn define_pattern(&mut self, pattern: &ast::Pattern, ty: Type) -> Result<LocalId, TypeError> {
         match &pattern.kind {
-            ast::PatternKind::Ident { name, mutable, .. } => {
+            ast::PatternKind::Ident { name, mutable, by_ref, .. } => {
+                // When by_ref is true (ref x), the bound variable has reference type
+                let binding_ty = if *by_ref {
+                    Type::reference(ty.clone(), *mutable)
+                } else {
+                    ty.clone()
+                };
+
                 let name_str = self.symbol_to_string(name.node);
                 let local_id = self.resolver.define_local(
                     name_str.clone(),
-                    ty.clone(),
+                    binding_ty.clone(),
                     *mutable,
                     pattern.span,
                 )?;
 
                 self.locals.push(hir::Local {
                     id: local_id,
-                    ty,
+                    ty: binding_ty,
                     mutable: *mutable,
                     name: Some(name_str),
                     span: pattern.span,
@@ -356,18 +363,25 @@ impl<'a> TypeContext<'a> {
     pub(crate) fn lower_pattern(&mut self, pattern: &ast::Pattern, expected_ty: &Type) -> Result<hir::Pattern, TypeError> {
         let kind = match &pattern.kind {
             ast::PatternKind::Wildcard => hir::PatternKind::Wildcard,
-            ast::PatternKind::Ident { name, mutable, .. } => {
+            ast::PatternKind::Ident { name, mutable, by_ref, .. } => {
+                // When by_ref is true (ref x), the bound variable has reference type
+                let binding_ty = if *by_ref {
+                    Type::reference(expected_ty.clone(), *mutable)
+                } else {
+                    expected_ty.clone()
+                };
+
                 let name_str = self.symbol_to_string(name.node);
                 let local_id = self.resolver.define_local(
                     name_str.clone(),
-                    expected_ty.clone(),
+                    binding_ty.clone(),
                     *mutable,
                     pattern.span,
                 )?;
 
                 self.locals.push(hir::Local {
                     id: local_id,
-                    ty: expected_ty.clone(),
+                    ty: binding_ty,
                     mutable: *mutable,
                     name: Some(name_str),
                     span: pattern.span,
@@ -450,6 +464,10 @@ impl<'a> TypeContext<'a> {
                 }
             }
             ast::PatternKind::TupleStruct { path, fields, .. } => {
+                // Auto-dereference references when matching tuple struct patterns
+                // This allows matching on &Option::Some(v) directly
+                let (inner_ty, _deref_count) = self.auto_deref_for_pattern(expected_ty);
+
                 // Handle both single-segment (Some(v)) and two-segment (Option::Some(v)) paths
                 let (enum_def_id, variant_info) = if path.segments.len() == 2 {
                     // Two-segment path: EnumName::VariantName
@@ -539,8 +557,8 @@ impl<'a> TypeContext<'a> {
                     pattern.span,
                 ))?;
 
-                // Build substitution map from generic params to concrete types from expected_ty
-                let subst: std::collections::HashMap<TyVarId, Type> = if let TypeKind::Adt { args, .. } = expected_ty.kind() {
+                // Build substitution map from generic params to concrete types from inner_ty
+                let subst: std::collections::HashMap<TyVarId, Type> = if let TypeKind::Adt { args, .. } = inner_ty.kind() {
                     enum_info.generics.iter()
                         .zip(args.iter())
                         .map(|(&tyvar, ty)| (tyvar, ty.clone()))
