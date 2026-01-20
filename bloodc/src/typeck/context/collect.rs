@@ -2548,6 +2548,11 @@ impl<'a> TypeContext<'a> {
                 let saved_module = self.current_module;
                 self.current_module = Some(def_id);
 
+                // Update source_path to the loaded module file so nested `pub mod` declarations
+                // resolve relative to the correct directory
+                let saved_source_path = self.source_path.clone();
+                self.source_path = Some(module_path.clone());
+
                 // Track the starting DefId counter
                 let def_id_start = self.resolver.current_def_id_counter();
 
@@ -2563,8 +2568,9 @@ impl<'a> TypeContext<'a> {
                     .map(DefId::new)
                     .collect();
 
-                // Restore previous module context
+                // Restore previous module context and source path
                 self.current_module = saved_module;
+                self.source_path = saved_source_path;
                 self.resolver.pop_scope();
 
                 // Build index for O(1) lookup by name

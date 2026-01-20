@@ -466,18 +466,24 @@ impl StdlibLoader {
         for (parent_path, child_paths) in &self.children {
             if let Some(parent_module) = self.modules.get(parent_path) {
                 if let Some(parent_def_id) = parent_module.def_id {
-                    // Get child DefIds
-                    let child_def_ids: Vec<DefId> = child_paths
+                    // Collect child info: (name, def_id)
+                    let child_info: Vec<(String, DefId)> = child_paths
                         .iter()
                         .filter_map(|child_path| {
-                            self.modules.get(child_path)
-                                .and_then(|m| m.def_id)
+                            let child_module = self.modules.get(child_path)?;
+                            let def_id = child_module.def_id?;
+                            // Extract the child module name (last segment of path)
+                            let name = child_path.rsplit('.').next()?.to_string();
+                            Some((name, def_id))
                         })
                         .collect();
 
-                    // Add children to parent's items
+                    // Add children to parent's items AND items_by_name index
                     if let Some(module_info) = ctx.module_defs.get_mut(&parent_def_id) {
-                        module_info.items.extend(child_def_ids);
+                        for (name, def_id) in child_info {
+                            module_info.items.push(def_id);
+                            module_info.items_by_name.insert(name, def_id);
+                        }
                     }
                 }
             }
