@@ -26,7 +26,7 @@ use crate::hir::{DefId, DefKind, Type, TypeKind, PrimitiveTy, IntTy, UintTy, TyV
 use crate::parser::Parser;
 use crate::span::Span;
 use crate::typeck::TypeContext;
-use crate::typeck::context::{StructInfo, FieldInfo, EnumInfo, VariantInfo, ImplBlockInfo, ImplMethodInfo};
+use crate::typeck::context::{StructInfo, FieldInfo, EnumInfo, VariantInfo, ImplBlockInfo, ImplMethodInfo, TypeAliasInfo};
 
 /// Information about a loaded stdlib module.
 #[derive(Debug)]
@@ -329,18 +329,8 @@ impl StdlibLoader {
         // Then, collect declarations for each module
         let decl_start = Instant::now();
         let mut decl_count = 0;
-        let mut skipped_no_decls = 0;
         let mut skipped_no_defid = 0;
         for (module_path, module) in &mut self.modules {
-            // Skip modules that failed to parse
-            if module.ast.declarations.is_empty() && !module.source.is_empty() {
-                if verbose {
-                    eprintln!("    Skipping '{}': no declarations but has source", module_path);
-                }
-                skipped_no_decls += 1;
-                continue;
-            }
-
             let def_id = match module.def_id {
                 Some(id) => id,
                 None => {
@@ -355,6 +345,8 @@ impl StdlibLoader {
             // Collect declarations from this module's AST
             // We need to run the collection phase for each module
             // For now, we'll extract just the top-level item names
+            // Note: Modules with no declarations (like mod.blood files that just re-export)
+            // still need to be registered so child modules can be added later.
 
             let ast_decl_count = module.ast.declarations.len();
             let mut module_decl_count = 0;
@@ -374,7 +366,7 @@ impl StdlibLoader {
                           module_path, ast_decl_count, module_decl_count);
             }
 
-            // Register the module with its items
+            // Register the module with its items (even if empty - child modules will be added later)
             ctx.register_external_module(
                 module_path.clone(),
                 def_id,
@@ -384,7 +376,7 @@ impl StdlibLoader {
         }
         if verbose {
             eprintln!("    Collected {} declarations in {:.2}s", decl_count, decl_start.elapsed().as_secs_f64());
-            eprintln!("    Skipped: {} (no decls), {} (no DefId)", skipped_no_decls, skipped_no_defid);
+            eprintln!("    Skipped: {} (no DefId)", skipped_no_defid);
         }
 
         // Build module hierarchy (parent modules contain child modules)
@@ -1008,11 +1000,13 @@ impl StdlibLoader {
 
                 // Try to resolve the path to a DefId, checking current module first
                 if let Some(def_id) = self.resolve_type_path_to_def_id_in_module(ctx, interner, path, current_module) {
-                    // Check if it's a struct or enum
+                    // Check if it's a struct, enum, or type alias
                     if let Some(info) = ctx.resolver.def_info.get(&def_id) {
                         match info.kind {
-                            DefKind::Struct | DefKind::Enum => {
+                            DefKind::Struct | DefKind::Enum | DefKind::TypeAlias => {
                                 // Resolve type arguments if present
+                                // Note: Type aliases are NOT expanded here - they remain nominal types
+                                // so that impl blocks for `impl Ident` work correctly.
                                 let type_args = self.resolve_type_args_in_module(ctx, interner, path, type_params, current_module);
                                 return Type::adt(def_id, type_args);
                             }
@@ -2119,6 +2113,47 @@ fn register_type_info<'a>(
                 generics,
             });
         }
+        ast::Declaration::Type(t) => {
+            // Skip if type alias info already exists
+            if ctx.type_aliases.contains_key(&def_id) {
+                return;
+            }
+
+            let name = resolve_symbol(t.name.node);
+
+            // Extract generics from the type alias declaration
+            let generics: Vec<TyVarId> = if let Some(ref params) = t.type_params {
+                params.params.iter().enumerate().filter_map(|(i, p)| {
+                    match p {
+                        ast::GenericParam::Type(_) => Some(TyVarId(i as u32)),
+                        _ => None,
+                    }
+                }).collect()
+            } else {
+                Vec::new()
+            };
+
+            // Convert the aliased type
+            // For complex types like Spanned<Symbol>, we need to resolve the DefIds
+            if std::env::var("BLOOD_DEBUG_TYPE_ALIAS").is_ok() {
+                eprintln!("[type_alias] Processing type alias '{}' DefId({})", name, def_id.index());
+            }
+            let aliased_ty = if let Some(ref ty_val) = t.ty {
+                let ty = ast_type_to_type_with_ctx(ctx, interner, ty_val);
+                if std::env::var("BLOOD_DEBUG_TYPE_ALIAS").is_ok() {
+                    eprintln!("[type_alias] '{}' resolved to {:?}", name, ty);
+                }
+                ty
+            } else {
+                Type::error()
+            };
+
+            ctx.type_aliases.insert(def_id, TypeAliasInfo {
+                name,
+                ty: aliased_ty,
+                generics,
+            });
+        }
         // Other declarations don't need type info registration
         _ => {}
     }
@@ -2160,6 +2195,177 @@ fn register_fn_sig<'a>(
             generics: Vec::new(), // TODO: handle function generics
         };
         ctx.fn_sigs.insert(def_id, sig);
+    }
+}
+
+/// Convert an AST type to HIR type with access to the type context.
+/// This can resolve user-defined types by looking up their DefIds.
+fn ast_type_to_type_with_ctx<'a>(
+    ctx: &TypeContext<'a>,
+    interner: &DefaultStringInterner,
+    ty: &ast::Type,
+) -> Type {
+    let resolve_symbol = |sym: crate::ast::Symbol| -> String {
+        interner.resolve(sym).map(|s| s.to_string()).unwrap_or_else(|| "unknown".to_string())
+    };
+
+    match &ty.kind {
+        ast::TypeKind::Path(path) => {
+            if path.segments.len() == 1 {
+                let name = resolve_symbol(path.segments[0].name.node);
+
+                // Handle primitive types first
+                if let Some(prim_ty) = match name.as_str() {
+                    "i8" => Some(Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::I8)))),
+                    "i16" => Some(Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::I16)))),
+                    "i32" => Some(Type::i32()),
+                    "i64" => Some(Type::i64()),
+                    "i128" => Some(Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::I128)))),
+                    "isize" => Some(Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::Isize)))),
+                    "u8" => Some(Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U8)))),
+                    "u16" => Some(Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U16)))),
+                    "u32" => Some(Type::u32()),
+                    "u64" => Some(Type::u64()),
+                    "u128" => Some(Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U128)))),
+                    "usize" => Some(Type::usize()),
+                    "f32" => Some(Type::f32()),
+                    "f64" => Some(Type::f64()),
+                    "bool" => Some(Type::bool()),
+                    "char" => Some(Type::char()),
+                    "str" => Some(Type::str()),
+                    "String" => Some(Type::string()),
+                    "()" => Some(Type::unit()),
+                    _ => None,
+                } {
+                    return prim_ty;
+                }
+
+                // Try to resolve as a user-defined type via resolver first
+                let mut found_def_id: Option<DefId> = ctx.resolver.lookup_type(&name);
+
+                // If resolver lookup fails, search through registered struct_defs and enum_defs
+                if found_def_id.is_none() {
+                    // Search struct_defs
+                    for (&def_id, info) in &ctx.struct_defs {
+                        if info.name == name {
+                            found_def_id = Some(def_id);
+                            break;
+                        }
+                    }
+                }
+                if found_def_id.is_none() {
+                    // Search enum_defs
+                    for (&def_id, info) in &ctx.enum_defs {
+                        if info.name == name {
+                            found_def_id = Some(def_id);
+                            break;
+                        }
+                    }
+                }
+                if found_def_id.is_none() {
+                    // Search type_aliases
+                    for (&def_id, info) in &ctx.type_aliases {
+                        if info.name == name {
+                            found_def_id = Some(def_id);
+                            break;
+                        }
+                    }
+                }
+
+                if std::env::var("BLOOD_DEBUG_TYPE_ALIAS").is_ok() {
+                    eprintln!("[type_alias] Looking up type '{}' -> {:?}", name, found_def_id.map(|d| d.index()));
+                }
+                if let Some(def_id) = found_def_id {
+                    // Collect type arguments if any
+                    let type_args: Vec<Type> = if let Some(ref args) = path.segments[0].args {
+                        args.args.iter().filter_map(|arg| {
+                            if let ast::TypeArg::Type(arg_ty) = arg {
+                                Some(ast_type_to_type_with_ctx(ctx, interner, arg_ty))
+                            } else {
+                                None
+                            }
+                        }).collect()
+                    } else {
+                        Vec::new()
+                    };
+
+                    return Type::adt(def_id, type_args);
+                }
+
+                // Fallback to error
+                Type::error()
+            } else if path.segments.len() == 2 {
+                // Two-segment path: Module::Type
+                let module_name = resolve_symbol(path.segments[0].name.node);
+                let type_name = resolve_symbol(path.segments[1].name.node);
+
+                // Look up the module
+                for (module_def_id, module_info) in &ctx.module_defs {
+                    if module_info.name == module_name {
+                        if let Some(&def_id) = module_info.items_by_name.get(&type_name) {
+                            // Collect type arguments if any
+                            let type_args: Vec<Type> = if let Some(ref args) = path.segments[1].args {
+                                args.args.iter().filter_map(|arg| {
+                                    if let ast::TypeArg::Type(arg_ty) = arg {
+                                        Some(ast_type_to_type_with_ctx(ctx, interner, arg_ty))
+                                    } else {
+                                        None
+                                    }
+                                }).collect()
+                            } else {
+                                Vec::new()
+                            };
+
+                            return Type::adt(def_id, type_args);
+                        }
+                    }
+                }
+
+                Type::error()
+            } else {
+                Type::error()
+            }
+        }
+        ast::TypeKind::Reference { inner, mutable, .. } => {
+            let inner_ty = ast_type_to_type_with_ctx(ctx, interner, inner);
+            Type::new(TypeKind::Ref {
+                inner: inner_ty,
+                mutable: *mutable
+            })
+        }
+        ast::TypeKind::Pointer { inner, mutable } => {
+            let inner_ty = ast_type_to_type_with_ctx(ctx, interner, inner);
+            Type::new(TypeKind::Ptr {
+                inner: inner_ty,
+                mutable: *mutable
+            })
+        }
+        ast::TypeKind::Tuple(types) => {
+            let tys: Vec<Type> = types
+                .iter()
+                .map(|t| ast_type_to_type_with_ctx(ctx, interner, t))
+                .collect();
+            Type::new(TypeKind::Tuple(tys))
+        }
+        ast::TypeKind::Slice { element } => {
+            let elem_ty = ast_type_to_type_with_ctx(ctx, interner, element);
+            Type::new(TypeKind::Slice { element: elem_ty })
+        }
+        ast::TypeKind::Array { element, size } => {
+            let elem_ty = ast_type_to_type_with_ctx(ctx, interner, element);
+            // Extract size from the expression if it's a literal integer
+            let size_val = if let ast::ExprKind::Literal(lit) = &size.kind {
+                if let ast::LiteralKind::Int { value, .. } = &lit.kind {
+                    *value as u64
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+            Type::new(TypeKind::Array { element: elem_ty, size: size_val })
+        }
+        _ => Type::error(),
     }
 }
 

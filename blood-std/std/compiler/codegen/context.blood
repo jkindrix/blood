@@ -20,17 +20,18 @@
 //! - **Region** (ArgEscape): Values that escape to caller, may need generation checks
 //! - **Persistent** (GlobalEscape): Values that escape globally, full generation tracking
 
-use std::collections::HashMap;
+use std.collections::HashMap;
 
-use super::llvm::{
+use std.compiler.codegen.llvm::{
     LLVMContext, LLVMModule, LLVMBuilder,
     LLVMContextRef, LLVMModuleRef, LLVMBuilderRef, LLVMValueRef,
     LLVMTypeRef, LLVMBasicBlockRef,
 };
-use super::llvm::target::LLVMTargetData;
+use std.compiler.codegen.llvm.target::LLVMTargetData;
 
-use std.compiler.hir::{DefId, LocalId, Type, BodyId, Body, FnDef, Crate as HirCrate};
-use std.compiler.mir::{MirBody, EscapeResults};
+use std.compiler.hir::{DefId, LocalId, Type, TypeKind, TyVarId, FnEffect, BodyId, Body, FnDef, Crate as HirCrate};
+use std.compiler.mir::{MirBody, EscapeResults, EscapeState};
+use std.compiler.span::Span;
 use std.compiler.typeck::effects::{EffectInfo, HandlerInfo};
 use std.compiler.diagnostics::Diagnostic;
 
@@ -306,9 +307,9 @@ impl CodegenContext {
         if let Some(def_id) = self.current_fn_def_id {
             if let Some(results) = self.escape_analysis.get(&def_id) {
                 return match results.get_escape_state(local_id) {
-                    crate.compiler.mir.EscapeState::NoEscape => MemoryTier::Stack,
-                    crate.compiler.mir.EscapeState::ArgEscape => MemoryTier::Region,
-                    crate.compiler.mir.EscapeState::GlobalEscape => MemoryTier::Persistent,
+                    EscapeState::NoEscape => MemoryTier::Stack,
+                    EscapeState::ArgEscape => MemoryTier::Region,
+                    EscapeState::GlobalEscape => MemoryTier::Persistent,
                 };
             }
         }
@@ -413,7 +414,7 @@ impl CodegenContext {
     }
 
     /// Report an error with a message and source span.
-    pub fn error(&mut self, message: String, span: crate.compiler.span.Span) {
+    pub fn error(&mut self, message: String, span: Span) {
         self.errors.push(Diagnostic::error(message, span));
     }
 
@@ -475,30 +476,30 @@ pub fn build_tyvar_mapping(types: &[Type]) -> HashMap<u32, u32> {
 /// Collect all type variable IDs from a type.
 fn collect_tyvars(ty: &Type, tyvars: &mut Vec<u32>) {
     match ty.kind() {
-        crate.compiler.hir.TypeKind::Param(id) => {
+        TypeKind::Param(id) => {
             if !tyvars.contains(&id.0) {
                 tyvars.push(id.0);
             }
         };
-        crate.compiler.hir.TypeKind::Tuple(fields) => {
+        TypeKind::Tuple(fields) => {
             for f in fields {
                 collect_tyvars(f, tyvars);
             }
         };
-        crate.compiler.hir.TypeKind::Array { element, .. } |
-        crate.compiler.hir.TypeKind::Slice { element } => {
+        TypeKind::Array { element, .. } |
+        TypeKind::Slice { element } => {
             collect_tyvars(element, tyvars);
         };
-        crate.compiler.hir.TypeKind::Ref { inner, .. } |
-        crate.compiler.hir.TypeKind::Ptr { inner, .. } => {
+        TypeKind::Ref { inner, .. } |
+        TypeKind::Ptr { inner, .. } => {
             collect_tyvars(inner, tyvars);
         };
-        crate.compiler.hir.TypeKind::Adt { args, .. } => {
+        TypeKind::Adt { args, .. } => {
             for arg in args {
                 collect_tyvars(arg, tyvars);
             }
         };
-        crate.compiler.hir.TypeKind::Fn { params, ret, effects } => {
+        TypeKind::Fn { params, ret, effects } => {
             for p in params {
                 collect_tyvars(p, tyvars);
             };
@@ -527,48 +528,48 @@ pub fn normalize_types_together(types: &[Type]) -> Vec<Type> {
 /// Recursively replace type variable IDs with normalized parameter indices.
 fn normalize_type_recursive(ty: &Type, tyvar_to_idx: &HashMap<u32, u32>) -> Type {
     match ty.kind() {
-        crate.compiler.hir.TypeKind::Param(id) => {
+        TypeKind::Param(id) => {
             if let Some(&idx) = tyvar_to_idx.get(&id.0) {
-                Type::param(crate.compiler.hir.TyVarId(idx))
+                Type::param(TyVarId(idx))
             } else {
                 ty.clone();
             }
         };
-        crate.compiler.hir.TypeKind::Tuple(fields) => {
+        TypeKind::Tuple(fields) => {
             let normalized: Vec<Type> = fields.iter()
                 .map(|f| normalize_type_recursive(f, tyvar_to_idx))
                 .collect();
             Type::tuple(normalized)
         };
-        crate.compiler.hir.TypeKind::Array { element, size } => {
+        TypeKind::Array { element, size } => {
             let normalized = normalize_type_recursive(element, tyvar_to_idx);
             Type::array(normalized, *size)
         };
-        crate.compiler.hir.TypeKind::Slice { element } => {
+        TypeKind::Slice { element } => {
             let normalized = normalize_type_recursive(element, tyvar_to_idx);
             Type::slice(normalized)
         };
-        crate.compiler.hir.TypeKind::Ref { inner, mutable } => {
+        TypeKind::Ref { inner, mutable } => {
             let normalized = normalize_type_recursive(inner, tyvar_to_idx);
             Type::reference(normalized, *mutable)
         };
-        crate.compiler.hir.TypeKind::Ptr { inner, mutable } => {
+        TypeKind::Ptr { inner, mutable } => {
             let normalized = normalize_type_recursive(inner, tyvar_to_idx);
             Type::ptr(normalized, *mutable)
         };
-        crate.compiler.hir.TypeKind::Adt { def_id, args } => {
+        TypeKind::Adt { def_id, args } => {
             let normalized_args: Vec<Type> = args.iter()
                 .map(|a| normalize_type_recursive(a, tyvar_to_idx))
                 .collect();
             Type::adt(*def_id, normalized_args)
         };
-        crate.compiler.hir.TypeKind::Fn { params, ret, effects } => {
+        TypeKind::Fn { params, ret, effects } => {
             let normalized_params: Vec<Type> = params.iter()
                 .map(|p| normalize_type_recursive(p, tyvar_to_idx))
                 .collect();
             let normalized_ret = normalize_type_recursive(ret, tyvar_to_idx);
-            let normalized_effects: Vec<crate.compiler.hir.FnEffect> = effects.iter()
-                .map(|eff| crate.compiler.hir.FnEffect {
+            let normalized_effects: Vec<FnEffect> = effects.iter()
+                .map(|eff| FnEffect {
                     def_id: eff.def_id,
                     type_args: eff.type_args.iter()
                         .map(|ty| normalize_type_recursive(ty, tyvar_to_idx))
@@ -588,43 +589,43 @@ fn normalize_type_recursive(ty: &Type, tyvar_to_idx: &HashMap<u32, u32>) -> Type
 /// Substitute type parameters in a type with concrete types.
 pub fn substitute_type(ty: &Type, subst: &HashMap<u32, Type>) -> Type {
     match ty.kind() {
-        crate.compiler.hir.TypeKind::Param(id) => {
+        TypeKind::Param(id) => {
             if let Some(concrete) = subst.get(&id.0) {
                 concrete.clone();
             } else {
                 ty.clone();
             }
         };
-        crate.compiler.hir.TypeKind::Tuple(fields) => {
+        TypeKind::Tuple(fields) => {
             let subst_fields: Vec<Type> = fields.iter()
                 .map(|f| substitute_type(f, subst))
                 .collect();
             Type::tuple(subst_fields)
         };
-        crate.compiler.hir.TypeKind::Array { element, size } => {
+        TypeKind::Array { element, size } => {
             Type::array(substitute_type(element, subst), *size)
         };
-        crate.compiler.hir.TypeKind::Slice { element } => {
+        TypeKind::Slice { element } => {
             Type::slice(substitute_type(element, subst))
         };
-        crate.compiler.hir.TypeKind::Ref { inner, mutable } => {
+        TypeKind::Ref { inner, mutable } => {
             Type::reference(substitute_type(inner, subst), *mutable)
         };
-        crate.compiler.hir.TypeKind::Ptr { inner, mutable } => {
+        TypeKind::Ptr { inner, mutable } => {
             Type::ptr(substitute_type(inner, subst), *mutable)
         };
-        crate.compiler.hir.TypeKind::Adt { def_id, args } => {
+        TypeKind::Adt { def_id, args } => {
             let subst_args: Vec<Type> = args.iter()
                 .map(|a| substitute_type(a, subst))
                 .collect();
             Type::adt(*def_id, subst_args)
         };
-        crate.compiler.hir.TypeKind::Fn { params, ret, effects } => {
+        TypeKind::Fn { params, ret, effects } => {
             let subst_params: Vec<Type> = params.iter()
                 .map(|p| substitute_type(p, subst))
                 .collect();
-            let subst_effects: Vec<crate.compiler.hir.FnEffect> = effects.iter()
-                .map(|eff| crate.compiler.hir.FnEffect {
+            let subst_effects: Vec<FnEffect> = effects.iter()
+                .map(|eff| FnEffect {
                     def_id: eff.def_id,
                     type_args: eff.type_args.iter()
                         .map(|ty| substitute_type(ty, subst))
@@ -663,11 +664,11 @@ pub fn infer_type_args(
 /// Recursively unify a generic type with a concrete type, populating the substitution map.
 fn unify_types(generic: &Type, concrete: &Type, subst: &mut HashMap<u32, Type>) {
     match generic.kind() {
-        crate.compiler.hir.TypeKind::Param(id) => {
+        TypeKind::Param(id) => {
             subst.entry(id.0).or_insert_with(|| concrete.clone());
         };
-        crate.compiler.hir.TypeKind::Fn { params: gen_params, ret: gen_ret, effects: gen_effects } => {
-            if let crate.compiler.hir.TypeKind::Fn { params: conc_params, ret: conc_ret, effects: conc_effects } = concrete.kind() {
+        TypeKind::Fn { params: gen_params, ret: gen_ret, effects: gen_effects } => {
+            if let TypeKind::Fn { params: conc_params, ret: conc_ret, effects: conc_effects } = concrete.kind() {
                 for (gp, cp) in gen_params.iter().zip(conc_params.iter()) {
                     unify_types(gp, cp, subst);
                 };
@@ -683,35 +684,35 @@ fn unify_types(generic: &Type, concrete: &Type, subst: &mut HashMap<u32, Type>) 
                 }
             }
         };
-        crate.compiler.hir.TypeKind::Tuple(gen_fields) => {
-            if let crate.compiler.hir.TypeKind::Tuple(conc_fields) = concrete.kind() {
+        TypeKind::Tuple(gen_fields) => {
+            if let TypeKind::Tuple(conc_fields) = concrete.kind() {
                 for (gf, cf) in gen_fields.iter().zip(conc_fields.iter()) {
                     unify_types(gf, cf, subst);
                 }
             }
         };
-        crate.compiler.hir.TypeKind::Array { element: gen_elem, .. } => {
-            if let crate.compiler.hir.TypeKind::Array { element: conc_elem, .. } = concrete.kind() {
+        TypeKind::Array { element: gen_elem, .. } => {
+            if let TypeKind::Array { element: conc_elem, .. } = concrete.kind() {
                 unify_types(gen_elem, conc_elem, subst);
             }
         };
-        crate.compiler.hir.TypeKind::Slice { element: gen_elem } => {
-            if let crate.compiler.hir.TypeKind::Slice { element: conc_elem } = concrete.kind() {
+        TypeKind::Slice { element: gen_elem } => {
+            if let TypeKind::Slice { element: conc_elem } = concrete.kind() {
                 unify_types(gen_elem, conc_elem, subst);
             }
         };
-        crate.compiler.hir.TypeKind::Ref { inner: gen_inner, .. } => {
-            if let crate.compiler.hir.TypeKind::Ref { inner: conc_inner, .. } = concrete.kind() {
+        TypeKind::Ref { inner: gen_inner, .. } => {
+            if let TypeKind::Ref { inner: conc_inner, .. } = concrete.kind() {
                 unify_types(gen_inner, conc_inner, subst);
             }
         };
-        crate.compiler.hir.TypeKind::Ptr { inner: gen_inner, .. } => {
-            if let crate.compiler.hir.TypeKind::Ptr { inner: conc_inner, .. } = concrete.kind() {
+        TypeKind::Ptr { inner: gen_inner, .. } => {
+            if let TypeKind::Ptr { inner: conc_inner, .. } = concrete.kind() {
                 unify_types(gen_inner, conc_inner, subst);
             }
         };
-        crate.compiler.hir.TypeKind::Adt { args: gen_args, .. } => {
-            if let crate.compiler.hir.TypeKind::Adt { args: conc_args, .. } = concrete.kind() {
+        TypeKind::Adt { args: gen_args, .. } => {
+            if let TypeKind::Adt { args: conc_args, .. } = concrete.kind() {
                 for (ga, ca) in gen_args.iter().zip(conc_args.iter()) {
                     unify_types(ga, ca, subst);
                 }

@@ -6,13 +6,14 @@
 //! - Code emission (object files, assembly)
 //! - Target data layout
 
-use super::{
+use std.compiler.codegen.llvm::{
     LLVMContextRef, LLVMModuleRef, LLVMTypeRef, LLVMValueRef,
     LLVMTargetRef, LLVMTargetMachineRef, LLVMTargetDataRef,
     LLVMMemoryBufferRef, LLVMPassManagerRef,
     OptLevel, RelocMode, CodeModel, CodeGenFileType,
     LLVM_TRUE, LLVM_FALSE,
 };
+use std.compiler.codegen.llvm.core::llvm_core;
 
 // ============================================================================
 // Raw FFI Declarations
@@ -306,7 +307,7 @@ pub fn get_default_target_triple() -> String {
     } else {
         let s = @unsafe { core::ffi::CStr::from_ptr(ptr as *const i8) };
         let result = s.to_string_lossy().to_string();
-        super::core::llvm_core::LLVMDisposeMessage(ptr);
+        llvm_core::LLVMDisposeMessage(ptr);
         result
     }
 }
@@ -319,7 +320,7 @@ pub fn get_host_cpu_name() -> String {
     } else {
         let s = @unsafe { core::ffi::CStr::from_ptr(ptr as *const i8) };
         let result = s.to_string_lossy().to_string();
-        super::core::llvm_core::LLVMDisposeMessage(ptr);
+        llvm_core::LLVMDisposeMessage(ptr);
         result
     }
 }
@@ -332,7 +333,7 @@ pub fn get_host_cpu_features() -> String {
     } else {
         let s = @unsafe { core::ffi::CStr::from_ptr(ptr as *const i8) };
         let result = s.to_string_lossy().to_string();
-        super::core::llvm_core::LLVMDisposeMessage(ptr);
+        llvm_core::LLVMDisposeMessage(ptr);
         result
     }
 }
@@ -380,7 +381,7 @@ impl LLVMTarget {
             let msg = if !error_msg.is_null() {
                 let s = @unsafe { core::ffi::CStr::from_ptr(error_msg as *const i8) };
                 let result = s.to_string_lossy().to_string();
-                super::core::llvm_core::LLVMDisposeMessage(error_msg);
+                llvm_core::LLVMDisposeMessage(error_msg);
                 result
             } else {
                 format!("Unknown error looking up target for triple '{}'", triple)
@@ -531,7 +532,7 @@ impl LLVMTargetMachine {
         } else {
             let s = @unsafe { core::ffi::CStr::from_ptr(ptr as *const i8) };
             let result = s.to_string_lossy().to_string();
-            super::core::llvm_core::LLVMDisposeMessage(ptr);
+            llvm_core::LLVMDisposeMessage(ptr);
             result
         }
     }
@@ -544,7 +545,7 @@ impl LLVMTargetMachine {
         } else {
             let s = @unsafe { core::ffi::CStr::from_ptr(ptr as *const i8) };
             let result = s.to_string_lossy().to_string();
-            super::core::llvm_core::LLVMDisposeMessage(ptr);
+            llvm_core::LLVMDisposeMessage(ptr);
             result
         }
     }
@@ -557,7 +558,7 @@ impl LLVMTargetMachine {
         } else {
             let s = @unsafe { core::ffi::CStr::from_ptr(ptr as *const i8) };
             let result = s.to_string_lossy().to_string();
-            super::core::llvm_core::LLVMDisposeMessage(ptr);
+            llvm_core::LLVMDisposeMessage(ptr);
             result
         }
     }
@@ -594,7 +595,7 @@ impl LLVMTargetMachine {
             let msg = if !error_msg.is_null() {
                 let s = @unsafe { core::ffi::CStr::from_ptr(error_msg as *const i8) };
                 let result = s.to_string_lossy().to_string();
-                super::core::llvm_core::LLVMDisposeMessage(error_msg);
+                llvm_core::LLVMDisposeMessage(error_msg);
                 result
             } else {
                 "Unknown error emitting to file".to_string()
@@ -626,7 +627,7 @@ impl LLVMTargetMachine {
             let msg = if !error_msg.is_null() {
                 let s = @unsafe { core::ffi::CStr::from_ptr(error_msg as *const i8) };
                 let result = s.to_string_lossy().to_string();
-                super::core::llvm_core::LLVMDisposeMessage(error_msg);
+                llvm_core::LLVMDisposeMessage(error_msg);
                 result
             } else {
                 "Unknown error emitting to memory buffer".to_string()
@@ -689,7 +690,7 @@ impl LLVMTargetData {
         } else {
             let s = @unsafe { core::ffi::CStr::from_ptr(ptr as *const i8) };
             let result = s.to_string_lossy().to_string();
-            super::core::llvm_core::LLVMDisposeMessage(ptr);
+            llvm_core::LLVMDisposeMessage(ptr);
             result
         }
     }
@@ -822,7 +823,7 @@ impl LLVMMemoryBuffer {
             let msg = if !error_msg.is_null() {
                 let s = @unsafe { core::ffi::CStr::from_ptr(error_msg as *const i8) };
                 let result = s.to_string_lossy().to_string();
-                super::core::llvm_core::LLVMDisposeMessage(error_msg);
+                llvm_core::LLVMDisposeMessage(error_msg);
                 result
             } else {
                 format!("Unknown error reading file '{}'", path)

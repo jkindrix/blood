@@ -19,18 +19,19 @@
 //! | Resume | Resume from handler | Exit handler |
 //! | StaleReference | Stale pointer detected | Panic |
 
-use std::collections::HashMap;
+use std.collections::HashMap;
 
-use super::super::llvm::{
+use std.compiler.codegen.llvm::{
     LLVMValueRef, LLVMTypeRef, LLVMBasicBlockRef,
-    types::{i1_type, i8_type, i32_type, i64_type, ptr_type, void_type, function_type, array_type},
+    types::{i1_type, i8_type, i32_type, i64_type, f64_type, ptr_type, void_type, function_type, array_type},
     values::{const_int, const_null, const_string, append_basic_block, get_undef},
 };
-use super::super::context::CodegenContext;
-use super::super::lower_type::lower_type;
-use super::rvalue::compile_mir_rvalue;
-use super::place::compile_mir_place;
-use super::statement::compile_mir_operand;
+use std.compiler.codegen.mir_codegen::type_may_contain_genref;
+use std.compiler.codegen.context::CodegenContext;
+use std.compiler.codegen.lower_type::lower_type;
+use std.compiler.codegen.mir_codegen.rvalue::compile_mir_rvalue;
+use std.compiler.codegen.mir_codegen.place::compile_mir_place;
+use std.compiler.codegen.mir_codegen.statement::compile_mir_operand;
 
 use std.compiler.hir::{DefId, LocalId, Type, TypeKind};
 use std.compiler.mir::{
@@ -376,7 +377,7 @@ fn compile_ptr_read_intrinsic(
         "ptr_read_i32" => i32_type(ctx.llvm_context_ref()),
         "ptr_read_i64" | "ptr_read_u64" => i64_type(ctx.llvm_context_ref()),
         "ptr_read_u8" => i8_type(ctx.llvm_context_ref()),
-        "ptr_read_f64" => super::super::llvm::types::f64_type(ctx.llvm_context_ref()),
+        "ptr_read_f64" => f64_type(ctx.llvm_context_ref()),
         _ => return Err(vec![Diagnostic::error(format!("Unknown ptr_read variant: {}", builtin_name), span)]),
     };
 
@@ -737,7 +738,7 @@ fn add_snapshot_entries(
         )])?;
 
     for local in &body.locals {
-        if escape.is_effect_captured(local.id) && super::type_may_contain_genref(&local.ty) {
+        if escape.is_effect_captured(local.id) && type_may_contain_genref(&local.ty) {
             if let Some(&local_ptr) = ctx.locals.get(&local.id) {
                 let ptr_ty = ptr_type(ctx.llvm_context_ref());
                 let ptr_val = ctx.llvm_builder().build_load(ptr_ty, local_ptr, &format!("cap_{}\0", local.id.index));

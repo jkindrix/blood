@@ -24,15 +24,15 @@
 //!
 //! Stack-allocated values (NoEscape) skip generation checks.
 
-use std::collections::HashMap;
+use std.collections::HashMap;
 
-use super::super::llvm::{
+use std.compiler.codegen.llvm::{
     LLVMValueRef, LLVMTypeRef, LLVMBasicBlockRef,
-    types::{i32_type, i64_type, ptr_type},
+    types::{i32_type, i64_type, ptr_type, struct_type},
     values::{const_int, append_basic_block},
 };
-use super::super::context::CodegenContext;
-use super::super::lower_type::lower_type;
+use std.compiler.codegen.context::CodegenContext;
+use std.compiler.codegen.lower_type::lower_type;
 
 use std.compiler.hir::{DefId, LocalId, Type, TypeKind};
 use std.compiler.mir::{
@@ -302,7 +302,7 @@ fn compile_enum_variant_field(
                         lower_type(ctx, &substituted)
                     })
                     .collect();
-                let variant_struct_ty = super::super::llvm::types::struct_type(
+                let variant_struct_ty = struct_type(
                     ctx.llvm_context_ref(),
                     &variant_field_types,
                     false

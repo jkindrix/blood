@@ -17,19 +17,19 @@
 //! | PopHandler | Remove effect handler | None |
 //! | Nop | No operation | None |
 
-use std::collections::HashMap;
+use std.collections::HashMap;
 
-use super::super::llvm::{
+use std.compiler.codegen.llvm::{
     LLVMValueRef, LLVMTypeRef, LLVMBasicBlockRef,
-    types::{i8_type, i64_type, ptr_type, void_type, function_type, array_type},
-    values::{const_int, const_null, append_basic_block},
+    types::{i1_type, i8_type, i32_type, i64_type, ptr_type, void_type, function_type, array_type},
+    values::{const_int, const_null, append_basic_block, const_array, const_struct, get_undef},
 };
-use super::super::context::{CodegenContext, MemoryTier};
-use super::super::lower_type::lower_type;
-use super::super::runtime;
-use super::rvalue::compile_mir_rvalue;
-use super::place::compile_mir_place;
-use super::memory;
+use std.compiler.codegen.context::{CodegenContext, MemoryTier};
+use std.compiler.codegen.lower_type::lower_type;
+use std.compiler.codegen.runtime;
+use std.compiler.codegen.mir_codegen.rvalue::compile_mir_rvalue;
+use std.compiler.codegen.mir_codegen.place::compile_mir_place;
+use std.compiler.codegen.mir_codegen.memory;
 
 use std.compiler.hir::{DefId, LocalId, Type};
 use std.compiler.mir::{
@@ -807,7 +807,7 @@ fn compile_constant(
     constant: &crate.compiler.mir.Constant,
 ) -> Result<LLVMValueRef, Vec<Diagnostic>> {
     use std.compiler.mir::ConstantKind;
-    use super::super::llvm::values::{const_int, const_real, const_string};
+    use std.compiler.codegen.llvm.values::{const_int, const_real, const_string};
 
     let llvm_ty = lower_type(ctx, &constant.ty);
 
@@ -822,11 +822,11 @@ fn compile_constant(
             Ok(const_real(llvm_ty, *v))
         }
         ConstantKind::bool(v) => {
-            let i1_ty = super::super::llvm::types::i1_type(ctx.llvm_context_ref());
+            let i1_ty = i1_type(ctx.llvm_context_ref());
             Ok(const_int(i1_ty, if *v { 1 } else { 0 }, false))
         }
         ConstantKind::char(c) => {
-            let i32_ty = super::super::llvm::types::i32_type(ctx.llvm_context_ref());
+            let i32_ty = i32_type(ctx.llvm_context_ref());
             Ok(const_int(i32_ty, *c as u64, false))
         }
         ConstantKind::String(s) => {
@@ -834,15 +834,15 @@ fn compile_constant(
         }
         ConstantKind::ByteString(bytes) => {
             // Create byte array constant
-            let i8_ty = super::super::llvm::types::i8_type(ctx.llvm_context_ref());
+            let i8_ty = i8_type(ctx.llvm_context_ref());
             let values: Vec<LLVMValueRef> = bytes.iter()
                 .map(|b| const_int(i8_ty, *b as u64, false))
                 .collect();
-            Ok(super::super::llvm::values::const_array(i8_ty, &values))
+            Ok(const_array(i8_ty, &values))
         }
         ConstantKind::Unit => {
             // Unit is represented as an empty struct
-            Ok(super::super::llvm::values::const_struct(ctx.llvm_context_ref(), &[], false))
+            Ok(const_struct(ctx.llvm_context_ref(), &[], false))
         }
         ConstantKind::FnDef(def_id) => {
             // Function reference
@@ -868,7 +868,7 @@ fn compile_constant(
         }
         ConstantKind::ZeroSized => {
             // Zero-sized type: return undef
-            Ok(super::super::llvm::values::get_undef(llvm_ty))
+            Ok(get_undef(llvm_ty))
         }
     }
 }

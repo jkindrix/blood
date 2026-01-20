@@ -7,11 +7,12 @@
 //! - Instructions
 //! - Parameters
 
-use super::{
+use std.compiler.codegen.llvm::{
     LLVMContextRef, LLVMModuleRef, LLVMTypeRef, LLVMValueRef,
     LLVMBasicBlockRef, Linkage, Visibility, CallConv,
     LLVM_TRUE, LLVM_FALSE,
 };
+use std.compiler.codegen.llvm.core::llvm_core;
 
 // ============================================================================
 // Raw FFI Declarations
@@ -524,7 +525,7 @@ impl LLVMValue {
         } else {
             let s = @unsafe { core::ffi::CStr::from_ptr(ptr as *const i8) };
             let result = s.to_string_lossy().to_string();
-            super::core::llvm_core::LLVMDisposeMessage(ptr);
+            llvm_core::LLVMDisposeMessage(ptr);
             result
         }
     }

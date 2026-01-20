@@ -54,7 +54,8 @@ impl<'a> TypeContext<'a> {
         let inferred = self.infer_expr(expr)?;
 
         // Unify expected type with inferred - order matters for error messages
-        self.unifier.unify(expected, &inferred.ty, expr.span)?;
+        // Use alias expansion so that `Ident` matches `Spanned<Symbol>` when `type Ident = Spanned<Symbol>`
+        self.unify_with_alias_expansion(expected, &inferred.ty, expr.span)?;
 
         Ok(inferred)
     }
@@ -1813,11 +1814,8 @@ impl<'a> TypeContext<'a> {
                             eprintln!("[type_lookup] Found '{}' -> DefId({})", name, def_id.index());
                         }
 
-                        // Check if it's a type alias and expand it
-                        if let Some(alias_info) = self.type_aliases.get(&def_id).cloned() {
-                            // For now, simple type aliases without generic args
-                            return Ok(alias_info.ty);
-                        }
+                        // Note: Type aliases are NOT expanded here - they are kept as nominal types.
+                        // Type alias expansion happens on-demand during field access, method calls, etc.
 
                         // Extract type arguments if any
                         let mut type_args = if let Some(ref args) = path.segments[0].args {
@@ -2695,6 +2693,84 @@ impl<'a> TypeContext<'a> {
                         TypeErrorKind::NotFound { name: format!("{}::{}", first_name, second_name) },
                         span,
                     ));
+                } else if self.type_aliases.contains_key(&type_def_id) {
+                    // It's a type alias - check for associated functions in impl blocks
+                    let self_ty = Type::adt(type_def_id, Vec::new());
+
+                    // Find the method def_id, signature, and impl block generics
+                    let mut found_method: Option<(DefId, hir::FnSig, Vec<TyVarId>)> = None;
+                    for impl_block in &self.impl_blocks {
+                        // Only check inherent impls (not trait impls)
+                        if impl_block.trait_ref.is_some() {
+                            continue;
+                        }
+                        // Check if impl block applies to this type
+                        if !self.types_match_for_impl(&impl_block.self_ty, &self_ty) {
+                            continue;
+                        }
+                        // Look for a method with matching name
+                        for method in &impl_block.methods {
+                            if method.name == second_name {
+                                // Found the associated function!
+                                if let Some(sig) = self.fn_sigs.get(&method.def_id).cloned() {
+                                    found_method = Some((method.def_id, sig, impl_block.generics.clone()));
+                                    break;
+                                }
+                            }
+                        }
+                        if found_method.is_some() {
+                            break;
+                        }
+                    }
+
+                    // Process the found method outside the borrow
+                    if let Some((method_def_id, sig, impl_generics)) = found_method {
+                        // Combine impl-level and method-level generics for instantiation
+                        let all_generics: Vec<TyVarId> = impl_generics.iter()
+                            .chain(sig.generics.iter())
+                            .copied()
+                            .collect();
+
+                        let fn_ty = if all_generics.is_empty() {
+                            Type::function(sig.inputs.clone(), sig.output.clone())
+                        } else {
+                            // Create fresh type vars for all generics (impl + method)
+                            let mut substitution: HashMap<TyVarId, Type> = HashMap::new();
+                            for &old_var in &all_generics {
+                                let fresh_var = self.unifier.fresh_var();
+                                substitution.insert(old_var, fresh_var);
+                            }
+
+                            // Substitute in parameter types
+                            let subst_inputs: Vec<Type> = sig.inputs.iter()
+                                .map(|ty| self.substitute_type_vars(ty, &substitution))
+                                .collect();
+
+                            // Substitute in return type
+                            let subst_output = self.substitute_type_vars(&sig.output, &substitution);
+
+                            Type::function(subst_inputs, subst_output)
+                        };
+                        return Ok(hir::Expr::new(
+                            hir::ExprKind::Def(method_def_id),
+                            fn_ty,
+                            span,
+                        ));
+                    }
+
+                    // Type alias found but no impl block method - check builtin static methods
+                    if let Some((method_def_id, fn_ty)) = self.find_builtin_static_method(&first_name, &second_name) {
+                        return Ok(hir::Expr::new(
+                            hir::ExprKind::Def(method_def_id),
+                            fn_ty,
+                            span,
+                        ));
+                    }
+
+                    return Err(TypeError::new(
+                        TypeErrorKind::NotFound { name: format!("{}::{}", first_name, second_name) },
+                        span,
+                    ));
                 }
             }
 
@@ -2931,7 +3007,10 @@ impl<'a> TypeContext<'a> {
                 left_expr.ty.clone()
             }
             ast::BinOp::Eq | ast::BinOp::Ne | ast::BinOp::Lt | ast::BinOp::Le | ast::BinOp::Gt | ast::BinOp::Ge => {
-                self.unifier.unify(&left_expr.ty, &right_expr.ty, span)?;
+                // Allow String/str comparisons
+                if !self.types_comparable_for_eq(&left_expr.ty, &right_expr.ty) {
+                    self.unifier.unify(&left_expr.ty, &right_expr.ty, span)?;
+                }
                 Type::bool()
             }
             ast::BinOp::And | ast::BinOp::Or => {
@@ -3678,25 +3757,16 @@ impl<'a> TypeContext<'a> {
                     TypeKind::Array { element, size } => {
                         return self.infer_for_array(pattern, iter_expr, element.clone(), *size, body, label, span);
                     }
-                    TypeKind::Slice { element: _ } => {
-                        // Slices require runtime length - not yet supported
-                        return Err(TypeError::new(
-                            TypeErrorKind::UnsupportedFeature {
-                                feature: "For loop over slices requires runtime length check (use while loop)".into(),
-                            },
-                            iter.span,
-                        ));
+                    TypeKind::Slice { element } => {
+                        // For loop over slice reference &[T]
+                        return self.infer_for_slice(pattern, iter_expr, element.clone(), body, label, span);
                     }
                     _ => {}
                 }
             }
-            TypeKind::Slice { element: _ } => {
-                return Err(TypeError::new(
-                    TypeErrorKind::UnsupportedFeature {
-                        feature: "For loop over slices requires runtime length check (use while loop)".into(),
-                    },
-                    iter.span,
-                ));
+            TypeKind::Slice { element } => {
+                // For loop over owned slice [T]
+                return self.infer_for_slice(pattern, iter_expr, element.clone(), body, label, span);
             }
             _ => {}
         }
@@ -4094,6 +4164,262 @@ impl<'a> TypeContext<'a> {
         Ok(hir::Expr::new(
             hir::ExprKind::Block {
                 stmts: vec![array_init_stmt, idx_init_stmt],
+                expr: Some(Box::new(while_loop)),
+            },
+            Type::unit(),
+            span,
+        ))
+    }
+
+    /// Helper: Infer for loop over a slice with runtime length.
+    fn infer_for_slice(
+        &mut self,
+        pattern: &ast::Pattern,
+        slice_expr: hir::Expr,
+        element_ty: Type,
+        body: &ast::Block,
+        label: Option<&Spanned<ast::Symbol>>,
+        span: Span,
+    ) -> Result<hir::Expr, TypeError> {
+        // Extract variable name, or None for wildcard pattern
+        let var_name = match &pattern.kind {
+            ast::PatternKind::Ident { name, .. } => Some(self.symbol_to_string(name.node)),
+            ast::PatternKind::Wildcard => None,
+            _ => {
+                return Err(TypeError::new(
+                    TypeErrorKind::UnsupportedFeature {
+                        feature: "For loop currently only supports simple identifier or wildcard patterns".into(),
+                    },
+                    pattern.span,
+                ));
+            }
+        };
+
+        let label_str = label.map(|l| self.symbol_to_string(l.node));
+        let loop_id = self.enter_loop(label_str.as_deref());
+
+        self.resolver.push_scope(ScopeKind::Loop, span);
+
+        let idx_ty = Type::i64(); // Use i64 for slice indices
+        let usize_ty = Type::usize(); // len() returns usize
+
+        // Store the slice in a temporary to avoid re-evaluating
+        let slice_local_id = self.resolver.next_local_id();
+        self.locals.push(hir::Local {
+            id: slice_local_id,
+            ty: slice_expr.ty.clone(),
+            mutable: false,
+            name: Some("_slice".to_string()),
+            span,
+        });
+
+        // Store the length in a temporary (computed once at loop entry)
+        let len_local_id = self.resolver.next_local_id();
+        self.locals.push(hir::Local {
+            id: len_local_id,
+            ty: usize_ty.clone(),
+            mutable: false,
+            name: Some("_slice_len".to_string()),
+            span,
+        });
+
+        // Create internal loop index
+        let idx_local_id = self.resolver.next_local_id();
+        self.locals.push(hir::Local {
+            id: idx_local_id,
+            ty: idx_ty.clone(),
+            mutable: true,
+            name: Some("_loop_idx".to_string()),
+            span,
+        });
+
+        // Register user's loop variable (only if not a wildcard pattern)
+        let var_local_id = if let Some(ref name) = var_name {
+            let local_id = self.resolver.define_local(
+                name.clone(),
+                element_ty.clone(),
+                false,
+                pattern.span,
+            )?;
+
+            self.locals.push(hir::Local {
+                id: local_id,
+                ty: element_ty.clone(),
+                mutable: false,
+                name: Some(name.clone()),
+                span: pattern.span,
+            });
+            Some(local_id)
+        } else {
+            None
+        };
+
+        let body_expr = self.check_block(body, &Type::unit())?;
+
+        self.resolver.pop_scope();
+
+        self.exit_loop(label_str.as_deref());
+
+        // Find the len() builtin method for slices
+        let len_method_def_id = self.find_builtin_method(&slice_expr.ty, "len")
+            .map(|(def_id, _, _, _, _)| def_id)
+            .ok_or_else(|| TypeError::new(
+                TypeErrorKind::UnsupportedFeature {
+                    feature: "Could not find len() method for slice".into(),
+                },
+                span,
+            ))?;
+
+        // Build len call: _slice.len()
+        let len_call = hir::Expr::new(
+            hir::ExprKind::MethodCall {
+                receiver: Box::new(hir::Expr::new(
+                    hir::ExprKind::Local(slice_local_id),
+                    slice_expr.ty.clone(),
+                    span,
+                )),
+                method: len_method_def_id,
+                args: vec![],
+            },
+            usize_ty.clone(),
+            span,
+        );
+
+        // Build condition: _idx < _slice_len (cast to i64 for comparison)
+        let condition = hir::Expr::new(
+            hir::ExprKind::Binary {
+                op: ast::BinOp::Lt,
+                left: Box::new(hir::Expr::new(
+                    hir::ExprKind::Local(idx_local_id),
+                    idx_ty.clone(),
+                    span,
+                )),
+                right: Box::new(hir::Expr::new(
+                    hir::ExprKind::Cast {
+                        expr: Box::new(hir::Expr::new(
+                            hir::ExprKind::Local(len_local_id),
+                            usize_ty.clone(),
+                            span,
+                        )),
+                        target_ty: idx_ty.clone(),
+                    },
+                    idx_ty.clone(),
+                    span,
+                )),
+            },
+            Type::bool(),
+            span,
+        );
+
+        // Helper to build slice access: _slice[_idx]
+        let make_slice_access = || {
+            hir::Expr::new(
+                hir::ExprKind::Index {
+                    base: Box::new(hir::Expr::new(
+                        hir::ExprKind::Local(slice_local_id),
+                        slice_expr.ty.clone(),
+                        span,
+                    )),
+                    index: Box::new(hir::Expr::new(
+                        hir::ExprKind::Local(idx_local_id),
+                        idx_ty.clone(),
+                        span,
+                    )),
+                },
+                element_ty.clone(),
+                span,
+            )
+        };
+
+        // Build bind statement if we have a named variable
+        let bind_stmt = var_local_id.map(|local_id| hir::Stmt::Let {
+            local_id,
+            init: Some(make_slice_access()),
+        });
+
+        // Build increment: _idx = _idx + 1
+        let increment = hir::Expr::new(
+            hir::ExprKind::Assign {
+                target: Box::new(hir::Expr::new(
+                    hir::ExprKind::Local(idx_local_id),
+                    idx_ty.clone(),
+                    span,
+                )),
+                value: Box::new(hir::Expr::new(
+                    hir::ExprKind::Binary {
+                        op: ast::BinOp::Add,
+                        left: Box::new(hir::Expr::new(
+                            hir::ExprKind::Local(idx_local_id),
+                            idx_ty.clone(),
+                            span,
+                        )),
+                        right: Box::new(hir::Expr::new(
+                            hir::ExprKind::Literal(hir::LiteralValue::Int(1)),
+                            idx_ty.clone(),
+                            span,
+                        )),
+                    },
+                    idx_ty.clone(),
+                    span,
+                )),
+            },
+            Type::unit(),
+            span,
+        );
+
+        // Build loop body statements
+        let mut body_stmts = Vec::new();
+        if let Some(stmt) = bind_stmt {
+            body_stmts.push(stmt);
+        } else {
+            // Even for wildcard, we still need to do the slice access (for side effects)
+            body_stmts.push(hir::Stmt::Expr(make_slice_access()));
+        }
+        body_stmts.push(hir::Stmt::Expr(body_expr));
+        body_stmts.push(hir::Stmt::Expr(increment));
+
+        let while_body = hir::Expr::new(
+            hir::ExprKind::Block {
+                stmts: body_stmts,
+                expr: None,
+            },
+            Type::unit(),
+            span,
+        );
+
+        let while_loop = hir::Expr::new(
+            hir::ExprKind::While {
+                condition: Box::new(condition),
+                body: Box::new(while_body),
+                label: Some(loop_id),
+            },
+            Type::unit(),
+            span,
+        );
+
+        // Initialize slice local, length local, and index
+        let slice_init_stmt = hir::Stmt::Let {
+            local_id: slice_local_id,
+            init: Some(slice_expr),
+        };
+
+        let len_init_stmt = hir::Stmt::Let {
+            local_id: len_local_id,
+            init: Some(len_call),
+        };
+
+        let idx_init_stmt = hir::Stmt::Let {
+            local_id: idx_local_id,
+            init: Some(hir::Expr::new(
+                hir::ExprKind::Literal(hir::LiteralValue::Int(0)),
+                idx_ty,
+                span,
+            )),
+        };
+
+        Ok(hir::Expr::new(
+            hir::ExprKind::Block {
+                stmts: vec![slice_init_stmt, len_init_stmt, idx_init_stmt],
                 expr: Some(Box::new(while_loop)),
             },
             Type::unit(),
@@ -4784,6 +5110,18 @@ impl<'a> TypeContext<'a> {
             inner_ty
         };
 
+        // Expand type aliases for field access
+        // If the type is a type alias, we need to get the underlying type to find fields
+        let inner_ty = if let TypeKind::Adt { def_id, .. } = inner_ty.kind() {
+            if let Some(alias_info) = self.type_aliases.get(def_id).cloned() {
+                alias_info.ty
+            } else {
+                inner_ty
+            }
+        } else {
+            inner_ty
+        };
+
         match field {
             ast::FieldAccess::Named(name) => {
                 let field_name = self.symbol_to_string(name.node);
@@ -5139,12 +5477,17 @@ impl<'a> TypeContext<'a> {
                     first_ty
                 };
 
-                // Return array type [T; N] where N is the element count
-                let array_ty = Type::array(element_ty.clone(), checked_elements.len() as u64);
+                // Return Vec<T> type
+                let vec_ty = if let Some(vec_def_id) = self.vec_def_id {
+                    Type::adt(vec_def_id, vec![element_ty.clone()])
+                } else {
+                    // Fallback to array type if Vec is not available
+                    Type::array(element_ty.clone(), checked_elements.len() as u64)
+                };
 
                 Ok(hir::Expr::new(
                     hir::ExprKind::VecLiteral(checked_elements),
-                    array_ty,
+                    vec_ty,
                     span,
                 ))
             }
@@ -5172,33 +5515,23 @@ impl<'a> TypeContext<'a> {
 
                 let element_ty = value_expr.ty.clone();
 
-                // Try to extract the count as a constant for array type sizing
-                let array_size = self.extract_usize_const(&count_expr);
+                // Return Vec<T> type
+                let vec_ty = if let Some(vec_def_id) = self.vec_def_id {
+                    Type::adt(vec_def_id, vec![element_ty])
+                } else {
+                    // Fallback to array type if Vec is not available
+                    let array_size = self.extract_usize_const(&count_expr).unwrap_or(0);
+                    Type::array(element_ty, array_size)
+                };
 
-                match array_size {
-                    Some(size) => {
-                        // Count is constant, create array type [T; N]
-                        let array_ty = Type::array(element_ty, size);
-                        Ok(hir::Expr::new(
-                            hir::ExprKind::VecRepeat {
-                                value: Box::new(value_expr),
-                                count: Box::new(count_expr),
-                            },
-                            array_ty,
-                            span,
-                        ))
-                    }
-                    None => {
-                        // Count is not a constant - for now, error
-                        Err(TypeError {
-                            kind: TypeErrorKind::UnsupportedFeature {
-                                feature: "vec! repeat count must be a constant integer literal".to_string(),
-                            },
-                            span,
-                            help: Some("use a literal like `vec![0; 10]` instead of a variable".to_string()),
-                        })
-                    }
-                }
+                Ok(hir::Expr::new(
+                    hir::ExprKind::VecRepeat {
+                        value: Box::new(value_expr),
+                        count: Box::new(count_expr),
+                    },
+                    vec_ty,
+                    span,
+                ))
             }
         }
     }
@@ -5321,5 +5654,31 @@ impl<'a> TypeContext<'a> {
             }
             _ => None,
         }
+    }
+
+    /// Check if two types are comparable for equality without needing exact type unification.
+    /// This allows String/str comparisons which are common and should work.
+    fn types_comparable_for_eq(&self, left: &Type, right: &Type) -> bool {
+        // Helper to extract the inner type of a reference
+        fn inner_type(ty: &Type) -> &Type {
+            match ty.kind() {
+                TypeKind::Ref { inner, .. } => inner,
+                _ => ty,
+            }
+        }
+
+        // Helper to check if a type is a string-like type (String or str)
+        fn is_string_like(ty: &Type) -> bool {
+            matches!(ty.kind(),
+                TypeKind::Primitive(PrimitiveTy::String) |
+                TypeKind::Primitive(PrimitiveTy::Str)
+            )
+        }
+
+        let left_inner = inner_type(left);
+        let right_inner = inner_type(right);
+
+        // Allow any combination of String and str (with or without references)
+        is_string_like(left_inner) && is_string_like(right_inner)
     }
 }

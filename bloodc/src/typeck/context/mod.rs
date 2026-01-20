@@ -794,6 +794,88 @@ impl<'a> TypeContext<'a> {
         }
     }
 
+    /// Expand type aliases in a type.
+    ///
+    /// If the type is an ADT whose def_id is a type alias, expand it to the underlying type.
+    /// This is recursive - type aliases within type arguments are also expanded.
+    /// This is necessary for type compatibility checking, as `Ident` and `Spanned<Symbol>`
+    /// should be treated as the same type when `type Ident = Spanned<Symbol>`.
+    pub(crate) fn expand_type_alias(&self, ty: &Type) -> Type {
+        match ty.kind() {
+            TypeKind::Adt { def_id, args } => {
+                // First expand any type arguments
+                let expanded_args: Vec<Type> = args.iter()
+                    .map(|arg| self.expand_type_alias(arg))
+                    .collect();
+
+                // Check if this ADT is a type alias
+                if let Some(alias_info) = self.type_aliases.get(def_id) {
+                    // It's a type alias - substitute type arguments into the underlying type
+                    let mut result_ty = alias_info.ty.clone();
+
+                    // Build substitution map from generic params to expanded args
+                    if !alias_info.generics.is_empty() && !expanded_args.is_empty() {
+                        let subst: HashMap<TyVarId, Type> = alias_info.generics.iter()
+                            .copied()
+                            .zip(expanded_args.iter().cloned())
+                            .collect();
+                        result_ty = self.substitute_type_vars(&result_ty, &subst);
+                    }
+
+                    // Recursively expand in case the underlying type is also an alias
+                    self.expand_type_alias(&result_ty)
+                } else {
+                    // Not a type alias - return with expanded args
+                    Type::adt(*def_id, expanded_args)
+                }
+            }
+            TypeKind::Tuple(tys) => {
+                Type::tuple(tys.iter().map(|t| self.expand_type_alias(t)).collect())
+            }
+            TypeKind::Array { element, size } => {
+                Type::array(self.expand_type_alias(element), *size)
+            }
+            TypeKind::Slice { element } => {
+                Type::slice(self.expand_type_alias(element))
+            }
+            TypeKind::Ref { inner, mutable } => {
+                Type::reference(self.expand_type_alias(inner), *mutable)
+            }
+            TypeKind::Ptr { inner, mutable } => {
+                Type::new(TypeKind::Ptr {
+                    inner: self.expand_type_alias(inner),
+                    mutable: *mutable,
+                })
+            }
+            TypeKind::Fn { params, ret, effects } => {
+                Type::new(TypeKind::Fn {
+                    params: params.iter().map(|p| self.expand_type_alias(p)).collect(),
+                    ret: self.expand_type_alias(ret),
+                    effects: effects.clone(),
+                })
+            }
+            TypeKind::Closure { def_id, params, ret } => {
+                Type::new(TypeKind::Closure {
+                    def_id: *def_id,
+                    params: params.iter().map(|p| self.expand_type_alias(p)).collect(),
+                    ret: self.expand_type_alias(ret),
+                })
+            }
+            _ => ty.clone(), // Primitive types, type vars, etc. don't need expansion
+        }
+    }
+
+    /// Unify two types with type alias expansion.
+    ///
+    /// This is a convenience method that expands type aliases in both types
+    /// before calling the underlying unifier. This ensures that `Ident` and
+    /// `Spanned<Symbol>` are treated as equal when `type Ident = Spanned<Symbol>`.
+    pub(crate) fn unify_with_alias_expansion(&mut self, t1: &Type, t2: &Type, span: Span) -> Result<(), TypeError> {
+        let t1_expanded = self.expand_type_alias(t1);
+        let t2_expanded = self.expand_type_alias(t2);
+        self.unifier.unify(&t1_expanded, &t2_expanded, span)
+    }
+
     // ================================================================================
     // External Module Support
     // ================================================================================

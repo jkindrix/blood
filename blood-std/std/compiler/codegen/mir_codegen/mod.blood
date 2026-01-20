@@ -47,15 +47,16 @@ pub mod rvalue;
 pub mod place;
 pub mod memory;
 
-use std::collections::HashMap;
+use std.collections::HashMap;
 
-use super::llvm::{
+use std.compiler.codegen.llvm::{
     LLVMValueRef, LLVMTypeRef, LLVMBasicBlockRef,
     values::append_basic_block,
+    values::get_param,
 };
-use super::context::{CodegenContext, MemoryTier};
-use super::lower_type::lower_type;
-use super::runtime;
+use std.compiler.codegen.context::{CodegenContext, MemoryTier};
+use std.compiler.codegen.lower_type::lower_type;
+use std.compiler.codegen.runtime;
 
 use std.compiler.hir::{DefId, LocalId, Type};
 use std.compiler.mir::{MirBody, BasicBlockId, EscapeResults, EscapeState};
@@ -140,7 +141,7 @@ pub fn compile_mir_body(
     // Store function parameters
     for (i, param_id) in body.param_ids().enumerate() {
         if let Some(&alloca) = ctx.locals.get(&param_id) {
-            let param_value = super::llvm::values::get_param(fn_value, i as u32).raw();
+            let param_value = get_param(fn_value, i as u32).raw();
             ctx.llvm_builder().build_store(param_value, alloca);
         }
     };

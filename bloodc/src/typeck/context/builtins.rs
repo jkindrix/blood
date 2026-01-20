@@ -746,6 +746,46 @@ impl<'a> TypeContext<'a> {
             "str_len_usize",
         );
 
+        // str.as_bytes(&self) -> &[u8]
+        self.register_builtin_method(
+            BuiltinMethodType::Str,
+            "as_bytes",
+            false,
+            vec![Type::reference(Type::str(), false)],
+            Type::reference(Type::array(Type::u8(), 0), false),
+            "str_as_bytes",
+        );
+
+        // &str.as_bytes(&self) -> &[u8]
+        self.register_builtin_method(
+            BuiltinMethodType::StrRef,
+            "as_bytes",
+            false,
+            vec![Type::reference(Type::str(), false)],
+            Type::reference(Type::array(Type::u8(), 0), false),
+            "str_as_bytes",
+        );
+
+        // str.is_empty(&self) -> bool
+        self.register_builtin_method(
+            BuiltinMethodType::Str,
+            "is_empty",
+            false,
+            vec![Type::reference(Type::str(), false)],
+            bool_ty.clone(),
+            "str_is_empty",
+        );
+
+        // &str.is_empty(&self) -> bool
+        self.register_builtin_method(
+            BuiltinMethodType::StrRef,
+            "is_empty",
+            false,
+            vec![Type::reference(Type::str(), false)],
+            bool_ty.clone(),
+            "str_is_empty",
+        );
+
         // === char methods ===
 
         // char.is_whitespace(self) -> bool
@@ -998,6 +1038,28 @@ impl<'a> TypeContext<'a> {
             "string_ends_with",
         );
 
+        // String.to_string(&self) -> String
+        // Clone the string (for uniformity with other types)
+        self.register_builtin_method(
+            BuiltinMethodType::String,
+            "to_string",
+            false,
+            vec![Type::reference(string_ty.clone(), false)],
+            string_ty.clone(),
+            "string_clone",  // Same as clone internally
+        );
+
+        // String.hash(&self) -> u64
+        // Compute a hash value for the string
+        self.register_builtin_method(
+            BuiltinMethodType::String,
+            "hash",
+            false,
+            vec![Type::reference(string_ty.clone(), false)],
+            Type::u64(),
+            "string_hash",
+        );
+
         // === Option methods ===
         // Note: Option<T>.unwrap(self) -> T requires generic handling,
         // which is done in find_builtin_method with type substitution.
@@ -1007,6 +1069,30 @@ impl<'a> TypeContext<'a> {
             .expect("BUG: option_def_id not set before register_builtin_methods");
         let vec_def_id = self.vec_def_id
             .expect("BUG: vec_def_id not set before register_builtin_methods");
+
+        // === str.split methods (needs Vec) ===
+        // Return type is [String] (array) for compatibility with for loops
+        let array_string = Type::array(string_ty.clone(), 0); // 0 = dynamic size
+
+        // str.split(&self, pattern: &str) -> [String]
+        self.register_builtin_method(
+            BuiltinMethodType::Str,
+            "split",
+            false,
+            vec![Type::reference(Type::str(), false), Type::reference(Type::str(), false)],
+            array_string.clone(),
+            "str_split",
+        );
+
+        // &str.split(&self, pattern: &str) -> [String]
+        self.register_builtin_method(
+            BuiltinMethodType::StrRef,
+            "split",
+            false,
+            vec![Type::reference(Type::str(), false), Type::reference(Type::str(), false)],
+            array_string.clone(),
+            "str_split",
+        );
 
         // Option<T>.unwrap(self) -> T
         // The actual return type is determined by the type argument
@@ -1226,6 +1312,29 @@ impl<'a> TypeContext<'a> {
             "array_last",
         );
 
+        // [T; N].iter(&self) -> &[T; N]
+        // Returns the array itself for iteration (arrays are iterable in Blood)
+        self.register_builtin_method(
+            BuiltinMethodType::Array,
+            "iter",
+            false,
+            vec![Type::reference(array_ty.clone(), false)],
+            Type::reference(array_ty.clone(), false),
+            "array_iter",
+        );
+
+        // [String].join(&self, sep: &str) -> String
+        // Join array of strings with separator
+        let array_string = Type::array(string_ty.clone(), 0);
+        self.register_builtin_method(
+            BuiltinMethodType::Array,
+            "join",
+            false,
+            vec![Type::reference(array_string.clone(), false), Type::reference(Type::str(), false)],
+            string_ty.clone(),
+            "array_join",
+        );
+
         // =========================================================================
         // Slice [T] methods
         // =========================================================================
@@ -1322,6 +1431,29 @@ impl<'a> TypeContext<'a> {
             vec![Type::reference(slice_ty.clone(), false)],
             Type::adt(option_def_id, vec![Type::reference(slice_elem_t.clone(), false)]),
             "slice_last",
+        );
+
+        // [T].iter(&self) -> &[T]
+        // Returns the slice itself for iteration (slices are iterable in Blood)
+        self.register_builtin_method(
+            BuiltinMethodType::Slice,
+            "iter",
+            false,
+            vec![Type::reference(slice_ty.clone(), false)],
+            Type::reference(slice_ty.clone(), false),
+            "slice_iter",
+        );
+
+        // [String].join(&self, sep: &str) -> String
+        // Join slice of strings with separator
+        let slice_string = Type::slice(string_ty.clone());
+        self.register_builtin_method(
+            BuiltinMethodType::Slice,
+            "join",
+            false,
+            vec![Type::reference(slice_string.clone(), false), Type::reference(Type::str(), false)],
+            string_ty.clone(),
+            "slice_join",
         );
 
         // =========================================================================

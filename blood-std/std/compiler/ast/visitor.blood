@@ -26,7 +26,7 @@
 //! }
 //!
 //! impl Visitor for CountFunctions {
-//!     fn visit_fn_decl(mut self, decl: &FnDecl) {
+//!     fn visit_fn_decl(self: &mut Self, decl: &FnDecl) {
 //!         self.count += 1
 //!         walk_fn_decl(self, decl)
 //!     }
@@ -45,6 +45,10 @@
 
 module std.compiler.ast.visitor;
 
+use std.core.Option;
+use std.core.Box;
+use std.collections.Vec;
+use std.compiler.ast.node.Span;
 use std.compiler.ast.node.Program;
 use std.compiler.ast.node.ModuleDecl;
 use std.compiler.ast.node.ModulePath;
@@ -62,6 +66,8 @@ use std.compiler.ast.ty.GenericParam;
 use std.compiler.ast.ty.WhereClause;
 use std.compiler.ast.ty.WherePredicate;
 use std.compiler.ast.ty.EffectRow;
+use std.compiler.ast.ty.EffectRowKind;
+use std.compiler.ast.ty.TypeArg;
 use std.compiler.ast.decl.Declaration;
 use std.compiler.ast.decl.FnDecl;
 use std.compiler.ast.decl.Param;
@@ -89,6 +95,9 @@ use std.compiler.ast.expr.ExprPath;
 use std.compiler.ast.expr.CallArg;
 use std.compiler.ast.expr.MatchArm;
 use std.compiler.ast.expr.ClosureParam;
+use std.compiler.ast.expr.ArrayExpr;
+use std.compiler.ast.expr.ElseBranch;
+use std.compiler.ast.expr.BinOp;
 use std.compiler.ast.pattern.Pattern;
 use std.compiler.ast.pattern.PatternKind;
 use std.compiler.ast.pattern.StructPatternField;
@@ -120,7 +129,7 @@ use std.compiler.ast.bridge.BridgeCallback;
 /// }
 ///
 /// impl Visitor for IdentCollector {
-///     fn visit_ident(mut self, ident: &Ident) {
+///     fn visit_ident(self: &mut Self, ident: &Ident) {
 ///         self.idents.push(ident.clone())
 ///     }
 /// }
@@ -131,22 +140,22 @@ pub trait Visitor {
     // ========================================================================
 
     /// Visit a program.
-    fn visit_program(mut self, program: &Program) {
+    fn visit_program(self: &mut Self, program: &Program) {
         walk_program(self, program)
     }
 
     /// Visit a module declaration.
-    fn visit_module_decl(mut self, decl: &ModuleDecl) {
+    fn visit_module_decl(self: &mut Self, decl: &ModuleDecl) {
         walk_module_decl(self, decl)
     }
 
     /// Visit a module path.
-    fn visit_module_path(mut self, path: &ModulePath) {
+    fn visit_module_path(self: &mut Self, path: &ModulePath) {
         walk_module_path(self, path)
     }
 
     /// Visit an import.
-    fn visit_import(mut self, import: &Import) {
+    fn visit_import(self: &mut Self, import: &Import) {
         walk_import(self, import)
     }
 
@@ -155,102 +164,102 @@ pub trait Visitor {
     // ========================================================================
 
     /// Visit a declaration.
-    fn visit_declaration(mut self, decl: &Declaration) {
+    fn visit_declaration(self: &mut Self, decl: &Declaration) {
         walk_declaration(self, decl)
     }
 
     /// Visit a function declaration.
-    fn visit_fn_decl(mut self, decl: &FnDecl) {
+    fn visit_fn_decl(self: &mut Self, decl: &FnDecl) {
         walk_fn_decl(self, decl)
     }
 
     /// Visit a function parameter.
-    fn visit_param(mut self, param: &Param) {
+    fn visit_param(self: &mut Self, param: &Param) {
         walk_param(self, param)
     }
 
     /// Visit a type declaration.
-    fn visit_type_decl(mut self, decl: &TypeDecl) {
+    fn visit_type_decl(self: &mut Self, decl: &TypeDecl) {
         walk_type_decl(self, decl)
     }
 
     /// Visit a struct declaration.
-    fn visit_struct_decl(mut self, decl: &StructDecl) {
+    fn visit_struct_decl(self: &mut Self, decl: &StructDecl) {
         walk_struct_decl(self, decl)
     }
 
     /// Visit a struct field.
-    fn visit_struct_field(mut self, field: &StructField) {
+    fn visit_struct_field(self: &mut Self, field: &StructField) {
         walk_struct_field(self, field)
     }
 
     /// Visit an enum declaration.
-    fn visit_enum_decl(mut self, decl: &EnumDecl) {
+    fn visit_enum_decl(self: &mut Self, decl: &EnumDecl) {
         walk_enum_decl(self, decl)
     }
 
     /// Visit an enum variant.
-    fn visit_enum_variant(mut self, variant: &EnumVariant) {
+    fn visit_enum_variant(self: &mut Self, variant: &EnumVariant) {
         walk_enum_variant(self, variant)
     }
 
     /// Visit an effect declaration.
-    fn visit_effect_decl(mut self, decl: &EffectDecl) {
+    fn visit_effect_decl(self: &mut Self, decl: &EffectDecl) {
         walk_effect_decl(self, decl)
     }
 
     /// Visit an effect operation.
-    fn visit_operation_decl(mut self, decl: &OperationDecl) {
+    fn visit_operation_decl(self: &mut Self, decl: &OperationDecl) {
         walk_operation_decl(self, decl)
     }
 
     /// Visit a handler declaration.
-    fn visit_handler_decl(mut self, decl: &HandlerDecl) {
+    fn visit_handler_decl(self: &mut Self, decl: &HandlerDecl) {
         walk_handler_decl(self, decl)
     }
 
     /// Visit an operation implementation.
-    fn visit_operation_impl(mut self, impl_: &OperationImpl) {
+    fn visit_operation_impl(self: &mut Self, impl_: &OperationImpl) {
         walk_operation_impl(self, impl_)
     }
 
     /// Visit a trait declaration.
-    fn visit_trait_decl(mut self, decl: &TraitDecl) {
+    fn visit_trait_decl(self: &mut Self, decl: &TraitDecl) {
         walk_trait_decl(self, decl)
     }
 
     /// Visit a trait item.
-    fn visit_trait_item(mut self, item: &TraitItem) {
+    fn visit_trait_item(self: &mut Self, item: &TraitItem) {
         walk_trait_item(self, item)
     }
 
     /// Visit an impl block.
-    fn visit_impl_block(mut self, impl_: &ImplBlock) {
+    fn visit_impl_block(self: &mut Self, impl_: &ImplBlock) {
         walk_impl_block(self, impl_)
     }
 
     /// Visit an impl item.
-    fn visit_impl_item(mut self, item: &ImplItem) {
+    fn visit_impl_item(self: &mut Self, item: &ImplItem) {
         walk_impl_item(self, item)
     }
 
     /// Visit a const declaration.
-    fn visit_const_decl(mut self, decl: &ConstDecl) {
+    fn visit_const_decl(self: &mut Self, decl: &ConstDecl) {
         walk_const_decl(self, decl)
     }
 
     /// Visit a static declaration.
-    fn visit_static_decl(mut self, decl: &StaticDecl) {
+    fn visit_static_decl(self: &mut Self, decl: &StaticDecl) {
         walk_static_decl(self, decl)
     }
 
     /// Visit a module item declaration.
-    fn visit_mod_item_decl(mut self, decl: &ModItemDecl) {
+    fn visit_mod_item_decl(self: &mut Self, decl: &ModItemDecl) {
         walk_mod_item_decl(self, decl)
     }
 
     /// Visit a macro declaration.
-    fn visit_macro_decl(mut self, decl: &MacroDecl) {
+    fn visit_macro_decl(self: &mut Self, decl: &MacroDecl) {
         walk_macro_decl(self, decl)
     }
 
@@ -259,37 +268,37 @@ pub trait Visitor {
     // ========================================================================
 
     /// Visit a type.
-    fn visit_type(mut self, ty: &Type) {
+    fn visit_type(self: &mut Self, ty: &Type) {
         walk_type(self, ty)
     }
 
     /// Visit a type path.
-    fn visit_type_path(mut self, path: &TypePath) {
+    fn visit_type_path(self: &mut Self, path: &TypePath) {
         walk_type_path(self, path)
     }
 
     /// Visit type parameters.
-    fn visit_type_params(mut self, params: &TypeParams) {
+    fn visit_type_params(self: &mut Self, params: &TypeParams) {
         walk_type_params(self, params)
     }
 
     /// Visit a generic parameter.
-    fn visit_generic_param(mut self, param: &GenericParam) {
+    fn visit_generic_param(self: &mut Self, param: &GenericParam) {
         walk_generic_param(self, param)
     }
 
     /// Visit a where clause.
-    fn visit_where_clause(mut self, clause: &WhereClause) {
+    fn visit_where_clause(self: &mut Self, clause: &WhereClause) {
         walk_where_clause(self, clause)
     }
 
     /// Visit a where predicate.
-    fn visit_where_predicate(mut self, pred: &WherePredicate) {
+    fn visit_where_predicate(self: &mut Self, pred: &WherePredicate) {
         walk_where_predicate(self, pred)
     }
 
     /// Visit an effect row.
-    fn visit_effect_row(mut self, row: &EffectRow) {
+    fn visit_effect_row(self: &mut Self, row: &EffectRow) {
         walk_effect_row(self, row)
     }
 
@@ -298,27 +307,27 @@ pub trait Visitor {
     // ========================================================================
 
     /// Visit an expression.
-    fn visit_expr(mut self, expr: &Expr) {
+    fn visit_expr(self: &mut Self, expr: &Expr) {
         walk_expr(self, expr)
     }
 
     /// Visit an expression path.
-    fn visit_expr_path(mut self, path: &ExprPath) {
+    fn visit_expr_path(self: &mut Self, path: &ExprPath) {
         walk_expr_path(self, path)
     }
 
     /// Visit a call argument.
-    fn visit_call_arg(mut self, arg: &CallArg) {
+    fn visit_call_arg(self: &mut Self, arg: &CallArg) {
         walk_call_arg(self, arg)
     }
 
     /// Visit a match arm.
-    fn visit_match_arm(mut self, arm: &MatchArm) {
+    fn visit_match_arm(self: &mut Self, arm: &MatchArm) {
         walk_match_arm(self, arm)
     }
 
     /// Visit a closure parameter.
-    fn visit_closure_param(mut self, param: &ClosureParam) {
+    fn visit_closure_param(self: &mut Self, param: &ClosureParam) {
         walk_closure_param(self, param)
     }
 
@@ -327,12 +336,12 @@ pub trait Visitor {
     // ========================================================================
 
     /// Visit a pattern.
-    fn visit_pattern(mut self, pattern: &Pattern) {
+    fn visit_pattern(self: &mut Self, pattern: &Pattern) {
         walk_pattern(self, pattern)
     }
 
     /// Visit a struct pattern field.
-    fn visit_struct_pattern_field(mut self, field: &StructPatternField) {
+    fn visit_struct_pattern_field(self: &mut Self, field: &StructPatternField) {
         walk_struct_pattern_field(self, field)
     }
 
@@ -341,12 +350,12 @@ pub trait Visitor {
     // ========================================================================
 
     /// Visit a block.
-    fn visit_block(mut self, block: &Block) {
+    fn visit_block(self: &mut Self, block: &Block) {
         walk_block(self, block)
     }
 
     /// Visit a statement.
-    fn visit_statement(mut self, stmt: &Statement) {
+    fn visit_statement(self: &mut Self, stmt: &Statement) {
         walk_statement(self, stmt)
     }
 
@@ -355,17 +364,17 @@ pub trait Visitor {
     // ========================================================================
 
     /// Visit an attribute.
-    fn visit_attribute(mut self, attr: &Attribute) {
+    fn visit_attribute(self: &mut Self, attr: &Attribute) {
         walk_attribute(self, attr)
     }
 
     /// Visit a literal.
-    fn visit_literal(mut self, lit: &Literal) {
+    fn visit_literal(self: &mut Self, lit: &Literal) {
         // No children to visit
     }
 
     /// Visit an identifier.
-    fn visit_ident(mut self, ident: &Ident) {
+    fn visit_ident(self: &mut Self, ident: &Ident) {
         // No children to visit
     }
 
@@ -374,12 +383,12 @@ pub trait Visitor {
     // ========================================================================
 
     /// Visit a bridge declaration.
-    fn visit_bridge_decl(mut self, decl: &BridgeDecl) {
+    fn visit_bridge_decl(self: &mut Self, decl: &BridgeDecl) {
         walk_bridge_decl(self, decl)
     }
 
     /// Visit a bridge item.
-    fn visit_bridge_item(mut self, item: &BridgeItem) {
+    fn visit_bridge_item(self: &mut Self, item: &BridgeItem) {
         walk_bridge_item(self, item)
     }
 }
@@ -390,16 +399,29 @@ pub trait Visitor {
 
 /// Walk a program, visiting all children.
 pub fn walk_program<V: Visitor>(visitor: &mut V, program: &Program) {
-    if let Option::Some(ref module) = program.module {
-        visitor.visit_module_decl(module);
-    };
+    if program.mod_decl.is_some() {
+        let mod_decl: &ModuleDecl = program.mod_decl.as_ref().unwrap();
+        visitor.visit_module_decl(mod_decl);
+    }
 
-    for import in program.imports.iter() {
-        visitor.visit_import(import);
-    };
+    {
+        let mut i: usize = 0;
+        while i < program.imports.len() {
+            if let Option::Some(import) = program.imports.get(i) {
+                visitor.visit_import(import);
+            };
+            i = i + 1usize;
+        }
+    }
 
-    for decl in program.declarations.iter() {
-        visitor.visit_declaration(decl);
+    {
+        let mut i: usize = 0;
+        while i < program.declarations.len() {
+            if let Option::Some(decl) = program.declarations.get(i) {
+                visitor.visit_declaration(decl);
+            };
+            i = i + 1usize;
+        }
     }
 }
 
@@ -410,8 +432,12 @@ pub fn walk_module_decl<V: Visitor>(visitor: &mut V, decl: &ModuleDecl) {
 
 /// Walk a module path.
 pub fn walk_module_path<V: Visitor>(visitor: &mut V, path: &ModulePath) {
-    for segment in path.segments.iter() {
-        visitor.visit_ident(segment);
+    let mut i: usize = 0;
+    while i < path.segments.len() {
+        if let Option::Some(segment) = path.segments.get(i) {
+            visitor.visit_ident(segment);
+        };
+        i = i + 1usize;
     }
 }
 
@@ -450,9 +476,15 @@ pub fn walk_declaration<V: Visitor>(visitor: &mut V, decl: &Declaration) {
 
 /// Walk a function declaration.
 pub fn walk_fn_decl<V: Visitor>(visitor: &mut V, decl: &FnDecl) {
-    for attr in decl.attrs.iter() {
-        visitor.visit_attribute(attr);
-    };
+    {
+        let mut i: usize = 0;
+        while i < decl.attrs.len() {
+            if let Option::Some(attr) = decl.attrs.get(i) {
+                visitor.visit_attribute(attr);
+            };
+            i = i + 1usize;
+        }
+    }
 
     visitor.visit_ident(&decl.name);
 
@@ -460,9 +492,15 @@ pub fn walk_fn_decl<V: Visitor>(visitor: &mut V, decl: &FnDecl) {
         visitor.visit_type_params(params);
     };
 
-    for param in decl.params.iter() {
-        visitor.visit_param(param);
-    };
+    {
+        let mut i: usize = 0;
+        while i < decl.params.len() {
+            if let Option::Some(param) = decl.params.get(i) {
+                visitor.visit_param(param);
+            };
+            i = i + 1usize;
+        }
+    }
 
     if let Option::Some(ref ret) = decl.return_type {
         visitor.visit_type(ret);
@@ -489,9 +527,15 @@ pub fn walk_param<V: Visitor>(visitor: &mut V, param: &Param) {
 
 /// Walk a type declaration.
 pub fn walk_type_decl<V: Visitor>(visitor: &mut V, decl: &TypeDecl) {
-    for attr in decl.attrs.iter() {
-        visitor.visit_attribute(attr);
-    };
+    {
+        let mut i: usize = 0;
+        while i < decl.attrs.len() {
+            if let Option::Some(attr) = decl.attrs.get(i) {
+                visitor.visit_attribute(attr);
+            };
+            i = i + 1usize;
+        }
+    }
 
     visitor.visit_ident(&decl.name);
 
@@ -504,9 +548,15 @@ pub fn walk_type_decl<V: Visitor>(visitor: &mut V, decl: &TypeDecl) {
 
 /// Walk a struct declaration.
 pub fn walk_struct_decl<V: Visitor>(visitor: &mut V, decl: &StructDecl) {
-    for attr in decl.attrs.iter() {
-        visitor.visit_attribute(attr);
-    };
+    {
+        let mut i: usize = 0;
+        while i < decl.attrs.len() {
+            if let Option::Some(attr) = decl.attrs.get(i) {
+                visitor.visit_attribute(attr);
+            };
+            i = i + 1usize;
+        }
+    }
 
     visitor.visit_ident(&decl.name);
 
@@ -516,13 +566,21 @@ pub fn walk_struct_decl<V: Visitor>(visitor: &mut V, decl: &StructDecl) {
 
     match decl.body {
         StructBody::Record(ref fields) => {
-            for field in fields.iter() {
-                visitor.visit_struct_field(field);
+            let mut i: usize = 0;
+            while i < fields.len() {
+                if let Option::Some(field) = fields.get(i) {
+                    visitor.visit_struct_field(field);
+                };
+                i = i + 1usize;
             }
         }
         StructBody::Tuple(ref types) => {
-            for ty in types.iter() {
-                visitor.visit_type(ty);
+            let mut i: usize = 0;
+            while i < types.len() {
+                if let Option::Some(ty) = types.get(i) {
+                    visitor.visit_type(ty);
+                };
+                i = i + 1usize;
             }
         }
         StructBody::Unit => {}
@@ -531,18 +589,30 @@ pub fn walk_struct_decl<V: Visitor>(visitor: &mut V, decl: &StructDecl) {
 
 /// Walk a struct field.
 pub fn walk_struct_field<V: Visitor>(visitor: &mut V, field: &StructField) {
-    for attr in field.attrs.iter() {
-        visitor.visit_attribute(attr);
-    };
+    {
+        let mut i: usize = 0;
+        while i < field.attrs.len() {
+            if let Option::Some(attr) = field.attrs.get(i) {
+                visitor.visit_attribute(attr);
+            };
+            i = i + 1usize;
+        }
+    }
     visitor.visit_ident(&field.name);
     visitor.visit_type(&field.ty);
 }
 
 /// Walk an enum declaration.
 pub fn walk_enum_decl<V: Visitor>(visitor: &mut V, decl: &EnumDecl) {
-    for attr in decl.attrs.iter() {
-        visitor.visit_attribute(attr);
-    };
+    {
+        let mut i: usize = 0;
+        while i < decl.attrs.len() {
+            if let Option::Some(attr) = decl.attrs.get(i) {
+                visitor.visit_attribute(attr);
+            };
+            i = i + 1usize;
+        }
+    }
 
     visitor.visit_ident(&decl.name);
 
@@ -550,28 +620,48 @@ pub fn walk_enum_decl<V: Visitor>(visitor: &mut V, decl: &EnumDecl) {
         visitor.visit_type_params(params);
     };
 
-    for variant in decl.variants.iter() {
-        visitor.visit_enum_variant(variant);
+    {
+        let mut i: usize = 0;
+        while i < decl.variants.len() {
+            if let Option::Some(variant) = decl.variants.get(i) {
+                visitor.visit_enum_variant(variant);
+            };
+            i = i + 1usize;
+        }
     }
 }
 
 /// Walk an enum variant.
 pub fn walk_enum_variant<V: Visitor>(visitor: &mut V, variant: &EnumVariant) {
-    for attr in variant.attrs.iter() {
-        visitor.visit_attribute(attr);
-    };
+    {
+        let mut i: usize = 0;
+        while i < variant.attrs.len() {
+            if let Option::Some(attr) = variant.attrs.get(i) {
+                visitor.visit_attribute(attr);
+            };
+            i = i + 1usize;
+        }
+    }
 
     visitor.visit_ident(&variant.name);
 
     match variant.body {
         StructBody::Record(ref fields) => {
-            for field in fields.iter() {
-                visitor.visit_struct_field(field);
+            let mut i: usize = 0;
+            while i < fields.len() {
+                if let Option::Some(field) = fields.get(i) {
+                    visitor.visit_struct_field(field);
+                };
+                i = i + 1usize;
             }
         }
         StructBody::Tuple(ref types) => {
-            for ty in types.iter() {
-                visitor.visit_type(ty);
+            let mut i: usize = 0;
+            while i < types.len() {
+                if let Option::Some(ty) = types.get(i) {
+                    visitor.visit_type(ty);
+                };
+                i = i + 1usize;
             }
         }
         StructBody::Unit => {}
@@ -584,9 +674,15 @@ pub fn walk_enum_variant<V: Visitor>(visitor: &mut V, variant: &EnumVariant) {
 
 /// Walk an effect declaration.
 pub fn walk_effect_decl<V: Visitor>(visitor: &mut V, decl: &EffectDecl) {
-    for attr in decl.attrs.iter() {
-        visitor.visit_attribute(attr);
-    };
+    {
+        let mut i: usize = 0;
+        while i < decl.attrs.len() {
+            if let Option::Some(attr) = decl.attrs.get(i) {
+                visitor.visit_attribute(attr);
+            };
+            i = i + 1usize;
+        }
+    }
 
     visitor.visit_ident(&decl.name);
 
@@ -594,12 +690,24 @@ pub fn walk_effect_decl<V: Visitor>(visitor: &mut V, decl: &EffectDecl) {
         visitor.visit_type_params(params);
     };
 
-    for ext in decl.extends.iter() {
-        visitor.visit_type(ext);
-    };
+    {
+        let mut i: usize = 0;
+        while i < decl.extends.len() {
+            if let Option::Some(ext) = decl.extends.get(i) {
+                visitor.visit_type(ext);
+            };
+            i = i + 1usize;
+        }
+    }
 
-    for op in decl.operations.iter() {
-        visitor.visit_operation_decl(op);
+    {
+        let mut i: usize = 0;
+        while i < decl.operations.len() {
+            if let Option::Some(op) = decl.operations.get(i) {
+                visitor.visit_operation_decl(op);
+            };
+            i = i + 1usize;
+        }
     }
 }
 
@@ -611,18 +719,30 @@ pub fn walk_operation_decl<V: Visitor>(visitor: &mut V, decl: &OperationDecl) {
         visitor.visit_type_params(params);
     };
 
-    for param in decl.params.iter() {
-        visitor.visit_param(param);
-    };
+    {
+        let mut i: usize = 0;
+        while i < decl.params.len() {
+            if let Option::Some(param) = decl.params.get(i) {
+                visitor.visit_param(param);
+            };
+            i = i + 1usize;
+        }
+    }
 
     visitor.visit_type(&decl.return_type);
 }
 
 /// Walk a handler declaration.
 pub fn walk_handler_decl<V: Visitor>(visitor: &mut V, decl: &HandlerDecl) {
-    for attr in decl.attrs.iter() {
-        visitor.visit_attribute(attr);
-    };
+    {
+        let mut i: usize = 0;
+        while i < decl.attrs.len() {
+            if let Option::Some(attr) = decl.attrs.get(i) {
+                visitor.visit_attribute(attr);
+            };
+            i = i + 1usize;
+        }
+    }
 
     visitor.visit_ident(&decl.name);
 
@@ -636,8 +756,14 @@ pub fn walk_handler_decl<V: Visitor>(visitor: &mut V, decl: &HandlerDecl) {
         visitor.visit_where_clause(where_clause);
     };
 
-    for op in decl.operations.iter() {
-        visitor.visit_operation_impl(op);
+    {
+        let mut i: usize = 0;
+        while i < decl.operations.len() {
+            if let Option::Some(op) = decl.operations.get(i) {
+                visitor.visit_operation_impl(op);
+            };
+            i = i + 1usize;
+        }
     }
 }
 
@@ -645,18 +771,30 @@ pub fn walk_handler_decl<V: Visitor>(visitor: &mut V, decl: &HandlerDecl) {
 pub fn walk_operation_impl<V: Visitor>(visitor: &mut V, impl_: &OperationImpl) {
     visitor.visit_ident(&impl_.name);
 
-    for param in impl_.params.iter() {
-        visitor.visit_pattern(param);
-    };
+    {
+        let mut i: usize = 0;
+        while i < impl_.params.len() {
+            if let Option::Some(param) = impl_.params.get(i) {
+                visitor.visit_pattern(param);
+            };
+            i = i + 1usize;
+        }
+    }
 
     visitor.visit_block(&impl_.body);
 }
 
 /// Walk a trait declaration.
 pub fn walk_trait_decl<V: Visitor>(visitor: &mut V, decl: &TraitDecl) {
-    for attr in decl.attrs.iter() {
-        visitor.visit_attribute(attr);
-    };
+    {
+        let mut i: usize = 0;
+        while i < decl.attrs.len() {
+            if let Option::Some(attr) = decl.attrs.get(i) {
+                visitor.visit_attribute(attr);
+            };
+            i = i + 1usize;
+        }
+    }
 
     visitor.visit_ident(&decl.name);
 
@@ -664,16 +802,28 @@ pub fn walk_trait_decl<V: Visitor>(visitor: &mut V, decl: &TraitDecl) {
         visitor.visit_type_params(params);
     };
 
-    for supertrait in decl.supertraits.iter() {
-        visitor.visit_type(supertrait);
-    };
+    {
+        let mut i: usize = 0;
+        while i < decl.supertraits.len() {
+            if let Option::Some(supertrait) = decl.supertraits.get(i) {
+                visitor.visit_type(supertrait);
+            };
+            i = i + 1usize;
+        }
+    }
 
     if let Option::Some(ref where_clause) = decl.where_clause {
         visitor.visit_where_clause(where_clause);
     };
 
-    for item in decl.items.iter() {
-        visitor.visit_trait_item(item);
+    {
+        let mut i: usize = 0;
+        while i < decl.items.len() {
+            if let Option::Some(item) = decl.items.get(i) {
+                visitor.visit_trait_item(item);
+            };
+            i = i + 1usize;
+        }
     }
 }
 
@@ -688,9 +838,15 @@ pub fn walk_trait_item<V: Visitor>(visitor: &mut V, item: &TraitItem) {
 
 /// Walk an impl block.
 pub fn walk_impl_block<V: Visitor>(visitor: &mut V, impl_: &ImplBlock) {
-    for attr in impl_.attrs.iter() {
-        visitor.visit_attribute(attr);
-    };
+    {
+        let mut i: usize = 0;
+        while i < impl_.attrs.len() {
+            if let Option::Some(attr) = impl_.attrs.get(i) {
+                visitor.visit_attribute(attr);
+            };
+            i = i + 1usize;
+        }
+    }
 
     if let Option::Some(ref params) = impl_.type_params {
         visitor.visit_type_params(params);
@@ -706,8 +862,14 @@ pub fn walk_impl_block<V: Visitor>(visitor: &mut V, impl_: &ImplBlock) {
         visitor.visit_where_clause(where_clause);
     };
 
-    for item in impl_.items.iter() {
-        visitor.visit_impl_item(item);
+    {
+        let mut i: usize = 0;
+        while i < impl_.items.len() {
+            if let Option::Some(item) = impl_.items.get(i) {
+                visitor.visit_impl_item(item);
+            };
+            i = i + 1usize;
+        }
     }
 }
 
@@ -722,9 +884,15 @@ pub fn walk_impl_item<V: Visitor>(visitor: &mut V, item: &ImplItem) {
 
 /// Walk a const declaration.
 pub fn walk_const_decl<V: Visitor>(visitor: &mut V, decl: &ConstDecl) {
-    for attr in decl.attrs.iter() {
-        visitor.visit_attribute(attr);
-    };
+    {
+        let mut i: usize = 0;
+        while i < decl.attrs.len() {
+            if let Option::Some(attr) = decl.attrs.get(i) {
+                visitor.visit_attribute(attr);
+            };
+            i = i + 1usize;
+        }
+    }
 
     visitor.visit_ident(&decl.name);
     visitor.visit_type(&decl.ty);
@@ -733,9 +901,15 @@ pub fn walk_const_decl<V: Visitor>(visitor: &mut V, decl: &ConstDecl) {
 
 /// Walk a static declaration.
 pub fn walk_static_decl<V: Visitor>(visitor: &mut V, decl: &StaticDecl) {
-    for attr in decl.attrs.iter() {
-        visitor.visit_attribute(attr);
-    };
+    {
+        let mut i: usize = 0;
+        while i < decl.attrs.len() {
+            if let Option::Some(attr) = decl.attrs.get(i) {
+                visitor.visit_attribute(attr);
+            };
+            i = i + 1usize;
+        }
+    }
 
     visitor.visit_ident(&decl.name);
     visitor.visit_type(&decl.ty);
@@ -744,24 +918,40 @@ pub fn walk_static_decl<V: Visitor>(visitor: &mut V, decl: &StaticDecl) {
 
 /// Walk a module item declaration.
 pub fn walk_mod_item_decl<V: Visitor>(visitor: &mut V, decl: &ModItemDecl) {
-    for attr in decl.attrs.iter() {
-        visitor.visit_attribute(attr);
-    };
+    {
+        let mut i: usize = 0;
+        while i < decl.attrs.len() {
+            if let Option::Some(attr) = decl.attrs.get(i) {
+                visitor.visit_attribute(attr);
+            };
+            i = i + 1usize;
+        }
+    }
 
     visitor.visit_ident(&decl.name);
 
     if let Option::Some(ref body) = decl.body {
-        for item in body.iter() {
-            visitor.visit_declaration(item);
+        let mut i: usize = 0;
+        while i < body.len() {
+            if let Option::Some(item) = body.get(i) {
+                visitor.visit_declaration(item);
+            };
+            i = i + 1usize;
         }
     }
 }
 
 /// Walk a macro declaration.
 pub fn walk_macro_decl<V: Visitor>(visitor: &mut V, decl: &MacroDecl) {
-    for attr in decl.attrs.iter() {
-        visitor.visit_attribute(attr);
-    };
+    {
+        let mut i: usize = 0;
+        while i < decl.attrs.len() {
+            if let Option::Some(attr) = decl.attrs.get(i) {
+                visitor.visit_attribute(attr);
+            };
+            i = i + 1usize;
+        }
+    }
 
     visitor.visit_ident(&decl.name);
     // Macro rules contain token streams, not AST nodes
@@ -787,22 +977,36 @@ pub fn walk_type<V: Visitor>(visitor: &mut V, ty: &Type) {
             visitor.visit_type(element);
         }
         TypeKind::Tuple(ref types) => {
-            for t in types.iter() {
-                visitor.visit_type(t);
+            let mut i: usize = 0;
+            while i < types.len() {
+                if let Option::Some(t) = types.get(i) {
+                    visitor.visit_type(t);
+                };
+                i = i + 1usize;
             }
         }
         TypeKind::Function { ref params, ref return_type, ref effects } => {
-            for p in params.iter() {
-                visitor.visit_type(p);
-            };
+            {
+                let mut i: usize = 0;
+                while i < params.len() {
+                    if let Option::Some(p) = params.get(i) {
+                        visitor.visit_type(p);
+                    };
+                    i = i + 1usize;
+                }
+            }
             visitor.visit_type(return_type);
             if let Option::Some(ref eff) = effects {
                 visitor.visit_effect_row(eff);
             }
         }
         TypeKind::Record { ref fields, .. } => {
-            for field in fields.iter() {
-                visitor.visit_type(&field.ty);
+            let mut i: usize = 0;
+            while i < fields.len() {
+                if let Option::Some(field) = fields.get(i) {
+                    visitor.visit_type(&field.ty);
+                };
+                i = i + 1usize;
             }
         }
         TypeKind::Ownership { ref inner, .. } => {
@@ -815,8 +1019,12 @@ pub fn walk_type<V: Visitor>(visitor: &mut V, ty: &Type) {
             visitor.visit_type(inner);
         }
         TypeKind::ImplTrait { ref bounds } | TypeKind::DynTrait { ref bounds } => {
-            for bound in bounds.iter() {
-                visitor.visit_type_path(&bound.path);
+            let mut i: usize = 0;
+            while i < bounds.len() {
+                if let Option::Some(bound) = bounds.get(i) {
+                    visitor.visit_type_path(&bound.path);
+                };
+                i = i + 1usize;
             }
         }
         TypeKind::Never | TypeKind::Infer | TypeKind::Error => {}
@@ -825,25 +1033,37 @@ pub fn walk_type<V: Visitor>(visitor: &mut V, ty: &Type) {
 
 /// Walk a type path.
 pub fn walk_type_path<V: Visitor>(visitor: &mut V, path: &TypePath) {
-    for segment in path.segments.iter() {
-        visitor.visit_ident(&segment.name);
-        if let Option::Some(ref args) = segment.args {
-            for arg in args.args.iter() {
-                match arg {
-                    crate.compiler.ast.ty.TypeArg::Type(ref t) => visitor.visit_type(t),
-                    crate.compiler.ast.ty.TypeArg::Const(ref e) => visitor.visit_expr(e),
-                    crate.compiler.ast.ty.TypeArg::Lifetime(_) => {}
-                    crate.compiler.ast.ty.TypeArg::Binding { ref ty, .. } => visitor.visit_type(ty),
+    let mut i: usize = 0;
+    while i < path.segments.len() {
+        if let Option::Some(segment) = path.segments.get(i) {
+            visitor.visit_ident(&segment.name);
+            if let Option::Some(ref args) = segment.args {
+                let mut j: usize = 0;
+                while j < args.args.len() {
+                    if let Option::Some(arg) = args.args.get(j) {
+                        match arg {
+                            TypeArg::Type(ref t) => visitor.visit_type(t),
+                            TypeArg::Const(ref e) => visitor.visit_expr(e),
+                            TypeArg::Lifetime(_) => {}
+                            TypeArg::Binding { ref ty, .. } => visitor.visit_type(ty),
+                        }
+                    };
+                    j = j + 1usize;
                 }
             }
-        }
+        };
+        i = i + 1usize;
     }
 }
 
 /// Walk type parameters.
 pub fn walk_type_params<V: Visitor>(visitor: &mut V, params: &TypeParams) {
-    for param in params.params.iter() {
-        visitor.visit_generic_param(param);
+    let mut i: usize = 0;
+    while i < params.params.len() {
+        if let Option::Some(param) = params.params.get(i) {
+            visitor.visit_generic_param(param);
+        };
+        i = i + 1usize;
     }
 }
 
@@ -852,9 +1072,15 @@ pub fn walk_generic_param<V: Visitor>(visitor: &mut V, param: &GenericParam) {
     match param {
         GenericParam::Type(ref tp) => {
             visitor.visit_ident(&tp.name);
-            for bound in tp.bounds.iter() {
-                visitor.visit_type_path(&bound.path);
-            };
+            {
+                let mut i: usize = 0;
+                while i < tp.bounds.len() {
+                    if let Option::Some(bound) = tp.bounds.get(i) {
+                        visitor.visit_type_path(&bound.path);
+                    };
+                    i = i + 1usize;
+                }
+            }
             if let Option::Some(ref default) = tp.default {
                 visitor.visit_type(default);
             }
@@ -874,8 +1100,12 @@ pub fn walk_generic_param<V: Visitor>(visitor: &mut V, param: &GenericParam) {
 
 /// Walk a where clause.
 pub fn walk_where_clause<V: Visitor>(visitor: &mut V, clause: &WhereClause) {
-    for pred in clause.predicates.iter() {
-        visitor.visit_where_predicate(pred);
+    let mut i: usize = 0;
+    while i < clause.predicates.len() {
+        if let Option::Some(pred) = clause.predicates.get(i) {
+            visitor.visit_where_predicate(pred);
+        };
+        i = i + 1usize;
     }
 }
 
@@ -884,8 +1114,12 @@ pub fn walk_where_predicate<V: Visitor>(visitor: &mut V, pred: &WherePredicate) 
     match pred {
         WherePredicate::TypeBound { ref ty, ref bounds, .. } => {
             visitor.visit_type(ty);
-            for bound in bounds.iter() {
-                visitor.visit_type_path(&bound.path);
+            let mut i: usize = 0;
+            while i < bounds.len() {
+                if let Option::Some(bound) = bounds.get(i) {
+                    visitor.visit_type_path(&bound.path);
+                };
+                i = i + 1usize;
             }
         }
         WherePredicate::Lifetime { .. } => {}
@@ -899,9 +1133,13 @@ pub fn walk_where_predicate<V: Visitor>(visitor: &mut V, pred: &WherePredicate) 
 /// Walk an effect row.
 pub fn walk_effect_row<V: Visitor>(visitor: &mut V, row: &EffectRow) {
     match row.kind {
-        crate.compiler.ast.ty.EffectRowKind::Effects { ref effects, .. } => {
-            for eff in effects.iter() {
-                visitor.visit_type(eff);
+        EffectRowKind::Effects { ref effects, .. } => {
+            let mut i: usize = 0;
+            while i < effects.len() {
+                if let Option::Some(eff) = effects.get(i) {
+                    visitor.visit_type(eff);
+                };
+                i = i + 1usize;
             }
         }
         _ => {}
@@ -926,14 +1164,26 @@ pub fn walk_expr<V: Visitor>(visitor: &mut V, expr: &Expr) {
         }
         ExprKind::Call { ref callee, ref args } => {
             visitor.visit_expr(callee);
-            for arg in args.iter() {
-                visitor.visit_call_arg(arg);
+            {
+                let mut i: usize = 0;
+                while i < args.len() {
+                    if let Option::Some(arg) = args.get(i) {
+                        visitor.visit_call_arg(arg);
+                    };
+                    i = i + 1usize;
+                }
             }
         }
         ExprKind::MethodCall { ref receiver, ref args, .. } => {
             visitor.visit_expr(receiver);
-            for arg in args.iter() {
-                visitor.visit_call_arg(arg);
+            {
+                let mut i: usize = 0;
+                while i < args.len() {
+                    if let Option::Some(arg) = args.get(i) {
+                        visitor.visit_call_arg(arg);
+                    };
+                    i = i + 1usize;
+                }
             }
         }
         ExprKind::Field { ref base, .. } => {
@@ -944,18 +1194,26 @@ pub fn walk_expr<V: Visitor>(visitor: &mut V, expr: &Expr) {
             visitor.visit_expr(index);
         }
         ExprKind::Tuple(ref exprs) => {
-            for e in exprs.iter() {
-                visitor.visit_expr(e);
+            let mut i: usize = 0;
+            while i < exprs.len() {
+                if let Option::Some(e) = exprs.get(i) {
+                    visitor.visit_expr(e);
+                };
+                i = i + 1usize;
             }
         }
         ExprKind::Array(ref arr) => {
             match arr {
-                crate.compiler.ast.expr.ArrayExpr::List(ref exprs) => {
-                    for e in exprs.iter() {
-                        visitor.visit_expr(e);
+                ArrayExpr::List(ref exprs) => {
+                    let mut i: usize = 0;
+                    while i < exprs.len() {
+                        if let Option::Some(e) = exprs.get(i) {
+                            visitor.visit_expr(e);
+                        };
+                        i = i + 1usize;
                     }
                 };
-                crate.compiler.ast.expr.ArrayExpr::Repeat { ref value, ref count } => {
+                ArrayExpr::Repeat { ref value, ref count } => {
                     visitor.visit_expr(value);
                     visitor.visit_expr(count);
                 }
@@ -965,11 +1223,17 @@ pub fn walk_expr<V: Visitor>(visitor: &mut V, expr: &Expr) {
             if let Option::Some(ref p) = path {
                 visitor.visit_type_path(p);
             };
-            for field in fields.iter() {
-                if let Option::Some(ref v) = field.value {
-                    visitor.visit_expr(v);
+            {
+                let mut i: usize = 0;
+                while i < fields.len() {
+                    if let Option::Some(field) = fields.get(i) {
+                        if let Option::Some(ref v) = field.value {
+                            visitor.visit_expr(v);
+                        }
+                    };
+                    i = i + 1usize;
                 }
-            };
+            }
             if let Option::Some(ref b) = base {
                 visitor.visit_expr(b);
             }
@@ -1002,8 +1266,8 @@ pub fn walk_expr<V: Visitor>(visitor: &mut V, expr: &Expr) {
             visitor.visit_block(then_branch);
             if let Option::Some(ref eb) = else_branch {
                 match eb {
-                    crate.compiler.ast.expr.ElseBranch::Block(ref b) => visitor.visit_block(b),
-                    crate.compiler.ast.expr.ElseBranch::If(ref e) => visitor.visit_expr(e),
+                    ElseBranch::Block(ref b) => visitor.visit_block(b),
+                    ElseBranch::If(ref e) => visitor.visit_expr(e),
                 }
             }
         }
@@ -1013,15 +1277,21 @@ pub fn walk_expr<V: Visitor>(visitor: &mut V, expr: &Expr) {
             visitor.visit_block(then_branch);
             if let Option::Some(ref eb) = else_branch {
                 match eb {
-                    crate.compiler.ast.expr.ElseBranch::Block(ref b) => visitor.visit_block(b),
-                    crate.compiler.ast.expr.ElseBranch::If(ref e) => visitor.visit_expr(e),
+                    ElseBranch::Block(ref b) => visitor.visit_block(b),
+                    ElseBranch::If(ref e) => visitor.visit_expr(e),
                 }
             }
         }
         ExprKind::Match { ref scrutinee, ref arms } => {
             visitor.visit_expr(scrutinee);
-            for arm in arms.iter() {
-                visitor.visit_match_arm(arm);
+            {
+                let mut i: usize = 0;
+                while i < arms.len() {
+                    if let Option::Some(arm) = arms.get(i) {
+                        visitor.visit_match_arm(arm);
+                    };
+                    i = i + 1usize;
+                }
             }
         }
         ExprKind::Loop { ref body, .. } => {
@@ -1053,9 +1323,15 @@ pub fn walk_expr<V: Visitor>(visitor: &mut V, expr: &Expr) {
         }
         ExprKind::Continue { .. } => {}
         ExprKind::Closure { ref params, ref return_type, ref body, .. } => {
-            for param in params.iter() {
-                visitor.visit_closure_param(param);
-            };
+            {
+                let mut i: usize = 0;
+                while i < params.len() {
+                    if let Option::Some(param) = params.get(i) {
+                        visitor.visit_closure_param(param);
+                    };
+                    i = i + 1usize;
+                }
+            }
             if let Option::Some(ref ret) = return_type {
                 visitor.visit_type(ret);
             };
@@ -1066,8 +1342,12 @@ pub fn walk_expr<V: Visitor>(visitor: &mut V, expr: &Expr) {
             visitor.visit_expr(body);
         }
         ExprKind::Perform { ref args, .. } => {
-            for arg in args.iter() {
-                visitor.visit_expr(arg);
+            let mut i: usize = 0;
+            while i < args.len() {
+                if let Option::Some(arg) = args.get(i) {
+                    visitor.visit_expr(arg);
+                };
+                i = i + 1usize;
             }
         }
         ExprKind::Resume(ref value) => {
@@ -1075,11 +1355,19 @@ pub fn walk_expr<V: Visitor>(visitor: &mut V, expr: &Expr) {
         }
         ExprKind::TryWith { ref body, ref handlers } => {
             visitor.visit_block(body);
-            for handler in handlers.iter() {
-                for param in handler.params.iter() {
-                    visitor.visit_pattern(param);
+            let mut i: usize = 0;
+            while i < handlers.len() {
+                if let Option::Some(handler) = handlers.get(i) {
+                    let mut j: usize = 0;
+                    while j < handler.params.len() {
+                        if let Option::Some(param) = handler.params.get(j) {
+                            visitor.visit_pattern(param);
+                        };
+                        j = j + 1usize;
+                    }
+                    visitor.visit_block(&handler.body);
                 };
-                visitor.visit_block(&handler.body);
+                i = i + 1usize;
             }
         }
         ExprKind::Unsafe(ref block) | ExprKind::Region { ref body: block, .. } => {
@@ -1098,8 +1386,12 @@ pub fn walk_expr<V: Visitor>(visitor: &mut V, expr: &Expr) {
 
 /// Walk an expression path.
 pub fn walk_expr_path<V: Visitor>(visitor: &mut V, path: &ExprPath) {
-    for segment in path.segments.iter() {
-        visitor.visit_ident(&segment.name);
+    let mut i: usize = 0;
+    while i < path.segments.len() {
+        if let Option::Some(segment) = path.segments.get(i) {
+            visitor.visit_ident(&segment.name);
+        };
+        i = i + 1usize;
     }
 }
 
@@ -1146,29 +1438,49 @@ pub fn walk_pattern<V: Visitor>(visitor: &mut V, pattern: &Pattern) {
         }
         PatternKind::Struct { ref path, ref fields, .. } => {
             visitor.visit_type_path(path);
-            for field in fields.iter() {
-                visitor.visit_struct_pattern_field(field);
+            let mut i: usize = 0;
+            while i < fields.len() {
+                if let Option::Some(field) = fields.get(i) {
+                    visitor.visit_struct_pattern_field(field);
+                };
+                i = i + 1usize;
             }
         }
         PatternKind::TupleStruct { ref path, ref fields, .. } => {
             visitor.visit_type_path(path);
-            for field in fields.iter() {
-                visitor.visit_pattern(field);
+            let mut i: usize = 0;
+            while i < fields.len() {
+                if let Option::Some(field) = fields.get(i) {
+                    visitor.visit_pattern(field);
+                };
+                i = i + 1usize;
             }
         }
         PatternKind::Tuple { ref fields, .. } => {
-            for field in fields.iter() {
-                visitor.visit_pattern(field);
+            let mut i: usize = 0;
+            while i < fields.len() {
+                if let Option::Some(field) = fields.get(i) {
+                    visitor.visit_pattern(field);
+                };
+                i = i + 1usize;
             }
         }
         PatternKind::Slice { ref elements, .. } => {
-            for elem in elements.iter() {
-                visitor.visit_pattern(elem);
+            let mut i: usize = 0;
+            while i < elements.len() {
+                if let Option::Some(elem) = elements.get(i) {
+                    visitor.visit_pattern(elem);
+                };
+                i = i + 1usize;
             }
         }
         PatternKind::Or(ref patterns) => {
-            for pat in patterns.iter() {
-                visitor.visit_pattern(pat);
+            let mut i: usize = 0;
+            while i < patterns.len() {
+                if let Option::Some(pat) = patterns.get(i) {
+                    visitor.visit_pattern(pat);
+                };
+                i = i + 1usize;
             }
         }
         PatternKind::Range { ref start, ref end, .. } => {
@@ -1198,9 +1510,13 @@ pub fn walk_struct_pattern_field<V: Visitor>(visitor: &mut V, field: &StructPatt
 
 /// Walk a block.
 pub fn walk_block<V: Visitor>(visitor: &mut V, block: &Block) {
-    for stmt in block.statements.iter() {
-        visitor.visit_statement(stmt);
-    };
+    let mut i: usize = 0;
+    while i < block.statements.len() {
+        if let Option::Some(stmt) = block.statements.get(i) {
+            visitor.visit_statement(stmt);
+        };
+        i = i + 1usize;
+    }
     if let Option::Some(ref expr) = block.expr {
         visitor.visit_expr(expr);
     }
@@ -1230,9 +1546,15 @@ pub fn walk_statement<V: Visitor>(visitor: &mut V, stmt: &Statement) {
 /// Walk an attribute.
 pub fn walk_attribute<V: Visitor>(visitor: &mut V, attr: &Attribute) {
     // Visit path segments
-    for segment in attr.path.segments.iter() {
-        visitor.visit_ident(segment);
-    };
+    {
+        let mut i: usize = 0;
+        while i < attr.path.segments.len() {
+            if let Option::Some(segment) = attr.path.segments.get(i) {
+                visitor.visit_ident(segment);
+            };
+            i = i + 1usize;
+        }
+    }
 
     // Visit args if present
     if let Option::Some(ref args) = attr.args {
@@ -1241,8 +1563,12 @@ pub fn walk_attribute<V: Visitor>(visitor: &mut V, attr: &Attribute) {
                 visitor.visit_literal(value);
             }
             AttrArgs::List { ref args, .. } => {
-                for arg in args.iter() {
-                    walk_attr_arg(visitor, arg)
+                let mut i: usize = 0;
+                while i < args.len() {
+                    if let Option::Some(arg) = args.get(i) {
+                        walk_attr_arg(visitor, arg);
+                    };
+                    i = i + 1usize;
                 }
             }
         }
@@ -1263,13 +1589,21 @@ fn walk_attr_arg<V: Visitor>(visitor: &mut V, arg: &AttrArg) {
         }
         AttrArg::Call { ref name, ref args, .. } => {
             visitor.visit_ident(name);
-            for arg in args.iter() {
-                walk_attr_arg(visitor, arg)
+            let mut i: usize = 0;
+            while i < args.len() {
+                if let Option::Some(a) = args.get(i) {
+                    walk_attr_arg(visitor, a);
+                };
+                i = i + 1usize;
             }
         }
         AttrArg::Path { ref path, .. } => {
-            for segment in path.segments.iter() {
-                visitor.visit_ident(segment);
+            let mut i: usize = 0;
+            while i < path.segments.len() {
+                if let Option::Some(segment) = path.segments.get(i) {
+                    visitor.visit_ident(segment);
+                };
+                i = i + 1usize;
             }
         }
     }
@@ -1277,14 +1611,26 @@ fn walk_attr_arg<V: Visitor>(visitor: &mut V, arg: &AttrArg) {
 
 /// Walk a bridge declaration.
 pub fn walk_bridge_decl<V: Visitor>(visitor: &mut V, decl: &BridgeDecl) {
-    for attr in decl.attrs.iter() {
-        visitor.visit_attribute(attr);
-    };
+    {
+        let mut i: usize = 0;
+        while i < decl.attrs.len() {
+            if let Option::Some(attr) = decl.attrs.get(i) {
+                visitor.visit_attribute(attr);
+            };
+            i = i + 1usize;
+        }
+    }
 
     visitor.visit_ident(&decl.name);
 
-    for item in decl.items.iter() {
-        visitor.visit_bridge_item(item);
+    {
+        let mut i: usize = 0;
+        while i < decl.items.len() {
+            if let Option::Some(item) = decl.items.get(i) {
+                visitor.visit_bridge_item(item);
+            };
+            i = i + 1usize;
+        }
     }
 }
 
@@ -1292,14 +1638,26 @@ pub fn walk_bridge_decl<V: Visitor>(visitor: &mut V, decl: &BridgeDecl) {
 pub fn walk_bridge_item<V: Visitor>(visitor: &mut V, item: &BridgeItem) {
     match item {
         BridgeItem::Function(ref f) => {
-            for attr in f.attrs.iter() {
-                visitor.visit_attribute(attr);
-            };
+            {
+                let mut i: usize = 0;
+                while i < f.attrs.len() {
+                    if let Option::Some(attr) = f.attrs.get(i) {
+                        visitor.visit_attribute(attr);
+                    };
+                    i = i + 1usize;
+                }
+            }
             visitor.visit_ident(&f.name);
-            for param in f.params.iter() {
-                visitor.visit_ident(&param.name);
-                visitor.visit_type(&param.ty);
-            };
+            {
+                let mut i: usize = 0;
+                while i < f.params.len() {
+                    if let Option::Some(param) = f.params.get(i) {
+                        visitor.visit_ident(&param.name);
+                        visitor.visit_type(&param.ty);
+                    };
+                    i = i + 1usize;
+                }
+            }
             if let Option::Some(ref ret) = f.return_type {
                 visitor.visit_type(ret);
             }
@@ -1317,42 +1675,84 @@ pub fn walk_bridge_item<V: Visitor>(visitor: &mut V, item: &BridgeItem) {
             visitor.visit_type(&t.ty);
         }
         BridgeItem::Struct(ref s) => {
-            for attr in s.attrs.iter() {
-                visitor.visit_attribute(attr);
-            };
+            {
+                let mut i: usize = 0;
+                while i < s.attrs.len() {
+                    if let Option::Some(attr) = s.attrs.get(i) {
+                        visitor.visit_attribute(attr);
+                    };
+                    i = i + 1usize;
+                }
+            }
             visitor.visit_ident(&s.name);
-            for field in s.fields.iter() {
-                visitor.visit_ident(&field.name);
-                visitor.visit_type(&field.ty);
+            {
+                let mut i: usize = 0;
+                while i < s.fields.len() {
+                    if let Option::Some(field) = s.fields.get(i) {
+                        visitor.visit_ident(&field.name);
+                        visitor.visit_type(&field.ty);
+                    };
+                    i = i + 1usize;
+                }
             }
         }
         BridgeItem::Enum(ref e) => {
-            for attr in e.attrs.iter() {
-                visitor.visit_attribute(attr);
-            };
+            {
+                let mut i: usize = 0;
+                while i < e.attrs.len() {
+                    if let Option::Some(attr) = e.attrs.get(i) {
+                        visitor.visit_attribute(attr);
+                    };
+                    i = i + 1usize;
+                }
+            }
             visitor.visit_ident(&e.name);
-            for variant in e.variants.iter() {
-                visitor.visit_ident(&variant.name);
-                if let Option::Some(ref disc) = variant.discriminant {
-                    visitor.visit_literal(disc);
+            {
+                let mut i: usize = 0;
+                while i < e.variants.len() {
+                    if let Option::Some(variant) = e.variants.get(i) {
+                        visitor.visit_ident(&variant.name);
+                        if let Option::Some(ref disc) = variant.discriminant {
+                            visitor.visit_literal(disc);
+                        }
+                    };
+                    i = i + 1usize;
                 }
             }
         }
         BridgeItem::Union(ref u) => {
-            for attr in u.attrs.iter() {
-                visitor.visit_attribute(attr);
-            };
+            {
+                let mut i: usize = 0;
+                while i < u.attrs.len() {
+                    if let Option::Some(attr) = u.attrs.get(i) {
+                        visitor.visit_attribute(attr);
+                    };
+                    i = i + 1usize;
+                }
+            }
             visitor.visit_ident(&u.name);
-            for field in u.fields.iter() {
-                visitor.visit_ident(&field.name);
-                visitor.visit_type(&field.ty);
+            {
+                let mut i: usize = 0;
+                while i < u.fields.len() {
+                    if let Option::Some(field) = u.fields.get(i) {
+                        visitor.visit_ident(&field.name);
+                        visitor.visit_type(&field.ty);
+                    };
+                    i = i + 1usize;
+                }
             }
         }
         BridgeItem::Callback(ref cb) => {
             visitor.visit_ident(&cb.name);
-            for param in cb.params.iter() {
-                visitor.visit_type(param);
-            };
+            {
+                let mut i: usize = 0;
+                while i < cb.params.len() {
+                    if let Option::Some(param) = cb.params.get(i) {
+                        visitor.visit_type(param);
+                    };
+                    i = i + 1usize;
+                }
+            }
             if let Option::Some(ref ret) = cb.return_type {
                 visitor.visit_type(ret);
             }
@@ -1372,7 +1772,7 @@ fn test_visitor_can_be_implemented() {
     }
 
     impl Visitor for CountExpressions {
-        fn visit_expr(mut self, expr: &Expr) {
+        fn visit_expr(self: &mut Self, expr: &Expr) {
             self.count += 1
             walk_expr(self, expr)
         }
@@ -1381,9 +1781,9 @@ fn test_visitor_can_be_implemented() {
     // Create a simple expression and count it
     let expr = Expr::new(
         ExprKind::Binary {
-            op: crate.compiler.ast.expr.BinOp::Add,
-            left: Box::new(Expr::new(ExprKind::Literal(Literal::int(1, Span::dummy())), Span::dummy())),
-            right: Box::new(Expr::new(ExprKind::Literal(Literal::int(2, Span::dummy())), Span::dummy())),
+            op: BinOp::Add,
+            left: Box::new(Expr::new(ExprKind::Literal(Literal::int(1, Option::None, Span::dummy())), Span::dummy())),
+            right: Box::new(Expr::new(ExprKind::Literal(Literal::int(2, Option::None, Span::dummy())), Span::dummy())),
         },
         Span::dummy(),
     );

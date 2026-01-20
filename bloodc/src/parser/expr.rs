@@ -1670,6 +1670,11 @@ impl<'src> Parser<'src> {
             TokenKind::Crate | TokenKind::Super | TokenKind::SelfUpper | TokenKind::TypeIdent
         );
 
+        // Track whether we've seen `::` as separator - once used, `.` should NOT continue path
+        // e.g., `Option::Some.method()` - the `.method()` is NOT part of the path
+        // e.g., `std.compiler.ast` - `.` IS part of the path (no `::` used)
+        let mut used_double_colon = false;
+
         loop {
             // Allow contextual keywords as path segments
             // Also allow crate and super as path roots
@@ -1706,12 +1711,14 @@ impl<'src> Parser<'src> {
             // Check for path continuation
             // `::` is always valid for path continuation (e.g., Option::Some)
             if self.try_consume(TokenKind::ColonColon) {
+                used_double_colon = true;
                 continue;
             }
 
             // `.` is only valid for path roots (crate, super, Self, TypeIdent)
+            // AND only if we haven't used `::` yet (once `::` is used, `.` is postfix)
             // For lowercase identifiers, `.` should be field/method access (postfix)
-            if is_path_root && self.try_consume(TokenKind::Dot) {
+            if is_path_root && !used_double_colon && self.try_consume(TokenKind::Dot) {
                 continue;
             }
 
@@ -1719,7 +1726,8 @@ impl<'src> Parser<'src> {
             // 1. `.ident::` which unambiguously indicates a module path (e.g., std.cmp::min)
             // 2. `.TypeIdent` since TypeIdents (uppercase) are never field names (e.g., std.option.Option)
             // This distinguishes module paths from field access - field names are always lowercase.
-            if !is_path_root && self.check(TokenKind::Dot) {
+            // NOTE: Once `::` has been used, `.` should NOT continue path (it's postfix then)
+            if !is_path_root && !used_double_colon && self.check(TokenKind::Dot) {
                 let next_is_type_ident = self.next.kind == TokenKind::TypeIdent;
                 let next_is_ident = matches!(
                     self.next.kind,
