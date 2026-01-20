@@ -1,0 +1,31 @@
+//! The Drop trait for running destructors.
+//!
+//! When a value is no longer needed, Blood will call `drop` on it. This trait
+//! allows types to run custom cleanup code when values go out of scope.
+//!
+//! ## Example
+//!
+//! ```blood
+//! struct FileHandle {
+//!     fd: i32,
+//! }
+//!
+//! impl Drop for FileHandle {
+//!     fn drop(&mut self) {
+//!         // Close the file descriptor
+//!         close(self.fd);
+//!     }
+//! }
+//! ```
+
+/// A trait for types that need custom cleanup when they go out of scope.
+///
+/// The compiler will automatically call `drop` when a value is no longer needed.
+/// This is Blood's equivalent of a destructor.
+pub trait Drop {
+    /// Executes the destructor for this type.
+    ///
+    /// This method is called implicitly when a value goes out of scope.
+    /// It should not be called explicitly in most cases.
+    fn drop(&mut self);
+}

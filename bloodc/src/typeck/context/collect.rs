@@ -1826,9 +1826,15 @@ impl<'a> TypeContext<'a> {
                         ));
                     }
                     let trait_name = self.symbol_to_string(path.segments[0].name.node);
-                    // Look up the trait by name
-                    match self.resolver.lookup(&trait_name) {
-                        Some(Binding::Def(def_id)) => {
+                    // Look up the trait by name in both value and type namespaces
+                    // (traits can be imported into either namespace depending on how they were imported)
+                    let maybe_def_id = match self.resolver.lookup(&trait_name) {
+                        Some(Binding::Def(def_id)) => Some(def_id),
+                        _ => self.resolver.lookup_type(&trait_name),
+                    };
+
+                    match maybe_def_id {
+                        Some(def_id) => {
                             // Verify this is actually a trait
                             if let Some(info) = self.resolver.def_info.get(&def_id) {
                                 if matches!(info.kind, hir::DefKind::Trait) {
@@ -1846,7 +1852,7 @@ impl<'a> TypeContext<'a> {
                                 ));
                             }
                         }
-                        _ => {
+                        None => {
                             return Err(TypeError::new(
                                 TypeErrorKind::TraitNotFound { name: trait_name },
                                 trait_ty.span,
@@ -2555,6 +2561,13 @@ impl<'a> TypeContext<'a> {
 
                 // Track the starting DefId counter
                 let def_id_start = self.resolver.current_def_id_counter();
+
+                // Process imports first so types are available for declarations
+                for import in &module_ast.imports {
+                    if let Err(e) = self.resolve_import(import) {
+                        self.errors.push(e);
+                    }
+                }
 
                 for decl in &module_ast.declarations {
                     if let Err(e) = self.collect_declaration(decl) {

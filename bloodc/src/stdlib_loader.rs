@@ -1331,31 +1331,8 @@ impl StdlibLoader {
                     process_import(import, ctx, self);
                 }
             }
-            if verbose {
-                if module_path == "std.collections" {
-                    // Debug: show all declaration types in the collections module
-                    eprintln!("      std.collections use_count={}, declarations:", use_count);
-                    for (i, decl) in module.ast.declarations.iter().enumerate() {
-                        match decl {
-                            ast::Declaration::Use(imp) => {
-                                let vis = match imp {
-                                    ast::Import::Simple { visibility, .. } => visibility,
-                                    ast::Import::Group { visibility, .. } => visibility,
-                                    ast::Import::Glob { visibility, .. } => visibility,
-                                };
-                                eprintln!("        [{}] Use: visibility={:?}", i, vis);
-                            }
-                            ast::Declaration::Module(_) => eprintln!("        [{}] Module", i),
-                            ast::Declaration::Trait(_) => eprintln!("        [{}] Trait", i),
-                            ast::Declaration::Impl(_) => eprintln!("        [{}] Impl", i),
-                            ast::Declaration::Struct(_) => eprintln!("        [{}] Struct", i),
-                            ast::Declaration::Enum(_) => eprintln!("        [{}] Enum", i),
-                            _ => eprintln!("        [{}] Other", i),
-                        }
-                    }
-                } else if use_count > 0 {
-                    eprintln!("      Found {} Declaration::Use items", use_count);
-                }
+            if verbose && use_count > 0 {
+                eprintln!("      Found {} Declaration::Use items", use_count);
             }
         }
 
@@ -1620,7 +1597,6 @@ impl StdlibLoader {
         }
 
         let first_segment = resolve_symbol(path.segments[0].node);
-        let verbose = std::env::var("BLOOD_STDLIB_VERBOSE").is_ok();
 
         // Determine the starting module and track the current module path
         let (mut current_id, mut current_module_path) = match first_segment.as_str() {
@@ -1635,9 +1611,6 @@ impl StdlibLoader {
                 // Try submodule first: base_module_path.first_segment
                 let submodule_path = format!("{}.{}", base_module_path, first_segment);
                 if let Some(submodule_id) = self.modules.get(&submodule_path).and_then(|m| m.def_id) {
-                    if verbose && base_module_path == "std.collections" {
-                        eprintln!("      resolve_import_path_relative: '{}' is submodule at '{}'", first_segment, submodule_path);
-                    }
                     (submodule_id, submodule_path)
                 } else {
                     // Fall back to item lookup in base module
@@ -1649,10 +1622,6 @@ impl StdlibLoader {
                         // Otherwise, item must be a container we can look into
                         (item_id, base_module_path.to_string())
                     } else {
-                        if verbose && base_module_path == "std.collections" {
-                            eprintln!("      resolve_import_path_relative: FAILED to find '{}' as submodule '{}' or item in '{}'",
-                                first_segment, submodule_path, base_module_path);
-                        }
                         return None;
                     }
                 }
@@ -1668,12 +1637,7 @@ impl StdlibLoader {
 
             if is_last {
                 // Last segment - should be an item in the current module
-                let result = self.lookup_in_module(ctx, current_id, &segment_name);
-                if verbose && base_module_path == "std.collections" {
-                    eprintln!("      resolve_import_path_relative: looking up item '{}' in module '{}' -> {:?}",
-                        segment_name, current_module_path, result.map(|id| id.index()));
-                }
-                return result;
+                return self.lookup_in_module(ctx, current_id, &segment_name);
             } else {
                 // Intermediate segment - should be a submodule
                 let submodule_path = format!("{}.{}", current_module_path, segment_name);
