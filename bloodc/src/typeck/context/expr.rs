@@ -4693,7 +4693,14 @@ impl<'a> TypeContext<'a> {
             if path.segments.len() == 1 {
                 let name = self.symbol_to_string(path.segments[0].name.node);
 
-                if let Some(Binding::Def(def_id)) = self.resolver.lookup(&name) {
+                // Look up the struct by name in both VALUE and TYPE namespaces
+                // Structs can be imported into either namespace depending on how they were imported
+                let maybe_def_id = match self.resolver.lookup(&name) {
+                    Some(Binding::Def(def_id)) => Some(def_id),
+                    _ => self.resolver.lookup_type(&name),
+                };
+
+                if let Some(def_id) = maybe_def_id {
                     if let Some(struct_info) = self.struct_defs.get(&def_id) {
                         let result_ty = Type::adt(def_id, Vec::new());
                         (def_id, struct_info.clone(), result_ty)
