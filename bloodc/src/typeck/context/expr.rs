@@ -1074,7 +1074,19 @@ impl<'a> TypeContext<'a> {
 
         // Extract concrete type args from receiver to build substitution
         if !impl_generics.is_empty() {
-            if let TypeKind::Adt { args: receiver_args, .. } = receiver_expr.ty.kind() {
+            // Handle both T and &T receivers by looking inside references
+            let receiver_args = match receiver_expr.ty.kind() {
+                TypeKind::Adt { args, .. } => Some(args.clone()),
+                TypeKind::Ref { inner, .. } => {
+                    if let TypeKind::Adt { args, .. } = inner.kind() {
+                        Some(args.clone())
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+            if let Some(receiver_args) = receiver_args {
                 for (tyvar, concrete_ty) in impl_generics.iter().zip(receiver_args.iter()) {
                     substitution.insert(*tyvar, concrete_ty.clone());
                 }
@@ -1525,6 +1537,18 @@ impl<'a> TypeContext<'a> {
                     TypeKind::Array { .. } => Some(BuiltinMethodType::Array),
                     TypeKind::Range { inclusive: false, .. } => Some(BuiltinMethodType::Range),
                     TypeKind::Range { inclusive: true, .. } => Some(BuiltinMethodType::RangeInclusive),
+                    // Handle references to ADT types like &Box<T>, &Option<T>, &Vec<T>
+                    TypeKind::Adt { def_id, .. } => {
+                        if Some(*def_id) == self.option_def_id {
+                            Some(BuiltinMethodType::Option)
+                        } else if Some(*def_id) == self.vec_def_id {
+                            Some(BuiltinMethodType::Vec)
+                        } else if Some(*def_id) == self.box_def_id {
+                            Some(BuiltinMethodType::Box)
+                        } else {
+                            None
+                        }
+                    }
                     _ => None,
                 }
             }
@@ -1581,8 +1605,19 @@ impl<'a> TypeContext<'a> {
                             }
                         }
                         BuiltinMethodType::Box => {
-                            // Extract the type argument from Box<T>
-                            if let TypeKind::Adt { args, .. } = ty.kind() {
+                            // Extract the type argument from Box<T> or &Box<T>
+                            let box_args = match ty.kind() {
+                                TypeKind::Adt { args, .. } => Some(args.clone()),
+                                TypeKind::Ref { inner, .. } => {
+                                    if let TypeKind::Adt { args, .. } = inner.kind() {
+                                        Some(args.clone())
+                                    } else {
+                                        None
+                                    }
+                                }
+                                _ => None,
+                            };
+                            if let Some(args) = box_args {
                                 if !args.is_empty() {
                                     let inner_ty = args[0].clone();
                                     // For Box<T>.as_ref(), return type is &T

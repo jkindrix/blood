@@ -369,7 +369,17 @@ impl<'src> Parser<'src> {
 
             // Check for pattern (name: pattern) or shorthand (name)
             let pattern = if self.try_consume(TokenKind::Colon) {
-                Some(self.parse_pattern())
+                // Parse the pattern after colon
+                let mut pat = self.parse_pattern();
+                // If ref/mut was specified before the field name, propagate it to the pattern
+                // e.g., `ref body: block` should make block bind by reference
+                if by_ref || mutable {
+                    if let PatternKind::Ident { by_ref: ref mut pat_by_ref, mutable: ref mut pat_mutable, .. } = &mut pat.kind {
+                        *pat_by_ref = *pat_by_ref || by_ref;
+                        *pat_mutable = *pat_mutable || mutable;
+                    }
+                }
+                Some(pat)
             } else if by_ref || mutable {
                 // Shorthand with ref/mut: `ref name` => `name: ref name`
                 Some(Pattern {
