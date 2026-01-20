@@ -10,6 +10,24 @@
 /// 2. **Occurs check**: Prevents infinite types
 /// 3. **Effect unification**: Supports row polymorphism for effects
 /// 4. **Error recovery**: Error types unify with anything
+///
+/// # Implemented Features (Aligned with Rust Reference Compiler)
+///
+/// - **Unit type equivalence**: `unit` == `()`
+/// - **Array-to-slice coercion**: `[T; N]` coerces to `[T]`
+/// - **Closure-function unification**: Closures unify with compatible fn types
+/// - **Ownership qualifier coercion**: `linear T` -> `affine T`, plain -> qualified
+/// - **Record row polymorphism**: Full row variable binding and unification
+/// - **Forall alpha-renaming**: Proper instantiation with fresh variables
+///
+/// # Known Limitations
+///
+/// - **Effect type arguments**: Effect def_id matching only; type args not fully checked
+///   (See `effect_in_row` function for details)
+/// - **Performance**: Uses string-based field names (O(n) lookup) vs interned symbols
+/// - **Iterators**: Uses explicit while loops; Blood lacks iterator adapters
+///
+/// See COMPILER_NOTES.md for detailed design documentation.
 
 use std.collections::{HashMap};
 use std.compiler.parser::{Span};
@@ -295,6 +313,26 @@ impl Unifier {
             (TypeKind::Error, _) => Ok(()),
             (_, TypeKind::Error) => Ok(()),
 
+            // Unit type equivalence: Primitive(Unit) == Tuple([])
+            // The unit type can be represented as either:
+            // - PrimitiveTy::Unit (from parsing `unit` keyword)
+            // - Tuple([]) (from parsing `()` or Type::unit())
+            // These should unify successfully.
+            (TypeKind::Primitive(PrimitiveTy::Unit), TypeKind::Tuple(ts)) => {
+                if ts.len() == 0 {
+                    Ok(())
+                } else {
+                    Err(TypeError::mismatch(t1.clone(), t2.clone(), span))
+                }
+            }
+            (TypeKind::Tuple(ts), TypeKind::Primitive(PrimitiveTy::Unit)) => {
+                if ts.len() == 0 {
+                    Ok(())
+                } else {
+                    Err(TypeError::mismatch(t1.clone(), t2.clone(), span))
+                }
+            }
+
             // Tuples with same length
             (TypeKind::Tuple(ts1), TypeKind::Tuple(ts2)) => {
                 if ts1.len() != ts2.len() {
@@ -318,6 +356,16 @@ impl Unifier {
 
             // Slices
             (TypeKind::Slice { element: e1 }, TypeKind::Slice { element: e2 }) => {
+                self.unify(e1, e2, span);
+            }
+
+            // Array to slice coercion: [T; N] coerces to [T]
+            // This allows passing arrays where slices are expected.
+            // The element types must unify, but the size is discarded.
+            (TypeKind::Array { element: e1, size: _ }, TypeKind::Slice { element: e2 }) => {
+                self.unify(e1, e2, span);
+            }
+            (TypeKind::Slice { element: e1 }, TypeKind::Array { element: e2, size: _ }) => {
                 self.unify(e1, e2, span);
             }
 
@@ -374,6 +422,37 @@ impl Unifier {
                 self.unify_effects(e1, e2, span);
             }
 
+            // Closure can unify with compatible function type
+            // This allows passing closures where function types are expected and vice versa.
+            // The parameter count and types must match, and return types must unify.
+            // Note: captures are ignored when unifying with a function type.
+            (TypeKind::Closure { params: p1, ret: r1, effect: e1, captures: _ },
+             TypeKind::Fn { params: p2, ret: r2, effect: e2 }) => {
+                if p1.len() != p2.len() {
+                    return Err(TypeError::mismatch(t1.clone(), t2.clone(), span));
+                };
+                let mut i: usize = 0;
+                while i < p1.len() {
+                    self.unify(&p1[i], &p2[i], span)?;
+                    i = i + 1;
+                };
+                self.unify(r1, r2, span)?;
+                self.unify_effects(e1, e2, span);
+            }
+            (TypeKind::Fn { params: p1, ret: r1, effect: e1 },
+             TypeKind::Closure { params: p2, ret: r2, effect: e2, captures: _ }) => {
+                if p1.len() != p2.len() {
+                    return Err(TypeError::mismatch(t1.clone(), t2.clone(), span));
+                };
+                let mut i: usize = 0;
+                while i < p1.len() {
+                    self.unify(&p1[i], &p2[i], span)?;
+                    i = i + 1;
+                };
+                self.unify(r1, r2, span)?;
+                self.unify_effects(e1, e2, span);
+            }
+
             // ADTs with same def_id and unifiable type args
             (TypeKind::Adt { def_id: d1, type_args: a1 }, TypeKind::Adt { def_id: d2, type_args: a2 }) => {
                 if !d1.eq(d2) {
@@ -407,36 +486,76 @@ impl Unifier {
             }
 
             // Record types (row polymorphism)
+            // Row polymorphism allows records with extra fields to match:
+            // - {x: i32, y: bool} matches {x: i32, y: bool}
+            // - {x: i32 | R} matches {x: i32, y: bool} (R binds to {y: bool})
             (TypeKind::Record { fields: f1, row_var: r1 }, TypeKind::Record { fields: f2, row_var: r2 }) => {
-                // Simple structural check for now
-                // Full row polymorphism would need more sophisticated handling
-                if f1.len() != f2.len() {
-                    return Err(TypeError::mismatch(t1.clone(), t2.clone(), span));
-                };
-                let mut i: usize = 0;
-                while i < f1.len() {
-                    if f1[i].name != f2[i].name {
-                        return Err(TypeError::mismatch(t1.clone(), t2.clone(), span));
-                    };
-                    self.unify(&f1[i].ty, &f2[i].ty, span)?;
-                    i = i + 1;
-                };
-                // Row variables would need unification here
-                match (r1, r2) {
-                    (None, None) => Ok(()),
-                    (Some(_), Some(_)) => Ok(()), // Simplified: assume compatible
-                    (Some(_), None) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-                    (None, Some(_)) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-                }
+                self.unify_records(f1, r1, f2, r2, span);
             }
 
             // Forall types (parametric polymorphism)
+            // Two forall types unify if they have the same number of params
+            // and their bodies unify under alpha-renaming.
             (TypeKind::Forall { params: p1, body: b1 }, TypeKind::Forall { params: p2, body: b2 }) => {
                 if p1.len() != p2.len() {
                     return Err(TypeError::mismatch(t1.clone(), t2.clone(), span));
                 };
-                // Would need alpha-renaming for proper comparison
-                self.unify(b1, b2, span);
+                // For alpha-equivalence, we instantiate both with the same fresh variables
+                // and check if the bodies unify.
+                let fresh_vars = self.fresh_vars(p1.len() as u32);
+
+                // Build substitution maps
+                let mut subst1: HashMap<u32, Type> = HashMap::new();
+                let mut i: usize = 0;
+                while i < p1.len() {
+                    subst1.insert(p1[i].id(), fresh_vars[i].clone());
+                    i = i + 1;
+                };
+
+                let mut subst2: HashMap<u32, Type> = HashMap::new();
+                i = 0;
+                while i < p2.len() {
+                    subst2.insert(p2[i].id(), fresh_vars[i].clone());
+                    i = i + 1;
+                };
+
+                // Substitute and unify
+                let b1_inst = self.substitute_forall_params(b1, &subst1);
+                let b2_inst = self.substitute_forall_params(b2, &subst2);
+                self.unify(&b1_inst, &b2_inst, span);
+            }
+
+            // When unifying a forall with a non-forall on the right, instantiate the forall.
+            // This handles cases like: forall<T>. T -> T  vs  i32 -> i32
+            (TypeKind::Forall { params, body }, _) => {
+                // Instantiate with fresh inference variables
+                let fresh_vars = self.fresh_vars(params.len() as u32);
+
+                let mut subst: HashMap<u32, Type> = HashMap::new();
+                let mut i: usize = 0;
+                while i < params.len() {
+                    subst.insert(params[i].id(), fresh_vars[i].clone());
+                    i = i + 1;
+                };
+
+                let body_inst = self.substitute_forall_params(body, &subst);
+                self.unify(&body_inst, &t2, span);
+            }
+
+            // When unifying a non-forall with a forall on the right
+            (_, TypeKind::Forall { params, body }) => {
+                // Instantiate with fresh inference variables
+                let fresh_vars = self.fresh_vars(params.len() as u32);
+
+                let mut subst: HashMap<u32, Type> = HashMap::new();
+                let mut i: usize = 0;
+                while i < params.len() {
+                    subst.insert(params[i].id(), fresh_vars[i].clone());
+                    i = i + 1;
+                };
+
+                let body_inst = self.substitute_forall_params(body, &subst);
+                self.unify(&t1, &body_inst, span);
             }
 
             // Type variable on left - bind it
@@ -466,12 +585,46 @@ impl Unifier {
                 }
             }
 
-            // Ownership-qualified types
+            // Ownership-qualified types with same qualifier
             (TypeKind::Ownership { inner: i1, ownership: o1 }, TypeKind::Ownership { inner: i2, ownership: o2 }) => {
-                if !self.ownership_eq(o1, o2) {
-                    return Err(TypeError::mismatch(t1.clone(), t2.clone(), span));
+                // Same qualifier - just unify inner types
+                if self.ownership_eq(o1, o2) {
+                    return self.unify(i1, i2, span);
                 };
-                self.unify(i1, i2, span);
+                // Coercion: linear T -> affine T
+                // Linear is stricter than affine, so we can relax linear to affine.
+                // (Linear: must use exactly once, Affine: can use at most once)
+                match (o1, o2) {
+                    (Ownership::Affine, Ownership::Linear) => self.unify(i1, i2, span),
+                    // No other coercions between ownership qualifiers
+                    (Ownership::Linear, Ownership::Affine) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
+                    (Ownership::Linear, Ownership::Default) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
+                    (Ownership::Affine, Ownership::Default) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
+                    (Ownership::Default, Ownership::Linear) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
+                    (Ownership::Default, Ownership::Affine) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
+                    // Same qualifier cases already handled above
+                    (Ownership::Linear, Ownership::Linear) => self.unify(i1, i2, span),
+                    (Ownership::Affine, Ownership::Affine) => self.unify(i1, i2, span),
+                    (Ownership::Default, Ownership::Default) => self.unify(i1, i2, span),
+                }
+            }
+
+            // Coercion: T -> linear T or T -> affine T
+            // A plain type can be promoted to an ownership-qualified type.
+            // This allows passing unqualified types where ownership-qualified types are expected.
+            (TypeKind::Ownership { inner, ownership: _ }, _) => {
+                // Check that the found type is NOT an ownership type
+                match &t2.kind {
+                    TypeKind::Ownership { inner: _, ownership: _ } => {
+                        // Both are ownership types but with different qualifiers
+                        // This case is handled above
+                        Err(TypeError::mismatch(t1.clone(), t2.clone(), span))
+                    }
+                    _ => {
+                        // Plain type found, ownership expected - promote
+                        self.unify(inner, &t2, span)
+                    }
+                }
             }
 
             // Explicit non-matching cases
@@ -487,7 +640,7 @@ impl Unifier {
             (TypeKind::Primitive(_), TypeKind::Range { element: _, inclusive: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Primitive(_), TypeKind::DynTrait { trait_id: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Primitive(_), TypeKind::Record { fields: _, row_var: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Primitive(_), TypeKind::Forall { params: _, body: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
+            // Primitive-Forall: handled by Forall instantiation above
             (TypeKind::Primitive(_), TypeKind::Param(_)) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Primitive(_), TypeKind::Ownership { inner: _, ownership: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
 
@@ -502,13 +655,13 @@ impl Unifier {
             (TypeKind::Tuple(_), TypeKind::Range { element: _, inclusive: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Tuple(_), TypeKind::DynTrait { trait_id: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Tuple(_), TypeKind::Record { fields: _, row_var: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Tuple(_), TypeKind::Forall { params: _, body: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
+            // Tuple-Forall: handled by Forall instantiation above
             (TypeKind::Tuple(_), TypeKind::Param(_)) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Tuple(_), TypeKind::Ownership { inner: _, ownership: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
 
             (TypeKind::Array { element: _, size: _ }, TypeKind::Primitive(_)) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Array { element: _, size: _ }, TypeKind::Tuple(_)) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Array { element: _, size: _ }, TypeKind::Slice { element: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
+            // Array-Slice coercion is now handled above - removed error case
             (TypeKind::Array { element: _, size: _ }, TypeKind::Ref { inner: _, mutability: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Array { element: _, size: _ }, TypeKind::Ptr { inner: _, mutability: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Array { element: _, size: _ }, TypeKind::Fn { params: _, ret: _, effect: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
@@ -517,13 +670,13 @@ impl Unifier {
             (TypeKind::Array { element: _, size: _ }, TypeKind::Range { element: _, inclusive: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Array { element: _, size: _ }, TypeKind::DynTrait { trait_id: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Array { element: _, size: _ }, TypeKind::Record { fields: _, row_var: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Array { element: _, size: _ }, TypeKind::Forall { params: _, body: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
+            // Array-Forall: handled by Forall instantiation above
             (TypeKind::Array { element: _, size: _ }, TypeKind::Param(_)) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Array { element: _, size: _ }, TypeKind::Ownership { inner: _, ownership: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
 
             (TypeKind::Slice { element: _ }, TypeKind::Primitive(_)) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Slice { element: _ }, TypeKind::Tuple(_)) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Slice { element: _ }, TypeKind::Array { element: _, size: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
+            // Slice-Array coercion is now handled above - removed error case
             (TypeKind::Slice { element: _ }, TypeKind::Ref { inner: _, mutability: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Slice { element: _ }, TypeKind::Ptr { inner: _, mutability: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Slice { element: _ }, TypeKind::Fn { params: _, ret: _, effect: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
@@ -532,7 +685,7 @@ impl Unifier {
             (TypeKind::Slice { element: _ }, TypeKind::Range { element: _, inclusive: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Slice { element: _ }, TypeKind::DynTrait { trait_id: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Slice { element: _ }, TypeKind::Record { fields: _, row_var: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Slice { element: _ }, TypeKind::Forall { params: _, body: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
+            // Slice-Forall: handled by Forall instantiation above
             (TypeKind::Slice { element: _ }, TypeKind::Param(_)) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Slice { element: _ }, TypeKind::Ownership { inner: _, ownership: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
 
@@ -547,7 +700,7 @@ impl Unifier {
             (TypeKind::Ref { inner: _, mutability: _ }, TypeKind::Range { element: _, inclusive: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Ref { inner: _, mutability: _ }, TypeKind::DynTrait { trait_id: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Ref { inner: _, mutability: _ }, TypeKind::Record { fields: _, row_var: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Ref { inner: _, mutability: _ }, TypeKind::Forall { params: _, body: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
+            // Ref-Forall: handled by Forall instantiation above
             (TypeKind::Ref { inner: _, mutability: _ }, TypeKind::Param(_)) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Ref { inner: _, mutability: _ }, TypeKind::Ownership { inner: _, ownership: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
 
@@ -562,7 +715,7 @@ impl Unifier {
             (TypeKind::Ptr { inner: _, mutability: _ }, TypeKind::Range { element: _, inclusive: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Ptr { inner: _, mutability: _ }, TypeKind::DynTrait { trait_id: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Ptr { inner: _, mutability: _ }, TypeKind::Record { fields: _, row_var: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Ptr { inner: _, mutability: _ }, TypeKind::Forall { params: _, body: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
+            // Ptr-Forall: handled by Forall instantiation above
             (TypeKind::Ptr { inner: _, mutability: _ }, TypeKind::Param(_)) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Ptr { inner: _, mutability: _ }, TypeKind::Ownership { inner: _, ownership: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
 
@@ -572,12 +725,12 @@ impl Unifier {
             (TypeKind::Fn { params: _, ret: _, effect: _ }, TypeKind::Slice { element: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Fn { params: _, ret: _, effect: _ }, TypeKind::Ref { inner: _, mutability: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Fn { params: _, ret: _, effect: _ }, TypeKind::Ptr { inner: _, mutability: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Fn { params: _, ret: _, effect: _ }, TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
+            // Fn-Closure unification is now handled above - removed error case
             (TypeKind::Fn { params: _, ret: _, effect: _ }, TypeKind::Adt { def_id: _, type_args: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Fn { params: _, ret: _, effect: _ }, TypeKind::Range { element: _, inclusive: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Fn { params: _, ret: _, effect: _ }, TypeKind::DynTrait { trait_id: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Fn { params: _, ret: _, effect: _ }, TypeKind::Record { fields: _, row_var: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Fn { params: _, ret: _, effect: _ }, TypeKind::Forall { params: _, body: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
+            // Fn-Forall: handled by Forall instantiation above
             (TypeKind::Fn { params: _, ret: _, effect: _ }, TypeKind::Param(_)) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Fn { params: _, ret: _, effect: _ }, TypeKind::Ownership { inner: _, ownership: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
 
@@ -587,12 +740,12 @@ impl Unifier {
             (TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }, TypeKind::Slice { element: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }, TypeKind::Ref { inner: _, mutability: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }, TypeKind::Ptr { inner: _, mutability: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }, TypeKind::Fn { params: _, ret: _, effect: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
+            // Closure-Fn unification is now handled above - removed error case
             (TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }, TypeKind::Adt { def_id: _, type_args: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }, TypeKind::Range { element: _, inclusive: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }, TypeKind::DynTrait { trait_id: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }, TypeKind::Record { fields: _, row_var: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }, TypeKind::Forall { params: _, body: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
+            // Closure-Forall: handled by Forall instantiation above
             (TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }, TypeKind::Param(_)) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }, TypeKind::Ownership { inner: _, ownership: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
 
@@ -607,7 +760,7 @@ impl Unifier {
             (TypeKind::Adt { def_id: _, type_args: _ }, TypeKind::Range { element: _, inclusive: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Adt { def_id: _, type_args: _ }, TypeKind::DynTrait { trait_id: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Adt { def_id: _, type_args: _ }, TypeKind::Record { fields: _, row_var: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Adt { def_id: _, type_args: _ }, TypeKind::Forall { params: _, body: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
+            // Adt-Forall: handled by Forall instantiation above
             (TypeKind::Adt { def_id: _, type_args: _ }, TypeKind::Param(_)) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Adt { def_id: _, type_args: _ }, TypeKind::Ownership { inner: _, ownership: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
 
@@ -622,7 +775,7 @@ impl Unifier {
             (TypeKind::Range { element: _, inclusive: _ }, TypeKind::Adt { def_id: _, type_args: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Range { element: _, inclusive: _ }, TypeKind::DynTrait { trait_id: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Range { element: _, inclusive: _ }, TypeKind::Record { fields: _, row_var: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Range { element: _, inclusive: _ }, TypeKind::Forall { params: _, body: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
+            // Range-Forall: handled by Forall instantiation above
             (TypeKind::Range { element: _, inclusive: _ }, TypeKind::Param(_)) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Range { element: _, inclusive: _ }, TypeKind::Ownership { inner: _, ownership: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
 
@@ -637,7 +790,7 @@ impl Unifier {
             (TypeKind::DynTrait { trait_id: _ }, TypeKind::Adt { def_id: _, type_args: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::DynTrait { trait_id: _ }, TypeKind::Range { element: _, inclusive: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::DynTrait { trait_id: _ }, TypeKind::Record { fields: _, row_var: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::DynTrait { trait_id: _ }, TypeKind::Forall { params: _, body: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
+            // DynTrait-Forall: handled by Forall instantiation above
             (TypeKind::DynTrait { trait_id: _ }, TypeKind::Param(_)) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::DynTrait { trait_id: _ }, TypeKind::Ownership { inner: _, ownership: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
 
@@ -652,24 +805,13 @@ impl Unifier {
             (TypeKind::Record { fields: _, row_var: _ }, TypeKind::Adt { def_id: _, type_args: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Record { fields: _, row_var: _ }, TypeKind::Range { element: _, inclusive: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Record { fields: _, row_var: _ }, TypeKind::DynTrait { trait_id: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Record { fields: _, row_var: _ }, TypeKind::Forall { params: _, body: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
+            // Record-Forall: handled by Forall instantiation above
             (TypeKind::Record { fields: _, row_var: _ }, TypeKind::Param(_)) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Record { fields: _, row_var: _ }, TypeKind::Ownership { inner: _, ownership: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
 
-            (TypeKind::Forall { params: _, body: _ }, TypeKind::Primitive(_)) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Forall { params: _, body: _ }, TypeKind::Tuple(_)) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Forall { params: _, body: _ }, TypeKind::Array { element: _, size: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Forall { params: _, body: _ }, TypeKind::Slice { element: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Forall { params: _, body: _ }, TypeKind::Ref { inner: _, mutability: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Forall { params: _, body: _ }, TypeKind::Ptr { inner: _, mutability: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Forall { params: _, body: _ }, TypeKind::Fn { params: _, ret: _, effect: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Forall { params: _, body: _ }, TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Forall { params: _, body: _ }, TypeKind::Adt { def_id: _, type_args: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Forall { params: _, body: _ }, TypeKind::Range { element: _, inclusive: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Forall { params: _, body: _ }, TypeKind::DynTrait { trait_id: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Forall { params: _, body: _ }, TypeKind::Record { fields: _, row_var: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Forall { params: _, body: _ }, TypeKind::Param(_)) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Forall { params: _, body: _ }, TypeKind::Ownership { inner: _, ownership: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
+            // Forall-* cases are now handled by the instantiation logic above.
+            // The catch-all cases (TypeKind::Forall { params, body }, _) and
+            // (_, TypeKind::Forall { params, body }) handle all Forall instantiation.
 
             (TypeKind::Param(_), TypeKind::Primitive(_)) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Param(_), TypeKind::Tuple(_)) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
@@ -683,23 +825,12 @@ impl Unifier {
             (TypeKind::Param(_), TypeKind::Range { element: _, inclusive: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Param(_), TypeKind::DynTrait { trait_id: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
             (TypeKind::Param(_), TypeKind::Record { fields: _, row_var: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Param(_), TypeKind::Forall { params: _, body: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
+            // Param-Forall: handled by Forall instantiation above
             (TypeKind::Param(_), TypeKind::Ownership { inner: _, ownership: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
 
-            (TypeKind::Ownership { inner: _, ownership: _ }, TypeKind::Primitive(_)) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Ownership { inner: _, ownership: _ }, TypeKind::Tuple(_)) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Ownership { inner: _, ownership: _ }, TypeKind::Array { element: _, size: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Ownership { inner: _, ownership: _ }, TypeKind::Slice { element: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Ownership { inner: _, ownership: _ }, TypeKind::Ref { inner: _, mutability: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Ownership { inner: _, ownership: _ }, TypeKind::Ptr { inner: _, mutability: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Ownership { inner: _, ownership: _ }, TypeKind::Fn { params: _, ret: _, effect: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Ownership { inner: _, ownership: _ }, TypeKind::Closure { params: _, ret: _, effect: _, captures: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Ownership { inner: _, ownership: _ }, TypeKind::Adt { def_id: _, type_args: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Ownership { inner: _, ownership: _ }, TypeKind::Range { element: _, inclusive: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Ownership { inner: _, ownership: _ }, TypeKind::DynTrait { trait_id: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Ownership { inner: _, ownership: _ }, TypeKind::Record { fields: _, row_var: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Ownership { inner: _, ownership: _ }, TypeKind::Forall { params: _, body: _ }) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
-            (TypeKind::Ownership { inner: _, ownership: _ }, TypeKind::Param(_)) => Err(TypeError::mismatch(t1.clone(), t2.clone(), span)),
+            // Ownership-* cases are now handled by the coercion logic above
+            // The coercion case (TypeKind::Ownership { inner, ownership: _ }, _) catches all
+            // remaining cases and either promotes plain types or returns a mismatch error.
         }
     }
 
@@ -878,6 +1009,329 @@ impl Unifier {
     }
 
     // --------------------------------------------------------
+    // Record Row Polymorphism
+    // --------------------------------------------------------
+
+    /// Unify two record types with row polymorphism.
+    ///
+    /// Row polymorphism allows records with extra fields to match:
+    /// - `{x: i32, y: bool}` matches `{x: i32, y: bool}`
+    /// - `{x: i32 | R}` matches `{x: i32, y: bool}` (R binds to `{y: bool}`)
+    fn unify_records(
+        &mut self,
+        fields1: &[RecordField],
+        row_var1: &Option<RecordRowVarId>,
+        fields2: &[RecordField],
+        row_var2: &Option<RecordRowVarId>,
+        span: Span,
+    ) -> Result<(), TypeError> {
+        // Build maps of field name -> (index, type) for both records
+        let mut map1: HashMap<String, (usize, Type)> = HashMap::new();
+        let mut i: usize = 0;
+        while i < fields1.len() {
+            map1.insert(fields1[i].name.clone(), (i, fields1[i].ty.clone()));
+            i = i + 1;
+        };
+
+        let mut map2: HashMap<String, (usize, Type)> = HashMap::new();
+        i = 0;
+        while i < fields2.len() {
+            map2.insert(fields2[i].name.clone(), (i, fields2[i].ty.clone()));
+            i = i + 1;
+        };
+
+        // Find common fields and unify their types
+        i = 0;
+        while i < fields1.len() {
+            let name = &fields1[i].name;
+            match map2.get(name) {
+                Some((_, ty2)) => {
+                    self.unify(&fields1[i].ty, ty2, span)?;
+                }
+                None => {
+                    // Field only in record 1 - handled below
+                }
+            };
+            i = i + 1;
+        };
+
+        // Find fields only in record 1
+        let mut only_in_1: [RecordField] = vec![];
+        i = 0;
+        while i < fields1.len() {
+            if !map2.contains_key(&fields1[i].name) {
+                only_in_1.push(fields1[i].clone());
+            };
+            i = i + 1;
+        };
+
+        // Find fields only in record 2
+        let mut only_in_2: [RecordField] = vec![];
+        i = 0;
+        while i < fields2.len() {
+            if !map1.contains_key(&fields2[i].name) {
+                only_in_2.push(fields2[i].clone());
+            };
+            i = i + 1;
+        };
+
+        // Handle row polymorphism based on the 4 cases
+        let has_extra_1 = only_in_1.len() > 0;
+        let has_extra_2 = only_in_2.len() > 0;
+
+        match (row_var1, row_var2) {
+            // Both closed (no row vars): must have exact same fields
+            (None, None) => {
+                if has_extra_1 || has_extra_2 {
+                    // Field mismatch - closed records must have identical fields
+                    Err(TypeError::mismatch(
+                        Type::new(TypeKind::Record {
+                            fields: fields1.to_vec(),
+                            row_var: row_var1.clone(),
+                        }),
+                        Type::new(TypeKind::Record {
+                            fields: fields2.to_vec(),
+                            row_var: row_var2.clone(),
+                        }),
+                        span,
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
+
+            // Record 1 is open - bind its row var to record 2's extra fields
+            (Some(rv1), None) => {
+                if has_extra_1 {
+                    // Record 2 is missing fields that record 1 has
+                    return Err(TypeError::mismatch(
+                        Type::new(TypeKind::Record {
+                            fields: fields1.to_vec(),
+                            row_var: row_var1.clone(),
+                        }),
+                        Type::new(TypeKind::Record {
+                            fields: fields2.to_vec(),
+                            row_var: row_var2.clone(),
+                        }),
+                        span,
+                    ));
+                };
+                // Bind rv1 to the extra fields from record 2
+                self.row_substitutions.insert(rv1.id(), (only_in_2, None));
+                Ok(())
+            }
+
+            // Record 2 is open - bind its row var to record 1's extra fields
+            (None, Some(rv2)) => {
+                if has_extra_2 {
+                    // Record 1 is missing fields that record 2 has
+                    return Err(TypeError::mismatch(
+                        Type::new(TypeKind::Record {
+                            fields: fields1.to_vec(),
+                            row_var: row_var1.clone(),
+                        }),
+                        Type::new(TypeKind::Record {
+                            fields: fields2.to_vec(),
+                            row_var: row_var2.clone(),
+                        }),
+                        span,
+                    ));
+                };
+                // Bind rv2 to the extra fields from record 1
+                self.row_substitutions.insert(rv2.id(), (only_in_1, None));
+                Ok(())
+            }
+
+            // Both open - create a fresh row variable for the union
+            (Some(rv1), Some(rv2)) => {
+                // Combine extra fields from both records
+                let mut combined: [RecordField] = only_in_1.clone();
+                i = 0;
+                while i < only_in_2.len() {
+                    combined.push(only_in_2[i].clone());
+                    i = i + 1;
+                };
+
+                if combined.len() == 0 {
+                    // Same row variables can unify
+                    if rv1.id() == rv2.id() {
+                        return Ok(());
+                    };
+                    // Bind rv1 to rv2
+                    self.row_substitutions.insert(rv1.id(), (vec![], Some(rv2.clone())));
+                } else {
+                    // Create a fresh row variable for the remainder
+                    let fresh_rv = self.fresh_row_var();
+                    self.row_substitutions.insert(rv1.id(), (combined.clone(), Some(fresh_rv.clone())));
+                    self.row_substitutions.insert(rv2.id(), (combined, Some(fresh_rv)));
+                };
+                Ok(())
+            }
+        }
+    }
+
+    // --------------------------------------------------------
+    // Forall Parameter Substitution
+    // --------------------------------------------------------
+
+    /// Substitute forall-bound type parameters with given types.
+    /// Used during instantiation of polymorphic types for alpha-renaming.
+    fn substitute_forall_params(&self, ty: &Type, subst: &HashMap<u32, Type>) -> Type {
+        match &ty.kind {
+            TypeKind::Param(id) => {
+                match subst.get(&id.id()) {
+                    Some(replacement) => replacement.clone(),
+                    None => ty.clone(),
+                }
+            }
+            TypeKind::Infer(id) => {
+                // Also resolve inference variables through our substitution chain
+                match self.substitutions.get(&id.id()) {
+                    Some(substituted) => self.substitute_forall_params(substituted, subst),
+                    None => ty.clone(),
+                }
+            }
+            TypeKind::Primitive(_) => ty.clone(),
+            TypeKind::Never => ty.clone(),
+            TypeKind::Error => ty.clone(),
+            TypeKind::Tuple(tys) => {
+                let mut result: [Type] = vec![];
+                let mut i: usize = 0;
+                while i < tys.len() {
+                    result.push(self.substitute_forall_params(&tys[i], subst));
+                    i = i + 1;
+                };
+                Type::new(TypeKind::Tuple(result))
+            }
+            TypeKind::Array { element, size } => {
+                Type::new(TypeKind::Array {
+                    element: Box::new(self.substitute_forall_params(element, subst)),
+                    size: *size,
+                })
+            }
+            TypeKind::Slice { element } => {
+                Type::new(TypeKind::Slice {
+                    element: Box::new(self.substitute_forall_params(element, subst)),
+                })
+            }
+            TypeKind::Ref { inner, mutability } => {
+                Type::new(TypeKind::Ref {
+                    inner: Box::new(self.substitute_forall_params(inner, subst)),
+                    mutability: mutability.clone(),
+                })
+            }
+            TypeKind::Ptr { inner, mutability } => {
+                Type::new(TypeKind::Ptr {
+                    inner: Box::new(self.substitute_forall_params(inner, subst)),
+                    mutability: mutability.clone(),
+                })
+            }
+            TypeKind::Fn { params, ret, effect } => {
+                let mut result_params: [Type] = vec![];
+                let mut i: usize = 0;
+                while i < params.len() {
+                    result_params.push(self.substitute_forall_params(&params[i], subst));
+                    i = i + 1;
+                };
+                Type::new(TypeKind::Fn {
+                    params: result_params,
+                    ret: Box::new(self.substitute_forall_params(ret, subst)),
+                    effect: effect.clone(),
+                })
+            }
+            TypeKind::Closure { params, ret, effect, captures } => {
+                let mut result_params: [Type] = vec![];
+                let mut i: usize = 0;
+                while i < params.len() {
+                    result_params.push(self.substitute_forall_params(&params[i], subst));
+                    i = i + 1;
+                };
+                let mut result_captures: [Type] = vec![];
+                i = 0;
+                while i < captures.len() {
+                    result_captures.push(self.substitute_forall_params(&captures[i], subst));
+                    i = i + 1;
+                };
+                Type::new(TypeKind::Closure {
+                    params: result_params,
+                    ret: Box::new(self.substitute_forall_params(ret, subst)),
+                    effect: effect.clone(),
+                    captures: result_captures,
+                })
+            }
+            TypeKind::Adt { def_id, type_args } => {
+                let mut result_args: [Type] = vec![];
+                let mut i: usize = 0;
+                while i < type_args.len() {
+                    result_args.push(self.substitute_forall_params(&type_args[i], subst));
+                    i = i + 1;
+                };
+                Type::new(TypeKind::Adt {
+                    def_id: def_id.clone(),
+                    type_args: result_args,
+                })
+            }
+            TypeKind::Range { element, inclusive } => {
+                Type::new(TypeKind::Range {
+                    element: Box::new(self.substitute_forall_params(element, subst)),
+                    inclusive: *inclusive,
+                })
+            }
+            TypeKind::DynTrait { trait_id } => {
+                Type::new(TypeKind::DynTrait {
+                    trait_id: trait_id.clone(),
+                })
+            }
+            TypeKind::Record { fields, row_var } => {
+                let mut result_fields: [RecordField] = vec![];
+                let mut i: usize = 0;
+                while i < fields.len() {
+                    result_fields.push(RecordField {
+                        name: fields[i].name.clone(),
+                        ty: self.substitute_forall_params(&fields[i].ty, subst),
+                    });
+                    i = i + 1;
+                };
+                Type::new(TypeKind::Record {
+                    fields: result_fields,
+                    row_var: row_var.clone(),
+                })
+            }
+            TypeKind::Forall { params: inner_params, body } => {
+                // Avoid capturing: skip substitution for inner-bound params
+                // Build a filtered substitution that excludes inner-bound params
+                let mut filtered_subst: HashMap<u32, Type> = HashMap::new();
+                // Copy over substitutions that don't conflict with inner params
+                // For simplicity, we check if each key is in inner_params
+                // This is O(n*m) but typically small
+                for (key, value) in subst.iter() {
+                    let mut is_bound = false;
+                    let mut i: usize = 0;
+                    while i < inner_params.len() {
+                        if inner_params[i].id() == *key {
+                            is_bound = true;
+                        };
+                        i = i + 1;
+                    };
+                    if !is_bound {
+                        filtered_subst.insert(*key, value.clone());
+                    };
+                };
+                Type::new(TypeKind::Forall {
+                    params: inner_params.clone(),
+                    body: Box::new(self.substitute_forall_params(body, &filtered_subst)),
+                })
+            }
+            TypeKind::Ownership { inner, ownership } => {
+                Type::new(TypeKind::Ownership {
+                    inner: Box::new(self.substitute_forall_params(inner, subst)),
+                    ownership: ownership.clone(),
+                })
+            }
+        }
+    }
+
+    // --------------------------------------------------------
     // Effect Unification
     // --------------------------------------------------------
 
@@ -931,12 +1385,23 @@ impl Unifier {
     }
 
     /// Check if an effect instance is in an effect row.
+    ///
+    /// # Limitation
+    ///
+    /// Currently only checks effect def_id match. For full correctness,
+    /// should also verify that type arguments are compatible. For example:
+    /// ```
+    /// // These should NOT be considered equal:
+    /// Error<String>  vs  Error<i32>
+    /// ```
+    /// This is a known simplification - see COMPILER_NOTES.md.
     fn effect_in_row(&self, effect: &EffectInstance, row: &EffectRow) -> bool {
         let mut i: usize = 0;
         while i < row.effects().len() {
             if row.effects()[i].def_id.eq(&effect.def_id) {
-                // For full correctness, should also check type args match
-                // but simplified for now
+                // LIMITATION: For full correctness, should also check type args match.
+                // Example: Error<String> should not unify with Error<i32>.
+                // Currently treats them as equal if def_id matches.
                 return true;
             };
             i = i + 1;
