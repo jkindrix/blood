@@ -963,9 +963,24 @@ impl<'a> TypeContext<'a> {
         let receiver_expr = self.infer_expr(receiver)?;
         let method_name = self.symbol_to_string(*method);
 
+        // Debug output for method calls
+        if std::env::var("BLOOD_METHOD_TRACE").is_ok() && (method_name == "unwrap" || method_name == "advance" || method_name == "is_ascii_digit") {
+            eprintln!("[METHOD_TRACE] Calling {} on receiver type: {:?}", method_name, receiver_expr.ty);
+            if let hir::TypeKind::Adt { def_id, args } = receiver_expr.ty.kind() {
+                eprintln!("[METHOD_TRACE]   Receiver is ADT with def_id={}, option_def_id={:?}", def_id.index(), self.option_def_id.map(|d| d.index()));
+                eprintln!("[METHOD_TRACE]   Type args: {:?}", args);
+            }
+        }
+
         // First resolve the method to get its signature (args parameter is unused)
         let (method_def_id, return_ty, first_param, impl_generics, method_generics, needs_auto_ref) =
             self.resolve_method(&receiver_expr.ty, &method_name, &[], span)?;
+
+        // Debug output for resolved method
+        if std::env::var("BLOOD_METHOD_TRACE").is_ok() && (method_name == "unwrap" || method_name == "advance" || method_name == "is_ascii_digit") {
+            eprintln!("[METHOD_TRACE]   Resolved to def_id={}, return_ty={:?}", method_def_id.index(), return_ty);
+            eprintln!("[METHOD_TRACE]   impl_generics={:?}, method_generics={:?}", impl_generics, method_generics);
+        }
 
         // Build substitution from impl generics to concrete types from receiver
         let mut substitution: HashMap<TyVarId, Type> = HashMap::new();
@@ -977,11 +992,37 @@ impl<'a> TypeContext<'a> {
                     substitution.insert(*tyvar, concrete_ty.clone());
                 }
             }
+            // For impl_generics that weren't mapped from receiver (e.g., Option.map's U param),
+            // create fresh inference vars so they can be inferred from function arguments
+            for &tyvar in impl_generics.iter() {
+                if !substitution.contains_key(&tyvar) {
+                    substitution.insert(tyvar, self.unifier.fresh_var());
+                }
+            }
         }
 
-        // Add fresh type vars for method-level generics
+        // For Array/Slice types, extract element type and add to substitution
+        // The synthetic TyVarId(9000) is used as placeholder for the element type T
+        let element_ty_for_array = match receiver_expr.ty.kind() {
+            TypeKind::Array { element, .. } => Some(element.clone()),
+            TypeKind::Slice { element } => Some(element.clone()),
+            TypeKind::Ref { inner, .. } => match inner.kind() {
+                TypeKind::Array { element, .. } => Some(element.clone()),
+                TypeKind::Slice { element } => Some(element.clone()),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(elem_ty) = element_ty_for_array {
+            substitution.insert(TyVarId(9000), elem_ty);
+        }
+
+        // Add fresh type vars for method-level generics that aren't already substituted
+        // (Some methods reuse impl generics, which are already mapped)
         for &tyvar in &method_generics {
-            substitution.insert(tyvar, self.unifier.fresh_var());
+            if !substitution.contains_key(&tyvar) {
+                substitution.insert(tyvar, self.unifier.fresh_var());
+            }
         }
 
         // Get expected parameter types from the function signature
@@ -1010,13 +1051,14 @@ impl<'a> TypeContext<'a> {
         }
 
         // Build the callee type by substituting in the stored signature
-        let callee_ty = if let Some(sig) = self.fn_sigs.get(&method_def_id).cloned() {
+        // Also compute the substituted return type for the expression
+        let (callee_ty, final_return_ty) = if let Some(sig) = self.fn_sigs.get(&method_def_id).cloned() {
             // Apply substitution to inputs and output
             let subst_inputs: Vec<Type> = sig.inputs.iter()
                 .map(|ty| self.substitute_type_vars(ty, &substitution))
                 .collect();
             let subst_output = self.substitute_type_vars(&sig.output, &substitution);
-            Type::function(subst_inputs, subst_output)
+            (Type::function(subst_inputs, subst_output.clone()), subst_output)
         } else {
             // Fallback to inferred function type
             let receiver_ty = if needs_auto_ref {
@@ -1026,7 +1068,9 @@ impl<'a> TypeContext<'a> {
             };
             let mut param_types = vec![receiver_ty];
             param_types.extend(hir_args.iter().map(|a| a.ty.clone()));
-            Type::function(param_types, return_ty.clone())
+            // Also substitute return_ty in case it has placeholders
+            let subst_return = self.substitute_type_vars(&return_ty, &substitution);
+            (Type::function(param_types, subst_return.clone()), subst_return)
         };
 
         let callee = hir::Expr::new(
@@ -1065,12 +1109,17 @@ impl<'a> TypeContext<'a> {
         all_args.push(final_receiver);
         all_args.extend(hir_args);
 
+        // Debug output for final return type
+        if std::env::var("BLOOD_METHOD_TRACE").is_ok() && (method_name == "unwrap" || method_name == "advance" || method_name == "is_ascii_digit") {
+            eprintln!("[METHOD_TRACE]   final_return_ty={:?}", final_return_ty);
+        }
+
         Ok(hir::Expr::new(
             hir::ExprKind::Call {
                 callee: Box::new(callee),
                 args: all_args,
             },
-            return_ty,
+            final_return_ty,
             span,
         ))
     }
@@ -1084,11 +1133,20 @@ impl<'a> TypeContext<'a> {
         _args: &[hir::Expr],
         span: Span,
     ) -> Result<(DefId, Type, Option<Type>, Vec<TyVarId>, Vec<TyVarId>, bool), TypeError> {
-        // Try to find the method on the receiver type directly
-        if let Some((def_id, ret_ty, first_param, impl_generics, method_generics)) = self.find_method_for_type(receiver_ty, method_name) {
-            // Check if we need to auto-ref the receiver
+        // Method resolution priority:
+        // 1. Inherent impl on receiver type
+        // 2. Inherent impl on auto-deref type
+        // 3. Trait impl on auto-deref type (prefers specific impls over blanket impls)
+        // 4. Trait impl on receiver type (fallback to blanket impls like Clone for &T)
+        // 5. Trait bounds on type parameters
+        // 6. Builtin methods
+        //
+        // NOTE: For references, we check auto-deref trait impls BEFORE receiver trait impls
+        // to prefer specific impls (e.g., Clone for Token) over blanket impls (e.g., Clone for &T).
+
+        // Phase 1: Check inherent impls (receiver type)
+        if let Some((def_id, ret_ty, first_param, impl_generics, method_generics)) = self.find_inherent_method_for_type(receiver_ty, method_name) {
             let needs_auto_ref = if let Some(ref param_ty) = first_param {
-                // If first param is a reference and receiver is not, we need auto-ref
                 matches!(param_ty.kind(), TypeKind::Ref { .. }) && !matches!(receiver_ty.kind(), TypeKind::Ref { .. })
             } else {
                 false
@@ -1096,16 +1154,156 @@ impl<'a> TypeContext<'a> {
             return Ok((def_id, ret_ty, first_param, impl_generics, method_generics, needs_auto_ref));
         }
 
-        // Try auto-deref: if receiver is &T or &mut T, try finding method on T
+        // Phase 2: Check inherent impls (auto-deref type)
+        if let TypeKind::Ref { inner, .. } = receiver_ty.kind() {
+            if let Some((def_id, ret_ty, first_param, impl_generics, method_generics)) = self.find_inherent_method_for_type(inner, method_name) {
+                return Ok((def_id, ret_ty, first_param, impl_generics, method_generics, false));
+            }
+        }
+
+        // Phase 3: Check trait impls (auto-deref type first)
+        // This prefers specific impls like `Clone for Token` over blanket impls like `Clone for &T`
+        if let TypeKind::Ref { inner, .. } = receiver_ty.kind() {
+            if let Some((def_id, ret_ty, first_param, impl_generics, method_generics)) = self.find_trait_method_for_type(inner, method_name) {
+                return Ok((def_id, ret_ty, first_param, impl_generics, method_generics, false));
+            }
+        }
+
+        // Phase 4: Check trait impls (receiver type)
+        // This finds blanket impls like `Clone for &T` when the inner type doesn't have the method
+        if let Some((def_id, ret_ty, first_param, impl_generics, method_generics)) = self.find_trait_method_for_type(receiver_ty, method_name) {
+            let needs_auto_ref = if let Some(ref param_ty) = first_param {
+                matches!(param_ty.kind(), TypeKind::Ref { .. }) && !matches!(receiver_ty.kind(), TypeKind::Ref { .. })
+            } else {
+                false
+            };
+            return Ok((def_id, ret_ty, first_param, impl_generics, method_generics, needs_auto_ref));
+        }
+
+        // Phase 5: Check trait bounds and builtins via find_method_for_type
+        // (These are at the end of find_method_for_type and don't conflict)
+        if let Some((def_id, ret_ty, first_param, impl_generics, method_generics)) = self.find_method_for_type(receiver_ty, method_name) {
+            let needs_auto_ref = if let Some(ref param_ty) = first_param {
+                matches!(param_ty.kind(), TypeKind::Ref { .. }) && !matches!(receiver_ty.kind(), TypeKind::Ref { .. })
+            } else {
+                false
+            };
+            return Ok((def_id, ret_ty, first_param, impl_generics, method_generics, needs_auto_ref));
+        }
+
         if let TypeKind::Ref { inner, .. } = receiver_ty.kind() {
             if let Some((def_id, ret_ty, first_param, impl_generics, method_generics)) = self.find_method_for_type(inner, method_name) {
-                // When auto-deref is used, we don't need auto-ref
                 return Ok((def_id, ret_ty, first_param, impl_generics, method_generics, false));
             }
         }
 
         // No method found
         Err(self.error_method_not_found(receiver_ty, method_name, span))
+    }
+
+    /// Find an inherent (non-trait) impl method for a specific type.
+    /// Returns (method_def_id, substituted return type, substituted first param type, impl generics, method generics).
+    fn find_inherent_method_for_type(&self, ty: &Type, method_name: &str) -> Option<(DefId, Type, Option<Type>, Vec<TyVarId>, Vec<TyVarId>)> {
+        for impl_block in &self.impl_blocks {
+            if impl_block.trait_ref.is_some() {
+                continue; // Skip trait impls
+            }
+
+            let subst = if impl_block.generics.is_empty() {
+                if !self.types_match_for_impl(&impl_block.self_ty, ty) {
+                    continue;
+                }
+                HashMap::new()
+            } else {
+                match self.extract_impl_substitution(&impl_block.generics, &impl_block.self_ty, ty) {
+                    Some(s) => s,
+                    None => continue,
+                }
+            };
+
+            for method in &impl_block.methods {
+                if method.name == method_name {
+                    if let Some(sig) = self.fn_sigs.get(&method.def_id) {
+                        let subst_output = self.substitute_type_vars(&sig.output, &subst);
+                        let first_param = sig.inputs.first().map(|p| self.substitute_type_vars(p, &subst));
+                        return Some((
+                            method.def_id,
+                            subst_output,
+                            first_param,
+                            impl_block.generics.clone(),
+                            sig.generics.clone(),
+                        ));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Find a trait impl method for a specific type.
+    /// Returns (method_def_id, substituted return type, substituted first param type, impl generics, method generics).
+    fn find_trait_method_for_type(&self, ty: &Type, method_name: &str) -> Option<(DefId, Type, Option<Type>, Vec<TyVarId>, Vec<TyVarId>)> {
+        let verbose = std::env::var("BLOOD_METHOD_VERBOSE").is_ok();
+        if verbose && method_name == "clone" {
+            eprintln!("  find_trait_method_for_type: looking for clone on {:?}", ty);
+        }
+        for impl_block in &self.impl_blocks {
+            if impl_block.trait_ref.is_none() {
+                continue; // Skip inherent impls
+            }
+
+            let subst = if impl_block.generics.is_empty() {
+                if !self.types_match_for_impl(&impl_block.self_ty, ty) {
+                    if verbose && method_name == "clone" && impl_block.methods.iter().any(|m| m.name == "clone") {
+                        eprintln!("    impl block self_ty {:?} doesn't match {:?}", impl_block.self_ty, ty);
+                    }
+                    continue;
+                }
+                HashMap::new()
+            } else {
+                match self.extract_impl_substitution(&impl_block.generics, &impl_block.self_ty, ty) {
+                    Some(s) => s,
+                    None => continue,
+                }
+            };
+
+            if verbose && method_name == "clone" {
+                eprintln!("    impl block self_ty {:?} MATCHES {:?}, checking methods: {:?}",
+                    impl_block.self_ty, ty, impl_block.methods.iter().map(|m| &m.name).collect::<Vec<_>>());
+            }
+            for method in &impl_block.methods {
+                if method.name == method_name {
+                    if verbose && method_name == "clone" {
+                        eprintln!("    FOUND method {} in impl block! impl_self_ty={:?}", method_name, impl_block.self_ty);
+                    }
+                    if let Some(sig) = self.fn_sigs.get(&method.def_id) {
+                        if verbose && method_name == "clone" {
+                            eprintln!("    clone sig: inputs={:?}, output={:?}", sig.inputs, sig.output);
+                        }
+                        // Skip methods with error types in their signatures (from unresolved blanket impls)
+                        let has_error = matches!(sig.output.kind(), TypeKind::Error)
+                            || sig.inputs.iter().any(|t| matches!(t.kind(), TypeKind::Error)
+                                || matches!(t.kind(), TypeKind::Ref { inner, .. } if matches!(inner.kind(), TypeKind::Error)));
+                        if has_error {
+                            if verbose && method_name == "clone" {
+                                eprintln!("    SKIPPING - signature has error types");
+                            }
+                            continue;
+                        }
+                        let subst_output = self.substitute_type_vars(&sig.output, &subst);
+                        let first_param = sig.inputs.first().map(|p| self.substitute_type_vars(p, &subst));
+                        return Some((
+                            method.def_id,
+                            subst_output,
+                            first_param,
+                            impl_block.generics.clone(),
+                            sig.generics.clone(),
+                        ));
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// Find a method for a specific type by searching impl blocks.
@@ -1303,7 +1501,7 @@ impl<'a> TypeContext<'a> {
                                 },
                                 _ => None,
                             };
-                            if let Some(element_ty) = elem_ty {
+                            if let Some(element_ty) = elem_ty.clone() {
                                 if method_name == "get" {
                                     // [T].get() returns Option<&T>
                                     let ref_elem = Type::reference(element_ty, false);
@@ -1311,6 +1509,18 @@ impl<'a> TypeContext<'a> {
                                         self.option_def_id.expect("BUG: option_def_id not set"),
                                         vec![ref_elem],
                                     )
+                                } else if method_name == "clone" {
+                                    // [T].clone() returns [T] with the actual element type
+                                    match ty.kind() {
+                                        TypeKind::Array { size, .. } => Type::array(element_ty, *size),
+                                        TypeKind::Slice { .. } => Type::slice(element_ty),
+                                        TypeKind::Ref { inner, .. } => match inner.kind() {
+                                            TypeKind::Array { size, .. } => Type::array(element_ty, *size),
+                                            TypeKind::Slice { .. } => Type::slice(element_ty),
+                                            _ => sig.output.clone(),
+                                        },
+                                        _ => sig.output.clone(),
+                                    }
                                 } else {
                                     sig.output.clone()
                                 }
@@ -1321,12 +1531,51 @@ impl<'a> TypeContext<'a> {
                         _ => sig.output.clone(),
                     };
 
-                    let first_param = sig.inputs.first().cloned();
+                    // For generic builtin types, we need to return impl_generics so the caller
+                    // can build a substitution map. The synthetic TyVarId(9000) is used as placeholder.
+                    // TyVarId(9001) is used for methods like Option.map that have a second type parameter.
+                    let (impl_generics, first_param) = match &type_match {
+                        BuiltinMethodType::Option => {
+                            // Return both TyVarId(9000) and TyVarId(9001) for Option methods
+                            // 9000 is T (element type), 9001 is U (used by map for return type)
+                            (vec![TyVarId(9000), TyVarId(9001)], sig.inputs.first().cloned())
+                        }
+                        BuiltinMethodType::Vec => {
+                            // Return TyVarId(9000) as the type parameter to substitute
+                            (vec![TyVarId(9000)], sig.inputs.first().cloned())
+                        }
+                        BuiltinMethodType::Slice | BuiltinMethodType::Array => {
+                            // For arrays/slices, extract element type and build substitution manually
+                            // since they don't use ADT type arguments
+                            let elem_ty = match ty.kind() {
+                                TypeKind::Slice { element } => Some(element.clone()),
+                                TypeKind::Array { element, .. } => Some(element.clone()),
+                                TypeKind::Ref { inner, .. } => match inner.kind() {
+                                    TypeKind::Slice { element } => Some(element.clone()),
+                                    TypeKind::Array { element, .. } => Some(element.clone()),
+                                    _ => None,
+                                },
+                                _ => None,
+                            };
+                            if let Some(element_ty) = elem_ty {
+                                // Build substitution and apply to first param
+                                let mut subst = std::collections::HashMap::new();
+                                subst.insert(TyVarId(9000), element_ty);
+                                let first_param = sig.inputs.first()
+                                    .map(|p| self.substitute_type_vars(p, &subst));
+                                // Return empty impl_generics since we already applied substitution
+                                (Vec::new(), first_param)
+                            } else {
+                                (Vec::new(), sig.inputs.first().cloned())
+                            }
+                        }
+                        _ => (Vec::new(), sig.inputs.first().cloned()),
+                    };
                     return Some((
                         builtin_method.def_id,
                         return_type,
                         first_param,
-                        Vec::new(),
+                        impl_generics,
                         Vec::new(),
                     ));
                 }
@@ -1559,6 +1808,11 @@ impl<'a> TypeContext<'a> {
 
                     // Look up user-defined types (structs, enums, type aliases)
                     if let Some(def_id) = self.resolver.lookup_type(&name) {
+                        // Debug output for type lookup
+                        if std::env::var("BLOOD_TYPE_LOOKUP_VERBOSE").is_ok() && name == "Token" {
+                            eprintln!("[type_lookup] Found '{}' -> DefId({})", name, def_id.index());
+                        }
+
                         // Check if it's a type alias and expand it
                         if let Some(alias_info) = self.type_aliases.get(&def_id).cloned() {
                             // For now, simple type aliases without generic args
@@ -1566,7 +1820,7 @@ impl<'a> TypeContext<'a> {
                         }
 
                         // Extract type arguments if any
-                        let type_args = if let Some(ref args) = path.segments[0].args {
+                        let mut type_args = if let Some(ref args) = path.segments[0].args {
                             let mut parsed_args = Vec::new();
                             for arg in &args.args {
                                 if let ast::TypeArg::Type(arg_ty) = arg {
@@ -1578,7 +1832,26 @@ impl<'a> TypeContext<'a> {
                             Vec::new()
                         };
 
+                        // Fill in inference variables for missing type parameters (handles default type params)
+                        let expected_params = if let Some(struct_info) = self.struct_defs.get(&def_id) {
+                            struct_info.generics.len()
+                        } else if let Some(enum_info) = self.enum_defs.get(&def_id) {
+                            enum_info.generics.len()
+                        } else {
+                            type_args.len() // No info available, assume user provided all args
+                        };
+
+                        while type_args.len() < expected_params {
+                            // Create fresh inference variable for missing type argument
+                            type_args.push(self.unifier.fresh_var());
+                        }
+
                         return Ok(Type::adt(def_id, type_args));
+                    }
+
+                    // Debug when type not found
+                    if std::env::var("BLOOD_TYPE_LOOKUP_VERBOSE").is_ok() && name == "Token" {
+                        eprintln!("[type_lookup] NOT FOUND: '{}'", name);
                     }
 
                     Err(self.error_type_not_found(&name, ty.span))
@@ -1700,7 +1973,13 @@ impl<'a> TypeContext<'a> {
                 }
             }
             ast::TypeKind::Reference { mutable, lifetime: _, inner } => {
+                if std::env::var("BLOOD_REF_TYPE_VERBOSE").is_ok() {
+                    eprintln!("[ast_type_to_hir_type] Processing Reference, inner = {:?}", inner.kind);
+                }
                 let inner_ty = self.ast_type_to_hir_type(inner)?;
+                if std::env::var("BLOOD_REF_TYPE_VERBOSE").is_ok() {
+                    eprintln!("[ast_type_to_hir_type] Reference inner resolved to: {:?}", inner_ty);
+                }
                 Ok(Type::reference(inner_ty, *mutable))
             }
             ast::TypeKind::Pointer { mutable, inner } => {
@@ -2089,6 +2368,10 @@ impl<'a> TypeContext<'a> {
 
             match self.resolver.lookup(&name) {
                 Some(Binding::Local { local_id, ty, .. }) => {
+                    // Debug: trace local variable lookup
+                    if std::env::var("BLOOD_LET_TRACE").is_ok() && name == "ch" {
+                        eprintln!("[LOOKUP_TRACE] Looking up 'ch' at {:?}, found type: {:?}", span, ty);
+                    }
                     Ok(hir::Expr::new(
                         hir::ExprKind::Local(local_id),
                         ty,
@@ -3155,6 +3438,10 @@ impl<'a> TypeContext<'a> {
 
     /// Infer type of a return expression.
     pub(crate) fn infer_return(&mut self, value: Option<&ast::Expr>, span: Span) -> Result<hir::Expr, TypeError> {
+        // Debug output for return outside function errors
+        if std::env::var("BLOOD_RETURN_TRACE").is_ok() && self.return_type.is_none() {
+            eprintln!("[RETURN_TRACE] return_type is None at {:?}, current_fn={:?}", span, self.current_fn);
+        }
         let return_type = self.return_type.clone().ok_or_else(|| {
             TypeError::new(TypeErrorKind::ReturnOutsideFunction, span)
         })?;

@@ -26,7 +26,7 @@ use crate::hir::{DefId, DefKind, Type, TypeKind, PrimitiveTy, IntTy, UintTy, TyV
 use crate::parser::Parser;
 use crate::span::Span;
 use crate::typeck::TypeContext;
-use crate::typeck::context::{StructInfo, FieldInfo, EnumInfo, VariantInfo};
+use crate::typeck::context::{StructInfo, FieldInfo, EnumInfo, VariantInfo, ImplBlockInfo, ImplMethodInfo};
 
 /// Information about a loaded stdlib module.
 #[derive(Debug)]
@@ -84,6 +84,23 @@ impl StdlibLoader {
     /// This walks the stdlib directory tree and creates LoadedModule
     /// entries for each .blood file found.
     pub fn discover(&mut self) -> Result<(), StdlibError> {
+        // Create the root "std" module first so imports like `use std.core.Option` can resolve
+        if !self.modules.contains_key("std") {
+            self.modules.insert("std".to_string(), LoadedModule {
+                path: "std".to_string(),
+                file_path: self.stdlib_root.clone(),
+                ast: ast::Program {
+                    module: None,
+                    imports: Vec::new(),
+                    declarations: Vec::new(),
+                    span: Span::dummy(),
+                },
+                source: String::new(),
+                interner: DefaultStringInterner::new(),
+                def_id: None,
+                items: Vec::new(),
+            });
+        }
         self.discover_directory(&self.stdlib_root.clone(), "std")
     }
 
@@ -346,6 +363,8 @@ impl StdlibLoader {
                     module.items.push(item_def_id);
                     // Register struct/enum type info for type system integration
                     register_type_info(ctx, &module.interner, item_def_id, decl);
+                    // Register function signatures for callable functions
+                    register_fn_sig(ctx, &module.interner, item_def_id, decl);
                     decl_count += 1;
                     module_decl_count += 1;
                 }
@@ -386,6 +405,16 @@ impl StdlibLoader {
         self.process_reexports(ctx)?;
         if verbose {
             eprintln!("    Re-exports processed in {:.2}s", reexport_start.elapsed().as_secs_f64());
+        }
+
+        // Process impl blocks (after all types and re-exports are registered)
+        if verbose {
+            eprintln!("  Processing impl blocks...");
+        }
+        let impl_start = Instant::now();
+        self.process_impl_blocks(ctx)?;
+        if verbose {
+            eprintln!("    Impl blocks processed in {:.2}s", impl_start.elapsed().as_secs_f64());
             eprintln!("  Total registration time: {:.2}s", start.elapsed().as_secs_f64());
         }
 
@@ -622,6 +651,598 @@ impl StdlibLoader {
         None
     }
 
+    /// Process impl blocks from all stdlib modules.
+    ///
+    /// This creates DefIds for methods and registers ImplBlockInfo so that
+    /// method calls on stdlib types can be resolved.
+    fn process_impl_blocks<'a>(&self, ctx: &mut TypeContext<'a>) -> Result<(), Vec<StdlibError>> {
+        let verbose = std::env::var("BLOOD_STDLIB_VERBOSE").is_ok();
+        let mut impl_count = 0;
+        let mut method_count = 0;
+        // Counter for generating unique TyVarIds for stdlib generics
+        // Starting at 100000 to avoid conflicts with other synthetic TyVarIds
+        let mut next_tyvar_id: u32 = 100000;
+
+        for (module_path, module) in &self.modules {
+            let module_def_id = match module.def_id {
+                Some(id) => id,
+                None => continue,
+            };
+
+            // Helper to resolve symbols
+            let resolve_symbol = |sym: ast::Symbol| -> String {
+                module.interner.resolve(sym)
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "unknown".to_string())
+            };
+
+            for decl in &module.ast.declarations {
+                if let ast::Declaration::Impl(impl_block) = decl {
+                    // Extract impl-level type parameters and create TyVarIds for them
+                    let mut impl_type_params: HashMap<String, TyVarId> = HashMap::new();
+                    let mut impl_generics: Vec<TyVarId> = Vec::new();
+
+                    if let Some(type_params) = &impl_block.type_params {
+                        for param in &type_params.params {
+                            if let ast::GenericParam::Type(type_param) = param {
+                                let param_name = resolve_symbol(type_param.name.node);
+                                let tyvar_id = TyVarId::new(next_tyvar_id);
+                                next_tyvar_id += 1;
+                                impl_type_params.insert(param_name, tyvar_id);
+                                impl_generics.push(tyvar_id);
+                            }
+                        }
+                    }
+
+                    // Resolve the self type to a Type, using impl-level type params
+                    // IMPORTANT: Pass the current module's DefId so single-segment type names
+                    // (like `Token`) resolve to types defined in THIS module first, rather than
+                    // finding a type with the same name in a different module.
+                    let self_ty = self.resolve_type_with_generics_in_module(ctx, &module.interner, &impl_block.self_ty, &impl_type_params, Some(module_def_id));
+
+                    // Skip if we couldn't resolve the self type
+                    if matches!(self_ty.kind(), TypeKind::Error) {
+                        if verbose {
+                            // Extract self type name for debugging
+                            let self_type_name = match &impl_block.self_ty.kind {
+                                ast::TypeKind::Path(path) if !path.segments.is_empty() => {
+                                    module.interner.resolve(path.segments.last().unwrap().name.node)
+                                        .map(|s| s.to_string())
+                                        .unwrap_or_else(|| "?".to_string())
+                                }
+                                _ => "?".to_string(),
+                            };
+                            eprintln!("    Skipping impl block for '{}' in '{}': couldn't resolve self type", self_type_name, module_path);
+                        }
+                        continue;
+                    }
+
+                    // Resolve trait ref if present (trait_ty is the trait type in `impl Trait for Type`)
+                    let trait_ref = impl_block.trait_ty.as_ref().and_then(|trait_ty| {
+                        if let ast::TypeKind::Path(path) = &trait_ty.kind {
+                            self.resolve_type_path_to_def_id(ctx, &module.interner, path)
+                        } else {
+                            None
+                        }
+                    });
+
+                    // Check for duplicate impl block BEFORE processing methods
+                    // (same self_ty and trait_ref combination already exists)
+                    let is_duplicate = ctx.impl_blocks.iter().any(|existing| {
+                        existing.self_ty == self_ty && existing.trait_ref == trait_ref
+                    });
+
+                    if is_duplicate {
+                        if verbose {
+                            let trait_name = trait_ref
+                                .and_then(|id| ctx.trait_defs.get(&id))
+                                .map(|t| t.name.clone())
+                                .unwrap_or_else(|| "inherent".to_string());
+                            eprintln!("    Skipping duplicate impl {} for {:?} in '{}'",
+                                      trait_name, self_ty, module_path);
+                        }
+                        continue;
+                    }
+
+                    // Process methods from impl items
+                    let mut methods = Vec::new();
+                    for item in &impl_block.items {
+                        let method = match item {
+                            ast::ImplItem::Function(f) => f,
+                            _ => continue, // Skip type aliases and consts for now
+                        };
+                        let method_name = resolve_symbol(method.name.node);
+
+                        // Create a DefId for this method
+                        let method_def_id = ctx.resolver.define_namespaced_item(
+                            method_name.clone(),
+                            DefKind::Fn,
+                            method.span,
+                        );
+
+                        // Check if method has a self parameter (first param is `self`, `&self`, etc.)
+                        let is_static = method.params.first()
+                            .map(|p| {
+                                // Check if it's a self pattern by looking at the pattern type
+                                // A self parameter typically has pattern Ident { name: "self", ... }
+                                match &p.pattern.kind {
+                                    ast::PatternKind::Ident { name, .. } => {
+                                        let name_str = module.interner.resolve(name.node)
+                                            .map(|s| s.to_string())
+                                            .unwrap_or_default();
+                                        name_str != "self"
+                                    }
+                                    ast::PatternKind::Ref { inner, .. } => {
+                                        // &self or &mut self
+                                        match &inner.kind {
+                                            ast::PatternKind::Ident { name, .. } => {
+                                                let name_str = module.interner.resolve(name.node)
+                                                    .map(|s| s.to_string())
+                                                    .unwrap_or_default();
+                                                name_str != "self"
+                                            }
+                                            _ => true
+                                        }
+                                    }
+                                    _ => true
+                                }
+                            })
+                            .unwrap_or(true);
+
+                        // Extract method-level type parameters
+                        // Method type params are merged with impl type params for type resolution
+                        let mut method_type_params = impl_type_params.clone();
+                        let mut method_generics: Vec<TyVarId> = impl_generics.clone();
+
+                        if let Some(type_params) = &method.type_params {
+                            for param in &type_params.params {
+                                if let ast::GenericParam::Type(type_param) = param {
+                                    let param_name = resolve_symbol(type_param.name.node);
+                                    // Only add if not already present from impl level
+                                    if !method_type_params.contains_key(&param_name) {
+                                        let tyvar_id = TyVarId::new(next_tyvar_id);
+                                        next_tyvar_id += 1;
+                                        method_type_params.insert(param_name, tyvar_id);
+                                        method_generics.push(tyvar_id);
+                                    }
+                                }
+                            }
+                        }
+
+                        // Build function signature for method lookup
+                        // Pass current module so type names like `Token` resolve to THIS module's Token
+                        // Pass self_ty so that `Self` type references in signatures get resolved
+                        let mut param_types = Vec::new();
+                        for (i, param) in method.params.iter().enumerate() {
+                            if i == 0 && !is_static {
+                                // Self parameter - use self_ty with reference if needed
+                                let param_ty = self.resolve_type_with_generics_impl(ctx, &module.interner, &param.ty, &method_type_params, Some(module_def_id), Some(&self_ty));
+                                param_types.push(param_ty);
+                            } else {
+                                // Regular parameter - also pass self_ty in case Self is used in param types
+                                let param_ty = self.resolve_type_with_generics_impl(ctx, &module.interner, &param.ty, &method_type_params, Some(module_def_id), Some(&self_ty));
+                                param_types.push(param_ty);
+                            }
+                        }
+
+                        let return_ty = method.return_type.as_ref()
+                            .map(|ty| self.resolve_type_with_generics_impl(ctx, &module.interner, ty, &method_type_params, Some(module_def_id), Some(&self_ty)))
+                            .unwrap_or_else(Type::unit);
+
+                        // Create and insert the function signature
+                        let sig = crate::hir::FnSig {
+                            inputs: param_types.clone(),
+                            output: return_ty.clone(),
+                            is_const: method.qualifiers.is_const,
+                            is_async: method.qualifiers.is_async,
+                            is_unsafe: method.qualifiers.is_unsafe,
+                            generics: method_generics,
+                        };
+
+                        // Debug output for stdlib method signature collection
+                        if std::env::var("BLOOD_COLLECT_VERBOSE").is_ok() && (method_name == "spanned_ident" || method_name.contains("spanned") || method_name == "clone" || method_name == "advance" || method_name == "current") {
+                            eprintln!("[STDLIB_COLLECT_IMPL] method '{}' on {:?} signature:", method_name, self_ty);
+                            for (i, ty) in param_types.iter().enumerate() {
+                                eprintln!("  param[{}]: {:?}", i, ty);
+                            }
+                            eprintln!("  return: {:?}", return_ty);
+                        }
+
+                        ctx.fn_sigs.insert(method_def_id, sig);
+
+                        methods.push(ImplMethodInfo {
+                            def_id: method_def_id,
+                            name: method_name.clone(),
+                            is_static,
+                        });
+
+                        // Register the method's self type for `self` resolution
+                        ctx.method_self_types.insert(method_def_id, self_ty.clone());
+
+                        // Add method to module items so it can be imported
+                        if let Some(module_info) = ctx.module_defs.get_mut(&module_def_id) {
+                            module_info.items.push(method_def_id);
+                            module_info.items_by_name.insert(method_name, method_def_id);
+                        }
+
+                        method_count += 1;
+                    }
+
+                    // Create the ImplBlockInfo
+                    let impl_info = ImplBlockInfo {
+                        self_ty,
+                        trait_ref,
+                        generics: impl_generics,
+                        methods,
+                        assoc_types: Vec::new(),
+                        assoc_consts: Vec::new(),
+                        span: impl_block.span,
+                        from_stdlib: true, // Stdlib impls don't have where clause info
+                    };
+
+                    if verbose {
+                        let trait_name = trait_ref
+                            .and_then(|id| ctx.trait_defs.get(&id))
+                            .map(|t| t.name.clone())
+                            .unwrap_or_else(|| "inherent".to_string());
+                        eprintln!("    Registered impl {} for {:?} in '{}'", trait_name, impl_info.self_ty, module_path);
+                    }
+                    ctx.impl_blocks.push(impl_info);
+                    impl_count += 1;
+                }
+            }
+        }
+
+        if verbose {
+            eprintln!("    Processed {} impl blocks with {} methods", impl_count, method_count);
+        }
+
+        Ok(())
+    }
+
+    /// Resolve an impl block's self type to a HIR Type.
+    fn resolve_impl_self_type(
+        &self,
+        ctx: &TypeContext<'_>,
+        interner: &DefaultStringInterner,
+        ast_type: &ast::Type,
+    ) -> Type {
+        match &ast_type.kind {
+            ast::TypeKind::Path(path) => {
+                // For single-segment paths, check if it's a primitive type first
+                if path.segments.len() == 1 {
+                    if let Some(name) = interner.resolve(path.segments[0].name.node) {
+                        if let Some(prim_ty) = self.name_to_primitive(name) {
+                            return Type::new(TypeKind::Primitive(prim_ty));
+                        }
+                    }
+                }
+
+                // Try to resolve the path to a DefId
+                if let Some(def_id) = self.resolve_type_path_to_def_id(ctx, interner, path) {
+                    // Check if it's a struct or enum
+                    if let Some(info) = ctx.resolver.def_info.get(&def_id) {
+                        match info.kind {
+                            DefKind::Struct => return Type::adt(def_id, Vec::new()),
+                            DefKind::Enum => return Type::adt(def_id, Vec::new()),
+                            _ => {}
+                        }
+                    }
+                }
+                Type::error()
+            }
+            ast::TypeKind::Reference { inner, mutable, .. } => {
+                let inner_ty = self.resolve_impl_self_type(ctx, interner, inner);
+                Type::new(TypeKind::Ref { inner: inner_ty, mutable: *mutable })
+            }
+            ast::TypeKind::Tuple(elements) if elements.is_empty() => {
+                // Unit type ()
+                Type::unit()
+            }
+            _ => Type::error(),
+        }
+    }
+
+    /// Resolve a type to a HIR Type, handling type parameters.
+    ///
+    /// This is similar to `resolve_impl_self_type` but also resolves:
+    /// - Type parameters (e.g., `T` in `impl<T> Box<T>`)
+    /// - Type arguments (e.g., `Box<T>` includes the `T` type argument)
+    fn resolve_type_with_generics(
+        &self,
+        ctx: &TypeContext<'_>,
+        interner: &DefaultStringInterner,
+        ast_type: &ast::Type,
+        type_params: &HashMap<String, TyVarId>,
+    ) -> Type {
+        self.resolve_type_with_generics_in_module(ctx, interner, ast_type, type_params, None)
+    }
+
+    /// Resolve a type with generics, with awareness of the current module.
+    /// The current_module parameter ensures that single-segment type names (like `Token`)
+    /// are resolved to the type defined in that module first, rather than potentially
+    /// finding a type with the same name in a different module.
+    fn resolve_type_with_generics_in_module(
+        &self,
+        ctx: &TypeContext<'_>,
+        interner: &DefaultStringInterner,
+        ast_type: &ast::Type,
+        type_params: &HashMap<String, TyVarId>,
+        current_module: Option<DefId>,
+    ) -> Type {
+        self.resolve_type_with_generics_impl(ctx, interner, ast_type, type_params, current_module, None)
+    }
+
+    /// Resolve a type with generics, with awareness of the current module and optional Self type.
+    /// The self_ty parameter is used to resolve `Self` type references in impl blocks.
+    fn resolve_type_with_generics_impl(
+        &self,
+        ctx: &TypeContext<'_>,
+        interner: &DefaultStringInterner,
+        ast_type: &ast::Type,
+        type_params: &HashMap<String, TyVarId>,
+        current_module: Option<DefId>,
+        self_ty: Option<&Type>,
+    ) -> Type {
+        match &ast_type.kind {
+            ast::TypeKind::Path(path) => {
+                // For single-segment paths, check type parameters first
+                if path.segments.len() == 1 {
+                    if let Some(name) = interner.resolve(path.segments[0].name.node) {
+                        // Check if it's the Self type
+                        if name == "Self" {
+                            if let Some(st) = self_ty {
+                                return st.clone();
+                            }
+                        }
+                        // Check if it's a type parameter
+                        if let Some(&tyvar_id) = type_params.get(name) {
+                            return Type::new(TypeKind::Param(tyvar_id));
+                        }
+                        // Check if it's a primitive type
+                        if let Some(prim_ty) = self.name_to_primitive(name) {
+                            return Type::new(TypeKind::Primitive(prim_ty));
+                        }
+                    }
+                }
+
+                // Try to resolve the path to a DefId, checking current module first
+                if let Some(def_id) = self.resolve_type_path_to_def_id_in_module(ctx, interner, path, current_module) {
+                    // Check if it's a struct or enum
+                    if let Some(info) = ctx.resolver.def_info.get(&def_id) {
+                        match info.kind {
+                            DefKind::Struct | DefKind::Enum => {
+                                // Resolve type arguments if present
+                                let type_args = self.resolve_type_args_in_module(ctx, interner, path, type_params, current_module);
+                                return Type::adt(def_id, type_args);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                Type::error()
+            }
+            ast::TypeKind::Reference { inner, mutable, .. } => {
+                let inner_ty = self.resolve_type_with_generics_impl(ctx, interner, inner, type_params, current_module, self_ty);
+                Type::new(TypeKind::Ref { inner: inner_ty, mutable: *mutable })
+            }
+            ast::TypeKind::Tuple(elements) if elements.is_empty() => {
+                Type::unit()
+            }
+            ast::TypeKind::Tuple(elements) => {
+                let element_types: Vec<Type> = elements.iter()
+                    .map(|elem| self.resolve_type_with_generics_impl(ctx, interner, elem, type_params, current_module, self_ty))
+                    .collect();
+                Type::new(TypeKind::Tuple(element_types))
+            }
+            ast::TypeKind::Slice { element } => {
+                let elem_ty = self.resolve_type_with_generics_impl(ctx, interner, element, type_params, current_module, self_ty);
+                Type::new(TypeKind::Slice { element: elem_ty })
+            }
+            ast::TypeKind::Array { element, size: _ } => {
+                let elem_ty = self.resolve_type_with_generics_impl(ctx, interner, element, type_params, current_module, self_ty);
+                // For now, use a placeholder size - array size handling is complex
+                Type::new(TypeKind::Array { element: elem_ty, size: 0 })
+            }
+            ast::TypeKind::Function { params, return_type, effects: _ } => {
+                let param_types: Vec<Type> = params.iter()
+                    .map(|p| self.resolve_type_with_generics_impl(ctx, interner, p, type_params, current_module, self_ty))
+                    .collect();
+                let ret_ty = self.resolve_type_with_generics_impl(ctx, interner, return_type, type_params, current_module, self_ty);
+                Type::new(TypeKind::Fn {
+                    params: param_types,
+                    ret: ret_ty,
+                    effects: Vec::new(),
+                })
+            }
+            _ => Type::error(),
+        }
+    }
+
+    /// Resolve type arguments from a type path.
+    fn resolve_type_args(
+        &self,
+        ctx: &TypeContext<'_>,
+        interner: &DefaultStringInterner,
+        path: &ast::TypePath,
+        type_params: &HashMap<String, TyVarId>,
+    ) -> Vec<Type> {
+        self.resolve_type_args_in_module(ctx, interner, path, type_params, None)
+    }
+
+    fn resolve_type_args_in_module(
+        &self,
+        ctx: &TypeContext<'_>,
+        interner: &DefaultStringInterner,
+        path: &ast::TypePath,
+        type_params: &HashMap<String, TyVarId>,
+        current_module: Option<DefId>,
+    ) -> Vec<Type> {
+        // Get the last segment which contains the type arguments
+        if let Some(segment) = path.segments.last() {
+            if let Some(args) = &segment.args {
+                return args.args.iter().filter_map(|arg| {
+                    match arg {
+                        ast::TypeArg::Type(ty) => {
+                            Some(self.resolve_type_with_generics_in_module(ctx, interner, ty, type_params, current_module))
+                        }
+                        _ => None, // Skip lifetimes, consts, etc. for now
+                    }
+                }).collect();
+            }
+        }
+        Vec::new()
+    }
+
+    /// Convert a type name to a primitive type.
+    fn name_to_primitive(&self, name: &str) -> Option<PrimitiveTy> {
+        match name {
+            "bool" => Some(PrimitiveTy::Bool),
+            "char" => Some(PrimitiveTy::Char),
+            "i8" => Some(PrimitiveTy::Int(IntTy::I8)),
+            "i16" => Some(PrimitiveTy::Int(IntTy::I16)),
+            "i32" => Some(PrimitiveTy::Int(IntTy::I32)),
+            "i64" => Some(PrimitiveTy::Int(IntTy::I64)),
+            "i128" => Some(PrimitiveTy::Int(IntTy::I128)),
+            "isize" => Some(PrimitiveTy::Int(IntTy::Isize)),
+            "u8" => Some(PrimitiveTy::Uint(UintTy::U8)),
+            "u16" => Some(PrimitiveTy::Uint(UintTy::U16)),
+            "u32" => Some(PrimitiveTy::Uint(UintTy::U32)),
+            "u64" => Some(PrimitiveTy::Uint(UintTy::U64)),
+            "u128" => Some(PrimitiveTy::Uint(UintTy::U128)),
+            "usize" => Some(PrimitiveTy::Uint(UintTy::Usize)),
+            "f32" => Some(PrimitiveTy::Float(crate::hir::FloatTy::F32)),
+            "f64" => Some(PrimitiveTy::Float(crate::hir::FloatTy::F64)),
+            "str" => Some(PrimitiveTy::Str),
+            "unit" => Some(PrimitiveTy::Unit),
+            _ => None,
+        }
+    }
+
+    /// Resolve a type path to a DefId by looking through registered modules.
+    fn resolve_type_path_to_def_id(
+        &self,
+        ctx: &TypeContext<'_>,
+        interner: &DefaultStringInterner,
+        path: &ast::TypePath,
+    ) -> Option<DefId> {
+        self.resolve_type_path_to_def_id_in_module(ctx, interner, path, None)
+    }
+
+    /// Resolve a type path to a DefId, optionally checking a specific module first.
+    /// This is important for single-segment paths in impl blocks to find the type
+    /// defined in the same module.
+    fn resolve_type_path_to_def_id_in_module(
+        &self,
+        ctx: &TypeContext<'_>,
+        interner: &DefaultStringInterner,
+        path: &ast::TypePath,
+        current_module: Option<DefId>,
+    ) -> Option<DefId> {
+        if path.segments.is_empty() {
+            return None;
+        }
+
+        // Single-segment path: look for a type in current module or global types
+        if path.segments.len() == 1 {
+            let name = interner.resolve(path.segments[0].name.node)
+                .map(|s| s.to_string())?;
+
+            // Check if it's a builtin type
+            if let Some(crate::typeck::resolve::Binding::Def(def_id)) = ctx.resolver.lookup(&name) {
+                return Some(def_id);
+            }
+
+            // Check type bindings
+            if let Some(def_id) = ctx.resolver.lookup_type(&name) {
+                return Some(def_id);
+            }
+
+            let verbose = std::env::var("BLOOD_TYPE_RESOLVE_VERBOSE").is_ok();
+
+            // IMPORTANT: Check current module FIRST for single-segment paths
+            // This ensures that `impl Clone for Token` in lexer.blood finds the Token
+            // defined in lexer.blood, not a Token from another module.
+            if let Some(module_def_id) = current_module {
+                if let Some(module_info) = ctx.module_defs.get(&module_def_id) {
+                    if let Some(&def_id) = module_info.items_by_name.get(&name) {
+                        if let Some(info) = ctx.resolver.def_info.get(&def_id) {
+                            if matches!(info.kind, DefKind::Struct | DefKind::Enum | DefKind::TypeAlias | DefKind::Trait) {
+                                if verbose {
+                                    eprintln!("    resolve_type_path: found '{}' -> DefId({}) in CURRENT module DefId({})", name, def_id.index(), module_def_id.index());
+                                }
+                                return Some(def_id);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Search through all modules for this type name
+            for (module_def_id, module_info) in &ctx.module_defs {
+                if let Some(&def_id) = module_info.items_by_name.get(&name) {
+                    if let Some(info) = ctx.resolver.def_info.get(&def_id) {
+                        // Include Trait in the match to properly resolve trait references in impl blocks
+                        if matches!(info.kind, DefKind::Struct | DefKind::Enum | DefKind::TypeAlias | DefKind::Trait) {
+                            if verbose {
+                                eprintln!("    resolve_type_path: found '{}' -> DefId({}) in module DefId({})", name, def_id.index(), module_def_id.index());
+                            }
+                            return Some(def_id);
+                        }
+                    }
+                }
+            }
+
+            return None;
+        }
+
+        // Multi-segment path: resolve as module path
+        let first_name = interner.resolve(path.segments[0].name.node)
+            .map(|s| s.to_string())?;
+
+        // Find the root module
+        let mut current_def_id = None;
+        for (&def_id, info) in &ctx.module_defs {
+            if info.is_external && info.name == first_name {
+                current_def_id = Some(def_id);
+                break;
+            }
+        }
+
+        let mut current_def_id = current_def_id?;
+
+        // Walk remaining segments
+        for segment in &path.segments[1..] {
+            let name = interner.resolve(segment.name.node)
+                .map(|s| s.to_string())?;
+
+            if let Some(module_info) = ctx.module_defs.get(&current_def_id) {
+                if let Some(&item_def_id) = module_info.items_by_name.get(&name) {
+                    current_def_id = item_def_id;
+                } else {
+                    // Check in items list
+                    let mut found = false;
+                    for &item_id in &module_info.items {
+                        if let Some(info) = ctx.resolver.def_info.get(&item_id) {
+                            if info.name == name {
+                                current_def_id = item_id;
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+                    if !found {
+                        return None;
+                    }
+                }
+            } else {
+                return None;
+            }
+        }
+
+        Some(current_def_id)
+    }
+
     /// Process pub use re-exports for all stdlib modules.
     ///
     /// This handles declarations like `pub use node::Span;` in mod.blood files,
@@ -649,8 +1270,14 @@ impl StdlibLoader {
                 None => continue,
             };
 
-            for import in &module.ast.imports {
-                // Only process pub use (public re-exports)
+            let verbose = std::env::var("BLOOD_STDLIB_VERBOSE").is_ok();
+            if verbose {
+                eprintln!("    Processing imports for module '{}' (DefId {}), {} imports, {} declarations",
+                    module_path, module_def_id.index(), module.ast.imports.len(), module.ast.declarations.len());
+            }
+
+            // Helper function to process a single import
+            let process_import = |import: &ast::Import, ctx: &mut TypeContext<'a>, loader: &Self| {
                 let (visibility, path, items_opt, alias_opt) = match import {
                     ast::Import::Simple { visibility, path, alias, .. } => {
                         (*visibility, path, None, alias.as_ref())
@@ -661,23 +1288,73 @@ impl StdlibLoader {
                     ast::Import::Glob { visibility, path, .. } => {
                         // Glob re-exports need special handling
                         if *visibility == ast::Visibility::Public {
-                            self.process_glob_reexport(ctx, module_def_id, &module_path, &module.interner, path);
+                            if verbose {
+                                eprintln!("      Glob reexport: pub use {:?}::*", path);
+                            }
+                            loader.process_glob_reexport(ctx, module_def_id, &module_path, &module.interner, path);
                         }
-                        continue;
+                        return;
                     }
                 };
 
                 if visibility != ast::Visibility::Public {
-                    continue;
+                    return;
                 }
 
                 // Resolve the import path relative to this module
                 if let Some(items) = items_opt {
+                    if verbose {
+                        eprintln!("      Group reexport: pub use {:?}::{{...}}", path);
+                    }
                     // Group import: pub use path::{Item1, Item2};
-                    self.process_group_reexport(ctx, module_def_id, &module_path, &module.interner, path, items);
+                    loader.process_group_reexport(ctx, module_def_id, &module_path, &module.interner, path, items);
                 } else {
+                    if verbose {
+                        eprintln!("      Simple reexport: pub use {:?}", path);
+                    }
                     // Simple import: pub use path::Item;
-                    self.process_simple_reexport(ctx, module_def_id, &module_path, &module.interner, path, alias_opt);
+                    loader.process_simple_reexport(ctx, module_def_id, &module_path, &module.interner, path, alias_opt);
+                }
+            };
+
+            // Process imports array
+            for import in &module.ast.imports {
+                process_import(import, ctx, self);
+            }
+
+            // Also process Declaration::Use from declarations array
+            // (pub use statements may appear as declarations rather than imports)
+            let mut use_count = 0;
+            for decl in &module.ast.declarations {
+                if let ast::Declaration::Use(import) = decl {
+                    use_count += 1;
+                    process_import(import, ctx, self);
+                }
+            }
+            if verbose {
+                if module_path == "std.collections" {
+                    // Debug: show all declaration types in the collections module
+                    eprintln!("      std.collections use_count={}, declarations:", use_count);
+                    for (i, decl) in module.ast.declarations.iter().enumerate() {
+                        match decl {
+                            ast::Declaration::Use(imp) => {
+                                let vis = match imp {
+                                    ast::Import::Simple { visibility, .. } => visibility,
+                                    ast::Import::Group { visibility, .. } => visibility,
+                                    ast::Import::Glob { visibility, .. } => visibility,
+                                };
+                                eprintln!("        [{}] Use: visibility={:?}", i, vis);
+                            }
+                            ast::Declaration::Module(_) => eprintln!("        [{}] Module", i),
+                            ast::Declaration::Trait(_) => eprintln!("        [{}] Trait", i),
+                            ast::Declaration::Impl(_) => eprintln!("        [{}] Impl", i),
+                            ast::Declaration::Struct(_) => eprintln!("        [{}] Struct", i),
+                            ast::Declaration::Enum(_) => eprintln!("        [{}] Enum", i),
+                            _ => eprintln!("        [{}] Other", i),
+                        }
+                    }
+                } else if use_count > 0 {
+                    eprintln!("      Found {} Declaration::Use items", use_count);
                 }
             }
         }
@@ -690,7 +1367,7 @@ impl StdlibLoader {
         &self,
         ctx: &mut TypeContext<'a>,
         module_def_id: DefId,
-        _module_path: &str,
+        module_path: &str,
         interner: &DefaultStringInterner,
         path: &ast::ModulePath,
         alias: Option<&crate::span::Spanned<ast::Symbol>>,
@@ -700,7 +1377,8 @@ impl StdlibLoader {
         };
 
         // Try to resolve the path to find the target item
-        if let Some(def_id) = self.resolve_import_path(ctx, interner, path) {
+        // Use the current module as base for relative paths
+        if let Some(def_id) = self.resolve_import_path_relative(ctx, interner, path, module_def_id, module_path) {
             // Determine the local name
             let local_name = if let Some(alias_spanned) = alias {
                 resolve_symbol(alias_spanned.node)
@@ -722,7 +1400,7 @@ impl StdlibLoader {
         &self,
         ctx: &mut TypeContext<'a>,
         module_def_id: DefId,
-        _module_path: &str,
+        module_path: &str,
         interner: &DefaultStringInterner,
         base_path: &ast::ModulePath,
         items: &[ast::ImportItem],
@@ -731,10 +1409,26 @@ impl StdlibLoader {
             interner.resolve(sym).map(|s| s.to_string()).unwrap_or_else(|| "unknown".to_string())
         };
 
-        // Resolve the base path to a module
-        let base_module_id = match self.resolve_module_path(ctx, interner, base_path) {
-            Some(id) => id,
-            None => return,
+        // Resolve the base path to a module (supports relative paths from current module)
+        let path_str: String = base_path.segments.iter()
+            .map(|s| resolve_symbol(s.node))
+            .collect::<Vec<_>>()
+            .join(".");
+        let base_module_id = match self.resolve_module_path_relative(ctx, interner, base_path, module_def_id, module_path) {
+            Some(id) => {
+                let verbose = std::env::var("BLOOD_STDLIB_VERBOSE").is_ok();
+                if verbose && module_path == "std.collections" {
+                    eprintln!("      RESOLVED: '{}' from '{}' -> DefId({})", path_str, module_path, id.index());
+                }
+                id
+            }
+            None => {
+                let verbose = std::env::var("BLOOD_STDLIB_VERBOSE").is_ok();
+                if verbose {
+                    eprintln!("      WARNING: Failed to resolve base path '{}' from module '{}'", path_str, module_path);
+                }
+                return;
+            }
         };
 
         self.process_import_items_reexport(
@@ -771,8 +1465,23 @@ impl StdlibLoader {
 
                     // Look up the item in the base module
                     if let Some(item_def_id) = self.lookup_in_module(ctx, base_module_id, &item_name) {
+                        let verbose = std::env::var("BLOOD_STDLIB_VERBOSE").is_ok();
+                        if verbose && item_name == "HashMap" {
+                            eprintln!("      REEXPORT: Found '{}' -> DefId({}) in module DefId({})",
+                                item_name, item_def_id.index(), base_module_id.index());
+                        }
                         if let Some(module_info) = ctx.module_defs.get_mut(&module_def_id) {
-                            module_info.reexports.push((local_name, item_def_id));
+                            module_info.reexports.push((local_name.clone(), item_def_id));
+                            if verbose && item_name == "HashMap" {
+                                eprintln!("      REEXPORT: Registered '{}' as reexport in module DefId({})",
+                                    local_name, module_def_id.index());
+                            }
+                        }
+                    } else {
+                        let verbose = std::env::var("BLOOD_STDLIB_VERBOSE").is_ok();
+                        if verbose && item_name == "HashMap" {
+                            eprintln!("      REEXPORT: FAILED to find '{}' in base_module DefId({}) (reexporting to DefId({}))",
+                                item_name, base_module_id.index(), module_def_id.index());
                         }
                     }
                 }
@@ -891,6 +1600,100 @@ impl StdlibLoader {
         Some(current_id)
     }
 
+    /// Resolve an import path, handling relative paths from the current module.
+    /// For paths starting with "std", uses absolute resolution.
+    /// For other paths, resolves relative to the base_module_id.
+    fn resolve_import_path_relative(
+        &self,
+        ctx: &TypeContext<'_>,
+        interner: &DefaultStringInterner,
+        path: &ast::ModulePath,
+        base_module_id: DefId,
+        base_module_path: &str,
+    ) -> Option<DefId> {
+        let resolve_symbol = |sym: ast::Symbol| -> String {
+            interner.resolve(sym).map(|s| s.to_string()).unwrap_or_else(|| "unknown".to_string())
+        };
+
+        if path.segments.is_empty() {
+            return None;
+        }
+
+        let first_segment = resolve_symbol(path.segments[0].node);
+        let verbose = std::env::var("BLOOD_STDLIB_VERBOSE").is_ok();
+
+        // Determine the starting module and track the current module path
+        let (mut current_id, mut current_module_path) = match first_segment.as_str() {
+            // Absolute paths starting with "std"
+            "std" => {
+                let std_id = self.modules.get("std").and_then(|m| m.def_id)?;
+                (std_id, "std".to_string())
+            }
+            // Relative paths start from the current module
+            _ => {
+                // First segment could be a submodule of the base module
+                // Try submodule first: base_module_path.first_segment
+                let submodule_path = format!("{}.{}", base_module_path, first_segment);
+                if let Some(submodule_id) = self.modules.get(&submodule_path).and_then(|m| m.def_id) {
+                    if verbose && base_module_path == "std.collections" {
+                        eprintln!("      resolve_import_path_relative: '{}' is submodule at '{}'", first_segment, submodule_path);
+                    }
+                    (submodule_id, submodule_path)
+                } else {
+                    // Fall back to item lookup in base module
+                    if let Some(item_id) = self.lookup_in_module(ctx, base_module_id, &first_segment) {
+                        // If the path has only one segment, this is the item we want
+                        if path.segments.len() == 1 {
+                            return Some(item_id);
+                        }
+                        // Otherwise, item must be a container we can look into
+                        (item_id, base_module_path.to_string())
+                    } else {
+                        if verbose && base_module_path == "std.collections" {
+                            eprintln!("      resolve_import_path_relative: FAILED to find '{}' as submodule '{}' or item in '{}'",
+                                first_segment, submodule_path, base_module_path);
+                        }
+                        return None;
+                    }
+                }
+            }
+        };
+
+        // Walk remaining segments
+        let skip_count = if first_segment == "std" { 1 } else { 1 }; // Skip first segment (already processed)
+
+        for (i, segment) in path.segments.iter().enumerate().skip(skip_count) {
+            let segment_name = resolve_symbol(segment.node);
+            let is_last = i == path.segments.len() - 1;
+
+            if is_last {
+                // Last segment - should be an item in the current module
+                let result = self.lookup_in_module(ctx, current_id, &segment_name);
+                if verbose && base_module_path == "std.collections" {
+                    eprintln!("      resolve_import_path_relative: looking up item '{}' in module '{}' -> {:?}",
+                        segment_name, current_module_path, result.map(|id| id.index()));
+                }
+                return result;
+            } else {
+                // Intermediate segment - should be a submodule
+                let submodule_path = format!("{}.{}", current_module_path, segment_name);
+                if let Some(submodule_id) = self.modules.get(&submodule_path).and_then(|m| m.def_id) {
+                    current_id = submodule_id;
+                    current_module_path = submodule_path;
+                } else {
+                    // Fall back to item lookup
+                    if let Some(id) = self.lookup_in_module(ctx, current_id, &segment_name) {
+                        current_id = id;
+                    } else {
+                        return None;
+                    }
+                }
+            }
+        }
+
+        Some(current_id)
+    }
+
     /// Resolve a module path to find the module DefId.
     fn resolve_module_path(
         &self,
@@ -929,6 +1732,68 @@ impl StdlibLoader {
 
                 Some(current_id)
             })
+    }
+
+    /// Resolve a module path, supporting relative paths from a base module.
+    /// For paths starting with "std", uses absolute resolution.
+    /// For other paths, resolves relative to the base module using the module_path_str.
+    ///
+    /// Resolution order for relative paths:
+    /// 1. Try as child of current module: module_path.relative_path
+    /// 2. Try as sibling (under parent): parent_module.relative_path
+    fn resolve_module_path_relative(
+        &self,
+        _ctx: &TypeContext<'_>,
+        interner: &DefaultStringInterner,
+        path: &ast::ModulePath,
+        _base_module_id: DefId,
+        module_path_str: &str,
+    ) -> Option<DefId> {
+        let resolve_symbol = |sym: ast::Symbol| -> String {
+            interner.resolve(sym).map(|s| s.to_string()).unwrap_or_else(|| "unknown".to_string())
+        };
+
+        if path.segments.is_empty() {
+            return None;
+        }
+
+        let first_segment = resolve_symbol(path.segments[0].node);
+
+        // Determine starting point based on whether path is absolute or relative
+        match first_segment.as_str() {
+            "std" => {
+                // Absolute path starting with "std"
+                let full_path: String = path.segments.iter()
+                    .map(|s| resolve_symbol(s.node))
+                    .collect::<Vec<_>>()
+                    .join(".");
+                self.modules.get(&full_path).and_then(|m| m.def_id)
+            }
+            _ => {
+                // Relative path - try multiple resolution strategies
+                let relative_path: String = path.segments.iter()
+                    .map(|s| resolve_symbol(s.node))
+                    .collect::<Vec<_>>()
+                    .join(".");
+
+                // Strategy 1: Try as child of current module (e.g., std.collections.hashmap)
+                let child_path = format!("{}.{}", module_path_str, relative_path);
+                if let Some(result) = self.modules.get(&child_path).and_then(|m| m.def_id) {
+                    return Some(result);
+                }
+
+                // Strategy 2: Try as sibling under parent module (e.g., std.core from std.prelude)
+                if let Some(dot_pos) = module_path_str.rfind('.') {
+                    let parent_path = &module_path_str[..dot_pos];
+                    let sibling_path = format!("{}.{}", parent_path, relative_path);
+                    if let Some(result) = self.modules.get(&sibling_path).and_then(|m| m.def_id) {
+                        return Some(result);
+                    }
+                }
+
+                None
+            }
+        }
     }
 
     /// Look up an item in a module.
@@ -1256,6 +2121,45 @@ fn register_type_info<'a>(
         }
         // Other declarations don't need type info registration
         _ => {}
+    }
+}
+
+/// Register a function signature for a top-level function declaration.
+/// This allows imported functions to be called with proper type checking.
+fn register_fn_sig<'a>(
+    ctx: &mut TypeContext<'a>,
+    interner: &DefaultStringInterner,
+    def_id: DefId,
+    decl: &ast::Declaration,
+) {
+    if let ast::Declaration::Function(f) = decl {
+        // Skip if fn_sig already exists
+        if ctx.fn_sigs.contains_key(&def_id) {
+            return;
+        }
+
+        // Convert parameter types
+        let mut param_types = Vec::new();
+        for param in &f.params {
+            let param_ty = ast_type_to_basic_type(interner, &param.ty);
+            param_types.push(param_ty);
+        }
+
+        // Convert return type
+        let return_ty = f.return_type.as_ref()
+            .map(|ty| ast_type_to_basic_type(interner, ty))
+            .unwrap_or_else(Type::unit);
+
+        // Create and insert the function signature
+        let sig = crate::hir::FnSig {
+            inputs: param_types,
+            output: return_ty,
+            is_const: f.qualifiers.is_const,
+            is_async: f.qualifiers.is_async,
+            is_unsafe: f.qualifiers.is_unsafe,
+            generics: Vec::new(), // TODO: handle function generics
+        };
+        ctx.fn_sigs.insert(def_id, sig);
     }
 }
 

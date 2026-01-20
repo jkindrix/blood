@@ -447,6 +447,12 @@ impl<'a> Resolver<'a> {
             return Ok(());
         }
 
+        let scope_idx = self.current_scope_idx();
+        if std::env::var("BLOOD_IMPORT_SCOPE_VERBOSE").is_ok() && name == "Token" {
+            eprintln!("[import_type_binding] Adding '{}' -> DefId({}) to scope {} ({:?})",
+                name, def_id.index(), scope_idx, self.scopes[scope_idx].kind);
+        }
+
         self.current_scope_mut()
             .type_bindings
             .insert(name, def_id);
@@ -499,14 +505,35 @@ impl<'a> Resolver<'a> {
             return None; // Primitives are handled specially
         }
 
+        let verbose = std::env::var("BLOOD_SCOPE_VERBOSE").is_ok() && name == "Token";
+
         let mut scope_idx = Some(self.current_scope_idx());
+        let mut depth = 0;
 
         while let Some(idx) = scope_idx {
             let scope = &self.scopes[idx];
+            if verbose {
+                eprintln!("[lookup_type] Checking scope {} ({:?}) for '{}', type_bindings count: {}",
+                    idx, scope.kind, name, scope.type_bindings.len());
+                for (k, v) in &scope.type_bindings {
+                    if k.contains("Token") || k == name {
+                        eprintln!("  Found binding: '{}' -> DefId({})", k, v.index());
+                    }
+                }
+            }
             if let Some(def_id) = scope.type_bindings.get(name) {
+                if verbose {
+                    eprintln!("[lookup_type] Found '{}' -> DefId({}) at depth {} scope {:?}",
+                        name, def_id.index(), depth, scope.kind);
+                }
                 return Some(*def_id);
             }
             scope_idx = scope.parent;
+            depth += 1;
+        }
+
+        if verbose {
+            eprintln!("[lookup_type] NOT FOUND: '{}' after {} scopes", name, depth);
         }
 
         None

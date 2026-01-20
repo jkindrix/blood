@@ -611,7 +611,10 @@ impl<'a> TypeContext<'a> {
                 }
             }
             ast::PatternKind::Struct { path, fields, rest } => {
-                let (adt_def_id, type_args) = match expected_ty.kind() {
+                // Auto-dereference references when matching struct patterns
+                // This allows matching on &Enum::Variant { fields } directly
+                let (inner_ty, _deref_count) = self.auto_deref_for_pattern(&expected_ty);
+                let (adt_def_id, type_args) = match inner_ty.kind() {
                     TypeKind::Adt { def_id, args, .. } => (*def_id, args.clone()),
                     _ => {
                         return Err(TypeError::new(
@@ -996,36 +999,36 @@ impl<'a> TypeContext<'a> {
                     let enum_name = self.symbol_to_string(path.segments[0].name.node);
                     let variant_name = self.symbol_to_string(path.segments[1].name.node);
 
-                    // Look up the enum type
-                    match self.resolver.lookup(&enum_name) {
-                        Some(Binding::Def(def_id)) => {
-                            // Find the enum info and variant
-                            if let Some(enum_info) = self.enum_defs.get(&def_id) {
-                                if let Some(variant) = enum_info.variants.iter().find(|v| v.name == variant_name) {
-                                    hir::PatternKind::Variant {
-                                        def_id: variant.def_id,
-                                        variant_idx: variant.index,
-                                        fields: vec![],
-                                    }
-                                } else {
-                                    return Err(TypeError::new(
-                                        TypeErrorKind::NotFound { name: format!("{}::{}", enum_name, variant_name) },
-                                        pattern.span,
-                                    ));
-                                }
-                            } else {
-                                return Err(TypeError::new(
-                                    TypeErrorKind::NotFound { name: enum_name },
-                                    pattern.span,
-                                ));
+                    // Look up the enum type (check type bindings first for imported types, then value bindings)
+                    let def_id = self.resolver.lookup_type(&enum_name)
+                        .or_else(|| {
+                            // Fallback to value lookup for locally defined types
+                            match self.resolver.lookup(&enum_name) {
+                                Some(Binding::Def(id)) => Some(id),
+                                _ => None,
                             }
-                        }
-                        _ => {
-                            return Err(TypeError::new(
-                                TypeErrorKind::NotFound { name: enum_name },
-                                pattern.span,
-                            ));
-                        }
+                        })
+                        .ok_or_else(|| TypeError::new(
+                            TypeErrorKind::NotFound { name: enum_name.clone() },
+                            pattern.span,
+                        ))?;
+
+                    // Find the enum info and variant
+                    let enum_info = self.enum_defs.get(&def_id).ok_or_else(|| TypeError::new(
+                        TypeErrorKind::NotFound { name: enum_name.clone() },
+                        pattern.span,
+                    ))?;
+
+                    let variant = enum_info.variants.iter().find(|v| v.name == variant_name)
+                        .ok_or_else(|| TypeError::new(
+                            TypeErrorKind::NotFound { name: format!("{}::{}", enum_name, variant_name) },
+                            pattern.span,
+                        ))?;
+
+                    hir::PatternKind::Variant {
+                        def_id: variant.def_id,
+                        variant_idx: variant.index,
+                        fields: vec![],
                     }
                 } else if path.segments.len() == 1 {
                     // Single-segment path: direct variant reference (e.g., None)
@@ -1091,5 +1094,29 @@ impl<'a> TypeContext<'a> {
             ty: expected_ty.clone(),
             span: pattern.span,
         })
+    }
+
+    /// Auto-dereference a type for pattern matching.
+    ///
+    /// When matching on `&T`, we want to allow matching against `T`'s patterns
+    /// without requiring an explicit reference pattern. This is consistent with
+    /// Rust's match ergonomics.
+    ///
+    /// Returns the dereferenced type and the number of dereferences applied.
+    fn auto_deref_for_pattern(&self, ty: &Type) -> (Type, usize) {
+        let mut current = ty.clone();
+        let mut deref_count = 0;
+
+        loop {
+            match current.kind() {
+                TypeKind::Ref { inner, .. } => {
+                    current = inner.clone();
+                    deref_count += 1;
+                }
+                _ => break,
+            }
+        }
+
+        (current, deref_count)
     }
 }

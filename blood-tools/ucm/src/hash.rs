@@ -435,6 +435,9 @@ fn collect_deps_from_stmt(
         Statement::Item(decl) => {
             collect_deps_from_decl(decl, interner, deps);
         }
+        Statement::Defer { body, .. } => {
+            collect_deps_from_block(body, interner, deps);
+        }
     }
 }
 

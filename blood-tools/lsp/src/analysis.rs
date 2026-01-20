@@ -596,6 +596,9 @@ impl SemanticAnalyzer {
                 Statement::Item(decl) => {
                     self.collect_declaration_symbols(decl, source, interner, symbols, symbol_at_offset);
                 }
+                Statement::Defer { body, .. } => {
+                    self.collect_block_symbols(body, source, interner, symbols, symbol_at_offset);
+                }
             }
         }
 
@@ -808,6 +811,15 @@ impl SemanticAnalyzer {
                     }
                 }
             }
+            ExprKind::Handle { body, handler, clauses } => {
+                self.collect_expr_symbols(body, source, interner, symbols, symbol_at_offset);
+                if let Some(h) = handler {
+                    self.collect_expr_symbols(h, source, interner, symbols, symbol_at_offset);
+                }
+                for clause in clauses {
+                    self.collect_block_symbols(&clause.body, source, interner, symbols, symbol_at_offset);
+                }
+            }
             // Terminal expressions with no nested symbols
             ExprKind::Literal(_)
             | ExprKind::Path(_)
@@ -906,6 +918,16 @@ impl SemanticAnalyzer {
             ast::TypeKind::MaybeUnsized { inner } => {
                 format!("?{}", self.type_to_string(inner, interner))
             }
+            ast::TypeKind::DynTrait { bounds, .. } => {
+                let bound_strs: Vec<_> = bounds.iter()
+                    .map(|path| path.segments.iter()
+                        .map(|seg| self.resolve_symbol(&seg.name.node, interner))
+                        .collect::<Vec<_>>()
+                        .join("::"))
+                    .collect();
+                format!("dyn {}", bound_strs.join(" + "))
+            }
+            ast::TypeKind::Wildcard => "_".to_string(),
         }
     }
 

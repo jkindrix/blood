@@ -294,6 +294,8 @@ pub struct ImplBlockInfo {
     pub assoc_consts: Vec<ImplAssocConstInfo>,
     /// Source location of the impl block.
     pub span: Span,
+    /// Whether this impl was loaded from the stdlib (no where clause info available).
+    pub from_stdlib: bool,
 }
 
 /// Information about a method in an impl block.
@@ -842,16 +844,64 @@ impl<'a> TypeContext<'a> {
             return None;
         }
 
-        // Look through all registered modules
+        // For full path matching, we need to walk the module hierarchy
+        // Start with the root module (first segment)
+        let first_segment = path[0];
+
+        // Find the root module
+        let mut current_id = None;
         for (&def_id, info) in &self.module_defs {
-            // For now, simple name matching
-            // TODO: Support full path matching for nested modules
-            if path.len() == 1 && info.name == path[0] {
-                return Some(def_id);
+            if info.name == first_segment {
+                // Check if this is actually a root module (no parent or parent is a package root)
+                if self.resolver.def_info.get(&def_id)
+                    .map_or(false, |di| di.parent.is_none())
+                {
+                    current_id = Some(def_id);
+                    break;
+                }
             }
         }
 
-        None
+        let mut current_id = current_id?;
+
+        // Walk remaining segments
+        for &segment in &path[1..] {
+            // Find the child module with the matching name
+            let mut found = false;
+            for (&def_id, info) in &self.module_defs {
+                if info.name == segment {
+                    // Check if this module's parent is current_id
+                    if let Some(di) = self.resolver.def_info.get(&def_id) {
+                        if di.parent == Some(current_id) {
+                            current_id = def_id;
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if !found {
+                // Also check items in the module (module might be stored as an item)
+                if let Some(module_info) = self.module_defs.get(&current_id) {
+                    for &item_id in &module_info.items {
+                        if let Some(di) = self.resolver.def_info.get(&item_id) {
+                            if di.name == segment {
+                                if let Some(child_module_info) = self.module_defs.get(&item_id) {
+                                    current_id = item_id;
+                                    found = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                if !found {
+                    return None;
+                }
+            }
+        }
+
+        Some(current_id)
     }
 
     /// Get all public items from a module.

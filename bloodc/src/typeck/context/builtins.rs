@@ -910,6 +910,16 @@ impl<'a> TypeContext<'a> {
             "string_clear",
         );
 
+        // String.clone(&self) -> String
+        self.register_builtin_method(
+            BuiltinMethodType::String,
+            "clone",
+            false,
+            vec![Type::reference(string_ty.clone(), false)],
+            string_ty.clone(),
+            "string_clone",
+        );
+
         // String.char_at(&self, index: usize) -> char
         // Access character at byte index (panics on out of bounds)
         // Blood code typically does bounds check before calling this
@@ -931,6 +941,61 @@ impl<'a> TypeContext<'a> {
             vec![Type::reference(string_ty.clone(), false), usize_ty.clone(), usize_ty.clone()],
             string_ty.clone(),
             "string_substring",
+        );
+
+        // String.eq(&self, other: &str) -> bool
+        // Compare string with a string slice (most common case)
+        self.register_builtin_method(
+            BuiltinMethodType::String,
+            "eq",
+            false,
+            vec![Type::reference(string_ty.clone(), false), Type::reference(Type::str(), false)],
+            bool_ty.clone(),
+            "string_eq",
+        );
+
+        // String.eq_str(&self, other: &str) -> bool
+        // Compare string with a string slice
+        self.register_builtin_method(
+            BuiltinMethodType::String,
+            "eq_str",
+            false,
+            vec![Type::reference(string_ty.clone(), false), Type::reference(Type::str(), false)],
+            bool_ty.clone(),
+            "string_eq_str",
+        );
+
+        // String.contains(&self, pattern: &str) -> bool
+        // Check if string contains pattern
+        self.register_builtin_method(
+            BuiltinMethodType::String,
+            "contains",
+            false,
+            vec![Type::reference(string_ty.clone(), false), Type::reference(Type::str(), false)],
+            bool_ty.clone(),
+            "string_contains",
+        );
+
+        // String.starts_with(&self, pattern: &str) -> bool
+        // Check if string starts with pattern
+        self.register_builtin_method(
+            BuiltinMethodType::String,
+            "starts_with",
+            false,
+            vec![Type::reference(string_ty.clone(), false), Type::reference(Type::str(), false)],
+            bool_ty.clone(),
+            "string_starts_with",
+        );
+
+        // String.ends_with(&self, pattern: &str) -> bool
+        // Check if string ends with pattern
+        self.register_builtin_method(
+            BuiltinMethodType::String,
+            "ends_with",
+            false,
+            vec![Type::reference(string_ty.clone(), false), Type::reference(Type::str(), false)],
+            bool_ty.clone(),
+            "string_ends_with",
         );
 
         // === Option methods ===
@@ -982,9 +1047,28 @@ impl<'a> TypeContext<'a> {
             BuiltinMethodType::Option,
             "try_",
             false,
-            vec![option_t],
+            vec![option_t.clone()],
             t_ty.clone(),
             "option_try",
+        );
+
+        // Option<T>.map<U>(self, f: fn(T) -> U) -> Option<U>
+        // We use a second synthetic type parameter U (TyVarId(9001))
+        let u_var_id = TyVarId(9001);  // synthetic placeholder for return type
+        let u_ty = Type::new(TypeKind::Param(u_var_id));
+        let option_u = Type::adt(option_def_id, vec![u_ty.clone()]);
+        let fn_t_to_u = Type::new(TypeKind::Fn {
+            params: vec![t_ty.clone()],
+            ret: u_ty.clone(),
+            effects: Vec::new(),
+        });
+        self.register_builtin_method(
+            BuiltinMethodType::Option,
+            "map",
+            false,
+            vec![option_t, fn_t_to_u],
+            option_u,
+            "option_map",
         );
 
         // === Vec methods ===
@@ -1033,7 +1117,7 @@ impl<'a> TypeContext<'a> {
         // Vec<T>.get(&self, index: usize) -> Option<&T>
         let option_ref_t = Type::adt(
             self.option_def_id.expect("BUG: option_def_id not set"),
-            vec![Type::reference(t_ty, false)],
+            vec![Type::reference(t_ty.clone(), false)],
         );
         self.register_builtin_method(
             BuiltinMethodType::Vec,
@@ -1049,8 +1133,9 @@ impl<'a> TypeContext<'a> {
         // =========================================================================
 
         // Array types in Blood are growable (like Vec in semantic terms)
-        // [T; N].len(&self) -> usize
-        let array_elem_t = self.unifier.fresh_var();
+        // Use the same synthetic type parameter as Vec/Option for proper substitution
+        // The placeholder TyVarId(9000) is replaced with the actual element type at call time
+        let array_elem_t = t_ty.clone(); // Use the same T type parameter
         let array_ty = Type::array(array_elem_t.clone(), 0); // Size 0 as placeholder
         self.register_builtin_method(
             BuiltinMethodType::Array,
@@ -1081,11 +1166,72 @@ impl<'a> TypeContext<'a> {
             "array_is_empty",
         );
 
+        // [T; N].clone(&self) -> [T; N]
+        self.register_builtin_method(
+            BuiltinMethodType::Array,
+            "clone",
+            false,
+            vec![Type::reference(array_ty.clone(), false)],
+            array_ty.clone(),
+            "array_clone",
+        );
+
+        // [T; N].get(&self, index: usize) -> Option<&T>
+        self.register_builtin_method(
+            BuiltinMethodType::Array,
+            "get",
+            false,
+            vec![Type::reference(array_ty.clone(), false), usize_ty.clone()],
+            Type::adt(option_def_id, vec![Type::reference(array_elem_t.clone(), false)]),
+            "array_get",
+        );
+
+        // [T; N].pop(&mut self) -> Option<T>
+        self.register_builtin_method(
+            BuiltinMethodType::Array,
+            "pop",
+            false,
+            vec![Type::reference(array_ty.clone(), true)],
+            Type::adt(option_def_id, vec![array_elem_t.clone()]),
+            "array_pop",
+        );
+
+        // [T; N].remove(&mut self, index: usize) -> T
+        self.register_builtin_method(
+            BuiltinMethodType::Array,
+            "remove",
+            false,
+            vec![Type::reference(array_ty.clone(), true), usize_ty.clone()],
+            array_elem_t.clone(),
+            "array_remove",
+        );
+
+        // [T; N].first(&self) -> Option<&T>
+        self.register_builtin_method(
+            BuiltinMethodType::Array,
+            "first",
+            false,
+            vec![Type::reference(array_ty.clone(), false)],
+            Type::adt(option_def_id, vec![Type::reference(array_elem_t.clone(), false)]),
+            "array_first",
+        );
+
+        // [T; N].last(&self) -> Option<&T>
+        self.register_builtin_method(
+            BuiltinMethodType::Array,
+            "last",
+            false,
+            vec![Type::reference(array_ty.clone(), false)],
+            Type::adt(option_def_id, vec![Type::reference(array_elem_t.clone(), false)]),
+            "array_last",
+        );
+
         // =========================================================================
         // Slice [T] methods
         // =========================================================================
 
-        let slice_elem_t = self.unifier.fresh_var();
+        // Use the same synthetic type parameter as Vec/Option for proper substitution
+        let slice_elem_t = t_ty.clone(); // Use the same T type parameter
         let slice_ty = Type::slice(slice_elem_t.clone());
 
         // [T].len(&self) -> usize
@@ -1116,6 +1262,66 @@ impl<'a> TypeContext<'a> {
             vec![Type::reference(slice_ty.clone(), false)],
             bool_ty.clone(),
             "slice_is_empty",
+        );
+
+        // [T].clone(&self) -> [T]
+        self.register_builtin_method(
+            BuiltinMethodType::Slice,
+            "clone",
+            false,
+            vec![Type::reference(slice_ty.clone(), false)],
+            slice_ty.clone(),
+            "slice_clone",
+        );
+
+        // [T].get(&self, index: usize) -> Option<&T>
+        self.register_builtin_method(
+            BuiltinMethodType::Slice,
+            "get",
+            false,
+            vec![Type::reference(slice_ty.clone(), false), usize_ty.clone()],
+            Type::adt(option_def_id, vec![Type::reference(slice_elem_t.clone(), false)]),
+            "slice_get",
+        );
+
+        // [T].pop(&mut self) -> Option<T>
+        self.register_builtin_method(
+            BuiltinMethodType::Slice,
+            "pop",
+            false,
+            vec![Type::reference(slice_ty.clone(), true)],
+            Type::adt(option_def_id, vec![slice_elem_t.clone()]),
+            "slice_pop",
+        );
+
+        // [T].remove(&mut self, index: usize) -> T
+        self.register_builtin_method(
+            BuiltinMethodType::Slice,
+            "remove",
+            false,
+            vec![Type::reference(slice_ty.clone(), true), usize_ty.clone()],
+            slice_elem_t.clone(),
+            "slice_remove",
+        );
+
+        // [T].first(&self) -> Option<&T>
+        self.register_builtin_method(
+            BuiltinMethodType::Slice,
+            "first",
+            false,
+            vec![Type::reference(slice_ty.clone(), false)],
+            Type::adt(option_def_id, vec![Type::reference(slice_elem_t.clone(), false)]),
+            "slice_first",
+        );
+
+        // [T].last(&self) -> Option<&T>
+        self.register_builtin_method(
+            BuiltinMethodType::Slice,
+            "last",
+            false,
+            vec![Type::reference(slice_ty.clone(), false)],
+            Type::adt(option_def_id, vec![Type::reference(slice_elem_t.clone(), false)]),
+            "slice_last",
         );
 
         // =========================================================================

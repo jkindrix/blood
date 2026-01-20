@@ -56,8 +56,9 @@ impl<'src> Parser<'src> {
                 Some(Declaration::MacroInvocation(self.parse_macro_invocation_decl(attrs)))
             }
             // Handle `use` / `pub use` (re-exports can appear among declarations)
+            // Note: visibility was already parsed by parse_declaration, so use parse_import_with_visibility
             TokenKind::Use => {
-                let import = self.parse_import();
+                let import = self.parse_import_with_visibility(vis);
                 Some(Declaration::Use(import))
             }
             _ => {

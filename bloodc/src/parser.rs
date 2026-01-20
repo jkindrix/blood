@@ -748,15 +748,19 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_import(&mut self) -> Import {
-        let start = self.current.span;
-
         // Parse optional visibility: `pub use ...`
         let visibility = if self.try_consume(TokenKind::Pub) {
             Visibility::Public
         } else {
             Visibility::Private
         };
+        self.parse_import_with_visibility(visibility)
+    }
 
+    /// Parse a use/import statement when visibility has already been parsed.
+    /// Used when `use` appears as a declaration (after `pub` was parsed by parse_declaration).
+    pub(super) fn parse_import_with_visibility(&mut self, visibility: Visibility) -> Import {
+        let start = self.current.span;
         self.advance(); // consume 'use'
 
         let path = self.parse_module_path();

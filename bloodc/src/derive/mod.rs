@@ -278,6 +278,7 @@ impl<'a> DeriveExpander<'a> {
             assoc_types: Vec::new(),
             assoc_consts: Vec::new(),
             span: request.span,
+            from_stdlib: false,
         };
 
         self.impl_blocks.push(impl_block);

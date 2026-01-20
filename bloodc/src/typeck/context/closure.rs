@@ -34,8 +34,29 @@ impl<'a> TypeContext<'a> {
     ) -> Result<hir::Expr, TypeError> {
         // Save current locals and create fresh ones for closure
         let outer_locals = std::mem::take(&mut self.locals);
-        let outer_return_type = self.return_type.take();
+        let outer_return_type = self.return_type.clone();
+        self.return_type = None;  // Closures have their own return context
 
+        // Use inner helper to ensure state restoration on errors
+        let result = self.infer_closure_inner(is_move, params, return_type, effects, body, span);
+
+        // Always restore outer state, even on error
+        self.locals = outer_locals;
+        self.return_type = outer_return_type;
+
+        result
+    }
+
+    /// Inner implementation of closure inference. State restoration happens in the caller.
+    fn infer_closure_inner(
+        &mut self,
+        is_move: bool,
+        params: &[ast::ClosureParam],
+        return_type: Option<&ast::Type>,
+        effects: Option<&ast::EffectRow>,
+        body: &ast::Expr,
+        span: Span,
+    ) -> Result<hir::Expr, TypeError> {
         // Parse and register closure's effect annotation if present.
         // This ensures that `perform Effect.op()` inside the closure uses the closure's
         // effect type arguments, not the enclosing function's.
@@ -222,9 +243,7 @@ impl<'a> TypeContext<'a> {
             self.handled_effects.pop();
         }
 
-        // Restore outer context
-        self.locals = outer_locals;
-        self.return_type = outer_return_type;
+        // Note: outer_locals and return_type restoration is handled by the caller (infer_closure)
 
         // Build the closure type: Fn(params) -> ret
         let closure_ty = Type::function(resolved_param_types, resolved_return_ty);
@@ -505,8 +524,35 @@ impl<'a> TypeContext<'a> {
 
         // Save current locals and create fresh ones for closure
         let outer_locals = std::mem::take(&mut self.locals);
-        let outer_return_type = self.return_type.take();
+        let outer_return_type = self.return_type.clone();
+        self.return_type = None;  // Closures have their own return context
 
+        // Use inner helper to ensure state restoration on errors
+        let result = self.check_closure_inner(
+            is_move, params, return_type, effects, body, expected,
+            expected_params, expected_ret, span
+        );
+
+        // Always restore outer state, even on error
+        self.locals = outer_locals;
+        self.return_type = outer_return_type;
+
+        result
+    }
+
+    /// Inner implementation of check_closure. State restoration happens in the caller.
+    fn check_closure_inner(
+        &mut self,
+        is_move: bool,
+        params: &[ast::ClosureParam],
+        return_type: Option<&ast::Type>,
+        effects: Option<&ast::EffectRow>,
+        body: &ast::Expr,
+        expected: &Type,
+        expected_params: Option<Vec<Type>>,
+        expected_ret: Option<Type>,
+        span: Span,
+    ) -> Result<hir::Expr, TypeError> {
         // Parse and register closure's effect annotation if present.
         let closure_effects_count = if let Some(effect_row) = effects {
             let (effect_refs, _row_var) = self.parse_effect_row(effect_row)?;
@@ -694,9 +740,7 @@ impl<'a> TypeContext<'a> {
             self.handled_effects.pop();
         }
 
-        // Restore outer context
-        self.locals = outer_locals;
-        self.return_type = outer_return_type;
+        // Note: outer_locals and return_type restoration is handled by the caller (check_closure)
 
         // Build the closure type: Fn(params) -> ret
         let closure_ty = Type::function(resolved_param_types, resolved_return_ty);

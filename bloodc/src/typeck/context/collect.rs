@@ -73,6 +73,18 @@ impl<'a> TypeContext<'a> {
 
     /// Resolve names in a program.
     pub fn resolve_program(&mut self, program: &ast::Program) -> Result<(), Vec<Diagnostic>> {
+        // Phase 0: Set current_module if this program declares a module
+        // This is needed for relative import resolution (e.g., `pub use visitor.Visitor;`)
+        if let Some(ref module_decl) = program.module {
+            let path_segments: Vec<String> = module_decl.path.segments.iter()
+                .map(|s| self.symbol_to_string(s.node))
+                .collect();
+            let path_refs: Vec<&str> = path_segments.iter().map(|s| s.as_str()).collect();
+            if let Some(def_id) = self.find_module_by_path(&path_refs) {
+                self.current_module = Some(def_id);
+            }
+        }
+
         // Phase 1: Pre-register all type names so forward references work.
         // This allows struct A { b: B } to compile when B is defined after A.
         for decl in &program.declarations {
@@ -281,6 +293,11 @@ impl<'a> TypeContext<'a> {
                             item_name.clone()
                         };
 
+                        let verbose = std::env::var("BLOOD_IMPORT_VERBOSE").is_ok();
+                        if verbose {
+                            eprintln!("  Import: {} -> DefId({}) from module DefId({})", item_name, def_id.index(), base_module_id.index());
+                        }
+
                         // Import based on def kind
                         if let Some(info) = self.resolver.def_info.get(&def_id) {
                             match info.kind {
@@ -292,6 +309,14 @@ impl<'a> TypeContext<'a> {
                                     self.resolver.import_binding(local_name.clone(), def_id, span)?;
                                 }
                             }
+                        } else {
+                            // This shouldn't happen - lookup_in_module already checked def_info
+                            return Err(TypeError::new(
+                                TypeErrorKind::ImportError {
+                                    message: format!("internal error: no def_info for `{}` (DefId {})", item_name, def_id.index()),
+                                },
+                                span,
+                            ));
                         }
 
                         // Track public re-exports
@@ -471,6 +496,7 @@ impl<'a> TypeContext<'a> {
         // 1. Value bindings in current scope
         // 2. Type bindings in current scope
         // 3. External modules registered via register_external_module
+        // 4. Child module of current module (for relative paths like `visitor.Visitor`)
         let mut current_id = if let Some(Binding::Def(def_id)) = self.resolver.lookup(&first_name) {
             def_id
         } else if let Some(def_id) = self.resolver.lookup_type(&first_name) {
@@ -478,6 +504,18 @@ impl<'a> TypeContext<'a> {
         } else if let Some(def_id) = self.find_root_module_by_name(&first_name) {
             // Check for external modules like "std"
             def_id
+        } else if let Some(current_module_id) = self.current_module {
+            // Try as a child module of the current module (for relative imports)
+            if let Some(def_id) = self.lookup_in_module(current_module_id, &first_name) {
+                def_id
+            } else {
+                return Err(TypeError::new(
+                    TypeErrorKind::ImportError {
+                        message: format!("cannot find module `{}`", first_name),
+                    },
+                    path.span,
+                ));
+            }
         } else {
             return Err(TypeError::new(
                 TypeErrorKind::ImportError {
@@ -488,10 +526,18 @@ impl<'a> TypeContext<'a> {
         };
 
         // Walk the remaining segments
+        let verbose = std::env::var("BLOOD_MODULE_PATH_VERBOSE").is_ok();
         for segment in &path.segments[1..] {
             let name = self.symbol_to_string(segment.node);
 
+            if verbose {
+                eprintln!("  resolve_module_path: looking for '{}' in module DefId({})", name, current_id.index());
+            }
+
             if let Some(def_id) = self.lookup_in_module(current_id, &name) {
+                if verbose {
+                    eprintln!("  resolve_module_path: found '{}' -> DefId({})", name, def_id.index());
+                }
                 current_id = def_id;
             } else {
                 return Err(TypeError::new(
@@ -508,11 +554,27 @@ impl<'a> TypeContext<'a> {
 
     /// Look up an item by name in a module.
     fn lookup_in_module(&self, module_id: DefId, name: &str) -> Option<DefId> {
+        let verbose = std::env::var("BLOOD_MODULE_PATH_VERBOSE").is_ok();
         // Check if we have module info for this DefId
         if let Some(module_def) = self.module_defs.get(&module_id) {
+            if verbose {
+                eprintln!("    lookup_in_module: module DefId({}) has {} items, {} reexports",
+                    module_id.index(), module_def.items.len(), module_def.reexports.len());
+                for &item_id in &module_def.items {
+                    if let Some(info) = self.resolver.def_info.get(&item_id) {
+                        eprintln!("      - item: '{}' -> DefId({})", info.name, item_id.index());
+                    }
+                }
+                for (reexport_name, def_id) in &module_def.reexports {
+                    eprintln!("      - reexport: '{}' -> DefId({})", reexport_name, def_id.index());
+                }
+            }
             // Look in the module's items
             for &item_id in &module_def.items {
                 if let Some(info) = self.resolver.def_info.get(&item_id) {
+                    if verbose && info.name == name {
+                        eprintln!("    lookup_in_module: found '{}' -> DefId({})", name, item_id.index());
+                    }
                     if info.name == name {
                         return Some(item_id);
                     }
@@ -565,12 +627,28 @@ impl<'a> TypeContext<'a> {
     /// This searches through registered external modules to find one with the given name.
     /// Used for resolving the first segment of import paths like `std.compiler.lexer`.
     fn find_root_module_by_name(&self, name: &str) -> Option<DefId> {
+        let verbose = std::env::var("BLOOD_MODULE_VERBOSE").is_ok();
+        if verbose {
+            eprintln!("find_root_module_by_name: looking for '{}'", name);
+            eprintln!("  have {} modules registered", self.module_defs.len());
+            for (&def_id, info) in &self.module_defs {
+                if info.is_external {
+                    eprintln!("    - external module '{}' (DefId: {})", info.name, def_id.index());
+                }
+            }
+        }
         // Search through all registered modules
         for (&def_id, info) in &self.module_defs {
             // Only consider root-level external modules
             if info.is_external && info.name == name {
+                if verbose {
+                    eprintln!("  found: DefId({})", def_id.index());
+                }
                 return Some(def_id);
             }
+        }
+        if verbose {
+            eprintln!("  not found!");
         }
         None
     }
@@ -1864,13 +1942,22 @@ impl<'a> TypeContext<'a> {
 
                     // Create function signature with method generics
                     let sig = hir::FnSig {
-                        inputs: param_types,
-                        output: return_type,
+                        inputs: param_types.clone(),
+                        output: return_type.clone(),
                         is_const: func.qualifiers.is_const,
                         is_async: func.qualifiers.is_async,
                         is_unsafe: func.qualifiers.is_unsafe,
                         generics: method_generics,
                     };
+
+                    // Debug output for method signature collection
+                    if std::env::var("BLOOD_COLLECT_VERBOSE").is_ok() && (method_name == "spanned_ident" || method_name.contains("spanned") || method_name == "clone" || method_name == "advance" || method_name == "current") {
+                        eprintln!("[USER_COLLECT_IMPL] method '{}' on {:?} signature:", method_name, self_ty);
+                        for (i, ty) in param_types.iter().enumerate() {
+                            eprintln!("  param[{}]: {:?}", i, ty);
+                        }
+                        eprintln!("  return: {:?}", return_type);
+                    }
 
                     self.fn_sigs.insert(method_def_id, sig);
 
@@ -1946,6 +2033,7 @@ impl<'a> TypeContext<'a> {
             assoc_types,
             assoc_consts,
             span: impl_block.span,
+            from_stdlib: false,
         });
 
         // Clear current_impl_self_ty now that we're done with this impl block

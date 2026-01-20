@@ -265,6 +265,13 @@ impl<'a> TypeContext<'a> {
                     let (idx_a, impl_a) = &impls[i];
                     let (idx_b, impl_b) = &impls[j];
 
+                    // Skip overlap checking if either impl is from stdlib.
+                    // Stdlib impls may have blanket impls with where clauses that we
+                    // don't track, so we can't accurately detect true overlaps.
+                    if impl_a.from_stdlib || impl_b.from_stdlib {
+                        continue;
+                    }
+
                     if self.impls_could_overlap(&impl_a.self_ty, &impl_b.self_ty) {
                         // Get trait name for error message
                         let trait_name = self.trait_defs.get(trait_id)

@@ -255,6 +255,12 @@ impl<'a> TypeContext<'a> {
                 func.span,
             ))?;
 
+        // Debug output for function body checking
+        if std::env::var("BLOOD_RETURN_TRACE").is_ok() {
+            let fn_name = self.symbol_to_string(func.name.node);
+            eprintln!("[FN_TRACE] Checking function body: {} (def_id={}, output={:?})", fn_name, def_id.index(), sig.output);
+        }
+
         // Save state for nested function support - these fields are modified
         // during type-checking and need to be restored after nested functions
         let saved_locals = std::mem::take(&mut self.locals);
@@ -833,6 +839,17 @@ impl<'a> TypeContext<'a> {
                     } else if let Some(value) = value {
                         // No type annotation - infer from value (only process once)
                         let inferred = self.infer_expr(value)?;
+                        // Debug: trace inferred expression type
+                        if std::env::var("BLOOD_LET_TRACE").is_ok() {
+                            if let ast::PatternKind::Ident { name, .. } = &pattern.kind {
+                                let name_str = self.symbol_to_string(name.node);
+                                if name_str == "ch" {
+                                    eprintln!("[INFER_TRACE] Inferred expression for 'ch' has kind: {:?}",
+                                        std::mem::discriminant(&inferred.kind));
+                                    eprintln!("[INFER_TRACE]   inferred.ty = {:?}", inferred.ty);
+                                }
+                            }
+                        }
                         (inferred.ty.clone(), Some(inferred))
                     } else {
                         // No type annotation and no value - error
@@ -841,6 +858,16 @@ impl<'a> TypeContext<'a> {
                             *span,
                         ));
                     };
+
+                    // Debug: trace let binding types
+                    if std::env::var("BLOOD_LET_TRACE").is_ok() {
+                        if let ast::PatternKind::Ident { name, .. } = &pattern.kind {
+                            let name_str = self.symbol_to_string(name.node);
+                            if name_str == "ch" {
+                                eprintln!("[LET_TRACE] Binding 'ch' at {:?} with type: {:?}", span, local_ty);
+                            }
+                        }
+                    }
 
                     // Handle the pattern (simplified: just identifiers for Phase 1)
                     let local_id = self.define_pattern(pattern, local_ty)?;
@@ -866,18 +893,37 @@ impl<'a> TypeContext<'a> {
         let expr = if let Some(expr) = &block.expr {
             self.check_expr(expr, expected)?
         } else {
-            // No trailing expression - block returns unit
-            if !expected.is_unit() && !expected.is_never() {
-                // Check if expected is a type variable
-                if let TypeKind::Infer(_) = expected.kind() {
-                    self.unifier.unify(&Type::unit(), expected, block.span)?;
+            // No trailing expression - check if last statement diverges
+            // (e.g., return, break, continue, panic)
+            let last_stmt_diverges = stmts.last().map_or(false, |stmt| {
+                if let hir::Stmt::Expr(expr) = stmt {
+                    expr.ty.is_never()
+                } else {
+                    false
                 }
+            });
+
+            if last_stmt_diverges {
+                // Block diverges - use never type
+                hir::Expr::new(
+                    hir::ExprKind::Tuple(Vec::new()),
+                    Type::never(),
+                    block.span,
+                )
+            } else {
+                // Block returns unit
+                if !expected.is_unit() && !expected.is_never() {
+                    // Check if expected is a type variable
+                    if let TypeKind::Infer(_) = expected.kind() {
+                        self.unifier.unify(&Type::unit(), expected, block.span)?;
+                    }
+                }
+                hir::Expr::new(
+                    hir::ExprKind::Tuple(Vec::new()),
+                    Type::unit(),
+                    block.span,
+                )
             }
-            hir::Expr::new(
-                hir::ExprKind::Tuple(Vec::new()),
-                Type::unit(),
-                block.span,
-            )
         };
 
         self.resolver.pop_scope();
