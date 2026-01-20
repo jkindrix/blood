@@ -786,6 +786,26 @@ impl<'a> TypeContext<'a> {
             "str_is_empty",
         );
 
+        // str.as_ptr(&self) -> *const u8
+        self.register_builtin_method(
+            BuiltinMethodType::Str,
+            "as_ptr",
+            false,
+            vec![Type::reference(Type::str(), false)],
+            Type::new(TypeKind::Ptr { inner: Type::u8(), mutable: false }),
+            "str_as_ptr",
+        );
+
+        // &str.as_ptr(&self) -> *const u8
+        self.register_builtin_method(
+            BuiltinMethodType::StrRef,
+            "as_ptr",
+            false,
+            vec![Type::reference(Type::str(), false)],
+            Type::new(TypeKind::Ptr { inner: Type::u8(), mutable: false }),
+            "str_as_ptr",
+        );
+
         // === char methods ===
 
         // char.is_whitespace(self) -> bool
@@ -1491,6 +1511,97 @@ impl<'a> TypeContext<'a> {
             bool_ty.clone(),
             "range_inclusive_contains",
         );
+
+        // =========================================================================
+        // Raw Pointer (*const T, *mut T) methods
+        // =========================================================================
+
+        // Use a fresh type variable for the pointee type
+        let ptr_elem_t = self.unifier.fresh_var();
+
+        // (*const T).is_null(self) -> bool
+        let ptr_const_ty = Type::new(TypeKind::Ptr { inner: ptr_elem_t.clone(), mutable: false });
+        self.register_builtin_method(
+            BuiltinMethodType::RawPtrConst,
+            "is_null",
+            false,
+            vec![ptr_const_ty.clone()],
+            bool_ty.clone(),
+            "ptr_is_null",
+        );
+
+        // (*mut T).is_null(self) -> bool
+        let ptr_mut_ty = Type::new(TypeKind::Ptr { inner: ptr_elem_t.clone(), mutable: true });
+        self.register_builtin_method(
+            BuiltinMethodType::RawPtrMut,
+            "is_null",
+            false,
+            vec![ptr_mut_ty.clone()],
+            bool_ty.clone(),
+            "ptr_is_null",
+        );
+
+        // (*const T).offset(self, count: isize) -> *const T
+        self.register_builtin_method(
+            BuiltinMethodType::RawPtrConst,
+            "offset",
+            false,
+            vec![ptr_const_ty.clone(), Type::isize()],
+            ptr_const_ty.clone(),
+            "ptr_offset",
+        );
+
+        // (*mut T).offset(self, count: isize) -> *mut T
+        self.register_builtin_method(
+            BuiltinMethodType::RawPtrMut,
+            "offset",
+            false,
+            vec![ptr_mut_ty.clone(), Type::isize()],
+            ptr_mut_ty.clone(),
+            "ptr_offset",
+        );
+
+        // (*const T).add(self, count: usize) -> *const T
+        self.register_builtin_method(
+            BuiltinMethodType::RawPtrConst,
+            "add",
+            false,
+            vec![ptr_const_ty.clone(), usize_ty.clone()],
+            ptr_const_ty.clone(),
+            "ptr_add",
+        );
+
+        // (*mut T).add(self, count: usize) -> *mut T
+        self.register_builtin_method(
+            BuiltinMethodType::RawPtrMut,
+            "add",
+            false,
+            vec![ptr_mut_ty.clone(), usize_ty.clone()],
+            ptr_mut_ty.clone(),
+            "ptr_add",
+        );
+
+        // (*const T).cast<U>(self) -> *const U
+        // For now, we use u8 as a common target type for casting
+        // The actual type will be determined by the call site
+        self.register_builtin_method(
+            BuiltinMethodType::RawPtrConst,
+            "cast",
+            false,
+            vec![ptr_const_ty.clone()],
+            Type::new(TypeKind::Ptr { inner: Type::u8(), mutable: false }),
+            "ptr_cast",
+        );
+
+        // (*mut T).cast<U>(self) -> *mut U
+        self.register_builtin_method(
+            BuiltinMethodType::RawPtrMut,
+            "cast",
+            false,
+            vec![ptr_mut_ty.clone()],
+            Type::new(TypeKind::Ptr { inner: Type::u8(), mutable: true }),
+            "ptr_cast",
+        );
     }
 
     /// Register a single builtin method.
@@ -1516,6 +1627,8 @@ impl<'a> TypeContext<'a> {
                 super::BuiltinMethodType::RangeInclusive => "RangeInclusive",
                 super::BuiltinMethodType::Slice => "Slice",
                 super::BuiltinMethodType::Array => "Array",
+                super::BuiltinMethodType::RawPtrConst => "ptr_const",
+                super::BuiltinMethodType::RawPtrMut => "ptr_mut",
             },
             name
         );

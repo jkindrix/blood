@@ -1452,6 +1452,8 @@ impl<'a> TypeContext<'a> {
                     None
                 }
             }
+            TypeKind::Ptr { mutable: false, .. } => Some(BuiltinMethodType::RawPtrConst),
+            TypeKind::Ptr { mutable: true, .. } => Some(BuiltinMethodType::RawPtrMut),
             _ => None,
         };
 
@@ -1529,6 +1531,20 @@ impl<'a> TypeContext<'a> {
                                 sig.output.clone()
                             }
                         }
+                        BuiltinMethodType::RawPtrConst | BuiltinMethodType::RawPtrMut => {
+                            // For raw pointer methods, preserve the actual pointer type
+                            // is_null returns bool (from signature), offset/add return same pointer type
+                            if method_name == "offset" || method_name == "add" {
+                                // Return the same pointer type as the receiver
+                                ty.clone()
+                            } else if method_name == "cast" {
+                                // Cast returns a pointer to u8 (placeholder, real type comes from turbofish)
+                                sig.output.clone()
+                            } else {
+                                // is_null returns bool
+                                sig.output.clone()
+                            }
+                        }
                         _ => sig.output.clone(),
                     };
 
@@ -1569,6 +1585,11 @@ impl<'a> TypeContext<'a> {
                             } else {
                                 (Vec::new(), sig.inputs.first().cloned())
                             }
+                        }
+                        BuiltinMethodType::RawPtrConst | BuiltinMethodType::RawPtrMut => {
+                            // For raw pointers, the first param is the pointer itself
+                            // No generic substitution needed - the actual pointer type is used
+                            (Vec::new(), Some(ty.clone()))
                         }
                         _ => (Vec::new(), sig.inputs.first().cloned()),
                     };

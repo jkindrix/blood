@@ -352,6 +352,10 @@ pub enum BuiltinMethodType {
     Slice,
     /// Matches `[T; N]` array type.
     Array,
+    /// Matches `*const T` raw pointer type.
+    RawPtrConst,
+    /// Matches `*mut T` raw pointer type.
+    RawPtrMut,
 }
 
 /// Information about a builtin method for primitive/builtin types.
