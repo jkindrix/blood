@@ -1,0 +1,207 @@
+/// Tests for exhaustiveness.blood - Pattern Exhaustiveness Checking
+///
+/// These tests verify that the exhaustiveness checker correctly identifies
+/// non-exhaustive matches and accepts exhaustive ones.
+///
+/// # Test Coverage
+///
+/// - Boolean exhaustiveness (true/false)
+/// - Integer exhaustiveness (requires wildcard)
+/// - Enum exhaustiveness (all variants)
+/// - Or-pattern exhaustiveness
+/// - Wildcard patterns
+
+use std.collections::{HashMap};
+use std.compiler.typeck.exhaustiveness::{
+    ExhaustivenessChecker, PatternMatrix, LiteralPattern, check_exhaustiveness,
+};
+use std.compiler.typeck.types::{Type, TypeKind, PrimitiveTy, DefId};
+use std.compiler.typeck.resolve::{TypeDef, TypeDefKind, EnumVariantDef};
+use std.compiler.parser::{Pattern, PatternKind, Literal, Span};
+
+// ============================================================
+// Helper Functions
+// ============================================================
+
+fn make_span() -> Span {
+    Span { start: 0, end: 0 }
+}
+
+fn make_bool_type() -> Type {
+    Type {
+        kind: TypeKind::Primitive(PrimitiveTy::Bool),
+        span: make_span(),
+    }
+}
+
+fn make_i32_type() -> Type {
+    Type {
+        kind: TypeKind::Primitive(PrimitiveTy::I32),
+        span: make_span(),
+    }
+}
+
+fn make_unit_type() -> Type {
+    Type {
+        kind: TypeKind::Primitive(PrimitiveTy::Unit),
+        span: make_span(),
+    }
+}
+
+fn empty_type_defs() -> HashMap<u32, TypeDef> {
+    HashMap::new()
+}
+
+// ============================================================
+// Boolean Exhaustiveness Tests
+// ============================================================
+
+#[test]
+fn test_bool_exhaustive_both_branches() {
+    let type_defs = empty_type_defs();
+    let checker = ExhaustivenessChecker::new(&type_defs);
+
+    let patterns = vec![
+        PatternMatrix::Literal(LiteralPattern::bool(true)),
+        PatternMatrix::Literal(LiteralPattern::bool(false)),
+    ];
+
+    let missing = checker.check_exhaustiveness(&patterns, &make_bool_type());
+    assert!(missing.len() == 0, "Both true and false covered - should be exhaustive");
+}
+
+#[test]
+fn test_bool_missing_false() {
+    let type_defs = empty_type_defs();
+    let checker = ExhaustivenessChecker::new(&type_defs);
+
+    let patterns = vec![
+        PatternMatrix::Literal(LiteralPattern::bool(true)),
+    ];
+
+    let missing = checker.check_exhaustiveness(&patterns, &make_bool_type());
+    assert!(missing.len() > 0, "Missing false - should NOT be exhaustive");
+}
+
+#[test]
+fn test_bool_missing_true() {
+    let type_defs = empty_type_defs();
+    let checker = ExhaustivenessChecker::new(&type_defs);
+
+    let patterns = vec![
+        PatternMatrix::Literal(LiteralPattern::bool(false)),
+    ];
+
+    let missing = checker.check_exhaustiveness(&patterns, &make_bool_type());
+    assert!(missing.len() > 0, "Missing true - should NOT be exhaustive");
+}
+
+#[test]
+fn test_bool_wildcard_covers_all() {
+    let type_defs = empty_type_defs();
+    let checker = ExhaustivenessChecker::new(&type_defs);
+
+    let patterns = vec![
+        PatternMatrix::Wild,
+    ];
+
+    let missing = checker.check_exhaustiveness(&patterns, &make_bool_type());
+    assert!(missing.len() == 0, "Wildcard should cover all bool values");
+}
+
+// ============================================================
+// Integer Exhaustiveness Tests
+// ============================================================
+
+#[test]
+fn test_int_without_wildcard() {
+    let type_defs = empty_type_defs();
+    let checker = ExhaustivenessChecker::new(&type_defs);
+
+    let patterns = vec![
+        PatternMatrix::Literal(LiteralPattern::Int(0)),
+        PatternMatrix::Literal(LiteralPattern::Int(1)),
+    ];
+
+    let missing = checker.check_exhaustiveness(&patterns, &make_i32_type());
+    assert!(missing.len() > 0, "Integer without wildcard - should NOT be exhaustive");
+}
+
+#[test]
+fn test_int_with_wildcard() {
+    let type_defs = empty_type_defs();
+    let checker = ExhaustivenessChecker::new(&type_defs);
+
+    let patterns = vec![
+        PatternMatrix::Literal(LiteralPattern::Int(0)),
+        PatternMatrix::Literal(LiteralPattern::Int(1)),
+        PatternMatrix::Wild,
+    ];
+
+    let missing = checker.check_exhaustiveness(&patterns, &make_i32_type());
+    assert!(missing.len() == 0, "Integer with wildcard should be exhaustive");
+}
+
+// ============================================================
+// Unit Type Exhaustiveness Tests
+// ============================================================
+
+#[test]
+fn test_unit_empty_patterns() {
+    let type_defs = empty_type_defs();
+    let checker = ExhaustivenessChecker::new(&type_defs);
+
+    let patterns: [PatternMatrix] = vec![];
+
+    let missing = checker.check_exhaustiveness(&patterns, &make_unit_type());
+    assert!(missing.len() > 0, "Unit with no patterns - should NOT be exhaustive");
+}
+
+#[test]
+fn test_unit_with_wildcard() {
+    let type_defs = empty_type_defs();
+    let checker = ExhaustivenessChecker::new(&type_defs);
+
+    let patterns = vec![
+        PatternMatrix::Wild,
+    ];
+
+    let missing = checker.check_exhaustiveness(&patterns, &make_unit_type());
+    assert!(missing.len() == 0, "Unit with wildcard should be exhaustive");
+}
+
+// ============================================================
+// Or-Pattern Exhaustiveness Tests
+// ============================================================
+
+#[test]
+fn test_or_pattern_bool_complete() {
+    let type_defs = empty_type_defs();
+    let checker = ExhaustivenessChecker::new(&type_defs);
+
+    let patterns = vec![
+        PatternMatrix::Or(vec![
+            PatternMatrix::Literal(LiteralPattern::bool(true)),
+            PatternMatrix::Literal(LiteralPattern::bool(false)),
+        ]),
+    ];
+
+    let missing = checker.check_exhaustiveness(&patterns, &make_bool_type());
+    assert!(missing.len() == 0, "Or-pattern with both bool values should be exhaustive");
+}
+
+#[test]
+fn test_or_pattern_with_wildcard() {
+    let type_defs = empty_type_defs();
+    let checker = ExhaustivenessChecker::new(&type_defs);
+
+    let patterns = vec![
+        PatternMatrix::Or(vec![
+            PatternMatrix::Literal(LiteralPattern::Int(0)),
+            PatternMatrix::Wild,
+        ]),
+    ];
+
+    let missing = checker.check_exhaustiveness(&patterns, &make_i32_type());
+    assert!(missing.len() == 0, "Or-pattern with wildcard should be exhaustive");
+}

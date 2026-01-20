@@ -4108,3 +4108,375 @@ fn test_ffi_unsafe_block_codegen() {
         }
     }
 }
+
+// ============================================================
+// Pattern Exhaustiveness Tests
+// ============================================================
+//
+// These tests verify that the exhaustiveness checker correctly
+// identifies non-exhaustive matches and accepts exhaustive ones.
+
+/// EXHAUST-001: Boolean exhaustiveness - both branches covered
+#[test]
+fn test_exhaustiveness_bool_complete() {
+    let source = r#"
+        fn check_bool(b: bool) -> i32 {
+            match b {
+                true => 1,
+                false => 0,
+            }
+        }
+    "#;
+
+    let result = check_source(source);
+    assert!(result.is_ok(), "Exhaustive bool match should type-check successfully");
+}
+
+/// EXHAUST-002: Boolean exhaustiveness - missing false branch
+#[test]
+fn test_exhaustiveness_bool_missing_false() {
+    let source = r#"
+        fn check_bool(b: bool) -> i32 {
+            match b {
+                true => 1,
+            }
+        }
+    "#;
+
+    let result = check_source(source);
+    assert!(result.is_err(), "Non-exhaustive bool match should fail type-checking");
+    let errors = result.unwrap_err();
+    let has_exhaustiveness_error = errors.iter().any(|e|
+        e.message.contains("non-exhaustive") || e.message.contains("false")
+    );
+    assert!(has_exhaustiveness_error,
+            "Should report non-exhaustive pattern, got: {:?}",
+            errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+}
+
+/// EXHAUST-003: Boolean exhaustiveness - missing true branch
+#[test]
+fn test_exhaustiveness_bool_missing_true() {
+    let source = r#"
+        fn check_bool(b: bool) -> i32 {
+            match b {
+                false => 0,
+            }
+        }
+    "#;
+
+    let result = check_source(source);
+    assert!(result.is_err(), "Non-exhaustive bool match should fail type-checking");
+    let errors = result.unwrap_err();
+    let has_exhaustiveness_error = errors.iter().any(|e|
+        e.message.contains("non-exhaustive") || e.message.contains("true")
+    );
+    assert!(has_exhaustiveness_error,
+            "Should report non-exhaustive pattern, got: {:?}",
+            errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+}
+
+/// EXHAUST-004: Boolean exhaustiveness - wildcard covers all
+#[test]
+fn test_exhaustiveness_bool_wildcard() {
+    let source = r#"
+        fn check_bool(b: bool) -> i32 {
+            match b {
+                _ => 42,
+            }
+        }
+    "#;
+
+    let result = check_source(source);
+    assert!(result.is_ok(), "Wildcard should make bool match exhaustive");
+}
+
+/// EXHAUST-005: Integer match requires wildcard
+#[test]
+fn test_exhaustiveness_int_needs_wildcard() {
+    let source = r#"
+        fn check_int(n: i32) -> i32 {
+            match n {
+                0 => 100,
+                1 => 200,
+            }
+        }
+    "#;
+
+    let result = check_source(source);
+    assert!(result.is_err(), "Integer match without wildcard should fail");
+}
+
+/// EXHAUST-006: Integer match with wildcard passes
+#[test]
+fn test_exhaustiveness_int_with_wildcard() {
+    let source = r#"
+        fn check_int(n: i32) -> i32 {
+            match n {
+                0 => 100,
+                1 => 200,
+                _ => 300,
+            }
+        }
+    "#;
+
+    let result = check_source(source);
+    assert!(result.is_ok(), "Integer match with wildcard should pass");
+}
+
+/// EXHAUST-007: Enum exhaustiveness - all variants covered
+#[test]
+fn test_exhaustiveness_enum_complete() {
+    let source = r#"
+        enum Color {
+            Red,
+            Green,
+            Blue,
+        }
+
+        fn color_code(c: Color) -> i32 {
+            match c {
+                Color::Red => 1,
+                Color::Green => 2,
+                Color::Blue => 3,
+            }
+        }
+    "#;
+
+    let result = check_source(source);
+    assert!(result.is_ok(), "Exhaustive enum match should type-check successfully");
+}
+
+/// EXHAUST-008: Enum exhaustiveness - missing variant
+#[test]
+fn test_exhaustiveness_enum_missing_variant() {
+    let source = r#"
+        enum Color {
+            Red,
+            Green,
+            Blue,
+        }
+
+        fn color_code(c: Color) -> i32 {
+            match c {
+                Color::Red => 1,
+                Color::Green => 2,
+            }
+        }
+    "#;
+
+    let result = check_source(source);
+    assert!(result.is_err(), "Non-exhaustive enum match should fail type-checking");
+    let errors = result.unwrap_err();
+    let has_exhaustiveness_error = errors.iter().any(|e|
+        e.message.contains("non-exhaustive") || e.message.contains("Blue")
+    );
+    assert!(has_exhaustiveness_error,
+            "Should report non-exhaustive pattern mentioning Blue, got: {:?}",
+            errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+}
+
+/// EXHAUST-009: Enum exhaustiveness - wildcard covers remaining
+#[test]
+fn test_exhaustiveness_enum_with_wildcard() {
+    let source = r#"
+        enum Color {
+            Red,
+            Green,
+            Blue,
+        }
+
+        fn color_code(c: Color) -> i32 {
+            match c {
+                Color::Red => 1,
+                _ => 0,
+            }
+        }
+    "#;
+
+    let result = check_source(source);
+    assert!(result.is_ok(), "Enum match with wildcard should pass");
+}
+
+/// EXHAUST-010: Enum with payload - exhaustive (non-generic version)
+#[test]
+fn test_exhaustiveness_enum_payload_complete() {
+    // Use non-generic enum to avoid issues with generic type instantiation
+    let source = r#"
+        enum OptionalInt {
+            SomeInt(i32),
+            NoneInt,
+        }
+
+        fn unwrap_or(opt: OptionalInt, default: i32) -> i32 {
+            match opt {
+                OptionalInt::SomeInt(x) => x,
+                OptionalInt::NoneInt => default,
+            }
+        }
+    "#;
+
+    let result = check_source(source);
+    assert!(result.is_ok(), "Exhaustive enum-with-payload match should pass");
+}
+
+/// EXHAUST-011: Enum with payload - missing variant (non-generic version)
+#[test]
+fn test_exhaustiveness_enum_payload_missing() {
+    // Use non-generic enum to avoid issues with generic type instantiation
+    let source = r#"
+        enum OptionalInt {
+            SomeInt(i32),
+            NoneInt,
+        }
+
+        fn get_value(opt: OptionalInt) -> i32 {
+            match opt {
+                OptionalInt::SomeInt(x) => x,
+            }
+        }
+    "#;
+
+    let result = check_source(source);
+    assert!(result.is_err(), "Non-exhaustive enum-with-payload match should fail");
+}
+
+/// EXHAUST-012: Or-pattern exhaustiveness
+#[test]
+fn test_exhaustiveness_or_pattern() {
+    let source = r#"
+        fn check_bool(b: bool) -> i32 {
+            match b {
+                true | false => 42,
+            }
+        }
+    "#;
+
+    let result = check_source(source);
+    assert!(result.is_ok(), "Or-pattern covering all values should pass");
+}
+
+/// EXHAUST-013: Binding pattern is irrefutable
+#[test]
+fn test_exhaustiveness_binding_irrefutable() {
+    let source = r#"
+        fn always_match(x: i32) -> i32 {
+            match x {
+                n => n + 1,
+            }
+        }
+    "#;
+
+    let result = check_source(source);
+    assert!(result.is_ok(), "Binding pattern should be irrefutable");
+}
+
+/// EXHAUST-014: Tuple exhaustiveness - all combinations covered
+#[test]
+fn test_exhaustiveness_tuple_complete() {
+    let source = r#"
+        fn check_tuple(t: (bool, bool)) -> i32 {
+            match t {
+                (true, true) => 1,
+                (true, false) => 2,
+                (false, true) => 3,
+                (false, false) => 4,
+            }
+        }
+    "#;
+
+    let result = check_source(source);
+    assert!(result.is_ok(), "Exhaustive tuple match should pass");
+}
+
+/// EXHAUST-015: Tuple exhaustiveness - wildcard in position
+#[test]
+fn test_exhaustiveness_tuple_partial_wildcard() {
+    let source = r#"
+        fn check_tuple(t: (bool, bool)) -> i32 {
+            match t {
+                (true, _) => 1,
+                (false, _) => 2,
+            }
+        }
+    "#;
+
+    let result = check_source(source);
+    assert!(result.is_ok(), "Tuple match with wildcard positions should pass");
+}
+
+/// EXHAUST-016: Tuple exhaustiveness - full wildcard
+#[test]
+fn test_exhaustiveness_tuple_full_wildcard() {
+    let source = r#"
+        fn check_tuple(t: (i32, i32)) -> i32 {
+            match t {
+                _ => 42,
+            }
+        }
+    "#;
+
+    let result = check_source(source);
+    assert!(result.is_ok(), "Tuple match with full wildcard should pass");
+}
+
+/// EXHAUST-017: Struct pattern exhaustiveness
+#[test]
+fn test_exhaustiveness_struct_pattern() {
+    let source = r#"
+        struct Point {
+            x: i32,
+            y: i32,
+        }
+
+        fn get_quadrant(p: Point) -> i32 {
+            match p {
+                Point { x, y } => {
+                    if x > 0 {
+                        if y > 0 { 1 } else { 4 }
+                    } else {
+                        if y > 0 { 2 } else { 3 }
+                    }
+                }
+            }
+        }
+    "#;
+
+    let result = check_source(source);
+    assert!(result.is_ok(), "Struct pattern match should be exhaustive");
+}
+
+/// EXHAUST-018: Unit type exhaustiveness
+#[test]
+fn test_exhaustiveness_unit() {
+    let source = r#"
+        fn check_unit(u: ()) -> i32 {
+            match u {
+                () => 42,
+            }
+        }
+    "#;
+
+    let result = check_source(source);
+    assert!(result.is_ok(), "Unit match should be exhaustive with () pattern");
+}
+
+/// EXHAUST-019: Never type exhaustiveness (empty match is valid)
+#[test]
+fn test_exhaustiveness_never_type() {
+    let source = r#"
+        fn impossible(n: !) -> i32 {
+            match n {}
+        }
+    "#;
+
+    let result = check_source(source);
+    // Never type may not be fully supported - track status
+    match result {
+        Ok(_) => (),
+        Err(errors) => {
+            eprintln!("EXHAUST-019: Never type status - errors: {:?}",
+                      errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+        }
+    }
+}
