@@ -344,10 +344,17 @@ impl StdlibLoader {
         }
 
         // Then, collect declarations for each module
+        // Sort module paths for deterministic DefId assignment to declarations
         let decl_start = Instant::now();
         let mut decl_count = 0;
         let mut skipped_no_defid = 0;
-        for (module_path, module) in &mut self.modules {
+        let mut sorted_paths: Vec<String> = self.modules.keys().cloned().collect();
+        sorted_paths.sort();
+        for module_path in sorted_paths {
+            let module = match self.modules.get_mut(&module_path) {
+                Some(m) => m,
+                None => continue,
+            };
             let def_id = match module.def_id {
                 Some(id) => id,
                 None => {
@@ -401,11 +408,18 @@ impl StdlibLoader {
 
         // Phase 2: Now that all types are registered, resolve field types
         // This allows field types like Option<ModuleDecl> to find ModuleDecl's DefId
+        // Sort module paths for deterministic processing order
         if verbose {
             eprintln!("  Resolving field types...");
         }
         let field_type_start = Instant::now();
-        for (_module_path, module) in &self.modules {
+        let mut phase2_paths: Vec<String> = self.modules.keys().cloned().collect();
+        phase2_paths.sort();
+        for module_path in phase2_paths {
+            let module = match self.modules.get(&module_path) {
+                Some(m) => m,
+                None => continue,
+            };
             if module.def_id.is_none() {
                 continue;
             }
@@ -465,9 +479,14 @@ impl StdlibLoader {
 
     /// Create DefIds for all modules.
     fn create_module_def_ids<'a>(&mut self, ctx: &mut TypeContext<'a>) -> Result<(), Vec<StdlibError>> {
-        // Sort modules by path depth so parents are created before children
+        // Sort modules by path depth (parents before children) and then alphabetically
+        // for deterministic DefId assignment
         let mut paths: Vec<String> = self.modules.keys().cloned().collect();
-        paths.sort_by_key(|p| p.matches('.').count());
+        paths.sort_by(|a, b| {
+            let depth_a = a.matches('.').count();
+            let depth_b = b.matches('.').count();
+            depth_a.cmp(&depth_b).then_with(|| a.cmp(b))
+        });
 
         let verbose = std::env::var("BLOOD_STDLIB_VERBOSE").is_ok();
         if verbose {
@@ -707,7 +726,14 @@ impl StdlibLoader {
         // Starting at 100000 to avoid conflicts with other synthetic TyVarIds
         let mut next_tyvar_id: u32 = 100000;
 
-        for (module_path, module) in &self.modules {
+        // Sort module paths for deterministic impl block processing order
+        let mut sorted_paths: Vec<String> = self.modules.keys().cloned().collect();
+        sorted_paths.sort();
+        for module_path in sorted_paths {
+            let module = match self.modules.get(&module_path) {
+                Some(m) => m,
+                None => continue,
+            };
             let module_def_id = match module.def_id {
                 Some(id) => id,
                 None => continue,
@@ -1225,15 +1251,21 @@ impl StdlibLoader {
             }
 
             // Search through all modules for this type name
-            for (module_def_id, module_info) in &ctx.module_defs {
-                if let Some(&def_id) = module_info.items_by_name.get(&name) {
-                    if let Some(info) = ctx.resolver.def_info.get(&def_id) {
-                        // Include Trait in the match to properly resolve trait references in impl blocks
-                        if matches!(info.kind, DefKind::Struct | DefKind::Enum | DefKind::TypeAlias | DefKind::Trait) {
-                            if verbose {
-                                eprintln!("    resolve_type_path: found '{}' -> DefId({}) in module DefId({})", name, def_id.index(), module_def_id.index());
+            // Sort module DefIds for deterministic resolution when multiple modules
+            // have types with the same name
+            let mut sorted_module_ids: Vec<DefId> = ctx.module_defs.keys().cloned().collect();
+            sorted_module_ids.sort_by_key(|d| d.index());
+            for module_def_id in sorted_module_ids {
+                if let Some(module_info) = ctx.module_defs.get(&module_def_id) {
+                    if let Some(&def_id) = module_info.items_by_name.get(&name) {
+                        if let Some(info) = ctx.resolver.def_info.get(&def_id) {
+                            // Include Trait in the match to properly resolve trait references in impl blocks
+                            if matches!(info.kind, DefKind::Struct | DefKind::Enum | DefKind::TypeAlias | DefKind::Trait) {
+                                if verbose {
+                                    eprintln!("    resolve_type_path: found '{}' -> DefId({}) in module DefId({})", name, def_id.index(), module_def_id.index());
+                                }
+                                return Some(def_id);
                             }
-                            return Some(def_id);
                         }
                     }
                 }
@@ -1246,12 +1278,16 @@ impl StdlibLoader {
         let first_name = interner.resolve(path.segments[0].name.node)
             .map(|s| s.to_string())?;
 
-        // Find the root module
+        // Find the root module - sort for deterministic resolution
         let mut current_def_id = None;
-        for (&def_id, info) in &ctx.module_defs {
-            if info.is_external && info.name == first_name {
-                current_def_id = Some(def_id);
-                break;
+        let mut sorted_module_ids: Vec<DefId> = ctx.module_defs.keys().cloned().collect();
+        sorted_module_ids.sort_by_key(|d| d.index());
+        for def_id in sorted_module_ids {
+            if let Some(info) = ctx.module_defs.get(&def_id) {
+                if info.is_external && info.name == first_name {
+                    current_def_id = Some(def_id);
+                    break;
+                }
             }
         }
 
