@@ -45,6 +45,53 @@ use bloodc::content::hash::ContentHasher;
 use bloodc::content::namespace::{NameRegistry, NameBinding, BindingKind};
 use bloodc::content::distributed_cache::{DistributedCache, FetchResult};
 
+/// Find the default stdlib path by searching common locations.
+///
+/// Search order:
+/// 1. BLOOD_STDLIB environment variable
+/// 2. blood-std/std relative to current directory
+/// 3. ../blood-std/std relative to current directory (for running from subdirs)
+/// 4. Relative to the executable (for installed compilers)
+fn find_default_stdlib() -> Option<PathBuf> {
+    // 1. Check environment variable
+    if let Ok(path) = std::env::var("BLOOD_STDLIB") {
+        let path = PathBuf::from(path);
+        if path.is_dir() {
+            return Some(path);
+        }
+    }
+
+    // 2. Check blood-std/std in current directory
+    let cwd_stdlib = PathBuf::from("blood-std/std");
+    if cwd_stdlib.is_dir() {
+        return Some(cwd_stdlib);
+    }
+
+    // 3. Check ../blood-std/std (for running from bloodc/ or similar)
+    let parent_stdlib = PathBuf::from("../blood-std/std");
+    if parent_stdlib.is_dir() {
+        return Some(parent_stdlib);
+    }
+
+    // 4. Check relative to executable
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            // Check exe_dir/../blood-std/std (typical install layout)
+            let installed_stdlib = exe_dir.join("../blood-std/std");
+            if installed_stdlib.is_dir() {
+                return Some(installed_stdlib);
+            }
+            // Check exe_dir/../../blood-std/std (cargo build layout)
+            let cargo_stdlib = exe_dir.join("../../blood-std/std");
+            if cargo_stdlib.is_dir() {
+                return Some(cargo_stdlib);
+            }
+        }
+    }
+
+    None
+}
+
 /// The Blood Programming Language Compiler
 ///
 /// Blood is a systems programming language designed for safety-critical domains.
@@ -680,8 +727,15 @@ fn cmd_check(args: &FileArgs, verbosity: u8) -> ExitCode {
     let mut ctx = bloodc::typeck::TypeContext::new(&source, interner)
         .with_source_path(&args.file);
 
-    // Load and register standard library modules if a stdlib path is provided
-    if let Some(ref stdlib_path) = args.stdlib_path {
+    // Determine stdlib path: use explicit --stdlib-path, or find default, unless --no-std
+    let stdlib_path = if args.no_std {
+        None
+    } else {
+        args.stdlib_path.clone().or_else(find_default_stdlib)
+    };
+
+    // Load and register standard library modules
+    if let Some(ref stdlib_path) = stdlib_path {
         if verbosity > 1 {
             eprintln!("Loading stdlib from: {}", stdlib_path.display());
         }
@@ -910,8 +964,15 @@ fn cmd_build(args: &FileArgs, verbosity: u8) -> ExitCode {
     let mut ctx = bloodc::typeck::TypeContext::new(&source, interner)
         .with_source_path(&args.file);
 
-    // Load and register standard library modules if a stdlib path is provided
-    if let Some(ref stdlib_path) = args.stdlib_path {
+    // Determine stdlib path: use explicit --stdlib-path, or find default, unless --no-std
+    let stdlib_path = if args.no_std {
+        None
+    } else {
+        args.stdlib_path.clone().or_else(find_default_stdlib)
+    };
+
+    // Load and register standard library modules
+    if let Some(ref stdlib_path) = stdlib_path {
         let mut stdlib_loader = StdlibLoader::new(stdlib_path.clone());
         // Exclude the file being built from stdlib loading to prevent double-loading
         stdlib_loader.exclude_file(args.file.clone());
