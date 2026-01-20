@@ -2323,30 +2323,38 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse a perform expression.
+    ///
+    /// Syntax: `perform operation()` or `perform Effect.operation()`
+    ///
+    /// Note: parse_type_path consumes dots as path separators, so `State.get`
+    /// becomes a two-segment path. We need to split it: all segments except
+    /// the last form the effect path, and the last segment is the operation.
     fn parse_perform_expr(&mut self) -> Expr {
         let start = self.current.span;
         self.advance(); // consume 'perform'
 
-        // Parse optional effect qualification
+        // Parse the full path (may be just operation, or Effect.operation)
         let path = self.parse_type_path();
-        let (effect, operation) = if self.try_consume(TokenKind::Dot) {
-            // Allow contextual keywords as operation names
-            let op = if self.check_ident() {
-                self.advance();
-                self.spanned_symbol()
-            } else {
-                self.error_expected("operation name");
-                Spanned::new(self.intern(""), self.current.span)
+
+        // Split path: last segment is operation, rest is effect path
+        let (effect, operation) = if path.segments.len() > 1 {
+            // Multiple segments: e.g., State.get or core.io.Effect.read
+            // Last segment is operation, everything before is effect path
+            let mut effect_segments = path.segments;
+            let op_segment = effect_segments.pop().unwrap();
+            let op = op_segment.name;
+            let effect_path = TypePath {
+                segments: effect_segments,
+                span: path.span,
             };
-            (Some(path), op)
+            (Some(effect_path), op)
+        } else if let Some(first) = path.segments.first() {
+            // Single segment: just the operation name, no effect qualification
+            (None, first.name.clone())
         } else {
-            // No dot, so path is just the operation name
-            let op = path
-                .segments
-                .first()
-                .map(|s| s.name.clone())
-                .unwrap_or_else(|| Spanned::new(self.intern(""), start));
-            (None, op)
+            // Empty path (parse error already reported by parse_type_path)
+            self.error_expected("effect or operation name");
+            (None, Spanned::new(self.intern(""), self.current.span))
         };
 
         self.expect(TokenKind::LParen);
