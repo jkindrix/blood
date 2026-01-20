@@ -356,13 +356,13 @@ impl StdlibLoader {
             let ast_decl_count = module.ast.declarations.len();
             let mut module_decl_count = 0;
             for (decl_index, decl) in module.ast.declarations.iter().enumerate() {
-                if let Some(item_def_id) = create_item_def_id(ctx, &module.interner, decl, verbose) {
+                if let Some(item_def_id) = create_item_def_id(ctx, &module.interner, decl, verbose, &module_path) {
                     module.items.push(item_def_id);
                     // Store mapping from declaration index to DefId for Phase 2
                     module.item_def_ids.insert(decl_index, item_def_id);
                     // Phase 1: Register skeleton type info (name, generics, empty fields)
                     // Full field types will be resolved in phase 2 after all types are known
-                    register_type_info_skeleton(ctx, &module.interner, item_def_id, decl);
+                    register_type_info_skeleton(ctx, &module.interner, item_def_id, decl, &module_path);
                     // Register function signatures for callable functions
                     register_fn_sig(ctx, &module.interner, item_def_id, decl);
                     decl_count += 1;
@@ -398,9 +398,14 @@ impl StdlibLoader {
                 continue;
             }
 
+            // Build set of local types (types defined in this module)
+            // This enables module-aware type resolution to prefer local types
+            // over types with the same name from other modules
+            let local_types: HashSet<DefId> = module.item_def_ids.values().cloned().collect();
+
             for (decl_index, decl) in module.ast.declarations.iter().enumerate() {
                 if let Some(&item_def_id) = module.item_def_ids.get(&decl_index) {
-                    register_type_info_with_ctx(ctx, &module.interner, item_def_id, decl);
+                    register_type_info_with_ctx(ctx, &module.interner, item_def_id, decl, &local_types);
                 }
             }
         }
@@ -1893,6 +1898,7 @@ fn create_item_def_id<'a>(
     interner: &DefaultStringInterner,
     decl: &ast::Declaration,
     verbose: bool,
+    module_path: &str,
 ) -> Option<DefId> {
     // Helper to resolve a symbol using the module's interner
     let resolve_symbol = |sym: crate::ast::Symbol| -> String {
@@ -1906,10 +1912,41 @@ fn create_item_def_id<'a>(
         }
         ast::Declaration::Struct(s) => {
             let name = resolve_symbol(s.name.node);
+
+            // Skip forward declarations from std.compiler.ast.node
+            if module_path == "std.compiler.ast.node" && NODE_FORWARD_DECL_TYPES.contains(&name.as_str()) {
+                if verbose {
+                    eprintln!("        - struct {} (forward declaration, skipped)", name);
+                }
+                return None;
+            }
+
+            // Skip placeholder structs (those with _placeholder field)
+            if let ast::StructBody::Record(fields) = &s.body {
+                if fields.len() == 1 {
+                    let field_name = resolve_symbol(fields[0].name.node);
+                    if field_name == "_placeholder" {
+                        if verbose {
+                            eprintln!("        - struct {} (placeholder, skipped)", name);
+                        }
+                        return None;
+                    }
+                }
+            }
+
             (name, DefKind::Struct, "struct")
         }
         ast::Declaration::Enum(e) => {
             let name = resolve_symbol(e.name.node);
+
+            // Skip forward declaration enums from std.compiler.ast.node
+            if module_path == "std.compiler.ast.node" && NODE_FORWARD_DECL_TYPES.contains(&name.as_str()) {
+                if verbose {
+                    eprintln!("        - enum {} (forward declaration, skipped)", name);
+                }
+                return None;
+            }
+
             (name, DefKind::Enum, "enum")
         }
         ast::Declaration::Trait(t) => {
@@ -1962,6 +1999,67 @@ fn create_item_def_id<'a>(
     Some(def_id)
 }
 
+/// Forward declaration types in std.compiler.ast.node that should be skipped.
+/// These are placeholder types defined to avoid circular dependencies.
+/// The real definitions are in other modules (e.g., decl.blood).
+const NODE_FORWARD_DECL_TYPES: &[&str] = &[
+    "Declaration", "FnDecl", "TypeDecl", "StructDecl", "EnumDecl",
+    "EffectDecl", "HandlerDecl", "ConstDecl", "StaticDecl", "ImplBlock",
+    "TraitDecl", "BridgeDecl", "ModItemDecl", "MacroDecl",
+];
+
+/// Map from forward declaration type names to their real module paths.
+/// Used during type resolution to find the correct type when a forward
+/// declaration is referenced.
+fn get_preferred_module_for_type(name: &str) -> Option<&'static str> {
+    match name {
+        // Declaration and decl-related types -> std.compiler.ast.decl
+        "Declaration" | "FnDecl" | "TypeDecl" | "StructDecl" | "EnumDecl"
+        | "EffectDecl" | "HandlerDecl" | "ConstDecl" | "StaticDecl"
+        | "ImplBlock" | "TraitDecl" | "ModItemDecl" | "MacroDecl"
+        | "Param" | "StructBody" | "StructField" | "EnumVariant"
+        | "TraitItem" | "ImplItem" | "OperationDecl" | "OperationImpl"
+        | "BridgeDecl" | "BridgeFn" | "BridgeRustBlock" | "BridgeBloodBlock" => {
+            Some("std.compiler.ast.decl")
+        }
+        // Expression types -> std.compiler.ast.expr
+        "Expr" | "ExprKind" | "ExprPath" | "CallArg" | "MatchArm"
+        | "ClosureParam" | "ArrayExpr" | "ElseBranch" | "BinOp" | "UnaryOp"
+        | "AssignOp" | "FieldInit" | "CompoundOp" => {
+            Some("std.compiler.ast.expr")
+        }
+        // Type types -> std.compiler.ast.ty
+        "Type" | "TypeKind" | "TypePath" | "TypeParams" | "TypeArgs"
+        | "GenericParam" | "TypeParam" | "LifetimeParam" | "ConstParam"
+        | "WhereClause" | "WherePredicate" | "TypeBound" | "EffectRow"
+        | "EffectRowKind" | "TypeArg" => {
+            Some("std.compiler.ast.ty")
+        }
+        // Statement types -> std.compiler.ast.stmt
+        "Stmt" | "StmtKind" | "Block" | "LocalDecl" => {
+            Some("std.compiler.ast.stmt")
+        }
+        // Pattern types -> std.compiler.ast.pattern
+        "Pattern" | "PatternKind" | "PatternField" | "RangeEnd" => {
+            Some("std.compiler.ast.pattern")
+        }
+        // Attribute types -> std.compiler.ast.attr
+        "Attribute" | "AttrArgs" | "AttrArg" => {
+            Some("std.compiler.ast.attr")
+        }
+        // Literal types -> std.compiler.ast.lit
+        "Literal" | "LiteralKind" => {
+            Some("std.compiler.ast.lit")
+        }
+        // Node types stay in node
+        "Span" | "Ident" | "NodeId" | "Program" | "ModuleDecl" | "ModulePath"
+        | "Import" | "ImportItem" | "Visibility" | "Spanned" => {
+            Some("std.compiler.ast.node")
+        }
+        _ => None,
+    }
+}
+
 /// Register skeleton type information for a declaration (Phase 1).
 /// This registers struct/enum name and generics, but with empty fields.
 /// Field types will be resolved in Phase 2 after all types are known.
@@ -1970,6 +2068,7 @@ fn register_type_info_skeleton<'a>(
     interner: &DefaultStringInterner,
     def_id: DefId,
     decl: &ast::Declaration,
+    module_path: &str,
 ) {
     let resolve_symbol = |sym: crate::ast::Symbol| -> String {
         interner.resolve(sym).map(|s| s.to_string()).unwrap_or_else(|| "unknown".to_string())
@@ -1983,6 +2082,23 @@ fn register_type_info_skeleton<'a>(
             }
 
             let name = resolve_symbol(s.name.node);
+
+            // Skip forward declaration types from std.compiler.ast.node
+            // These are placeholders; the real definitions are in other modules
+            if module_path == "std.compiler.ast.node" && NODE_FORWARD_DECL_TYPES.contains(&name.as_str()) {
+                return;
+            }
+
+            // Also skip placeholder structs by detecting the _placeholder field
+            // (fallback for any not caught by the explicit list)
+            if let ast::StructBody::Record(fields) = &s.body {
+                if fields.len() == 1 {
+                    let field_name = resolve_symbol(fields[0].name.node);
+                    if field_name == "_placeholder" {
+                        return;
+                    }
+                }
+            }
 
             // Extract generics
             let generics: Vec<TyVarId> = if let Some(ref params) = s.type_params {
@@ -2015,6 +2131,12 @@ fn register_type_info_skeleton<'a>(
             }
 
             let name = resolve_symbol(e.name.node);
+
+            // Skip forward declaration enums from std.compiler.ast.node
+            // The Declaration enum is a forward declaration; the real one is in decl.blood
+            if module_path == "std.compiler.ast.node" && NODE_FORWARD_DECL_TYPES.contains(&name.as_str()) {
+                return;
+            }
 
             // Extract generics
             let generics: Vec<TyVarId> = if let Some(ref params) = e.type_params {
@@ -2092,11 +2214,14 @@ fn register_type_info_skeleton<'a>(
 
 /// Register type information with full type resolution (Phase 2).
 /// This updates struct/enum fields and type aliases using context-aware type resolution.
+/// The `local_types` set contains DefIds of types defined in the same module,
+/// enabling module-aware type resolution to prefer local types.
 fn register_type_info_with_ctx<'a>(
     ctx: &mut TypeContext<'a>,
     interner: &DefaultStringInterner,
     def_id: DefId,
     decl: &ast::Declaration,
+    local_types: &HashSet<DefId>,
 ) {
     let resolve_symbol = |sym: crate::ast::Symbol| -> String {
         interner.resolve(sym).map(|s| s.to_string()).unwrap_or_else(|| "unknown".to_string())
@@ -2123,7 +2248,7 @@ fn register_type_info_with_ctx<'a>(
                 }
             }
 
-            // Convert fields using context-aware type resolution
+            // Convert fields using context-aware type resolution with local type preference
             let fields = match &s.body {
                 ast::StructBody::Record(fields) => {
                     fields
@@ -2131,7 +2256,7 @@ fn register_type_info_with_ctx<'a>(
                         .enumerate()
                         .map(|(i, f)| {
                             let field_name = resolve_symbol(f.name.node);
-                            let ty = ast_type_to_type_with_ctx_and_generics(ctx, interner, &f.ty, &generic_params_map);
+                            let ty = ast_type_to_type_with_ctx_and_generics_local(ctx, interner, &f.ty, &generic_params_map, local_types);
                             FieldInfo {
                                 name: field_name,
                                 ty,
@@ -2145,7 +2270,7 @@ fn register_type_info_with_ctx<'a>(
                         .iter()
                         .enumerate()
                         .map(|(i, field)| {
-                            let ty = ast_type_to_type_with_ctx_and_generics(ctx, interner, &field.ty, &generic_params_map);
+                            let ty = ast_type_to_type_with_ctx_and_generics_local(ctx, interner, &field.ty, &generic_params_map, local_types);
                             FieldInfo {
                                 name: format!("{i}"),
                                 ty,
@@ -2199,7 +2324,7 @@ fn register_type_info_with_ctx<'a>(
                             .map(|(fi, field)| {
                                 FieldInfo {
                                     name: format!("{fi}"),
-                                    ty: ast_type_to_type_with_ctx_and_generics(ctx, interner, &field.ty, &generic_params_map),
+                                    ty: ast_type_to_type_with_ctx_and_generics_local(ctx, interner, &field.ty, &generic_params_map, local_types),
                                     index: fi as u32,
                                 }
                             })
@@ -2212,7 +2337,7 @@ fn register_type_info_with_ctx<'a>(
                             .map(|(fi, f)| {
                                 FieldInfo {
                                     name: resolve_symbol(f.name.node),
-                                    ty: ast_type_to_type_with_ctx_and_generics(ctx, interner, &f.ty, &generic_params_map),
+                                    ty: ast_type_to_type_with_ctx_and_generics_local(ctx, interner, &f.ty, &generic_params_map, local_types),
                                     index: fi as u32,
                                 }
                             })
@@ -2250,9 +2375,9 @@ fn register_type_info_with_ctx<'a>(
                 }
             }
 
-            // Convert the aliased type with context
+            // Convert the aliased type with context and local type preference
             let aliased_ty = if let Some(ref ty_val) = t.ty {
-                ast_type_to_type_with_ctx_and_generics(ctx, interner, ty_val, &generic_params_map)
+                ast_type_to_type_with_ctx_and_generics_local(ctx, interner, ty_val, &generic_params_map, local_types)
             } else {
                 Type::error()
             };
@@ -2849,6 +2974,217 @@ fn ast_type_to_type_with_ctx_and_generics<'a>(
         }
         ast::TypeKind::Array { element, size } => {
             let elem_ty = ast_type_to_type_with_ctx_and_generics(ctx, interner, element, generic_params);
+            // Extract size from the expression if it's a literal integer
+            let size_val = if let ast::ExprKind::Literal(lit) = &size.kind {
+                if let ast::LiteralKind::Int { value, .. } = &lit.kind {
+                    *value as u64
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+            Type::new(TypeKind::Array { element: elem_ty, size: size_val })
+        }
+        _ => Type::error(),
+    }
+}
+
+/// Convert an AST type to a HIR type with context, generic params, and local type preference.
+/// When multiple types share the same name (e.g., Span in different modules),
+/// this function prefers types from the local module (specified by local_types).
+fn ast_type_to_type_with_ctx_and_generics_local<'a>(
+    ctx: &TypeContext<'a>,
+    interner: &DefaultStringInterner,
+    ty: &ast::Type,
+    generic_params: &HashMap<String, TyVarId>,
+    local_types: &HashSet<DefId>,
+) -> Type {
+    let resolve_symbol = |sym: crate::ast::Symbol| -> String {
+        interner.resolve(sym).map(|s| s.to_string()).unwrap_or_else(|| "unknown".to_string())
+    };
+
+    match &ty.kind {
+        ast::TypeKind::Path(path) => {
+            if path.segments.len() == 1 {
+                let name = resolve_symbol(path.segments[0].name.node);
+
+                // Check if this is a generic type parameter first
+                if let Some(&tyvar_id) = generic_params.get(&name) {
+                    return Type::param(tyvar_id);
+                }
+
+                // Handle primitive types
+                if let Some(prim_ty) = match name.as_str() {
+                    "i8" => Some(Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::I8)))),
+                    "i16" => Some(Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::I16)))),
+                    "i32" => Some(Type::i32()),
+                    "i64" => Some(Type::i64()),
+                    "i128" => Some(Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::I128)))),
+                    "isize" => Some(Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::Isize)))),
+                    "u8" => Some(Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U8)))),
+                    "u16" => Some(Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U16)))),
+                    "u32" => Some(Type::u32()),
+                    "u64" => Some(Type::u64()),
+                    "u128" => Some(Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U128)))),
+                    "usize" => Some(Type::usize()),
+                    "f32" => Some(Type::f32()),
+                    "f64" => Some(Type::f64()),
+                    "bool" => Some(Type::bool()),
+                    "char" => Some(Type::char()),
+                    "str" => Some(Type::str()),
+                    "String" => Some(Type::string()),
+                    "()" => Some(Type::unit()),
+                    _ => None,
+                } {
+                    return prim_ty;
+                }
+
+                // Try to resolve as a user-defined type
+                // Strategy:
+                // 1. First look for a local type (defined in the same module)
+                // 2. Then check for a preferred module (for AST types)
+                // 3. Fall back to any match
+                let mut found_def_id: Option<DefId> = None;
+                let mut preferred_module_def_id: Option<DefId> = None;
+                let mut any_match_def_id: Option<DefId> = None;
+
+                // Check if there's a preferred module for this type
+                let preferred_module_path = get_preferred_module_for_type(&name);
+
+                // If a preferred module is specified, look it up directly
+                if let Some(pref_path) = preferred_module_path {
+                    for (_mod_def_id, mod_info) in &ctx.module_defs {
+                        if mod_info.name == pref_path {
+                            if let Some(&def_id) = mod_info.items_by_name.get(&name) {
+                                preferred_module_def_id = Some(def_id);
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                // Search struct_defs, preferring local types
+                for (&def_id, info) in &ctx.struct_defs {
+                    if info.name == name {
+                        if local_types.contains(&def_id) {
+                            found_def_id = Some(def_id);
+                            break; // Local type found, stop searching
+                        } else if any_match_def_id.is_none() {
+                            any_match_def_id = Some(def_id);
+                        }
+                    }
+                }
+
+                // If no local struct found, search enum_defs
+                if found_def_id.is_none() {
+                    for (&def_id, info) in &ctx.enum_defs {
+                        if info.name == name {
+                            if local_types.contains(&def_id) {
+                                found_def_id = Some(def_id);
+                                break; // Local type found, stop searching
+                            } else if any_match_def_id.is_none() {
+                                any_match_def_id = Some(def_id);
+                            }
+                        }
+                    }
+                }
+
+                // If no local type found, search type_aliases
+                if found_def_id.is_none() {
+                    for (&def_id, info) in &ctx.type_aliases {
+                        if info.name == name {
+                            if local_types.contains(&def_id) {
+                                found_def_id = Some(def_id);
+                                break; // Local type found, stop searching
+                            } else if any_match_def_id.is_none() {
+                                any_match_def_id = Some(def_id);
+                            }
+                        }
+                    }
+                }
+
+                // Priority: local match > preferred module match > any match
+                let final_def_id = found_def_id.or(preferred_module_def_id).or(any_match_def_id);
+
+                if let Some(def_id) = final_def_id {
+                    // Collect type arguments if any
+                    let type_args: Vec<Type> = if let Some(ref args) = path.segments[0].args {
+                        args.args.iter().filter_map(|arg| {
+                            if let ast::TypeArg::Type(arg_ty) = arg {
+                                Some(ast_type_to_type_with_ctx_and_generics_local(ctx, interner, arg_ty, generic_params, local_types))
+                            } else {
+                                None
+                            }
+                        }).collect()
+                    } else {
+                        Vec::new()
+                    };
+
+                    return Type::adt(def_id, type_args);
+                }
+
+                // Fallback to error
+                Type::error()
+            } else if path.segments.len() == 2 {
+                // Two-segment path: Module::Type
+                let module_name = resolve_symbol(path.segments[0].name.node);
+                let type_name = resolve_symbol(path.segments[1].name.node);
+
+                // Look up the module
+                for (_module_def_id, module_info) in &ctx.module_defs {
+                    if module_info.name == module_name {
+                        if let Some(&def_id) = module_info.items_by_name.get(&type_name) {
+                            // Collect type arguments if any
+                            let type_args: Vec<Type> = if let Some(ref args) = path.segments[1].args {
+                                args.args.iter().filter_map(|arg| {
+                                    if let ast::TypeArg::Type(arg_ty) = arg {
+                                        Some(ast_type_to_type_with_ctx_and_generics_local(ctx, interner, arg_ty, generic_params, local_types))
+                                    } else {
+                                        None
+                                    }
+                                }).collect()
+                            } else {
+                                Vec::new()
+                            };
+
+                            return Type::adt(def_id, type_args);
+                        }
+                    }
+                }
+
+                Type::error()
+            } else {
+                Type::error()
+            }
+        }
+        ast::TypeKind::Reference { inner, mutable, .. } => {
+            let inner_ty = ast_type_to_type_with_ctx_and_generics_local(ctx, interner, inner, generic_params, local_types);
+            Type::new(TypeKind::Ref {
+                inner: inner_ty,
+                mutable: *mutable
+            })
+        }
+        ast::TypeKind::Pointer { inner, mutable } => {
+            let inner_ty = ast_type_to_type_with_ctx_and_generics_local(ctx, interner, inner, generic_params, local_types);
+            Type::new(TypeKind::Ptr {
+                inner: inner_ty,
+                mutable: *mutable
+            })
+        }
+        ast::TypeKind::Tuple(types) => {
+            let tys: Vec<Type> = types
+                .iter()
+                .map(|t| ast_type_to_type_with_ctx_and_generics_local(ctx, interner, t, generic_params, local_types))
+                .collect();
+            Type::new(TypeKind::Tuple(tys))
+        }
+        ast::TypeKind::Slice { element } => {
+            let elem_ty = ast_type_to_type_with_ctx_and_generics_local(ctx, interner, element, generic_params, local_types);
+            Type::new(TypeKind::Slice { element: elem_ty })
+        }
+        ast::TypeKind::Array { element, size } => {
+            let elem_ty = ast_type_to_type_with_ctx_and_generics_local(ctx, interner, element, generic_params, local_types);
             // Extract size from the expression if it's a literal integer
             let size_val = if let ast::ExprKind::Literal(lit) = &size.kind {
                 if let ast::LiteralKind::Int { value, .. } = &lit.kind {
