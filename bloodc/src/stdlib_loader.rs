@@ -203,14 +203,21 @@ impl StdlibLoader {
                     format!("{}.{}", module_prefix, file_name)
                 };
 
-                // Skip if already loaded (mod.blood takes precedence)
-                if self.modules.contains_key(&module_path) {
-                    continue;
-                }
-
                 // Read source
                 let source = fs::read_to_string(&path)
                     .map_err(|e| StdlibError::IoError(format!("{}: {}", path.display(), e)))?;
+
+                // Check if module already exists (could be pre-created placeholder)
+                if let Some(existing) = self.modules.get_mut(&module_path) {
+                    // Only update if the existing module has empty source (placeholder)
+                    // This allows lib.blood/mod.blood to replace pre-created modules
+                    if existing.source.is_empty() {
+                        existing.source = source;
+                        existing.file_path = path;
+                    }
+                    // If existing module already has source, skip (first file wins)
+                    continue;
+                }
 
                 self.modules.insert(module_path.clone(), LoadedModule {
                     path: module_path.clone(),
