@@ -30,7 +30,7 @@ use std.collections.HashMap;
 use std.collections.HashSet;
 use std.collections.Vec;
 use std.result.Result;
-use std.option.Option;
+use std.core.Option;
 use std.io.Path;
 use std.io.File;
 use std.io.IoError;
@@ -51,11 +51,11 @@ use std.compiler.content.hash.ContentHasher;
 /// Note: This version covers cache structure changes. For codegen changes
 /// that affect compiled output, see `CODEGEN_ABI_VERSION` and `CODEGEN_HASH`
 /// which are incorporated into the cache directory path automatically.
-pub const CACHE_VERSION: U32 = 2;
+pub const CACHE_VERSION: u32 = 2;
 
 /// ABI version for code generation compatibility.
 /// Increment when making intentional ABI-breaking changes.
-pub const CODEGEN_ABI_VERSION: U32 = 1;
+pub const CODEGEN_ABI_VERSION: u32 = 1;
 
 /// Hash of codegen source for automatic invalidation.
 /// This is computed from the codegen module source code.
@@ -75,8 +75,8 @@ pub enum CacheError {
 
     /// Cache version mismatch.
     VersionMismatch {
-        expected: U32,
-        found: U32,
+        expected: u32,
+        found: u32,
     },
 
     /// JSON serialization/deserialization error.
@@ -104,13 +104,13 @@ impl CacheError {
 /// Cache statistics for monitoring and debugging.
 pub struct CacheStats {
     /// Number of cache hits.
-    hits: USize,
+    hits: usize,
     /// Number of cache misses.
-    misses: USize,
+    misses: usize,
     /// Total cached object size in bytes.
-    cached_size: U64,
+    cached_size: u64,
     /// Number of cached objects.
-    cached_count: USize,
+    cached_count: usize,
 }
 
 impl CacheStats {
@@ -125,32 +125,32 @@ impl CacheStats {
     }
 
     /// Get the number of cache hits.
-    pub fn hits(self) -> USize {
+    pub fn hits(self) -> usize {
         self.hits
     }
 
     /// Get the number of cache misses.
-    pub fn misses(self) -> USize {
+    pub fn misses(self) -> usize {
         self.misses
     }
 
     /// Get the total cached size in bytes.
-    pub fn cached_size(self) -> U64 {
+    pub fn cached_size(self) -> u64 {
         self.cached_size
     }
 
     /// Get the number of cached objects.
-    pub fn cached_count(self) -> USize {
+    pub fn cached_count(self) -> usize {
         self.cached_count
     }
 
     /// Calculate the hit rate as a percentage.
-    pub fn hit_rate(self) -> F64 {
+    pub fn hit_rate(self) -> f64 {
         let total = self.hits + self.misses;
         if total == 0 {
             0.0
         } else {
-            (self.hits as F64) / (total as F64) * 100.0
+            (self.hits as f64) / (total as f64) * 100.0
         }
     }
 
@@ -174,7 +174,7 @@ impl CacheStats {
 /// This is serialized to `deps.json` in the cache directory.
 pub struct CacheIndex {
     /// Cache format version for compatibility checking.
-    version: U32,
+    version: u32,
     /// Dependency graph: hash → list of dependency hashes.
     dependencies: HashMap<ContentHash, Vec<ContentHash>>,
 }
@@ -250,7 +250,7 @@ pub struct BuildCache {
     dependencies: HashMap<ContentHash, Vec<ContentHash>>,
 
     /// Whether caching is enabled.
-    enabled: Bool,
+    enabled: bool,
 
     /// Runtime statistics.
     stats: CacheStats,
@@ -320,7 +320,7 @@ impl BuildCache {
     }
 
     /// Check if caching is enabled.
-    pub fn is_enabled(self) -> Bool {
+    pub fn is_enabled(self) -> bool {
         self.enabled
     }
 
@@ -411,7 +411,7 @@ impl BuildCache {
     ///
     /// This creates the cache directory structure and loads any
     /// existing dependency index.
-    pub fn init_and_load(mut self) -> Result<Bool, CacheError> {
+    pub fn init_and_load(mut self) -> Result<bool, CacheError> {
         match self.init() {
             Result::Err(e) => return Result::Err(e),
             Result::Ok(_) => {}
@@ -422,7 +422,7 @@ impl BuildCache {
     // === Object Storage ===
 
     /// Check if a compiled object exists for a hash.
-    pub fn has_object(mut self, hash: ContentHash) -> Bool {
+    pub fn has_object(mut self, hash: ContentHash) -> bool {
         if !self.enabled {
             return false;
         };
@@ -439,7 +439,7 @@ impl BuildCache {
     /// Get a compiled object by hash.
     ///
     /// Returns the object data if found, or None if not cached.
-    pub fn get_object(mut self, hash: ContentHash) -> Result<Option[Vec<U8>>, CacheError] {
+    pub fn get_object(mut self, hash: ContentHash) -> Result<Option[Vec<u8>>, CacheError] {
         if !self.enabled {
             return Result::Ok(Option::None);
         };
@@ -462,7 +462,7 @@ impl BuildCache {
     /// Store a compiled object.
     ///
     /// Returns the path where the object was stored.
-    pub fn store_object(mut self, hash: ContentHash, data: Vec<U8>) -> Result<Path, CacheError> {
+    pub fn store_object(mut self, hash: ContentHash, data: Vec<u8>) -> Result<Path, CacheError> {
         if !self.enabled {
             return Result::Ok(Path::new(""));
         };
@@ -634,7 +634,7 @@ impl BuildCache {
     ///
     /// Returns `Ok(true)` if the index was successfully loaded,
     /// `Ok(false)` if no index exists (fresh cache), or an error.
-    pub fn load_index(mut self) -> Result<Bool, CacheError> {
+    pub fn load_index(mut self) -> Result<bool, CacheError> {
         if !self.enabled {
             return Result::Ok(false);
         };
@@ -769,7 +769,7 @@ pub fn hash_hir_item(item: HirItem) -> ContentHash {
     hasher.update_str(item.name);
 
     // Hash item kind tag
-    let kind_tag: U8 = match item.kind {
+    let kind_tag: u8 = match item.kind {
         HirItemKind::Function => 0x01,
         HirItemKind::Struct => 0x02,
         HirItemKind::Enum => 0x03,

@@ -23,17 +23,17 @@ use std.collections.Vec;
 /// without storing the full path in every span.
 pub struct FileId {
     /// The internal file index.
-    id: U32,
+    id: u32,
 }
 
 impl FileId {
     /// Create a new file ID.
-    pub fn new(id: U32) -> FileId {
+    pub fn new(id: u32) -> FileId {
         FileId { id }
     }
 
     /// Get the raw ID value.
-    pub fn raw(self) -> U32 {
+    pub fn raw(self) -> u32 {
         self.id
     }
 
@@ -43,7 +43,7 @@ impl FileId {
     }
 
     /// Check if this is a dummy file ID.
-    pub fn is_dummy(self) -> Bool {
+    pub fn is_dummy(self) -> bool {
         self.id == 0;
     }
 }
@@ -67,7 +67,7 @@ impl FileId {
 pub struct LineIndex {
     /// Byte offsets where each line starts.
     /// line_starts[0] = 0 (line 1 starts at byte 0).
-    line_starts: Vec<USize>,
+    line_starts: Vec<usize>,
 }
 
 impl LineIndex {
@@ -78,7 +78,7 @@ impl LineIndex {
         let mut line_starts = Vec::new();
         line_starts.push(0);  // Line 1 starts at byte 0
 
-        let mut offset: USize = 0;
+        let mut offset: usize = 0;
         for ch in source.chars() {
             if ch == '\n' {
                 line_starts.push(offset + 1);  // Next line starts after newline
@@ -93,17 +93,17 @@ impl LineIndex {
     ///
     /// Returns 1-indexed (line, column) pair.
     /// Uses binary search for O(log n) lookup.
-    pub fn line_col(self, offset: USize) -> (U32, U32) {
+    pub fn line_col(self, offset: usize) -> (u32, u32) {
         // Binary search for the line containing this offset
         let line_idx = self.binary_search_line(offset);
-        let line = (line_idx + 1) as U32;  // 1-indexed
-        let col = (offset - self.line_starts.get(line_idx).unwrap_or(0) + 1) as U32;  // 1-indexed
+        let line = (line_idx + 1) as u32;  // 1-indexed
+        let col = (offset - self.line_starts.get(line_idx).unwrap_or(0) + 1) as u32;  // 1-indexed
         (line, col)
     }
 
     /// Binary search for the line index containing offset.
-    fn binary_search_line(self, offset: USize) -> USize {
-        let mut low: USize = 0;
+    fn binary_search_line(self, offset: usize) -> usize {
+        let mut low: usize = 0;
         let mut high = self.line_starts.len();
 
         while low < high {
@@ -136,15 +136,15 @@ impl LineIndex {
     /// Get the byte offset where a line starts.
     ///
     /// Line numbers are 1-indexed.
-    pub fn line_start(self, line: U32) -> Option<USize> {
+    pub fn line_start(self, line: u32) -> Option<usize> {
         if line == 0 {
             return Option::None;
         };
-        self.line_starts.get((line - 1) as USize).map(|s| *s);
+        self.line_starts.get((line - 1) as usize).map(|s| *s);
     }
 
     /// Get the number of lines in the source.
-    pub fn line_count(self) -> USize {
+    pub fn line_count(self) -> usize {
         self.line_starts.len();
     }
 }
@@ -158,23 +158,23 @@ impl LineIndex {
 /// Positions are byte offsets with cached line/column information.
 pub struct Position {
     /// Byte offset from start of file.
-    offset: USize,
+    offset: usize,
     /// 1-indexed line number.
-    line: U32,
+    line: u32,
     /// 1-indexed column number.
-    column: U32,
+    column: u32,
 }
 
 impl Position {
     /// Create a new position.
-    pub fn new(offset: USize, line: U32, column: U32) -> Position {
+    pub fn new(offset: usize, line: u32, column: u32) -> Position {
         Position { offset, line, column }
     }
 
     /// Create a position from just an offset (line/column will be 0).
     ///
     /// Use `with_line_info` to compute line/column from a LineIndex.
-    pub fn from_offset(offset: USize) -> Position {
+    pub fn from_offset(offset: usize) -> Position {
         Position {
             offset,
             line: 0,
@@ -183,7 +183,7 @@ impl Position {
     }
 
     /// Create a position with line info from a LineIndex.
-    pub fn from_offset_with_index(offset: USize, index: LineIndex) -> Position {
+    pub fn from_offset_with_index(offset: usize, index: LineIndex) -> Position {
         let (line, column) = index.line_col(offset);
         Position { offset, line, column }
     }
@@ -198,22 +198,22 @@ impl Position {
     }
 
     /// Get the byte offset.
-    pub fn offset(self) -> USize {
+    pub fn offset(self) -> usize {
         self.offset
     }
 
     /// Get the 1-indexed line number.
-    pub fn line(self) -> U32 {
+    pub fn line(self) -> u32 {
         self.line
     }
 
     /// Get the 1-indexed column number.
-    pub fn column(self) -> U32 {
+    pub fn column(self) -> u32 {
         self.column
     }
 
     /// Check if this is a dummy position.
-    pub fn is_dummy(self) -> Bool {
+    pub fn is_dummy(self) -> bool {
         self.line == 0 && self.column == 0;
     }
 
@@ -253,7 +253,7 @@ impl Span {
     }
 
     /// Create a span from byte offsets (without line info).
-    pub fn from_offsets(file: FileId, start: USize, end: USize) -> Span {
+    pub fn from_offsets(file: FileId, start: usize, end: usize) -> Span {
         Span {
             file,
             start: Position::from_offset(start),
@@ -262,7 +262,7 @@ impl Span {
     }
 
     /// Create a span from byte offsets with a LineIndex for position info.
-    pub fn from_offsets_with_index(file: FileId, start: USize, end: USize, index: LineIndex) -> Span {
+    pub fn from_offsets_with_index(file: FileId, start: usize, end: usize, index: LineIndex) -> Span {
         Span {
             file,
             start: Position::from_offset_with_index(start, index.clone()),
@@ -306,39 +306,39 @@ impl Span {
     }
 
     /// Get the start byte offset.
-    pub fn start_offset(self) -> USize {
+    pub fn start_offset(self) -> usize {
         self.start.offset
     }
 
     /// Get the end byte offset.
-    pub fn end_offset(self) -> USize {
+    pub fn end_offset(self) -> usize {
         self.end.offset
     }
 
     /// Get the start line (1-indexed).
-    pub fn start_line(self) -> U32 {
+    pub fn start_line(self) -> u32 {
         self.start.line
     }
 
     /// Get the start column (1-indexed).
-    pub fn start_column(self) -> U32 {
+    pub fn start_column(self) -> u32 {
         self.start.column
     }
 
     /// Get the end line (1-indexed).
-    pub fn end_line(self) -> U32 {
+    pub fn end_line(self) -> u32 {
         self.end.line
     }
 
     /// Get the end column (1-indexed).
-    pub fn end_column(self) -> U32 {
+    pub fn end_column(self) -> u32 {
         self.end.column
     }
 
     // === Properties ===
 
     /// Get the length of the span in bytes.
-    pub fn len(self) -> USize {
+    pub fn len(self) -> usize {
         if self.end.offset >= self.start.offset {
             self.end.offset - self.start.offset
         } else {
@@ -347,34 +347,34 @@ impl Span {
     }
 
     /// Check if the span is empty (zero length).
-    pub fn is_empty(self) -> Bool {
+    pub fn is_empty(self) -> bool {
         self.start.offset == self.end.offset;
     }
 
     /// Check if this is a dummy span.
-    pub fn is_dummy(self) -> Bool {
+    pub fn is_dummy(self) -> bool {
         self.file.is_dummy() && self.start.is_dummy() && self.end.is_dummy();
     }
 
     /// Check if this span covers multiple lines.
-    pub fn is_multiline(self) -> Bool {
+    pub fn is_multiline(self) -> bool {
         self.start.line != self.end.line && self.start.line != 0 && self.end.line != 0
     }
 
     /// Check if this span contains a byte offset.
-    pub fn contains_offset(self, offset: USize) -> Bool {
+    pub fn contains_offset(self, offset: usize) -> bool {
         offset >= self.start.offset && offset < self.end.offset
     }
 
     /// Check if this span contains another span.
-    pub fn contains(self, other: Span) -> Bool {
+    pub fn contains(self, other: Span) -> bool {
         self.file.id == other.file.id &&
         self.start.offset <= other.start.offset &&
         self.end.offset >= other.end.offset
     }
 
     /// Check if this span overlaps with another.
-    pub fn overlaps(self, other: Span) -> Bool {
+    pub fn overlaps(self, other: Span) -> bool {
         self.file.id == other.file.id &&
         self.start.offset < other.end.offset &&
         self.end.offset > other.start.offset
@@ -409,7 +409,7 @@ impl Span {
     }
 
     /// Shrink the span to just the first N bytes.
-    pub fn shrink_to_start(self, len: USize) -> Span {
+    pub fn shrink_to_start(self, len: usize) -> Span {
         let new_end_offset = (self.start.offset + len).min(self.end.offset);
         Span {
             file: self.file,
@@ -419,7 +419,7 @@ impl Span {
     }
 
     /// Shrink the span to just the last N bytes.
-    pub fn shrink_to_end(self, len: USize) -> Span {
+    pub fn shrink_to_end(self, len: usize) -> Span {
         let new_start_offset = if len >= self.len() {
             self.start.offset
         } else {
@@ -505,10 +505,10 @@ impl<T> Spanned<T> {
 ///
 /// This is O(n) and should only be used for occasional lookups.
 /// For many lookups in the same file, use LineIndex instead.
-pub fn line_col_scan(source: String, offset: USize) -> (U32, U32) {
-    let mut line: U32 = 1;
-    let mut col: U32 = 1;
-    let mut current: USize = 0;
+pub fn line_col_scan(source: String, offset: usize) -> (u32, u32) {
+    let mut line: u32 = 1;
+    let mut col: u32 = 1;
+    let mut current: usize = 0;
 
     for ch in source.chars() {
         if current >= offset {

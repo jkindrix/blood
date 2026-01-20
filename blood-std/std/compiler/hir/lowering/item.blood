@@ -7,10 +7,10 @@
 module std.compiler.hir.lowering.item;
 
 use std.result.Result;
-use std.option.Option;
+use std.core.Option;
 use std.collections.HashMap;
 
-use crate.compiler.ast.{
+use std.compiler.ast.{
     Declaration, DeclarationKind, Ident, Span as AstSpan, NodeId,
     FunctionDecl, StructDecl, EnumDecl, EffectDecl, HandlerDecl,
     ImplDecl, TraitDecl, TypeAliasDecl, ConstDecl, StaticDecl,
@@ -18,7 +18,7 @@ use crate.compiler.ast.{
     Param, GenericParam, TypePath, Visibility as AstVisibility,
 };
 
-use crate.compiler.hir.{
+use std.compiler.hir.{
     Item, ItemKind, Visibility, Span as HirSpan,
     FnDef, FnSig, StructDef, StructFieldDef, EnumDef, EnumVariant,
     Generics, GenericParamDef, GenericParamKind,
@@ -27,9 +27,9 @@ use crate.compiler.hir.{
     ExternFnDef, BridgeDef, ModuleDef, Body, BodyId,
 };
 
-use crate.compiler.hir.lowering.{AstLowering, LoweringError};
-use crate.compiler.hir.lowering.expr;
-use crate.compiler.typeck.types.{DefId, Type};
+use std.compiler.hir.lowering.{AstLowering, LoweringError};
+use std.compiler.hir.lowering.expr;
+use std.compiler.typeck.types.{DefId, Type};
 
 // ============================================================================
 // Declaration Lowering Entry Point
@@ -1000,7 +1000,7 @@ fn resolve_type_path(ctx: &mut AstLowering, path: &TypePath) -> Result<Type, Low
             "u64" => return Ok(Type::u64()),
             "f32" => return Ok(Type::f32()),
             "f64" => return Ok(Type::f64()),
-            "bool" | "Bool" => return Ok(Type::bool()),
+            "bool" | "bool" => return Ok(Type::bool()),
             "char" => return Ok(Type::char()),
             "str" => return Ok(Type::str()),
             "String" => return Ok(Type::string()),

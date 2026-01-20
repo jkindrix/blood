@@ -23,28 +23,28 @@
 module std.compiler.typeck.context;
 
 use std.collections.HashMap;
-use std.option.Option;
+use std.core.Option;
 use std.result.Result;
 
 // Parser types
-use crate.compiler.parser::{
+use std.compiler.parser::{
     Program, Declaration, FnDecl, StructDecl, EnumDecl, TraitDecl, ImplBlock,
     EffectDecl, TypeDecl, ConstDecl, StaticDecl, HandlerDecl, ModItemDecl,
     TypeParams, Param,
     Expr, ExprKind, Pattern, PatternKind, Block, Stmt, StmtKind,
     Spanned, ModulePath, Visibility, StructField, EnumVariant,
 };
-use crate.compiler.parser::Span;
-use crate.compiler.parser::Type as parser_type;
-use crate.compiler.parser::TypeKind as parser_type_kind;
+use std.compiler.parser::Span;
+use std.compiler.parser::Type as parser_type;
+use std.compiler.parser::TypeKind as parser_type_kind;
 
 // Type system types
-use super.types::{Type, TypeKind, PrimitiveTy, TyVarId, DefId, EffectRow, EffectInstance, Mutability};
-use super.errors::{TypeError, TypeErrorKind, TypeErrors};
-use super.resolve::{Scope, TypeDef, TypeDefKind, FnDef, EffectDef, EffectOpDef, StructFieldDef, EnumVariantDef, DefRegistry};
-use super.unify.Unifier;
-use super.traits::{TraitResolver, TraitDef, TraitMethodDef, ImplDef, ImplMethodDef, TraitBound};
-use super.effects::{EffectContext, HandlerStack};
+use std.compiler.typeck.types::{Type, TypeKind, PrimitiveTy, TyVarId, DefId, EffectRow, EffectInstance, Mutability};
+use std.compiler.typeck.errors::{TypeError, TypeErrorKind, TypeErrors};
+use std.compiler.typeck.resolve::{Scope, TypeDef, TypeDefKind, FnDef, EffectDef, EffectOpDef, StructFieldDef, EnumVariantDef, DefRegistry};
+use std.compiler.typeck.unify.Unifier;
+use std.compiler.typeck.traits::{TraitResolver, TraitDef, TraitMethodDef, ImplDef, ImplMethodDef, TraitBound};
+use std.compiler.typeck.effects::{EffectContext, HandlerStack};
 use super::{TypeChecker, TypeCheckResult};
 
 // ============================================================================
@@ -1031,8 +1031,8 @@ impl ProgramContext {
         match lit {
             Literal::Int(_) => Type::i32(), // Default integer type
             Literal::Float(_) => Type::f64(), // Default float type
-            Literal::Bool(_) => Type::bool(),
-            Literal::Char(_) => Type::char(),
+            Literal::bool(_) => Type::bool(),
+            Literal::char(_) => Type::char(),
             Literal::String(_) => Type::string(),
             Literal::Unit => Type::unit(),
         }

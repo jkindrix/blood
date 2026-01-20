@@ -10,12 +10,12 @@
 /// 3. **Clear context**: Track return types, loop types, and effect contexts
 /// 4. **Separation of concerns**: Expression utilities separate from main checker
 
-use super.types::{
+use std.compiler.typeck.types::{
     Type, TypeKind, DefId, TyVarId, PrimitiveTy, Mutability, Ownership,
     EffectRow, EffectInstance, RecordField,
 };
-use super.errors::{TypeError, TypeErrorKind};
-use super.effects::EffectContext;
+use std.compiler.typeck.errors::{TypeError, TypeErrorKind};
+use std.compiler.typeck.effects::EffectContext;
 
 // ============================================================
 // Binary Operators
@@ -374,9 +374,9 @@ pub enum LiteralKind {
         suffix: Option<FloatSuffix>,
     },
     /// Boolean literal: true, false
-    Bool(bool),
+    bool(bool),
     /// Character literal: 'a', '\n'
-    Char(char),
+    char(char),
     /// String literal: "hello"
     String(String),
     /// Byte literal: b'a'
@@ -387,41 +387,41 @@ pub enum LiteralKind {
 
 /// Integer literal suffix.
 pub enum IntSuffix {
-    I8,
-    I16,
-    I32,
-    I64,
-    I128,
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
     Isize,
-    U8,
-    U16,
-    U32,
-    U64,
-    U128,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
     Usize,
 }
 
 /// Float literal suffix.
 pub enum FloatSuffix {
-    F32,
-    F64,
+    f32,
+    f64,
 }
 
 impl IntSuffix {
     /// Convert to the corresponding primitive type.
     pub fn to_primitive(&self) -> PrimitiveTy {
         match self {
-            IntSuffix::I8 => PrimitiveTy::I8,
-            IntSuffix::I16 => PrimitiveTy::I16,
-            IntSuffix::I32 => PrimitiveTy::I32,
-            IntSuffix::I64 => PrimitiveTy::I64,
-            IntSuffix::I128 => PrimitiveTy::I128,
+            IntSuffix::i8 => PrimitiveTy::I8,
+            IntSuffix::i16 => PrimitiveTy::I16,
+            IntSuffix::i32 => PrimitiveTy::I32,
+            IntSuffix::i64 => PrimitiveTy::I64,
+            IntSuffix::i128 => PrimitiveTy::I128,
             IntSuffix::Isize => PrimitiveTy::Isize,
-            IntSuffix::U8 => PrimitiveTy::U8,
-            IntSuffix::U16 => PrimitiveTy::U16,
-            IntSuffix::U32 => PrimitiveTy::U32,
-            IntSuffix::U64 => PrimitiveTy::U64,
-            IntSuffix::U128 => PrimitiveTy::U128,
+            IntSuffix::u8 => PrimitiveTy::U8,
+            IntSuffix::u16 => PrimitiveTy::U16,
+            IntSuffix::u32 => PrimitiveTy::U32,
+            IntSuffix::u64 => PrimitiveTy::U64,
+            IntSuffix::u128 => PrimitiveTy::U128,
             IntSuffix::Usize => PrimitiveTy::Usize,
         }
     }
@@ -431,8 +431,8 @@ impl FloatSuffix {
     /// Convert to the corresponding primitive type.
     pub fn to_primitive(&self) -> PrimitiveTy {
         match self {
-            FloatSuffix::F32 => PrimitiveTy::F32,
-            FloatSuffix::F64 => PrimitiveTy::F64,
+            FloatSuffix::f32 => PrimitiveTy::F32,
+            FloatSuffix::f64 => PrimitiveTy::F64,
         }
     }
 }
@@ -448,8 +448,8 @@ impl Clone for LiteralKind {
                 value: *value,
                 suffix: suffix.clone(),
             },
-            LiteralKind::Bool(b) => LiteralKind::Bool(*b),
-            LiteralKind::Char(c) => LiteralKind::Char(*c),
+            LiteralKind::bool(b) => LiteralKind::bool(*b),
+            LiteralKind::char(c) => LiteralKind::char(*c),
             LiteralKind::String(s) => LiteralKind::String(s.clone()),
             LiteralKind::Byte(b) => LiteralKind::Byte(*b),
             LiteralKind::ByteString(bs) => LiteralKind::ByteString(bs.clone()),
@@ -460,17 +460,17 @@ impl Clone for LiteralKind {
 impl Clone for IntSuffix {
     fn clone(&self) -> IntSuffix {
         match self {
-            IntSuffix::I8 => IntSuffix::I8,
-            IntSuffix::I16 => IntSuffix::I16,
-            IntSuffix::I32 => IntSuffix::I32,
-            IntSuffix::I64 => IntSuffix::I64,
-            IntSuffix::I128 => IntSuffix::I128,
+            IntSuffix::i8 => IntSuffix::i8,
+            IntSuffix::i16 => IntSuffix::i16,
+            IntSuffix::i32 => IntSuffix::i32,
+            IntSuffix::i64 => IntSuffix::i64,
+            IntSuffix::i128 => IntSuffix::i128,
             IntSuffix::Isize => IntSuffix::Isize,
-            IntSuffix::U8 => IntSuffix::U8,
-            IntSuffix::U16 => IntSuffix::U16,
-            IntSuffix::U32 => IntSuffix::U32,
-            IntSuffix::U64 => IntSuffix::U64,
-            IntSuffix::U128 => IntSuffix::U128,
+            IntSuffix::u8 => IntSuffix::u8,
+            IntSuffix::u16 => IntSuffix::u16,
+            IntSuffix::u32 => IntSuffix::u32,
+            IntSuffix::u64 => IntSuffix::u64,
+            IntSuffix::u128 => IntSuffix::u128,
             IntSuffix::Usize => IntSuffix::Usize,
         }
     }
@@ -479,8 +479,8 @@ impl Clone for IntSuffix {
 impl Clone for FloatSuffix {
     fn clone(&self) -> FloatSuffix {
         match self {
-            FloatSuffix::F32 => FloatSuffix::F32,
-            FloatSuffix::F64 => FloatSuffix::F64,
+            FloatSuffix::f32 => FloatSuffix::f32,
+            FloatSuffix::f64 => FloatSuffix::f64,
         }
     }
 }
@@ -827,8 +827,8 @@ pub fn infer_literal_type(lit: &LiteralKind) -> Type {
                 None => Type::f64(), // Default float type
             }
         }
-        LiteralKind::Bool(_) => Type::bool(),
-        LiteralKind::Char(_) => Type::char(),
+        LiteralKind::bool(_) => Type::bool(),
+        LiteralKind::char(_) => Type::char(),
         LiteralKind::String(_) => Type::str(),
         LiteralKind::Byte(_) => Type::new(TypeKind::Primitive(PrimitiveTy::U8)),
         LiteralKind::ByteString(bs) => Type::array(

@@ -15,7 +15,7 @@
 module std.compiler.diagnostics.renderer.snippet;
 
 use std.collections.Vec;
-use std.option.Option;
+use std.core.Option;
 use std.compiler.diagnostics.span.Span;
 use std.compiler.diagnostics.label.Label;
 use std.compiler.diagnostics.label.LabelCollection;
@@ -29,22 +29,22 @@ use std.compiler.diagnostics.renderer.source.SourceMap;
 /// Configuration for snippet rendering.
 pub struct SnippetConfig {
     /// Number of context lines before the highlighted region.
-    context_lines_before: U32,
+    context_lines_before: u32,
 
     /// Number of context lines after the highlighted region.
-    context_lines_after: U32,
+    context_lines_after: u32,
 
     /// Tab width for rendering.
-    tab_width: U32,
+    tab_width: u32,
 
     /// Whether to show line numbers.
-    show_line_numbers: Bool,
+    show_line_numbers: bool,
 
     /// Whether to show the column indicator character (│).
-    show_column_indicator: Bool,
+    show_column_indicator: bool,
 
     /// Whether to use Unicode characters.
-    use_unicode: Bool,
+    use_unicode: bool,
 }
 
 impl SnippetConfig {
@@ -87,26 +87,26 @@ impl SnippetConfig {
     // === Builder Methods ===
 
     /// Set context lines.
-    pub fn with_context(mut self, before: U32, after: U32) -> SnippetConfig {
+    pub fn with_context(mut self, before: u32, after: u32) -> SnippetConfig {
         self.context_lines_before = before;
         self.context_lines_after = after;
         self
     }
 
     /// Set tab width.
-    pub fn with_tab_width(mut self, width: U32) -> SnippetConfig {
+    pub fn with_tab_width(mut self, width: u32) -> SnippetConfig {
         self.tab_width = width;
         self
     }
 
     /// Enable/disable line numbers.
-    pub fn with_line_numbers(mut self, show: Bool) -> SnippetConfig {
+    pub fn with_line_numbers(mut self, show: bool) -> SnippetConfig {
         self.show_line_numbers = show;
         self
     }
 
     /// Enable/disable Unicode.
-    pub fn with_unicode(mut self, use_unicode: Bool) -> SnippetConfig {
+    pub fn with_unicode(mut self, use_unicode: bool) -> SnippetConfig {
         self.use_unicode = use_unicode;
         self
     }
@@ -157,9 +157,9 @@ impl SnippetConfig {
 pub enum SnippetLine {
     /// A source code line.
     Source {
-        line_number: U32,
+        line_number: u32,
         content: String,
-        is_highlighted: Bool,
+        is_highlighted: bool,
     },
 
     /// An annotation line (underlines and labels).
@@ -169,7 +169,7 @@ pub enum SnippetLine {
 
     /// A fold indicator (for omitted lines).
     Fold {
-        count: U32,
+        count: u32,
     },
 
     /// An empty separator line.
@@ -178,7 +178,7 @@ pub enum SnippetLine {
 
 impl SnippetLine {
     /// Create a source line.
-    pub fn source(line_number: U32, content: String, highlighted: Bool) -> SnippetLine {
+    pub fn source(line_number: u32, content: String, highlighted: bool) -> SnippetLine {
         SnippetLine::Source {
             line_number,
             content,
@@ -192,7 +192,7 @@ impl SnippetLine {
     }
 
     /// Create a fold line.
-    pub fn fold(count: U32) -> SnippetLine {
+    pub fn fold(count: u32) -> SnippetLine {
         SnippetLine::Fold { count }
     }
 
@@ -202,7 +202,7 @@ impl SnippetLine {
     }
 
     /// Check if this is a source line.
-    pub fn is_source(self) -> Bool {
+    pub fn is_source(self) -> bool {
         match self {
             SnippetLine::Source { .. } => true,
             SnippetLine::Annotation { .. } => false,
@@ -259,7 +259,7 @@ impl Snippet {
     }
 
     /// Check if empty.
-    pub fn is_empty(self) -> Bool {
+    pub fn is_empty(self) -> bool {
         self.lines.is_empty();
     }
 }
@@ -369,7 +369,7 @@ impl SnippetBuilder {
     }
 
     /// Build an annotation line for labels.
-    fn build_annotation_line(self, source_line: String, labels: Vec<Label>, line_number: U32) -> String {
+    fn build_annotation_line(self, source_line: String, labels: Vec<Label>, line_number: u32) -> String {
         // For now, create a simple annotation
         // A full implementation would handle overlapping labels, multi-line, etc.
         let mut annotation = String::new();
@@ -378,7 +378,7 @@ impl SnippetBuilder {
         let mut sorted_labels = labels.clone();
         sorted_labels.sort_by(|a, b| a.span().start_column().cmp(b.span().start_column()));
 
-        let mut current_col: U32 = 1;
+        let mut current_col: u32 = 1;
         for label in sorted_labels {
             let start_col = label.span().start_column();
             let end_col = label.span().end_column();
@@ -392,7 +392,7 @@ impl SnippetBuilder {
             // Add underline characters
             let underline_char = label.underline_char();
             let label_width = if end_col > start_col { end_col - start_col } else { 1 };
-            let mut i: U32 = 0;
+            let mut i: u32 = 0;
             while i < label_width {
                 annotation = annotation ++ underline_char.to_string();
                 i = i + 1;
@@ -422,15 +422,15 @@ impl SnippetBuilder {
 // ============================================================================
 
 /// Expand tabs in a string to spaces.
-pub fn expand_tabs(line: String, tab_width: U32) -> String {
+pub fn expand_tabs(line: String, tab_width: u32) -> String {
     let mut result = String::new();
-    let mut col: U32 = 0;
+    let mut col: u32 = 0;
 
     for ch in line.chars() {
         if ch == '\t' {
             // Add spaces to next tab stop
             let spaces_to_add = tab_width - (col % tab_width);
-            let mut i: U32 = 0;
+            let mut i: u32 = 0;
             while i < spaces_to_add {
                 result = result ++ " "
                 i = i + 1;
@@ -446,17 +446,17 @@ pub fn expand_tabs(line: String, tab_width: U32) -> String {
 }
 
 /// Calculate the display width of a string (handling tabs).
-pub fn display_width(line: String, tab_width: U32) -> USize {
+pub fn display_width(line: String, tab_width: u32) -> usize {
     expand_tabs(line, tab_width).len()
 }
 
 /// Pad a number with spaces on the left.
-pub fn pad_number(n: U32, width: USize) -> String {
+pub fn pad_number(n: u32, width: usize) -> String {
     let s = n.to_string();
     let pad = if width > s.len() { width - s.len() } else { 0 };
 
     let mut result = String::new();
-    let mut i: USize = 0;
+    let mut i: usize = 0;
     while i < pad {
         result = result ++ " "
         i = i + 1;

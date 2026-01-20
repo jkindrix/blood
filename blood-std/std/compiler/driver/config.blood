@@ -17,9 +17,9 @@
 
 module std.compiler.driver.config;
 
-use std.option.Option;
+use std.core.Option;
 use std.collections.Vec;
-use std.string.String;
+use std.core.string.String;
 
 // ============================================================================
 // Optimization Level
@@ -50,7 +50,7 @@ pub enum OptLevel {
 
 impl OptLevel {
     /// Convert to a numeric level (0-4).
-    pub fn as_level(self) -> U32 {
+    pub fn as_level(self) -> u32 {
         match self {
             OptLevel::None => 0,
             OptLevel::Basic => 1,
@@ -61,7 +61,7 @@ impl OptLevel {
     }
 
     /// Check if this level includes inlining.
-    pub fn enables_inlining(self) -> Bool {
+    pub fn enables_inlining(self) -> bool {
         match self {
             OptLevel::None => false,
             OptLevel::Basic => false,
@@ -184,12 +184,12 @@ impl Target {
     }
 
     /// Check if this is a 64-bit target.
-    pub fn is_64bit(self) -> Bool {
+    pub fn is_64bit(self) -> bool {
         self.arch == "x86_64" || self.arch == "aarch64" || self.arch == "riscv64"
     }
 
     /// Check if this is a WebAssembly target.
-    pub fn is_wasm(self) -> Bool {
+    pub fn is_wasm(self) -> bool {
         self.arch.starts_with("wasm");
     }
 }
@@ -223,28 +223,28 @@ pub struct CompilerConfig {
     pub output_path: Option<String>,
 
     /// Include debug information.
-    pub debug_info: Bool,
+    pub debug_info: bool,
 
     /// Enable Link-Time Optimization.
-    pub lto: Bool,
+    pub lto: bool,
 
     /// Enable panic=abort (no unwinding).
-    pub panic_abort: Bool,
+    pub panic_abort: bool,
 
     /// Treat warnings as errors.
-    pub warnings_as_errors: Bool,
+    pub warnings_as_errors: bool,
 
     /// Maximum number of errors before stopping.
-    pub error_limit: U32,
+    pub error_limit: u32,
 
     /// Show compiler timing information.
-    pub show_timings: Bool,
+    pub show_timings: bool,
 
     /// Verbose output.
-    pub verbose: Bool,
+    pub verbose: bool,
 
     /// Enable colored output.
-    pub color: Bool,
+    pub color: bool,
 
     /// Include paths for imports.
     pub include_paths: Vec<String>,
@@ -259,19 +259,19 @@ pub struct CompilerConfig {
     pub defines: Vec<String>,
 
     /// Emit intermediate representation for debugging.
-    pub emit_ir: Bool,
+    pub emit_ir: bool,
 
     /// Emit HIR for debugging.
-    pub emit_hir: Bool,
+    pub emit_hir: bool,
 
     /// Emit MIR for debugging.
-    pub emit_mir: Bool,
+    pub emit_mir: bool,
 
     /// Dump AST for debugging.
-    pub dump_ast: Bool,
+    pub dump_ast: bool,
 
     /// Enable incremental compilation.
-    pub incremental: Bool,
+    pub incremental: bool,
 
     /// Incremental compilation cache directory.
     pub incremental_dir: Option<String>,
@@ -327,7 +327,7 @@ impl CompilerConfig {
     }
 
     /// Enable debug information.
-    pub fn with_debug_info(mut self, enabled: Bool) -> CompilerConfig {
+    pub fn with_debug_info(mut self, enabled: bool) -> CompilerConfig {
         self.debug_info = enabled;
         self
     }
@@ -351,12 +351,12 @@ impl CompilerConfig {
     }
 
     /// Check if this configuration is for debug mode.
-    pub fn is_debug(self) -> Bool {
+    pub fn is_debug(self) -> bool {
         self.opt_level == OptLevel::None && self.debug_info;
     }
 
     /// Check if this configuration is for release mode.
-    pub fn is_release(self) -> Bool {
+    pub fn is_release(self) -> bool {
         self.opt_level == OptLevel::Release;
     }
 }

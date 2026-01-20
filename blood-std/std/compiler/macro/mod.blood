@@ -22,7 +22,7 @@
 /// let result = my_macro!(42);  // expands to: 42 + 1
 /// ```
 
-use std.option.Option;
+use std.core.Option;
 use std.result.Result;
 use std.collections::{Vec, HashMap};
 use std.compiler.ast.expr::{Expr, ExprKind, MacroCallKind, MacroDelimiter};
@@ -64,12 +64,12 @@ impl TokenStream {
     }
 
     /// Check if the stream is empty.
-    pub fn is_empty(&self) -> Bool {
+    pub fn is_empty(&self) -> bool {
         self.tokens.is_empty();
     }
 
     /// Get the number of tokens.
-    pub fn len(&self) -> USize {
+    pub fn len(&self) -> usize {
         self.tokens.len();
     }
 
@@ -79,7 +79,7 @@ impl TokenStream {
     }
 
     /// Get a token at an index.
-    pub fn get(&self, index: USize) -> Option<&TokenTree> {
+    pub fn get(&self, index: usize) -> Option<&TokenTree> {
         if index < self.tokens.len() {
             Option::Some(&self.tokens[index])
         } else {
@@ -205,7 +205,7 @@ impl MacroExpander {
     }
 
     /// Check if a macro is registered.
-    pub fn has_macro(&self, name: &str) -> Bool {
+    pub fn has_macro(&self, name: &str) -> bool {
         self.macros.contains_key(name);
     }
 
@@ -257,7 +257,7 @@ impl MacroExpander {
         let input = self.content_to_token_stream(content, span);
 
         // Try each rule in order
-        let mut i: USize = 0;
+        let mut i: usize = 0;
         while i < macro_def.rules.len() {
             let rule = &macro_def.rules[i];
             match self.match_pattern(&rule.pattern, &input) {
@@ -292,8 +292,8 @@ impl MacroExpander {
     fn content_to_token_stream(&self, content: &str, _span: Span) -> TokenStream {
         // Simple tokenization - in a full implementation, use the lexer
         let mut tokens: Vec<TokenTree> = Vec::new();
-        let mut pos: USize = 0;
-        let chars: Vec<Char> = content.chars().collect();
+        let mut pos: usize = 0;
+        let chars: Vec<char> = content.chars().collect();
 
         while pos < chars.len() {
             // Skip whitespace
@@ -329,7 +329,7 @@ impl MacroExpander {
     }
 
     /// Lex a single token from the character array.
-    fn lex_token(&self, chars: &[Char], start: USize) -> (TokenKind, USize) {
+    fn lex_token(&self, chars: &[char], start: usize) -> (TokenKind, usize) {
         if start >= chars.len() {
             return (TokenKind::Eof, start);
         };
@@ -455,9 +455,9 @@ impl MacroExpander {
         input: &TokenStream,
     ) -> Option<HashMap<String, CapturedValue>> {
         let mut captures: HashMap<String, CapturedValue> = HashMap::new();
-        let mut input_pos: USize = 0;
+        let mut input_pos: usize = 0;
 
-        let mut i: USize = 0;
+        let mut i: usize = 0;
         while i < pattern.parts.len() {
             let part = &pattern.parts[i];
             match part {
@@ -484,10 +484,10 @@ impl MacroExpander {
         &self,
         parts: &[MacroPatternPart],
         input: &TokenStream,
-        pos: &mut USize,
+        pos: &mut usize,
         captures: &mut HashMap<String, CapturedValue>,
-    ) -> Bool {
-        let mut i: USize = 0;
+    ) -> bool {
+        let mut i: usize = 0;
         while i < parts.len() {
             if !self.match_single_part(&parts[i], input, pos, captures) {
                 return false;
@@ -502,9 +502,9 @@ impl MacroExpander {
         &self,
         part: &MacroPatternPart,
         input: &TokenStream,
-        pos: &mut USize,
+        pos: &mut usize,
         captures: &mut HashMap<String, CapturedValue>,
-    ) -> Bool {
+    ) -> bool {
         match part {
             MacroPatternPart::Token { kind, .. } => {
                 if *pos >= input.len() {
@@ -620,7 +620,7 @@ impl MacroExpander {
                 match input.get(*pos) {
                     Option::Some(TokenTree::Group { delimiter: d, stream, .. }) => {
                         if *d == *delimiter {
-                            let mut inner_pos: USize = 0;
+                            let mut inner_pos: usize = 0;
                             if self.match_pattern_parts(pattern, stream, &mut inner_pos, captures) {
                                 *pos = *pos + 1;
                                 return true;
@@ -639,7 +639,7 @@ impl MacroExpander {
         &self,
         fragment: FragmentKind,
         input: &TokenStream,
-        pos: &mut USize,
+        pos: &mut usize,
     ) -> Option<CapturedValue> {
         if *pos >= input.len() {
             return Option::None;
@@ -807,7 +807,7 @@ impl MacroExpander {
                     MacroDelimiter::Brace => ("{", "}"),
                 };
                 let mut inner = String::new();
-                let mut i: USize = 0;
+                let mut i: usize = 0;
                 while i < stream.len() {
                     if i > 0 {
                         inner.push(' ');
@@ -833,7 +833,7 @@ impl MacroExpander {
     ) -> Result<String, String> {
         let mut result = String::new();
 
-        let mut i: USize = 0;
+        let mut i: usize = 0;
         while i < expansion.parts.len() {
             match self.substitute_part_to_source(&expansion.parts[i], captures, &mut result) {
                 Result::Ok(()) => {}
@@ -854,7 +854,7 @@ impl MacroExpander {
     ) -> Result<(), String> {
         match part {
             MacroExpansionPart::Tokens(tokens) => {
-                let mut i: USize = 0;
+                let mut i: usize = 0;
                 while i < tokens.len() {
                     result.push_str(&self.token_to_source(&tokens[i]));
                     result.push(' ');
@@ -874,7 +874,7 @@ impl MacroExpander {
                                 result.push(' ');
                             }
                             CapturedValue::Repeated(items) => {
-                                let mut i: USize = 0;
+                                let mut i: usize = 0;
                                 while i < items.len() {
                                     match &items[i] {
                                         CapturedValue::Single { source, .. } => {
@@ -897,8 +897,8 @@ impl MacroExpander {
 
             MacroExpansionPart::Repetition { parts, separator, .. } => {
                 // Find the repeat count from captured values
-                let mut repeat_count: USize = 0;
-                let mut i: USize = 0;
+                let mut repeat_count: usize = 0;
+                let mut i: usize = 0;
                 while i < parts.len() {
                     match &parts[i] {
                         MacroExpansionPart::Substitution { name, .. } => {
@@ -953,7 +953,7 @@ impl MacroExpander {
                     };
 
                     // Substitute parts for this iteration
-                    let mut j: USize = 0;
+                    let mut j: usize = 0;
                     while j < parts.len() {
                         match self.substitute_part_to_source(&parts[j], &iter_captures, result) {
                             Result::Ok(()) => {}
@@ -976,7 +976,7 @@ impl MacroExpander {
                 };
                 result.push_str(open);
 
-                let mut i: USize = 0;
+                let mut i: usize = 0;
                 while i < parts.len() {
                     match self.substitute_part_to_source(&parts[i], captures, result) {
                         Result::Ok(()) => {}
@@ -995,7 +995,7 @@ impl MacroExpander {
 
     /// Apply hygiene scope to a token stream.
     pub fn apply_hygiene(&self, stream: &mut TokenStream, scope: HygieneId) {
-        let mut i: USize = 0;
+        let mut i: usize = 0;
         while i < stream.tokens.len() {
             match &mut stream.tokens[i] {
                 TokenTree::Token(t) => {
@@ -1038,17 +1038,17 @@ impl Clone for MacroExpander {
 // ============================================================
 
 /// Check if a character is whitespace.
-fn is_whitespace(c: Char) -> Bool {
+fn is_whitespace(c: char) -> bool {
     c == ' ' || c == '\t' || c == '\n' || c == '\r'
 }
 
 /// Check if a character can start an identifier.
-fn is_ident_start(c: Char) -> Bool {
+fn is_ident_start(c: char) -> bool {
     c.is_ascii_alphabetic() || c == '_'
 }
 
 /// Check if a character can continue an identifier.
-fn is_ident_continue(c: Char) -> Bool {
+fn is_ident_continue(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
 }
 

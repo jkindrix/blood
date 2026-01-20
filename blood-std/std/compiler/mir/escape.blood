@@ -28,6 +28,7 @@
 /// Iteration continues until a fixed point is reached.
 
 use std.collections::{HashMap, HashSet};
+use std.traits.cmp::Ordering;
 use std.compiler.typeck.types::{DefId};
 use std.compiler.mir.types::{
     LocalId, BasicBlockId, StatementKind, TerminatorKind, Place, PlaceElem, Operand, Rvalue,
@@ -114,20 +115,16 @@ impl PartialEq for EscapeState {
 }
 
 impl PartialOrd for EscapeState {
-    fn lt(&self, other: &EscapeState) -> bool {
-        self.ordinal() < other.ordinal();
-    }
-
-    fn le(&self, other: &EscapeState) -> bool {
-        self.ordinal() <= other.ordinal();
-    }
-
-    fn gt(&self, other: &EscapeState) -> bool {
-        self.ordinal() > other.ordinal();
-    }
-
-    fn ge(&self, other: &EscapeState) -> bool {
-        self.ordinal() >= other.ordinal();
+    fn partial_cmp(&self, other: &EscapeState) -> Option<Ordering> / pure {
+        let self_ord = self.ordinal();
+        let other_ord = other.ordinal();
+        if self_ord < other_ord {
+            Some(Ordering::Less)
+        } else if self_ord > other_ord {
+            Some(Ordering::Greater)
+        } else {
+            Some(Ordering::Equal)
+        }
     }
 }
 

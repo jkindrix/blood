@@ -20,21 +20,21 @@
 //!     type FILE;
 //!
 //!     // Type aliases
-//!     type size_t = USize;
+//!     type size_t = usize;
 //!
 //!     // Constants
-//!     const STDIN_FILENO: I32 = 0;
+//!     const STDIN_FILENO: i32 = 0;
 //!
 //!     // Functions
-//!     fn malloc(size: size_t) -> *mut U8;
-//!     fn free(ptr: *mut U8);
-//!     fn printf(format: *const I8, ...) -> I32;
+//!     fn malloc(size: size_t) -> *mut u8;
+//!     fn free(ptr: *mut u8);
+//!     fn printf(format: *const i8, ...) -> i32;
 //!
 //!     // Structs
 //!     #[repr(C)]
 //!     struct timespec {
-//!         tv_sec: I64,
-//!         tv_nsec: I64,
+//!         tv_sec: i64,
+//!         tv_nsec: i64,
 //!     }
 //!
 //!     // Enums
@@ -47,12 +47,12 @@
 //!     // Unions
 //!     #[repr(C)]
 //!     union Value {
-//!         i: I32,
-//!         f: F32,
+//!         i: i32,
+//!         f: f32,
 //!     }
 //!
 //!     // Callbacks
-//!     callback Comparator = fn(*const U8, *const U8) -> I32;
+//!     callback Comparator = fn(*const u8, *const u8) -> i32;
 //! }
 //! ```
 //!
@@ -65,9 +65,9 @@
 
 module std.compiler.ast.bridge;
 
-use std.option.Option;
+use std.core.Option;
 use std.collections.Vec;
-use std.string.String;
+use std.core.string.String;
 use std.compiler.ast.node.Span;
 use std.compiler.ast.node.Ident;
 use std.compiler.ast.node.NodeId;
@@ -85,8 +85,8 @@ use std.compiler.ast.ty.Type;
 ///
 /// ```blood
 /// bridge "C" libc {
-///     fn malloc(size: USize) -> *mut U8;
-///     fn free(ptr: *mut U8);
+///     fn malloc(size: usize) -> *mut u8;
+///     fn free(ptr: *mut u8);
 /// }
 /// ```
 #[derive(Clone, PartialEq, Eq)]
@@ -107,7 +107,7 @@ pub struct BridgeDecl {
 
 impl BridgeDecl {
     /// Check if this is a C bridge.
-    pub fn is_c(self) -> Bool {
+    pub fn is_c(self) -> bool {
         match self.language {
             BridgeLanguage::C => true,
             _ => false,
@@ -115,7 +115,7 @@ impl BridgeDecl {
     }
 
     /// Check if this is a C++ bridge.
-    pub fn is_cpp(self) -> Bool {
+    pub fn is_cpp(self) -> bool {
         match self.language {
             BridgeLanguage::Cpp => true,
             _ => false,
@@ -123,7 +123,7 @@ impl BridgeDecl {
     }
 
     /// Check if this is a WebAssembly bridge.
-    pub fn is_wasm(self) -> Bool {
+    pub fn is_wasm(self) -> bool {
         match self.language {
             BridgeLanguage::Wasm => true,
             _ => false,
@@ -175,21 +175,21 @@ impl BridgeLanguage {
 pub enum BridgeItem {
     /// Link specification: `#[link(name = "c")]`
     Link(LinkSpec),
-    /// Foreign function: `fn malloc(size: USize) -> *mut U8;`
+    /// Foreign function: `fn malloc(size: usize) -> *mut u8;`
     Function(BridgeFn),
-    /// Constant: `const STDIN_FILENO: I32 = 0;`
+    /// Constant: `const STDIN_FILENO: i32 = 0;`
     Const(BridgeConst),
     /// Opaque type: `type FILE;`
     OpaqueType(BridgeOpaqueType),
-    /// Type alias: `type size_t = USize;`
+    /// Type alias: `type size_t = usize;`
     TypeAlias(BridgeTypeAlias),
-    /// Struct with C layout: `#[repr(C)] struct Point { x: F64, y: F64 }`
+    /// Struct with C layout: `#[repr(C)] struct Point { x: f64, y: f64 }`
     Struct(BridgeStruct),
     /// Enum with C layout: `#[repr(C)] enum Status { Ok = 0, Error = 1 }`
     Enum(BridgeEnum),
-    /// Union with C layout: `#[repr(C)] union Value { i: I32, f: F32 }`
+    /// Union with C layout: `#[repr(C)] union Value { i: i32, f: f32 }`
     Union(BridgeUnion),
-    /// Callback type: `callback Comparator = fn(*const U8, *const U8) -> I32;`
+    /// Callback type: `callback Comparator = fn(*const u8, *const u8) -> i32;`
     Callback(BridgeCallback),
 }
 
@@ -278,8 +278,8 @@ impl LinkKind {
 /// ## Example
 ///
 /// ```blood
-/// fn malloc(size: USize) -> *mut U8;
-/// fn printf(format: *const I8, ...) -> I32;
+/// fn malloc(size: usize) -> *mut u8;
+/// fn printf(format: *const i8, ...) -> i32;
 /// ```
 #[derive(Clone, PartialEq, Eq)]
 pub struct BridgeFn {
@@ -292,7 +292,7 @@ pub struct BridgeFn {
     /// Parameters.
     pub params: Vec<BridgeParam>,
     /// Is variadic (...).
-    pub is_variadic: Bool,
+    pub is_variadic: bool,
     /// Return type.
     pub return_type: Option<Type>,
     /// Span of the declaration.
@@ -301,12 +301,12 @@ pub struct BridgeFn {
 
 impl BridgeFn {
     /// Check if this function is variadic.
-    pub fn is_variadic(self) -> Bool {
+    pub fn is_variadic(self) -> bool {
         self.is_variadic
     }
 
     /// Check if this function returns void.
-    pub fn returns_void(self) -> Bool {
+    pub fn returns_void(self) -> bool {
         self.return_type.is_none();
     }
 }
@@ -363,8 +363,8 @@ impl BridgeOwnership {
 /// ## Example
 ///
 /// ```blood
-/// const STDIN_FILENO: I32 = 0;
-/// const NULL: *const U8 = 0 as *const U8;
+/// const STDIN_FILENO: i32 = 0;
+/// const NULL: *const u8 = 0 as *const u8;
 /// ```
 #[derive(Clone, PartialEq, Eq)]
 pub struct BridgeConst {
@@ -409,8 +409,8 @@ pub struct BridgeOpaqueType {
 /// ## Example
 ///
 /// ```blood
-/// type size_t = USize;
-/// type time_t = I64;
+/// type size_t = usize;
+/// type time_t = i64;
 /// ```
 #[derive(Clone, PartialEq, Eq)]
 pub struct BridgeTypeAlias {
@@ -435,14 +435,14 @@ pub struct BridgeTypeAlias {
 /// ```blood
 /// #[repr(C)]
 /// struct timespec {
-///     tv_sec: I64,
-///     tv_nsec: I64,
+///     tv_sec: i64,
+///     tv_nsec: i64,
 /// }
 ///
 /// #[repr(C, packed)]
 /// struct PackedData {
-///     a: U8,
-///     b: U32,
+///     a: u8,
+///     b: u32,
 /// }
 /// ```
 #[derive(Clone, PartialEq, Eq)]
@@ -526,9 +526,9 @@ pub struct BridgeEnumVariant {
 /// ```blood
 /// #[repr(C)]
 /// union Value {
-///     i: I32,
-///     f: F32,
-///     bytes: [U8; 4],
+///     i: i32,
+///     f: f32,
+///     bytes: [u8; 4],
 /// }
 /// ```
 #[derive(Clone, PartialEq, Eq)]
@@ -556,8 +556,8 @@ pub struct BridgeUnion {
 /// ## Example
 ///
 /// ```blood
-/// callback Comparator = fn(*const U8, *const U8) -> I32;
-/// callback Callback = fn(*mut U8);
+/// callback Comparator = fn(*const u8, *const u8) -> i32;
+/// callback Callback = fn(*mut u8);
 /// ```
 #[derive(Clone, PartialEq, Eq)]
 pub struct BridgeCallback {

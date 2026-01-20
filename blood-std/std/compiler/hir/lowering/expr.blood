@@ -56,10 +56,10 @@
 module std.compiler.hir.lowering.expr;
 
 use std.result.Result;
-use std.option.Option;
+use std.core.Option;
 use std.collections.HashMap;
 
-use crate.compiler.ast.{
+use std.compiler.ast.{
     Expr as AstExpr, ExprKind as AstExprKind,
     Block as AstBlock, Stmt as AstStmt, StmtKind as AstStmtKind,
     Literal, BinOp as AstBinOp, UnaryOp as AstUnaryOp,
@@ -70,7 +70,7 @@ use crate.compiler.ast.{
     FunctionDecl,
 };
 
-use crate.compiler.hir.{
+use std.compiler.hir.{
     Body, Local, LocalId, BodyId, LoopId,
     Expr as HirExpr, ExprKind as HirExprKind,
     Stmt as HirStmt,
@@ -81,11 +81,11 @@ use crate.compiler.hir.{
     FieldExpr, RecordFieldExpr, Capture, InlineOpHandler,
 };
 
-use crate.compiler.hir.lowering.{AstLowering, LoweringError};
-use crate.compiler.hir.lowering.pattern;
-use crate.compiler.hir.lowering.stmt;
-use crate.compiler.hir.lowering.item.lower_type;
-use crate.compiler.typeck.types.{DefId, Type};
+use std.compiler.hir.lowering.{AstLowering, LoweringError};
+use std.compiler.hir.lowering.pattern;
+use std.compiler.hir.lowering.stmt;
+use std.compiler.hir.lowering.item.lower_type;
+use std.compiler.typeck.types.{DefId, Type};
 
 // ============================================================================
 // Function Body Lowering
@@ -1071,8 +1071,8 @@ fn lower_literal(lit: &Literal) -> HirLiteral {
         Literal::Integer(v, suffix) => HirLiteral::Integer(*v, suffix.clone()),
         Literal::Float(v, suffix) => HirLiteral::Float(*v, suffix.clone()),
         Literal::String(s) => HirLiteral::String(s.clone()),
-        Literal::Char(c) => HirLiteral::Char(*c),
-        Literal::Bool(b) => HirLiteral::Bool(*b),
+        Literal::char(c) => HirLiteral::char(*c),
+        Literal::bool(b) => HirLiteral::bool(*b),
         Literal::Byte(b) => HirLiteral::Byte(*b),
         Literal::ByteString(bs) => HirLiteral::ByteString(bs.clone()),
     }

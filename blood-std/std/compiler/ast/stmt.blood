@@ -36,7 +36,7 @@
 
 module std.compiler.ast.stmt;
 
-use std.option.Option;
+use std.core.Option;
 use std.collections.Vec;
 use std.compiler.ast.node.Span;
 use std.compiler.ast.node.NodeId;
@@ -105,22 +105,22 @@ impl Block {
     }
 
     /// Check if the block is empty (no statements and no expression).
-    pub fn is_empty(self) -> Bool {
+    pub fn is_empty(self) -> bool {
         self.statements.is_empty() && self.expr.is_none();
     }
 
     /// Check if the block has a trailing expression.
-    pub fn has_expr(self) -> Bool {
+    pub fn has_expr(self) -> bool {
         self.expr.is_some();
     }
 
     /// Get the number of statements.
-    pub fn statement_count(self) -> USize {
+    pub fn statement_count(self) -> usize {
         self.statements.len();
     }
 
     /// Check if this block returns unit (no trailing expression).
-    pub fn returns_unit(self) -> Bool {
+    pub fn returns_unit(self) -> bool {
         self.expr.is_none();
     }
 }
@@ -151,7 +151,7 @@ pub enum Statement {
         /// The expression.
         expr: Expr,
         /// Whether the statement has a semicolon.
-        has_semi: Bool,
+        has_semi: bool,
     },
 
     /// Item declaration inside a block (local function, struct, etc.)
@@ -201,7 +201,7 @@ impl Statement {
     }
 
     /// Check if this is a let statement.
-    pub fn is_let(self) -> Bool {
+    pub fn is_let(self) -> bool {
         match self {
             Statement::Let { .. } => true,
             _ => false,
@@ -209,7 +209,7 @@ impl Statement {
     }
 
     /// Check if this is an expression statement.
-    pub fn is_expr(self) -> Bool {
+    pub fn is_expr(self) -> bool {
         match self {
             Statement::Expr { .. } => true,
             _ => false,
@@ -217,7 +217,7 @@ impl Statement {
     }
 
     /// Check if this is an item statement.
-    pub fn is_item(self) -> Bool {
+    pub fn is_item(self) -> bool {
         match self {
             Statement::Item(_) => true,
             _ => false,
@@ -228,7 +228,7 @@ impl Statement {
     ///
     /// Returns true for let statements (always have semi),
     /// expression statements with semi, and item statements.
-    pub fn has_semicolon(self) -> Bool {
+    pub fn has_semicolon(self) -> bool {
         match self {
             Statement::Let { .. } => true,
             Statement::Expr { has_semi, .. } => has_semi,

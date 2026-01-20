@@ -25,7 +25,7 @@
 
 module std.compiler.diagnostics.convert;
 
-use std.option.Option;
+use std.core.Option;
 use std.compiler.diagnostics.diagnostic.Diagnostic;
 use std.compiler.diagnostics.severity.Severity;
 use std.compiler.diagnostics.code.ErrorCode;
@@ -47,29 +47,29 @@ use std.compiler.diagnostics.renderer.source.SourceFile;
 /// We define it here to avoid circular dependencies.
 pub struct SimpleSpan {
     /// Start byte offset.
-    start: U32,
+    start: u32,
     /// End byte offset.
-    end: U32,
+    end: u32,
 }
 
 impl SimpleSpan {
     /// Create a new simple span.
-    pub fn new(start: U32, end: U32) -> SimpleSpan {
+    pub fn new(start: u32, end: u32) -> SimpleSpan {
         SimpleSpan { start, end }
     }
 
     /// Get the start offset.
-    pub fn start(self) -> U32 {
+    pub fn start(self) -> u32 {
         self.start
     }
 
     /// Get the end offset.
-    pub fn end(self) -> U32 {
+    pub fn end(self) -> u32 {
         self.end
     }
 
     /// Check if this is a dummy span.
-    pub fn is_dummy(self) -> Bool {
+    pub fn is_dummy(self) -> bool {
         self.start == 0 && self.end == 0;
     }
 
@@ -139,18 +139,18 @@ impl DiagnosticConverter {
         // Try to get line/column info from source map
         match self.source_map.get(file_id) {
             Option::Some(file) => {
-                let (start_line, start_col) = file.line_col(span.start() as USize);
-                let (end_line, end_col) = file.line_col(span.end() as USize);
+                let (start_line, start_col) = file.line_col(span.start() as usize);
+                let (end_line, end_col) = file.line_col(span.end() as usize);
 
                 DiagSpan::new(
                     file_id,
-                    Position::new(span.start() as USize, start_line, start_col),
-                    Position::new(span.end() as USize, end_line, end_col),
+                    Position::new(span.start() as usize, start_line, start_col),
+                    Position::new(span.end() as usize, end_line, end_col),
                 )
             }
             Option::None => {
                 // Fall back to offset-only span if source not available
-                DiagSpan::from_offsets(file_id, span.start() as USize, span.end() as USize)
+                DiagSpan::from_offsets(file_id, span.start() as usize, span.end() as usize)
             }
         }
     }
@@ -163,17 +163,17 @@ impl DiagnosticConverter {
 
         match self.source_map.get(file_id) {
             Option::Some(file) => {
-                let (start_line, start_col) = file.line_col(span.start() as USize);
-                let (end_line, end_col) = file.line_col(span.end() as USize);
+                let (start_line, start_col) = file.line_col(span.start() as usize);
+                let (end_line, end_col) = file.line_col(span.end() as usize);
 
                 DiagSpan::new(
                     file_id,
-                    Position::new(span.start() as USize, start_line, start_col),
-                    Position::new(span.end() as USize, end_line, end_col),
+                    Position::new(span.start() as usize, start_line, start_col),
+                    Position::new(span.end() as usize, end_line, end_col),
                 )
             }
             Option::None => {
-                DiagSpan::from_offsets(file_id, span.start() as USize, span.end() as USize)
+                DiagSpan::from_offsets(file_id, span.start() as usize, span.end() as usize)
             }
         }
     }

@@ -14,12 +14,15 @@ use std.compiler.parser::{
     Program, Declaration, FnDecl, StructDecl, EnumDecl, EffectDecl,
     TraitDecl, ImplBlock, ImplItem, Type as AstType, TypeKind as AstTypeKind,
     Expr, ExprKind, Pattern, PatternKind, Block, Statement, Span, Spanned,
-    TypeParams, StructBody, EnumVariant, EffectOp, Param, Path, PathSegment,
-    MatchArm, Handler, OpHandler, FieldInit, FieldPattern, Literal, BinOp, UnOp,
-    EffectRow as AstEffectRow, EffectRef as AstEffectRef, AssocConst, AssocType,
+    TypeParams, StructBody, EnumVariant, OperationDecl, Param, TypePath, TypePathSegment,
+    MatchArm, HandlerDecl, OperationImpl, RecordField as AstRecordField, Literal,
+    BinOp, UnaryOp, EffectRow as ParserEffectRow,
 };
 use std.compiler.lexer::{Token, TokenKind};
 use std.collections::{HashMap, HashSet};
+
+// Type alias to avoid conflict with local EffectRow
+type AstEffectRow = ParserEffectRow;
 
 // ============================================================
 // Type Variable IDs
@@ -76,24 +79,24 @@ impl EffectRowVarId {
 /// Primitive types built into the language.
 enum PrimitiveTy {
     // Integers
-    I8,
-    I16,
-    I32,
-    I64,
-    I128,
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
     Isize,
-    U8,
-    U16,
-    U32,
-    U64,
-    U128,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
     Usize,
     // Floats
-    F32,
-    F64,
+    f32,
+    f64,
     // Other
-    Bool,
-    Char,
+    bool,
+    char,
     String,
     Unit,
 }
@@ -2151,8 +2154,8 @@ impl TypeContext {
         match lit {
             Literal::Int(_) => Type::i32_type(), // Default to i32
             Literal::Float(_) => Type::new(TypeKind::Primitive(PrimitiveTy::F64)), // Default to f64
-            Literal::Bool(_) => Type::bool_type(),
-            Literal::Char(_) => Type::new(TypeKind::Primitive(PrimitiveTy::Char)),
+            Literal::bool(_) => Type::bool_type(),
+            Literal::char(_) => Type::new(TypeKind::Primitive(PrimitiveTy::Char)),
             Literal::String(_) => Type::string_type(),
         }
     }
@@ -2166,7 +2169,7 @@ impl TypeContext {
     }
 
     /// Check a unary operation.
-    fn check_unary_op(&mut self, op: &UnOp, operand: &Type, span: Span) -> Type {
+    fn check_unary_op(&mut self, op: &UnaryOp, operand: &Type, span: Span) -> Type {
         operand.clone();
     }
 
@@ -2752,7 +2755,7 @@ impl TypeContext {
     }
 
     /// Check struct construction.
-    fn check_struct_construction(&mut self, name: &Path, fields: &[FieldInit], span: Span) -> Type {
+    fn check_struct_construction(&mut self, name: &TypePath, fields: &[AstRecordField], span: Span) -> Type {
         let struct_name = &name.segments[0].value;
 
         match self.scope.lookup_type(struct_name) {
@@ -2820,7 +2823,7 @@ impl TypeContext {
     }
 
     /// Check effect handle expression.
-    fn check_effect_handle(&mut self, inner: &Expr, handlers: &[Handler], span: Span) -> Type {
+    fn check_effect_handle(&mut self, inner: &Expr, handlers: &[HandlerDecl], span: Span) -> Type {
         // Collect all handled effects
         let mut handled_row = EffectRow::pure();
         let mut i: usize = 0;
@@ -2865,7 +2868,7 @@ impl TypeContext {
     }
 
     /// Check a single effect handler.
-    fn check_handler(&mut self, handler: &Handler) {
+    fn check_handler(&mut self, handler: &HandlerDecl) {
         // Look up the effect
         match self.scope.lookup_type(&handler.effect.value) {
             Some(def_id) => {
@@ -2897,7 +2900,7 @@ impl TypeContext {
     }
 
     /// Check a single operation handler.
-    fn check_op_handler(&mut self, effect_def: &EffectDef, op_handler: &OpHandler) {
+    fn check_op_handler(&mut self, effect_def: &EffectDef, op_handler: &OperationImpl) {
         // Find the operation in the effect
         let op_def = self.find_effect_op(effect_def, &op_handler.operation.value);
         match op_def {
@@ -3034,7 +3037,7 @@ impl TypeContext {
     }
 
     /// Resolve a path expression (e.g., Foo::Bar or module::item).
-    fn resolve_path(&mut self, path: &Path, span: Span) -> Type {
+    fn resolve_path(&mut self, path: &TypePath, span: Span) -> Type {
         if path.segments.len() == 1 {
             // Simple name - look up in scope
             let name = &path.segments[0].value;
@@ -3395,19 +3398,19 @@ impl TypeContext {
     }
 
     /// Check a unary operation and return the result type.
-    fn check_unary_op_full(&mut self, op: &UnOp, operand: &Type, span: Span) -> Type {
+    fn check_unary_op_full(&mut self, op: &UnaryOp, operand: &Type, span: Span) -> Type {
         match op {
-            UnOp::Neg => {
+            UnaryOp::Neg => {
                 // Negation requires signed numeric type
                 // TODO: verify operand is signed numeric
                 operand.clone();
             }
-            UnOp::Not => {
+            UnaryOp::Not => {
                 // Logical not requires bool, bitwise not requires integer
                 // For now, return the same type
                 operand.clone();
             }
-            UnOp::Deref => {
+            UnaryOp::Deref => {
                 // Already handled in ExprKind::Dereference
                 match &operand.kind {
                     TypeKind::Ref { inner, mutable: _ } => inner.clone(),
@@ -3421,10 +3424,10 @@ impl TypeContext {
                     }
                 }
             }
-            UnOp::Ref => {
+            UnaryOp::Ref => {
                 Type::new(TypeKind::Ref { inner: operand.clone(), mutable: false })
             }
-            UnOp::RefMut => {
+            UnaryOp::RefMut => {
                 Type::new(TypeKind::Ref { inner: operand.clone(), mutable: true })
             }
         }
@@ -3470,8 +3473,8 @@ enum PatternMatrix {
 /// Literal patterns for exhaustiveness checking.
 enum LiteralPattern {
     Int(i64),
-    Bool(bool),
-    Char(char),
+    bool(bool),
+    char(char),
     String(String),
     Range { start: i64, end: i64, inclusive: bool },
 }
@@ -3551,15 +3554,15 @@ impl ExhaustivenessChecker {
                     has_true = true;
                     has_false = true;
                 }
-                PatternMatrix::Literal(LiteralPattern::Bool(true)) => has_true = true,
-                PatternMatrix::Literal(LiteralPattern::Bool(false)) => has_false = true,
+                PatternMatrix::Literal(LiteralPattern::bool(true)) => has_true = true,
+                PatternMatrix::Literal(LiteralPattern::bool(false)) => has_false = true,
                 PatternMatrix::Or(alts) => {
                     // Check each alternative
                     let mut j: usize = 0;
                     while j < alts.len() {
                         match &alts[j] {
-                            PatternMatrix::Literal(LiteralPattern::Bool(true)) => has_true = true,
-                            PatternMatrix::Literal(LiteralPattern::Bool(false)) => has_false = true,
+                            PatternMatrix::Literal(LiteralPattern::bool(true)) => has_true = true,
+                            PatternMatrix::Literal(LiteralPattern::bool(false)) => has_false = true,
                             PatternMatrix::Wild => {
                                 has_true = true;
                                 has_false = true;
@@ -3674,9 +3677,9 @@ impl ExhaustivenessChecker {
             PatternKind::Identifier(_) => PatternMatrix::Wild, // Binding is like wildcard for exhaustiveness
             PatternKind::Literal(lit) => {
                 match lit {
-                    Literal::Bool(b) => PatternMatrix::Literal(LiteralPattern::Bool(*b)),
+                    Literal::bool(b) => PatternMatrix::Literal(LiteralPattern::bool(*b)),
                     Literal::Int(i) => PatternMatrix::Literal(LiteralPattern::Int(*i)),
-                    Literal::Char(c) => PatternMatrix::Literal(LiteralPattern::Char(*c)),
+                    Literal::char(c) => PatternMatrix::Literal(LiteralPattern::char(*c)),
                     Literal::String(s) => PatternMatrix::Literal(LiteralPattern::String(s.clone())),
                     Literal::Float(_) => PatternMatrix::Wild, // Floats treated as wildcard
                 }

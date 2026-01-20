@@ -36,7 +36,7 @@ module std.compiler.diagnostics.context;
 
 use std.collections.Vec;
 use std.collections.HashSet;
-use std.option.Option;
+use std.core.Option;
 use std.compiler.diagnostics.diagnostic.Diagnostic;
 use std.compiler.diagnostics.severity.Severity;
 use std.compiler.diagnostics.code.ErrorCode;
@@ -74,7 +74,7 @@ pub enum EmissionMode {
 
 impl EmissionMode {
     /// Check if this mode emits immediately.
-    pub fn is_immediate(self) -> Bool {
+    pub fn is_immediate(self) -> bool {
         match self {
             EmissionMode::Immediate => true,
             EmissionMode::Buffered => false,
@@ -83,7 +83,7 @@ impl EmissionMode {
     }
 
     /// Check if this mode buffers.
-    pub fn is_buffered(self) -> Bool {
+    pub fn is_buffered(self) -> bool {
         match self {
             EmissionMode::Buffered => true,
             EmissionMode::Immediate => false,
@@ -92,7 +92,7 @@ impl EmissionMode {
     }
 
     /// Check if this mode is silent.
-    pub fn is_silent(self) -> Bool {
+    pub fn is_silent(self) -> bool {
         match self {
             EmissionMode::Silent => true,
             EmissionMode::Immediate => false,
@@ -144,16 +144,16 @@ pub struct DiagCtxt {
     diagnostics: Vec<Diagnostic>,
 
     /// Number of fatal errors emitted.
-    fatal_count: U32,
+    fatal_count: u32,
 
     /// Number of errors emitted.
-    error_count: U32,
+    error_count: u32,
 
     /// Number of warnings emitted.
-    warning_count: U32,
+    warning_count: u32,
 
     /// Number of notes emitted.
-    note_count: U32,
+    note_count: u32,
 
     /// Emission mode.
     mode: EmissionMode,
@@ -168,10 +168,10 @@ pub struct DiagCtxt {
     suppressed_groups: Vec<DiagnosticGroup>,
 
     /// Deduplicated diagnostic hashes (to prevent spam).
-    seen_hashes: HashSet<U64>,
+    seen_hashes: HashSet<u64>,
 
     /// Whether to deduplicate diagnostics.
-    deduplicate: Bool,
+    deduplicate: bool,
 
     /// Output buffer (for immediate mode).
     output: String,
@@ -233,7 +233,7 @@ impl DiagCtxt {
     }
 
     /// Enable/disable deduplication.
-    pub fn with_deduplication(mut self, enabled: Bool) -> DiagCtxt {
+    pub fn with_deduplication(mut self, enabled: bool) -> DiagCtxt {
         self.deduplicate = enabled;
         self
     }
@@ -425,27 +425,27 @@ impl DiagCtxt {
     // === Status Methods ===
 
     /// Check if any errors have been emitted.
-    pub fn has_errors(self) -> Bool {
+    pub fn has_errors(self) -> bool {
         self.error_count > 0 || self.fatal_count > 0
     }
 
     /// Check if any warnings have been emitted.
-    pub fn has_warnings(self) -> Bool {
+    pub fn has_warnings(self) -> bool {
         self.warning_count > 0
     }
 
     /// Get the error count.
-    pub fn error_count(self) -> U32 {
+    pub fn error_count(self) -> u32 {
         self.error_count + self.fatal_count
     }
 
     /// Get the warning count.
-    pub fn warning_count(self) -> U32 {
+    pub fn warning_count(self) -> u32 {
         self.warning_count
     }
 
     /// Get the total diagnostic count.
-    pub fn total_count(self) -> U32 {
+    pub fn total_count(self) -> u32 {
         self.fatal_count + self.error_count + self.warning_count + self.note_count
     }
 
@@ -498,7 +498,7 @@ impl DiagCtxt {
     // === Private Helpers ===
 
     /// Check if a diagnostic should be suppressed.
-    fn is_suppressed(self, diagnostic: Diagnostic) -> Bool {
+    fn is_suppressed(self, diagnostic: Diagnostic) -> bool {
         match diagnostic.group() {
             Option::Some(group) => {
                 for suppressed in self.suppressed_groups.clone() {
@@ -513,20 +513,20 @@ impl DiagCtxt {
     }
 
     /// Compute a hash for deduplication.
-    fn diagnostic_hash(self, diagnostic: Diagnostic) -> U64 {
+    fn diagnostic_hash(self, diagnostic: Diagnostic) -> u64 {
         // Simple hash based on message and span
-        let mut hash: U64 = 0;
+        let mut hash: u64 = 0;
         let msg = diagnostic.message();
         let span = diagnostic.span();
 
         // Hash message characters
         for ch in msg.chars() {
-            hash = hash * 31 + (ch as U64);
+            hash = hash * 31 + (ch as u64);
         };
 
         // Include span info
-        hash = hash * 31 + (span.start_offset() as U64);
-        hash = hash * 31 + (span.end_offset() as U64);
+        hash = hash * 31 + (span.start_offset() as u64);
+        hash = hash * 31 + (span.end_offset() as u64);
 
         hash
     }
@@ -605,7 +605,7 @@ impl ScopedDiagCtxt {
     }
 
     /// Check if local scope has errors.
-    pub fn has_local_errors(self) -> Bool {
+    pub fn has_local_errors(self) -> bool {
         for diag in self.local_diagnostics.clone() {
             match diag.severity() {
                 Severity::Error => return true,

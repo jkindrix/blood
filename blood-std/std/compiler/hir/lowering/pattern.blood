@@ -6,23 +6,23 @@
 module std.compiler.hir.lowering.pattern;
 
 use std.result.Result;
-use std.option.Option;
+use std.core.Option;
 
-use crate.compiler.ast.{
+use std.compiler.ast.{
     Pattern as AstPattern, PatternKind as AstPatternKind,
     Literal, Ident, Span as AstSpan,
     FieldPattern as AstFieldPattern,
 };
 
-use crate.compiler.hir.{
+use std.compiler.hir.{
     Pattern as HirPattern, PatternKind as HirPatternKind,
     LocalId, Span as HirSpan,
     FieldPattern as HirFieldPattern,
 };
 
-use crate.compiler.hir.lowering.{AstLowering, LoweringError};
-use crate.compiler.hir.lowering.item.lower_type;
-use crate.compiler.typeck.types.{DefId, Type};
+use std.compiler.hir.lowering.{AstLowering, LoweringError};
+use std.compiler.hir.lowering.item.lower_type;
+use std.compiler.typeck.types.{DefId, Type};
 
 // ============================================================================
 // Pattern Lowering
@@ -243,8 +243,8 @@ fn lower_literal(lit: &Literal) -> crate.compiler.hir::LiteralValue {
         Literal::Integer(v, suffix) => crate.compiler.hir::LiteralValue::Integer(*v, suffix.clone()),
         Literal::Float(v, suffix) => crate.compiler.hir::LiteralValue::Float(*v, suffix.clone()),
         Literal::String(s) => crate.compiler.hir::LiteralValue::String(s.clone()),
-        Literal::Char(c) => crate.compiler.hir::LiteralValue::Char(*c),
-        Literal::Bool(b) => crate.compiler.hir::LiteralValue::Bool(*b),
+        Literal::char(c) => crate.compiler.hir::LiteralValue::char(*c),
+        Literal::bool(b) => crate.compiler.hir::LiteralValue::bool(*b),
         Literal::Byte(b) => crate.compiler.hir::LiteralValue::Byte(*b),
         Literal::ByteString(bs) => crate.compiler.hir::LiteralValue::ByteString(bs.clone()),
     }
@@ -280,7 +280,7 @@ fn lower_range_end(
 
 #[test]
 fn test_wildcard_pattern() {
-    use crate.compiler.typeck::TypeCheckResult;
+    use std.compiler.typeck::TypeCheckResult;
     use std.collections.HashMap;
 
     let types = TypeCheckResult::success(HashMap::new());
@@ -304,7 +304,7 @@ fn test_wildcard_pattern() {
 
 #[test]
 fn test_binding_pattern() {
-    use crate.compiler.typeck::TypeCheckResult;
+    use std.compiler.typeck::TypeCheckResult;
     use std.collections.HashMap;
 
     let types = TypeCheckResult::success(HashMap::new());
@@ -335,7 +335,7 @@ fn test_binding_pattern() {
 
 #[test]
 fn test_tuple_pattern() {
-    use crate.compiler.typeck::TypeCheckResult;
+    use std.compiler.typeck::TypeCheckResult;
     use std.collections.HashMap;
 
     let types = TypeCheckResult::success(HashMap::new());

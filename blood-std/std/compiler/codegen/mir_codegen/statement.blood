@@ -31,16 +31,16 @@ use super::rvalue::compile_mir_rvalue;
 use super::place::compile_mir_place;
 use super::memory;
 
-use crate.compiler.hir::{DefId, LocalId, Type};
-use crate.compiler.mir::{
+use std.compiler.hir::{DefId, LocalId, Type};
+use std.compiler.mir::{
     MirBody, Statement, StatementKind, Place, Operand,
     EscapeResults, InlineHandlerOp, InlineHandlerCapture,
 };
-use crate.compiler.mir::ptr::MemoryTier as MirMemoryTier;
-use crate.compiler.mir::static_evidence::InlineEvidenceMode;
-use crate.compiler.effects::evidence::HandlerStateKind;
-use crate.compiler.diagnostics::Diagnostic;
-use crate.compiler.span::Span;
+use std.compiler.mir::ptr::MemoryTier as MirMemoryTier;
+use std.compiler.mir::static_evidence::InlineEvidenceMode;
+use std.compiler.effects::evidence::HandlerStateKind;
+use std.compiler.diagnostics::Diagnostic;
+use std.compiler.span::Span;
 
 // ============================================================================
 // Statement Compilation
@@ -763,7 +763,7 @@ fn get_place_type(body: &MirBody, place: &Place) -> Type {
 
 /// Apply a projection element to get the resulting type.
 fn apply_projection_type(ty: &Type, elem: &crate.compiler.mir.PlaceElem) -> Type {
-    use crate.compiler.mir::PlaceElem;
+    use std.compiler.mir::PlaceElem;
 
     match elem {
         PlaceElem::Deref => {
@@ -806,7 +806,7 @@ fn compile_constant(
     ctx: &mut CodegenContext,
     constant: &crate.compiler.mir.Constant,
 ) -> Result<LLVMValueRef, Vec<Diagnostic>> {
-    use crate.compiler.mir::ConstantKind;
+    use std.compiler.mir::ConstantKind;
     use super::super::llvm::values::{const_int, const_real, const_string};
 
     let llvm_ty = lower_type(ctx, &constant.ty);
@@ -821,11 +821,11 @@ fn compile_constant(
         ConstantKind::Float(v) => {
             Ok(const_real(llvm_ty, *v))
         }
-        ConstantKind::Bool(v) => {
+        ConstantKind::bool(v) => {
             let i1_ty = super::super::llvm::types::i1_type(ctx.llvm_context_ref());
             Ok(const_int(i1_ty, if *v { 1 } else { 0 }, false))
         }
-        ConstantKind::Char(c) => {
+        ConstantKind::char(c) => {
             let i32_ty = super::super::llvm::types::i32_type(ctx.llvm_context_ref());
             Ok(const_int(i32_ty, *c as u64, false))
         }

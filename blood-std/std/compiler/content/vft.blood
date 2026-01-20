@@ -27,7 +27,7 @@ module std.compiler.content.vft;
 use std.collections.HashMap;
 use std.collections.Vec;
 use std.result.Result;
-use std.option.Option;
+use std.core.Option;
 use std.compiler.content.hash.ContentHash;
 
 // ============================================================================
@@ -71,7 +71,7 @@ impl CallingConvention {
     }
 
     /// Check if this is the standard Blood convention.
-    pub fn is_standard(self) -> Bool {
+    pub fn is_standard(self) -> bool {
         match self {
             CallingConvention::Blood => true,
             CallingConvention::Tail => false,
@@ -81,7 +81,7 @@ impl CallingConvention {
     }
 
     /// Check if this convention supports tail-call optimization.
-    pub fn supports_tco(self) -> Bool {
+    pub fn supports_tco(self) -> bool {
         match self {
             CallingConvention::Blood => false,
             CallingConvention::Tail => true,
@@ -91,7 +91,7 @@ impl CallingConvention {
     }
 
     /// Check if this convention captures continuations.
-    pub fn captures_continuation(self) -> Bool {
+    pub fn captures_continuation(self) -> bool {
         match self {
             CallingConvention::Blood => false,
             CallingConvention::Tail => false,
@@ -101,7 +101,7 @@ impl CallingConvention {
     }
 
     /// Check if this is an FFI convention.
-    pub fn is_foreign(self) -> Bool {
+    pub fn is_foreign(self) -> bool {
         match self {
             CallingConvention::Blood => false,
             CallingConvention::Tail => false,
@@ -142,7 +142,7 @@ impl CallingConvention {
 /// ```
 pub struct EffectMask {
     /// The underlying bit field.
-    bits: U32,
+    bits: u32,
 }
 
 impl EffectMask {
@@ -162,19 +162,19 @@ impl EffectMask {
     pub const ASYNC: EffectMask = EffectMask { bits: 8 };
 
     /// Create an effect mask with the given bits.
-    pub fn from_bits(bits: U32) -> EffectMask {
+    pub fn from_bits(bits: u32) -> EffectMask {
         EffectMask { bits }
     }
 
     /// Get the raw bit representation.
-    pub fn to_bits(self) -> U32 {
+    pub fn to_bits(self) -> u32 {
         self.bits
     }
 
     /// Check if this mask contains all effects from another mask.
     ///
     /// Returns true if every effect bit set in `other` is also set in `self`.
-    pub fn contains(self, other: EffectMask) -> Bool {
+    pub fn contains(self, other: EffectMask) -> bool {
         (self.bits & other.bits) == other.bits
     }
 
@@ -193,27 +193,27 @@ impl EffectMask {
     }
 
     /// Check if this function is pure (no effects).
-    pub fn is_pure(self) -> Bool {
+    pub fn is_pure(self) -> bool {
         self.bits == 0;
     }
 
     /// Check if this mask has IO effects.
-    pub fn has_io(self) -> Bool {
+    pub fn has_io(self) -> bool {
         self.contains(EffectMask::IO);
     }
 
     /// Check if this mask has state effects.
-    pub fn has_state(self) -> Bool {
+    pub fn has_state(self) -> bool {
         self.contains(EffectMask::STATE);
     }
 
     /// Check if this mask has exception effects.
-    pub fn has_exception(self) -> Bool {
+    pub fn has_exception(self) -> bool {
         self.contains(EffectMask::EXCEPTION);
     }
 
     /// Check if this mask has async effects.
-    pub fn has_async(self) -> Bool {
+    pub fn has_async(self) -> bool {
         self.contains(EffectMask::ASYNC);
     }
 
@@ -222,7 +222,7 @@ impl EffectMask {
     /// For hot-swap safety, the new mask must be a subset of the old mask.
     /// This ensures callers that expected certain effects won't be surprised
     /// by new effects being added.
-    pub fn is_compatible_replacement(self, new_mask: EffectMask) -> Bool {
+    pub fn is_compatible_replacement(self, new_mask: EffectMask) -> bool {
         // New effects must be subset of old (can remove effects, not add)
         (new_mask.bits & !self.bits) == 0
     }
@@ -263,11 +263,11 @@ pub struct VFTEntry {
     /// The content hash this entry is for.
     hash: ContentHash,
 
-    /// Pointer to native code (as USize for cross-platform).
-    entry_point: USize,
+    /// Pointer to native code (as usize for cross-platform).
+    entry_point: usize,
 
     /// Number of arguments expected by the function.
-    arity: U8,
+    arity: u8,
 
     /// Calling convention for this function.
     calling_convention: CallingConvention,
@@ -276,17 +276,17 @@ pub struct VFTEntry {
     effects: EffectMask,
 
     /// Size of compiled code in bytes.
-    compiled_size: U32,
+    compiled_size: u32,
 
     /// Generation number for hot-swap tracking.
-    generation: U64,
+    generation: u64,
 }
 
 impl VFTEntry {
     /// Create a new VFT entry with default metadata.
     ///
     /// Uses Blood calling convention, no effects, and generation 0.
-    pub fn new(hash: ContentHash, entry_point: USize, arity: U8) -> VFTEntry {
+    pub fn new(hash: ContentHash, entry_point: usize, arity: u8) -> VFTEntry {
         VFTEntry {
             hash,
             entry_point,
@@ -304,12 +304,12 @@ impl VFTEntry {
     }
 
     /// Get the entry point address.
-    pub fn entry_point(self) -> USize {
+    pub fn entry_point(self) -> usize {
         self.entry_point
     }
 
     /// Get the function arity.
-    pub fn arity(self) -> U8 {
+    pub fn arity(self) -> u8 {
         self.arity
     }
 
@@ -324,12 +324,12 @@ impl VFTEntry {
     }
 
     /// Get the compiled code size.
-    pub fn compiled_size(self) -> U32 {
+    pub fn compiled_size(self) -> u32 {
         self.compiled_size
     }
 
     /// Get the generation number.
-    pub fn generation(self) -> U64 {
+    pub fn generation(self) -> u64 {
         self.generation
     }
 
@@ -348,13 +348,13 @@ impl VFTEntry {
     }
 
     /// Set the compiled code size.
-    pub fn with_size(mut self, size: U32) -> VFTEntry {
+    pub fn with_size(mut self, size: u32) -> VFTEntry {
         self.compiled_size = size;
         self
     }
 
     /// Set the generation number.
-    pub fn with_generation(mut self, generation: U64) -> VFTEntry {
+    pub fn with_generation(mut self, generation: u64) -> VFTEntry {
         self.generation = generation;
         self
     }
@@ -362,12 +362,12 @@ impl VFTEntry {
     // === Query Methods ===
 
     /// Check if this function is pure (no effects).
-    pub fn is_pure(self) -> Bool {
+    pub fn is_pure(self) -> bool {
         self.effects.is_pure();
     }
 
     /// Check if this function uses tail-call optimization.
-    pub fn is_tail_call(self) -> Bool {
+    pub fn is_tail_call(self) -> bool {
         match self.calling_convention {
             CallingConvention::Tail => true,
             CallingConvention::Blood => false,
@@ -377,7 +377,7 @@ impl VFTEntry {
     }
 
     /// Check if this function uses the effect calling convention.
-    pub fn is_effectful(self) -> Bool {
+    pub fn is_effectful(self) -> bool {
         match self.calling_convention {
             CallingConvention::Effect => true,
             CallingConvention::Blood => false,
@@ -387,7 +387,7 @@ impl VFTEntry {
     }
 
     /// Check if this function is an FFI callback.
-    pub fn is_foreign(self) -> Bool {
+    pub fn is_foreign(self) -> bool {
         self.calling_convention.is_foreign();
     }
 }
@@ -436,13 +436,13 @@ pub enum HotSwapResult {
         /// The new hash now active.
         new_hash: ContentHash,
         /// New generation number.
-        generation: U64,
+        generation: u64,
     },
 
     /// Swap was scheduled for later (Epoch mode).
     Scheduled {
         /// Target epoch for the swap.
-        target_epoch: U64,
+        target_epoch: u64,
     },
 
     /// Swap failed with an error.
@@ -451,7 +451,7 @@ pub enum HotSwapResult {
 
 impl HotSwapResult {
     /// Check if the swap was successful.
-    pub fn is_success(self) -> Bool {
+    pub fn is_success(self) -> bool {
         match self {
             HotSwapResult::Success { .. } => true,
             HotSwapResult::Scheduled { .. } => false,
@@ -460,7 +460,7 @@ impl HotSwapResult {
     }
 
     /// Check if the swap was scheduled.
-    pub fn is_scheduled(self) -> Bool {
+    pub fn is_scheduled(self) -> bool {
         match self {
             HotSwapResult::Success { .. } => false,
             HotSwapResult::Scheduled { .. } => true,
@@ -469,7 +469,7 @@ impl HotSwapResult {
     }
 
     /// Check if the swap failed.
-    pub fn is_error(self) -> Bool {
+    pub fn is_error(self) -> bool {
         match self {
             HotSwapResult::Success { .. } => false,
             HotSwapResult::Scheduled { .. } => false,
@@ -497,8 +497,8 @@ pub enum HotSwapError {
 
     /// Arity mismatch between old and new.
     ArityMismatch {
-        old_arity: U8,
-        new_arity: U8,
+        old_arity: u8,
+        new_arity: u8,
     },
 
     /// Effect mismatch (new effects not subset of old).
@@ -515,7 +515,7 @@ pub enum HotSwapError {
 
     /// In-flight calls blocking barrier swap.
     InFlightCallsBlocking {
-        count: U64,
+        count: u64,
     },
 }
 
@@ -548,7 +548,7 @@ pub struct VFTUpdate {
     /// Swap mode.
     mode: SwapMode,
     /// Scheduled epoch (for Epoch mode).
-    target_epoch: Option<U64>,
+    target_epoch: Option<u64>,
 }
 
 impl VFTUpdate {
@@ -563,7 +563,7 @@ impl VFTUpdate {
     }
 
     /// Create an epoch-scheduled update.
-    pub fn for_epoch(old_hash: ContentHash, new_hash: ContentHash, epoch: U64) -> VFTUpdate {
+    pub fn for_epoch(old_hash: ContentHash, new_hash: ContentHash, epoch: u64) -> VFTUpdate {
         VFTUpdate {
             old_hash,
             new_hash,
@@ -578,7 +578,7 @@ impl VFTUpdate {
 // ============================================================================
 
 /// Maximum redirect chain depth to prevent infinite loops.
-const MAX_REDIRECT_DEPTH: USize = 10;
+const MAX_REDIRECT_DEPTH: usize = 10;
 
 /// The Virtual Function Table.
 ///
@@ -595,7 +595,7 @@ pub struct VFT {
     all_entries: Vec<ContentHash>,
 
     /// Current version/generation.
-    version: U64,
+    version: u64,
 
     /// Pending updates (for batch/epoch swaps).
     pending_updates: Vec<VFTUpdate>,
@@ -657,7 +657,7 @@ impl VFT {
     /// infinite loops from circular redirects.
     fn resolve_redirect(self, hash: ContentHash) -> ContentHash {
         let mut current = hash;
-        let mut depth: USize = 0;
+        let mut depth: usize = 0;
 
         while depth < MAX_REDIRECT_DEPTH {
             match self.redirects.get(current) {
@@ -676,12 +676,12 @@ impl VFT {
     }
 
     /// Check if an entry exists (directly or via redirect).
-    pub fn contains(self, hash: ContentHash) -> Bool {
+    pub fn contains(self, hash: ContentHash) -> bool {
         self.entries.contains_key(hash) || self.redirects.contains_key(hash);
     }
 
     /// Get the entry point address for a hash.
-    pub fn get_entry_point(self, hash: ContentHash) -> Option<USize> {
+    pub fn get_entry_point(self, hash: ContentHash) -> Option<usize> {
         match self.lookup(hash) {
             Option::Some(entry) => Option::Some(entry.entry_point),
             Option::None => Option::None,
@@ -689,7 +689,7 @@ impl VFT {
     }
 
     /// Get the arity for a hash.
-    pub fn get_arity(self, hash: ContentHash) -> Option<U8> {
+    pub fn get_arity(self, hash: ContentHash) -> Option<u8> {
         match self.lookup(hash) {
             Option::Some(entry) => Option::Some(entry.arity),
             Option::None => Option::None,
@@ -699,12 +699,12 @@ impl VFT {
     // === Version/Epoch ===
 
     /// Get the current version/epoch.
-    pub fn version(self) -> U64 {
+    pub fn version(self) -> u64 {
         self.version
     }
 
     /// Get the current epoch (alias for version).
-    pub fn current_epoch(self) -> U64 {
+    pub fn current_epoch(self) -> u64 {
         self.version
     }
 
@@ -869,22 +869,22 @@ impl VFT {
     // === Statistics ===
 
     /// Get the number of entries.
-    pub fn len(self) -> USize {
+    pub fn len(self) -> usize {
         self.entries.len();
     }
 
     /// Check if empty.
-    pub fn is_empty(self) -> Bool {
+    pub fn is_empty(self) -> bool {
         self.entries.is_empty();
     }
 
     /// Get the number of pending updates.
-    pub fn pending_count(self) -> USize {
+    pub fn pending_count(self) -> usize {
         self.pending_updates.len();
     }
 
     /// Get the number of active redirects.
-    pub fn redirect_count(self) -> USize {
+    pub fn redirect_count(self) -> usize {
         self.redirects.len();
     }
 
@@ -930,7 +930,7 @@ pub enum TypePattern {
 
 impl TypePattern {
     /// Check if this pattern matches the given type hash.
-    pub fn matches(self, type_hash: ContentHash) -> Bool {
+    pub fn matches(self, type_hash: ContentHash) -> bool {
         match self {
             TypePattern::Any => true,
             TypePattern::Concrete(h) => h == type_hash,
@@ -945,12 +945,12 @@ impl TypePattern {
     ///
     /// Higher specificity means more specific match.
     /// Used to resolve ambiguous dispatches.
-    pub fn specificity(self) -> U32 {
+    pub fn specificity(self) -> u32 {
         match self {
             TypePattern::Any => 0,
             TypePattern::Concrete(_) => 10,
             TypePattern::Applied { args, .. } => {
-                let mut sum: U32 = 10;
+                let mut sum: u32 = 10;
                 for arg in args {
                     sum = sum + arg.specificity();
                 }
@@ -965,7 +965,7 @@ pub struct DispatchEntry {
     /// Type pattern for matching.
     type_pattern: TypePattern,
     /// Specialization specificity (higher = more specific).
-    specificity: U32,
+    specificity: u32,
     /// Implementation hash.
     impl_hash: ContentHash,
 }
@@ -982,7 +982,7 @@ impl DispatchEntry {
     }
 
     /// Create a dispatch entry with explicit specificity.
-    pub fn with_specificity(type_pattern: TypePattern, specificity: U32, impl_hash: ContentHash)
+    pub fn with_specificity(type_pattern: TypePattern, specificity: u32, impl_hash: ContentHash)
         -> DispatchEntry
     {
         DispatchEntry {
@@ -1036,7 +1036,7 @@ impl DispatchTable {
         };
 
         let mut best: Option<DispatchEntry> = Option::None;
-        let mut best_specificity: U32 = 0;
+        let mut best_specificity: u32 = 0;
 
         for entry in entries {
             if entry.type_pattern.matches(arg_type) {
@@ -1059,13 +1059,13 @@ impl DispatchTable {
     }
 
     /// Get the number of registered methods.
-    pub fn method_count(self) -> USize {
+    pub fn method_count(self) -> usize {
         self.methods.len();
     }
 
     /// Get the total number of implementations across all methods.
-    pub fn impl_count(self) -> USize {
-        let mut count: USize = 0;
+    pub fn impl_count(self) -> usize {
+        let mut count: usize = 0;
         for (_, entries) in self.methods {
             count = count + entries.len();
         }

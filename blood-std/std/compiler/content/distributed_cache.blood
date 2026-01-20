@@ -35,7 +35,7 @@ module std.compiler.content.distributed_cache;
 use std.collections.HashMap;
 use std.collections.Vec;
 use std.result.Result;
-use std.option.Option;
+use std.core.Option;
 use std.time.Duration;
 use std.env;
 use std.net.http.HttpClient;
@@ -58,13 +58,13 @@ pub struct RemoteCacheConfig {
     auth_token: Option<String>,
 
     /// Request timeout in seconds.
-    timeout_secs: U32,
+    timeout_secs: u32,
 
     /// Whether this cache is read-only (can't publish to it).
-    read_only: Bool,
+    read_only: bool,
 
     /// Priority (lower = tried first).
-    priority: U32,
+    priority: u32,
 }
 
 impl RemoteCacheConfig {
@@ -105,19 +105,19 @@ impl RemoteCacheConfig {
     }
 
     /// Set the timeout in seconds.
-    pub fn with_timeout(mut self, timeout_secs: U32) -> RemoteCacheConfig {
+    pub fn with_timeout(mut self, timeout_secs: u32) -> RemoteCacheConfig {
         self.timeout_secs = timeout_secs;
         self
     }
 
     /// Set whether this remote is read-only.
-    pub fn with_read_only(mut self, read_only: Bool) -> RemoteCacheConfig {
+    pub fn with_read_only(mut self, read_only: bool) -> RemoteCacheConfig {
         self.read_only = read_only;
         self
     }
 
     /// Set the priority (lower = tried first).
-    pub fn with_priority(mut self, priority: U32) -> RemoteCacheConfig {
+    pub fn with_priority(mut self, priority: u32) -> RemoteCacheConfig {
         self.priority = priority;
         self
     }
@@ -135,23 +135,23 @@ impl RemoteCacheConfig {
     }
 
     /// Get the timeout in seconds.
-    pub fn timeout_secs(self) -> U32 {
+    pub fn timeout_secs(self) -> u32 {
         self.timeout_secs
     }
 
     /// Check if this remote is read-only.
-    pub fn is_read_only(self) -> Bool {
+    pub fn is_read_only(self) -> bool {
         self.read_only
     }
 
     /// Get the priority.
-    pub fn priority(self) -> U32 {
+    pub fn priority(self) -> u32 {
         self.priority
     }
 
     /// Get timeout as a Duration.
     pub fn timeout(self) -> Duration {
-        Duration::from_secs(self.timeout_secs as U64)
+        Duration::from_secs(self.timeout_secs as u64)
     }
 }
 
@@ -162,19 +162,19 @@ impl RemoteCacheConfig {
 /// Statistics for remote cache operations.
 pub struct RemoteCacheStats {
     /// Number of remote cache hits.
-    remote_hits: USize,
+    remote_hits: usize,
 
     /// Number of remote cache misses.
-    remote_misses: USize,
+    remote_misses: usize,
 
     /// Total bytes downloaded from remote.
-    bytes_downloaded: U64,
+    bytes_downloaded: u64,
 
     /// Total bytes uploaded to remote.
-    bytes_uploaded: U64,
+    bytes_uploaded: u64,
 
     /// Number of failed remote requests.
-    failed_requests: USize,
+    failed_requests: usize,
 }
 
 impl RemoteCacheStats {
@@ -192,51 +192,51 @@ impl RemoteCacheStats {
     // === Accessors ===
 
     /// Get the number of remote cache hits.
-    pub fn remote_hits(self) -> USize {
+    pub fn remote_hits(self) -> usize {
         self.remote_hits
     }
 
     /// Get the number of remote cache misses.
-    pub fn remote_misses(self) -> USize {
+    pub fn remote_misses(self) -> usize {
         self.remote_misses
     }
 
     /// Get total bytes downloaded.
-    pub fn bytes_downloaded(self) -> U64 {
+    pub fn bytes_downloaded(self) -> u64 {
         self.bytes_downloaded
     }
 
     /// Get total bytes uploaded.
-    pub fn bytes_uploaded(self) -> U64 {
+    pub fn bytes_uploaded(self) -> u64 {
         self.bytes_uploaded
     }
 
     /// Get the number of failed requests.
-    pub fn failed_requests(self) -> USize {
+    pub fn failed_requests(self) -> usize {
         self.failed_requests
     }
 
     // === Derived Metrics ===
 
     /// Calculate the remote hit rate as a percentage.
-    pub fn hit_rate(self) -> F64 {
+    pub fn hit_rate(self) -> f64 {
         let total = self.remote_hits + self.remote_misses;
         if total == 0 {
             0.0
         } else {
-            (self.remote_hits as F64) / (total as F64) * 100.0
+            (self.remote_hits as f64) / (total as f64) * 100.0
         }
     }
 
     /// Get total bytes transferred (downloaded + uploaded).
-    pub fn total_bytes_transferred(self) -> U64 {
+    pub fn total_bytes_transferred(self) -> u64 {
         self.bytes_downloaded + self.bytes_uploaded
     }
 
     // === Recording ===
 
     /// Record a remote cache hit.
-    pub fn record_hit(mut self, bytes: U64) -> Unit {
+    pub fn record_hit(mut self, bytes: u64) -> Unit {
         self.remote_hits = self.remote_hits + 1;
         self.bytes_downloaded = self.bytes_downloaded + bytes;
     }
@@ -252,7 +252,7 @@ impl RemoteCacheStats {
     }
 
     /// Record an upload.
-    pub fn record_upload(mut self, bytes: U64) -> Unit {
+    pub fn record_upload(mut self, bytes: u64) -> Unit {
         self.bytes_uploaded = self.bytes_uploaded + bytes;
     }
 }
@@ -264,11 +264,11 @@ impl RemoteCacheStats {
 /// Result of a cache fetch operation.
 pub enum FetchResult {
     /// Found in local cache.
-    LocalHit(Vec<U8>),
+    LocalHit(Vec<u8>),
 
     /// Found in remote cache (downloaded and stored locally).
     RemoteHit {
-        data: Vec<U8>,
+        data: Vec<u8>,
         source: String,
     },
 
@@ -281,7 +281,7 @@ pub enum FetchResult {
 
 impl FetchResult {
     /// Check if the fetch was successful (hit).
-    pub fn is_hit(self) -> Bool {
+    pub fn is_hit(self) -> bool {
         match self {
             FetchResult::LocalHit(_) => true,
             FetchResult::RemoteHit { .. } => true,
@@ -291,7 +291,7 @@ impl FetchResult {
     }
 
     /// Check if this was a local hit.
-    pub fn is_local_hit(self) -> Bool {
+    pub fn is_local_hit(self) -> bool {
         match self {
             FetchResult::LocalHit(_) => true,
             FetchResult::RemoteHit { .. } => false,
@@ -301,7 +301,7 @@ impl FetchResult {
     }
 
     /// Check if this was a remote hit.
-    pub fn is_remote_hit(self) -> Bool {
+    pub fn is_remote_hit(self) -> bool {
         match self {
             FetchResult::LocalHit(_) => false,
             FetchResult::RemoteHit { .. } => true,
@@ -311,7 +311,7 @@ impl FetchResult {
     }
 
     /// Get the data if this was a hit.
-    pub fn data(self) -> Option[Vec<U8>] {
+    pub fn data(self) -> Option[Vec<u8>] {
         match self {
             FetchResult::LocalHit(data) => Option::Some(data),
             FetchResult::RemoteHit { data, .. } => Option::Some(data),
@@ -379,7 +379,7 @@ pub struct DistributedCache {
     stats: RemoteCacheStats,
 
     /// Whether remote caching is enabled.
-    enabled: Bool,
+    enabled: bool,
 
     /// HTTP client for making requests.
     http_client: Option<HttpClient>,
@@ -411,7 +411,7 @@ impl DistributedCache {
             Option::Some(remotes_str) => {
                 let auth_token = env::var("BLOOD_CACHE_TOKEN");
 
-                let mut priority: U32 = 0;
+                let mut priority: u32 = 0;
                 for url in remotes_str.split(",") {
                     let url = url.trim();
                     if !url.is_empty() {
@@ -449,7 +449,7 @@ impl DistributedCache {
     }
 
     /// Remove a remote cache endpoint by URL.
-    pub fn remove_remote(mut self, url: String) -> Bool {
+    pub fn remove_remote(mut self, url: String) -> bool {
         let initial_len = self.remotes.len();
         self.remotes.retain(|c| c.url != url);
 
@@ -461,7 +461,7 @@ impl DistributedCache {
     }
 
     /// Check if remote caching is enabled.
-    pub fn is_enabled(self) -> Bool {
+    pub fn is_enabled(self) -> bool {
         self.enabled && !self.remotes.is_empty();
     }
 
@@ -506,7 +506,7 @@ impl DistributedCache {
         for remote in self.remotes.clone() {
             match self.fetch_from_remote(hash, remote) {
                 Option::Some(data) => {
-                    self.stats.record_hit(data.len() as U64);
+                    self.stats.record_hit(data.len() as u64);
 
                     // Store in local cache for future use
                     match self.local.store_object(hash, data.clone()) {
@@ -531,7 +531,7 @@ impl DistributedCache {
     }
 
     /// Fetch from a specific remote endpoint.
-    fn fetch_from_remote(mut self, hash: ContentHash, config: RemoteCacheConfig) -> Option[Vec<U8>] {
+    fn fetch_from_remote(mut self, hash: ContentHash, config: RemoteCacheConfig) -> Option[Vec<u8>] {
         // Mark as in-flight
         self.in_flight.insert(hash, ());
 
@@ -557,7 +557,7 @@ impl DistributedCache {
     }
 
     /// Perform an HTTP GET request.
-    fn http_get(self, url: String, config: RemoteCacheConfig) -> Result<Vec<U8>, CacheError> {
+    fn http_get(self, url: String, config: RemoteCacheConfig) -> Result<Vec<u8>, CacheError> {
         let mut request = HttpRequest::get(url)
             .with_timeout(config.timeout());
 
@@ -598,12 +598,12 @@ impl DistributedCache {
     /// Only publishes to remotes that are not read-only.
     ///
     /// Returns the number of remotes the object was published to.
-    pub fn publish(mut self, hash: ContentHash, data: Vec<U8>) -> Result<USize, CacheError> {
+    pub fn publish(mut self, hash: ContentHash, data: Vec<u8>) -> Result<usize, CacheError> {
         if !self.is_enabled() {
             return Result::Ok(0);
         };
 
-        let mut published: USize = 0;
+        let mut published: usize = 0;
 
         for remote in self.remotes.clone() {
             if remote.is_read_only() {
@@ -613,7 +613,7 @@ impl DistributedCache {
             match self.publish_to_remote(hash, data.clone(), remote) {
                 Result::Ok(_) => {
                     published = published + 1;
-                    self.stats.record_upload(data.len() as U64);
+                    self.stats.record_upload(data.len() as u64);
                 }
                 Result::Err(_) => {
                     self.stats.record_failure();
@@ -625,7 +625,7 @@ impl DistributedCache {
     }
 
     /// Publish to a specific remote endpoint.
-    fn publish_to_remote(self, hash: ContentHash, data: Vec<U8>, config: RemoteCacheConfig)
+    fn publish_to_remote(self, hash: ContentHash, data: Vec<u8>, config: RemoteCacheConfig)
         -> Result<Unit, CacheError>
     {
         let hash_str = hash.full_display();
@@ -637,7 +637,7 @@ impl DistributedCache {
     }
 
     /// Perform an HTTP PUT request.
-    fn http_put(self, url: String, data: Vec<U8>, config: RemoteCacheConfig) -> Result<Unit, CacheError> {
+    fn http_put(self, url: String, data: Vec<u8>, config: RemoteCacheConfig) -> Result<Unit, CacheError> {
         let mut request = HttpRequest::put(url)
             .with_timeout(config.timeout())
             .with_header("Content-Type", "application/octet-stream")
@@ -674,7 +674,7 @@ impl DistributedCache {
     ///
     /// Note: Only checks local cache without network request.
     /// Use `fetch` to check remotes.
-    pub fn has_object(self, hash: ContentHash) -> Bool {
+    pub fn has_object(self, hash: ContentHash) -> bool {
         // Check local first
         if self.local.has_object(hash) {
             return true;
@@ -686,7 +686,7 @@ impl DistributedCache {
     }
 
     /// Store an object in local cache and optionally publish to remotes.
-    pub fn store(mut self, hash: ContentHash, data: Vec<U8>, publish: Bool) -> Result<Unit, CacheError> {
+    pub fn store(mut self, hash: ContentHash, data: Vec<u8>, publish: bool) -> Result<Unit, CacheError> {
         // Store locally
         match self.local.store_object(hash, data.clone()) {
             Result::Err(e) => return Result::Err(e),
@@ -767,12 +767,12 @@ pub struct PutRequest {
     /// The content hash.
     hash: ContentHash,
     /// The object data.
-    data: Vec<U8>,
+    data: Vec<u8>,
 }
 
 impl PutRequest {
     /// Create a new PUT request.
-    pub fn new(hash: ContentHash, data: Vec<U8>) -> PutRequest {
+    pub fn new(hash: ContentHash, data: Vec<u8>) -> PutRequest {
         PutRequest { hash, data }
     }
 
@@ -782,7 +782,7 @@ impl PutRequest {
     }
 
     /// Get the data.
-    pub fn data(self) -> Vec<U8> {
+    pub fn data(self) -> Vec<u8> {
         self.data.clone();
     }
 }
@@ -790,7 +790,7 @@ impl PutRequest {
 /// Response from cache server.
 pub enum CacheResponse {
     /// Object found with data.
-    Found { data: Vec<U8> },
+    Found { data: Vec<u8> },
 
     /// Object not found.
     NotFound,
@@ -807,7 +807,7 @@ pub enum CacheResponse {
 
 impl CacheResponse {
     /// Check if the response indicates success.
-    pub fn is_success(self) -> Bool {
+    pub fn is_success(self) -> bool {
         match self {
             CacheResponse::Found { .. } => true,
             CacheResponse::Exists => true,
@@ -818,7 +818,7 @@ impl CacheResponse {
     }
 
     /// Check if the object was found.
-    pub fn is_found(self) -> Bool {
+    pub fn is_found(self) -> bool {
         match self {
             CacheResponse::Found { .. } => true,
             CacheResponse::Exists => true,
@@ -829,7 +829,7 @@ impl CacheResponse {
     }
 
     /// Get the data if found.
-    pub fn data(self) -> Option[Vec<U8>] {
+    pub fn data(self) -> Option[Vec<u8>] {
         match self {
             CacheResponse::Found { data } => Option::Some(data),
             CacheResponse::NotFound => Option::None,

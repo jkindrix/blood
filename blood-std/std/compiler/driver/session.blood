@@ -18,11 +18,11 @@
 
 module std.compiler.driver.session;
 
-use std.option.Option;
+use std.core.Option;
 use std.result.Result;
 use std.collections.Vec;
 use std.collections.HashMap;
-use std.string.String;
+use std.core.string.String;
 use std.compiler.driver.config.CompilerConfig;
 
 // ============================================================================
@@ -41,7 +41,7 @@ pub struct SourceFile {
     /// Source code content.
     pub content: String,
     /// Precomputed line start byte offsets.
-    line_starts: Vec<U32>,
+    line_starts: Vec<u32>,
 }
 
 impl SourceFile {
@@ -62,27 +62,27 @@ impl SourceFile {
     }
 
     /// Get the number of lines.
-    pub fn line_count(self) -> USize {
+    pub fn line_count(self) -> usize {
         self.line_starts.len();
     }
 
     /// Get the byte offset of a line start.
     ///
     /// Line numbers are 1-indexed.
-    pub fn line_start(self, line: U32) -> Option<U32> {
-        if line == 0 || line as USize > self.line_starts.len() {
+    pub fn line_start(self, line: u32) -> Option<u32> {
+        if line == 0 || line as usize > self.line_starts.len() {
             return Option::None;
         }
-        Option::Some(self.line_starts[(line - 1) as USize])
+        Option::Some(self.line_starts[(line - 1) as usize])
     }
 
     /// Get the line number for a byte offset.
     ///
     /// Returns a 1-indexed line number.
-    pub fn line_for_offset(self, offset: U32) -> U32 {
+    pub fn line_for_offset(self, offset: u32) -> u32 {
         // Binary search for the line
-        let mut low: USize = 0;
-        let mut high: USize = self.line_starts.len();
+        let mut low: usize = 0;
+        let mut high: usize = self.line_starts.len();
 
         while low < high {
             let mid = low + (high - low) / 2;
@@ -93,13 +93,13 @@ impl SourceFile {
             }
         }
 
-        low as U32
+        low as u32
     }
 
     /// Get the column number for a byte offset.
     ///
     /// Returns a 1-indexed column number.
-    pub fn column_for_offset(self, offset: U32) -> U32 {
+    pub fn column_for_offset(self, offset: u32) -> u32 {
         let line = self.line_for_offset(offset);
         match self.line_start(line) {
             Option::Some(start) => offset - start + 1,
@@ -110,7 +110,7 @@ impl SourceFile {
     /// Get a line of source code.
     ///
     /// Line numbers are 1-indexed.
-    pub fn get_line(self, line: U32) -> Option<String> {
+    pub fn get_line(self, line: u32) -> Option<String> {
         let start = match self.line_start(line) {
             Option::Some(s) => s,
             Option::None => return Option::None,
@@ -118,11 +118,11 @@ impl SourceFile {
 
         let end = match self.line_start(line + 1) {
             Option::Some(e) => e,
-            Option::None => self.content.len() as U32,
+            Option::None => self.content.len() as u32,
         };
 
         // Trim trailing newline
-        let mut end_pos = end as USize;
+        let mut end_pos = end as usize;
         if end_pos > 0 && self.content.as_bytes()[end_pos - 1] == b'\n' {
             end_pos -= 1;
         };
@@ -130,26 +130,26 @@ impl SourceFile {
             end_pos -= 1;
         }
 
-        Option::Some(self.content[start as USize..end_pos].to_string())
+        Option::Some(self.content[start as usize..end_pos].to_string())
     }
 
     /// Get a slice of source code by byte range.
-    pub fn slice(self, start: U32, end: U32) -> String {
-        let s = start as USize;
-        let e = (end as USize).min(self.content.len());
+    pub fn slice(self, start: u32, end: u32) -> String {
+        let s = start as usize;
+        let e = (end as usize).min(self.content.len());
         self.content[s..e].to_string();
     }
 }
 
 /// Compute the byte offsets of each line start.
-fn compute_line_starts(content: &String) -> Vec<U32> {
+fn compute_line_starts(content: &String) -> Vec<u32> {
     let mut starts = Vec::new();
     starts.push(0); // First line starts at 0
 
     let bytes = content.as_bytes();
     for i in 0..bytes.len() {
         if bytes[i] == b'\n' {
-            starts.push((i + 1) as U32);
+            starts.push((i + 1) as u32);
         }
     }
 
@@ -163,28 +163,28 @@ fn compute_line_starts(content: &String) -> Vec<U32> {
 /// Unique identifier for a source file.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FileId {
-    id: U32,
+    id: u32,
 }
 
 impl FileId {
     /// Create a new file ID.
-    pub fn new(id: U32) -> FileId {
+    pub fn new(id: u32) -> FileId {
         FileId { id }
     }
 
     /// Get the raw ID value.
-    pub fn as_u32(self) -> U32 {
+    pub fn as_u32(self) -> u32 {
         self.id
     }
 
     /// Dummy file ID for synthetic spans.
     pub fn dummy() -> FileId {
-        FileId { id: U32::MAX }
+        FileId { id: u32::MAX }
     }
 
     /// Check if this is a dummy file ID.
-    pub fn is_dummy(self) -> Bool {
-        self.id == U32::MAX;
+    pub fn is_dummy(self) -> bool {
+        self.id == u32::MAX;
     }
 }
 
@@ -213,11 +213,11 @@ pub struct Session {
     /// Map from file path to file ID.
     file_map: HashMap<String, FileId>,
     /// Accumulated error count.
-    error_count: U32,
+    error_count: u32,
     /// Accumulated warning count.
-    warning_count: U32,
+    warning_count: u32,
     /// Whether compilation has been aborted.
-    aborted: Bool,
+    aborted: bool,
 }
 
 impl Session {
@@ -237,7 +237,7 @@ impl Session {
     pub fn load_file(mut self, path: String) -> Result<SourceFile, String> {
         // Check if already loaded
         if let Option::Some(&id) = self.file_map.get(&path) {
-            return Result::Ok(self.files[id.as_u32() as USize].clone());
+            return Result::Ok(self.files[id.as_u32() as usize].clone());
         };
 
         // Read file content
@@ -247,7 +247,7 @@ impl Session {
         };
 
         // Create source file
-        let id = FileId::new(self.files.len() as U32);
+        let id = FileId::new(self.files.len() as u32);
         let mut file = SourceFile::from_string(path.clone(), content);
         file.id = id;
 
@@ -260,7 +260,7 @@ impl Session {
 
     /// Add a source file from a string.
     pub fn add_source(mut self, name: String, content: String) -> SourceFile {
-        let id = FileId::new(self.files.len() as U32);
+        let id = FileId::new(self.files.len() as u32);
         let mut file = SourceFile::from_string(name.clone(), content);
         file.id = id;
 
@@ -275,7 +275,7 @@ impl Session {
         if id.is_dummy() {
             return Option::None;
         };
-        let idx = id.as_u32() as USize;
+        let idx = id.as_u32() as usize;
         if idx >= self.files.len() {
             return Option::None;
         }
@@ -316,22 +316,22 @@ impl Session {
     }
 
     /// Get the error count.
-    pub fn error_count(self) -> U32 {
+    pub fn error_count(self) -> u32 {
         self.error_count
     }
 
     /// Get the warning count.
-    pub fn warning_count(self) -> U32 {
+    pub fn warning_count(self) -> u32 {
         self.warning_count
     }
 
     /// Check if any errors have occurred.
-    pub fn has_errors(self) -> Bool {
+    pub fn has_errors(self) -> bool {
         self.error_count > 0
     }
 
     /// Check if compilation should stop.
-    pub fn should_stop(self) -> Bool {
+    pub fn should_stop(self) -> bool {
         self.aborted || self.error_count >= self.config.error_limit
     }
 

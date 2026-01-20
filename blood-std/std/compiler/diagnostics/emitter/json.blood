@@ -32,7 +32,7 @@
 module std.compiler.diagnostics.emitter.json;
 
 use std.collections.Vec;
-use std.option.Option;
+use std.core.Option;
 use std.compiler.diagnostics.diagnostic.Diagnostic;
 use std.compiler.diagnostics.severity.Severity;
 use std.compiler.diagnostics.code.ErrorCode;
@@ -65,13 +65,13 @@ pub struct JsonEmitter {
     source_map: SourceMap,
 
     /// Whether to pretty-print the JSON.
-    pretty: Bool,
+    pretty: bool,
 
     /// Number of errors emitted.
-    error_count: U32,
+    error_count: u32,
 
     /// Number of warnings emitted.
-    warning_count: U32,
+    warning_count: u32,
 }
 
 impl JsonEmitter {
@@ -98,7 +98,7 @@ impl JsonEmitter {
     }
 
     /// Create a JSON emitter with custom configuration.
-    pub fn with_config(config: EmitterConfig, source_map: SourceMap, pretty: Bool) -> JsonEmitter {
+    pub fn with_config(config: EmitterConfig, source_map: SourceMap, pretty: bool) -> JsonEmitter {
         JsonEmitter {
             config,
             source_map,
@@ -187,17 +187,17 @@ impl JsonEmitter {
     }
 
     /// Get the number of errors emitted.
-    pub fn error_count(self) -> U32 {
+    pub fn error_count(self) -> u32 {
         self.error_count
     }
 
     /// Get the number of warnings emitted.
-    pub fn warning_count(self) -> U32 {
+    pub fn warning_count(self) -> u32 {
         self.warning_count
     }
 
     /// Check if any errors were emitted.
-    pub fn has_errors(self) -> Bool {
+    pub fn has_errors(self) -> bool {
         self.error_count > 0
     }
 
@@ -208,9 +208,9 @@ impl JsonEmitter {
         output = output ++ "{"
         output = output ++ self.json_field("type", "summary");
         output = output ++ ","
-        output = output ++ self.json_field_num("error_count", self.error_count as USize);
+        output = output ++ self.json_field_num("error_count", self.error_count as usize);
         output = output ++ ","
-        output = output ++ self.json_field_num("warning_count", self.warning_count as USize);
+        output = output ++ self.json_field_num("warning_count", self.warning_count as usize);
         output = output ++ ","
         output = output ++ self.json_field_bool("success", self.error_count == 0);
         output = output ++ "}"
@@ -326,7 +326,7 @@ impl JsonEmitter {
     }
 
     /// Convert a span to JSON.
-    fn span_to_json(self, span: Span, label: Option<String>, is_primary: Bool) -> String {
+    fn span_to_json(self, span: Span, label: Option<String>, is_primary: bool) -> String {
         let mut output = String::new();
 
         output = output ++ "{"
@@ -340,15 +340,15 @@ impl JsonEmitter {
         output = output ++ ","
 
         // Start position
-        output = output ++ self.json_field_num("start_line", span.start_line() as USize);
+        output = output ++ self.json_field_num("start_line", span.start_line() as usize);
         output = output ++ ","
-        output = output ++ self.json_field_num("start_column", span.start_column() as USize);
+        output = output ++ self.json_field_num("start_column", span.start_column() as usize);
         output = output ++ ","
 
         // End position
-        output = output ++ self.json_field_num("end_line", span.end_line() as USize);
+        output = output ++ self.json_field_num("end_line", span.end_line() as usize);
         output = output ++ ","
-        output = output ++ self.json_field_num("end_column", span.end_column() as USize);
+        output = output ++ self.json_field_num("end_column", span.end_column() as usize);
         output = output ++ ","
 
         // Byte offsets (useful for tooling)
@@ -459,12 +459,12 @@ impl JsonEmitter {
     }
 
     /// Create a JSON field with numeric value.
-    fn json_field_num(self, key: String, value: USize) -> String {
+    fn json_field_num(self, key: String, value: usize) -> String {
         "\"" ++ key ++ "\":" ++ value.to_string()
     }
 
     /// Create a JSON field with boolean value.
-    fn json_field_bool(self, key: String, value: Bool) -> String {
+    fn json_field_bool(self, key: String, value: bool) -> String {
         let bool_str = if value { "true" } else { "false" };
         "\"" ++ key ++ "\":" ++ bool_str
     }
@@ -493,11 +493,11 @@ impl JsonEmitter {
     }
 
     /// Indent a string by a number of spaces.
-    fn indent(self, s: String, spaces: U32) -> String {
+    fn indent(self, s: String, spaces: u32) -> String {
         let mut result = String::new();
         let mut indent_str = String::new();
 
-        let mut i: U32 = 0;
+        let mut i: u32 = 0;
         while i < spaces {
             indent_str = indent_str ++ " "
             i = i + 1;
@@ -520,7 +520,7 @@ impl JsonEmitter {
     /// Adds newlines and indentation for readability.
     fn prettify(self, json: String) -> String {
         let mut result = String::new();
-        let mut indent_level: U32 = 0;
+        let mut indent_level: u32 = 0;
         let mut in_string = false;
 
         for ch in json.chars() {
@@ -582,9 +582,9 @@ impl JsonEmitter {
     }
 
     /// Create indentation string.
-    fn make_indent(self, level: U32) -> String {
+    fn make_indent(self, level: u32) -> String {
         let mut result = String::new();
-        let mut i: U32 = 0;
+        let mut i: u32 = 0;
         while i < level * 2 {
             result = result ++ " "
             i = i + 1;

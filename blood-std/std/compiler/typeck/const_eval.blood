@@ -17,13 +17,13 @@
 /// - Const items and const functions
 /// - More complex const generics
 
-use std.option.Option;
+use std.core.Option;
 use std.result.Result;
 use std.compiler.ast.expr::{Expr, ExprKind, BinOp, UnaryOp, ElseBranch};
 use std.compiler.ast.lit::{Literal, LiteralKind, IntSuffix};
 use std.compiler.ast.stmt::Block;
 use std.compiler.parser::Span;
-use super.errors::{TypeError, TypeErrorKind};
+use std.compiler.typeck.errors::{TypeError, TypeErrorKind};
 
 // ============================================================
 // Const Result
@@ -36,7 +36,7 @@ pub enum ConstResult {
     /// An unsigned integer value.
     Uint(u128),
     /// A boolean value.
-    Bool(bool),
+    bool(bool),
 }
 
 impl ConstResult {
@@ -57,7 +57,7 @@ impl ConstResult {
                     Option::None
                 }
             }
-            ConstResult::Bool(_) => Option::None,
+            ConstResult::bool(_) => Option::None,
         }
     }
 
@@ -73,14 +73,14 @@ impl ConstResult {
                     Option::None
                 }
             }
-            ConstResult::Bool(_) => Option::None,
+            ConstResult::bool(_) => Option::None,
         }
     }
 
     /// Get the boolean value.
     pub fn as_bool(&self) -> Option<bool> {
         match self {
-            ConstResult::Bool(b) => Option::Some(*b),
+            ConstResult::bool(b) => Option::Some(*b),
             ConstResult::Int(_) => Option::None,
             ConstResult::Uint(_) => Option::None,
         }
@@ -92,7 +92,7 @@ impl Clone for ConstResult {
         match self {
             ConstResult::Int(v) => ConstResult::Int(*v),
             ConstResult::Uint(v) => ConstResult::Uint(*v),
-            ConstResult::Bool(b) => ConstResult::Bool(*b),
+            ConstResult::bool(b) => ConstResult::bool(*b),
         }
     }
 }
@@ -125,8 +125,8 @@ pub fn eval_const_expr(expr: &Expr) -> Result<ConstResult, TypeError> {
         ExprKind::If { condition, then_branch, else_branch } => {
             let cond = eval_const_expr(condition)?;
             match cond {
-                ConstResult::Bool(true) => eval_block(then_branch),
-                ConstResult::Bool(false) => {
+                ConstResult::bool(true) => eval_block(then_branch),
+                ConstResult::bool(false) => {
                     match else_branch {
                         Option::Some(else_expr) => eval_else_branch(else_expr),
                         Option::None => {
@@ -491,12 +491,12 @@ fn eval_literal(lit: &Literal, span: Span) -> Result<ConstResult, TypeError> {
         LiteralKind::Int { value, suffix } => {
             // Determine if unsigned based on suffix
             let is_unsigned = match suffix {
-                Option::Some(IntSuffix::U8) => true,
-                Option::Some(IntSuffix::U16) => true,
-                Option::Some(IntSuffix::U32) => true,
-                Option::Some(IntSuffix::U64) => true,
-                Option::Some(IntSuffix::U128) => true,
-                Option::Some(IntSuffix::USize) => true,
+                Option::Some(IntSuffix::u8) => true,
+                Option::Some(IntSuffix::u16) => true,
+                Option::Some(IntSuffix::u32) => true,
+                Option::Some(IntSuffix::u64) => true,
+                Option::Some(IntSuffix::u128) => true,
+                Option::Some(IntSuffix::usize) => true,
                 _ => false,
             };
 
@@ -506,7 +506,7 @@ fn eval_literal(lit: &Literal, span: Span) -> Result<ConstResult, TypeError> {
                 Result::Ok(ConstResult::Int(*value as i128))
             }
         }
-        LiteralKind::Bool(b) => Result::Ok(ConstResult::Bool(*b)),
+        LiteralKind::bool(b) => Result::Ok(ConstResult::bool(*b)),
         LiteralKind::Float { .. } => {
             Result::Err(TypeError::new(
                 TypeErrorKind::ConstEvalError {
@@ -523,7 +523,7 @@ fn eval_literal(lit: &Literal, span: Span) -> Result<ConstResult, TypeError> {
                 span,
             ))
         }
-        LiteralKind::Char(_) => {
+        LiteralKind::char(_) => {
             Result::Err(TypeError::new(
                 TypeErrorKind::ConstEvalError {
                     reason: "character literals are not supported in const contexts".to_string(),
@@ -715,12 +715,12 @@ fn eval_binary_op(
             }
         }
         // Comparison operators return bool
-        BinOp::Eq => Result::Ok(ConstResult::Bool(l == r)),
-        BinOp::Ne => Result::Ok(ConstResult::Bool(l != r)),
-        BinOp::Lt => Result::Ok(ConstResult::Bool(l < r)),
-        BinOp::Le => Result::Ok(ConstResult::Bool(l <= r)),
-        BinOp::Gt => Result::Ok(ConstResult::Bool(l > r)),
-        BinOp::Ge => Result::Ok(ConstResult::Bool(l >= r)),
+        BinOp::Eq => Result::Ok(ConstResult::bool(l == r)),
+        BinOp::Ne => Result::Ok(ConstResult::bool(l != r)),
+        BinOp::Lt => Result::Ok(ConstResult::bool(l < r)),
+        BinOp::Le => Result::Ok(ConstResult::bool(l <= r)),
+        BinOp::Gt => Result::Ok(ConstResult::bool(l > r)),
+        BinOp::Ge => Result::Ok(ConstResult::bool(l >= r)),
         BinOp::Pipe => {
             Result::Err(TypeError::new(
                 TypeErrorKind::ConstEvalError {
@@ -761,7 +761,7 @@ fn eval_logical_and(left: ConstResult, right: ConstResult, span: Span) -> Result
         }
     };
 
-    Result::Ok(ConstResult::Bool(lb && rb))
+    Result::Ok(ConstResult::bool(lb && rb))
 }
 
 /// Evaluate logical OR.
@@ -790,7 +790,7 @@ fn eval_logical_or(left: ConstResult, right: ConstResult, span: Span) -> Result<
         }
     };
 
-    Result::Ok(ConstResult::Bool(lb || rb))
+    Result::Ok(ConstResult::bool(lb || rb))
 }
 
 // ============================================================
@@ -825,7 +825,7 @@ fn eval_unary_op(unary_op: UnaryOp, val: ConstResult, span: Span) -> Result<Cons
         }
         UnaryOp::Not => {
             match val {
-                ConstResult::Bool(b) => Result::Ok(ConstResult::Bool(!b)),
+                ConstResult::bool(b) => Result::Ok(ConstResult::bool(!b)),
                 ConstResult::Int(v) => Result::Ok(ConstResult::Int(!v)),
                 ConstResult::Uint(v) => Result::Ok(ConstResult::Uint(!v)),
             }
@@ -861,8 +861,8 @@ fn eval_unary_op(unary_op: UnaryOp, val: ConstResult, span: Span) -> Result<Cons
 // Checked Arithmetic Helpers
 // ============================================================
 
-/// Checked addition for I128.
-fn checked_add_i128(a: I128, b: I128) -> Option<i128> {
+/// Checked addition for i128.
+fn checked_add_i128(a: i128, b: i128) -> Option<i128> {
     // Check for overflow
     // For signed addition: overflow if signs are same and result has different sign
     let result = a + b;
@@ -873,8 +873,8 @@ fn checked_add_i128(a: I128, b: I128) -> Option<i128> {
     }
 }
 
-/// Checked subtraction for I128.
-fn checked_sub_i128(a: I128, b: I128) -> Option<i128> {
+/// Checked subtraction for i128.
+fn checked_sub_i128(a: i128, b: i128) -> Option<i128> {
     let result = a - b;
     if (b > 0 && result > a) || (b < 0 && result < a) {
         Option::None
@@ -883,8 +883,8 @@ fn checked_sub_i128(a: I128, b: I128) -> Option<i128> {
     }
 }
 
-/// Checked multiplication for I128.
-fn checked_mul_i128(a: I128, b: I128) -> Option<i128> {
+/// Checked multiplication for i128.
+fn checked_mul_i128(a: i128, b: i128) -> Option<i128> {
     if a == 0 || b == 0 {
         return Option::Some(0);
     };
@@ -899,8 +899,8 @@ fn checked_mul_i128(a: I128, b: I128) -> Option<i128> {
     }
 }
 
-/// Checked division for I128.
-fn checked_div_i128(a: I128, b: I128) -> Option<i128> {
+/// Checked division for i128.
+fn checked_div_i128(a: i128, b: i128) -> Option<i128> {
     // Division overflow only occurs for MIN / -1
     if a == -170141183460469231731687303715884105728i128 && b == -1 {
         Option::None
@@ -909,8 +909,8 @@ fn checked_div_i128(a: I128, b: I128) -> Option<i128> {
     }
 }
 
-/// Checked remainder for I128.
-fn checked_rem_i128(a: I128, b: I128) -> Option<i128> {
+/// Checked remainder for i128.
+fn checked_rem_i128(a: i128, b: i128) -> Option<i128> {
     // Remainder overflow only occurs for MIN % -1
     if a == -170141183460469231731687303715884105728i128 && b == -1 {
         Option::None
@@ -919,8 +919,8 @@ fn checked_rem_i128(a: I128, b: I128) -> Option<i128> {
     }
 }
 
-/// Checked left shift for I128.
-fn checked_shl_i128(a: I128, shift: U32) -> Option<i128> {
+/// Checked left shift for i128.
+fn checked_shl_i128(a: i128, shift: u32) -> Option<i128> {
     if shift >= 128 {
         Option::None
     } else {
@@ -928,8 +928,8 @@ fn checked_shl_i128(a: I128, shift: U32) -> Option<i128> {
     }
 }
 
-/// Checked right shift for I128.
-fn checked_shr_i128(a: I128, shift: U32) -> Option<i128> {
+/// Checked right shift for i128.
+fn checked_shr_i128(a: i128, shift: u32) -> Option<i128> {
     if shift >= 128 {
         Option::None
     } else {
@@ -937,8 +937,8 @@ fn checked_shr_i128(a: I128, shift: U32) -> Option<i128> {
     }
 }
 
-/// Checked negation for I128.
-fn checked_neg_i128(a: I128) -> Option<i128> {
+/// Checked negation for i128.
+fn checked_neg_i128(a: i128) -> Option<i128> {
     // Negation overflow only occurs for MIN
     if a == -170141183460469231731687303715884105728i128 {
         Option::None
@@ -962,7 +962,7 @@ fn test_const_result_as_u64() {
     let negative = ConstResult::Int(-5);
     assert(negative.as_u64() == Option::None);
 
-    let bool_val = ConstResult::Bool(true);
+    let bool_val = ConstResult::bool(true);
     assert(bool_val.as_u64() == Option::None);
 }
 
@@ -980,7 +980,7 @@ fn test_const_result_as_i128() {
 
 #[test]
 fn test_const_result_as_bool() {
-    let bool_val = ConstResult::Bool(true);
+    let bool_val = ConstResult::bool(true);
     assert(bool_val.as_bool() == Option::Some(true));
 
     let int_val = ConstResult::Int(1);

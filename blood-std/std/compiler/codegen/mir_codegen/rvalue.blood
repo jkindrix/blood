@@ -32,13 +32,13 @@ use super::super::context::CodegenContext;
 use super::super::lower_type::lower_type;
 use super::place::compile_mir_place;
 
-use crate.compiler.hir::{DefId, LocalId, Type, TypeKind, PrimitiveTy};
-use crate.compiler.mir::{
+use std.compiler.hir::{DefId, LocalId, Type, TypeKind, PrimitiveTy};
+use std.compiler.mir::{
     MirBody, Rvalue, Operand, Place, PlaceElem, Constant, ConstantKind,
     BinOp, UnOp, AggregateKind, EscapeResults,
 };
-use crate.compiler.diagnostics::Diagnostic;
-use crate.compiler.span::Span;
+use std.compiler.diagnostics::Diagnostic;
+use std.compiler.span::Span;
 
 // ============================================================================
 // Rvalue Compilation
@@ -332,7 +332,7 @@ fn compile_cast(
         } else if src_bits < dst_bits {
             // Extending
             if src_bits == 1 {
-                // Bool to larger int: zero extend
+                // bool to larger int: zero extend
                 Ok(builder.build_zext(val, target_llvm, "zext\0"))
             } else {
                 // Regular int: sign extend
@@ -825,12 +825,12 @@ fn compile_constant(
             Ok(const_real(llvm_ty, *v))
         }
 
-        ConstantKind::Bool(v) => {
+        ConstantKind::bool(v) => {
             let i1_ty = i1_type(ctx.llvm_context_ref());
             Ok(const_int(i1_ty, if *v { 1 } else { 0 }, false))
         }
 
-        ConstantKind::Char(v) => {
+        ConstantKind::char(v) => {
             let i32_ty = i32_type(ctx.llvm_context_ref());
             Ok(const_int(i32_ty, *v as u64, false))
         }

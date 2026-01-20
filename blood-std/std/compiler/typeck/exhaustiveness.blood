@@ -17,9 +17,9 @@
 
 use std.collections::{HashMap, HashSet};
 use std.compiler.parser::{Pattern, PatternKind, Literal, Span};
-use super.types::{Type, TypeKind, DefId, PrimitiveTy};
-use super.resolve::{TypeDef, TypeDefKind, EnumVariantDef};
-use super.errors::{TypeError, TypeErrorKind};
+use std.compiler.typeck.types::{Type, TypeKind, DefId, PrimitiveTy};
+use std.compiler.typeck.resolve::{TypeDef, TypeDefKind, EnumVariantDef};
+use std.compiler.typeck.errors::{TypeError, TypeErrorKind};
 
 // ============================================================
 // Pattern Matrix
@@ -69,8 +69,8 @@ impl Clone for PatternMatrix {
 /// Literal patterns for exhaustiveness checking.
 pub enum LiteralPattern {
     Int(i64),
-    Bool(bool),
-    Char(char),
+    bool(bool),
+    char(char),
     String(String),
     Range {
         start: i64,
@@ -83,8 +83,8 @@ impl Clone for LiteralPattern {
     fn clone(&self) -> LiteralPattern {
         match self {
             LiteralPattern::Int(i) => LiteralPattern::Int(*i),
-            LiteralPattern::Bool(b) => LiteralPattern::Bool(*b),
-            LiteralPattern::Char(c) => LiteralPattern::Char(*c),
+            LiteralPattern::bool(b) => LiteralPattern::bool(*b),
+            LiteralPattern::char(c) => LiteralPattern::char(*c),
             LiteralPattern::String(s) => LiteralPattern::String(s.clone()),
             LiteralPattern::Range { start, end, inclusive } => {
                 LiteralPattern::Range {
@@ -294,10 +294,10 @@ impl ExhaustivenessChecker {
                 *has_true = true;
                 *has_false = true;
             }
-            PatternMatrix::Literal(LiteralPattern::Bool(true)) => *has_true = true,
-            PatternMatrix::Literal(LiteralPattern::Bool(false)) => *has_false = true,
+            PatternMatrix::Literal(LiteralPattern::bool(true)) => *has_true = true,
+            PatternMatrix::Literal(LiteralPattern::bool(false)) => *has_false = true,
             PatternMatrix::Literal(LiteralPattern::Int(_)) => {}
-            PatternMatrix::Literal(LiteralPattern::Char(_)) => {}
+            PatternMatrix::Literal(LiteralPattern::char(_)) => {}
             PatternMatrix::Literal(LiteralPattern::String(_)) => {}
             PatternMatrix::Literal(LiteralPattern::Range { start: _, end: _, inclusive: _ }) => {}
             PatternMatrix::Or(alts) => {
@@ -539,11 +539,11 @@ impl ExhaustivenessChecker {
 
     fn literal_to_pattern(&self, lit: &Literal) -> PatternMatrix {
         match lit {
-            Literal::Bool(b) => PatternMatrix::Literal(LiteralPattern::Bool(*b)),
+            Literal::bool(b) => PatternMatrix::Literal(LiteralPattern::bool(*b)),
             Literal::Integer { value, suffix: _ } => {
                 PatternMatrix::Literal(LiteralPattern::Int(*value))
             }
-            Literal::Char(c) => PatternMatrix::Literal(LiteralPattern::Char(*c)),
+            Literal::char(c) => PatternMatrix::Literal(LiteralPattern::char(*c)),
             Literal::String(s) => PatternMatrix::Literal(LiteralPattern::String(s.clone())),
             Literal::Float { value: _, suffix: _ } => PatternMatrix::Wild, // Floats treated as wildcard
         }
@@ -561,15 +561,15 @@ impl ExhaustivenessChecker {
                         })
                     };
                     Some(Literal::Float { value: _, suffix: _ }) => PatternMatrix::Wild,
-                    Some(Literal::Bool(_)) => PatternMatrix::Wild,
-                    Some(Literal::Char(_)) => PatternMatrix::Wild,
+                    Some(Literal::bool(_)) => PatternMatrix::Wild,
+                    Some(Literal::char(_)) => PatternMatrix::Wild,
                     Some(Literal::String(_)) => PatternMatrix::Wild,
                     None => PatternMatrix::Wild,
                 }
             }
             Literal::Float { value: _, suffix: _ } => PatternMatrix::Wild,
-            Literal::Bool(_) => PatternMatrix::Wild,
-            Literal::Char(_) => PatternMatrix::Wild,
+            Literal::bool(_) => PatternMatrix::Wild,
+            Literal::char(_) => PatternMatrix::Wild,
             Literal::String(_) => PatternMatrix::Wild,
         }
     }

@@ -17,7 +17,7 @@
 /// | `>=1.0, <2.0` | Range constraint |
 /// | `*` | Any version |
 
-use std.option.Option;
+use std.core.Option;
 use std.result.Result;
 use std.string::String;
 use std.collections::Vec;
@@ -273,7 +273,7 @@ impl VersionReq {
         let parts: Vec<&str> = s.split(',').collect();
         let mut constraints: Vec<VersionConstraint> = Vec::new();
 
-        let mut i: USize = 0;
+        let mut i: usize = 0;
         while i < parts.len() {
             match VersionConstraint::parse(parts[i].trim()) {
                 Result::Ok(c) => constraints.push(c),
@@ -287,7 +287,7 @@ impl VersionReq {
 
     /// Check if a version matches this requirement.
     pub fn matches(&self, version: &Version) -> bool {
-        let mut i: USize = 0;
+        let mut i: usize = 0;
         while i < self.constraints.len() {
             if !self.constraints[i].matches(version) {
                 return false;
@@ -304,7 +304,7 @@ impl VersionReq {
         };
 
         let mut result = String::new();
-        let mut i: USize = 0;
+        let mut i: usize = 0;
         while i < self.constraints.len() {
             if i > 0 {
                 result.push_str(", ");

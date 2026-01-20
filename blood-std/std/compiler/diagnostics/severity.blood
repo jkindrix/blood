@@ -96,7 +96,7 @@ impl Severity {
     /// Check if this severity represents an error (Error or Fatal).
     ///
     /// Returns true for severities that will cause compilation to fail.
-    pub fn is_error(self) -> Bool {
+    pub fn is_error(self) -> bool {
         match self {
             Severity::Fatal => true,
             Severity::Error => true,
@@ -108,7 +108,7 @@ impl Severity {
     }
 
     /// Check if this severity is a warning.
-    pub fn is_warning(self) -> Bool {
+    pub fn is_warning(self) -> bool {
         match self {
             Severity::Warning => true,
             Severity::Fatal => false,
@@ -120,7 +120,7 @@ impl Severity {
     }
 
     /// Check if this severity is fatal (compilation must stop immediately).
-    pub fn is_fatal(self) -> Bool {
+    pub fn is_fatal(self) -> bool {
         match self {
             Severity::Fatal => true,
             Severity::Error => false,
@@ -135,7 +135,7 @@ impl Severity {
     ///
     /// Attached diagnostics should not appear standalone; they must
     /// follow an Error or Warning.
-    pub fn is_attached(self) -> Bool {
+    pub fn is_attached(self) -> bool {
         match self {
             Severity::Note => true,
             Severity::Help => true,
@@ -147,7 +147,7 @@ impl Severity {
     }
 
     /// Check if this is a primary diagnostic (not attached).
-    pub fn is_primary(self) -> Bool {
+    pub fn is_primary(self) -> bool {
         !self.is_attached()
     }
 
@@ -178,7 +178,7 @@ impl Severity {
     /// Get the numeric severity level (higher = more severe).
     ///
     /// Used for filtering: a diagnostic is shown if its level >= threshold.
-    pub fn level(self) -> U8 {
+    pub fn level(self) -> u8 {
         match self {
             Severity::Fatal => 6,
             Severity::Error => 5,
@@ -192,14 +192,14 @@ impl Severity {
     /// Compare severity levels.
     ///
     /// Returns true if `self` is more severe than `other`.
-    pub fn more_severe_than(self, other: Severity) -> Bool {
+    pub fn more_severe_than(self, other: Severity) -> bool {
         self.level() > other.level();
     }
 
     /// Compare severity levels.
     ///
     /// Returns true if `self` is at least as severe as `other`.
-    pub fn at_least(self, other: Severity) -> Bool {
+    pub fn at_least(self, other: Severity) -> bool {
         self.level() >= other.level();
     }
 }

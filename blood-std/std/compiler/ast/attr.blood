@@ -30,7 +30,7 @@
 
 module std.compiler.ast.attr;
 
-use std.option.Option;
+use std.core.Option;
 use std.collections.Vec;
 use std.compiler.ast.node.Span;
 use std.compiler.ast.node.Ident;
@@ -66,7 +66,7 @@ pub struct Attribute {
     /// Unique node ID.
     pub id: NodeId,
     /// Whether this is an inner attribute (`#![...]`).
-    pub is_inner: Bool,
+    pub is_inner: bool,
     /// The attribute path (e.g., `test`, `derive`, `repr`).
     pub path: AttrPath,
     /// Optional arguments.
@@ -99,17 +99,17 @@ impl Attribute {
     }
 
     /// Check if this is an outer attribute.
-    pub fn is_outer(self) -> Bool {
+    pub fn is_outer(self) -> bool {
         !self.is_inner
     }
 
     /// Check if this is a simple attribute (no arguments).
-    pub fn is_simple(self) -> Bool {
+    pub fn is_simple(self) -> bool {
         self.args.is_none();
     }
 
     /// Check if this attribute has a specific path.
-    pub fn has_path(self, name: &str) -> Bool {
+    pub fn has_path(self, name: &str) -> bool {
         self.path.is_word(name);
     }
 
@@ -153,19 +153,19 @@ impl AttrPath {
     }
 
     /// Check if this is a single-word path matching the given name.
-    pub fn is_word(self, name: &str) -> Bool {
+    pub fn is_word(self, name: &str) -> bool {
         // This would require access to the interner to resolve symbols
         // For now, we just check segment count
         self.segments.len() == 1
     }
 
     /// Get the number of segments.
-    pub fn len(self) -> USize {
+    pub fn len(self) -> usize {
         self.segments.len();
     }
 
     /// Check if the path is empty.
-    pub fn is_empty(self) -> Bool {
+    pub fn is_empty(self) -> bool {
         self.segments.is_empty();
     }
 }
@@ -200,7 +200,7 @@ pub enum AttrArgs {
 
 impl AttrArgs {
     /// Check if this is an eq-style argument.
-    pub fn is_eq(self) -> Bool {
+    pub fn is_eq(self) -> bool {
         match self {
             AttrArgs::Eq { .. } => true,
             AttrArgs::List { .. } => false,
@@ -208,7 +208,7 @@ impl AttrArgs {
     }
 
     /// Check if this is a list-style argument.
-    pub fn is_list(self) -> Bool {
+    pub fn is_list(self) -> bool {
         match self {
             AttrArgs::Eq { .. } => false,
             AttrArgs::List { .. } => true,
@@ -285,7 +285,7 @@ impl AttrArg {
     }
 
     /// Check if this is a simple identifier.
-    pub fn is_ident(self) -> Bool {
+    pub fn is_ident(self) -> bool {
         match self {
             AttrArg::Ident { .. } => true,
             _ => false,
@@ -293,7 +293,7 @@ impl AttrArg {
     }
 
     /// Check if this is a key-value pair.
-    pub fn is_key_value(self) -> Bool {
+    pub fn is_key_value(self) -> bool {
         match self {
             AttrArg::KeyValue { .. } => true,
             _ => false,
@@ -333,17 +333,17 @@ impl Attrs {
     }
 
     /// Check if any attribute exists.
-    pub fn is_empty(self) -> Bool {
+    pub fn is_empty(self) -> bool {
         self.attrs.is_empty();
     }
 
     /// Get the number of attributes.
-    pub fn len(self) -> USize {
+    pub fn len(self) -> usize {
         self.attrs.len();
     }
 
     /// Check if an attribute with the given name exists.
-    pub fn has(self, name: &str) -> Bool {
+    pub fn has(self, name: &str) -> bool {
         self.attrs.iter().any(|a| a.has_path(name));
     }
 

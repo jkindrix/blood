@@ -23,7 +23,7 @@
 module std.compiler.diagnostics.emitter.plain;
 
 use std.collections.Vec;
-use std.option.Option;
+use std.core.Option;
 use std.compiler.diagnostics.diagnostic.Diagnostic;
 use std.compiler.diagnostics.severity.Severity;
 use std.compiler.diagnostics.code.ErrorCode;
@@ -57,10 +57,10 @@ pub struct PlainEmitter {
     source_map: SourceMap,
 
     /// Number of errors emitted.
-    error_count: U32,
+    error_count: u32,
 
     /// Number of warnings emitted.
-    warning_count: U32,
+    warning_count: u32,
 }
 
 impl PlainEmitter {
@@ -152,17 +152,17 @@ impl PlainEmitter {
     }
 
     /// Get the number of errors emitted.
-    pub fn error_count(self) -> U32 {
+    pub fn error_count(self) -> u32 {
         self.error_count
     }
 
     /// Get the number of warnings emitted.
-    pub fn warning_count(self) -> U32 {
+    pub fn warning_count(self) -> u32 {
         self.warning_count
     }
 
     /// Check if any errors were emitted.
-    pub fn has_errors(self) -> Bool {
+    pub fn has_errors(self) -> bool {
         self.error_count > 0
     }
 
@@ -336,9 +336,9 @@ impl PlainEmitter {
     fn emit_annotation_line(
         self,
         diagnostic: Diagnostic,
-        line_number: U32,
+        line_number: u32,
         source_line: String,
-        gutter_width: USize,
+        gutter_width: usize,
     ) -> String {
         let mut output = String::new();
         let span = diagnostic.span();
@@ -357,12 +357,12 @@ impl PlainEmitter {
         let end_col = if line_number == span.end_line() {
             span.end_column();
         } else {
-            source_line.len() as U32 + 1
+            source_line.len() as u32 + 1
         };
 
         // Build annotation
         let mut annotation = String::new();
-        let mut col: U32 = 1;
+        let mut col: u32 = 1;
 
         while col < start_col {
             annotation = annotation ++ " "
@@ -370,7 +370,7 @@ impl PlainEmitter {
         };
 
         let underline_width = if end_col > start_col { end_col - start_col } else { 1 };
-        let mut i: U32 = 0;
+        let mut i: u32 = 0;
         while i < underline_width {
             annotation = annotation ++ "^"
             i = i + 1;
@@ -407,7 +407,7 @@ impl PlainEmitter {
     }
 
     /// Emit a secondary label.
-    fn emit_secondary_label(self, label: Label, gutter_width: USize) -> String {
+    fn emit_secondary_label(self, label: Label, gutter_width: usize) -> String {
         let mut output = String::new();
 
         // Gutter
@@ -416,7 +416,7 @@ impl PlainEmitter {
 
         // Indentation
         let start_col = label.span().start_column();
-        let mut col: U32 = 1;
+        let mut col: u32 = 1;
         while col < start_col {
             output = output ++ " "
             col = col + 1;
@@ -484,12 +484,12 @@ impl PlainEmitter {
     }
 
     /// Emit a gutter.
-    fn emit_gutter(self, content: String, width: USize) -> String {
+    fn emit_gutter(self, content: String, width: usize) -> String {
         let mut output = String::new();
 
         // Pad
         let pad = if width > content.len() { width - content.len() } else { 0 };
-        let mut i: USize = 0;
+        let mut i: usize = 0;
         while i < pad {
             output = output ++ " "
             i = i + 1;
@@ -503,8 +503,8 @@ impl PlainEmitter {
 
     /// Extract basename from path.
     fn basename(self, path: String) -> String {
-        let mut last_sep: Option<USize> = Option::None;
-        let mut i: USize = 0;
+        let mut last_sep: Option<usize> = Option::None;
+        let mut i: usize = 0;
 
         for ch in path.chars() {
             if ch == '/' || ch == '\\' {

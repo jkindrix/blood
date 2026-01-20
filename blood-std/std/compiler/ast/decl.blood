@@ -13,7 +13,7 @@
 //! - Handlers: `handler ConsoleIO for IO { ... }`
 //! - Traits: `trait Clone { fn clone(self) -> Self }`
 //! - Implementations: `impl Clone for Point { ... }`
-//! - Constants: `const PI: F64 = 3.14159`
+//! - Constants: `const PI: f64 = 3.14159`
 //! - Statics: `static mut COUNTER: Int = 0`
 //! - Modules: `mod foo { ... }`
 //! - Macros: `macro vec!(...) { ... }`
@@ -37,7 +37,7 @@
 
 module std.compiler.ast.decl;
 
-use std.option.Option;
+use std.core.Option;
 use std.collections.Vec;
 use std.compiler.ast.node.Span;
 use std.compiler.ast.node.Ident;
@@ -75,7 +75,7 @@ pub enum Declaration {
     Effect(EffectDecl),
     /// Handler: `handler ConsoleIO for IO { ... }`
     Handler(HandlerDecl),
-    /// Constant: `const PI: F64 = 3.14159`
+    /// Constant: `const PI: f64 = 3.14159`
     Const(ConstDecl),
     /// Static: `static mut COUNTER: Int = 0`
     Static(StaticDecl),
@@ -127,7 +127,7 @@ impl Declaration {
     }
 
     /// Check if this declaration is public.
-    pub fn is_public(self) -> Bool {
+    pub fn is_public(self) -> bool {
         match self {
             Declaration::Function(d) => d.vis == Visibility::Public,
             Declaration::Type(d) => d.vis == Visibility::Public,
@@ -192,27 +192,27 @@ pub struct FnDecl {
 
 impl FnDecl {
     /// Check if this function has a body.
-    pub fn has_body(self) -> Bool {
+    pub fn has_body(self) -> bool {
         self.body.is_some();
     }
 
     /// Check if this is a const function.
-    pub fn is_const(self) -> Bool {
+    pub fn is_const(self) -> bool {
         self.qualifiers.is_const
     }
 
     /// Check if this is an async function.
-    pub fn is_async(self) -> Bool {
+    pub fn is_async(self) -> bool {
         self.qualifiers.is_async
     }
 
     /// Check if this is an unsafe function.
-    pub fn is_unsafe(self) -> Bool {
+    pub fn is_unsafe(self) -> bool {
         self.qualifiers.is_unsafe
     }
 
     /// Check if this function has generic parameters.
-    pub fn is_generic(self) -> Bool {
+    pub fn is_generic(self) -> bool {
         self.type_params.is_some();
     }
 }
@@ -221,11 +221,11 @@ impl FnDecl {
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub struct FnQualifiers {
     /// Is this a const function?
-    pub is_const: Bool,
+    pub is_const: bool,
     /// Is this an async function?
-    pub is_async: Bool,
+    pub is_async: bool,
     /// Is this an unsafe function?
-    pub is_unsafe: Bool,
+    pub is_unsafe: bool,
 }
 
 impl FnQualifiers {
@@ -239,7 +239,7 @@ impl FnQualifiers {
     }
 
     /// Check if any qualifier is set.
-    pub fn any(self) -> Bool {
+    pub fn any(self) -> bool {
         self.is_const || self.is_async || self.is_unsafe
     }
 }
@@ -360,7 +360,7 @@ pub struct StructDecl {
 
 impl StructDecl {
     /// Check if this is a unit struct.
-    pub fn is_unit(self) -> Bool {
+    pub fn is_unit(self) -> bool {
         match self.body {
             StructBody::Unit => true,
             _ => false,
@@ -368,7 +368,7 @@ impl StructDecl {
     }
 
     /// Check if this is a tuple struct.
-    pub fn is_tuple(self) -> Bool {
+    pub fn is_tuple(self) -> bool {
         match self.body {
             StructBody::Tuple(_) => true,
             _ => false,
@@ -376,7 +376,7 @@ impl StructDecl {
     }
 
     /// Check if this is a record struct.
-    pub fn is_record(self) -> Bool {
+    pub fn is_record(self) -> bool {
         match self.body {
             StructBody::Record(_) => true,
             _ => false,
@@ -618,7 +618,7 @@ pub struct HandlerState {
     /// Unique node ID.
     pub id: NodeId,
     /// Whether the state is mutable.
-    pub is_mut: Bool,
+    pub is_mut: bool,
     /// State field name.
     pub name: Ident,
     /// State type.
@@ -709,7 +709,7 @@ pub struct TryWithHandler {
 ///     type Item
 ///
 ///     fn next(mut self) -> Option[Self::Item]
-///     fn size_hint(self) -> (USize, Option<USize>) {
+///     fn size_hint(self) -> (usize, Option<usize>) {
 ///         (0, Option::None)
 ///     }
 /// }
@@ -777,7 +777,7 @@ impl TraitItem {
 ///         Point { x, y }
 ///     }
 ///
-///     pub fn distance(self, other: Point) -> F64 {
+///     pub fn distance(self, other: Point) -> f64 {
 ///         // ...
 ///     }
 /// }
@@ -821,12 +821,12 @@ pub struct ImplBlock {
 
 impl ImplBlock {
     /// Check if this is a trait implementation.
-    pub fn is_trait_impl(self) -> Bool {
+    pub fn is_trait_impl(self) -> bool {
         self.trait_ty.is_some();
     }
 
     /// Check if this is an inherent implementation.
-    pub fn is_inherent(self) -> Bool {
+    pub fn is_inherent(self) -> bool {
         self.trait_ty.is_none();
     }
 }
@@ -862,8 +862,8 @@ impl ImplItem {
 /// ## Example
 ///
 /// ```blood
-/// pub const PI: F64 = 3.14159265358979
-/// const MAX_SIZE: USize = 1024
+/// pub const PI: f64 = 3.14159265358979
+/// const MAX_SIZE: usize = 1024
 /// ```
 #[derive(Clone, PartialEq, Eq)]
 pub struct ConstDecl {
@@ -900,7 +900,7 @@ pub struct StaticDecl {
     /// Visibility.
     pub vis: Visibility,
     /// Whether this static is mutable.
-    pub is_mut: Bool,
+    pub is_mut: bool,
     /// Static name.
     pub name: Ident,
     /// Static type.
@@ -948,12 +948,12 @@ pub struct ModItemDecl {
 
 impl ModItemDecl {
     /// Check if this is an external module reference.
-    pub fn is_external(self) -> Bool {
+    pub fn is_external(self) -> bool {
         self.body.is_none();
     }
 
     /// Check if this is an inline module.
-    pub fn is_inline(self) -> Bool {
+    pub fn is_inline(self) -> bool {
         self.body.is_some();
     }
 }
@@ -1204,7 +1204,7 @@ pub type TokenKind = crate.compiler.lexer.TokenKind;
 
 /// Hygiene context identifier for macro expansion.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub struct HygieneId(pub U32);
+pub struct HygieneId(pub u32);
 
 impl HygieneId {
     /// Create a root hygiene context.
@@ -1213,7 +1213,7 @@ impl HygieneId {
     }
 
     /// Create a new hygiene context.
-    pub fn new(id: U32) -> HygieneId {
+    pub fn new(id: u32) -> HygieneId {
         HygieneId(id)
     }
 }

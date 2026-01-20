@@ -22,7 +22,7 @@
 module std.compiler.diagnostics.emitter.terminal;
 
 use std.collections.Vec;
-use std.option.Option;
+use std.core.Option;
 use std.io.Writer;
 use std.io.Stdout;
 use std.compiler.diagnostics.diagnostic.Diagnostic;
@@ -63,10 +63,10 @@ pub struct TerminalEmitter {
     source_map: SourceMap,
 
     /// Number of errors emitted.
-    error_count: U32,
+    error_count: u32,
 
     /// Number of warnings emitted.
-    warning_count: U32,
+    warning_count: u32,
 }
 
 impl TerminalEmitter {
@@ -151,17 +151,17 @@ impl TerminalEmitter {
     }
 
     /// Get the number of errors emitted.
-    pub fn error_count(self) -> U32 {
+    pub fn error_count(self) -> u32 {
         self.error_count
     }
 
     /// Get the number of warnings emitted.
-    pub fn warning_count(self) -> U32 {
+    pub fn warning_count(self) -> u32 {
         self.warning_count
     }
 
     /// Check if any errors were emitted.
-    pub fn has_errors(self) -> Bool {
+    pub fn has_errors(self) -> bool {
         self.error_count > 0
     }
 
@@ -349,9 +349,9 @@ impl TerminalEmitter {
     fn emit_annotation_line(
         self,
         diagnostic: Diagnostic,
-        line_number: U32,
+        line_number: u32,
         source_line: String,
-        gutter_width: USize,
+        gutter_width: usize,
     ) -> String {
         let mut output = String::new();
         let span = diagnostic.span();
@@ -372,12 +372,12 @@ impl TerminalEmitter {
         let end_col = if line_number == span.end_line() {
             span.end_column();
         } else {
-            source_line.len() as U32 + 1
+            source_line.len() as u32 + 1
         };
 
         // Build annotation string
         let mut annotation = String::new();
-        let mut col: U32 = 1;
+        let mut col: u32 = 1;
 
         // Spaces before underline
         while col < start_col {
@@ -387,7 +387,7 @@ impl TerminalEmitter {
 
         // Underline characters
         let underline_width = if end_col > start_col { end_col - start_col } else { 1 };
-        let mut i: U32 = 0;
+        let mut i: u32 = 0;
         while i < underline_width {
             annotation = annotation ++ "^"
             i = i + 1;
@@ -424,7 +424,7 @@ impl TerminalEmitter {
     }
 
     /// Emit a secondary label.
-    fn emit_secondary_label(self, label: Label, gutter_width: USize) -> String {
+    fn emit_secondary_label(self, label: Label, gutter_width: usize) -> String {
         let mut output = String::new();
         let separator_color = self.config.colors().separator_color();
         let secondary_color = self.config.colors().secondary_label_color();
@@ -435,7 +435,7 @@ impl TerminalEmitter {
 
         // Indentation to label start column
         let start_col = label.span().start_column();
-        let mut col: U32 = 1;
+        let mut col: u32 = 1;
         while col < start_col {
             output = output ++ " "
             col = col + 1;
@@ -522,12 +522,12 @@ impl TerminalEmitter {
     }
 
     /// Emit a gutter (line number area).
-    fn emit_gutter(self, content: String, width: USize, color: AnsiColor) -> String {
+    fn emit_gutter(self, content: String, width: usize, color: AnsiColor) -> String {
         let mut output = String::new();
 
         // Pad content to width
         let pad = if width > content.len() { width - content.len() } else { 0 };
-        let mut i: USize = 0;
+        let mut i: usize = 0;
         while i < pad {
             output = output ++ " "
             i = i + 1;
@@ -571,8 +571,8 @@ impl TerminalEmitter {
     /// Extract basename from a path.
     fn basename(self, path: String) -> String {
         // Find last / or \ and return everything after
-        let mut last_sep: Option<USize> = Option::None;
-        let mut i: USize = 0;
+        let mut last_sep: Option<usize> = Option::None;
+        let mut i: usize = 0;
 
         for ch in path.chars() {
             if ch == '/' || ch == '\\' {

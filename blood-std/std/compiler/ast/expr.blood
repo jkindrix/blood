@@ -58,7 +58,7 @@
 
 module std.compiler.ast.expr;
 
-use std.option.Option;
+use std.core.Option;
 use std.collections.Vec;
 use std.compiler.ast.node.Span;
 use std.compiler.ast.node.Ident;
@@ -100,7 +100,7 @@ impl Expr {
     }
 
     /// Check if this is a literal expression.
-    pub fn is_literal(self) -> Bool {
+    pub fn is_literal(self) -> bool {
         match self.kind {
             ExprKind::Literal(_) => true,
             _ => false,
@@ -108,7 +108,7 @@ impl Expr {
     }
 
     /// Check if this is a path expression.
-    pub fn is_path(self) -> Bool {
+    pub fn is_path(self) -> bool {
         match self.kind {
             ExprKind::Path(_) => true,
             _ => false,
@@ -116,7 +116,7 @@ impl Expr {
     }
 
     /// Check if this is a block expression.
-    pub fn is_block(self) -> Bool {
+    pub fn is_block(self) -> bool {
         match self.kind {
             ExprKind::Block(_) => true,
             _ => false,
@@ -126,7 +126,7 @@ impl Expr {
     /// Check if this expression requires a semicolon when used as a statement.
     ///
     /// Block-like expressions (if, match, loop, etc.) don't require semicolons.
-    pub fn requires_semi(self) -> Bool {
+    pub fn requires_semi(self) -> bool {
         match self.kind {
             ExprKind::Block(_)
             | ExprKind::If { .. }
@@ -145,7 +145,7 @@ impl Expr {
     }
 
     /// Check if this expression can be the left-hand side of an assignment.
-    pub fn is_assignable(self) -> Bool {
+    pub fn is_assignable(self) -> bool {
         match self.kind {
             ExprKind::Path(_) => true,
             ExprKind::Field { .. } => true,
@@ -226,7 +226,7 @@ pub enum ExprKind {
     Range {
         start: Option[Box<Expr>],
         end: Option[Box<Expr>],
-        inclusive: Bool,
+        inclusive: bool,
     },
 
     /// Cast: `x as T`
@@ -317,7 +317,7 @@ pub enum ExprKind {
 
     /// Closure: `|x| x + 1`, `move |x, y| { x + y }`
     Closure {
-        is_move: Bool,
+        is_move: bool,
         params: Vec<ClosureParam>,
         return_type: Option<Type>,
         effects: Option<EffectRow>,
@@ -400,12 +400,12 @@ impl ExprPath {
     }
 
     /// Check if this is a single-segment path.
-    pub fn is_simple(self) -> Bool {
+    pub fn is_simple(self) -> bool {
         self.segments.len() == 1 && self.segments[0].args.is_none();
     }
 
     /// Get the number of segments.
-    pub fn len(self) -> USize {
+    pub fn len(self) -> usize {
         self.segments.len();
     }
 }
@@ -463,7 +463,7 @@ impl CallArg {
     }
 
     /// Check if this is a named argument.
-    pub fn is_named(self) -> Bool {
+    pub fn is_named(self) -> bool {
         self.name.is_some();
     }
 }
@@ -478,7 +478,7 @@ pub enum FieldAccess {
     /// Named field: `x.field`
     Named(Ident),
     /// Tuple index: `x.0`
-    Index(U32, Span),
+    Index(u32, Span),
 }
 
 impl FieldAccess {
@@ -532,7 +532,7 @@ pub struct RecordExprField {
 
 impl RecordExprField {
     /// Check if this uses shorthand syntax.
-    pub fn is_shorthand(self) -> Bool {
+    pub fn is_shorthand(self) -> bool {
         self.value.is_none();
     }
 }
@@ -589,7 +589,7 @@ pub struct MatchArm {
 
 impl MatchArm {
     /// Check if this arm has a guard.
-    pub fn has_guard(self) -> Bool {
+    pub fn has_guard(self) -> bool {
         self.guard.is_some();
     }
 }
@@ -701,7 +701,7 @@ impl BinOp {
     }
 
     /// Check if this is an arithmetic operator.
-    pub fn is_arithmetic(self) -> Bool {
+    pub fn is_arithmetic(self) -> bool {
         match self {
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => true,
             _ => false,
@@ -709,7 +709,7 @@ impl BinOp {
     }
 
     /// Check if this is a comparison operator.
-    pub fn is_comparison(self) -> Bool {
+    pub fn is_comparison(self) -> bool {
         match self {
             BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => true,
             _ => false,
@@ -717,7 +717,7 @@ impl BinOp {
     }
 
     /// Check if this is a logical operator.
-    pub fn is_logical(self) -> Bool {
+    pub fn is_logical(self) -> bool {
         match self {
             BinOp::And | BinOp::Or => true,
             _ => false,
@@ -725,7 +725,7 @@ impl BinOp {
     }
 
     /// Check if this is a bitwise operator.
-    pub fn is_bitwise(self) -> Bool {
+    pub fn is_bitwise(self) -> bool {
         match self {
             BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => true,
             _ => false,
@@ -733,7 +733,7 @@ impl BinOp {
     }
 
     /// Get the precedence of this operator (higher = tighter binding).
-    pub fn precedence(self) -> U8 {
+    pub fn precedence(self) -> u8 {
         match self {
             BinOp::Or => 1,
             BinOp::And => 2,
@@ -749,7 +749,7 @@ impl BinOp {
     }
 
     /// Check if this operator is right-associative.
-    pub fn is_right_associative(self) -> Bool {
+    pub fn is_right_associative(self) -> bool {
         // All Blood binary operators are left-associative
         false
     }
@@ -787,7 +787,7 @@ impl UnaryOp {
     }
 
     /// Check if this is a prefix operator.
-    pub fn is_prefix(self) -> Bool {
+    pub fn is_prefix(self) -> bool {
         // All unary operators in Blood are prefix
         true
     }

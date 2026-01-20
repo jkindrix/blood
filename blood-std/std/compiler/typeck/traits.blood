@@ -10,11 +10,12 @@
 /// 2. **Explicit error handling**: All failure cases are properly reported
 /// 3. **Separation of concerns**: Trait resolution is independent of type checking
 
-use super.types::{
+use std.collections::HashMap;
+use std.compiler.typeck.types::{
     Type, TypeKind, DefId, TyVarId, PrimitiveTy, Mutability, Ownership,
     EffectRow, RecordField, RecordRowVarId,
 };
-use super.unify::Unifier;
+use std.compiler.typeck.unify::Unifier;
 
 // ============================================================
 // Trait Definitions
@@ -309,12 +310,14 @@ impl ImplDef {
 
     /// Get a method by name.
     pub fn get_method(&self, name: &str) -> Option<&ImplMethodDef> {
-        self.methods.get(name);
+        let key = name.to_string();
+        self.methods.get(&key)
     }
 
     /// Get an associated type by name.
     pub fn get_assoc_type(&self, name: &str) -> Option<&Type> {
-        self.assoc_types.get(name);
+        let key = name.to_string();
+        self.assoc_types.get(&key)
     }
 }
 
@@ -469,7 +472,9 @@ impl TraitResolver {
             // Check if this impl is for the right trait
             match &impl_def.trait_id {
                 Some(tid) => {
-                    if tid.id() != trait_id.id() {
+                    let tid_id = tid.id();
+                    let trait_id_id = trait_id.id();
+                    if tid_id != trait_id_id {
                         i = i + 1;
                         continue;
                     }
@@ -761,10 +766,11 @@ impl TraitResolver {
     /// Searches first in inherent impls, then in trait impls.
     /// Returns both the impl and the method definition if found.
     pub fn lookup_method(&self, ty: &Type, method_name: &str, unifier: &Unifier) -> Option<(ImplDef, ImplMethodDef)> {
+        let method_key = method_name.to_string();
         // First, check inherent impls
         match self.find_inherent_impl(ty, unifier) {
             Some(impl_def) => {
-                match impl_def.methods.get(method_name) {
+                match impl_def.methods.get(&method_key) {
                     Some(method) => return Some((impl_def.clone(), method.clone())),
                     None => {}
                 }
@@ -777,7 +783,7 @@ impl TraitResolver {
         while i < self.impl_defs.len() {
             let impl_def = &self.impl_defs[i];
             if self.type_matches(&impl_def.self_type, ty, unifier) {
-                match impl_def.methods.get(method_name) {
+                match impl_def.methods.get(&method_key) {
                     Some(method) => return Some((impl_def.clone(), method.clone())),
                     None => {}
                 }
@@ -818,7 +824,9 @@ impl TraitResolver {
         while i < self.impl_defs.len() {
             match &self.impl_defs[i].trait_id {
                 Some(tid) => {
-                    if tid.id() == trait_id.id() {
+                    let tid_id = tid.id();
+                    let trait_id_id = trait_id.id();
+                    if tid_id == trait_id_id {
                         result.push(&self.impl_defs[i]);
                     }
                 };
@@ -899,8 +907,8 @@ impl MethodResolution {
     /// Get the method definition if found.
     pub fn method(&self) -> Option<&ImplMethodDef> {
         match self {
-            MethodResolution::Inherent { impl_def: _, method } => Some(method),
-            MethodResolution::TraitImpl { impl_def: _, trait_id: _, method } => Some(method),
+            MethodResolution::Inherent { impl_def: _, method } => Some(&method),
+            MethodResolution::TraitImpl { impl_def: _, trait_id: _, method } => Some(&method),
             MethodResolution::NotFound => None,
             MethodResolution::Ambiguous { candidates: _ } => None,
         }

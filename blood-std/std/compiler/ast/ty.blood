@@ -7,7 +7,7 @@
 //! Types appear in many places in Blood source code:
 //! - Function signatures: `fn foo(x: Int) -> String`
 //! - Variable bindings: `let x: Vec<Int> = ...`
-//! - Struct fields: `struct Point { x: F64, y: F64 }`
+//! - Struct fields: `struct Point { x: f64, y: f64 }`
 //! - Type aliases: `type Result<T> = Either[Error, T]`
 //!
 //! ## Type Forms
@@ -34,7 +34,7 @@
 
 module std.compiler.ast.ty;
 
-use std.option.Option;
+use std.core.Option;
 use std.collections.Vec;
 use std.compiler.ast.node.Span;
 use std.compiler.ast.node.Ident;
@@ -101,7 +101,7 @@ impl Type {
     }
 
     /// Check if this is a path type.
-    pub fn is_path(self) -> Bool {
+    pub fn is_path(self) -> bool {
         match self.kind {
             TypeKind::Path(_) => true,
             _ => false,
@@ -109,7 +109,7 @@ impl Type {
     }
 
     /// Check if this is the unit type.
-    pub fn is_unit(self) -> Bool {
+    pub fn is_unit(self) -> bool {
         match self.kind {
             TypeKind::Tuple(ref types) => types.is_empty(),
             _ => false,
@@ -117,7 +117,7 @@ impl Type {
     }
 
     /// Check if this is the never type.
-    pub fn is_never(self) -> Bool {
+    pub fn is_never(self) -> bool {
         match self.kind {
             TypeKind::Never => true,
             _ => false,
@@ -125,7 +125,7 @@ impl Type {
     }
 
     /// Check if this is an inferred type.
-    pub fn is_infer(self) -> Bool {
+    pub fn is_infer(self) -> bool {
         match self.kind {
             TypeKind::Infer => true,
             _ => false,
@@ -133,7 +133,7 @@ impl Type {
     }
 
     /// Check if this is a reference type.
-    pub fn is_reference(self) -> Bool {
+    pub fn is_reference(self) -> bool {
         match self.kind {
             TypeKind::Reference { .. } => true,
             _ => false,
@@ -141,7 +141,7 @@ impl Type {
     }
 
     /// Check if this is a pointer type.
-    pub fn is_pointer(self) -> Bool {
+    pub fn is_pointer(self) -> bool {
         match self.kind {
             TypeKind::Pointer { .. } => true,
             _ => false,
@@ -149,7 +149,7 @@ impl Type {
     }
 
     /// Check if this is a function type.
-    pub fn is_function(self) -> Bool {
+    pub fn is_function(self) -> bool {
         match self.kind {
             TypeKind::Function { .. } => true,
             _ => false,
@@ -172,7 +172,7 @@ pub enum TypeKind {
         /// Optional lifetime.
         lifetime: Option<Lifetime>,
         /// Whether this is a mutable reference.
-        mutable: Bool,
+        mutable: bool,
         /// The referenced type.
         inner: Box<Type>,
     },
@@ -180,7 +180,7 @@ pub enum TypeKind {
     /// Raw pointer: `*const T`, `*mut T`
     Pointer {
         /// Whether this is a mutable pointer.
-        mutable: Bool,
+        mutable: bool,
         /// The pointed-to type.
         inner: Box<Type>,
     },
@@ -293,12 +293,12 @@ impl TypePath {
     }
 
     /// Check if this is a single-segment path.
-    pub fn is_simple(self) -> Bool {
+    pub fn is_simple(self) -> bool {
         self.segments.len() == 1 && self.segments[0].args.is_none();
     }
 
     /// Get the number of segments.
-    pub fn len(self) -> USize {
+    pub fn len(self) -> usize {
         self.segments.len();
     }
 
@@ -334,7 +334,7 @@ impl TypePathSegment {
     }
 
     /// Check if this segment has type arguments.
-    pub fn has_args(self) -> Bool {
+    pub fn has_args(self) -> bool {
         self.args.is_some();
     }
 }
@@ -359,12 +359,12 @@ impl TypeArgs {
     }
 
     /// Check if empty.
-    pub fn is_empty(self) -> Bool {
+    pub fn is_empty(self) -> bool {
         self.args.is_empty();
     }
 
     /// Get the number of arguments.
-    pub fn len(self) -> USize {
+    pub fn len(self) -> usize {
         self.args.len();
     }
 }
@@ -418,13 +418,13 @@ impl Lifetime {
     }
 
     /// Check if this is the static lifetime.
-    pub fn is_static(self) -> Bool {
+    pub fn is_static(self) -> bool {
         // Would need interner access to check
         false
     }
 
     /// Check if this is an anonymous lifetime `'_`.
-    pub fn is_anonymous(self) -> Bool {
+    pub fn is_anonymous(self) -> bool {
         // Would need interner access to check
         false
     }
@@ -471,7 +471,7 @@ impl EffectRow {
     }
 
     /// Check if this is a pure effect row.
-    pub fn is_pure(self) -> Bool {
+    pub fn is_pure(self) -> bool {
         match self.kind {
             EffectRowKind::Pure => true,
             EffectRowKind::Effects { ref effects, .. } => effects.is_empty(),
@@ -589,12 +589,12 @@ impl TypeParams {
     }
 
     /// Check if empty.
-    pub fn is_empty(self) -> Bool {
+    pub fn is_empty(self) -> bool {
         self.params.is_empty();
     }
 
     /// Get the number of parameters.
-    pub fn len(self) -> USize {
+    pub fn len(self) -> usize {
         self.params.len();
     }
 }
@@ -686,7 +686,7 @@ impl WhereClause {
     }
 
     /// Check if empty.
-    pub fn is_empty(self) -> Bool {
+    pub fn is_empty(self) -> bool {
         self.predicates.is_empty();
     }
 }

@@ -31,7 +31,7 @@
 
 module std.compiler.ast.pattern;
 
-use std.option.Option;
+use std.core.Option;
 use std.collections.Vec;
 use std.compiler.ast.node.Span;
 use std.compiler.ast.node.Ident;
@@ -90,7 +90,7 @@ impl Pattern {
     }
 
     /// Check if this is a wildcard pattern.
-    pub fn is_wildcard(self) -> Bool {
+    pub fn is_wildcard(self) -> bool {
         match self.kind {
             PatternKind::Wildcard => true,
             _ => false,
@@ -98,7 +98,7 @@ impl Pattern {
     }
 
     /// Check if this is a rest pattern.
-    pub fn is_rest(self) -> Bool {
+    pub fn is_rest(self) -> bool {
         match self.kind {
             PatternKind::Rest => true,
             _ => false,
@@ -109,7 +109,7 @@ impl Pattern {
     ///
     /// Irrefutable patterns can be used in let bindings without
     /// requiring a refutable pattern context (match, if-let, etc.).
-    pub fn is_irrefutable(self) -> Bool {
+    pub fn is_irrefutable(self) -> bool {
         match self.kind {
             PatternKind::Wildcard => true,
             PatternKind::Rest => true,
@@ -130,7 +130,7 @@ impl Pattern {
     }
 
     /// Check if this pattern binds any variables.
-    pub fn binds_variables(self) -> Bool {
+    pub fn binds_variables(self) -> bool {
         match self.kind {
             PatternKind::Wildcard => false,
             PatternKind::Rest => false,
@@ -183,9 +183,9 @@ pub enum PatternKind {
     /// Identifier: `x`, `ref x`, `mut x`, `x @ pat`
     Ident {
         /// Bind by reference.
-        by_ref: Bool,
+        by_ref: bool,
         /// Mutable binding.
-        mutable: Bool,
+        mutable: bool,
         /// Variable name.
         name: Ident,
         /// Optional subpattern for `@` binding.
@@ -195,7 +195,7 @@ pub enum PatternKind {
     /// Reference pattern: `&x`, `&mut x`
     Ref {
         /// Mutable reference.
-        mutable: Bool,
+        mutable: bool,
         /// Inner pattern.
         inner: Box<Pattern>,
     },
@@ -207,7 +207,7 @@ pub enum PatternKind {
         /// Field patterns.
         fields: Vec<StructPatternField>,
         /// Has rest pattern `..`.
-        rest: Bool,
+        rest: bool,
     },
 
     /// Tuple struct pattern: `Some(x)`, `Ok(v)`
@@ -217,7 +217,7 @@ pub enum PatternKind {
         /// Field patterns.
         fields: Vec<Pattern>,
         /// Position of rest pattern `..` if present.
-        rest_pos: Option<USize>,
+        rest_pos: Option<usize>,
     },
 
     /// Tuple pattern: `(x, y)`, `(a, .., z)`
@@ -225,7 +225,7 @@ pub enum PatternKind {
         /// Element patterns.
         fields: Vec<Pattern>,
         /// Position of rest pattern `..` if present.
-        rest_pos: Option<USize>,
+        rest_pos: Option<usize>,
     },
 
     /// Slice pattern: `[first, .., last]`, `[a, b, c]`
@@ -233,7 +233,7 @@ pub enum PatternKind {
         /// Element patterns.
         elements: Vec<Pattern>,
         /// Position of rest pattern `..` if present.
-        rest_pos: Option<USize>,
+        rest_pos: Option<usize>,
     },
 
     /// Or pattern: `A | B | C`
@@ -246,7 +246,7 @@ pub enum PatternKind {
         /// End of range (None for open end).
         end: Option[Box<Pattern>],
         /// Is the range inclusive (`..=`)?
-        inclusive: Bool,
+        inclusive: bool,
     },
 
     /// Path pattern: `None`, `Color::Red`
@@ -283,7 +283,7 @@ pub struct StructPatternField {
 
 impl StructPatternField {
     /// Check if this uses shorthand syntax.
-    pub fn is_shorthand(self) -> Bool {
+    pub fn is_shorthand(self) -> bool {
         self.pattern.is_none();
     }
 }

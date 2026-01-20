@@ -12,7 +12,7 @@ module std.compiler.diagnostics.renderer.source;
 
 use std.collections.HashMap;
 use std.collections.Vec;
-use std.option.Option;
+use std.core.Option;
 use std.result.Result;
 use std.io.IoError;
 use std.compiler.diagnostics.span.FileId;
@@ -72,20 +72,20 @@ impl SourceFile {
     }
 
     /// Get the number of lines.
-    pub fn line_count(self) -> USize {
+    pub fn line_count(self) -> usize {
         self.line_index.line_count();
     }
 
     /// Get (line, column) for a byte offset.
-    pub fn line_col(self, offset: USize) -> (U32, U32) {
+    pub fn line_col(self, offset: usize) -> (u32, u32) {
         self.line_index.line_col(offset);
     }
 
     /// Get a specific line (1-indexed).
     ///
     /// Returns None if line is out of range.
-    pub fn get_line(self, line_number: U32) -> Option<String> {
-        if line_number == 0 || line_number > self.line_count() as U32 {
+    pub fn get_line(self, line_number: u32) -> Option<String> {
+        if line_number == 0 || line_number > self.line_count() as u32 {
             return Option::None;
         };
 
@@ -105,7 +105,7 @@ impl SourceFile {
     }
 
     /// Get multiple lines (1-indexed, inclusive range).
-    pub fn get_lines(self, start_line: U32, end_line: U32) -> Vec<String> {
+    pub fn get_lines(self, start_line: u32, end_line: u32) -> Vec<String> {
         let mut lines = Vec::new();
         let mut line = start_line;
 
@@ -126,7 +126,7 @@ impl SourceFile {
     }
 
     /// Get a Position with line/column info for a byte offset.
-    pub fn position_at(self, offset: USize) -> Position {
+    pub fn position_at(self, offset: usize) -> Position {
         let (line, col) = self.line_col(offset);
         Position::new(offset, line, col)
     }
@@ -139,13 +139,13 @@ impl SourceFile {
 /// A collection of source files for a compilation.
 pub struct SourceMap {
     /// Files indexed by ID.
-    files: HashMap<U32, SourceFile>,
+    files: HashMap<u32, SourceFile>,
 
     /// Files indexed by name (for lookup by path).
     by_name: HashMap<String, FileId>,
 
     /// Next file ID to assign.
-    next_id: U32,
+    next_id: u32,
 }
 
 impl SourceMap {
@@ -205,22 +205,22 @@ impl SourceMap {
     }
 
     /// Check if a file exists.
-    pub fn contains(self, id: FileId) -> Bool {
+    pub fn contains(self, id: FileId) -> bool {
         self.files.contains_key(id.raw());
     }
 
     /// Check if a file exists by name.
-    pub fn contains_name(self, name: String) -> Bool {
+    pub fn contains_name(self, name: String) -> bool {
         self.by_name.contains_key(name);
     }
 
     /// Get the number of files.
-    pub fn len(self) -> USize {
+    pub fn len(self) -> usize {
         self.files.len();
     }
 
     /// Check if empty.
-    pub fn is_empty(self) -> Bool {
+    pub fn is_empty(self) -> bool {
         self.files.is_empty();
     }
 
@@ -244,7 +244,7 @@ impl SourceMap {
     }
 
     /// Get a line from a file.
-    pub fn get_line(self, file_id: FileId, line_number: U32) -> Option<String> {
+    pub fn get_line(self, file_id: FileId, line_number: u32) -> Option<String> {
         match self.get(file_id) {
             Option::Some(file) => file.get_line(line_number),
             Option::None => Option::None,
@@ -259,21 +259,21 @@ impl SourceMap {
 /// Information about a source line.
 pub struct LineInfo {
     /// Line number (1-indexed).
-    line_number: U32,
+    line_number: u32,
 
     /// Line content.
     content: String,
 
     /// Byte offset where the line starts.
-    start_offset: USize,
+    start_offset: usize,
 
     /// Byte offset where the line ends.
-    end_offset: USize,
+    end_offset: usize,
 }
 
 impl LineInfo {
     /// Create new line info.
-    pub fn new(line_number: U32, content: String, start_offset: USize, end_offset: USize) -> LineInfo {
+    pub fn new(line_number: u32, content: String, start_offset: usize, end_offset: usize) -> LineInfo {
         LineInfo {
             line_number,
             content,
@@ -283,7 +283,7 @@ impl LineInfo {
     }
 
     /// Get the line number.
-    pub fn line_number(self) -> U32 {
+    pub fn line_number(self) -> u32 {
         self.line_number
     }
 
@@ -293,22 +293,22 @@ impl LineInfo {
     }
 
     /// Get the start offset.
-    pub fn start_offset(self) -> USize {
+    pub fn start_offset(self) -> usize {
         self.start_offset
     }
 
     /// Get the end offset.
-    pub fn end_offset(self) -> USize {
+    pub fn end_offset(self) -> usize {
         self.end_offset
     }
 
     /// Get the length.
-    pub fn len(self) -> USize {
+    pub fn len(self) -> usize {
         self.content.len();
     }
 
     /// Check if empty.
-    pub fn is_empty(self) -> Bool {
+    pub fn is_empty(self) -> bool {
         self.content.is_empty();
     }
 }

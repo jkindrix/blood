@@ -18,7 +18,7 @@ module std.compiler.diagnostics.label;
 use std.compiler.diagnostics.span.Span;
 use std.compiler.diagnostics.severity.AnsiColor;
 use std.collections.Vec;
-use std.option.Option;
+use std.core.Option;
 
 // ============================================================================
 // Label Kind
@@ -45,7 +45,7 @@ pub enum LabelKind {
 
 impl LabelKind {
     /// Check if this is a primary label.
-    pub fn is_primary(self) -> Bool {
+    pub fn is_primary(self) -> bool {
         match self {
             LabelKind::Primary => true,
             LabelKind::Secondary => false,
@@ -53,7 +53,7 @@ impl LabelKind {
     }
 
     /// Check if this is a secondary label.
-    pub fn is_secondary(self) -> Bool {
+    pub fn is_secondary(self) -> bool {
         match self {
             LabelKind::Primary => false,
             LabelKind::Secondary => true,
@@ -61,7 +61,7 @@ impl LabelKind {
     }
 
     /// Get the underline character for this label kind.
-    pub fn underline_char(self) -> Char {
+    pub fn underline_char(self) -> char {
         match self {
             LabelKind::Primary => '^',
             LabelKind::Secondary => '-',
@@ -111,7 +111,7 @@ pub struct Label {
 
     /// Priority for ordering when labels overlap.
     /// Lower values = higher priority (shown first).
-    priority: U32,
+    priority: u32,
 
     /// Optional override color.
     color: Option<AnsiColor>,
@@ -172,7 +172,7 @@ impl Label {
     // === Builder Methods ===
 
     /// Set the priority (lower = shown first when overlapping).
-    pub fn with_priority(mut self, priority: U32) -> Label {
+    pub fn with_priority(mut self, priority: u32) -> Label {
         self.priority = priority;
         self
     }
@@ -213,22 +213,22 @@ impl Label {
     }
 
     /// Get the priority.
-    pub fn priority(self) -> U32 {
+    pub fn priority(self) -> u32 {
         self.priority
     }
 
     /// Check if this is a primary label.
-    pub fn is_primary(self) -> Bool {
+    pub fn is_primary(self) -> bool {
         self.kind.is_primary();
     }
 
     /// Check if this is a secondary label.
-    pub fn is_secondary(self) -> Bool {
+    pub fn is_secondary(self) -> bool {
         self.kind.is_secondary();
     }
 
     /// Check if this label has a message.
-    pub fn has_message(self) -> Bool {
+    pub fn has_message(self) -> bool {
         self.message.is_some();
     }
 
@@ -241,24 +241,24 @@ impl Label {
     }
 
     /// Get the underline character for this label.
-    pub fn underline_char(self) -> Char {
+    pub fn underline_char(self) -> char {
         self.kind.underline_char();
     }
 
     // === Span Properties ===
 
     /// Get the start line of this label's span.
-    pub fn start_line(self) -> U32 {
+    pub fn start_line(self) -> u32 {
         self.span.start_line();
     }
 
     /// Get the end line of this label's span.
-    pub fn end_line(self) -> U32 {
+    pub fn end_line(self) -> u32 {
         self.span.end_line();
     }
 
     /// Check if this label spans multiple lines.
-    pub fn is_multiline(self) -> Bool {
+    pub fn is_multiline(self) -> bool {
         self.span.is_multiline();
     }
 }
@@ -292,12 +292,12 @@ impl LabelCollection {
     }
 
     /// Get the number of labels.
-    pub fn len(self) -> USize {
+    pub fn len(self) -> usize {
         self.labels.len();
     }
 
     /// Check if the collection is empty.
-    pub fn is_empty(self) -> Bool {
+    pub fn is_empty(self) -> bool {
         self.labels.is_empty();
     }
 
@@ -341,7 +341,7 @@ impl LabelCollection {
     }
 
     /// Get labels that overlap with a given line.
-    pub fn labels_on_line(self, line: U32) -> Vec<Label> {
+    pub fn labels_on_line(self, line: u32) -> Vec<Label> {
         let mut result = Vec::new();
         for label in self.labels.clone() {
             if label.start_line() <= line && label.end_line() >= line {
@@ -354,13 +354,13 @@ impl LabelCollection {
     /// Get the range of lines covered by all labels.
     ///
     /// Returns (min_line, max_line) or None if empty.
-    pub fn line_range(self) -> Option[(U32, U32)] {
+    pub fn line_range(self) -> Option[(u32, u32)] {
         if self.labels.is_empty() {
             return Option::None;
         };
 
-        let mut min_line = U32::MAX;
-        let mut max_line: U32 = 0;
+        let mut min_line = u32::MAX;
+        let mut max_line: u32 = 0;
 
         for label in self.labels.clone() {
             let start = label.start_line();
@@ -378,7 +378,7 @@ impl LabelCollection {
     }
 
     /// Check if any label is multiline.
-    pub fn has_multiline(self) -> Bool {
+    pub fn has_multiline(self) -> bool {
         for label in self.labels.clone() {
             if label.is_multiline() {
                 return true;

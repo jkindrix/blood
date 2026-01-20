@@ -21,7 +21,7 @@ module std.compiler.diagnostics.suggestion;
 
 use std.compiler.diagnostics.span.Span;
 use std.collections.Vec;
-use std.option.Option;
+use std.core.Option;
 
 // ============================================================================
 // Applicability
@@ -74,7 +74,7 @@ pub enum Applicability {
 
 impl Applicability {
     /// Check if this suggestion is safe for automated application.
-    pub fn is_machine_applicable(self) -> Bool {
+    pub fn is_machine_applicable(self) -> bool {
         match self {
             Applicability::MachineApplicable => true,
             Applicability::HasPlaceholders => false,
@@ -84,7 +84,7 @@ impl Applicability {
     }
 
     /// Check if this suggestion has placeholders.
-    pub fn has_placeholders(self) -> Bool {
+    pub fn has_placeholders(self) -> bool {
         match self {
             Applicability::HasPlaceholders => true,
             Applicability::MachineApplicable => false,
@@ -94,7 +94,7 @@ impl Applicability {
     }
 
     /// Check if this suggestion might be incorrect.
-    pub fn might_be_incorrect(self) -> Bool {
+    pub fn might_be_incorrect(self) -> bool {
         match self {
             Applicability::MaybeIncorrect => true,
             Applicability::Unspecified => true,  // Unknown = might be incorrect
@@ -127,7 +127,7 @@ pub enum Substitution {
     /// The text is inserted before the given offset.
     Insert {
         /// Byte offset where to insert.
-        position: USize,
+        position: usize,
         /// Text to insert.
         text: String,
     },
@@ -149,7 +149,7 @@ pub enum Substitution {
 
 impl Substitution {
     /// Create an insertion.
-    pub fn insert(position: USize, text: String) -> Substitution {
+    pub fn insert(position: usize, text: String) -> Substitution {
         Substitution::Insert { position, text }
     }
 
@@ -180,7 +180,7 @@ impl Substitution {
     }
 
     /// Check if this is an insertion.
-    pub fn is_insert(self) -> Bool {
+    pub fn is_insert(self) -> bool {
         match self {
             Substitution::Insert { .. } => true,
             Substitution::Remove { .. } => false,
@@ -189,7 +189,7 @@ impl Substitution {
     }
 
     /// Check if this is a removal.
-    pub fn is_remove(self) -> Bool {
+    pub fn is_remove(self) -> bool {
         match self {
             Substitution::Remove { .. } => true,
             Substitution::Insert { .. } => false,
@@ -198,7 +198,7 @@ impl Substitution {
     }
 
     /// Check if this is a replacement.
-    pub fn is_replace(self) -> Bool {
+    pub fn is_replace(self) -> bool {
         match self {
             Substitution::Replace { .. } => true,
             Substitution::Insert { .. } => false,
@@ -286,7 +286,7 @@ pub struct Suggestion {
     applicability: Applicability,
 
     /// Whether this is the primary suggestion (shown inline) or alternative.
-    primary: Bool,
+    primary: bool,
 }
 
 impl Suggestion {
@@ -316,7 +316,7 @@ impl Suggestion {
     // === Convenience Constructors ===
 
     /// Create an insertion suggestion.
-    pub fn insert(message: String, position: USize, text: String, applicability: Applicability) -> Suggestion {
+    pub fn insert(message: String, position: usize, text: String, applicability: Applicability) -> Suggestion {
         Suggestion::new(message, Substitution::insert(position, text), applicability)
     }
 
@@ -372,17 +372,17 @@ impl Suggestion {
     }
 
     /// Check if this is the primary suggestion.
-    pub fn is_primary(self) -> Bool {
+    pub fn is_primary(self) -> bool {
         self.primary
     }
 
     /// Check if this suggestion is machine-applicable.
-    pub fn is_machine_applicable(self) -> Bool {
+    pub fn is_machine_applicable(self) -> bool {
         self.applicability.is_machine_applicable();
     }
 
     /// Check if this suggestion has placeholders.
-    pub fn has_placeholders(self) -> Bool {
+    pub fn has_placeholders(self) -> bool {
         self.applicability.has_placeholders();
     }
 

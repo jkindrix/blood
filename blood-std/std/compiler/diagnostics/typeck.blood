@@ -21,7 +21,7 @@
 
 module std.compiler.diagnostics.typeck;
 
-use std.option.Option;
+use std.core.Option;
 use std.collections.Vec;
 use std.compiler.diagnostics.diagnostic.Diagnostic;
 use std.compiler.diagnostics.severity.Severity;
@@ -92,16 +92,16 @@ pub enum TypeErrorKindAdapter {
     UnresolvedType { name: String },
 
     // Arity
-    WrongArity { expected: U32, found: U32 },
+    WrongArity { expected: u32, found: u32 },
 
     // Unification
-    OccursCheck { var_id: U32, ty: String },
+    OccursCheck { var_id: u32, ty: String },
 
     // Effects
     UnhandledEffect { effect: String },
     InvalidEffectOp { effect: String, op: String },
-    EffectMismatch { expected_pure: Bool },
-    EffectRowMismatch { expected_count: U32, found_count: U32 },
+    EffectMismatch { expected_pure: bool },
+    EffectRowMismatch { expected_count: u32, found_count: u32 },
     EffectNotInRow { effect: String },
 
     // Definitions
@@ -123,7 +123,7 @@ pub enum TypeErrorKindAdapter {
 
     // Tuples
     TupleFieldNotNumeric { field: String },
-    TupleFieldOutOfBounds { index: U32, tuple_len: U32 },
+    TupleFieldOutOfBounds { index: u32, tuple_len: u32 },
 
     // Enums
     CannotConstructEnum { name: String },
@@ -570,7 +570,7 @@ fn test_wrong_arity_diagnostic() {
 fn test_error_code_mapping() {
     let kind = TypeErrorKindAdapter::Mismatch {
         expected: "Int",
-        found: "Bool",
+        found: "bool",
     };
 
     assert(kind.error_code() == ErrorCode::TypeMismatch);

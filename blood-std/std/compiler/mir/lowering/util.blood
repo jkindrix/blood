@@ -16,14 +16,14 @@
 /// - `LoopContext`: Information about the current loop for break/continue
 /// - `LoweringResult`: Result type for lowering operations
 
-use crate.compiler.hir::{
+use std.compiler.hir::{
     BinOp as HirBinOp,
     UnaryOp as HirUnaryOp,
     LiteralValue,
     Pattern,
     PatternKind,
 };
-use crate.compiler.mir::{
+use std.compiler.mir::{
     BinOp as MirBinOp,
     UnOp as MirUnOp,
     Constant,
@@ -31,7 +31,7 @@ use crate.compiler.mir::{
     BasicBlockId,
     Place,
 };
-use crate.compiler.typeck::types::Type;
+use std.compiler.typeck::types::Type;
 
 // ============================================================
 // Operator Conversion
@@ -102,8 +102,8 @@ pub fn lower_literal(lit: &LiteralValue, ty: &Type) -> Constant {
         LiteralValue::Int(v) => ConstantKind::Int { value: *v },
         LiteralValue::Uint(v) => ConstantKind::Uint { value: *v },
         LiteralValue::Float(v) => ConstantKind::Float { value: *v },
-        LiteralValue::Bool(v) => ConstantKind::Bool { value: *v },
-        LiteralValue::Char(v) => ConstantKind::Char { value: *v },
+        LiteralValue::bool(v) => ConstantKind::bool { value: *v },
+        LiteralValue::char(v) => ConstantKind::char { value: *v },
         LiteralValue::String(v) => ConstantKind::String { value: v.clone() },
         LiteralValue::ByteString(_) => {
             // Byte strings are represented as arrays of u8

@@ -15,11 +15,11 @@
 
 module std.compiler.driver.pipeline;
 
-use std.option.Option;
+use std.core.Option;
 use std.result.Result;
 use std.collections.Vec;
 use std.collections.HashMap;
-use std.string.String;
+use std.core.string.String;
 use std.compiler.driver.session.Session;
 use std.compiler.driver.session.SourceFile;
 use std.compiler.driver.config.OutputType;
@@ -61,18 +61,18 @@ type EscapeAnalysisMap = HashMap<u32, EscapeResults>;
 /// Contains the generated output and any metadata.
 pub struct CompilationResult {
     /// The generated output (bytes).
-    pub output: Vec<U8>,
+    pub output: Vec<u8>,
     /// Output type that was generated.
     pub output_type: OutputType,
     /// Source file name.
     pub source_name: String,
     /// Number of warnings generated.
-    pub warning_count: U32,
+    pub warning_count: u32,
 }
 
 impl CompilationResult {
     /// Create a new compilation result.
-    pub fn new(output: Vec<U8>, output_type: OutputType, source_name: String) -> CompilationResult {
+    pub fn new(output: Vec<u8>, output_type: OutputType, source_name: String) -> CompilationResult {
         CompilationResult {
             output,
             output_type,
@@ -92,12 +92,12 @@ impl CompilationResult {
     }
 
     /// Check if the output is empty.
-    pub fn is_empty(self) -> Bool {
+    pub fn is_empty(self) -> bool {
         self.output.is_empty();
     }
 
     /// Get the output size in bytes.
-    pub fn output_size(self) -> USize {
+    pub fn output_size(self) -> usize {
         self.output.len();
     }
 }
@@ -118,16 +118,16 @@ pub struct CompilationError {
     /// Source file name.
     pub file: String,
     /// Line number (1-indexed, 0 if unknown).
-    pub line: U32,
+    pub line: u32,
     /// Column number (1-indexed, 0 if unknown).
-    pub column: U32,
+    pub column: u32,
     /// Optional help text.
     pub help: Option<String>,
 }
 
 impl CompilationError {
     /// Create a new compilation error.
-    pub fn new(phase: CompilationPhase, message: String, file: String, line: U32, column: U32) -> CompilationError {
+    pub fn new(phase: CompilationPhase, message: String, file: String, line: u32, column: u32) -> CompilationError {
         CompilationError {
             phase,
             message,
@@ -469,7 +469,7 @@ fn generate_code(
     session: &mut Session,
     hir: &HirCrate,
     mir: &MirLoweringResult,
-) -> Result<Vec<U8>, CompilationError> {
+) -> Result<Vec<u8>, CompilationError> {
     // Determine output path from session
     let output_path = session.output_path().unwrap_or("a.out".to_string());
 
