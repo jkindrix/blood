@@ -40,7 +40,8 @@ use std.compiler.codegen.llvm.types::{
 };
 use std.compiler.codegen.context::CodegenContext;
 
-use std.compiler.hir::{DefId, Type, TypeKind, PrimitiveTy, IntTy, UintTy, FloatTy, FnSig};
+use std.compiler.typeck.types::{DefId, Type, TypeKind, PrimitiveTy};
+use std.compiler.hir::{FnSig};
 
 // ============================================================================
 // Type Lowering
@@ -162,26 +163,25 @@ fn lower_primitive(llvm_ctx: LLVMContextRef, prim: &PrimitiveTy) -> LLVMTypeRef 
         PrimitiveTy::Bool => i1_type(llvm_ctx).raw(),
         PrimitiveTy::Char => i32_type(llvm_ctx).raw(),
 
-        PrimitiveTy::Int(int_ty) => match int_ty {
-            IntTy::I8 => i8_type(llvm_ctx).raw(),
-            IntTy::I16 => i16_type(llvm_ctx).raw(),
-            IntTy::I32 => i32_type(llvm_ctx).raw(),
-            IntTy::I64 => i64_type(llvm_ctx).raw(),
-            IntTy::I128 => i128_type(llvm_ctx).raw(),
-            IntTy::Isize => i64_type(llvm_ctx).raw(),
-        },
+        // Signed integers
+        PrimitiveTy::I8 => i8_type(llvm_ctx).raw(),
+        PrimitiveTy::I16 => i16_type(llvm_ctx).raw(),
+        PrimitiveTy::I32 => i32_type(llvm_ctx).raw(),
+        PrimitiveTy::I64 => i64_type(llvm_ctx).raw(),
+        PrimitiveTy::I128 => i128_type(llvm_ctx).raw(),
+        PrimitiveTy::Isize => i64_type(llvm_ctx).raw(),
 
-        PrimitiveTy::Uint(uint_ty) => match uint_ty {
-            UintTy::U8 => i8_type(llvm_ctx).raw(),
-            UintTy::U16 => i16_type(llvm_ctx).raw(),
-            UintTy::U32 => i32_type(llvm_ctx).raw(),
-            UintTy::U64 => i64_type(llvm_ctx).raw(),
-            UintTy::U128 => i128_type(llvm_ctx).raw(),
-            UintTy::Usize => i64_type(llvm_ctx).raw(),
-        },
+        // Unsigned integers
+        PrimitiveTy::U8 => i8_type(llvm_ctx).raw(),
+        PrimitiveTy::U16 => i16_type(llvm_ctx).raw(),
+        PrimitiveTy::U32 => i32_type(llvm_ctx).raw(),
+        PrimitiveTy::U64 => i64_type(llvm_ctx).raw(),
+        PrimitiveTy::U128 => i128_type(llvm_ctx).raw(),
+        PrimitiveTy::Usize => i64_type(llvm_ctx).raw(),
 
-        PrimitiveTy::Float(FloatTy::F32) => f32_type(llvm_ctx).raw(),
-        PrimitiveTy::Float(FloatTy::F64) => f64_type(llvm_ctx).raw(),
+        // Floating point
+        PrimitiveTy::F32 => f32_type(llvm_ctx).raw(),
+        PrimitiveTy::F64 => f64_type(llvm_ctx).raw(),
 
         PrimitiveTy::Str => {
             // String slice: { ptr, len }
@@ -190,20 +190,8 @@ fn lower_primitive(llvm_ctx: LLVMContextRef, prim: &PrimitiveTy) -> LLVMTypeRef 
             struct_type(llvm_ctx, &[ptr_ty, len_ty], false).raw()
         }
 
-        PrimitiveTy::String => {
-            // Heap-allocated string: { ptr, len, capacity }
-            let ptr_ty = ptr_type(llvm_ctx, 0).raw();
-            let len_ty = i64_type(llvm_ctx).raw();
-            struct_type(llvm_ctx, &[ptr_ty, len_ty, len_ty], false).raw()
-        }
-
         PrimitiveTy::Unit => {
             // Unit type - use i8 as placeholder
-            i8_type(llvm_ctx).raw()
-        }
-
-        PrimitiveTy::Never => {
-            // Never type (!) - use i8 placeholder
             i8_type(llvm_ctx).raw()
         }
     }
