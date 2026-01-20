@@ -1,5 +1,48 @@
 # Blood Compiler Development Guidelines
 
+## Dual Compiler Architecture
+
+This repository contains two parallel compiler implementations:
+
+| Compiler | Location | Language | Purpose |
+|----------|----------|----------|---------|
+| **Reference** | `bloodc/src/` | Rust | Bootstrap compiler, leverages Rust ecosystem (inkwell, ariadne) |
+| **Self-Hosted** | `blood-std/std/compiler/` | Blood | Self-hosting target, implements everything in Blood |
+
+Both compilers share identical architecture:
+```
+Source → Lexer → Parser → AST → HIR → Type Check → MIR → Codegen → LLVM
+```
+
+### Parity Expectations
+
+**The Blood compiler must match the Rust compiler's behavior for all language semantics.**
+
+When the Blood compiler lacks a feature that the Rust compiler has:
+- This is generally a **bug to fix**, not a design decision
+- Check `blood-std/std/compiler/COMPILER_NOTES.md` for explicitly documented limitations
+- If not documented, implement the missing feature to match Rust
+
+### Blood Language Idioms
+
+Blood is not Rust. These patterns are **correct in Blood**, not shortcuts:
+
+| Pattern | Why It's Correct |
+|---------|------------------|
+| `while i < len { ... i = i + 1; }` | Blood lacks iterator adapters |
+| `i = i + 1` | Blood lacks `+=` operator |
+| Explicit match arms for every variant | Required by zero shortcuts principle |
+| `HashMap<u32, Type>` vs newtype keys | Blood's type system differs from Rust |
+
+**Do not "improve" Blood code by adding Rust features that don't exist in Blood.**
+
+### Design Documentation
+
+For detailed design decisions, divergences, and known limitations, see:
+- `blood-std/std/compiler/COMPILER_NOTES.md`
+
+---
+
 ## Prime Directive: Zero Shortcuts
 
 **This codebase must have ZERO shortcuts.** Every pattern match must be exhaustive with proper handling. Every error case must be reported. Every feature must be complete or explicitly error with "not yet implemented."
