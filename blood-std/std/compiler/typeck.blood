@@ -78,26 +78,27 @@ impl EffectRowVarId {
 
 /// Primitive types built into the language.
 enum PrimitiveTy {
-    // Integers
-    i8,
-    i16,
-    i32,
-    i64,
-    i128,
+    // Signed integers
+    I8,
+    I16,
+    I32,
+    I64,
+    I128,
     Isize,
-    u8,
-    u16,
-    u32,
-    u64,
-    u128,
+    // Unsigned integers
+    U8,
+    U16,
+    U32,
+    U64,
+    U128,
     Usize,
     // Floats
-    f32,
-    f64,
+    F32,
+    F64,
     // Other
-    bool,
-    char,
-    String,
+    Bool,
+    Char,
+    Str,
     Unit,
 }
 
@@ -121,7 +122,7 @@ impl PrimitiveTy {
             PrimitiveTy::F64 => "f64",
             PrimitiveTy::Bool => "bool",
             PrimitiveTy::Char => "char",
-            PrimitiveTy::String => "String",
+            PrimitiveTy::Str => "str",
             PrimitiveTy::Unit => "()",
         }
     }
@@ -282,9 +283,9 @@ impl Type {
         Type::new(TypeKind::Primitive(PrimitiveTy::I64))
     }
 
-    /// Create a string type.
-    fn string_type() -> Type {
-        Type::new(TypeKind::Primitive(PrimitiveTy::String))
+    /// Create a str type.
+    fn str_type() -> Type {
+        Type::new(TypeKind::Primitive(PrimitiveTy::Str))
     }
 
     /// Create an inference variable.
@@ -787,7 +788,7 @@ impl Unifier {
             (PrimitiveTy::F64, PrimitiveTy::F64) => true,
             (PrimitiveTy::Bool, PrimitiveTy::Bool) => true,
             (PrimitiveTy::Char, PrimitiveTy::Char) => true,
-            (PrimitiveTy::String, PrimitiveTy::String) => true,
+            (PrimitiveTy::Str, PrimitiveTy::Str) => true,
             (PrimitiveTy::Unit, PrimitiveTy::Unit) => true,
             _ => false,
         }
@@ -1330,7 +1331,7 @@ impl TraitResolver {
             (PrimitiveTy::F64, PrimitiveTy::F64) => true,
             (PrimitiveTy::Bool, PrimitiveTy::Bool) => true,
             (PrimitiveTy::Char, PrimitiveTy::Char) => true,
-            (PrimitiveTy::String, PrimitiveTy::String) => true,
+            (PrimitiveTy::Str, PrimitiveTy::Str) => true,
             (PrimitiveTy::Unit, PrimitiveTy::Unit) => true,
             _ => false,
         }
@@ -1648,8 +1649,9 @@ impl TypeContext {
     /// Lower an AST type to a semantic type.
     fn lower_type(&mut self, ast_ty: &AstType) -> Type {
         match &ast_ty.kind {
-            AstTypeKind::Named { path, args } => {
-                let name = &path.segments[0].value;
+            AstTypeKind::Path(path) => {
+                let first_segment = &path.segments[0];
+                let name = &first_segment.name.value;
 
                 // Check for primitive types
                 if let Some(prim) = self.lookup_primitive(name) {
@@ -1659,12 +1661,13 @@ impl TypeContext {
                 // Look up user-defined type
                 match self.scope.lookup_type(name) {
                     Some(def_id) => {
-                        let type_args = match args {
+                        let type_args = match &first_segment.args {
                             Some(arg_list) => {
                                 let mut args: [Type] = vec![];
                                 let mut i: usize = 0;
-                                while i < arg_list.len() {
-                                    args.push(self.lower_type(&arg_list[i]));
+                                while i < arg_list.args.len() {
+                                    // TypeArg can be a type or a const - handle type case
+                                    args.push(self.lower_type_arg(&arg_list.args[i]));
                                     i = i + 1;
                                 }
                                 args
@@ -1766,7 +1769,7 @@ impl TypeContext {
             "f64" => Some(PrimitiveTy::F64),
             "bool" => Some(PrimitiveTy::Bool),
             "char" => Some(PrimitiveTy::Char),
-            "String" => Some(PrimitiveTy::String),
+            "str" => Some(PrimitiveTy::Str),
             _ => None,
         }
     }
@@ -2292,7 +2295,7 @@ impl TypeContext {
     /// Bind a pattern to a type, adding variables to scope.
     fn bind_pattern(&mut self, pattern: &Pattern, ty: &Type) {
         match &pattern.kind {
-            PatternKind::Identifier(name) => {
+            PatternKind::Ident { name, .. } => {
                 self.scope.define_var(name.value.clone(), ty.clone());
             }
             PatternKind::Wildcard => {
@@ -3332,7 +3335,7 @@ impl TypeContext {
     /// Check if a pattern is a self parameter.
     fn is_self_param(&self, pattern: &Pattern) -> bool {
         match &pattern.kind {
-            PatternKind::Identifier(name) => name.value == "self",
+            PatternKind::Ident { name, .. } => name.value == "self",
             _ => false,
         }
     }
@@ -3384,15 +3387,11 @@ impl TypeContext {
                 left.clone();
             }
 
-            // Compound assignment operators
-            BinOp::AddAssign | BinOp::SubAssign | BinOp::MulAssign | BinOp::DivAssign |
-            BinOp::RemAssign | BinOp::BitAndAssign | BinOp::BitOrAssign | BinOp::BitXorAssign |
-            BinOp::ShlAssign | BinOp::ShrAssign => {
-                match self.unifier.unify(left, right, span) {
-                    Ok(()) => {}
-                    Err(e) => self.error(e),
-                }
-                Type::unit()
+            // Pipe operator: used for function composition
+            BinOp::Pipe => {
+                // TODO: implement pipe operator type checking
+                // For now, return right side's type
+                right.clone();
             }
         }
     }
@@ -3674,7 +3673,7 @@ impl ExhaustivenessChecker {
     fn pattern_to_matrix(&self, pattern: &Pattern, ctx: &TypeContext) -> PatternMatrix {
         match &pattern.kind {
             PatternKind::Wildcard => PatternMatrix::Wild,
-            PatternKind::Identifier(_) => PatternMatrix::Wild, // Binding is like wildcard for exhaustiveness
+            PatternKind::Ident { .. } => PatternMatrix::Wild, // Binding is like wildcard for exhaustiveness
             PatternKind::Literal(lit) => {
                 match lit {
                     Literal::bool(b) => PatternMatrix::Literal(LiteralPattern::bool(*b)),
