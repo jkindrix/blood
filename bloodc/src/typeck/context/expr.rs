@@ -53,11 +53,97 @@ impl<'a> TypeContext<'a> {
 
         let inferred = self.infer_expr(expr)?;
 
+        // Try deref coercion for Box: if expected is &T and inferred is &Box<T>, auto-deref
+        let coerced = self.try_deref_coercion(&inferred, expected, expr.span)?;
+
         // Unify expected type with inferred - order matters for error messages
         // Use alias expansion so that `Ident` matches `Spanned<Symbol>` when `type Ident = Spanned<Symbol>`
-        self.unify_with_alias_expansion(expected, &inferred.ty, expr.span)?;
+        self.unify_with_alias_expansion(expected, &coerced.ty, expr.span)?;
 
-        Ok(inferred)
+        Ok(coerced)
+    }
+
+    /// Try to apply deref coercion for Box types.
+    /// If expected is &T and inferred is &Box<T>, insert an auto-deref.
+    fn try_deref_coercion(
+        &self,
+        expr: &hir::Expr,
+        expected: &Type,
+        span: Span,
+    ) -> Result<hir::Expr, TypeError> {
+        let resolved_expected = self.unifier.resolve(expected);
+        let resolved_inferred = self.unifier.resolve(&expr.ty);
+
+        // Check if expected is &T
+        if let TypeKind::Ref { inner: expected_inner, mutable: expected_mut } = resolved_expected.kind() {
+            // Check if inferred is &Box<T>
+            if let TypeKind::Ref { inner: inferred_inner, mutable: inferred_mut } = resolved_inferred.kind() {
+                // Check mutability compatibility
+                if *expected_mut && !inferred_mut {
+                    return Ok(expr.clone()); // Let unification handle the error
+                }
+
+                // Check if inner type is Box<T>
+                let resolved_inferred_inner = self.unifier.resolve(inferred_inner);
+                if let TypeKind::Adt { def_id, args, .. } = resolved_inferred_inner.kind() {
+                    // Check if this is Box
+                    if Some(*def_id) == self.box_def_id && args.len() == 1 {
+                        let box_inner_ty = &args[0];
+                        let resolved_expected_inner = self.unifier.resolve(expected_inner);
+
+                        // Check if Box<T>'s T matches expected inner type
+                        if self.types_match_for_coercion(box_inner_ty, &resolved_expected_inner) {
+                            // Insert auto-deref: &Box<T> -> &T
+                            // First deref the reference to get Box<T>
+                            let deref_ref = hir::Expr::new(
+                                hir::ExprKind::Deref(Box::new(expr.clone())),
+                                resolved_inferred_inner.clone(),
+                                span,
+                            );
+                            // Then deref the Box to get T
+                            let deref_box = hir::Expr::new(
+                                hir::ExprKind::Deref(Box::new(deref_ref)),
+                                box_inner_ty.clone(),
+                                span,
+                            );
+                            // Re-reference to get &T
+                            let result_ty = Type::reference(box_inner_ty.clone(), *expected_mut);
+                            return Ok(hir::Expr::new(
+                                hir::ExprKind::AddrOf {
+                                    mutable: *expected_mut,
+                                    expr: Box::new(deref_box),
+                                },
+                                result_ty,
+                                span,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        // No coercion needed
+        Ok(expr.clone())
+    }
+
+    /// Check if two types match for the purpose of deref coercion.
+    fn types_match_for_coercion(&self, ty1: &Type, ty2: &Type) -> bool {
+        let resolved1 = self.unifier.resolve(ty1);
+        let resolved2 = self.unifier.resolve(ty2);
+
+        match (resolved1.kind(), resolved2.kind()) {
+            (TypeKind::Adt { def_id: d1, args: a1, .. }, TypeKind::Adt { def_id: d2, args: a2, .. }) => {
+                d1 == d2 && a1.len() == a2.len() &&
+                a1.iter().zip(a2.iter()).all(|(t1, t2)| self.types_match_for_coercion(t1, t2))
+            }
+            (TypeKind::Ref { inner: i1, mutable: m1 }, TypeKind::Ref { inner: i2, mutable: m2 }) => {
+                m1 == m2 && self.types_match_for_coercion(i1, i2)
+            }
+            (TypeKind::Tuple(t1), TypeKind::Tuple(t2)) => {
+                t1.len() == t2.len() && t1.iter().zip(t2.iter()).all(|(a, b)| self.types_match_for_coercion(a, b))
+            }
+            _ => resolved1 == resolved2 || matches!(resolved1.kind(), TypeKind::Infer(_)) || matches!(resolved2.kind(), TypeKind::Infer(_))
+        }
     }
 
     /// Infer the type of an expression.
@@ -1448,6 +1534,8 @@ impl<'a> TypeContext<'a> {
                     Some(BuiltinMethodType::Option)
                 } else if Some(*def_id) == self.vec_def_id {
                     Some(BuiltinMethodType::Vec)
+                } else if Some(*def_id) == self.box_def_id {
+                    Some(BuiltinMethodType::Box)
                 } else {
                     None
                 }
@@ -1482,6 +1570,26 @@ impl<'a> TypeContext<'a> {
                                             self.option_def_id.expect("BUG: option_def_id not set"),
                                             vec![ref_elem],
                                         )
+                                    } else {
+                                        sig.output.clone()
+                                    }
+                                } else {
+                                    sig.output.clone()
+                                }
+                            } else {
+                                sig.output.clone()
+                            }
+                        }
+                        BuiltinMethodType::Box => {
+                            // Extract the type argument from Box<T>
+                            if let TypeKind::Adt { args, .. } = ty.kind() {
+                                if !args.is_empty() {
+                                    let inner_ty = args[0].clone();
+                                    // For Box<T>.as_ref(), return type is &T
+                                    if method_name == "as_ref" {
+                                        Type::reference(inner_ty, false)
+                                    } else if method_name == "as_mut" {
+                                        Type::reference(inner_ty, true)
                                     } else {
                                         sig.output.clone()
                                     }
@@ -1560,7 +1668,7 @@ impl<'a> TypeContext<'a> {
                             // 9000 is T (element type), 9001 is U (used by map for return type)
                             (vec![TyVarId(9000), TyVarId(9001)], sig.inputs.first().cloned())
                         }
-                        BuiltinMethodType::Vec => {
+                        BuiltinMethodType::Vec | BuiltinMethodType::Box => {
                             // Return TyVarId(9000) as the type parameter to substitute
                             (vec![TyVarId(9000)], sig.inputs.first().cloned())
                         }

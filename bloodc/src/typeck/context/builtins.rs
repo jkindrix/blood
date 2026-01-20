@@ -689,6 +689,8 @@ impl<'a> TypeContext<'a> {
             fields: vec![],  // opaque - no exposed fields
             generics: vec![box_t_var_id],
         });
+
+        self.box_def_id = Some(box_def_id);
     }
 
     /// Register built-in methods for primitive and builtin types.
@@ -1235,6 +1237,32 @@ impl<'a> TypeContext<'a> {
         );
 
         // =========================================================================
+        // Box<T> methods
+        // =========================================================================
+
+        let box_t = Type::adt(self.box_def_id.expect("BUG: box_def_id not set"), vec![t_ty.clone()]);
+
+        // Box<T>.as_ref(&self) -> &T
+        self.register_builtin_method(
+            BuiltinMethodType::Box,
+            "as_ref",
+            false,
+            vec![Type::reference(box_t.clone(), false)],
+            Type::reference(t_ty.clone(), false),
+            "box_as_ref",
+        );
+
+        // Box<T>.as_mut(&mut self) -> &mut T
+        self.register_builtin_method(
+            BuiltinMethodType::Box,
+            "as_mut",
+            false,
+            vec![Type::reference(box_t.clone(), true)],
+            Type::reference(t_ty.clone(), true),
+            "box_as_mut",
+        );
+
+        // =========================================================================
         // Array [T; N] methods
         // =========================================================================
 
@@ -1651,6 +1679,7 @@ impl<'a> TypeContext<'a> {
                 super::BuiltinMethodType::Array => "Array",
                 super::BuiltinMethodType::RawPtrConst => "ptr_const",
                 super::BuiltinMethodType::RawPtrMut => "ptr_mut",
+                super::BuiltinMethodType::Box => "Box",
             },
             name
         );

@@ -156,6 +156,8 @@ pub struct TypeContext<'a> {
     pub(crate) result_def_id: Option<DefId>,
     /// DefId for the built-in Vec<T> type.
     pub(crate) vec_def_id: Option<DefId>,
+    /// DefId for the built-in Box<T> type (for deref coercion).
+    pub(crate) box_def_id: Option<DefId>,
     /// Builtin methods for primitive and builtin types.
     /// Maps (type discriminant, method name) -> method info.
     pub(crate) builtin_methods: Vec<BuiltinMethodInfo>,
@@ -356,6 +358,8 @@ pub enum BuiltinMethodType {
     RawPtrConst,
     /// Matches `*mut T` raw pointer type.
     RawPtrMut,
+    /// Matches `Box<T>` type.
+    Box,
 }
 
 /// Information about a builtin method for primitive/builtin types.
@@ -692,6 +696,7 @@ impl<'a> TypeContext<'a> {
             option_def_id: None,
             result_def_id: None,
             vec_def_id: None,
+            box_def_id: None,
             builtin_methods: Vec::new(),
         };
         ctx.register_builtins();
