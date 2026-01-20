@@ -1343,6 +1343,17 @@ impl<'a> TypeContext<'a> {
             "array_iter",
         );
 
+        // [T; N].as_ptr(&self) -> *const T
+        // Returns a raw pointer to the first element
+        self.register_builtin_method(
+            BuiltinMethodType::Array,
+            "as_ptr",
+            false,
+            vec![Type::reference(array_ty.clone(), false)],
+            Type::new(TypeKind::Ptr { inner: array_elem_t.clone(), mutable: false }),
+            "array_as_ptr",
+        );
+
         // [String].join(&self, sep: &str) -> String
         // Join array of strings with separator
         let array_string = Type::array(string_ty.clone(), 0);
@@ -1462,6 +1473,17 @@ impl<'a> TypeContext<'a> {
             vec![Type::reference(slice_ty.clone(), false)],
             Type::reference(slice_ty.clone(), false),
             "slice_iter",
+        );
+
+        // [T].as_ptr(&self) -> *const T
+        // Returns a raw pointer to the first element
+        self.register_builtin_method(
+            BuiltinMethodType::Slice,
+            "as_ptr",
+            false,
+            vec![Type::reference(slice_ty.clone(), false)],
+            Type::new(TypeKind::Ptr { inner: slice_elem_t.clone(), mutable: false }),
+            "slice_as_ptr",
         );
 
         // [String].join(&self, sep: &str) -> String

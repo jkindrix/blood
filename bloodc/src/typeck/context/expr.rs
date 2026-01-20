@@ -1524,6 +1524,9 @@ impl<'a> TypeContext<'a> {
                                         },
                                         _ => sig.output.clone(),
                                     }
+                                } else if method_name == "as_ptr" {
+                                    // [T].as_ptr() returns *const T with the actual element type
+                                    Type::new(TypeKind::Ptr { inner: element_ty, mutable: false })
                                 } else {
                                     sig.output.clone()
                                 }
