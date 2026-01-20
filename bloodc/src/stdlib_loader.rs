@@ -112,11 +112,16 @@ impl StdlibLoader {
             return Err(StdlibError::PathNotFound(dir.to_path_buf()));
         }
 
-        let entries = fs::read_dir(dir)
+        // Collect and sort entries for deterministic ordering
+        // read_dir returns entries in arbitrary filesystem order, which causes
+        // non-deterministic DefId assignment and test flakiness
+        let mut entries: Vec<_> = fs::read_dir(dir)
+            .map_err(|e| StdlibError::IoError(e.to_string()))?
+            .collect::<Result<Vec<_>, _>>()
             .map_err(|e| StdlibError::IoError(e.to_string()))?;
+        entries.sort_by_key(|e| e.path());
 
         for entry in entries {
-            let entry = entry.map_err(|e| StdlibError::IoError(e.to_string()))?;
             let path = entry.path();
 
             if path.is_dir() {
