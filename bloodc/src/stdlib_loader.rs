@@ -45,6 +45,8 @@ pub struct LoadedModule {
     pub def_id: Option<DefId>,
     /// DefIds of items in this module
     pub items: Vec<DefId>,
+    /// Mapping from declaration index to DefId (for Phase 2 field type resolution)
+    pub item_def_ids: HashMap<usize, DefId>,
 }
 
 /// Loader for the Blood standard library.
@@ -99,6 +101,7 @@ impl StdlibLoader {
                 interner: DefaultStringInterner::new(),
                 def_id: None,
                 items: Vec::new(),
+                item_def_ids: HashMap::new(),
             });
         }
         self.discover_directory(&self.stdlib_root.clone(), "std")
@@ -166,6 +169,7 @@ impl StdlibLoader {
                         interner: DefaultStringInterner::new(),
                         def_id: None,
                         items: Vec::new(),
+                        item_def_ids: HashMap::new(),
                     });
                 }
 
@@ -221,6 +225,7 @@ impl StdlibLoader {
                     interner: DefaultStringInterner::new(),
                     def_id: None,
                     items: Vec::new(),
+                    item_def_ids: HashMap::new(),
                 });
 
                 // Record as child of parent module
@@ -350,11 +355,14 @@ impl StdlibLoader {
 
             let ast_decl_count = module.ast.declarations.len();
             let mut module_decl_count = 0;
-            for decl in &module.ast.declarations {
+            for (decl_index, decl) in module.ast.declarations.iter().enumerate() {
                 if let Some(item_def_id) = create_item_def_id(ctx, &module.interner, decl, verbose) {
                     module.items.push(item_def_id);
-                    // Register struct/enum type info for type system integration
-                    register_type_info(ctx, &module.interner, item_def_id, decl);
+                    // Store mapping from declaration index to DefId for Phase 2
+                    module.item_def_ids.insert(decl_index, item_def_id);
+                    // Phase 1: Register skeleton type info (name, generics, empty fields)
+                    // Full field types will be resolved in phase 2 after all types are known
+                    register_type_info_skeleton(ctx, &module.interner, item_def_id, decl);
                     // Register function signatures for callable functions
                     register_fn_sig(ctx, &module.interner, item_def_id, decl);
                     decl_count += 1;
@@ -377,6 +385,27 @@ impl StdlibLoader {
         if verbose {
             eprintln!("    Collected {} declarations in {:.2}s", decl_count, decl_start.elapsed().as_secs_f64());
             eprintln!("    Skipped: {} (no DefId)", skipped_no_defid);
+        }
+
+        // Phase 2: Now that all types are registered, resolve field types
+        // This allows field types like Option<ModuleDecl> to find ModuleDecl's DefId
+        if verbose {
+            eprintln!("  Resolving field types...");
+        }
+        let field_type_start = Instant::now();
+        for (_module_path, module) in &self.modules {
+            if module.def_id.is_none() {
+                continue;
+            }
+
+            for (decl_index, decl) in module.ast.declarations.iter().enumerate() {
+                if let Some(&item_def_id) = module.item_def_ids.get(&decl_index) {
+                    register_type_info_with_ctx(ctx, &module.interner, item_def_id, decl);
+                }
+            }
+        }
+        if verbose {
+            eprintln!("    Field types resolved in {:.2}s", field_type_start.elapsed().as_secs_f64());
         }
 
         // Build module hierarchy (parent modules contain child modules)
@@ -1933,8 +1962,313 @@ fn create_item_def_id<'a>(
     Some(def_id)
 }
 
+/// Register skeleton type information for a declaration (Phase 1).
+/// This registers struct/enum name and generics, but with empty fields.
+/// Field types will be resolved in Phase 2 after all types are known.
+fn register_type_info_skeleton<'a>(
+    ctx: &mut TypeContext<'a>,
+    interner: &DefaultStringInterner,
+    def_id: DefId,
+    decl: &ast::Declaration,
+) {
+    let resolve_symbol = |sym: crate::ast::Symbol| -> String {
+        interner.resolve(sym).map(|s| s.to_string()).unwrap_or_else(|| "unknown".to_string())
+    };
+
+    match decl {
+        ast::Declaration::Struct(s) => {
+            // Skip if struct info already exists (e.g., from builtins)
+            if ctx.struct_defs.contains_key(&def_id) {
+                return;
+            }
+
+            let name = resolve_symbol(s.name.node);
+
+            // Extract generics
+            let generics: Vec<TyVarId> = if let Some(ref params) = s.type_params {
+                let mut type_param_index = 0u32;
+                params.params.iter().filter_map(|p| {
+                    match p {
+                        ast::GenericParam::Type(_type_param) => {
+                            let tyvar_id = TyVarId(type_param_index);
+                            type_param_index += 1;
+                            Some(tyvar_id)
+                        }
+                        _ => None,
+                    }
+                }).collect()
+            } else {
+                Vec::new()
+            };
+
+            // Register with empty fields - they'll be filled in Phase 2
+            ctx.struct_defs.insert(def_id, StructInfo {
+                name,
+                fields: Vec::new(),
+                generics,
+            });
+        }
+        ast::Declaration::Enum(e) => {
+            // Skip if enum info already exists (e.g., from builtins like Option, Result)
+            if ctx.enum_defs.contains_key(&def_id) {
+                return;
+            }
+
+            let name = resolve_symbol(e.name.node);
+
+            // Extract generics
+            let generics: Vec<TyVarId> = if let Some(ref params) = e.type_params {
+                let mut type_param_index = 0u32;
+                params.params.iter().filter_map(|p| {
+                    match p {
+                        ast::GenericParam::Type(_type_param) => {
+                            let tyvar_id = TyVarId(type_param_index);
+                            type_param_index += 1;
+                            Some(tyvar_id)
+                        }
+                        _ => None,
+                    }
+                }).collect()
+            } else {
+                Vec::new()
+            };
+
+            // Create variants with empty fields - they'll be filled in Phase 2
+            let mut variants = Vec::new();
+            for (i, v) in e.variants.iter().enumerate() {
+                let variant_name = resolve_symbol(v.name.node);
+
+                // Create a DefId for this variant WITHOUT adding to root scope.
+                let variant_def_id = ctx.resolver.define_namespaced_item(
+                    variant_name.clone(),
+                    DefKind::Variant,
+                    Span::dummy(),
+                );
+
+                variants.push(VariantInfo {
+                    name: variant_name,
+                    index: i as u32,
+                    fields: Vec::new(),
+                    def_id: variant_def_id,
+                });
+            }
+
+            ctx.enum_defs.insert(def_id, EnumInfo {
+                name,
+                variants,
+                generics,
+            });
+        }
+        ast::Declaration::Type(t) => {
+            // Skip if type alias info already exists
+            if ctx.type_aliases.contains_key(&def_id) {
+                return;
+            }
+
+            let name = resolve_symbol(t.name.node);
+
+            // Extract generics from the type alias declaration
+            let generics: Vec<TyVarId> = if let Some(ref params) = t.type_params {
+                params.params.iter().enumerate().filter_map(|(i, p)| {
+                    match p {
+                        ast::GenericParam::Type(_) => Some(TyVarId(i as u32)),
+                        _ => None,
+                    }
+                }).collect()
+            } else {
+                Vec::new()
+            };
+
+            // Register with placeholder aliased type - will be resolved in Phase 2
+            ctx.type_aliases.insert(def_id, TypeAliasInfo {
+                name,
+                generics,
+                ty: Type::error(),
+            });
+        }
+        _ => {}
+    }
+}
+
+/// Register type information with full type resolution (Phase 2).
+/// This updates struct/enum fields and type aliases using context-aware type resolution.
+fn register_type_info_with_ctx<'a>(
+    ctx: &mut TypeContext<'a>,
+    interner: &DefaultStringInterner,
+    def_id: DefId,
+    decl: &ast::Declaration,
+) {
+    let resolve_symbol = |sym: crate::ast::Symbol| -> String {
+        interner.resolve(sym).map(|s| s.to_string()).unwrap_or_else(|| "unknown".to_string())
+    };
+
+    match decl {
+        ast::Declaration::Struct(s) => {
+            // Skip if struct info doesn't exist (shouldn't happen)
+            if !ctx.struct_defs.contains_key(&def_id) {
+                return;
+            }
+
+            // Build generic params map: param name -> TyVarId
+            let mut generic_params_map: HashMap<String, TyVarId> = HashMap::new();
+            if let Some(ref params) = s.type_params {
+                let mut type_param_index = 0u32;
+                for p in &params.params {
+                    if let ast::GenericParam::Type(type_param) = p {
+                        let param_name = resolve_symbol(type_param.name.node);
+                        let tyvar_id = TyVarId(type_param_index);
+                        type_param_index += 1;
+                        generic_params_map.insert(param_name, tyvar_id);
+                    }
+                }
+            }
+
+            // Convert fields using context-aware type resolution
+            let fields = match &s.body {
+                ast::StructBody::Record(fields) => {
+                    fields
+                        .iter()
+                        .enumerate()
+                        .map(|(i, f)| {
+                            let field_name = resolve_symbol(f.name.node);
+                            let ty = ast_type_to_type_with_ctx_and_generics(ctx, interner, &f.ty, &generic_params_map);
+                            FieldInfo {
+                                name: field_name,
+                                ty,
+                                index: i as u32,
+                            }
+                        })
+                        .collect()
+                }
+                ast::StructBody::Tuple(fields) => {
+                    fields
+                        .iter()
+                        .enumerate()
+                        .map(|(i, field)| {
+                            let ty = ast_type_to_type_with_ctx_and_generics(ctx, interner, &field.ty, &generic_params_map);
+                            FieldInfo {
+                                name: format!("{i}"),
+                                ty,
+                                index: i as u32,
+                            }
+                        })
+                        .collect()
+                }
+                ast::StructBody::Unit => Vec::new(),
+            };
+
+            // Update the struct info with resolved field types
+            if let Some(struct_info) = ctx.struct_defs.get_mut(&def_id) {
+                struct_info.fields = fields;
+            }
+        }
+        ast::Declaration::Enum(e) => {
+            // Skip if enum info doesn't exist (shouldn't happen) or is builtin
+            if !ctx.enum_defs.contains_key(&def_id) {
+                return;
+            }
+
+            // Check if this is a builtin enum (Option, Result) - don't override their fields
+            let name = resolve_symbol(e.name.node);
+            if name == "Option" || name == "Result" {
+                return;
+            }
+
+            // Build generic params map: param name -> TyVarId
+            let mut generic_params_map: HashMap<String, TyVarId> = HashMap::new();
+            if let Some(ref params) = e.type_params {
+                let mut type_param_index = 0u32;
+                for p in &params.params {
+                    if let ast::GenericParam::Type(type_param) = p {
+                        let param_name = resolve_symbol(type_param.name.node);
+                        let tyvar_id = TyVarId(type_param_index);
+                        type_param_index += 1;
+                        generic_params_map.insert(param_name, tyvar_id);
+                    }
+                }
+            }
+
+            // Collect all variant fields first (to avoid borrow issues)
+            let variant_fields: Vec<Vec<FieldInfo>> = e.variants.iter().map(|v| {
+                match &v.body {
+                    ast::StructBody::Unit => Vec::new(),
+                    ast::StructBody::Tuple(fields) => {
+                        fields
+                            .iter()
+                            .enumerate()
+                            .map(|(fi, field)| {
+                                FieldInfo {
+                                    name: format!("{fi}"),
+                                    ty: ast_type_to_type_with_ctx_and_generics(ctx, interner, &field.ty, &generic_params_map),
+                                    index: fi as u32,
+                                }
+                            })
+                            .collect()
+                    }
+                    ast::StructBody::Record(fields) => {
+                        fields
+                            .iter()
+                            .enumerate()
+                            .map(|(fi, f)| {
+                                FieldInfo {
+                                    name: resolve_symbol(f.name.node),
+                                    ty: ast_type_to_type_with_ctx_and_generics(ctx, interner, &f.ty, &generic_params_map),
+                                    index: fi as u32,
+                                }
+                            })
+                            .collect()
+                    }
+                }
+            }).collect();
+
+            // Now update the enum info
+            if let Some(enum_info) = ctx.enum_defs.get_mut(&def_id) {
+                for (i, fields) in variant_fields.into_iter().enumerate() {
+                    if i < enum_info.variants.len() {
+                        enum_info.variants[i].fields = fields;
+                    }
+                }
+            }
+        }
+        ast::Declaration::Type(t) => {
+            // Skip if type alias info doesn't exist
+            if !ctx.type_aliases.contains_key(&def_id) {
+                return;
+            }
+
+            // Build generic params map for type aliases
+            let mut generic_params_map: HashMap<String, TyVarId> = HashMap::new();
+            if let Some(ref params) = t.type_params {
+                let mut type_param_index = 0u32;
+                for p in &params.params {
+                    if let ast::GenericParam::Type(type_param) = p {
+                        let param_name = resolve_symbol(type_param.name.node);
+                        let tyvar_id = TyVarId(type_param_index);
+                        type_param_index += 1;
+                        generic_params_map.insert(param_name, tyvar_id);
+                    }
+                }
+            }
+
+            // Convert the aliased type with context
+            let aliased_ty = if let Some(ref ty_val) = t.ty {
+                ast_type_to_type_with_ctx_and_generics(ctx, interner, ty_val, &generic_params_map)
+            } else {
+                Type::error()
+            };
+
+            // Update the type alias info
+            if let Some(alias_info) = ctx.type_aliases.get_mut(&def_id) {
+                alias_info.ty = aliased_ty;
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Register type information for a declaration.
 /// This populates struct_defs/enum_defs so type checking works for external types.
+#[allow(dead_code)]
 fn register_type_info<'a>(
     ctx: &mut TypeContext<'a>,
     interner: &DefaultStringInterner,
@@ -2341,6 +2675,180 @@ fn ast_type_to_type_with_ctx<'a>(
         }
         ast::TypeKind::Array { element, size } => {
             let elem_ty = ast_type_to_type_with_ctx(ctx, interner, element);
+            // Extract size from the expression if it's a literal integer
+            let size_val = if let ast::ExprKind::Literal(lit) = &size.kind {
+                if let ast::LiteralKind::Int { value, .. } = &lit.kind {
+                    *value as u64
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+            Type::new(TypeKind::Array { element: elem_ty, size: size_val })
+        }
+        _ => Type::error(),
+    }
+}
+
+/// Convert an AST type to HIR type with access to the type context and generic parameters.
+/// This can resolve user-defined types by looking up their DefIds and handles generic type params.
+fn ast_type_to_type_with_ctx_and_generics<'a>(
+    ctx: &TypeContext<'a>,
+    interner: &DefaultStringInterner,
+    ty: &ast::Type,
+    generic_params: &HashMap<String, TyVarId>,
+) -> Type {
+    let resolve_symbol = |sym: crate::ast::Symbol| -> String {
+        interner.resolve(sym).map(|s| s.to_string()).unwrap_or_else(|| "unknown".to_string())
+    };
+
+    match &ty.kind {
+        ast::TypeKind::Path(path) => {
+            if path.segments.len() == 1 {
+                let name = resolve_symbol(path.segments[0].name.node);
+
+                // Check if this is a generic type parameter first
+                if let Some(&tyvar_id) = generic_params.get(&name) {
+                    return Type::param(tyvar_id);
+                }
+
+                // Handle primitive types
+                if let Some(prim_ty) = match name.as_str() {
+                    "i8" => Some(Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::I8)))),
+                    "i16" => Some(Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::I16)))),
+                    "i32" => Some(Type::i32()),
+                    "i64" => Some(Type::i64()),
+                    "i128" => Some(Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::I128)))),
+                    "isize" => Some(Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::Isize)))),
+                    "u8" => Some(Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U8)))),
+                    "u16" => Some(Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U16)))),
+                    "u32" => Some(Type::u32()),
+                    "u64" => Some(Type::u64()),
+                    "u128" => Some(Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U128)))),
+                    "usize" => Some(Type::usize()),
+                    "f32" => Some(Type::f32()),
+                    "f64" => Some(Type::f64()),
+                    "bool" => Some(Type::bool()),
+                    "char" => Some(Type::char()),
+                    "str" => Some(Type::str()),
+                    "String" => Some(Type::string()),
+                    "()" => Some(Type::unit()),
+                    _ => None,
+                } {
+                    return prim_ty;
+                }
+
+                // Try to resolve as a user-defined type via resolver first
+                let mut found_def_id: Option<DefId> = ctx.resolver.lookup_type(&name);
+
+                // If resolver lookup fails, search through registered struct_defs and enum_defs
+                if found_def_id.is_none() {
+                    // Search struct_defs
+                    for (&def_id, info) in &ctx.struct_defs {
+                        if info.name == name {
+                            found_def_id = Some(def_id);
+                            break;
+                        }
+                    }
+                }
+                if found_def_id.is_none() {
+                    // Search enum_defs
+                    for (&def_id, info) in &ctx.enum_defs {
+                        if info.name == name {
+                            found_def_id = Some(def_id);
+                            break;
+                        }
+                    }
+                }
+                if found_def_id.is_none() {
+                    // Search type_aliases
+                    for (&def_id, info) in &ctx.type_aliases {
+                        if info.name == name {
+                            found_def_id = Some(def_id);
+                            break;
+                        }
+                    }
+                }
+
+                if let Some(def_id) = found_def_id {
+                    // Collect type arguments if any
+                    let type_args: Vec<Type> = if let Some(ref args) = path.segments[0].args {
+                        args.args.iter().filter_map(|arg| {
+                            if let ast::TypeArg::Type(arg_ty) = arg {
+                                Some(ast_type_to_type_with_ctx_and_generics(ctx, interner, arg_ty, generic_params))
+                            } else {
+                                None
+                            }
+                        }).collect()
+                    } else {
+                        Vec::new()
+                    };
+
+                    return Type::adt(def_id, type_args);
+                }
+
+                // Fallback to error
+                Type::error()
+            } else if path.segments.len() == 2 {
+                // Two-segment path: Module::Type
+                let module_name = resolve_symbol(path.segments[0].name.node);
+                let type_name = resolve_symbol(path.segments[1].name.node);
+
+                // Look up the module
+                for (_module_def_id, module_info) in &ctx.module_defs {
+                    if module_info.name == module_name {
+                        if let Some(&def_id) = module_info.items_by_name.get(&type_name) {
+                            // Collect type arguments if any
+                            let type_args: Vec<Type> = if let Some(ref args) = path.segments[1].args {
+                                args.args.iter().filter_map(|arg| {
+                                    if let ast::TypeArg::Type(arg_ty) = arg {
+                                        Some(ast_type_to_type_with_ctx_and_generics(ctx, interner, arg_ty, generic_params))
+                                    } else {
+                                        None
+                                    }
+                                }).collect()
+                            } else {
+                                Vec::new()
+                            };
+
+                            return Type::adt(def_id, type_args);
+                        }
+                    }
+                }
+
+                Type::error()
+            } else {
+                Type::error()
+            }
+        }
+        ast::TypeKind::Reference { inner, mutable, .. } => {
+            let inner_ty = ast_type_to_type_with_ctx_and_generics(ctx, interner, inner, generic_params);
+            Type::new(TypeKind::Ref {
+                inner: inner_ty,
+                mutable: *mutable
+            })
+        }
+        ast::TypeKind::Pointer { inner, mutable } => {
+            let inner_ty = ast_type_to_type_with_ctx_and_generics(ctx, interner, inner, generic_params);
+            Type::new(TypeKind::Ptr {
+                inner: inner_ty,
+                mutable: *mutable
+            })
+        }
+        ast::TypeKind::Tuple(types) => {
+            let tys: Vec<Type> = types
+                .iter()
+                .map(|t| ast_type_to_type_with_ctx_and_generics(ctx, interner, t, generic_params))
+                .collect();
+            Type::new(TypeKind::Tuple(tys))
+        }
+        ast::TypeKind::Slice { element } => {
+            let elem_ty = ast_type_to_type_with_ctx_and_generics(ctx, interner, element, generic_params);
+            Type::new(TypeKind::Slice { element: elem_ty })
+        }
+        ast::TypeKind::Array { element, size } => {
+            let elem_ty = ast_type_to_type_with_ctx_and_generics(ctx, interner, element, generic_params);
             // Extract size from the expression if it's a literal integer
             let size_val = if let ast::ExprKind::Literal(lit) = &size.kind {
                 if let ast::LiteralKind::Int { value, .. } = &lit.kind {
