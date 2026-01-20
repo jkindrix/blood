@@ -30,9 +30,8 @@
 //! | () | 0 | 1 |
 //! | ! | 0 | 1 |
 
-use std.compiler.hir::{Type, DefId};
-use std.compiler.hir.ty::TypeKind;
-use std.compiler.hir.def::{PrimitiveTy, IntTy, UintTy, FloatTy};
+use std.core.Option;
+use std.compiler.typeck.types::{Type, DefId, TypeKind, PrimitiveTy};
 
 // ============================================================================
 // Type Size Calculation
@@ -159,45 +158,26 @@ fn primitive_size(prim: &PrimitiveTy) -> usize {
     match prim {
         PrimitiveTy::Bool => 1,
         PrimitiveTy::Char => 4,  // Unicode code point
-        PrimitiveTy::Int(int_ty) => int_size(int_ty),
-        PrimitiveTy::Uint(uint_ty) => uint_size(uint_ty),
-        PrimitiveTy::Float(float_ty) => float_size(float_ty),
+        // Signed integers
+        PrimitiveTy::I8 => 1,
+        PrimitiveTy::I16 => 2,
+        PrimitiveTy::I32 => 4,
+        PrimitiveTy::I64 => 8,
+        PrimitiveTy::I128 => 16,
+        PrimitiveTy::Isize => 8,  // Assuming 64-bit platform
+        // Unsigned integers
+        PrimitiveTy::U8 => 1,
+        PrimitiveTy::U16 => 2,
+        PrimitiveTy::U32 => 4,
+        PrimitiveTy::U64 => 8,
+        PrimitiveTy::U128 => 16,
+        PrimitiveTy::Usize => 8,  // Assuming 64-bit platform
+        // Floating point
+        PrimitiveTy::F32 => 4,
+        PrimitiveTy::F64 => 8,
+        // Other
         PrimitiveTy::Str => 16,     // Fat pointer (ptr + len)
-        PrimitiveTy::String => 24,  // ptr + len + cap
         PrimitiveTy::Unit => 0,     // Zero-sized type
-        PrimitiveTy::Never => 0,    // Never type is zero-sized
-    }
-}
-
-/// Calculate the size of a signed integer type.
-fn int_size(int_ty: &IntTy) -> usize {
-    match int_ty {
-        IntTy::I8 => 1,
-        IntTy::I16 => 2,
-        IntTy::I32 => 4,
-        IntTy::I64 => 8,
-        IntTy::I128 => 16,
-        IntTy::Isize => 8,  // Assuming 64-bit platform
-    }
-}
-
-/// Calculate the size of an unsigned integer type.
-fn uint_size(uint_ty: &UintTy) -> usize {
-    match uint_ty {
-        UintTy::U8 => 1,
-        UintTy::U16 => 2,
-        UintTy::U32 => 4,
-        UintTy::U64 => 8,
-        UintTy::U128 => 16,
-        UintTy::Usize => 8,  // Assuming 64-bit platform
-    }
-}
-
-/// Calculate the size of a floating point type.
-fn float_size(float_ty: &FloatTy) -> usize {
-    match float_ty {
-        FloatTy::F32 => 4,
-        FloatTy::F64 => 8,
     }
 }
 
@@ -571,26 +551,22 @@ pub fn type_may_contain_genref(ty: &Type) -> bool {
 /// Get the bit width for an integer type.
 pub fn integer_bit_width(ty: &Type) -> Option<u32> {
     match ty.kind() {
-        TypeKind::Primitive(PrimitiveTy::Bool) => Some(1),
-        TypeKind::Primitive(PrimitiveTy::Int(int_ty)) => {
-            Some(match int_ty {
-                IntTy::I8 => 8,
-                IntTy::I16 => 16,
-                IntTy::I32 => 32,
-                IntTy::I64 | IntTy::Isize => 64,
-                IntTy::I128 => 128,
-            })
-        }
-        TypeKind::Primitive(PrimitiveTy::Uint(uint_ty)) => {
-            Some(match uint_ty {
-                UintTy::U8 => 8,
-                UintTy::U16 => 16,
-                UintTy::U32 => 32,
-                UintTy::U64 | UintTy::Usize => 64,
-                UintTy::U128 => 128,
-            })
-        }
-        TypeKind::Primitive(PrimitiveTy::Char) => Some(32),
-        _ => None,
+        TypeKind::Primitive(PrimitiveTy::Bool) => Option::Some(1),
+        TypeKind::Primitive(PrimitiveTy::Char) => Option::Some(32),
+        // Signed integers
+        TypeKind::Primitive(PrimitiveTy::I8) => Option::Some(8),
+        TypeKind::Primitive(PrimitiveTy::I16) => Option::Some(16),
+        TypeKind::Primitive(PrimitiveTy::I32) => Option::Some(32),
+        TypeKind::Primitive(PrimitiveTy::I64) => Option::Some(64),
+        TypeKind::Primitive(PrimitiveTy::Isize) => Option::Some(64),
+        TypeKind::Primitive(PrimitiveTy::I128) => Option::Some(128),
+        // Unsigned integers
+        TypeKind::Primitive(PrimitiveTy::U8) => Option::Some(8),
+        TypeKind::Primitive(PrimitiveTy::U16) => Option::Some(16),
+        TypeKind::Primitive(PrimitiveTy::U32) => Option::Some(32),
+        TypeKind::Primitive(PrimitiveTy::U64) => Option::Some(64),
+        TypeKind::Primitive(PrimitiveTy::Usize) => Option::Some(64),
+        TypeKind::Primitive(PrimitiveTy::U128) => Option::Some(128),
+        _ => Option::None,
     }
 }
