@@ -832,13 +832,15 @@ impl<'src> Parser<'src> {
             // Note: Contextual keywords can be identifiers in names (fn default, field handle)
             // They are parsed as identifiers/paths first, not as special expressions.
             // Crate and Super can start paths (crate.module.Type, super.module.Type)
-            // Reserved keywords (catch, try, finally, throw, yield) can be used as function names
+            // Note: Try is NOT included here - it has special `try { } with { }` syntax.
+            // Catch, Finally, Throw, Yield are reserved but allowed as identifiers until
+            // they get dedicated expression syntax.
             TokenKind::Ident | TokenKind::TypeIdent | TokenKind::SelfLower | TokenKind::SelfUpper
             | TokenKind::Default | TokenKind::Crate | TokenKind::Super
             | TokenKind::Op | TokenKind::Module | TokenKind::Ref | TokenKind::Pure
             | TokenKind::Linear | TokenKind::Affine | TokenKind::Extends
             | TokenKind::Handler | TokenKind::Effect | TokenKind::Deep | TokenKind::Shallow | TokenKind::Resume
-            | TokenKind::Catch | TokenKind::Try | TokenKind::Finally | TokenKind::Throw | TokenKind::Yield => {
+            | TokenKind::Catch | TokenKind::Finally | TokenKind::Throw | TokenKind::Yield => {
                 self.parse_path_or_struct_expr()
             }
 
