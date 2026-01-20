@@ -15,7 +15,7 @@ use std.compiler.parser::{
     TraitDecl, ImplBlock, ImplItem, Type as AstType, TypeKind as AstTypeKind,
     Expr, ExprKind, Pattern, PatternKind, Block, Statement, Span, Spanned,
     TypeParams, StructBody, EnumVariant, OperationDecl, Param, TypePath, TypePathSegment,
-    MatchArm, HandlerDecl, OperationImpl, RecordField as AstRecordField, Literal,
+    MatchArm, HandlerDecl, OperationImpl, RecordField as AstRecordField, Literal, LiteralKind,
     BinOp, UnaryOp, EffectRow as ParserEffectRow,
 };
 use std.compiler.lexer::{Token, TokenKind};
@@ -2154,12 +2154,12 @@ impl TypeContext {
 
     /// Infer the type of a literal.
     fn infer_literal(&mut self, lit: &Literal) -> Type {
-        match lit {
-            Literal::Int(_) => Type::i32_type(), // Default to i32
-            Literal::Float(_) => Type::new(TypeKind::Primitive(PrimitiveTy::F64)), // Default to f64
-            Literal::bool(_) => Type::bool_type(),
-            Literal::char(_) => Type::new(TypeKind::Primitive(PrimitiveTy::Char)),
-            Literal::String(_) => Type::string_type(),
+        match &lit.kind {
+            LiteralKind::Int(_) => Type::i32_type(), // Default to i32
+            LiteralKind::Float(_) => Type::new(TypeKind::Primitive(PrimitiveTy::F64)), // Default to f64
+            LiteralKind::bool(_) => Type::bool_type(),
+            LiteralKind::char(_) => Type::new(TypeKind::Primitive(PrimitiveTy::Char)),
+            LiteralKind::String(_) => Type::str_type(),
         }
     }
 
@@ -2375,7 +2375,7 @@ impl TypeContext {
                             };
                             None => {
                                 self.error(TypeError::new(
-                                    TypeErrorKind::UnresolvedType { name: name.segments[0].value.clone() },
+                                    TypeErrorKind::UnresolvedType { name: name.segments[0].name.value.clone() },
                                     pattern.span,
                                 ));
                             }
@@ -2446,7 +2446,7 @@ impl TypeContext {
                             };
                             None => {
                                 self.error(TypeError::new(
-                                    TypeErrorKind::UnresolvedType { name: name.segments[0].value.clone() },
+                                    TypeErrorKind::UnresolvedType { name: name.segments[0].name.value.clone() },
                                     pattern.span,
                                 ));
                             }
@@ -2614,8 +2614,8 @@ impl TypeContext {
             }
             TypeKind::Tuple(tys) => {
                 // Tuple field access by index (e.g., tuple.0)
-                match field.parse::<usize>() {
-                    Ok(idx) => {
+                match parse_usize(field) {
+                    Option::Some(idx) => {
                         if idx < tys.len() {
                             tys[idx].clone()
                         } else {
@@ -2627,8 +2627,8 @@ impl TypeContext {
                             ));
                             Type::error()
                         }
-                    };
-                    Err(_) => {
+                    }
+                    Option::None => {
                         self.error(TypeError::new(
                             TypeErrorKind::Other { message: "Tuple fields must be numeric".to_string() },
                             span,
@@ -2759,7 +2759,7 @@ impl TypeContext {
 
     /// Check struct construction.
     fn check_struct_construction(&mut self, name: &TypePath, fields: &[AstRecordField], span: Span) -> Type {
-        let struct_name = &name.segments[0].value;
+        let struct_name = &name.segments[0].name.value;
 
         match self.scope.lookup_type(struct_name) {
             Some(def_id) => {
@@ -2832,22 +2832,32 @@ impl TypeContext {
         let mut i: usize = 0;
         while i < handlers.len() {
             let handler = &handlers[i];
-            match self.scope.lookup_type(&handler.effect.value) {
-                Some(def_id) => {
-                    handled_row.effects.push(EffectInstance {
-                        def_id,
-                        args: vec![], // TODO: track type args
-                    });
-                };
-                None => {
+            match extract_type_name(&handler.effect) {
+                Option::Some(effect_name) => {
+                    match self.scope.lookup_type(&effect_name) {
+                        Some(def_id) => {
+                            handled_row.effects.push(EffectInstance {
+                                def_id,
+                                args: vec![], // TODO: track type args
+                            });
+                        }
+                        None => {
+                            self.error(TypeError::new(
+                                TypeErrorKind::UnresolvedType { name: effect_name },
+                                handler.span,
+                            ));
+                        }
+                    }
+                }
+                Option::None => {
                     self.error(TypeError::new(
-                        TypeErrorKind::UnresolvedType { name: handler.effect.value.clone() },
+                        TypeErrorKind::Other { message: "Invalid effect type".to_string() },
                         handler.span,
                     ));
                 }
-            };
+            }
             i = i + 1;
-        };
+        }
 
         // Push handled effects onto stack
         self.handled_effects.push(handled_row);
@@ -2873,29 +2883,39 @@ impl TypeContext {
     /// Check a single effect handler.
     fn check_handler(&mut self, handler: &HandlerDecl) {
         // Look up the effect
-        match self.scope.lookup_type(&handler.effect.value) {
-            Some(def_id) => {
-                match self.effect_defs.get(&def_id.id) {
-                    Some(effect_def) => {
-                        // Check each operation handler
-                        let mut i: usize = 0;
-                        while i < handler.operations.len() {
-                            let op_handler = &handler.operations[i];
-                            self.check_op_handler(effect_def, op_handler);
-                            i = i + 1;
+        match extract_type_name(&handler.effect) {
+            Option::Some(effect_name) => {
+                match self.scope.lookup_type(&effect_name) {
+                    Some(def_id) => {
+                        match self.effect_defs.get(&def_id.id) {
+                            Some(effect_def) => {
+                                // Check each operation handler
+                                let mut i: usize = 0;
+                                while i < handler.operations.len() {
+                                    let op_handler = &handler.operations[i];
+                                    self.check_op_handler(effect_def, op_handler);
+                                    i = i + 1;
+                                }
+                            }
+                            None => {
+                                self.error(TypeError::new(
+                                    TypeErrorKind::UnresolvedType { name: effect_name },
+                                    handler.span,
+                                ));
+                            }
                         }
-                    };
+                    }
                     None => {
                         self.error(TypeError::new(
-                            TypeErrorKind::UnresolvedType { name: handler.effect.value.clone() },
+                            TypeErrorKind::UnresolvedType { name: effect_name },
                             handler.span,
                         ));
                     }
                 }
-            };
-            None => {
+            }
+            Option::None => {
                 self.error(TypeError::new(
-                    TypeErrorKind::UnresolvedType { name: handler.effect.value.clone() },
+                    TypeErrorKind::Other { message: "Invalid effect type".to_string() },
                     handler.span,
                 ));
             }
@@ -2905,7 +2925,7 @@ impl TypeContext {
     /// Check a single operation handler.
     fn check_op_handler(&mut self, effect_def: &EffectDef, op_handler: &OperationImpl) {
         // Find the operation in the effect
-        let op_def = self.find_effect_op(effect_def, &op_handler.operation.value);
+        let op_def = self.find_effect_op(effect_def, &op_handler.name.value);
         match op_def {
             Some(opdef) => {
                 // Create child scope for handler
@@ -3043,7 +3063,7 @@ impl TypeContext {
     fn resolve_path(&mut self, path: &TypePath, span: Span) -> Type {
         if path.segments.len() == 1 {
             // Simple name - look up in scope
-            let name = &path.segments[0].value;
+            let name = &path.segments[0].name.value;
             match self.scope.lookup_var(name) {
                 Some(ty) => ty,
                 None => {
@@ -3087,8 +3107,8 @@ impl TypeContext {
             }
         } else if path.segments.len() == 2 {
             // Could be EnumType::Variant
-            let type_name = &path.segments[0].value;
-            let variant_name = &path.segments[1].value;
+            let type_name = &path.segments[0].name.value;
+            let variant_name = &path.segments[1].name.value;
 
             match self.scope.lookup_type(type_name) {
                 Some(def_id) => {
@@ -3675,12 +3695,12 @@ impl ExhaustivenessChecker {
             PatternKind::Wildcard => PatternMatrix::Wild,
             PatternKind::Ident { .. } => PatternMatrix::Wild, // Binding is like wildcard for exhaustiveness
             PatternKind::Literal(lit) => {
-                match lit {
-                    Literal::bool(b) => PatternMatrix::Literal(LiteralPattern::bool(*b)),
-                    Literal::Int(i) => PatternMatrix::Literal(LiteralPattern::Int(*i)),
-                    Literal::char(c) => PatternMatrix::Literal(LiteralPattern::char(*c)),
-                    Literal::String(s) => PatternMatrix::Literal(LiteralPattern::String(s.clone())),
-                    Literal::Float(_) => PatternMatrix::Wild, // Floats treated as wildcard
+                match &lit.kind {
+                    LiteralKind::bool(b) => PatternMatrix::Literal(LiteralPattern::bool(b)),
+                    LiteralKind::Int(i) => PatternMatrix::Literal(LiteralPattern::Int(i)),
+                    LiteralKind::char(c) => PatternMatrix::Literal(LiteralPattern::char(c)),
+                    LiteralKind::String(s) => PatternMatrix::Literal(LiteralPattern::String(s.clone())),
+                    LiteralKind::Float(_) => PatternMatrix::Wild, // Floats treated as wildcard
                 }
             }
             PatternKind::Tuple(pats) => {
@@ -3700,7 +3720,7 @@ impl ExhaustivenessChecker {
                     i = i + 1;
                 }
                 PatternMatrix::Constructor {
-                    name: name.segments[0].value.clone(),
+                    name: name.segments[0].name.value.clone(),
                     args,
                 }
             }
@@ -3763,6 +3783,46 @@ impl TypeContext {
             ));
         }
     }
+}
+
+// ============================================================
+// Helper Functions
+// ============================================================
+
+/// Extract the simple name from an AST type.
+/// Returns the first segment name for Path types, None for others.
+fn extract_type_name(ty: &AstType) -> Option<String> {
+    match &ty.kind {
+        AstTypeKind::Path(path) => {
+            if path.segments.len() > 0 {
+                Option::Some(path.segments[0].name.value.clone())
+            } else {
+                Option::None
+            }
+        }
+        _ => Option::None,
+    }
+}
+
+/// Parse a string as a usize. Returns Some(value) if successful, None otherwise.
+fn parse_usize(s: &str) -> Option<usize> {
+    if s.is_empty() {
+        return Option::None;
+    }
+    let mut result: usize = 0;
+    let bytes = s.as_bytes();
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b >= 48 && b <= 57 {
+            // '0' = 48, '9' = 57
+            result = result * 10 + ((b - 48) as usize);
+        } else {
+            return Option::None;
+        }
+        i = i + 1;
+    }
+    Option::Some(result)
 }
 
 // ============================================================
