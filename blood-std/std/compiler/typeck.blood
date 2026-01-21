@@ -255,7 +255,7 @@ impl Type {
 
     /// Create the unit type `()`.
     fn unit() -> Type {
-        Type::new(TypeKind::Tuple(vec![]))
+        Type::new(TypeKind::Tuple([]))
     }
 
     /// Create the never type `!`.
@@ -379,7 +379,7 @@ impl EffectRow {
 
     /// Create a pure effect row (no effects).
     fn pure() -> EffectRow {
-        EffectRow { effects: vec![], row_var: None }
+        EffectRow { effects: [], row_var: None }
     }
 
     /// Check if this effect row is pure (no effects).
@@ -494,7 +494,7 @@ impl Unifier {
 
     /// Create multiple fresh type variables.
     fn fresh_vars(&mut self, count: u32) -> [Type] {
-        let mut vars: [Type] = vec![];
+        let mut vars = [];
         let mut i: u32 = 0;
         while i < count {
             vars.push(self.fresh_var());
@@ -548,7 +548,7 @@ impl Unifier {
         match (&t1.kind, &t2.kind) {
             // Same primitive types
             (TypeKind::Primitive(p1), TypeKind::Primitive(p2)) => {
-                if self.primitive_eq(p1, p2) {
+                if self.primitive_eq(&p1, &p2) {
                     Ok(())
                 } else {
                     Err(TypeError::new(
@@ -873,7 +873,7 @@ impl Unifier {
             }
             TypeKind::Primitive(_) | TypeKind::Never | TypeKind::Error | TypeKind::Param(_) => ty.clone(),
             TypeKind::Tuple(tys) => {
-                let mut applied: [Type] = vec![];
+                let mut applied = [];
                 let mut i: usize = 0;
                 while i < tys.len() {
                     applied.push(self.apply(&tys[i]));
@@ -894,7 +894,7 @@ impl Unifier {
                 Type::new(TypeKind::Ptr { inner: self.apply(inner), mutable: *mutable })
             }
             TypeKind::Fn { params, ret, effect } => {
-                let mut applied_params: [Type] = vec![];
+                let mut applied_params = [];
                 let mut i: usize = 0;
                 while i < params.len() {
                     applied_params.push(self.apply(&params[i]));
@@ -907,7 +907,7 @@ impl Unifier {
                 })
             }
             TypeKind::Adt { def_id, args } => {
-                let mut applied_args: [Type] = vec![];
+                let mut applied_args = [];
                 let mut i: usize = 0;
                 while i < args.len() {
                     applied_args.push(self.apply(&args[i]));
@@ -1034,14 +1034,14 @@ impl EffectContext {
     fn new() -> EffectContext {
         EffectContext {
             declared: None,
-            used: vec![],
+            used: [],
         }
     }
 
     fn with_declared(declared: Option<EffectRow>) -> EffectContext {
         EffectContext {
             declared,
-            used: vec![],
+            used: [],
         }
     }
 
@@ -1194,7 +1194,7 @@ impl TraitResolver {
     fn new() -> TraitResolver {
         TraitResolver {
             trait_defs: HashMap::new(),
-            impl_defs: vec![],
+            impl_defs: [],
             impl_cache: HashMap::new(),
         }
     }
@@ -1376,7 +1376,7 @@ impl TraitResolver {
 
     /// Check all trait bounds on a type.
     fn check_bounds(&self, ty: &Type, bounds: &[TraitBound], unifier: &Unifier) -> [DefId] {
-        let mut unsatisfied: [DefId] = vec![];
+        let mut unsatisfied = [];
         let mut i: usize = 0;
         while i < bounds.len() {
             if !self.satisfies_bound(ty, &bounds[i], unifier) {
@@ -1399,11 +1399,11 @@ impl TypeContext {
             effect_defs: HashMap::new(),
             trait_resolver: TraitResolver::new(),
             next_def_id: 0,
-            errors: vec![],
+            errors: [],
             current_return_type: None,
             current_loop_type: None,
             current_effect_context: EffectContext::new(),
-            handled_effects: vec![],
+            handled_effects: [],
         }
     }
 
@@ -1463,7 +1463,7 @@ impl TypeContext {
         let type_params = self.collect_type_params(&fn_decl.type_params);
 
         // Collect parameter types
-        let mut params: [Type] = vec![];
+        let mut params = [];
         let mut i: usize = 0;
         while i < fn_decl.params.len() {
             params.push(self.lower_type(&fn_decl.params[i].ty));
@@ -1500,7 +1500,7 @@ impl TypeContext {
     fn collect_type_params(&mut self, type_params: &Option<TypeParams>) -> [TyVarId] {
         match type_params {
             Some(params) => {
-                let mut ids: [TyVarId] = vec![];
+                let mut ids = [];
                 let mut i: usize = 0;
                 while i < params.params.len() {
                     let id = self.unifier.fresh_forall_var();
@@ -1509,7 +1509,7 @@ impl TypeContext {
                 }
                 ids
             };
-            None => vec![],
+            None => [],
         }
     }
 
@@ -1531,7 +1531,7 @@ impl TypeContext {
         // Collect fields
         let fields = match &struct_decl.body {
             StructBody::Record(field_list) => {
-                let mut fields: [StructFieldDef] = vec![];
+                let mut fields = [];
                 let mut i: usize = 0;
                 while i < field_list.len() {
                     fields.push(StructFieldDef {
@@ -1543,7 +1543,7 @@ impl TypeContext {
                 fields
             }
             StructBody::Tuple(types) => {
-                let mut fields: [StructFieldDef] = vec![];
+                let mut fields = [];
                 let mut i: usize = 0;
                 while i < types.len() {
                     fields.push(StructFieldDef {
@@ -1554,7 +1554,7 @@ impl TypeContext {
                 }
                 fields
             }
-            StructBody::Unit => vec![],
+            StructBody::Unit => [],
         };
 
         // Store the type definition
@@ -1575,7 +1575,7 @@ impl TypeContext {
         let type_params = self.collect_type_params(&enum_decl.type_params);
 
         // Collect variants
-        let mut variants: [EnumVariantDef] = vec![];
+        let mut variants = [];
         let mut i: usize = 0;
         while i < enum_decl.variants.len() {
             let variant = &enum_decl.variants[i];
@@ -1607,11 +1607,11 @@ impl TypeContext {
         let type_params = self.collect_type_params(&effect_decl.type_params);
 
         // Collect operations
-        let mut operations: [EffectOpDef] = vec![];
+        let mut operations = [];
         let mut i: usize = 0;
         while i < effect_decl.operations.len() {
             let op = &effect_decl.operations[i];
-            let mut params: [Type] = vec![];
+            let mut params = [];
             let mut j: usize = 0;
             while j < op.params.len() {
                 params.push(self.lower_type(&op.params[j].ty));
@@ -1663,7 +1663,7 @@ impl TypeContext {
                     Some(def_id) => {
                         let type_args = match &first_segment.args {
                             Some(arg_list) => {
-                                let mut args: [Type] = vec![];
+                                let mut args = [];
                                 let mut i: usize = 0;
                                 while i < arg_list.args.len() {
                                     // TypeArg can be a type or a const - handle type case
@@ -1672,7 +1672,7 @@ impl TypeContext {
                                 }
                                 args
                             };
-                            None => vec![],
+                            None => [],
                         };
                         Type::new(TypeKind::Adt { def_id, args: type_args })
                     };
@@ -1686,7 +1686,7 @@ impl TypeContext {
                 }
             }
             AstTypeKind::Tuple(types) => {
-                let mut tys: [Type] = vec![];
+                let mut tys = [];
                 let mut i: usize = 0;
                 while i < types.len() {
                     tys.push(self.lower_type(&types[i]));
@@ -1718,7 +1718,7 @@ impl TypeContext {
                 })
             }
             AstTypeKind::Function { params, ret, effects } => {
-                let mut param_tys: [Type] = vec![];
+                let mut param_tys = [];
                 let mut i: usize = 0;
                 while i < params.len() {
                     param_tys.push(self.lower_type(&params[i]));
@@ -1776,13 +1776,13 @@ impl TypeContext {
 
     /// Lower an effect row from AST.
     fn lower_effect_row(&mut self, row: &AstEffectRow) -> EffectRow {
-        let mut effects: [EffectInstance] = vec![];
+        let mut effects = [];
         let mut i: usize = 0;
         while i < row.effects.len() {
             let effect: &AstEffectRef = &row.effects[i];
             match self.scope.lookup_type(&effect.name.value) {
                 Some(def_id) => {
-                    let mut args: [Type] = vec![];
+                    let mut args = [];
                     match &effect.args {
                         Some(arg_list) => {
                             let mut j: usize = 0;
@@ -1905,7 +1905,7 @@ impl TypeContext {
                 };
 
                 // Check pattern exhaustiveness
-                let mut patterns: [Pattern] = vec![];
+                let mut patterns = [];
                 i = 0;
                 while i < arms.len() {
                     patterns.push(arms[i].pattern.clone());
@@ -1991,7 +1991,7 @@ impl TypeContext {
             }
 
             ExprKind::Tuple(elements) => {
-                let mut tys: [Type] = vec![];
+                let mut tys = [];
                 let mut i: usize = 0;
                 while i < elements.len() {
                     tys.push(self.infer_expr(&elements[i]));
@@ -2106,7 +2106,7 @@ impl TypeContext {
                 self.scope = self.scope.child();
 
                 // Add parameters to scope
-                let mut param_tys: [Type] = vec![];
+                let mut param_tys = [];
                 let mut i: usize = 0;
                 while i < params.len() {
                     let param_ty = self.lower_type(&params[i].ty);
@@ -2202,7 +2202,7 @@ impl TypeContext {
             }
             TypeKind::Infer(_) => {
                 // Create fresh variables for params and return
-                let mut param_tys: [Type] = vec![];
+                let mut param_tys = [];
                 let mut i: usize = 0;
                 while i < args.len() {
                     param_tys.push(self.fresh_var());
@@ -2795,7 +2795,7 @@ impl TypeContext {
                                 // TODO: check all required fields are provided
 
                                 // Return the struct type
-                                Type::new(TypeKind::Adt { def_id: def_id.clone(), args: vec![] })
+                                Type::new(TypeKind::Adt { def_id: def_id.clone(), args: [] })
                             }
                             TypeDefKind::Enum { variants: _ } => {
                                 self.error(TypeError::new(
@@ -2838,7 +2838,7 @@ impl TypeContext {
                         Some(def_id) => {
                             handled_row.effects.push(EffectInstance {
                                 def_id,
-                                args: vec![], // TODO: track type args
+                                args: [], // TODO: track type args
                             });
                         }
                         None => {
@@ -2949,7 +2949,7 @@ impl TypeContext {
                     Some(resume_name) => {
                         // resume has type: (ReturnType) -> ResultType
                         let resume_ty = Type::new(TypeKind::Fn {
-                            params: vec![opdef.ret.clone()],
+                            params: [opdef.ret.clone()],
                             ret: self.fresh_var(), // Will be unified with handler result
                             effect: None,
                         });
@@ -3000,7 +3000,7 @@ impl TypeContext {
                                 // Track that this effect is being used
                                 self.current_effect_context.use_effect(EffectInstance {
                                     def_id: def_id.clone(),
-                                    args: vec![], // TODO: track type args
+                                    args: [], // TODO: track type args
                                 });
 
                                 // Check argument count
@@ -3075,7 +3075,7 @@ impl TypeContext {
                                     match &type_def.kind {
                                         TypeDefKind::Struct { fields: _ } => {
                                             // Unit struct used as value
-                                            Type::new(TypeKind::Adt { def_id, args: vec![] })
+                                            Type::new(TypeKind::Adt { def_id, args: [] })
                                         }
                                         TypeDefKind::Enum { variants: _ } => {
                                             self.error(TypeError::new(
@@ -3119,7 +3119,7 @@ impl TypeContext {
                                     match self.find_enum_variant(&variants, variant_name) {
                                         Some(variant) => {
                                             // Return enum type - variant carries the payload info
-                                            Type::new(TypeKind::Adt { def_id, args: vec![] })
+                                            Type::new(TypeKind::Adt { def_id, args: [] })
                                         };
                                         None => {
                                             self.error(TypeError::new(
@@ -3524,7 +3524,7 @@ impl ExhaustivenessChecker {
         let mut i: usize = 0;
         while i < patterns.len() {
             match &patterns[i] {
-                PatternMatrix::Wild => return vec![],
+                PatternMatrix::Wild => return [],
                 _ => {}
             };
             i = i + 1;
@@ -3538,9 +3538,9 @@ impl ExhaustivenessChecker {
             TypeKind::Primitive(PrimitiveTy::Unit) => {
                 // Unit has exactly one value
                 if patterns.len() == 0 {
-                    vec!["()".to_string()]
+                    ["()".to_string()]
                 } else {
-                    vec![]
+                    []
                 }
             }
             TypeKind::Adt { def_id, args: _ } => {
@@ -3552,10 +3552,10 @@ impl ExhaustivenessChecker {
             _ => {
                 // For types like integers, strings, etc., require a wildcard
                 if patterns.len() == 0 {
-                    vec!["_".to_string()]
+                    ["_".to_string()]
                 } else {
                     // Check if there's any wildcard or catch-all
-                    vec![]
+                    []
                 }
             }
         }
@@ -3596,7 +3596,7 @@ impl ExhaustivenessChecker {
             i = i + 1;
         };
 
-        let mut missing: [String] = vec![];
+        let mut missing = [];
         if !has_true { missing.push("true".to_string()); }
         if !has_false { missing.push("false".to_string()); }
         missing
@@ -3610,9 +3610,9 @@ impl ExhaustivenessChecker {
                     TypeDefKind::Struct { fields: _ } => {
                         // Structs have exactly one constructor
                         if patterns.len() == 0 {
-                            vec![format!("{} {{ .. }}", type_def.name)]
+                            [format!("{} {{ .. }}", type_def.name)]
                         } else {
-                            vec![]
+                            []
                         }
                     }
                     TypeDefKind::Enum { variants } => {
@@ -3620,7 +3620,7 @@ impl ExhaustivenessChecker {
                     }
                 }
             };
-            None => vec![];
+            None => [];
         }
     }
 
@@ -3634,7 +3634,7 @@ impl ExhaustivenessChecker {
             match &patterns[i] {
                 PatternMatrix::Wild => {
                     // Wildcard covers all variants
-                    return vec![];
+                    return [];
                 }
                 PatternMatrix::Constructor { name, args: _ } => {
                     covered.insert(name.clone());
@@ -3643,7 +3643,7 @@ impl ExhaustivenessChecker {
                     let mut j: usize = 0;
                     while j < alts.len() {
                         match &alts[j] {
-                            PatternMatrix::Wild => return vec![],
+                            PatternMatrix::Wild => return [],
                             PatternMatrix::Constructor { name, args: _ } => {
                                 covered.insert(name.clone());
                             }
@@ -3658,7 +3658,7 @@ impl ExhaustivenessChecker {
         };
 
         // Find missing variants
-        let mut missing: [String] = vec![];
+        let mut missing = [];
         i = 0;
         while i < variants.len() {
             if !covered.contains(&variants[i].name) {
@@ -3680,12 +3680,12 @@ impl ExhaustivenessChecker {
         // This is a simplified version - full algorithm would use pattern matrices
         if patterns.len() == 0 {
             if element_tys.len() == 0 {
-                vec!["()".to_string()]
+                ["()".to_string()]
             } else {
-                vec!["(_, ...)".to_string()]
+                ["(_, ...)".to_string()]
             }
         } else {
-            vec![]
+            []
         }
     }
 
@@ -3704,7 +3704,7 @@ impl ExhaustivenessChecker {
                 }
             }
             PatternKind::Tuple(pats) => {
-                let mut args: [PatternMatrix] = vec![];
+                let mut args = [];
                 let mut i: usize = 0;
                 while i < pats.len() {
                     args.push(self.pattern_to_matrix(&pats[i], ctx));
@@ -3713,7 +3713,7 @@ impl ExhaustivenessChecker {
                 PatternMatrix::Constructor { name: "tuple".to_string(), args }
             }
             PatternKind::Struct { name, fields } => {
-                let mut args: [PatternMatrix] = vec![];
+                let mut args = [];
                 let mut i: usize = 0;
                 while i < fields.len() {
                     args.push(self.pattern_to_matrix(&fields[i].pattern, ctx));
@@ -3726,8 +3726,8 @@ impl ExhaustivenessChecker {
             }
             PatternKind::Enum { name, variant, payload } => {
                 let args = match payload {
-                    Some(p) => vec![self.pattern_to_matrix(p, ctx)],
-                    None => vec![],
+                    Some(p) => [self.pattern_to_matrix(p, ctx)],
+                    None => [],
                 };
                 PatternMatrix::Constructor {
                     name: variant.value.clone(),
@@ -3735,7 +3735,7 @@ impl ExhaustivenessChecker {
                 }
             }
             PatternKind::Or(pats) => {
-                let mut alts: [PatternMatrix] = vec![];
+                let mut alts = [];
                 let mut i: usize = 0;
                 while i < pats.len() {
                     alts.push(self.pattern_to_matrix(&pats[i], ctx));
@@ -3766,7 +3766,7 @@ impl TypeContext {
         let checker = ExhaustivenessChecker::new(&self.type_defs);
 
         // Convert patterns to matrix form
-        let mut matrix: [PatternMatrix] = vec![];
+        let mut matrix = [];
         let mut i: usize = 0;
         while i < patterns.len() {
             matrix.push(checker.pattern_to_matrix(&patterns[i], self));
