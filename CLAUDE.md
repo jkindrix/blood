@@ -1,86 +1,117 @@
-# Blood Compiler Development Guidelines
+# Blood Self-Hosted Compiler
 
-## Dual Compiler Architecture
+## Repository Purpose
 
-This repository contains two parallel compiler implementations:
+This repository contains the **self-hosted Blood compiler** written in Blood. This is Blood source code that compiles to a working compiler.
 
-| Compiler | Location | Language | Purpose |
-|----------|----------|----------|---------|
-| **Reference** | `bloodc/src/` | Rust | Bootstrap compiler, leverages Rust ecosystem (inkwell, ariadne) |
-| **Self-Hosted** | `blood-std/std/compiler/` | Blood | Self-hosting target, implements everything in Blood |
+**This is NOT the Rust-based compiler.** The Rust bootstrap compiler lives at:
+- Repository: `~/blood-rust` (or `github.com/jkindrix/blood-rust`)
+- Commit: `1148f02` - stable, tested, Aether-verified
 
-Both compilers share identical architecture:
+## Architecture
+
 ```
-Source → Lexer → Parser → AST → HIR → Type Check → MIR → Codegen → LLVM
+blood-rust (Rust)          blood (this repo)
+┌─────────────────┐        ┌─────────────────────────────┐
+│ bloodc          │ ──────>│ blood-std/std/compiler/*.blood │
+│ blood-runtime   │compiles│                             │
+│ blood-tools     │        │ Self-hosted compiler source │
+└─────────────────┘        └─────────────────────────────┘
 ```
 
-### Parity Expectations
+The Rust compiler (`blood-rust`) compiles the Blood compiler source code (this repo).
 
-**The Blood compiler must match the Rust compiler's behavior for all language semantics.**
+## Development Rules
 
-When the Blood compiler lacks a feature that the Rust compiler has:
-- This is generally a **bug to fix**, not a design decision
-- Check `blood-std/std/compiler/COMPILER_NOTES.md` for explicitly documented limitations
-- If not documented, implement the missing feature to match Rust
+### Rule 1: Compile Against blood-rust
 
-### Blood Language Idioms
+**Every file must compile with blood-rust before committing.**
 
-Blood is not Rust. These patterns are **correct in Blood**, not shortcuts:
+```bash
+/home/jkindrix/blood-rust/target/release/blood check <file.blood>
+```
 
-| Pattern | Why It's Correct |
-|---------|------------------|
-| `while i < len { ... i = i + 1; }` | Blood lacks iterator adapters |
-| `i = i + 1` | Blood lacks `+=` operator |
-| Explicit match arms for every variant | Required by zero shortcuts principle |
-| `HashMap<u32, Type>` vs newtype keys | Blood's type system differs from Rust |
+If blood-rust rejects the code, the code is wrong. Do NOT modify blood-rust to accept bad syntax.
 
-**Do not "improve" Blood code by adding Rust features that don't exist in Blood.**
+### Rule 2: Incremental Development
 
-### Design Documentation
+Write one file at a time:
+1. Write the file
+2. Compile with blood-rust
+3. Test functionality
+4. Commit
+5. Move to next file
 
-For detailed design decisions, divergences, and known limitations, see:
-- `blood-std/std/compiler/COMPILER_NOTES.md`
+Never write thousands of lines without compiling. The previous 96k-line compiler was written without testing against blood-rust - that's why it failed.
 
----
+### Rule 3: Use Correct Blood Syntax
 
-## Prime Directive: Zero Shortcuts
+Blood syntax that blood-rust (1148f02) accepts:
 
-**This codebase must have ZERO shortcuts.** Every pattern match must be exhaustive with proper handling. Every error case must be reported. Every feature must be complete or explicitly error with "not yet implemented."
+```blood
+// Match expressions - NO semicolon after arms
+match value {
+    Some(x) => { do_something(x) }
+    None => { default() }
+}
 
-### What Constitutes a Shortcut
+// While loops with manual increment
+let mut i: usize = 0;
+while i < len {
+    process(items[i]);
+    i = i + 1;
+}
 
-1. **Silent failures**: `_ => Ok(())`, `_ => continue`, returning success without doing work
-2. **Placeholder returns**: `Type::error()`, `unwrap_or_default()` hiding real errors
-3. **Catch-all patterns**: `_ =>` that should enumerate all cases explicitly
-4. **Dead code**: Functions that don't work but aren't removed
-5. **Magic numbers**: Hardcoded values like `0` that should be computed
-6. **TODO/FIXME without action**: Comments noting problems without fixing them
-7. **Silent skips**: `continue` in loops without logging/reporting
-8. **Incomplete error messages**: Errors that don't help diagnose the problem
+// Array literals (not vec![])
+let items: [i32] = [];
+items.push(1);
 
-### Required Behavior
+// Closures with effects
+let f = || / {Emit<i32>} { perform Emit.emit(42); };
+```
 
-- Every match arm must either handle the case properly OR return an explicit error
-- Every `unwrap()` must be justified or replaced with proper error handling
-- Every `_ =>` must be replaced with explicit variant listing
-- Every silent `continue` must either handle the case or report an error
-- Every TODO must be addressed or converted to an error
+### Rule 4: Zero Shortcuts
 
-### Audit Checklist
+- Every match arm explicitly handled (no `_ =>` catch-alls)
+- Every error case reported
+- Every feature complete or explicitly errors with "not yet implemented"
+- No silent failures, no placeholder returns
 
-When auditing code, search for:
-- `_ =>`
-- `unwrap_or_default`
-- `unwrap_or_else`
-- `Type::error()`
-- `continue` (in match arms)
-- `Ok(())` (suspicious early returns)
-- `TODO`, `FIXME`, `XXX`, `HACK`
-- `Phase 2`, `not yet`, `later`
-- `unreachable!()`, `panic!()`
-- Empty function bodies
-- Functions returning hardcoded values
+## Compiler Phases
+
+Build in this order, testing each phase before moving on:
+
+| Phase | File(s) | Purpose |
+|-------|---------|---------|
+| 1 | `lexer.blood` | Tokenize source |
+| 2 | `parser.blood` | Build AST |
+| 3 | `ast/*.blood` | AST data structures |
+| 4 | `hir/*.blood` | High-level IR |
+| 5 | `typeck/*.blood` | Type checking |
+| 6 | `mir/*.blood` | Mid-level IR |
+| 7 | `codegen/*.blood` | LLVM codegen |
 
 ## Current Status
 
-Audit in progress. No shortcuts are acceptable.
+**Starting from scratch.** The previous 96k-line implementation was written without compiling against blood-rust and used invalid syntax throughout.
+
+## Testing
+
+Use blood-rust to compile and run test programs:
+
+```bash
+# Check syntax/types
+/home/jkindrix/blood-rust/target/release/blood check file.blood
+
+# Build executable
+/home/jkindrix/blood-rust/target/release/blood build file.blood
+
+# Run
+/home/jkindrix/blood-rust/target/release/blood run file.blood
+```
+
+## Reference
+
+The old (broken) compiler code can be referenced for algorithms and architecture, but do NOT copy-paste. Rewrite with correct syntax.
+
+The Aether project (`~/blood-test/aether/`) demonstrates correct Blood syntax that blood-rust accepts.
