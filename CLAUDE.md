@@ -100,36 +100,30 @@ Audit in progress. No shortcuts are acceptable.
 | Monolithic file | 600 | Must split or justify |
 | Emergency limit | 800 | Immediate refactoring required |
 
-**Current exceptions** (justified by blood-rust limitations):
-- `lexer.blood` (1206 lines) - Self-contained due to module system limitations
-- `ast.blood` (1161 lines) - Interconnected types, splitting not possible without cross-module types
+**Current exceptions:**
+- `lexer.blood` (~870 lines) - Contains lexer state machine logic, reduced from 1206 after modularization
+- `ast.blood` (~1130 lines) - Contains all AST node types, reduced after removing duplicate type definitions
 
 ### Consistency Requirements
 
-**All duplicate type definitions MUST be identical.**
+**Shared types are now defined once in `common.blood` and imported.**
 
-When types are duplicated across files (necessary due to blood-rust limitations):
+| Type | Defined In | Fields |
+|------|------------|--------|
+| `Span` | `common.blood` | `start: usize`, `end: usize`, `line: u32`, `column: u32` |
+| `Symbol` | `common.blood` | `index: u32` |
+| `SpannedSymbol` | `common.blood` | `symbol: Symbol`, `span: Span` |
+| `SpannedString` | `common.blood` | `value: String`, `span: Span` |
+| `OrderedFloat` | `common.blood` | `bits: u64` |
 
-1. **Canonical source**: `common.blood` is the authoritative reference
-2. **Field names**: Must match exactly across all definitions
-3. **Method signatures**: Must match exactly
-4. **Documentation**: Keep in sync
-
-**Consistency checklist for shared types:**
-```
-Span: start, end, line, column (all usize/u32)
-Symbol: index (u32)
-SpannedSymbol: symbol (Symbol), span (Span)  // NOT 'value'
-SpannedString: value (String), span (Span)
-OrderedFloat: bits (u64)
-```
+Files import these via `mod common;` and reference as `common::Span`, etc.
 
 ### Code Organization Principles
 
 1. **Single Responsibility**: Each file should have one clear purpose
 2. **Logical Grouping**: Related types stay together
 3. **Dependency Direction**: Lower-level modules don't depend on higher-level
-4. **Self-Containment**: Until blood-rust supports cross-module types, each file must define all types it needs
+4. **Shared Types in Common**: Define shared types in `common.blood`, import elsewhere
 
 ### When to Refactor
 
@@ -147,9 +141,9 @@ OrderedFloat: bits (u64)
 
 ---
 
-## Blood-Rust Module System Limitations
+## Blood-Rust Module System
 
-**CRITICAL: Understand these limitations before designing file structure.**
+**The blood-rust module system now supports cross-module types.**
 
 ### What Works
 
@@ -159,43 +153,54 @@ OrderedFloat: bits (u64)
 | Directory modules | `mod sub;` loads `sub/mod.blood` | ✅ Works |
 | Qualified struct in expressions | `helper::Data { value: 42 }` | ✅ Works |
 | Qualified function calls | `helper::add(1, 2)` | ✅ Works |
+| Cross-module types in type position | `pub field: helper::Data` | ✅ Works |
+| Chained module paths | `token::common::Span` | ✅ Works |
 
 ### What Does NOT Work
 
 | Feature | Example | Status |
 |---------|---------|--------|
-| Cross-module types in type position | `pub field: helper::Data` | ❌ Fails |
-| Cross-module enum variants | `helper::Kind::A` | ❌ Fails |
 | `use` imports after declarations | `mod foo; use foo.Bar;` | ❌ Parse error |
 | `use` imports finding external modules | `use std.compiler.Span;` | ❌ Module not found |
 
-### Practical Implications
+### Working Module Patterns
 
-**You CANNOT:**
+**Simple module import:**
 ```blood
-// This will NOT work
 mod common;
 
 pub struct Token {
-    pub kind: common::TokenKind,  // ERROR: cross-module type in type position
-    pub span: common::Span,       // ERROR: same issue
+    pub kind: TokenKind,
+    pub span: common::Span,  // Cross-module type works!
 }
 ```
 
-**You MUST:**
+**Chained module paths (preferred for files with @unsafe blocks):**
 ```blood
-// Each file defines all types it needs inline
-pub struct Span { pub start: usize, pub end: usize, ... }
-pub enum TokenKind { ... }
-pub struct Token { pub kind: TokenKind, pub span: Span }
+mod token;  // token.blood imports common
+
+pub struct Lexer { ... }
+
+impl Lexer {
+    fn make_token(self: &Self, kind: token::TokenKind) -> token::Token {
+        token::Token {
+            kind,
+            span: token::common::Span { ... },  // Access through chain
+        }
+    }
+}
 ```
 
-### Workaround Strategy
+### Current Modularization
 
-1. **Canonical Reference**: Keep `common.blood` as the authoritative type definitions
-2. **Copy, Don't Import**: Duplicate types in each file that needs them
-3. **Consistency Enforcement**: Manually ensure duplicates stay synchronized
-4. **Future-Proof Comments**: Mark duplicates with `// Canonical: common.blood`
+The self-hosted compiler now uses proper module imports:
+
+| File | Imports | Shared Types From |
+|------|---------|-------------------|
+| `common.blood` | none | (defines canonical types) |
+| `token.blood` | `mod common;` | `common::Span` |
+| `lexer.blood` | `mod token;` | `token::TokenKind`, `token::Token`, `token::common::Span` |
+| `ast.blood` | `mod common;` | `common::Span`, `common::Symbol`, `common::SpannedSymbol`, etc. |
 
 ---
 
@@ -271,13 +276,13 @@ Before modifying any shared type:
 
 | Constraint | Example That Fails | Workaround |
 |------------|-------------------|------------|
-| Cross-module types in type position | `pub field: mod::Type` | Define types inline |
-| Cross-module enum variants | `mod::Enum::Variant` | Define enums inline |
 | `use` after declarations | `mod foo; use foo.Bar;` | Not supported - use qualified paths |
 | Some keywords as field names | `pub module: ...` | Rename: `mod_decl` |
 | Limited &str methods | No `.chars()`, `.as_bytes()` | Use unsafe pointer arithmetic |
 
 **Fixed constraints (no longer apply):**
+- Cross-module types in type position now work (e.g., `pub field: mod::Type`)
+- Cross-module enum variants now work (e.g., `mod::Enum::Variant`)
 - Nested generics like `Option<Box<Expr>>` now work (fixed in commit 40a4efe)
 - Field name `end` works (was incorrectly thought to be a keyword)
 - Format strings support all integer types (fixed in commit 61c8d43)
@@ -290,14 +295,15 @@ Build in this order, testing each phase before moving on:
 
 | Phase | File(s) | Lines | Status |
 |-------|---------|-------|--------|
-| 1 | `common.blood` | 134 | ✅ Complete |
-| 2 | `lexer.blood` | 1206 | ✅ Complete |
-| 3 | `ast.blood` | 1161 | ✅ Complete |
-| 4 | `parser.blood` | - | ❌ Not started |
-| 5 | `hir.blood` | - | ❌ Not started |
-| 6 | `typeck.blood` | - | ❌ Not started |
-| 7 | `mir.blood` | - | ❌ Not started |
-| 8 | `codegen.blood` | - | ❌ Not started |
+| 1 | `common.blood` | ~135 | ✅ Complete |
+| 2 | `token.blood` | ~323 | ✅ Complete (new, extracted from lexer) |
+| 3 | `lexer.blood` | ~870 | ✅ Complete (modularized) |
+| 4 | `ast.blood` | ~1130 | ✅ Complete (modularized) |
+| 5 | `parser.blood` | - | ❌ Not started |
+| 6 | `hir.blood` | - | ❌ Not started |
+| 7 | `typeck.blood` | - | ❌ Not started |
+| 8 | `mir.blood` | - | ❌ Not started |
+| 9 | `codegen.blood` | - | ❌ Not started |
 
 ---
 
