@@ -2,48 +2,8 @@
 //
 // This module defines the AST data structures that represent parsed Blood
 // programs. The AST closely mirrors the surface syntax.
-//
-// NOTE: Types like Span, Symbol, SpannedSymbol are duplicated here due to
-// blood-rust module limitations. Canonical definitions are in common.blood.
-// Keep in sync.
 
-// ============================================================
-// Shared Types (Canonical: common.blood)
-// ============================================================
-
-/// Canonical: common.blood
-pub struct Span {
-    pub start: usize,
-    pub end: usize,
-    pub line: u32,
-    pub column: u32,
-}
-
-// ============================================================
-// Symbol - Interned string identifier
-// ============================================================
-
-/// A symbol representing an interned string identifier.
-pub struct Symbol {
-    pub index: u32,
-}
-
-/// A symbol with its source span.
-pub struct SpannedSymbol {
-    pub symbol: Symbol,
-    pub span: Span,
-}
-
-/// A string with its source span.
-pub struct SpannedString {
-    pub value: String,
-    pub span: Span,
-}
-
-/// Wrapper for f64 that we can use in AST nodes.
-pub struct OrderedFloat {
-    pub bits: u64,
-}
+mod common;
 
 // ============================================================
 // Program
@@ -58,19 +18,19 @@ pub struct Program {
     /// Top-level declarations.
     pub declarations: Vec<Declaration>,
     /// The span of the entire program.
-    pub span: Span,
+    pub span: common::Span,
 }
 
 /// Module declaration: `module std.collections.vec;`
 pub struct ModuleDecl {
     pub path: ModulePath,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 /// A module path like `std.collections.vec`.
 pub struct ModulePath {
-    pub segments: Vec<SpannedSymbol>,
-    pub span: Span,
+    pub segments: Vec<common::SpannedSymbol>,
+    pub span: common::Span,
 }
 
 // ============================================================
@@ -82,25 +42,25 @@ pub enum Import {
     /// `use std.mem.allocate;`
     Simple {
         path: ModulePath,
-        alias: Option<SpannedSymbol>,
-        span: Span,
+        alias: Option<common::SpannedSymbol>,
+        span: common::Span,
     },
     /// `use std.iter::{Iterator, IntoIterator};`
     Group {
         path: ModulePath,
         items: Vec<ImportItem>,
-        span: Span,
+        span: common::Span,
     },
     /// `use std.ops::*;`
     Glob {
         path: ModulePath,
-        span: Span,
+        span: common::Span,
     },
 }
 
 pub struct ImportItem {
-    pub name: SpannedSymbol,
-    pub alias: Option<SpannedSymbol>,
+    pub name: common::SpannedSymbol,
+    pub alias: Option<common::SpannedSymbol>,
 }
 
 // ============================================================
@@ -128,9 +88,9 @@ pub enum Declaration {
 pub struct ModItemDecl {
     pub attrs: Vec<Attribute>,
     pub vis: Visibility,
-    pub name: SpannedSymbol,
+    pub name: common::SpannedSymbol,
     pub body: Option<Vec<Declaration>>,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 // ============================================================
@@ -151,9 +111,9 @@ pub enum Visibility {
 
 pub struct Attribute {
     pub is_inner: bool,
-    pub path: Vec<SpannedSymbol>,
+    pub path: Vec<common::SpannedSymbol>,
     pub args: Option<AttributeArgs>,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub enum AttributeArgs {
@@ -162,10 +122,10 @@ pub enum AttributeArgs {
 }
 
 pub enum AttributeArg {
-    Ident(SpannedSymbol),
-    KeyValue { key: SpannedSymbol, val: Literal },
+    Ident(common::SpannedSymbol),
+    KeyValue { key: common::SpannedSymbol, val: Literal },
     Lit(Literal),
-    Call { name: SpannedSymbol, arg: Literal },
+    Call { name: common::SpannedSymbol, arg: Literal },
 }
 
 // ============================================================
@@ -176,14 +136,14 @@ pub struct FnDecl {
     pub attrs: Vec<Attribute>,
     pub vis: Visibility,
     pub qualifiers: FnQualifiers,
-    pub name: SpannedSymbol,
+    pub name: common::SpannedSymbol,
     pub type_params: Option<TypeParams>,
     pub params: Vec<Param>,
     pub return_type: Option<Type>,
     pub effects: Option<EffectRow>,
     pub where_clause: Option<WhereClause>,
     pub body: Option<Block>,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub struct FnQualifiers {
@@ -196,7 +156,7 @@ pub struct Param {
     pub qualifier: Option<ParamQualifier>,
     pub pattern: Pattern,
     pub ty: Type,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub enum ParamQualifier {
@@ -212,19 +172,19 @@ pub enum ParamQualifier {
 pub struct TypeAliasDecl {
     pub attrs: Vec<Attribute>,
     pub vis: Visibility,
-    pub name: SpannedSymbol,
+    pub name: common::SpannedSymbol,
     pub type_params: Option<TypeParams>,
     pub ty: Type,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub struct StructDecl {
     pub attrs: Vec<Attribute>,
     pub vis: Visibility,
-    pub name: SpannedSymbol,
+    pub name: common::SpannedSymbol,
     pub type_params: Option<TypeParams>,
     pub body: StructBody,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub enum StructBody {
@@ -236,25 +196,25 @@ pub enum StructBody {
 pub struct StructField {
     pub attrs: Vec<Attribute>,
     pub vis: Visibility,
-    pub name: SpannedSymbol,
+    pub name: common::SpannedSymbol,
     pub ty: Type,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub struct EnumDecl {
     pub attrs: Vec<Attribute>,
     pub vis: Visibility,
-    pub name: SpannedSymbol,
+    pub name: common::SpannedSymbol,
     pub type_params: Option<TypeParams>,
     pub variants: Vec<EnumVariant>,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub struct EnumVariant {
     pub attrs: Vec<Attribute>,
-    pub name: SpannedSymbol,
+    pub name: common::SpannedSymbol,
     pub body: StructBody,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 // ============================================================
@@ -263,32 +223,32 @@ pub struct EnumVariant {
 
 pub struct EffectDecl {
     pub attrs: Vec<Attribute>,
-    pub name: SpannedSymbol,
+    pub name: common::SpannedSymbol,
     pub type_params: Option<TypeParams>,
     pub parent_effects: Vec<Type>,
     pub operations: Vec<OperationDecl>,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub struct OperationDecl {
-    pub name: SpannedSymbol,
+    pub name: common::SpannedSymbol,
     pub type_params: Option<TypeParams>,
     pub params: Vec<Param>,
     pub return_type: Type,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub struct HandlerDecl {
     pub attrs: Vec<Attribute>,
     pub kind: HandlerKind,
-    pub name: SpannedSymbol,
+    pub name: common::SpannedSymbol,
     pub type_params: Option<TypeParams>,
     pub effect: Type,
     pub where_clause: Option<WhereClause>,
     pub state: Vec<HandlerState>,
     pub return_clause: Option<ReturnClause>,
     pub operations: Vec<OperationImpl>,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub enum HandlerKind {
@@ -298,31 +258,31 @@ pub enum HandlerKind {
 
 pub struct HandlerState {
     pub is_mut: bool,
-    pub name: SpannedSymbol,
+    pub name: common::SpannedSymbol,
     pub ty: Type,
     pub default_val: Option<Expr>,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub struct ReturnClause {
-    pub param: SpannedSymbol,
+    pub param: common::SpannedSymbol,
     pub body: Block,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub struct OperationImpl {
-    pub name: SpannedSymbol,
+    pub name: common::SpannedSymbol,
     pub params: Vec<Pattern>,
     pub body: Block,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub struct TryWithHandler {
     pub effect: TypePath,
-    pub operation: SpannedSymbol,
+    pub operation: common::SpannedSymbol,
     pub params: Vec<Pattern>,
     pub body: Block,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 // ============================================================
@@ -332,12 +292,12 @@ pub struct TryWithHandler {
 pub struct TraitDecl {
     pub attrs: Vec<Attribute>,
     pub vis: Visibility,
-    pub name: SpannedSymbol,
+    pub name: common::SpannedSymbol,
     pub type_params: Option<TypeParams>,
     pub supertraits: Vec<Type>,
     pub where_clause: Option<WhereClause>,
     pub items: Vec<TraitItem>,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub enum TraitItem {
@@ -353,7 +313,7 @@ pub struct ImplBlock {
     pub self_ty: Type,
     pub where_clause: Option<WhereClause>,
     pub items: Vec<ImplItem>,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub enum ImplItem {
@@ -369,20 +329,20 @@ pub enum ImplItem {
 pub struct ConstDecl {
     pub attrs: Vec<Attribute>,
     pub vis: Visibility,
-    pub name: SpannedSymbol,
+    pub name: common::SpannedSymbol,
     pub ty: Type,
     pub init_value: Expr,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub struct StaticDecl {
     pub attrs: Vec<Attribute>,
     pub vis: Visibility,
     pub is_mut: bool,
-    pub name: SpannedSymbol,
+    pub name: common::SpannedSymbol,
     pub ty: Type,
     pub init_value: Expr,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 // ============================================================
@@ -391,10 +351,10 @@ pub struct StaticDecl {
 
 pub struct BridgeDecl {
     pub attrs: Vec<Attribute>,
-    pub language: SpannedString,
-    pub name: SpannedSymbol,
+    pub language: common::SpannedString,
+    pub name: common::SpannedSymbol,
     pub items: Vec<BridgeItem>,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub enum BridgeItem {
@@ -413,7 +373,7 @@ pub struct LinkSpec {
     pub name: String,
     pub kind: Option<LinkKind>,
     pub wasm_import_module: Option<String>,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub enum LinkKind {
@@ -424,18 +384,18 @@ pub enum LinkKind {
 
 pub struct BridgeFn {
     pub attrs: Vec<Attribute>,
-    pub name: SpannedSymbol,
+    pub name: common::SpannedSymbol,
     pub params: Vec<BridgeParam>,
     pub is_variadic: bool,
     pub return_type: Option<Type>,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub struct BridgeParam {
-    pub name: SpannedSymbol,
+    pub name: common::SpannedSymbol,
     pub ty: Type,
     pub ownership: Option<BridgeOwnership>,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub enum BridgeOwnership {
@@ -445,61 +405,61 @@ pub enum BridgeOwnership {
 }
 
 pub struct BridgeConst {
-    pub name: SpannedSymbol,
+    pub name: common::SpannedSymbol,
     pub ty: Type,
     pub init_value: Literal,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub struct BridgeOpaqueType {
-    pub name: SpannedSymbol,
-    pub span: Span,
+    pub name: common::SpannedSymbol,
+    pub span: common::Span,
 }
 
 pub struct BridgeTypeAlias {
-    pub name: SpannedSymbol,
+    pub name: common::SpannedSymbol,
     pub ty: Type,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub struct BridgeStruct {
     pub attrs: Vec<Attribute>,
-    pub name: SpannedSymbol,
+    pub name: common::SpannedSymbol,
     pub fields: Vec<BridgeField>,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub struct BridgeField {
-    pub name: SpannedSymbol,
+    pub name: common::SpannedSymbol,
     pub ty: Type,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub struct BridgeEnum {
     pub attrs: Vec<Attribute>,
-    pub name: SpannedSymbol,
+    pub name: common::SpannedSymbol,
     pub variants: Vec<BridgeEnumVariant>,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub struct BridgeEnumVariant {
-    pub name: SpannedSymbol,
+    pub name: common::SpannedSymbol,
     pub discriminant: Option<Literal>,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub struct BridgeUnion {
     pub attrs: Vec<Attribute>,
-    pub name: SpannedSymbol,
+    pub name: common::SpannedSymbol,
     pub fields: Vec<BridgeField>,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub struct BridgeCallback {
-    pub name: SpannedSymbol,
+    pub name: common::SpannedSymbol,
     pub params: Vec<Type>,
     pub return_type: Option<Type>,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 // ============================================================
@@ -508,7 +468,7 @@ pub struct BridgeCallback {
 
 pub struct TypeParams {
     pub params: Vec<GenericParam>,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub enum GenericParam {
@@ -518,38 +478,38 @@ pub enum GenericParam {
 }
 
 pub struct TypeParam {
-    pub name: SpannedSymbol,
+    pub name: common::SpannedSymbol,
     pub bounds: Vec<Type>,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub struct LifetimeParam {
-    pub name: SpannedSymbol,
-    pub bounds: Vec<SpannedSymbol>,
-    pub span: Span,
+    pub name: common::SpannedSymbol,
+    pub bounds: Vec<common::SpannedSymbol>,
+    pub span: common::Span,
 }
 
 pub struct ConstGenericParam {
-    pub name: SpannedSymbol,
+    pub name: common::SpannedSymbol,
     pub ty: Type,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub struct WhereClause {
     pub predicates: Vec<WherePredicate>,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub enum WherePredicate {
     TypeBound {
         ty: Type,
         bounds: Vec<Type>,
-        span: Span,
+        span: common::Span,
     },
     Lifetime {
-        lifetime: SpannedSymbol,
-        bound: SpannedSymbol,
-        span: Span,
+        lifetime: common::SpannedSymbol,
+        bound: common::SpannedSymbol,
+        span: common::Span,
     },
 }
 
@@ -559,13 +519,13 @@ pub enum WherePredicate {
 
 pub struct Type {
     pub kind: TypeKind,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub enum TypeKind {
     Path(TypePath),
     Reference {
-        lifetime: Option<SpannedSymbol>,
+        lifetime: Option<common::SpannedSymbol>,
         is_mut: bool,
         inner: Box<Type>,
     },
@@ -588,14 +548,14 @@ pub enum TypeKind {
     },
     Record {
         fields: Vec<RecordTypeField>,
-        rest: Option<SpannedSymbol>,
+        rest: Option<common::SpannedSymbol>,
     },
     Ownership {
         qualifier: OwnershipQualifier,
         inner: Box<Type>,
     },
     Forall {
-        params: Vec<SpannedSymbol>,
+        params: Vec<common::SpannedSymbol>,
         body: Box<Type>,
     },
     Never,
@@ -605,29 +565,29 @@ pub enum TypeKind {
 
 pub struct TypePath {
     pub segments: Vec<TypePathSegment>,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub struct TypePathSegment {
-    pub name: SpannedSymbol,
+    pub name: common::SpannedSymbol,
     pub args: Option<TypeArgs>,
 }
 
 pub struct TypeArgs {
     pub args: Vec<TypeArg>,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub enum TypeArg {
     Type(Type),
-    Lifetime(SpannedSymbol),
+    Lifetime(common::SpannedSymbol),
     Const(Expr),
 }
 
 pub struct RecordTypeField {
-    pub name: SpannedSymbol,
+    pub name: common::SpannedSymbol,
     pub ty: Type,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub enum OwnershipQualifier {
@@ -641,16 +601,16 @@ pub enum OwnershipQualifier {
 
 pub struct EffectRow {
     pub kind: EffectRowKind,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub enum EffectRowKind {
     Pure,
     Effects {
         effects: Vec<Type>,
-        rest: Option<SpannedSymbol>,
+        rest: Option<common::SpannedSymbol>,
     },
-    Var(SpannedSymbol),
+    Var(common::SpannedSymbol),
 }
 
 // ============================================================
@@ -659,7 +619,7 @@ pub enum EffectRowKind {
 
 pub struct Expr {
     pub kind: ExprKind,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub enum ExprKind {
@@ -680,7 +640,7 @@ pub enum ExprKind {
     },
     MethodCall {
         receiver: Box<Expr>,
-        method: SpannedSymbol,
+        method: common::SpannedSymbol,
         type_args: Option<TypeArgs>,
         args: Vec<CallArg>,
     },
@@ -734,33 +694,33 @@ pub enum ExprKind {
         arms: Vec<MatchArm>,
     },
     Loop {
-        label: Option<SpannedSymbol>,
+        label: Option<common::SpannedSymbol>,
         body: Block,
     },
     While {
-        label: Option<SpannedSymbol>,
+        label: Option<common::SpannedSymbol>,
         condition: Box<Expr>,
         body: Block,
     },
     WhileLet {
-        label: Option<SpannedSymbol>,
+        label: Option<common::SpannedSymbol>,
         pattern: Pattern,
         scrutinee: Box<Expr>,
         body: Block,
     },
     For {
-        label: Option<SpannedSymbol>,
+        label: Option<common::SpannedSymbol>,
         pattern: Pattern,
         iter: Box<Expr>,
         body: Block,
     },
     Return(Option<Box<Expr>>),
     Break {
-        label: Option<SpannedSymbol>,
+        label: Option<common::SpannedSymbol>,
         val: Option<Box<Expr>>,
     },
     Continue {
-        label: Option<SpannedSymbol>,
+        label: Option<common::SpannedSymbol>,
     },
     Closure {
         is_move: bool,
@@ -775,7 +735,7 @@ pub enum ExprKind {
     },
     Perform {
         effect: Option<TypePath>,
-        operation: SpannedSymbol,
+        operation: common::SpannedSymbol,
         args: Vec<Expr>,
     },
     Resume(Box<Expr>),
@@ -785,7 +745,7 @@ pub enum ExprKind {
     },
     Unsafe(Block),
     Region {
-        name: Option<SpannedSymbol>,
+        name: Option<common::SpannedSymbol>,
         body: Block,
     },
     Paren(Box<Expr>),
@@ -798,7 +758,7 @@ pub enum ExprKind {
 
 pub enum MacroCallKind {
     Format {
-        format_str: SpannedString,
+        format_str: common::SpannedString,
         args: Vec<Expr>,
     },
     VecMacro(VecMacroArgs),
@@ -833,23 +793,23 @@ pub enum VecMacroArgs {
 
 pub struct ExprPath {
     pub segments: Vec<ExprPathSegment>,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub struct ExprPathSegment {
-    pub name: SpannedSymbol,
+    pub name: common::SpannedSymbol,
     pub args: Option<TypeArgs>,
 }
 
 pub struct CallArg {
-    pub name: Option<SpannedSymbol>,
+    pub name: Option<common::SpannedSymbol>,
     pub val: Expr,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub enum FieldAccess {
-    Named(SpannedSymbol),
-    Index(u32, Span),
+    Named(common::SpannedSymbol),
+    Index(u32, common::Span),
 }
 
 pub enum ArrayExpr {
@@ -861,9 +821,9 @@ pub enum ArrayExpr {
 }
 
 pub struct RecordExprField {
-    pub name: SpannedSymbol,
+    pub name: common::SpannedSymbol,
     pub val: Option<Expr>,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub enum ElseBranch {
@@ -875,13 +835,13 @@ pub struct MatchArm {
     pub pattern: Pattern,
     pub guard: Option<Expr>,
     pub body: Expr,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub struct ClosureParam {
     pub pattern: Pattern,
     pub ty: Option<Type>,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 // ============================================================
@@ -924,7 +884,7 @@ pub enum UnaryOp {
 
 pub struct Literal {
     pub kind: LiteralKind,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub enum LiteralKind {
@@ -968,7 +928,7 @@ pub enum FloatSuffix {
 
 pub struct Pattern {
     pub kind: PatternKind,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub enum PatternKind {
@@ -978,7 +938,7 @@ pub enum PatternKind {
     Ident {
         by_ref: bool,
         is_mut: bool,
-        name: SpannedSymbol,
+        name: common::SpannedSymbol,
         subpattern: Option<Box<Pattern>>,
     },
     Ref {
@@ -1014,9 +974,9 @@ pub enum PatternKind {
 }
 
 pub struct StructPatternField {
-    pub name: SpannedSymbol,
+    pub name: common::SpannedSymbol,
     pub pattern: Option<Pattern>,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 // ============================================================
@@ -1026,7 +986,7 @@ pub struct StructPatternField {
 pub struct Block {
     pub statements: Vec<Statement>,
     pub expr: Option<Box<Expr>>,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub enum Statement {
@@ -1034,7 +994,7 @@ pub enum Statement {
         pattern: Pattern,
         ty: Option<Type>,
         init_val: Option<Expr>,
-        span: Span,
+        span: common::Span,
     },
     Expr {
         expr: Expr,
@@ -1054,42 +1014,42 @@ pub struct HygieneId {
 pub struct MacroDecl {
     pub attrs: Vec<Attribute>,
     pub vis: Visibility,
-    pub name: SpannedSymbol,
+    pub name: common::SpannedSymbol,
     pub rules: Vec<MacroRule>,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub struct MacroRule {
     pub pattern: MacroPattern,
     pub expansion: MacroExpansion,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub struct MacroPattern {
     pub parts: Vec<MacroPatternPart>,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub enum MacroPatternPart {
     Token {
         kind: MacroTokenKind,
-        span: Span,
+        span: common::Span,
     },
     Capture {
-        name: SpannedSymbol,
+        name: common::SpannedSymbol,
         fragment: FragmentKind,
-        span: Span,
+        span: common::Span,
     },
     Repetition {
         pattern: Vec<MacroPatternPart>,
         separator: Option<MacroTokenKind>,
         kind: RepetitionKind,
-        span: Span,
+        span: common::Span,
     },
     Group {
         delimiter: MacroDelimiter,
         pattern: Vec<MacroPatternPart>,
-        span: Span,
+        span: common::Span,
     },
 }
 
@@ -1125,30 +1085,30 @@ pub enum RepetitionKind {
 
 pub struct MacroExpansion {
     pub parts: Vec<MacroExpansionPart>,
-    pub span: Span,
+    pub span: common::Span,
 }
 
 pub enum MacroExpansionPart {
     Tokens(Vec<MacroToken>),
     Substitution {
-        name: SpannedSymbol,
-        span: Span,
+        name: common::SpannedSymbol,
+        span: common::Span,
     },
     Repetition {
         parts: Vec<MacroExpansionPart>,
         separator: Option<MacroToken>,
-        span: Span,
+        span: common::Span,
     },
     Group {
         delimiter: MacroDelimiter,
         parts: Vec<MacroExpansionPart>,
-        span: Span,
+        span: common::Span,
     },
 }
 
 pub struct MacroToken {
     pub kind: MacroTokenKind,
-    pub span: Span,
+    pub span: common::Span,
     pub hygiene: HygieneId,
 }
 
@@ -1161,6 +1121,6 @@ pub enum TokenTree {
     Group {
         delimiter: MacroDelimiter,
         stream: TokenStream,
-        span: Span,
+        span: common::Span,
     },
 }
