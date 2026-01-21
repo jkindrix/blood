@@ -70,12 +70,52 @@ items.push(1);
 let f = || / {Emit<i32>} { perform Emit.emit(42); };
 ```
 
+### Rule 3a: Known Syntax Constraints
+
+**Document all constraints discovered during development here.**
+
+| Constraint | Example That Fails | Workaround |
+|------------|-------------------|------------|
+| Keywords as field names | `pub module: ...`, `pub end: ...` | Rename: `mod_decl`, `end_pos`, `end_val` |
+| No `super::` imports | `use super::lexer::Span` | Duplicate definitions or use full paths |
+| Limited &str methods | No `.chars()`, `.as_bytes()`, indexing | Use unsafe pointer arithmetic |
+
+**Fixed constraints (no longer apply):**
+- Nested generics like `Option<Box<Expr>>` now work (fixed in blood-rust commit 40a4efe)
+
+**When you discover a new constraint:**
+1. Test it in isolation with a minimal example
+2. Document it in this table
+3. Only then work around it in actual code
+
 ### Rule 4: Zero Shortcuts
 
 - Every match arm explicitly handled (no `_ =>` catch-alls)
 - Every error case reported
 - Every feature complete or explicitly errors with "not yet implemented"
 - No silent failures, no placeholder returns
+
+### Rule 5: No Rushing
+
+**Slow down. Think. Test. Document.**
+
+When writing a new file:
+
+1. **Understand first** - Read reference implementations, understand the problem
+2. **Start minimal** - Begin with 10-20 lines that compile, not 1000 lines that don't
+3. **Test each addition** - Add one struct/enum, compile, verify
+4. **Document discoveries** - When something fails, understand WHY before working around it
+5. **Explain your reasoning** - Provide commentary on decisions, not just code
+6. **Preserve context** - Don't delete comments or structure without explicit reason
+
+**Signs you're rushing (STOP if you notice these):**
+- Writing hundreds of lines without compiling
+- Repeatedly fixing compile errors without understanding root cause
+- Deleting/rewriting large sections of code
+- Not explaining what you're doing or why
+- Skipping documentation of discovered constraints
+
+**The goal is a working compiler, not a fast one. Quality over speed.**
 
 ## Compiler Phases
 
