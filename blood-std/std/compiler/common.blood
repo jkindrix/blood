@@ -1,0 +1,134 @@
+// Blood Self-Hosted Compiler - Common Types
+//
+// Shared types used across all compiler modules (lexer, parser, ast, etc.)
+//
+// NOTE: blood-rust (as of 1148f02) does not yet support multi-file compilation.
+// Each compiler module must currently define these types inline. This file
+// serves as the canonical reference - once blood-rust gains multi-file support,
+// modules will import from here using Blood's dot-separated syntax:
+//
+//     use std.compiler.common.Span;
+//     use std.compiler.common::{Symbol, SpannedSymbol};
+//
+// Until then, copy these type definitions into each compiler module as needed.
+
+// ============================================================
+// Source Location Types
+// ============================================================
+
+/// Span in source code with byte offsets and line/column info.
+///
+/// Used to track the location of tokens and AST nodes for error reporting.
+pub struct Span {
+    /// Start byte offset (inclusive)
+    pub start: usize,
+    /// End byte offset (exclusive)
+    pub end: usize,
+    /// Line number (1-based)
+    pub line: u32,
+    /// Column number (1-based)
+    pub column: u32,
+}
+
+impl Span {
+    /// Creates a new span.
+    pub fn new(start: usize, end: usize, line: u32, column: u32) -> Span {
+        Span { start, end, line, column }
+    }
+
+    /// Creates a dummy span for synthetic tokens or nodes.
+    pub fn dummy() -> Span {
+        Span { start: 0, end: 0, line: 0, column: 0 }
+    }
+
+    /// Returns the length of this span in bytes.
+    pub fn len(self: &Span) -> usize {
+        self.end - self.start
+    }
+
+    /// Merges two spans into one that covers both.
+    pub fn merge(self: &Span, other: &Span) -> Span {
+        let new_start = if self.start < other.start { self.start } else { other.start };
+        let new_end = if self.end > other.end { self.end } else { other.end };
+        // Use the line/column of whichever span starts first
+        let line = if self.start <= other.start { self.line } else { other.line };
+        let column = if self.start <= other.start { self.column } else { other.column };
+        Span { start: new_start, end: new_end, line, column }
+    }
+}
+
+// ============================================================
+// Symbol - Interned String Identifier
+// ============================================================
+
+/// A symbol representing an interned string identifier.
+///
+/// Symbols are used instead of raw strings for identifiers to enable
+/// fast comparison (just compare indices) and efficient memory usage
+/// (each unique string is stored only once in the interner).
+pub struct Symbol {
+    /// Index into the string interner.
+    pub index: u32,
+}
+
+impl Symbol {
+    /// Creates a new symbol with the given index.
+    pub fn new(index: u32) -> Symbol {
+        Symbol { index }
+    }
+}
+
+// ============================================================
+// Spanned Wrappers
+// ============================================================
+
+/// A symbol with its source span.
+///
+/// Used for identifiers, type names, and other symbolic values that need
+/// location information for error reporting.
+pub struct SpannedSymbol {
+    pub symbol: Symbol,
+    pub span: Span,
+}
+
+impl SpannedSymbol {
+    /// Creates a new spanned symbol.
+    pub fn new(symbol: Symbol, span: Span) -> SpannedSymbol {
+        SpannedSymbol { symbol, span }
+    }
+}
+
+/// A string with its source span.
+///
+/// Used for string literals and other string values that need location
+/// information for error reporting.
+pub struct SpannedString {
+    pub value: String,
+    pub span: Span,
+}
+
+impl SpannedString {
+    /// Creates a new spanned string.
+    pub fn new(value: String, span: Span) -> SpannedString {
+        SpannedString { value, span }
+    }
+}
+
+// ============================================================
+// Numeric Wrappers
+// ============================================================
+
+/// Wrapper for f64 that stores the bits directly.
+///
+/// This allows floats to be used in AST nodes without dealing with
+/// NaN comparison issues.
+pub struct OrderedFloat {
+    pub bits: u64,
+}
+
+impl OrderedFloat {
+    /// Creates an OrderedFloat from a u64 bit representation.
+    pub fn from_bits(bits: u64) -> OrderedFloat {
+        OrderedFloat { bits }
+    }
+}

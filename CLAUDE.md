@@ -46,7 +46,37 @@ Never write thousands of lines without compiling. The previous 96k-line compiler
 
 ### Rule 3: Use Correct Blood Syntax
 
-Blood syntax that blood-rust (1148f02) accepts:
+**CRITICAL: Blood is NOT Rust. Do not assume Rust syntax applies.**
+
+#### Blood Module Paths (NOT Rust-style)
+
+Blood uses **dot-separated module paths**, NOT Rust's `::` path syntax:
+
+```blood
+// CORRECT Blood syntax:
+module std.collections.vec;
+use std.mem.allocate;
+use std.iter.Iterator;
+
+// WRONG - this is Rust, not Blood:
+// use crate::module::item;
+// use super::sibling;
+// use std::collections::Vec;
+```
+
+Blood's `::` is ONLY for:
+1. **Grouped imports**: `use std.iter::{Iterator, IntoIterator};`
+2. **Glob imports**: `use std.ops::*;`
+
+**Visibility specifiers** in Blood use `crate`, `super`, `self` as modifiers, NOT path prefixes:
+```blood
+pub(crate) fn internal_function() { }  // visible within crate
+pub(super) fn parent_visible() { }      // visible to parent module
+```
+
+**Before assuming ANY syntax, check:** `/home/jkindrix/blood/docs/spec/GRAMMAR.md`
+
+#### Blood syntax that blood-rust (1148f02) accepts:
 
 ```blood
 // Match expressions - NO semicolon after arms
@@ -76,12 +106,13 @@ let f = || / {Emit<i32>} { perform Emit.emit(42); };
 
 | Constraint | Example That Fails | Workaround |
 |------------|-------------------|------------|
-| Keywords as field names | `pub module: ...`, `pub end: ...` | Rename: `mod_decl`, `end_pos`, `end_val` |
-| No `super::` imports | `use super::lexer::Span` | Duplicate definitions or use full paths |
+| No cross-file imports | `use std.compiler.common.Span;` | Each file must be self-contained; duplicate shared types |
+| Some keywords as field names | `pub module: ...` | Rename: `mod_decl` |
 | Limited &str methods | No `.chars()`, `.as_bytes()`, indexing | Use unsafe pointer arithmetic |
 
 **Fixed constraints (no longer apply):**
 - Nested generics like `Option<Box<Expr>>` now work (fixed in blood-rust commit 40a4efe)
+- Field name `end` now works (was incorrectly thought to be a keyword)
 
 **When you discover a new constraint:**
 1. Test it in isolation with a minimal example
