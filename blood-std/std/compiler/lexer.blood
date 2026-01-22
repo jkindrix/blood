@@ -112,7 +112,7 @@ impl<'src> Lexer<'src> {
                 self.advance();
             } else if c == 47 && self.peek() == 47 {
                 // // line comment
-                if self.peek_at(2) == 47 && self.peek_at(3) != 47 {
+                if self.peek_at(2usize) == 47 && self.peek_at(3usize) != 47 {
                     // /// doc comment - don't skip
                     break;
                 }
@@ -432,19 +432,19 @@ impl<'src> Lexer<'src> {
     fn lex_at_token(self: &mut Self) -> token::Token {
         self.advance(); // skip @
         // Check for @unsafe (6 chars)
-        if self.match_keyword_bytes(0, 6, 117, 110, 115, 97, 102, 101) {
+        if self.match_keyword_bytes(0usize, 6usize, 117u8, 110u8, 115u8, 97u8, 102u8, 101u8) {
             // u n s a f e
             self.pos = self.pos + 6;
             return self.make_token(token::TokenKind::AtUnsafe);
         }
         // Check for @heap (4 chars)
-        if self.match_keyword_bytes(0, 4, 104, 101, 97, 112, 0, 0) {
+        if self.match_keyword_bytes(0usize, 4usize, 104u8, 101u8, 97u8, 112u8, 0u8, 0u8) {
             // h e a p
             self.pos = self.pos + 4;
             return self.make_token(token::TokenKind::AtHeap);
         }
         // Check for @stack (5 chars)
-        if self.match_keyword_bytes(0, 5, 115, 116, 97, 99, 107, 0) {
+        if self.match_keyword_bytes(0usize, 5usize, 115u8, 116u8, 97u8, 99u8, 107u8, 0u8) {
             // s t a c k
             self.pos = self.pos + 5;
             return self.make_token(token::TokenKind::AtStack);

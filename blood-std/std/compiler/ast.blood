@@ -87,22 +87,10 @@ pub enum Declaration {
 /// Module item declaration: `mod foo;` or `mod foo { ... }`
 pub struct ModItemDecl {
     pub attrs: Vec<Attribute>,
-    pub vis: Visibility,
+    pub vis: common::Visibility,
     pub name: common::SpannedSymbol,
     pub body: Option<Vec<Declaration>>,
     pub span: common::Span,
-}
-
-// ============================================================
-// Visibility
-// ============================================================
-
-pub enum Visibility {
-    Private,
-    Public,
-    PublicCrate,
-    PublicSuper,
-    PublicSelf,
 }
 
 // ============================================================
@@ -134,8 +122,8 @@ pub enum AttributeArg {
 
 pub struct FnDecl {
     pub attrs: Vec<Attribute>,
-    pub vis: Visibility,
-    pub qualifiers: FnQualifiers,
+    pub vis: common::Visibility,
+    pub qualifiers: common::FnQualifiers,
     pub name: common::SpannedSymbol,
     pub type_params: Option<TypeParams>,
     pub params: Vec<Param>,
@@ -144,12 +132,6 @@ pub struct FnDecl {
     pub where_clause: Option<WhereClause>,
     pub body: Option<Block>,
     pub span: common::Span,
-}
-
-pub struct FnQualifiers {
-    pub is_const: bool,
-    pub is_async: bool,
-    pub is_unsafe: bool,
 }
 
 pub struct Param {
@@ -171,7 +153,7 @@ pub enum ParamQualifier {
 
 pub struct TypeAliasDecl {
     pub attrs: Vec<Attribute>,
-    pub vis: Visibility,
+    pub vis: common::Visibility,
     pub name: common::SpannedSymbol,
     pub type_params: Option<TypeParams>,
     pub ty: Type,
@@ -180,7 +162,7 @@ pub struct TypeAliasDecl {
 
 pub struct StructDecl {
     pub attrs: Vec<Attribute>,
-    pub vis: Visibility,
+    pub vis: common::Visibility,
     pub name: common::SpannedSymbol,
     pub type_params: Option<TypeParams>,
     pub body: StructBody,
@@ -195,7 +177,7 @@ pub enum StructBody {
 
 pub struct StructField {
     pub attrs: Vec<Attribute>,
-    pub vis: Visibility,
+    pub vis: common::Visibility,
     pub name: common::SpannedSymbol,
     pub ty: Type,
     pub span: common::Span,
@@ -203,7 +185,7 @@ pub struct StructField {
 
 pub struct EnumDecl {
     pub attrs: Vec<Attribute>,
-    pub vis: Visibility,
+    pub vis: common::Visibility,
     pub name: common::SpannedSymbol,
     pub type_params: Option<TypeParams>,
     pub variants: Vec<EnumVariant>,
@@ -240,7 +222,7 @@ pub struct OperationDecl {
 
 pub struct HandlerDecl {
     pub attrs: Vec<Attribute>,
-    pub kind: HandlerKind,
+    pub kind: common::HandlerKind,
     pub name: common::SpannedSymbol,
     pub type_params: Option<TypeParams>,
     pub effect: Type,
@@ -249,11 +231,6 @@ pub struct HandlerDecl {
     pub return_clause: Option<ReturnClause>,
     pub operations: Vec<OperationImpl>,
     pub span: common::Span,
-}
-
-pub enum HandlerKind {
-    Deep,
-    Shallow,
 }
 
 pub struct HandlerState {
@@ -291,7 +268,7 @@ pub struct TryWithHandler {
 
 pub struct TraitDecl {
     pub attrs: Vec<Attribute>,
-    pub vis: Visibility,
+    pub vis: common::Visibility,
     pub name: common::SpannedSymbol,
     pub type_params: Option<TypeParams>,
     pub supertraits: Vec<Type>,
@@ -328,7 +305,7 @@ pub enum ImplItem {
 
 pub struct ConstDecl {
     pub attrs: Vec<Attribute>,
-    pub vis: Visibility,
+    pub vis: common::Visibility,
     pub name: common::SpannedSymbol,
     pub ty: Type,
     pub init_value: Expr,
@@ -337,7 +314,7 @@ pub struct ConstDecl {
 
 pub struct StaticDecl {
     pub attrs: Vec<Attribute>,
-    pub vis: Visibility,
+    pub vis: common::Visibility,
     pub is_mut: bool,
     pub name: common::SpannedSymbol,
     pub ty: Type,
@@ -626,12 +603,12 @@ pub enum ExprKind {
     Literal(Literal),
     Path(ExprPath),
     Binary {
-        op: BinOp,
+        op: common::BinOp,
         left: Box<Expr>,
         right: Box<Expr>,
     },
     Unary {
-        op: UnaryOp,
+        op: common::UnaryOp,
         operand: Box<Expr>,
     },
     Call {
@@ -673,7 +650,7 @@ pub enum ExprKind {
         val: Box<Expr>,
     },
     AssignOp {
-        op: BinOp,
+        op: common::BinOp,
         target: Box<Expr>,
         val: Box<Expr>,
     },
@@ -739,6 +716,7 @@ pub enum ExprKind {
         args: Vec<Expr>,
     },
     Resume(Box<Expr>),
+    Try(Box<Expr>),
     TryWith {
         body: Block,
         handlers: Vec<TryWithHandler>,
@@ -842,40 +820,6 @@ pub struct ClosureParam {
     pub pattern: Pattern,
     pub ty: Option<Type>,
     pub span: common::Span,
-}
-
-// ============================================================
-// Operators
-// ============================================================
-
-pub enum BinOp {
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Rem,
-    Eq,
-    Ne,
-    Lt,
-    Le,
-    Gt,
-    Ge,
-    And,
-    Or,
-    BitAnd,
-    BitOr,
-    BitXor,
-    Shl,
-    Shr,
-    Pipe,
-}
-
-pub enum UnaryOp {
-    Neg,
-    Not,
-    Deref,
-    Ref,
-    RefMut,
 }
 
 // ============================================================
@@ -1013,7 +957,7 @@ pub struct HygieneId {
 
 pub struct MacroDecl {
     pub attrs: Vec<Attribute>,
-    pub vis: Visibility,
+    pub vis: common::Visibility,
     pub name: common::SpannedSymbol,
     pub rules: Vec<MacroRule>,
     pub span: common::Span,
