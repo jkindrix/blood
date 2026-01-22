@@ -254,21 +254,91 @@ Blood's `::` is ONLY for:
 
 **Before assuming ANY syntax, check:** `/home/jkindrix/blood/docs/spec/GRAMMAR.md`
 
-### Rule 4: Document Discoveries
+### Rule 4: Blood-Rust Compiler Bugs Must Be Reported, NOT Worked Around
+
+**CRITICAL: When you encounter a blood-rust compiler bug, you MUST NOT work around it.**
+
+A blood-rust bug is identified when:
+- Code compiles in isolation but fails when imported by another module
+- The error message references internal DefIds (e.g., `"def921" is not a struct`)
+- Syntactically correct code is rejected
+- The same pattern works in one context but not another
+
+**When you identify a potential blood-rust bug:**
+
+1. **STOP** - Do not attempt workarounds, band-aids, or alternative syntax
+2. **Isolate** - Create a minimal reproduction case
+3. **Document** - Record the bug in the "Known Blood-Rust Bugs" section below
+4. **Report** - The bug must be communicated to blood-rust developers
+5. **Wait** - Do not proceed with workarounds; the bug must be fixed at the source
+
+**Why this matters:**
+- Workarounds create technical debt that compounds over time
+- Band-aids mask the real problem and make future debugging harder
+- The blood-rust compiler should be fixed to support valid Blood code
+- Shortcuts violate the Zero Shortcuts principle
+
+**What is NOT a blood-rust bug:**
+- Blood syntax that differs from Rust (documented in this file)
+- Features that blood-rust explicitly doesn't support yet (documented limitations)
+- Code that uses incorrect Blood syntax
+
+### Rule 5: Document Discoveries
 
 When you discover a limitation or constraint:
 1. Test it in isolation with a minimal example
 2. Document it in this file
 3. Add a comment in the affected code
-4. Only then work around it
+4. Only then work around it (if it's a documented limitation, NOT a bug)
 
-### Rule 5: Maintain Consistency
+### Rule 6: Maintain Consistency
 
 Before modifying any shared type:
 1. Check `common.blood` for the canonical definition
 2. Update ALL files that duplicate the type
 3. Verify all files still compile
 4. Document the change
+
+---
+
+## Known Blood-Rust Bugs
+
+**These are compiler bugs that need to be fixed in blood-rust. Do NOT work around them.**
+
+### BUG-001: Struct initialization fails in impl blocks when module is imported
+
+**Status:** OPEN - Needs report to blood-rust developers
+
+**Symptom:**
+- A file compiles successfully when checked directly
+- The same file fails when imported by another module via `mod`
+- Error message: `"defXXX" is not a struct` (referencing internal DefIds)
+
+**Reproduction:**
+```bash
+# hir_expr.blood compiles successfully on its own:
+blood check hir_expr.blood  # ✅ Passes
+
+# But fails when imported by hir_lower.blood:
+blood check hir_lower.blood  # ❌ Fails with "def921 is not a struct"
+```
+
+**Affected code pattern:**
+```blood
+pub struct Local { ... }
+
+impl Local {
+    pub fn new(...) -> Local {
+        Local { field: value, ... }  // This line fails when imported
+    }
+}
+```
+
+**Error locations:** hir_expr.blood lines 64, 85, 90, 250, 527, 532
+
+**Hypothesis:** When a file is imported as a module, blood-rust assigns different DefIds to structs than when the same code is used within the file. The struct initialization in impl blocks then fails to resolve the struct name to the correct DefId.
+
+**Blocked work:** Cannot complete hir_lower.blood until this is fixed.
 
 ---
 
