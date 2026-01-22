@@ -285,6 +285,7 @@ Before modifying any shared type:
 - Cross-module enum variants now work (e.g., `mod::Enum::Variant`)
 - Nested generics like `Option<Box<Expr>>` now work (fixed in commit 40a4efe)
 - Field name `end` works (was incorrectly thought to be a keyword)
+- Vec.push() now works with all types (was broken due to generic type inference bug)
 - Format strings support all integer types (fixed in commit 61c8d43)
 
 ---
