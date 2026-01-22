@@ -11,6 +11,9 @@
 mod common;
 mod hir_def;
 mod hir_ty;
+mod hir_expr;
+mod hir_item;
+mod hir;
 mod unify;
 
 // ============================================================
@@ -501,4 +504,285 @@ pub enum ObligationCause {
     Coercion,
     /// From pattern matching.
     Pattern,
+}
+
+// ============================================================
+// Local Variable Info
+// ============================================================
+
+/// Information about a local variable for type checking.
+pub struct LocalInfo {
+    /// The local variable's type.
+    pub ty: hir_ty::Type,
+    /// Whether the local is mutable.
+    pub mutable: bool,
+    /// The span where the local was declared.
+    pub span: common::Span,
+}
+
+impl LocalInfo {
+    /// Creates new local info.
+    pub fn new(ty: hir_ty::Type, mutable: bool, span: common::Span) -> LocalInfo {
+        LocalInfo {
+            ty: ty,
+            mutable: mutable,
+            span: span,
+        }
+    }
+}
+
+// ============================================================
+// Type Checker
+// ============================================================
+
+/// The main type checker.
+///
+/// This struct coordinates type checking for an entire HIR crate.
+/// It maintains:
+/// - Substitution table for type unification
+/// - Type variable generator
+/// - Current function context
+/// - Errors collected during type checking
+pub struct TypeChecker {
+    /// Substitution table for type unification.
+    pub subst_table: unify::SubstTable,
+    /// Unifier for generating fresh type variables.
+    pub unifier: unify::Unifier,
+    /// Current function's return type.
+    pub return_ty: Option<hir_ty::Type>,
+    /// Whether we're currently in a loop.
+    pub in_loop: bool,
+    /// Type of the current loop (for break values).
+    pub loop_ty: Option<hir_ty::Type>,
+    /// Local variable types by LocalId index.
+    pub locals: Vec<LocalInfo>,
+    /// Type errors collected during checking.
+    pub errors: Vec<TypeError>,
+}
+
+impl TypeChecker {
+    /// Creates a new type checker.
+    pub fn new() -> TypeChecker {
+        TypeChecker {
+            subst_table: unify::SubstTable::new(),
+            unifier: unify::Unifier::new(),
+            return_ty: Option::None,
+            in_loop: false,
+            loop_ty: Option::None,
+            locals: Vec::new(),
+            errors: Vec::new(),
+        }
+    }
+
+    /// Generates a fresh inference type variable.
+    pub fn fresh_infer(self: &mut Self) -> hir_ty::Type {
+        self.unifier.fresh_infer()
+    }
+
+    /// Adds a local variable to the context.
+    pub fn add_local(self: &mut Self, ty: hir_ty::Type, mutable: bool, span: common::Span) -> hir_def::LocalId {
+        let id = hir_def::LocalId::new(self.locals.len() as u32);
+        let info = LocalInfo::new(ty, mutable, span);
+        self.locals.push(info);
+        id
+    }
+
+    /// Gets the type of a local variable.
+    pub fn get_local_ty(self: &Self, id: hir_def::LocalId) -> Option<hir_ty::Type> {
+        let idx = id.index as usize;
+        if idx < self.locals.len() {
+            Some(copy_type(&self.locals[idx].ty))
+        } else {
+            Option::None
+        }
+    }
+
+    /// Checks if a local variable is mutable.
+    pub fn is_local_mutable(self: &Self, id: hir_def::LocalId) -> bool {
+        let idx = id.index as usize;
+        if idx < self.locals.len() {
+            self.locals[idx].mutable
+        } else {
+            false
+        }
+    }
+
+    /// Sets the return type for the current function.
+    pub fn set_return_ty(self: &mut Self, ty: hir_ty::Type) {
+        self.return_ty = Some(ty);
+    }
+
+    /// Clears the return type when exiting a function.
+    pub fn clear_return_ty(self: &mut Self) {
+        self.return_ty = Option::None;
+    }
+
+    /// Enters a loop context.
+    pub fn enter_loop(self: &mut Self, ty: hir_ty::Type) {
+        self.in_loop = true;
+        self.loop_ty = Some(ty);
+    }
+
+    /// Exits a loop context.
+    pub fn exit_loop(self: &mut Self) {
+        self.in_loop = false;
+        self.loop_ty = Option::None;
+    }
+
+    /// Reports a type error.
+    pub fn error(self: &mut Self, kind: TypeErrorKind, span: common::Span) {
+        let err = TypeError::new(kind, span);
+        self.errors.push(err);
+    }
+
+    /// Returns whether any errors have been reported.
+    pub fn has_errors(self: &Self) -> bool {
+        self.errors.len() > 0
+    }
+
+    /// Unifies two types.
+    pub fn unify(self: &mut Self, a: &hir_ty::Type, b: &hir_ty::Type, span: common::Span) -> bool {
+        match unify::unify(&mut self.subst_table, &mut self.unifier, a, b, span) {
+            unify::UnifyResult::Ok => true,
+            unify::UnifyResult::Err(e) => {
+                // Convert unify error to type error
+                let kind = match e.kind {
+                    unify::UnifyErrorKind::TypeMismatch => TypeErrorKind::TypeMismatch,
+                    unify::UnifyErrorKind::OccursCheck => TypeErrorKind::InfiniteType,
+                    unify::UnifyErrorKind::ArityMismatch => TypeErrorKind::ArityMismatch,
+                    unify::UnifyErrorKind::EffectMismatch => TypeErrorKind::TypeMismatch,
+                    unify::UnifyErrorKind::RecordMismatch => TypeErrorKind::TypeMismatch,
+                };
+                self.error(kind, e.span);
+                false
+            }
+        }
+    }
+
+    /// Resolves a type by applying current substitutions.
+    pub fn resolve(self: &Self, ty: &hir_ty::Type) -> hir_ty::Type {
+        let table_ref: &unify::SubstTable = &self.subst_table;
+        unify::apply_substs(table_ref, ty)
+    }
+
+    /// Clears local variables (for entering a new function body).
+    pub fn clear_locals(self: &mut Self) {
+        self.locals = Vec::new();
+    }
+}
+
+// ============================================================
+// Type Copying (for internal use)
+// ============================================================
+
+/// Creates a shallow copy of a type (Blood lacks Clone).
+fn copy_type(ty: &hir_ty::Type) -> hir_ty::Type {
+    hir_ty::Type { kind: copy_type_kind(&ty.kind) }
+}
+
+/// Creates a copy of a TypeKind.
+fn copy_type_kind(kind: &hir_ty::TypeKind) -> hir_ty::TypeKind {
+    match kind {
+        &hir_ty::TypeKind::Primitive(prim) => hir_ty::TypeKind::Primitive(prim),
+        &hir_ty::TypeKind::Never => hir_ty::TypeKind::Never,
+        &hir_ty::TypeKind::Error => hir_ty::TypeKind::Error,
+        &hir_ty::TypeKind::Infer(var_id) => hir_ty::TypeKind::Infer(var_id),
+        &hir_ty::TypeKind::Param(var_id) => hir_ty::TypeKind::Param(var_id),
+        &hir_ty::TypeKind::Tuple(ref types) => {
+            let mut copied: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < types.len() {
+                copied.push(copy_type(&types[i]));
+                i = i + 1;
+            }
+            hir_ty::TypeKind::Tuple(copied)
+        }
+        &hir_ty::TypeKind::Array { ref element, size } => {
+            hir_ty::TypeKind::Array {
+                element: Box::new(copy_type(element.as_ref())),
+                size: size,
+            }
+        }
+        &hir_ty::TypeKind::Slice { ref element } => {
+            hir_ty::TypeKind::Slice {
+                element: Box::new(copy_type(element.as_ref())),
+            }
+        }
+        &hir_ty::TypeKind::Ref { ref inner, mutable } => {
+            hir_ty::TypeKind::Ref {
+                inner: Box::new(copy_type(inner.as_ref())),
+                mutable: mutable,
+            }
+        }
+        &hir_ty::TypeKind::Ptr { ref inner, mutable } => {
+            hir_ty::TypeKind::Ptr {
+                inner: Box::new(copy_type(inner.as_ref())),
+                mutable: mutable,
+            }
+        }
+        &hir_ty::TypeKind::Adt { def_id, ref args } => {
+            let mut copied_args: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < args.len() {
+                copied_args.push(copy_type(&args[i]));
+                i = i + 1;
+            }
+            hir_ty::TypeKind::Adt {
+                def_id: def_id,
+                args: copied_args,
+            }
+        }
+        &hir_ty::TypeKind::Fn { ref params, ref ret, ref effects } => {
+            let mut copied_params: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < params.len() {
+                copied_params.push(copy_type(&params[i]));
+                i = i + 1;
+            }
+            hir_ty::TypeKind::Fn {
+                params: copied_params,
+                ret: Box::new(copy_type(ret.as_ref())),
+                effects: copy_effect_row(effects),
+            }
+        }
+        &hir_ty::TypeKind::Record { ref fields, ref row_var } => {
+            let mut copied_fields: Vec<hir_ty::RecordField> = Vec::new();
+            let mut i: usize = 0;
+            while i < fields.len() {
+                copied_fields.push(hir_ty::RecordField::new(
+                    fields[i].name,
+                    copy_type(&fields[i].ty),
+                ));
+                i = i + 1;
+            }
+            hir_ty::TypeKind::Record {
+                fields: copied_fields,
+                row_var: *row_var,
+            }
+        }
+    }
+}
+
+/// Creates a copy of an EffectRow.
+fn copy_effect_row(row: &hir_ty::EffectRow) -> hir_ty::EffectRow {
+    let mut copied_effects: Vec<hir_ty::EffectRef> = Vec::new();
+    let mut i: usize = 0;
+    while i < row.effects.len() {
+        let eff = &row.effects[i];
+        let mut copied_args: Vec<hir_ty::Type> = Vec::new();
+        let mut j: usize = 0;
+        while j < eff.args.len() {
+            copied_args.push(copy_type(&eff.args[j]));
+            j = j + 1;
+        }
+        copied_effects.push(hir_ty::EffectRef {
+            def_id: eff.def_id,
+            args: copied_args,
+        });
+        i = i + 1;
+    }
+    hir_ty::EffectRow {
+        effects: copied_effects,
+        row_var: row.row_var,
+    }
 }

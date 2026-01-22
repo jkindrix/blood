@@ -641,3 +641,592 @@ impl DeferredConstraint {
         }
     }
 }
+
+// ============================================================
+// Substitution Table Operations
+// ============================================================
+
+impl SubstTable {
+    /// Adds a type variable substitution.
+    pub fn add_ty_subst(self: &mut Self, var_id: hir_def::TyVarId, ty: hir_ty::Type) {
+        let subst = TySubst::new(var_id, ty);
+        self.ty_substs.push(subst);
+    }
+
+    /// Looks up a type variable in the substitution table.
+    /// Returns Some(ty) if the variable is bound, None otherwise.
+    pub fn lookup_ty(self: &Self, var_id: hir_def::TyVarId) -> Option<hir_ty::Type> {
+        let mut i: usize = 0;
+        while i < self.ty_substs.len() {
+            if self.ty_substs[i].var_id.index == var_id.index {
+                return Some(copy_type(&self.ty_substs[i].ty));
+            }
+            i = i + 1;
+        }
+        Option::None
+    }
+
+    /// Adds an effect row variable substitution.
+    pub fn add_effect_subst(self: &mut Self, var_id: hir_def::EffectRowVarId, row: hir_ty::EffectRow) {
+        let subst = EffectRowSubst::new(var_id, row);
+        self.effect_substs.push(subst);
+    }
+
+    /// Looks up an effect row variable.
+    pub fn lookup_effect(self: &Self, var_id: hir_def::EffectRowVarId) -> Option<hir_ty::EffectRow> {
+        let mut i: usize = 0;
+        while i < self.effect_substs.len() {
+            if self.effect_substs[i].var_id.index == var_id.index {
+                return Some(copy_effect_row(&self.effect_substs[i].row));
+            }
+            i = i + 1;
+        }
+        Option::None
+    }
+}
+
+// ============================================================
+// Type Copying (Blood lacks Clone)
+// ============================================================
+
+/// Creates a shallow copy of a type.
+fn copy_type(ty: &hir_ty::Type) -> hir_ty::Type {
+    hir_ty::Type { kind: copy_type_kind(&ty.kind) }
+}
+
+/// Creates a copy of a TypeKind.
+fn copy_type_kind(kind: &hir_ty::TypeKind) -> hir_ty::TypeKind {
+    match kind {
+        &hir_ty::TypeKind::Primitive(prim) => hir_ty::TypeKind::Primitive(prim),
+        &hir_ty::TypeKind::Never => hir_ty::TypeKind::Never,
+        &hir_ty::TypeKind::Error => hir_ty::TypeKind::Error,
+        &hir_ty::TypeKind::Infer(var_id) => hir_ty::TypeKind::Infer(var_id),
+        &hir_ty::TypeKind::Param(var_id) => hir_ty::TypeKind::Param(var_id),
+        &hir_ty::TypeKind::Tuple(ref types) => {
+            let mut copied: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < types.len() {
+                copied.push(copy_type(&types[i]));
+                i = i + 1;
+            }
+            hir_ty::TypeKind::Tuple(copied)
+        }
+        &hir_ty::TypeKind::Array { ref element, size } => {
+            hir_ty::TypeKind::Array {
+                element: Box::new(copy_type(element.as_ref())),
+                size: size,
+            }
+        }
+        &hir_ty::TypeKind::Slice { ref element } => {
+            hir_ty::TypeKind::Slice {
+                element: Box::new(copy_type(element.as_ref())),
+            }
+        }
+        &hir_ty::TypeKind::Ref { ref inner, mutable } => {
+            hir_ty::TypeKind::Ref {
+                inner: Box::new(copy_type(inner.as_ref())),
+                mutable: mutable,
+            }
+        }
+        &hir_ty::TypeKind::Ptr { ref inner, mutable } => {
+            hir_ty::TypeKind::Ptr {
+                inner: Box::new(copy_type(inner.as_ref())),
+                mutable: mutable,
+            }
+        }
+        &hir_ty::TypeKind::Adt { def_id, ref args } => {
+            let mut copied_args: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < args.len() {
+                copied_args.push(copy_type(&args[i]));
+                i = i + 1;
+            }
+            hir_ty::TypeKind::Adt {
+                def_id: def_id,
+                args: copied_args,
+            }
+        }
+        &hir_ty::TypeKind::Fn { ref params, ref ret, ref effects } => {
+            let mut copied_params: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < params.len() {
+                copied_params.push(copy_type(&params[i]));
+                i = i + 1;
+            }
+            hir_ty::TypeKind::Fn {
+                params: copied_params,
+                ret: Box::new(copy_type(ret.as_ref())),
+                effects: copy_effect_row(effects),
+            }
+        }
+        &hir_ty::TypeKind::Record { ref fields, ref row_var } => {
+            let mut copied_fields: Vec<hir_ty::RecordField> = Vec::new();
+            let mut i: usize = 0;
+            while i < fields.len() {
+                copied_fields.push(hir_ty::RecordField::new(
+                    fields[i].name,
+                    copy_type(&fields[i].ty),
+                ));
+                i = i + 1;
+            }
+            hir_ty::TypeKind::Record {
+                fields: copied_fields,
+                row_var: *row_var,
+            }
+        }
+    }
+}
+
+/// Creates a copy of an EffectRow.
+fn copy_effect_row(row: &hir_ty::EffectRow) -> hir_ty::EffectRow {
+    let mut copied_effects: Vec<hir_ty::EffectRef> = Vec::new();
+    let mut i: usize = 0;
+    while i < row.effects.len() {
+        let eff = &row.effects[i];
+        let mut copied_args: Vec<hir_ty::Type> = Vec::new();
+        let mut j: usize = 0;
+        while j < eff.args.len() {
+            copied_args.push(copy_type(&eff.args[j]));
+            j = j + 1;
+        }
+        copied_effects.push(hir_ty::EffectRef {
+            def_id: eff.def_id,
+            args: copied_args,
+        });
+        i = i + 1;
+    }
+    hir_ty::EffectRow {
+        effects: copied_effects,
+        row_var: row.row_var,
+    }
+}
+
+// ============================================================
+// Type Resolution (Apply Substitutions)
+// ============================================================
+
+/// Applies substitutions to resolve type variables in a type.
+/// This is also called "zonking" - replacing inference variables with their solutions.
+pub fn apply_substs(table: &SubstTable, ty: &hir_ty::Type) -> hir_ty::Type {
+    match &ty.kind {
+        &hir_ty::TypeKind::Infer(var_id) => {
+            // Look up the type variable
+            match table.lookup_ty(var_id) {
+                Some(resolved) => {
+                    // Recursively apply substitutions to the resolved type
+                    apply_substs(table, &resolved)
+                }
+                Option::None => {
+                    // Variable not yet resolved
+                    copy_type(ty)
+                }
+            }
+        }
+        &hir_ty::TypeKind::Primitive(_) => copy_type(ty),
+        &hir_ty::TypeKind::Never => copy_type(ty),
+        &hir_ty::TypeKind::Error => copy_type(ty),
+        &hir_ty::TypeKind::Param(_) => copy_type(ty),
+        &hir_ty::TypeKind::Tuple(ref types) => {
+            let mut resolved: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < types.len() {
+                resolved.push(apply_substs(table, &types[i]));
+                i = i + 1;
+            }
+            hir_ty::Type::new(hir_ty::TypeKind::Tuple(resolved))
+        }
+        &hir_ty::TypeKind::Array { ref element, size } => {
+            hir_ty::Type::new(hir_ty::TypeKind::Array {
+                element: Box::new(apply_substs(table, element.as_ref())),
+                size: size,
+            })
+        }
+        &hir_ty::TypeKind::Slice { ref element } => {
+            hir_ty::Type::new(hir_ty::TypeKind::Slice {
+                element: Box::new(apply_substs(table, element.as_ref())),
+            })
+        }
+        &hir_ty::TypeKind::Ref { ref inner, mutable } => {
+            hir_ty::Type::new(hir_ty::TypeKind::Ref {
+                inner: Box::new(apply_substs(table, inner.as_ref())),
+                mutable: mutable,
+            })
+        }
+        &hir_ty::TypeKind::Ptr { ref inner, mutable } => {
+            hir_ty::Type::new(hir_ty::TypeKind::Ptr {
+                inner: Box::new(apply_substs(table, inner.as_ref())),
+                mutable: mutable,
+            })
+        }
+        &hir_ty::TypeKind::Adt { def_id, ref args } => {
+            let mut resolved_args: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < args.len() {
+                resolved_args.push(apply_substs(table, &args[i]));
+                i = i + 1;
+            }
+            hir_ty::Type::new(hir_ty::TypeKind::Adt {
+                def_id: def_id,
+                args: resolved_args,
+            })
+        }
+        &hir_ty::TypeKind::Fn { ref params, ref ret, ref effects } => {
+            let mut resolved_params: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < params.len() {
+                resolved_params.push(apply_substs(table, &params[i]));
+                i = i + 1;
+            }
+            hir_ty::Type::new(hir_ty::TypeKind::Fn {
+                params: resolved_params,
+                ret: Box::new(apply_substs(table, ret.as_ref())),
+                effects: apply_substs_to_effect_row(table, effects),
+            })
+        }
+        &hir_ty::TypeKind::Record { ref fields, ref row_var } => {
+            let mut resolved_fields: Vec<hir_ty::RecordField> = Vec::new();
+            let mut i: usize = 0;
+            while i < fields.len() {
+                resolved_fields.push(hir_ty::RecordField::new(
+                    fields[i].name,
+                    apply_substs(table, &fields[i].ty),
+                ));
+                i = i + 1;
+            }
+            hir_ty::Type::new(hir_ty::TypeKind::Record {
+                fields: resolved_fields,
+                row_var: *row_var,
+            })
+        }
+    }
+}
+
+/// Applies substitutions to an effect row.
+fn apply_substs_to_effect_row(table: &SubstTable, row: &hir_ty::EffectRow) -> hir_ty::EffectRow {
+    let mut resolved_effects: Vec<hir_ty::EffectRef> = Vec::new();
+    let mut i: usize = 0;
+    while i < row.effects.len() {
+        let eff = &row.effects[i];
+        let mut resolved_args: Vec<hir_ty::Type> = Vec::new();
+        let mut j: usize = 0;
+        while j < eff.args.len() {
+            resolved_args.push(apply_substs(table, &eff.args[j]));
+            j = j + 1;
+        }
+        resolved_effects.push(hir_ty::EffectRef {
+            def_id: eff.def_id,
+            args: resolved_args,
+        });
+        i = i + 1;
+    }
+    hir_ty::EffectRow {
+        effects: resolved_effects,
+        row_var: row.row_var,
+    }
+}
+
+// ============================================================
+// Occurs Check
+// ============================================================
+
+/// Checks if a type variable occurs in a type.
+/// Used to prevent infinite types like `T = Option<T>`.
+pub fn occurs_in(var_id: hir_def::TyVarId, ty: &hir_ty::Type) -> bool {
+    match &ty.kind {
+        &hir_ty::TypeKind::Infer(id) => id.index == var_id.index,
+        &hir_ty::TypeKind::Primitive(_) => false,
+        &hir_ty::TypeKind::Never => false,
+        &hir_ty::TypeKind::Error => false,
+        &hir_ty::TypeKind::Param(_) => false,
+        &hir_ty::TypeKind::Tuple(ref types) => {
+            let mut i: usize = 0;
+            while i < types.len() {
+                if occurs_in(var_id, &types[i]) {
+                    return true;
+                }
+                i = i + 1;
+            }
+            false
+        }
+        &hir_ty::TypeKind::Array { ref element, size: _ } => {
+            occurs_in(var_id, element.as_ref())
+        }
+        &hir_ty::TypeKind::Slice { ref element } => {
+            occurs_in(var_id, element.as_ref())
+        }
+        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
+            occurs_in(var_id, inner.as_ref())
+        }
+        &hir_ty::TypeKind::Ptr { ref inner, mutable: _ } => {
+            occurs_in(var_id, inner.as_ref())
+        }
+        &hir_ty::TypeKind::Adt { def_id: _, ref args } => {
+            let mut i: usize = 0;
+            while i < args.len() {
+                if occurs_in(var_id, &args[i]) {
+                    return true;
+                }
+                i = i + 1;
+            }
+            false
+        }
+        &hir_ty::TypeKind::Fn { ref params, ref ret, effects: _ } => {
+            let mut i: usize = 0;
+            while i < params.len() {
+                if occurs_in(var_id, &params[i]) {
+                    return true;
+                }
+                i = i + 1;
+            }
+            occurs_in(var_id, ret.as_ref())
+        }
+        &hir_ty::TypeKind::Record { ref fields, row_var: _ } => {
+            let mut i: usize = 0;
+            while i < fields.len() {
+                if occurs_in(var_id, &fields[i].ty) {
+                    return true;
+                }
+                i = i + 1;
+            }
+            false
+        }
+    }
+}
+
+// ============================================================
+// Core Unification Algorithm
+// ============================================================
+
+/// Unifies two types, adding substitutions to the table.
+/// Returns Ok if unification succeeds, Err with details if it fails.
+pub fn unify(
+    table: &mut SubstTable,
+    unifier: &mut Unifier,
+    a: &hir_ty::Type,
+    b: &hir_ty::Type,
+    span: common::Span,
+) -> UnifyResult {
+    // First, apply any existing substitutions (reborrow as shared ref)
+    let table_ref: &SubstTable = &*table;
+    let a_resolved = apply_substs(table_ref, a);
+    let b_resolved = apply_substs(table_ref, b);
+
+    // Now unify the resolved types
+    unify_resolved(table, unifier, &a_resolved, &b_resolved, span)
+}
+
+/// Unifies two types that have already had substitutions applied.
+fn unify_resolved(
+    table: &mut SubstTable,
+    unifier: &mut Unifier,
+    a: &hir_ty::Type,
+    b: &hir_ty::Type,
+    span: common::Span,
+) -> UnifyResult {
+    match (&a.kind, &b.kind) {
+        // Inference variables
+        (&hir_ty::TypeKind::Infer(var_a), &hir_ty::TypeKind::Infer(var_b)) => {
+            if var_a.index == var_b.index {
+                // Same variable, already unified
+                UnifyResult::Ok
+            } else {
+                // Bind one to the other
+                table.add_ty_subst(var_a, copy_type(b));
+                UnifyResult::Ok
+            }
+        }
+        (&hir_ty::TypeKind::Infer(var_id), _) => {
+            // Occurs check
+            if occurs_in(var_id, b) {
+                return UnifyResult::Err(UnifyError::occurs(span));
+            }
+            table.add_ty_subst(var_id, copy_type(b));
+            UnifyResult::Ok
+        }
+        (_, &hir_ty::TypeKind::Infer(var_id)) => {
+            // Occurs check
+            if occurs_in(var_id, a) {
+                return UnifyResult::Err(UnifyError::occurs(span));
+            }
+            table.add_ty_subst(var_id, copy_type(a));
+            UnifyResult::Ok
+        }
+
+        // Error types unify with anything (error recovery)
+        (&hir_ty::TypeKind::Error, _) => UnifyResult::Ok,
+        (_, &hir_ty::TypeKind::Error) => UnifyResult::Ok,
+
+        // Never type unifies with anything (divergence)
+        (&hir_ty::TypeKind::Never, _) => UnifyResult::Ok,
+        (_, &hir_ty::TypeKind::Never) => UnifyResult::Ok,
+
+        // Primitives must be equal
+        (&hir_ty::TypeKind::Primitive(prim_a), &hir_ty::TypeKind::Primitive(prim_b)) => {
+            if primitives_equal(prim_a, prim_b) {
+                UnifyResult::Ok
+            } else {
+                UnifyResult::Err(UnifyError::mismatch(span))
+            }
+        }
+
+        // Type parameters must match exactly
+        (&hir_ty::TypeKind::Param(id_a), &hir_ty::TypeKind::Param(id_b)) => {
+            if id_a.index == id_b.index {
+                UnifyResult::Ok
+            } else {
+                UnifyResult::Err(UnifyError::mismatch(span))
+            }
+        }
+
+        // Tuples: same length, unify element-wise
+        (&hir_ty::TypeKind::Tuple(ref types_a), &hir_ty::TypeKind::Tuple(ref types_b)) => {
+            if types_a.len() != types_b.len() {
+                return UnifyResult::Err(UnifyError::arity(span));
+            }
+            let mut i: usize = 0;
+            while i < types_a.len() {
+                match unify(table, unifier, &types_a[i], &types_b[i], span) {
+                    UnifyResult::Err(e) => { return UnifyResult::Err(e); }
+                    UnifyResult::Ok => {}
+                }
+                i = i + 1;
+            }
+            UnifyResult::Ok
+        }
+
+        // Arrays: same size, unify element types
+        (&hir_ty::TypeKind::Array { ref element, size }, other_kind) => {
+            let elem_a = element;
+            let size_a = size;
+            match other_kind {
+                &hir_ty::TypeKind::Array { ref element, size } => {
+                    if size_a != size {
+                        return UnifyResult::Err(UnifyError::mismatch(span));
+                    }
+                    unify(table, unifier, elem_a.as_ref(), element.as_ref(), span)
+                }
+                _ => UnifyResult::Err(UnifyError::mismatch(span))
+            }
+        }
+
+        // Slices: unify element types
+        (&hir_ty::TypeKind::Slice { ref element }, other_kind) => {
+            let elem_a = element;
+            match other_kind {
+                &hir_ty::TypeKind::Slice { ref element } => {
+                    unify(table, unifier, elem_a.as_ref(), element.as_ref(), span)
+                }
+                _ => UnifyResult::Err(UnifyError::mismatch(span))
+            }
+        }
+
+        // References: same mutability, unify inner types
+        (&hir_ty::TypeKind::Ref { ref inner, mutable }, other_kind) => {
+            let inner_a = inner;
+            let mut_a = mutable;
+            match other_kind {
+                &hir_ty::TypeKind::Ref { ref inner, mutable } => {
+                    if mut_a != mutable {
+                        return UnifyResult::Err(UnifyError::mismatch(span));
+                    }
+                    unify(table, unifier, inner_a.as_ref(), inner.as_ref(), span)
+                }
+                _ => UnifyResult::Err(UnifyError::mismatch(span))
+            }
+        }
+
+        // Pointers: same mutability, unify inner types
+        (&hir_ty::TypeKind::Ptr { ref inner, mutable }, other_kind) => {
+            let inner_a = inner;
+            let mut_a = mutable;
+            match other_kind {
+                &hir_ty::TypeKind::Ptr { ref inner, mutable } => {
+                    if mut_a != mutable {
+                        return UnifyResult::Err(UnifyError::mismatch(span));
+                    }
+                    unify(table, unifier, inner_a.as_ref(), inner.as_ref(), span)
+                }
+                _ => UnifyResult::Err(UnifyError::mismatch(span))
+            }
+        }
+
+        // ADTs: same def_id, unify type arguments
+        (&hir_ty::TypeKind::Adt { def_id, ref args }, other_kind) => {
+            let def_a = def_id;
+            let args_a = args;
+            match other_kind {
+                &hir_ty::TypeKind::Adt { def_id, ref args } => {
+                    if def_a.index != def_id.index {
+                        return UnifyResult::Err(UnifyError::mismatch(span));
+                    }
+                    if args_a.len() != args.len() {
+                        return UnifyResult::Err(UnifyError::arity(span));
+                    }
+                    let mut i: usize = 0;
+                    while i < args_a.len() {
+                        match unify(table, unifier, &args_a[i], &args[i], span) {
+                            UnifyResult::Err(e) => { return UnifyResult::Err(e); }
+                            UnifyResult::Ok => {}
+                        }
+                        i = i + 1;
+                    }
+                    UnifyResult::Ok
+                }
+                _ => UnifyResult::Err(UnifyError::mismatch(span))
+            }
+        }
+
+        // Function types: unify params, return, and effects
+        (&hir_ty::TypeKind::Fn { ref params, ref ret, effects: _ }, other_kind) => {
+            let params_a = params;
+            let ret_a = ret;
+            match other_kind {
+                &hir_ty::TypeKind::Fn { ref params, ref ret, effects: _ } => {
+                    if params_a.len() != params.len() {
+                        return UnifyResult::Err(UnifyError::arity(span));
+                    }
+                    let mut i: usize = 0;
+                    while i < params_a.len() {
+                        match unify(table, unifier, &params_a[i], &params[i], span) {
+                            UnifyResult::Err(e) => { return UnifyResult::Err(e); }
+                            UnifyResult::Ok => {}
+                        }
+                        i = i + 1;
+                    }
+                    // Unify return types
+                    unify(table, unifier, ret_a.as_ref(), ret.as_ref(), span)
+                    // TODO: Unify effect rows
+                }
+                _ => UnifyResult::Err(UnifyError::mismatch(span))
+            }
+        }
+
+        // Record types: unify fields
+        (&hir_ty::TypeKind::Record { ref fields, row_var: _ }, other_kind) => {
+            let fields_a = fields;
+            match other_kind {
+                &hir_ty::TypeKind::Record { ref fields, row_var: _ } => {
+                    // For now, require exact field match
+                    if fields_a.len() != fields.len() {
+                        return UnifyResult::Err(UnifyError::new(UnifyErrorKind::RecordMismatch, span));
+                    }
+                    // TODO: Proper structural record unification with row polymorphism
+                    let mut i: usize = 0;
+                    while i < fields_a.len() {
+                        // Fields should be in same order for now
+                        if fields_a[i].name.index != fields[i].name.index {
+                            return UnifyResult::Err(UnifyError::new(UnifyErrorKind::RecordMismatch, span));
+                        }
+                        match unify(table, unifier, &fields_a[i].ty, &fields[i].ty, span) {
+                            UnifyResult::Err(e) => { return UnifyResult::Err(e); }
+                            UnifyResult::Ok => {}
+                        }
+                        i = i + 1;
+                    }
+                    UnifyResult::Ok
+                }
+                _ => UnifyResult::Err(UnifyError::mismatch(span))
+            }
+        }
+    }
+}

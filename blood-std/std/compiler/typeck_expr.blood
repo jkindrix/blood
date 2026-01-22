@@ -1,0 +1,1113 @@
+// Blood Self-Hosted Compiler - Expression Type Checking
+//
+// This module implements type checking for HIR expressions.
+// It provides both inference (infer type from expression) and
+// checking (verify expression has expected type) modes.
+//
+// The main entry points are:
+// - infer_expr: Infer the type of an expression
+// - check_expr: Check an expression against an expected type
+
+mod common;
+mod hir_def;
+mod hir_ty;
+mod hir_expr;
+mod hir_item;
+mod hir;
+mod unify;
+mod typeck;
+
+// ============================================================
+// Helper: String Creation
+// ============================================================
+
+/// Create a String from a string literal.
+fn make_string(s: &str) -> String {
+    let mut result = String::new();
+    result.push_str(s);
+    result
+}
+
+// ============================================================
+// Main Entry Points
+// ============================================================
+
+/// Infers the type of an expression.
+/// Returns the inferred type (may contain inference variables).
+pub fn infer_expr(checker: &mut typeck::TypeChecker, expr: &hir_expr::Expr) -> hir_ty::Type {
+    match &expr.kind {
+        &hir_expr::ExprKind::Literal(ref lit) => infer_literal(checker, lit),
+        &hir_expr::ExprKind::Local(id) => infer_local(checker, id, expr.span),
+        &hir_expr::ExprKind::Path(ref path) => infer_path(checker, path, expr.span),
+        &hir_expr::ExprKind::Binary { op: bin_op, ref left, ref right } => {
+            infer_binary(checker, bin_op, left.as_ref(), right.as_ref(), expr.span)
+        }
+        &hir_expr::ExprKind::Unary { op: un_op, ref operand } => {
+            infer_unary(checker, un_op, operand.as_ref(), expr.span)
+        }
+        &hir_expr::ExprKind::Call { ref callee, ref args } => {
+            infer_call(checker, callee.as_ref(), args, expr.span)
+        }
+        &hir_expr::ExprKind::MethodCall { ref receiver, ref method, ref method_def, ref type_args, ref args } => {
+            infer_method_call(checker, receiver.as_ref(), method, method_def, type_args, args, expr.span)
+        }
+        &hir_expr::ExprKind::Field { ref base, ref field } => {
+            infer_field(checker, base.as_ref(), field, expr.span)
+        }
+        &hir_expr::ExprKind::Index { ref base, ref idx } => {
+            infer_index(checker, base.as_ref(), idx.as_ref(), expr.span)
+        }
+        &hir_expr::ExprKind::Tuple(ref exprs) => infer_tuple(checker, exprs, expr.span),
+        &hir_expr::ExprKind::Array(ref arr) => infer_array(checker, arr, expr.span),
+        &hir_expr::ExprKind::Struct { ref path, ref fields, ref base } => {
+            infer_struct(checker, path, fields, base, expr.span)
+        }
+        &hir_expr::ExprKind::Range { ref start, ref end_val, inclusive } => {
+            infer_range(checker, start, end_val, inclusive, expr.span)
+        }
+        &hir_expr::ExprKind::Cast { expr: ref inner, ty: ref cast_ty } => {
+            infer_cast(checker, inner.as_ref(), cast_ty, expr.span)
+        }
+        &hir_expr::ExprKind::Assign { ref target, ref val } => {
+            infer_assign(checker, target.as_ref(), val.as_ref(), expr.span)
+        }
+        &hir_expr::ExprKind::AssignOp { op: assign_op, ref target, ref val } => {
+            infer_assign_op(checker, assign_op, target.as_ref(), val.as_ref(), expr.span)
+        }
+        &hir_expr::ExprKind::AddrOf { mutable, expr: ref inner } => {
+            infer_addr_of(checker, mutable, inner.as_ref(), expr.span)
+        }
+        &hir_expr::ExprKind::Block(ref block) => infer_block(checker, block, expr.span),
+        &hir_expr::ExprKind::If { ref condition, ref then_branch, ref else_branch } => {
+            infer_if(checker, condition.as_ref(), then_branch.as_ref(), else_branch, expr.span)
+        }
+        &hir_expr::ExprKind::Match { ref scrutinee, ref arms } => {
+            infer_match(checker, scrutinee.as_ref(), arms, expr.span)
+        }
+        &hir_expr::ExprKind::Loop { ref label, ref body } => {
+            infer_loop(checker, label, body.as_ref(), expr.span)
+        }
+        &hir_expr::ExprKind::Return(ref val) => infer_return(checker, val, expr.span),
+        &hir_expr::ExprKind::Break { ref label, ref val } => {
+            infer_break(checker, label, val, expr.span)
+        }
+        &hir_expr::ExprKind::Continue { ref label } => {
+            infer_continue(checker, label, expr.span)
+        }
+        &hir_expr::ExprKind::Closure { ref captures, ref params, ref return_ty, ref body, body_id } => {
+            infer_closure(checker, captures, params, return_ty, body.as_ref(), body_id, expr.span)
+        }
+        &hir_expr::ExprKind::WithHandle { ref handler, ref body } => {
+            infer_with_handle(checker, handler.as_ref(), body.as_ref(), expr.span)
+        }
+        &hir_expr::ExprKind::Perform { effect_def, op_def, ref args } => {
+            infer_perform(checker, effect_def, op_def, args, expr.span)
+        }
+        &hir_expr::ExprKind::Resume(ref val) => infer_resume(checker, val.as_ref(), expr.span),
+        &hir_expr::ExprKind::Try(ref inner) => infer_try(checker, inner.as_ref(), expr.span),
+        &hir_expr::ExprKind::Unsafe(ref inner) => infer_expr(checker, inner.as_ref()),
+        &hir_expr::ExprKind::Error => hir_ty::Type::error(),
+    }
+}
+
+/// Checks an expression against an expected type.
+/// Returns true if the expression has the expected type.
+pub fn check_expr(
+    checker: &mut typeck::TypeChecker,
+    expr: &hir_expr::Expr,
+    expected: &hir_ty::Type,
+) -> bool {
+    let inferred = infer_expr(checker, expr);
+    checker.unify(&inferred, expected, expr.span)
+}
+
+// ============================================================
+// Literal Type Inference
+// ============================================================
+
+/// Infers the type of a literal.
+fn infer_literal(checker: &mut typeck::TypeChecker, lit: &hir_expr::Literal) -> hir_ty::Type {
+    match &lit.kind {
+        &hir_expr::LiteralKind::Int { val: _, ref ty } => {
+            match ty {
+                &Some(prim_ty) => hir_ty::Type::new(hir_ty::TypeKind::Primitive(prim_ty)),
+                &None => {
+                    // Unsuffixed integer literal - create inference variable
+                    // Default to i32 if not constrained
+                    checker.fresh_infer()
+                }
+            }
+        }
+        &hir_expr::LiteralKind::Float { bits: _, ref ty } => {
+            match ty {
+                &Some(prim_ty) => hir_ty::Type::new(hir_ty::TypeKind::Primitive(prim_ty)),
+                &None => {
+                    // Unsuffixed float literal - create inference variable
+                    // Default to f64 if not constrained
+                    checker.fresh_infer()
+                }
+            }
+        }
+        &hir_expr::LiteralKind::Str(ref _s) => {
+            // String literals have type &str
+            hir_ty::Type::new(hir_ty::TypeKind::Ref {
+                inner: Box::new(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Str))),
+                mutable: false,
+            })
+        }
+        &hir_expr::LiteralKind::ByteStr(ref _bytes) => {
+            // Byte string literals have type &[u8]
+            hir_ty::Type::new(hir_ty::TypeKind::Ref {
+                inner: Box::new(hir_ty::Type::new(hir_ty::TypeKind::Slice {
+                    element: Box::new(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::U8))),
+                })),
+                mutable: false,
+            })
+        }
+        &hir_expr::LiteralKind::Char(_c) => {
+            hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Char))
+        }
+        &hir_expr::LiteralKind::Bool(_b) => {
+            hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Bool))
+        }
+    }
+}
+
+// ============================================================
+// Variable and Path Type Inference
+// ============================================================
+
+/// Infers the type of a local variable reference.
+fn infer_local(checker: &mut typeck::TypeChecker, id: hir_def::LocalId, span: common::Span) -> hir_ty::Type {
+    match checker.get_local_ty(id) {
+        Some(ty) => ty,
+        Option::None => {
+            checker.error(typeck::TypeErrorKind::UndefinedVariable, span);
+            hir_ty::Type::error()
+        }
+    }
+}
+
+/// Infers the type of a path reference.
+fn infer_path(checker: &mut typeck::TypeChecker, path: &hir_def::ResolvedPath, span: common::Span) -> hir_ty::Type {
+    // For now, return an inference variable
+    // Full implementation needs to look up the type from the definition
+    // This would involve looking up functions, consts, statics in a type environment
+    checker.fresh_infer()
+}
+
+// ============================================================
+// Operator Type Inference
+// ============================================================
+
+/// Infers the type of a binary operation.
+fn infer_binary(
+    checker: &mut typeck::TypeChecker,
+    bin_op: common::BinOp,
+    left: &hir_expr::Expr,
+    right: &hir_expr::Expr,
+    span: common::Span,
+) -> hir_ty::Type {
+    let left_ty = infer_expr(checker, left);
+    let right_ty = infer_expr(checker, right);
+
+    // Unify operand types for most operators
+    checker.unify(&left_ty, &right_ty, span);
+
+    // Determine result type based on operator
+    match bin_op {
+        // Comparison operators return bool
+        common::BinOp::Eq => hir_ty::Type::bool_ty(),
+        common::BinOp::Ne => hir_ty::Type::bool_ty(),
+        common::BinOp::Lt => hir_ty::Type::bool_ty(),
+        common::BinOp::Le => hir_ty::Type::bool_ty(),
+        common::BinOp::Gt => hir_ty::Type::bool_ty(),
+        common::BinOp::Ge => hir_ty::Type::bool_ty(),
+        // Logical operators return bool and expect bool operands
+        common::BinOp::And => {
+            let bool_ty = hir_ty::Type::bool_ty();
+            checker.unify(&left_ty, &bool_ty, span);
+            hir_ty::Type::bool_ty()
+        }
+        common::BinOp::Or => {
+            let bool_ty = hir_ty::Type::bool_ty();
+            checker.unify(&left_ty, &bool_ty, span);
+            hir_ty::Type::bool_ty()
+        }
+        // Arithmetic operators return the operand type
+        common::BinOp::Add => checker.resolve(&left_ty),
+        common::BinOp::Sub => checker.resolve(&left_ty),
+        common::BinOp::Mul => checker.resolve(&left_ty),
+        common::BinOp::Div => checker.resolve(&left_ty),
+        common::BinOp::Rem => checker.resolve(&left_ty),
+        // Bitwise operators return the operand type
+        common::BinOp::BitAnd => checker.resolve(&left_ty),
+        common::BinOp::BitOr => checker.resolve(&left_ty),
+        common::BinOp::BitXor => checker.resolve(&left_ty),
+        common::BinOp::Shl => checker.resolve(&left_ty),
+        common::BinOp::Shr => checker.resolve(&left_ty),
+        // Pipe operator: left |> right where right is a function
+        common::BinOp::Pipe => {
+            // Pipe operator: the result is the return type of the function on the right
+            // For now, return an inference variable since we'd need to resolve the function type
+            checker.fresh_infer()
+        }
+    }
+}
+
+/// Infers the type of a unary operation.
+fn infer_unary(
+    checker: &mut typeck::TypeChecker,
+    un_op: common::UnaryOp,
+    operand: &hir_expr::Expr,
+    span: common::Span,
+) -> hir_ty::Type {
+    let operand_ty = infer_expr(checker, operand);
+
+    match un_op {
+        common::UnaryOp::Neg => {
+            // Negation returns the same type (must be numeric)
+            checker.resolve(&operand_ty)
+        }
+        common::UnaryOp::Not => {
+            // Logical not returns bool for bool, same type for integers (bitwise)
+            checker.resolve(&operand_ty)
+        }
+        common::UnaryOp::Deref => {
+            // Dereference: *T -> U where T is a reference/pointer type
+            let resolved = checker.resolve(&operand_ty);
+            match &resolved.kind {
+                &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
+                    copy_type(inner.as_ref())
+                }
+                &hir_ty::TypeKind::Ptr { ref inner, mutable: _ } => {
+                    copy_type(inner.as_ref())
+                }
+                _ => {
+                    checker.error(typeck::TypeErrorKind::TypeMismatch, span);
+                    hir_ty::Type::error()
+                }
+            }
+        }
+        common::UnaryOp::Ref => {
+            // Reference: &T where T is the operand type
+            hir_ty::Type::new(hir_ty::TypeKind::Ref {
+                inner: Box::new(checker.resolve(&operand_ty)),
+                mutable: false,
+            })
+        }
+        common::UnaryOp::RefMut => {
+            // Mutable reference: &mut T where T is the operand type
+            hir_ty::Type::new(hir_ty::TypeKind::Ref {
+                inner: Box::new(checker.resolve(&operand_ty)),
+                mutable: true,
+            })
+        }
+    }
+}
+
+// ============================================================
+// Call Type Inference
+// ============================================================
+
+/// Infers the type of a function call.
+fn infer_call(
+    checker: &mut typeck::TypeChecker,
+    callee: &hir_expr::Expr,
+    args: &Vec<hir_expr::Expr>,
+    span: common::Span,
+) -> hir_ty::Type {
+    let callee_ty = infer_expr(checker, callee);
+    let resolved_callee = checker.resolve(&callee_ty);
+
+    match &resolved_callee.kind {
+        &hir_ty::TypeKind::Fn { ref params, ref ret, effects: _ } => {
+            // Check arity
+            if params.len() != args.len() {
+                checker.error(typeck::TypeErrorKind::ArityMismatch, span);
+                return hir_ty::Type::error();
+            }
+
+            // Check each argument against parameter type
+            let mut i: usize = 0;
+            while i < args.len() {
+                check_expr(checker, &args[i], &params[i]);
+                i = i + 1;
+            }
+
+            // Return the return type
+            copy_type(ret.as_ref())
+        }
+        &hir_ty::TypeKind::Infer(_) => {
+            // Callee type not yet known - create fresh return type
+            checker.fresh_infer()
+        }
+        &hir_ty::TypeKind::Error => {
+            hir_ty::Type::error()
+        }
+        _ => {
+            checker.error(typeck::TypeErrorKind::NotCallable, span);
+            hir_ty::Type::error()
+        }
+    }
+}
+
+/// Infers the type of a method call.
+fn infer_method_call(
+    checker: &mut typeck::TypeChecker,
+    receiver: &hir_expr::Expr,
+    method: &common::SpannedSymbol,
+    _method_def: &Option<hir_def::DefId>,
+    _type_args: &Vec<hir_ty::Type>,
+    args: &Vec<hir_expr::Expr>,
+    span: common::Span,
+) -> hir_ty::Type {
+    let _receiver_ty = infer_expr(checker, receiver);
+
+    // Check all argument types
+    let mut i: usize = 0;
+    while i < args.len() {
+        infer_expr(checker, &args[i]);
+        i = i + 1;
+    }
+
+    // Method resolution would require looking up the method in impl blocks
+    // For now, return an inference variable
+    checker.fresh_infer()
+}
+
+// ============================================================
+// Field and Index Type Inference
+// ============================================================
+
+/// Infers the type of a field access.
+fn infer_field(
+    checker: &mut typeck::TypeChecker,
+    base: &hir_expr::Expr,
+    field: &hir_expr::FieldAccess,
+    span: common::Span,
+) -> hir_ty::Type {
+    let base_ty = infer_expr(checker, base);
+    let resolved_base = checker.resolve(&base_ty);
+
+    match &resolved_base.kind {
+        &hir_ty::TypeKind::Tuple(ref types) => {
+            // Tuple field access by index
+            match field {
+                &hir_expr::FieldAccess::Index(idx) => {
+                    let idx_usize = idx as usize;
+                    if idx_usize < types.len() {
+                        copy_type(&types[idx_usize])
+                    } else {
+                        checker.error(typeck::TypeErrorKind::NoSuchField, span);
+                        hir_ty::Type::error()
+                    }
+                }
+                &hir_expr::FieldAccess::Named { name: _, field_idx: _ } => {
+                    checker.error(typeck::TypeErrorKind::NoSuchField, span);
+                    hir_ty::Type::error()
+                }
+            }
+        }
+        &hir_ty::TypeKind::Record { ref fields, row_var: _ } => {
+            // Record field access by name
+            match field {
+                &hir_expr::FieldAccess::Named { ref name, field_idx: _ } => {
+                    let mut i: usize = 0;
+                    while i < fields.len() {
+                        if fields[i].name.index == name.symbol.index {
+                            return copy_type(&fields[i].ty);
+                        }
+                        i = i + 1;
+                    }
+                    checker.error(typeck::TypeErrorKind::NoSuchField, span);
+                    hir_ty::Type::error()
+                }
+                &hir_expr::FieldAccess::Index(_) => {
+                    checker.error(typeck::TypeErrorKind::NoSuchField, span);
+                    hir_ty::Type::error()
+                }
+            }
+        }
+        &hir_ty::TypeKind::Adt { def_id: _, args: _ } => {
+            // ADT field access - would need to look up struct definition
+            // For now, return an inference variable
+            checker.fresh_infer()
+        }
+        &hir_ty::TypeKind::Infer(_) => {
+            // Base type not yet known
+            checker.fresh_infer()
+        }
+        &hir_ty::TypeKind::Error => {
+            hir_ty::Type::error()
+        }
+        _ => {
+            checker.error(typeck::TypeErrorKind::NoSuchField, span);
+            hir_ty::Type::error()
+        }
+    }
+}
+
+/// Infers the type of an index operation.
+fn infer_index(
+    checker: &mut typeck::TypeChecker,
+    base: &hir_expr::Expr,
+    idx: &hir_expr::Expr,
+    span: common::Span,
+) -> hir_ty::Type {
+    let base_ty = infer_expr(checker, base);
+    let idx_ty = infer_expr(checker, idx);
+    let resolved_base = checker.resolve(&base_ty);
+
+    // Index should be usize
+    let usize_ty = hir_ty::Type::usize_ty();
+    checker.unify(&idx_ty, &usize_ty, idx.span);
+
+    match &resolved_base.kind {
+        &hir_ty::TypeKind::Array { ref element, size: _ } => {
+            copy_type(element.as_ref())
+        }
+        &hir_ty::TypeKind::Slice { ref element } => {
+            copy_type(element.as_ref())
+        }
+        &hir_ty::TypeKind::Infer(_) => {
+            checker.fresh_infer()
+        }
+        &hir_ty::TypeKind::Error => {
+            hir_ty::Type::error()
+        }
+        _ => {
+            checker.error(typeck::TypeErrorKind::NotIndexable, span);
+            hir_ty::Type::error()
+        }
+    }
+}
+
+// ============================================================
+// Compound Expression Type Inference
+// ============================================================
+
+/// Infers the type of a tuple expression.
+fn infer_tuple(
+    checker: &mut typeck::TypeChecker,
+    exprs: &Vec<hir_expr::Expr>,
+    span: common::Span,
+) -> hir_ty::Type {
+    let mut types: Vec<hir_ty::Type> = Vec::new();
+    let mut i: usize = 0;
+    while i < exprs.len() {
+        types.push(infer_expr(checker, &exprs[i]));
+        i = i + 1;
+    }
+    hir_ty::Type::new(hir_ty::TypeKind::Tuple(types))
+}
+
+/// Infers the type of an array expression.
+fn infer_array(
+    checker: &mut typeck::TypeChecker,
+    arr: &hir_expr::ArrayExpr,
+    span: common::Span,
+) -> hir_ty::Type {
+    match arr {
+        &hir_expr::ArrayExpr::List(ref exprs) => {
+            if exprs.len() == 0 {
+                // Empty array - element type is inference variable
+                let elem_ty = checker.fresh_infer();
+                hir_ty::Type::new(hir_ty::TypeKind::Array {
+                    element: Box::new(elem_ty),
+                    size: 0,
+                })
+            } else {
+                // Infer element type from first element, unify all others
+                let elem_ty = infer_expr(checker, &exprs[0]);
+                let mut i: usize = 1;
+                while i < exprs.len() {
+                    let ty = infer_expr(checker, &exprs[i]);
+                    checker.unify(&ty, &elem_ty, exprs[i].span);
+                    i = i + 1;
+                }
+                hir_ty::Type::new(hir_ty::TypeKind::Array {
+                    element: Box::new(checker.resolve(&elem_ty)),
+                    size: exprs.len() as u64,
+                })
+            }
+        }
+        &hir_expr::ArrayExpr::Repeat { ref val, count } => {
+            let elem_ty = infer_expr(checker, val.as_ref());
+            // count is already a u64 (const evaluated at lowering time)
+            hir_ty::Type::new(hir_ty::TypeKind::Array {
+                element: Box::new(checker.resolve(&elem_ty)),
+                size: count,
+            })
+        }
+    }
+}
+
+/// Infers the type of a struct expression.
+fn infer_struct(
+    checker: &mut typeck::TypeChecker,
+    path: &hir_def::ResolvedPath,
+    fields: &Vec<hir_expr::FieldExpr>,
+    base: &Option<Box<hir_expr::Expr>>,
+    span: common::Span,
+) -> hir_ty::Type {
+    // Check all field expressions
+    let mut i: usize = 0;
+    while i < fields.len() {
+        infer_expr(checker, &fields[i].val);
+        i = i + 1;
+    }
+
+    // Check base expression if present
+    match base {
+        &Some(ref b) => {
+            infer_expr(checker, b.as_ref());
+        }
+        &None => {}
+    }
+
+    // Return the ADT type
+    // Generate inference variables for type arguments
+    // (actual types will be unified during type checking)
+    let mut args: Vec<hir_ty::Type> = Vec::new();
+    let mut i: u32 = 0;
+    while i < path.type_arg_count {
+        args.push(checker.fresh_infer());
+        i = i + 1;
+    }
+    hir_ty::Type::new(hir_ty::TypeKind::Adt {
+        def_id: path.def_id,
+        args: args,
+    })
+}
+
+/// Infers the type of a range expression.
+fn infer_range(
+    checker: &mut typeck::TypeChecker,
+    start: &Option<Box<hir_expr::Expr>>,
+    end_val: &Option<Box<hir_expr::Expr>>,
+    inclusive: bool,
+    span: common::Span,
+) -> hir_ty::Type {
+    // Infer bound types and unify them
+    let bound_ty = match (start, end_val) {
+        (&Some(ref s), &Some(ref e)) => {
+            let start_ty = infer_expr(checker, s.as_ref());
+            let end_ty = infer_expr(checker, e.as_ref());
+            checker.unify(&start_ty, &end_ty, span);
+            checker.resolve(&start_ty)
+        }
+        (&Some(ref s), &None) => infer_expr(checker, s.as_ref()),
+        (&None, &Some(ref e)) => infer_expr(checker, e.as_ref()),
+        (&None, &None) => checker.fresh_infer(),
+    };
+
+    // Range types are ADTs in std - for now return inference variable
+    checker.fresh_infer()
+}
+
+/// Infers the type of a cast expression.
+fn infer_cast(
+    checker: &mut typeck::TypeChecker,
+    expr: &hir_expr::Expr,
+    ty: &hir_ty::Type,
+    span: common::Span,
+) -> hir_ty::Type {
+    // Check the source expression
+    let _src_ty = infer_expr(checker, expr);
+
+    // TODO: Validate that the cast is valid
+
+    // Return the target type
+    copy_type(ty)
+}
+
+// ============================================================
+// Assignment Type Inference
+// ============================================================
+
+/// Infers the type of an assignment expression.
+fn infer_assign(
+    checker: &mut typeck::TypeChecker,
+    target: &hir_expr::Expr,
+    val: &hir_expr::Expr,
+    span: common::Span,
+) -> hir_ty::Type {
+    let target_ty = infer_expr(checker, target);
+    let val_ty = infer_expr(checker, val);
+
+    // Value type must match target type
+    checker.unify(&val_ty, &target_ty, span);
+
+    // TODO: Check that target is a valid lvalue
+
+    // Assignment returns unit
+    hir_ty::Type::new(hir_ty::TypeKind::Tuple(Vec::new()))
+}
+
+/// Infers the type of a compound assignment expression.
+fn infer_assign_op(
+    checker: &mut typeck::TypeChecker,
+    assign_op: common::BinOp,
+    target: &hir_expr::Expr,
+    val: &hir_expr::Expr,
+    span: common::Span,
+) -> hir_ty::Type {
+    let target_ty = infer_expr(checker, target);
+    let val_ty = infer_expr(checker, val);
+
+    // For most operators, types should match
+    checker.unify(&val_ty, &target_ty, span);
+
+    // TODO: Check that target is a valid mutable lvalue
+
+    // Compound assignment returns unit
+    hir_ty::Type::new(hir_ty::TypeKind::Tuple(Vec::new()))
+}
+
+/// Infers the type of an address-of expression.
+fn infer_addr_of(
+    checker: &mut typeck::TypeChecker,
+    mutable: bool,
+    expr: &hir_expr::Expr,
+    span: common::Span,
+) -> hir_ty::Type {
+    let inner_ty = infer_expr(checker, expr);
+    hir_ty::Type::new(hir_ty::TypeKind::Ref {
+        inner: Box::new(checker.resolve(&inner_ty)),
+        mutable: mutable,
+    })
+}
+
+// ============================================================
+// Block and Control Flow Type Inference
+// ============================================================
+
+/// Infers the type of a block expression.
+fn infer_block(
+    checker: &mut typeck::TypeChecker,
+    block: &hir_expr::Block,
+    span: common::Span,
+) -> hir_ty::Type {
+    // Process all statements
+    let mut i: usize = 0;
+    while i < block.stmts.len() {
+        infer_stmt(checker, &block.stmts[i]);
+        i = i + 1;
+    }
+
+    // Block type is the type of the final expression, or unit
+    match &block.expr {
+        &Some(ref e) => infer_expr(checker, e.as_ref()),
+        &None => hir_ty::Type::new(hir_ty::TypeKind::Tuple(Vec::new())),
+    }
+}
+
+/// Infers the type of a statement.
+fn infer_stmt(checker: &mut typeck::TypeChecker, stmt: &hir_expr::Stmt) {
+    match stmt {
+        &hir_expr::Stmt::Let { ref pattern, ref ty, ref init, span: _ } => {
+            // Infer or check initializer type
+            let init_ty = match init {
+                &Some(ref e) => infer_expr(checker, e),
+                &None => checker.fresh_infer(),
+            };
+
+            // Unify with declared type if present
+            match ty {
+                &Some(ref declared) => {
+                    checker.unify(&init_ty, declared, pattern.span);
+                }
+                &None => {}
+            }
+
+            // Add bindings from pattern
+            // For now, just handle simple patterns
+            // Full pattern type checking would be separate
+        }
+        &hir_expr::Stmt::Expr { ref expr, has_semi: _ } => {
+            infer_expr(checker, expr);
+        }
+        &hir_expr::Stmt::Item(_def_id) => {
+            // Item statements are handled during item collection
+        }
+    }
+}
+
+/// Infers the type of an if expression.
+fn infer_if(
+    checker: &mut typeck::TypeChecker,
+    condition: &hir_expr::Expr,
+    then_branch: &hir_expr::Expr,
+    else_branch: &Option<Box<hir_expr::Expr>>,
+    span: common::Span,
+) -> hir_ty::Type {
+    // Condition must be bool
+    let cond_ty = infer_expr(checker, condition);
+    let bool_ty = hir_ty::Type::bool_ty();
+    checker.unify(&cond_ty, &bool_ty, condition.span);
+
+    // Infer branch types
+    let then_ty = infer_expr(checker, then_branch);
+
+    match else_branch {
+        &Some(ref e) => {
+            let else_ty = infer_expr(checker, e.as_ref());
+            // Both branches must have same type
+            checker.unify(&then_ty, &else_ty, span);
+            checker.resolve(&then_ty)
+        }
+        &None => {
+            // No else branch - then branch must be unit, or whole if is unit
+            let unit_ty = hir_ty::Type::new(hir_ty::TypeKind::Tuple(Vec::new()));
+            checker.unify(&then_ty, &unit_ty, then_branch.span);
+            unit_ty
+        }
+    }
+}
+
+/// Infers the type of a match expression.
+fn infer_match(
+    checker: &mut typeck::TypeChecker,
+    scrutinee: &hir_expr::Expr,
+    arms: &Vec<hir_expr::MatchArm>,
+    span: common::Span,
+) -> hir_ty::Type {
+    let scrut_ty = infer_expr(checker, scrutinee);
+
+    if arms.len() == 0 {
+        // Empty match - type is never (or error)
+        return hir_ty::Type::never();
+    }
+
+    // Infer type from first arm, unify all others
+    let result_ty = infer_expr(checker, &arms[0].body);
+
+    let mut i: usize = 1;
+    while i < arms.len() {
+        let arm_ty = infer_expr(checker, &arms[i].body);
+        checker.unify(&arm_ty, &result_ty, arms[i].body.span);
+        i = i + 1;
+    }
+
+    // TODO: Check pattern exhaustiveness
+
+    checker.resolve(&result_ty)
+}
+
+/// Infers the type of a loop expression.
+fn infer_loop(
+    checker: &mut typeck::TypeChecker,
+    _label: &Option<common::Symbol>,
+    body: &hir_expr::Expr,
+    span: common::Span,
+) -> hir_ty::Type {
+    // Loop type is determined by break values
+    let loop_ty = checker.fresh_infer();
+
+    // Enter loop context
+    let prev_in_loop = checker.in_loop;
+    let prev_loop_ty = copy_option_type(&checker.loop_ty);
+    checker.enter_loop(copy_type(&loop_ty));
+
+    // Check body
+    infer_expr(checker, body);
+
+    // Restore context
+    checker.in_loop = prev_in_loop;
+    checker.loop_ty = prev_loop_ty;
+
+    // If no break with value, loop has type !
+    // For now, return the inference variable
+    checker.resolve(&loop_ty)
+}
+
+/// Infers the type of a return expression.
+fn infer_return(
+    checker: &mut typeck::TypeChecker,
+    val: &Option<Box<hir_expr::Expr>>,
+    span: common::Span,
+) -> hir_ty::Type {
+    let val_ty = match val {
+        &Some(ref e) => infer_expr(checker, e.as_ref()),
+        &None => hir_ty::Type::new(hir_ty::TypeKind::Tuple(Vec::new())),
+    };
+
+    // Unify with function return type
+    match &checker.return_ty {
+        &Some(ref ret_ty) => {
+            let ret_copy = copy_type(ret_ty);
+            checker.unify(&val_ty, &ret_copy, span);
+        }
+        &None => {
+            checker.error(typeck::TypeErrorKind::InvalidControl, span);
+        }
+    }
+
+    // Return expression has type Never
+    hir_ty::Type::never()
+}
+
+/// Infers the type of a break expression.
+fn infer_break(
+    checker: &mut typeck::TypeChecker,
+    _label: &Option<common::Symbol>,
+    val: &Option<Box<hir_expr::Expr>>,
+    span: common::Span,
+) -> hir_ty::Type {
+    if !checker.in_loop {
+        checker.error(typeck::TypeErrorKind::InvalidControl, span);
+        return hir_ty::Type::never();
+    }
+
+    let val_ty = match val {
+        &Some(ref e) => infer_expr(checker, e.as_ref()),
+        &None => hir_ty::Type::new(hir_ty::TypeKind::Tuple(Vec::new())),
+    };
+
+    // Unify with loop type
+    match &checker.loop_ty {
+        &Some(ref loop_ty) => {
+            let loop_copy = copy_type(loop_ty);
+            checker.unify(&val_ty, &loop_copy, span);
+        }
+        &None => {}
+    }
+
+    hir_ty::Type::never()
+}
+
+/// Infers the type of a continue expression.
+fn infer_continue(
+    checker: &mut typeck::TypeChecker,
+    _label: &Option<common::Symbol>,
+    span: common::Span,
+) -> hir_ty::Type {
+    if !checker.in_loop {
+        checker.error(typeck::TypeErrorKind::InvalidControl, span);
+    }
+    hir_ty::Type::never()
+}
+
+// ============================================================
+// Closure Type Inference
+// ============================================================
+
+/// Infers the type of a closure expression.
+fn infer_closure(
+    checker: &mut typeck::TypeChecker,
+    captures: &Vec<hir_expr::Capture>,
+    params: &Vec<hir_expr::ClosureParam>,
+    return_ty: &hir_ty::Type,
+    body: &hir_expr::Expr,
+    _body_id: hir_def::BodyId,
+    span: common::Span,
+) -> hir_ty::Type {
+    // Build parameter types
+    let mut param_types: Vec<hir_ty::Type> = Vec::new();
+    let mut i: usize = 0;
+    while i < params.len() {
+        param_types.push(copy_type(&params[i].ty));
+        i = i + 1;
+    }
+
+    // Set up closure context
+    let prev_return = copy_option_type(&checker.return_ty);
+    checker.set_return_ty(copy_type(return_ty));
+
+    // Check body
+    let body_ty = infer_expr(checker, body);
+    checker.unify(&body_ty, return_ty, body.span);
+
+    // Restore context
+    checker.return_ty = prev_return;
+
+    // Return function type
+    hir_ty::Type::new(hir_ty::TypeKind::Fn {
+        params: param_types,
+        ret: Box::new(copy_type(return_ty)),
+        effects: hir_ty::EffectRow::empty(),
+    })
+}
+
+// ============================================================
+// Effect System Type Inference
+// ============================================================
+
+/// Infers the type of a with-handle expression.
+fn infer_with_handle(
+    checker: &mut typeck::TypeChecker,
+    handler_expr: &hir_expr::Expr,
+    body: &hir_expr::Expr,
+    span: common::Span,
+) -> hir_ty::Type {
+    // Check handler and body
+    infer_expr(checker, handler_expr);
+    infer_expr(checker, body)
+}
+
+/// Infers the type of an effect operation invocation.
+fn infer_perform(
+    checker: &mut typeck::TypeChecker,
+    _effect_def: hir_def::DefId,
+    _op_def: hir_def::DefId,
+    args: &Vec<hir_expr::Expr>,
+    span: common::Span,
+) -> hir_ty::Type {
+    // Check all arguments
+    let mut i: usize = 0;
+    while i < args.len() {
+        infer_expr(checker, &args[i]);
+        i = i + 1;
+    }
+
+    // Return type depends on effect operation - need to look up
+    checker.fresh_infer()
+}
+
+/// Infers the type of a resume expression.
+fn infer_resume(
+    checker: &mut typeck::TypeChecker,
+    val: &hir_expr::Expr,
+    span: common::Span,
+) -> hir_ty::Type {
+    infer_expr(checker, val);
+    // Resume's return type depends on context
+    checker.fresh_infer()
+}
+
+/// Infers the type of a try expression.
+fn infer_try(
+    checker: &mut typeck::TypeChecker,
+    inner: &hir_expr::Expr,
+    span: common::Span,
+) -> hir_ty::Type {
+    let inner_ty = infer_expr(checker, inner);
+    // ? operator extracts from Result/Option
+    // For now, return inference variable
+    checker.fresh_infer()
+}
+
+// ============================================================
+// Type Copying Helper (Blood lacks Clone)
+// ============================================================
+
+/// Creates a shallow copy of a type.
+fn copy_type(ty: &hir_ty::Type) -> hir_ty::Type {
+    hir_ty::Type { kind: copy_type_kind(&ty.kind) }
+}
+
+/// Creates a copy of a TypeKind.
+fn copy_type_kind(kind: &hir_ty::TypeKind) -> hir_ty::TypeKind {
+    match kind {
+        &hir_ty::TypeKind::Primitive(prim) => hir_ty::TypeKind::Primitive(prim),
+        &hir_ty::TypeKind::Never => hir_ty::TypeKind::Never,
+        &hir_ty::TypeKind::Error => hir_ty::TypeKind::Error,
+        &hir_ty::TypeKind::Infer(var_id) => hir_ty::TypeKind::Infer(var_id),
+        &hir_ty::TypeKind::Param(var_id) => hir_ty::TypeKind::Param(var_id),
+        &hir_ty::TypeKind::Tuple(ref types) => {
+            let mut copied: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < types.len() {
+                copied.push(copy_type(&types[i]));
+                i = i + 1;
+            }
+            hir_ty::TypeKind::Tuple(copied)
+        }
+        &hir_ty::TypeKind::Array { ref element, size } => {
+            hir_ty::TypeKind::Array {
+                element: Box::new(copy_type(element.as_ref())),
+                size: size,
+            }
+        }
+        &hir_ty::TypeKind::Slice { ref element } => {
+            hir_ty::TypeKind::Slice {
+                element: Box::new(copy_type(element.as_ref())),
+            }
+        }
+        &hir_ty::TypeKind::Ref { ref inner, mutable } => {
+            hir_ty::TypeKind::Ref {
+                inner: Box::new(copy_type(inner.as_ref())),
+                mutable: mutable,
+            }
+        }
+        &hir_ty::TypeKind::Ptr { ref inner, mutable } => {
+            hir_ty::TypeKind::Ptr {
+                inner: Box::new(copy_type(inner.as_ref())),
+                mutable: mutable,
+            }
+        }
+        &hir_ty::TypeKind::Adt { def_id, ref args } => {
+            let mut copied_args: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < args.len() {
+                copied_args.push(copy_type(&args[i]));
+                i = i + 1;
+            }
+            hir_ty::TypeKind::Adt {
+                def_id: def_id,
+                args: copied_args,
+            }
+        }
+        &hir_ty::TypeKind::Fn { ref params, ref ret, ref effects } => {
+            let mut copied_params: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < params.len() {
+                copied_params.push(copy_type(&params[i]));
+                i = i + 1;
+            }
+            hir_ty::TypeKind::Fn {
+                params: copied_params,
+                ret: Box::new(copy_type(ret.as_ref())),
+                effects: copy_effect_row(effects),
+            }
+        }
+        &hir_ty::TypeKind::Record { ref fields, ref row_var } => {
+            let mut copied_fields: Vec<hir_ty::RecordField> = Vec::new();
+            let mut i: usize = 0;
+            while i < fields.len() {
+                copied_fields.push(hir_ty::RecordField::new(
+                    fields[i].name,
+                    copy_type(&fields[i].ty),
+                ));
+                i = i + 1;
+            }
+            hir_ty::TypeKind::Record {
+                fields: copied_fields,
+                row_var: *row_var,
+            }
+        }
+    }
+}
+
+/// Creates a copy of an EffectRow.
+fn copy_effect_row(row: &hir_ty::EffectRow) -> hir_ty::EffectRow {
+    let mut copied_effects: Vec<hir_ty::EffectRef> = Vec::new();
+    let mut i: usize = 0;
+    while i < row.effects.len() {
+        let eff = &row.effects[i];
+        let mut copied_args: Vec<hir_ty::Type> = Vec::new();
+        let mut j: usize = 0;
+        while j < eff.args.len() {
+            copied_args.push(copy_type(&eff.args[j]));
+            j = j + 1;
+        }
+        copied_effects.push(hir_ty::EffectRef {
+            def_id: eff.def_id,
+            args: copied_args,
+        });
+        i = i + 1;
+    }
+    hir_ty::EffectRow {
+        effects: copied_effects,
+        row_var: row.row_var,
+    }
+}
+
+/// Creates a copy of an Option<Type>.
+fn copy_option_type(opt: &Option<hir_ty::Type>) -> Option<hir_ty::Type> {
+    match opt {
+        &Some(ref ty) => Some(copy_type(ty)),
+        &None => Option::None,
+    }
+}

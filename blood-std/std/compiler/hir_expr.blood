@@ -34,7 +34,7 @@ pub struct Body {
 impl Body {
     /// Creates a new body.
     pub fn new(id: hir_def::BodyId, locals: Vec<Local>, param_count: u32, expr: Expr) -> Body {
-        Body { id, locals, param_count, expr }
+        Body { id: id, locals: locals, param_count: param_count, expr: expr }
     }
 }
 
@@ -61,7 +61,7 @@ impl Local {
         mutable: bool,
         span: common::Span,
     ) -> Local {
-        Local { id, name, ty, mutable, span }
+        Local { id: id, name: name, ty: ty, mutable: mutable, span: span }
     }
 }
 
@@ -82,7 +82,7 @@ pub struct Expr {
 impl Expr {
     /// Creates a new expression.
     pub fn new(kind: ExprKind, ty: hir_ty::Type, span: common::Span) -> Expr {
-        Expr { kind, ty, span }
+        Expr { kind: kind, ty: ty, span: span }
     }
 
     /// Creates an error expression for error recovery.
@@ -90,7 +90,7 @@ impl Expr {
         Expr {
             kind: ExprKind::Error,
             ty: hir_ty::Type::error(),
-            span,
+            span: span,
         }
     }
 }
@@ -247,7 +247,7 @@ pub struct Literal {
 impl Literal {
     /// Creates a new literal.
     pub fn new(kind: LiteralKind, span: common::Span) -> Literal {
-        Literal { kind, span }
+        Literal { kind: kind, span: span }
     }
 }
 
@@ -319,7 +319,7 @@ impl FieldExpr {
         val: Expr,
         span: common::Span,
     ) -> FieldExpr {
-        FieldExpr { name, field_idx, val, span }
+        FieldExpr { name: name, field_idx: field_idx, val: val, span: span }
     }
 }
 
@@ -342,7 +342,7 @@ pub struct MatchArm {
 impl MatchArm {
     /// Creates a new match arm.
     pub fn new(pattern: Pattern, guard: Option<Expr>, body: Expr, span: common::Span) -> MatchArm {
-        MatchArm { pattern, guard, body, span }
+        MatchArm { pattern: pattern, guard: guard, body: body, span: span }
     }
 }
 
@@ -371,7 +371,7 @@ pub enum CaptureKind {
 impl Capture {
     /// Creates a new capture.
     pub fn new(local_id: hir_def::LocalId, kind: CaptureKind) -> Capture {
-        Capture { local_id, kind }
+        Capture { local_id: local_id, kind: kind }
     }
 }
 
@@ -386,7 +386,7 @@ pub struct ClosureParam {
 impl ClosureParam {
     /// Creates a new closure parameter.
     pub fn new(pattern: Pattern, ty: hir_ty::Type) -> ClosureParam {
-        ClosureParam { pattern, ty }
+        ClosureParam { pattern: pattern, ty: ty }
     }
 }
 
@@ -407,15 +407,15 @@ pub struct Pattern {
 impl Pattern {
     /// Creates a new pattern.
     pub fn new(kind: PatternKind, ty: hir_ty::Type, span: common::Span) -> Pattern {
-        Pattern { kind, ty, span }
+        Pattern { kind: kind, ty: ty, span: span }
     }
 
     /// Creates a wildcard pattern.
     pub fn wildcard(ty: hir_ty::Type, span: common::Span) -> Pattern {
         Pattern {
             kind: PatternKind::Wildcard,
-            ty,
-            span,
+            ty: ty,
+            span: span,
         }
     }
 }
@@ -503,7 +503,7 @@ impl FieldPattern {
         pattern: Pattern,
         span: common::Span,
     ) -> FieldPattern {
-        FieldPattern { name, field_idx, pattern, span }
+        FieldPattern { name: name, field_idx: field_idx, pattern: pattern, span: span }
     }
 }
 
@@ -524,12 +524,12 @@ pub struct Block {
 impl Block {
     /// Creates a new block.
     pub fn new(stmts: Vec<Stmt>, expr: Option<Box<Expr>>, span: common::Span) -> Block {
-        Block { stmts, expr, span }
+        Block { stmts: stmts, expr: expr, span: span }
     }
 
     /// Creates an empty block.
     pub fn empty(span: common::Span) -> Block {
-        Block { stmts: Vec::new(), expr: None, span }
+        Block { stmts: Vec::new(), expr: None, span: span }
     }
 }
 

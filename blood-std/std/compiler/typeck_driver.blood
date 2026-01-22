@@ -1,0 +1,252 @@
+// Blood Self-Hosted Compiler - Type Checking Driver
+//
+// This module provides the entry point for type checking a lowered HIR.
+// It coordinates the TypeChecker from typeck.blood with the expression
+// checking from typeck_expr.blood to check all function bodies.
+//
+// Pipeline integration:
+//   AST -> lower_program() -> LoweringCtx -> check_types() -> TypeCheckResult
+//
+// The type checking driver:
+// 1. Collects type information from all items (structs, enums, functions)
+// 2. Type checks each function body
+// 3. Returns type errors or success
+
+mod common;
+mod hir_def;
+mod hir_ty;
+mod hir_item;
+mod hir_expr;
+mod hir;
+mod hir_lower_ctx;
+mod unify;
+mod typeck;
+mod typeck_expr;
+
+// ============================================================
+// Type Check Result
+// ============================================================
+
+/// Result of type checking a crate.
+pub struct TypeCheckResult {
+    /// Whether type checking succeeded.
+    pub success: bool,
+    /// Type errors encountered.
+    pub errors: Vec<typeck::TypeError>,
+}
+
+impl TypeCheckResult {
+    /// Creates a successful result.
+    pub fn ok() -> TypeCheckResult {
+        TypeCheckResult {
+            success: true,
+            errors: Vec::new(),
+        }
+    }
+
+    /// Creates a failed result with errors.
+    pub fn failed(errors: Vec<typeck::TypeError>) -> TypeCheckResult {
+        TypeCheckResult {
+            success: false,
+            errors: errors,
+        }
+    }
+
+    /// Returns true if type checking passed.
+    pub fn is_ok(self: &Self) -> bool {
+        self.success
+    }
+
+    /// Returns the number of errors.
+    pub fn error_count(self: &Self) -> usize {
+        self.errors.len()
+    }
+}
+
+// ============================================================
+// Main Entry Point
+// ============================================================
+
+/// Type check a lowered HIR crate.
+///
+/// Takes the lowering context which contains all items and bodies,
+/// and returns a TypeCheckResult indicating success or failure.
+pub fn check_types(ctx: &hir_lower_ctx::LoweringCtx) -> TypeCheckResult {
+    let mut checker = typeck::TypeChecker::new();
+
+    // Phase 1: Collect type information from items
+    // (For now, we skip this since we don't have item signatures stored separately)
+
+    // Phase 2: Type check all function bodies
+    let mut i: usize = 0;
+    while i < ctx.bodies.len() {
+        check_body(&mut checker, &ctx.bodies[i].body);
+        i = i + 1;
+    }
+
+    // Return result
+    if checker.has_errors() {
+        // Move errors from checker
+        TypeCheckResult::failed(checker.errors)
+    } else {
+        TypeCheckResult::ok()
+    }
+}
+
+// ============================================================
+// Body Type Checking
+// ============================================================
+
+/// Type checks a single function body.
+fn check_body(checker: &mut typeck::TypeChecker, body: &hir_expr::Body) {
+    // Clear locals for this body
+    checker.clear_locals();
+
+    // Register all locals from the body
+    let mut i: usize = 0;
+    while i < body.locals.len() {
+        let local = &body.locals[i];
+        // Add local with its declared type
+        checker.add_local(
+            copy_type(&local.ty),
+            local.mutable,
+            local.span,
+        );
+        i = i + 1;
+    }
+
+    // Set return type from the first local (local 0 is the return slot in HIR convention)
+    if body.locals.len() > 0 {
+        checker.set_return_ty(copy_type(&body.locals[0].ty));
+    }
+
+    // Type check the body expression
+    let body_ty = typeck_expr::infer_expr(checker, &body.expr);
+
+    // Unify body type with return type
+    match &checker.return_ty {
+        &Some(ref ret_ty) => {
+            checker.unify(&body_ty, ret_ty, body.expr.span);
+        }
+        &None => {}
+    }
+
+    // Clear return type
+    checker.clear_return_ty();
+}
+
+// ============================================================
+// Type Copying (Blood lacks Clone)
+// ============================================================
+
+/// Creates a shallow copy of a type.
+fn copy_type(ty: &hir_ty::Type) -> hir_ty::Type {
+    hir_ty::Type { kind: copy_type_kind(&ty.kind) }
+}
+
+/// Creates a copy of a TypeKind.
+fn copy_type_kind(kind: &hir_ty::TypeKind) -> hir_ty::TypeKind {
+    match kind {
+        &hir_ty::TypeKind::Primitive(prim) => hir_ty::TypeKind::Primitive(prim),
+        &hir_ty::TypeKind::Never => hir_ty::TypeKind::Never,
+        &hir_ty::TypeKind::Error => hir_ty::TypeKind::Error,
+        &hir_ty::TypeKind::Infer(var_id) => hir_ty::TypeKind::Infer(var_id),
+        &hir_ty::TypeKind::Param(var_id) => hir_ty::TypeKind::Param(var_id),
+        &hir_ty::TypeKind::Tuple(ref types) => {
+            let mut copied: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < types.len() {
+                copied.push(copy_type(&types[i]));
+                i = i + 1;
+            }
+            hir_ty::TypeKind::Tuple(copied)
+        }
+        &hir_ty::TypeKind::Array { ref element, size } => {
+            hir_ty::TypeKind::Array {
+                element: Box::new(copy_type(element.as_ref())),
+                size: size,
+            }
+        }
+        &hir_ty::TypeKind::Slice { ref element } => {
+            hir_ty::TypeKind::Slice {
+                element: Box::new(copy_type(element.as_ref())),
+            }
+        }
+        &hir_ty::TypeKind::Ref { ref inner, mutable } => {
+            hir_ty::TypeKind::Ref {
+                inner: Box::new(copy_type(inner.as_ref())),
+                mutable: mutable,
+            }
+        }
+        &hir_ty::TypeKind::Ptr { ref inner, mutable } => {
+            hir_ty::TypeKind::Ptr {
+                inner: Box::new(copy_type(inner.as_ref())),
+                mutable: mutable,
+            }
+        }
+        &hir_ty::TypeKind::Adt { def_id, ref args } => {
+            let mut copied_args: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < args.len() {
+                copied_args.push(copy_type(&args[i]));
+                i = i + 1;
+            }
+            hir_ty::TypeKind::Adt {
+                def_id: def_id,
+                args: copied_args,
+            }
+        }
+        &hir_ty::TypeKind::Fn { ref params, ref ret, ref effects } => {
+            let mut copied_params: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < params.len() {
+                copied_params.push(copy_type(&params[i]));
+                i = i + 1;
+            }
+            hir_ty::TypeKind::Fn {
+                params: copied_params,
+                ret: Box::new(copy_type(ret.as_ref())),
+                effects: copy_effect_row(effects),
+            }
+        }
+        &hir_ty::TypeKind::Record { ref fields, ref row_var } => {
+            let mut copied_fields: Vec<hir_ty::RecordField> = Vec::new();
+            let mut i: usize = 0;
+            while i < fields.len() {
+                copied_fields.push(hir_ty::RecordField::new(
+                    fields[i].name,
+                    copy_type(&fields[i].ty),
+                ));
+                i = i + 1;
+            }
+            hir_ty::TypeKind::Record {
+                fields: copied_fields,
+                row_var: *row_var,
+            }
+        }
+    }
+}
+
+/// Creates a copy of an EffectRow.
+fn copy_effect_row(row: &hir_ty::EffectRow) -> hir_ty::EffectRow {
+    let mut copied_effects: Vec<hir_ty::EffectRef> = Vec::new();
+    let mut i: usize = 0;
+    while i < row.effects.len() {
+        let eff = &row.effects[i];
+        let mut copied_args: Vec<hir_ty::Type> = Vec::new();
+        let mut j: usize = 0;
+        while j < eff.args.len() {
+            copied_args.push(copy_type(&eff.args[j]));
+            j = j + 1;
+        }
+        copied_effects.push(hir_ty::EffectRef {
+            def_id: eff.def_id,
+            args: copied_args,
+        });
+        i = i + 1;
+    }
+    hir_ty::EffectRow {
+        effects: copied_effects,
+        row_var: row.row_var,
+    }
+}
