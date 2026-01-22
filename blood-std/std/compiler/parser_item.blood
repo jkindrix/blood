@@ -1,0 +1,1032 @@
+// Parser Item Module - Declaration/Item Parsing
+//
+// This module handles parsing of top-level declarations:
+// - Functions (fn)
+// - Structs (struct)
+// - Enums (enum)
+// - Traits (trait)
+// - Impl blocks (impl)
+// - Type aliases (type)
+// - Constants (const)
+// - Statics (static)
+// - Modules (mod)
+// - Effects (effect)
+// - Handlers (handler)
+// - Bridge declarations (bridge)
+// - Macros (macro)
+
+mod common;
+mod token;
+mod ast;
+mod parser_base;
+mod parser_expr;
+
+// ============================================================
+// Attribute and Visibility Parsing
+// ============================================================
+
+/// Parse attributes: #[attr], #[attr(value)], etc.
+pub fn parse_attributes(parser: &mut parser_base::Parser) -> Vec<ast::Attribute> {
+    let mut attrs: Vec<ast::Attribute> = Vec::new();
+
+    while parser.check(token::TokenKind::Hash) {
+        let attr = parse_attribute(parser);
+        attrs.push(attr);
+    }
+
+    attrs
+}
+
+fn parse_attribute(parser: &mut parser_base::Parser) -> ast::Attribute {
+    let start = parser.current.span;
+    parser.advance(); // consume '#'
+
+    // Check for inner attribute: #![...]
+    let is_inner = parser.try_consume(token::TokenKind::Not);
+
+    parser.expect(token::TokenKind::LBracket);
+
+    // Parse path as Vec<SpannedSymbol>
+    let mut path: Vec<common::SpannedSymbol> = Vec::new();
+    let first = parser.parse_spanned_symbol();
+    path.push(first);
+
+    while parser.try_consume(token::TokenKind::ColonColon) {
+        let segment = parser.parse_spanned_symbol();
+        path.push(segment);
+    }
+
+    // Parse optional arguments
+    let args: Option<ast::AttributeArgs> = if parser.check(token::TokenKind::LParen) {
+        parser.advance();
+        // For now, skip to closing paren and return empty list
+        let mut depth: i32 = 1;
+        while depth > 0 && !parser.is_at_end() {
+            if parser.check(token::TokenKind::LParen) {
+                depth = depth + 1;
+            }
+            if parser.check(token::TokenKind::RParen) {
+                depth = depth - 1;
+            }
+            if depth > 0 {
+                parser.advance();
+            }
+        }
+        parser.expect(token::TokenKind::RParen);
+        Option::Some(ast::AttributeArgs::List(Vec::new()))
+    } else if parser.try_consume(token::TokenKind::Eq) {
+        // #[attr = "value"] - parse string literal
+        // For now, create a placeholder literal and skip to ]
+        let placeholder_lit = ast::Literal {
+            kind: ast::LiteralKind::Str(String::new()),
+            span: parser.current.span,
+        };
+        parser.advance(); // skip the literal value
+        Option::Some(ast::AttributeArgs::Eq(placeholder_lit))
+    } else {
+        Option::None
+    };
+
+    parser.expect(token::TokenKind::RBracket);
+    let end_span = parser.previous.span;
+
+    ast::Attribute {
+        is_inner: is_inner,
+        path: path,
+        args: args,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+/// Parse visibility: pub, pub(crate), pub(super), pub(in path), or private (no keyword).
+pub fn parse_visibility(parser: &mut parser_base::Parser) -> common::Visibility {
+    if !parser.check(token::TokenKind::Pub) {
+        return common::Visibility::Private;
+    }
+
+    parser.advance(); // consume 'pub'
+
+    // Check for restricted visibility
+    if parser.check(token::TokenKind::LParen) {
+        parser.advance(); // consume '('
+
+        if parser.check(token::TokenKind::Crate) {
+            parser.advance();
+            parser.expect(token::TokenKind::RParen);
+            return common::Visibility::PublicCrate;
+        }
+
+        if parser.check(token::TokenKind::Super) {
+            parser.advance();
+            parser.expect(token::TokenKind::RParen);
+            return common::Visibility::PublicSuper;
+        }
+
+        if parser.check(token::TokenKind::In) {
+            parser.advance();
+            let _path = parser_expr::parse_type_path(parser);
+            parser.expect(token::TokenKind::RParen);
+            // For now, treat as public
+            return common::Visibility::Public;
+        }
+
+        // Unknown restriction, treat as public
+        parser.expect(token::TokenKind::RParen);
+        return common::Visibility::Public;
+    }
+
+    common::Visibility::Public
+}
+
+// ============================================================
+// Type Parameter Parsing
+// ============================================================
+
+/// Parse type parameters: <T, U: Trait, 'a>
+pub fn parse_type_params(parser: &mut parser_base::Parser) -> ast::TypeParams {
+    let start = parser.current.span;
+    parser.expect(token::TokenKind::Lt);
+
+    let mut params: Vec<ast::GenericParam> = Vec::new();
+
+    while !parser.check(token::TokenKind::Gt) && !parser.is_at_end() {
+        let param = parse_generic_param(parser);
+        params.push(param);
+
+        if !parser.try_consume(token::TokenKind::Comma) {
+            break;
+        }
+    }
+
+    parser.expect(token::TokenKind::Gt);
+    let end_span = parser.previous.span;
+
+    ast::TypeParams {
+        params: params,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+fn parse_generic_param(parser: &mut parser_base::Parser) -> ast::GenericParam {
+    let start = parser.current.span;
+
+    // Check for lifetime parameter
+    if parser.check(token::TokenKind::Lifetime) {
+        let name = parser.parse_spanned_symbol();
+
+        // Optional lifetime bounds: 'a: 'b + 'c
+        let mut bounds: Vec<common::SpannedSymbol> = Vec::new();
+        if parser.try_consume(token::TokenKind::Colon) {
+            if parser.check(token::TokenKind::Lifetime) {
+                let bound = parser.parse_spanned_symbol();
+                bounds.push(bound);
+            }
+            while parser.try_consume(token::TokenKind::Plus) {
+                if parser.check(token::TokenKind::Lifetime) {
+                    let bound = parser.parse_spanned_symbol();
+                    bounds.push(bound);
+                }
+            }
+        }
+
+        let end_span = parser.previous.span;
+        let lifetime_param = ast::LifetimeParam {
+            name: name,
+            bounds: bounds,
+            span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        };
+        return ast::GenericParam::Lifetime(lifetime_param);
+    }
+
+    // Check for const generic: const N: usize
+    if parser.check(token::TokenKind::Const) {
+        parser.advance();
+        let name = parser.parse_spanned_symbol();
+        parser.expect(token::TokenKind::Colon);
+        let ty = parser_expr::parse_type(parser);
+        let end_span = parser.previous.span;
+        let const_param = ast::ConstGenericParam {
+            name: name,
+            ty: ty,
+            span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        };
+        return ast::GenericParam::Const(const_param);
+    }
+
+    // Type parameter
+    let name = parser.parse_spanned_symbol();
+
+    // Optional bounds: T: Trait + OtherTrait
+    let mut bounds: Vec<ast::Type> = Vec::new();
+    if parser.try_consume(token::TokenKind::Colon) {
+        let bound = parse_type_bound(parser);
+        bounds.push(bound);
+
+        while parser.try_consume(token::TokenKind::Plus) {
+            let bound = parse_type_bound(parser);
+            bounds.push(bound);
+        }
+    }
+
+    let end_span = parser.previous.span;
+    let type_param = ast::TypeParam {
+        name: name,
+        bounds: bounds,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    };
+    ast::GenericParam::Type(type_param)
+}
+
+/// Parse a type bound (trait or lifetime) as a Type.
+fn parse_type_bound(parser: &mut parser_base::Parser) -> ast::Type {
+    // Type bounds are just types (trait paths)
+    parser_expr::parse_type(parser)
+}
+
+// ============================================================
+// Where Clause Parsing
+// ============================================================
+
+/// Parse where clause: where T: Trait, U: OtherTrait
+pub fn parse_where_clause(parser: &mut parser_base::Parser) -> ast::WhereClause {
+    let start = parser.current.span;
+    parser.expect(token::TokenKind::Where);
+
+    let mut predicates: Vec<ast::WherePredicate> = Vec::new();
+
+    while !parser.check(token::TokenKind::LBrace) && !parser.check(token::TokenKind::Semi) && !parser.is_at_end() {
+        let pred = parse_where_predicate(parser);
+        predicates.push(pred);
+
+        if !parser.try_consume(token::TokenKind::Comma) {
+            break;
+        }
+    }
+
+    let end_span = parser.previous.span;
+    ast::WhereClause {
+        predicates: predicates,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+fn parse_where_predicate(parser: &mut parser_base::Parser) -> ast::WherePredicate {
+    let start = parser.current.span;
+
+    let ty = parser_expr::parse_type(parser);
+    parser.expect(token::TokenKind::Colon);
+
+    let mut bounds: Vec<ast::Type> = Vec::new();
+    let bound = parse_type_bound(parser);
+    bounds.push(bound);
+
+    while parser.try_consume(token::TokenKind::Plus) {
+        let bound = parse_type_bound(parser);
+        bounds.push(bound);
+    }
+
+    let end_span = parser.previous.span;
+    ast::WherePredicate::TypeBound {
+        ty: ty,
+        bounds: bounds,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+// ============================================================
+// Function Declaration Parsing
+// ============================================================
+
+/// Parse a function declaration.
+pub fn parse_fn_decl(parser: &mut parser_base::Parser, attrs: Vec<ast::Attribute>, vis: common::Visibility) -> ast::FnDecl {
+    let start = parser.current.span;
+    parser.advance(); // consume 'fn'
+
+    let name = parser.parse_spanned_symbol();
+
+    // Parse type parameters if present
+    let type_params = if parser.check(token::TokenKind::Lt) {
+        Option::Some(parse_type_params(parser))
+    } else {
+        Option::None
+    };
+
+    // Parse parameters
+    parser.expect(token::TokenKind::LParen);
+    let params = parse_fn_params(parser);
+    parser.expect(token::TokenKind::RParen);
+
+    // Parse return type if present
+    let return_type = if parser.try_consume(token::TokenKind::Arrow) {
+        Option::Some(parser_expr::parse_type(parser))
+    } else {
+        Option::None
+    };
+
+    // Parse effects clause: / Effect1 + Effect2
+    let effects: Option<ast::EffectRow> = if parser.check(token::TokenKind::Slash) {
+        Option::Some(parse_effect_row(parser))
+    } else {
+        Option::None
+    };
+
+    // Parse where clause
+    let where_clause: Option<ast::WhereClause> = if parser.check(token::TokenKind::Where) {
+        Option::Some(parse_where_clause(parser))
+    } else {
+        Option::None
+    };
+
+    // Parse body or semicolon
+    let body: Option<ast::Block> = if parser.check(token::TokenKind::LBrace) {
+        Option::Some(parser_expr::parse_block(parser))
+    } else {
+        parser.expect(token::TokenKind::Semi);
+        Option::None
+    };
+
+    let end_span = parser.previous.span;
+    ast::FnDecl {
+        attrs: attrs,
+        vis: vis,
+        qualifiers: common::FnQualifiers { is_const: false, is_async: false, is_unsafe: false },
+        name: name,
+        type_params: type_params,
+        params: params,
+        return_type: return_type,
+        effects: effects,
+        where_clause: where_clause,
+        body: body,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+fn parse_fn_params(parser: &mut parser_base::Parser) -> Vec<ast::Param> {
+    let mut params: Vec<ast::Param> = Vec::new();
+
+    while !parser.check(token::TokenKind::RParen) && !parser.is_at_end() {
+        let param = parse_fn_param(parser);
+        params.push(param);
+
+        if !parser.try_consume(token::TokenKind::Comma) {
+            break;
+        }
+    }
+
+    params
+}
+
+fn parse_fn_param(parser: &mut parser_base::Parser) -> ast::Param {
+    let start = parser.current.span;
+
+    // Check for self parameter
+    let is_self = parser.check(token::TokenKind::SelfLower);
+    let is_ref_self = parser.check(token::TokenKind::And);
+
+    // Check for optional qualifier (mut)
+    let qualifier: Option<ast::ParamQualifier> = if parser.check(token::TokenKind::Mut) && !is_self && !is_ref_self {
+        parser.advance();
+        Option::Some(ast::ParamQualifier::Mut)
+    } else {
+        Option::None
+    };
+
+    // Handle self parameters
+    if is_self || is_ref_self {
+        // Handle &self, &mut self, self, mut self
+        let self_span = parser.current.span;
+        parser.expect(token::TokenKind::SelfLower);
+
+        // Create a self pattern
+        let self_pattern = ast::Pattern {
+            kind: ast::PatternKind::Ident {
+                by_ref: is_ref_self,
+                is_mut: false,
+                name: common::SpannedSymbol {
+                    symbol: common::Symbol { index: 0 }, // self
+                    span: self_span,
+                },
+                subpattern: Option::None,
+            },
+            span: self_span,
+        };
+
+        // Optional type annotation: self: Type
+        let ty = if parser.try_consume(token::TokenKind::Colon) {
+            parser_expr::parse_type(parser)
+        } else {
+            // Create Self type as a Path
+            let self_segment = ast::TypePathSegment {
+                name: common::SpannedSymbol {
+                    symbol: common::Symbol { index: 0 }, // Self
+                    span: self_span,
+                },
+                args: Option::None,
+            };
+            let mut segments: Vec<ast::TypePathSegment> = Vec::new();
+            segments.push(self_segment);
+            let self_type_path = ast::TypePath {
+                segments: segments,
+                span: self_span,
+            };
+            ast::Type {
+                kind: ast::TypeKind::Path(self_type_path),
+                span: self_span,
+            }
+        };
+
+        let end_span = parser.previous.span;
+        return ast::Param {
+            qualifier: qualifier,
+            pattern: self_pattern,
+            ty: ty,
+            span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        };
+    }
+
+    // Regular parameter: pattern: Type
+    let pattern = parser_expr::parse_pattern(parser);
+    parser.expect(token::TokenKind::Colon);
+    let ty = parser_expr::parse_type(parser);
+
+    let end_span = parser.previous.span;
+    ast::Param {
+        qualifier: qualifier,
+        pattern: pattern,
+        ty: ty,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+fn parse_effect_row(parser: &mut parser_base::Parser) -> ast::EffectRow {
+    let start = parser.current.span;
+    parser.advance(); // consume '/'
+
+    // Check for "pure" effect row
+    if parser.check(token::TokenKind::LBrace) || parser.check(token::TokenKind::Where) || parser.is_at_end() {
+        let end_span = parser.previous.span;
+        return ast::EffectRow {
+            kind: ast::EffectRowKind::Pure,
+            span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        };
+    }
+
+    let mut effects: Vec<ast::Type> = Vec::new();
+    let rest: Option<common::SpannedSymbol> = Option::None;
+
+    // Parse first effect (as a type)
+    let eff = parser_expr::parse_type(parser);
+    effects.push(eff);
+
+    // Parse additional effects with +
+    while parser.try_consume(token::TokenKind::Plus) {
+        let eff = parser_expr::parse_type(parser);
+        effects.push(eff);
+    }
+
+    let end_span = parser.previous.span;
+    let kind = ast::EffectRowKind::Effects { effects: effects, rest: rest };
+    ast::EffectRow {
+        kind: kind,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+// ============================================================
+// Struct Declaration Parsing
+// ============================================================
+
+/// Parse a struct declaration.
+pub fn parse_struct_decl(parser: &mut parser_base::Parser, attrs: Vec<ast::Attribute>, vis: common::Visibility) -> ast::StructDecl {
+    let start = parser.current.span;
+    parser.advance(); // consume 'struct'
+
+    let name = parser.parse_spanned_symbol();
+
+    // Parse type parameters
+    let type_params = if parser.check(token::TokenKind::Lt) {
+        Option::Some(parse_type_params(parser))
+    } else {
+        Option::None
+    };
+
+    // Parse struct body
+    let body = if parser.check(token::TokenKind::LBrace) {
+        let fields = parse_struct_fields(parser);
+        ast::StructBody::Record(fields)
+    } else if parser.check(token::TokenKind::LParen) {
+        // Tuple struct
+        let fields = parse_tuple_struct_fields(parser);
+        parser.expect(token::TokenKind::Semi);
+        ast::StructBody::Tuple(fields)
+    } else {
+        // Unit struct
+        parser.expect(token::TokenKind::Semi);
+        ast::StructBody::Unit
+    };
+
+    let end_span = parser.previous.span;
+    ast::StructDecl {
+        attrs: attrs,
+        vis: vis,
+        name: name,
+        type_params: type_params,
+        body: body,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+fn parse_struct_fields(parser: &mut parser_base::Parser) -> Vec<ast::StructField> {
+    let mut fields: Vec<ast::StructField> = Vec::new();
+    parser.expect(token::TokenKind::LBrace);
+
+    while !parser.check(token::TokenKind::RBrace) && !parser.is_at_end() {
+        let field = parse_struct_field(parser);
+        fields.push(field);
+
+        if !parser.try_consume(token::TokenKind::Comma) {
+            break;
+        }
+    }
+
+    parser.expect(token::TokenKind::RBrace);
+    fields
+}
+
+fn parse_struct_field(parser: &mut parser_base::Parser) -> ast::StructField {
+    let start = parser.current.span;
+
+    let attrs = parse_attributes(parser);
+    let vis = parse_visibility(parser);
+    let name = parser.parse_spanned_symbol();
+    parser.expect(token::TokenKind::Colon);
+    let ty = parser_expr::parse_type(parser);
+
+    let end_span = parser.previous.span;
+    ast::StructField {
+        attrs: attrs,
+        vis: vis,
+        name: name,
+        ty: ty,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+/// Parse tuple struct types: (Type1, Type2, ...)
+fn parse_tuple_struct_fields(parser: &mut parser_base::Parser) -> Vec<ast::Type> {
+    let mut types: Vec<ast::Type> = Vec::new();
+    parser.expect(token::TokenKind::LParen);
+
+    while !parser.check(token::TokenKind::RParen) && !parser.is_at_end() {
+        // Visibility is allowed but ignored for tuple fields
+        let _vis = parse_visibility(parser);
+        let ty = parser_expr::parse_type(parser);
+        types.push(ty);
+
+        if !parser.try_consume(token::TokenKind::Comma) {
+            break;
+        }
+    }
+
+    parser.expect(token::TokenKind::RParen);
+    types
+}
+
+// ============================================================
+// Enum Declaration Parsing
+// ============================================================
+
+/// Parse an enum declaration.
+pub fn parse_enum_decl(parser: &mut parser_base::Parser, attrs: Vec<ast::Attribute>, vis: common::Visibility) -> ast::EnumDecl {
+    let start = parser.current.span;
+    parser.advance(); // consume 'enum'
+
+    let name = parser.parse_spanned_symbol();
+
+    // Parse type parameters
+    let type_params = if parser.check(token::TokenKind::Lt) {
+        Option::Some(parse_type_params(parser))
+    } else {
+        Option::None
+    };
+
+    // Parse variants
+    parser.expect(token::TokenKind::LBrace);
+    let mut variants: Vec<ast::EnumVariant> = Vec::new();
+
+    while !parser.check(token::TokenKind::RBrace) && !parser.is_at_end() {
+        let variant = parse_enum_variant(parser);
+        variants.push(variant);
+
+        if !parser.try_consume(token::TokenKind::Comma) {
+            break;
+        }
+    }
+
+    parser.expect(token::TokenKind::RBrace);
+
+    let end_span = parser.previous.span;
+    ast::EnumDecl {
+        attrs: attrs,
+        vis: vis,
+        name: name,
+        type_params: type_params,
+        variants: variants,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+fn parse_enum_variant(parser: &mut parser_base::Parser) -> ast::EnumVariant {
+    let start = parser.current.span;
+
+    let attrs = parse_attributes(parser);
+    let name = parser.parse_spanned_symbol();
+
+    // Parse variant body
+    let body = if parser.check(token::TokenKind::LBrace) {
+        // Struct variant
+        let fields = parse_struct_fields(parser);
+        ast::StructBody::Record(fields)
+    } else if parser.check(token::TokenKind::LParen) {
+        // Tuple variant - convert types to StructField
+        let fields = parse_tuple_struct_fields(parser);
+        ast::StructBody::Tuple(fields)
+    } else {
+        // Unit variant
+        ast::StructBody::Unit
+    };
+
+    let end_span = parser.previous.span;
+    ast::EnumVariant {
+        attrs: attrs,
+        name: name,
+        body: body,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+// ============================================================
+// Impl Block Parsing
+// ============================================================
+
+/// Parse an impl block.
+pub fn parse_impl_block(parser: &mut parser_base::Parser, attrs: Vec<ast::Attribute>) -> ast::ImplBlock {
+    let start = parser.current.span;
+    parser.advance(); // consume 'impl'
+
+    // Parse type parameters
+    let type_params = if parser.check(token::TokenKind::Lt) {
+        Option::Some(parse_type_params(parser))
+    } else {
+        Option::None
+    };
+
+    // Parse the type (or trait for impl)
+    let first_type = parser_expr::parse_type(parser);
+
+    // Check for trait impl: impl Trait for Type
+    let trait_ty: Option<ast::Type>;
+    let self_ty: ast::Type;
+
+    if parser.try_consume(token::TokenKind::For) {
+        // This is a trait impl - first_type is the trait
+        trait_ty = Option::Some(first_type);
+        self_ty = parser_expr::parse_type(parser);
+    } else {
+        // Inherent impl
+        trait_ty = Option::None;
+        self_ty = first_type;
+    }
+
+    // Parse where clause
+    let where_clause = if parser.check(token::TokenKind::Where) {
+        Option::Some(parse_where_clause(parser))
+    } else {
+        Option::None
+    };
+
+    // Parse impl items
+    parser.expect(token::TokenKind::LBrace);
+    let mut items: Vec<ast::ImplItem> = Vec::new();
+
+    while !parser.check(token::TokenKind::RBrace) && !parser.is_at_end() {
+        let item = parse_impl_item(parser);
+        items.push(item);
+    }
+
+    parser.expect(token::TokenKind::RBrace);
+
+    let end_span = parser.previous.span;
+    ast::ImplBlock {
+        attrs: attrs,
+        type_params: type_params,
+        trait_ty: trait_ty,
+        self_ty: self_ty,
+        where_clause: where_clause,
+        items: items,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+fn parse_impl_item(parser: &mut parser_base::Parser) -> ast::ImplItem {
+    let start = parser.current.span;
+    let attrs = parse_attributes(parser);
+    let vis = parse_visibility(parser);
+
+    match parser.current.kind {
+        token::TokenKind::Fn => {
+            let fn_decl = parse_fn_decl(parser, attrs, vis);
+            ast::ImplItem::Function(fn_decl)
+        }
+        token::TokenKind::Const => {
+            let const_decl = parse_const_decl(parser, attrs, vis);
+            ast::ImplItem::Const(const_decl)
+        }
+        token::TokenKind::Type => {
+            let type_decl = parse_type_alias_decl(parser, attrs, vis);
+            ast::ImplItem::TypeAlias(type_decl)
+        }
+        _ => {
+            parser.error_expected("impl item (fn, const, or type)");
+            parser.advance();
+            // Return a placeholder
+            let end_span = parser.previous.span;
+            let placeholder = ast::FnDecl {
+                attrs: Vec::new(),
+                vis: common::Visibility::Private,
+                qualifiers: common::FnQualifiers { is_const: false, is_async: false, is_unsafe: false },
+                name: common::SpannedSymbol { symbol: common::Symbol { index: 0 }, span: start },
+                type_params: Option::None,
+                params: Vec::new(),
+                return_type: Option::None,
+                effects: Option::None,
+                where_clause: Option::None,
+                body: Option::None,
+                span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+            };
+            ast::ImplItem::Function(placeholder)
+        }
+    }
+}
+
+// ============================================================
+// Const and Static Declaration Parsing
+// ============================================================
+
+/// Parse a const declaration.
+pub fn parse_const_decl(parser: &mut parser_base::Parser, attrs: Vec<ast::Attribute>, vis: common::Visibility) -> ast::ConstDecl {
+    let start = parser.current.span;
+    parser.advance(); // consume 'const'
+
+    let name = parser.parse_spanned_symbol();
+    parser.expect(token::TokenKind::Colon);
+    let ty = parser_expr::parse_type(parser);
+    parser.expect(token::TokenKind::Eq);
+    let value = parser_expr::parse_expr(parser);
+    parser.expect(token::TokenKind::Semi);
+
+    let end_span = parser.previous.span;
+    ast::ConstDecl {
+        attrs: attrs,
+        vis: vis,
+        name: name,
+        ty: ty,
+        init_value: value,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+/// Parse a static declaration.
+pub fn parse_static_decl(parser: &mut parser_base::Parser, attrs: Vec<ast::Attribute>, vis: common::Visibility) -> ast::StaticDecl {
+    let start = parser.current.span;
+    parser.advance(); // consume 'static'
+
+    let is_mut = parser.try_consume(token::TokenKind::Mut);
+    let name = parser.parse_spanned_symbol();
+    parser.expect(token::TokenKind::Colon);
+    let ty = parser_expr::parse_type(parser);
+    parser.expect(token::TokenKind::Eq);
+    let value = parser_expr::parse_expr(parser);
+    parser.expect(token::TokenKind::Semi);
+
+    let end_span = parser.previous.span;
+    ast::StaticDecl {
+        attrs: attrs,
+        vis: vis,
+        is_mut: is_mut,
+        name: name,
+        ty: ty,
+        init_value: value,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+// ============================================================
+// Type Alias Declaration Parsing
+// ============================================================
+
+/// Parse a type alias declaration.
+pub fn parse_type_alias_decl(parser: &mut parser_base::Parser, attrs: Vec<ast::Attribute>, vis: common::Visibility) -> ast::TypeAliasDecl {
+    let start = parser.current.span;
+    parser.advance(); // consume 'type'
+
+    let name = parser.parse_spanned_symbol();
+
+    // Parse type parameters
+    let type_params = if parser.check(token::TokenKind::Lt) {
+        Option::Some(parse_type_params(parser))
+    } else {
+        Option::None
+    };
+
+    parser.expect(token::TokenKind::Eq);
+    let ty = parser_expr::parse_type(parser);
+    parser.expect(token::TokenKind::Semi);
+
+    let end_span = parser.previous.span;
+    ast::TypeAliasDecl {
+        attrs: attrs,
+        vis: vis,
+        name: name,
+        type_params: type_params,
+        ty: ty,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+// ============================================================
+// Module Declaration Parsing
+// ============================================================
+
+/// Parse a mod declaration: mod name; or mod name { ... }
+pub fn parse_mod_decl(parser: &mut parser_base::Parser, attrs: Vec<ast::Attribute>, vis: common::Visibility) -> ast::ModItemDecl {
+    let start = parser.current.span;
+    parser.advance(); // consume 'mod'
+
+    let name = parser.parse_spanned_symbol();
+
+    // Check for inline module vs external module
+    let body: Option<Vec<ast::Declaration>> = if parser.check(token::TokenKind::LBrace) {
+        parser.advance();
+        let mut declarations: Vec<ast::Declaration> = Vec::new();
+
+        while !parser.check(token::TokenKind::RBrace) && !parser.is_at_end() {
+            let decl = parse_declaration(parser);
+            declarations.push(decl);
+        }
+
+        parser.expect(token::TokenKind::RBrace);
+        Option::Some(declarations)
+    } else {
+        parser.expect(token::TokenKind::Semi);
+        Option::None
+    };
+
+    let end_span = parser.previous.span;
+    ast::ModItemDecl {
+        attrs: attrs,
+        vis: vis,
+        name: name,
+        body: body,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+// ============================================================
+// Trait Declaration Parsing (stub)
+// ============================================================
+
+/// Parse a trait declaration.
+pub fn parse_trait_decl(parser: &mut parser_base::Parser, attrs: Vec<ast::Attribute>, vis: common::Visibility) -> ast::TraitDecl {
+    let start = parser.current.span;
+    parser.advance(); // consume 'trait'
+
+    let name = parser.parse_spanned_symbol();
+
+    // Parse type parameters
+    let type_params = if parser.check(token::TokenKind::Lt) {
+        Option::Some(parse_type_params(parser))
+    } else {
+        Option::None
+    };
+
+    // Parse supertraits: trait Foo: Bar + Baz
+    let mut supertraits: Vec<ast::Type> = Vec::new();
+    if parser.try_consume(token::TokenKind::Colon) {
+        let bound = parse_type_bound(parser);
+        supertraits.push(bound);
+
+        while parser.try_consume(token::TokenKind::Plus) {
+            let bound = parse_type_bound(parser);
+            supertraits.push(bound);
+        }
+    }
+
+    // Parse where clause
+    let where_clause = if parser.check(token::TokenKind::Where) {
+        Option::Some(parse_where_clause(parser))
+    } else {
+        Option::None
+    };
+
+    // Parse trait items
+    parser.expect(token::TokenKind::LBrace);
+    let mut items: Vec<ast::TraitItem> = Vec::new();
+
+    while !parser.check(token::TokenKind::RBrace) && !parser.is_at_end() {
+        let item = parse_trait_item(parser);
+        items.push(item);
+    }
+
+    parser.expect(token::TokenKind::RBrace);
+
+    let end_span = parser.previous.span;
+    ast::TraitDecl {
+        attrs: attrs,
+        vis: vis,
+        name: name,
+        type_params: type_params,
+        supertraits: supertraits,
+        where_clause: where_clause,
+        items: items,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+fn parse_trait_item(parser: &mut parser_base::Parser) -> ast::TraitItem {
+    let attrs = parse_attributes(parser);
+    let vis = parse_visibility(parser);
+
+    match parser.current.kind {
+        token::TokenKind::Fn => {
+            let fn_decl = parse_fn_decl(parser, attrs, vis);
+            ast::TraitItem::Function(fn_decl)
+        }
+        token::TokenKind::Const => {
+            let const_decl = parse_const_decl(parser, attrs, vis);
+            ast::TraitItem::Const(const_decl)
+        }
+        token::TokenKind::Type => {
+            let type_decl = parse_type_alias_decl(parser, attrs, vis);
+            ast::TraitItem::TypeAlias(type_decl)
+        }
+        _ => {
+            parser.error_expected("trait item (fn, const, or type)");
+            parser.advance();
+            // Return a placeholder
+            let start = parser.current.span;
+            let placeholder = ast::TypeAliasDecl {
+                attrs: Vec::new(),
+                vis: common::Visibility::Private,
+                name: common::SpannedSymbol { symbol: common::Symbol { index: 0 }, span: start },
+                type_params: Option::None,
+                ty: ast::Type { kind: ast::TypeKind::Never, span: start },
+                span: start,
+            };
+            ast::TraitItem::TypeAlias(placeholder)
+        }
+    }
+}
+
+// ============================================================
+// Top-Level Declaration Router
+// ============================================================
+
+/// Parse a top-level declaration.
+pub fn parse_declaration(parser: &mut parser_base::Parser) -> ast::Declaration {
+    let attrs = parse_attributes(parser);
+    let vis = parse_visibility(parser);
+
+    match parser.current.kind {
+        token::TokenKind::Fn => ast::Declaration::Function(parse_fn_decl(parser, attrs, vis)),
+        token::TokenKind::Struct => ast::Declaration::Struct(parse_struct_decl(parser, attrs, vis)),
+        token::TokenKind::Enum => ast::Declaration::Enum(parse_enum_decl(parser, attrs, vis)),
+        token::TokenKind::Trait => ast::Declaration::Trait(parse_trait_decl(parser, attrs, vis)),
+        token::TokenKind::Impl => ast::Declaration::Impl(parse_impl_block(parser, attrs)),
+        token::TokenKind::Type => ast::Declaration::TypeAlias(parse_type_alias_decl(parser, attrs, vis)),
+        token::TokenKind::Const => ast::Declaration::Const(parse_const_decl(parser, attrs, vis)),
+        token::TokenKind::Static => ast::Declaration::Static(parse_static_decl(parser, attrs, vis)),
+        token::TokenKind::Mod => ast::Declaration::Module(parse_mod_decl(parser, attrs, vis)),
+        _ => {
+            // Error recovery
+            parser.error_expected("declaration");
+            parser.advance();
+            // Return a placeholder function declaration
+            let start = parser.previous.span;
+            let placeholder = ast::FnDecl {
+                attrs: Vec::new(),
+                vis: common::Visibility::Private,
+                qualifiers: common::FnQualifiers { is_const: false, is_async: false, is_unsafe: false },
+                name: common::SpannedSymbol { symbol: common::Symbol { index: 0 }, span: start },
+                type_params: Option::None,
+                params: Vec::new(),
+                return_type: Option::None,
+                effects: Option::None,
+                where_clause: Option::None,
+                body: Option::None,
+                span: start,
+            };
+            ast::Declaration::Function(placeholder)
+        }
+    }
+}

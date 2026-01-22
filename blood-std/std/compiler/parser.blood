@@ -1,0 +1,243 @@
+// Blood Self-Hosted Compiler - Parser Orchestrator
+//
+// This module serves as the main entry point for parsing. It imports and
+// re-exports the split parser modules:
+// - parser_base: Parser struct and core token handling
+// - parser_expr: Type, expression, pattern, statement, and block parsing
+// - parser_item: Declaration parsing (functions, structs, enums, etc.)
+
+mod common;
+mod token;
+mod lexer;
+mod ast;
+mod parser_base;
+mod parser_expr;
+mod parser_item;
+
+// ============================================================
+// Main Entry Point
+// ============================================================
+
+/// Parse result containing either a Program or errors.
+pub struct ParseResult {
+    pub program: Option<ast::Program>,
+    pub errors: Vec<parser_base::Diagnostic>,
+}
+
+/// Parse a complete Blood source file.
+pub fn parse_file(source: &str) -> ParseResult {
+    let mut parser = parser_base::Parser::new(source);
+    let start_span = parser.current.span;
+
+    // Parse module declaration if present
+    let mod_decl = parse_module_decl(&mut parser);
+
+    // Parse imports
+    let imports = parse_imports(&mut parser);
+
+    // Parse declarations
+    let mut declarations: Vec<ast::Declaration> = Vec::new();
+    while !parser.is_at_end() {
+        let decl = parser_item::parse_declaration(&mut parser);
+        declarations.push(decl);
+    }
+
+    let end_span = parser.previous.span;
+
+    // Build Program
+    let program = ast::Program {
+        mod_decl: mod_decl,
+        imports: imports,
+        declarations: declarations,
+        span: common::Span { start: start_span.start, end: end_span.end, line: start_span.line, column: start_span.column },
+    };
+
+    let errors = parser.take_errors();
+
+    if errors.len() > 0 {
+        return ParseResult {
+            program: Option::None,
+            errors: errors,
+        };
+    }
+
+    ParseResult {
+        program: Option::Some(program),
+        errors: Vec::new(),
+    }
+}
+
+// ============================================================
+// Module Declaration Parsing
+// ============================================================
+
+/// Parse optional module declaration: module std.collections.vec;
+fn parse_module_decl(parser: &mut parser_base::Parser) -> Option<ast::ModuleDecl> {
+    if !parser.check(token::TokenKind::Module) {
+        return Option::None;
+    }
+
+    let start = parser.current.span;
+    parser.advance(); // consume 'module'
+
+    // Parse module path: std.collections.vec
+    let path = parse_module_path(parser);
+    parser.expect(token::TokenKind::Semi);
+
+    let end_span = parser.previous.span;
+    let mod_decl = ast::ModuleDecl {
+        path: path,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    };
+    Option::Some(mod_decl)
+}
+
+/// Parse a module path: std.collections.vec
+fn parse_module_path(parser: &mut parser_base::Parser) -> ast::ModulePath {
+    let start = parser.current.span;
+    let mut segments: Vec<common::SpannedSymbol> = Vec::new();
+
+    let first = parser.parse_spanned_symbol();
+    segments.push(first);
+
+    while parser.try_consume(token::TokenKind::Dot) {
+        let segment = parser.parse_spanned_symbol();
+        segments.push(segment);
+    }
+
+    let end_span = parser.previous.span;
+    ast::ModulePath {
+        segments: segments,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+// ============================================================
+// Import Parsing
+// ============================================================
+
+/// Parse all imports at the beginning of the file.
+fn parse_imports(parser: &mut parser_base::Parser) -> Vec<ast::Import> {
+    let mut imports: Vec<ast::Import> = Vec::new();
+
+    while parser.check(token::TokenKind::Use) {
+        let imp = parse_import(parser);
+        imports.push(imp);
+    }
+
+    imports
+}
+
+/// Parse a single import statement.
+fn parse_import(parser: &mut parser_base::Parser) -> ast::Import {
+    let start = parser.current.span;
+    parser.advance(); // consume 'use'
+
+    // Parse module path
+    let path = parse_module_path(parser);
+
+    // Check for specific import types
+    if parser.try_consume(token::TokenKind::ColonColon) {
+        if parser.try_consume(token::TokenKind::Star) {
+            // use std.ops::*;
+            parser.expect(token::TokenKind::Semi);
+            let end_span = parser.previous.span;
+            let span = common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column };
+            return ast::Import::Glob { path: path, span: span };
+        } else if parser.check(token::TokenKind::LBrace) {
+            // use std.iter::{Iterator, IntoIterator};
+            parser.advance();
+            let mut items: Vec<ast::ImportItem> = Vec::new();
+
+            while !parser.check(token::TokenKind::RBrace) && !parser.is_at_end() {
+                let item = parse_import_item(parser);
+                items.push(item);
+
+                if !parser.try_consume(token::TokenKind::Comma) {
+                    break;
+                }
+            }
+
+            parser.expect(token::TokenKind::RBrace);
+            parser.expect(token::TokenKind::Semi);
+            let end_span = parser.previous.span;
+            let span = common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column };
+            return ast::Import::Group { path: path, items: items, span: span };
+        } else {
+            // use std.iter::Iterator;
+            // Add the imported item name as a segment to the path
+            let name = parser.parse_spanned_symbol();
+            let mut full_segments = path.segments;
+            full_segments.push(name);
+            let full_path = ast::ModulePath {
+                segments: full_segments,
+                span: common::Span { start: path.span.start, end: name.span.end, line: path.span.line, column: path.span.column },
+            };
+
+            let alias = if parser.try_consume(token::TokenKind::As) {
+                Option::Some(parser.parse_spanned_symbol())
+            } else {
+                Option::None
+            };
+            parser.expect(token::TokenKind::Semi);
+            let end_span = parser.previous.span;
+            let span = common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column };
+            return ast::Import::Simple { path: full_path, alias: alias, span: span };
+        }
+    } else {
+        // use std.collections; (import the module itself)
+        parser.expect(token::TokenKind::Semi);
+        let end_span = parser.previous.span;
+        let span = common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column };
+        return ast::Import::Simple { path: path, alias: Option::None, span: span };
+    }
+}
+
+/// Parse a single item in a grouped import.
+fn parse_import_item(parser: &mut parser_base::Parser) -> ast::ImportItem {
+    let name = parser.parse_spanned_symbol();
+    let alias = if parser.try_consume(token::TokenKind::As) {
+        Option::Some(parser.parse_spanned_symbol())
+    } else {
+        Option::None
+    };
+
+    ast::ImportItem {
+        name: name,
+        alias: alias,
+    }
+}
+
+// ============================================================
+// Re-exports for convenience
+// ============================================================
+
+// Re-export commonly used types
+pub type Parser = parser_base::Parser;
+pub type Diagnostic = parser_base::Diagnostic;
+pub type ErrorCode = parser_base::ErrorCode;
+
+// Re-export commonly used functions
+pub fn parse_type(parser: &mut parser_base::Parser) -> ast::Type {
+    parser_expr::parse_type(parser)
+}
+
+pub fn parse_expr(parser: &mut parser_base::Parser) -> ast::Expr {
+    parser_expr::parse_expr(parser)
+}
+
+pub fn parse_pattern(parser: &mut parser_base::Parser) -> ast::Pattern {
+    parser_expr::parse_pattern(parser)
+}
+
+pub fn parse_statement(parser: &mut parser_base::Parser) -> ast::Statement {
+    parser_expr::parse_statement(parser)
+}
+
+pub fn parse_block(parser: &mut parser_base::Parser) -> ast::Block {
+    parser_expr::parse_block(parser)
+}
+
+pub fn parse_declaration(parser: &mut parser_base::Parser) -> ast::Declaration {
+    parser_item::parse_declaration(parser)
+}
