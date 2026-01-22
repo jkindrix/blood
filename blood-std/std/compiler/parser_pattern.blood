@@ -1,0 +1,404 @@
+// Blood Self-Hosted Compiler - Pattern Parsing
+//
+// This module handles parsing of patterns:
+// - Literal patterns (integers, strings, booleans)
+// - Identifier patterns (bindings)
+// - Path patterns (enum variants)
+// - Struct patterns (destructuring)
+// - Tuple patterns
+// - Slice patterns
+// - Reference patterns
+// - Wildcard patterns
+
+mod parser_base;
+mod common;
+mod token;
+mod ast;
+mod parser_type;
+
+// ============================================================
+// Pattern Parsing
+// ============================================================
+
+/// Parse a pattern.
+pub fn parse_pattern(parser: &mut parser_base::Parser) -> ast::Pattern {
+    let start = parser.current.span;
+    let kind = parse_pattern_kind(parser);
+    let end_span = parser.previous.span;
+    ast::Pattern {
+        kind: kind,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+/// Parse a pattern kind.
+fn parse_pattern_kind(parser: &mut parser_base::Parser) -> ast::PatternKind {
+    match parser.current.kind {
+        // Rest pattern: ..
+        token::TokenKind::DotDot => {
+            parser.advance();
+            return ast::PatternKind::Rest;
+        }
+
+        // Literal patterns
+        token::TokenKind::IntLit => {
+            let pat_start = parser.current.span;
+            parser.advance();
+            let lit = ast::Literal {
+                kind: ast::LiteralKind::Int { val: 0, suffix: Option::None },
+                span: pat_start,
+            };
+            return ast::PatternKind::Literal(lit);
+        }
+        token::TokenKind::FloatLit => {
+            let pat_start = parser.current.span;
+            parser.advance();
+            let lit = ast::Literal {
+                kind: ast::LiteralKind::Float { bits: 0, suffix: Option::None },
+                span: pat_start,
+            };
+            return ast::PatternKind::Literal(lit);
+        }
+        token::TokenKind::StringLit => {
+            let pat_start = parser.current.span;
+            parser.advance();
+            let lit = ast::Literal {
+                kind: ast::LiteralKind::Str(String::new()),
+                span: pat_start,
+            };
+            return ast::PatternKind::Literal(lit);
+        }
+        token::TokenKind::CharLit => {
+            let pat_start = parser.current.span;
+            parser.advance();
+            let lit = ast::Literal {
+                kind: ast::LiteralKind::Char('?'),
+                span: pat_start,
+            };
+            return ast::PatternKind::Literal(lit);
+        }
+        token::TokenKind::True => {
+            let pat_start = parser.current.span;
+            parser.advance();
+            let lit = ast::Literal {
+                kind: ast::LiteralKind::Bool(true),
+                span: pat_start,
+            };
+            return ast::PatternKind::Literal(lit);
+        }
+        token::TokenKind::False => {
+            let pat_start = parser.current.span;
+            parser.advance();
+            let lit = ast::Literal {
+                kind: ast::LiteralKind::Bool(false),
+                span: pat_start,
+            };
+            return ast::PatternKind::Literal(lit);
+        }
+
+        // Reference pattern: &pat or &mut pat
+        token::TokenKind::And => {
+            parser.advance();
+            let is_mut = parser.try_consume(token::TokenKind::Mut);
+            let inner = parse_pattern(parser);
+            return ast::PatternKind::Ref {
+                is_mut: is_mut,
+                inner: Box::new(inner),
+            };
+        }
+
+        // mut binding
+        token::TokenKind::Mut => {
+            parser.advance();
+            let name = parser.parse_spanned_symbol();
+            let subpattern = if parser.try_consume(token::TokenKind::At) {
+                Option::Some(Box::new(parse_pattern(parser)))
+            } else {
+                Option::None
+            };
+            return ast::PatternKind::Ident {
+                by_ref: false,
+                is_mut: true,
+                name: name,
+                subpattern: subpattern,
+            };
+        }
+
+        // ref binding
+        token::TokenKind::Ref => {
+            parser.advance();
+            let is_mut = parser.try_consume(token::TokenKind::Mut);
+            let name = parser.parse_spanned_symbol();
+            let subpattern = if parser.try_consume(token::TokenKind::At) {
+                Option::Some(Box::new(parse_pattern(parser)))
+            } else {
+                Option::None
+            };
+            return ast::PatternKind::Ident {
+                by_ref: true,
+                is_mut: is_mut,
+                name: name,
+                subpattern: subpattern,
+            };
+        }
+
+        // Tuple pattern: (pat, pat, ...)
+        token::TokenKind::LParen => {
+            return parse_tuple_pattern(parser);
+        }
+
+        // Slice pattern: [pat, pat, ...]
+        token::TokenKind::LBracket => {
+            return parse_slice_pattern(parser);
+        }
+
+        // Identifier or path pattern
+        token::TokenKind::Ident => {
+            return parse_ident_or_path_pattern(parser);
+        }
+        token::TokenKind::TypeIdent => {
+            return parse_ident_or_path_pattern(parser);
+        }
+
+        // Path starting with ::
+        token::TokenKind::ColonColon => {
+            return parse_path_pattern(parser);
+        }
+
+        token::TokenKind::Error => {
+            return ast::PatternKind::Wildcard;
+        }
+
+        _ => {
+            parser.error_expected("pattern");
+            return ast::PatternKind::Wildcard;
+        }
+    }
+}
+
+fn parse_tuple_pattern(parser: &mut parser_base::Parser) -> ast::PatternKind {
+    parser.advance(); // consume '('
+    let mut fields: Vec<ast::Pattern> = Vec::new();
+    let mut rest_pos: Option<usize> = Option::None;
+    let mut idx: usize = 0;
+
+    while !parser.check(token::TokenKind::RParen) && !parser.is_at_end() {
+        if parser.check(token::TokenKind::DotDot) {
+            parser.advance();
+            rest_pos = Option::Some(idx);
+        } else {
+            let pat = parse_pattern(parser);
+            fields.push(pat);
+            idx = idx + 1;
+        }
+
+        if !parser.try_consume(token::TokenKind::Comma) {
+            break;
+        }
+    }
+
+    parser.expect(token::TokenKind::RParen);
+
+    ast::PatternKind::Tuple {
+        fields: fields,
+        rest_pos: rest_pos,
+    }
+}
+
+fn parse_slice_pattern(parser: &mut parser_base::Parser) -> ast::PatternKind {
+    parser.advance(); // consume '['
+    let mut elements: Vec<ast::Pattern> = Vec::new();
+    let mut rest_pos: Option<usize> = Option::None;
+    let mut idx: usize = 0;
+
+    while !parser.check(token::TokenKind::RBracket) && !parser.is_at_end() {
+        if parser.check(token::TokenKind::DotDot) {
+            parser.advance();
+            rest_pos = Option::Some(idx);
+        } else {
+            let pat = parse_pattern(parser);
+            elements.push(pat);
+            idx = idx + 1;
+        }
+
+        if !parser.try_consume(token::TokenKind::Comma) {
+            break;
+        }
+    }
+
+    parser.expect(token::TokenKind::RBracket);
+
+    ast::PatternKind::Slice {
+        elements: elements,
+        rest_pos: rest_pos,
+    }
+}
+
+fn parse_ident_or_path_pattern(parser: &mut parser_base::Parser) -> ast::PatternKind {
+    // Check for wildcard pattern: _
+    if parser.token_is_underscore(parser.current) {
+        parser.advance();
+        return ast::PatternKind::Wildcard;
+    }
+
+    let first_name = parser.parse_spanned_symbol();
+
+    // Check for :: to see if this is a path
+    if parser.check(token::TokenKind::ColonColon) {
+        let mut segments: Vec<ast::TypePathSegment> = Vec::new();
+        let first_seg = ast::TypePathSegment { name: first_name, args: Option::None };
+        segments.push(first_seg);
+
+        while parser.try_consume(token::TokenKind::ColonColon) {
+            let seg_name = parser.parse_spanned_symbol();
+            let seg = ast::TypePathSegment { name: seg_name, args: Option::None };
+            segments.push(seg);
+        }
+
+        let path_span = common::Span {
+            start: first_name.span.start,
+            end: parser.previous.span.end,
+            line: first_name.span.line,
+            column: first_name.span.column,
+        };
+        let path = ast::TypePath { segments: segments, span: path_span };
+
+        // Check for struct pattern: Path { ... }
+        if parser.check(token::TokenKind::LBrace) {
+            return parse_struct_pattern(parser, path);
+        }
+
+        // Check for tuple struct pattern: Path(...)
+        if parser.check(token::TokenKind::LParen) {
+            return parse_tuple_struct_pattern(parser, path);
+        }
+
+        return ast::PatternKind::Path(path);
+    }
+
+    // Check for @ subpattern
+    if parser.try_consume(token::TokenKind::At) {
+        let subpat = parse_pattern(parser);
+        return ast::PatternKind::Ident {
+            by_ref: false,
+            is_mut: false,
+            name: first_name,
+            subpattern: Option::Some(Box::new(subpat)),
+        };
+    }
+
+    // Check for struct pattern with single ident: Foo { ... }
+    if parser.check(token::TokenKind::LBrace) {
+        let mut segments: Vec<ast::TypePathSegment> = Vec::new();
+        let seg = ast::TypePathSegment { name: first_name, args: Option::None };
+        segments.push(seg);
+        let path = ast::TypePath { segments: segments, span: first_name.span };
+        return parse_struct_pattern(parser, path);
+    }
+
+    // Check for tuple struct pattern with single ident: Foo(...)
+    if parser.check(token::TokenKind::LParen) {
+        let mut segments: Vec<ast::TypePathSegment> = Vec::new();
+        let seg = ast::TypePathSegment { name: first_name, args: Option::None };
+        segments.push(seg);
+        let path = ast::TypePath { segments: segments, span: first_name.span };
+        return parse_tuple_struct_pattern(parser, path);
+    }
+
+    // Simple identifier pattern
+    ast::PatternKind::Ident {
+        by_ref: false,
+        is_mut: false,
+        name: first_name,
+        subpattern: Option::None,
+    }
+}
+
+fn parse_path_pattern(parser: &mut parser_base::Parser) -> ast::PatternKind {
+    let path = parser_type::parse_type_path(parser);
+
+    // Check for struct pattern
+    if parser.check(token::TokenKind::LBrace) {
+        return parse_struct_pattern(parser, path);
+    }
+
+    // Check for tuple struct pattern
+    if parser.check(token::TokenKind::LParen) {
+        return parse_tuple_struct_pattern(parser, path);
+    }
+
+    ast::PatternKind::Path(path)
+}
+
+fn parse_struct_pattern(parser: &mut parser_base::Parser, path: ast::TypePath) -> ast::PatternKind {
+    parser.advance(); // consume '{'
+    let mut fields: Vec<ast::StructPatternField> = Vec::new();
+    let mut has_rest = false;
+
+    while !parser.check(token::TokenKind::RBrace) && !parser.is_at_end() {
+        if parser.check(token::TokenKind::DotDot) {
+            parser.advance();
+            has_rest = true;
+            break;
+        }
+
+        let field_start = parser.current.span;
+        let field_name = parser.parse_spanned_symbol();
+
+        let pattern = if parser.try_consume(token::TokenKind::Colon) {
+            Option::Some(parse_pattern(parser))
+        } else {
+            Option::None
+        };
+
+        let field_end = parser.previous.span;
+        let field = ast::StructPatternField {
+            name: field_name,
+            pattern: pattern,
+            span: common::Span { start: field_start.start, end: field_end.end, line: field_start.line, column: field_start.column },
+        };
+        fields.push(field);
+
+        if !parser.try_consume(token::TokenKind::Comma) {
+            break;
+        }
+    }
+
+    parser.expect(token::TokenKind::RBrace);
+
+    ast::PatternKind::Struct {
+        path: path,
+        fields: fields,
+        has_rest: has_rest,
+    }
+}
+
+fn parse_tuple_struct_pattern(parser: &mut parser_base::Parser, path: ast::TypePath) -> ast::PatternKind {
+    parser.advance(); // consume '('
+    let mut fields: Vec<ast::Pattern> = Vec::new();
+    let mut rest_pos: Option<usize> = Option::None;
+    let mut idx: usize = 0;
+
+    while !parser.check(token::TokenKind::RParen) && !parser.is_at_end() {
+        if parser.check(token::TokenKind::DotDot) {
+            parser.advance();
+            rest_pos = Option::Some(idx);
+        } else {
+            let pat = parse_pattern(parser);
+            fields.push(pat);
+            idx = idx + 1;
+        }
+
+        if !parser.try_consume(token::TokenKind::Comma) {
+            break;
+        }
+    }
+
+    parser.expect(token::TokenKind::RParen);
+
+    ast::PatternKind::TupleStruct {
+        path: path,
+        fields: fields,
+        rest_pos: rest_pos,
+    }
+}

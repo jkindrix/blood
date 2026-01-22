@@ -3,7 +3,9 @@
 // This module serves as the main entry point for parsing. It imports and
 // re-exports the split parser modules:
 // - parser_base: Parser struct and core token handling
-// - parser_expr: Type, expression, pattern, statement, and block parsing
+// - parser_type: Type parsing (standalone, no circular deps)
+// - parser_pattern: Pattern parsing (imports parser_type)
+// - parser_expr: Expression and statement parsing (imports parser_type, parser_pattern)
 // - parser_item: Declaration parsing (functions, structs, enums, etc.)
 
 mod common;
@@ -11,6 +13,8 @@ mod token;
 mod lexer;
 mod ast;
 mod parser_base;
+mod parser_type;
+mod parser_pattern;
 mod parser_expr;
 mod parser_item;
 
@@ -219,7 +223,7 @@ pub type ErrorCode = parser_base::ErrorCode;
 
 // Re-export commonly used functions
 pub fn parse_type(parser: &mut parser_base::Parser) -> ast::Type {
-    parser_expr::parse_type(parser)
+    parser_type::parse_type(parser)
 }
 
 pub fn parse_expr(parser: &mut parser_base::Parser) -> ast::Expr {
@@ -227,7 +231,7 @@ pub fn parse_expr(parser: &mut parser_base::Parser) -> ast::Expr {
 }
 
 pub fn parse_pattern(parser: &mut parser_base::Parser) -> ast::Pattern {
-    parser_expr::parse_pattern(parser)
+    parser_pattern::parse_pattern(parser)
 }
 
 pub fn parse_statement(parser: &mut parser_base::Parser) -> ast::Statement {
