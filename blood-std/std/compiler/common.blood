@@ -132,3 +132,142 @@ impl OrderedFloat {
         OrderedFloat { bits }
     }
 }
+
+// ============================================================
+// Visibility
+// ============================================================
+
+/// The visibility of an item or field.
+pub enum Visibility {
+    /// Private to the current module.
+    Private,
+    /// Public to all.
+    Public,
+    /// Public to the current crate.
+    PublicCrate,
+    /// Public to the parent module.
+    PublicSuper,
+    /// Public to the current module (explicit self).
+    PublicSelf,
+}
+
+impl Visibility {
+    /// Returns true if this is public to all.
+    pub fn is_public(self: &Self) -> bool {
+        match self {
+            Visibility::Private => false,
+            Visibility::Public => true,
+            Visibility::PublicCrate => false,
+            Visibility::PublicSuper => false,
+            Visibility::PublicSelf => false,
+        }
+    }
+}
+
+// ============================================================
+// Function Qualifiers
+// ============================================================
+
+/// Qualifiers on a function (const, async, unsafe).
+pub struct FnQualifiers {
+    /// Whether the function is const.
+    pub is_const: bool,
+    /// Whether the function is async.
+    pub is_async: bool,
+    /// Whether the function is unsafe.
+    pub is_unsafe: bool,
+}
+
+impl FnQualifiers {
+    /// Creates default (none) qualifiers.
+    pub fn none() -> FnQualifiers {
+        FnQualifiers { is_const: false, is_async: false, is_unsafe: false }
+    }
+
+    /// Creates const qualifiers.
+    pub fn const_fn() -> FnQualifiers {
+        FnQualifiers { is_const: true, is_async: false, is_unsafe: false }
+    }
+
+    /// Creates async qualifiers.
+    pub fn async_fn() -> FnQualifiers {
+        FnQualifiers { is_const: false, is_async: true, is_unsafe: false }
+    }
+
+    /// Creates unsafe qualifiers.
+    pub fn unsafe_fn() -> FnQualifiers {
+        FnQualifiers { is_const: false, is_async: false, is_unsafe: true }
+    }
+}
+
+// ============================================================
+// Handler Kind
+// ============================================================
+
+/// The kind of effect handler.
+pub enum HandlerKind {
+    /// A deep handler (resumes always return to handler).
+    Deep,
+    /// A shallow handler (resumes return to call site).
+    Shallow,
+}
+
+// ============================================================
+// Operators
+// ============================================================
+
+/// A binary operator.
+pub enum BinOp {
+    /// Addition (+)
+    Add,
+    /// Subtraction (-)
+    Sub,
+    /// Multiplication (*)
+    Mul,
+    /// Division (/)
+    Div,
+    /// Remainder (%)
+    Rem,
+    /// Equality (==)
+    Eq,
+    /// Inequality (!=)
+    Ne,
+    /// Less than (<)
+    Lt,
+    /// Less than or equal (<=)
+    Le,
+    /// Greater than (>)
+    Gt,
+    /// Greater than or equal (>=)
+    Ge,
+    /// Logical and (&&)
+    And,
+    /// Logical or (||)
+    Or,
+    /// Bitwise and (&)
+    BitAnd,
+    /// Bitwise or (|)
+    BitOr,
+    /// Bitwise xor (^)
+    BitXor,
+    /// Left shift (<<)
+    Shl,
+    /// Right shift (>>)
+    Shr,
+    /// Pipe operator (|>)
+    Pipe,
+}
+
+/// A unary operator.
+pub enum UnaryOp {
+    /// Negation (-)
+    Neg,
+    /// Logical not (!)
+    Not,
+    /// Dereference (*)
+    Deref,
+    /// Reference (&)
+    Ref,
+    /// Mutable reference (&mut)
+    RefMut,
+}
