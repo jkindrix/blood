@@ -1,0 +1,1709 @@
+// Blood Self-Hosted Compiler - HIR Expression Lowering
+//
+// This module handles lowering AST expressions to HIR expressions:
+// - Expression lowering (all AST expression kinds)
+// - Pattern lowering (for match arms, let bindings)
+// - Statement lowering (for blocks)
+// - Body lowering (for functions)
+//
+// Functions in this module take &mut LoweringCtx from hir_lower_ctx.
+
+mod common;
+mod ast;
+mod hir_def;
+mod hir_ty;
+mod hir_expr;
+mod hir_item;
+mod hir;
+mod hir_lower_ctx;
+mod hir_lower_type;
+
+// ============================================================
+// Helper Functions
+// ============================================================
+
+/// Create a String from a string literal.
+fn make_string(s: &str) -> String {
+    let mut result = String::new();
+    result.push_str(s);
+    result
+}
+
+// ============================================================
+// Expression Lowering
+// ============================================================
+
+/// Lower an AST expression to an HIR expression.
+pub fn lower_expr(ctx: &mut hir_lower_ctx::LoweringCtx, expr: &ast::Expr) -> hir_expr::Expr {
+    let span = expr.span;
+
+    match &expr.kind {
+        &ast::ExprKind::Literal(ref lit) => {
+            lower_literal_expr(ctx, lit, span)
+        }
+        &ast::ExprKind::Path(ref path) => {
+            lower_path_expr(ctx, path, span)
+        }
+        &ast::ExprKind::Binary { op: bin_op, ref left, ref right } => {
+            let left_hir = lower_expr(ctx, left.as_ref());
+            let right_hir = lower_expr(ctx, right.as_ref());
+            let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+            hir_expr::Expr::new(
+                hir_expr::ExprKind::Binary {
+                    op: bin_op,
+                    left: Box::new(left_hir),
+                    right: Box::new(right_hir),
+                },
+                ty,
+                span,
+            )
+        }
+        &ast::ExprKind::Unary { op: unary_op, ref operand } => {
+            let operand_hir = lower_expr(ctx, operand.as_ref());
+            let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+            hir_expr::Expr::new(
+                hir_expr::ExprKind::Unary {
+                    op: unary_op,
+                    operand: Box::new(operand_hir),
+                },
+                ty,
+                span,
+            )
+        }
+        &ast::ExprKind::Call { ref callee, ref args } => {
+            lower_call_expr(ctx, callee.as_ref(), args, span)
+        }
+        &ast::ExprKind::MethodCall { ref receiver, ref method, ref type_args, ref args } => {
+            lower_method_call_expr(ctx, receiver.as_ref(), method, type_args, args, span)
+        }
+        &ast::ExprKind::Field { ref base, ref field } => {
+            lower_field_expr(ctx, base.as_ref(), field, span)
+        }
+        &ast::ExprKind::Index { ref base, ref idx } => {
+            let base_hir = lower_expr(ctx, base.as_ref());
+            let idx_hir = lower_expr(ctx, idx.as_ref());
+            let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+            hir_expr::Expr::new(
+                hir_expr::ExprKind::Index {
+                    base: Box::new(base_hir),
+                    idx: Box::new(idx_hir),
+                },
+                ty,
+                span,
+            )
+        }
+        &ast::ExprKind::Tuple(ref elems) => {
+            lower_tuple_expr(ctx, elems, span)
+        }
+        &ast::ExprKind::Array(ref arr) => {
+            lower_array_expr(ctx, arr, span)
+        }
+        &ast::ExprKind::Record { ref path, ref fields, ref base } => {
+            lower_record_expr(ctx, path, fields, base, span)
+        }
+        &ast::ExprKind::Range { ref start, ref end_val, inclusive } => {
+            let start_hir = match start {
+                &Some(ref e) => Some(Box::new(lower_expr(ctx, e.as_ref()))),
+                &None => Option::None,
+            };
+            let end_hir = match end_val {
+                &Some(ref e) => Some(Box::new(lower_expr(ctx, e.as_ref()))),
+                &None => Option::None,
+            };
+            let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+            hir_expr::Expr::new(
+                hir_expr::ExprKind::Range {
+                    start: start_hir,
+                    end_val: end_hir,
+                    inclusive: inclusive,
+                },
+                ty,
+                span,
+            )
+        }
+        &ast::ExprKind::Cast { ref expr, ref ty } => {
+            let expr_hir = lower_expr(ctx, expr.as_ref());
+            let cast_ty = hir_lower_type::lower_type(ctx, ty);
+            hir_expr::Expr::new(
+                hir_expr::ExprKind::Cast {
+                    expr: Box::new(expr_hir),
+                    ty: cast_ty,
+                },
+                hir_ty::Type::infer(ctx.alloc_ty_var()),
+                span,
+            )
+        }
+        &ast::ExprKind::Assign { ref target, ref val } => {
+            let target_hir = lower_expr(ctx, target.as_ref());
+            let val_hir = lower_expr(ctx, val.as_ref());
+            hir_expr::Expr::new(
+                hir_expr::ExprKind::Assign {
+                    target: Box::new(target_hir),
+                    val: Box::new(val_hir),
+                },
+                hir_ty::Type::unit(),
+                span,
+            )
+        }
+        &ast::ExprKind::AssignOp { op: assign_op, ref target, ref val } => {
+            let target_hir = lower_expr(ctx, target.as_ref());
+            let val_hir = lower_expr(ctx, val.as_ref());
+            hir_expr::Expr::new(
+                hir_expr::ExprKind::AssignOp {
+                    op: assign_op,
+                    target: Box::new(target_hir),
+                    val: Box::new(val_hir),
+                },
+                hir_ty::Type::unit(),
+                span,
+            )
+        }
+        &ast::ExprKind::Block(ref block) => {
+            lower_block_expr(ctx, block, span)
+        }
+        &ast::ExprKind::If { ref condition, ref then_branch, ref else_branch } => {
+            lower_if_expr(ctx, condition.as_ref(), then_branch, else_branch, span)
+        }
+        &ast::ExprKind::IfLet { ref pattern, ref scrutinee, ref then_branch, ref else_branch } => {
+            lower_if_let_expr(ctx, pattern, scrutinee.as_ref(), then_branch, else_branch, span)
+        }
+        &ast::ExprKind::Match { ref scrutinee, ref arms } => {
+            lower_match_expr(ctx, scrutinee.as_ref(), arms, span)
+        }
+        &ast::ExprKind::Loop { ref label, ref body } => {
+            lower_loop_expr(ctx, label, body, span)
+        }
+        &ast::ExprKind::While { ref label, ref condition, ref body } => {
+            lower_while_expr(ctx, label, condition.as_ref(), body, span)
+        }
+        &ast::ExprKind::WhileLet { ref label, ref pattern, ref scrutinee, ref body } => {
+            lower_while_let_expr(ctx, label, pattern, scrutinee.as_ref(), body, span)
+        }
+        &ast::ExprKind::For { ref label, ref pattern, ref iter, ref body } => {
+            lower_for_expr(ctx, label, pattern, iter.as_ref(), body, span)
+        }
+        &ast::ExprKind::Return(ref val) => {
+            let val_hir = match val {
+                &Some(ref e) => Some(Box::new(lower_expr(ctx, e.as_ref()))),
+                &None => Option::None,
+            };
+            hir_expr::Expr::new(
+                hir_expr::ExprKind::Return(val_hir),
+                hir_ty::Type::never(),
+                span,
+            )
+        }
+        &ast::ExprKind::Break { ref label, ref val } => {
+            let label_sym = match label {
+                &Some(ref l) => Some(l.symbol),
+                &None => Option::None,
+            };
+            let val_hir = match val {
+                &Some(ref e) => Some(Box::new(lower_expr(ctx, e.as_ref()))),
+                &None => Option::None,
+            };
+            hir_expr::Expr::new(
+                hir_expr::ExprKind::Break {
+                    label: label_sym,
+                    val: val_hir,
+                },
+                hir_ty::Type::never(),
+                span,
+            )
+        }
+        &ast::ExprKind::Continue { ref label } => {
+            let label_sym = match label {
+                &Some(ref l) => Some(l.symbol),
+                &None => Option::None,
+            };
+            hir_expr::Expr::new(
+                hir_expr::ExprKind::Continue {
+                    label: label_sym,
+                },
+                hir_ty::Type::never(),
+                span,
+            )
+        }
+        &ast::ExprKind::Closure { is_move: _, ref params, ref return_type, effects: _, ref body } => {
+            lower_closure_expr(ctx, params, return_type, body.as_ref(), span)
+        }
+        &ast::ExprKind::WithHandle { ref handler, ref body } => {
+            let handler_hir = lower_expr(ctx, handler.as_ref());
+            let body_hir = lower_expr(ctx, body.as_ref());
+            let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+            hir_expr::Expr::new(
+                hir_expr::ExprKind::WithHandle {
+                    handler: Box::new(handler_hir),
+                    body: Box::new(body_hir),
+                },
+                ty,
+                span,
+            )
+        }
+        &ast::ExprKind::Perform { effect: ref eff_path, ref operation, ref args } => {
+            lower_perform_expr(ctx, eff_path, operation, args, span)
+        }
+        &ast::ExprKind::Resume(ref val) => {
+            let val_hir = lower_expr(ctx, val.as_ref());
+            let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+            hir_expr::Expr::new(
+                hir_expr::ExprKind::Resume(Box::new(val_hir)),
+                ty,
+                span,
+            )
+        }
+        &ast::ExprKind::Try(ref inner) => {
+            let inner_hir = lower_expr(ctx, inner.as_ref());
+            let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+            hir_expr::Expr::new(
+                hir_expr::ExprKind::Try(Box::new(inner_hir)),
+                ty,
+                span,
+            )
+        }
+        &ast::ExprKind::TryWith { ref body, handlers: _ } => {
+            // Desugar try-with to regular error handling
+            let body_hir = lower_block_to_expr(ctx, body);
+            body_hir
+        }
+        &ast::ExprKind::Unsafe(ref block) => {
+            let block_hir = lower_block_to_expr(ctx, block);
+            let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+            hir_expr::Expr::new(
+                hir_expr::ExprKind::Unsafe(Box::new(block_hir)),
+                ty,
+                span,
+            )
+        }
+        &ast::ExprKind::Region { name: _, ref body } => {
+            // Regions lower to regular blocks for now
+            lower_block_expr(ctx, body, span)
+        }
+        &ast::ExprKind::Paren(ref inner) => {
+            // Parentheses are purely syntactic
+            lower_expr(ctx, inner.as_ref())
+        }
+        &ast::ExprKind::Default => {
+            // Default expression needs type-directed lowering
+            let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+            ctx.error(
+                hir::DiagnosticCode::E0104,
+                make_string("default expressions not yet supported"),
+                span,
+            );
+            hir_expr::Expr::error(span)
+        }
+        &ast::ExprKind::MacroCall { path: _, ref kind } => {
+            lower_macro_call_expr(ctx, kind, span)
+        }
+    }
+}
+
+// ============================================================
+// Literal Lowering
+// ============================================================
+
+/// Lower a literal expression.
+fn lower_literal_expr(ctx: &mut hir_lower_ctx::LoweringCtx, lit: &ast::Literal, span: common::Span) -> hir_expr::Expr {
+    let (kind, ty) = match &lit.kind {
+        &ast::LiteralKind::Int { val, ref suffix } => {
+            let prim_ty = match suffix {
+                &Some(ref s) => int_suffix_to_prim(s),
+                &None => Option::None,
+            };
+            (
+                hir_expr::LiteralKind::Int { val: val, ty: prim_ty },
+                match prim_ty {
+                    Some(p) => hir_ty::Type::new(hir_ty::TypeKind::Primitive(p)),
+                    Option::None => hir_ty::Type::infer(ctx.alloc_ty_var()),
+                },
+            )
+        }
+        &ast::LiteralKind::Float { bits, ref suffix } => {
+            let prim_ty = match suffix {
+                &Some(ref s) => float_suffix_to_prim(s),
+                &None => Option::None,
+            };
+            (
+                hir_expr::LiteralKind::Float { bits: bits, ty: prim_ty },
+                match prim_ty {
+                    Some(p) => hir_ty::Type::new(hir_ty::TypeKind::Primitive(p)),
+                    Option::None => hir_ty::Type::infer(ctx.alloc_ty_var()),
+                },
+            )
+        }
+        &ast::LiteralKind::Str(ref s) => {
+            // Clone the string
+            let mut s_copy = String::new();
+            s_copy.push_str(s.as_str());
+            (
+                hir_expr::LiteralKind::Str(s_copy),
+                hir_ty::Type::new(hir_ty::TypeKind::Ref { inner: Box::new(hir_ty::Type::str_ty()), mutable: false }),
+            )
+        }
+        &ast::LiteralKind::ByteStr(ref bytes) => {
+            // Copy the bytes
+            let mut bytes_copy: Vec<u8> = Vec::new();
+            let mut i: usize = 0;
+            while i < bytes.len() {
+                bytes_copy.push(bytes[i]);
+                i = i + 1;
+            }
+            (
+                hir_expr::LiteralKind::ByteStr(bytes_copy),
+                hir_ty::Type::infer(ctx.alloc_ty_var()), // &[u8; N]
+            )
+        }
+        &ast::LiteralKind::Char(c) => {
+            (
+                hir_expr::LiteralKind::Char(c),
+                hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Char)),
+            )
+        }
+        &ast::LiteralKind::Bool(b) => {
+            (
+                hir_expr::LiteralKind::Bool(b),
+                hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Bool)),
+            )
+        }
+    };
+
+    let hir_lit = hir_expr::Literal::new(kind, lit.span);
+    hir_expr::Expr::new(
+        hir_expr::ExprKind::Literal(hir_lit),
+        ty,
+        span,
+    )
+}
+
+/// Convert an integer suffix to a primitive type.
+fn int_suffix_to_prim(suffix: &ast::IntSuffix) -> Option<hir_ty::PrimitiveTy> {
+    match suffix {
+        &ast::IntSuffix::I8 => Some(hir_ty::PrimitiveTy::I8),
+        &ast::IntSuffix::I16 => Some(hir_ty::PrimitiveTy::I16),
+        &ast::IntSuffix::I32 => Some(hir_ty::PrimitiveTy::I32),
+        &ast::IntSuffix::I64 => Some(hir_ty::PrimitiveTy::I64),
+        &ast::IntSuffix::I128 => Some(hir_ty::PrimitiveTy::I128),
+        &ast::IntSuffix::Isize => Some(hir_ty::PrimitiveTy::Isize),
+        &ast::IntSuffix::U8 => Some(hir_ty::PrimitiveTy::U8),
+        &ast::IntSuffix::U16 => Some(hir_ty::PrimitiveTy::U16),
+        &ast::IntSuffix::U32 => Some(hir_ty::PrimitiveTy::U32),
+        &ast::IntSuffix::U64 => Some(hir_ty::PrimitiveTy::U64),
+        &ast::IntSuffix::U128 => Some(hir_ty::PrimitiveTy::U128),
+        &ast::IntSuffix::Usize => Some(hir_ty::PrimitiveTy::Usize),
+    }
+}
+
+/// Convert a float suffix to a primitive type.
+fn float_suffix_to_prim(suffix: &ast::FloatSuffix) -> Option<hir_ty::PrimitiveTy> {
+    match suffix {
+        &ast::FloatSuffix::F32 => Some(hir_ty::PrimitiveTy::F32),
+        &ast::FloatSuffix::F64 => Some(hir_ty::PrimitiveTy::F64),
+    }
+}
+
+// ============================================================
+// Path Expression Lowering
+// ============================================================
+
+/// Lower a path expression to HIR.
+fn lower_path_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprPath, span: common::Span) -> hir_expr::Expr {
+    // Single-segment paths: could be local variable or global definition
+    if path.segments.len() == 1 {
+        let seg = &path.segments[0];
+
+        // Try to look up as a local or global
+        let lookup = ctx.resolver.lookup(seg.name.symbol);
+        if lookup.is_some() {
+            let result = lookup.unwrap();
+            let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+
+            // Lower type arguments if present
+            let type_args = match &seg.args {
+                &Some(ref args) => hir_lower_type::lower_type_args(ctx, args),
+                &None => Vec::new(),
+            };
+            let type_arg_count = type_args.len() as u32;
+
+            let resolved = hir_def::ResolvedPath::new(binding.def_id, type_arg_count, span);
+            let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+            return hir_expr::Expr::new(
+                hir_expr::ExprKind::Path(resolved),
+                ty,
+                span,
+            );
+        }
+
+        // Not found
+        ctx.error(
+            hir::DiagnosticCode::E0102,
+            make_string("undefined name"),
+            seg.name.span,
+        );
+        return hir_expr::Expr::error(span);
+    }
+
+    // Multi-segment paths (e.g., module::item or Type::method)
+    // For now, try to resolve the full path
+    // TODO: Handle qualified paths properly
+    ctx.error(
+        hir::DiagnosticCode::E0102,
+        make_string("qualified paths not yet fully supported"),
+        span,
+    );
+    hir_expr::Expr::error(span)
+}
+
+// ============================================================
+// Call Expression Lowering
+// ============================================================
+
+/// Lower a call expression.
+fn lower_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, callee: &ast::Expr, args: &Vec<ast::CallArg>, span: common::Span) -> hir_expr::Expr {
+    let callee_hir = lower_expr(ctx, callee);
+
+    let mut args_hir: Vec<hir_expr::Expr> = Vec::new();
+    let mut i: usize = 0;
+    while i < args.len() {
+        let arg_hir = lower_expr(ctx, &args[i].val);
+        args_hir.push(arg_hir);
+        i = i + 1;
+    }
+
+    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    hir_expr::Expr::new(
+        hir_expr::ExprKind::Call {
+            callee: Box::new(callee_hir),
+            args: args_hir,
+        },
+        ty,
+        span,
+    )
+}
+
+/// Lower a method call expression.
+fn lower_method_call_expr(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    receiver: &ast::Expr,
+    method: &common::SpannedSymbol,
+    type_args: &Option<ast::TypeArgs>,
+    args: &Vec<ast::CallArg>,
+    span: common::Span,
+) -> hir_expr::Expr {
+    let receiver_hir = lower_expr(ctx, receiver);
+
+    let type_args_hir = match type_args {
+        &Some(ref ta) => hir_lower_type::lower_type_args(ctx, ta),
+        &None => Vec::new(),
+    };
+
+    let mut args_hir: Vec<hir_expr::Expr> = Vec::new();
+    let mut i: usize = 0;
+    while i < args.len() {
+        let arg_hir = lower_expr(ctx, &args[i].val);
+        args_hir.push(arg_hir);
+        i = i + 1;
+    }
+
+    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    hir_expr::Expr::new(
+        hir_expr::ExprKind::MethodCall {
+            receiver: Box::new(receiver_hir),
+            method: *method,
+            method_def: Option::None, // Resolved during type checking
+            type_args: type_args_hir,
+            args: args_hir,
+        },
+        ty,
+        span,
+    )
+}
+
+// ============================================================
+// Field and Tuple Lowering
+// ============================================================
+
+/// Lower a field access expression.
+fn lower_field_expr(ctx: &mut hir_lower_ctx::LoweringCtx, base: &ast::Expr, field: &ast::FieldAccess, span: common::Span) -> hir_expr::Expr {
+    let base_hir = lower_expr(ctx, base);
+
+    let field_hir = match field {
+        &ast::FieldAccess::Named(ref name) => {
+            hir_expr::FieldAccess::Named {
+                name: *name,
+                field_idx: Option::None, // Resolved during type checking
+            }
+        }
+        &ast::FieldAccess::Index(idx, _) => {
+            hir_expr::FieldAccess::Index(idx)
+        }
+    };
+
+    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    hir_expr::Expr::new(
+        hir_expr::ExprKind::Field {
+            base: Box::new(base_hir),
+            field: field_hir,
+        },
+        ty,
+        span,
+    )
+}
+
+/// Lower a tuple expression.
+fn lower_tuple_expr(ctx: &mut hir_lower_ctx::LoweringCtx, elems: &Vec<ast::Expr>, span: common::Span) -> hir_expr::Expr {
+    let mut elems_hir: Vec<hir_expr::Expr> = Vec::new();
+    let mut i: usize = 0;
+    while i < elems.len() {
+        let elem_hir = lower_expr(ctx, &elems[i]);
+        elems_hir.push(elem_hir);
+        i = i + 1;
+    }
+
+    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    hir_expr::Expr::new(
+        hir_expr::ExprKind::Tuple(elems_hir),
+        ty,
+        span,
+    )
+}
+
+/// Lower an array expression.
+fn lower_array_expr(ctx: &mut hir_lower_ctx::LoweringCtx, arr: &ast::ArrayExpr, span: common::Span) -> hir_expr::Expr {
+    let arr_hir = match arr {
+        &ast::ArrayExpr::List(ref elems) => {
+            let mut elems_hir: Vec<hir_expr::Expr> = Vec::new();
+            let mut i: usize = 0;
+            while i < elems.len() {
+                let elem_hir = lower_expr(ctx, &elems[i]);
+                elems_hir.push(elem_hir);
+                i = i + 1;
+            }
+            hir_expr::ArrayExpr::List(elems_hir)
+        }
+        &ast::ArrayExpr::Repeat { ref val, count: _ } => {
+            let val_hir = lower_expr(ctx, val.as_ref());
+            // TODO: Evaluate count expression at compile time
+            hir_expr::ArrayExpr::Repeat {
+                val: Box::new(val_hir),
+                count: 0, // Placeholder
+            }
+        }
+    };
+
+    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    hir_expr::Expr::new(
+        hir_expr::ExprKind::Array(arr_hir),
+        ty,
+        span,
+    )
+}
+
+// ============================================================
+// Record/Struct Expression Lowering
+// ============================================================
+
+/// Lower a record/struct expression.
+fn lower_record_expr(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    path: &Option<ast::TypePath>,
+    fields: &Vec<ast::RecordExprField>,
+    base: &Option<Box<ast::Expr>>,
+    span: common::Span,
+) -> hir_expr::Expr {
+    // Resolve the struct type path
+    let p = match path {
+        &Some(ref p) => p,
+        &None => {
+            ctx.error(
+                hir::DiagnosticCode::E0104,
+                make_string("anonymous record expressions not yet supported"),
+                span,
+            );
+            return hir_expr::Expr::error(span);
+        }
+    };
+
+    // Handle multi-segment paths
+    if p.segments.len() != 1 {
+        ctx.error(
+            hir::DiagnosticCode::E0102,
+            make_string("qualified struct paths not yet supported"),
+            p.span,
+        );
+        return hir_expr::Expr::error(span);
+    }
+
+    let seg = &p.segments[0];
+    let lookup = ctx.resolver.lookup(seg.name.symbol);
+
+    // Handle lookup failure (early return)
+    if lookup.is_none() {
+        ctx.error(
+            hir::DiagnosticCode::E0102,
+            make_string("unknown struct type"),
+            p.span,
+        );
+        return hir_expr::Expr::error(span);
+    }
+
+    // Now we can resolve the path
+    let result = lookup.unwrap();
+    let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+    let type_args = match &seg.args {
+        &Some(ref args) => hir_lower_type::lower_type_args(ctx, args),
+        &None => Vec::new(),
+    };
+    let type_arg_count = type_args.len() as u32;
+    let resolved_path = hir_def::ResolvedPath::new(binding.def_id, type_arg_count, p.span);
+
+    // Lower fields
+    let mut fields_hir: Vec<hir_expr::FieldExpr> = Vec::new();
+    let mut i: usize = 0;
+    while i < fields.len() {
+        let f = &fields[i];
+        // Handle shorthand fields (e.g., `Foo { bar }` where bar is a variable)
+        let val_hir = match &f.val {
+            &Some(ref e) => lower_expr(ctx, e),
+            &None => {
+                // Shorthand: field name is also the variable name
+                // Create a path expression for the variable
+                let lookup = ctx.resolver.lookup(f.name.symbol);
+                if lookup.is_some() {
+                    let result = lookup.unwrap();
+                    let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+                    let resolved = hir_def::ResolvedPath::new(binding.def_id, 0, f.name.span);
+                    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+                    hir_expr::Expr::new(
+                        hir_expr::ExprKind::Path(resolved),
+                        ty,
+                        f.name.span,
+                    )
+                } else {
+                    ctx.error(
+                        hir::DiagnosticCode::E0102,
+                        make_string("undefined field variable"),
+                        f.name.span,
+                    );
+                    hir_expr::Expr::error(f.name.span)
+                }
+            }
+        };
+        let field_hir = hir_expr::FieldExpr::new(
+            f.name,
+            Option::None, // Field index resolved during type checking
+            val_hir,
+            f.span,
+        );
+        fields_hir.push(field_hir);
+        i = i + 1;
+    }
+
+    // Lower base expression if present
+    let base_hir = match base {
+        &Some(ref b) => Some(Box::new(lower_expr(ctx, b.as_ref()))),
+        &None => Option::None,
+    };
+
+    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    hir_expr::Expr::new(
+        hir_expr::ExprKind::Struct {
+            path: resolved_path,
+            fields: fields_hir,
+            base: base_hir,
+        },
+        ty,
+        span,
+    )
+}
+
+// ============================================================
+// Block and Statement Lowering
+// ============================================================
+
+/// Lower a block expression.
+fn lower_block_expr(ctx: &mut hir_lower_ctx::LoweringCtx, block: &ast::Block, span: common::Span) -> hir_expr::Expr {
+    let block_hir = lower_block(ctx, block);
+    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    hir_expr::Expr::new(
+        hir_expr::ExprKind::Block(block_hir),
+        ty,
+        span,
+    )
+}
+
+/// Lower a block to HIR Block.
+pub fn lower_block(ctx: &mut hir_lower_ctx::LoweringCtx, block: &ast::Block) -> hir_expr::Block {
+    let mut stmts_hir: Vec<hir_expr::Stmt> = Vec::new();
+    let mut i: usize = 0;
+    while i < block.statements.len() {
+        let stmt_hir = lower_stmt(ctx, &block.statements[i]);
+        stmts_hir.push(stmt_hir);
+        i = i + 1;
+    }
+
+    let expr_hir = match &block.expr {
+        &Some(ref e) => Some(Box::new(lower_expr(ctx, e.as_ref()))),
+        &None => Option::None,
+    };
+
+    hir_expr::Block::new(stmts_hir, expr_hir, block.span)
+}
+
+/// Lower a block to an expression.
+fn lower_block_to_expr(ctx: &mut hir_lower_ctx::LoweringCtx, block: &ast::Block) -> hir_expr::Expr {
+    let block_hir = lower_block(ctx, block);
+    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    hir_expr::Expr::new(
+        hir_expr::ExprKind::Block(block_hir),
+        ty,
+        block.span,
+    )
+}
+
+/// Lower a statement.
+fn lower_stmt(ctx: &mut hir_lower_ctx::LoweringCtx, stmt: &ast::Statement) -> hir_expr::Stmt {
+    match stmt {
+        &ast::Statement::Let { ref pattern, ref ty, ref init_val, span } => {
+            let pattern_hir = lower_pattern(ctx, pattern);
+            let ty_hir = match ty {
+                &Some(ref t) => Some(hir_lower_type::lower_type(ctx, t)),
+                &None => Option::None,
+            };
+            let init_hir = match init_val {
+                &Some(ref e) => Some(lower_expr(ctx, e)),
+                &None => Option::None,
+            };
+            hir_expr::Stmt::Let {
+                pattern: pattern_hir,
+                ty: ty_hir,
+                init: init_hir,
+                span: span,
+            }
+        }
+        &ast::Statement::Expr { ref expr, has_semi } => {
+            let expr_hir = lower_expr(ctx, expr);
+            hir_expr::Stmt::Expr {
+                expr: expr_hir,
+                has_semi: has_semi,
+            }
+        }
+        &ast::Statement::Item(ref _decl) => {
+            // Local items need to be registered and lowered
+            // For now, return a placeholder
+            // TODO: Handle local items properly
+            let placeholder_def_id = ctx.alloc_def_id();
+            hir_expr::Stmt::Item(placeholder_def_id)
+        }
+    }
+}
+
+// ============================================================
+// Pattern Lowering
+// ============================================================
+
+/// Lower a pattern.
+pub fn lower_pattern(ctx: &mut hir_lower_ctx::LoweringCtx, pattern: &ast::Pattern) -> hir_expr::Pattern {
+    let span = pattern.span;
+    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+
+    let kind = match &pattern.kind {
+        &ast::PatternKind::Wildcard => {
+            hir_expr::PatternKind::Wildcard
+        }
+        &ast::PatternKind::Rest => {
+            hir_expr::PatternKind::Rest
+        }
+        &ast::PatternKind::Literal(ref lit) => {
+            let lit_hir = lower_pattern_literal(ctx, lit);
+            hir_expr::PatternKind::Literal(lit_hir)
+        }
+        &ast::PatternKind::Ident { by_ref, is_mut, ref name, ref subpattern } => {
+            // Allocate a local ID for this binding
+            let local_id = ctx.alloc_local_id();
+
+            let mode = if by_ref {
+                if is_mut {
+                    hir_expr::BindingMode::ByMutRef
+                } else {
+                    hir_expr::BindingMode::ByRef
+                }
+            } else {
+                hir_expr::BindingMode::ByValue
+            };
+
+            let subpat_hir = match subpattern {
+                &Some(ref sp) => Some(Box::new(lower_pattern(ctx, sp.as_ref()))),
+                &None => Option::None,
+            };
+
+            hir_expr::PatternKind::Binding {
+                local_id: local_id,
+                name: *name,
+                mode: mode,
+                subpattern: subpat_hir,
+            }
+        }
+        &ast::PatternKind::Ref { is_mut, ref inner } => {
+            let inner_hir = lower_pattern(ctx, inner.as_ref());
+            hir_expr::PatternKind::Ref {
+                mutable: is_mut,
+                inner: Box::new(inner_hir),
+            }
+        }
+        &ast::PatternKind::Struct { ref path, ref fields, has_rest } => {
+            lower_struct_pattern(ctx, path, fields, has_rest, span)
+        }
+        &ast::PatternKind::TupleStruct { ref path, ref fields, rest_pos: _ } => {
+            lower_tuple_struct_pattern(ctx, path, fields, span)
+        }
+        &ast::PatternKind::Tuple { ref fields, rest_pos: _ } => {
+            let mut fields_hir: Vec<hir_expr::Pattern> = Vec::new();
+            let mut i: usize = 0;
+            while i < fields.len() {
+                let f_hir = lower_pattern(ctx, &fields[i]);
+                fields_hir.push(f_hir);
+                i = i + 1;
+            }
+            hir_expr::PatternKind::Tuple(fields_hir)
+        }
+        &ast::PatternKind::Slice { ref elements, rest_pos: _ } => {
+            let mut elements_hir: Vec<hir_expr::Pattern> = Vec::new();
+            let mut i: usize = 0;
+            while i < elements.len() {
+                elements_hir.push(lower_pattern(ctx, &elements[i]));
+                i = i + 1;
+            }
+
+            // Simplified slice pattern - just convert all elements
+            hir_expr::PatternKind::Slice {
+                prefix: elements_hir,
+                rest: Option::None,
+                suffix: Vec::new(),
+            }
+        }
+        &ast::PatternKind::Or(ref patterns) => {
+            let mut pats_hir: Vec<hir_expr::Pattern> = Vec::new();
+            let mut i: usize = 0;
+            while i < patterns.len() {
+                let p_hir = lower_pattern(ctx, &patterns[i]);
+                pats_hir.push(p_hir);
+                i = i + 1;
+            }
+            hir_expr::PatternKind::Or(pats_hir)
+        }
+        &ast::PatternKind::Range { ref start, ref end_val, inclusive } => {
+            let start_hir = match start {
+                &Some(ref s) => Some(Box::new(lower_pattern(ctx, s.as_ref()))),
+                &None => Option::None,
+            };
+            let end_hir = match end_val {
+                &Some(ref e) => Some(Box::new(lower_pattern(ctx, e.as_ref()))),
+                &None => Option::None,
+            };
+            hir_expr::PatternKind::Range {
+                start: start_hir,
+                end_val: end_hir,
+                inclusive: inclusive,
+            }
+        }
+        &ast::PatternKind::Path(ref path) => {
+            lower_path_pattern(ctx, path, span)
+        }
+        &ast::PatternKind::Paren(ref inner) => {
+            // Parentheses are purely syntactic - recurse on inner pattern
+            return lower_pattern(ctx, inner.as_ref());
+        }
+    };
+
+    hir_expr::Pattern::new(kind, ty, span)
+}
+
+/// Lower a literal in a pattern context.
+fn lower_pattern_literal(ctx: &mut hir_lower_ctx::LoweringCtx, lit: &ast::Literal) -> hir_expr::Literal {
+    let kind = match &lit.kind {
+        &ast::LiteralKind::Int { val, ref suffix } => {
+            let prim_ty = match suffix {
+                &Some(ref s) => int_suffix_to_prim(s),
+                &None => Option::None,
+            };
+            hir_expr::LiteralKind::Int { val: val, ty: prim_ty }
+        }
+        &ast::LiteralKind::Float { bits, ref suffix } => {
+            let prim_ty = match suffix {
+                &Some(ref s) => float_suffix_to_prim(s),
+                &None => Option::None,
+            };
+            hir_expr::LiteralKind::Float { bits: bits, ty: prim_ty }
+        }
+        &ast::LiteralKind::Str(ref s) => {
+            let mut s_copy = String::new();
+            s_copy.push_str(s.as_str());
+            hir_expr::LiteralKind::Str(s_copy)
+        }
+        &ast::LiteralKind::ByteStr(ref bytes) => {
+            let mut bytes_copy: Vec<u8> = Vec::new();
+            let mut i: usize = 0;
+            while i < bytes.len() {
+                bytes_copy.push(bytes[i]);
+                i = i + 1;
+            }
+            hir_expr::LiteralKind::ByteStr(bytes_copy)
+        }
+        &ast::LiteralKind::Char(c) => {
+            hir_expr::LiteralKind::Char(c)
+        }
+        &ast::LiteralKind::Bool(b) => {
+            hir_expr::LiteralKind::Bool(b)
+        }
+    };
+
+    hir_expr::Literal::new(kind, lit.span)
+}
+
+/// Lower a struct pattern.
+fn lower_struct_pattern(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    path: &ast::TypePath,
+    fields: &Vec<ast::StructPatternField>,
+    has_rest: bool,
+    span: common::Span,
+) -> hir_expr::PatternKind {
+    // Resolve the path
+    let resolved = resolve_type_path_for_pattern(ctx, path, span);
+
+    // Lower field patterns
+    let mut fields_hir: Vec<hir_expr::FieldPattern> = Vec::new();
+    let mut i: usize = 0;
+    while i < fields.len() {
+        let f = &fields[i];
+        // Handle shorthand patterns (Foo { bar } binds to variable named bar)
+        let pat_hir = match &f.pattern {
+            &Some(ref p) => lower_pattern(ctx, p),
+            &None => {
+                // Shorthand: field name becomes binding name
+                let local_id = ctx.alloc_local_id();
+                let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+                hir_expr::Pattern::new(
+                    hir_expr::PatternKind::Binding {
+                        local_id: local_id,
+                        name: f.name,
+                        mode: hir_expr::BindingMode::ByValue,
+                        subpattern: Option::None,
+                    },
+                    ty,
+                    f.span,
+                )
+            }
+        };
+        let field_hir = hir_expr::FieldPattern::new(
+            f.name,
+            Option::None, // Field index resolved during type checking
+            pat_hir,
+            f.span,
+        );
+        fields_hir.push(field_hir);
+        i = i + 1;
+    }
+
+    hir_expr::PatternKind::Struct {
+        path: resolved,
+        fields: fields_hir,
+        has_rest: has_rest,
+    }
+}
+
+/// Lower a tuple struct pattern.
+fn lower_tuple_struct_pattern(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    path: &ast::TypePath,
+    fields: &Vec<ast::Pattern>,
+    span: common::Span,
+) -> hir_expr::PatternKind {
+    let resolved = resolve_type_path_for_pattern(ctx, path, span);
+
+    let mut fields_hir: Vec<hir_expr::Pattern> = Vec::new();
+    let mut i: usize = 0;
+    while i < fields.len() {
+        let f_hir = lower_pattern(ctx, &fields[i]);
+        fields_hir.push(f_hir);
+        i = i + 1;
+    }
+
+    hir_expr::PatternKind::TupleStruct {
+        path: resolved,
+        fields: fields_hir,
+    }
+}
+
+/// Lower a path pattern (unit variant or constant).
+fn lower_path_pattern(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath, span: common::Span) -> hir_expr::PatternKind {
+    let resolved = resolve_type_path_for_pattern(ctx, path, span);
+    hir_expr::PatternKind::Path(resolved)
+}
+
+/// Resolve a type path for use in a pattern.
+fn resolve_type_path_for_pattern(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath, span: common::Span) -> hir_def::ResolvedPath {
+    if path.segments.len() == 1 {
+        let seg = &path.segments[0];
+        let lookup = ctx.resolver.lookup(seg.name.symbol);
+        if lookup.is_some() {
+            let result = lookup.unwrap();
+            let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+            let type_args = match &seg.args {
+                &Some(ref args) => hir_lower_type::lower_type_args(ctx, args),
+                &None => Vec::new(),
+            };
+            let type_arg_count = type_args.len() as u32;
+            return hir_def::ResolvedPath::new(binding.def_id, type_arg_count, span);
+        }
+    }
+
+    // Multi-segment or unresolved
+    // TODO: Handle qualified paths
+    ctx.error(
+        hir::DiagnosticCode::E0102,
+        make_string("cannot resolve pattern path"),
+        span,
+    );
+
+    // Return error path
+    let error_def_id = hir_def::DefId::new(0);
+    hir_def::ResolvedPath::new(error_def_id, 0, span)
+}
+
+// ============================================================
+// Control Flow Lowering
+// ============================================================
+
+/// Lower an if expression.
+fn lower_if_expr(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    condition: &ast::Expr,
+    then_branch: &ast::Block,
+    else_branch: &Option<ast::ElseBranch>,
+    span: common::Span,
+) -> hir_expr::Expr {
+    let cond_hir = lower_expr(ctx, condition);
+    let then_hir = lower_block_to_expr(ctx, then_branch);
+
+    let else_hir = match else_branch {
+        &Some(ref eb) => {
+            match eb {
+                &ast::ElseBranch::Block(ref block) => {
+                    Some(Box::new(lower_block_to_expr(ctx, block)))
+                }
+                &ast::ElseBranch::If(ref if_expr) => {
+                    Some(Box::new(lower_expr(ctx, if_expr.as_ref())))
+                }
+            }
+        }
+        &None => Option::None,
+    };
+
+    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    hir_expr::Expr::new(
+        hir_expr::ExprKind::If {
+            condition: Box::new(cond_hir),
+            then_branch: Box::new(then_hir),
+            else_branch: else_hir,
+        },
+        ty,
+        span,
+    )
+}
+
+/// Lower an if-let expression (desugar to match).
+fn lower_if_let_expr(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    pattern: &ast::Pattern,
+    scrutinee: &ast::Expr,
+    then_branch: &ast::Block,
+    else_branch: &Option<ast::ElseBranch>,
+    span: common::Span,
+) -> hir_expr::Expr {
+    // Desugar if let to match:
+    // if let pat = expr { then } else { else }
+    // becomes:
+    // match expr { pat => then, _ => else }
+
+    let scrutinee_hir = lower_expr(ctx, scrutinee);
+    let pattern_hir = lower_pattern(ctx, pattern);
+    let then_hir = lower_block_to_expr(ctx, then_branch);
+
+    let then_arm = hir_expr::MatchArm::new(
+        pattern_hir,
+        Option::None,
+        then_hir,
+        then_branch.span,
+    );
+
+    let else_hir = match else_branch {
+        &Some(ref eb) => {
+            match eb {
+                &ast::ElseBranch::Block(ref block) => {
+                    lower_block_to_expr(ctx, block)
+                }
+                &ast::ElseBranch::If(ref if_expr) => {
+                    lower_expr(ctx, if_expr.as_ref())
+                }
+            }
+        }
+        &None => {
+            // No else branch, use unit
+            hir_expr::Expr::new(
+                hir_expr::ExprKind::Tuple(Vec::new()),
+                hir_ty::Type::unit(),
+                span,
+            )
+        }
+    };
+
+    let wildcard_ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    let wildcard_pat = hir_expr::Pattern::wildcard(wildcard_ty, span);
+    let else_arm = hir_expr::MatchArm::new(
+        wildcard_pat,
+        Option::None,
+        else_hir,
+        span,
+    );
+
+    let mut arms: Vec<hir_expr::MatchArm> = Vec::new();
+    arms.push(then_arm);
+    arms.push(else_arm);
+
+    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    hir_expr::Expr::new(
+        hir_expr::ExprKind::Match {
+            scrutinee: Box::new(scrutinee_hir),
+            arms: arms,
+        },
+        ty,
+        span,
+    )
+}
+
+/// Lower a match expression.
+fn lower_match_expr(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    scrutinee: &ast::Expr,
+    arms: &Vec<ast::MatchArm>,
+    span: common::Span,
+) -> hir_expr::Expr {
+    let scrutinee_hir = lower_expr(ctx, scrutinee);
+
+    let mut arms_hir: Vec<hir_expr::MatchArm> = Vec::new();
+    let mut i: usize = 0;
+    while i < arms.len() {
+        let arm = &arms[i];
+        let pattern_hir = lower_pattern(ctx, &arm.pattern);
+        let guard_hir = match &arm.guard {
+            &Some(ref g) => Some(lower_expr(ctx, g)),
+            &None => Option::None,
+        };
+        let body_hir = lower_expr(ctx, &arm.body);
+        let arm_hir = hir_expr::MatchArm::new(
+            pattern_hir,
+            guard_hir,
+            body_hir,
+            arm.span,
+        );
+        arms_hir.push(arm_hir);
+        i = i + 1;
+    }
+
+    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    hir_expr::Expr::new(
+        hir_expr::ExprKind::Match {
+            scrutinee: Box::new(scrutinee_hir),
+            arms: arms_hir,
+        },
+        ty,
+        span,
+    )
+}
+
+/// Lower a loop expression.
+fn lower_loop_expr(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    label: &Option<common::SpannedSymbol>,
+    body: &ast::Block,
+    span: common::Span,
+) -> hir_expr::Expr {
+    let label_sym = match label {
+        &Some(ref l) => Some(l.symbol),
+        &None => Option::None,
+    };
+    let body_hir = lower_block_to_expr(ctx, body);
+    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    hir_expr::Expr::new(
+        hir_expr::ExprKind::Loop {
+            label: label_sym,
+            body: Box::new(body_hir),
+        },
+        ty,
+        span,
+    )
+}
+
+/// Lower a while expression (desugar to loop + if).
+fn lower_while_expr(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    label: &Option<common::SpannedSymbol>,
+    condition: &ast::Expr,
+    body: &ast::Block,
+    span: common::Span,
+) -> hir_expr::Expr {
+    // Desugar: while cond { body }
+    // to: loop { if cond { body } else { break } }
+
+    let label_sym = match label {
+        &Some(ref l) => Some(l.symbol),
+        &None => Option::None,
+    };
+
+    let cond_hir = lower_expr(ctx, condition);
+    let body_hir = lower_block_to_expr(ctx, body);
+
+    let break_expr = hir_expr::Expr::new(
+        hir_expr::ExprKind::Break {
+            label: label_sym,
+            val: Option::None,
+        },
+        hir_ty::Type::never(),
+        span,
+    );
+
+    let if_expr = hir_expr::Expr::new(
+        hir_expr::ExprKind::If {
+            condition: Box::new(cond_hir),
+            then_branch: Box::new(body_hir),
+            else_branch: Some(Box::new(break_expr)),
+        },
+        hir_ty::Type::unit(),
+        span,
+    );
+
+    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    hir_expr::Expr::new(
+        hir_expr::ExprKind::Loop {
+            label: label_sym,
+            body: Box::new(if_expr),
+        },
+        ty,
+        span,
+    )
+}
+
+/// Lower a while-let expression (desugar to loop + match).
+fn lower_while_let_expr(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    label: &Option<common::SpannedSymbol>,
+    pattern: &ast::Pattern,
+    scrutinee: &ast::Expr,
+    body: &ast::Block,
+    span: common::Span,
+) -> hir_expr::Expr {
+    // Desugar: while let pat = expr { body }
+    // to: loop { match expr { pat => body, _ => break } }
+
+    let label_sym = match label {
+        &Some(ref l) => Some(l.symbol),
+        &None => Option::None,
+    };
+
+    let scrutinee_hir = lower_expr(ctx, scrutinee);
+    let pattern_hir = lower_pattern(ctx, pattern);
+    let body_hir = lower_block_to_expr(ctx, body);
+
+    let match_arm = hir_expr::MatchArm::new(
+        pattern_hir,
+        Option::None,
+        body_hir,
+        body.span,
+    );
+
+    let break_expr = hir_expr::Expr::new(
+        hir_expr::ExprKind::Break {
+            label: label_sym,
+            val: Option::None,
+        },
+        hir_ty::Type::never(),
+        span,
+    );
+
+    let wildcard_ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    let wildcard_pat = hir_expr::Pattern::wildcard(wildcard_ty, span);
+    let break_arm = hir_expr::MatchArm::new(
+        wildcard_pat,
+        Option::None,
+        break_expr,
+        span,
+    );
+
+    let mut arms: Vec<hir_expr::MatchArm> = Vec::new();
+    arms.push(match_arm);
+    arms.push(break_arm);
+
+    let match_expr = hir_expr::Expr::new(
+        hir_expr::ExprKind::Match {
+            scrutinee: Box::new(scrutinee_hir),
+            arms: arms,
+        },
+        hir_ty::Type::unit(),
+        span,
+    );
+
+    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    hir_expr::Expr::new(
+        hir_expr::ExprKind::Loop {
+            label: label_sym,
+            body: Box::new(match_expr),
+        },
+        ty,
+        span,
+    )
+}
+
+/// Lower a for expression (desugar to loop + match over iterator).
+fn lower_for_expr(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    label: &Option<common::SpannedSymbol>,
+    pattern: &ast::Pattern,
+    iter: &ast::Expr,
+    body: &ast::Block,
+    span: common::Span,
+) -> hir_expr::Expr {
+    // For now, emit a placeholder error since for loop desugaring
+    // requires IntoIterator trait resolution
+    ctx.error(
+        hir::DiagnosticCode::E0104,
+        make_string("for loops not yet supported (requires iterator traits)"),
+        span,
+    );
+
+    // Return the body as a fallback
+    lower_block_to_expr(ctx, body)
+}
+
+// ============================================================
+// Closure Lowering
+// ============================================================
+
+/// Lower a closure expression.
+fn lower_closure_expr(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    params: &Vec<ast::ClosureParam>,
+    return_type: &Option<ast::Type>,
+    body: &ast::Expr,
+    span: common::Span,
+) -> hir_expr::Expr {
+    // Allocate a BodyId for the closure
+    let body_id = ctx.alloc_body_id();
+
+    // Lower parameters
+    let mut params_hir: Vec<hir_expr::ClosureParam> = Vec::new();
+    let mut i: usize = 0;
+    while i < params.len() {
+        let p = &params[i];
+        let pattern_hir = lower_pattern(ctx, &p.pattern);
+        let ty_hir = match &p.ty {
+            &Some(ref t) => hir_lower_type::lower_type(ctx, t),
+            &None => hir_ty::Type::infer(ctx.alloc_ty_var()),
+        };
+        let param_hir = hir_expr::ClosureParam::new(pattern_hir, ty_hir);
+        params_hir.push(param_hir);
+        i = i + 1;
+    }
+
+    // Lower return type
+    let ret_ty = match return_type {
+        &Some(ref t) => hir_lower_type::lower_type(ctx, t),
+        &None => hir_ty::Type::infer(ctx.alloc_ty_var()),
+    };
+
+    // Lower body
+    let body_hir = lower_expr(ctx, body);
+
+    // Captures will be determined during type checking
+    let captures: Vec<hir_expr::Capture> = Vec::new();
+
+    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    hir_expr::Expr::new(
+        hir_expr::ExprKind::Closure {
+            captures: captures,
+            params: params_hir,
+            return_ty: ret_ty,
+            body: Box::new(body_hir),
+            body_id: body_id,
+        },
+        ty,
+        span,
+    )
+}
+
+// ============================================================
+// Effect Lowering
+// ============================================================
+
+/// Lower a perform expression.
+fn lower_perform_expr(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    effect_path: &Option<ast::TypePath>,
+    operation: &common::SpannedSymbol,
+    args: &Vec<ast::Expr>,
+    span: common::Span,
+) -> hir_expr::Expr {
+    // Resolve the effect
+    let effect_def_id = match effect_path {
+        &Some(ref path) => {
+            if path.segments.len() >= 1 {
+                let seg = &path.segments[0];
+                let lookup = ctx.resolver.lookup(seg.name.symbol);
+                if lookup.is_some() {
+                    let result = lookup.unwrap();
+                    let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+                    binding.def_id
+                } else {
+                    ctx.error(
+                        hir::DiagnosticCode::E0102,
+                        make_string("unknown effect"),
+                        path.span,
+                    );
+                    hir_def::DefId::new(0)
+                }
+            } else {
+                ctx.error(
+                    hir::DiagnosticCode::E0102,
+                    make_string("invalid effect path"),
+                    span,
+                );
+                hir_def::DefId::new(0)
+            }
+        }
+        &None => {
+            ctx.error(
+                hir::DiagnosticCode::E0104,
+                make_string("effect must be specified"),
+                span,
+            );
+            hir_def::DefId::new(0)
+        }
+    };
+
+    // Lower arguments
+    let mut args_hir: Vec<hir_expr::Expr> = Vec::new();
+    let mut i: usize = 0;
+    while i < args.len() {
+        let arg_hir = lower_expr(ctx, &args[i]);
+        args_hir.push(arg_hir);
+        i = i + 1;
+    }
+
+    // Operation DefId will be resolved during type checking
+    let op_def_id = hir_def::DefId::new(0);
+
+    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    hir_expr::Expr::new(
+        hir_expr::ExprKind::Perform {
+            effect_def: effect_def_id,
+            op_def: op_def_id,
+            args: args_hir,
+        },
+        ty,
+        span,
+    )
+}
+
+// ============================================================
+// Macro Call Lowering
+// ============================================================
+
+/// Lower a macro call expression.
+fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, kind: &ast::MacroCallKind, span: common::Span) -> hir_expr::Expr {
+    match kind {
+        &ast::MacroCallKind::Format { ref format_str, ref args } => {
+            // Format strings need special handling
+            // For now, just lower the args
+            let mut args_hir: Vec<hir_expr::Expr> = Vec::new();
+            let mut i: usize = 0;
+            while i < args.len() {
+                let arg_hir = lower_expr(ctx, &args[i]);
+                args_hir.push(arg_hir);
+                i = i + 1;
+            }
+
+            // Return a placeholder string expression
+            let mut str_copy = String::new();
+            str_copy.push_str(format_str.value.as_str());
+            let lit = hir_expr::Literal::new(
+                hir_expr::LiteralKind::Str(str_copy),
+                format_str.span,
+            );
+            hir_expr::Expr::new(
+                hir_expr::ExprKind::Literal(lit),
+                hir_ty::Type::new(hir_ty::TypeKind::Ref { inner: Box::new(hir_ty::Type::str_ty()), mutable: false }),
+                span,
+            )
+        }
+        &ast::MacroCallKind::VecMacro(ref vec_args) => {
+            match vec_args {
+                &ast::VecMacroArgs::List(ref elems) => {
+                    lower_array_expr(ctx, &ast::ArrayExpr::List(copy_expr_vec(elems)), span)
+                }
+                &ast::VecMacroArgs::Repeat { ref val, count: _ } => {
+                    // vec![val; count] - need const evaluation for count
+                    let val_hir = lower_expr(ctx, val.as_ref());
+                    let arr = hir_expr::ArrayExpr::Repeat {
+                        val: Box::new(val_hir),
+                        count: 0,
+                    };
+                    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+                    hir_expr::Expr::new(
+                        hir_expr::ExprKind::Array(arr),
+                        ty,
+                        span,
+                    )
+                }
+            }
+        }
+        &ast::MacroCallKind::Assert { ref condition, message: _ } => {
+            // Desugar assert! to if !cond { panic!(...) }
+            let cond_hir = lower_expr(ctx, condition.as_ref());
+            // For now, just return the condition (proper panic handling later)
+            cond_hir
+        }
+        &ast::MacroCallKind::Dbg(ref expr) => {
+            // dbg! just evaluates and returns the expression
+            lower_expr(ctx, expr.as_ref())
+        }
+        &ast::MacroCallKind::Matches { ref expr, ref pattern } => {
+            // matches!(expr, pattern) desugars to match expr { pattern => true, _ => false }
+            let expr_hir = lower_expr(ctx, expr.as_ref());
+            let pattern_hir = lower_pattern(ctx, pattern.as_ref());
+
+            let true_lit = hir_expr::Literal::new(
+                hir_expr::LiteralKind::Bool(true),
+                span,
+            );
+            let true_expr = hir_expr::Expr::new(
+                hir_expr::ExprKind::Literal(true_lit),
+                hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Bool)),
+                span,
+            );
+
+            let false_lit = hir_expr::Literal::new(
+                hir_expr::LiteralKind::Bool(false),
+                span,
+            );
+            let false_expr = hir_expr::Expr::new(
+                hir_expr::ExprKind::Literal(false_lit),
+                hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Bool)),
+                span,
+            );
+
+            let match_arm = hir_expr::MatchArm::new(
+                pattern_hir,
+                Option::None,
+                true_expr,
+                span,
+            );
+
+            let wildcard_ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+            let wildcard_pat = hir_expr::Pattern::wildcard(wildcard_ty, span);
+            let else_arm = hir_expr::MatchArm::new(
+                wildcard_pat,
+                Option::None,
+                false_expr,
+                span,
+            );
+
+            let mut arms: Vec<hir_expr::MatchArm> = Vec::new();
+            arms.push(match_arm);
+            arms.push(else_arm);
+
+            hir_expr::Expr::new(
+                hir_expr::ExprKind::Match {
+                    scrutinee: Box::new(expr_hir),
+                    arms: arms,
+                },
+                hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Bool)),
+                span,
+            )
+        }
+        &ast::MacroCallKind::Custom { delim: _, content: _ } => {
+            ctx.error(
+                hir::DiagnosticCode::E0104,
+                make_string("custom macros not yet supported"),
+                span,
+            );
+            hir_expr::Expr::error(span)
+        }
+    }
+}
+
+/// Copy a vector of expressions (shallow copy references).
+fn copy_expr_vec(exprs: &Vec<ast::Expr>) -> Vec<ast::Expr> {
+    // This is a workaround since Blood doesn't have clone
+    // We can't actually copy AST nodes, so we'd need to re-parse
+    // For now, return empty and handle specially
+    Vec::new()
+}
+
+// ============================================================
+// Body Lowering
+// ============================================================
+
+/// Lower a function body.
+pub fn lower_fn_body(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    body_id: hir_def::BodyId,
+    params: &Vec<hir_item::FnParam>,
+    body_expr: &Option<ast::Expr>,
+    body_block: &Option<ast::Block>,
+) -> hir_expr::Body {
+    // Create locals for parameters
+    let mut locals: Vec<hir_expr::Local> = Vec::new();
+    let mut i: usize = 0;
+    while i < params.len() {
+        let p = &params[i];
+        let local_id = hir_def::LocalId::new(i as u32);
+        let local = hir_expr::Local::new(
+            local_id,
+            p.name,
+            copy_type(&p.ty),
+            p.mutable,
+            p.span,
+        );
+        locals.push(local);
+        i = i + 1;
+    }
+
+    let param_count = params.len() as u32;
+
+    // Lower the body expression
+    let expr = match body_expr {
+        &Some(ref e) => lower_expr(ctx, e),
+        &None => {
+            match body_block {
+                &Some(ref block) => lower_block_to_expr(ctx, block),
+                &None => {
+                    // No body - create unit expression
+                    hir_expr::Expr::new(
+                        hir_expr::ExprKind::Tuple(Vec::new()),
+                        hir_ty::Type::unit(),
+                        common::Span::dummy(),
+                    )
+                }
+            }
+        }
+    };
+
+    hir_expr::Body::new(body_id, locals, param_count, expr)
+}
+
+/// Copy a type (shallow).
+fn copy_type(ty: &hir_ty::Type) -> hir_ty::Type {
+    // Since we can't deep copy, return an inferred type as placeholder
+    hir_ty::Type { kind: hir_ty::TypeKind::Error }
+}

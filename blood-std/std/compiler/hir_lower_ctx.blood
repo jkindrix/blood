@@ -1,0 +1,200 @@
+// Blood Self-Hosted Compiler - HIR Lowering Context
+//
+// This module defines the core types for AST-to-HIR lowering:
+// - LoweringCtx: The main context holding state during lowering
+// - LowerResult: The result of lowering (success or failure)
+// - ItemEntry, BodyEntry: Storage entries for items and bodies
+//
+// Other hir_lower_* modules import this for access to LoweringCtx.
+
+mod common;
+mod hir_def;
+mod hir_ty;
+mod hir_item;
+mod hir_expr;
+mod hir;
+mod resolve;
+
+// ============================================================
+// Helper Functions
+// ============================================================
+
+/// Create a String from a string literal.
+/// Blood-rust requires this helper since string literals are &str.
+pub fn make_string(s: &str) -> String {
+    let mut result = String::new();
+    result.push_str(s);
+    result
+}
+
+// ============================================================
+// Lowering Result
+// ============================================================
+
+/// Result of lowering an AST to HIR.
+pub struct LowerResult {
+    /// The lowered HIR crate, if successful.
+    pub crate_data: Option<hir::Crate>,
+    /// Any diagnostics (errors, warnings) from lowering.
+    pub diagnostics: Vec<hir::Diagnostic>,
+}
+
+impl LowerResult {
+    /// Creates a successful result.
+    pub fn success(crate_data: hir::Crate) -> LowerResult {
+        LowerResult {
+            crate_data: Some(crate_data),
+            diagnostics: Vec::new(),
+        }
+    }
+
+    /// Creates a failure result with diagnostics.
+    pub fn failure(diagnostics: Vec<hir::Diagnostic>) -> LowerResult {
+        LowerResult {
+            crate_data: Option::None,
+            diagnostics: diagnostics,
+        }
+    }
+
+    /// Returns true if lowering was successful.
+    pub fn is_ok(self: &Self) -> bool {
+        self.crate_data.is_some()
+    }
+}
+
+// ============================================================
+// Lowering Context
+// ============================================================
+
+/// Context for lowering AST to HIR.
+///
+/// Maintains the resolver for name resolution and collects
+/// lowered items and bodies.
+pub struct LoweringCtx {
+    /// The name resolver.
+    pub resolver: resolve::Resolver,
+    /// Counter for allocating DefIds.
+    pub next_def_id: u32,
+    /// Counter for allocating BodyIds.
+    pub next_body_id: u32,
+    /// Counter for allocating LocalIds.
+    pub next_local_id: u32,
+    /// Counter for allocating type variables.
+    pub next_ty_var: u32,
+    /// Collected diagnostics.
+    pub diagnostics: Vec<hir::Diagnostic>,
+    /// Items by DefId index.
+    pub items: Vec<ItemEntry>,
+    /// Bodies by BodyId index.
+    pub bodies: Vec<BodyEntry>,
+    /// The entry point DefId (main function), if found.
+    pub entry_point: Option<hir_def::DefId>,
+}
+
+/// Entry storing a DefId and its corresponding Item.
+pub struct ItemEntry {
+    pub def_id: hir_def::DefId,
+    pub item: hir_item::Item,
+}
+
+impl ItemEntry {
+    pub fn new(def_id: hir_def::DefId, item: hir_item::Item) -> ItemEntry {
+        ItemEntry { def_id, item }
+    }
+}
+
+/// Entry storing a BodyId and its corresponding Body.
+pub struct BodyEntry {
+    pub body_id: hir_def::BodyId,
+    pub body: hir_expr::Body,
+}
+
+impl BodyEntry {
+    pub fn new(body_id: hir_def::BodyId, body: hir_expr::Body) -> BodyEntry {
+        BodyEntry { body_id, body }
+    }
+}
+
+impl LoweringCtx {
+    /// Creates a new lowering context.
+    pub fn new() -> LoweringCtx {
+        LoweringCtx {
+            resolver: resolve::Resolver::new(),
+            next_def_id: 0,
+            next_body_id: 0,
+            next_local_id: 0,
+            next_ty_var: 0,
+            diagnostics: Vec::new(),
+            items: Vec::new(),
+            bodies: Vec::new(),
+            entry_point: Option::None,
+        }
+    }
+
+    /// Allocates a fresh DefId.
+    pub fn alloc_def_id(self: &mut Self) -> hir_def::DefId {
+        let id = hir_def::DefId::new(self.next_def_id);
+        self.next_def_id = self.next_def_id + 1;
+        id
+    }
+
+    /// Allocates a fresh BodyId.
+    pub fn alloc_body_id(self: &mut Self) -> hir_def::BodyId {
+        let id = hir_def::BodyId::new(self.next_body_id);
+        self.next_body_id = self.next_body_id + 1;
+        id
+    }
+
+    /// Allocates a fresh LocalId.
+    pub fn alloc_local_id(self: &mut Self) -> hir_def::LocalId {
+        let id = hir_def::LocalId::new(self.next_local_id);
+        self.next_local_id = self.next_local_id + 1;
+        id
+    }
+
+    /// Allocates a fresh TyVarId.
+    pub fn alloc_ty_var(self: &mut Self) -> hir_def::TyVarId {
+        let id = hir_def::TyVarId::new(self.next_ty_var);
+        self.next_ty_var = self.next_ty_var + 1;
+        id
+    }
+
+    /// Reports an error diagnostic.
+    pub fn error(self: &mut Self, code: hir::DiagnosticCode, message: String, span: common::Span) {
+        let diag = hir::Diagnostic::error(code, message, span);
+        self.diagnostics.push(diag);
+    }
+
+    /// Reports a warning diagnostic.
+    pub fn warning(self: &mut Self, code: hir::DiagnosticCode, message: String, span: common::Span) {
+        let diag = hir::Diagnostic::warning(code, message, span);
+        self.diagnostics.push(diag);
+    }
+
+    /// Returns true if there are any error diagnostics.
+    pub fn has_errors(self: &Self) -> bool {
+        let mut i: usize = 0;
+        while i < self.diagnostics.len() {
+            match self.diagnostics[i].level {
+                hir::DiagnosticLevel::Error => { return true; }
+                hir::DiagnosticLevel::Warning => {}
+                hir::DiagnosticLevel::Note => {}
+                hir::DiagnosticLevel::Help => {}
+            }
+            i = i + 1;
+        }
+        false
+    }
+
+    /// Adds an item to the lowered items.
+    pub fn add_item(self: &mut Self, def_id: hir_def::DefId, item: hir_item::Item) {
+        let entry = ItemEntry::new(def_id, item);
+        self.items.push(entry);
+    }
+
+    /// Adds a body to the lowered bodies.
+    pub fn add_body(self: &mut Self, body_id: hir_def::BodyId, body: hir_expr::Body) {
+        let entry = BodyEntry::new(body_id, body);
+        self.bodies.push(entry);
+    }
+}

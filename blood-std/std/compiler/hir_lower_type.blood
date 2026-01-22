@@ -1,0 +1,379 @@
+// Blood Self-Hosted Compiler - HIR Type Lowering
+//
+// This module handles lowering AST types to HIR types:
+// - Type lowering (all AST type kinds)
+// - Type path resolution
+// - Generic parameter lowering
+// - Effect row lowering
+//
+// Functions in this module take &mut LoweringCtx from hir_lower_ctx.
+
+mod common;
+mod ast;
+mod hir_def;
+mod hir_ty;
+mod hir;
+mod hir_lower_ctx;
+
+// ============================================================
+// Type Lowering
+// ============================================================
+
+/// Lower an AST type to an HIR type.
+pub fn lower_type(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> hir_ty::Type {
+    match &ty.kind {
+        &ast::TypeKind::Path(ref path) => {
+            lower_type_path(ctx, path)
+        }
+        &ast::TypeKind::Reference { lifetime: _, is_mut, ref inner } => {
+            let inner_ty = lower_type(ctx, inner.as_ref());
+            hir_ty::Type::new(hir_ty::TypeKind::Ref {
+                inner: Box::new(inner_ty),
+                mutable: is_mut,
+            })
+        }
+        &ast::TypeKind::Pointer { is_mut, ref inner } => {
+            let inner_ty = lower_type(ctx, inner.as_ref());
+            hir_ty::Type::new(hir_ty::TypeKind::Ptr {
+                inner: Box::new(inner_ty),
+                mutable: is_mut,
+            })
+        }
+        &ast::TypeKind::Array { ref element, size: _ } => {
+            // TODO: Evaluate const size expression
+            let elem_ty = lower_type(ctx, element.as_ref());
+            hir_ty::Type::new(hir_ty::TypeKind::Array {
+                element: Box::new(elem_ty),
+                size: 0, // Placeholder until const evaluation
+            })
+        }
+        &ast::TypeKind::Slice { ref element } => {
+            let elem_ty = lower_type(ctx, element.as_ref());
+            hir_ty::Type::new(hir_ty::TypeKind::Slice {
+                element: Box::new(elem_ty),
+            })
+        }
+        &ast::TypeKind::Tuple(ref types) => {
+            let mut lowered: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < types.len() {
+                let t = lower_type(ctx, &types[i]);
+                lowered.push(t);
+                i = i + 1;
+            }
+            hir_ty::Type::new(hir_ty::TypeKind::Tuple(lowered))
+        }
+        &ast::TypeKind::Function { ref params, ref return_type, ref effects } => {
+            let mut param_tys: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < params.len() {
+                let t = lower_type(ctx, &params[i]);
+                param_tys.push(t);
+                i = i + 1;
+            }
+            let ret_ty = lower_type(ctx, return_type.as_ref());
+            let effect_row = match effects {
+                &Some(ref eff) => lower_effect_row(ctx, eff),
+                &None => hir_ty::EffectRow::empty(),
+            };
+            hir_ty::Type::new(hir_ty::TypeKind::Fn {
+                params: param_tys,
+                ret: Box::new(ret_ty),
+                effects: effect_row,
+            })
+        }
+        &ast::TypeKind::Record { ref fields, rest: _ } => {
+            let mut hir_fields: Vec<hir_ty::RecordField> = Vec::new();
+            let mut i: usize = 0;
+            while i < fields.len() {
+                let f = &fields[i];
+                let field_ty = lower_type(ctx, &f.ty);
+                let hir_field = hir_ty::RecordField::new(f.name.symbol, field_ty);
+                hir_fields.push(hir_field);
+                i = i + 1;
+            }
+            hir_ty::Type::new(hir_ty::TypeKind::Record {
+                fields: hir_fields,
+                row_var: Option::None, // TODO: Handle row polymorphism
+            })
+        }
+        &ast::TypeKind::Ownership { qualifier: _, ref inner } => {
+            // For now, just lower the inner type
+            // TODO: Track ownership qualifiers
+            lower_type(ctx, inner.as_ref())
+        }
+        &ast::TypeKind::Forall { params: _, ref body } => {
+            // For now, just lower the body type
+            // TODO: Handle forall types properly
+            lower_type(ctx, body.as_ref())
+        }
+        &ast::TypeKind::Never => {
+            hir_ty::Type::never()
+        }
+        &ast::TypeKind::Infer => {
+            let var_id = ctx.alloc_ty_var();
+            hir_ty::Type::infer(var_id)
+        }
+        &ast::TypeKind::Paren(ref inner) => {
+            lower_type(ctx, inner.as_ref())
+        }
+    }
+}
+
+/// Lower a type path to an HIR type.
+fn lower_type_path(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath) -> hir_ty::Type {
+    // Handle built-in primitive types
+    if path.segments.len() == 1 {
+        let seg = &path.segments[0];
+        if seg.args.is_none() {
+            let prim = try_primitive_type(seg.name.symbol);
+            if prim.is_some() {
+                return prim.unwrap();
+            }
+        }
+    }
+
+    // Look up the type in the resolver
+    if path.segments.len() == 1 {
+        let seg = &path.segments[0];
+        let lookup = ctx.resolver.lookup(seg.name.symbol);
+        if lookup.is_some() {
+            let result = lookup.unwrap();
+            let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+            let def_id = binding.def_id;
+
+            // Lower type arguments if present
+            let type_args = match &seg.args {
+                &Some(ref args) => lower_type_args(ctx, args),
+                &None => Vec::new(),
+            };
+
+            return hir_ty::Type::new(hir_ty::TypeKind::Adt {
+                def_id: def_id,
+                args: type_args,
+            });
+        } else {
+            ctx.error(
+                hir::DiagnosticCode::E0102,
+                hir_lower_ctx::make_string("unknown type"),
+                seg.name.span,
+            );
+            return hir_ty::Type::error();
+        }
+    }
+
+    // Multi-segment paths (e.g., module::Type)
+    // TODO: Handle module paths properly
+    ctx.error(
+        hir::DiagnosticCode::E0102,
+        hir_lower_ctx::make_string("qualified type paths not yet supported"),
+        path.span,
+    );
+    hir_ty::Type::error()
+}
+
+/// Try to convert a symbol to a primitive type.
+fn try_primitive_type(sym: common::Symbol) -> Option<hir_ty::Type> {
+    // TODO: Implement symbol comparison once we have string interning
+    // For now, return None and rely on type lookup
+    Option::None
+}
+
+/// Lower type arguments.
+pub fn lower_type_args(ctx: &mut hir_lower_ctx::LoweringCtx, args: &ast::TypeArgs) -> Vec<hir_ty::Type> {
+    let mut result: Vec<hir_ty::Type> = Vec::new();
+    let mut i: usize = 0;
+    while i < args.args.len() {
+        match &args.args[i] {
+            &ast::TypeArg::Type(ref ty) => {
+                let t = lower_type(ctx, ty);
+                result.push(t);
+            }
+            &ast::TypeArg::Lifetime(_) => {
+                // Lifetimes don't produce types in our representation
+            }
+            &ast::TypeArg::Const(_) => {
+                // TODO: Handle const generics
+            }
+        }
+        i = i + 1;
+    }
+    result
+}
+
+// ============================================================
+// Effect Row Lowering
+// ============================================================
+
+/// Lower an effect row.
+pub fn lower_effect_row(ctx: &mut hir_lower_ctx::LoweringCtx, row: &ast::EffectRow) -> hir_ty::EffectRow {
+    match &row.kind {
+        &ast::EffectRowKind::Pure => {
+            hir_ty::EffectRow::empty()
+        }
+        &ast::EffectRowKind::Effects { ref effects, rest: _ } => {
+            let mut hir_effects: Vec<hir_ty::EffectRef> = Vec::new();
+            let mut i: usize = 0;
+            while i < effects.len() {
+                let eff = lower_effect_ref(ctx, &effects[i]);
+                if eff.is_some() {
+                    hir_effects.push(eff.unwrap());
+                }
+                i = i + 1;
+            }
+            hir_ty::EffectRow::with_effects(hir_effects)
+        }
+        &ast::EffectRowKind::Var(_) => {
+            // TODO: Handle effect row variables
+            hir_ty::EffectRow::empty()
+        }
+    }
+}
+
+/// Lower an effect reference from a type.
+fn lower_effect_ref(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> Option<hir_ty::EffectRef> {
+    match &ty.kind {
+        &ast::TypeKind::Path(ref path) => {
+            if path.segments.len() == 1 {
+                let seg = &path.segments[0];
+                let lookup = ctx.resolver.lookup(seg.name.symbol);
+                if lookup.is_some() {
+                    let result = lookup.unwrap();
+                    let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+                    let def_id = binding.def_id;
+
+                    let type_args = match &seg.args {
+                        &Some(ref args) => lower_type_args(ctx, args),
+                        &None => Vec::new(),
+                    };
+
+                    return Some(hir_ty::EffectRef::new(def_id, type_args));
+                }
+            }
+            ctx.error(
+                hir::DiagnosticCode::E0102,
+                hir_lower_ctx::make_string("unknown effect"),
+                ty.span,
+            );
+            Option::None
+        }
+        _ => {
+            ctx.error(
+                hir::DiagnosticCode::E0102,
+                hir_lower_ctx::make_string("invalid effect type"),
+                ty.span,
+            );
+            Option::None
+        }
+    }
+}
+
+// ============================================================
+// Generics Lowering
+// ============================================================
+
+/// Lower AST type parameters to HIR generics.
+pub fn lower_generics(ctx: &mut hir_lower_ctx::LoweringCtx, type_params: &Option<ast::TypeParams>, where_clause: &Option<ast::WhereClause>) -> hir_ty::Generics {
+    let mut params: Vec<hir_ty::GenericParam> = Vec::new();
+    let mut where_predicates: Vec<hir_ty::WherePredicate> = Vec::new();
+
+    match type_params {
+        &Some(ref tp) => {
+            let mut i: usize = 0;
+            while i < tp.params.len() {
+                match &tp.params[i] {
+                    &ast::GenericParam::Type(ref type_param) => {
+                        let var_id = ctx.alloc_ty_var();
+                        let type_param_def = hir_ty::TypeParamDef::new(
+                            type_param.name.symbol,
+                            var_id,
+                            type_param.span,
+                        );
+                        let param = hir_ty::GenericParam::TypeParam(type_param_def);
+                        params.push(param);
+
+                        // If there are bounds, add them as where predicates
+                        if type_param.bounds.len() > 0 {
+                            let param_ty = hir_ty::Type::new(hir_ty::TypeKind::Param(var_id));
+                            let mut trait_refs: Vec<hir_ty::TraitRef> = Vec::new();
+                            let mut j: usize = 0;
+                            while j < type_param.bounds.len() {
+                                let bound_ty = lower_type(ctx, &type_param.bounds[j]);
+                                // Convert the bound type to a TraitRef
+                                let trait_ref = type_to_trait_ref(&bound_ty, type_param.bounds[j].span);
+                                if trait_ref.is_some() {
+                                    trait_refs.push(trait_ref.unwrap());
+                                }
+                                j = j + 1;
+                            }
+                            if trait_refs.len() > 0 {
+                                let pred = hir_ty::WherePredicate::TypeBound {
+                                    ty: param_ty,
+                                    bounds: trait_refs,
+                                    span: type_param.span,
+                                };
+                                where_predicates.push(pred);
+                            }
+                        }
+                    }
+                    &ast::GenericParam::Lifetime(ref lifetime_param) => {
+                        let lifetime_def = hir_ty::LifetimeParamDef::new(
+                            lifetime_param.name.symbol,
+                            lifetime_param.span,
+                        );
+                        let param = hir_ty::GenericParam::LifetimeParam(lifetime_def);
+                        params.push(param);
+                    }
+                    &ast::GenericParam::Const(ref const_param) => {
+                        let ty = lower_type(ctx, &const_param.ty);
+                        let const_def = hir_ty::ConstParamDef::new(
+                            const_param.name.symbol,
+                            ty,
+                            const_param.span,
+                        );
+                        let param = hir_ty::GenericParam::ConstParam(const_def);
+                        params.push(param);
+                    }
+                }
+                i = i + 1;
+            }
+        }
+        &None => {}
+    }
+
+    // TODO: Also lower explicit where clause predicates
+
+    hir_ty::Generics { params, where_predicates }
+}
+
+/// Convert a type to a TraitRef if it's a path type referring to a trait.
+fn type_to_trait_ref(ty: &hir_ty::Type, span: common::Span) -> Option<hir_ty::TraitRef> {
+    match &ty.kind {
+        &hir_ty::TypeKind::Adt { def_id, ref args } => {
+            // Manually copy the args vector since Blood doesn't have clone
+            let mut args_copy: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < args.len() {
+                args_copy.push(copy_type(&args[i]));
+                i = i + 1;
+            }
+            Some(hir_ty::TraitRef::new(def_id, args_copy, span))
+        }
+        _ => {
+            // Other types can't be used as trait bounds directly
+            Option::None
+        }
+    }
+}
+
+/// Copy a type (shallow copy since Type is small).
+fn copy_type(ty: &hir_ty::Type) -> hir_ty::Type {
+    hir_ty::Type { kind: copy_type_kind(&ty.kind) }
+}
+
+/// Copy a TypeKind (shallow for simple kinds).
+fn copy_type_kind(kind: &hir_ty::TypeKind) -> hir_ty::TypeKind {
+    // For now, return error type for complex kinds
+    // TODO: Implement proper deep copy when needed
+    hir_ty::TypeKind::Error
+}

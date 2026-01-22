@@ -1,0 +1,336 @@
+// Blood Self-Hosted Compiler - HIR Item Lowering
+//
+// This module handles lowering AST declarations to HIR items:
+// - Function parameter lowering
+// - Struct body and field lowering
+// - Enum variant lowering
+// - Declaration lowering (function, struct, enum, etc.)
+//
+// Functions in this module take &mut LoweringCtx from hir_lower_ctx.
+
+mod common;
+mod ast;
+mod hir_def;
+mod hir_ty;
+mod hir_item;
+mod hir;
+mod hir_lower_ctx;
+mod hir_lower_type;
+
+// ============================================================
+// Function Parameter Lowering
+// ============================================================
+
+/// Lower function parameters.
+pub fn lower_fn_params(ctx: &mut hir_lower_ctx::LoweringCtx, params: &Vec<ast::Param>) -> Vec<hir_item::FnParam> {
+    let mut result: Vec<hir_item::FnParam> = Vec::new();
+    let mut i: usize = 0;
+    while i < params.len() {
+        let param = lower_fn_param(ctx, &params[i]);
+        if param.is_some() {
+            result.push(param.unwrap());
+        }
+        i = i + 1;
+    }
+    result
+}
+
+/// Lower a single function parameter.
+fn lower_fn_param(ctx: &mut hir_lower_ctx::LoweringCtx, param: &ast::Param) -> Option<hir_item::FnParam> {
+    let ty = hir_lower_type::lower_type(ctx, &param.ty);
+
+    // Extract the parameter name from the pattern
+    let name_and_mutability = extract_param_name(&param.pattern);
+    match name_and_mutability {
+        Some((name, is_mut)) => {
+            // Allocate a DefId for the parameter
+            let def_id = ctx.alloc_def_id();
+
+            // Check for qualifier-based mutability
+            let mutable = is_mut || match &param.qualifier {
+                &Some(ast::ParamQualifier::Mut) => true,
+                _ => false,
+            };
+
+            Some(hir_item::FnParam::new(def_id, name, ty, mutable, param.span))
+        }
+        Option::None => {
+            ctx.error(
+                hir::DiagnosticCode::E0103,
+                hir_lower_ctx::make_string("cannot determine parameter name from pattern"),
+                param.span,
+            );
+            Option::None
+        }
+    }
+}
+
+/// Extract the parameter name and mutability from a pattern.
+/// Returns Some((name, is_mut)) for simple identifier patterns.
+fn extract_param_name(pattern: &ast::Pattern) -> Option<(common::SpannedSymbol, bool)> {
+    match &pattern.kind {
+        &ast::PatternKind::Ident { by_ref: _, is_mut, ref name, subpattern: _ } => {
+            Some((*name, is_mut))
+        }
+        &ast::PatternKind::Wildcard => {
+            // Create a synthetic name for wildcard parameters
+            // Using symbol index 0 as a placeholder
+            let span = pattern.span;
+            let sym = common::Symbol::new(0);
+            let spanned = common::SpannedSymbol { symbol: sym, span };
+            Some((spanned, false))
+        }
+        &ast::PatternKind::Ref { is_mut: _, ref inner } => {
+            // Look through reference patterns
+            extract_param_name(inner.as_ref())
+        }
+        _ => {
+            // More complex patterns not yet supported for parameter names
+            Option::None
+        }
+    }
+}
+
+/// Lower the return type, defaulting to unit if not specified.
+pub fn lower_return_type(ctx: &mut hir_lower_ctx::LoweringCtx, return_type: &Option<ast::Type>) -> hir_ty::Type {
+    match return_type {
+        &Some(ref ty) => hir_lower_type::lower_type(ctx, ty),
+        &None => hir_ty::Type::unit(),
+    }
+}
+
+/// Lower the effect row, defaulting to empty (pure) if not specified.
+pub fn lower_effects(ctx: &mut hir_lower_ctx::LoweringCtx, effects: &Option<ast::EffectRow>) -> hir_ty::EffectRow {
+    match effects {
+        &Some(ref eff) => hir_lower_type::lower_effect_row(ctx, eff),
+        &None => hir_ty::EffectRow::empty(),
+    }
+}
+
+// ============================================================
+// Struct Body Lowering
+// ============================================================
+
+/// Lower a struct body to HIR.
+pub fn lower_struct_body(ctx: &mut hir_lower_ctx::LoweringCtx, body: &ast::StructBody) -> hir_item::StructBody {
+    match body {
+        ast::StructBody::Unit => hir_item::StructBody::Unit,
+        ast::StructBody::Tuple(ref types) => {
+            let mut lowered: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < types.len() {
+                let ty = hir_lower_type::lower_type(ctx, &types[i]);
+                lowered.push(ty);
+                i = i + 1;
+            }
+            hir_item::StructBody::Tuple(lowered)
+        }
+        ast::StructBody::Record(ref fields) => {
+            let mut lowered: Vec<hir_item::StructField> = Vec::new();
+            let mut i: usize = 0;
+            while i < fields.len() {
+                let field = lower_struct_field(ctx, &fields[i]);
+                lowered.push(field);
+                i = i + 1;
+            }
+            hir_item::StructBody::Record(lowered)
+        }
+    }
+}
+
+/// Lower a struct field to HIR.
+pub fn lower_struct_field(ctx: &mut hir_lower_ctx::LoweringCtx, field: &ast::StructField) -> hir_item::StructField {
+    let def_id = ctx.alloc_def_id();
+    let ty = hir_lower_type::lower_type(ctx, &field.ty);
+    hir_item::StructField::new(def_id, field.name, ty, field.vis, field.span)
+}
+
+// ============================================================
+// Enum Variant Lowering
+// ============================================================
+
+/// Lower enum variants to HIR.
+pub fn lower_enum_variants(ctx: &mut hir_lower_ctx::LoweringCtx, variants: &Vec<ast::EnumVariant>) -> Vec<hir_item::Variant> {
+    let mut result: Vec<hir_item::Variant> = Vec::new();
+    let mut i: usize = 0;
+    while i < variants.len() {
+        let variant = lower_enum_variant(ctx, &variants[i], i as u32);
+        result.push(variant);
+        i = i + 1;
+    }
+    result
+}
+
+/// Lower a single enum variant to HIR.
+fn lower_enum_variant(ctx: &mut hir_lower_ctx::LoweringCtx, variant: &ast::EnumVariant, discriminant: u32) -> hir_item::Variant {
+    let def_id = ctx.alloc_def_id();
+    let kind = lower_variant_kind(ctx, &variant.body);
+    hir_item::Variant::new(def_id, variant.name, discriminant, kind, variant.span)
+}
+
+/// Lower a variant body to a VariantKind.
+fn lower_variant_kind(ctx: &mut hir_lower_ctx::LoweringCtx, body: &ast::StructBody) -> hir_item::VariantKind {
+    match body {
+        ast::StructBody::Unit => hir_item::VariantKind::Unit,
+        ast::StructBody::Tuple(ref types) => {
+            let mut lowered: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < types.len() {
+                let ty = hir_lower_type::lower_type(ctx, &types[i]);
+                lowered.push(ty);
+                i = i + 1;
+            }
+            hir_item::VariantKind::Tuple(lowered)
+        }
+        ast::StructBody::Record(ref fields) => {
+            let mut lowered: Vec<hir_item::StructField> = Vec::new();
+            let mut i: usize = 0;
+            while i < fields.len() {
+                let field = lower_struct_field(ctx, &fields[i]);
+                lowered.push(field);
+                i = i + 1;
+            }
+            hir_item::VariantKind::Record(lowered)
+        }
+    }
+}
+
+// ============================================================
+// Declaration Lowering
+// ============================================================
+
+/// Lower all declarations to HIR items.
+pub fn lower_declarations(ctx: &mut hir_lower_ctx::LoweringCtx, decls: &Vec<ast::Declaration>) {
+    let mut i: usize = 0;
+    while i < decls.len() {
+        lower_declaration(ctx, &decls[i]);
+        i = i + 1;
+    }
+}
+
+/// Lower a single declaration to an HIR item.
+pub fn lower_declaration(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declaration) {
+    match decl {
+        &ast::Declaration::Function(ref f) => {
+            lower_function_decl(ctx, f);
+        }
+        &ast::Declaration::Struct(ref s) => {
+            lower_struct_decl(ctx, s);
+        }
+        &ast::Declaration::Enum(ref e) => {
+            lower_enum_decl(ctx, e);
+        }
+        // TODO: Lower other declaration types
+        &ast::Declaration::TypeAlias(_) => {}
+        &ast::Declaration::Const(_) => {}
+        &ast::Declaration::Static(_) => {}
+        &ast::Declaration::Trait(_) => {}
+        &ast::Declaration::Effect(_) => {}
+        &ast::Declaration::Handler(_) => {}
+        &ast::Declaration::Impl(_) => {}
+        &ast::Declaration::Bridge(_) => {}
+        &ast::Declaration::Module(_) => {}
+        &ast::Declaration::Macro(_) => {}
+    }
+}
+
+/// Lower a function declaration.
+fn lower_function_decl(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl) {
+    // Look up the DefId we registered
+    let lookup = ctx.resolver.lookup(f.name.symbol);
+    if lookup.is_none() {
+        // Should not happen if registration succeeded
+        return;
+    }
+    let result = lookup.unwrap();
+    let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+    let def_id = binding.def_id;
+
+    // Lower generics
+    let generics = hir_lower_type::lower_generics(ctx, &f.type_params, &f.where_clause);
+
+    // Lower parameters
+    let params = lower_fn_params(ctx, &f.params);
+
+    // Lower return type
+    let return_ty = lower_return_type(ctx, &f.return_type);
+
+    // Lower effects
+    let effects = lower_effects(ctx, &f.effects);
+
+    // Create function signature
+    let sig = hir_item::FnSig::new(
+        generics,
+        params,
+        return_ty,
+        effects,
+        f.qualifiers,
+        f.span,
+    );
+
+    // Create function definition (body lowered in Phase 4)
+    let fn_def = hir_item::FnDef::new(sig, Option::None);
+    let item_kind = hir_item::ItemKind::Fn(fn_def);
+    let item = hir_item::Item::new(
+        def_id,
+        f.name,
+        item_kind,
+        f.vis,
+        f.span,
+    );
+    ctx.add_item(def_id, item);
+}
+
+/// Lower a struct declaration.
+fn lower_struct_decl(ctx: &mut hir_lower_ctx::LoweringCtx, s: &ast::StructDecl) {
+    let lookup = ctx.resolver.lookup(s.name.symbol);
+    if lookup.is_none() { return; }
+    let result = lookup.unwrap();
+    let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+    let def_id = binding.def_id;
+
+    // Lower generics (structs don't have where_clause in AST)
+    let no_where: Option<ast::WhereClause> = Option::None;
+    let generics = hir_lower_type::lower_generics(ctx, &s.type_params, &no_where);
+
+    // Lower struct body
+    let struct_body = lower_struct_body(ctx, &s.body);
+
+    let struct_def = hir_item::StructDef::new(generics, struct_body);
+    let item_kind = hir_item::ItemKind::Struct(struct_def);
+    let item = hir_item::Item::new(
+        def_id,
+        s.name,
+        item_kind,
+        s.vis,
+        s.span,
+    );
+    ctx.add_item(def_id, item);
+}
+
+/// Lower an enum declaration.
+fn lower_enum_decl(ctx: &mut hir_lower_ctx::LoweringCtx, e: &ast::EnumDecl) {
+    let lookup = ctx.resolver.lookup(e.name.symbol);
+    if lookup.is_none() { return; }
+    let result = lookup.unwrap();
+    let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+    let def_id = binding.def_id;
+
+    // Lower generics (enums don't have where_clause in AST)
+    let no_where: Option<ast::WhereClause> = Option::None;
+    let generics = hir_lower_type::lower_generics(ctx, &e.type_params, &no_where);
+
+    // Lower variants
+    let variants = lower_enum_variants(ctx, &e.variants);
+
+    let enum_def = hir_item::EnumDef::new(generics, variants);
+    let item_kind = hir_item::ItemKind::Enum(enum_def);
+    let item = hir_item::Item::new(
+        def_id,
+        e.name,
+        item_kind,
+        e.vis,
+        e.span,
+    );
+    ctx.add_item(def_id, item);
+}
