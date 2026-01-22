@@ -1,0 +1,794 @@
+// Blood Self-Hosted Compiler - HIR Items
+//
+// This module defines the HIR representation of top-level items.
+// Items are definitions like functions, structs, enums, etc.
+//
+// HIR items differ from AST items in that:
+// - Names are resolved to DefIds
+// - Types are semantic types (from hir_ty), not syntactic
+// - Visibility and other attributes are normalized
+
+mod common;
+mod hir_def;
+mod hir_ty;
+
+// ============================================================
+// Item
+// ============================================================
+
+/// A top-level item in the HIR.
+pub struct Item {
+    /// The DefId of this item.
+    pub def_id: hir_def::DefId,
+    /// The name of this item.
+    pub name: common::SpannedSymbol,
+    /// The kind of item.
+    pub kind: ItemKind,
+    /// The visibility of this item.
+    pub vis: common::Visibility,
+    /// The span of this item in source.
+    pub span: common::Span,
+}
+
+impl Item {
+    /// Creates a new item.
+    pub fn new(
+        def_id: hir_def::DefId,
+        name: common::SpannedSymbol,
+        kind: ItemKind,
+        vis: common::Visibility,
+        span: common::Span,
+    ) -> Item {
+        Item { def_id, name, kind, vis, span }
+    }
+}
+
+// ============================================================
+// Item Kind
+// ============================================================
+
+/// The kind of a top-level item.
+pub enum ItemKind {
+    /// A function definition.
+    Fn(FnDef),
+    /// A struct definition.
+    Struct(StructDef),
+    /// An enum definition.
+    Enum(EnumDef),
+    /// A type alias.
+    TypeAlias(TypeAliasDef),
+    /// A constant.
+    Const(ConstDef),
+    /// A static variable.
+    Static(StaticDef),
+    /// A trait definition.
+    Trait(TraitDef),
+    /// An effect definition.
+    Effect(EffectDef),
+    /// An effect handler.
+    Handler(HandlerDef),
+    /// A module.
+    Module(ModuleDef),
+    /// An impl block.
+    Impl(ImplDef),
+    /// A macro definition.
+    Macro(MacroDef),
+    /// A foreign (bridge) item.
+    Foreign(ForeignDef),
+}
+
+// ============================================================
+// Function Definition
+// ============================================================
+
+/// A function definition.
+pub struct FnDef {
+    /// The function signature.
+    pub sig: FnSig,
+    /// The body of the function (None for extern functions).
+    pub body_id: Option<hir_def::BodyId>,
+}
+
+impl FnDef {
+    /// Creates a new function definition.
+    pub fn new(sig: FnSig, body_id: Option<hir_def::BodyId>) -> FnDef {
+        FnDef { sig, body_id }
+    }
+}
+
+/// A function signature.
+pub struct FnSig {
+    /// Generic parameters.
+    pub generics: hir_ty::Generics,
+    /// Function parameters.
+    pub params: Vec<FnParam>,
+    /// Return type.
+    pub return_ty: hir_ty::Type,
+    /// Effect row (what effects this function may perform).
+    pub effects: hir_ty::EffectRow,
+    /// Function qualifiers.
+    pub qualifiers: common::FnQualifiers,
+    /// Span of the signature.
+    pub span: common::Span,
+}
+
+impl FnSig {
+    /// Creates a new function signature.
+    pub fn new(
+        generics: hir_ty::Generics,
+        params: Vec<FnParam>,
+        return_ty: hir_ty::Type,
+        effects: hir_ty::EffectRow,
+        qualifiers: common::FnQualifiers,
+        span: common::Span,
+    ) -> FnSig {
+        FnSig { generics, params, return_ty, effects, qualifiers, span }
+    }
+}
+
+/// A function parameter.
+pub struct FnParam {
+    /// The DefId of this parameter (as a local).
+    pub def_id: hir_def::DefId,
+    /// The name of the parameter.
+    pub name: common::SpannedSymbol,
+    /// The type of the parameter.
+    pub ty: hir_ty::Type,
+    /// Whether the parameter is mutable.
+    pub mutable: bool,
+    /// Span of the parameter.
+    pub span: common::Span,
+}
+
+impl FnParam {
+    /// Creates a new function parameter.
+    pub fn new(
+        def_id: hir_def::DefId,
+        name: common::SpannedSymbol,
+        ty: hir_ty::Type,
+        mutable: bool,
+        span: common::Span,
+    ) -> FnParam {
+        FnParam { def_id, name, ty, mutable, span }
+    }
+}
+
+// ============================================================
+// Struct Definition
+// ============================================================
+
+/// A struct definition.
+pub struct StructDef {
+    /// Generic parameters.
+    pub generics: hir_ty::Generics,
+    /// The struct body (fields or tuple elements).
+    pub body: StructBody,
+}
+
+impl StructDef {
+    /// Creates a new struct definition.
+    pub fn new(generics: hir_ty::Generics, body: StructBody) -> StructDef {
+        StructDef { generics, body }
+    }
+}
+
+/// The body of a struct.
+pub enum StructBody {
+    /// A record struct with named fields.
+    Record(Vec<StructField>),
+    /// A tuple struct with positional fields.
+    Tuple(Vec<hir_ty::Type>),
+    /// A unit struct with no fields.
+    Unit,
+}
+
+/// A field in a record struct.
+pub struct StructField {
+    /// The DefId of this field.
+    pub def_id: hir_def::DefId,
+    /// The name of the field.
+    pub name: common::SpannedSymbol,
+    /// The type of the field.
+    pub ty: hir_ty::Type,
+    /// The visibility of the field.
+    pub vis: common::Visibility,
+    /// Span of the field.
+    pub span: common::Span,
+}
+
+impl StructField {
+    /// Creates a new struct field.
+    pub fn new(
+        def_id: hir_def::DefId,
+        name: common::SpannedSymbol,
+        ty: hir_ty::Type,
+        vis: common::Visibility,
+        span: common::Span,
+    ) -> StructField {
+        StructField { def_id, name, ty, vis, span }
+    }
+}
+
+// ============================================================
+// Enum Definition
+// ============================================================
+
+/// An enum definition.
+pub struct EnumDef {
+    /// Generic parameters.
+    pub generics: hir_ty::Generics,
+    /// The variants of this enum.
+    pub variants: Vec<Variant>,
+}
+
+impl EnumDef {
+    /// Creates a new enum definition.
+    pub fn new(generics: hir_ty::Generics, variants: Vec<Variant>) -> EnumDef {
+        EnumDef { generics, variants }
+    }
+}
+
+/// An enum variant.
+pub struct Variant {
+    /// The DefId of this variant.
+    pub def_id: hir_def::DefId,
+    /// The name of the variant.
+    pub name: common::SpannedSymbol,
+    /// The discriminant index (0, 1, 2, ...).
+    pub discriminant: u32,
+    /// The kind of variant (unit, tuple, or record).
+    pub kind: VariantKind,
+    /// Span of the variant.
+    pub span: common::Span,
+}
+
+impl Variant {
+    /// Creates a new variant.
+    pub fn new(
+        def_id: hir_def::DefId,
+        name: common::SpannedSymbol,
+        discriminant: u32,
+        kind: VariantKind,
+        span: common::Span,
+    ) -> Variant {
+        Variant { def_id: def_id, name: name, discriminant: discriminant, kind: kind, span: span }
+    }
+}
+
+/// The kind of an enum variant.
+pub enum VariantKind {
+    /// A unit variant: `Variant`
+    Unit,
+    /// A tuple variant: `Variant(T1, T2)`
+    Tuple(Vec<hir_ty::Type>),
+    /// A record variant: `Variant { field: T }`
+    Record(Vec<StructField>),
+}
+
+// ============================================================
+// Type Alias Definition
+// ============================================================
+
+/// A type alias definition.
+pub struct TypeAliasDef {
+    /// Generic parameters.
+    pub generics: hir_ty::Generics,
+    /// The aliased type.
+    pub ty: hir_ty::Type,
+}
+
+impl TypeAliasDef {
+    /// Creates a new type alias definition.
+    pub fn new(generics: hir_ty::Generics, ty: hir_ty::Type) -> TypeAliasDef {
+        TypeAliasDef { generics, ty }
+    }
+}
+
+// ============================================================
+// Constant and Static Definitions
+// ============================================================
+
+/// A constant definition.
+pub struct ConstDef {
+    /// The type of the constant.
+    pub ty: hir_ty::Type,
+    /// The body containing the initializer expression.
+    pub body_id: hir_def::BodyId,
+}
+
+impl ConstDef {
+    /// Creates a new constant definition.
+    pub fn new(ty: hir_ty::Type, body_id: hir_def::BodyId) -> ConstDef {
+        ConstDef { ty, body_id }
+    }
+}
+
+/// A static variable definition.
+pub struct StaticDef {
+    /// The type of the static.
+    pub ty: hir_ty::Type,
+    /// Whether the static is mutable.
+    pub mutable: bool,
+    /// The body containing the initializer expression.
+    pub body_id: hir_def::BodyId,
+}
+
+impl StaticDef {
+    /// Creates a new static definition.
+    pub fn new(ty: hir_ty::Type, mutable: bool, body_id: hir_def::BodyId) -> StaticDef {
+        StaticDef { ty, mutable, body_id }
+    }
+}
+
+// ============================================================
+// Trait Definition
+// ============================================================
+
+/// A trait definition.
+pub struct TraitDef {
+    /// Generic parameters.
+    pub generics: hir_ty::Generics,
+    /// Supertraits that this trait requires.
+    pub supertraits: Vec<hir_ty::TraitRef>,
+    /// Associated items in this trait.
+    pub items: Vec<AssocItem>,
+}
+
+impl TraitDef {
+    /// Creates a new trait definition.
+    pub fn new(
+        generics: hir_ty::Generics,
+        supertraits: Vec<hir_ty::TraitRef>,
+        items: Vec<AssocItem>,
+    ) -> TraitDef {
+        TraitDef { generics, supertraits, items }
+    }
+}
+
+/// An associated item in a trait or impl.
+pub enum AssocItem {
+    /// An associated function/method.
+    Fn(AssocFn),
+    /// An associated type.
+    Type(AssocType),
+    /// An associated constant.
+    Const(AssocConst),
+}
+
+/// An associated function.
+pub struct AssocFn {
+    /// The DefId of this function.
+    pub def_id: hir_def::DefId,
+    /// The name of this function.
+    pub name: common::SpannedSymbol,
+    /// The function signature.
+    pub sig: FnSig,
+    /// The body (None for trait declarations without default).
+    pub body_id: Option<hir_def::BodyId>,
+    /// Whether this has a default implementation.
+    pub has_default: bool,
+}
+
+impl AssocFn {
+    /// Creates a new associated function.
+    pub fn new(
+        def_id: hir_def::DefId,
+        name: common::SpannedSymbol,
+        sig: FnSig,
+        body_id: Option<hir_def::BodyId>,
+        has_default: bool,
+    ) -> AssocFn {
+        AssocFn { def_id, name, sig, body_id, has_default }
+    }
+}
+
+/// An associated type.
+pub struct AssocType {
+    /// The DefId of this type.
+    pub def_id: hir_def::DefId,
+    /// The name of this type.
+    pub name: common::SpannedSymbol,
+    /// Generic parameters.
+    pub generics: hir_ty::Generics,
+    /// Bounds on the associated type.
+    pub bounds: Vec<hir_ty::TraitRef>,
+    /// Default type (if any).
+    pub default_ty: Option<hir_ty::Type>,
+}
+
+impl AssocType {
+    /// Creates a new associated type.
+    pub fn new(
+        def_id: hir_def::DefId,
+        name: common::SpannedSymbol,
+        generics: hir_ty::Generics,
+        bounds: Vec<hir_ty::TraitRef>,
+        default_ty: Option<hir_ty::Type>,
+    ) -> AssocType {
+        AssocType { def_id: def_id, name: name, generics: generics, bounds: bounds, default_ty: default_ty }
+    }
+}
+
+/// An associated constant.
+pub struct AssocConst {
+    /// The DefId of this constant.
+    pub def_id: hir_def::DefId,
+    /// The name of this constant.
+    pub name: common::SpannedSymbol,
+    /// The type of the constant.
+    pub ty: hir_ty::Type,
+    /// Default value body (if any).
+    pub body_id: Option<hir_def::BodyId>,
+}
+
+impl AssocConst {
+    /// Creates a new associated constant.
+    pub fn new(
+        def_id: hir_def::DefId,
+        name: common::SpannedSymbol,
+        ty: hir_ty::Type,
+        body_id: Option<hir_def::BodyId>,
+    ) -> AssocConst {
+        AssocConst { def_id: def_id, name: name, ty: ty, body_id: body_id }
+    }
+}
+
+// ============================================================
+// Effect Definition
+// ============================================================
+
+/// An effect definition.
+pub struct EffectDef {
+    /// Generic parameters.
+    pub generics: hir_ty::Generics,
+    /// Parent effects (supereffects).
+    pub parents: Vec<hir_ty::EffectRef>,
+    /// Operations declared by this effect.
+    pub operations: Vec<EffectOp>,
+}
+
+impl EffectDef {
+    /// Creates a new effect definition.
+    pub fn new(
+        generics: hir_ty::Generics,
+        parents: Vec<hir_ty::EffectRef>,
+        operations: Vec<EffectOp>,
+    ) -> EffectDef {
+        EffectDef { generics, parents, operations }
+    }
+}
+
+/// An effect operation.
+pub struct EffectOp {
+    /// The DefId of this operation.
+    pub def_id: hir_def::DefId,
+    /// The name of this operation.
+    pub name: common::SpannedSymbol,
+    /// Generic parameters for this operation.
+    pub generics: hir_ty::Generics,
+    /// Parameter types.
+    pub param_tys: Vec<hir_ty::Type>,
+    /// Return type.
+    pub return_ty: hir_ty::Type,
+    /// Span of the operation.
+    pub span: common::Span,
+}
+
+impl EffectOp {
+    /// Creates a new effect operation.
+    pub fn new(
+        def_id: hir_def::DefId,
+        name: common::SpannedSymbol,
+        generics: hir_ty::Generics,
+        param_tys: Vec<hir_ty::Type>,
+        return_ty: hir_ty::Type,
+        span: common::Span,
+    ) -> EffectOp {
+        EffectOp { def_id, name, generics, param_tys, return_ty, span }
+    }
+}
+
+// ============================================================
+// Handler Definition
+// ============================================================
+
+/// A handler definition.
+pub struct HandlerDef {
+    /// Generic parameters.
+    pub generics: hir_ty::Generics,
+    /// The effect being handled.
+    pub handled_effect: hir_ty::EffectRef,
+    /// Handler kind (deep or shallow).
+    pub kind: common::HandlerKind,
+    /// State fields.
+    pub state: Vec<HandlerState>,
+    /// Return clause (if present).
+    pub return_clause: Option<HandlerReturn>,
+    /// Operation implementations.
+    pub op_impls: Vec<OpImpl>,
+}
+
+impl HandlerDef {
+    /// Creates a new handler definition.
+    pub fn new(
+        generics: hir_ty::Generics,
+        handled_effect: hir_ty::EffectRef,
+        kind: common::HandlerKind,
+        state: Vec<HandlerState>,
+        return_clause: Option<HandlerReturn>,
+        op_impls: Vec<OpImpl>,
+    ) -> HandlerDef {
+        HandlerDef { generics, handled_effect, kind, state, return_clause, op_impls }
+    }
+}
+
+/// A state field in a handler.
+pub struct HandlerState {
+    /// The DefId of this state field.
+    pub def_id: hir_def::DefId,
+    /// The name of this state field.
+    pub name: common::SpannedSymbol,
+    /// The type of this state field.
+    pub ty: hir_ty::Type,
+    /// Whether this state is mutable.
+    pub mutable: bool,
+    /// Default value body (if any).
+    pub default_body: Option<hir_def::BodyId>,
+}
+
+impl HandlerState {
+    /// Creates a new handler state field.
+    pub fn new(
+        def_id: hir_def::DefId,
+        name: common::SpannedSymbol,
+        ty: hir_ty::Type,
+        mutable: bool,
+        default_body: Option<hir_def::BodyId>,
+    ) -> HandlerState {
+        HandlerState { def_id, name, ty, mutable, default_body }
+    }
+}
+
+/// The return clause of a handler.
+pub struct HandlerReturn {
+    /// The parameter name for the computation result.
+    pub param_name: common::SpannedSymbol,
+    /// The body of the return clause.
+    pub body_id: hir_def::BodyId,
+}
+
+impl HandlerReturn {
+    /// Creates a new handler return clause.
+    pub fn new(param_name: common::SpannedSymbol, body_id: hir_def::BodyId) -> HandlerReturn {
+        HandlerReturn { param_name, body_id }
+    }
+}
+
+/// An operation implementation in a handler.
+pub struct OpImpl {
+    /// The DefId of the operation being implemented.
+    pub op_def_id: hir_def::DefId,
+    /// The name of the operation.
+    pub name: common::SpannedSymbol,
+    /// Parameter names (patterns resolved to locals).
+    pub param_names: Vec<common::SpannedSymbol>,
+    /// The body of this implementation.
+    pub body_id: hir_def::BodyId,
+    /// Span of this implementation.
+    pub span: common::Span,
+}
+
+impl OpImpl {
+    /// Creates a new operation implementation.
+    pub fn new(
+        op_def_id: hir_def::DefId,
+        name: common::SpannedSymbol,
+        param_names: Vec<common::SpannedSymbol>,
+        body_id: hir_def::BodyId,
+        span: common::Span,
+    ) -> OpImpl {
+        OpImpl { op_def_id, name, param_names, body_id, span }
+    }
+}
+
+// ============================================================
+// Module Definition
+// ============================================================
+
+/// A module definition.
+pub struct ModuleDef {
+    /// Items in this module (by DefId).
+    pub items: Vec<hir_def::DefId>,
+}
+
+impl ModuleDef {
+    /// Creates a new module definition.
+    pub fn new(items: Vec<hir_def::DefId>) -> ModuleDef {
+        ModuleDef { items }
+    }
+
+    /// Creates an empty module definition.
+    pub fn empty() -> ModuleDef {
+        ModuleDef { items: Vec::new() }
+    }
+}
+
+// ============================================================
+// Impl Definition
+// ============================================================
+
+/// An impl block definition.
+pub struct ImplDef {
+    /// Generic parameters.
+    pub generics: hir_ty::Generics,
+    /// The trait being implemented (None for inherent impls).
+    pub trait_ref: Option<hir_ty::TraitRef>,
+    /// The type this impl is for.
+    pub self_ty: hir_ty::Type,
+    /// Associated items in this impl.
+    pub items: Vec<AssocItem>,
+}
+
+impl ImplDef {
+    /// Creates a new impl definition.
+    pub fn new(
+        generics: hir_ty::Generics,
+        trait_ref: Option<hir_ty::TraitRef>,
+        self_ty: hir_ty::Type,
+        items: Vec<AssocItem>,
+    ) -> ImplDef {
+        ImplDef { generics, trait_ref, self_ty, items }
+    }
+}
+
+// ============================================================
+// Macro Definition
+// ============================================================
+
+/// A macro definition (placeholder for now).
+pub struct MacroDef {
+    /// The macro kind.
+    pub kind: MacroKind,
+}
+
+/// The kind of macro.
+pub enum MacroKind {
+    /// A declarative macro (macro_rules!).
+    Declarative,
+    /// A procedural macro.
+    Procedural,
+    /// A derive macro.
+    Derive,
+    /// An attribute macro.
+    Attribute,
+}
+
+impl MacroDef {
+    /// Creates a new macro definition.
+    pub fn new(kind: MacroKind) -> MacroDef {
+        MacroDef { kind }
+    }
+}
+
+// ============================================================
+// Foreign (Bridge) Definition
+// ============================================================
+
+/// A foreign (FFI) definition.
+pub struct ForeignDef {
+    /// The ABI for this foreign block.
+    pub abi: Abi,
+    /// Foreign items.
+    pub items: Vec<ForeignItem>,
+}
+
+impl ForeignDef {
+    /// Creates a new foreign definition.
+    pub fn new(abi: Abi, items: Vec<ForeignItem>) -> ForeignDef {
+        ForeignDef { abi, items }
+    }
+}
+
+/// The ABI of a foreign block.
+pub enum Abi {
+    /// C ABI.
+    C,
+    /// Rust ABI (default).
+    Rust,
+    /// System ABI (platform-specific).
+    System,
+    /// stdcall ABI (Windows).
+    Stdcall,
+    /// fastcall ABI.
+    Fastcall,
+    /// Other/unknown ABI.
+    Other(common::Symbol),
+}
+
+/// A foreign item.
+pub enum ForeignItem {
+    /// A foreign function.
+    Fn(ForeignFn),
+    /// A foreign static.
+    Static(ForeignStatic),
+    /// An opaque type.
+    OpaqueType(ForeignOpaqueType),
+}
+
+/// A foreign function declaration.
+pub struct ForeignFn {
+    /// The DefId of this function.
+    pub def_id: hir_def::DefId,
+    /// The name of this function.
+    pub name: common::SpannedSymbol,
+    /// Parameter types.
+    pub param_tys: Vec<hir_ty::Type>,
+    /// Return type.
+    pub return_ty: hir_ty::Type,
+    /// Whether the function is variadic.
+    pub is_variadic: bool,
+    /// Span of the declaration.
+    pub span: common::Span,
+}
+
+impl ForeignFn {
+    /// Creates a new foreign function.
+    pub fn new(
+        def_id: hir_def::DefId,
+        name: common::SpannedSymbol,
+        param_tys: Vec<hir_ty::Type>,
+        return_ty: hir_ty::Type,
+        is_variadic: bool,
+        span: common::Span,
+    ) -> ForeignFn {
+        ForeignFn { def_id, name, param_tys, return_ty, is_variadic, span }
+    }
+}
+
+/// A foreign static declaration.
+pub struct ForeignStatic {
+    /// The DefId of this static.
+    pub def_id: hir_def::DefId,
+    /// The name of this static.
+    pub name: common::SpannedSymbol,
+    /// The type of this static.
+    pub ty: hir_ty::Type,
+    /// Whether this static is mutable.
+    pub mutable: bool,
+    /// Span of the declaration.
+    pub span: common::Span,
+}
+
+impl ForeignStatic {
+    /// Creates a new foreign static.
+    pub fn new(
+        def_id: hir_def::DefId,
+        name: common::SpannedSymbol,
+        ty: hir_ty::Type,
+        mutable: bool,
+        span: common::Span,
+    ) -> ForeignStatic {
+        ForeignStatic { def_id, name, ty, mutable, span }
+    }
+}
+
+/// An opaque type declaration.
+pub struct ForeignOpaqueType {
+    /// The DefId of this type.
+    pub def_id: hir_def::DefId,
+    /// The name of this type.
+    pub name: common::SpannedSymbol,
+    /// Span of the declaration.
+    pub span: common::Span,
+}
+
+impl ForeignOpaqueType {
+    /// Creates a new opaque type.
+    pub fn new(
+        def_id: hir_def::DefId,
+        name: common::SpannedSymbol,
+        span: common::Span,
+    ) -> ForeignOpaqueType {
+        ForeignOpaqueType { def_id, name, span }
+    }
+}

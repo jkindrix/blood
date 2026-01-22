@@ -1,0 +1,255 @@
+// Blood Self-Hosted Compiler - HIR Definition Identifiers
+//
+// This module defines the core identifiers used throughout the HIR (High-Level
+// Intermediate Representation). These IDs provide a stable way to reference
+// items, locals, and bodies across the compiler pipeline.
+
+mod common;
+
+// ============================================================
+// Definition Identifier (DefId)
+// ============================================================
+
+/// A globally unique identifier for a definition (function, struct, enum, etc.)
+///
+/// DefIds are assigned during name resolution and remain stable throughout
+/// compilation. They are used to reference items across the entire crate.
+pub struct DefId {
+    /// Index into the global definition table.
+    pub index: u32,
+}
+
+impl DefId {
+    /// Creates a new DefId with the given index.
+    pub fn new(index: u32) -> DefId {
+        DefId { index }
+    }
+
+    /// Returns a dummy DefId for error recovery.
+    pub fn dummy() -> DefId {
+        DefId { index: 0xFFFFFFFF }
+    }
+
+    /// Returns true if this is a dummy/error DefId.
+    pub fn is_dummy(self: &DefId) -> bool {
+        self.index == 0xFFFFFFFF
+    }
+}
+
+// ============================================================
+// Local Identifier (LocalId)
+// ============================================================
+
+/// A body-local identifier for variables and temporaries.
+///
+/// LocalIds are scoped to a single function body. They are assigned during
+/// HIR lowering and are used to reference locals within expressions.
+pub struct LocalId {
+    /// Index into the body's local table.
+    pub index: u32,
+}
+
+impl LocalId {
+    /// Creates a new LocalId with the given index.
+    pub fn new(index: u32) -> LocalId {
+        LocalId { index }
+    }
+
+    /// Returns a dummy LocalId for error recovery.
+    pub fn dummy() -> LocalId {
+        LocalId { index: 0xFFFFFFFF }
+    }
+
+    /// Returns true if this is a dummy/error LocalId.
+    pub fn is_dummy(self: &LocalId) -> bool {
+        self.index == 0xFFFFFFFF
+    }
+}
+
+// ============================================================
+// Body Identifier (BodyId)
+// ============================================================
+
+/// An identifier for a function or closure body.
+///
+/// BodyIds are used to associate expressions with their containing body
+/// and to look up body data in the HIR crate.
+pub struct BodyId {
+    /// Index into the crate's body table.
+    pub index: u32,
+}
+
+impl BodyId {
+    /// Creates a new BodyId with the given index.
+    pub fn new(index: u32) -> BodyId {
+        BodyId { index }
+    }
+
+    /// Returns a dummy BodyId for error recovery.
+    pub fn dummy() -> BodyId {
+        BodyId { index: 0xFFFFFFFF }
+    }
+
+    /// Returns true if this is a dummy/error BodyId.
+    pub fn is_dummy(self: &BodyId) -> bool {
+        self.index == 0xFFFFFFFF
+    }
+}
+
+// ============================================================
+// Type Variable Identifier (TyVarId)
+// ============================================================
+
+/// An identifier for a type inference variable.
+///
+/// TyVarIds are created during type inference to represent unknown types
+/// that will be determined through unification.
+pub struct TyVarId {
+    /// Unique index for this type variable.
+    pub index: u32,
+}
+
+impl TyVarId {
+    /// Creates a new TyVarId with the given index.
+    pub fn new(index: u32) -> TyVarId {
+        TyVarId { index }
+    }
+}
+
+// ============================================================
+// Effect Row Variable Identifier
+// ============================================================
+
+/// An identifier for an effect row variable.
+///
+/// Effect row variables represent unknown effect sets that will be
+/// determined through effect inference.
+pub struct EffectRowVarId {
+    /// Unique index for this effect row variable.
+    pub index: u32,
+}
+
+impl EffectRowVarId {
+    /// Creates a new EffectRowVarId with the given index.
+    pub fn new(index: u32) -> EffectRowVarId {
+        EffectRowVarId { index }
+    }
+}
+
+// ============================================================
+// Record Row Variable Identifier
+// ============================================================
+
+/// An identifier for a record row variable (for extensible records).
+///
+/// Record row variables represent unknown record extensions that will be
+/// determined through row polymorphism.
+pub struct RecordRowVarId {
+    /// Unique index for this record row variable.
+    pub index: u32,
+}
+
+impl RecordRowVarId {
+    /// Creates a new RecordRowVarId with the given index.
+    pub fn new(index: u32) -> RecordRowVarId {
+        RecordRowVarId { index }
+    }
+}
+
+// ============================================================
+// Resolved Path
+// ============================================================
+
+/// A fully resolved path to a definition.
+///
+/// After name resolution, paths like `std::vec::Vec<T>` are converted to
+/// ResolvedPaths that contain the DefId of the referenced item and any
+/// type arguments.
+pub struct ResolvedPath {
+    /// The DefId of the referenced definition.
+    pub def_id: DefId,
+    /// Type arguments if this is a generic instantiation.
+    /// Note: We use a simple Vec here; proper type args need hir_ty.
+    pub type_arg_count: u32,
+    /// The span of the path in source code.
+    pub span: common::Span,
+}
+
+impl ResolvedPath {
+    /// Creates a new ResolvedPath.
+    pub fn new(def_id: DefId, type_arg_count: u32, span: common::Span) -> ResolvedPath {
+        ResolvedPath { def_id, type_arg_count, span }
+    }
+
+    /// Creates a ResolvedPath with no type arguments.
+    pub fn simple(def_id: DefId, span: common::Span) -> ResolvedPath {
+        ResolvedPath { def_id, type_arg_count: 0, span }
+    }
+}
+
+// ============================================================
+// Definition Info
+// ============================================================
+
+/// Basic information about a definition.
+///
+/// This is stored in the resolver to track what kind of thing a DefId refers to.
+pub enum DefKind {
+    /// A function definition.
+    Fn,
+    /// A struct definition.
+    Struct,
+    /// An enum definition.
+    Enum,
+    /// An enum variant.
+    Variant,
+    /// A type alias.
+    TypeAlias,
+    /// A constant.
+    Const,
+    /// A static variable.
+    Static,
+    /// A trait definition.
+    Trait,
+    /// An effect definition.
+    Effect,
+    /// An effect operation.
+    Operation,
+    /// An effect handler.
+    Handler,
+    /// A module.
+    Module,
+    /// An impl block (not directly named, but can be referenced).
+    Impl,
+    /// A macro.
+    Macro,
+    /// An associated type.
+    AssocType,
+    /// An associated const.
+    AssocConst,
+    /// A type parameter.
+    TypeParam,
+    /// A lifetime parameter.
+    LifetimeParam,
+    /// A const generic parameter.
+    ConstParam,
+}
+
+/// Information about a definition stored in the resolver.
+pub struct DefInfo {
+    /// The kind of definition.
+    pub kind: DefKind,
+    /// The name of the definition (as a symbol index).
+    pub name: common::Symbol,
+    /// The span where this definition was declared.
+    pub span: common::Span,
+    /// The parent definition (for nested items).
+    pub parent: Option<DefId>,
+}
+
+impl DefInfo {
+    /// Creates a new DefInfo.
+    pub fn new(kind: DefKind, name: common::Symbol, span: common::Span, parent: Option<DefId>) -> DefInfo {
+        DefInfo { kind, name, span, parent }
+    }
+}

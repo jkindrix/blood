@@ -1,0 +1,136 @@
+// Blood Self-Hosted Compiler - Name Resolution Types
+//
+// This module defines the types for name resolution. The actual resolution
+// algorithms are implemented in hir.blood which orchestrates the lowering.
+//
+// Note: Some methods are omitted due to blood-rust Vec<T> type inference
+// limitations with struct field access. These will be added when the
+// compiler supports this pattern.
+
+mod common;
+mod hir_def;
+
+// ============================================================
+// Resolution Errors
+// ============================================================
+
+/// Error codes for name resolution.
+pub enum ResolveErrorCode {
+    NotFound,
+    Ambiguous,
+    PrivateAccess,
+    ImportNotFound,
+    CircularImport,
+    DuplicateDefinition,
+    InvalidPath,
+    ModuleNotFound,
+}
+
+/// A name resolution error.
+pub struct ResolveError {
+    pub name_sym: common::Symbol,
+    pub span: common::Span,
+    pub code: ResolveErrorCode,
+}
+
+impl ResolveError {
+    pub fn new(name_sym: common::Symbol, span: common::Span, code: ResolveErrorCode) -> ResolveError {
+        ResolveError { name_sym, span, code }
+    }
+
+    pub fn not_found(name_sym: common::Symbol, span: common::Span) -> ResolveError {
+        ResolveError::new(name_sym, span, ResolveErrorCode::NotFound)
+    }
+
+    pub fn duplicate(name_sym: common::Symbol, span: common::Span) -> ResolveError {
+        ResolveError::new(name_sym, span, ResolveErrorCode::DuplicateDefinition)
+    }
+}
+
+// ============================================================
+// Bindings
+// ============================================================
+
+/// A binding in a scope.
+pub enum Binding {
+    Local {
+        local_id: hir_def::LocalId,
+        mutable: bool,
+        span: common::Span,
+    },
+    Def(hir_def::DefId),
+    Module(hir_def::DefId),
+}
+
+impl Binding {
+    pub fn local(local_id: hir_def::LocalId, mutable: bool, span: common::Span) -> Binding {
+        Binding::Local { local_id, mutable, span }
+    }
+
+    pub fn def(def_id: hir_def::DefId) -> Binding {
+        Binding::Def(def_id)
+    }
+}
+
+// ============================================================
+// Scope
+// ============================================================
+
+/// The kind of scope.
+pub enum ScopeKind {
+    Module,
+    Function,
+    Block,
+    Loop,
+    MatchArm,
+    Closure,
+    ImplBlock,
+    TraitDef,
+}
+
+/// A binding entry storing name and binding.
+pub struct BindingEntry {
+    pub name: common::Symbol,
+    pub binding: Binding,
+}
+
+impl BindingEntry {
+    pub fn new(name: common::Symbol, binding: Binding) -> BindingEntry {
+        BindingEntry { name, binding }
+    }
+}
+
+/// A lexical scope containing bindings.
+pub struct Scope {
+    pub kind: ScopeKind,
+    pub bindings: Vec<BindingEntry>,
+    pub parent: Option<usize>,
+    pub label: Option<common::Symbol>,
+}
+
+// ============================================================
+// Global Entry
+// ============================================================
+
+/// An entry in the global namespace.
+pub struct GlobalEntry {
+    pub name: common::Symbol,
+    pub def_id: hir_def::DefId,
+}
+
+impl GlobalEntry {
+    pub fn new(name: common::Symbol, def_id: hir_def::DefId) -> GlobalEntry {
+        GlobalEntry { name, def_id }
+    }
+}
+
+// ============================================================
+// Lookup Result
+// ============================================================
+
+/// Result of a name lookup.
+pub struct LookupResult {
+    pub scope_index: usize,
+    pub binding_index: usize,
+    pub is_global: bool,
+}

@@ -1,0 +1,320 @@
+// Blood Self-Hosted Compiler - HIR Crate and Lowering
+//
+// This module defines the top-level HIR structure (Crate) and types
+// needed for AST-to-HIR lowering.
+//
+// Note: Due to blood-rust module system limitations with overlapping
+// imports, this module uses a minimal import strategy. Types from
+// hir_def and hir_ty are accessed through hir_item where needed.
+
+mod common;
+mod hir_def;
+mod hir_ty;
+
+// ============================================================
+// Crate
+// ============================================================
+
+/// The HIR representation of a crate (compilation unit).
+///
+/// Contains all items and bodies with their DefIds/BodyIds as keys.
+pub struct Crate {
+    /// The entry point (main function) if present.
+    pub entry: Option<hir_def::DefId>,
+    /// The root module DefId.
+    pub root_module: hir_def::DefId,
+    /// Number of items.
+    pub item_count: u32,
+    /// Number of bodies.
+    pub body_count: u32,
+}
+
+impl Crate {
+    /// Creates an empty crate.
+    pub fn new(root_module: hir_def::DefId) -> Crate {
+        Crate {
+            entry: None,
+            root_module: root_module,
+            item_count: 0,
+            body_count: 0,
+        }
+    }
+}
+
+// ============================================================
+// Lowering Context Types
+// ============================================================
+
+/// Context for lowering AST to HIR.
+///
+/// Note: Methods that modify Vec fields are omitted due to
+/// blood-rust Vec<T> type inference limitations.
+pub struct LoweringContext {
+    /// Counter for allocating DefIds.
+    pub next_def_id: u32,
+    /// Counter for allocating BodyIds.
+    pub next_body_id: u32,
+    /// Counter for allocating LocalIds.
+    pub next_local_id: u32,
+    /// Counter for allocating type variables.
+    pub next_ty_var: u32,
+}
+
+impl LoweringContext {
+    /// Creates a new lowering context.
+    pub fn new() -> LoweringContext {
+        LoweringContext {
+            next_def_id: 0,
+            next_body_id: 0,
+            next_local_id: 0,
+            next_ty_var: 0,
+        }
+    }
+
+    /// Allocates a fresh DefId.
+    pub fn alloc_def_id(self: &mut Self) -> hir_def::DefId {
+        let id = hir_def::DefId::new(self.next_def_id);
+        self.next_def_id = self.next_def_id + 1;
+        id
+    }
+
+    /// Allocates a fresh BodyId.
+    pub fn alloc_body_id(self: &mut Self) -> hir_def::BodyId {
+        let id = hir_def::BodyId::new(self.next_body_id);
+        self.next_body_id = self.next_body_id + 1;
+        id
+    }
+
+    /// Allocates a fresh LocalId.
+    pub fn alloc_local_id(self: &mut Self) -> hir_def::LocalId {
+        let id = hir_def::LocalId::new(self.next_local_id);
+        self.next_local_id = self.next_local_id + 1;
+        id
+    }
+
+    /// Allocates a fresh TyVarId.
+    pub fn alloc_ty_var(self: &mut Self) -> hir_def::TyVarId {
+        let id = hir_def::TyVarId::new(self.next_ty_var);
+        self.next_ty_var = self.next_ty_var + 1;
+        id
+    }
+
+    /// Resets LocalId counter (for new function bodies).
+    pub fn reset_local_ids(self: &mut Self) {
+        self.next_local_id = 0;
+    }
+}
+
+// ============================================================
+// Diagnostics
+// ============================================================
+
+/// A diagnostic message (error, warning, note).
+pub struct Diagnostic {
+    /// The severity level.
+    pub level: DiagnosticLevel,
+    /// The error/warning code.
+    pub code: DiagnosticCode,
+    /// The main message.
+    pub message: String,
+    /// The primary span.
+    pub span: common::Span,
+}
+
+impl Diagnostic {
+    /// Creates a new error diagnostic.
+    pub fn error(code: DiagnosticCode, message: String, span: common::Span) -> Diagnostic {
+        Diagnostic {
+            level: DiagnosticLevel::Error,
+            code: code,
+            message: message,
+            span: span,
+        }
+    }
+
+    /// Creates a new warning diagnostic.
+    pub fn warning(code: DiagnosticCode, message: String, span: common::Span) -> Diagnostic {
+        Diagnostic {
+            level: DiagnosticLevel::Warning,
+            code: code,
+            message: message,
+            span: span,
+        }
+    }
+}
+
+/// The severity level of a diagnostic.
+pub enum DiagnosticLevel {
+    /// An error that prevents compilation.
+    Error,
+    /// A warning that doesn't prevent compilation.
+    Warning,
+    /// A note providing additional information.
+    Note,
+    /// A help message.
+    Help,
+}
+
+/// Diagnostic error codes.
+pub enum DiagnosticCode {
+    // Name resolution errors (E01xx)
+    E0100,  // Name not found
+    E0101,  // Duplicate definition
+    E0102,  // Private item access
+    E0103,  // Import not found
+    E0104,  // Circular import
+
+    // Type errors (E02xx)
+    E0200,  // Type mismatch
+    E0201,  // Cannot infer type
+    E0202,  // Invalid cast
+    E0203,  // Missing trait implementation
+    E0204,  // Type parameter bound not satisfied
+    E0205,  // Invalid use of never type
+    E0206,  // Recursive type without indirection
+
+    // Expression errors (E03xx)
+    E0300,  // Invalid lvalue
+    E0301,  // Cannot mutate immutable
+    E0302,  // Invalid break/continue
+    E0303,  // Missing return value
+    E0304,  // Unreachable code
+    E0305,  // Invalid method call
+
+    // Pattern errors (E04xx)
+    E0400,  // Non-exhaustive patterns
+    E0401,  // Unreachable pattern
+    E0402,  // Invalid pattern for type
+    E0403,  // Binding in or-pattern
+
+    // Effect errors (E05xx)
+    E0500,  // Unhandled effect
+    E0501,  // Effect not in scope
+    E0502,  // Invalid resume
+    E0503,  // Handler type mismatch
+
+    // Borrow checker errors (E06xx)
+    E0600,  // Use after move
+    E0601,  // Cannot borrow as mutable
+    E0602,  // Borrow conflict
+    E0603,  // Lifetime mismatch
+    E0604,  // Dangling reference
+
+    // Internal errors (E09xx)
+    E0900,  // Internal compiler error
+}
+
+/// A label in a diagnostic pointing to a span.
+pub struct DiagnosticLabel {
+    /// The span this label points to.
+    pub span: common::Span,
+    /// The label text.
+    pub message: String,
+    /// Whether this is the primary label.
+    pub is_primary: bool,
+}
+
+impl DiagnosticLabel {
+    /// Creates a primary label.
+    pub fn primary(span: common::Span, message: String) -> DiagnosticLabel {
+        DiagnosticLabel {
+            span: span,
+            message: message,
+            is_primary: true,
+        }
+    }
+
+    /// Creates a secondary label.
+    pub fn secondary(span: common::Span, message: String) -> DiagnosticLabel {
+        DiagnosticLabel {
+            span: span,
+            message: message,
+            is_primary: false,
+        }
+    }
+}
+
+/// A suggested fix for a diagnostic.
+pub struct Suggestion {
+    /// Description of the suggestion.
+    pub message: String,
+    /// The span to replace.
+    pub span: common::Span,
+    /// The replacement text.
+    pub replacement: String,
+    /// How applicable this suggestion is.
+    pub applicability: Applicability,
+}
+
+impl Suggestion {
+    /// Creates a new suggestion.
+    pub fn new(
+        message: String,
+        span: common::Span,
+        replacement: String,
+        applicability: Applicability,
+    ) -> Suggestion {
+        Suggestion {
+            message: message,
+            span: span,
+            replacement: replacement,
+            applicability: applicability,
+        }
+    }
+}
+
+/// How applicable a suggestion is.
+pub enum Applicability {
+    /// Can be applied automatically.
+    MachineApplicable,
+    /// Might need human review.
+    MaybeIncorrect,
+    /// Contains placeholders.
+    HasPlaceholders,
+    /// For reference only.
+    Unspecified,
+}
+
+// ============================================================
+// Source Map
+// ============================================================
+
+/// Information about a source file.
+pub struct SourceFile {
+    /// The file path.
+    pub path: String,
+    /// The source content.
+    pub source: String,
+}
+
+impl SourceFile {
+    /// Creates a new source file.
+    pub fn new(path: String, source: String) -> SourceFile {
+        SourceFile {
+            path: path,
+            source: source,
+        }
+    }
+}
+
+// ============================================================
+// HIR Visitor Trait Types
+// ============================================================
+
+/// Result of visiting an HIR node.
+pub enum VisitResult {
+    /// Continue visiting children.
+    Continue,
+    /// Skip children but continue siblings.
+    SkipChildren,
+    /// Stop visiting entirely.
+    Stop,
+}
+
+/// Direction of traversal.
+pub enum TraversalOrder {
+    /// Visit parent before children.
+    PreOrder,
+    /// Visit children before parent.
+    PostOrder,
+}

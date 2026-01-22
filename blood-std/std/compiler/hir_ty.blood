@@ -1,0 +1,402 @@
+// Blood Self-Hosted Compiler - HIR Type System
+//
+// This module defines the type representation used in the HIR. Types here
+// are semantic types used for type checking, distinct from the syntactic
+// types in the AST.
+
+mod common;
+mod hir_def;
+
+// ============================================================
+// Type Structure
+// ============================================================
+
+/// A semantic type in the HIR.
+///
+/// Types store their kind directly, with Box used only for recursive
+/// references within TypeKind variants.
+pub struct Type {
+    /// The kind of type this represents.
+    pub kind: TypeKind,
+}
+
+impl Type {
+    /// Creates a new type with the given kind.
+    pub fn new(kind: TypeKind) -> Type {
+        Type { kind }
+    }
+
+    /// Creates an error type for error recovery.
+    pub fn error() -> Type {
+        Type::new(TypeKind::Error)
+    }
+
+    /// Creates a never type (!).
+    pub fn never() -> Type {
+        Type::new(TypeKind::Never)
+    }
+
+    /// Creates a unit type ().
+    pub fn unit() -> Type {
+        Type::new(TypeKind::Tuple(Vec::new()))
+    }
+
+    /// Creates a boolean type.
+    pub fn bool_ty() -> Type {
+        Type::new(TypeKind::Primitive(PrimitiveTy::Bool))
+    }
+
+    /// Creates an i32 type.
+    pub fn i32_ty() -> Type {
+        Type::new(TypeKind::Primitive(PrimitiveTy::I32))
+    }
+
+    /// Creates a u8 type.
+    pub fn u8_ty() -> Type {
+        Type::new(TypeKind::Primitive(PrimitiveTy::U8))
+    }
+
+    /// Creates a usize type.
+    pub fn usize_ty() -> Type {
+        Type::new(TypeKind::Primitive(PrimitiveTy::Usize))
+    }
+
+    /// Creates a str type.
+    pub fn str_ty() -> Type {
+        Type::new(TypeKind::Primitive(PrimitiveTy::Str))
+    }
+
+    /// Creates an inference variable type.
+    pub fn infer(var_id: hir_def::TyVarId) -> Type {
+        Type::new(TypeKind::Infer(var_id))
+    }
+
+    /// Creates a type parameter type.
+    pub fn param(var_id: hir_def::TyVarId) -> Type {
+        Type::new(TypeKind::Param(var_id))
+    }
+}
+
+// ============================================================
+// Type Kind
+// ============================================================
+
+/// The kind of a type.
+pub enum TypeKind {
+    /// A primitive type (i32, bool, char, etc.)
+    Primitive(PrimitiveTy),
+    /// A tuple type: (T1, T2, ...)
+    Tuple(Vec<Type>),
+    /// An array type: [T; N]
+    Array {
+        element: Box<Type>,
+        size: u64,
+    },
+    /// A slice type: [T]
+    Slice {
+        element: Box<Type>,
+    },
+    /// A reference type: &T or &mut T
+    Ref {
+        inner: Box<Type>,
+        mutable: bool,
+    },
+    /// A raw pointer type: *const T or *mut T
+    Ptr {
+        inner: Box<Type>,
+        mutable: bool,
+    },
+    /// A function type: fn(T1, T2) -> R / effects
+    Fn {
+        params: Vec<Type>,
+        ret: Box<Type>,
+        effects: EffectRow,
+    },
+    /// An algebraic data type (struct, enum): Name<T1, T2>
+    Adt {
+        def_id: hir_def::DefId,
+        args: Vec<Type>,
+    },
+    /// A type inference variable (to be resolved during type checking)
+    Infer(hir_def::TyVarId),
+    /// A type parameter (generic type variable)
+    Param(hir_def::TyVarId),
+    /// An extensible record type: { field: T, ... | r }
+    Record {
+        fields: Vec<RecordField>,
+        row_var: Option<hir_def::RecordRowVarId>,
+    },
+    /// The never type (!)
+    Never,
+    /// An error type (used for error recovery)
+    Error,
+}
+
+// ============================================================
+// Primitive Types
+// ============================================================
+
+/// Primitive types built into the language.
+pub enum PrimitiveTy {
+    /// Boolean type
+    Bool,
+    /// 8-bit signed integer
+    I8,
+    /// 16-bit signed integer
+    I16,
+    /// 32-bit signed integer
+    I32,
+    /// 64-bit signed integer
+    I64,
+    /// 128-bit signed integer
+    I128,
+    /// Pointer-sized signed integer
+    Isize,
+    /// 8-bit unsigned integer
+    U8,
+    /// 16-bit unsigned integer
+    U16,
+    /// 32-bit unsigned integer
+    U32,
+    /// 64-bit unsigned integer
+    U64,
+    /// 128-bit unsigned integer
+    U128,
+    /// Pointer-sized unsigned integer
+    Usize,
+    /// 32-bit floating point
+    F32,
+    /// 64-bit floating point
+    F64,
+    /// Character type
+    Char,
+    /// String slice type (str)
+    Str,
+}
+
+// ============================================================
+// Record Fields
+// ============================================================
+
+/// A field in a record type.
+pub struct RecordField {
+    /// The name of the field (as a symbol).
+    pub name: common::Symbol,
+    /// The type of the field.
+    pub ty: Type,
+}
+
+impl RecordField {
+    /// Creates a new record field.
+    pub fn new(name: common::Symbol, ty: Type) -> RecordField {
+        RecordField { name, ty }
+    }
+}
+
+// ============================================================
+// Effect System Types
+// ============================================================
+
+/// An effect row representing the effects a computation may perform.
+///
+/// Effect rows support row polymorphism through an optional row variable,
+/// allowing functions to be polymorphic over additional effects.
+pub struct EffectRow {
+    /// The known effects in this row.
+    pub effects: Vec<EffectRef>,
+    /// An optional row variable for polymorphism.
+    pub row_var: Option<hir_def::EffectRowVarId>,
+}
+
+impl EffectRow {
+    /// Creates an empty (pure) effect row.
+    pub fn empty() -> EffectRow {
+        EffectRow { effects: Vec::new(), row_var: None }
+    }
+
+    /// Creates an effect row with the given effects.
+    pub fn with_effects(effects: Vec<EffectRef>) -> EffectRow {
+        EffectRow { effects, row_var: None }
+    }
+
+    /// Creates a polymorphic effect row.
+    pub fn polymorphic(row_var: hir_def::EffectRowVarId) -> EffectRow {
+        EffectRow { effects: Vec::new(), row_var: Some(row_var) }
+    }
+
+    /// Returns true if this is a pure (empty) effect row.
+    pub fn is_empty(self: &EffectRow) -> bool {
+        self.effects.len() == 0 && self.row_var.is_none()
+    }
+}
+
+/// A reference to an effect definition.
+pub struct EffectRef {
+    /// The DefId of the effect.
+    pub def_id: hir_def::DefId,
+    /// Type arguments if the effect is generic.
+    pub args: Vec<Type>,
+}
+
+impl EffectRef {
+    /// Creates a new effect reference.
+    pub fn new(def_id: hir_def::DefId, args: Vec<Type>) -> EffectRef {
+        EffectRef { def_id, args }
+    }
+
+    /// Creates an effect reference with no type arguments.
+    pub fn simple(def_id: hir_def::DefId) -> EffectRef {
+        EffectRef { def_id, args: Vec::new() }
+    }
+}
+
+// ============================================================
+// Generics
+// ============================================================
+
+/// Generic parameters for a definition.
+pub struct Generics {
+    /// The generic parameters.
+    pub params: Vec<GenericParam>,
+    /// Where clause predicates.
+    pub where_predicates: Vec<WherePredicate>,
+}
+
+impl Generics {
+    /// Creates empty generics.
+    pub fn empty() -> Generics {
+        Generics { params: Vec::new(), where_predicates: Vec::new() }
+    }
+
+    /// Creates generics with the given parameters.
+    pub fn with_params(params: Vec<GenericParam>) -> Generics {
+        Generics { params, where_predicates: Vec::new() }
+    }
+
+    /// Returns true if there are no generic parameters.
+    pub fn is_empty(self: &Generics) -> bool {
+        self.params.len() == 0
+    }
+}
+
+/// A generic parameter.
+pub enum GenericParam {
+    /// A type parameter: T
+    TypeParam(TypeParamDef),
+    /// A lifetime parameter: 'a
+    LifetimeParam(LifetimeParamDef),
+    /// A const generic parameter: const N: usize
+    ConstParam(ConstParamDef),
+}
+
+/// A type parameter definition.
+pub struct TypeParamDef {
+    /// The name of the type parameter.
+    pub name: common::Symbol,
+    /// The TyVarId assigned to this parameter.
+    pub var_id: hir_def::TyVarId,
+    /// Default type (if any).
+    pub default_ty: Option<Type>,
+    /// Span where this parameter was declared.
+    pub span: common::Span,
+}
+
+impl TypeParamDef {
+    /// Creates a new type parameter definition.
+    pub fn new(name: common::Symbol, var_id: hir_def::TyVarId, span: common::Span) -> TypeParamDef {
+        TypeParamDef { name, var_id, default_ty: None, span }
+    }
+}
+
+/// A lifetime parameter definition.
+pub struct LifetimeParamDef {
+    /// The name of the lifetime (without the leading ').
+    pub name: common::Symbol,
+    /// Span where this parameter was declared.
+    pub span: common::Span,
+}
+
+impl LifetimeParamDef {
+    /// Creates a new lifetime parameter definition.
+    pub fn new(name: common::Symbol, span: common::Span) -> LifetimeParamDef {
+        LifetimeParamDef { name, span }
+    }
+}
+
+/// A const generic parameter definition.
+pub struct ConstParamDef {
+    /// The name of the const parameter.
+    pub name: common::Symbol,
+    /// The type of the const parameter.
+    pub ty: Type,
+    /// Span where this parameter was declared.
+    pub span: common::Span,
+}
+
+impl ConstParamDef {
+    /// Creates a new const parameter definition.
+    pub fn new(name: common::Symbol, ty: Type, span: common::Span) -> ConstParamDef {
+        ConstParamDef { name, ty, span }
+    }
+}
+
+/// A where clause predicate.
+pub enum WherePredicate {
+    /// A type bound: T: Trait
+    TypeBound {
+        ty: Type,
+        bounds: Vec<TraitRef>,
+        span: common::Span,
+    },
+    /// A lifetime bound: 'a: 'b
+    LifetimeBound {
+        lifetime: common::Symbol,
+        bound: common::Symbol,
+        span: common::Span,
+    },
+    /// An effect bound: E: EffectSet
+    EffectBound {
+        effect_var: hir_def::EffectRowVarId,
+        bounds: Vec<EffectRef>,
+        span: common::Span,
+    },
+}
+
+/// A reference to a trait.
+pub struct TraitRef {
+    /// The DefId of the trait.
+    pub def_id: hir_def::DefId,
+    /// Type arguments for the trait.
+    pub args: Vec<Type>,
+    /// Span of this trait reference.
+    pub span: common::Span,
+}
+
+impl TraitRef {
+    /// Creates a new trait reference.
+    pub fn new(def_id: hir_def::DefId, args: Vec<Type>, span: common::Span) -> TraitRef {
+        TraitRef { def_id, args, span }
+    }
+}
+
+// ============================================================
+// Function Effect Annotation
+// ============================================================
+
+/// An effect annotation on a function type.
+///
+/// This represents effects declared in function signatures like:
+/// `fn foo() -> i32 / IO + State`
+pub struct FnEffect {
+    /// The effect reference.
+    pub eff_ref: EffectRef,
+    /// The span of this effect in the source.
+    pub span: common::Span,
+}
+
+impl FnEffect {
+    /// Creates a new function effect annotation.
+    pub fn new(eff_ref: EffectRef, span: common::Span) -> FnEffect {
+        FnEffect { eff_ref, span }
+    }
+}

@@ -1,0 +1,504 @@
+// Blood Self-Hosted Compiler - Type Checking
+//
+// This module implements type checking and inference for the HIR.
+// Type checking validates that expressions have compatible types and
+// infers types where they are not explicitly annotated.
+//
+// Note: Due to blood-rust limitations with Vec<T> type inference on
+// struct field operations, the full type checking implementation is
+// deferred. This module defines the types and structures needed.
+
+mod common;
+mod hir_def;
+mod hir_ty;
+mod unify;
+
+// ============================================================
+// Type Context
+// ============================================================
+
+/// The context for type checking a function or closure.
+///
+/// Note: Methods that modify Vec fields are omitted due to blood-rust
+/// limitations. The actual type checking implementation will be added
+/// when the compiler supports this pattern.
+pub struct TypeContext {
+    /// Counter for generating fresh type variables.
+    pub next_ty_var: u32,
+    /// The expected return type of the current function.
+    pub return_ty: Option<hir_ty::Type>,
+    /// The current function's DefId.
+    pub current_fn: Option<hir_def::DefId>,
+    /// Whether we're in a loop (for break/continue checking).
+    pub in_loop: bool,
+    /// The type of the current loop (for break value checking).
+    pub loop_ty: Option<hir_ty::Type>,
+}
+
+impl TypeContext {
+    /// Creates a new type context.
+    pub fn new() -> TypeContext {
+        TypeContext {
+            next_ty_var: 0,
+            return_ty: None,
+            current_fn: None,
+            in_loop: false,
+            loop_ty: None,
+        }
+    }
+
+    /// Generates a fresh type variable.
+    pub fn fresh_ty_var(self: &mut Self) -> hir_def::TyVarId {
+        let id = hir_def::TyVarId::new(self.next_ty_var);
+        self.next_ty_var = self.next_ty_var + 1;
+        id
+    }
+
+    /// Creates a fresh inference type.
+    pub fn fresh_infer(self: &mut Self) -> hir_ty::Type {
+        hir_ty::Type::infer(self.fresh_ty_var())
+    }
+
+    /// Sets the return type for the current function.
+    pub fn set_return_ty(self: &mut Self, ty: hir_ty::Type) {
+        self.return_ty = Some(ty);
+    }
+
+    /// Enters a loop context.
+    pub fn enter_loop(self: &mut Self, ty: hir_ty::Type) {
+        self.in_loop = true;
+        self.loop_ty = Some(ty);
+    }
+
+    /// Exits a loop context.
+    pub fn exit_loop(self: &mut Self) {
+        self.in_loop = false;
+        self.loop_ty = None;
+    }
+}
+
+// ============================================================
+// Type Error
+// ============================================================
+
+/// A type checking error.
+pub struct TypeError {
+    /// The kind of type error.
+    pub kind: TypeErrorKind,
+    /// The span where the error occurred.
+    pub span: common::Span,
+    /// Additional notes for the error.
+    pub notes: Vec<TypeNote>,
+}
+
+impl TypeError {
+    /// Creates a new type error.
+    pub fn new(kind: TypeErrorKind, span: common::Span) -> TypeError {
+        TypeError {
+            kind: kind,
+            span: span,
+            notes: Vec::new(),
+        }
+    }
+
+    /// Creates a type mismatch error.
+    pub fn mismatch(span: common::Span) -> TypeError {
+        TypeError::new(TypeErrorKind::TypeMismatch, span)
+    }
+
+    /// Creates an undefined variable error.
+    pub fn undefined(span: common::Span) -> TypeError {
+        TypeError::new(TypeErrorKind::UndefinedVariable, span)
+    }
+
+    /// Creates an invalid call error.
+    pub fn not_callable(span: common::Span) -> TypeError {
+        TypeError::new(TypeErrorKind::NotCallable, span)
+    }
+}
+
+/// The kind of type error.
+pub enum TypeErrorKind {
+    /// Types don't match.
+    TypeMismatch,
+    /// Cannot infer type.
+    CannotInfer,
+    /// Undefined variable.
+    UndefinedVariable,
+    /// Undefined function.
+    UndefinedFunction,
+    /// Wrong number of arguments.
+    ArityMismatch,
+    /// Expression is not callable.
+    NotCallable,
+    /// Expression is not indexable.
+    NotIndexable,
+    /// Field does not exist.
+    NoSuchField,
+    /// Method does not exist.
+    NoSuchMethod,
+    /// Cannot mutate immutable.
+    CannotMutate,
+    /// Invalid assignment target.
+    InvalidLValue,
+    /// Missing return value.
+    MissingReturn,
+    /// Type does not implement trait.
+    TraitNotImplemented,
+    /// Effect not handled.
+    UnhandledEffect,
+    /// Invalid break/continue.
+    InvalidControl,
+    /// Pattern type mismatch.
+    PatternMismatch,
+    /// Non-exhaustive patterns.
+    NonExhaustive,
+    /// Recursive type without indirection.
+    InfiniteType,
+    /// Invalid cast.
+    InvalidCast,
+}
+
+/// A note attached to a type error.
+pub struct TypeNote {
+    /// The note message.
+    pub message: String,
+    /// Optional span for the note.
+    pub span: Option<common::Span>,
+}
+
+impl TypeNote {
+    /// Creates a new type note.
+    pub fn new(message: String) -> TypeNote {
+        TypeNote {
+            message: message,
+            span: None,
+        }
+    }
+
+    /// Creates a type note with a span.
+    pub fn with_span(message: String, span: common::Span) -> TypeNote {
+        TypeNote {
+            message: message,
+            span: Some(span),
+        }
+    }
+}
+
+// ============================================================
+// Type Information
+// ============================================================
+
+/// Information about a struct for type checking.
+pub struct StructInfo {
+    /// The DefId of the struct.
+    pub def_id: hir_def::DefId,
+    /// The name of the struct.
+    pub name: common::Symbol,
+    /// Number of generic parameters.
+    pub num_generics: u32,
+    /// Field names (in order).
+    pub field_names: Vec<common::Symbol>,
+}
+
+impl StructInfo {
+    /// Creates new struct info.
+    pub fn new(
+        def_id: hir_def::DefId,
+        name: common::Symbol,
+        num_generics: u32,
+        field_names: Vec<common::Symbol>,
+    ) -> StructInfo {
+        StructInfo {
+            def_id: def_id,
+            name: name,
+            num_generics: num_generics,
+            field_names: field_names,
+        }
+    }
+}
+
+/// Information about an enum for type checking.
+pub struct EnumInfo {
+    /// The DefId of the enum.
+    pub def_id: hir_def::DefId,
+    /// The name of the enum.
+    pub name: common::Symbol,
+    /// Number of generic parameters.
+    pub num_generics: u32,
+    /// Variant names (in order).
+    pub variant_names: Vec<common::Symbol>,
+}
+
+impl EnumInfo {
+    /// Creates new enum info.
+    pub fn new(
+        def_id: hir_def::DefId,
+        name: common::Symbol,
+        num_generics: u32,
+        variant_names: Vec<common::Symbol>,
+    ) -> EnumInfo {
+        EnumInfo {
+            def_id: def_id,
+            name: name,
+            num_generics: num_generics,
+            variant_names: variant_names,
+        }
+    }
+}
+
+/// Information about a function for type checking.
+pub struct FnInfo {
+    /// The DefId of the function.
+    pub def_id: hir_def::DefId,
+    /// The name of the function.
+    pub name: common::Symbol,
+    /// Number of generic parameters.
+    pub num_generics: u32,
+    /// Number of parameters.
+    pub num_params: u32,
+    /// Whether the function is const.
+    pub is_const: bool,
+    /// Whether the function is unsafe.
+    pub is_unsafe: bool,
+}
+
+impl FnInfo {
+    /// Creates new function info.
+    pub fn new(
+        def_id: hir_def::DefId,
+        name: common::Symbol,
+        num_generics: u32,
+        num_params: u32,
+        is_const: bool,
+        is_unsafe: bool,
+    ) -> FnInfo {
+        FnInfo {
+            def_id: def_id,
+            name: name,
+            num_generics: num_generics,
+            num_params: num_params,
+            is_const: is_const,
+            is_unsafe: is_unsafe,
+        }
+    }
+}
+
+/// Information about an effect for type checking.
+pub struct EffectInfo {
+    /// The DefId of the effect.
+    pub def_id: hir_def::DefId,
+    /// The name of the effect.
+    pub name: common::Symbol,
+    /// Number of generic parameters.
+    pub num_generics: u32,
+    /// Operation names.
+    pub op_names: Vec<common::Symbol>,
+}
+
+impl EffectInfo {
+    /// Creates new effect info.
+    pub fn new(
+        def_id: hir_def::DefId,
+        name: common::Symbol,
+        num_generics: u32,
+        op_names: Vec<common::Symbol>,
+    ) -> EffectInfo {
+        EffectInfo {
+            def_id: def_id,
+            name: name,
+            num_generics: num_generics,
+            op_names: op_names,
+        }
+    }
+}
+
+// ============================================================
+// Type Checking Mode
+// ============================================================
+
+/// The mode for type checking an expression.
+pub enum CheckMode {
+    /// Infer the type (no expectation).
+    Infer,
+    /// Check against an expected type.
+    Check(hir_ty::Type),
+    /// Coerce to an expected type (allows implicit conversions).
+    Coerce(hir_ty::Type),
+}
+
+impl CheckMode {
+    /// Creates an inference mode.
+    pub fn infer() -> CheckMode {
+        CheckMode::Infer
+    }
+
+    /// Creates a checking mode with the given expected type.
+    pub fn check(ty: hir_ty::Type) -> CheckMode {
+        CheckMode::Check(ty)
+    }
+
+    /// Creates a coercion mode with the given target type.
+    pub fn coerce(ty: hir_ty::Type) -> CheckMode {
+        CheckMode::Coerce(ty)
+    }
+}
+
+// ============================================================
+// Coercion
+// ============================================================
+
+/// A type coercion.
+pub enum Coercion {
+    /// No coercion needed.
+    None,
+    /// Dereference coercion: &T -> &U where T: Deref<Target=U>
+    Deref,
+    /// Reference coercion: &T -> &U where T <: U
+    RefCoerce,
+    /// Unsizing coercion: [T; N] -> [T], Sized -> ?Sized
+    Unsize,
+    /// Function pointer coercion: fn item -> fn pointer
+    FnPointer,
+    /// Closure coercion: closure -> fn pointer (when captures empty)
+    ClosureToFnPtr,
+    /// Never coercion: ! -> T
+    NeverToAny,
+}
+
+/// Result of attempting a coercion.
+pub enum CoercionResult {
+    /// Coercion succeeded.
+    Ok(Coercion),
+    /// Coercion failed.
+    Err,
+}
+
+// ============================================================
+// Exhaustiveness Checking
+// ============================================================
+
+/// A witness for non-exhaustiveness (a pattern not covered).
+pub struct Witness {
+    /// The pattern that isn't covered.
+    pub description: String,
+}
+
+impl Witness {
+    /// Creates a new witness.
+    pub fn new(description: String) -> Witness {
+        Witness {
+            description: description,
+        }
+    }
+}
+
+/// Result of exhaustiveness checking.
+pub enum ExhaustivenessResult {
+    /// Patterns are exhaustive.
+    Exhaustive,
+    /// Patterns are not exhaustive, with witnesses.
+    NonExhaustive(Vec<Witness>),
+}
+
+// ============================================================
+// Type Checking Results
+// ============================================================
+
+/// Result of type checking a single item.
+pub enum ItemCheckResult {
+    /// Type checking succeeded.
+    Ok,
+    /// Type checking failed with errors.
+    Err,
+}
+
+/// Result of type checking a crate.
+pub struct CrateCheckResult {
+    /// Whether type checking succeeded overall.
+    pub success: bool,
+    /// Number of errors.
+    pub error_count: u32,
+    /// Number of warnings.
+    pub warning_count: u32,
+}
+
+impl CrateCheckResult {
+    /// Creates a successful result.
+    pub fn ok() -> CrateCheckResult {
+        CrateCheckResult {
+            success: true,
+            error_count: 0,
+            warning_count: 0,
+        }
+    }
+
+    /// Creates a failed result.
+    pub fn failed(error_count: u32) -> CrateCheckResult {
+        CrateCheckResult {
+            success: false,
+            error_count: error_count,
+            warning_count: 0,
+        }
+    }
+}
+
+// ============================================================
+// Obligation
+// ============================================================
+
+/// A trait obligation that needs to be resolved.
+pub struct Obligation {
+    /// The predicate (trait bound) that must hold.
+    pub predicate: Predicate,
+    /// The span where this obligation was created.
+    pub span: common::Span,
+    /// The cause of this obligation.
+    pub cause: ObligationCause,
+}
+
+impl Obligation {
+    /// Creates a new obligation.
+    pub fn new(predicate: Predicate, span: common::Span, cause: ObligationCause) -> Obligation {
+        Obligation {
+            predicate: predicate,
+            span: span,
+            cause: cause,
+        }
+    }
+}
+
+/// A predicate that must be satisfied.
+pub enum Predicate {
+    /// A trait bound: T: Trait
+    Trait(hir_ty::TraitRef),
+    /// A type equality: T == U
+    TypeEqual {
+        left: hir_ty::Type,
+        right: hir_ty::Type,
+    },
+    /// A well-formed type: WF(T)
+    WellFormed(hir_ty::Type),
+}
+
+/// The cause of an obligation.
+pub enum ObligationCause {
+    /// From an explicit where clause.
+    WhereClause,
+    /// From a function argument type.
+    FnArgument,
+    /// From a function return type.
+    FnReturn,
+    /// From a struct field.
+    FieldType,
+    /// From a method call.
+    MethodCall,
+    /// From an operator.
+    Operator,
+    /// From a cast.
+    Cast,
+    /// From type coercion.
+    Coercion,
+    /// From pattern matching.
+    Pattern,
+}

@@ -1,0 +1,605 @@
+// Blood Self-Hosted Compiler - HIR Expressions
+//
+// This module defines the HIR representation of expressions, patterns,
+// statements, and function bodies.
+//
+// HIR expressions differ from AST expressions in that:
+// - Names are resolved to DefIds or LocalIds
+// - Types are attached to expressions and patterns
+// - Some syntactic sugar is desugared
+
+mod common;
+mod hir_def;
+mod hir_ty;
+
+// ============================================================
+// Body
+// ============================================================
+
+/// A function or closure body.
+///
+/// Bodies contain the local variables and the body expression.
+/// The first `param_count` locals are the function parameters.
+pub struct Body {
+    /// The BodyId of this body.
+    pub id: hir_def::BodyId,
+    /// Local variable declarations.
+    pub locals: Vec<Local>,
+    /// Number of parameters (first N locals are params).
+    pub param_count: u32,
+    /// The body expression.
+    pub expr: Expr,
+}
+
+impl Body {
+    /// Creates a new body.
+    pub fn new(id: hir_def::BodyId, locals: Vec<Local>, param_count: u32, expr: Expr) -> Body {
+        Body { id, locals, param_count, expr }
+    }
+}
+
+/// A local variable declaration.
+pub struct Local {
+    /// The LocalId of this local.
+    pub id: hir_def::LocalId,
+    /// The name of this local.
+    pub name: common::SpannedSymbol,
+    /// The type of this local.
+    pub ty: hir_ty::Type,
+    /// Whether this local is mutable.
+    pub mutable: bool,
+    /// Span of the declaration.
+    pub span: common::Span,
+}
+
+impl Local {
+    /// Creates a new local.
+    pub fn new(
+        id: hir_def::LocalId,
+        name: common::SpannedSymbol,
+        ty: hir_ty::Type,
+        mutable: bool,
+        span: common::Span,
+    ) -> Local {
+        Local { id, name, ty, mutable, span }
+    }
+}
+
+// ============================================================
+// Expression
+// ============================================================
+
+/// An expression in the HIR.
+pub struct Expr {
+    /// The kind of expression.
+    pub kind: ExprKind,
+    /// The type of this expression (may be inferred).
+    pub ty: hir_ty::Type,
+    /// Span of this expression.
+    pub span: common::Span,
+}
+
+impl Expr {
+    /// Creates a new expression.
+    pub fn new(kind: ExprKind, ty: hir_ty::Type, span: common::Span) -> Expr {
+        Expr { kind, ty, span }
+    }
+
+    /// Creates an error expression for error recovery.
+    pub fn error(span: common::Span) -> Expr {
+        Expr {
+            kind: ExprKind::Error,
+            ty: hir_ty::Type::error(),
+            span,
+        }
+    }
+}
+
+/// The kind of an expression.
+pub enum ExprKind {
+    /// A literal value.
+    Literal(Literal),
+    /// A reference to a local variable.
+    Local(hir_def::LocalId),
+    /// A reference to a definition (function, const, static, etc.).
+    Path(hir_def::ResolvedPath),
+    /// A binary operation.
+    Binary {
+        op: common::BinOp,
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
+    /// A unary operation.
+    Unary {
+        op: common::UnaryOp,
+        operand: Box<Expr>,
+    },
+    /// A function call.
+    Call {
+        callee: Box<Expr>,
+        args: Vec<Expr>,
+    },
+    /// A method call.
+    MethodCall {
+        receiver: Box<Expr>,
+        method: common::SpannedSymbol,
+        method_def: Option<hir_def::DefId>,
+        type_args: Vec<hir_ty::Type>,
+        args: Vec<Expr>,
+    },
+    /// Field access.
+    Field {
+        base: Box<Expr>,
+        field: FieldAccess,
+    },
+    /// Index operation (a[i]).
+    Index {
+        base: Box<Expr>,
+        idx: Box<Expr>,
+    },
+    /// A tuple expression.
+    Tuple(Vec<Expr>),
+    /// An array expression.
+    Array(ArrayExpr),
+    /// A struct/record construction.
+    Struct {
+        path: hir_def::ResolvedPath,
+        fields: Vec<FieldExpr>,
+        base: Option<Box<Expr>>,
+    },
+    /// A range expression.
+    Range {
+        start: Option<Box<Expr>>,
+        end_val: Option<Box<Expr>>,
+        inclusive: bool,
+    },
+    /// A type cast.
+    Cast {
+        expr: Box<Expr>,
+        ty: hir_ty::Type,
+    },
+    /// An assignment.
+    Assign {
+        target: Box<Expr>,
+        val: Box<Expr>,
+    },
+    /// A compound assignment (+=, -=, etc.).
+    AssignOp {
+        op: common::BinOp,
+        target: Box<Expr>,
+        val: Box<Expr>,
+    },
+    /// An address-of expression (&x or &mut x).
+    AddrOf {
+        mutable: bool,
+        expr: Box<Expr>,
+    },
+    /// A block expression.
+    Block(Block),
+    /// An if expression.
+    If {
+        condition: Box<Expr>,
+        then_branch: Box<Expr>,
+        else_branch: Option<Box<Expr>>,
+    },
+    /// A match expression.
+    Match {
+        scrutinee: Box<Expr>,
+        arms: Vec<MatchArm>,
+    },
+    /// An infinite loop.
+    Loop {
+        label: Option<common::Symbol>,
+        body: Box<Expr>,
+    },
+    /// A return expression.
+    Return(Option<Box<Expr>>),
+    /// A break expression.
+    Break {
+        label: Option<common::Symbol>,
+        val: Option<Box<Expr>>,
+    },
+    /// A continue expression.
+    Continue {
+        label: Option<common::Symbol>,
+    },
+    /// A closure expression.
+    Closure {
+        captures: Vec<Capture>,
+        params: Vec<ClosureParam>,
+        return_ty: hir_ty::Type,
+        body: Box<Expr>,
+        body_id: hir_def::BodyId,
+    },
+    /// Effect handling: with handler { body }
+    WithHandle {
+        handler: Box<Expr>,
+        body: Box<Expr>,
+    },
+    /// Effect operation invocation: perform Effect.op(args)
+    Perform {
+        effect_def: hir_def::DefId,
+        op_def: hir_def::DefId,
+        args: Vec<Expr>,
+    },
+    /// Resume from handler: resume(value)
+    Resume(Box<Expr>),
+    /// Try expression: expr?
+    Try(Box<Expr>),
+    /// Unsafe block.
+    Unsafe(Box<Expr>),
+    /// An error expression (for error recovery).
+    Error,
+}
+
+// ============================================================
+// Literals
+// ============================================================
+
+/// A literal value.
+pub struct Literal {
+    /// The kind of literal.
+    pub kind: LiteralKind,
+    /// Span of the literal.
+    pub span: common::Span,
+}
+
+impl Literal {
+    /// Creates a new literal.
+    pub fn new(kind: LiteralKind, span: common::Span) -> Literal {
+        Literal { kind, span }
+    }
+}
+
+/// The kind of a literal.
+pub enum LiteralKind {
+    /// An integer literal.
+    Int {
+        val: u128,
+        ty: Option<hir_ty::PrimitiveTy>,
+    },
+    /// A floating-point literal.
+    Float {
+        bits: u64,
+        ty: Option<hir_ty::PrimitiveTy>,
+    },
+    /// A string literal.
+    Str(String),
+    /// A byte string literal.
+    ByteStr(Vec<u8>),
+    /// A character literal.
+    Char(char),
+    /// A boolean literal.
+    Bool(bool),
+}
+
+// ============================================================
+// Field Access and Array Expressions
+// ============================================================
+
+/// Field access (named or tuple index).
+pub enum FieldAccess {
+    /// Named field: .field_name
+    Named {
+        name: common::SpannedSymbol,
+        field_idx: Option<u32>,
+    },
+    /// Tuple index: .0, .1, etc.
+    Index(u32),
+}
+
+/// An array expression.
+pub enum ArrayExpr {
+    /// List of elements: [a, b, c]
+    List(Vec<Expr>),
+    /// Repeat expression: [val; count]
+    Repeat {
+        val: Box<Expr>,
+        count: u64,
+    },
+}
+
+/// A field in a struct expression.
+pub struct FieldExpr {
+    /// The field name.
+    pub name: common::SpannedSymbol,
+    /// The field index (if resolved).
+    pub field_idx: Option<u32>,
+    /// The value expression.
+    pub val: Expr,
+    /// Span of the field.
+    pub span: common::Span,
+}
+
+impl FieldExpr {
+    /// Creates a new field expression.
+    pub fn new(
+        name: common::SpannedSymbol,
+        field_idx: Option<u32>,
+        val: Expr,
+        span: common::Span,
+    ) -> FieldExpr {
+        FieldExpr { name, field_idx, val, span }
+    }
+}
+
+// ============================================================
+// Match
+// ============================================================
+
+/// A match arm.
+pub struct MatchArm {
+    /// The pattern to match.
+    pub pattern: Pattern,
+    /// Optional guard expression.
+    pub guard: Option<Expr>,
+    /// The body expression.
+    pub body: Expr,
+    /// Span of the arm.
+    pub span: common::Span,
+}
+
+impl MatchArm {
+    /// Creates a new match arm.
+    pub fn new(pattern: Pattern, guard: Option<Expr>, body: Expr, span: common::Span) -> MatchArm {
+        MatchArm { pattern, guard, body, span }
+    }
+}
+
+// ============================================================
+// Closures
+// ============================================================
+
+/// A captured variable in a closure.
+pub struct Capture {
+    /// The LocalId of the captured variable.
+    pub local_id: hir_def::LocalId,
+    /// How the variable is captured.
+    pub kind: CaptureKind,
+}
+
+/// How a variable is captured.
+pub enum CaptureKind {
+    /// Captured by value (moved).
+    ByValue,
+    /// Captured by reference.
+    ByRef,
+    /// Captured by mutable reference.
+    ByMutRef,
+}
+
+impl Capture {
+    /// Creates a new capture.
+    pub fn new(local_id: hir_def::LocalId, kind: CaptureKind) -> Capture {
+        Capture { local_id, kind }
+    }
+}
+
+/// A closure parameter.
+pub struct ClosureParam {
+    /// The pattern for this parameter.
+    pub pattern: Pattern,
+    /// The type of this parameter.
+    pub ty: hir_ty::Type,
+}
+
+impl ClosureParam {
+    /// Creates a new closure parameter.
+    pub fn new(pattern: Pattern, ty: hir_ty::Type) -> ClosureParam {
+        ClosureParam { pattern, ty }
+    }
+}
+
+// ============================================================
+// Pattern
+// ============================================================
+
+/// A pattern in the HIR.
+pub struct Pattern {
+    /// The kind of pattern.
+    pub kind: PatternKind,
+    /// The type of values this pattern matches.
+    pub ty: hir_ty::Type,
+    /// Span of this pattern.
+    pub span: common::Span,
+}
+
+impl Pattern {
+    /// Creates a new pattern.
+    pub fn new(kind: PatternKind, ty: hir_ty::Type, span: common::Span) -> Pattern {
+        Pattern { kind, ty, span }
+    }
+
+    /// Creates a wildcard pattern.
+    pub fn wildcard(ty: hir_ty::Type, span: common::Span) -> Pattern {
+        Pattern {
+            kind: PatternKind::Wildcard,
+            ty,
+            span,
+        }
+    }
+}
+
+/// The kind of a pattern.
+pub enum PatternKind {
+    /// Wildcard pattern: _
+    Wildcard,
+    /// Rest pattern: ..
+    Rest,
+    /// Literal pattern.
+    Literal(Literal),
+    /// Binding pattern: name, mut name, ref name, ref mut name
+    Binding {
+        local_id: hir_def::LocalId,
+        name: common::SpannedSymbol,
+        mode: BindingMode,
+        subpattern: Option<Box<Pattern>>,
+    },
+    /// Reference pattern: &pat, &mut pat
+    Ref {
+        mutable: bool,
+        inner: Box<Pattern>,
+    },
+    /// Struct pattern: Path { field: pat, .. }
+    Struct {
+        path: hir_def::ResolvedPath,
+        fields: Vec<FieldPattern>,
+        has_rest: bool,
+    },
+    /// Tuple struct pattern: Path(pat, pat)
+    TupleStruct {
+        path: hir_def::ResolvedPath,
+        fields: Vec<Pattern>,
+    },
+    /// Tuple pattern: (pat, pat)
+    Tuple(Vec<Pattern>),
+    /// Slice pattern: [pat, pat, ..]
+    Slice {
+        prefix: Vec<Pattern>,
+        rest: Option<Box<Pattern>>,
+        suffix: Vec<Pattern>,
+    },
+    /// Or pattern: pat | pat
+    Or(Vec<Pattern>),
+    /// Range pattern: start..end, start..=end
+    Range {
+        start: Option<Box<Pattern>>,
+        end_val: Option<Box<Pattern>>,
+        inclusive: bool,
+    },
+    /// Path pattern (unit variant or constant): Path
+    Path(hir_def::ResolvedPath),
+    /// Error pattern (for error recovery).
+    Error,
+}
+
+/// How a binding captures its value.
+pub enum BindingMode {
+    /// By value (move or copy).
+    ByValue,
+    /// By reference.
+    ByRef,
+    /// By mutable reference.
+    ByMutRef,
+}
+
+/// A field in a struct pattern.
+pub struct FieldPattern {
+    /// The field name.
+    pub name: common::SpannedSymbol,
+    /// The field index (if resolved).
+    pub field_idx: Option<u32>,
+    /// The pattern for this field.
+    pub pattern: Pattern,
+    /// Span of this field pattern.
+    pub span: common::Span,
+}
+
+impl FieldPattern {
+    /// Creates a new field pattern.
+    pub fn new(
+        name: common::SpannedSymbol,
+        field_idx: Option<u32>,
+        pattern: Pattern,
+        span: common::Span,
+    ) -> FieldPattern {
+        FieldPattern { name, field_idx, pattern, span }
+    }
+}
+
+// ============================================================
+// Block and Statements
+// ============================================================
+
+/// A block expression.
+pub struct Block {
+    /// Statements in the block.
+    pub stmts: Vec<Stmt>,
+    /// Optional trailing expression (determines block value).
+    pub expr: Option<Box<Expr>>,
+    /// Span of the block.
+    pub span: common::Span,
+}
+
+impl Block {
+    /// Creates a new block.
+    pub fn new(stmts: Vec<Stmt>, expr: Option<Box<Expr>>, span: common::Span) -> Block {
+        Block { stmts, expr, span }
+    }
+
+    /// Creates an empty block.
+    pub fn empty(span: common::Span) -> Block {
+        Block { stmts: Vec::new(), expr: None, span }
+    }
+}
+
+/// A statement.
+pub enum Stmt {
+    /// A let statement.
+    Let {
+        pattern: Pattern,
+        ty: Option<hir_ty::Type>,
+        init: Option<Expr>,
+        span: common::Span,
+    },
+    /// An expression statement.
+    Expr {
+        expr: Expr,
+        has_semi: bool,
+    },
+    /// A local item definition (function, struct, etc.).
+    Item(hir_def::DefId),
+}
+
+// ============================================================
+// Const Values
+// ============================================================
+
+/// A compile-time constant value.
+///
+/// Used for const generics and const evaluation.
+pub enum ConstValue {
+    /// A boolean value.
+    Bool(bool),
+    /// An integer value with its type.
+    Int {
+        val: u128,
+        ty: hir_ty::PrimitiveTy,
+    },
+    /// A float value with its type.
+    Float {
+        bits: u64,
+        ty: hir_ty::PrimitiveTy,
+    },
+    /// A character value.
+    Char(char),
+    /// A string value (for string constants).
+    Str(String),
+    /// An unevaluated constant (by DefId).
+    Unevaluated(hir_def::DefId),
+    /// An error value.
+    Error,
+}
+
+impl ConstValue {
+    /// Creates a boolean constant.
+    pub fn bool_val(b: bool) -> ConstValue {
+        ConstValue::Bool(b)
+    }
+
+    /// Creates an i32 constant.
+    pub fn i32_val(v: i32) -> ConstValue {
+        ConstValue::Int {
+            val: v as u128,
+            ty: hir_ty::PrimitiveTy::I32,
+        }
+    }
+
+    /// Creates a usize constant.
+    pub fn usize_val(v: u64) -> ConstValue {
+        ConstValue::Int {
+            val: v as u128,
+            ty: hir_ty::PrimitiveTy::Usize,
+        }
+    }
+}
