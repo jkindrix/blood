@@ -48,44 +48,9 @@ pub fn emit_operand_typed(
 /// Gets the type of an operand.
 pub fn operand_type(operand: &mir_types::Operand) -> Option<hir_ty::Type> {
     match operand {
-        &mir_types::Operand::Constant(ref constant) => Option::Some(clone_type(&constant.ty)),
+        &mir_types::Operand::Constant(ref constant) => Option::Some(hir_ty::copy_type(&constant.ty)),
         &mir_types::Operand::Copy(_) => Option::None,
         &mir_types::Operand::Move(_) => Option::None,
-    }
-}
-
-/// Clones a Type.
-fn clone_type(ty: &hir_ty::Type) -> hir_ty::Type {
-    // For now, only clone primitive types properly
-    // Complex types would need deeper cloning
-    match &ty.kind {
-        &hir_ty::TypeKind::Primitive(ref prim) => {
-            hir_ty::Type::new(hir_ty::TypeKind::Primitive(clone_primitive(prim)))
-        }
-        _ => hir_ty::Type::error(),
-    }
-}
-
-/// Clones a PrimitiveTy.
-fn clone_primitive(prim: &hir_ty::PrimitiveTy) -> hir_ty::PrimitiveTy {
-    match prim {
-        &hir_ty::PrimitiveTy::Bool => hir_ty::PrimitiveTy::Bool,
-        &hir_ty::PrimitiveTy::Char => hir_ty::PrimitiveTy::Char,
-        &hir_ty::PrimitiveTy::I8 => hir_ty::PrimitiveTy::I8,
-        &hir_ty::PrimitiveTy::I16 => hir_ty::PrimitiveTy::I16,
-        &hir_ty::PrimitiveTy::I32 => hir_ty::PrimitiveTy::I32,
-        &hir_ty::PrimitiveTy::I64 => hir_ty::PrimitiveTy::I64,
-        &hir_ty::PrimitiveTy::I128 => hir_ty::PrimitiveTy::I128,
-        &hir_ty::PrimitiveTy::Isize => hir_ty::PrimitiveTy::Isize,
-        &hir_ty::PrimitiveTy::U8 => hir_ty::PrimitiveTy::U8,
-        &hir_ty::PrimitiveTy::U16 => hir_ty::PrimitiveTy::U16,
-        &hir_ty::PrimitiveTy::U32 => hir_ty::PrimitiveTy::U32,
-        &hir_ty::PrimitiveTy::U64 => hir_ty::PrimitiveTy::U64,
-        &hir_ty::PrimitiveTy::U128 => hir_ty::PrimitiveTy::U128,
-        &hir_ty::PrimitiveTy::Usize => hir_ty::PrimitiveTy::Usize,
-        &hir_ty::PrimitiveTy::F32 => hir_ty::PrimitiveTy::F32,
-        &hir_ty::PrimitiveTy::F64 => hir_ty::PrimitiveTy::F64,
-        &hir_ty::PrimitiveTy::Str => hir_ty::PrimitiveTy::Str,
     }
 }
 

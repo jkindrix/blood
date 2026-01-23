@@ -232,6 +232,49 @@ Most previous blood-rust limitations have been resolved. Current remaining limit
 
 ---
 
+## Blood-Rust Runtime Limitations
+
+The following features are **NOT available** in the blood-rust runtime, blocking full standalone operation:
+
+### File I/O (NOT AVAILABLE)
+
+The blood-rust runtime does not provide file I/O functions. The `source.blood` stub correctly returns an error:
+```blood
+pub fn read_file(_path: &str) -> ReadFileResult {
+    ReadFileResult::err(common::make_string("File reading not yet implemented"))
+}
+```
+
+**Impact**: The compiler cannot read source files from disk when running standalone.
+**Workaround**: Use the `driver.compile()` function with in-memory source strings.
+**Resolution**: Requires adding file I/O builtins to blood-rust (outside this repository).
+
+### Command Line Arguments (NOT AVAILABLE)
+
+The blood-rust runtime does not provide argc/argv access. The `main.blood` stub correctly returns defaults:
+```blood
+fn parse_args_stub() -> Args {
+    // Without runtime FFI, we can't access actual command line args
+    Args::default()
+}
+```
+
+**Impact**: The compiler cannot parse command line arguments when running standalone.
+**Workaround**: Programmatically construct `Args` structs.
+**Resolution**: Requires adding CLI argument builtins to blood-rust.
+
+### Available Runtime Functions
+
+The blood-rust runtime DOES provide:
+- Print functions: `print_str`, `println_str`, `print_int`, `println_int`, etc.
+- String operations: `str_len`, `str_eq`, `str_concat`
+- Memory allocation: `alloc`, `free`, `realloc`, `memcpy`
+- Stdin input: `read_line`, `read_int`
+- Math functions: `sqrt`, `sin`, `cos`, `pow`, etc.
+- Effect system functions: `blood_push_handler`, `blood_perform`, etc.
+
+---
+
 ## Testing Strategy
 
 ### Compilation Verification
@@ -243,9 +286,45 @@ for f in blood-std/std/compiler/*.blood; do
 done
 ```
 
-### End-to-End Testing
+**Current status**: All 53 compiler files pass type checking.
 
-Test programs are compiled with the self-hosted compiler and verified against expected output.
+### In-Memory Pipeline Testing
+
+Since file I/O is not available, end-to-end testing uses in-memory source strings:
+
+```blood
+// Example: Full pipeline test
+let source = "fn main() { let x = 42; }";
+let mut compiler = driver::Compiler::new();
+let result = compiler.compile(source);
+assert(result.success, "compilation should succeed");
+assert(result.llvm_ir.is_some(), "should produce LLVM IR");
+```
+
+Test coverage includes:
+- Lexer: Token stream generation from source strings
+- Parser: AST construction from tokens
+- HIR Lowering: AST to HIR conversion with name resolution
+- Type Checking: Type inference, unification, trait resolution
+- MIR Lowering: HIR to MIR conversion with pattern compilation
+- Code Generation: MIR to LLVM IR with type-aware output
+
+### LLVM IR Verification
+
+Generated LLVM IR can be verified using `llc`:
+```bash
+# Compile Blood program to LLVM IR (via in-memory test)
+# Then verify the IR is syntactically valid:
+llc -filetype=null output.ll
+```
+
+### End-to-End Testing (Future)
+
+Once blood-rust adds file I/O support, full end-to-end testing will:
+1. Compile the self-hosted compiler with blood-rust → executable
+2. Use that executable to compile test Blood programs → LLVM IR
+3. Compile LLVM IR with clang → native executable
+4. Run and verify output matches expected results
 
 ---
 
@@ -298,3 +377,16 @@ When modifying the compiler:
   - Created effect_evidence.blood with evidence passing infrastructure
   - Created effect_runtime.blood with handler stack management and runtime stubs
   - Updated COMPILER_NOTES.md with accurate feature status
+- **2026-01**: Documentation and verification update:
+  - Documented blood-rust runtime limitations (file I/O, CLI args not available)
+  - Added comprehensive testing strategy with in-memory pipeline testing
+  - Split typeck.blood into typeck_types.blood and typeck_info.blood (pub use re-exports)
+  - All 53 compiler files verified to pass type checking
+  - Total: 53 files, 30,631 lines of compiler code
+- **2026-01**: Codegen gap resolution:
+  - Fixed incomplete type cloning in codegen_expr.blood (operand_type function)
+  - Now uses hir_ty::copy_type for proper deep cloning of all type kinds
+  - Removed redundant clone_type/clone_primitive functions
+  - Verified all MIR rvalues, statements, and terminators are fully handled in codegen
+  - Verified all TypeKind variants have LLVM type mapping
+  - All 53 compiler files continue to pass type checking
