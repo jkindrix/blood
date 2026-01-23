@@ -59,6 +59,8 @@ pub enum BindingKind {
     Def,
     /// A reference to a module.
     Module,
+    /// A type parameter binding (for forall types and generic functions).
+    TypeParam,
 }
 
 /// A binding in a scope.
@@ -68,10 +70,12 @@ pub enum BindingKind {
 pub struct Binding {
     /// The kind of binding.
     pub kind: BindingKind,
-    /// For Local: the local variable ID. For Def/Module: dummy.
+    /// For Local: the local variable ID. For others: dummy.
     pub local_id: hir_def::LocalId,
-    /// For Def/Module: the definition ID. For Local: dummy.
+    /// For Def/Module: the definition ID. For others: dummy.
     pub def_id: hir_def::DefId,
+    /// For TypeParam: the type variable ID. For others: dummy.
+    pub ty_var_id: hir_def::TyVarId,
     /// For Local: whether the variable is mutable.
     pub mutable: bool,
     /// For Local: the declaration span.
@@ -85,6 +89,7 @@ impl Binding {
             kind: BindingKind::Local,
             local_id: local_id,
             def_id: hir_def::DefId::dummy(),
+            ty_var_id: hir_def::TyVarId::dummy(),
             mutable: mutable,
             span: span,
         }
@@ -96,6 +101,7 @@ impl Binding {
             kind: BindingKind::Def,
             local_id: hir_def::LocalId::dummy(),
             def_id: def_id,
+            ty_var_id: hir_def::TyVarId::dummy(),
             mutable: false,
             span: common::Span::dummy(),
         }
@@ -107,6 +113,19 @@ impl Binding {
             kind: BindingKind::Module,
             local_id: hir_def::LocalId::dummy(),
             def_id: def_id,
+            ty_var_id: hir_def::TyVarId::dummy(),
+            mutable: false,
+            span: common::Span::dummy(),
+        }
+    }
+
+    /// Creates a type parameter binding.
+    pub fn type_param(ty_var_id: hir_def::TyVarId) -> Binding {
+        Binding {
+            kind: BindingKind::TypeParam,
+            local_id: hir_def::LocalId::dummy(),
+            def_id: hir_def::DefId::dummy(),
+            ty_var_id: ty_var_id,
             mutable: false,
             span: common::Span::dummy(),
         }
@@ -118,6 +137,7 @@ impl Binding {
             BindingKind::Local => true,
             BindingKind::Def => false,
             BindingKind::Module => false,
+            BindingKind::TypeParam => false,
         }
     }
 
@@ -127,6 +147,7 @@ impl Binding {
             BindingKind::Local => false,
             BindingKind::Def => true,
             BindingKind::Module => false,
+            BindingKind::TypeParam => false,
         }
     }
 
@@ -136,6 +157,17 @@ impl Binding {
             BindingKind::Local => false,
             BindingKind::Def => false,
             BindingKind::Module => true,
+            BindingKind::TypeParam => false,
+        }
+    }
+
+    /// Returns true if this is a TypeParam binding.
+    pub fn is_type_param(self: &Self) -> bool {
+        match self.kind {
+            BindingKind::Local => false,
+            BindingKind::Def => false,
+            BindingKind::Module => false,
+            BindingKind::TypeParam => true,
         }
     }
 }
@@ -154,6 +186,8 @@ pub enum ScopeKind {
     Closure,
     ImplBlock,
     TraitDef,
+    /// Type parameter scope (for forall types and generic definitions).
+    TypeParams,
 }
 
 /// A binding entry storing name and binding.
@@ -420,6 +454,50 @@ impl Resolver {
         self.scopes[current_scope_idx].bindings.push(binding_entry);
 
         true
+    }
+
+    /// Defines a type parameter in the current scope.
+    ///
+    /// Used for forall types and generic function/struct definitions.
+    /// Type parameters can be looked up via lookup_type_param during type resolution.
+    pub fn define_type_param(
+        self: &mut Self,
+        name: common::Symbol,
+        ty_var_id: hir_def::TyVarId,
+    ) -> bool {
+        let binding = Binding::type_param(ty_var_id);
+        self.define(name, binding)
+    }
+
+    /// Looks up a type parameter by name in the current scope chain.
+    ///
+    /// Returns Some(TyVarId) if found, None otherwise.
+    /// This is used during type path resolution to check if a name refers
+    /// to a type parameter before checking for type definitions.
+    pub fn lookup_type_param(self: &Self, name: common::Symbol) -> Option<hir_def::TyVarId> {
+        // Search through scope stack from innermost to outermost
+        let stack_len = self.scope_stack.len();
+        let mut stack_idx = stack_len;
+
+        while stack_idx > 0 {
+            stack_idx = stack_idx - 1;
+            let scope_idx = self.scope_stack[stack_idx];
+            let scope = &self.scopes[scope_idx];
+
+            // Search bindings in this scope
+            let mut i: usize = 0;
+            while i < scope.bindings.len() {
+                let entry = &scope.bindings[i];
+                if entry.name.index == name.index {
+                    if entry.binding.is_type_param() {
+                        return Option::Some(entry.binding.ty_var_id);
+                    }
+                }
+                i = i + 1;
+            }
+        }
+
+        Option::None
     }
 
     /// Registers definition info.
