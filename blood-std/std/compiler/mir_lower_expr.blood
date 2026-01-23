@@ -103,6 +103,9 @@ pub fn lower_expr(
         &hir_expr::ExprKind::Struct { ref path, ref fields, ref base } => {
             lower_struct_expr(ctx, path, fields, base, &expr.ty, dest, expr.span);
         }
+        &hir_expr::ExprKind::AnonRecord { ref fields } => {
+            lower_anon_record_expr(ctx, fields, &expr.ty, dest, expr.span);
+        }
         &hir_expr::ExprKind::Range { ref start, ref end_val, inclusive } => {
             lower_range_expr(ctx, start, end_val, inclusive, &expr.ty, dest, expr.span);
         }
@@ -157,6 +160,20 @@ pub fn lower_expr(
         &hir_expr::ExprKind::Unsafe(ref inner) => {
             // Unsafe blocks are transparent in MIR
             lower_expr(ctx, inner.as_ref(), dest);
+        }
+        &hir_expr::ExprKind::Default => {
+            // Default expression: produce zero-initialized value
+            // TODO: In the future, call Default trait method if available
+            match dest.as_place() {
+                Option::Some(place) => {
+                    ctx.emit_assign(
+                        place,
+                        mir_types::Rvalue::ZeroInit(expr.ty.clone()),
+                        expr.span,
+                    );
+                }
+                Option::None => {}
+            }
         }
         &hir_expr::ExprKind::Error => {
             // Error expression: produce undefined value
@@ -809,6 +826,42 @@ fn lower_struct_expr(
                         variant_idx: 0,
                         type_args: Vec::new(),
                     },
+                    operands: operands,
+                },
+                span,
+            );
+        }
+        Option::None => {}
+    }
+}
+
+fn lower_anon_record_expr(
+    ctx: &mut mir_lower_ctx::MirLowerCtx,
+    fields: &Vec<hir_expr::AnonRecordField>,
+    _ty: &hir_ty::Type,
+    dest: mir_lower_ctx::Destination,
+    span: common::Span,
+) {
+    // Evaluate all field values
+    let mut operands = Vec::new();
+    let mut i: usize = 0;
+    while i < fields.len() {
+        let field = &fields[i];
+        let temp = ctx.new_temp(field.val.ty.clone(), span);
+        lower_expr(ctx, &field.val, mir_lower_ctx::destination_local(temp));
+        operands.push(mir_lower_util::operand_from_place(
+            mir_types::Place::local(temp),
+            &field.val.ty,
+        ));
+        i = i + 1;
+    }
+
+    match dest.as_place() {
+        Option::Some(place) => {
+            ctx.emit_assign(
+                place,
+                mir_types::Rvalue::Aggregate {
+                    kind: mir_types::AggregateKind::Record,
                     operands: operands,
                 },
                 span,
@@ -1490,6 +1543,10 @@ fn classify_handler_state(ty: &hir_ty::Type) -> mir_stmt::HandlerStateKind {
         &hir_ty::TypeKind::Forall { params: _, body: _ } => {
             mir_stmt::HandlerStateKind::Dynamic
         }
+        &hir_ty::TypeKind::Ownership { qualifier: _, ref inner } => {
+            // Classify based on inner type
+            classify_handler_state(inner.as_ref())
+        }
     }
 }
 
@@ -1511,6 +1568,7 @@ fn extract_handler_def_id(ty: &hir_ty::Type) -> hir_def::DefId {
         &hir_ty::TypeKind::Forall { params: _, body: _ } => hir_def::DefId::dummy(),
         &hir_ty::TypeKind::Never => hir_def::DefId::dummy(),
         &hir_ty::TypeKind::Error => hir_def::DefId::dummy(),
+        &hir_ty::TypeKind::Ownership { qualifier: _, ref inner } => extract_handler_def_id(inner.as_ref()),
     }
 }
 

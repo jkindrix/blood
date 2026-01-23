@@ -147,6 +147,10 @@ pub enum ExprKind {
         fields: Vec<FieldExpr>,
         base: Option<Box<Expr>>,
     },
+    /// An anonymous record expression: { field: value, ... }
+    AnonRecord {
+        fields: Vec<AnonRecordField>,
+    },
     /// A range expression.
     Range {
         start: Option<Box<Expr>>,
@@ -228,6 +232,8 @@ pub enum ExprKind {
     Try(Box<Expr>),
     /// Unsafe block.
     Unsafe(Box<Expr>),
+    /// A default expression (produces default value of expected type).
+    Default,
     /// An error expression (for error recovery).
     Error,
 }
@@ -320,6 +326,27 @@ impl FieldExpr {
         span: common::Span,
     ) -> FieldExpr {
         FieldExpr { name: name, field_idx: field_idx, val: val, span: span }
+    }
+}
+
+/// A field in an anonymous record expression.
+pub struct AnonRecordField {
+    /// The field name.
+    pub name: common::SpannedSymbol,
+    /// The value expression.
+    pub val: Expr,
+    /// Span of the field.
+    pub span: common::Span,
+}
+
+impl AnonRecordField {
+    /// Creates a new anonymous record field.
+    pub fn new(
+        name: common::SpannedSymbol,
+        val: Expr,
+        span: common::Span,
+    ) -> AnonRecordField {
+        AnonRecordField { name: name, val: val, span: span }
     }
 }
 

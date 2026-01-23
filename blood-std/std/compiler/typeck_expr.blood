@@ -51,6 +51,9 @@ pub fn infer_expr(checker: &mut typeck::TypeChecker, expr: &hir_expr::Expr) -> h
         &hir_expr::ExprKind::Struct { ref path, ref fields, ref base } => {
             infer_struct(checker, path, fields, base, expr.span)
         }
+        &hir_expr::ExprKind::AnonRecord { ref fields } => {
+            infer_anon_record(checker, fields, expr.span)
+        }
         &hir_expr::ExprKind::Range { ref start, ref end_val, inclusive } => {
             infer_range(checker, start, end_val, inclusive, expr.span)
         }
@@ -95,6 +98,10 @@ pub fn infer_expr(checker: &mut typeck::TypeChecker, expr: &hir_expr::Expr) -> h
         &hir_expr::ExprKind::Resume(ref val) => infer_resume(checker, val.as_ref(), expr.span),
         &hir_expr::ExprKind::Try(ref inner) => infer_try(checker, inner.as_ref(), expr.span),
         &hir_expr::ExprKind::Unsafe(ref inner) => infer_expr(checker, inner.as_ref()),
+        &hir_expr::ExprKind::Default => {
+            // Default expression type comes from context; return expression's type variable
+            hir_ty::copy_type(&expr.ty)
+        }
         &hir_expr::ExprKind::Error => hir_ty::Type::error(),
     }
 }
@@ -301,6 +308,11 @@ fn types_equal(a: &hir_ty::Type, b: &hir_ty::Type) -> bool {
          &hir_ty::TypeKind::Adt { def_id: db, args: _ }) => {
             da.index == db.index
         }
+        // Ownership types - compare qualifier and inner type
+        (&hir_ty::TypeKind::Ownership { qualifier: qa, ref inner },
+         &hir_ty::TypeKind::Ownership { qualifier: qb, inner: ref inner_b }) => {
+            qa == qb && types_equal(inner.as_ref(), inner_b.as_ref())
+        }
         _ => false,
     }
 }
@@ -371,6 +383,7 @@ fn is_lvalue(expr: &hir_expr::Expr) -> bool {
         &hir_expr::ExprKind::Tuple(_) => false,
         &hir_expr::ExprKind::Array(_) => false,
         &hir_expr::ExprKind::Struct { path: _, fields: _, base: _ } => false,
+        &hir_expr::ExprKind::AnonRecord { fields: _ } => false,
         &hir_expr::ExprKind::Range { start: _, end_val: _, inclusive: _ } => false,
         &hir_expr::ExprKind::Cast { expr: _, ty: _ } => false,
         &hir_expr::ExprKind::Block(_) => false,
@@ -389,6 +402,7 @@ fn is_lvalue(expr: &hir_expr::Expr) -> bool {
         &hir_expr::ExprKind::Resume(ref _val) => false,
         &hir_expr::ExprKind::Try(ref _inner) => false,
         &hir_expr::ExprKind::Unsafe(ref _inner) => false,
+        &hir_expr::ExprKind::Default => false,
         &hir_expr::ExprKind::Error => false,
     }
 }
@@ -1019,6 +1033,32 @@ fn infer_struct(
     })
 }
 
+/// Infers the type of an anonymous record expression.
+fn infer_anon_record(
+    checker: &mut typeck::TypeChecker,
+    fields: &Vec<hir_expr::AnonRecordField>,
+    span: common::Span,
+) -> hir_ty::Type {
+    // Build the record type from field expressions
+    let mut record_fields: Vec<hir_ty::RecordField> = Vec::new();
+    let mut i: usize = 0;
+    while i < fields.len() {
+        let field = &fields[i];
+        let field_ty = infer_expr(checker, &field.val);
+        record_fields.push(hir_ty::RecordField::new(
+            field.name.symbol,
+            field_ty,
+        ));
+        i = i + 1;
+    }
+
+    // Create a closed record type (no row variable)
+    hir_ty::Type::new(hir_ty::TypeKind::Record {
+        fields: record_fields,
+        row_var: Option::None,
+    })
+}
+
 /// Infers the type of a range expression.
 fn infer_range(
     checker: &mut typeck::TypeChecker,
@@ -1136,6 +1176,13 @@ fn is_valid_cast(src_ty: &hir_ty::Type, dst_ty: &hir_ty::Type) -> bool {
         // Error types can be cast to anything
         (&hir_ty::TypeKind::Error, _) => true,
         (_, &hir_ty::TypeKind::Error) => true,
+        // Ownership types - check inner types
+        (&hir_ty::TypeKind::Ownership { qualifier: _, ref inner }, _) => {
+            is_valid_cast(inner.as_ref(), dst_ty)
+        }
+        (_, &hir_ty::TypeKind::Ownership { qualifier: _, ref inner }) => {
+            is_valid_cast(src_ty, inner.as_ref())
+        }
         // Other casts are invalid
         _ => false,
     }

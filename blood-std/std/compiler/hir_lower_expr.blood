@@ -274,14 +274,9 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx::LoweringCtx, expr: &ast::Expr) -> hir
             lower_expr(ctx, inner.as_ref())
         }
         &ast::ExprKind::Default => {
-            // Default expression needs type-directed lowering
+            // Default expression - type will be inferred from context during type checking
             let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
-            ctx.error(
-                hir::DiagnosticCode::E0104,
-                common::make_string("default expressions not yet supported"),
-                span,
-            );
-            hir_expr::Expr::error(span)
+            hir_expr::Expr::new(hir_expr::ExprKind::Default, ty, span)
         }
         &ast::ExprKind::MacroCall { path: _, ref kind } => {
             lower_macro_call_expr(ctx, kind, span)
@@ -632,47 +627,64 @@ fn lower_record_expr(
     let p = match path {
         &Some(ref p) => p,
         &None => {
-            ctx.error(
-                hir::DiagnosticCode::E0104,
-                common::make_string("anonymous record expressions not yet supported"),
-                span,
-            );
-            return hir_expr::Expr::error(span);
+            // Anonymous record expression: { field: value, ... }
+            return lower_anon_record_expr(ctx, fields, span);
         }
     };
 
-    // Handle multi-segment paths
-    if p.segments.len() != 1 {
-        ctx.error(
-            hir::DiagnosticCode::E0102,
-            common::make_string("qualified struct paths not yet supported"),
-            p.span,
-        );
-        return hir_expr::Expr::error(span);
-    }
+    // Resolve the struct path (handles both single and multi-segment paths)
+    let (def_id, type_args) = if p.segments.len() == 1 {
+        // Single-segment path: use direct lookup
+        let seg = &p.segments[0];
+        let lookup = ctx.resolver.lookup(seg.name.symbol);
 
-    let seg = &p.segments[0];
-    let lookup = ctx.resolver.lookup(seg.name.symbol);
+        if lookup.is_none() {
+            ctx.error(
+                hir::DiagnosticCode::E0102,
+                common::make_string("unknown struct type"),
+                p.span,
+            );
+            return hir_expr::Expr::error(span);
+        }
 
-    // Handle lookup failure (early return)
-    if lookup.is_none() {
-        ctx.error(
-            hir::DiagnosticCode::E0102,
-            common::make_string("unknown struct type"),
-            p.span,
-        );
-        return hir_expr::Expr::error(span);
-    }
+        let result = lookup.unwrap();
+        let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+        let args = match &seg.args {
+            &Some(ref args) => hir_lower_type::lower_type_args(ctx, args),
+            &None => Vec::new(),
+        };
+        (binding.def_id, args)
+    } else {
+        // Multi-segment path (e.g., module::StructName): use qualified path resolution
+        let mut names: Vec<common::SpannedSymbol> = Vec::new();
+        let mut i: usize = 0;
+        while i < p.segments.len() {
+            names.push(p.segments[i].name);
+            i = i + 1;
+        }
 
-    // Now we can resolve the path
-    let result = lookup.unwrap();
-    let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
-    let type_args = match &seg.args {
-        &Some(ref args) => hir_lower_type::lower_type_args(ctx, args),
-        &None => Vec::new(),
+        let resolved = ctx.resolver.resolve_qualified_path(&names);
+        if resolved.is_none() {
+            ctx.error(
+                hir::DiagnosticCode::E0102,
+                common::make_string("unknown qualified struct path"),
+                p.span,
+            );
+            return hir_expr::Expr::error(span);
+        }
+
+        let result = resolved.unwrap();
+        // Get type args from last segment
+        let last_seg = &p.segments[p.segments.len() - 1];
+        let args = match &last_seg.args {
+            &Some(ref args) => hir_lower_type::lower_type_args(ctx, args),
+            &None => Vec::new(),
+        };
+        (result.def_id, args)
     };
+
     let type_arg_count = type_args.len() as u32;
-    let resolved_path = hir_def::ResolvedPath::new(binding.def_id, type_arg_count, p.span);
+    let resolved_path = hir_def::ResolvedPath::new(def_id, type_arg_count, p.span);
 
     // Lower fields
     let mut fields_hir: Vec<hir_expr::FieldExpr> = Vec::new();
@@ -729,6 +741,59 @@ fn lower_record_expr(
             fields: fields_hir,
             base: base_hir,
         },
+        ty,
+        span,
+    )
+}
+
+/// Lower an anonymous record expression: { field: value, ... }
+fn lower_anon_record_expr(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    fields: &Vec<ast::RecordExprField>,
+    span: common::Span,
+) -> hir_expr::Expr {
+    let mut fields_hir: Vec<hir_expr::AnonRecordField> = Vec::new();
+    let mut i: usize = 0;
+    while i < fields.len() {
+        let f = &fields[i];
+        let val_hir = match &f.val {
+            &Some(ref v) => lower_expr(ctx, v),
+            &None => {
+                // Shorthand: { name } means { name: name }
+                let local = ctx.resolver.lookup(f.name.symbol);
+                match local {
+                    Option::Some(result) => {
+                        let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+                        let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+                        hir_expr::Expr::new(
+                            hir_expr::ExprKind::Local(binding.local_id),
+                            ty,
+                            f.name.span,
+                        )
+                    }
+                    Option::None => {
+                        ctx.error(
+                            hir::DiagnosticCode::E0101,
+                            common::make_string("cannot use shorthand for unresolved field"),
+                            f.name.span,
+                        );
+                        hir_expr::Expr::error(f.name.span)
+                    }
+                }
+            }
+        };
+        let field_hir = hir_expr::AnonRecordField::new(
+            f.name,
+            val_hir,
+            f.span,
+        );
+        fields_hir.push(field_hir);
+        i = i + 1;
+    }
+
+    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    hir_expr::Expr::new(
+        hir_expr::ExprKind::AnonRecord { fields: fields_hir },
         ty,
         span,
     )
@@ -1468,6 +1533,7 @@ fn lower_while_let_expr(
 }
 
 /// Lower a for expression (desugar to loop + match over iterator).
+/// Currently supports range iteration: for i in start..end { body }
 fn lower_for_expr(
     ctx: &mut hir_lower_ctx::LoweringCtx,
     label: &Option<common::SpannedSymbol>,
@@ -1476,16 +1542,225 @@ fn lower_for_expr(
     body: &ast::Block,
     span: common::Span,
 ) -> hir_expr::Expr {
-    // For now, emit a placeholder error since for loop desugaring
-    // requires IntoIterator trait resolution
-    ctx.error(
-        hir::DiagnosticCode::E0104,
-        common::make_string("for loops not yet supported (requires iterator traits)"),
+    // Check if iter is a range expression
+    match &iter.kind {
+        &ast::ExprKind::Range { ref start, ref end_val, inclusive } => {
+            // Desugar: for pattern in start..end { body }
+            // to: { let mut pattern = start; loop { if pattern < end { body; pattern = pattern + 1; } else { break } } }
+            lower_for_range(ctx, label, pattern, start, end_val, inclusive, body, span)
+        }
+        _ => {
+            // For non-range iterators, emit an error
+            ctx.error(
+                hir::DiagnosticCode::E0104,
+                common::make_string("for loops currently only support range iteration (e.g., for i in 0..10)"),
+                span,
+            );
+            // Return the body as a fallback
+            lower_block_to_expr(ctx, body)
+        }
+    }
+}
+
+/// Lower a for loop over a range.
+fn lower_for_range(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    label: &Option<common::SpannedSymbol>,
+    pattern: &ast::Pattern,
+    start: &Option<Box<ast::Expr>>,
+    end_val: &Option<Box<ast::Expr>>,
+    inclusive: bool,
+    body: &ast::Block,
+    span: common::Span,
+) -> hir_expr::Expr {
+    let label_sym = match label {
+        &Some(ref l) => Some(l.symbol),
+        &None => Option::None,
+    };
+
+    // Lower the pattern to get the loop variable
+    let pattern_hir = lower_pattern(ctx, pattern);
+
+    // Get the local_id from the pattern (should be a binding pattern)
+    let loop_var_local_id = extract_binding_local_id(&pattern_hir);
+    if loop_var_local_id.is_none() {
+        ctx.error(
+            hir::DiagnosticCode::E0104,
+            common::make_string("for loop variable must be a simple identifier"),
+            span,
+        );
+        return lower_block_to_expr(ctx, body);
+    }
+    let loop_var_id = loop_var_local_id.unwrap();
+
+    // Lower start value (default to 0 if not provided)
+    let start_expr = match start {
+        &Some(ref e) => lower_expr(ctx, e.as_ref()),
+        &None => {
+            // Default to 0
+            hir_expr::Expr::new(
+                hir_expr::ExprKind::Literal(hir_expr::Literal::new(
+                    hir_expr::LiteralKind::Int { val: 0, ty: Some(hir_ty::PrimitiveTy::I32) },
+                    span,
+                )),
+                hir_ty::Type::i32_ty(),
+                span,
+            )
+        }
+    };
+
+    // Lower end value
+    let end_expr = match end_val {
+        &Some(ref e) => lower_expr(ctx, e.as_ref()),
+        &None => {
+            ctx.error(
+                hir::DiagnosticCode::E0104,
+                common::make_string("for loop requires an end value"),
+                span,
+            );
+            return lower_block_to_expr(ctx, body);
+        }
+    };
+
+    // Get the type for the loop variable from start expression
+    let loop_var_ty = hir_ty::copy_type(&start_expr.ty);
+
+    // Create: let mut pattern = start;
+    let init_let = hir_expr::Stmt::Let {
+        pattern: pattern_hir,
+        ty: Some(hir_ty::copy_type(&loop_var_ty)),
+        init: Some(start_expr),
+        span: span,
+    };
+
+    // Create condition: pattern < end (or pattern <= end for inclusive)
+    let loop_var_ref = hir_expr::Expr::new(
+        hir_expr::ExprKind::Local(loop_var_id),
+        hir_ty::copy_type(&loop_var_ty),
         span,
     );
 
-    // Return the body as a fallback
-    lower_block_to_expr(ctx, body)
+    let cmp_op = if inclusive {
+        common::BinOp::Le
+    } else {
+        common::BinOp::Lt
+    };
+
+    let condition = hir_expr::Expr::new(
+        hir_expr::ExprKind::Binary {
+            op: cmp_op,
+            left: Box::new(loop_var_ref),
+            right: Box::new(end_expr),
+        },
+        hir_ty::Type::bool_ty(),
+        span,
+    );
+
+    // Lower the body
+    let body_hir = lower_block_to_expr(ctx, body);
+
+    // Create increment: pattern = pattern + 1
+    let loop_var_ref_for_add = hir_expr::Expr::new(
+        hir_expr::ExprKind::Local(loop_var_id),
+        hir_ty::copy_type(&loop_var_ty),
+        span,
+    );
+
+    let one_lit = hir_expr::Expr::new(
+        hir_expr::ExprKind::Literal(hir_expr::Literal::new(
+            hir_expr::LiteralKind::Int { val: 1, ty: Some(hir_ty::PrimitiveTy::I32) },
+            span,
+        )),
+        hir_ty::copy_type(&loop_var_ty),
+        span,
+    );
+
+    let add_expr = hir_expr::Expr::new(
+        hir_expr::ExprKind::Binary {
+            op: common::BinOp::Add,
+            left: Box::new(loop_var_ref_for_add),
+            right: Box::new(one_lit),
+        },
+        hir_ty::copy_type(&loop_var_ty),
+        span,
+    );
+
+    let loop_var_place = hir_expr::Expr::new(
+        hir_expr::ExprKind::Local(loop_var_id),
+        hir_ty::copy_type(&loop_var_ty),
+        span,
+    );
+
+    let increment_assign = hir_expr::Expr::new(
+        hir_expr::ExprKind::Assign {
+            target: Box::new(loop_var_place),
+            val: Box::new(add_expr),
+        },
+        hir_ty::Type::unit(),
+        span,
+    );
+
+    // Create body block with increment at the end: { body; pattern = pattern + 1; }
+    let mut body_with_increment_stmts: Vec<hir_expr::Stmt> = Vec::new();
+    body_with_increment_stmts.push(hir_expr::Stmt::Expr { expr: body_hir, has_semi: true });
+    body_with_increment_stmts.push(hir_expr::Stmt::Expr { expr: increment_assign, has_semi: true });
+    let body_with_increment_block = hir_expr::Block::new(body_with_increment_stmts, Option::None, span);
+    let body_with_increment = hir_expr::Expr::new(
+        hir_expr::ExprKind::Block(body_with_increment_block),
+        hir_ty::Type::unit(),
+        span,
+    );
+
+    // Create break expression
+    let break_expr = hir_expr::Expr::new(
+        hir_expr::ExprKind::Break {
+            label: label_sym,
+            val: Option::None,
+        },
+        hir_ty::Type::never(),
+        span,
+    );
+
+    // Create if expression: if condition { body; increment; } else { break }
+    let if_expr = hir_expr::Expr::new(
+        hir_expr::ExprKind::If {
+            condition: Box::new(condition),
+            then_branch: Box::new(body_with_increment),
+            else_branch: Some(Box::new(break_expr)),
+        },
+        hir_ty::Type::unit(),
+        span,
+    );
+
+    // Create loop: loop { if_expr }
+    let loop_expr = hir_expr::Expr::new(
+        hir_expr::ExprKind::Loop {
+            label: label_sym,
+            body: Box::new(if_expr),
+        },
+        hir_ty::Type::infer(ctx.alloc_ty_var()),
+        span,
+    );
+
+    // Wrap in block with init: { let mut pattern = start; loop { ... } }
+    let mut outer_stmts: Vec<hir_expr::Stmt> = Vec::new();
+    outer_stmts.push(init_let);
+    let outer_block = hir_expr::Block::new(outer_stmts, Some(Box::new(loop_expr)), span);
+    hir_expr::Expr::new(
+        hir_expr::ExprKind::Block(outer_block),
+        hir_ty::Type::infer(ctx.alloc_ty_var()),
+        span,
+    )
+}
+
+/// Extract the LocalId from a binding pattern.
+fn extract_binding_local_id(pattern: &hir_expr::Pattern) -> Option<hir_def::LocalId> {
+    match &pattern.kind {
+        &hir_expr::PatternKind::Binding { local_id, name: _, mode: _, subpattern: _ } => {
+            Some(local_id)
+        }
+        _ => Option::None
+    }
 }
 
 // ============================================================
