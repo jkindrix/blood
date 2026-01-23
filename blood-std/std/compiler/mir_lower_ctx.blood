@@ -29,6 +29,8 @@ pub struct MirLowerCtx {
     loop_stack: Vec<LoopContext>,
     /// Counter for generating unique temporary names.
     temp_counter: u32,
+    /// Tracks moved places for use-after-move detection.
+    pub move_tracker: MoveTracker,
 }
 
 /// Mapping from an HIR local to a MIR local.
@@ -49,6 +51,7 @@ impl MirLowerCtx {
             local_map: Vec::new(),
             loop_stack: Vec::new(),
             temp_counter: 0,
+            move_tracker: MoveTracker::new(),
         }
     }
 
@@ -413,8 +416,7 @@ impl mir_types::PlaceElem {
 // ============================================================
 //
 // This section provides infrastructure for tracking moved values
-// to detect use-after-move errors. Currently this is documentation
-// and a basic framework for future implementation.
+// to detect use-after-move errors.
 //
 // # Architecture
 //
@@ -424,17 +426,17 @@ impl mir_types::PlaceElem {
 //
 // # Current Status
 //
-// The infrastructure is defined but not yet integrated into MIR
-// lowering. The MIR lowering creates Move operands correctly based
-// on is_copy_type(), but doesn't enforce use-after-move checking.
+// MoveTracker is integrated into MirLowerCtx:
+// - MirLowerCtx has a `move_tracker` field
+// - `operand_from_place_tracked()` in mir_lower_util.blood checks for
+//   use-after-move before creating operands and tracks moves
+// - `clear_move_on_assign()` resets move status after reassignment
 //
-// # Integration Points
+// # Usage
 //
-// To fully implement move tracking:
-// 1. Add a MoveTracker field to MirLowerCtx
-// 2. Call track_move() when creating Move operands
-// 3. Call check_not_moved() when using places
-// 4. Report E0600 (Use after move) on violations
+// Use `operand_from_place_tracked()` instead of `operand_from_place()`
+// to enable move tracking. The function will return Option::None if
+// the place has been moved from, allowing the caller to report an error.
 
 /// Tracks which places have been moved from.
 ///

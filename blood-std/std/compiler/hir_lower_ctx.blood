@@ -124,6 +124,10 @@ pub struct LoweringCtx {
     pub next_local_id: u32,
     /// Counter for allocating type variables.
     pub next_ty_var: u32,
+    /// Counter for allocating effect row variables.
+    pub next_effect_row_var: u32,
+    /// Counter for allocating record row variables.
+    pub next_record_row_var: u32,
     /// Collected diagnostics.
     pub diagnostics: Vec<hir::Diagnostic>,
     /// Lowered items.
@@ -169,6 +173,8 @@ impl LoweringCtx {
             next_body_id: 0,
             next_local_id: 0,
             next_ty_var: 0,
+            next_effect_row_var: 0,
+            next_record_row_var: 0,
             diagnostics: Vec::new(),
             items: Vec::new(),
             item_index: Vec::new(),
@@ -202,6 +208,20 @@ impl LoweringCtx {
     pub fn alloc_ty_var(self: &mut Self) -> hir_def::TyVarId {
         let id = hir_def::TyVarId::new(self.next_ty_var);
         self.next_ty_var = self.next_ty_var + 1;
+        id
+    }
+
+    /// Allocates a fresh EffectRowVarId.
+    pub fn alloc_effect_row_var(self: &mut Self) -> hir_def::EffectRowVarId {
+        let id = hir_def::EffectRowVarId::new(self.next_effect_row_var);
+        self.next_effect_row_var = self.next_effect_row_var + 1;
+        id
+    }
+
+    /// Allocates a fresh RecordRowVarId.
+    pub fn alloc_record_row_var(self: &mut Self) -> hir_def::RecordRowVarId {
+        let id = hir_def::RecordRowVarId::new(self.next_record_row_var);
+        self.next_record_row_var = self.next_record_row_var + 1;
         id
     }
 
