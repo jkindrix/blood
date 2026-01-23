@@ -126,6 +126,29 @@ pub enum TypeKind {
         fields: Vec<RecordField>,
         row_var: Option<hir_def::RecordRowVarId>,
     },
+    /// A universally quantified type: forall<T, U> Body
+    ///
+    /// Forall types allow rank-N polymorphism where a type can abstract
+    /// over type parameters. For example:
+    /// - `forall<T> fn(T) -> T` represents the polymorphic identity function type
+    /// - `forall<T: Clone> T -> (T, T)` with bounded type parameters
+    ///
+    /// # Implementation Status
+    ///
+    /// Basic infrastructure is in place:
+    /// - Type representation in HIR
+    /// - Lowering from AST
+    ///
+    /// Full support would require:
+    /// - Skolemization during type checking (creating fresh rigid type variables)
+    /// - Instantiation when forall types are used (replacing params with fresh inference vars)
+    /// - Subsumption checking for higher-rank polymorphism
+    Forall {
+        /// The type parameters being quantified.
+        params: Vec<hir_def::TyVarId>,
+        /// The body type (may reference the params).
+        body: Box<Type>,
+    },
     /// The never type (!)
     Never,
     /// An error type (used for error recovery)
@@ -492,6 +515,18 @@ fn copy_type_kind(kind: &TypeKind) -> TypeKind {
             TypeKind::Record {
                 fields: copied_fields,
                 row_var: *row_var,
+            }
+        }
+        &TypeKind::Forall { ref params, ref body } => {
+            let mut copied_params: Vec<hir_def::TyVarId> = Vec::new();
+            let mut i: usize = 0;
+            while i < params.len() {
+                copied_params.push(params[i]);
+                i = i + 1;
+            }
+            TypeKind::Forall {
+                params: copied_params,
+                body: Box::new(copy_type(body.as_ref())),
             }
         }
     }

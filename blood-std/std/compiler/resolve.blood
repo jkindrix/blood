@@ -393,6 +393,35 @@ impl Resolver {
         true
     }
 
+    /// Defines a local item (function, struct, etc.) in the current scope.
+    ///
+    /// Unlike define_global, this adds the item binding to the current scope
+    /// instead of the root module scope. Used for local items (items defined
+    /// inside function bodies).
+    pub fn define_local_item(
+        self: &mut Self,
+        name: common::Symbol,
+        def_id: hir_def::DefId,
+    ) -> bool {
+        // Check for duplicates in current scope
+        let current_scope_idx = self.current_scope();
+        let current_scope = &self.scopes[current_scope_idx];
+        let mut i: usize = 0;
+        while i < current_scope.bindings.len() {
+            if current_scope.bindings[i].name.index == name.index {
+                return false; // Duplicate in current scope
+            }
+            i = i + 1;
+        }
+
+        // Add to current scope
+        let binding = Binding::def(def_id);
+        let binding_entry = BindingEntry::new(name, binding);
+        self.scopes[current_scope_idx].bindings.push(binding_entry);
+
+        true
+    }
+
     /// Registers definition info.
     pub fn register_def_info(
         self: &mut Self,

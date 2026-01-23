@@ -86,15 +86,54 @@ fn emit_constant(
             ctx.add_string_constant(&s)
         }
         &mir_types::ConstantKind::Unit => common::make_string("undef"),
-        &mir_types::ConstantKind::FnDef(ref _def_id) => {
-            // Function pointers - would need function table
-            common::make_string("null")
+        &mir_types::ConstantKind::FnDef(ref def_id) => {
+            // Function pointer - look up the function name
+            match ctx.lookup_def_name(def_id.index) {
+                Option::Some(name) => {
+                    let mut result = common::make_string("@");
+                    result.push_str(name.as_str());
+                    result
+                }
+                Option::None => {
+                    // Fallback: generate a placeholder name
+                    let mut result = common::make_string("@fn_");
+                    result.push_str(codegen_types::format_u64(def_id.index as u64).as_str());
+                    result
+                }
+            }
         }
-        &mir_types::ConstantKind::ConstDef(ref _def_id) => {
-            common::make_string("null")
+        &mir_types::ConstantKind::ConstDef(ref def_id) => {
+            // Const reference - look up and inline the const value
+            // For now, generate a reference (full const eval would inline the value)
+            match ctx.lookup_def_name(def_id.index) {
+                Option::Some(name) => {
+                    let mut result = common::make_string("@");
+                    result.push_str(name.as_str());
+                    result
+                }
+                Option::None => {
+                    // Fallback: generate a placeholder
+                    let mut result = common::make_string("@const_");
+                    result.push_str(codegen_types::format_u64(def_id.index as u64).as_str());
+                    result
+                }
+            }
         }
-        &mir_types::ConstantKind::StaticDef(ref _def_id) => {
-            common::make_string("null")
+        &mir_types::ConstantKind::StaticDef(ref def_id) => {
+            // Static reference - look up the static name
+            match ctx.lookup_def_name(def_id.index) {
+                Option::Some(name) => {
+                    let mut result = common::make_string("@");
+                    result.push_str(name.as_str());
+                    result
+                }
+                Option::None => {
+                    // Fallback: generate a placeholder name
+                    let mut result = common::make_string("@static_");
+                    result.push_str(codegen_types::format_u64(def_id.index as u64).as_str());
+                    result
+                }
+            }
         }
         &mir_types::ConstantKind::ZeroSized => common::make_string("undef"),
     }

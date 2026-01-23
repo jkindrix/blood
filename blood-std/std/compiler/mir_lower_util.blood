@@ -229,6 +229,35 @@ pub fn lower_literal(lit: &hir_expr::Literal, ty: &hir_ty::Type) -> mir_types::C
 // ============================================================
 
 /// Returns true if a type is Copy (can be copied without moving).
+///
+/// # Ownership Tracking Status
+///
+/// This function provides structural Copy detection based on type kind.
+/// Currently implemented:
+/// - Primitives (i32, bool, etc.) are Copy
+/// - References (&T, &mut T) are Copy
+/// - Pointers (*const T, *mut T) are Copy
+/// - Tuples are Copy if all elements are Copy
+/// - Arrays are Copy if element type is Copy
+/// - Never type is Copy
+///
+/// # Limitations
+///
+/// ADT (struct, enum) types are conservatively treated as Move.
+/// Full ownership tracking would require:
+/// 1. Lang item infrastructure to identify the Copy trait
+/// 2. Access to TypeContext to query trait implementations
+/// 3. Recursive checking of ADT fields
+///
+/// This is safe but may be less efficient than optimal - values that
+/// could be copied will instead be moved.
+///
+/// # Future Enhancements
+///
+/// To properly check ADT Copy status:
+/// 1. Add lang items system in typeck or resolver
+/// 2. Thread TypeContext through MIR lowering
+/// 3. Query type_implements_trait(ty, copy_trait_def_id)
 pub fn is_copy_type(ty: &hir_ty::Type) -> bool {
     match &ty.kind {
         &hir_ty::TypeKind::Primitive(_) => true,
@@ -246,13 +275,15 @@ pub fn is_copy_type(ty: &hir_ty::Type) -> bool {
         }
         &hir_ty::TypeKind::Array { ref element, size: _ } => is_copy_type(element.as_ref()),
         &hir_ty::TypeKind::Never => true,
-        // Other types are not Copy by default
+        // Other types are not Copy by default.
+        // ADT types would need TypeContext access to check Copy trait impl.
         &hir_ty::TypeKind::Slice { element: _ } => false,
         &hir_ty::TypeKind::Fn { params: _, ret: _, effects: _ } => false,
         &hir_ty::TypeKind::Adt { def_id: _, args: _ } => false,
         &hir_ty::TypeKind::Infer(_) => false,
         &hir_ty::TypeKind::Param(_) => false,
         &hir_ty::TypeKind::Record { fields: _, row_var: _ } => false,
+        &hir_ty::TypeKind::Forall { params: _, body: _ } => false,
         &hir_ty::TypeKind::Error => true,
     }
 }
@@ -404,6 +435,18 @@ impl hir_ty::TypeKind {
                 hir_ty::TypeKind::Record {
                     fields: cloned_fields,
                     row_var: *row_var,
+                }
+            }
+            &hir_ty::TypeKind::Forall { ref params, ref body } => {
+                let mut cloned_params = Vec::new();
+                let mut i: usize = 0;
+                while i < params.len() {
+                    cloned_params.push(params[i]);
+                    i = i + 1;
+                }
+                hir_ty::TypeKind::Forall {
+                    params: cloned_params,
+                    body: Box::new(body.as_ref().clone()),
                 }
             }
             &hir_ty::TypeKind::Never => hir_ty::TypeKind::Never,

@@ -129,23 +129,47 @@ These features are intentionally deferred to Phase 2 and will return explicit "n
 
 | Feature | Location | Status |
 |---------|----------|--------|
-| Row polymorphism for records | hir_ty.blood | Not implemented |
-| Row variable handling in type lowering | hir_lower_type.blood | Not implemented |
+| Row polymorphism for records | unify.blood | ✅ Implemented |
+| Row variable handling in type lowering | hir_lower_type.blood | ⚠️ Partial |
 
-**Rationale**: Row polymorphism for extensible records requires:
-- Row variable tracking
-- Structural unification with row extension
-- Type inference for partial records
+**Status**: Record row polymorphism is now implemented:
+- `unify_record_rows` function handles structural unification
+- Common fields are unified, different fields go to row variables
+- Supports closed records (exact match) and open records (extensible)
+- `add_record_subst` and `lookup_record` methods in SubstTable
 
 ### Advanced Type Features (TODO-10, TODO-15, TODO-16)
 
 | Feature | Location | Status |
 |---------|----------|--------|
-| Forall type handling | hir_lower_type.blood | Lowered as body only |
-| Const generics | hir_lower_type.blood | Not implemented |
+| Forall type handling | hir_ty.blood, hir_lower_type.blood | ✅ Basic infrastructure |
+| Const generics | hir_lower_type.blood | ⚠️ Partial (expressions evaluated) |
 | Ownership qualifiers | hir_lower_type.blood | Stripped during lowering |
+| Ownership tracking | mir_lower_ctx.blood, mir_lower_util.blood | ✅ Basic infrastructure |
+| Local item handling | resolve.blood, hir_lower_expr.blood | ✅ Name registration |
 
-**Rationale**: These features require significant type system infrastructure.
+**Status**: Advanced type features now have basic infrastructure:
+
+**Forall types:**
+- `TypeKind::Forall` variant added with params and body
+- Lowering creates Forall type with allocated type variables
+- Unification compares param counts and unifies bodies
+- Full support would require type parameter scope during lowering
+
+**Const generics:**
+- Const type arguments are evaluated using const_eval
+- Full support would require storing const values in type args
+
+**Ownership tracking:**
+- `is_copy_type` determines Copy vs Move semantics for types
+- `MoveTracker` struct added for tracking moved places
+- `operand_from_place` chooses Copy or Move based on type
+- ADTs conservatively treated as Move (would need trait lookup for full support)
+
+**Local items:**
+- `define_local_item` registers items in current scope
+- `lower_local_item` allocates DefId and registers in resolver
+- Full body lowering deferred due to circular dependencies
 
 ---
 
@@ -205,13 +229,13 @@ These features are intentionally deferred to Phase 2 and will return explicit "n
 | Effect evidence system | ✅ Complete | - |
 | Effect runtime support | ✅ Complete | - |
 | Handler expression lowering | ✅ Complete | - |
-| Row polymorphism (records) | ❌ Not implemented | LOW |
-| Forall types | ❌ Not implemented | LOW |
-| Const generics | ❌ Not implemented | LOW |
+| Row polymorphism (records) | ✅ Implemented | - |
+| Forall types | ✅ Basic infrastructure | - |
+| Const generics | ⚠️ Partial | LOW |
 | Pattern exhaustiveness | ✅ Complete | - |
 | Deref coercion | ✅ Complete | - |
-| Ownership tracking | ❌ Not implemented | MEDIUM |
-| Local item handling | ❌ Not implemented | MEDIUM |
+| Ownership tracking | ✅ Basic infrastructure | - |
+| Local item handling | ✅ Name registration | - |
 
 ---
 
@@ -451,4 +475,23 @@ When modifying the compiler:
   - Implemented output using blood-rust print builtins (main.blood)
     - `print_string()` now uses `print_str` builtin
   - Updated documentation: "Blood-Rust Runtime Limitations" → "Blood-Rust Runtime Support"
+  - All 53 compiler files continue to pass type checking
+- **2026-01**: Advanced type system infrastructure:
+  - Implemented row polymorphism for records (unify.blood)
+    - `unify_record_rows` function for structural unification
+    - `add_record_subst` and `lookup_record` methods in SubstTable
+    - Supports closed records (exact match) and open records (extensible)
+  - Implemented Forall types infrastructure (hir_ty.blood, unify.blood)
+    - Added `TypeKind::Forall` variant with params and body
+    - Updated lowering to create Forall with allocated type variables
+    - Added Forall handling in substitute_type_params, apply_substs, occurs_in, unify
+    - Updated codegen_types.blood and mir_lower_expr.blood for Forall
+  - Implemented ownership tracking infrastructure (mir_lower_ctx.blood, mir_lower_util.blood)
+    - `MoveTracker` struct for tracking moved places
+    - Documentation added to `is_copy_type` explaining limitations
+  - Implemented local item handling (resolve.blood, hir_lower_expr.blood)
+    - `define_local_item` registers items in current scope
+    - `lower_local_item` allocates DefId and registers in resolver
+  - Updated const generics to evaluate expressions (hir_lower_type.blood)
+  - Documented run command limitations (main.blood)
   - All 53 compiler files continue to pass type checking

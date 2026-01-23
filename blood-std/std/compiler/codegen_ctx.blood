@@ -37,6 +37,8 @@ pub struct CodegenCtx {
     string_table: Vec<StringConstant>,
     /// Counter for generating unique string constant names.
     string_counter: u32,
+    /// Mapping from DefIds to their global names (functions, consts, statics).
+    def_names: Vec<DefNameEntry>,
 }
 
 /// Mapping from a MIR local to its LLVM type.
@@ -61,6 +63,19 @@ struct LocalName {
     name: String,
 }
 
+/// Mapping from a DefId to its global name (for functions, consts, statics).
+pub struct DefNameEntry {
+    pub def_id: u32,
+    pub name: String,
+}
+
+impl DefNameEntry {
+    /// Creates a new DefNameEntry.
+    pub fn new(def_id: u32, name: String) -> DefNameEntry {
+        DefNameEntry { def_id, name }
+    }
+}
+
 impl CodegenCtx {
     /// Creates a new codegen context.
     pub fn new() -> CodegenCtx {
@@ -74,7 +89,53 @@ impl CodegenCtx {
             current_fn: Option::None,
             string_table: Vec::new(),
             string_counter: 0,
+            def_names: Vec::new(),
         }
+    }
+
+    /// Creates a new codegen context with pre-populated def names.
+    pub fn with_def_names(def_names: Vec<DefNameEntry>) -> CodegenCtx {
+        CodegenCtx {
+            output: String::new(),
+            indent_level: 0,
+            value_counter: 0,
+            label_counter: 0,
+            local_names: Vec::new(),
+            local_types: Vec::new(),
+            current_fn: Option::None,
+            string_table: Vec::new(),
+            string_counter: 0,
+            def_names: def_names,
+        }
+    }
+
+    /// Registers a DefId with its global name.
+    pub fn register_def_name(self: &mut CodegenCtx, def_id: u32, name: String) {
+        self.def_names.push(DefNameEntry { def_id, name });
+    }
+
+    /// Looks up the global name for a DefId.
+    pub fn lookup_def_name(self: &CodegenCtx, def_id: u32) -> Option<String> {
+        let mut i: usize = 0;
+        while i < self.def_names.len() {
+            if self.def_names[i].def_id == def_id {
+                return Option::Some(clone_string(&self.def_names[i].name));
+            }
+            i = i + 1;
+        }
+        Option::None
+    }
+
+    /// Resets per-function state while keeping global state (def_names).
+    pub fn reset_function_state(self: &mut CodegenCtx) {
+        self.output = String::new();
+        self.indent_level = 0;
+        self.value_counter = 0;
+        self.label_counter = 0;
+        self.local_names = Vec::new();
+        self.local_types = Vec::new();
+        self.current_fn = Option::None;
+        // Note: string_table and def_names are preserved
     }
 
     // ======== Output Management ========

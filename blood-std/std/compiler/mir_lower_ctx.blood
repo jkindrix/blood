@@ -407,3 +407,107 @@ impl mir_types::PlaceElem {
         }
     }
 }
+
+// ============================================================
+// Move Tracking Infrastructure
+// ============================================================
+//
+// This section provides infrastructure for tracking moved values
+// to detect use-after-move errors. Currently this is documentation
+// and a basic framework for future implementation.
+//
+// # Architecture
+//
+// Move tracking operates in two phases:
+// 1. During MIR lowering: Record when Move operands are created
+// 2. During MIR analysis: Check that moved places aren't used again
+//
+// # Current Status
+//
+// The infrastructure is defined but not yet integrated into MIR
+// lowering. The MIR lowering creates Move operands correctly based
+// on is_copy_type(), but doesn't enforce use-after-move checking.
+//
+// # Integration Points
+//
+// To fully implement move tracking:
+// 1. Add a MoveTracker field to MirLowerCtx
+// 2. Call track_move() when creating Move operands
+// 3. Call check_not_moved() when using places
+// 4. Report E0600 (Use after move) on violations
+
+/// Tracks which places have been moved from.
+///
+/// This is a simplified representation. A full implementation would
+/// track partial moves (e.g., moving a struct field) and handle
+/// re-assignment which allows reuse.
+pub struct MoveTracker {
+    /// Places that have been moved from.
+    /// Stored as (local_index, moved) pairs.
+    moved_locals: Vec<MovedLocal>,
+}
+
+/// A local that has been moved from.
+struct MovedLocal {
+    /// The local's index.
+    local_index: u32,
+    /// The span where the move occurred (for error messages).
+    move_span: common::Span,
+}
+
+impl MoveTracker {
+    /// Creates a new move tracker.
+    pub fn new() -> MoveTracker {
+        MoveTracker {
+            moved_locals: Vec::new(),
+        }
+    }
+
+    /// Records that a local has been moved.
+    pub fn track_move(self: &mut Self, local: mir_def::MirLocalId, span: common::Span) {
+        self.moved_locals.push(MovedLocal {
+            local_index: local.index,
+            move_span: span,
+        });
+    }
+
+    /// Checks if a local has been moved.
+    /// Returns Some(span) if moved, None otherwise.
+    pub fn check_moved(self: &Self, local: mir_def::MirLocalId) -> Option<common::Span> {
+        let mut i: usize = 0;
+        while i < self.moved_locals.len() {
+            if self.moved_locals[i].local_index == local.index {
+                return Option::Some(self.moved_locals[i].move_span);
+            }
+            i = i + 1;
+        }
+        Option::None
+    }
+
+    /// Clears the moved status of a local (after re-assignment).
+    pub fn clear_move(self: &mut Self, local: mir_def::MirLocalId) {
+        let mut i: usize = 0;
+        while i < self.moved_locals.len() {
+            if self.moved_locals[i].local_index == local.index {
+                // Remove by swapping with last and popping
+                let last = self.moved_locals.len() - 1;
+                if i != last {
+                    self.moved_locals[i] = MovedLocal {
+                        local_index: self.moved_locals[last].local_index,
+                        move_span: self.moved_locals[last].move_span,
+                    };
+                }
+                self.moved_locals.pop();
+                return;
+            }
+            i = i + 1;
+        }
+    }
+
+    /// Resets all move tracking (for a new function body).
+    pub fn reset(self: &mut Self) {
+        while self.moved_locals.len() > 0 {
+            self.moved_locals.pop();
+        }
+    }
+}

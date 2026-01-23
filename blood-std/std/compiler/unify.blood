@@ -294,6 +294,20 @@ pub fn substitute_type_params(ty: &hir_ty::Type, subst: &TypeParamSubst) -> hir_
                 row_var: *row_var,
             })
         }
+        &hir_ty::TypeKind::Forall { ref params, ref body } => {
+            // Substitute in the body, but don't touch the quantified params
+            // (they shadow any outer params with the same var_id)
+            let mut copied_params: Vec<hir_def::TyVarId> = Vec::new();
+            let mut i: usize = 0;
+            while i < params.len() {
+                copied_params.push(params[i]);
+                i = i + 1;
+            }
+            hir_ty::Type::new(hir_ty::TypeKind::Forall {
+                params: copied_params,
+                body: Box::new(substitute_type_params(body.as_ref(), subst)),
+            })
+        }
     }
 }
 
@@ -868,6 +882,49 @@ impl SubstTable {
         }
         Option::None
     }
+
+    /// Adds a record row variable substitution.
+    ///
+    /// This binds a record row variable to a set of fields and an optional
+    /// rest row variable (for open record types).
+    pub fn add_record_subst(
+        self: &mut Self,
+        var_id: hir_def::RecordRowVarId,
+        fields: Vec<hir_ty::RecordField>,
+        rest: Option<hir_def::RecordRowVarId>,
+    ) {
+        let subst = RecordRowSubst::new(var_id, fields, rest);
+        self.record_substs.push(subst);
+    }
+
+    /// Looks up a record row variable.
+    ///
+    /// Returns the fields and optional rest row variable that the given
+    /// row variable is bound to.
+    pub fn lookup_record(self: &Self, var_id: hir_def::RecordRowVarId) -> Option<RecordRowSubst> {
+        let mut i: usize = 0;
+        while i < self.record_substs.len() {
+            if self.record_substs[i].var_id.index == var_id.index {
+                // Return a copy of the substitution
+                let mut copied_fields: Vec<hir_ty::RecordField> = Vec::new();
+                let mut j: usize = 0;
+                while j < self.record_substs[i].fields.len() {
+                    copied_fields.push(hir_ty::RecordField {
+                        name: self.record_substs[i].fields[j].name,
+                        ty: hir_ty::copy_type(&self.record_substs[i].fields[j].ty),
+                    });
+                    j = j + 1;
+                }
+                return Option::Some(RecordRowSubst {
+                    var_id: self.record_substs[i].var_id,
+                    fields: copied_fields,
+                    rest: self.record_substs[i].rest,
+                });
+            }
+            i = i + 1;
+        }
+        Option::None
+    }
 }
 
 // ============================================================
@@ -967,6 +1024,19 @@ pub fn apply_substs(table: &SubstTable, ty: &hir_ty::Type) -> hir_ty::Type {
                 row_var: *row_var,
             })
         }
+        &hir_ty::TypeKind::Forall { ref params, ref body } => {
+            // Apply substitutions to the body
+            let mut copied_params: Vec<hir_def::TyVarId> = Vec::new();
+            let mut i: usize = 0;
+            while i < params.len() {
+                copied_params.push(params[i]);
+                i = i + 1;
+            }
+            hir_ty::Type::new(hir_ty::TypeKind::Forall {
+                params: copied_params,
+                body: Box::new(apply_substs(table, body.as_ref())),
+            })
+        }
     }
 }
 
@@ -1058,6 +1128,9 @@ pub fn occurs_in(var_id: hir_def::TyVarId, ty: &hir_ty::Type) -> bool {
                 i = i + 1;
             }
             false
+        }
+        &hir_ty::TypeKind::Forall { params: _, ref body } => {
+            occurs_in(var_id, body.as_ref())
         }
     }
 }
@@ -1275,29 +1348,36 @@ fn unify_resolved(
             }
         }
 
-        // Record types: unify fields
-        (&hir_ty::TypeKind::Record { ref fields, row_var: _ }, other_kind) => {
+        // Record types: unify with row polymorphism
+        (&hir_ty::TypeKind::Record { ref fields, ref row_var }, other_kind) => {
             let fields_a = fields;
+            let row_var_a = row_var;
             match other_kind {
-                &hir_ty::TypeKind::Record { ref fields, row_var: _ } => {
-                    // For now, require exact field match
-                    if fields_a.len() != fields.len() {
-                        return UnifyResult::Err(UnifyError::new(UnifyErrorKind::RecordMismatch, span));
+                &hir_ty::TypeKind::Record { ref fields, ref row_var } => {
+                    let fields_b = fields;
+                    let row_var_b = row_var;
+                    unify_record_rows(table, unifier, fields_a, row_var_a, fields_b, row_var_b, span)
+                }
+                _ => UnifyResult::Err(UnifyError::mismatch(span))
+            }
+        }
+
+        // Forall types: unify quantified types
+        // Full support would require instantiation and subsumption checking
+        (&hir_ty::TypeKind::Forall { ref params, ref body }, other_kind) => {
+            let params_a = params;
+            let body_a = body;
+            match other_kind {
+                &hir_ty::TypeKind::Forall { ref params, ref body } => {
+                    // For now, require same number of quantified params
+                    if params_a.len() != params.len() {
+                        return UnifyResult::Err(UnifyError::mismatch(span));
                     }
-                    // TODO: Proper structural record unification with row polymorphism
-                    let mut i: usize = 0;
-                    while i < fields_a.len() {
-                        // Fields should be in same order for now
-                        if fields_a[i].name.index != fields[i].name.index {
-                            return UnifyResult::Err(UnifyError::new(UnifyErrorKind::RecordMismatch, span));
-                        }
-                        match unify(table, unifier, &fields_a[i].ty, &fields[i].ty, span) {
-                            UnifyResult::Err(e) => { return UnifyResult::Err(e); }
-                            UnifyResult::Ok => {}
-                        }
-                        i = i + 1;
-                    }
-                    UnifyResult::Ok
+                    // Unify the body types
+                    // NOTE: This is a simplified implementation. Full forall unification
+                    // would require skolemization (replacing quantified vars with fresh
+                    // rigid vars) to properly check impredicative polymorphism.
+                    unify(table, unifier, body_a.as_ref(), body.as_ref(), span)
                 }
                 _ => UnifyResult::Err(UnifyError::mismatch(span))
             }
@@ -1545,4 +1625,194 @@ fn types_equal(a: &hir_ty::Type, b: &hir_ty::Type) -> bool {
         }
         _ => false // Conservative: non-primitive types need unification
     }
+}
+
+// ============================================================
+// Record Row Unification
+// ============================================================
+
+/// Unifies two record types with row polymorphism support.
+///
+/// Record row unification rules:
+/// 1. If both rows are closed (no row_var): fields must match exactly
+/// 2. If one has a row_var (open row): bind the var to extra fields
+/// 3. If both have row_vars: unify common fields, bind difference
+///
+/// Row polymorphism allows functions to work with records that have
+/// at least certain fields, enabling structural subtyping.
+pub fn unify_record_rows(
+    table: &mut SubstTable,
+    unifier: &mut Unifier,
+    fields_a: &Vec<hir_ty::RecordField>,
+    row_var_a: &Option<hir_def::RecordRowVarId>,
+    fields_b: &Vec<hir_ty::RecordField>,
+    row_var_b: &Option<hir_def::RecordRowVarId>,
+    span: common::Span,
+) -> UnifyResult {
+    // Check if rows are closed (no row variables)
+    let a_closed = row_var_a.is_none();
+    let b_closed = row_var_b.is_none();
+
+    // Case 1: Both closed - require exact field match
+    if a_closed && b_closed {
+        if fields_a.len() != fields_b.len() {
+            return UnifyResult::Err(UnifyError::new(UnifyErrorKind::RecordMismatch, span));
+        }
+        return unify_record_fields_exact(table, unifier, fields_a, fields_b, span);
+    }
+
+    // Case 2: Find common and different fields
+    // Common fields must unify; different fields go into row variables
+
+    // Collect field names from both records
+    let mut common: Vec<(usize, usize)> = Vec::new(); // (a_idx, b_idx)
+    let mut only_in_a: Vec<usize> = Vec::new();
+    let mut only_in_b: Vec<usize> = Vec::new();
+
+    // Find common fields and fields only in a
+    let mut i: usize = 0;
+    while i < fields_a.len() {
+        let found = find_field_by_name(fields_b, fields_a[i].name);
+        match found {
+            Option::Some(b_idx) => {
+                common.push((i, b_idx));
+            }
+            Option::None => {
+                only_in_a.push(i);
+            }
+        }
+        i = i + 1;
+    }
+
+    // Find fields only in b
+    let mut j: usize = 0;
+    while j < fields_b.len() {
+        let found = find_field_by_name(fields_a, fields_b[j].name);
+        if found.is_none() {
+            only_in_b.push(j);
+        }
+        j = j + 1;
+    }
+
+    // Unify common fields
+    let mut k: usize = 0;
+    while k < common.len() {
+        let (a_idx, b_idx) = common[k];
+        match unify(table, unifier, &fields_a[a_idx].ty, &fields_b[b_idx].ty, span) {
+            UnifyResult::Err(e) => { return UnifyResult::Err(e); }
+            UnifyResult::Ok => {}
+        }
+        k = k + 1;
+    }
+
+    // Handle different fields based on row variable availability
+    match (row_var_a, row_var_b) {
+        (&Option::Some(var_a), &Option::None) => {
+            // A is open, B is closed
+            // A must not have any extra fields, and A's row var binds to B's extras
+            if only_in_a.len() > 0 {
+                return UnifyResult::Err(UnifyError::new(UnifyErrorKind::RecordMismatch, span));
+            }
+            // Bind var_a to fields only in B
+            let extra_fields = collect_fields_by_indices(fields_b, &only_in_b);
+            table.add_record_subst(var_a, extra_fields, Option::None);
+        }
+        (&Option::None, &Option::Some(var_b)) => {
+            // B is open, A is closed
+            // B must not have any extra fields, and B's row var binds to A's extras
+            if only_in_b.len() > 0 {
+                return UnifyResult::Err(UnifyError::new(UnifyErrorKind::RecordMismatch, span));
+            }
+            // Bind var_b to fields only in A
+            let extra_fields = collect_fields_by_indices(fields_a, &only_in_a);
+            table.add_record_subst(var_b, extra_fields, Option::None);
+        }
+        (&Option::Some(var_a), &Option::Some(var_b)) => {
+            // Both open - create fresh row variable for unified extension
+            let fresh_var = unifier.fresh_record_var();
+
+            // A's row var binds to B's extra fields + fresh
+            let a_extra = collect_fields_by_indices(fields_b, &only_in_b);
+            table.add_record_subst(var_a, a_extra, Option::Some(fresh_var));
+
+            // B's row var binds to A's extra fields + fresh
+            let b_extra = collect_fields_by_indices(fields_a, &only_in_a);
+            table.add_record_subst(var_b, b_extra, Option::Some(fresh_var));
+        }
+        (&Option::None, &Option::None) => {
+            // Both closed - already handled above
+        }
+    }
+
+    UnifyResult::Ok
+}
+
+/// Unifies record fields exactly (for closed records).
+fn unify_record_fields_exact(
+    table: &mut SubstTable,
+    unifier: &mut Unifier,
+    fields_a: &Vec<hir_ty::RecordField>,
+    fields_b: &Vec<hir_ty::RecordField>,
+    span: common::Span,
+) -> UnifyResult {
+    // Check that field sets match (order-independent)
+    let mut i: usize = 0;
+    while i < fields_a.len() {
+        let found = find_field_by_name(fields_b, fields_a[i].name);
+        match found {
+            Option::Some(b_idx) => {
+                match unify(table, unifier, &fields_a[i].ty, &fields_b[b_idx].ty, span) {
+                    UnifyResult::Err(e) => { return UnifyResult::Err(e); }
+                    UnifyResult::Ok => {}
+                }
+            }
+            Option::None => {
+                return UnifyResult::Err(UnifyError::new(UnifyErrorKind::RecordMismatch, span));
+            }
+        }
+        i = i + 1;
+    }
+
+    // Verify b doesn't have extra fields not in a
+    let mut j: usize = 0;
+    while j < fields_b.len() {
+        if find_field_by_name(fields_a, fields_b[j].name).is_none() {
+            return UnifyResult::Err(UnifyError::new(UnifyErrorKind::RecordMismatch, span));
+        }
+        j = j + 1;
+    }
+
+    UnifyResult::Ok
+}
+
+/// Finds a field by name and returns its index.
+fn find_field_by_name(fields: &Vec<hir_ty::RecordField>, name: common::Symbol) -> Option<usize> {
+    let mut i: usize = 0;
+    while i < fields.len() {
+        if fields[i].name.index == name.index {
+            return Option::Some(i);
+        }
+        i = i + 1;
+    }
+    Option::None
+}
+
+/// Collects fields at the given indices.
+fn collect_fields_by_indices(
+    fields: &Vec<hir_ty::RecordField>,
+    indices: &Vec<usize>,
+) -> Vec<hir_ty::RecordField> {
+    let mut result: Vec<hir_ty::RecordField> = Vec::new();
+    let mut i: usize = 0;
+    while i < indices.len() {
+        let idx = indices[i];
+        if idx < fields.len() {
+            result.push(hir_ty::RecordField {
+                name: fields[idx].name,
+                ty: hir_ty::copy_type(&fields[idx].ty),
+            });
+        }
+        i = i + 1;
+    }
+    result
 }

@@ -129,6 +129,18 @@ pub fn generate_module(
 ) -> CodegenResult {
     let mut output = String::new();
 
+    // Build the DefId to name mapping for all functions
+    let mut def_names: Vec<codegen_ctx::DefNameEntry> = Vec::new();
+    let mut idx: usize = 0;
+    while idx < functions.len() {
+        let (ref name, ref body) = functions[idx];
+        def_names.push(codegen_ctx::DefNameEntry::new(
+            body.def_id.index,
+            clone_string(name),
+        ));
+        idx = idx + 1;
+    }
+
     // Module header
     output.push_str("; ModuleID = '");
     output.push_str(module_name);
@@ -140,11 +152,11 @@ pub fn generate_module(
     output.push_str("target triple = \"x86_64-unknown-linux-gnu\"\n");
     output.push_str("\n");
 
-    // Generate each function
+    // Generate each function with the shared def_names table
     let mut i: usize = 0;
     while i < functions.len() {
         let (ref name, ref body) = functions[i];
-        let fn_ir = generate_function(body, name.as_str());
+        let fn_ir = generate_function_with_defs(body, name.as_str(), &def_names);
         output.push_str(fn_ir.as_str());
         i = i + 1;
     }
@@ -164,6 +176,82 @@ pub fn generate_module(
     output.push_str("declare void @blood_resume(i64)\n");
 
     CodegenResult::ok(output)
+}
+
+/// Generates LLVM IR for a function with access to def names table.
+fn generate_function_with_defs(
+    body: &mir_body::MirBody,
+    fn_name: &str,
+    def_names: &Vec<codegen_ctx::DefNameEntry>,
+) -> String {
+    let mut ctx = codegen_ctx::CodegenCtx::new();
+
+    // Register all def names in the context
+    let mut i: usize = 0;
+    while i < def_names.len() {
+        ctx.register_def_name(def_names[i].def_id, clone_string(&def_names[i].name));
+        i = i + 1;
+    }
+
+    ctx.begin_function(common::make_string(fn_name));
+
+    // Build parameter list (skip first local which is return place)
+    let mut params: Vec<(String, String)> = Vec::new();
+    let mut p: usize = 1; // Start at 1 to skip return place
+    let param_end: usize = 1usize + (body.param_count as usize);
+    while p < param_end && p < body.locals.len() {
+        let local = &body.locals[p];
+        let ty = codegen_types::type_to_llvm(&local.ty);
+        let mut arg_name = common::make_string("%arg");
+        let idx_str = codegen_types::format_u64((p - 1) as u64);
+        arg_name.push_str(idx_str.as_str());
+        params.push((ty, arg_name));
+        p = p + 1;
+    }
+
+    // Get return type (local _0)
+    let ret_ty = if body.locals.len() > 0 {
+        codegen_types::type_to_llvm(&body.locals[0].ty)
+    } else {
+        common::make_string("void")
+    };
+
+    // Emit function header
+    ctx.emit_fn_header(fn_name, &params, ret_ty.as_str());
+
+    // Emit entry label
+    ctx.write("entry:\n");
+
+    // Emit allocas for all locals
+    codegen_stmt::emit_allocas(&mut ctx, body);
+
+    // Store arguments into allocas
+    codegen_stmt::emit_arg_stores(&mut ctx, body);
+
+    // Jump to first basic block if there are any
+    if body.basic_blocks.len() > 0 {
+        let first_label = ctx.block_label(mir_def::BasicBlockId::new(0));
+        ctx.indent();
+        ctx.emit_br(first_label.as_str());
+        ctx.dedent();
+    } else {
+        ctx.indent();
+        ctx.emit_unreachable();
+        ctx.dedent();
+    }
+
+    // Emit all basic blocks
+    let mut block_idx: usize = 0;
+    while block_idx < body.basic_blocks.len() {
+        let block_id = mir_def::BasicBlockId::new(block_idx as u32);
+        codegen_term::emit_basic_block(&mut ctx, block_id, &body.basic_blocks[block_idx]);
+        block_idx = block_idx + 1;
+    }
+
+    ctx.emit_fn_footer();
+    ctx.end_function();
+
+    ctx.output
 }
 
 // ============================================================

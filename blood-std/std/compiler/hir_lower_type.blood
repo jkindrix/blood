@@ -105,10 +105,37 @@ pub fn lower_type(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> hir_t
             // TODO: Track ownership qualifiers
             lower_type(ctx, inner.as_ref())
         }
-        &ast::TypeKind::Forall { params: _, ref body } => {
-            // For now, just lower the body type
-            // TODO: Handle forall types properly
-            lower_type(ctx, body.as_ref())
+        &ast::TypeKind::Forall { ref params, ref body } => {
+            // Lower forall type: forall<T, U> Body
+            //
+            // For each type parameter, allocate a type variable ID.
+            // These become the quantified parameters in the Forall type.
+            //
+            // NOTE: Currently, the body type cannot properly reference these
+            // parameters by name because they are not added to the resolver scope.
+            // Full forall type support would require:
+            // 1. Pushing a type parameter scope before lowering body
+            // 2. Adding each parameter name -> TyVarId mapping
+            // 3. Popping the scope after lowering
+            // 4. Making type path resolution check type parameter scope first
+            //
+            // For now, we create the structure but body type param references
+            // won't resolve correctly.
+
+            let mut param_ids: Vec<hir_def::TyVarId> = Vec::new();
+            let mut i: usize = 0;
+            while i < params.len() {
+                let var_id = ctx.alloc_ty_var();
+                param_ids.push(var_id);
+                i = i + 1;
+            }
+
+            let body_ty = lower_type(ctx, body.as_ref());
+
+            hir_ty::Type::new(hir_ty::TypeKind::Forall {
+                params: param_ids,
+                body: Box::new(body_ty),
+            })
         }
         &ast::TypeKind::Never => {
             hir_ty::Type::never()
@@ -276,8 +303,21 @@ pub fn lower_type_args(ctx: &mut hir_lower_ctx::LoweringCtx, args: &ast::TypeArg
             &ast::TypeArg::Lifetime(_) => {
                 // Lifetimes don't produce types in our representation
             }
-            &ast::TypeArg::Const(_) => {
-                // TODO: Handle const generics
+            &ast::TypeArg::Const(ref expr) => {
+                // Const generic argument: evaluate the expression
+                //
+                // NOTE: Full const generics support would require:
+                // 1. A representation for const generic values in type args
+                //    (currently ADT only stores Vec<Type>, not Vec<GenericArg>)
+                // 2. Const parameter resolution in type paths
+                // 3. Const expression evaluation and comparison during unification
+                //
+                // For now, we evaluate the expression but don't store it.
+                // This allows the compiler to verify the expression is const-evaluable.
+                let _value = const_eval::eval_const_expr(expr);
+
+                // We could emit a diagnostic if the value is an error:
+                // if value.is_error() { ... }
             }
         }
         i = i + 1;

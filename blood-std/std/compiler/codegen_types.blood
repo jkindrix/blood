@@ -70,6 +70,8 @@ pub fn type_to_llvm(ty: &hir_ty::Type) -> String {
         &hir_ty::TypeKind::Param(ref var_id) => param_to_llvm(var_id),
         &hir_ty::TypeKind::Infer(_) => common::make_string("i64"),
         &hir_ty::TypeKind::Record { fields: _, row_var: _ } => common::make_string("ptr"),
+        // Forall types are represented as opaque pointers (polymorphic values)
+        &hir_ty::TypeKind::Forall { params: _, body: _ } => common::make_string("ptr"),
         &hir_ty::TypeKind::Error => common::make_string("i64"),
     }
 }
@@ -193,6 +195,7 @@ pub fn get_layout(ty: &hir_ty::Type) -> TypeLayout {
         &hir_ty::TypeKind::Param(_) => TypeLayout::pointer(),
         &hir_ty::TypeKind::Infer(_) => TypeLayout::new(8, 8, common::make_string("i64")),
         &hir_ty::TypeKind::Record { fields: _, row_var: _ } => TypeLayout::pointer(),
+        &hir_ty::TypeKind::Forall { params: _, body: _ } => TypeLayout::pointer(),
         &hir_ty::TypeKind::Error => TypeLayout::new(8, 8, common::make_string("i64")),
     }
 }

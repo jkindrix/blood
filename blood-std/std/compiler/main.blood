@@ -9,6 +9,7 @@
 // - args_get(i32) -> &str - get argument at index
 // - print_str(&str) - print string without newline
 // - println_str(&str) - print string with newline
+// - file_write_string(&str, &str) -> bool - write string to file path
 
 mod common;
 mod ast;
@@ -219,13 +220,18 @@ fn run_build(args: &Args) -> i32 {
                         // Write to output file or stdout
                         match &args.output_file {
                             &Option::Some(ref out_path) => {
-                                // File writing not yet implemented
-                                print_error("File writing not yet implemented");
-                                print_info("LLVM IR would be written to: ");
-                                print_string(out_path);
-                                print_newline();
-                                // For now, print to stdout
-                                print_string(ir);
+                                // Write to output file using blood-rust builtin
+                                let write_success = file_write_string(out_path.as_str(), ir.as_str());
+                                if write_success {
+                                    print_success("Wrote LLVM IR to: ");
+                                    print_string(out_path);
+                                    print_newline();
+                                } else {
+                                    print_error("Failed to write file: ");
+                                    print_string(out_path);
+                                    print_newline();
+                                    return 1;
+                                }
                             }
                             &Option::None => {
                                 // Print to stdout
@@ -255,15 +261,32 @@ fn run_build(args: &Args) -> i32 {
 }
 
 /// Runs the run command.
+///
+/// This command compiles the source to LLVM IR and then attempts to execute it.
+///
+/// # Current Limitation
+///
+/// The run command currently only generates LLVM IR. Full execution would require:
+/// 1. A shell execution builtin to run external commands
+/// 2. Access to LLVM tools (llc) to compile IR to object code
+/// 3. Access to a linker (ld, clang, gcc) to create an executable
+/// 4. Running the resulting binary and capturing its exit code
+///
+/// To run a Blood program manually after compilation:
+/// 1. Use `blood build file.blood -o output.ll` to generate LLVM IR
+/// 2. Run `llc output.ll -filetype=obj -o output.o` to create object file
+/// 3. Run `clang output.o -o output` to link into executable
+/// 4. Run `./output` to execute
 fn run_run(args: &Args) -> i32 {
-    // Build first
+    // Build first (generates LLVM IR)
     let build_result = run_build(args);
     if build_result != 0 {
         return build_result;
     }
 
-    // Execute - would require linking and running
-    print_info("Execution not yet implemented");
+    // Execution requires shell command support which is not available
+    print_info("Build complete. See help for manual execution steps.");
+    print_info("Run command requires shell execution builtin (not yet available).");
     0
 }
 

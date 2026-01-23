@@ -1487,6 +1487,9 @@ fn classify_handler_state(ty: &hir_ty::Type) -> mir_stmt::HandlerStateKind {
         &hir_ty::TypeKind::Record { ref fields, ref row_var } => {
             mir_stmt::HandlerStateKind::Dynamic
         }
+        &hir_ty::TypeKind::Forall { params: _, body: _ } => {
+            mir_stmt::HandlerStateKind::Dynamic
+        }
     }
 }
 
@@ -1505,6 +1508,7 @@ fn extract_handler_def_id(ty: &hir_ty::Type) -> hir_def::DefId {
         &hir_ty::TypeKind::Infer(_) => hir_def::DefId::dummy(),
         &hir_ty::TypeKind::Param(_) => hir_def::DefId::dummy(),
         &hir_ty::TypeKind::Record { fields: _, row_var: _ } => hir_def::DefId::dummy(),
+        &hir_ty::TypeKind::Forall { params: _, body: _ } => hir_def::DefId::dummy(),
         &hir_ty::TypeKind::Never => hir_def::DefId::dummy(),
         &hir_ty::TypeKind::Error => hir_def::DefId::dummy(),
     }

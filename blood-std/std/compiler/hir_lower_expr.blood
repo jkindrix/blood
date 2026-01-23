@@ -805,14 +805,94 @@ fn lower_stmt(ctx: &mut hir_lower_ctx::LoweringCtx, stmt: &ast::Statement) -> hi
                 has_semi: has_semi,
             }
         }
-        &ast::Statement::Item(ref _decl) => {
-            // Local items need to be registered and lowered
-            // For now, return a placeholder
-            // TODO: Handle local items properly
-            let placeholder_def_id = ctx.alloc_def_id();
-            hir_expr::Stmt::Item(placeholder_def_id)
+        &ast::Statement::Item(ref decl) => {
+            // Local items: register and lower inline
+            // 1. Extract the name from the declaration
+            // 2. Allocate a DefId
+            // 3. Register in current scope
+            // 4. Lower the declaration
+            let def_id = lower_local_item(ctx, decl);
+            hir_expr::Stmt::Item(def_id)
         }
     }
+}
+
+// ============================================================
+// Local Item Lowering
+// ============================================================
+
+/// Lower a local item declaration (item inside a function body).
+///
+/// This registers the item in the current scope so it can be referenced
+/// by name within the enclosing function. The item is registered with
+/// the resolver but is NOT fully lowered here to avoid circular dependency.
+///
+/// Note: Local items currently register for name resolution but their
+/// bodies are not lowered. Full local item support would require
+/// collecting local items and lowering them in a separate pass.
+fn lower_local_item(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declaration) -> hir_def::DefId {
+    // Extract name and span from the declaration
+    let (name, span) = match decl {
+        &ast::Declaration::Function(ref f) => (f.name, f.span),
+        &ast::Declaration::Struct(ref s) => (s.name, s.span),
+        &ast::Declaration::Enum(ref e) => (e.name, e.span),
+        &ast::Declaration::TypeAlias(ref t) => (t.name, t.span),
+        &ast::Declaration::Const(ref c) => (c.name, c.span),
+        &ast::Declaration::Static(ref s) => (s.name, s.span),
+        &ast::Declaration::Trait(ref t) => (t.name, t.span),
+        &ast::Declaration::Effect(ref e) => (e.name, e.span),
+        &ast::Declaration::Handler(ref h) => (h.name, h.span),
+        &ast::Declaration::Impl(_) => {
+            // Impl blocks don't have a name, allocate anonymous DefId
+            return ctx.alloc_def_id();
+        }
+        &ast::Declaration::Bridge(_) => {
+            // Not yet supported
+            return ctx.alloc_def_id();
+        }
+        &ast::Declaration::Module(_) => {
+            // Not yet supported in local scope
+            return ctx.alloc_def_id();
+        }
+        &ast::Declaration::Macro(_) => {
+            // Not yet supported
+            return ctx.alloc_def_id();
+        }
+    };
+
+    // Allocate a DefId
+    let def_id = ctx.alloc_def_id();
+
+    // Register in current scope (not global)
+    let success = ctx.resolver.define_local_item(name.symbol, def_id);
+    if !success {
+        ctx.error(
+            hir::DiagnosticCode::E0102,
+            common::make_string("duplicate local item definition"),
+            span,
+        );
+    }
+
+    // Register DefInfo with the enclosing function as parent
+    let def_kind = match decl {
+        &ast::Declaration::Function(_) => hir_def::DefKind::Fn,
+        &ast::Declaration::Struct(_) => hir_def::DefKind::Struct,
+        &ast::Declaration::Enum(_) => hir_def::DefKind::Enum,
+        &ast::Declaration::TypeAlias(_) => hir_def::DefKind::TypeAlias,
+        &ast::Declaration::Const(_) => hir_def::DefKind::Const,
+        &ast::Declaration::Static(_) => hir_def::DefKind::Static,
+        &ast::Declaration::Trait(_) => hir_def::DefKind::Trait,
+        &ast::Declaration::Effect(_) => hir_def::DefKind::Effect,
+        &ast::Declaration::Handler(_) => hir_def::DefKind::Handler,
+        _ => hir_def::DefKind::Fn, // Fallback
+    };
+    ctx.resolver.register_def_info(def_id, def_kind, name.symbol, span, Option::None);
+
+    // Note: Full lowering of local item bodies is deferred.
+    // To fully support local items, we would need to collect them
+    // during body lowering and process them in a separate pass.
+
+    def_id
 }
 
 // ============================================================
