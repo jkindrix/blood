@@ -1335,27 +1335,148 @@ pub fn unify_effect_rows(
     }
 
     // At least one row is open (has a row variable)
-    // For now, accept if the known effects overlap
-    // A full implementation would bind the row variable to the difference
+    // We need to:
+    // 1. Check that known effects are compatible
+    // 2. Bind row variables to capture the difference
 
-    // Check that all effects in the smaller set are in the larger set
-    let smaller = if a.effects.len() <= b.effects.len() { &a.effects } else { &b.effects };
-    let larger = if a.effects.len() <= b.effects.len() { &b.effects } else { &a.effects };
+    // First, check that all effects in a are in b (or can be added via b's row var)
+    // and all effects in b are in a (or can be added via a's row var)
+    let a_has_all_b = contains_all_effects(&a.effects, &b.effects);
+    let b_has_all_a = contains_all_effects(&b.effects, &a.effects);
 
+    // If a is closed but doesn't have all of b's effects, fail
+    if a_closed && !a_has_all_b {
+        return UnifyResult::Err(UnifyError::new(UnifyErrorKind::EffectMismatch, span));
+    }
+
+    // If b is closed but doesn't have all of a's effects, fail
+    if b_closed && !b_has_all_a {
+        return UnifyResult::Err(UnifyError::new(UnifyErrorKind::EffectMismatch, span));
+    }
+
+    // Now bind row variables to capture the differences
+    match (a.row_var, b.row_var) {
+        (Option::Some(a_var), Option::None) => {
+            // a is open, b is closed
+            // Bind a_var to the effects in b that aren't in a
+            let diff = compute_effect_difference(&b.effects, &a.effects);
+            let bound_row = hir_ty::EffectRow {
+                effects: diff,
+                row_var: Option::None, // The difference has no row var (closed)
+            };
+            table.add_effect_subst(a_var, bound_row);
+        }
+        (Option::None, Option::Some(b_var)) => {
+            // b is open, a is closed
+            // Bind b_var to the effects in a that aren't in b
+            let diff = compute_effect_difference(&a.effects, &b.effects);
+            let bound_row = hir_ty::EffectRow {
+                effects: diff,
+                row_var: Option::None,
+            };
+            table.add_effect_subst(b_var, bound_row);
+        }
+        (Option::Some(a_var), Option::Some(b_var)) => {
+            // Both are open - create a fresh row variable for the unified row
+            // This is the most complex case
+            let fresh_var = unifier.fresh_effect_var();
+
+            // Merge all known effects
+            let merged = merge_effect_lists(&a.effects, &b.effects);
+
+            // Bind both row vars to the merged effects + fresh var
+            let merged_row = hir_ty::EffectRow {
+                effects: merged,
+                row_var: Option::Some(fresh_var),
+            };
+
+            // For the original vars, bind them to what they need to add
+            // a_var should provide: (b.effects - a.effects) + fresh_var
+            let a_needs = compute_effect_difference(&b.effects, &a.effects);
+            let a_bound = hir_ty::EffectRow {
+                effects: a_needs,
+                row_var: Option::Some(fresh_var),
+            };
+            table.add_effect_subst(a_var, a_bound);
+
+            // b_var should provide: (a.effects - b.effects) + fresh_var
+            let b_needs = compute_effect_difference(&a.effects, &b.effects);
+            let b_bound = hir_ty::EffectRow {
+                effects: b_needs,
+                row_var: Option::Some(fresh_var),
+            };
+            table.add_effect_subst(b_var, b_bound);
+
+            let _ = merged_row; // Document that this represents the unified row
+        }
+        (Option::None, Option::None) => {
+            // Both closed - already handled above
+        }
+    }
+
+    UnifyResult::Ok
+}
+
+/// Checks if all effects in `subset` are present in `superset`.
+fn contains_all_effects(superset: &Vec<hir_ty::EffectRef>, subset: &Vec<hir_ty::EffectRef>) -> bool {
     let mut i: usize = 0;
-    while i < smaller.len() {
-        if !effect_list_contains(larger, &smaller[i]) {
-            return UnifyResult::Err(UnifyError::new(UnifyErrorKind::EffectMismatch, span));
+    while i < subset.len() {
+        if !effect_list_contains(superset, &subset[i]) {
+            return false;
         }
         i = i + 1;
     }
+    true
+}
 
-    // If we get here, the effects are compatible
-    // In a full implementation, we'd bind row variables here
-    let _ = table;
-    let _ = unifier;
+/// Computes effects in `from` that are not in `subtract`.
+fn compute_effect_difference(from: &Vec<hir_ty::EffectRef>, subtract: &Vec<hir_ty::EffectRef>) -> Vec<hir_ty::EffectRef> {
+    let mut result: Vec<hir_ty::EffectRef> = Vec::new();
+    let mut i: usize = 0;
+    while i < from.len() {
+        if !effect_list_contains(subtract, &from[i]) {
+            result.push(copy_effect_ref(&from[i]));
+        }
+        i = i + 1;
+    }
+    result
+}
 
-    UnifyResult::Ok
+/// Merges two effect lists, eliminating duplicates.
+fn merge_effect_lists(a: &Vec<hir_ty::EffectRef>, b: &Vec<hir_ty::EffectRef>) -> Vec<hir_ty::EffectRef> {
+    let mut result: Vec<hir_ty::EffectRef> = Vec::new();
+
+    // Add all from a
+    let mut i: usize = 0;
+    while i < a.len() {
+        result.push(copy_effect_ref(&a[i]));
+        i = i + 1;
+    }
+
+    // Add from b if not already present
+    let mut j: usize = 0;
+    while j < b.len() {
+        if !effect_list_contains(&result, &b[j]) {
+            result.push(copy_effect_ref(&b[j]));
+        }
+        j = j + 1;
+    }
+
+    result
+}
+
+/// Creates a copy of an EffectRef.
+fn copy_effect_ref(eff: &hir_ty::EffectRef) -> hir_ty::EffectRef {
+    let mut args: Vec<hir_ty::Type> = Vec::new();
+    let mut i: usize = 0;
+    while i < eff.args.len() {
+        args.push(hir_ty::copy_type(&eff.args[i]));
+        i = i + 1;
+    }
+    hir_ty::EffectRef {
+        def_id: eff.def_id,
+        args: args,
+    }
 }
 
 /// Checks if two effect sets are equal (ignoring order).

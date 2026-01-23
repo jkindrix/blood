@@ -227,15 +227,26 @@ fn emit_projection(
             ctx.emit_gep(result.as_str(), "i64", base.as_str(), &indices);
             result
         }
-        &mir_types::PlaceElem::Downcast(idx) => {
-            // For enums - just offset to variant data
+        &mir_types::PlaceElem::Downcast(variant_idx) => {
+            // Enum downcast: project into variant data for a specific variant.
+            // The variant_idx indicates which variant we're accessing.
+            //
+            // Blood uses a uniform enum layout (tagged union):
+            //   - Index 0: discriminant (i64)
+            //   - Index 1: variant payload (shared space for all variants)
+            //
+            // The GEP offset to variant data is the same regardless of variant,
+            // but we emit the variant index as a comment for debugging.
+            ctx.write("    ; downcast to variant ");
+            ctx.write_string(&codegen_types::format_u64(variant_idx as u64));
+            ctx.write("\n");
+
             let result = ctx.fresh_temp();
             let mut indices: Vec<String> = Vec::new();
             indices.push(common::make_string("0"));
-            // Skip discriminant (assume at index 0), variant data at 1
+            // Skip discriminant at index 0, variant data at index 1
             indices.push(common::make_string("1"));
             ctx.emit_gep(result.as_str(), "{ i64, i64 }", base.as_str(), &indices);
-            let _ = idx; // Use variant index for proper downcast
             result
         }
     }
@@ -282,10 +293,27 @@ pub fn emit_rvalue(
             let addr = emit_place_addr(ctx, place);
             ctx.emit_store("ptr", addr.as_str(), dest);
         }
-        &mir_types::Rvalue::ArrayToSlice { ref array_ref, array_len: _ } => {
-            // Convert array ref to fat pointer (ptr + len)
+        &mir_types::Rvalue::ArrayToSlice { ref array_ref, array_len } => {
+            // Convert array ref to fat pointer (ptr + len).
+            // Slices are represented as { ptr, i64 } in LLVM IR.
             let arr_val = emit_operand(ctx, array_ref);
-            ctx.emit_store("ptr", arr_val.as_str(), dest);
+
+            // Store pointer at offset 0 of the fat pointer
+            let ptr_field = ctx.fresh_temp();
+            let mut ptr_indices: Vec<String> = Vec::new();
+            ptr_indices.push(common::make_string("0"));
+            ptr_indices.push(common::make_string("0"));
+            ctx.emit_gep(ptr_field.as_str(), "{ ptr, i64 }", dest, &ptr_indices);
+            ctx.emit_store("ptr", arr_val.as_str(), ptr_field.as_str());
+
+            // Store length at offset 1 of the fat pointer
+            let len_field = ctx.fresh_temp();
+            let mut len_indices: Vec<String> = Vec::new();
+            len_indices.push(common::make_string("0"));
+            len_indices.push(common::make_string("1"));
+            ctx.emit_gep(len_field.as_str(), "{ ptr, i64 }", dest, &len_indices);
+            let len_val = codegen_types::format_u64(array_len);
+            ctx.emit_store("i64", len_val.as_str(), len_field.as_str());
         }
         &mir_types::Rvalue::ZeroInit(ref ty) => {
             // Zero-initialize the destination
@@ -586,14 +614,98 @@ pub fn emit_binop_typed(
                     ctx.emit_icmp(res, "sge", llvm_ty, l, r);
                 }
             }
-            // Checked operations - for now, same as unchecked (overflow ignored)
-            &mir_types::MirBinOp::AddChecked => ctx.emit_binop(res, "add", llvm_ty, l, r),
-            &mir_types::MirBinOp::SubChecked => ctx.emit_binop(res, "sub", llvm_ty, l, r),
-            &mir_types::MirBinOp::MulChecked => ctx.emit_binop(res, "mul", llvm_ty, l, r),
+            // Checked operations - use LLVM overflow intrinsics and trap on overflow
+            &mir_types::MirBinOp::AddChecked => {
+                emit_checked_binop(ctx, res, "sadd", llvm_ty, l, r);
+            }
+            &mir_types::MirBinOp::SubChecked => {
+                emit_checked_binop(ctx, res, "ssub", llvm_ty, l, r);
+            }
+            &mir_types::MirBinOp::MulChecked => {
+                emit_checked_binop(ctx, res, "smul", llvm_ty, l, r);
+            }
         }
     }
 
     result
+}
+
+/// Emits a checked binary operation using LLVM overflow intrinsics.
+/// On overflow, traps with @llvm.trap().
+///
+/// Uses intrinsics like @llvm.sadd.with.overflow.i64, @llvm.ssub.with.overflow.i64, etc.
+/// These return { iN, i1 } where the second element is the overflow flag.
+fn emit_checked_binop(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    result: &str,
+    intrinsic_base: &str,
+    llvm_ty: &str,
+    left: &str,
+    right: &str,
+) {
+    // Build the intrinsic name: @llvm.sadd.with.overflow.i64
+    let mut intrinsic_name = common::make_string("@llvm.");
+    intrinsic_name.push_str(intrinsic_base);
+    intrinsic_name.push_str(".with.overflow.");
+    intrinsic_name.push_str(llvm_ty);
+
+    // Build the return type: { i64, i1 }
+    let mut ret_ty = common::make_string("{ ");
+    ret_ty.push_str(llvm_ty);
+    ret_ty.push_str(", i1 }");
+
+    // Call the intrinsic
+    let overflow_result = ctx.fresh_temp();
+    ctx.write_indent();
+    ctx.write_string(&overflow_result);
+    ctx.write(" = call ");
+    ctx.write_string(&ret_ty);
+    ctx.write(" ");
+    ctx.write_string(&intrinsic_name);
+    ctx.write("(");
+    ctx.write(llvm_ty);
+    ctx.write(" ");
+    ctx.write(left);
+    ctx.write(", ");
+    ctx.write(llvm_ty);
+    ctx.write(" ");
+    ctx.write(right);
+    ctx.write(")\n");
+
+    // Extract the result value
+    ctx.write_indent();
+    ctx.write(result);
+    ctx.write(" = extractvalue ");
+    ctx.write_string(&ret_ty);
+    ctx.write(" ");
+    ctx.write_string(&overflow_result);
+    ctx.write(", 0\n");
+
+    // Extract the overflow flag
+    let overflow_flag = ctx.fresh_temp();
+    ctx.write_indent();
+    ctx.write_string(&overflow_flag);
+    ctx.write(" = extractvalue ");
+    ctx.write_string(&ret_ty);
+    ctx.write(" ");
+    ctx.write_string(&overflow_result);
+    ctx.write(", 1\n");
+
+    // Emit conditional trap on overflow using basic blocks
+    let trap_label = ctx.fresh_label();
+    let continue_label = ctx.fresh_label();
+
+    ctx.emit_cond_br(overflow_flag.as_str(), trap_label.as_str(), continue_label.as_str());
+
+    // Trap block
+    ctx.emit_label(trap_label.as_str());
+    ctx.indent();
+    ctx.write("    call void @llvm.trap()\n");
+    ctx.emit_unreachable();
+    ctx.dedent();
+
+    // Continue block
+    ctx.emit_label(continue_label.as_str());
 }
 
 /// Checks if a string starts with a prefix.

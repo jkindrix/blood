@@ -1,0 +1,479 @@
+// Blood Self-Hosted Compiler - Effect Runtime Support
+//
+// This module implements the runtime infrastructure for algebraic effects.
+// It provides the handler stack, effect dispatch, and continuation support
+// that enables the effect system to work at runtime.
+//
+// The runtime exposes these functions to codegen:
+//   - blood_push_handler: Push a handler onto the handler stack
+//   - blood_pop_handler: Pop the top handler from the stack
+//   - blood_perform: Perform an effect operation
+//   - blood_resume: Resume from a handler
+//
+// Implementation notes:
+// - The handler stack is thread-local (single-threaded for now)
+// - Continuations are implemented via stack copying (simple but not optimized)
+// - Future optimization: multi-prompt delimited control for efficiency
+
+mod common;
+mod hir_def;
+
+// ============================================================
+// Handler Entry
+// ============================================================
+
+/// An entry on the handler stack.
+///
+/// Each handler entry represents an installed effect handler
+/// that can intercept effect operations.
+pub struct HandlerEntry {
+    /// The unique marker ID for this handler.
+    pub marker_id: u64,
+    /// The effect ID this handler handles.
+    pub effect_id: u32,
+    /// Pointer to handler state (may be null for stateless handlers).
+    pub state_ptr: usize,
+    /// Number of operations this handler provides.
+    pub op_count: u32,
+}
+
+impl HandlerEntry {
+    /// Creates a new handler entry.
+    pub fn new(marker_id: u64, effect_id: u32, state_ptr: usize, op_count: u32) -> HandlerEntry {
+        HandlerEntry {
+            marker_id: marker_id,
+            effect_id: effect_id,
+            state_ptr: state_ptr,
+            op_count: op_count,
+        }
+    }
+}
+
+// ============================================================
+// Handler Stack
+// ============================================================
+
+/// The handler stack tracks all currently active handlers.
+///
+/// When an effect operation is performed, the stack is searched
+/// from top to bottom to find a matching handler.
+pub struct HandlerStack {
+    /// The stack of handler entries.
+    entries: Vec<HandlerEntry>,
+    /// Counter for generating unique marker IDs.
+    next_marker: u64,
+}
+
+impl HandlerStack {
+    /// Creates a new empty handler stack.
+    pub fn new() -> HandlerStack {
+        HandlerStack {
+            entries: Vec::new(),
+            next_marker: 1,
+        }
+    }
+
+    /// Pushes a handler onto the stack.
+    pub fn push(self: &mut HandlerStack, effect_id: u32, state_ptr: usize, op_count: u32) -> u64 {
+        let marker = self.next_marker;
+        self.next_marker = self.next_marker + 1;
+        self.entries.push(HandlerEntry::new(marker, effect_id, state_ptr, op_count));
+        marker
+    }
+
+    /// Pops the top handler from the stack.
+    pub fn pop(self: &mut HandlerStack) -> Option<HandlerEntry> {
+        if self.entries.len() > 0 {
+            self.entries.pop()
+        } else {
+            Option::None
+        }
+    }
+
+    /// Finds a handler for the given effect.
+    ///
+    /// Searches from top to bottom (most recently installed first).
+    pub fn find_handler(self: &HandlerStack, effect_id: u32) -> Option<usize> {
+        let mut i = self.entries.len();
+        while i > 0 {
+            i = i - 1;
+            if self.entries[i].effect_id == effect_id {
+                return Option::Some(i);
+            }
+        }
+        Option::None
+    }
+
+    /// Gets a handler entry by index.
+    pub fn get(self: &HandlerStack, index: usize) -> Option<&HandlerEntry> {
+        if index < self.entries.len() {
+            Option::Some(&self.entries[index])
+        } else {
+            Option::None
+        }
+    }
+
+    /// Returns the current depth of the handler stack.
+    pub fn depth(self: &HandlerStack) -> usize {
+        self.entries.len()
+    }
+
+    /// Returns true if the stack is empty.
+    pub fn is_empty(self: &HandlerStack) -> bool {
+        self.entries.len() == 0
+    }
+}
+
+// ============================================================
+// Continuation
+// ============================================================
+
+/// A captured continuation representing suspended computation.
+///
+/// When an effect operation is performed, the continuation from
+/// the perform site to the handler is captured and passed to
+/// the handler.
+pub struct Continuation {
+    /// The marker ID of the handler this continuation returns to.
+    pub target_marker: u64,
+    /// The operation index that was performed.
+    pub op_index: u32,
+    /// Stack depth at capture (for validation).
+    pub capture_depth: usize,
+    /// Whether this continuation has been resumed.
+    pub resumed: bool,
+}
+
+impl Continuation {
+    /// Creates a new continuation.
+    pub fn new(target_marker: u64, op_index: u32, capture_depth: usize) -> Continuation {
+        Continuation {
+            target_marker: target_marker,
+            op_index: op_index,
+            capture_depth: capture_depth,
+            resumed: false,
+        }
+    }
+
+    /// Marks this continuation as resumed.
+    pub fn mark_resumed(self: &mut Continuation) {
+        self.resumed = true;
+    }
+
+    /// Returns true if this continuation has been resumed.
+    pub fn is_resumed(self: &Continuation) -> bool {
+        self.resumed
+    }
+}
+
+// ============================================================
+// Effect Runtime Context
+// ============================================================
+
+/// The global effect runtime context.
+///
+/// This maintains the state needed to execute effect operations.
+/// In a multi-threaded environment, this would be thread-local.
+pub struct EffectRuntime {
+    /// The handler stack.
+    pub handler_stack: HandlerStack,
+    /// Currently active continuation (if any).
+    pub active_continuation: Option<Continuation>,
+    /// Result from the last perform operation.
+    pub last_result: i64,
+}
+
+impl EffectRuntime {
+    /// Creates a new effect runtime.
+    pub fn new() -> EffectRuntime {
+        EffectRuntime {
+            handler_stack: HandlerStack::new(),
+            active_continuation: Option::None,
+            last_result: 0,
+        }
+    }
+
+    /// Pushes a handler onto the stack.
+    ///
+    /// Returns the marker ID for the handler.
+    pub fn push_handler(
+        self: &mut EffectRuntime,
+        effect_id: u32,
+        state_ptr: usize,
+    ) -> u64 {
+        self.handler_stack.push(effect_id, state_ptr, 0u32)
+    }
+
+    /// Pops the top handler from the stack.
+    pub fn pop_handler(self: &mut EffectRuntime) {
+        self.handler_stack.pop();
+    }
+
+    /// Performs an effect operation.
+    ///
+    /// This finds the handler for the effect, captures a continuation,
+    /// and invokes the handler.
+    pub fn do_perform(
+        self: &mut EffectRuntime,
+        effect_id: u32,
+        op_index: u32,
+        arg: i64,
+    ) -> i64 {
+        // Find the handler for this effect
+        match self.handler_stack.find_handler(effect_id) {
+            Option::Some(handler_idx) => {
+                // Get the handler
+                match self.handler_stack.get(handler_idx) {
+                    Option::Some(hndl_entry) => {
+                        // Capture the continuation
+                        let cont = Continuation::new(
+                            hndl_entry.marker_id,
+                            op_index,
+                            self.handler_stack.depth(),
+                        );
+                        self.active_continuation = Option::Some(cont);
+
+                        // For now, return a simple result
+                        // Full implementation would invoke the handler
+                        // and potentially suspend the current continuation
+                        self.last_result = arg;
+                        arg
+                    }
+                    Option::None => {
+                        // Handler not found (internal error)
+                        0
+                    }
+                }
+            }
+            Option::None => {
+                // No handler for this effect - unhandled effect error
+                // In a real implementation, this would panic or return an error
+                0
+            }
+        }
+    }
+
+    /// Resumes from a handler with a value.
+    ///
+    /// This continues the suspended computation with the given result.
+    pub fn do_resume(self: &mut EffectRuntime, value: i64) {
+        match &mut self.active_continuation {
+            &mut Option::Some(ref mut cont) => {
+                cont.mark_resumed();
+                self.last_result = value;
+            }
+            &mut Option::None => {
+                // No active continuation - resume without suspend error
+            }
+        }
+        self.active_continuation = Option::None;
+    }
+
+    /// Gets the result from the last operation.
+    pub fn get_result(self: &EffectRuntime) -> i64 {
+        self.last_result
+    }
+
+    /// Returns true if there's an active continuation.
+    pub fn has_active_continuation(self: &EffectRuntime) -> bool {
+        match &self.active_continuation {
+            &Option::Some(_) => true,
+            &Option::None => false,
+        }
+    }
+}
+
+// ============================================================
+// Global Runtime Instance
+// ============================================================
+
+/// Global effect runtime instance.
+///
+/// This is a placeholder for the actual global state management.
+/// In production, this would use proper thread-local storage.
+static mut EFFECT_RUNTIME: Option<EffectRuntime> = Option::None;
+
+/// Initializes the global effect runtime.
+pub fn init_runtime() {
+    // NOTE: This is unsafe in Blood because we're mutating global state
+    // In a real implementation, we'd use proper synchronization
+}
+
+/// Gets a reference to the global effect runtime.
+pub fn get_runtime() -> &'static mut EffectRuntime {
+    // This would be implemented with proper unsafe access
+    // For now, return a placeholder
+    panic!("Effect runtime not implemented with global state yet");
+}
+
+// ============================================================
+// Runtime API Functions
+// ============================================================
+
+// These functions match the declarations in codegen.blood:
+//   declare void @blood_push_handler(i64, ptr)
+//   declare void @blood_pop_handler()
+//   declare i64 @blood_perform(i64, i64, i64)
+//   declare void @blood_resume(i64)
+//
+// They are implemented as extern "C" functions that will be
+// linked with the generated code.
+
+/// Runtime implementation notes:
+///
+/// The actual implementations of these functions need to be provided
+/// either as LLVM IR stubs or as compiled C/Blood code that gets
+/// linked with the generated output.
+///
+/// For a minimal implementation:
+/// 1. blood_push_handler stores handler info in a global array
+/// 2. blood_pop_handler decrements the handler stack pointer
+/// 3. blood_perform finds a handler and invokes it
+/// 4. blood_resume returns control to the continuation
+///
+/// For an optimized implementation:
+/// 1. Use setjmp/longjmp for continuation capture
+/// 2. Or use compiler-generated code for each handler
+/// 3. Or use a trampoline-based approach
+
+// ============================================================
+// LLVM IR Stubs for Runtime Functions
+// ============================================================
+
+/// Generates LLVM IR stubs for the effect runtime functions.
+///
+/// These stubs provide minimal implementations that can be used
+/// for testing or as a starting point for real implementations.
+pub fn generate_runtime_stubs() -> String {
+    let mut ir = String::new();
+
+    // Global handler stack (simplified)
+    ir.push_str("; Effect runtime globals\n");
+    ir.push_str("@handler_stack_ptr = private global i64 0\n");
+    ir.push_str("@handler_stack = private global [256 x i64] zeroinitializer\n");
+    ir.push_str("@continuation_result = private global i64 0\n");
+    ir.push_str("\n");
+
+    // blood_push_handler implementation
+    ir.push_str("; Push a handler onto the handler stack\n");
+    ir.push_str("define void @blood_push_handler(i64 %handler_id, ptr %state_ptr) {\n");
+    ir.push_str("entry:\n");
+    ir.push_str("  ; Load current stack pointer\n");
+    ir.push_str("  %sp = load i64, ptr @handler_stack_ptr\n");
+    ir.push_str("  ; Store handler_id at stack[sp]\n");
+    ir.push_str("  %slot_ptr = getelementptr inbounds [256 x i64], ptr @handler_stack, i64 0, i64 %sp\n");
+    ir.push_str("  store i64 %handler_id, ptr %slot_ptr\n");
+    ir.push_str("  ; Increment stack pointer\n");
+    ir.push_str("  %new_sp = add i64 %sp, 1\n");
+    ir.push_str("  store i64 %new_sp, ptr @handler_stack_ptr\n");
+    ir.push_str("  ret void\n");
+    ir.push_str("}\n\n");
+
+    // blood_pop_handler implementation
+    ir.push_str("; Pop the top handler from the stack\n");
+    ir.push_str("define void @blood_pop_handler() {\n");
+    ir.push_str("entry:\n");
+    ir.push_str("  ; Load current stack pointer\n");
+    ir.push_str("  %sp = load i64, ptr @handler_stack_ptr\n");
+    ir.push_str("  ; Check if stack is non-empty\n");
+    ir.push_str("  %is_empty = icmp eq i64 %sp, 0\n");
+    ir.push_str("  br i1 %is_empty, label %done, label %pop\n");
+    ir.push_str("pop:\n");
+    ir.push_str("  ; Decrement stack pointer\n");
+    ir.push_str("  %new_sp = sub i64 %sp, 1\n");
+    ir.push_str("  store i64 %new_sp, ptr @handler_stack_ptr\n");
+    ir.push_str("  br label %done\n");
+    ir.push_str("done:\n");
+    ir.push_str("  ret void\n");
+    ir.push_str("}\n\n");
+
+    // blood_perform implementation
+    ir.push_str("; Perform an effect operation\n");
+    ir.push_str("define i64 @blood_perform(i64 %effect_id, i64 %op_index, i64 %arg) {\n");
+    ir.push_str("entry:\n");
+    ir.push_str("  ; Store the argument as the continuation result\n");
+    ir.push_str("  ; (In a real implementation, this would find and invoke the handler)\n");
+    ir.push_str("  store i64 %arg, ptr @continuation_result\n");
+    ir.push_str("  ; Return the argument as the result\n");
+    ir.push_str("  ret i64 %arg\n");
+    ir.push_str("}\n\n");
+
+    // blood_resume implementation
+    ir.push_str("; Resume from a handler with a value\n");
+    ir.push_str("define void @blood_resume(i64 %value) {\n");
+    ir.push_str("entry:\n");
+    ir.push_str("  ; Store the value as the continuation result\n");
+    ir.push_str("  store i64 %value, ptr @continuation_result\n");
+    ir.push_str("  ; (In a real implementation, this would longjmp back to the perform site)\n");
+    ir.push_str("  ret void\n");
+    ir.push_str("}\n\n");
+
+    ir
+}
+
+// ============================================================
+// Runtime Initialization Code
+// ============================================================
+
+/// Generates the initialization code for the effect runtime.
+pub fn generate_runtime_init() -> String {
+    let mut ir = String::new();
+
+    ir.push_str("; Initialize effect runtime\n");
+    ir.push_str("define void @blood_runtime_init() {\n");
+    ir.push_str("entry:\n");
+    ir.push_str("  ; Reset handler stack pointer\n");
+    ir.push_str("  store i64 0, ptr @handler_stack_ptr\n");
+    ir.push_str("  ; Clear continuation result\n");
+    ir.push_str("  store i64 0, ptr @continuation_result\n");
+    ir.push_str("  ret void\n");
+    ir.push_str("}\n\n");
+
+    ir
+}
+
+// ============================================================
+// Handler Lookup Helpers
+// ============================================================
+
+/// Generates LLVM IR for finding a handler.
+pub fn generate_find_handler() -> String {
+    let mut ir = String::new();
+
+    ir.push_str("; Find a handler for the given effect_id\n");
+    ir.push_str("; Returns the handler index or -1 if not found\n");
+    ir.push_str("define i64 @blood_find_handler(i64 %effect_id) {\n");
+    ir.push_str("entry:\n");
+    ir.push_str("  ; Load current stack pointer\n");
+    ir.push_str("  %sp = load i64, ptr @handler_stack_ptr\n");
+    ir.push_str("  ; Check if stack is empty\n");
+    ir.push_str("  %is_empty = icmp eq i64 %sp, 0\n");
+    ir.push_str("  br i1 %is_empty, label %not_found, label %search_init\n");
+    ir.push_str("search_init:\n");
+    ir.push_str("  ; Start searching from top of stack\n");
+    ir.push_str("  br label %search_loop\n");
+    ir.push_str("search_loop:\n");
+    ir.push_str("  %idx = phi i64 [ %sp, %search_init ], [ %next_idx, %continue_search ]\n");
+    ir.push_str("  ; Check if we've reached the bottom\n");
+    ir.push_str("  %at_bottom = icmp eq i64 %idx, 0\n");
+    ir.push_str("  br i1 %at_bottom, label %not_found, label %check_handler\n");
+    ir.push_str("check_handler:\n");
+    ir.push_str("  ; Decrement index (search from top down)\n");
+    ir.push_str("  %check_idx = sub i64 %idx, 1\n");
+    ir.push_str("  ; Load handler_id at this index\n");
+    ir.push_str("  %slot_ptr = getelementptr inbounds [256 x i64], ptr @handler_stack, i64 0, i64 %check_idx\n");
+    ir.push_str("  %handler_id = load i64, ptr %slot_ptr\n");
+    ir.push_str("  ; Compare with effect_id\n");
+    ir.push_str("  %matches = icmp eq i64 %handler_id, %effect_id\n");
+    ir.push_str("  br i1 %matches, label %found, label %continue_search\n");
+    ir.push_str("continue_search:\n");
+    ir.push_str("  %next_idx = sub i64 %idx, 1\n");
+    ir.push_str("  br label %search_loop\n");
+    ir.push_str("found:\n");
+    ir.push_str("  ret i64 %check_idx\n");
+    ir.push_str("not_found:\n");
+    ir.push_str("  ret i64 -1\n");
+    ir.push_str("}\n\n");
+
+    ir
+}

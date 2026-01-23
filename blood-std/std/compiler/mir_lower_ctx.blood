@@ -299,9 +299,10 @@ pub struct LoopContext {
 // ============================================================
 // Destination
 // ============================================================
-// NOTE: This is intentionally duplicated in mir_lower_expr.blood because
-// blood-rust doesn't fully support cross-module enum constructor calls.
-// Both definitions must be kept in sync manually.
+// This is the canonical definition of Destination. Other modules use
+// standalone helper functions (destination_local, destination_ignore,
+// destination_return_place) for cross-module access since blood-rust
+// doesn't support cross-module associated function calls on enums.
 
 /// The destination for an expression's value.
 ///
@@ -345,6 +346,29 @@ impl Destination {
             &Destination::Ignore => Destination::Ignore,
         }
     }
+}
+
+// ============================================================
+// Destination Standalone Helper Functions
+// ============================================================
+// These standalone functions allow cross-module use because
+// blood-rust doesn't support cross-module associated function calls
+// (e.g., mir_lower_ctx::Destination::local(...) fails).
+// Use these helpers instead: mir_lower_ctx::destination_local(...), etc.
+
+/// Creates a destination for a local variable.
+pub fn destination_local(id: mir_def::MirLocalId) -> Destination {
+    Destination::Place(mir_types::Place::local(id))
+}
+
+/// Creates a destination for the return place.
+pub fn destination_return_place() -> Destination {
+    Destination::Place(mir_types::Place::return_place())
+}
+
+/// Creates an ignore destination.
+pub fn destination_ignore() -> Destination {
+    Destination::Ignore
 }
 
 // ============================================================

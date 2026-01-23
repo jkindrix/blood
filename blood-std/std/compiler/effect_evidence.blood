@@ -1,0 +1,544 @@
+// Blood Self-Hosted Compiler - Effect Evidence System
+//
+// This module implements the capability/evidence threading infrastructure
+// for the algebraic effect system. Evidence provides proof that effects are
+// properly handled, enabling safe compilation of effect operations.
+//
+// The approach is based on "Generalized Evidence Passing for Effect Handlers"
+// (Xie et al., ICFP 2021) which enables efficient compilation of effect handlers
+// by threading evidence through computations.
+//
+// Key concepts:
+// - Evidence: A runtime value proving an effect can be handled
+// - Evidence Vector: Collection of evidence for all required effects
+// - Handler Marker: Unique identifier for handler frames on the stack
+// - Yield Point: Where effect operations capture continuations
+
+mod common;
+mod hir_def;
+mod hir_ty;
+mod mir_def;
+
+// ============================================================
+// Handler Marker
+// ============================================================
+
+/// A unique marker identifying a handler frame on the stack.
+///
+/// Handler markers enable efficient handler lookup and stack unwinding.
+/// Each handler installation generates a fresh marker.
+pub struct HandlerMarker {
+    /// Unique identifier for this handler instance.
+    pub id: u64,
+}
+
+impl HandlerMarker {
+    /// Creates a new handler marker with the given ID.
+    pub fn new(id: u64) -> HandlerMarker {
+        HandlerMarker { id }
+    }
+
+    /// Creates a fresh handler marker from a counter.
+    pub fn fresh(counter: &mut u64) -> HandlerMarker {
+        let id = *counter;
+        *counter = *counter + 1;
+        HandlerMarker { id }
+    }
+}
+
+// ============================================================
+// Effect Evidence
+// ============================================================
+
+/// Evidence that a specific effect can be handled.
+///
+/// Evidence values are passed implicitly through function calls,
+/// enabling effect operations to find their handlers at runtime.
+pub struct Evidence {
+    /// The effect this evidence pertains to.
+    pub effect_id: hir_def::DefId,
+    /// The marker of the handler providing this evidence.
+    pub marker: HandlerMarker,
+    /// The handler operations for this effect.
+    pub operations: Vec<OperationEvidence>,
+    /// Type arguments if the effect is generic.
+    pub type_args: Vec<hir_ty::Type>,
+}
+
+impl Evidence {
+    /// Creates new evidence for an effect.
+    pub fn new(
+        effect_id: hir_def::DefId,
+        marker: HandlerMarker,
+        operations: Vec<OperationEvidence>,
+        type_args: Vec<hir_ty::Type>,
+    ) -> Evidence {
+        Evidence {
+            effect_id: effect_id,
+            marker: marker,
+            operations: operations,
+            type_args: type_args,
+        }
+    }
+
+    /// Creates simple evidence with no operations or type args.
+    pub fn simple(effect_id: hir_def::DefId, marker: HandlerMarker) -> Evidence {
+        Evidence {
+            effect_id: effect_id,
+            marker: marker,
+            operations: Vec::new(),
+            type_args: Vec::new(),
+        }
+    }
+}
+
+/// Evidence for a single operation within an effect.
+pub struct OperationEvidence {
+    /// The index of this operation within the effect.
+    pub op_index: u32,
+    /// The operation name (for debugging).
+    pub op_name: String,
+    /// The body ID implementing this operation.
+    pub handler_body: hir_def::BodyId,
+    /// Whether this operation is tail-resumptive (can be optimized).
+    pub is_tail_resumptive: bool,
+}
+
+impl OperationEvidence {
+    /// Creates new operation evidence.
+    pub fn new(
+        op_index: u32,
+        op_name: String,
+        handler_body: hir_def::BodyId,
+        is_tail_resumptive: bool,
+    ) -> OperationEvidence {
+        OperationEvidence {
+            op_index: op_index,
+            op_name: op_name,
+            handler_body: handler_body,
+            is_tail_resumptive: is_tail_resumptive,
+        }
+    }
+}
+
+// ============================================================
+// Evidence Vector
+// ============================================================
+
+/// A vector of evidence values for multiple effects.
+///
+/// Evidence vectors are passed through function calls, providing
+/// proof that all required effects can be handled.
+pub struct EvidenceVector {
+    /// The evidence entries in this vector.
+    pub entries: Vec<Evidence>,
+}
+
+impl EvidenceVector {
+    /// Creates an empty evidence vector.
+    pub fn empty() -> EvidenceVector {
+        EvidenceVector { entries: Vec::new() }
+    }
+
+    /// Creates an evidence vector with the given entries.
+    pub fn with_entries(entries: Vec<Evidence>) -> EvidenceVector {
+        EvidenceVector { entries: entries }
+    }
+
+    /// Adds evidence to this vector.
+    pub fn push(self: &mut EvidenceVector, evidence: Evidence) {
+        self.entries.push(evidence);
+    }
+
+    /// Looks up evidence for a specific effect.
+    pub fn lookup(self: &EvidenceVector, effect_id: hir_def::DefId) -> Option<usize> {
+        let mut i: usize = 0;
+        while i < self.entries.len() {
+            if self.entries[i].effect_id.index == effect_id.index {
+                return Option::Some(i);
+            }
+            i = i + 1;
+        }
+        Option::None
+    }
+
+    /// Gets evidence at the given index.
+    pub fn get(self: &EvidenceVector, index: usize) -> Option<&Evidence> {
+        if index < self.entries.len() {
+            Option::Some(&self.entries[index])
+        } else {
+            Option::None
+        }
+    }
+
+    /// Returns the number of evidence entries.
+    pub fn len(self: &EvidenceVector) -> usize {
+        self.entries.len()
+    }
+
+    /// Returns true if the vector is empty.
+    pub fn is_empty(self: &EvidenceVector) -> bool {
+        self.entries.len() == 0
+    }
+}
+
+// ============================================================
+// Evidence Context
+// ============================================================
+
+/// Context for managing evidence during compilation.
+///
+/// Tracks the evidence requirements and available evidence
+/// for a given function or block scope.
+pub struct EvidenceContext {
+    /// The available evidence in the current scope.
+    pub available: EvidenceVector,
+    /// The required effects that must have evidence.
+    pub required: Vec<hir_def::DefId>,
+    /// Counter for generating fresh handler markers.
+    marker_counter: u64,
+}
+
+impl EvidenceContext {
+    /// Creates a new empty evidence context.
+    pub fn new() -> EvidenceContext {
+        EvidenceContext {
+            available: EvidenceVector::empty(),
+            required: Vec::new(),
+            marker_counter: 0,
+        }
+    }
+
+    /// Creates a context with initial evidence.
+    pub fn with_evidence(evidence: EvidenceVector) -> EvidenceContext {
+        EvidenceContext {
+            available: evidence,
+            required: Vec::new(),
+            marker_counter: 0,
+        }
+    }
+
+    /// Generates a fresh handler marker.
+    pub fn fresh_marker(self: &mut EvidenceContext) -> HandlerMarker {
+        HandlerMarker::fresh(&mut self.marker_counter)
+    }
+
+    /// Adds a required effect.
+    pub fn require_effect(self: &mut EvidenceContext, effect_id: hir_def::DefId) {
+        // Check if already required
+        let mut found = false;
+        let mut i: usize = 0;
+        while i < self.required.len() {
+            if self.required[i].index == effect_id.index {
+                found = true;
+            }
+            i = i + 1;
+        }
+        if !found {
+            self.required.push(effect_id);
+        }
+    }
+
+    /// Provides evidence for an effect.
+    pub fn provide_evidence(self: &mut EvidenceContext, evidence: Evidence) {
+        self.available.push(evidence);
+    }
+
+    /// Checks if evidence exists for an effect.
+    pub fn has_evidence(self: &EvidenceContext, effect_id: hir_def::DefId) -> bool {
+        match self.available.lookup(effect_id) {
+            Option::Some(_) => true,
+            Option::None => false,
+        }
+    }
+
+    /// Gets evidence for an effect, returning None if not found.
+    pub fn get_evidence(self: &EvidenceContext, effect_id: hir_def::DefId) -> Option<&Evidence> {
+        match self.available.lookup(effect_id) {
+            Option::Some(idx) => self.available.get(idx),
+            Option::None => Option::None,
+        }
+    }
+
+    /// Checks if all required effects have evidence.
+    pub fn all_requirements_satisfied(self: &EvidenceContext) -> bool {
+        let mut i: usize = 0;
+        while i < self.required.len() {
+            if !self.has_evidence(self.required[i]) {
+                return false;
+            }
+            i = i + 1;
+        }
+        true
+    }
+
+    /// Returns the effects that are required but lack evidence.
+    pub fn unsatisfied_requirements(self: &EvidenceContext) -> Vec<hir_def::DefId> {
+        let mut unsatisfied = Vec::new();
+        let mut i: usize = 0;
+        while i < self.required.len() {
+            if !self.has_evidence(self.required[i]) {
+                unsatisfied.push(self.required[i]);
+            }
+            i = i + 1;
+        }
+        unsatisfied
+    }
+}
+
+// ============================================================
+// Evidence Resolution
+// ============================================================
+
+/// Result of resolving an effect operation.
+pub struct ResolvedOperation {
+    /// The evidence providing this operation.
+    pub evidence: Evidence,
+    /// The specific operation evidence.
+    pub operation: OperationEvidence,
+    /// Index of the evidence in the vector.
+    pub evidence_index: usize,
+}
+
+/// Resolves an effect operation to its handler.
+///
+/// Given an effect and operation index, finds the evidence that
+/// provides the handler for that operation.
+pub fn resolve_operation(
+    evidence_vec: &EvidenceVector,
+    effect_id: hir_def::DefId,
+    op_index: u32,
+) -> Option<usize> {
+    // First, find evidence for this effect
+    match evidence_vec.lookup(effect_id) {
+        Option::Some(ev_idx) => {
+            // Check if the evidence has this operation
+            match evidence_vec.get(ev_idx) {
+                Option::Some(ev) => {
+                    // Verify the operation exists
+                    let mut i: usize = 0;
+                    while i < ev.operations.len() {
+                        if ev.operations[i].op_index == op_index {
+                            return Option::Some(ev_idx);
+                        }
+                        i = i + 1;
+                    }
+                    // Operation not found in evidence
+                    Option::None
+                }
+                Option::None => Option::None,
+            }
+        }
+        Option::None => Option::None,
+    }
+}
+
+// ============================================================
+// Evidence Passing Helpers
+// ============================================================
+
+/// Creates evidence for installing a handler.
+///
+/// This is called when lowering a `with handler { body }` expression.
+pub fn create_handler_evidence(
+    marker: HandlerMarker,
+    effect_id: hir_def::DefId,
+    operations: Vec<OperationEvidence>,
+    type_args: Vec<hir_ty::Type>,
+) -> Evidence {
+    Evidence::new(effect_id, marker, operations, type_args)
+}
+
+/// Extracts the evidence requirements from an effect row.
+///
+/// Returns the list of effect DefIds that need evidence.
+pub fn extract_requirements(effect_row: &hir_ty::EffectRow) -> Vec<hir_def::DefId> {
+    let mut requirements = Vec::new();
+    let mut i: usize = 0;
+    while i < effect_row.effects.len() {
+        requirements.push(effect_row.effects[i].def_id);
+        i = i + 1;
+    }
+    requirements
+}
+
+/// Merges two evidence vectors, with later evidence shadowing earlier.
+pub fn merge_evidence(base: &EvidenceVector, overlay: &EvidenceVector) -> EvidenceVector {
+    // Start with a copy of base
+    let mut result = Vec::new();
+    let mut i: usize = 0;
+    while i < base.entries.len() {
+        // Only include if not shadowed by overlay
+        let effect_id = base.entries[i].effect_id;
+        match overlay.lookup(effect_id) {
+            Option::Some(_) => {
+                // Shadowed, skip
+            }
+            Option::None => {
+                // Not shadowed, include
+                result.push(copy_evidence(&base.entries[i]));
+            }
+        }
+        i = i + 1;
+    }
+
+    // Add all overlay entries
+    let mut j: usize = 0;
+    while j < overlay.entries.len() {
+        result.push(copy_evidence(&overlay.entries[j]));
+        j = j + 1;
+    }
+
+    EvidenceVector::with_entries(result)
+}
+
+/// Creates a copy of evidence (Blood lacks Clone).
+pub fn copy_evidence(ev: &Evidence) -> Evidence {
+    let mut ops = Vec::new();
+    let mut i: usize = 0;
+    while i < ev.operations.len() {
+        ops.push(copy_operation_evidence(&ev.operations[i]));
+        i = i + 1;
+    }
+
+    let mut type_args = Vec::new();
+    let mut j: usize = 0;
+    while j < ev.type_args.len() {
+        type_args.push(hir_ty::copy_type(&ev.type_args[j]));
+        j = j + 1;
+    }
+
+    Evidence {
+        effect_id: ev.effect_id,
+        marker: HandlerMarker::new(ev.marker.id),
+        operations: ops,
+        type_args: type_args,
+    }
+}
+
+/// Creates a copy of operation evidence.
+fn copy_operation_evidence(op_ev: &OperationEvidence) -> OperationEvidence {
+    let mut name = String::new();
+    name.push_str(op_ev.op_name.as_str());
+    OperationEvidence {
+        op_index: op_ev.op_index,
+        op_name: name,
+        handler_body: op_ev.handler_body,
+        is_tail_resumptive: op_ev.is_tail_resumptive,
+    }
+}
+
+// ============================================================
+// Tail-Resumptive Analysis
+// ============================================================
+
+/// Checks if an operation handler is tail-resumptive.
+///
+/// A tail-resumptive operation always resumes at the end of its
+/// handler with the result of some expression. This enables
+/// important optimizations where the handler doesn't need to
+/// capture a full continuation.
+pub fn is_tail_resumptive_operation(op_ev: &OperationEvidence) -> bool {
+    op_ev.is_tail_resumptive
+}
+
+/// Marks an operation as tail-resumptive if it qualifies.
+///
+/// This should be called during analysis of handler bodies
+/// to enable optimizations.
+pub fn mark_tail_resumptive(op_ev: &mut OperationEvidence, is_tail_resumptive: bool) {
+    op_ev.is_tail_resumptive = is_tail_resumptive;
+}
+
+// ============================================================
+// Evidence Vector Printing (for debugging)
+// ============================================================
+
+/// Formats evidence information for debugging.
+pub fn format_evidence(ev: &Evidence) -> String {
+    let mut result = String::new();
+    result.push_str("Evidence { effect: ");
+    // Format effect_id index
+    let id_str = format_u32(ev.effect_id.index);
+    result.push_str(id_str.as_str());
+    result.push_str(", marker: ");
+    let marker_str = format_u64(ev.marker.id);
+    result.push_str(marker_str.as_str());
+    result.push_str(", ops: ");
+    let ops_str = format_usize(ev.operations.len());
+    result.push_str(ops_str.as_str());
+    result.push_str(" }");
+    result
+}
+
+/// Formats a u32 as a string.
+fn format_u32(val: u32) -> String {
+    let mut result = String::new();
+    if val == 0 {
+        result.push('0');
+        return result;
+    }
+    let mut digits = Vec::new();
+    let mut n = val;
+    while n > 0 {
+        let digit = (n % 10) as u8;
+        digits.push(digit);
+        n = n / 10;
+    }
+    // Reverse
+    let mut i = digits.len();
+    while i > 0 {
+        i = i - 1;
+        let c = ('0' as u8 + digits[i]) as char;
+        result.push(c);
+    }
+    result
+}
+
+/// Formats a u64 as a string.
+fn format_u64(val: u64) -> String {
+    let mut result = String::new();
+    if val == 0 {
+        result.push('0');
+        return result;
+    }
+    let mut digits = Vec::new();
+    let mut n = val;
+    while n > 0 {
+        let digit = (n % 10) as u8;
+        digits.push(digit);
+        n = n / 10;
+    }
+    // Reverse
+    let mut i = digits.len();
+    while i > 0 {
+        i = i - 1;
+        let c = ('0' as u8 + digits[i]) as char;
+        result.push(c);
+    }
+    result
+}
+
+/// Formats a usize as a string.
+fn format_usize(val: usize) -> String {
+    let mut result = String::new();
+    if val == 0 {
+        result.push('0');
+        return result;
+    }
+    let mut digits = Vec::new();
+    let mut n = val;
+    while n > 0 {
+        let digit = (n % 10) as u8;
+        digits.push(digit);
+        n = n / 10;
+    }
+    // Reverse
+    let mut i = digits.len();
+    while i > 0 {
+        i = i - 1;
+        let c = ('0' as u8 + digits[i]) as char;
+        result.push(c);
+    }
+    result
+}

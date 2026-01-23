@@ -520,3 +520,80 @@ pub fn copy_effect_row(row: &EffectRow) -> EffectRow {
         row_var: row.row_var,
     }
 }
+
+/// Creates a copy of a TraitRef.
+pub fn copy_trait_ref(tr: &TraitRef) -> TraitRef {
+    let mut copied_args: Vec<Type> = Vec::new();
+    let mut i: usize = 0;
+    while i < tr.args.len() {
+        copied_args.push(copy_type(&tr.args[i]));
+        i = i + 1;
+    }
+    TraitRef {
+        def_id: tr.def_id,
+        args: copied_args,
+        span: tr.span,
+    }
+}
+
+/// Creates a copy of a WherePredicate.
+pub fn copy_where_predicate(pred: &WherePredicate) -> WherePredicate {
+    match pred {
+        &WherePredicate::TypeBound { ref ty, ref bounds, span } => {
+            let mut copied_bounds: Vec<TraitRef> = Vec::new();
+            let mut i: usize = 0;
+            while i < bounds.len() {
+                copied_bounds.push(copy_trait_ref(&bounds[i]));
+                i = i + 1;
+            }
+            WherePredicate::TypeBound {
+                ty: copy_type(ty),
+                bounds: copied_bounds,
+                span: span,
+            }
+        }
+        &WherePredicate::LifetimeBound { lifetime, bound, span } => {
+            // Symbol is Copy (just a u32 wrapper), so no copying needed
+            WherePredicate::LifetimeBound {
+                lifetime: lifetime,
+                bound: bound,
+                span: span,
+            }
+        }
+        &WherePredicate::EffectBound { effect_var, ref bounds, span } => {
+            // Copy effect bounds
+            let mut copied_bounds: Vec<EffectRef> = Vec::new();
+            let mut i: usize = 0;
+            while i < bounds.len() {
+                let eff = &bounds[i];
+                let mut copied_args: Vec<Type> = Vec::new();
+                let mut j: usize = 0;
+                while j < eff.args.len() {
+                    copied_args.push(copy_type(&eff.args[j]));
+                    j = j + 1;
+                }
+                copied_bounds.push(EffectRef {
+                    def_id: eff.def_id,
+                    args: copied_args,
+                });
+                i = i + 1;
+            }
+            WherePredicate::EffectBound {
+                effect_var: effect_var,
+                bounds: copied_bounds,
+                span: span,
+            }
+        }
+    }
+}
+
+/// Copies a vector of where predicates.
+pub fn copy_where_predicates(preds: &Vec<WherePredicate>) -> Vec<WherePredicate> {
+    let mut result: Vec<WherePredicate> = Vec::new();
+    let mut i: usize = 0;
+    while i < preds.len() {
+        result.push(copy_where_predicate(&preds[i]));
+        i = i + 1;
+    }
+    result
+}

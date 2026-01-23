@@ -239,11 +239,12 @@ fn is_void_type(llvm_ty: &str) -> bool {
 }
 
 /// Emits an assertion.
+/// On failure, prints the assertion message and traps.
 fn emit_assert(
     ctx: &mut codegen_ctx::CodegenCtx,
     cond: &mir_types::Operand,
     expected: bool,
-    _msg: &String,
+    msg: &String,
     target: mir_def::BasicBlockId,
 ) {
     let cond_val = codegen_expr::emit_operand(ctx, cond);
@@ -264,6 +265,20 @@ fn emit_assert(
     // Fail block
     ctx.emit_label(fail_label.as_str());
     ctx.indent();
+
+    // Build the full assertion message: "Assertion failed: <msg>\n"
+    let mut full_msg = common::make_string("Assertion failed: ");
+    full_msg.push_str(msg.as_str());
+
+    // Add the message as a string constant and get its label
+    let msg_label = ctx.add_string_constant(&full_msg);
+
+    // Call puts() to print the message to stderr before trapping
+    // puts takes a pointer and returns i32
+    ctx.write("    call i32 @puts(ptr ");
+    ctx.write_string(&msg_label);
+    ctx.write(")\n");
+
     // Call panic or trap
     ctx.writeln("call void @llvm.trap()");
     ctx.emit_unreachable();
