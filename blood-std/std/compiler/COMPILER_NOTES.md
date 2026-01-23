@@ -18,7 +18,7 @@ Source → Lexer → Parser → AST → HIR → Type Check → MIR → Codegen �
 | Parsing | `parser*.blood` (6 files) | Tokens → AST |
 | Name Resolution | `resolve.blood` | Scope tracking, name binding |
 | HIR Lowering | `hir_lower*.blood` (6 files) | AST → HIR with resolved names |
-| Type Checking | `typeck*.blood` (4 files), `unify.blood` | HIR → Typed HIR |
+| Type Checking | `typeck*.blood` (6 files), `unify.blood` | HIR → Typed HIR |
 | MIR Lowering | `mir_lower*.blood` (5 files) | Typed HIR → MIR |
 | Code Generation | `codegen*.blood` (6 files) | MIR → LLVM IR |
 | Effect System | `effect_evidence.blood`, `effect_runtime.blood` | Evidence passing, runtime support |
@@ -69,8 +69,9 @@ Some files exceed the typical 600-line guideline but are accepted due to:
 
 Current large files:
 - `hir_lower_expr.blood` (~1641 lines) - Expression/pattern/control flow lowering
+- `typeck_expr.blood` (~1553 lines) - Expression type checking
 - `unify.blood` (~1232 lines) - Type unification with union-find
-- `typeck_expr.blood` (~1113 lines) - Expression type checking
+- `typeck.blood` (~1235 lines) - Main type checker (split from 1877 lines via typeck_types.blood and typeck_info.blood)
 - `ast.blood` (~1070 lines) - All AST node types
 
 ### 4. Qualified Path Resolution
@@ -216,15 +217,18 @@ These features are intentionally deferred to Phase 2 and will return explicit "n
 
 ## Blood-Rust Limitations
 
-The self-hosted compiler works around these blood-rust compiler limitations:
+Most previous blood-rust limitations have been resolved. Current remaining limitations:
 
 | Limitation | Workaround |
 |------------|------------|
-| Cross-module associated functions on enums | Use standalone helper functions (e.g., `destination_local()`) |
-| `use` imports after declarations | Use qualified paths instead |
-| `pub use` re-exports | Not supported; use qualified paths from source module |
-| Transitive dependencies | Must import all modules that imported modules use |
 | Some keywords as field names | Rename fields (e.g., `mod_decl` instead of `module`) |
+
+**Resolved limitations (no longer require workarounds):**
+- Cross-module associated functions on enums now work
+- `use` imports after declarations now work
+- `pub use` re-exports now work (structs, enums, pattern matching)
+- Transitive dependencies now resolved automatically
+- `&str` methods (.len(), .as_bytes()) now work
 
 ---
 

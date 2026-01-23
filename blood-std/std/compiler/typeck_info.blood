@@ -1,0 +1,397 @@
+// Blood Self-Hosted Compiler - Type Checking Info Structures
+//
+// This module defines the information structures used by the type checker
+// to track metadata about structs, enums, functions, traits, and impls.
+
+mod common;
+mod hir_def;
+mod hir_ty;
+mod typeck_types;
+
+// ============================================================
+// Struct and Enum Information
+// ============================================================
+
+/// Information about a struct for type checking.
+pub struct StructInfo {
+    /// The DefId of the struct.
+    pub def_id: hir_def::DefId,
+    /// The name of the struct.
+    pub name: common::Symbol,
+    /// Number of generic parameters.
+    pub num_generics: u32,
+    /// Field names (in order).
+    pub field_names: Vec<common::Symbol>,
+    /// Field info with types (for type checking).
+    pub fields: Vec<FieldInfo>,
+}
+
+impl StructInfo {
+    /// Creates new struct info.
+    pub fn new(
+        def_id: hir_def::DefId,
+        name: common::Symbol,
+        num_generics: u32,
+        field_names: Vec<common::Symbol>,
+        fields: Vec<FieldInfo>,
+    ) -> StructInfo {
+        StructInfo {
+            def_id: def_id,
+            name: name,
+            num_generics: num_generics,
+            field_names: field_names,
+            fields: fields,
+        }
+    }
+}
+
+/// Information about an enum for type checking.
+pub struct EnumInfo {
+    /// The DefId of the enum.
+    pub def_id: hir_def::DefId,
+    /// The name of the enum.
+    pub name: common::Symbol,
+    /// Number of generic parameters.
+    pub num_generics: u32,
+    /// Variant names (in order).
+    pub variant_names: Vec<common::Symbol>,
+    /// Variant info with types (for type checking).
+    pub variants: Vec<VariantInfo>,
+}
+
+impl EnumInfo {
+    /// Creates new enum info.
+    pub fn new(
+        def_id: hir_def::DefId,
+        name: common::Symbol,
+        num_generics: u32,
+        variant_names: Vec<common::Symbol>,
+        variants: Vec<VariantInfo>,
+    ) -> EnumInfo {
+        EnumInfo {
+            def_id: def_id,
+            name: name,
+            num_generics: num_generics,
+            variant_names: variant_names,
+            variants: variants,
+        }
+    }
+}
+
+/// Information about a function for type checking.
+pub struct FnInfo {
+    /// The DefId of the function.
+    pub def_id: hir_def::DefId,
+    /// The name of the function.
+    pub name: common::Symbol,
+    /// Number of generic parameters.
+    pub num_generics: u32,
+    /// Number of parameters.
+    pub num_params: u32,
+    /// Whether the function is const.
+    pub is_const: bool,
+    /// Whether the function is unsafe.
+    pub is_unsafe: bool,
+}
+
+impl FnInfo {
+    /// Creates new function info.
+    pub fn new(
+        def_id: hir_def::DefId,
+        name: common::Symbol,
+        num_generics: u32,
+        num_params: u32,
+        is_const: bool,
+        is_unsafe: bool,
+    ) -> FnInfo {
+        FnInfo {
+            def_id: def_id,
+            name: name,
+            num_generics: num_generics,
+            num_params: num_params,
+            is_const: is_const,
+            is_unsafe: is_unsafe,
+        }
+    }
+}
+
+/// Information about an effect for type checking.
+pub struct EffectInfo {
+    /// The DefId of the effect.
+    pub def_id: hir_def::DefId,
+    /// The name of the effect.
+    pub name: common::Symbol,
+    /// Number of generic parameters.
+    pub num_generics: u32,
+    /// Operation names.
+    pub op_names: Vec<common::Symbol>,
+}
+
+impl EffectInfo {
+    /// Creates new effect info.
+    pub fn new(
+        def_id: hir_def::DefId,
+        name: common::Symbol,
+        num_generics: u32,
+        op_names: Vec<common::Symbol>,
+    ) -> EffectInfo {
+        EffectInfo {
+            def_id: def_id,
+            name: name,
+            num_generics: num_generics,
+            op_names: op_names,
+        }
+    }
+}
+
+// ============================================================
+// Field and Variant Information
+// ============================================================
+
+/// Stored info about a struct field.
+pub struct FieldInfo {
+    /// Field name symbol.
+    pub name: common::Symbol,
+    /// Field type.
+    pub ty: hir_ty::Type,
+}
+
+impl FieldInfo {
+    /// Creates a new field info.
+    pub fn new(name: common::Symbol, ty: hir_ty::Type) -> FieldInfo {
+        FieldInfo { name, ty }
+    }
+}
+
+/// Stored info about an enum variant.
+pub struct VariantInfo {
+    /// Variant name symbol.
+    pub name: common::Symbol,
+    /// Field types for tuple variants.
+    pub field_tys: Vec<hir_ty::Type>,
+    /// Variant index within the enum (for pattern matching).
+    pub variant_index: u32,
+}
+
+impl VariantInfo {
+    /// Creates a new variant info.
+    pub fn new(name: common::Symbol, field_tys: Vec<hir_ty::Type>, variant_index: u32) -> VariantInfo {
+        VariantInfo { name, field_tys, variant_index }
+    }
+}
+
+// ============================================================
+// Function Signature Information
+// ============================================================
+
+/// Stored info about a function signature for type checking.
+pub struct FnSigInfo {
+    /// Parameter types.
+    pub param_tys: Vec<hir_ty::Type>,
+    /// Return type.
+    pub return_ty: hir_ty::Type,
+    /// Number of generic type parameters.
+    pub num_generics: u32,
+}
+
+impl FnSigInfo {
+    /// Creates a new function signature info.
+    pub fn new(param_tys: Vec<hir_ty::Type>, return_ty: hir_ty::Type, num_generics: u32) -> FnSigInfo {
+        FnSigInfo { param_tys, return_ty, num_generics }
+    }
+}
+
+// ============================================================
+// Const and Static Information
+// ============================================================
+
+/// Stored info about a constant.
+pub struct ConstInfo {
+    /// The DefId of the constant.
+    pub def_id: hir_def::DefId,
+    /// The name of the constant.
+    pub name: common::Symbol,
+    /// The type of the constant.
+    pub ty: hir_ty::Type,
+}
+
+impl ConstInfo {
+    /// Creates a new const info.
+    pub fn new(def_id: hir_def::DefId, name: common::Symbol, ty: hir_ty::Type) -> ConstInfo {
+        ConstInfo { def_id, name, ty }
+    }
+}
+
+/// Stored info about a static.
+pub struct StaticInfo {
+    /// The DefId of the static.
+    pub def_id: hir_def::DefId,
+    /// The name of the static.
+    pub name: common::Symbol,
+    /// The type of the static.
+    pub ty: hir_ty::Type,
+    /// Whether the static is mutable.
+    pub mutable: bool,
+}
+
+impl StaticInfo {
+    /// Creates a new static info.
+    pub fn new(def_id: hir_def::DefId, name: common::Symbol, ty: hir_ty::Type, mutable: bool) -> StaticInfo {
+        StaticInfo { def_id, name, ty, mutable }
+    }
+}
+
+// ============================================================
+// Method and Impl Information
+// ============================================================
+
+/// Stored info about a method in an impl block.
+pub struct MethodInfo {
+    /// The DefId of the method.
+    pub def_id: hir_def::DefId,
+    /// The name of the method.
+    pub name: common::Symbol,
+    /// Parameter types (excluding self).
+    pub param_tys: Vec<hir_ty::Type>,
+    /// Return type.
+    pub return_ty: hir_ty::Type,
+    /// Whether the method takes self by reference.
+    pub takes_self_ref: bool,
+    /// Whether the method takes self by mutable reference.
+    pub takes_self_mut: bool,
+}
+
+impl MethodInfo {
+    /// Creates a new method info.
+    pub fn new(
+        def_id: hir_def::DefId,
+        name: common::Symbol,
+        param_tys: Vec<hir_ty::Type>,
+        return_ty: hir_ty::Type,
+        takes_self_ref: bool,
+        takes_self_mut: bool,
+    ) -> MethodInfo {
+        MethodInfo { def_id, name, param_tys, return_ty, takes_self_ref, takes_self_mut }
+    }
+}
+
+/// Stored info about an impl block.
+pub struct ImplInfo {
+    /// The DefId of the impl block.
+    pub def_id: hir_def::DefId,
+    /// The self type this impl is for.
+    pub self_ty: hir_ty::Type,
+    /// Number of generic parameters on the impl.
+    pub num_generics: u32,
+    /// Methods in this impl block.
+    pub methods: Vec<MethodInfo>,
+}
+
+impl ImplInfo {
+    /// Creates a new impl info.
+    pub fn new(
+        def_id: hir_def::DefId,
+        self_ty: hir_ty::Type,
+        num_generics: u32,
+        methods: Vec<MethodInfo>,
+    ) -> ImplInfo {
+        ImplInfo { def_id, self_ty, num_generics, methods }
+    }
+}
+
+// ============================================================
+// Trait Information
+// ============================================================
+
+/// Information about a trait for type checking.
+pub struct TraitInfo {
+    /// The DefId of the trait.
+    pub def_id: hir_def::DefId,
+    /// The name of the trait.
+    pub name: common::Symbol,
+    /// Number of generic type parameters.
+    pub num_generics: u32,
+    /// Methods required by this trait.
+    pub methods: Vec<TraitMethodInfo>,
+    /// Associated types in this trait.
+    pub assoc_types: Vec<common::Symbol>,
+}
+
+impl TraitInfo {
+    /// Creates new trait info.
+    pub fn new(
+        def_id: hir_def::DefId,
+        name: common::Symbol,
+        num_generics: u32,
+        methods: Vec<TraitMethodInfo>,
+        assoc_types: Vec<common::Symbol>,
+    ) -> TraitInfo {
+        TraitInfo { def_id, name, num_generics, methods, assoc_types }
+    }
+}
+
+/// Information about a trait method.
+pub struct TraitMethodInfo {
+    /// The name of the method.
+    pub name: common::Symbol,
+    /// Parameter types (excluding self).
+    pub param_tys: Vec<hir_ty::Type>,
+    /// Return type.
+    pub return_ty: hir_ty::Type,
+    /// Whether the method takes &self.
+    pub takes_self_ref: bool,
+    /// Whether the method takes &mut self.
+    pub takes_self_mut: bool,
+    /// Whether this method has a default implementation.
+    pub has_default: bool,
+}
+
+impl TraitMethodInfo {
+    /// Creates new trait method info.
+    pub fn new(
+        name: common::Symbol,
+        param_tys: Vec<hir_ty::Type>,
+        return_ty: hir_ty::Type,
+        takes_self_ref: bool,
+        takes_self_mut: bool,
+        has_default: bool,
+    ) -> TraitMethodInfo {
+        TraitMethodInfo {
+            name, param_tys, return_ty,
+            takes_self_ref, takes_self_mut, has_default,
+        }
+    }
+}
+
+/// Information about a trait implementation.
+pub struct TraitImplInfo {
+    /// The DefId of this impl block.
+    pub impl_def_id: hir_def::DefId,
+    /// The DefId of the trait being implemented.
+    pub trait_def_id: hir_def::DefId,
+    /// The type implementing the trait.
+    pub self_ty: hir_ty::Type,
+    /// Type arguments for the trait (if generic).
+    pub trait_args: Vec<hir_ty::Type>,
+    /// Number of generic parameters on the impl.
+    pub num_generics: u32,
+    /// Where clause predicates for this impl.
+    pub where_predicates: Vec<typeck_types::Predicate>,
+}
+
+impl TraitImplInfo {
+    /// Creates new trait impl info.
+    pub fn new(
+        impl_def_id: hir_def::DefId,
+        trait_def_id: hir_def::DefId,
+        self_ty: hir_ty::Type,
+        trait_args: Vec<hir_ty::Type>,
+        num_generics: u32,
+        where_predicates: Vec<typeck_types::Predicate>,
+    ) -> TraitImplInfo {
+        TraitImplInfo {
+            impl_def_id, trait_def_id, self_ty,
+            trait_args, num_generics, where_predicates,
+        }
+    }
+}

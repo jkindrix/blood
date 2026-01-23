@@ -1,0 +1,303 @@
+// Blood Self-Hosted Compiler - Type Checking Types
+//
+// This module defines the foundational types for type checking:
+// error types, checking modes, coercion types, and obligations.
+
+mod common;
+mod hir_ty;
+
+// ============================================================
+// Type Error
+// ============================================================
+
+/// A type checking error.
+pub struct TypeError {
+    /// The kind of type error.
+    pub kind: TypeErrorKind,
+    /// The span where the error occurred.
+    pub span: common::Span,
+    /// Additional notes for the error.
+    pub notes: Vec<TypeNote>,
+}
+
+impl TypeError {
+    /// Creates a new type error.
+    pub fn new(kind: TypeErrorKind, span: common::Span) -> TypeError {
+        TypeError {
+            kind: kind,
+            span: span,
+            notes: Vec::new(),
+        }
+    }
+
+    /// Creates a type mismatch error.
+    pub fn mismatch(span: common::Span) -> TypeError {
+        TypeError::new(TypeErrorKind::TypeMismatch, span)
+    }
+
+    /// Creates an undefined variable error.
+    pub fn undefined(span: common::Span) -> TypeError {
+        TypeError::new(TypeErrorKind::UndefinedVariable, span)
+    }
+
+    /// Creates an invalid call error.
+    pub fn not_callable(span: common::Span) -> TypeError {
+        TypeError::new(TypeErrorKind::NotCallable, span)
+    }
+}
+
+/// The kind of type error.
+pub enum TypeErrorKind {
+    /// Types don't match.
+    TypeMismatch,
+    /// Cannot infer type.
+    CannotInfer,
+    /// Undefined variable.
+    UndefinedVariable,
+    /// Undefined function.
+    UndefinedFunction,
+    /// Wrong number of arguments.
+    ArityMismatch,
+    /// Expression is not callable.
+    NotCallable,
+    /// Expression is not indexable.
+    NotIndexable,
+    /// Field does not exist.
+    NoSuchField,
+    /// Method does not exist.
+    NoSuchMethod,
+    /// Cannot mutate immutable.
+    CannotMutate,
+    /// Invalid assignment target.
+    InvalidLValue,
+    /// Missing return value.
+    MissingReturn,
+    /// Type does not implement trait.
+    TraitNotImplemented,
+    /// Effect not handled.
+    UnhandledEffect,
+    /// Invalid break/continue.
+    InvalidControl,
+    /// Pattern type mismatch.
+    PatternMismatch,
+    /// Non-exhaustive patterns.
+    NonExhaustive,
+    /// Recursive type without indirection.
+    InfiniteType,
+    /// Invalid cast.
+    InvalidCast,
+}
+
+/// A note attached to a type error.
+pub struct TypeNote {
+    /// The note message.
+    pub message: String,
+    /// Optional span for the note.
+    pub span: Option<common::Span>,
+}
+
+impl TypeNote {
+    /// Creates a new type note.
+    pub fn new(message: String) -> TypeNote {
+        TypeNote {
+            message: message,
+            span: None,
+        }
+    }
+
+    /// Creates a type note with a span.
+    pub fn with_span(message: String, span: common::Span) -> TypeNote {
+        TypeNote {
+            message: message,
+            span: Some(span),
+        }
+    }
+}
+
+// ============================================================
+// Type Checking Mode
+// ============================================================
+
+/// The mode for type checking an expression.
+pub enum CheckMode {
+    /// Infer the type (no expectation).
+    Infer,
+    /// Check against an expected type.
+    Check(hir_ty::Type),
+    /// Coerce to an expected type (allows implicit conversions).
+    Coerce(hir_ty::Type),
+}
+
+impl CheckMode {
+    /// Creates an inference mode.
+    pub fn infer() -> CheckMode {
+        CheckMode::Infer
+    }
+
+    /// Creates a checking mode with the given expected type.
+    pub fn check(ty: hir_ty::Type) -> CheckMode {
+        CheckMode::Check(ty)
+    }
+
+    /// Creates a coercion mode with the given target type.
+    pub fn coerce(ty: hir_ty::Type) -> CheckMode {
+        CheckMode::Coerce(ty)
+    }
+}
+
+// ============================================================
+// Coercion
+// ============================================================
+
+/// A type coercion.
+pub enum Coercion {
+    /// No coercion needed.
+    None,
+    /// Dereference coercion: &T -> &U where T: Deref<Target=U>
+    Deref,
+    /// Reference coercion: &T -> &U where T <: U
+    RefCoerce,
+    /// Unsizing coercion: [T; N] -> [T], Sized -> ?Sized
+    Unsize,
+    /// Function pointer coercion: fn item -> fn pointer
+    FnPointer,
+    /// Closure coercion: closure -> fn pointer (when captures empty)
+    ClosureToFnPtr,
+    /// Never coercion: ! -> T
+    NeverToAny,
+}
+
+/// Result of attempting a coercion.
+pub enum CoercionResult {
+    /// Coercion succeeded.
+    Ok(Coercion),
+    /// Coercion failed.
+    Err,
+}
+
+// ============================================================
+// Type Checking Results
+// ============================================================
+
+/// Result of type checking a single item.
+pub enum ItemCheckResult {
+    /// Type checking succeeded.
+    Ok,
+    /// Type checking failed with errors.
+    Err,
+}
+
+/// Result of type checking a crate.
+pub struct CrateCheckResult {
+    /// Whether type checking succeeded overall.
+    pub success: bool,
+    /// Number of errors.
+    pub error_count: u32,
+    /// Number of warnings.
+    pub warning_count: u32,
+}
+
+impl CrateCheckResult {
+    /// Creates a successful result.
+    pub fn ok() -> CrateCheckResult {
+        CrateCheckResult {
+            success: true,
+            error_count: 0,
+            warning_count: 0,
+        }
+    }
+
+    /// Creates a failed result.
+    pub fn failed(error_count: u32) -> CrateCheckResult {
+        CrateCheckResult {
+            success: false,
+            error_count: error_count,
+            warning_count: 0,
+        }
+    }
+}
+
+// ============================================================
+// Obligation
+// ============================================================
+
+/// A trait obligation that needs to be resolved.
+pub struct Obligation {
+    /// The predicate (trait bound) that must hold.
+    pub predicate: Predicate,
+    /// The span where this obligation was created.
+    pub span: common::Span,
+    /// The cause of this obligation.
+    pub cause: ObligationCause,
+}
+
+impl Obligation {
+    /// Creates a new obligation.
+    pub fn new(predicate: Predicate, span: common::Span, cause: ObligationCause) -> Obligation {
+        Obligation {
+            predicate: predicate,
+            span: span,
+            cause: cause,
+        }
+    }
+}
+
+/// A predicate that must be satisfied.
+pub enum Predicate {
+    /// A trait bound: T: Trait
+    Trait(hir_ty::TraitRef),
+    /// A type equality: T == U
+    TypeEqual {
+        left: hir_ty::Type,
+        right: hir_ty::Type,
+    },
+    /// A well-formed type: WF(T)
+    WellFormed(hir_ty::Type),
+}
+
+/// The cause of an obligation.
+pub enum ObligationCause {
+    /// From an explicit where clause.
+    WhereClause,
+    /// From a function argument type.
+    FnArgument,
+    /// From a function return type.
+    FnReturn,
+    /// From a struct field.
+    FieldType,
+    /// From a method call.
+    MethodCall,
+    /// From an operator.
+    Operator,
+    /// From a cast.
+    Cast,
+    /// From type coercion.
+    Coercion,
+    /// From pattern matching.
+    Pattern,
+}
+
+// ============================================================
+// Local Variable Info
+// ============================================================
+
+/// Information about a local variable for type checking.
+pub struct LocalInfo {
+    /// The local variable's type.
+    pub ty: hir_ty::Type,
+    /// Whether the local is mutable.
+    pub mutable: bool,
+    /// The span where the local was declared.
+    pub span: common::Span,
+}
+
+impl LocalInfo {
+    /// Creates new local info.
+    pub fn new(ty: hir_ty::Type, mutable: bool, span: common::Span) -> LocalInfo {
+        LocalInfo {
+            ty: ty,
+            mutable: mutable,
+            span: span,
+        }
+    }
+}

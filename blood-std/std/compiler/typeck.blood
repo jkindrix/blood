@@ -3,10 +3,6 @@
 // This module implements type checking and inference for the HIR.
 // Type checking validates that expressions have compatible types and
 // infers types where they are not explicitly annotated.
-//
-// Note: Due to blood-rust limitations with Vec<T> type inference on
-// struct field operations, the full type checking implementation is
-// deferred. This module defines the types and structures needed.
 
 mod common;
 mod hir_def;
@@ -16,310 +12,38 @@ mod hir_item;
 mod hir;
 mod unify;
 
-// ============================================================
-// Type Error
-// ============================================================
+// Import submodules
+mod typeck_types;
+mod typeck_info;
 
-/// A type checking error.
-pub struct TypeError {
-    /// The kind of type error.
-    pub kind: TypeErrorKind,
-    /// The span where the error occurred.
-    pub span: common::Span,
-    /// Additional notes for the error.
-    pub notes: Vec<TypeNote>,
-}
+// Re-export types from submodules for public API
+pub use typeck_types::TypeError;
+pub use typeck_types::TypeErrorKind;
+pub use typeck_types::TypeNote;
+pub use typeck_types::CheckMode;
+pub use typeck_types::Coercion;
+pub use typeck_types::CoercionResult;
+pub use typeck_types::ItemCheckResult;
+pub use typeck_types::CrateCheckResult;
+pub use typeck_types::Obligation;
+pub use typeck_types::Predicate;
+pub use typeck_types::ObligationCause;
+pub use typeck_types::LocalInfo;
 
-impl TypeError {
-    /// Creates a new type error.
-    pub fn new(kind: TypeErrorKind, span: common::Span) -> TypeError {
-        TypeError {
-            kind: kind,
-            span: span,
-            notes: Vec::new(),
-        }
-    }
-
-    /// Creates a type mismatch error.
-    pub fn mismatch(span: common::Span) -> TypeError {
-        TypeError::new(TypeErrorKind::TypeMismatch, span)
-    }
-
-    /// Creates an undefined variable error.
-    pub fn undefined(span: common::Span) -> TypeError {
-        TypeError::new(TypeErrorKind::UndefinedVariable, span)
-    }
-
-    /// Creates an invalid call error.
-    pub fn not_callable(span: common::Span) -> TypeError {
-        TypeError::new(TypeErrorKind::NotCallable, span)
-    }
-}
-
-/// The kind of type error.
-pub enum TypeErrorKind {
-    /// Types don't match.
-    TypeMismatch,
-    /// Cannot infer type.
-    CannotInfer,
-    /// Undefined variable.
-    UndefinedVariable,
-    /// Undefined function.
-    UndefinedFunction,
-    /// Wrong number of arguments.
-    ArityMismatch,
-    /// Expression is not callable.
-    NotCallable,
-    /// Expression is not indexable.
-    NotIndexable,
-    /// Field does not exist.
-    NoSuchField,
-    /// Method does not exist.
-    NoSuchMethod,
-    /// Cannot mutate immutable.
-    CannotMutate,
-    /// Invalid assignment target.
-    InvalidLValue,
-    /// Missing return value.
-    MissingReturn,
-    /// Type does not implement trait.
-    TraitNotImplemented,
-    /// Effect not handled.
-    UnhandledEffect,
-    /// Invalid break/continue.
-    InvalidControl,
-    /// Pattern type mismatch.
-    PatternMismatch,
-    /// Non-exhaustive patterns.
-    NonExhaustive,
-    /// Recursive type without indirection.
-    InfiniteType,
-    /// Invalid cast.
-    InvalidCast,
-}
-
-/// A note attached to a type error.
-pub struct TypeNote {
-    /// The note message.
-    pub message: String,
-    /// Optional span for the note.
-    pub span: Option<common::Span>,
-}
-
-impl TypeNote {
-    /// Creates a new type note.
-    pub fn new(message: String) -> TypeNote {
-        TypeNote {
-            message: message,
-            span: None,
-        }
-    }
-
-    /// Creates a type note with a span.
-    pub fn with_span(message: String, span: common::Span) -> TypeNote {
-        TypeNote {
-            message: message,
-            span: Some(span),
-        }
-    }
-}
-
-// ============================================================
-// Type Information
-// ============================================================
-
-/// Information about a struct for type checking.
-pub struct StructInfo {
-    /// The DefId of the struct.
-    pub def_id: hir_def::DefId,
-    /// The name of the struct.
-    pub name: common::Symbol,
-    /// Number of generic parameters.
-    pub num_generics: u32,
-    /// Field names (in order).
-    pub field_names: Vec<common::Symbol>,
-    /// Field info with types (for type checking).
-    pub fields: Vec<FieldInfo>,
-}
-
-impl StructInfo {
-    /// Creates new struct info.
-    pub fn new(
-        def_id: hir_def::DefId,
-        name: common::Symbol,
-        num_generics: u32,
-        field_names: Vec<common::Symbol>,
-        fields: Vec<FieldInfo>,
-    ) -> StructInfo {
-        StructInfo {
-            def_id: def_id,
-            name: name,
-            num_generics: num_generics,
-            field_names: field_names,
-            fields: fields,
-        }
-    }
-}
-
-/// Information about an enum for type checking.
-pub struct EnumInfo {
-    /// The DefId of the enum.
-    pub def_id: hir_def::DefId,
-    /// The name of the enum.
-    pub name: common::Symbol,
-    /// Number of generic parameters.
-    pub num_generics: u32,
-    /// Variant names (in order).
-    pub variant_names: Vec<common::Symbol>,
-    /// Variant info with types (for type checking).
-    pub variants: Vec<VariantInfo>,
-}
-
-impl EnumInfo {
-    /// Creates new enum info.
-    pub fn new(
-        def_id: hir_def::DefId,
-        name: common::Symbol,
-        num_generics: u32,
-        variant_names: Vec<common::Symbol>,
-        variants: Vec<VariantInfo>,
-    ) -> EnumInfo {
-        EnumInfo {
-            def_id: def_id,
-            name: name,
-            num_generics: num_generics,
-            variant_names: variant_names,
-            variants: variants,
-        }
-    }
-}
-
-/// Information about a function for type checking.
-pub struct FnInfo {
-    /// The DefId of the function.
-    pub def_id: hir_def::DefId,
-    /// The name of the function.
-    pub name: common::Symbol,
-    /// Number of generic parameters.
-    pub num_generics: u32,
-    /// Number of parameters.
-    pub num_params: u32,
-    /// Whether the function is const.
-    pub is_const: bool,
-    /// Whether the function is unsafe.
-    pub is_unsafe: bool,
-}
-
-impl FnInfo {
-    /// Creates new function info.
-    pub fn new(
-        def_id: hir_def::DefId,
-        name: common::Symbol,
-        num_generics: u32,
-        num_params: u32,
-        is_const: bool,
-        is_unsafe: bool,
-    ) -> FnInfo {
-        FnInfo {
-            def_id: def_id,
-            name: name,
-            num_generics: num_generics,
-            num_params: num_params,
-            is_const: is_const,
-            is_unsafe: is_unsafe,
-        }
-    }
-}
-
-/// Information about an effect for type checking.
-pub struct EffectInfo {
-    /// The DefId of the effect.
-    pub def_id: hir_def::DefId,
-    /// The name of the effect.
-    pub name: common::Symbol,
-    /// Number of generic parameters.
-    pub num_generics: u32,
-    /// Operation names.
-    pub op_names: Vec<common::Symbol>,
-}
-
-impl EffectInfo {
-    /// Creates new effect info.
-    pub fn new(
-        def_id: hir_def::DefId,
-        name: common::Symbol,
-        num_generics: u32,
-        op_names: Vec<common::Symbol>,
-    ) -> EffectInfo {
-        EffectInfo {
-            def_id: def_id,
-            name: name,
-            num_generics: num_generics,
-            op_names: op_names,
-        }
-    }
-}
-
-// ============================================================
-// Type Checking Mode
-// ============================================================
-
-/// The mode for type checking an expression.
-pub enum CheckMode {
-    /// Infer the type (no expectation).
-    Infer,
-    /// Check against an expected type.
-    Check(hir_ty::Type),
-    /// Coerce to an expected type (allows implicit conversions).
-    Coerce(hir_ty::Type),
-}
-
-impl CheckMode {
-    /// Creates an inference mode.
-    pub fn infer() -> CheckMode {
-        CheckMode::Infer
-    }
-
-    /// Creates a checking mode with the given expected type.
-    pub fn check(ty: hir_ty::Type) -> CheckMode {
-        CheckMode::Check(ty)
-    }
-
-    /// Creates a coercion mode with the given target type.
-    pub fn coerce(ty: hir_ty::Type) -> CheckMode {
-        CheckMode::Coerce(ty)
-    }
-}
-
-// ============================================================
-// Coercion
-// ============================================================
-
-/// A type coercion.
-pub enum Coercion {
-    /// No coercion needed.
-    None,
-    /// Dereference coercion: &T -> &U where T: Deref<Target=U>
-    Deref,
-    /// Reference coercion: &T -> &U where T <: U
-    RefCoerce,
-    /// Unsizing coercion: [T; N] -> [T], Sized -> ?Sized
-    Unsize,
-    /// Function pointer coercion: fn item -> fn pointer
-    FnPointer,
-    /// Closure coercion: closure -> fn pointer (when captures empty)
-    ClosureToFnPtr,
-    /// Never coercion: ! -> T
-    NeverToAny,
-}
-
-/// Result of attempting a coercion.
-pub enum CoercionResult {
-    /// Coercion succeeded.
-    Ok(Coercion),
-    /// Coercion failed.
-    Err,
-}
+pub use typeck_info::StructInfo;
+pub use typeck_info::EnumInfo;
+pub use typeck_info::FnInfo;
+pub use typeck_info::EffectInfo;
+pub use typeck_info::FieldInfo;
+pub use typeck_info::VariantInfo;
+pub use typeck_info::FnSigInfo;
+pub use typeck_info::ConstInfo;
+pub use typeck_info::StaticInfo;
+pub use typeck_info::MethodInfo;
+pub use typeck_info::ImplInfo;
+pub use typeck_info::TraitInfo;
+pub use typeck_info::TraitMethodInfo;
+pub use typeck_info::TraitImplInfo;
 
 // ============================================================
 // Exhaustiveness Checking
@@ -465,373 +189,6 @@ impl PatternMatrix {
 }
 
 // ============================================================
-// Type Checking Results
-// ============================================================
-
-/// Result of type checking a single item.
-pub enum ItemCheckResult {
-    /// Type checking succeeded.
-    Ok,
-    /// Type checking failed with errors.
-    Err,
-}
-
-/// Result of type checking a crate.
-pub struct CrateCheckResult {
-    /// Whether type checking succeeded overall.
-    pub success: bool,
-    /// Number of errors.
-    pub error_count: u32,
-    /// Number of warnings.
-    pub warning_count: u32,
-}
-
-impl CrateCheckResult {
-    /// Creates a successful result.
-    pub fn ok() -> CrateCheckResult {
-        CrateCheckResult {
-            success: true,
-            error_count: 0,
-            warning_count: 0,
-        }
-    }
-
-    /// Creates a failed result.
-    pub fn failed(error_count: u32) -> CrateCheckResult {
-        CrateCheckResult {
-            success: false,
-            error_count: error_count,
-            warning_count: 0,
-        }
-    }
-}
-
-// ============================================================
-// Obligation
-// ============================================================
-
-/// A trait obligation that needs to be resolved.
-pub struct Obligation {
-    /// The predicate (trait bound) that must hold.
-    pub predicate: Predicate,
-    /// The span where this obligation was created.
-    pub span: common::Span,
-    /// The cause of this obligation.
-    pub cause: ObligationCause,
-}
-
-impl Obligation {
-    /// Creates a new obligation.
-    pub fn new(predicate: Predicate, span: common::Span, cause: ObligationCause) -> Obligation {
-        Obligation {
-            predicate: predicate,
-            span: span,
-            cause: cause,
-        }
-    }
-}
-
-/// A predicate that must be satisfied.
-pub enum Predicate {
-    /// A trait bound: T: Trait
-    Trait(hir_ty::TraitRef),
-    /// A type equality: T == U
-    TypeEqual {
-        left: hir_ty::Type,
-        right: hir_ty::Type,
-    },
-    /// A well-formed type: WF(T)
-    WellFormed(hir_ty::Type),
-}
-
-/// The cause of an obligation.
-pub enum ObligationCause {
-    /// From an explicit where clause.
-    WhereClause,
-    /// From a function argument type.
-    FnArgument,
-    /// From a function return type.
-    FnReturn,
-    /// From a struct field.
-    FieldType,
-    /// From a method call.
-    MethodCall,
-    /// From an operator.
-    Operator,
-    /// From a cast.
-    Cast,
-    /// From type coercion.
-    Coercion,
-    /// From pattern matching.
-    Pattern,
-}
-
-// ============================================================
-// Local Variable Info
-// ============================================================
-
-/// Information about a local variable for type checking.
-pub struct LocalInfo {
-    /// The local variable's type.
-    pub ty: hir_ty::Type,
-    /// Whether the local is mutable.
-    pub mutable: bool,
-    /// The span where the local was declared.
-    pub span: common::Span,
-}
-
-impl LocalInfo {
-    /// Creates new local info.
-    pub fn new(ty: hir_ty::Type, mutable: bool, span: common::Span) -> LocalInfo {
-        LocalInfo {
-            ty: ty,
-            mutable: mutable,
-            span: span,
-        }
-    }
-}
-
-// ============================================================
-// Stored Signature Info
-// ============================================================
-
-/// Stored info about a function signature for type checking.
-pub struct FnSigInfo {
-    /// Parameter types.
-    pub param_tys: Vec<hir_ty::Type>,
-    /// Return type.
-    pub return_ty: hir_ty::Type,
-    /// Number of generic type parameters.
-    pub num_generics: u32,
-}
-
-impl FnSigInfo {
-    /// Creates a new function signature info.
-    pub fn new(param_tys: Vec<hir_ty::Type>, return_ty: hir_ty::Type, num_generics: u32) -> FnSigInfo {
-        FnSigInfo { param_tys, return_ty, num_generics }
-    }
-}
-
-/// Stored info about a struct field.
-pub struct FieldInfo {
-    /// Field name symbol.
-    pub name: common::Symbol,
-    /// Field type.
-    pub ty: hir_ty::Type,
-}
-
-impl FieldInfo {
-    /// Creates a new field info.
-    pub fn new(name: common::Symbol, ty: hir_ty::Type) -> FieldInfo {
-        FieldInfo { name, ty }
-    }
-}
-
-/// Stored info about an enum variant.
-pub struct VariantInfo {
-    /// Variant name symbol.
-    pub name: common::Symbol,
-    /// Field types for tuple variants.
-    pub field_tys: Vec<hir_ty::Type>,
-    /// Variant index within the enum (for pattern matching).
-    pub variant_index: u32,
-}
-
-impl VariantInfo {
-    /// Creates a new variant info.
-    pub fn new(name: common::Symbol, field_tys: Vec<hir_ty::Type>, variant_index: u32) -> VariantInfo {
-        VariantInfo { name, field_tys, variant_index }
-    }
-}
-
-/// Stored info about a constant.
-pub struct ConstInfo {
-    /// The DefId of the constant.
-    pub def_id: hir_def::DefId,
-    /// The name of the constant.
-    pub name: common::Symbol,
-    /// The type of the constant.
-    pub ty: hir_ty::Type,
-}
-
-impl ConstInfo {
-    /// Creates a new const info.
-    pub fn new(def_id: hir_def::DefId, name: common::Symbol, ty: hir_ty::Type) -> ConstInfo {
-        ConstInfo { def_id, name, ty }
-    }
-}
-
-/// Stored info about a static.
-pub struct StaticInfo {
-    /// The DefId of the static.
-    pub def_id: hir_def::DefId,
-    /// The name of the static.
-    pub name: common::Symbol,
-    /// The type of the static.
-    pub ty: hir_ty::Type,
-    /// Whether the static is mutable.
-    pub mutable: bool,
-}
-
-impl StaticInfo {
-    /// Creates a new static info.
-    pub fn new(def_id: hir_def::DefId, name: common::Symbol, ty: hir_ty::Type, mutable: bool) -> StaticInfo {
-        StaticInfo { def_id, name, ty, mutable }
-    }
-}
-
-/// Stored info about a method in an impl block.
-pub struct MethodInfo {
-    /// The DefId of the method.
-    pub def_id: hir_def::DefId,
-    /// The name of the method.
-    pub name: common::Symbol,
-    /// Parameter types (excluding self).
-    pub param_tys: Vec<hir_ty::Type>,
-    /// Return type.
-    pub return_ty: hir_ty::Type,
-    /// Whether the method takes self by reference.
-    pub takes_self_ref: bool,
-    /// Whether the method takes self by mutable reference.
-    pub takes_self_mut: bool,
-}
-
-impl MethodInfo {
-    /// Creates a new method info.
-    pub fn new(
-        def_id: hir_def::DefId,
-        name: common::Symbol,
-        param_tys: Vec<hir_ty::Type>,
-        return_ty: hir_ty::Type,
-        takes_self_ref: bool,
-        takes_self_mut: bool,
-    ) -> MethodInfo {
-        MethodInfo { def_id, name, param_tys, return_ty, takes_self_ref, takes_self_mut }
-    }
-}
-
-/// Stored info about an impl block.
-pub struct ImplInfo {
-    /// The DefId of the impl block.
-    pub def_id: hir_def::DefId,
-    /// The self type this impl is for.
-    pub self_ty: hir_ty::Type,
-    /// Number of generic parameters on the impl.
-    pub num_generics: u32,
-    /// Methods in this impl block.
-    pub methods: Vec<MethodInfo>,
-}
-
-impl ImplInfo {
-    /// Creates a new impl info.
-    pub fn new(
-        def_id: hir_def::DefId,
-        self_ty: hir_ty::Type,
-        num_generics: u32,
-        methods: Vec<MethodInfo>,
-    ) -> ImplInfo {
-        ImplInfo { def_id, self_ty, num_generics, methods }
-    }
-}
-
-// ============================================================
-// Trait Information
-// ============================================================
-
-/// Information about a trait for type checking.
-pub struct TraitInfo {
-    /// The DefId of the trait.
-    pub def_id: hir_def::DefId,
-    /// The name of the trait.
-    pub name: common::Symbol,
-    /// Number of generic type parameters.
-    pub num_generics: u32,
-    /// Methods required by this trait.
-    pub methods: Vec<TraitMethodInfo>,
-    /// Associated types in this trait.
-    pub assoc_types: Vec<common::Symbol>,
-}
-
-impl TraitInfo {
-    /// Creates new trait info.
-    pub fn new(
-        def_id: hir_def::DefId,
-        name: common::Symbol,
-        num_generics: u32,
-        methods: Vec<TraitMethodInfo>,
-        assoc_types: Vec<common::Symbol>,
-    ) -> TraitInfo {
-        TraitInfo { def_id, name, num_generics, methods, assoc_types }
-    }
-}
-
-/// Information about a trait method.
-pub struct TraitMethodInfo {
-    /// The name of the method.
-    pub name: common::Symbol,
-    /// Parameter types (excluding self).
-    pub param_tys: Vec<hir_ty::Type>,
-    /// Return type.
-    pub return_ty: hir_ty::Type,
-    /// Whether the method takes &self.
-    pub takes_self_ref: bool,
-    /// Whether the method takes &mut self.
-    pub takes_self_mut: bool,
-    /// Whether this method has a default implementation.
-    pub has_default: bool,
-}
-
-impl TraitMethodInfo {
-    /// Creates new trait method info.
-    pub fn new(
-        name: common::Symbol,
-        param_tys: Vec<hir_ty::Type>,
-        return_ty: hir_ty::Type,
-        takes_self_ref: bool,
-        takes_self_mut: bool,
-        has_default: bool,
-    ) -> TraitMethodInfo {
-        TraitMethodInfo {
-            name, param_tys, return_ty,
-            takes_self_ref, takes_self_mut, has_default,
-        }
-    }
-}
-
-/// Information about a trait implementation.
-pub struct TraitImplInfo {
-    /// The DefId of this impl block.
-    pub impl_def_id: hir_def::DefId,
-    /// The DefId of the trait being implemented.
-    pub trait_def_id: hir_def::DefId,
-    /// The type implementing the trait.
-    pub self_ty: hir_ty::Type,
-    /// Type arguments for the trait (if generic).
-    pub trait_args: Vec<hir_ty::Type>,
-    /// Number of generic parameters on the impl.
-    pub num_generics: u32,
-    /// Where clause predicates for this impl.
-    pub where_predicates: Vec<Predicate>,
-}
-
-impl TraitImplInfo {
-    /// Creates new trait impl info.
-    pub fn new(
-        impl_def_id: hir_def::DefId,
-        trait_def_id: hir_def::DefId,
-        self_ty: hir_ty::Type,
-        trait_args: Vec<hir_ty::Type>,
-        num_generics: u32,
-        where_predicates: Vec<Predicate>,
-    ) -> TraitImplInfo {
-        TraitImplInfo {
-            impl_def_id, trait_def_id, self_ty,
-            trait_args, num_generics, where_predicates,
-        }
-    }
-}
-
-// ============================================================
 // Type Checker
 // ============================================================
 
@@ -856,25 +213,25 @@ pub struct TypeChecker {
     /// Type of the current loop (for break values).
     pub loop_ty: Option<hir_ty::Type>,
     /// Local variable types by LocalId index.
-    pub locals: Vec<LocalInfo>,
+    pub locals: Vec<typeck_types::LocalInfo>,
     /// Type errors collected during checking.
-    pub errors: Vec<TypeError>,
+    pub errors: Vec<typeck_types::TypeError>,
     /// Function signature info by DefId.index for O(1) lookup.
-    pub fn_sigs: Vec<Option<FnSigInfo>>,
+    pub fn_sigs: Vec<Option<typeck_info::FnSigInfo>>,
     /// Struct info by DefId.index for O(1) lookup.
-    pub structs: Vec<Option<StructInfo>>,
+    pub structs: Vec<Option<typeck_info::StructInfo>>,
     /// Enum info by DefId.index for O(1) lookup.
-    pub enums: Vec<Option<EnumInfo>>,
+    pub enums: Vec<Option<typeck_info::EnumInfo>>,
     /// Const info by DefId.index for O(1) lookup.
-    pub consts: Vec<Option<ConstInfo>>,
+    pub consts: Vec<Option<typeck_info::ConstInfo>>,
     /// Static info by DefId.index for O(1) lookup.
-    pub statics: Vec<Option<StaticInfo>>,
+    pub statics: Vec<Option<typeck_info::StaticInfo>>,
     /// Impl blocks for method resolution.
-    pub impls: Vec<ImplInfo>,
+    pub impls: Vec<typeck_info::ImplInfo>,
     /// Trait definitions by DefId.index for O(1) lookup.
-    pub traits: Vec<Option<TraitInfo>>,
+    pub traits: Vec<Option<typeck_info::TraitInfo>>,
     /// Trait implementations for trait resolution.
-    pub trait_impls: Vec<TraitImplInfo>,
+    pub trait_impls: Vec<typeck_info::TraitImplInfo>,
 }
 
 impl TypeChecker {
@@ -907,7 +264,7 @@ impl TypeChecker {
     /// Adds a local variable to the context.
     pub fn add_local(self: &mut Self, ty: hir_ty::Type, mutable: bool, span: common::Span) -> hir_def::LocalId {
         let id = hir_def::LocalId::new(self.locals.len() as u32);
-        let info = LocalInfo::new(ty, mutable, span);
+        let info = typeck_types::LocalInfo::new(ty, mutable, span);
         self.locals.push(info);
         id
     }
@@ -955,8 +312,8 @@ impl TypeChecker {
     }
 
     /// Reports a type error.
-    pub fn error(self: &mut Self, kind: TypeErrorKind, span: common::Span) {
-        let err = TypeError::new(kind, span);
+    pub fn error(self: &mut Self, kind: typeck_types::TypeErrorKind, span: common::Span) {
+        let err = typeck_types::TypeError::new(kind, span);
         self.errors.push(err);
     }
 
@@ -972,11 +329,11 @@ impl TypeChecker {
             unify::UnifyResult::Err(e) => {
                 // Convert unify error to type error
                 let kind = match e.kind {
-                    unify::UnifyErrorKind::TypeMismatch => TypeErrorKind::TypeMismatch,
-                    unify::UnifyErrorKind::OccursCheck => TypeErrorKind::InfiniteType,
-                    unify::UnifyErrorKind::ArityMismatch => TypeErrorKind::ArityMismatch,
-                    unify::UnifyErrorKind::EffectMismatch => TypeErrorKind::TypeMismatch,
-                    unify::UnifyErrorKind::RecordMismatch => TypeErrorKind::TypeMismatch,
+                    unify::UnifyErrorKind::TypeMismatch => typeck_types::TypeErrorKind::TypeMismatch,
+                    unify::UnifyErrorKind::OccursCheck => typeck_types::TypeErrorKind::InfiniteType,
+                    unify::UnifyErrorKind::ArityMismatch => typeck_types::TypeErrorKind::ArityMismatch,
+                    unify::UnifyErrorKind::EffectMismatch => typeck_types::TypeErrorKind::TypeMismatch,
+                    unify::UnifyErrorKind::RecordMismatch => typeck_types::TypeErrorKind::TypeMismatch,
                 };
                 self.error(kind, e.span);
                 false
@@ -1013,7 +370,7 @@ impl TypeChecker {
         let num_generics = sig.generics.params.len() as u32;
 
         // Create the info
-        let info = FnSigInfo::new(param_tys, hir_ty::copy_type(&sig.return_ty), num_generics);
+        let info = typeck_info::FnSigInfo::new(param_tys, hir_ty::copy_type(&sig.return_ty), num_generics);
 
         // Store at def_id.index
         let def_idx = def_id.index as usize;
@@ -1027,20 +384,21 @@ impl TypeChecker {
     pub fn register_struct(self: &mut Self, def_id: hir_def::DefId, name: common::Symbol, struct_def: &hir_item::StructDef) {
         // Extract field names and field info based on struct body
         let mut field_names: Vec<common::Symbol> = Vec::new();
-        let mut fields: Vec<FieldInfo> = Vec::new();
+        let mut fields: Vec<typeck_info::FieldInfo> = Vec::new();
         match &struct_def.body {
             &hir_item::StructBody::Record(ref struct_fields) => {
                 let mut i: usize = 0;
                 while i < struct_fields.len() {
                     let f = &struct_fields[i];
                     field_names.push(f.name.symbol);
-                    let info = FieldInfo::new(f.name.symbol, hir_ty::copy_type(&f.ty));
+                    let info = typeck_info::FieldInfo::new(f.name.symbol, hir_ty::copy_type(&f.ty));
                     fields.push(info);
                     i = i + 1;
                 }
             }
             &hir_item::StructBody::Tuple(ref types) => {
                 // Tuple structs don't have named fields
+                let _ = types;
             }
             &hir_item::StructBody::Unit => {
                 // Unit structs have no fields
@@ -1051,7 +409,7 @@ impl TypeChecker {
         let num_generics = struct_def.generics.params.len() as u32;
 
         // Create the info
-        let info = StructInfo::new(def_id, name, num_generics, field_names, fields);
+        let info = typeck_info::StructInfo::new(def_id, name, num_generics, field_names, fields);
 
         // Store at def_id.index
         let def_idx = def_id.index as usize;
@@ -1065,7 +423,7 @@ impl TypeChecker {
     pub fn register_enum(self: &mut Self, def_id: hir_def::DefId, name: common::Symbol, enum_def: &hir_item::EnumDef) {
         // Extract variant names and variant info
         let mut variant_names: Vec<common::Symbol> = Vec::new();
-        let mut variants: Vec<VariantInfo> = Vec::new();
+        let mut variants: Vec<typeck_info::VariantInfo> = Vec::new();
         let mut i: usize = 0;
         while i < enum_def.variants.len() {
             let v = &enum_def.variants[i];
@@ -1094,7 +452,7 @@ impl TypeChecker {
                 }
             }
 
-            let info = VariantInfo::new(v.name.symbol, field_tys, i as u32);
+            let info = typeck_info::VariantInfo::new(v.name.symbol, field_tys, i as u32);
             variants.push(info);
             i = i + 1;
         }
@@ -1103,7 +461,7 @@ impl TypeChecker {
         let num_generics = enum_def.generics.params.len() as u32;
 
         // Create the info
-        let info = EnumInfo::new(def_id, name, num_generics, variant_names, variants);
+        let info = typeck_info::EnumInfo::new(def_id, name, num_generics, variant_names, variants);
 
         // Store at def_id.index
         let def_idx = def_id.index as usize;
@@ -1118,7 +476,7 @@ impl TypeChecker {
     // ========================================================
 
     /// Gets a function signature by DefId in O(1) time.
-    pub fn get_fn_sig(self: &Self, def_id: hir_def::DefId) -> Option<&FnSigInfo> {
+    pub fn get_fn_sig(self: &Self, def_id: hir_def::DefId) -> Option<&typeck_info::FnSigInfo> {
         let def_idx = def_id.index as usize;
         if def_idx >= self.fn_sigs.len() {
             return Option::None;
@@ -1130,7 +488,7 @@ impl TypeChecker {
     }
 
     /// Gets a struct info by DefId in O(1) time.
-    pub fn get_struct(self: &Self, def_id: hir_def::DefId) -> Option<&StructInfo> {
+    pub fn get_struct(self: &Self, def_id: hir_def::DefId) -> Option<&typeck_info::StructInfo> {
         let def_idx = def_id.index as usize;
         if def_idx >= self.structs.len() {
             return Option::None;
@@ -1142,7 +500,7 @@ impl TypeChecker {
     }
 
     /// Gets an enum info by DefId in O(1) time.
-    pub fn get_enum(self: &Self, def_id: hir_def::DefId) -> Option<&EnumInfo> {
+    pub fn get_enum(self: &Self, def_id: hir_def::DefId) -> Option<&typeck_info::EnumInfo> {
         let def_idx = def_id.index as usize;
         if def_idx >= self.enums.len() {
             return Option::None;
@@ -1172,7 +530,7 @@ impl TypeChecker {
     }
 
     /// Gets a const info by DefId in O(1) time.
-    pub fn get_const(self: &Self, def_id: hir_def::DefId) -> Option<&ConstInfo> {
+    pub fn get_const(self: &Self, def_id: hir_def::DefId) -> Option<&typeck_info::ConstInfo> {
         let def_idx = def_id.index as usize;
         if def_idx >= self.consts.len() {
             return Option::None;
@@ -1184,7 +542,7 @@ impl TypeChecker {
     }
 
     /// Gets a static info by DefId in O(1) time.
-    pub fn get_static(self: &Self, def_id: hir_def::DefId) -> Option<&StaticInfo> {
+    pub fn get_static(self: &Self, def_id: hir_def::DefId) -> Option<&typeck_info::StaticInfo> {
         let def_idx = def_id.index as usize;
         if def_idx >= self.statics.len() {
             return Option::None;
@@ -1197,7 +555,7 @@ impl TypeChecker {
 
     /// Registers a constant definition for later lookup.
     pub fn register_const(self: &mut Self, def_id: hir_def::DefId, name: common::Symbol, ty: hir_ty::Type) {
-        let info = ConstInfo::new(def_id, name, ty);
+        let info = typeck_info::ConstInfo::new(def_id, name, ty);
         let def_idx = def_id.index as usize;
         while self.consts.len() <= def_idx {
             self.consts.push(Option::None);
@@ -1207,7 +565,7 @@ impl TypeChecker {
 
     /// Registers a static definition for later lookup.
     pub fn register_static(self: &mut Self, def_id: hir_def::DefId, name: common::Symbol, ty: hir_ty::Type, mutable: bool) {
-        let info = StaticInfo::new(def_id, name, ty, mutable);
+        let info = typeck_info::StaticInfo::new(def_id, name, ty, mutable);
         let def_idx = def_id.index as usize;
         while self.statics.len() <= def_idx {
             self.statics.push(Option::None);
@@ -1216,7 +574,7 @@ impl TypeChecker {
     }
 
     /// Registers an impl block for method resolution.
-    pub fn register_impl(self: &mut Self, impl_info: ImplInfo) {
+    pub fn register_impl(self: &mut Self, impl_info: typeck_info::ImplInfo) {
         self.impls.push(impl_info);
     }
 
@@ -1248,12 +606,12 @@ impl TypeChecker {
     }
 
     /// Gets method info from a lookup result.
-    pub fn get_method_from_lookup(self: &Self, result: &MethodLookupResult) -> &MethodInfo {
+    pub fn get_method_from_lookup(self: &Self, result: &MethodLookupResult) -> &typeck_info::MethodInfo {
         &self.impls[result.impl_index].methods[result.method_index]
     }
 
     /// Gets the impl info from a lookup result.
-    pub fn get_impl_from_lookup(self: &Self, result: &MethodLookupResult) -> &ImplInfo {
+    pub fn get_impl_from_lookup(self: &Self, result: &MethodLookupResult) -> &typeck_info::ImplInfo {
         &self.impls[result.impl_index]
     }
 
@@ -1280,7 +638,7 @@ impl TypeChecker {
     // ========================================================
 
     /// Registers a trait definition for later lookup.
-    pub fn register_trait(self: &mut Self, def_id: hir_def::DefId, info: TraitInfo) {
+    pub fn register_trait(self: &mut Self, def_id: hir_def::DefId, info: typeck_info::TraitInfo) {
         let def_idx = def_id.index as usize;
         while self.traits.len() <= def_idx {
             self.traits.push(Option::None);
@@ -1289,7 +647,7 @@ impl TypeChecker {
     }
 
     /// Gets a trait definition by DefId.
-    pub fn get_trait(self: &Self, def_id: hir_def::DefId) -> Option<&TraitInfo> {
+    pub fn get_trait(self: &Self, def_id: hir_def::DefId) -> Option<&typeck_info::TraitInfo> {
         let def_idx = def_id.index as usize;
         if def_idx < self.traits.len() {
             match &self.traits[def_idx] {
@@ -1302,7 +660,7 @@ impl TypeChecker {
     }
 
     /// Registers a trait implementation.
-    pub fn register_trait_impl(self: &mut Self, impl_info: TraitImplInfo) {
+    pub fn register_trait_impl(self: &mut Self, impl_info: typeck_info::TraitImplInfo) {
         self.trait_impls.push(impl_info);
     }
 
@@ -1330,20 +688,20 @@ impl TypeChecker {
 
     /// Resolves an obligation (checks if a predicate is satisfied).
     /// Returns true if the obligation is satisfied.
-    pub fn resolve_obligation(self: &Self, obligation: &Obligation) -> bool {
+    pub fn resolve_obligation(self: &Self, obligation: &typeck_types::Obligation) -> bool {
         match &obligation.predicate {
-            &Predicate::Trait(ref trait_ref) => {
+            &typeck_types::Predicate::Trait(ref trait_ref) => {
                 // For trait bounds, we need to find an impl
                 // The trait ref contains the type parameter that must implement the trait
                 // For now, we check if any impl exists for the trait
                 self.has_impl_for_trait(trait_ref.def_id)
             }
-            &Predicate::TypeEqual { ref left, ref right } => {
+            &typeck_types::Predicate::TypeEqual { ref left, ref right } => {
                 // For type equality, types must unify
                 // We can't mutate here, so do a simple structural check
                 types_structurally_equal(left, right)
             }
-            &Predicate::WellFormed(_) => {
+            &typeck_types::Predicate::WellFormed(_) => {
                 // WF predicates are assumed satisfied for now
                 true
             }
@@ -1366,11 +724,11 @@ impl TypeChecker {
     /// Returns obligations that must be satisfied.
     pub fn collect_call_obligations(
         self: &Self,
-        fn_sig: &FnSigInfo,
+        fn_sig: &typeck_info::FnSigInfo,
         type_args: &Vec<hir_ty::Type>,
         span: common::Span,
-    ) -> Vec<Obligation> {
-        let mut obligations: Vec<Obligation> = Vec::new();
+    ) -> Vec<typeck_types::Obligation> {
+        let mut obligations: Vec<typeck_types::Obligation> = Vec::new();
 
         // Check where predicates (would be stored in FnSigInfo if we extended it)
         // For now, create obligations for each type argument implementing basic traits
@@ -1384,12 +742,12 @@ impl TypeChecker {
     }
 
     /// Checks all collected obligations and reports errors for unsatisfied ones.
-    pub fn check_obligations(self: &mut Self, obligations: &Vec<Obligation>) {
+    pub fn check_obligations(self: &mut Self, obligations: &Vec<typeck_types::Obligation>) {
         let mut i: usize = 0;
         while i < obligations.len() {
             if !self.resolve_obligation(&obligations[i]) {
                 // Report error for unsatisfied obligation
-                self.error(TypeErrorKind::TraitNotImplemented, obligations[i].span);
+                self.error(typeck_types::TypeErrorKind::TraitNotImplemented, obligations[i].span);
             }
             i = i + 1;
         }

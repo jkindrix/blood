@@ -325,9 +325,7 @@ Before modifying any shared type:
 
 | Constraint | Example That Fails | Workaround |
 |------------|-------------------|------------|
-| `use` after declarations | `mod foo; use foo.Bar;` | Not supported - use qualified paths |
 | Some keywords as field names | `pub module: ...` | Rename: `mod_decl` |
-| Limited &str methods | No `.chars()`, `.as_bytes()` | Use unsafe pointer arithmetic |
 
 **Fixed constraints (no longer apply):**
 - Cross-module types in type position now work (e.g., `pub field: mod::Type`)
@@ -336,6 +334,11 @@ Before modifying any shared type:
 - Field name `end` works (was incorrectly thought to be a keyword)
 - Vec.push() now works with all types (was broken due to generic type inference bug)
 - Format strings support all integer types (fixed in commit 61c8d43)
+- `use` imports after `mod` declarations now work
+- Cross-module associated functions on enums now work
+- Transitive dependencies now resolved automatically
+- `&str` methods (.len(), .as_bytes()) now work
+- `pub use` re-exports work for structs, enums (construction, methods, AND pattern matching)
 
 ---
 
@@ -353,14 +356,14 @@ Build in this order, testing each phase before moving on:
 | 6 | `hir*.blood` (5 files) | 2,376 | ✅ Complete |
 | 7 | `resolve.blood` | 605 | ✅ Complete |
 | 8 | `hir_lower*.blood` (6 files) | 2,704 | ✅ Complete |
-| 9 | `unify.blood`, `typeck*.blood` (4 files) | 3,385 | ✅ Complete |
+| 9 | `unify.blood`, `typeck*.blood` (6 files) | 5,312 | ✅ Complete |
 | 10 | `mir_*.blood` (10 files) | 5,011 | ✅ Complete |
 | 11 | `codegen*.blood` (6 files) | 2,224 | ✅ Complete |
 | 12 | Infrastructure (6 files) | 2,148 | ✅ Complete |
 
 **Infrastructure files:** `interner.blood` (286), `driver.blood` (547), `reporter.blood` (364), `source.blood` (372), `main.blood` (369), `const_eval.blood` (210)
 
-**Total: 49 files, 26,464 lines - All type-check successfully.**
+**Total: 53 files, 30,631 lines - All type-check successfully.**
 
 ---
 
