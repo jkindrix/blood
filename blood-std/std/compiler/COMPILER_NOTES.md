@@ -67,12 +67,22 @@ Some files exceed the typical 600-line guideline but are accepted due to:
 - Tight coupling that would create circular dependencies if split
 - Stable, well-tested code
 
-Current large files:
-- `hir_lower_expr.blood` (~1641 lines) - Expression/pattern/control flow lowering
+Current large files (as of 2026-01):
+- `unify.blood` (~1818 lines) - Type unification with union-find and row polymorphism
+- `hir_lower_expr.blood` (~1770 lines) - Expression/pattern/control flow lowering
+- `mir_lower_expr.blood` (~1700 lines) - MIR expression lowering
 - `typeck_expr.blood` (~1553 lines) - Expression type checking
-- `unify.blood` (~1232 lines) - Type unification with union-find
-- `typeck.blood` (~1235 lines) - Main type checker (split from 1877 lines via typeck_types.blood and typeck_info.blood)
+- `typeck.blood` (~1235 lines) - Main type checker
+- `parser_expr.blood` (~1179 lines) - Pratt parser for expressions
 - `ast.blood` (~1070 lines) - All AST node types
+
+**Modularization assessment:**
+- `unify.blood`: Cannot be split - recursive dependencies between unification functions
+- `hir_lower_expr.blood`: Pattern lowering (lines 924-1196, ~273 lines) could potentially be
+  extracted to `hir_lower_pattern.blood`, but depends on shared suffix helper functions
+- `mir_lower_expr.blood`: Tightly coupled expression lowering, splitting not recommended
+- `typeck_expr.blood`: Tightly coupled type checking, splitting not recommended
+- `ast.blood`: All AST types in one place aids comprehension, splitting not recommended
 
 ### 4. Qualified Path Resolution
 
@@ -130,7 +140,7 @@ These features are intentionally deferred to Phase 2 and will return explicit "n
 | Feature | Location | Status |
 |---------|----------|--------|
 | Row polymorphism for records | unify.blood | ✅ Implemented |
-| Row variable handling in type lowering | hir_lower_type.blood | ⚠️ Partial |
+| Row variable handling in type lowering | hir_lower_type.blood, hir_lower_ctx.blood | ✅ Complete |
 
 **Status**: Record row polymorphism is now implemented:
 - `unify_record_rows` function handles structural unification
@@ -142,19 +152,22 @@ These features are intentionally deferred to Phase 2 and will return explicit "n
 
 | Feature | Location | Status |
 |---------|----------|--------|
-| Forall type handling | hir_ty.blood, hir_lower_type.blood | ✅ Basic infrastructure |
+| Forall type handling | hir_ty.blood, hir_lower_type.blood, resolve.blood | ✅ Complete |
 | Const generics | hir_lower_type.blood | ⚠️ Partial (expressions evaluated) |
 | Ownership qualifiers | hir_lower_type.blood | Stripped during lowering |
-| Ownership tracking | mir_lower_ctx.blood, mir_lower_util.blood | ✅ Basic infrastructure |
+| Ownership tracking | mir_lower_ctx.blood, mir_lower_util.blood | ✅ Integrated |
 | Local item handling | resolve.blood, hir_lower_expr.blood | ✅ Name registration |
+| Row polymorphism (type lowering) | hir_lower_type.blood, hir_lower_ctx.blood | ✅ Complete |
 
-**Status**: Advanced type features now have basic infrastructure:
+**Status**: Advanced type features are now complete or partially implemented:
 
 **Forall types:**
-- `TypeKind::Forall` variant added with params and body
-- Lowering creates Forall type with allocated type variables
-- Unification compares param counts and unifies bodies
-- Full support would require type parameter scope during lowering
+- `TypeKind::Forall` variant with params and body
+- `TypeParam` binding kind added to resolve.blood
+- `ScopeKind::TypeParams` for type parameter scopes
+- `define_type_param` and `lookup_type_param` methods in Resolver
+- Type lowering pushes TypeParams scope, registers params, resolves body
+- Type path resolution checks type parameters before definitions
 
 **Const generics:**
 - Const type arguments are evaluated using const_eval
@@ -162,9 +175,15 @@ These features are intentionally deferred to Phase 2 and will return explicit "n
 
 **Ownership tracking:**
 - `is_copy_type` determines Copy vs Move semantics for types
-- `MoveTracker` struct added for tracking moved places
-- `operand_from_place` chooses Copy or Move based on type
+- `MoveTracker` struct integrated into MirLowerCtx
+- `operand_from_place_tracked` with use-after-move detection
+- `clear_move_on_assign` for reassignment handling
 - ADTs conservatively treated as Move (would need trait lookup for full support)
+
+**Row polymorphism (type lowering):**
+- `alloc_effect_row_var` and `alloc_record_row_var` methods in LoweringCtx
+- Effect row lowering handles `rest` field and `Var` case
+- Record type lowering handles `row_var` field
 
 **Local items:**
 - `define_local_item` registers items in current scope
@@ -205,6 +224,8 @@ These features are intentionally deferred to Phase 2 and will return explicit "n
 | Deref coercion | ✅ Implemented | &&T -> &T and ADT deref patterns |
 | Pattern exhaustiveness | ✅ Implemented | Pattern matrix algorithm for match completeness |
 | Effect row unification | ✅ Complete | Full row variable binding with set operations |
+| Complex param patterns | ✅ Implemented | Tuple/struct destructuring in function parameters |
+| For loop (range) | ✅ Implemented | Desugars to while loop for range expressions |
 
 ### Code Generation Features
 
@@ -230,11 +251,11 @@ These features are intentionally deferred to Phase 2 and will return explicit "n
 | Effect runtime support | ✅ Complete | - |
 | Handler expression lowering | ✅ Complete | - |
 | Row polymorphism (records) | ✅ Implemented | - |
-| Forall types | ✅ Basic infrastructure | - |
+| Forall types | ✅ Complete | - |
 | Const generics | ⚠️ Partial | LOW |
 | Pattern exhaustiveness | ✅ Complete | - |
 | Deref coercion | ✅ Complete | - |
-| Ownership tracking | ✅ Basic infrastructure | - |
+| Ownership tracking | ✅ Integrated | - |
 | Local item handling | ✅ Name registration | - |
 
 ---
@@ -495,3 +516,22 @@ When modifying the compiler:
   - Updated const generics to evaluate expressions (hir_lower_type.blood)
   - Documented run command limitations (main.blood)
   - All 53 compiler files continue to pass type checking
+- **2026-01**: Complete type parameter scoping and ownership integration:
+  - Implemented complete forall type parameter scoping (resolve.blood, hir_lower_type.blood)
+    - Added `BindingKind::TypeParam` for type parameter bindings
+    - Added `ScopeKind::TypeParams` for type parameter scopes
+    - Added `define_type_param` and `lookup_type_param` methods to Resolver
+    - Added `TyVarId::dummy()` and `is_dummy()` methods (hir_def.blood)
+    - Type lowering now pushes TypeParams scope, registers params, resolves body
+    - Type path resolution checks type parameters before definitions
+  - Completed row variable allocation for type lowering (hir_lower_ctx.blood, hir_lower_type.blood)
+    - Added `alloc_effect_row_var` and `alloc_record_row_var` methods
+    - Effect row lowering handles `rest` field and `Var` case
+    - Record type lowering handles `row_var` field
+    - Added `with_effects_and_var` method to EffectRow (hir_ty.blood)
+  - Integrated MoveTracker into MIR lowering (mir_lower_ctx.blood, mir_lower_util.blood)
+    - Added `move_tracker` field to MirLowerCtx
+    - Added `operand_from_place_tracked` for use-after-move detection
+    - Added `clear_move_on_assign` for reassignment handling
+    - Added copy helper functions for MIR types
+  - All compiler files continue to pass type checking
