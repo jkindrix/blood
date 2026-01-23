@@ -1,0 +1,379 @@
+// Blood Self-Hosted Compiler - Error Reporter
+//
+// This module provides formatted error reporting with source context.
+// It formats compilation errors in a human-readable way, showing the
+// source location and surrounding code.
+
+mod common;
+mod error;
+// Note: The following imports are required for Blood's module system
+// because driver.blood uses these modules and Blood requires all transitive
+// dependencies to be imported.
+mod ast;
+mod hir;
+mod hir_def;
+mod hir_ty;
+mod hir_item;
+mod hir_expr;
+mod hir_lower;
+mod hir_lower_ctx;
+mod parser;
+mod parser_base;
+mod resolve;
+mod mir_def;
+mod mir_body;
+mod mir_lower;
+mod codegen;
+mod interner;
+mod unify;
+mod typeck;
+mod typeck_driver;
+mod driver;
+
+// ============================================================
+// Error Reporter
+// ============================================================
+
+/// Error reporter that formats errors with source context.
+pub struct ErrorReporter {
+    /// The source code being compiled.
+    source: String,
+    /// Line starting positions (byte offsets).
+    line_starts: Vec<usize>,
+    /// The file name (for display).
+    filename: String,
+    /// Whether to use colors in output.
+    use_colors: bool,
+}
+
+impl ErrorReporter {
+    /// Creates a new error reporter for the given source.
+    pub fn new(source: &str, filename: &str) -> ErrorReporter {
+        let mut reporter = ErrorReporter {
+            source: common::make_string(source),
+            line_starts: Vec::new(),
+            filename: common::make_string(filename),
+            use_colors: false,
+        };
+        reporter.compute_line_starts();
+        reporter
+    }
+
+    /// Creates a new reporter with colors enabled.
+    pub fn with_colors(source: &str, filename: &str) -> ErrorReporter {
+        let mut reporter = ErrorReporter::new(source, filename);
+        reporter.use_colors = true;
+        reporter
+    }
+
+    /// Computes the starting byte offset of each line.
+    fn compute_line_starts(self: &mut ErrorReporter) {
+        self.line_starts.push(0usize); // First line starts at 0
+
+        let bytes = self.source.as_bytes();
+        let mut i: usize = 0;
+        while i < bytes.len() {
+            if bytes[i] == 10 { // '\n'
+                self.line_starts.push(i + 1);
+            }
+            i = i + 1;
+        }
+    }
+
+    /// Converts a byte offset to line and column (1-indexed).
+    pub fn offset_to_line_col(self: &ErrorReporter, offset: usize) -> (u32, u32) {
+        let mut line: u32 = 1;
+        let mut i: usize = 0;
+        while i < self.line_starts.len() {
+            if i + 1 < self.line_starts.len() && self.line_starts[i + 1] <= offset {
+                line = line + 1;
+            } else {
+                break;
+            }
+            i = i + 1;
+        }
+        let line_start = if (line as usize) <= self.line_starts.len() {
+            self.line_starts[(line as usize) - 1]
+        } else {
+            0
+        };
+        let column = (offset - line_start) as u32 + 1;
+        (line, column)
+    }
+
+    /// Gets the content of a specific line (1-indexed).
+    pub fn get_line(self: &ErrorReporter, line_num: u32) -> String {
+        if line_num == 0 || (line_num as usize) > self.line_starts.len() {
+            return String::new();
+        }
+
+        let start = self.line_starts[(line_num as usize) - 1];
+        let end = if (line_num as usize) < self.line_starts.len() {
+            self.line_starts[line_num as usize] - 1 // Exclude newline
+        } else {
+            self.source.len()
+        };
+
+        substring(&self.source, start, end)
+    }
+
+    /// Formats a compile error as a string.
+    pub fn format_error(self: &ErrorReporter, error: &error::CompileError) -> String {
+        let mut output = String::new();
+
+        // Error header
+        if self.use_colors {
+            output.push_str("\x1b[31merror\x1b[0m"); // Red "error"
+        } else {
+            output.push_str("error");
+        }
+        output.push_str(": ");
+        output.push_str(error.message.as_str());
+        output.push('\n');
+
+        // Location
+        match &error.span {
+            &Option::Some(ref span) => {
+                output.push_str("  --> ");
+                output.push_str(self.filename.as_str());
+                output.push(':');
+                let (line, col) = self.offset_to_line_col(span.start);
+                append_u32(&mut output, line);
+                output.push(':');
+                append_u32(&mut output, col);
+                output.push('\n');
+
+                // Source context
+                self.append_source_context(&mut output, span, line);
+            }
+            &Option::None => {}
+        }
+
+        output
+    }
+
+    /// Appends source context showing the error location.
+    fn append_source_context(self: &ErrorReporter, output: &mut String, span: &common::Span, line: u32) {
+        let line_content = self.get_line(line);
+        let (_, start_col) = self.offset_to_line_col(span.start);
+        let (end_line, end_col) = self.offset_to_line_col(span.end);
+
+        // Line number gutter
+        output.push_str("   |\n");
+        append_line_number(output, line);
+        output.push_str(" | ");
+        output.push_str(line_content.as_str());
+        output.push('\n');
+
+        // Underline
+        output.push_str("   | ");
+        let mut i: u32 = 1;
+        while i < start_col {
+            output.push(' ');
+            i = i + 1;
+        }
+
+        // Calculate underline length
+        let underline_len = if end_line == line {
+            if end_col > start_col { end_col - start_col } else { 1 }
+        } else {
+            // Multi-line span: underline to end of line
+            (line_content.len() as u32) - start_col + 1
+        };
+
+        if self.use_colors {
+            output.push_str("\x1b[31m"); // Red
+        }
+        let mut j: u32 = 0;
+        while j < underline_len {
+            output.push('^');
+            j = j + 1;
+        }
+        if self.use_colors {
+            output.push_str("\x1b[0m"); // Reset
+        }
+        output.push('\n');
+    }
+
+    /// Formats multiple errors.
+    pub fn format_errors(self: &ErrorReporter, errors: &Vec<error::CompileError>) -> String {
+        let mut output = String::new();
+        let mut i: usize = 0;
+        while i < errors.len() {
+            let formatted = self.format_error(&errors[i]);
+            output.push_str(formatted.as_str());
+            if i + 1 < errors.len() {
+                output.push('\n');
+            }
+            i = i + 1;
+        }
+        output
+    }
+
+    /// Formats a compile result (errors and warnings).
+    pub fn format_result(self: &ErrorReporter, result: &driver::CompileResult) -> String {
+        let mut output = String::new();
+
+        // Format errors
+        if result.errors.len() > 0 {
+            let errors_str = self.format_errors(&result.errors);
+            output.push_str(errors_str.as_str());
+
+            // Summary
+            output.push('\n');
+            if self.use_colors {
+                output.push_str("\x1b[31merror\x1b[0m");
+            } else {
+                output.push_str("error");
+            }
+            output.push_str(": aborting due to ");
+            append_usize(&mut output, result.errors.len());
+            if result.errors.len() == 1 {
+                output.push_str(" previous error\n");
+            } else {
+                output.push_str(" previous errors\n");
+            }
+        }
+
+        // Format warnings
+        let mut wi: usize = 0;
+        while wi < result.warnings.len() {
+            let warning = &result.warnings[wi];
+            if self.use_colors {
+                output.push_str("\x1b[33mwarning\x1b[0m"); // Yellow
+            } else {
+                output.push_str("warning");
+            }
+            output.push_str(": ");
+            output.push_str(warning.message.as_str());
+            output.push('\n');
+            wi = wi + 1;
+        }
+
+        output
+    }
+}
+
+// ============================================================
+// Simple Error Formatting (without source context)
+// ============================================================
+
+/// Formats an error without source context.
+pub fn format_error_simple(error: &error::CompileError) -> String {
+    let mut output = String::new();
+    output.push_str("error");
+
+    // Add error code if present
+    match &error.code {
+        &Option::Some(ref code) => {
+            output.push('[');
+            output.push_str(code.as_str());
+            output.push(']');
+        }
+        &Option::None => {}
+    }
+
+    output.push_str(": ");
+    output.push_str(error.message.as_str());
+
+    // Add location if present
+    match &error.span {
+        &Option::Some(ref span) => {
+            output.push_str(" at ");
+            append_u32(&mut output, span.line);
+            output.push(':');
+            append_u32(&mut output, span.column);
+        }
+        &Option::None => {}
+    }
+
+    output
+}
+
+/// Formats multiple errors without source context.
+pub fn format_errors_simple(errors: &Vec<error::CompileError>) -> String {
+    let mut output = String::new();
+    let mut i: usize = 0;
+    while i < errors.len() {
+        let formatted = format_error_simple(&errors[i]);
+        output.push_str(formatted.as_str());
+        output.push('\n');
+        i = i + 1;
+    }
+    output
+}
+
+// ============================================================
+// Check Result Formatting
+// ============================================================
+
+/// Formats a check result.
+pub fn format_check_result(result: &driver::CheckResult, source: &str, filename: &str) -> String {
+    if result.success {
+        let mut output = String::new();
+        output.push_str("Check successful: ");
+        output.push_str(filename);
+        output.push('\n');
+        output
+    } else {
+        let reporter = ErrorReporter::new(source, filename);
+        reporter.format_errors(&result.errors)
+    }
+}
+
+// ============================================================
+// Helper Functions
+// ============================================================
+
+/// Extracts a substring.
+fn substring(s: &String, start: usize, end: usize) -> String {
+    let bytes = s.as_bytes();
+    let mut result = String::new();
+
+    let actual_end = if end > bytes.len() { bytes.len() } else { end };
+    let mut i = start;
+    while i < actual_end {
+        result.push(bytes[i] as char);
+        i = i + 1;
+    }
+
+    result
+}
+
+/// Appends a u32 as a decimal string.
+fn append_u32(s: &mut String, n: u32) {
+    if n == 0 {
+        s.push('0');
+        return;
+    }
+
+    let mut digits: Vec<char> = Vec::new();
+    let mut val = n;
+    while val > 0 {
+        let digit = (val % 10) as u8;
+        digits.push((48u8 + digit) as char);
+        val = val / 10;
+    }
+
+    // Reverse digits
+    let len = digits.len();
+    let mut i: usize = 0;
+    while i < len {
+        s.push(digits[len - 1 - i]);
+        i = i + 1;
+    }
+}
+
+/// Appends a usize as a decimal string.
+fn append_usize(s: &mut String, n: usize) {
+    append_u32(s, n as u32);
+}
+
+/// Appends a line number with padding.
+fn append_line_number(s: &mut String, line: u32) {
+    // Simple implementation: just append the number with minimal padding
+    if line < 10 {
+        s.push(' ');
+    }
+    append_u32(s, line);
+}

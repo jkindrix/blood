@@ -1,0 +1,107 @@
+// Blood Self-Hosted Compiler - Error Types
+//
+// This module defines error types used throughout the compiler.
+// Centralizing error definitions reduces coupling between modules
+// and provides a consistent error handling interface.
+
+mod common;
+
+// ============================================================
+// Compilation Phases
+// ============================================================
+
+/// Compilation phases.
+pub enum CompilePhase {
+    /// Lexing and parsing phase.
+    Parse,
+    /// HIR lowering phase.
+    Lower,
+    /// Type checking phase.
+    TypeCheck,
+    /// MIR lowering phase.
+    MirLower,
+    /// Code generation phase.
+    Codegen,
+}
+
+// ============================================================
+// Compile Error
+// ============================================================
+
+/// A compilation error.
+pub struct CompileError {
+    /// The compilation phase that produced this error.
+    pub phase: CompilePhase,
+    /// The error message.
+    pub message: String,
+    /// Source location (if available).
+    pub span: Option<common::Span>,
+    /// Error code (if available).
+    pub code: Option<String>,
+}
+
+impl CompileError {
+    /// Creates a new compile error.
+    pub fn new(phase: CompilePhase, message: String) -> CompileError {
+        CompileError {
+            phase,
+            message,
+            span: Option::None,
+            code: Option::None,
+        }
+    }
+
+    /// Creates a new compile error with span.
+    pub fn with_span(phase: CompilePhase, message: String, span: common::Span) -> CompileError {
+        CompileError {
+            phase,
+            message,
+            span: Option::Some(span),
+            code: Option::None,
+        }
+    }
+
+    /// Creates a new compile error with span and code.
+    pub fn with_code(phase: CompilePhase, message: String, span: common::Span, code: String) -> CompileError {
+        CompileError {
+            phase,
+            message,
+            span: Option::Some(span),
+            code: Option::Some(code),
+        }
+    }
+}
+
+// ============================================================
+// Compile Warning
+// ============================================================
+
+/// A compilation warning.
+pub struct CompileWarning {
+    /// The compilation phase that produced this warning.
+    pub phase: CompilePhase,
+    /// The warning message.
+    pub message: String,
+    /// Source location (if available).
+    pub span: Option<common::Span>,
+}
+
+impl CompileWarning {
+    /// Creates a new compile warning.
+    pub fn new(phase: CompilePhase, message: String) -> CompileWarning {
+        CompileWarning {
+            phase,
+            message,
+            span: Option::None,
+        }
+    }
+
+    /// Creates a new compile warning with span.
+    pub fn with_span(phase: CompilePhase, message: String, span: common::Span) -> CompileWarning {
+        CompileWarning {
+            phase,
+            message,
+            span: Option::Some(span),
+        }
+    }
+}

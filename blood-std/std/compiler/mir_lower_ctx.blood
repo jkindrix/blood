@@ -1,0 +1,385 @@
+// Blood Self-Hosted Compiler - MIR Lowering Context
+//
+// This module defines the context used during HIR to MIR lowering.
+// It tracks the mapping from HIR locals to MIR locals, loop contexts
+// for break/continue, and the current block being built.
+
+mod common;
+mod hir_def;
+mod hir_ty;
+mod hir_expr;
+mod mir_def;
+mod mir_types;
+mod mir_stmt;
+mod mir_term;
+mod mir_body;
+
+// ============================================================
+// MIR Lowering Context
+// ============================================================
+
+/// Context for lowering a single function body from HIR to MIR.
+pub struct MirLowerCtx {
+    /// The MIR body being built.
+    pub builder: mir_body::MirBodyBuilder,
+    /// Mapping from HIR LocalId to MIR MirLocalId.
+    /// Stored as pairs (hir_index, mir_index) for simplicity.
+    local_map: Vec<LocalMapping>,
+    /// Stack of loop contexts for break/continue.
+    loop_stack: Vec<LoopContext>,
+    /// Counter for generating unique temporary names.
+    temp_counter: u32,
+}
+
+/// Mapping from an HIR local to a MIR local.
+struct LocalMapping {
+    hir_id: u32,
+    mir_id: mir_def::MirLocalId,
+}
+
+impl MirLowerCtx {
+    /// Creates a new lowering context for a function.
+    pub fn new(
+        def_id: hir_def::DefId,
+        return_ty: hir_ty::Type,
+        span: common::Span,
+    ) -> MirLowerCtx {
+        MirLowerCtx {
+            builder: mir_body::MirBodyBuilder::new(def_id, return_ty, span),
+            local_map: Vec::new(),
+            loop_stack: Vec::new(),
+            temp_counter: 0,
+        }
+    }
+
+    // ======== Local Management ========
+
+    /// Registers a mapping from an HIR local to a MIR local.
+    pub fn register_local(self: &mut MirLowerCtx, hir_id: hir_def::LocalId, mir_id: mir_def::MirLocalId) {
+        self.local_map.push(LocalMapping {
+            hir_id: hir_id.index,
+            mir_id: mir_id,
+        });
+    }
+
+    /// Looks up the MIR local for an HIR local.
+    pub fn lookup_local(self: &MirLowerCtx, hir_id: hir_def::LocalId) -> Option<mir_def::MirLocalId> {
+        let mut i: usize = 0;
+        while i < self.local_map.len() {
+            if self.local_map[i].hir_id == hir_id.index {
+                return Option::Some(self.local_map[i].mir_id);
+            }
+            i = i + 1;
+        }
+        Option::None
+    }
+
+    /// Creates a new temporary and returns its ID.
+    pub fn new_temp(self: &mut MirLowerCtx, ty: hir_ty::Type, span: common::Span) -> mir_def::MirLocalId {
+        self.temp_counter = self.temp_counter + 1;
+        self.builder.new_temp(ty, span)
+    }
+
+    /// Creates a new user variable and returns its ID.
+    pub fn new_var(
+        self: &mut MirLowerCtx,
+        ty: hir_ty::Type,
+        name: String,
+        mutable: bool,
+        span: common::Span,
+    ) -> mir_def::MirLocalId {
+        self.builder.new_var(ty, name, mutable, span)
+    }
+
+    // ======== Block Management ========
+
+    /// Creates a new basic block.
+    pub fn new_block(self: &mut MirLowerCtx) -> mir_def::BasicBlockId {
+        self.builder.new_block()
+    }
+
+    /// Returns the current block.
+    pub fn current_block(self: &MirLowerCtx) -> mir_def::BasicBlockId {
+        self.builder.current_block()
+    }
+
+    /// Sets the current block.
+    pub fn set_current_block(self: &mut MirLowerCtx, block: mir_def::BasicBlockId) {
+        self.builder.set_current_block(block);
+    }
+
+    /// Returns true if the current block is already terminated.
+    pub fn is_terminated(self: &MirLowerCtx) -> bool {
+        self.builder.is_terminated()
+    }
+
+    // ======== Statement Emission ========
+
+    /// Emits a statement to the current block.
+    pub fn emit_stmt(self: &mut MirLowerCtx, stmt: mir_stmt::Statement) {
+        self.builder.push_stmt(stmt);
+    }
+
+    /// Emits an assignment statement.
+    pub fn emit_assign(
+        self: &mut MirLowerCtx,
+        place: mir_types::Place,
+        rvalue: mir_types::Rvalue,
+        span: common::Span,
+    ) {
+        self.builder.push_assign(place, rvalue, span);
+    }
+
+    /// Emits a storage live marker.
+    pub fn emit_storage_live(self: &mut MirLowerCtx, local: mir_def::MirLocalId, span: common::Span) {
+        self.emit_stmt(mir_stmt::Statement::storage_live(local, span));
+    }
+
+    /// Emits a storage dead marker.
+    pub fn emit_storage_dead(self: &mut MirLowerCtx, local: mir_def::MirLocalId, span: common::Span) {
+        self.emit_stmt(mir_stmt::Statement::storage_dead(local, span));
+    }
+
+    // ======== Terminator Emission ========
+
+    /// Terminates with an unconditional goto.
+    pub fn terminate_goto(self: &mut MirLowerCtx, target: mir_def::BasicBlockId, span: common::Span) {
+        self.builder.terminate(mir_term::Terminator::goto(target, span));
+    }
+
+    /// Terminates with a return.
+    pub fn terminate_return(self: &mut MirLowerCtx, span: common::Span) {
+        self.builder.terminate_return(span);
+    }
+
+    /// Terminates with a conditional branch.
+    pub fn terminate_if(
+        self: &mut MirLowerCtx,
+        cond: mir_types::Operand,
+        true_block: mir_def::BasicBlockId,
+        false_block: mir_def::BasicBlockId,
+        span: common::Span,
+    ) {
+        self.builder.terminate_if(cond, true_block, false_block, span);
+    }
+
+    /// Terminates with a switch.
+    pub fn terminate_switch(
+        self: &mut MirLowerCtx,
+        discr: mir_types::Operand,
+        targets: mir_types::SwitchTargets,
+        span: common::Span,
+    ) {
+        self.builder.terminate(mir_term::Terminator::new(
+            mir_term::TerminatorKind::SwitchInt { discr, targets },
+            span,
+        ));
+    }
+
+    /// Terminates with a function call.
+    pub fn terminate_call(
+        self: &mut MirLowerCtx,
+        func: mir_types::Operand,
+        args: Vec<mir_types::Operand>,
+        destination: mir_types::Place,
+        target: mir_def::BasicBlockId,
+        span: common::Span,
+    ) {
+        self.builder.terminate(mir_term::call(func, args, destination, target, span));
+    }
+
+    /// Terminates with unreachable.
+    pub fn terminate_unreachable(self: &mut MirLowerCtx, span: common::Span) {
+        self.builder.terminate(mir_term::Terminator::unreachable(span));
+    }
+
+    // ======== Loop Context ========
+
+    /// Pushes a loop context.
+    pub fn push_loop(
+        self: &mut MirLowerCtx,
+        label: Option<common::Symbol>,
+        break_block: mir_def::BasicBlockId,
+        continue_block: mir_def::BasicBlockId,
+    ) {
+        self.loop_stack.push(LoopContext {
+            label: label,
+            break_block: break_block,
+            continue_block: continue_block,
+        });
+    }
+
+    /// Pops the current loop context.
+    pub fn pop_loop(self: &mut MirLowerCtx) {
+        if self.loop_stack.len() > 0 {
+            self.loop_stack.pop();
+        }
+    }
+
+    /// Finds the break block for the given label (or innermost loop if None).
+    pub fn find_break_block(self: &MirLowerCtx, label: Option<common::Symbol>) -> Option<mir_def::BasicBlockId> {
+        match label {
+            Option::Some(lbl) => {
+                // Search for matching label from innermost to outermost
+                let mut i = self.loop_stack.len();
+                while i > 0 {
+                    i = i - 1;
+                    match &self.loop_stack[i].label {
+                        &Option::Some(loop_lbl) => {
+                            if loop_lbl.index == lbl.index {
+                                return Option::Some(self.loop_stack[i].break_block);
+                            }
+                        }
+                        &Option::None => {}
+                    }
+                }
+                Option::None
+            }
+            Option::None => {
+                // Use innermost loop
+                if self.loop_stack.len() > 0 {
+                    Option::Some(self.loop_stack[self.loop_stack.len() - 1].break_block)
+                } else {
+                    Option::None
+                }
+            }
+        }
+    }
+
+    /// Finds the continue block for the given label (or innermost loop if None).
+    pub fn find_continue_block(self: &MirLowerCtx, label: Option<common::Symbol>) -> Option<mir_def::BasicBlockId> {
+        match label {
+            Option::Some(lbl) => {
+                let mut i = self.loop_stack.len();
+                while i > 0 {
+                    i = i - 1;
+                    match &self.loop_stack[i].label {
+                        &Option::Some(loop_lbl) => {
+                            if loop_lbl.index == lbl.index {
+                                return Option::Some(self.loop_stack[i].continue_block);
+                            }
+                        }
+                        &Option::None => {}
+                    }
+                }
+                Option::None
+            }
+            Option::None => {
+                if self.loop_stack.len() > 0 {
+                    Option::Some(self.loop_stack[self.loop_stack.len() - 1].continue_block)
+                } else {
+                    Option::None
+                }
+            }
+        }
+    }
+
+    // ======== Finalization ========
+
+    /// Finishes building and returns the MIR body.
+    pub fn finish(self: MirLowerCtx) -> mir_body::MirBody {
+        self.builder.finish()
+    }
+}
+
+// ============================================================
+// Loop Context
+// ============================================================
+
+/// Context for a loop, tracking break and continue targets.
+pub struct LoopContext {
+    /// Optional label for this loop.
+    pub label: Option<common::Symbol>,
+    /// The block to jump to on break.
+    pub break_block: mir_def::BasicBlockId,
+    /// The block to jump to on continue.
+    pub continue_block: mir_def::BasicBlockId,
+}
+
+// ============================================================
+// Destination
+// ============================================================
+// NOTE: This is intentionally duplicated in mir_lower_expr.blood because
+// blood-rust doesn't fully support cross-module enum constructor calls.
+// Both definitions must be kept in sync manually.
+
+/// The destination for an expression's value.
+///
+/// When lowering expressions, we need to know where to put the result.
+/// This can be a specific place or we can ignore the result.
+pub enum Destination {
+    /// Write the result to this place.
+    Place(mir_types::Place),
+    /// Ignore the result (expression is used for side effects only).
+    Ignore,
+}
+
+impl Destination {
+    /// Creates a destination for a local.
+    pub fn local(id: mir_def::MirLocalId) -> Destination {
+        Destination::Place(mir_types::Place::local(id))
+    }
+
+    /// Creates a destination for the return place.
+    pub fn return_place() -> Destination {
+        Destination::Place(mir_types::Place::return_place())
+    }
+
+    /// Creates an ignore destination.
+    pub fn ignore() -> Destination {
+        Destination::Ignore
+    }
+
+    /// Returns the place if this is a Place destination.
+    pub fn as_place(self: &Destination) -> Option<mir_types::Place> {
+        match self {
+            &Destination::Place(ref p) => Option::Some(p.clone()),
+            &Destination::Ignore => Option::None,
+        }
+    }
+
+    /// Clone the destination.
+    pub fn clone(self: &Destination) -> Destination {
+        match self {
+            &Destination::Place(ref p) => Destination::Place(p.clone()),
+            &Destination::Ignore => Destination::Ignore,
+        }
+    }
+}
+
+// ============================================================
+// Clone implementations
+// ============================================================
+
+// mir_types::Place needs clone for Destination
+impl mir_types::Place {
+    pub fn clone(self: &mir_types::Place) -> mir_types::Place {
+        let mut proj = Vec::new();
+        let mut i: usize = 0;
+        while i < self.projection.len() {
+            proj.push(self.projection[i].clone());
+            i = i + 1;
+        }
+        mir_types::Place {
+            local: self.local,
+            projection: proj,
+        }
+    }
+}
+
+impl mir_types::PlaceElem {
+    pub fn clone(self: &mir_types::PlaceElem) -> mir_types::PlaceElem {
+        match self {
+            &mir_types::PlaceElem::Deref => mir_types::PlaceElem::Deref,
+            &mir_types::PlaceElem::Field(idx) => mir_types::PlaceElem::Field(idx),
+            &mir_types::PlaceElem::Index(ref local) => mir_types::PlaceElem::Index(*local),
+            &mir_types::PlaceElem::ConstantIndex { offset, min_length, from_end } => {
+                mir_types::PlaceElem::ConstantIndex { offset, min_length, from_end }
+            }
+            &mir_types::PlaceElem::Subslice { from, to, from_end } => {
+                mir_types::PlaceElem::Subslice { from, to, from_end }
+            }
+            &mir_types::PlaceElem::Downcast(idx) => mir_types::PlaceElem::Downcast(idx),
+        }
+    }
+}

@@ -1,0 +1,364 @@
+// Blood Self-Hosted Compiler - Source File Management
+//
+// This module provides abstractions for managing source files and their
+// contents. It handles reading files, tracking line positions, and
+// converting between byte offsets and line/column positions.
+//
+// Note: The actual file reading requires runtime support via @unsafe
+// extern functions. The SourceMap and SourceFile abstractions work
+// with in-memory strings until proper file I/O is available.
+
+mod common;
+
+// ============================================================
+// Source File
+// ============================================================
+
+/// A source file with its contents and metadata.
+pub struct SourceFile {
+    /// The file path or name.
+    pub path: String,
+    /// The file contents.
+    pub content: String,
+    /// Starting byte offset of each line (for line/column lookup).
+    line_starts: Vec<usize>,
+}
+
+impl SourceFile {
+    /// Creates a new source file from content.
+    pub fn new(path: &str, content: &str) -> SourceFile {
+        let mut file = SourceFile {
+            path: common::make_string(path),
+            content: common::make_string(content),
+            line_starts: Vec::new(),
+        };
+        file.compute_line_starts();
+        file
+    }
+
+    /// Creates an empty source file (placeholder).
+    pub fn empty(path: &str) -> SourceFile {
+        SourceFile {
+            path: common::make_string(path),
+            content: String::new(),
+            line_starts: Vec::new(),
+        }
+    }
+
+    /// Computes line starting positions.
+    fn compute_line_starts(self: &mut SourceFile) {
+        self.line_starts.push(0usize); // Line 1 starts at byte 0
+
+        let bytes = self.content.as_bytes();
+        let mut i: usize = 0;
+        while i < bytes.len() {
+            if bytes[i] == 10 { // '\n'
+                self.line_starts.push(i + 1);
+            }
+            i = i + 1;
+        }
+    }
+
+    /// Converts a byte offset to (line, column), both 1-indexed.
+    pub fn offset_to_line_col(self: &SourceFile, offset: usize) -> (u32, u32) {
+        let mut line: u32 = 1;
+        let mut i: usize = 0;
+        while i < self.line_starts.len() {
+            if i + 1 < self.line_starts.len() && self.line_starts[i + 1] <= offset {
+                line = line + 1;
+            } else {
+                break;
+            }
+            i = i + 1;
+        }
+
+        let line_start = if (line as usize) <= self.line_starts.len() {
+            self.line_starts[(line as usize) - 1]
+        } else {
+            0usize
+        };
+        let column = (offset - line_start) as u32 + 1;
+        (line, column)
+    }
+
+    /// Gets the content of a specific line (1-indexed).
+    pub fn get_line(self: &SourceFile, line_num: u32) -> String {
+        if line_num == 0 || (line_num as usize) > self.line_starts.len() {
+            return String::new();
+        }
+
+        let start = self.line_starts[(line_num as usize) - 1];
+        let end = if (line_num as usize) < self.line_starts.len() {
+            // Exclude the newline character
+            let next_start = self.line_starts[line_num as usize];
+            if next_start > 0 { next_start - 1 } else { next_start }
+        } else {
+            self.content.len()
+        };
+
+        substring(&self.content, start, end)
+    }
+
+    /// Returns the total number of lines.
+    pub fn line_count(self: &SourceFile) -> usize {
+        self.line_starts.len()
+    }
+
+    /// Returns the length of the content in bytes.
+    pub fn len(self: &SourceFile) -> usize {
+        self.content.len()
+    }
+
+    /// Returns true if the file is empty.
+    pub fn is_empty(self: &SourceFile) -> bool {
+        self.content.len() == 0
+    }
+
+    /// Gets the source content.
+    pub fn source(self: &SourceFile) -> &String {
+        &self.content
+    }
+}
+
+// ============================================================
+// Source Map
+// ============================================================
+
+/// A collection of source files.
+pub struct SourceMap {
+    /// All source files, indexed by FileId.
+    files: Vec<SourceFile>,
+}
+
+/// Identifier for a source file within a SourceMap.
+pub struct FileId {
+    /// Index into the SourceMap's files vector.
+    pub index: u32,
+}
+
+impl FileId {
+    /// Creates a new FileId.
+    pub fn new(index: u32) -> FileId {
+        FileId { index }
+    }
+}
+
+impl SourceMap {
+    /// Creates a new empty source map.
+    pub fn new() -> SourceMap {
+        SourceMap { files: Vec::new() }
+    }
+
+    /// Adds a source file and returns its FileId.
+    pub fn add_file(self: &mut SourceMap, path: &str, content: &str) -> FileId {
+        let id = FileId::new(self.files.len() as u32);
+        self.files.push(SourceFile::new(path, content));
+        id
+    }
+
+    /// Gets a source file by FileId.
+    pub fn get_file(self: &SourceMap, id: FileId) -> Option<&SourceFile> {
+        let idx = id.index as usize;
+        if idx < self.files.len() {
+            Option::Some(&self.files[idx])
+        } else {
+            Option::None
+        }
+    }
+
+    /// Finds a file by path.
+    pub fn find_by_path(self: &SourceMap, path: &str) -> Option<FileId> {
+        let mut i: usize = 0;
+        while i < self.files.len() {
+            if str_equals(&self.files[i].path, path) {
+                return Option::Some(FileId::new(i as u32));
+            }
+            i = i + 1;
+        }
+        Option::None
+    }
+
+    /// Returns the number of files.
+    pub fn file_count(self: &SourceMap) -> usize {
+        self.files.len()
+    }
+}
+
+// ============================================================
+// Spanned Location
+// ============================================================
+
+/// A location within a specific file.
+pub struct SourceLocation {
+    /// The file containing this location.
+    pub file_id: FileId,
+    /// The span within the file.
+    pub span: common::Span,
+}
+
+impl SourceLocation {
+    /// Creates a new source location.
+    pub fn new(file_id: FileId, span: common::Span) -> SourceLocation {
+        SourceLocation { file_id, span }
+    }
+}
+
+// ============================================================
+// File Reading (Stub)
+// ============================================================
+
+/// Result of reading a file.
+pub struct ReadFileResult {
+    /// Whether reading succeeded.
+    pub success: bool,
+    /// The file content (if successful).
+    pub content: Option<String>,
+    /// Error message (if failed).
+    pub error: Option<String>,
+}
+
+impl ReadFileResult {
+    /// Creates a successful result.
+    pub fn ok(content: String) -> ReadFileResult {
+        ReadFileResult {
+            success: true,
+            content: Option::Some(content),
+            error: Option::None,
+        }
+    }
+
+    /// Creates a failed result.
+    pub fn err(message: String) -> ReadFileResult {
+        ReadFileResult {
+            success: false,
+            content: Option::None,
+            error: Option::Some(message),
+        }
+    }
+}
+
+/// Reads a file from the filesystem.
+///
+/// Note: This is a stub that returns an error. Actual file reading
+/// requires runtime support that connects to the host filesystem.
+/// When blood-rust supports FFI or provides file I/O primitives,
+/// this function should be updated.
+pub fn read_file(_path: &str) -> ReadFileResult {
+    ReadFileResult::err(common::make_string("File reading not yet implemented"))
+}
+
+/// Checks if a file exists.
+///
+/// Note: Stub implementation - always returns false.
+pub fn file_exists(_path: &str) -> bool {
+    false
+}
+
+/// Gets the directory containing a path.
+///
+/// Simple implementation that finds the last '/' or '\' and returns
+/// everything before it.
+pub fn parent_dir(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let mut last_sep: i32 = -1;
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == 47 || b == 92 { // '/' or '\'
+            last_sep = i as i32;
+        }
+        i = i + 1;
+    }
+
+    if last_sep < 0 {
+        common::make_string(".")
+    } else {
+        let mut result = String::new();
+        let mut j: usize = 0;
+        while j < (last_sep as usize) {
+            result.push(bytes[j] as char);
+            j = j + 1;
+        }
+        result
+    }
+}
+
+/// Gets the file name from a path.
+pub fn file_name(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let mut last_sep: i32 = -1;
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == 47 || b == 92 { // '/' or '\'
+            last_sep = i as i32;
+        }
+        i = i + 1;
+    }
+
+    let start = if last_sep < 0 { 0usize } else { (last_sep as usize) + 1 };
+    let mut result = String::new();
+    let mut j = start;
+    while j < bytes.len() {
+        result.push(bytes[j] as char);
+        j = j + 1;
+    }
+    result
+}
+
+/// Joins two path components.
+pub fn join_path(base: &str, name: &str) -> String {
+    let base_bytes = base.as_bytes();
+    let mut result = String::new();
+    result.push_str(base);
+
+    // Add separator if needed
+    if base_bytes.len() > 0 {
+        let last = base_bytes[base_bytes.len() - 1];
+        if last != 47 && last != 92 { // '/' or '\'
+            result.push('/');
+        }
+    }
+
+    result.push_str(name);
+    result
+}
+
+// ============================================================
+// Helper Functions
+// ============================================================
+
+/// Extracts a substring.
+fn substring(s: &String, start: usize, end: usize) -> String {
+    let bytes = s.as_bytes();
+    let mut result = String::new();
+
+    let actual_end = if end > bytes.len() { bytes.len() } else { end };
+    let mut i = start;
+    while i < actual_end {
+        result.push(bytes[i] as char);
+        i = i + 1;
+    }
+
+    result
+}
+
+/// Compares a String with a &str for equality.
+fn str_equals(s: &String, other: &str) -> bool {
+    let bytes = s.as_bytes();
+    let other_bytes = other.as_bytes();
+
+    if bytes.len() != other_bytes.len() {
+        return false;
+    }
+
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        if bytes[i] != other_bytes[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+
+    true
+}

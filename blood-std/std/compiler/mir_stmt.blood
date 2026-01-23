@@ -1,0 +1,293 @@
+// Blood Self-Hosted Compiler - MIR Statements
+//
+// This module defines MIR statements - the sequential operations within
+// a basic block that don't affect control flow.
+
+mod common;
+mod hir_def;
+mod hir_ty;
+mod mir_def;
+mod mir_types;
+
+// ============================================================
+// Statement
+// ============================================================
+
+/// A statement within a basic block.
+///
+/// Statements execute sequentially and don't affect control flow.
+/// They represent assignments, storage operations, and other
+/// side-effecting operations.
+pub struct Statement {
+    /// The kind of statement.
+    pub kind: StatementKind,
+    /// The source location of this statement.
+    pub span: common::Span,
+}
+
+impl Statement {
+    /// Creates a new statement.
+    pub fn new(kind: StatementKind, span: common::Span) -> Statement {
+        Statement { kind, span }
+    }
+
+    /// Creates an assignment statement.
+    pub fn assign(place: mir_types::Place, rvalue: mir_types::Rvalue, span: common::Span) -> Statement {
+        Statement {
+            kind: StatementKind::Assign {
+                place: place,
+                rvalue: rvalue,
+            },
+            span: span,
+        }
+    }
+
+    /// Creates a storage live statement.
+    pub fn storage_live(local: mir_def::MirLocalId, span: common::Span) -> Statement {
+        Statement {
+            kind: StatementKind::StorageLive(local),
+            span: span,
+        }
+    }
+
+    /// Creates a storage dead statement.
+    pub fn storage_dead(local: mir_def::MirLocalId, span: common::Span) -> Statement {
+        Statement {
+            kind: StatementKind::StorageDead(local),
+            span: span,
+        }
+    }
+
+    /// Creates a nop statement.
+    pub fn nop(span: common::Span) -> Statement {
+        Statement {
+            kind: StatementKind::Nop,
+            span: span,
+        }
+    }
+}
+
+// ============================================================
+// Statement Kind
+// ============================================================
+
+/// The kind of a statement.
+pub enum StatementKind {
+    /// Assignment: `place = rvalue`
+    Assign {
+        /// The destination place.
+        place: mir_types::Place,
+        /// The value to assign.
+        rvalue: mir_types::Rvalue,
+    },
+    /// Mark storage as live (allocation begins).
+    StorageLive(mir_def::MirLocalId),
+    /// Mark storage as dead (allocation ends).
+    StorageDead(mir_def::MirLocalId),
+    /// Drop a value (call destructor if applicable).
+    Drop(mir_types::Place),
+    /// Push an effect handler onto the handler stack.
+    PushHandler {
+        /// The DefId of the handler.
+        handler_id: hir_def::DefId,
+        /// Where to store handler state.
+        state_place: mir_types::Place,
+        /// The kind of handler state.
+        state_kind: HandlerStateKind,
+    },
+    /// Pop the top effect handler from the handler stack.
+    PopHandler,
+    /// Push an inline effect handler.
+    PushInlineHandler {
+        /// The DefId of the effect being handled.
+        effect_id: hir_def::DefId,
+        /// The handler operations.
+        operations: Vec<InlineOperation>,
+    },
+    /// A return clause for effect handling.
+    CallReturnClause {
+        /// The handler identifier.
+        handler_id: hir_def::DefId,
+        /// The handler name (for debugging).
+        handler_name: String,
+        /// The result from the body.
+        body_result: mir_types::Operand,
+        /// Where handler state is stored.
+        state_place: mir_types::Place,
+        /// Where to store the final result.
+        destination: mir_types::Place,
+    },
+    /// Deinitialize a place (mark as uninitialized without dropping).
+    Deinit(mir_types::Place),
+    /// Set the discriminant of an enum.
+    SetDiscriminant {
+        /// The place to modify.
+        place: mir_types::Place,
+        /// The variant index to set.
+        variant_idx: u32,
+    },
+    /// Copy between non-overlapping places.
+    CopyNonOverlapping {
+        /// Source place.
+        src: mir_types::Operand,
+        /// Destination place.
+        dst: mir_types::Operand,
+        /// Number of elements to copy.
+        count: mir_types::Operand,
+    },
+    /// No operation (placeholder for removed statements).
+    Nop,
+}
+
+// ============================================================
+// Handler State Kind
+// ============================================================
+
+/// The kind of state stored for an effect handler.
+///
+/// This classification enables optimizations by identifying handlers
+/// that don't need runtime storage allocation.
+pub enum HandlerStateKind {
+    /// Handler has no state (unit type).
+    Stateless,
+    /// Handler state is a compile-time constant.
+    Constant,
+    /// Handler state is zero-initialized.
+    ZeroInit,
+    /// Handler state is computed at runtime.
+    Dynamic,
+}
+
+impl HandlerStateKind {
+    /// Returns true if this state needs runtime allocation.
+    pub fn needs_allocation(self: &HandlerStateKind) -> bool {
+        match self {
+            HandlerStateKind::Stateless => false,
+            HandlerStateKind::Constant => false,
+            HandlerStateKind::ZeroInit => true,
+            HandlerStateKind::Dynamic => true,
+        }
+    }
+
+    /// Returns true if this is a stateless handler.
+    pub fn is_stateless(self: &HandlerStateKind) -> bool {
+        match self {
+            HandlerStateKind::Stateless => true,
+            HandlerStateKind::Constant => false,
+            HandlerStateKind::ZeroInit => false,
+            HandlerStateKind::Dynamic => false,
+        }
+    }
+}
+
+// ============================================================
+// Inline Handler Operations
+// ============================================================
+
+/// An operation in an inline effect handler.
+pub struct InlineOperation {
+    /// The index of this operation within the effect.
+    pub op_index: u32,
+    /// The name of the operation.
+    pub op_name: String,
+    /// Parameter types for this operation.
+    pub param_types: Vec<hir_ty::Type>,
+    /// Return type of this operation.
+    pub return_type: hir_ty::Type,
+    /// The body ID for the operation's handler code.
+    pub body_id: hir_def::BodyId,
+}
+
+impl InlineOperation {
+    /// Creates a new inline operation.
+    pub fn new(
+        op_index: u32,
+        op_name: String,
+        param_types: Vec<hir_ty::Type>,
+        return_type: hir_ty::Type,
+        body_id: hir_def::BodyId,
+    ) -> InlineOperation {
+        InlineOperation {
+            op_index: op_index,
+            op_name: op_name,
+            param_types: param_types,
+            return_type: return_type,
+            body_id: body_id,
+        }
+    }
+}
+
+// ============================================================
+// Storage Tracking
+// ============================================================
+
+/// Tracks which locals are currently live.
+///
+/// Used during MIR lowering to emit StorageLive/StorageDead statements.
+pub struct StorageTracker {
+    /// Set of currently live local indices.
+    /// We use a Vec as a simple set since blood-rust lacks HashSet.
+    live_locals: Vec<u32>,
+}
+
+impl StorageTracker {
+    /// Creates a new storage tracker.
+    pub fn new() -> StorageTracker {
+        StorageTracker { live_locals: Vec::new() }
+    }
+
+    /// Marks a local as live.
+    pub fn mark_live(self: &mut StorageTracker, local: mir_def::MirLocalId) {
+        let idx = local.index;
+        // Check if already present
+        let mut found = false;
+        let mut i: usize = 0;
+        while i < self.live_locals.len() {
+            if self.live_locals[i] == idx {
+                found = true;
+            }
+            i = i + 1;
+        }
+        if !found {
+            self.live_locals.push(idx);
+        }
+    }
+
+    /// Marks a local as dead.
+    pub fn mark_dead(self: &mut StorageTracker, local: mir_def::MirLocalId) {
+        let idx = local.index;
+        let mut new_vec = Vec::new();
+        let mut i: usize = 0;
+        while i < self.live_locals.len() {
+            if self.live_locals[i] != idx {
+                new_vec.push(self.live_locals[i]);
+            }
+            i = i + 1;
+        }
+        self.live_locals = new_vec;
+    }
+
+    /// Returns true if a local is currently live.
+    pub fn is_live(self: &StorageTracker, local: mir_def::MirLocalId) -> bool {
+        let idx = local.index;
+        let mut i: usize = 0;
+        while i < self.live_locals.len() {
+            if self.live_locals[i] == idx {
+                return true;
+            }
+            i = i + 1;
+        }
+        false
+    }
+
+    /// Returns all currently live locals.
+    pub fn live_set(self: &StorageTracker) -> Vec<mir_def::MirLocalId> {
+        let mut result = Vec::new();
+        let mut i: usize = 0;
+        while i < self.live_locals.len() {
+            result.push(mir_def::MirLocalId::new(self.live_locals[i]));
+            i = i + 1;
+        }
+        result
+    }
+}

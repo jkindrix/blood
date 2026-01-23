@@ -1,0 +1,346 @@
+// Blood Self-Hosted Compiler - String Interner
+//
+// This module provides string interning for identifiers and symbols.
+// Interning ensures that identical strings share the same storage and
+// can be compared efficiently via their indices.
+
+mod common;
+
+// ============================================================
+// String Interner
+// ============================================================
+
+/// A string interner that maps strings to unique indices.
+///
+/// The interner stores strings and returns `Symbol` indices that can be
+/// used for efficient comparison and storage. Each unique string is only
+/// stored once.
+pub struct StringInterner {
+    /// Storage for interned strings.
+    strings: Vec<String>,
+}
+
+impl StringInterner {
+    /// Creates a new empty string interner.
+    pub fn new() -> StringInterner {
+        let mut interner = StringInterner {
+            strings: Vec::new(),
+        };
+        // Pre-intern common strings at known indices
+        interner.intern_keywords();
+        interner
+    }
+
+    /// Interns common keywords at fixed indices for fast lookup.
+    fn intern_keywords(self: &mut StringInterner) {
+        // Keywords - indices 0-39
+        self.strings.push(common::make_string(""));          // 0: empty string
+        self.strings.push(common::make_string("fn"));        // 1
+        self.strings.push(common::make_string("let"));       // 2
+        self.strings.push(common::make_string("mut"));       // 3
+        self.strings.push(common::make_string("if"));        // 4
+        self.strings.push(common::make_string("else"));      // 5
+        self.strings.push(common::make_string("while"));     // 6
+        self.strings.push(common::make_string("for"));       // 7
+        self.strings.push(common::make_string("in"));        // 8
+        self.strings.push(common::make_string("return"));    // 9
+        self.strings.push(common::make_string("break"));     // 10
+        self.strings.push(common::make_string("continue"));  // 11
+        self.strings.push(common::make_string("match"));     // 12
+        self.strings.push(common::make_string("struct"));    // 13
+        self.strings.push(common::make_string("enum"));      // 14
+        self.strings.push(common::make_string("impl"));      // 15
+        self.strings.push(common::make_string("trait"));     // 16
+        self.strings.push(common::make_string("type"));      // 17
+        self.strings.push(common::make_string("pub"));       // 18
+        self.strings.push(common::make_string("self"));      // 19
+        self.strings.push(common::make_string("Self"));      // 20
+        self.strings.push(common::make_string("true"));      // 21
+        self.strings.push(common::make_string("false"));     // 22
+        self.strings.push(common::make_string("mod"));       // 23
+        self.strings.push(common::make_string("use"));       // 24
+        self.strings.push(common::make_string("as"));        // 25
+        self.strings.push(common::make_string("const"));     // 26
+        self.strings.push(common::make_string("static"));    // 27
+        self.strings.push(common::make_string("unsafe"));    // 28
+        self.strings.push(common::make_string("extern"));    // 29
+        self.strings.push(common::make_string("where"));     // 30
+        self.strings.push(common::make_string("loop"));      // 31
+        self.strings.push(common::make_string("async"));     // 32
+        self.strings.push(common::make_string("await"));     // 33
+        self.strings.push(common::make_string("effect"));    // 34
+        self.strings.push(common::make_string("handler"));   // 35
+        self.strings.push(common::make_string("perform"));   // 36
+        self.strings.push(common::make_string("resume"));    // 37
+        self.strings.push(common::make_string("with"));      // 38
+        self.strings.push(common::make_string("module"));    // 39
+
+        // Special identifiers - index 40
+        self.strings.push(common::make_string("main"));       // 40
+
+        // Primitive types - indices 41-57
+        self.strings.push(common::make_string("bool"));       // 41
+        self.strings.push(common::make_string("i8"));         // 42
+        self.strings.push(common::make_string("i16"));        // 43
+        self.strings.push(common::make_string("i32"));        // 44
+        self.strings.push(common::make_string("i64"));        // 45
+        self.strings.push(common::make_string("i128"));       // 46
+        self.strings.push(common::make_string("isize"));      // 47
+        self.strings.push(common::make_string("u8"));         // 48
+        self.strings.push(common::make_string("u16"));        // 49
+        self.strings.push(common::make_string("u32"));        // 50
+        self.strings.push(common::make_string("u64"));        // 51
+        self.strings.push(common::make_string("u128"));       // 52
+        self.strings.push(common::make_string("usize"));      // 53
+        self.strings.push(common::make_string("f32"));        // 54
+        self.strings.push(common::make_string("f64"));        // 55
+        self.strings.push(common::make_string("char"));       // 56
+        self.strings.push(common::make_string("str"));        // 57
+    }
+
+    /// Interns a string, returning its symbol index.
+    ///
+    /// If the string is already interned, returns the existing index.
+    /// Otherwise, adds the string and returns a new index.
+    pub fn intern(self: &mut StringInterner, s: &str) -> common::Symbol {
+        // Check if already interned (linear search)
+        let mut i: usize = 0;
+        while i < self.strings.len() {
+            if str_equals(&self.strings[i], s) {
+                return common::Symbol::new(i as u32);
+            }
+            i = i + 1;
+        }
+
+        // Not found, add new string
+        let index = self.strings.len() as u32;
+        self.strings.push(common::make_string(s));
+        common::Symbol::new(index)
+    }
+
+    /// Interns a String, returning its symbol index.
+    pub fn intern_string(self: &mut StringInterner, s: &String) -> common::Symbol {
+        self.intern(s.as_str())
+    }
+
+    /// Resolves a symbol back to its string.
+    ///
+    /// Returns None if the symbol index is out of bounds.
+    pub fn resolve(self: &StringInterner, symbol: common::Symbol) -> Option<&String> {
+        let index = symbol.index as usize;
+        if index < self.strings.len() {
+            Option::Some(&self.strings[index])
+        } else {
+            Option::None
+        }
+    }
+
+    /// Resolves a symbol, returning an empty string if not found.
+    pub fn resolve_or_empty(self: &StringInterner, symbol: common::Symbol) -> &String {
+        match self.resolve(symbol) {
+            Option::Some(s) => s,
+            Option::None => &self.strings[0], // Empty string at index 0
+        }
+    }
+
+    /// Returns the number of interned strings.
+    pub fn len(self: &StringInterner) -> usize {
+        self.strings.len()
+    }
+
+    /// Checks if the interner is empty.
+    pub fn is_empty(self: &StringInterner) -> bool {
+        self.strings.len() == 0
+    }
+
+    /// Gets the string at a specific index (for debugging).
+    pub fn get(self: &StringInterner, index: u32) -> Option<&String> {
+        let idx = index as usize;
+        if idx < self.strings.len() {
+            Option::Some(&self.strings[idx])
+        } else {
+            Option::None
+        }
+    }
+}
+
+// ============================================================
+// Keyword Symbol Constants
+// ============================================================
+
+/// Well-known symbol indices for keywords.
+/// These match the order in intern_keywords().
+pub struct Keywords {}
+
+impl Keywords {
+    pub fn empty() -> common::Symbol { common::Symbol::new(0) }
+    pub fn fn_kw() -> common::Symbol { common::Symbol::new(1) }
+    pub fn let_kw() -> common::Symbol { common::Symbol::new(2) }
+    pub fn mut_kw() -> common::Symbol { common::Symbol::new(3) }
+    pub fn if_kw() -> common::Symbol { common::Symbol::new(4) }
+    pub fn else_kw() -> common::Symbol { common::Symbol::new(5) }
+    pub fn while_kw() -> common::Symbol { common::Symbol::new(6) }
+    pub fn for_kw() -> common::Symbol { common::Symbol::new(7) }
+    pub fn in_kw() -> common::Symbol { common::Symbol::new(8) }
+    pub fn return_kw() -> common::Symbol { common::Symbol::new(9) }
+    pub fn break_kw() -> common::Symbol { common::Symbol::new(10) }
+    pub fn continue_kw() -> common::Symbol { common::Symbol::new(11) }
+    pub fn match_kw() -> common::Symbol { common::Symbol::new(12) }
+    pub fn struct_kw() -> common::Symbol { common::Symbol::new(13) }
+    pub fn enum_kw() -> common::Symbol { common::Symbol::new(14) }
+    pub fn impl_kw() -> common::Symbol { common::Symbol::new(15) }
+    pub fn trait_kw() -> common::Symbol { common::Symbol::new(16) }
+    pub fn type_kw() -> common::Symbol { common::Symbol::new(17) }
+    pub fn pub_kw() -> common::Symbol { common::Symbol::new(18) }
+    pub fn self_kw() -> common::Symbol { common::Symbol::new(19) }
+    pub fn self_ty() -> common::Symbol { common::Symbol::new(20) }
+    pub fn true_kw() -> common::Symbol { common::Symbol::new(21) }
+    pub fn false_kw() -> common::Symbol { common::Symbol::new(22) }
+    pub fn mod_kw() -> common::Symbol { common::Symbol::new(23) }
+    pub fn use_kw() -> common::Symbol { common::Symbol::new(24) }
+    pub fn as_kw() -> common::Symbol { common::Symbol::new(25) }
+    pub fn const_kw() -> common::Symbol { common::Symbol::new(26) }
+    pub fn static_kw() -> common::Symbol { common::Symbol::new(27) }
+    pub fn unsafe_kw() -> common::Symbol { common::Symbol::new(28) }
+    pub fn extern_kw() -> common::Symbol { common::Symbol::new(29) }
+    pub fn where_kw() -> common::Symbol { common::Symbol::new(30) }
+    pub fn loop_kw() -> common::Symbol { common::Symbol::new(31) }
+    pub fn async_kw() -> common::Symbol { common::Symbol::new(32) }
+    pub fn await_kw() -> common::Symbol { common::Symbol::new(33) }
+    pub fn effect_kw() -> common::Symbol { common::Symbol::new(34) }
+    pub fn handler_kw() -> common::Symbol { common::Symbol::new(35) }
+    pub fn perform_kw() -> common::Symbol { common::Symbol::new(36) }
+    pub fn resume_kw() -> common::Symbol { common::Symbol::new(37) }
+    pub fn with_kw() -> common::Symbol { common::Symbol::new(38) }
+    pub fn module_kw() -> common::Symbol { common::Symbol::new(39) }
+}
+
+// ============================================================
+// Special Identifier Symbol Constants
+// ============================================================
+
+/// Well-known symbol indices for special identifiers.
+pub struct SpecialIdents {}
+
+impl SpecialIdents {
+    /// Symbol for "main" - the entry point function.
+    pub fn main_sym() -> common::Symbol { common::Symbol::new(40) }
+}
+
+// ============================================================
+// Primitive Type Symbol Constants
+// ============================================================
+
+/// Well-known symbol indices for primitive type names.
+/// These match the order in intern_keywords() after special identifiers.
+pub struct Primitives {}
+
+impl Primitives {
+    pub fn bool_sym() -> common::Symbol { common::Symbol::new(41) }
+    pub fn i8_sym() -> common::Symbol { common::Symbol::new(42) }
+    pub fn i16_sym() -> common::Symbol { common::Symbol::new(43) }
+    pub fn i32_sym() -> common::Symbol { common::Symbol::new(44) }
+    pub fn i64_sym() -> common::Symbol { common::Symbol::new(45) }
+    pub fn i128_sym() -> common::Symbol { common::Symbol::new(46) }
+    pub fn isize_sym() -> common::Symbol { common::Symbol::new(47) }
+    pub fn u8_sym() -> common::Symbol { common::Symbol::new(48) }
+    pub fn u16_sym() -> common::Symbol { common::Symbol::new(49) }
+    pub fn u32_sym() -> common::Symbol { common::Symbol::new(50) }
+    pub fn u64_sym() -> common::Symbol { common::Symbol::new(51) }
+    pub fn u128_sym() -> common::Symbol { common::Symbol::new(52) }
+    pub fn usize_sym() -> common::Symbol { common::Symbol::new(53) }
+    pub fn f32_sym() -> common::Symbol { common::Symbol::new(54) }
+    pub fn f64_sym() -> common::Symbol { common::Symbol::new(55) }
+    pub fn char_sym() -> common::Symbol { common::Symbol::new(56) }
+    pub fn str_sym() -> common::Symbol { common::Symbol::new(57) }
+
+    /// Checks if a symbol is a primitive type name.
+    /// Returns true if the symbol index is in the primitive range (41-57).
+    pub fn is_primitive(sym: common::Symbol) -> bool {
+        sym.index >= 41 && sym.index <= 57
+    }
+}
+
+// ============================================================
+// Global Interner (Thread-Local Singleton Pattern)
+// ============================================================
+
+/// Global interner instance.
+/// In a multi-threaded context, this would need synchronization.
+static mut GLOBAL_INTERNER: Option<StringInterner> = Option::None;
+
+/// Initializes the global interner.
+/// Must be called before any interning operations.
+pub fn init_global_interner() {
+    @unsafe {
+        GLOBAL_INTERNER = Option::Some(StringInterner::new());
+    }
+}
+
+/// Gets a mutable reference to the global interner.
+/// Panics if the interner hasn't been initialized.
+pub fn global_interner() -> &mut StringInterner {
+    @unsafe {
+        match &mut GLOBAL_INTERNER {
+            &mut Option::Some(ref mut interner) => interner,
+            &mut Option::None => {
+                // Auto-initialize if not done
+                GLOBAL_INTERNER = Option::Some(StringInterner::new());
+                match &mut GLOBAL_INTERNER {
+                    &mut Option::Some(ref mut interner) => interner,
+                    &mut Option::None => {
+                        // This should never happen
+                        panic("Global interner initialization failed");
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Interns a string using the global interner.
+pub fn intern(s: &str) -> common::Symbol {
+    global_interner().intern(s)
+}
+
+/// Resolves a symbol using the global interner.
+pub fn resolve(symbol: common::Symbol) -> Option<&String> {
+    // Note: This is unsafe due to static mut, but necessary for global access
+    @unsafe {
+        match &GLOBAL_INTERNER {
+            &Option::Some(ref interner) => interner.resolve(symbol),
+            &Option::None => Option::None,
+        }
+    }
+}
+
+// ============================================================
+// Helper Functions
+// ============================================================
+
+/// Compares a String with a &str for equality.
+fn str_equals(s: &String, other: &str) -> bool {
+    let bytes = s.as_bytes();
+    let other_bytes = other.as_bytes();
+
+    if bytes.len() != other_bytes.len() {
+        return false;
+    }
+
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        if bytes[i] != other_bytes[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+
+    true
+}
+
+/// Panic function for unrecoverable errors.
+fn panic(msg: &str) -> ! {
+    // In a real implementation, this would abort or unwind
+    // For now, we use an infinite loop (Blood doesn't have panic! macro)
+    loop {}
+}

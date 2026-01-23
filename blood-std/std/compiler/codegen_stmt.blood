@@ -1,0 +1,234 @@
+// Blood Self-Hosted Compiler - Codegen Statements
+//
+// This module handles generating LLVM IR for MIR statements.
+
+mod common;
+mod hir_def;
+mod hir_ty;
+mod mir_def;
+mod mir_types;
+mod mir_stmt;
+mod mir_term;
+mod mir_body;
+mod codegen_types;
+mod codegen_ctx;
+mod codegen_expr;
+
+// ============================================================
+// Statement Codegen
+// ============================================================
+
+/// Generates LLVM IR for a statement.
+pub fn emit_statement(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    stmt: &mir_stmt::Statement,
+) {
+    match &stmt.kind {
+        &mir_stmt::StatementKind::Assign { ref place, ref rvalue } => {
+            let dest = codegen_expr::emit_place_addr(ctx, place);
+            codegen_expr::emit_rvalue(ctx, dest.as_str(), rvalue);
+        }
+        &mir_stmt::StatementKind::StorageLive(ref local) => {
+            // In LLVM IR, storage is typically handled by alloca placement
+            // For now, emit as a comment/no-op
+            let name = ctx.local_alloca_name(*local);
+            ctx.write("    ; storage live ");
+            ctx.write_string(&name);
+            ctx.newline();
+        }
+        &mir_stmt::StatementKind::StorageDead(ref local) => {
+            // Storage dead is also a no-op in basic LLVM IR codegen
+            let name = ctx.local_alloca_name(*local);
+            ctx.write("    ; storage dead ");
+            ctx.write_string(&name);
+            ctx.newline();
+        }
+        &mir_stmt::StatementKind::Drop(ref place) => {
+            // Drop - for now just emit a comment
+            // A full implementation would call destructors
+            let _ptr = codegen_expr::emit_place_addr(ctx, place);
+            ctx.write("    ; drop\n");
+        }
+        &mir_stmt::StatementKind::Deinit(ref place) => {
+            // Deinit - mark as uninitialized (no-op in simple codegen)
+            let _ptr = codegen_expr::emit_place_addr(ctx, place);
+            ctx.write("    ; deinit\n");
+        }
+        &mir_stmt::StatementKind::SetDiscriminant { ref place, variant_idx } => {
+            // Set the discriminant field of an enum
+            let ptr = codegen_expr::emit_place_addr(ctx, place);
+            let discr_val = codegen_types::format_u64(variant_idx as u64);
+            ctx.emit_store("i64", discr_val.as_str(), ptr.as_str());
+        }
+        &mir_stmt::StatementKind::CopyNonOverlapping { ref src, ref dst, ref count } => {
+            // Emit memcpy intrinsic
+            let src_val = codegen_expr::emit_operand(ctx, src);
+            let dst_val = codegen_expr::emit_operand(ctx, dst);
+            let count_val = codegen_expr::emit_operand(ctx, count);
+            emit_memcpy(ctx, &dst_val, &src_val, &count_val);
+        }
+        &mir_stmt::StatementKind::Nop => {
+            // No operation - do nothing
+        }
+        &mir_stmt::StatementKind::PushHandler { handler_id, ref state_place, state_kind: _ } => {
+            // Effect handler push - call runtime function
+            let state_ptr = codegen_expr::emit_place_addr(ctx, state_place);
+            let handler_id_val = codegen_types::format_u64(handler_id.index as u64);
+
+            // Call @blood_push_handler(handler_id, state_ptr)
+            ctx.write_indent();
+            ctx.write("call void @blood_push_handler(i64 ");
+            ctx.write_string(&handler_id_val);
+            ctx.write(", ptr ");
+            ctx.write_string(&state_ptr);
+            ctx.write(")\n");
+        }
+        &mir_stmt::StatementKind::PopHandler => {
+            // Effect handler pop - call runtime function
+            ctx.write_indent();
+            ctx.write("call void @blood_pop_handler()\n");
+        }
+        &mir_stmt::StatementKind::PushInlineHandler { effect_id, operations: _ } => {
+            // Inline effect handler - call runtime function
+            let effect_id_val = codegen_types::format_u64(effect_id.index as u64);
+
+            ctx.write_indent();
+            ctx.write("call void @blood_push_inline_handler(i64 ");
+            ctx.write_string(&effect_id_val);
+            ctx.write(")\n");
+        }
+        &mir_stmt::StatementKind::CallReturnClause {
+            handler_id: _,
+            handler_name: _,
+            ref body_result,
+            ref state_place,
+            ref destination,
+        } => {
+            // Return clause - copy result to destination
+            let result_val = codegen_expr::emit_operand(ctx, body_result);
+            let _state = codegen_expr::emit_place_addr(ctx, state_place);
+            let dest_ptr = codegen_expr::emit_place_addr(ctx, destination);
+            ctx.emit_store("i64", result_val.as_str(), dest_ptr.as_str());
+        }
+    }
+}
+
+/// Emits a sequence of statements.
+pub fn emit_statements(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    stmts: &Vec<mir_stmt::Statement>,
+) {
+    let mut i: usize = 0;
+    while i < stmts.len() {
+        emit_statement(ctx, &stmts[i]);
+        i = i + 1;
+    }
+}
+
+// ============================================================
+// Memory Operations
+// ============================================================
+
+/// Emits a memcpy call.
+fn emit_memcpy(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    dst: &String,
+    src: &String,
+    count: &String,
+) {
+    // Calculate bytes: count * 8 (assuming 64-bit values)
+    let bytes = ctx.fresh_temp();
+    ctx.emit_binop(bytes.as_str(), "mul", "i64", count.as_str(), "8");
+
+    // Call llvm.memcpy
+    ctx.write_indent();
+    ctx.write("call void @llvm.memcpy.p0.p0.i64(ptr ");
+    ctx.write_string(dst);
+    ctx.write(", ptr ");
+    ctx.write_string(src);
+    ctx.write(", i64 ");
+    ctx.write_string(&bytes);
+    ctx.write(", i1 false)\n");
+}
+
+/// Emits a memset call (for zeroing memory).
+pub fn emit_memset_zero(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    ptr: &String,
+    size: u64,
+) {
+    let size_str = codegen_types::format_u64(size);
+    ctx.write_indent();
+    ctx.write("call void @llvm.memset.p0.i64(ptr ");
+    ctx.write_string(ptr);
+    ctx.write(", i8 0, i64 ");
+    ctx.write_string(&size_str);
+    ctx.write(", i1 false)\n");
+}
+
+// ============================================================
+// Helper Functions for Locals
+// ============================================================
+
+/// Emits alloca instructions for all locals in a function.
+pub fn emit_allocas(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    body: &mir_body::MirBody,
+) {
+    ctx.indent();
+    let mut i: usize = 0;
+    while i < body.locals.len() {
+        let local = &body.locals[i];
+        let local_id = mir_def::MirLocalId::new(i as u32);
+        let name = ctx.local_alloca_name(local_id);
+        let ty = codegen_types::type_to_llvm(&local.ty);
+        ctx.emit_alloca(name.as_str(), ty.as_str());
+        ctx.register_local(local_id, clone_string(&name));
+        // Also register the type for this local
+        ctx.register_local_type(local_id, clone_string(&ty));
+        i = i + 1;
+    }
+    ctx.dedent();
+}
+
+/// Stores function arguments into their allocas.
+pub fn emit_arg_stores(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    body: &mir_body::MirBody,
+) {
+    ctx.indent();
+    let mut i: usize = 0;
+    while i < body.arg_count as usize {
+        if i < body.locals.len() {
+            let local = &body.locals[i];
+            let local_id = mir_def::MirLocalId::new(i as u32);
+            let alloca_name = ctx.local_alloca_name(local_id);
+            let ty = codegen_types::type_to_llvm(&local.ty);
+
+            // Argument name is %arg0, %arg1, etc.
+            let mut arg_name = common::make_string("%arg");
+            let idx_str = codegen_types::format_u64(i as u64);
+            arg_name.push_str(idx_str.as_str());
+
+            ctx.emit_store(ty.as_str(), arg_name.as_str(), alloca_name.as_str());
+        }
+        i = i + 1;
+    }
+    ctx.dedent();
+}
+
+// ============================================================
+// String Helpers
+// ============================================================
+
+/// Clones a String.
+fn clone_string(s: &String) -> String {
+    let mut result = String::new();
+    let bytes = s.as_bytes();
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        result.push(bytes[i] as char);
+        i = i + 1;
+    }
+    result
+}

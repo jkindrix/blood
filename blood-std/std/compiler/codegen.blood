@@ -1,0 +1,310 @@
+// Blood Self-Hosted Compiler - Code Generator
+//
+// This module provides the main entry point for generating LLVM IR from MIR.
+// It coordinates the generation of function bodies, declarations, and
+// produces complete LLVM modules as text.
+
+mod common;
+mod hir_def;
+mod hir_ty;
+mod mir_def;
+mod mir_types;
+mod mir_stmt;
+mod mir_term;
+mod mir_body;
+mod codegen_types;
+mod codegen_ctx;
+mod codegen_expr;
+mod codegen_stmt;
+mod codegen_term;
+
+// ============================================================
+// Module Generation
+// ============================================================
+
+/// Result of code generation for a complete module.
+pub struct CodegenResult {
+    /// The generated LLVM IR as a string.
+    pub llvm_ir: String,
+    /// Any warnings generated during codegen.
+    pub warnings: Vec<String>,
+    /// Whether codegen was successful.
+    pub success: bool,
+}
+
+impl CodegenResult {
+    /// Creates a successful result.
+    pub fn ok(llvm_ir: String) -> CodegenResult {
+        CodegenResult {
+            llvm_ir: llvm_ir,
+            warnings: Vec::new(),
+            success: true,
+        }
+    }
+
+    /// Creates a failed result.
+    pub fn error(msg: String) -> CodegenResult {
+        let mut warnings = Vec::new();
+        warnings.push(msg);
+        CodegenResult {
+            llvm_ir: String::new(),
+            warnings: warnings,
+            success: false,
+        }
+    }
+}
+
+/// Generates LLVM IR for a single MIR body (function).
+pub fn generate_function(
+    body: &mir_body::MirBody,
+    fn_name: &str,
+) -> String {
+    let mut ctx = codegen_ctx::CodegenCtx::new();
+    ctx.begin_function(common::make_string(fn_name));
+
+    // Build parameter list
+    let mut params: Vec<(String, String)> = Vec::new();
+    let mut i: usize = 0;
+    while i < body.arg_count as usize {
+        if i < body.locals.len() {
+            let local = &body.locals[i];
+            let ty = codegen_types::type_to_llvm(&local.ty);
+            let mut arg_name = common::make_string("%arg");
+            let idx_str = codegen_types::format_u64(i as u64);
+            arg_name.push_str(idx_str.as_str());
+            params.push((ty, arg_name));
+        }
+        i = i + 1;
+    }
+
+    // Get return type (local _0)
+    let ret_ty = if body.locals.len() > 0 {
+        codegen_types::type_to_llvm(&body.locals[0].ty)
+    } else {
+        common::make_string("void")
+    };
+
+    // Emit function header
+    ctx.emit_fn_header(fn_name, &params, ret_ty.as_str());
+
+    // Emit entry label
+    ctx.write("entry:\n");
+
+    // Emit allocas for all locals
+    codegen_stmt::emit_allocas(&mut ctx, body);
+
+    // Store arguments into allocas
+    codegen_stmt::emit_arg_stores(&mut ctx, body);
+
+    // Jump to first basic block if there are any
+    if body.basic_blocks.len() > 0 {
+        let first_label = ctx.block_label(mir_def::BasicBlockId::new(0));
+        ctx.indent();
+        ctx.emit_br(first_label.as_str());
+        ctx.dedent();
+    } else {
+        ctx.indent();
+        ctx.emit_unreachable();
+        ctx.dedent();
+    }
+
+    // Emit all basic blocks
+    let mut block_idx: usize = 0;
+    while block_idx < body.basic_blocks.len() {
+        let block_id = mir_def::BasicBlockId::new(block_idx as u32);
+        codegen_term::emit_basic_block(&mut ctx, block_id, &body.basic_blocks[block_idx]);
+        block_idx = block_idx + 1;
+    }
+
+    ctx.emit_fn_footer();
+    ctx.end_function();
+
+    ctx.output
+}
+
+/// Generates LLVM IR for a module with multiple functions.
+pub fn generate_module(
+    module_name: &str,
+    functions: &Vec<(String, mir_body::MirBody)>,
+) -> CodegenResult {
+    let mut output = String::new();
+
+    // Module header
+    output.push_str("; ModuleID = '");
+    output.push_str(module_name);
+    output.push_str("'\n");
+    output.push_str("source_filename = \"");
+    output.push_str(module_name);
+    output.push_str(".blood\"\n");
+    output.push_str("target datalayout = \"e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128\"\n");
+    output.push_str("target triple = \"x86_64-unknown-linux-gnu\"\n");
+    output.push_str("\n");
+
+    // Generate each function
+    let mut i: usize = 0;
+    while i < functions.len() {
+        let (ref name, ref body) = functions[i];
+        let fn_ir = generate_function(body, name.as_str());
+        output.push_str(fn_ir.as_str());
+        i = i + 1;
+    }
+
+    // Intrinsics declarations
+    output.push_str("\n; Intrinsic declarations\n");
+    output.push_str("declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)\n");
+    output.push_str("declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)\n");
+    output.push_str("declare void @llvm.trap()\n");
+
+    // Effect runtime declarations
+    output.push_str("\n; Effect runtime declarations\n");
+    output.push_str("declare void @blood_push_handler(i64, ptr)\n");
+    output.push_str("declare void @blood_pop_handler()\n");
+    output.push_str("declare void @blood_push_inline_handler(i64)\n");
+    output.push_str("declare i64 @blood_perform(i64, i64, i64)\n");
+    output.push_str("declare void @blood_resume(i64)\n");
+
+    CodegenResult::ok(output)
+}
+
+// ============================================================
+// Simple Function Generator
+// ============================================================
+
+/// Generates a simple function that returns a constant.
+pub fn generate_constant_function(name: &str, value: i64) -> String {
+    let mut output = String::new();
+    output.push_str("define i64 @");
+    output.push_str(name);
+    output.push_str("() {\n");
+    output.push_str("entry:\n");
+    output.push_str("    ret i64 ");
+    let val_str = codegen_types::i64_to_string(value);
+    output.push_str(val_str.as_str());
+    output.push_str("\n}\n");
+    output
+}
+
+/// Generates LLVM IR for a main function that returns a value.
+pub fn generate_main(body: &mir_body::MirBody) -> String {
+    generate_function(body, "main")
+}
+
+// ============================================================
+// Module Preamble
+// ============================================================
+
+/// Generates the standard module preamble.
+pub fn module_preamble(module_name: &str) -> String {
+    let mut output = String::new();
+    output.push_str("; ModuleID = '");
+    output.push_str(module_name);
+    output.push_str("'\n");
+    output.push_str("source_filename = \"");
+    output.push_str(module_name);
+    output.push_str(".blood\"\n");
+    output.push_str("target datalayout = \"e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128\"\n");
+    output.push_str("target triple = \"x86_64-unknown-linux-gnu\"\n\n");
+    output
+}
+
+/// Generates standard intrinsic declarations.
+pub fn intrinsic_declarations() -> String {
+    let mut output = String::new();
+    output.push_str("\n; Intrinsic declarations\n");
+    output.push_str("declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)\n");
+    output.push_str("declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)\n");
+    output.push_str("declare void @llvm.trap()\n");
+    output.push_str("declare void @llvm.debugtrap()\n");
+
+    // Effect runtime declarations
+    output.push_str("\n; Effect runtime declarations\n");
+    output.push_str("declare void @blood_push_handler(i64, ptr)\n");
+    output.push_str("declare void @blood_pop_handler()\n");
+    output.push_str("declare void @blood_push_inline_handler(i64)\n");
+    output.push_str("declare i64 @blood_perform(i64, i64, i64)\n");
+    output.push_str("declare void @blood_resume(i64)\n");
+
+    output
+}
+
+// ============================================================
+// External Function Declarations
+// ============================================================
+
+/// Generates an external function declaration.
+pub fn extern_function(name: &str, params: &Vec<String>, ret_ty: &str) -> String {
+    let mut output = String::new();
+    output.push_str("declare ");
+    output.push_str(ret_ty);
+    output.push_str(" @");
+    output.push_str(name);
+    output.push_str("(");
+    let mut i: usize = 0;
+    while i < params.len() {
+        if i > 0 {
+            output.push_str(", ");
+        }
+        output.push_str(params[i].as_str());
+        i = i + 1;
+    }
+    output.push_str(")\n");
+    output
+}
+
+// ============================================================
+// String Helpers
+// ============================================================
+
+/// Clones a String.
+fn clone_string(s: &String) -> String {
+    let mut result = String::new();
+    let bytes = s.as_bytes();
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        result.push(bytes[i] as char);
+        i = i + 1;
+    }
+    result
+}
+
+// ============================================================
+// Integration Tests (compile-time verification)
+// ============================================================
+
+/// Generates a minimal test module to verify codegen works.
+pub fn generate_test_module() -> String {
+    let mut output = String::new();
+
+    // Module header
+    output.push_str("; Test module for Blood codegen\n");
+    output.push_str("source_filename = \"test.blood\"\n\n");
+
+    // Simple function that returns 42
+    output.push_str("define i64 @test_return() {\n");
+    output.push_str("entry:\n");
+    output.push_str("    ret i64 42\n");
+    output.push_str("}\n\n");
+
+    // Function with parameters
+    output.push_str("define i64 @test_add(i64 %a, i64 %b) {\n");
+    output.push_str("entry:\n");
+    output.push_str("    %result = add i64 %a, %b\n");
+    output.push_str("    ret i64 %result\n");
+    output.push_str("}\n\n");
+
+    // Function with control flow
+    output.push_str("define i64 @test_if(i64 %cond) {\n");
+    output.push_str("entry:\n");
+    output.push_str("    %cmp = icmp ne i64 %cond, 0\n");
+    output.push_str("    br i1 %cmp, label %then, label %else\n");
+    output.push_str("then:\n");
+    output.push_str("    br label %merge\n");
+    output.push_str("else:\n");
+    output.push_str("    br label %merge\n");
+    output.push_str("merge:\n");
+    output.push_str("    %result = phi i64 [ 1, %then ], [ 0, %else ]\n");
+    output.push_str("    ret i64 %result\n");
+    output.push_str("}\n");
+
+    output
+}

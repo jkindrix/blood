@@ -1,0 +1,476 @@
+// Blood Self-Hosted Compiler - MIR Lowering Utilities
+//
+// This module provides helper functions for converting between HIR and MIR
+// representations, including operator conversion and literal lowering.
+
+mod common;
+mod hir_def;
+mod hir_ty;
+mod hir_expr;
+mod mir_def;
+mod mir_types;
+
+// ============================================================
+// Helper Functions
+// ============================================================
+
+/// Clones a String.
+fn clone_string(s: &String) -> String {
+    let mut result = String::new();
+    result.push_str(s.as_str());
+    result
+}
+
+/// Clones a Vec<u8>.
+fn clone_bytes(bytes: &Vec<u8>) -> Vec<u8> {
+    let mut result = Vec::new();
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        result.push(bytes[i]);
+        i = i + 1;
+    }
+    result
+}
+
+// ============================================================
+// Operator Conversion
+// ============================================================
+
+/// Converts an HIR binary operator to a MIR binary operator.
+///
+/// Returns None for operators that need special handling (And, Or, Pipe).
+pub fn convert_binop(bin_op: common::BinOp) -> Option<mir_types::MirBinOp> {
+    match bin_op {
+        common::BinOp::Add => Option::Some(mir_types::MirBinOp::Add),
+        common::BinOp::Sub => Option::Some(mir_types::MirBinOp::Sub),
+        common::BinOp::Mul => Option::Some(mir_types::MirBinOp::Mul),
+        common::BinOp::Div => Option::Some(mir_types::MirBinOp::Div),
+        common::BinOp::Rem => Option::Some(mir_types::MirBinOp::Rem),
+        common::BinOp::Eq => Option::Some(mir_types::MirBinOp::Eq),
+        common::BinOp::Ne => Option::Some(mir_types::MirBinOp::Ne),
+        common::BinOp::Lt => Option::Some(mir_types::MirBinOp::Lt),
+        common::BinOp::Le => Option::Some(mir_types::MirBinOp::Le),
+        common::BinOp::Gt => Option::Some(mir_types::MirBinOp::Gt),
+        common::BinOp::Ge => Option::Some(mir_types::MirBinOp::Ge),
+        common::BinOp::BitAnd => Option::Some(mir_types::MirBinOp::BitAnd),
+        common::BinOp::BitOr => Option::Some(mir_types::MirBinOp::BitOr),
+        common::BinOp::BitXor => Option::Some(mir_types::MirBinOp::BitXor),
+        common::BinOp::Shl => Option::Some(mir_types::MirBinOp::Shl),
+        common::BinOp::Shr => Option::Some(mir_types::MirBinOp::Shr),
+        // These need special handling for short-circuit evaluation
+        common::BinOp::And => Option::None,
+        common::BinOp::Or => Option::None,
+        // Pipe operator needs special handling
+        common::BinOp::Pipe => Option::None,
+    }
+}
+
+/// Converts an HIR unary operator to a MIR unary operator.
+///
+/// Returns None for operators that need special handling (Ref, RefMut, Deref).
+pub fn convert_unop(unary_op: common::UnaryOp) -> Option<mir_types::MirUnOp> {
+    match unary_op {
+        common::UnaryOp::Neg => Option::Some(mir_types::MirUnOp::Neg),
+        common::UnaryOp::Not => Option::Some(mir_types::MirUnOp::Not),
+        // These need place-based handling
+        common::UnaryOp::Deref => Option::None,
+        common::UnaryOp::Ref => Option::None,
+        common::UnaryOp::RefMut => Option::None,
+    }
+}
+
+/// Returns true if a binary operator requires short-circuit evaluation.
+pub fn is_short_circuit_op(bin_op: common::BinOp) -> bool {
+    match bin_op {
+        common::BinOp::And => true,
+        common::BinOp::Or => true,
+        common::BinOp::Add => false,
+        common::BinOp::Sub => false,
+        common::BinOp::Mul => false,
+        common::BinOp::Div => false,
+        common::BinOp::Rem => false,
+        common::BinOp::Eq => false,
+        common::BinOp::Ne => false,
+        common::BinOp::Lt => false,
+        common::BinOp::Le => false,
+        common::BinOp::Gt => false,
+        common::BinOp::Ge => false,
+        common::BinOp::BitAnd => false,
+        common::BinOp::BitOr => false,
+        common::BinOp::BitXor => false,
+        common::BinOp::Shl => false,
+        common::BinOp::Shr => false,
+        common::BinOp::Pipe => false,
+    }
+}
+
+/// Returns true if a unary operator produces a place (not a value).
+pub fn is_place_unop(unary_op: common::UnaryOp) -> bool {
+    match unary_op {
+        common::UnaryOp::Deref => true,
+        common::UnaryOp::Ref => false,
+        common::UnaryOp::RefMut => false,
+        common::UnaryOp::Neg => false,
+        common::UnaryOp::Not => false,
+    }
+}
+
+// ============================================================
+// Literal Conversion
+// ============================================================
+
+/// Converts an HIR literal to a MIR constant.
+pub fn lower_literal(lit: &hir_expr::Literal, ty: &hir_ty::Type) -> mir_types::Constant {
+    match &lit.kind {
+        &hir_expr::LiteralKind::Int { val, ty: _ } => {
+            // Determine if signed or unsigned based on the type
+            match &ty.kind {
+                &hir_ty::TypeKind::Primitive(ref prim) => {
+                    match prim {
+                        &hir_ty::PrimitiveTy::I8 => mir_types::Constant::new(
+                            ty.clone(),
+                            mir_types::ConstantKind::Int(val as i128),
+                        ),
+                        &hir_ty::PrimitiveTy::I16 => mir_types::Constant::new(
+                            ty.clone(),
+                            mir_types::ConstantKind::Int(val as i128),
+                        ),
+                        &hir_ty::PrimitiveTy::I32 => mir_types::Constant::new(
+                            ty.clone(),
+                            mir_types::ConstantKind::Int(val as i128),
+                        ),
+                        &hir_ty::PrimitiveTy::I64 => mir_types::Constant::new(
+                            ty.clone(),
+                            mir_types::ConstantKind::Int(val as i128),
+                        ),
+                        &hir_ty::PrimitiveTy::I128 => mir_types::Constant::new(
+                            ty.clone(),
+                            mir_types::ConstantKind::Int(val as i128),
+                        ),
+                        &hir_ty::PrimitiveTy::Isize => mir_types::Constant::new(
+                            ty.clone(),
+                            mir_types::ConstantKind::Int(val as i128),
+                        ),
+                        &hir_ty::PrimitiveTy::U8 => mir_types::Constant::new(
+                            ty.clone(),
+                            mir_types::ConstantKind::Uint(val),
+                        ),
+                        &hir_ty::PrimitiveTy::U16 => mir_types::Constant::new(
+                            ty.clone(),
+                            mir_types::ConstantKind::Uint(val),
+                        ),
+                        &hir_ty::PrimitiveTy::U32 => mir_types::Constant::new(
+                            ty.clone(),
+                            mir_types::ConstantKind::Uint(val),
+                        ),
+                        &hir_ty::PrimitiveTy::U64 => mir_types::Constant::new(
+                            ty.clone(),
+                            mir_types::ConstantKind::Uint(val),
+                        ),
+                        &hir_ty::PrimitiveTy::U128 => mir_types::Constant::new(
+                            ty.clone(),
+                            mir_types::ConstantKind::Uint(val),
+                        ),
+                        &hir_ty::PrimitiveTy::Usize => mir_types::Constant::new(
+                            ty.clone(),
+                            mir_types::ConstantKind::Uint(val),
+                        ),
+                        &hir_ty::PrimitiveTy::Bool => mir_types::Constant::new(
+                            ty.clone(),
+                            mir_types::ConstantKind::Bool(val != 0),
+                        ),
+                        &hir_ty::PrimitiveTy::Char => mir_types::Constant::new(
+                            ty.clone(),
+                            mir_types::ConstantKind::Uint(val),
+                        ),
+                        &hir_ty::PrimitiveTy::F32 => mir_types::Constant::new(
+                            ty.clone(),
+                            mir_types::ConstantKind::Float(val as u64),
+                        ),
+                        &hir_ty::PrimitiveTy::F64 => mir_types::Constant::new(
+                            ty.clone(),
+                            mir_types::ConstantKind::Float(val as u64),
+                        ),
+                        &hir_ty::PrimitiveTy::Str => mir_types::Constant::new(
+                            ty.clone(),
+                            mir_types::ConstantKind::Int(val as i128),
+                        ),
+                    }
+                }
+                _ => {
+                    // Default to signed interpretation
+                    mir_types::Constant::new(
+                        ty.clone(),
+                        mir_types::ConstantKind::Int(val as i128),
+                    )
+                }
+            }
+        }
+        &hir_expr::LiteralKind::Float { bits, ty: _ } => {
+            mir_types::Constant::new(ty.clone(), mir_types::ConstantKind::Float(bits))
+        }
+        &hir_expr::LiteralKind::Str(ref s) => {
+            mir_types::Constant::new(ty.clone(), mir_types::ConstantKind::String(clone_string(s)))
+        }
+        &hir_expr::LiteralKind::ByteStr(ref bytes) => {
+            mir_types::Constant::new(ty.clone(), mir_types::ConstantKind::ByteString(clone_bytes(bytes)))
+        }
+        &hir_expr::LiteralKind::Char(c) => {
+            mir_types::Constant::new(ty.clone(), mir_types::ConstantKind::Char(c))
+        }
+        &hir_expr::LiteralKind::Bool(b) => {
+            mir_types::Constant::new(ty.clone(), mir_types::ConstantKind::Bool(b))
+        }
+    }
+}
+
+// ============================================================
+// Type Utilities
+// ============================================================
+
+/// Returns true if a type is Copy (can be copied without moving).
+pub fn is_copy_type(ty: &hir_ty::Type) -> bool {
+    match &ty.kind {
+        &hir_ty::TypeKind::Primitive(_) => true,
+        &hir_ty::TypeKind::Ref { inner: _, mutable: _ } => true,
+        &hir_ty::TypeKind::Ptr { inner: _, mutable: _ } => true,
+        &hir_ty::TypeKind::Tuple(ref elems) => {
+            let mut i: usize = 0;
+            while i < elems.len() {
+                if !is_copy_type(&elems[i]) {
+                    return false;
+                }
+                i = i + 1;
+            }
+            true
+        }
+        &hir_ty::TypeKind::Array { ref element, size: _ } => is_copy_type(element.as_ref()),
+        &hir_ty::TypeKind::Never => true,
+        // Other types are not Copy by default
+        &hir_ty::TypeKind::Slice { element: _ } => false,
+        &hir_ty::TypeKind::Fn { params: _, ret: _, effects: _ } => false,
+        &hir_ty::TypeKind::Adt { def_id: _, args: _ } => false,
+        &hir_ty::TypeKind::Infer(_) => false,
+        &hir_ty::TypeKind::Param(_) => false,
+        &hir_ty::TypeKind::Record { fields: _, row_var: _ } => false,
+        &hir_ty::TypeKind::Error => true,
+    }
+}
+
+/// Creates an operand from a place, choosing Copy or Move based on type.
+pub fn operand_from_place(place: mir_types::Place, ty: &hir_ty::Type) -> mir_types::Operand {
+    if is_copy_type(ty) {
+        mir_types::Operand::Copy(place)
+    } else {
+        mir_types::Operand::Move(place)
+    }
+}
+
+// ============================================================
+// Pattern Utilities
+// ============================================================
+
+/// Returns true if a pattern is irrefutable (always matches).
+pub fn is_irrefutable_pattern(pattern: &hir_expr::Pattern) -> bool {
+    match &pattern.kind {
+        &hir_expr::PatternKind::Wildcard => true,
+        &hir_expr::PatternKind::Rest => true,
+        &hir_expr::PatternKind::Binding { local_id: _, name: _, mode: _, ref subpattern } => {
+            match subpattern {
+                &Option::Some(ref sub) => is_irrefutable_pattern(sub.as_ref()),
+                &Option::None => true,
+            }
+        }
+        &hir_expr::PatternKind::Tuple(ref pats) => {
+            let mut i: usize = 0;
+            while i < pats.len() {
+                if !is_irrefutable_pattern(&pats[i]) {
+                    return false;
+                }
+                i = i + 1;
+            }
+            true
+        }
+        &hir_expr::PatternKind::Struct { path: _, ref fields, has_rest } => {
+            if has_rest {
+                let mut i: usize = 0;
+                while i < fields.len() {
+                    if !is_irrefutable_pattern(&fields[i].pattern) {
+                        return false;
+                    }
+                    i = i + 1;
+                }
+                true
+            } else {
+                false
+            }
+        }
+        &hir_expr::PatternKind::Ref { mutable: _, ref inner } => {
+            is_irrefutable_pattern(inner.as_ref())
+        }
+        // Refutable patterns
+        &hir_expr::PatternKind::Literal(_) => false,
+        &hir_expr::PatternKind::TupleStruct { path: _, fields: _ } => false,
+        &hir_expr::PatternKind::Slice { prefix: _, rest: _, suffix: _ } => false,
+        &hir_expr::PatternKind::Or(_) => false,
+        &hir_expr::PatternKind::Range { start: _, end_val: _, inclusive: _ } => false,
+        &hir_expr::PatternKind::Path(_) => false,
+        &hir_expr::PatternKind::Error => true,
+    }
+}
+
+// ============================================================
+// Type Clone Implementation
+// ============================================================
+
+impl hir_ty::Type {
+    /// Clones a type.
+    pub fn clone(self: &hir_ty::Type) -> hir_ty::Type {
+        hir_ty::Type::new(self.kind.clone())
+    }
+}
+
+impl hir_ty::TypeKind {
+    /// Clones a type kind.
+    pub fn clone(self: &hir_ty::TypeKind) -> hir_ty::TypeKind {
+        match self {
+            &hir_ty::TypeKind::Primitive(ref p) => hir_ty::TypeKind::Primitive(p.clone()),
+            &hir_ty::TypeKind::Tuple(ref elems) => {
+                let mut cloned = Vec::new();
+                let mut i: usize = 0;
+                while i < elems.len() {
+                    cloned.push(elems[i].clone());
+                    i = i + 1;
+                }
+                hir_ty::TypeKind::Tuple(cloned)
+            }
+            &hir_ty::TypeKind::Array { ref element, size } => {
+                hir_ty::TypeKind::Array {
+                    element: Box::new(element.as_ref().clone()),
+                    size: size,
+                }
+            }
+            &hir_ty::TypeKind::Slice { ref element } => {
+                hir_ty::TypeKind::Slice {
+                    element: Box::new(element.as_ref().clone()),
+                }
+            }
+            &hir_ty::TypeKind::Ref { ref inner, mutable } => {
+                hir_ty::TypeKind::Ref {
+                    inner: Box::new(inner.as_ref().clone()),
+                    mutable: mutable,
+                }
+            }
+            &hir_ty::TypeKind::Ptr { ref inner, mutable } => {
+                hir_ty::TypeKind::Ptr {
+                    inner: Box::new(inner.as_ref().clone()),
+                    mutable: mutable,
+                }
+            }
+            &hir_ty::TypeKind::Fn { ref params, ref ret, ref effects } => {
+                let mut cloned_params = Vec::new();
+                let mut i: usize = 0;
+                while i < params.len() {
+                    cloned_params.push(params[i].clone());
+                    i = i + 1;
+                }
+                hir_ty::TypeKind::Fn {
+                    params: cloned_params,
+                    ret: Box::new(ret.as_ref().clone()),
+                    effects: effects.clone(),
+                }
+            }
+            &hir_ty::TypeKind::Adt { ref def_id, ref args } => {
+                let mut cloned_args = Vec::new();
+                let mut i: usize = 0;
+                while i < args.len() {
+                    cloned_args.push(args[i].clone());
+                    i = i + 1;
+                }
+                hir_ty::TypeKind::Adt {
+                    def_id: *def_id,
+                    args: cloned_args,
+                }
+            }
+            &hir_ty::TypeKind::Infer(ref v) => hir_ty::TypeKind::Infer(*v),
+            &hir_ty::TypeKind::Param(ref v) => hir_ty::TypeKind::Param(*v),
+            &hir_ty::TypeKind::Record { ref fields, ref row_var } => {
+                let mut cloned_fields = Vec::new();
+                let mut i: usize = 0;
+                while i < fields.len() {
+                    cloned_fields.push(fields[i].clone());
+                    i = i + 1;
+                }
+                hir_ty::TypeKind::Record {
+                    fields: cloned_fields,
+                    row_var: *row_var,
+                }
+            }
+            &hir_ty::TypeKind::Never => hir_ty::TypeKind::Never,
+            &hir_ty::TypeKind::Error => hir_ty::TypeKind::Error,
+        }
+    }
+}
+
+impl hir_ty::PrimitiveTy {
+    pub fn clone(self: &hir_ty::PrimitiveTy) -> hir_ty::PrimitiveTy {
+        match self {
+            &hir_ty::PrimitiveTy::Bool => hir_ty::PrimitiveTy::Bool,
+            &hir_ty::PrimitiveTy::I8 => hir_ty::PrimitiveTy::I8,
+            &hir_ty::PrimitiveTy::I16 => hir_ty::PrimitiveTy::I16,
+            &hir_ty::PrimitiveTy::I32 => hir_ty::PrimitiveTy::I32,
+            &hir_ty::PrimitiveTy::I64 => hir_ty::PrimitiveTy::I64,
+            &hir_ty::PrimitiveTy::I128 => hir_ty::PrimitiveTy::I128,
+            &hir_ty::PrimitiveTy::Isize => hir_ty::PrimitiveTy::Isize,
+            &hir_ty::PrimitiveTy::U8 => hir_ty::PrimitiveTy::U8,
+            &hir_ty::PrimitiveTy::U16 => hir_ty::PrimitiveTy::U16,
+            &hir_ty::PrimitiveTy::U32 => hir_ty::PrimitiveTy::U32,
+            &hir_ty::PrimitiveTy::U64 => hir_ty::PrimitiveTy::U64,
+            &hir_ty::PrimitiveTy::U128 => hir_ty::PrimitiveTy::U128,
+            &hir_ty::PrimitiveTy::Usize => hir_ty::PrimitiveTy::Usize,
+            &hir_ty::PrimitiveTy::F32 => hir_ty::PrimitiveTy::F32,
+            &hir_ty::PrimitiveTy::F64 => hir_ty::PrimitiveTy::F64,
+            &hir_ty::PrimitiveTy::Char => hir_ty::PrimitiveTy::Char,
+            &hir_ty::PrimitiveTy::Str => hir_ty::PrimitiveTy::Str,
+        }
+    }
+}
+
+impl hir_ty::EffectRow {
+    pub fn clone(self: &hir_ty::EffectRow) -> hir_ty::EffectRow {
+        let mut cloned_effects = Vec::new();
+        let mut i: usize = 0;
+        while i < self.effects.len() {
+            cloned_effects.push(self.effects[i].clone());
+            i = i + 1;
+        }
+        hir_ty::EffectRow {
+            effects: cloned_effects,
+            row_var: self.row_var,
+        }
+    }
+}
+
+impl hir_ty::EffectRef {
+    pub fn clone(self: &hir_ty::EffectRef) -> hir_ty::EffectRef {
+        let mut cloned_args = Vec::new();
+        let mut i: usize = 0;
+        while i < self.args.len() {
+            cloned_args.push(self.args[i].clone());
+            i = i + 1;
+        }
+        hir_ty::EffectRef {
+            def_id: self.def_id,
+            args: cloned_args,
+        }
+    }
+}
+
+impl hir_ty::RecordField {
+    pub fn clone(self: &hir_ty::RecordField) -> hir_ty::RecordField {
+        hir_ty::RecordField {
+            name: self.name,
+            ty: self.ty.clone(),
+        }
+    }
+}

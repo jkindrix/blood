@@ -1,0 +1,256 @@
+// Blood Self-Hosted Compiler - MIR Lowering Driver
+//
+// This module provides the main entry point for lowering HIR to MIR.
+// It orchestrates the lowering of function bodies from HIR representation
+// to MIR control flow graphs.
+
+mod common;
+mod hir_def;
+mod hir_ty;
+mod hir_expr;
+mod mir_def;
+mod mir_types;
+mod mir_stmt;
+mod mir_term;
+mod mir_body;
+mod mir_lower_ctx;
+mod mir_lower_util;
+mod mir_lower_pattern;
+mod mir_lower_expr;
+
+// ============================================================
+// MIR Lowering Driver
+// ============================================================
+
+/// Lowers an HIR function body to MIR.
+///
+/// This is the main entry point for MIR lowering. It takes a function's
+/// definition ID, the HIR body, and produces a complete MIR body.
+pub fn lower_body(
+    def_id: hir_def::DefId,
+    body: &hir_expr::Body,
+    return_ty: hir_ty::Type,
+    span: common::Span,
+) -> mir_body::MirBody {
+    // Create lowering context
+    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, return_ty.clone(), span);
+
+    // Lower parameters (first param_count locals are parameters)
+    lower_params_from_body(&mut ctx, body, span);
+
+    // Lower body expression, storing result in return place
+    mir_lower_expr::lower_expr_to_return(&mut ctx, &body.expr);
+
+    // Terminate with return if not already terminated
+    if !ctx.is_terminated() {
+        ctx.terminate_return(span);
+    }
+
+    // Finish and return the MIR body
+    ctx.finish()
+}
+
+/// Lowers parameters from an HIR body.
+///
+/// In HIR, the first `param_count` locals in the body are the function parameters.
+fn lower_params_from_body(
+    ctx: &mut mir_lower_ctx::MirLowerCtx,
+    body: &hir_expr::Body,
+    span: common::Span,
+) {
+    let mut i: u32 = 0;
+    while i < body.param_count {
+        let local = &body.locals[i as usize];
+        // Create MIR local for the parameter
+        let mir_local = ctx.builder.body.new_local(
+            local.ty.clone(),
+            mir_def::LocalKind::Arg,
+            Option::None,
+            local.span,
+        );
+        // Register mapping from HIR local to MIR local
+        ctx.register_local(local.id, mir_local);
+        i = i + 1;
+    }
+}
+
+// ============================================================
+// Closure Lowering
+// ============================================================
+
+/// Lowers a closure body to MIR.
+///
+/// Closures are similar to functions but may capture variables from
+/// their environment.
+pub fn lower_closure(
+    def_id: hir_def::DefId,
+    params: &Vec<hir_expr::ClosureParam>,
+    return_ty: hir_ty::Type,
+    body_expr: &hir_expr::Expr,
+    span: common::Span,
+) -> mir_body::MirBody {
+    // Create lowering context
+    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, return_ty.clone(), span);
+
+    // Lower closure parameters
+    lower_closure_params(&mut ctx, params, span);
+
+    // Lower body expression
+    mir_lower_expr::lower_expr_to_return(&mut ctx, body_expr);
+
+    // Terminate with return if not already terminated
+    if !ctx.is_terminated() {
+        ctx.terminate_return(span);
+    }
+
+    ctx.finish()
+}
+
+/// Lowers closure parameters.
+fn lower_closure_params(
+    ctx: &mut mir_lower_ctx::MirLowerCtx,
+    params: &Vec<hir_expr::ClosureParam>,
+    span: common::Span,
+) {
+    let mut i: usize = 0;
+    while i < params.len() {
+        let param = &params[i];
+        let mir_local = ctx.builder.body.new_local(
+            param.ty.clone(),
+            mir_def::LocalKind::Arg,
+            Option::None,
+            span,
+        );
+        // Pattern binding for closure params
+        let source = mir_types::Place::local(mir_local);
+        mir_lower_pattern::lower_irrefutable_pattern(ctx, &param.pattern, source, span);
+        i = i + 1;
+    }
+}
+
+// ============================================================
+// Static and Const Lowering
+// ============================================================
+
+/// Lowers a static initializer to MIR.
+pub fn lower_static(
+    def_id: hir_def::DefId,
+    ty: hir_ty::Type,
+    init: &hir_expr::Expr,
+    span: common::Span,
+) -> mir_body::MirBody {
+    // Create context for the static initializer
+    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, ty, span);
+
+    // Lower initializer expression
+    mir_lower_expr::lower_expr_to_return(&mut ctx, init);
+
+    // Terminate with return
+    if !ctx.is_terminated() {
+        ctx.terminate_return(span);
+    }
+
+    ctx.finish()
+}
+
+/// Lowers a const initializer to MIR.
+pub fn lower_const(
+    def_id: hir_def::DefId,
+    ty: hir_ty::Type,
+    init: &hir_expr::Expr,
+    span: common::Span,
+) -> mir_body::MirBody {
+    // Constants are lowered the same way as statics
+    lower_static(def_id, ty, init, span)
+}
+
+// ============================================================
+// Module-Level Lowering
+// ============================================================
+
+/// Result of lowering an entire module to MIR.
+pub struct MirModule {
+    /// MIR bodies for all functions.
+    pub functions: Vec<mir_body::MirBody>,
+    /// MIR bodies for all statics.
+    pub statics: Vec<mir_body::MirBody>,
+    /// MIR bodies for all constants.
+    pub constants: Vec<mir_body::MirBody>,
+}
+
+impl MirModule {
+    /// Creates a new empty MIR module.
+    pub fn new() -> MirModule {
+        MirModule {
+            functions: Vec::new(),
+            statics: Vec::new(),
+            constants: Vec::new(),
+        }
+    }
+
+    /// Adds a function body.
+    pub fn add_function(self: &mut MirModule, body: mir_body::MirBody) {
+        self.functions.push(body);
+    }
+
+    /// Adds a static body.
+    pub fn add_static(self: &mut MirModule, body: mir_body::MirBody) {
+        self.statics.push(body);
+    }
+
+    /// Adds a constant body.
+    pub fn add_constant(self: &mut MirModule, body: mir_body::MirBody) {
+        self.constants.push(body);
+    }
+
+    /// Returns the total number of bodies.
+    pub fn body_count(self: &MirModule) -> usize {
+        self.functions.len() + self.statics.len() + self.constants.len()
+    }
+}
+
+// ============================================================
+// Utility Functions
+// ============================================================
+
+/// Checks if a MIR body has any unreachable code.
+pub fn has_unreachable_code(body: &mir_body::MirBody) -> bool {
+    // Simple check: any block with unreachable terminator
+    let mut i: usize = 0;
+    while i < body.basic_blocks.len() {
+        let block = &body.basic_blocks[i];
+        match &block.terminator {
+            &Option::Some(ref term) => {
+                match &term.kind {
+                    &mir_term::TerminatorKind::Unreachable => {
+                        return true;
+                    }
+                    _ => {}
+                }
+            }
+            &Option::None => {}
+        }
+        i = i + 1;
+    }
+    false
+}
+
+/// Counts the number of basic blocks in a MIR body.
+pub fn block_count(body: &mir_body::MirBody) -> usize {
+    body.basic_blocks.len()
+}
+
+/// Counts the number of locals in a MIR body.
+pub fn local_count(body: &mir_body::MirBody) -> usize {
+    body.locals.len()
+}
+
+/// Gets the return type of a MIR body.
+/// The return type is stored in the first local (_0).
+pub fn get_return_type(body: &mir_body::MirBody) -> hir_ty::Type {
+    if body.locals.len() > 0 {
+        body.locals[0].ty.clone()
+    } else {
+        hir_ty::Type::unit()
+    }
+}

@@ -1,0 +1,324 @@
+// Blood Self-Hosted Compiler - Codegen Terminators
+//
+// This module handles generating LLVM IR for MIR terminators.
+
+mod common;
+mod hir_def;
+mod hir_ty;
+mod mir_def;
+mod mir_types;
+mod mir_stmt;
+mod mir_term;
+mod mir_body;
+mod codegen_types;
+mod codegen_ctx;
+mod codegen_expr;
+
+// ============================================================
+// Terminator Codegen
+// ============================================================
+
+/// Generates LLVM IR for a terminator.
+pub fn emit_terminator(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    term: &mir_term::Terminator,
+) {
+    match &term.kind {
+        &mir_term::TerminatorKind::Goto { target } => {
+            let label = ctx.block_label(target);
+            ctx.emit_br(label.as_str());
+        }
+        &mir_term::TerminatorKind::SwitchInt { ref discr, ref targets } => {
+            emit_switch_int(ctx, discr, targets);
+        }
+        &mir_term::TerminatorKind::Return => {
+            emit_return(ctx);
+        }
+        &mir_term::TerminatorKind::Call { ref func, ref args, ref destination, ref target, unwind: _ } => {
+            emit_call(ctx, func, args, destination, target);
+        }
+        &mir_term::TerminatorKind::Assert { ref cond, expected, ref msg, target, unwind: _ } => {
+            emit_assert(ctx, cond, expected, msg, target);
+        }
+        &mir_term::TerminatorKind::Perform { effect_id, op_index, ref args, ref destination, ref target, is_tail_resumptive: _ } => {
+            // Effect perform - call runtime to look up and dispatch to handler
+            let effect_id_val = codegen_types::format_u64(effect_id.index as u64);
+            let op_index_val = codegen_types::format_u64(op_index as u64);
+            let dest = codegen_expr::emit_place_addr(ctx, destination);
+
+            // Pack arguments into array for runtime
+            let args_vals: Vec<String> = emit_operand_list(ctx, args);
+            let num_args_val = codegen_types::format_u64(args_vals.len() as u64);
+
+            // Call @blood_perform(effect_id, op_index, num_args, args_ptr, result_ptr)
+            // For now, simplified: store result directly
+            let result = ctx.fresh_temp();
+            ctx.write_indent();
+            ctx.write_string(&result);
+            ctx.write(" = call i64 @blood_perform(i64 ");
+            ctx.write_string(&effect_id_val);
+            ctx.write(", i64 ");
+            ctx.write_string(&op_index_val);
+            ctx.write(", i64 ");
+            ctx.write_string(&num_args_val);
+            ctx.write(")\n");
+
+            // Store result
+            ctx.emit_store("i64", result.as_str(), dest.as_str());
+
+            match target {
+                &Option::Some(t) => {
+                    let label = ctx.block_label(t);
+                    ctx.emit_br(label.as_str());
+                }
+                &Option::None => {
+                    ctx.emit_unreachable();
+                }
+            }
+        }
+        &mir_term::TerminatorKind::Resume { ref value } => {
+            // Resume from handler - call runtime to transfer control back
+            let val = codegen_expr::emit_operand(ctx, value);
+
+            // Call @blood_resume(value)
+            ctx.write_indent();
+            ctx.write("call void @blood_resume(i64 ");
+            ctx.write_string(&val);
+            ctx.write(")\n");
+
+            // Resume doesn't return, emit unreachable (runtime handles control transfer)
+            ctx.emit_unreachable();
+        }
+        &mir_term::TerminatorKind::Unreachable => {
+            ctx.emit_unreachable();
+        }
+        &mir_term::TerminatorKind::Drop { ref place, target, unwind: _ } => {
+            // Drop - call destructor if needed, then continue
+            let _ptr = codegen_expr::emit_place_addr(ctx, place);
+            // For now, just continue to target
+            let label = ctx.block_label(target);
+            ctx.emit_br(label.as_str());
+        }
+    }
+}
+
+/// Emits a switch on an integer value.
+fn emit_switch_int(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    discr: &mir_types::Operand,
+    switch_targets: &mir_types::SwitchTargets,
+) {
+    let discr_val = codegen_expr::emit_operand(ctx, discr);
+
+    // Check if this is a simple boolean switch
+    if switch_targets.targets.len() == 1 {
+        // Binary switch - use conditional branch
+        let default_label = ctx.block_label(switch_targets.otherwise);
+        let case_target = &switch_targets.targets[0];
+        let case_label = ctx.block_label(case_target.target);
+        let case_val = codegen_types::format_u128(case_target.value);
+
+        // Compare discriminant with case value
+        let cmp_result = ctx.fresh_temp();
+        ctx.emit_icmp(cmp_result.as_str(), "eq", "i64", discr_val.as_str(), case_val.as_str());
+        ctx.emit_cond_br(cmp_result.as_str(), case_label.as_str(), default_label.as_str());
+    } else {
+        // Multi-way switch
+        let default_label = ctx.block_label(switch_targets.otherwise);
+
+        // Build cases vector
+        let mut cases: Vec<(String, String)> = Vec::new();
+        let mut i: usize = 0;
+        while i < switch_targets.targets.len() {
+            let switch_target = &switch_targets.targets[i];
+            let val_str = codegen_types::format_u128(switch_target.value);
+            let label = ctx.block_label(switch_target.target);
+            cases.push((val_str, label));
+            i = i + 1;
+        }
+
+        ctx.emit_switch("i64", discr_val.as_str(), default_label.as_str(), &cases);
+    }
+}
+
+/// Emits a return from the function.
+fn emit_return(ctx: &mut codegen_ctx::CodegenCtx) {
+    // Load return value from _0
+    let ret_local = mir_def::MirLocalId::new(0);
+    let ret_name = ctx.local_name(ret_local);
+    let ret_ty = ctx.get_local_type(ret_local);
+
+    // Check if return type is void (unit type)
+    let is_void = is_void_type(ret_ty.as_str());
+
+    if is_void {
+        ctx.emit_ret("void", Option::None);
+    } else {
+        let ret_val = ctx.fresh_temp();
+        ctx.emit_load(ret_val.as_str(), ret_ty.as_str(), ret_name.as_str());
+        ctx.emit_ret(ret_ty.as_str(), Option::Some(ret_val.as_str()));
+    }
+}
+
+/// Emits a function call.
+fn emit_call(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    func: &mir_types::Operand,
+    args: &Vec<mir_types::Operand>,
+    destination: &mir_types::Place,
+    target: &Option<mir_def::BasicBlockId>,
+) {
+    // Get function name/pointer
+    let func_val = codegen_expr::emit_operand(ctx, func);
+
+    // Emit arguments with their types
+    let mut llvm_args: Vec<(String, String)> = Vec::new();
+    let mut i: usize = 0;
+    while i < args.len() {
+        let (arg_val, arg_ty) = codegen_expr::emit_operand_typed(ctx, &args[i]);
+        llvm_args.push((arg_ty, arg_val));
+        i = i + 1;
+    }
+
+    // Get return type from destination
+    let dest_ptr = codegen_expr::emit_place_addr(ctx, destination);
+    let return_ty = ctx.get_local_type(destination.local);
+
+    // Check if return type is void (unit type)
+    let is_void = is_void_type(return_ty.as_str());
+
+    if is_void {
+        // Void function - no return value
+        ctx.emit_call(
+            Option::None,
+            "void",
+            func_val.as_str(),
+            &llvm_args,
+        );
+    } else {
+        // Non-void function - capture return value
+        let result = ctx.fresh_temp();
+        ctx.emit_call(
+            Option::Some(result.as_str()),
+            return_ty.as_str(),
+            func_val.as_str(),
+            &llvm_args,
+        );
+        // Store result
+        ctx.emit_store(return_ty.as_str(), result.as_str(), dest_ptr.as_str());
+    }
+
+    // Jump to continuation
+    match target {
+        &Option::Some(t) => {
+            let label = ctx.block_label(t);
+            ctx.emit_br(label.as_str());
+        }
+        &Option::None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Checks if an LLVM type is void/unit.
+fn is_void_type(llvm_ty: &str) -> bool {
+    let bytes = llvm_ty.as_bytes();
+    if bytes.len() == 4 {
+        // Check for "void"
+        if bytes[0] == 118 && bytes[1] == 111 && bytes[2] == 105 && bytes[3] == 100 {
+            return true;
+        }
+    }
+    if bytes.len() == 2 {
+        // Check for "{}"
+        if bytes[0] == 123 && bytes[1] == 125 {
+            return true;
+        }
+    }
+    false
+}
+
+/// Emits an assertion.
+fn emit_assert(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    cond: &mir_types::Operand,
+    expected: bool,
+    _msg: &String,
+    target: mir_def::BasicBlockId,
+) {
+    let cond_val = codegen_expr::emit_operand(ctx, cond);
+
+    // Create labels
+    let success_label = ctx.block_label(target);
+    let fail_label = ctx.fresh_label();
+
+    // Compare condition with expected
+    if expected {
+        // Expect true: if cond, goto success, else fail
+        ctx.emit_cond_br(cond_val.as_str(), success_label.as_str(), fail_label.as_str());
+    } else {
+        // Expect false: if cond, goto fail, else success
+        ctx.emit_cond_br(cond_val.as_str(), fail_label.as_str(), success_label.as_str());
+    }
+
+    // Fail block
+    ctx.emit_label(fail_label.as_str());
+    ctx.indent();
+    // Call panic or trap
+    ctx.writeln("call void @llvm.trap()");
+    ctx.emit_unreachable();
+    ctx.dedent();
+}
+
+/// Emits a list of operands and returns their values.
+fn emit_operand_list(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    operands: &Vec<mir_types::Operand>,
+) -> Vec<String> {
+    let mut result: Vec<String> = Vec::new();
+    let mut i: usize = 0;
+    while i < operands.len() {
+        result.push(codegen_expr::emit_operand(ctx, &operands[i]));
+        i = i + 1;
+    }
+    result
+}
+
+// ============================================================
+// Basic Block Codegen
+// ============================================================
+
+/// Emits a complete basic block.
+pub fn emit_basic_block(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    block_id: mir_def::BasicBlockId,
+    block: &mir_body::BasicBlockData,
+) {
+    // Emit label
+    let label = ctx.block_label(block_id);
+    ctx.emit_label(label.as_str());
+
+    // Emit statements
+    ctx.indent();
+    let mut i: usize = 0;
+    while i < block.statements.len() {
+        codegen_stmt::emit_statement(ctx, &block.statements[i]);
+        i = i + 1;
+    }
+    ctx.dedent();
+
+    // Emit terminator
+    ctx.indent();
+    match &block.terminator {
+        &Option::Some(ref term) => {
+            emit_terminator(ctx, term);
+        }
+        &Option::None => {
+            ctx.emit_unreachable();
+        }
+    }
+    ctx.dedent();
+}
+
+// Forward declaration for codegen_stmt
+mod codegen_stmt;

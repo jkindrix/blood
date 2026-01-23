@@ -1,0 +1,528 @@
+// Blood Self-Hosted Compiler - Driver
+//
+// This module provides the main compiler driver that orchestrates all
+// compilation phases: parsing, HIR lowering, type checking, MIR lowering,
+// and code generation.
+
+mod common;
+mod error;
+mod ast;
+mod hir;
+mod hir_def;
+mod hir_ty;
+mod hir_item;
+mod hir_expr;
+mod hir_lower;
+mod hir_lower_ctx;
+mod parser;
+mod parser_base;
+mod resolve;
+mod mir_def;
+mod mir_body;
+mod mir_lower;
+mod codegen;
+mod interner;
+mod unify;
+mod typeck;
+mod typeck_driver;
+
+// ============================================================
+// Compilation Result
+// ============================================================
+
+/// The result of a complete compilation.
+pub struct CompileResult {
+    /// Whether compilation succeeded.
+    pub success: bool,
+    /// Generated LLVM IR (if successful).
+    pub llvm_ir: Option<String>,
+    /// All errors collected during compilation.
+    pub errors: Vec<error::CompileError>,
+    /// All warnings collected during compilation.
+    pub warnings: Vec<error::CompileWarning>,
+}
+
+impl CompileResult {
+    /// Creates a successful result.
+    pub fn ok(llvm_ir: String) -> CompileResult {
+        CompileResult {
+            success: true,
+            llvm_ir: Option::Some(llvm_ir),
+            errors: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+
+    /// Creates a failed result.
+    pub fn err(errors: Vec<error::CompileError>) -> CompileResult {
+        CompileResult {
+            success: false,
+            llvm_ir: Option::None,
+            errors: errors,
+            warnings: Vec::new(),
+        }
+    }
+
+    /// Returns true if there are errors.
+    pub fn has_errors(self: &CompileResult) -> bool {
+        self.errors.len() > 0
+    }
+}
+
+// ============================================================
+// Compiler
+// ============================================================
+
+/// The main compiler driver.
+pub struct Compiler {
+    /// String interner for symbols.
+    interner: interner::StringInterner,
+}
+
+impl Compiler {
+    /// Creates a new compiler.
+    pub fn new() -> Compiler {
+        Compiler {
+            interner: interner::StringInterner::new(),
+        }
+    }
+
+    /// Compiles source code to LLVM IR.
+    ///
+    /// This runs the full compilation pipeline:
+    /// 1. Parse source to AST
+    /// 2. Lower AST to HIR
+    /// 3. Type check HIR
+    /// 4. Lower HIR to MIR
+    /// 5. Generate LLVM IR from MIR
+    pub fn compile(self: &mut Compiler, source: &str) -> CompileResult {
+        // Phase 1: Parse
+        let parse_result = parser::parse_file(source);
+        if parse_result.errors.len() > 0 {
+            let errors = convert_parse_errors(&parse_result.errors);
+            return CompileResult::err(errors);
+        }
+
+        let program = match &parse_result.program {
+            &Option::Some(ref p) => p,
+            &Option::None => {
+                let mut errors = Vec::new();
+                errors.push(error::CompileError::new(
+                    error::CompilePhase::Parse,
+                    common::make_string("No program produced by parser"),
+                ));
+                return CompileResult::err(errors);
+            }
+        };
+
+        // Phase 2: Lower to HIR
+        let lower_result = hir_lower::lower_program(program);
+        if has_error_diagnostics(&lower_result.diagnostics) {
+            let errors = convert_hir_diagnostics(&lower_result.diagnostics);
+            return CompileResult::err(errors);
+        }
+
+        let crate_data = match &lower_result.crate_data {
+            &Option::Some(ref c) => c,
+            &Option::None => {
+                let mut errors = Vec::new();
+                errors.push(error::CompileError::new(
+                    error::CompilePhase::Lower,
+                    common::make_string("No HIR crate produced"),
+                ));
+                return CompileResult::err(errors);
+            }
+        };
+
+        // Phase 3: Type checking
+        let typeck_result = typeck_driver::check_lower_result(&lower_result);
+        if !typeck_result.success {
+            let errors = convert_type_errors(&typeck_result.errors);
+            return CompileResult::err(errors);
+        }
+
+        // Phase 4: Lower HIR bodies to MIR
+        let mut mir_functions: Vec<(String, mir_body::MirBody)> = Vec::new();
+        let mut body_idx: usize = 0;
+        while body_idx < lower_result.bodies.len() {
+            let body_entry = &lower_result.bodies[body_idx];
+            let hir_body = &body_entry.body;
+            let body_id = body_entry.body_id;
+
+            // Find the Item for this body to get name and return type
+            let fn_info = find_fn_for_body(&lower_result.items, body_id);
+
+            // Get return type from function signature, or default to unit
+            let return_ty = match &fn_info {
+                &Option::Some(ref info) => hir_ty::copy_type(&info.return_ty),
+                &Option::None => hir_ty::Type::unit(),
+            };
+
+            // Get span from function item, or use dummy span
+            let span = match &fn_info {
+                &Option::Some(ref info) => info.span,
+                &Option::None => common::Span::new(0, 0, 1, 1),
+            };
+
+            // Get function name or generate one
+            let fn_name = match &fn_info {
+                &Option::Some(ref info) => resolve_symbol(&self.interner, info.name),
+                &Option::None => make_fn_name(body_idx),
+            };
+
+            // Get DefId from function info or use body index
+            let def_id = match &fn_info {
+                &Option::Some(ref info) => info.def_id,
+                &Option::None => hir_def::DefId::new(body_idx as u32),
+            };
+
+            // Lower the body to MIR
+            let mir_body = mir_lower::lower_body(
+                def_id,
+                hir_body,
+                return_ty,
+                span,
+            );
+
+            mir_functions.push((fn_name, mir_body));
+
+            body_idx = body_idx + 1;
+        }
+
+        // Phase 5: Generate LLVM IR from MIR
+        let codegen_result = codegen::generate_module("main", &mir_functions);
+        if !codegen_result.success {
+            let mut errors = Vec::new();
+            errors.push(error::CompileError::new(
+                error::CompilePhase::Codegen,
+                common::make_string("Code generation failed"),
+            ));
+            return CompileResult::err(errors);
+        }
+
+        CompileResult::ok(codegen_result.llvm_ir)
+    }
+
+    /// Parses source code and returns the AST.
+    pub fn parse(self: &mut Compiler, source: &str) -> ParseOnlyResult {
+        let parse_result = parser::parse_file(source);
+
+        if parse_result.errors.len() > 0 {
+            let errors = convert_parse_errors(&parse_result.errors);
+            return ParseOnlyResult {
+                success: false,
+                program: Option::None,
+                errors: errors,
+            };
+        }
+
+        ParseOnlyResult {
+            success: true,
+            program: parse_result.program,
+            errors: Vec::new(),
+        }
+    }
+
+    /// Checks source code without generating code.
+    ///
+    /// Runs parsing and HIR lowering to check for errors.
+    pub fn check(self: &mut Compiler, source: &str) -> CheckResult {
+        // Parse
+        let parse_result = parser::parse_file(source);
+        if parse_result.errors.len() > 0 {
+            let errors = convert_parse_errors(&parse_result.errors);
+            return CheckResult {
+                success: false,
+                errors: errors,
+            };
+        }
+
+        let program = match &parse_result.program {
+            &Option::Some(ref p) => p,
+            &Option::None => {
+                let mut errors = Vec::new();
+                errors.push(error::CompileError::new(
+                    error::CompilePhase::Parse,
+                    common::make_string("No program produced by parser"),
+                ));
+                return CheckResult {
+                    success: false,
+                    errors: errors,
+                };
+            }
+        };
+
+        // Lower to HIR
+        let lower_result = hir_lower::lower_program(program);
+        if has_error_diagnostics(&lower_result.diagnostics) {
+            let errors = convert_hir_diagnostics(&lower_result.diagnostics);
+            return CheckResult {
+                success: false,
+                errors: errors,
+            };
+        }
+
+        // Check succeeded
+        CheckResult {
+            success: true,
+            errors: Vec::new(),
+        }
+    }
+
+    /// Gets a reference to the string interner.
+    pub fn interner(self: &Self) -> &interner::StringInterner {
+        &self.interner
+    }
+
+    /// Gets a mutable reference to the string interner.
+    pub fn interner_mut(self: &mut Self) -> &mut interner::StringInterner {
+        &mut self.interner
+    }
+}
+
+// ============================================================
+// Additional Result Types
+// ============================================================
+
+/// Result of parse-only operation.
+pub struct ParseOnlyResult {
+    pub success: bool,
+    pub program: Option<ast::Program>,
+    pub errors: Vec<error::CompileError>,
+}
+
+/// Result of check-only operation.
+pub struct CheckResult {
+    pub success: bool,
+    pub errors: Vec<error::CompileError>,
+}
+
+// ============================================================
+// Error Conversion Functions
+// ============================================================
+
+/// Converts parser diagnostics to compile errors.
+fn convert_parse_errors(diagnostics: &Vec<parser_base::Diagnostic>) -> Vec<error::CompileError> {
+    let mut errors = Vec::new();
+    let mut i: usize = 0;
+    while i < diagnostics.len() {
+        let diag = &diagnostics[i];
+        errors.push(error::CompileError::with_span(
+            error::CompilePhase::Parse,
+            clone_string(&diag.message),
+            diag.span,
+        ));
+        i = i + 1;
+    }
+    errors
+}
+
+/// Converts HIR diagnostics to compile errors.
+fn convert_hir_diagnostics(diagnostics: &Vec<hir::Diagnostic>) -> Vec<error::CompileError> {
+    let mut errors = Vec::new();
+    let mut i: usize = 0;
+    while i < diagnostics.len() {
+        let diag = &diagnostics[i];
+        errors.push(error::CompileError::with_span(
+            error::CompilePhase::Lower,
+            clone_string(&diag.message),
+            diag.span,
+        ));
+        i = i + 1;
+    }
+    errors
+}
+
+/// Checks if any diagnostic is an error (not just a warning).
+fn has_error_diagnostics(diagnostics: &Vec<hir::Diagnostic>) -> bool {
+    let mut i: usize = 0;
+    while i < diagnostics.len() {
+        let diag = &diagnostics[i];
+        match &diag.level {
+            &hir::DiagnosticLevel::Error => return true,
+            &hir::DiagnosticLevel::Warning => {}
+            &hir::DiagnosticLevel::Note => {}
+            &hir::DiagnosticLevel::Help => {}
+        }
+        i = i + 1;
+    }
+    false
+}
+
+/// Converts type errors to compile errors.
+fn convert_type_errors(type_errors: &Vec<typeck::TypeError>) -> Vec<error::CompileError> {
+    let mut errors = Vec::new();
+    let mut i: usize = 0;
+    while i < type_errors.len() {
+        let te = &type_errors[i];
+        let message = type_error_message(&te.kind);
+        errors.push(error::CompileError::with_span(
+            error::CompilePhase::TypeCheck,
+            message,
+            te.span,
+        ));
+        i = i + 1;
+    }
+    errors
+}
+
+/// Converts a TypeErrorKind to a human-readable message.
+fn type_error_message(kind: &typeck::TypeErrorKind) -> String {
+    match kind {
+        &typeck::TypeErrorKind::TypeMismatch => common::make_string("type mismatch"),
+        &typeck::TypeErrorKind::CannotInfer => common::make_string("cannot infer type"),
+        &typeck::TypeErrorKind::UndefinedVariable => common::make_string("undefined variable"),
+        &typeck::TypeErrorKind::UndefinedFunction => common::make_string("undefined function"),
+        &typeck::TypeErrorKind::ArityMismatch => common::make_string("wrong number of arguments"),
+        &typeck::TypeErrorKind::NotCallable => common::make_string("expression is not callable"),
+        &typeck::TypeErrorKind::NotIndexable => common::make_string("expression is not indexable"),
+        &typeck::TypeErrorKind::NoSuchField => common::make_string("field does not exist"),
+        &typeck::TypeErrorKind::NoSuchMethod => common::make_string("method does not exist"),
+        &typeck::TypeErrorKind::CannotMutate => common::make_string("cannot mutate immutable value"),
+        &typeck::TypeErrorKind::InvalidLValue => common::make_string("invalid assignment target"),
+        &typeck::TypeErrorKind::MissingReturn => common::make_string("missing return value"),
+        &typeck::TypeErrorKind::TraitNotImplemented => common::make_string("type does not implement trait"),
+        &typeck::TypeErrorKind::UnhandledEffect => common::make_string("unhandled effect"),
+        &typeck::TypeErrorKind::InvalidControl => common::make_string("invalid break/continue"),
+        &typeck::TypeErrorKind::PatternMismatch => common::make_string("pattern type mismatch"),
+        &typeck::TypeErrorKind::NonExhaustive => common::make_string("non-exhaustive patterns"),
+        &typeck::TypeErrorKind::InfiniteType => common::make_string("infinite type (recursive without indirection)"),
+        &typeck::TypeErrorKind::InvalidCast => common::make_string("invalid cast"),
+    }
+}
+
+// ============================================================
+// Function Info Extraction
+// ============================================================
+
+/// Information extracted from a function item.
+pub struct FnInfo {
+    /// The DefId of the function.
+    pub def_id: hir_def::DefId,
+    /// The function name (as Symbol).
+    pub name: common::Symbol,
+    /// The return type.
+    pub return_ty: hir_ty::Type,
+    /// The span of the function.
+    pub span: common::Span,
+}
+
+/// Finds the function Item that corresponds to a given BodyId.
+fn find_fn_for_body(
+    items: &Vec<hir_lower_ctx::ItemEntry>,
+    target_body_id: hir_def::BodyId,
+) -> Option<FnInfo> {
+    let mut i: usize = 0;
+    while i < items.len() {
+        let entry = &items[i];
+        match &entry.item.kind {
+            &hir_item::ItemKind::Fn(ref fn_def) => {
+                match &fn_def.body_id {
+                    &Option::Some(ref bid) => {
+                        if bid.index == target_body_id.index {
+                            return Option::Some(FnInfo {
+                                def_id: entry.item.def_id,
+                                name: entry.item.name.symbol,
+                                return_ty: hir_ty::copy_type(&fn_def.sig.return_ty),
+                                span: entry.item.span,
+                            });
+                        }
+                    }
+                    &Option::None => {}
+                }
+            }
+            // Other item kinds don't have bodies in the same way
+            &hir_item::ItemKind::Struct(_) => {}
+            &hir_item::ItemKind::Enum(_) => {}
+            &hir_item::ItemKind::TypeAlias(_) => {}
+            &hir_item::ItemKind::Const(_) => {}
+            &hir_item::ItemKind::Static(_) => {}
+            &hir_item::ItemKind::Trait(_) => {}
+            &hir_item::ItemKind::Effect(_) => {}
+            &hir_item::ItemKind::Handler(_) => {}
+            &hir_item::ItemKind::Module(_) => {}
+            &hir_item::ItemKind::Impl(_) => {}
+            &hir_item::ItemKind::Macro(_) => {}
+            &hir_item::ItemKind::Foreign(_) => {}
+        }
+        i = i + 1;
+    }
+    Option::None
+}
+
+/// Resolves a Symbol to a String using the interner.
+fn resolve_symbol(interner: &interner::StringInterner, symbol: common::Symbol) -> String {
+    match interner.resolve(symbol) {
+        Option::Some(s) => clone_string(s),
+        Option::None => make_fn_name(symbol.index as usize),
+    }
+}
+
+// ============================================================
+// Helper Functions
+// ============================================================
+
+/// Clones a String.
+fn clone_string(s: &String) -> String {
+    let mut result = String::new();
+    let bytes = s.as_bytes();
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        result.push(bytes[i] as char);
+        i = i + 1;
+    }
+    result
+}
+
+/// Generates a function name from an index.
+fn make_fn_name(index: usize) -> String {
+    let mut name = common::make_string("fn_");
+    append_usize(&mut name, index);
+    name
+}
+
+/// Appends a usize as decimal digits to a string.
+fn append_usize(s: &mut String, n: usize) {
+    if n == 0 {
+        s.push('0');
+        return;
+    }
+
+    let mut digits: Vec<char> = Vec::new();
+    let mut val = n;
+    while val > 0 {
+        let digit = (val % 10) as u8;
+        digits.push((48u8 + digit) as char);
+        val = val / 10;
+    }
+
+    // Reverse digits
+    let len = digits.len();
+    let mut i: usize = 0;
+    while i < len {
+        s.push(digits[len - 1 - i]);
+        i = i + 1;
+    }
+}
+
+// ============================================================
+// Convenience Functions
+// ============================================================
+
+/// Compiles source code to LLVM IR using a fresh compiler.
+pub fn compile(source: &str) -> CompileResult {
+    let mut compiler = Compiler::new();
+    compiler.compile(source)
+}
+
+/// Checks source code without generating code.
+pub fn check(source: &str) -> CheckResult {
+    let mut compiler = Compiler::new();
+    compiler.check(source)
+}
+
+/// Parses source code and returns the AST.
+pub fn parse(source: &str) -> ParseOnlyResult {
+    let mut compiler = Compiler::new();
+    compiler.parse(source)
+}

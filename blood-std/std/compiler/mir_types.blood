@@ -1,0 +1,540 @@
+// Blood Self-Hosted Compiler - MIR Core Types
+//
+// This module defines the core value types used in MIR: places, operands,
+// rvalues, constants, and related structures.
+
+mod common;
+mod hir_def;
+mod hir_ty;
+mod mir_def;
+
+// ============================================================
+// Place - Memory Locations
+// ============================================================
+
+/// A place in memory that can be read from or written to.
+///
+/// Places consist of a local variable and a projection path that navigates
+/// from that local to a nested location (fields, array elements, etc.).
+pub struct Place {
+    /// The base local variable.
+    pub local: mir_def::MirLocalId,
+    /// Projections applied to the local to reach the final place.
+    pub projection: Vec<PlaceElem>,
+}
+
+impl Place {
+    /// Creates a place referring directly to a local variable.
+    pub fn local(local: mir_def::MirLocalId) -> Place {
+        Place { local, projection: Vec::new() }
+    }
+
+    /// Creates the return place (_0).
+    pub fn return_place() -> Place {
+        Place::local(mir_def::MirLocalId::return_place())
+    }
+
+    /// Adds a projection element to this place.
+    pub fn project(self: Place, elem: PlaceElem) -> Place {
+        let mut proj = self.projection;
+        proj.push(elem);
+        Place { local: self.local, projection: proj }
+    }
+
+    /// Returns true if this is just a local with no projections.
+    pub fn is_local(self: &Place) -> bool {
+        self.projection.len() == 0
+    }
+
+    /// Returns true if this is the return place with no projections.
+    pub fn is_return_place(self: &Place) -> bool {
+        self.local.is_return_place() && self.projection.len() == 0
+    }
+}
+
+// ============================================================
+// Place Projection Elements
+// ============================================================
+
+/// An element of a place projection path.
+///
+/// Projections describe how to navigate from a base place to a nested location.
+pub enum PlaceElem {
+    /// Dereference: `*place`
+    Deref,
+    /// Field access: `place.field`
+    /// The u32 is the field index.
+    Field(u32),
+    /// Array/slice indexing with a dynamic index: `place[local]`
+    Index(mir_def::MirLocalId),
+    /// Array/slice indexing with a constant index.
+    ConstantIndex {
+        /// The offset from the start (or end if from_end is true).
+        offset: u64,
+        /// Minimum length required for this access.
+        min_length: u64,
+        /// If true, count from the end instead of the start.
+        from_end: bool,
+    },
+    /// Subslice: `place[from..to]`
+    Subslice {
+        /// Start index (inclusive).
+        from: u64,
+        /// End index (exclusive, or offset from end if from_end).
+        to: u64,
+        /// If true, `to` is an offset from the end.
+        from_end: bool,
+    },
+    /// Enum variant downcast: `place as Variant`
+    /// The u32 is the variant index.
+    Downcast(u32),
+}
+
+// ============================================================
+// Operand - Read-Only Values
+// ============================================================
+
+/// An operand that provides a value for an operation.
+///
+/// Operands are read-only and represent either copying from a place,
+/// moving from a place, or using a constant.
+pub enum Operand {
+    /// Copy the value from a place (for Copy types).
+    Copy(Place),
+    /// Move the value from a place (transfers ownership).
+    Move(Place),
+    /// A constant value.
+    Constant(Constant),
+}
+
+impl Operand {
+    /// Creates a copy operand from a local.
+    pub fn copy_local(local: mir_def::MirLocalId) -> Operand {
+        Operand::Copy(Place::local(local))
+    }
+
+    /// Creates a move operand from a local.
+    pub fn move_local(local: mir_def::MirLocalId) -> Operand {
+        Operand::Move(Place::local(local))
+    }
+
+    /// Creates a constant operand.
+    pub fn constant(c: Constant) -> Operand {
+        Operand::Constant(c)
+    }
+}
+
+// ============================================================
+// Rvalue - Right-Hand Side Values
+// ============================================================
+
+/// A value that can be assigned to a place.
+///
+/// Rvalues represent the right-hand side of assignments and include
+/// operations like arithmetic, references, and aggregate construction.
+pub enum Rvalue {
+    /// Direct use of an operand.
+    Use(Operand),
+    /// Create a reference to a place.
+    Ref {
+        place: Place,
+        mutable: bool,
+    },
+    /// Create a raw pointer to a place.
+    AddressOf {
+        place: Place,
+        mutable: bool,
+    },
+    /// Binary operation.
+    BinaryOp {
+        op: MirBinOp,
+        left: Operand,
+        right: Operand,
+    },
+    /// Unary operation.
+    UnaryOp {
+        op: MirUnOp,
+        operand: Operand,
+    },
+    /// Type cast.
+    Cast {
+        operand: Operand,
+        target_ty: hir_ty::Type,
+    },
+    /// Aggregate construction (tuple, struct, array, enum variant).
+    Aggregate {
+        kind: AggregateKind,
+        operands: Vec<Operand>,
+    },
+    /// Get the discriminant of an enum.
+    Discriminant(Place),
+    /// Get the length of an array or slice.
+    Len(Place),
+    /// Convert an array reference to a slice.
+    ArrayToSlice {
+        array_ref: Operand,
+        array_len: u64,
+    },
+    /// Zero-initialize a value of the given type.
+    ZeroInit(hir_ty::Type),
+}
+
+// ============================================================
+// MIR Binary Operators
+// ============================================================
+
+/// Binary operators in MIR.
+///
+/// These are lower-level than HIR operators: logical operators are
+/// handled by control flow, and comparison operators return bool.
+pub enum MirBinOp {
+    /// Addition (+)
+    Add,
+    /// Subtraction (-)
+    Sub,
+    /// Multiplication (*)
+    Mul,
+    /// Division (/)
+    Div,
+    /// Remainder (%)
+    Rem,
+    /// Equality (==)
+    Eq,
+    /// Inequality (!=)
+    Ne,
+    /// Less than (<)
+    Lt,
+    /// Less than or equal (<=)
+    Le,
+    /// Greater than (>)
+    Gt,
+    /// Greater than or equal (>=)
+    Ge,
+    /// Bitwise and (&)
+    BitAnd,
+    /// Bitwise or (|)
+    BitOr,
+    /// Bitwise xor (^)
+    BitXor,
+    /// Left shift (<<)
+    Shl,
+    /// Right shift (>>)
+    Shr,
+    /// Wrapping addition (for overflow checking)
+    AddChecked,
+    /// Wrapping subtraction (for overflow checking)
+    SubChecked,
+    /// Wrapping multiplication (for overflow checking)
+    MulChecked,
+}
+
+impl MirBinOp {
+    /// Returns true if this is a comparison operator.
+    pub fn is_comparison(self: &MirBinOp) -> bool {
+        match self {
+            MirBinOp::Eq => true,
+            MirBinOp::Ne => true,
+            MirBinOp::Lt => true,
+            MirBinOp::Le => true,
+            MirBinOp::Gt => true,
+            MirBinOp::Ge => true,
+            MirBinOp::Add => false,
+            MirBinOp::Sub => false,
+            MirBinOp::Mul => false,
+            MirBinOp::Div => false,
+            MirBinOp::Rem => false,
+            MirBinOp::BitAnd => false,
+            MirBinOp::BitOr => false,
+            MirBinOp::BitXor => false,
+            MirBinOp::Shl => false,
+            MirBinOp::Shr => false,
+            MirBinOp::AddChecked => false,
+            MirBinOp::SubChecked => false,
+            MirBinOp::MulChecked => false,
+        }
+    }
+
+    /// Returns true if this is an arithmetic operator.
+    pub fn is_arithmetic(self: &MirBinOp) -> bool {
+        match self {
+            MirBinOp::Add => true,
+            MirBinOp::Sub => true,
+            MirBinOp::Mul => true,
+            MirBinOp::Div => true,
+            MirBinOp::Rem => true,
+            MirBinOp::AddChecked => true,
+            MirBinOp::SubChecked => true,
+            MirBinOp::MulChecked => true,
+            MirBinOp::Eq => false,
+            MirBinOp::Ne => false,
+            MirBinOp::Lt => false,
+            MirBinOp::Le => false,
+            MirBinOp::Gt => false,
+            MirBinOp::Ge => false,
+            MirBinOp::BitAnd => false,
+            MirBinOp::BitOr => false,
+            MirBinOp::BitXor => false,
+            MirBinOp::Shl => false,
+            MirBinOp::Shr => false,
+        }
+    }
+
+    /// Returns true if this is a bitwise operator.
+    pub fn is_bitwise(self: &MirBinOp) -> bool {
+        match self {
+            MirBinOp::BitAnd => true,
+            MirBinOp::BitOr => true,
+            MirBinOp::BitXor => true,
+            MirBinOp::Shl => true,
+            MirBinOp::Shr => true,
+            MirBinOp::Add => false,
+            MirBinOp::Sub => false,
+            MirBinOp::Mul => false,
+            MirBinOp::Div => false,
+            MirBinOp::Rem => false,
+            MirBinOp::Eq => false,
+            MirBinOp::Ne => false,
+            MirBinOp::Lt => false,
+            MirBinOp::Le => false,
+            MirBinOp::Gt => false,
+            MirBinOp::Ge => false,
+            MirBinOp::AddChecked => false,
+            MirBinOp::SubChecked => false,
+            MirBinOp::MulChecked => false,
+        }
+    }
+
+    /// Returns true if this is a checked arithmetic operator.
+    pub fn is_checked(self: &MirBinOp) -> bool {
+        match self {
+            MirBinOp::AddChecked => true,
+            MirBinOp::SubChecked => true,
+            MirBinOp::MulChecked => true,
+            MirBinOp::Add => false,
+            MirBinOp::Sub => false,
+            MirBinOp::Mul => false,
+            MirBinOp::Div => false,
+            MirBinOp::Rem => false,
+            MirBinOp::Eq => false,
+            MirBinOp::Ne => false,
+            MirBinOp::Lt => false,
+            MirBinOp::Le => false,
+            MirBinOp::Gt => false,
+            MirBinOp::Ge => false,
+            MirBinOp::BitAnd => false,
+            MirBinOp::BitOr => false,
+            MirBinOp::BitXor => false,
+            MirBinOp::Shl => false,
+            MirBinOp::Shr => false,
+        }
+    }
+}
+
+// ============================================================
+// MIR Unary Operators
+// ============================================================
+
+/// Unary operators in MIR.
+pub enum MirUnOp {
+    /// Negation (-)
+    Neg,
+    /// Bitwise/logical not (!)
+    Not,
+}
+
+// ============================================================
+// Aggregate Kind
+// ============================================================
+
+/// The kind of aggregate being constructed.
+pub enum AggregateKind {
+    /// A tuple.
+    Tuple,
+    /// An array of the given element type.
+    Array(hir_ty::Type),
+    /// An ADT (struct or enum variant).
+    Adt {
+        /// The DefId of the struct or enum.
+        def_id: hir_def::DefId,
+        /// The variant index (0 for structs, variant index for enums).
+        variant_idx: u32,
+        /// Type arguments for generics.
+        type_args: Vec<hir_ty::Type>,
+    },
+    /// An extensible record.
+    Record,
+    /// A closure.
+    Closure {
+        /// The DefId of the closure.
+        def_id: hir_def::DefId,
+    },
+    /// A range value.
+    Range {
+        /// The element type of the range.
+        element: hir_ty::Type,
+        /// Whether this is an inclusive range.
+        inclusive: bool,
+    },
+}
+
+// ============================================================
+// Constant
+// ============================================================
+
+/// A compile-time constant value.
+pub struct Constant {
+    /// The type of this constant.
+    pub ty: hir_ty::Type,
+    /// The kind of constant.
+    pub kind: ConstantKind,
+}
+
+impl Constant {
+    /// Creates a new constant.
+    pub fn new(ty: hir_ty::Type, kind: ConstantKind) -> Constant {
+        Constant { ty, kind }
+    }
+
+    /// Creates a boolean constant.
+    pub fn bool_val(b: bool) -> Constant {
+        Constant {
+            ty: hir_ty::Type::bool_ty(),
+            kind: ConstantKind::Bool(b),
+        }
+    }
+
+    /// Creates an i32 constant.
+    pub fn i32_val(v: i64) -> Constant {
+        Constant {
+            ty: hir_ty::Type::i32_ty(),
+            kind: ConstantKind::Int(v as i128),
+        }
+    }
+
+    /// Creates a u64 constant.
+    pub fn u64_val(v: u64) -> Constant {
+        Constant {
+            ty: hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::U64)),
+            kind: ConstantKind::Uint(v as u128),
+        }
+    }
+
+    /// Creates a usize constant.
+    pub fn usize_val(v: u64) -> Constant {
+        Constant {
+            ty: hir_ty::Type::usize_ty(),
+            kind: ConstantKind::Uint(v as u128),
+        }
+    }
+
+    /// Creates a unit constant.
+    pub fn unit() -> Constant {
+        Constant {
+            ty: hir_ty::Type::unit(),
+            kind: ConstantKind::Unit,
+        }
+    }
+
+    /// Creates a string constant.
+    pub fn string(s: String) -> Constant {
+        Constant {
+            ty: hir_ty::Type::new(hir_ty::TypeKind::Ref {
+                inner: Box::new(hir_ty::Type::str_ty()),
+                mutable: false,
+            }),
+            kind: ConstantKind::String(s),
+        }
+    }
+}
+
+// ============================================================
+// Constant Kind
+// ============================================================
+
+/// The kind of a constant value.
+pub enum ConstantKind {
+    /// A signed integer value.
+    Int(i128),
+    /// An unsigned integer value.
+    Uint(u128),
+    /// A floating-point value (stored as bits).
+    Float(u64),
+    /// A boolean value.
+    Bool(bool),
+    /// A character value.
+    Char(char),
+    /// A string value.
+    String(String),
+    /// A byte string value.
+    ByteString(Vec<u8>),
+    /// The unit value ().
+    Unit,
+    /// A reference to a function definition.
+    FnDef(hir_def::DefId),
+    /// A reference to a const definition.
+    ConstDef(hir_def::DefId),
+    /// A reference to a static definition.
+    StaticDef(hir_def::DefId),
+    /// A zero-sized type marker.
+    ZeroSized,
+}
+
+// ============================================================
+// Switch Targets
+// ============================================================
+
+/// Targets for a switch terminator.
+///
+/// Maps discriminant values to target basic blocks, with a default
+/// "otherwise" target for unmatched values.
+pub struct SwitchTargets {
+    /// Mapping from values to target blocks.
+    pub targets: Vec<SwitchTarget>,
+    /// The default target if no value matches.
+    pub otherwise: mir_def::BasicBlockId,
+}
+
+impl SwitchTargets {
+    /// Creates new switch targets.
+    pub fn new(targets: Vec<SwitchTarget>, otherwise: mir_def::BasicBlockId) -> SwitchTargets {
+        SwitchTargets { targets, otherwise }
+    }
+
+    /// Creates switch targets for a boolean condition.
+    pub fn bool_switch(
+        false_block: mir_def::BasicBlockId,
+        true_block: mir_def::BasicBlockId,
+    ) -> SwitchTargets {
+        let mut targets = Vec::new();
+        targets.push(SwitchTarget { value: 0, target: false_block });
+        targets.push(SwitchTarget { value: 1, target: true_block });
+        SwitchTargets { targets, otherwise: false_block }
+    }
+
+    /// Returns all target blocks (including otherwise).
+    pub fn all_targets(self: &SwitchTargets) -> Vec<mir_def::BasicBlockId> {
+        let mut result = Vec::new();
+        let mut i: usize = 0;
+        while i < self.targets.len() {
+            result.push(self.targets[i].target);
+            i = i + 1;
+        }
+        result.push(self.otherwise);
+        result
+    }
+}
+
+/// A single target in a switch.
+pub struct SwitchTarget {
+    /// The discriminant value.
+    pub value: u128,
+    /// The target block.
+    pub target: mir_def::BasicBlockId,
+}
+
+impl SwitchTarget {
+    /// Creates a new switch target.
+    pub fn new(value: u128, target: mir_def::BasicBlockId) -> SwitchTarget {
+        SwitchTarget { value, target }
+    }
+}

@@ -1,0 +1,66 @@
+// Blood Self-Hosted Compiler - HIR Function Body Lowering
+//
+// This module handles lowering function bodies to HIR.
+// Separated from hir_lower_expr.blood for better organization.
+
+mod common;
+mod ast;
+mod hir_def;
+mod hir_ty;
+mod hir_expr;
+mod hir_item;
+mod hir_lower_ctx;
+mod hir_lower_type;
+mod hir_lower_expr;
+
+// ============================================================
+// Body Lowering
+// ============================================================
+
+/// Lower a function body.
+pub fn lower_fn_body(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    body_id: hir_def::BodyId,
+    params: &Vec<hir_item::FnParam>,
+    body_expr: &Option<ast::Expr>,
+    body_block: &Option<ast::Block>,
+) -> hir_expr::Body {
+    // Create locals for parameters
+    let mut locals: Vec<hir_expr::Local> = Vec::new();
+    let mut i: usize = 0;
+    while i < params.len() {
+        let p = &params[i];
+        let local_id = hir_def::LocalId::new(i as u32);
+        let local = hir_expr::Local::new(
+            local_id,
+            p.name,
+            hir_ty::copy_type(&p.ty),
+            p.mutable,
+            p.span,
+        );
+        locals.push(local);
+        i = i + 1;
+    }
+
+    let param_count = params.len() as u32;
+
+    // Lower the body expression
+    let expr = match body_expr {
+        &Some(ref e) => hir_lower_expr::lower_expr(ctx, e),
+        &None => {
+            match body_block {
+                &Some(ref block) => hir_lower_expr::lower_block_to_expr(ctx, block),
+                &None => {
+                    // No body - create unit expression
+                    hir_expr::Expr::new(
+                        hir_expr::ExprKind::Tuple(Vec::new()),
+                        hir_ty::Type::unit(),
+                        common::Span::dummy(),
+                    )
+                }
+            }
+        }
+    };
+
+    hir_expr::Body::new(body_id, locals, param_count, expr)
+}

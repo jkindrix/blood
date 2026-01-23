@@ -1,0 +1,210 @@
+// Blood Self-Hosted Compiler - Constant Expression Evaluation
+//
+// This module provides compile-time evaluation of constant expressions,
+// primarily used for array sizes and repeat counts.
+//
+// Supported expressions:
+// - Integer literals
+// - Basic arithmetic: +, -, *, /, %
+// - Unary negation
+// - Parenthesized expressions
+
+mod common;
+mod ast;
+
+// ============================================================
+// Const Evaluation Result
+// ============================================================
+
+/// Result of evaluating a const expression.
+pub enum ConstValue {
+    /// A signed integer value.
+    Int(i64),
+    /// A unsigned integer value.
+    Uint(u64),
+    /// Evaluation failed or expression is not const.
+    Error,
+}
+
+impl ConstValue {
+    /// Creates an integer const value.
+    pub fn int(value: i64) -> ConstValue {
+        ConstValue::Int(value)
+    }
+
+    /// Creates an unsigned integer const value.
+    pub fn uint(value: u64) -> ConstValue {
+        ConstValue::Uint(value)
+    }
+
+    /// Creates an error const value.
+    pub fn error() -> ConstValue {
+        ConstValue::Error
+    }
+
+    /// Returns true if this is an error.
+    pub fn is_error(self: &ConstValue) -> bool {
+        match self {
+            &ConstValue::Error => true,
+            &ConstValue::Int(_) => false,
+            &ConstValue::Uint(_) => false,
+        }
+    }
+
+    /// Converts to usize for array sizes. Returns 0 on error.
+    pub fn to_usize(self: &ConstValue) -> usize {
+        match self {
+            &ConstValue::Int(v) => {
+                if v < 0 {
+                    0 // Negative sizes not allowed
+                } else {
+                    v as usize
+                }
+            }
+            &ConstValue::Uint(v) => v as usize,
+            &ConstValue::Error => 0,
+        }
+    }
+
+    /// Converts to u64 for HIR array sizes. Returns 0 on error.
+    pub fn to_u64(self: &ConstValue) -> u64 {
+        match self {
+            &ConstValue::Int(v) => {
+                if v < 0 {
+                    0 // Negative sizes not allowed
+                } else {
+                    v as u64
+                }
+            }
+            &ConstValue::Uint(v) => v,
+            &ConstValue::Error => 0,
+        }
+    }
+
+    /// Converts to i64 for general const integer usage.
+    pub fn to_i64(self: &ConstValue) -> i64 {
+        match self {
+            &ConstValue::Int(v) => v,
+            &ConstValue::Uint(v) => v as i64,
+            &ConstValue::Error => 0,
+        }
+    }
+}
+
+// ============================================================
+// Const Expression Evaluation
+// ============================================================
+
+/// Evaluate a constant expression.
+/// Returns ConstValue::Error if the expression cannot be evaluated at compile time.
+pub fn eval_const_expr(expr: &ast::Expr) -> ConstValue {
+    match &expr.kind {
+        &ast::ExprKind::Literal(ref lit) => eval_literal(lit),
+        &ast::ExprKind::Binary { ref left, op, ref right } => {
+            eval_binary(left.as_ref(), op, right.as_ref())
+        }
+        &ast::ExprKind::Unary { op, ref operand } => {
+            eval_unary(op, operand.as_ref())
+        }
+        &ast::ExprKind::Paren(ref inner) => eval_const_expr(inner.as_ref()),
+        // Other expressions cannot be evaluated at compile time
+        _ => ConstValue::error(),
+    }
+}
+
+/// Evaluate a literal expression.
+fn eval_literal(lit: &ast::Literal) -> ConstValue {
+    match &lit.kind {
+        &ast::LiteralKind::Int { val, suffix: _ } => {
+            // val is u128, convert to i64 (may truncate for very large values)
+            ConstValue::int(val as i64)
+        }
+        // Other literals not supported for const evaluation
+        _ => ConstValue::error(),
+    }
+}
+
+/// Evaluate a binary expression.
+fn eval_binary(left: &ast::Expr, bin_op: common::BinOp, right: &ast::Expr) -> ConstValue {
+    let left_val = eval_const_expr(left);
+    let right_val = eval_const_expr(right);
+
+    if left_val.is_error() || right_val.is_error() {
+        return ConstValue::error();
+    }
+
+    let l = left_val.to_i64();
+    let r = right_val.to_i64();
+
+    match bin_op {
+        common::BinOp::Add => ConstValue::int(l + r),
+        common::BinOp::Sub => ConstValue::int(l - r),
+        common::BinOp::Mul => ConstValue::int(l * r),
+        common::BinOp::Div => {
+            if r == 0 {
+                ConstValue::error() // Division by zero
+            } else {
+                ConstValue::int(l / r)
+            }
+        }
+        common::BinOp::Rem => {
+            if r == 0 {
+                ConstValue::error() // Modulo by zero
+            } else {
+                ConstValue::int(l % r)
+            }
+        }
+        common::BinOp::BitAnd => ConstValue::int(l & r),
+        common::BinOp::BitOr => ConstValue::int(l | r),
+        common::BinOp::BitXor => ConstValue::int(l ^ r),
+        // Shift operations have complex type semantics, not supported in const eval
+        common::BinOp::Shl => ConstValue::error(),
+        common::BinOp::Shr => ConstValue::error(),
+        // Comparison and logical ops return bool, not int
+        common::BinOp::Eq => ConstValue::error(),
+        common::BinOp::Ne => ConstValue::error(),
+        common::BinOp::Lt => ConstValue::error(),
+        common::BinOp::Le => ConstValue::error(),
+        common::BinOp::Gt => ConstValue::error(),
+        common::BinOp::Ge => ConstValue::error(),
+        common::BinOp::And => ConstValue::error(),
+        common::BinOp::Or => ConstValue::error(),
+        common::BinOp::Pipe => ConstValue::error(),
+    }
+}
+
+/// Evaluate a unary expression.
+fn eval_unary(unary_op: common::UnaryOp, operand: &ast::Expr) -> ConstValue {
+    let val = eval_const_expr(operand);
+    if val.is_error() {
+        return ConstValue::error();
+    }
+
+    let v = val.to_i64();
+
+    match unary_op {
+        common::UnaryOp::Neg => ConstValue::int(-v),
+        common::UnaryOp::Not => ConstValue::int(!v),
+        common::UnaryOp::Deref => ConstValue::error(),
+        common::UnaryOp::Ref => ConstValue::error(),
+        common::UnaryOp::RefMut => ConstValue::error(),
+    }
+}
+
+// ============================================================
+// Helper for Array Size Evaluation
+// ============================================================
+
+/// Evaluate an expression and return as usize for array sizes.
+/// Returns 0 if evaluation fails.
+pub fn eval_array_size(expr: &ast::Expr) -> usize {
+    let val = eval_const_expr(expr);
+    val.to_usize()
+}
+
+/// Evaluate an expression and return as u64 for HIR array sizes.
+/// Returns 0 if evaluation fails.
+pub fn eval_array_size_u64(expr: &ast::Expr) -> u64 {
+    let val = eval_const_expr(expr);
+    val.to_u64()
+}

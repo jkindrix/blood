@@ -1,0 +1,405 @@
+// Blood Self-Hosted Compiler - MIR Pattern Lowering
+//
+// This module handles lowering HIR patterns to MIR. Patterns appear in
+// let bindings, match arms, and function parameters.
+
+mod common;
+mod hir_def;
+mod hir_ty;
+mod hir_expr;
+mod mir_def;
+mod mir_types;
+mod mir_stmt;
+mod mir_term;
+mod mir_body;
+mod mir_lower_ctx;
+mod mir_lower_util;
+
+// ============================================================
+// Irrefutable Pattern Lowering
+// ============================================================
+
+/// Lowers an irrefutable pattern, binding values to locals.
+///
+/// This is used for let bindings and function parameters where the pattern
+/// is guaranteed to match.
+pub fn lower_irrefutable_pattern(
+    ctx: &mut mir_lower_ctx::MirLowerCtx,
+    pattern: &hir_expr::Pattern,
+    source: mir_types::Place,
+    span: common::Span,
+) {
+    match &pattern.kind {
+        &hir_expr::PatternKind::Wildcard => {
+            // Wildcard: nothing to bind
+        }
+        &hir_expr::PatternKind::Rest => {
+            // Rest: nothing to bind here
+        }
+        &hir_expr::PatternKind::Binding { local_id, name: _, mode, ref subpattern } => {
+            lower_binding_pattern(ctx, local_id, mode, &source, &pattern.ty, span);
+            match subpattern {
+                &Option::Some(ref sub) => {
+                    lower_irrefutable_pattern(ctx, sub.as_ref(), source, span);
+                }
+                &Option::None => {}
+            }
+        }
+        &hir_expr::PatternKind::Tuple(ref patterns) => {
+            lower_tuple_pattern(ctx, patterns, source, span);
+        }
+        &hir_expr::PatternKind::Struct { path: _, ref fields, has_rest: _ } => {
+            lower_struct_pattern(ctx, fields, source, span);
+        }
+        &hir_expr::PatternKind::TupleStruct { path: _, ref fields } => {
+            lower_tuple_struct_pattern(ctx, fields, source, span);
+        }
+        &hir_expr::PatternKind::Ref { mutable: _, ref inner } => {
+            // Dereference and continue with inner pattern
+            let deref_place = source.project(mir_types::PlaceElem::Deref);
+            lower_irrefutable_pattern(ctx, inner.as_ref(), deref_place, span);
+        }
+        &hir_expr::PatternKind::Slice { ref prefix, ref rest, ref suffix } => {
+            lower_slice_pattern(ctx, prefix, rest, suffix, source, span);
+        }
+        &hir_expr::PatternKind::Or(_) => {
+            // Or patterns in irrefutable position: use first alternative
+            // This should have been caught by type checking
+        }
+        &hir_expr::PatternKind::Literal(_) => {
+            // Literal in irrefutable position: should have been caught
+        }
+        &hir_expr::PatternKind::Range { start: _, end_val: _, inclusive: _ } => {
+            // Range in irrefutable position: should have been caught
+        }
+        &hir_expr::PatternKind::Path(_) => {
+            // Path in irrefutable position: unit variant, nothing to bind
+        }
+        &hir_expr::PatternKind::Error => {
+            // Error pattern: nothing to do
+        }
+    }
+}
+
+/// Lowers a binding pattern (name, mut name, ref name, ref mut name).
+fn lower_binding_pattern(
+    ctx: &mut mir_lower_ctx::MirLowerCtx,
+    local_id: hir_def::LocalId,
+    mode: hir_expr::BindingMode,
+    source: &mir_types::Place,
+    ty: &hir_ty::Type,
+    span: common::Span,
+) {
+    // Create MIR local for this binding
+    let mir_local = ctx.new_var(
+        ty.clone(),
+        common::make_string("_var"),
+        true,
+        span,
+    );
+    ctx.register_local(local_id, mir_local);
+
+    // Generate assignment based on binding mode
+    let dest = mir_types::Place::local(mir_local);
+    match mode {
+        hir_expr::BindingMode::ByValue => {
+            // Copy or move the value
+            let operand = mir_lower_util::operand_from_place(source.clone(), ty);
+            ctx.emit_assign(
+                dest,
+                mir_types::Rvalue::Use(operand),
+                span,
+            );
+        }
+        hir_expr::BindingMode::ByRef => {
+            // Take a shared reference
+            ctx.emit_assign(
+                dest,
+                mir_types::Rvalue::Ref { place: source.clone(), mutable: false },
+                span,
+            );
+        }
+        hir_expr::BindingMode::ByMutRef => {
+            // Take a mutable reference
+            ctx.emit_assign(
+                dest,
+                mir_types::Rvalue::Ref { place: source.clone(), mutable: true },
+                span,
+            );
+        }
+    }
+}
+
+/// Lowers a tuple pattern (a, b, c).
+fn lower_tuple_pattern(
+    ctx: &mut mir_lower_ctx::MirLowerCtx,
+    patterns: &Vec<hir_expr::Pattern>,
+    source: mir_types::Place,
+    span: common::Span,
+) {
+    let mut i: usize = 0;
+    while i < patterns.len() {
+        let field_place = source.clone().project(mir_types::PlaceElem::Field(i as u32));
+        lower_irrefutable_pattern(ctx, &patterns[i], field_place, span);
+        i = i + 1;
+    }
+}
+
+/// Lowers a struct pattern { field: pat, ... }.
+fn lower_struct_pattern(
+    ctx: &mut mir_lower_ctx::MirLowerCtx,
+    fields: &Vec<hir_expr::FieldPattern>,
+    source: mir_types::Place,
+    span: common::Span,
+) {
+    let mut i: usize = 0;
+    while i < fields.len() {
+        let field = &fields[i];
+        // Use resolved field index if available, otherwise use position
+        let field_idx = match field.field_idx {
+            Option::Some(idx) => idx,
+            Option::None => i as u32,
+        };
+        let field_place = source.clone().project(mir_types::PlaceElem::Field(field_idx));
+        lower_irrefutable_pattern(ctx, &field.pattern, field_place, span);
+        i = i + 1;
+    }
+}
+
+/// Lowers a tuple struct pattern Path(a, b, c).
+fn lower_tuple_struct_pattern(
+    ctx: &mut mir_lower_ctx::MirLowerCtx,
+    fields: &Vec<hir_expr::Pattern>,
+    source: mir_types::Place,
+    span: common::Span,
+) {
+    let mut i: usize = 0;
+    while i < fields.len() {
+        let field_place = source.clone().project(mir_types::PlaceElem::Field(i as u32));
+        lower_irrefutable_pattern(ctx, &fields[i], field_place, span);
+        i = i + 1;
+    }
+}
+
+/// Lowers a slice pattern [a, b, .., c, d].
+fn lower_slice_pattern(
+    ctx: &mut mir_lower_ctx::MirLowerCtx,
+    prefix: &Vec<hir_expr::Pattern>,
+    _rest: &Option<Box<hir_expr::Pattern>>,
+    suffix: &Vec<hir_expr::Pattern>,
+    source: mir_types::Place,
+    span: common::Span,
+) {
+    // Lower prefix patterns with constant indices from start
+    let mut i: usize = 0;
+    while i < prefix.len() {
+        let elem_place = source.clone().project(
+            mir_types::PlaceElem::ConstantIndex {
+                offset: i as u64,
+                min_length: (prefix.len() + suffix.len()) as u64,
+                from_end: false,
+            }
+        );
+        lower_irrefutable_pattern(ctx, &prefix[i], elem_place, span);
+        i = i + 1;
+    }
+
+    // Lower suffix patterns with constant indices from end
+    let mut j: usize = 0;
+    while j < suffix.len() {
+        let elem_place = source.clone().project(
+            mir_types::PlaceElem::ConstantIndex {
+                offset: (suffix.len() - j) as u64,
+                min_length: (prefix.len() + suffix.len()) as u64,
+                from_end: true,
+            }
+        );
+        lower_irrefutable_pattern(ctx, &suffix[j], elem_place, span);
+        j = j + 1;
+    }
+}
+
+// ============================================================
+// Refutable Pattern Matching (for match expressions)
+// ============================================================
+
+/// Result of testing a refutable pattern.
+pub struct PatternTest {
+    /// The operand to test.
+    pub discriminant: mir_types::Operand,
+    /// The expected value for a match.
+    pub expected: u128,
+}
+
+/// Generates the test for a refutable pattern.
+///
+/// Returns None if the pattern is irrefutable.
+pub fn pattern_test(
+    ctx: &mut mir_lower_ctx::MirLowerCtx,
+    pattern: &hir_expr::Pattern,
+    source: &mir_types::Place,
+    span: common::Span,
+) -> Option<PatternTest> {
+    match &pattern.kind {
+        &hir_expr::PatternKind::Wildcard => Option::None,
+        &hir_expr::PatternKind::Rest => Option::None,
+        &hir_expr::PatternKind::Binding { local_id: _, name: _, mode: _, subpattern: _ } => Option::None,
+        &hir_expr::PatternKind::Tuple(_) => Option::None,
+        &hir_expr::PatternKind::Struct { path: _, fields: _, has_rest: _ } => Option::None,
+        &hir_expr::PatternKind::Ref { mutable: _, inner: _ } => Option::None,
+        &hir_expr::PatternKind::Error => Option::None,
+
+        &hir_expr::PatternKind::Literal(ref lit) => {
+            // Compare against literal value
+            let const_val = mir_lower_util::lower_literal(lit, &pattern.ty);
+            let expected = extract_constant_value(&const_val.kind);
+            let temp = ctx.new_temp(pattern.ty.clone(), span);
+            ctx.emit_assign(
+                mir_types::Place::local(temp),
+                mir_types::Rvalue::Use(mir_types::Operand::Copy(source.clone())),
+                span,
+            );
+            Option::Some(PatternTest {
+                discriminant: mir_types::Operand::Copy(mir_types::Place::local(temp)),
+                expected: expected,
+            })
+        }
+
+        &hir_expr::PatternKind::TupleStruct { ref path, fields: _ } => {
+            // For enum variants, test the discriminant
+            let discr_temp = ctx.new_temp(hir_ty::Type::usize_ty(), span);
+            ctx.emit_assign(
+                mir_types::Place::local(discr_temp),
+                mir_types::Rvalue::Discriminant(source.clone()),
+                span,
+            );
+            // Get variant index from path
+            let variant_idx = get_variant_index_from_path(path);
+            Option::Some(PatternTest {
+                discriminant: mir_types::Operand::Copy(mir_types::Place::local(discr_temp)),
+                expected: variant_idx as u128,
+            })
+        }
+
+        &hir_expr::PatternKind::Path(ref path) => {
+            // For unit variants or constants
+            let discr_temp = ctx.new_temp(hir_ty::Type::usize_ty(), span);
+            ctx.emit_assign(
+                mir_types::Place::local(discr_temp),
+                mir_types::Rvalue::Discriminant(source.clone()),
+                span,
+            );
+            let variant_idx = get_variant_index_from_path(path);
+            Option::Some(PatternTest {
+                discriminant: mir_types::Operand::Copy(mir_types::Place::local(discr_temp)),
+                expected: variant_idx as u128,
+            })
+        }
+
+        &hir_expr::PatternKind::Slice { prefix: _, rest: _, suffix: _ } => {
+            // Slice patterns are complex - simplified for now
+            Option::None
+        }
+
+        &hir_expr::PatternKind::Or(_) => {
+            // Or patterns need multiple tests
+            Option::None
+        }
+
+        &hir_expr::PatternKind::Range { start: _, end_val: _, inclusive: _ } => {
+            // Range patterns need bounds checking
+            Option::None
+        }
+    }
+}
+
+/// Extracts a numeric value from a constant.
+fn extract_constant_value(kind: &mir_types::ConstantKind) -> u128 {
+    match kind {
+        &mir_types::ConstantKind::Int(v) => v as u128,
+        &mir_types::ConstantKind::Uint(v) => v,
+        &mir_types::ConstantKind::Bool(b) => if b { 1 } else { 0 },
+        &mir_types::ConstantKind::Char(c) => c as u128,
+        &mir_types::ConstantKind::Float(_) => 0,
+        &mir_types::ConstantKind::String(_) => 0,
+        &mir_types::ConstantKind::ByteString(_) => 0,
+        &mir_types::ConstantKind::Unit => 0,
+        &mir_types::ConstantKind::FnDef(_) => 0,
+        &mir_types::ConstantKind::ConstDef(_) => 0,
+        &mir_types::ConstantKind::StaticDef(_) => 0,
+        &mir_types::ConstantKind::ZeroSized => 0,
+    }
+}
+
+/// Gets the variant index from a resolved path (for enum variants).
+fn get_variant_index_from_path(path: &hir_def::ResolvedPath) -> u32 {
+    // Use the variant_index stored in the ResolvedPath if available
+    match path.variant_index {
+        Option::Some(idx) => idx,
+        Option::None => {
+            // Fallback for paths without variant_index set
+            // This shouldn't happen for properly resolved variant paths,
+            // but provides backwards compatibility
+            path.def_id.index
+        }
+    }
+}
+
+// ============================================================
+// Match Arm Lowering
+// ============================================================
+
+/// Information about a lowered match arm.
+pub struct LoweredArm {
+    /// Block where the arm body starts.
+    pub body_block: mir_def::BasicBlockId,
+    /// Optional guard block.
+    pub guard_block: Option<mir_def::BasicBlockId>,
+    /// Pattern test info (if refutable).
+    pub test: Option<PatternTest>,
+}
+
+/// Lowers a match arm's pattern, creating the necessary blocks.
+pub fn lower_match_arm(
+    ctx: &mut mir_lower_ctx::MirLowerCtx,
+    arm: &hir_expr::MatchArm,
+    scrutinee: &mir_types::Place,
+    span: common::Span,
+) -> LoweredArm {
+    // Create body block
+    let body_block = ctx.new_block();
+
+    // Get pattern test
+    let test = pattern_test(ctx, &arm.pattern, scrutinee, span);
+
+    // Handle guard if present
+    let guard_block = match &arm.guard {
+        &Option::Some(_) => Option::Some(ctx.new_block()),
+        &Option::None => Option::None,
+    };
+
+    LoweredArm {
+        body_block: body_block,
+        guard_block: guard_block,
+        test: test,
+    }
+}
+
+/// Binds the pattern variables for a match arm.
+pub fn bind_arm_pattern(
+    ctx: &mut mir_lower_ctx::MirLowerCtx,
+    pattern: &hir_expr::Pattern,
+    scrutinee: mir_types::Place,
+    span: common::Span,
+) {
+    // For enum variants, downcast first
+    let source = match &pattern.kind {
+        &hir_expr::PatternKind::TupleStruct { ref path, fields: _ } => {
+            let variant_idx = get_variant_index_from_path(path);
+            scrutinee.project(mir_types::PlaceElem::Downcast(variant_idx))
+        }
+        _ => scrutinee,
+    };
+
+    lower_irrefutable_pattern(ctx, pattern, source, span);
+}

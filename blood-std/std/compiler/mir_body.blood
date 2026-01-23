@@ -1,0 +1,502 @@
+// Blood Self-Hosted Compiler - MIR Body
+//
+// This module defines the MIR function body structure and related types.
+// A MirBody contains the control flow graph and local variable declarations
+// for a single function or closure.
+
+mod common;
+mod hir_def;
+mod hir_ty;
+mod mir_def;
+mod mir_types;
+mod mir_stmt;
+mod mir_term;
+
+// ============================================================
+// MIR Body
+// ============================================================
+
+/// A MIR function body.
+///
+/// Contains all the information needed to compile a function:
+/// - Local variable declarations (including return place and parameters)
+/// - Basic blocks forming the control flow graph
+/// - Debug and source information
+pub struct MirBody {
+    /// The DefId of the function this body belongs to.
+    pub def_id: hir_def::DefId,
+    /// All local variables in this function.
+    pub locals: Vec<MirLocal>,
+    /// Number of function parameters (excludes return place).
+    pub param_count: u32,
+    /// The basic blocks forming the control flow graph.
+    pub basic_blocks: Vec<BasicBlockData>,
+    /// The source span of the function.
+    pub span: common::Span,
+    /// Effect row for this function (if it has effects).
+    pub effect_row: Option<hir_ty::EffectRow>,
+}
+
+impl MirBody {
+    /// Creates a new empty MIR body.
+    pub fn new(def_id: hir_def::DefId, span: common::Span) -> MirBody {
+        MirBody {
+            def_id: def_id,
+            locals: Vec::new(),
+            param_count: 0,
+            basic_blocks: Vec::new(),
+            span: span,
+            effect_row: Option::None,
+        }
+    }
+
+    /// Returns the return place local.
+    pub fn return_local(self: &MirBody) -> &MirLocal {
+        &self.locals[0]
+    }
+
+    /// Returns the type of the return place.
+    pub fn return_ty(self: &MirBody) -> &hir_ty::Type {
+        &self.locals[0].ty
+    }
+
+    /// Returns the number of locals (including return place).
+    pub fn local_count(self: &MirBody) -> usize {
+        self.locals.len()
+    }
+
+    /// Returns the number of basic blocks.
+    pub fn block_count(self: &MirBody) -> usize {
+        self.basic_blocks.len()
+    }
+
+    /// Gets a local by its ID.
+    pub fn get_local(self: &MirBody, id: mir_def::MirLocalId) -> &MirLocal {
+        &self.locals[id.as_usize()]
+    }
+
+    /// Gets a basic block by its ID.
+    pub fn get_block(self: &MirBody, id: mir_def::BasicBlockId) -> &BasicBlockData {
+        &self.basic_blocks[id.as_usize()]
+    }
+
+    /// Gets a mutable reference to a basic block.
+    pub fn get_block_mut(self: &mut MirBody, id: mir_def::BasicBlockId) -> &mut BasicBlockData {
+        &mut self.basic_blocks[id.as_usize()]
+    }
+
+    /// Allocates a new local and returns its ID.
+    pub fn new_local(
+        self: &mut MirBody,
+        ty: hir_ty::Type,
+        kind: mir_def::LocalKind,
+        name: Option<String>,
+        span: common::Span,
+    ) -> mir_def::MirLocalId {
+        let id = mir_def::MirLocalId::new(self.locals.len() as u32);
+        let local = MirLocal {
+            id: id,
+            ty: ty,
+            kind: kind,
+            mutable: false,
+            name: name,
+            span: span,
+        };
+        self.locals.push(local);
+        id
+    }
+
+    /// Allocates a new temporary local.
+    pub fn new_temp(self: &mut MirBody, ty: hir_ty::Type, span: common::Span) -> mir_def::MirLocalId {
+        self.new_local(ty, mir_def::LocalKind::Temp, Option::None, span)
+    }
+
+    /// Allocates a new user variable local.
+    pub fn new_var(
+        self: &mut MirBody,
+        ty: hir_ty::Type,
+        name: String,
+        mutable: bool,
+        span: common::Span,
+    ) -> mir_def::MirLocalId {
+        let id = mir_def::MirLocalId::new(self.locals.len() as u32);
+        let local = MirLocal {
+            id: id,
+            ty: ty,
+            kind: mir_def::LocalKind::Var,
+            mutable: mutable,
+            name: Option::Some(name),
+            span: span,
+        };
+        self.locals.push(local);
+        id
+    }
+
+    /// Creates a new basic block and returns its ID.
+    pub fn new_block(self: &mut MirBody) -> mir_def::BasicBlockId {
+        let id = mir_def::BasicBlockId::new(self.basic_blocks.len() as u32);
+        self.basic_blocks.push(BasicBlockData::new());
+        id
+    }
+
+    /// Adds a statement to a basic block.
+    pub fn push_stmt(self: &mut MirBody, block: mir_def::BasicBlockId, stmt: mir_stmt::Statement) {
+        self.basic_blocks[block.as_usize()].statements.push(stmt);
+    }
+
+    /// Sets the terminator of a basic block.
+    pub fn set_terminator(self: &mut MirBody, block: mir_def::BasicBlockId, term: mir_term::Terminator) {
+        self.basic_blocks[block.as_usize()].terminator = Option::Some(term);
+    }
+
+    /// Returns true if a block is terminated.
+    pub fn is_terminated(self: &MirBody, block: mir_def::BasicBlockId) -> bool {
+        self.basic_blocks[block.as_usize()].is_terminated()
+    }
+
+    /// Returns the entry block (always block 0).
+    pub fn entry_block(self: &MirBody) -> mir_def::BasicBlockId {
+        mir_def::BasicBlockId::entry()
+    }
+
+    /// Computes the predecessor map for all blocks.
+    pub fn predecessors(self: &MirBody) -> Vec<Vec<mir_def::BasicBlockId>> {
+        let mut preds: Vec<Vec<mir_def::BasicBlockId>> = Vec::new();
+        let mut i: usize = 0;
+        while i < self.basic_blocks.len() {
+            preds.push(Vec::new());
+            i = i + 1;
+        }
+
+        let mut bb_idx: usize = 0;
+        while bb_idx < self.basic_blocks.len() {
+            let block = &self.basic_blocks[bb_idx];
+            match &block.terminator {
+                &Option::Some(ref term) => {
+                    let succs = term.successors();
+                    let mut j: usize = 0;
+                    while j < succs.len() {
+                        let succ_idx = succs[j].as_usize();
+                        preds[succ_idx].push(mir_def::BasicBlockId::new(bb_idx as u32));
+                        j = j + 1;
+                    }
+                }
+                &Option::None => {}
+            }
+            bb_idx = bb_idx + 1;
+        }
+
+        preds
+    }
+
+    /// Returns blocks in reverse postorder (useful for dataflow analysis).
+    pub fn reverse_postorder(self: &MirBody) -> Vec<mir_def::BasicBlockId> {
+        let mut visited: Vec<bool> = Vec::new();
+        let mut i: usize = 0;
+        while i < self.basic_blocks.len() {
+            visited.push(false);
+            i = i + 1;
+        }
+
+        let mut result: Vec<mir_def::BasicBlockId> = Vec::new();
+        self.postorder_visit(mir_def::BasicBlockId::entry(), &mut visited, &mut result);
+
+        // Reverse the result
+        let mut reversed: Vec<mir_def::BasicBlockId> = Vec::new();
+        let mut j: usize = result.len();
+        while j > 0 {
+            j = j - 1;
+            reversed.push(result[j]);
+        }
+        reversed
+    }
+
+    /// Helper for postorder traversal.
+    fn postorder_visit(
+        self: &MirBody,
+        block: mir_def::BasicBlockId,
+        visited: &mut Vec<bool>,
+        result: &mut Vec<mir_def::BasicBlockId>,
+    ) {
+        let idx = block.as_usize();
+        if visited[idx] {
+            return;
+        }
+        visited[idx] = true;
+
+        let block_data = &self.basic_blocks[idx];
+        match &block_data.terminator {
+            &Option::Some(ref term) => {
+                let succs = term.successors();
+                let mut i: usize = 0;
+                while i < succs.len() {
+                    self.postorder_visit(succs[i], visited, result);
+                    i = i + 1;
+                }
+            }
+            &Option::None => {}
+        }
+
+        result.push(block);
+    }
+}
+
+// ============================================================
+// MIR Local
+// ============================================================
+
+/// A local variable in a MIR function.
+pub struct MirLocal {
+    /// The unique ID of this local.
+    pub id: mir_def::MirLocalId,
+    /// The type of this local.
+    pub ty: hir_ty::Type,
+    /// The kind of local (return place, arg, var, temp).
+    pub kind: mir_def::LocalKind,
+    /// Whether this local is mutable.
+    pub mutable: bool,
+    /// The name of this local (if it has one).
+    pub name: Option<String>,
+    /// The source span where this local was declared.
+    pub span: common::Span,
+}
+
+impl MirLocal {
+    /// Creates a new local with the return place kind.
+    pub fn return_place(ty: hir_ty::Type, span: common::Span) -> MirLocal {
+        MirLocal {
+            id: mir_def::MirLocalId::return_place(),
+            ty: ty,
+            kind: mir_def::LocalKind::ReturnPlace,
+            mutable: true,
+            name: Option::Some(common::make_string("_0")),
+            span: span,
+        }
+    }
+
+    /// Creates a new argument local.
+    pub fn arg(id: mir_def::MirLocalId, ty: hir_ty::Type, name: String, span: common::Span) -> MirLocal {
+        MirLocal {
+            id: id,
+            ty: ty,
+            kind: mir_def::LocalKind::Arg,
+            mutable: false,
+            name: Option::Some(name),
+            span: span,
+        }
+    }
+
+    /// Creates a new user variable local.
+    pub fn var(id: mir_def::MirLocalId, ty: hir_ty::Type, name: String, mutable: bool, span: common::Span) -> MirLocal {
+        MirLocal {
+            id: id,
+            ty: ty,
+            kind: mir_def::LocalKind::Var,
+            mutable: mutable,
+            name: Option::Some(name),
+            span: span,
+        }
+    }
+
+    /// Creates a new temporary local.
+    pub fn temp(id: mir_def::MirLocalId, ty: hir_ty::Type, span: common::Span) -> MirLocal {
+        MirLocal {
+            id: id,
+            ty: ty,
+            kind: mir_def::LocalKind::Temp,
+            mutable: true,
+            name: Option::None,
+            span: span,
+        }
+    }
+
+    /// Returns true if this is the return place.
+    pub fn is_return_place(self: &MirLocal) -> bool {
+        self.kind.is_return_place()
+    }
+
+    /// Returns true if this is an argument.
+    pub fn is_arg(self: &MirLocal) -> bool {
+        self.kind.is_arg()
+    }
+}
+
+// ============================================================
+// Basic Block Data
+// ============================================================
+
+/// The data for a single basic block.
+pub struct BasicBlockData {
+    /// The statements in this block.
+    pub statements: Vec<mir_stmt::Statement>,
+    /// The terminator that ends this block (None if not yet set).
+    pub terminator: Option<mir_term::Terminator>,
+}
+
+impl BasicBlockData {
+    /// Creates a new empty basic block.
+    pub fn new() -> BasicBlockData {
+        BasicBlockData {
+            statements: Vec::new(),
+            terminator: Option::None,
+        }
+    }
+
+    /// Returns true if this block has a terminator.
+    pub fn is_terminated(self: &BasicBlockData) -> bool {
+        match &self.terminator {
+            &Option::Some(_) => true,
+            &Option::None => false,
+        }
+    }
+
+    /// Returns the number of statements in this block.
+    pub fn statement_count(self: &BasicBlockData) -> usize {
+        self.statements.len()
+    }
+
+    /// Adds a statement to this block.
+    pub fn push_stmt(self: &mut BasicBlockData, stmt: mir_stmt::Statement) {
+        self.statements.push(stmt);
+    }
+
+    /// Sets the terminator of this block.
+    pub fn set_terminator(self: &mut BasicBlockData, term: mir_term::Terminator) {
+        self.terminator = Option::Some(term);
+    }
+
+    /// Returns the successor blocks (empty if not terminated).
+    pub fn successors(self: &BasicBlockData) -> Vec<mir_def::BasicBlockId> {
+        match &self.terminator {
+            &Option::Some(ref term) => term.successors(),
+            &Option::None => Vec::new(),
+        }
+    }
+}
+
+// ============================================================
+// MIR Body Builder
+// ============================================================
+
+/// A builder for constructing MIR bodies incrementally.
+///
+/// This provides a convenient API for lowering HIR to MIR.
+pub struct MirBodyBuilder {
+    /// The body being built.
+    body: MirBody,
+    /// The current block being built.
+    current_block: mir_def::BasicBlockId,
+}
+
+impl MirBodyBuilder {
+    /// Creates a new builder for the given function.
+    pub fn new(def_id: hir_def::DefId, return_ty: hir_ty::Type, span: common::Span) -> MirBodyBuilder {
+        let mut body = MirBody::new(def_id, span);
+
+        // Create return place as _0
+        let return_local = MirLocal::return_place(return_ty, span);
+        body.locals.push(return_local);
+
+        // Create entry block
+        let entry = body.new_block();
+
+        MirBodyBuilder {
+            body: body,
+            current_block: entry,
+        }
+    }
+
+    /// Adds a parameter and returns its local ID.
+    pub fn add_param(self: &mut MirBodyBuilder, ty: hir_ty::Type, name: String, span: common::Span) -> mir_def::MirLocalId {
+        let id = mir_def::MirLocalId::new(self.body.locals.len() as u32);
+        let local = MirLocal::arg(id, ty, name, span);
+        self.body.locals.push(local);
+        self.body.param_count = self.body.param_count + 1;
+        id
+    }
+
+    /// Allocates a new temporary.
+    pub fn new_temp(self: &mut MirBodyBuilder, ty: hir_ty::Type, span: common::Span) -> mir_def::MirLocalId {
+        self.body.new_temp(ty, span)
+    }
+
+    /// Allocates a new user variable.
+    pub fn new_var(self: &mut MirBodyBuilder, ty: hir_ty::Type, name: String, mutable: bool, span: common::Span) -> mir_def::MirLocalId {
+        self.body.new_var(ty, name, mutable, span)
+    }
+
+    /// Creates a new basic block and returns its ID.
+    pub fn new_block(self: &mut MirBodyBuilder) -> mir_def::BasicBlockId {
+        self.body.new_block()
+    }
+
+    /// Sets the current block for adding statements.
+    pub fn set_current_block(self: &mut MirBodyBuilder, block: mir_def::BasicBlockId) {
+        self.current_block = block;
+    }
+
+    /// Returns the current block.
+    pub fn current_block(self: &MirBodyBuilder) -> mir_def::BasicBlockId {
+        self.current_block
+    }
+
+    /// Adds a statement to the current block.
+    pub fn push_stmt(self: &mut MirBodyBuilder, stmt: mir_stmt::Statement) {
+        self.body.push_stmt(self.current_block, stmt);
+    }
+
+    /// Adds an assignment to the current block.
+    pub fn push_assign(self: &mut MirBodyBuilder, place: mir_types::Place, rvalue: mir_types::Rvalue, span: common::Span) {
+        self.push_stmt(mir_stmt::Statement::assign(place, rvalue, span));
+    }
+
+    /// Terminates the current block and switches to a new one.
+    pub fn terminate_and_goto(self: &mut MirBodyBuilder, target: mir_def::BasicBlockId, span: common::Span) {
+        self.body.set_terminator(self.current_block, mir_term::Terminator::goto(target, span));
+        self.current_block = target;
+    }
+
+    /// Terminates the current block with a return.
+    pub fn terminate_return(self: &mut MirBodyBuilder, span: common::Span) {
+        self.body.set_terminator(self.current_block, mir_term::Terminator::return_term(span));
+    }
+
+    /// Terminates the current block with a conditional branch.
+    pub fn terminate_if(
+        self: &mut MirBodyBuilder,
+        cond: mir_types::Operand,
+        true_block: mir_def::BasicBlockId,
+        false_block: mir_def::BasicBlockId,
+        span: common::Span,
+    ) {
+        self.body.set_terminator(
+            self.current_block,
+            mir_term::switch_bool(cond, true_block, false_block, span),
+        );
+    }
+
+    /// Terminates the current block with a terminator.
+    pub fn terminate(self: &mut MirBodyBuilder, term: mir_term::Terminator) {
+        self.body.set_terminator(self.current_block, term);
+    }
+
+    /// Returns true if the current block is terminated.
+    pub fn is_terminated(self: &MirBodyBuilder) -> bool {
+        self.body.is_terminated(self.current_block)
+    }
+
+    /// Returns the built body.
+    pub fn finish(self: MirBodyBuilder) -> MirBody {
+        self.body
+    }
+
+    /// Returns a reference to the body being built.
+    pub fn body_ref(self: &MirBodyBuilder) -> &MirBody {
+        &self.body
+    }
+
+    /// Returns a mutable reference to the body being built.
+    pub fn body_mut(self: &mut MirBodyBuilder) -> &mut MirBody {
+        &mut self.body
+    }
+}

@@ -1,0 +1,199 @@
+// Blood Self-Hosted Compiler - MIR Definition Identifiers
+//
+// This module defines the core identifiers used throughout the MIR (Mid-level
+// Intermediate Representation). These IDs provide stable references to basic
+// blocks, locals, and other MIR constructs.
+
+mod common;
+mod hir_def;
+
+// ============================================================
+// Basic Block Identifier
+// ============================================================
+
+/// A unique identifier for a basic block within a function.
+///
+/// Basic blocks form the nodes of the control flow graph. Block 0 is always
+/// the entry block of a function.
+pub struct BasicBlockId {
+    /// Index into the function's basic block table.
+    pub index: u32,
+}
+
+impl BasicBlockId {
+    /// Creates a new BasicBlockId with the given index.
+    pub fn new(index: u32) -> BasicBlockId {
+        BasicBlockId { index }
+    }
+
+    /// Returns the entry block ID (always block 0).
+    pub fn entry() -> BasicBlockId {
+        BasicBlockId { index: 0 }
+    }
+
+    /// Returns a dummy BasicBlockId for error recovery.
+    pub fn dummy() -> BasicBlockId {
+        BasicBlockId { index: 0xFFFFFFFF }
+    }
+
+    /// Returns true if this is a dummy/error BasicBlockId.
+    pub fn is_dummy(self: &BasicBlockId) -> bool {
+        self.index == 0xFFFFFFFF
+    }
+
+    /// Returns the raw index value.
+    pub fn as_usize(self: &BasicBlockId) -> usize {
+        self.index as usize
+    }
+}
+
+// ============================================================
+// MIR Local Identifier
+// ============================================================
+
+/// A unique identifier for a local variable within a MIR function body.
+///
+/// MIR locals follow a specific convention:
+/// - _0: The return place (always first)
+/// - _1.._n: Function parameters (n = param_count)
+/// - _(n+1)...: User variables and compiler temporaries
+pub struct MirLocalId {
+    /// Index into the function's local table.
+    pub index: u32,
+}
+
+impl MirLocalId {
+    /// Creates a new MirLocalId with the given index.
+    pub fn new(index: u32) -> MirLocalId {
+        MirLocalId { index }
+    }
+
+    /// Returns the return place local ID (always local 0).
+    pub fn return_place() -> MirLocalId {
+        MirLocalId { index: 0 }
+    }
+
+    /// Returns a dummy MirLocalId for error recovery.
+    pub fn dummy() -> MirLocalId {
+        MirLocalId { index: 0xFFFFFFFF }
+    }
+
+    /// Returns true if this is a dummy/error MirLocalId.
+    pub fn is_dummy(self: &MirLocalId) -> bool {
+        self.index == 0xFFFFFFFF
+    }
+
+    /// Returns true if this is the return place.
+    pub fn is_return_place(self: &MirLocalId) -> bool {
+        self.index == 0
+    }
+
+    /// Returns the raw index value.
+    pub fn as_usize(self: &MirLocalId) -> usize {
+        self.index as usize
+    }
+}
+
+// ============================================================
+// Local Kind
+// ============================================================
+
+/// The kind of a MIR local variable.
+///
+/// This distinguishes between different categories of locals for
+/// analysis and codegen purposes.
+pub enum LocalKind {
+    /// The return place (_0).
+    ReturnPlace,
+    /// A function argument (_1.._n).
+    Arg,
+    /// A user-declared variable.
+    Var,
+    /// A compiler-generated temporary.
+    Temp,
+}
+
+impl LocalKind {
+    /// Returns true if this is the return place.
+    pub fn is_return_place(self: &LocalKind) -> bool {
+        match self {
+            LocalKind::ReturnPlace => true,
+            LocalKind::Arg => false,
+            LocalKind::Var => false,
+            LocalKind::Temp => false,
+        }
+    }
+
+    /// Returns true if this is an argument.
+    pub fn is_arg(self: &LocalKind) -> bool {
+        match self {
+            LocalKind::ReturnPlace => false,
+            LocalKind::Arg => true,
+            LocalKind::Var => false,
+            LocalKind::Temp => false,
+        }
+    }
+
+    /// Returns true if this is a user variable.
+    pub fn is_var(self: &LocalKind) -> bool {
+        match self {
+            LocalKind::ReturnPlace => false,
+            LocalKind::Arg => false,
+            LocalKind::Var => true,
+            LocalKind::Temp => false,
+        }
+    }
+
+    /// Returns true if this is a temporary.
+    pub fn is_temp(self: &LocalKind) -> bool {
+        match self {
+            LocalKind::ReturnPlace => false,
+            LocalKind::Arg => false,
+            LocalKind::Var => false,
+            LocalKind::Temp => true,
+        }
+    }
+}
+
+// ============================================================
+// Location in MIR
+// ============================================================
+
+/// A location within a MIR function body.
+///
+/// Locations identify specific statements or terminators for analysis
+/// and error reporting purposes.
+pub struct Location {
+    /// The basic block containing this location.
+    pub block: BasicBlockId,
+    /// The statement index within the block.
+    /// For terminators, this is set to TERMINATOR_INDEX.
+    pub statement_index: u32,
+}
+
+impl Location {
+    /// Sentinel value indicating this location refers to the block terminator.
+    pub fn terminator_index() -> u32 {
+        0xFFFFFFFF
+    }
+
+    /// Creates a location pointing to a statement.
+    pub fn statement(block: BasicBlockId, index: u32) -> Location {
+        Location { block, statement_index: index }
+    }
+
+    /// Creates a location pointing to a block's terminator.
+    pub fn terminator(block: BasicBlockId) -> Location {
+        Location { block, statement_index: Location::terminator_index() }
+    }
+
+    /// Returns true if this location refers to a terminator.
+    pub fn is_terminator(self: &Location) -> bool {
+        self.statement_index == Location::terminator_index()
+    }
+
+    /// Returns true if this location refers to a statement.
+    pub fn is_statement(self: &Location) -> bool {
+        self.statement_index != Location::terminator_index()
+    }
+}

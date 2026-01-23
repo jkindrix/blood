@@ -1,0 +1,895 @@
+// Blood Self-Hosted Compiler - Codegen Expressions
+//
+// This module handles generating LLVM IR for MIR operands and rvalues.
+
+mod common;
+mod hir_def;
+mod hir_ty;
+mod mir_def;
+mod mir_types;
+mod mir_stmt;
+mod mir_term;
+mod mir_body;
+mod codegen_types;
+mod codegen_ctx;
+
+// ============================================================
+// Operand Codegen
+// ============================================================
+
+/// Generates LLVM IR for an operand, returning the value name.
+pub fn emit_operand(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    operand: &mir_types::Operand,
+) -> String {
+    match operand {
+        &mir_types::Operand::Copy(ref place) => emit_place_load(ctx, place),
+        &mir_types::Operand::Move(ref place) => emit_place_load(ctx, place),
+        &mir_types::Operand::Constant(ref constant) => emit_constant(ctx, constant),
+    }
+}
+
+/// Generates LLVM IR for an operand with type information, returning (value, llvm_type).
+pub fn emit_operand_typed(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    operand: &mir_types::Operand,
+) -> (String, String) {
+    match operand {
+        &mir_types::Operand::Copy(ref place) => emit_place_load_with_type(ctx, place),
+        &mir_types::Operand::Move(ref place) => emit_place_load_with_type(ctx, place),
+        &mir_types::Operand::Constant(ref constant) => {
+            let val = emit_constant(ctx, constant);
+            let ty = codegen_types::type_to_llvm(&constant.ty);
+            (val, ty)
+        }
+    }
+}
+
+/// Gets the type of an operand.
+pub fn operand_type(operand: &mir_types::Operand) -> Option<hir_ty::Type> {
+    match operand {
+        &mir_types::Operand::Constant(ref constant) => Option::Some(clone_type(&constant.ty)),
+        &mir_types::Operand::Copy(_) => Option::None,
+        &mir_types::Operand::Move(_) => Option::None,
+    }
+}
+
+/// Clones a Type.
+fn clone_type(ty: &hir_ty::Type) -> hir_ty::Type {
+    // For now, only clone primitive types properly
+    // Complex types would need deeper cloning
+    match &ty.kind {
+        &hir_ty::TypeKind::Primitive(ref prim) => {
+            hir_ty::Type::new(hir_ty::TypeKind::Primitive(clone_primitive(prim)))
+        }
+        _ => hir_ty::Type::error(),
+    }
+}
+
+/// Clones a PrimitiveTy.
+fn clone_primitive(prim: &hir_ty::PrimitiveTy) -> hir_ty::PrimitiveTy {
+    match prim {
+        &hir_ty::PrimitiveTy::Bool => hir_ty::PrimitiveTy::Bool,
+        &hir_ty::PrimitiveTy::Char => hir_ty::PrimitiveTy::Char,
+        &hir_ty::PrimitiveTy::I8 => hir_ty::PrimitiveTy::I8,
+        &hir_ty::PrimitiveTy::I16 => hir_ty::PrimitiveTy::I16,
+        &hir_ty::PrimitiveTy::I32 => hir_ty::PrimitiveTy::I32,
+        &hir_ty::PrimitiveTy::I64 => hir_ty::PrimitiveTy::I64,
+        &hir_ty::PrimitiveTy::I128 => hir_ty::PrimitiveTy::I128,
+        &hir_ty::PrimitiveTy::Isize => hir_ty::PrimitiveTy::Isize,
+        &hir_ty::PrimitiveTy::U8 => hir_ty::PrimitiveTy::U8,
+        &hir_ty::PrimitiveTy::U16 => hir_ty::PrimitiveTy::U16,
+        &hir_ty::PrimitiveTy::U32 => hir_ty::PrimitiveTy::U32,
+        &hir_ty::PrimitiveTy::U64 => hir_ty::PrimitiveTy::U64,
+        &hir_ty::PrimitiveTy::U128 => hir_ty::PrimitiveTy::U128,
+        &hir_ty::PrimitiveTy::Usize => hir_ty::PrimitiveTy::Usize,
+        &hir_ty::PrimitiveTy::F32 => hir_ty::PrimitiveTy::F32,
+        &hir_ty::PrimitiveTy::F64 => hir_ty::PrimitiveTy::F64,
+        &hir_ty::PrimitiveTy::Str => hir_ty::PrimitiveTy::Str,
+    }
+}
+
+/// Generates LLVM IR for a constant, returning the value.
+fn emit_constant(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    constant: &mir_types::Constant,
+) -> String {
+    match &constant.kind {
+        &mir_types::ConstantKind::Int(v) => codegen_types::i128_to_string(v),
+        &mir_types::ConstantKind::Uint(v) => codegen_types::format_u128(v),
+        &mir_types::ConstantKind::Bool(b) => {
+            if b { common::make_string("1") } else { common::make_string("0") }
+        }
+        &mir_types::ConstantKind::Char(c) => {
+            codegen_types::format_u64(c as u64)
+        }
+        &mir_types::ConstantKind::Float(bits) => {
+            codegen_types::f64_bits_to_llvm_hex(bits)
+        }
+        &mir_types::ConstantKind::String(ref s) => {
+            // Add string to the string table and return the global label
+            ctx.add_string_constant(s)
+        }
+        &mir_types::ConstantKind::ByteString(ref bytes) => {
+            // Convert byte string to regular string for storage
+            let mut s = String::new();
+            let mut i: usize = 0;
+            while i < bytes.len() {
+                s.push(bytes[i] as char);
+                i = i + 1;
+            }
+            ctx.add_string_constant(&s)
+        }
+        &mir_types::ConstantKind::Unit => common::make_string("undef"),
+        &mir_types::ConstantKind::FnDef(ref _def_id) => {
+            // Function pointers - would need function table
+            common::make_string("null")
+        }
+        &mir_types::ConstantKind::ConstDef(ref _def_id) => {
+            common::make_string("null")
+        }
+        &mir_types::ConstantKind::StaticDef(ref _def_id) => {
+            common::make_string("null")
+        }
+        &mir_types::ConstantKind::ZeroSized => common::make_string("undef"),
+    }
+}
+
+/// Loads a value from a place, returning the value name.
+fn emit_place_load(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    place: &mir_types::Place,
+) -> String {
+    let ptr = emit_place_addr(ctx, place);
+    let result = ctx.fresh_temp();
+    // Get the LLVM type for this local
+    let llvm_ty = ctx.get_local_type(place.local);
+    ctx.emit_load(result.as_str(), llvm_ty.as_str(), ptr.as_str());
+    result
+}
+
+/// Loads a value from a place, returning (value, llvm_type).
+fn emit_place_load_with_type(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    place: &mir_types::Place,
+) -> (String, String) {
+    let ptr = emit_place_addr(ctx, place);
+    let result = ctx.fresh_temp();
+    let llvm_ty = ctx.get_local_type(place.local);
+    ctx.emit_load(result.as_str(), llvm_ty.as_str(), ptr.as_str());
+    (result, llvm_ty)
+}
+
+/// Emits the address of a place, returning the pointer value.
+pub fn emit_place_addr(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    place: &mir_types::Place,
+) -> String {
+    let mut current = ctx.local_name(place.local);
+
+    let mut i: usize = 0;
+    while i < place.projection.len() {
+        current = emit_projection(ctx, &current, &place.projection[i]);
+        i = i + 1;
+    }
+
+    current
+}
+
+/// Emits a projection, returning the new pointer.
+fn emit_projection(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    base: &String,
+    proj: &mir_types::PlaceElem,
+) -> String {
+    match proj {
+        &mir_types::PlaceElem::Deref => {
+            // Load the pointer value
+            let result = ctx.fresh_temp();
+            ctx.emit_load(result.as_str(), "ptr", base.as_str());
+            result
+        }
+        &mir_types::PlaceElem::Field(idx) => {
+            let result = ctx.fresh_temp();
+            let mut indices: Vec<String> = Vec::new();
+            indices.push(common::make_string("0"));
+            indices.push(codegen_types::format_u64(idx as u64));
+            // Use opaque struct type - real implementation would use actual type
+            ctx.emit_gep(result.as_str(), "{ i64 }", base.as_str(), &indices);
+            result
+        }
+        &mir_types::PlaceElem::Index(ref local) => {
+            let idx_val = ctx.local_name(*local);
+            let idx_loaded = ctx.fresh_temp();
+            ctx.emit_load(idx_loaded.as_str(), "i64", idx_val.as_str());
+            let result = ctx.fresh_temp();
+            let mut indices: Vec<String> = Vec::new();
+            indices.push(clone_string(&idx_loaded));
+            ctx.emit_gep(result.as_str(), "i64", base.as_str(), &indices);
+            result
+        }
+        &mir_types::PlaceElem::ConstantIndex { offset, min_length: _, from_end } => {
+            let result = ctx.fresh_temp();
+            let mut indices: Vec<String> = Vec::new();
+            if from_end {
+                // Would need to compute length - offset
+                indices.push(codegen_types::format_u64(offset));
+            } else {
+                indices.push(codegen_types::format_u64(offset));
+            }
+            ctx.emit_gep(result.as_str(), "i64", base.as_str(), &indices);
+            result
+        }
+        &mir_types::PlaceElem::Subslice { from, to: _, from_end: _ } => {
+            let result = ctx.fresh_temp();
+            let mut indices: Vec<String> = Vec::new();
+            indices.push(codegen_types::format_u64(from));
+            ctx.emit_gep(result.as_str(), "i64", base.as_str(), &indices);
+            result
+        }
+        &mir_types::PlaceElem::Downcast(idx) => {
+            // For enums - just offset to variant data
+            let result = ctx.fresh_temp();
+            let mut indices: Vec<String> = Vec::new();
+            indices.push(common::make_string("0"));
+            // Skip discriminant (assume at index 0), variant data at 1
+            indices.push(common::make_string("1"));
+            ctx.emit_gep(result.as_str(), "{ i64, i64 }", base.as_str(), &indices);
+            let _ = idx; // Use variant index for proper downcast
+            result
+        }
+    }
+}
+
+// ============================================================
+// Rvalue Codegen
+// ============================================================
+
+/// Generates LLVM IR for an rvalue, storing result at dest.
+pub fn emit_rvalue(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    dest: &str,
+    rvalue: &mir_types::Rvalue,
+) {
+    match rvalue {
+        &mir_types::Rvalue::Use(ref operand) => {
+            let (val, ty) = emit_operand_typed(ctx, operand);
+            ctx.emit_store(ty.as_str(), val.as_str(), dest);
+        }
+        &mir_types::Rvalue::Ref { ref place, mutable: _ } => {
+            let addr = emit_place_addr(ctx, place);
+            ctx.emit_store("ptr", addr.as_str(), dest);
+        }
+        &mir_types::Rvalue::BinaryOp { op: ref bin_op, ref left, ref right } => {
+            // Get typed operands
+            let (left_val, left_ty) = emit_operand_typed(ctx, left);
+            let (right_val, _right_ty) = emit_operand_typed(ctx, right);
+            // Use the left operand's type for the binary operation
+            let result = emit_binop_typed(ctx, bin_op, &left_val, &right_val, left_ty.as_str());
+            // For comparison operations, result is i1 (bool)
+            if bin_op.is_comparison() {
+                ctx.emit_store("i1", result.as_str(), dest);
+            } else {
+                ctx.emit_store(left_ty.as_str(), result.as_str(), dest);
+            }
+        }
+        &mir_types::Rvalue::UnaryOp { op: ref un_op, ref operand } => {
+            let (val, ty) = emit_operand_typed(ctx, operand);
+            let result = emit_unop_typed(ctx, un_op, &val, ty.as_str());
+            ctx.emit_store(ty.as_str(), result.as_str(), dest);
+        }
+        &mir_types::Rvalue::AddressOf { ref place, mutable: _ } => {
+            let addr = emit_place_addr(ctx, place);
+            ctx.emit_store("ptr", addr.as_str(), dest);
+        }
+        &mir_types::Rvalue::ArrayToSlice { ref array_ref, array_len: _ } => {
+            // Convert array ref to fat pointer (ptr + len)
+            let arr_val = emit_operand(ctx, array_ref);
+            ctx.emit_store("ptr", arr_val.as_str(), dest);
+        }
+        &mir_types::Rvalue::ZeroInit(ref ty) => {
+            // Zero-initialize the destination
+            let llvm_ty = codegen_types::type_to_llvm(ty);
+            let zero = get_zero_value(llvm_ty.as_str());
+            ctx.emit_store(llvm_ty.as_str(), zero.as_str(), dest);
+        }
+        &mir_types::Rvalue::Cast { ref operand, ref target_ty } => {
+            // Get source type from operand
+            let (val, src_ty) = emit_operand_typed(ctx, operand);
+            let tgt_llvm = codegen_types::type_to_llvm(target_ty);
+            // Use the type-aware cast if we have source type info
+            let src_ty_opt = operand_type(operand);
+            let result = match src_ty_opt {
+                Option::Some(ref src_type) => emit_cast_with_types(ctx, &val, src_type, target_ty),
+                Option::None => {
+                    // Fallback: construct approximate source type from LLVM type
+                    emit_cast_from_llvm_types(ctx, &val, src_ty.as_str(), tgt_llvm.as_str())
+                }
+            };
+            ctx.emit_store(tgt_llvm.as_str(), result.as_str(), dest);
+        }
+        &mir_types::Rvalue::Aggregate { ref kind, ref operands } => {
+            emit_aggregate(ctx, dest, kind, operands);
+        }
+        &mir_types::Rvalue::Len(ref place) => {
+            // For slices - load the length field
+            let ptr = emit_place_addr(ctx, place);
+            let len_ptr = ctx.fresh_temp();
+            let mut indices: Vec<String> = Vec::new();
+            indices.push(common::make_string("0"));
+            indices.push(common::make_string("1"));
+            ctx.emit_gep(len_ptr.as_str(), "{ ptr, i64 }", ptr.as_str(), &indices);
+            let len_val = ctx.fresh_temp();
+            ctx.emit_load(len_val.as_str(), "i64", len_ptr.as_str());
+            ctx.emit_store("i64", len_val.as_str(), dest);
+        }
+        &mir_types::Rvalue::Discriminant(ref place) => {
+            // Load discriminant field of enum
+            let ptr = emit_place_addr(ctx, place);
+            let discr_val = ctx.fresh_temp();
+            ctx.emit_load(discr_val.as_str(), "i64", ptr.as_str());
+            ctx.emit_store("i64", discr_val.as_str(), dest);
+        }
+    }
+}
+
+/// Gets the zero value for an LLVM type.
+fn get_zero_value(llvm_ty: &str) -> String {
+    if string_starts_with(llvm_ty, "float") {
+        common::make_string("0.0")
+    } else if string_starts_with(llvm_ty, "double") {
+        common::make_string("0.0")
+    } else if string_starts_with(llvm_ty, "ptr") {
+        common::make_string("null")
+    } else if string_starts_with(llvm_ty, "{") {
+        common::make_string("zeroinitializer")
+    } else if string_starts_with(llvm_ty, "[") {
+        common::make_string("zeroinitializer")
+    } else {
+        common::make_string("0")
+    }
+}
+
+/// Emits a cast based only on LLVM type strings.
+fn emit_cast_from_llvm_types(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    val: &String,
+    src_ty: &str,
+    tgt_ty: &str,
+) -> String {
+    let result = ctx.fresh_temp();
+
+    // Quick check: if same type, just return value
+    if string_eq_str(src_ty, tgt_ty) {
+        return clone_string(val);
+    }
+
+    let src_is_float = string_starts_with(src_ty, "float") || string_starts_with(src_ty, "double");
+    let tgt_is_float = string_starts_with(tgt_ty, "float") || string_starts_with(tgt_ty, "double");
+    let src_is_ptr = string_starts_with(src_ty, "ptr");
+    let tgt_is_ptr = string_starts_with(tgt_ty, "ptr");
+
+    if src_is_float && tgt_is_float {
+        // Float to float
+        let src_size = if string_starts_with(src_ty, "float") { 4u64 } else { 8u64 };
+        let tgt_size = if string_starts_with(tgt_ty, "float") { 4u64 } else { 8u64 };
+        if tgt_size < src_size {
+            ctx.emit_cast(result.as_str(), "fptrunc", src_ty, val.as_str(), tgt_ty);
+        } else if tgt_size > src_size {
+            ctx.emit_cast(result.as_str(), "fpext", src_ty, val.as_str(), tgt_ty);
+        } else {
+            return clone_string(val);
+        }
+    } else if !src_is_float && tgt_is_float {
+        // Int to float (default signed)
+        ctx.emit_cast(result.as_str(), "sitofp", src_ty, val.as_str(), tgt_ty);
+    } else if src_is_float && !tgt_is_float {
+        // Float to int (default signed)
+        ctx.emit_cast(result.as_str(), "fptosi", src_ty, val.as_str(), tgt_ty);
+    } else if src_is_ptr && !tgt_is_ptr {
+        // Pointer to int
+        ctx.emit_cast(result.as_str(), "ptrtoint", src_ty, val.as_str(), tgt_ty);
+    } else if !src_is_ptr && tgt_is_ptr {
+        // Int to pointer
+        ctx.emit_cast(result.as_str(), "inttoptr", src_ty, val.as_str(), tgt_ty);
+    } else if src_is_ptr && tgt_is_ptr {
+        // Pointer to pointer - bitcast
+        ctx.emit_cast(result.as_str(), "bitcast", src_ty, val.as_str(), tgt_ty);
+    } else {
+        // Int to int - determine by size
+        let src_size = get_int_type_size(src_ty);
+        let tgt_size = get_int_type_size(tgt_ty);
+        if tgt_size < src_size {
+            ctx.emit_cast(result.as_str(), "trunc", src_ty, val.as_str(), tgt_ty);
+        } else if tgt_size > src_size {
+            // Default to sign extend
+            ctx.emit_cast(result.as_str(), "sext", src_ty, val.as_str(), tgt_ty);
+        } else {
+            return clone_string(val);
+        }
+    }
+
+    result
+}
+
+/// Gets the size in bits of an LLVM integer type (e.g., "i32" -> 32).
+fn get_int_type_size(llvm_ty: &str) -> u64 {
+    let bytes = llvm_ty.as_bytes();
+    if bytes.len() < 2 {
+        return 64; // Default
+    }
+    if bytes[0] != 105 {
+        return 64; // Not 'i'
+    }
+    // Parse number after 'i'
+    let mut n: u64 = 0;
+    let mut i: usize = 1;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b >= 48 && b <= 57 {
+            n = n * 10 + ((b - 48) as u64);
+        } else {
+            break;
+        }
+        i = i + 1;
+    }
+    if n == 0 { 64 } else { n }
+}
+
+/// Compares string with &str.
+fn string_eq_str(s: &str, other: &str) -> bool {
+    let s_bytes = s.as_bytes();
+    let other_bytes = other.as_bytes();
+    if s_bytes.len() != other_bytes.len() {
+        return false;
+    }
+    let mut i: usize = 0;
+    while i < s_bytes.len() {
+        if s_bytes[i] != other_bytes[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    true
+}
+
+/// Emits a binary operation, returning the result value.
+/// Uses i64 as the default type (legacy behavior).
+fn emit_binop(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    bin_op: &mir_types::MirBinOp,
+    left: &String,
+    right: &String,
+) -> String {
+    emit_binop_typed(ctx, bin_op, left, right, "i64")
+}
+
+/// Emits a binary operation with explicit type, returning the result value.
+/// Handles both integer and floating-point operations based on the type.
+pub fn emit_binop_typed(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    bin_op: &mir_types::MirBinOp,
+    left: &String,
+    right: &String,
+    llvm_ty: &str,
+) -> String {
+    let result = ctx.fresh_temp();
+    let l = left.as_str();
+    let r = right.as_str();
+    let res = result.as_str();
+
+    // Check if this is a floating-point type
+    let is_float = string_starts_with(llvm_ty, "float") || string_starts_with(llvm_ty, "double");
+
+    if is_float {
+        // Floating-point operations
+        match bin_op {
+            &mir_types::MirBinOp::Add => ctx.emit_binop(res, "fadd", llvm_ty, l, r),
+            &mir_types::MirBinOp::Sub => ctx.emit_binop(res, "fsub", llvm_ty, l, r),
+            &mir_types::MirBinOp::Mul => ctx.emit_binop(res, "fmul", llvm_ty, l, r),
+            &mir_types::MirBinOp::Div => ctx.emit_binop(res, "fdiv", llvm_ty, l, r),
+            &mir_types::MirBinOp::Rem => ctx.emit_binop(res, "frem", llvm_ty, l, r),
+            // Floating-point comparisons use ordered comparisons (NaN returns false)
+            &mir_types::MirBinOp::Eq => ctx.emit_fcmp(res, "oeq", llvm_ty, l, r),
+            &mir_types::MirBinOp::Ne => ctx.emit_fcmp(res, "one", llvm_ty, l, r),
+            &mir_types::MirBinOp::Lt => ctx.emit_fcmp(res, "olt", llvm_ty, l, r),
+            &mir_types::MirBinOp::Le => ctx.emit_fcmp(res, "ole", llvm_ty, l, r),
+            &mir_types::MirBinOp::Gt => ctx.emit_fcmp(res, "ogt", llvm_ty, l, r),
+            &mir_types::MirBinOp::Ge => ctx.emit_fcmp(res, "oge", llvm_ty, l, r),
+            // Bitwise operations don't apply to floats - emit error comment
+            &mir_types::MirBinOp::BitAnd => {
+                ctx.write("    ; ERROR: bitwise AND on float\n");
+                ctx.emit_binop(res, "fadd", llvm_ty, l, "0.0");
+            }
+            &mir_types::MirBinOp::BitOr => {
+                ctx.write("    ; ERROR: bitwise OR on float\n");
+                ctx.emit_binop(res, "fadd", llvm_ty, l, "0.0");
+            }
+            &mir_types::MirBinOp::BitXor => {
+                ctx.write("    ; ERROR: bitwise XOR on float\n");
+                ctx.emit_binop(res, "fadd", llvm_ty, l, "0.0");
+            }
+            &mir_types::MirBinOp::Shl => {
+                ctx.write("    ; ERROR: shift left on float\n");
+                ctx.emit_binop(res, "fadd", llvm_ty, l, "0.0");
+            }
+            &mir_types::MirBinOp::Shr => {
+                ctx.write("    ; ERROR: shift right on float\n");
+                ctx.emit_binop(res, "fadd", llvm_ty, l, "0.0");
+            }
+            // Checked operations - floats don't have overflow, treat as unchecked
+            &mir_types::MirBinOp::AddChecked => ctx.emit_binop(res, "fadd", llvm_ty, l, r),
+            &mir_types::MirBinOp::SubChecked => ctx.emit_binop(res, "fsub", llvm_ty, l, r),
+            &mir_types::MirBinOp::MulChecked => ctx.emit_binop(res, "fmul", llvm_ty, l, r),
+        }
+    } else {
+        // Integer operations (original behavior but with correct type)
+        // Check for unsigned types for division/comparison
+        let is_unsigned = string_starts_with(llvm_ty, "i") && !is_signed_int_type(llvm_ty);
+
+        match bin_op {
+            &mir_types::MirBinOp::Add => ctx.emit_binop(res, "add", llvm_ty, l, r),
+            &mir_types::MirBinOp::Sub => ctx.emit_binop(res, "sub", llvm_ty, l, r),
+            &mir_types::MirBinOp::Mul => ctx.emit_binop(res, "mul", llvm_ty, l, r),
+            &mir_types::MirBinOp::Div => {
+                if is_unsigned {
+                    ctx.emit_binop(res, "udiv", llvm_ty, l, r);
+                } else {
+                    ctx.emit_binop(res, "sdiv", llvm_ty, l, r);
+                }
+            }
+            &mir_types::MirBinOp::Rem => {
+                if is_unsigned {
+                    ctx.emit_binop(res, "urem", llvm_ty, l, r);
+                } else {
+                    ctx.emit_binop(res, "srem", llvm_ty, l, r);
+                }
+            }
+            &mir_types::MirBinOp::BitAnd => ctx.emit_binop(res, "and", llvm_ty, l, r),
+            &mir_types::MirBinOp::BitOr => ctx.emit_binop(res, "or", llvm_ty, l, r),
+            &mir_types::MirBinOp::BitXor => ctx.emit_binop(res, "xor", llvm_ty, l, r),
+            &mir_types::MirBinOp::Shl => ctx.emit_binop(res, "shl", llvm_ty, l, r),
+            &mir_types::MirBinOp::Shr => {
+                if is_unsigned {
+                    ctx.emit_binop(res, "lshr", llvm_ty, l, r);
+                } else {
+                    ctx.emit_binop(res, "ashr", llvm_ty, l, r);
+                }
+            }
+            &mir_types::MirBinOp::Eq => ctx.emit_icmp(res, "eq", llvm_ty, l, r),
+            &mir_types::MirBinOp::Ne => ctx.emit_icmp(res, "ne", llvm_ty, l, r),
+            &mir_types::MirBinOp::Lt => {
+                if is_unsigned {
+                    ctx.emit_icmp(res, "ult", llvm_ty, l, r);
+                } else {
+                    ctx.emit_icmp(res, "slt", llvm_ty, l, r);
+                }
+            }
+            &mir_types::MirBinOp::Le => {
+                if is_unsigned {
+                    ctx.emit_icmp(res, "ule", llvm_ty, l, r);
+                } else {
+                    ctx.emit_icmp(res, "sle", llvm_ty, l, r);
+                }
+            }
+            &mir_types::MirBinOp::Gt => {
+                if is_unsigned {
+                    ctx.emit_icmp(res, "ugt", llvm_ty, l, r);
+                } else {
+                    ctx.emit_icmp(res, "sgt", llvm_ty, l, r);
+                }
+            }
+            &mir_types::MirBinOp::Ge => {
+                if is_unsigned {
+                    ctx.emit_icmp(res, "uge", llvm_ty, l, r);
+                } else {
+                    ctx.emit_icmp(res, "sge", llvm_ty, l, r);
+                }
+            }
+            // Checked operations - for now, same as unchecked (overflow ignored)
+            &mir_types::MirBinOp::AddChecked => ctx.emit_binop(res, "add", llvm_ty, l, r),
+            &mir_types::MirBinOp::SubChecked => ctx.emit_binop(res, "sub", llvm_ty, l, r),
+            &mir_types::MirBinOp::MulChecked => ctx.emit_binop(res, "mul", llvm_ty, l, r),
+        }
+    }
+
+    result
+}
+
+/// Checks if a string starts with a prefix.
+fn string_starts_with(s: &str, prefix: &str) -> bool {
+    let s_bytes = s.as_bytes();
+    let prefix_bytes = prefix.as_bytes();
+    if prefix_bytes.len() > s_bytes.len() {
+        return false;
+    }
+    let mut i: usize = 0;
+    while i < prefix_bytes.len() {
+        if s_bytes[i] != prefix_bytes[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    true
+}
+
+/// Checks if a type is a signed integer type (heuristic based on LLVM type name).
+/// In practice, we'd need to track this through type info, but for codegen we use
+/// the fact that unsigned types are tracked separately.
+fn is_signed_int_type(_llvm_ty: &str) -> bool {
+    // Default to signed for integer types - proper tracking requires type metadata
+    // The correct behavior is to use the HIR type info to determine signedness
+    true
+}
+
+/// Emits a unary operation, returning the result value.
+fn emit_unop(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    un_op: &mir_types::MirUnOp,
+    operand: &String,
+) -> String {
+    emit_unop_typed(ctx, un_op, operand, "i64")
+}
+
+/// Emits a unary operation with explicit type, returning the result value.
+/// Handles both integer and floating-point operations.
+fn emit_unop_typed(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    un_op: &mir_types::MirUnOp,
+    operand: &String,
+    llvm_ty: &str,
+) -> String {
+    let result = ctx.fresh_temp();
+    let v = operand.as_str();
+    let res = result.as_str();
+
+    // Check if this is a floating-point type
+    let is_float = string_starts_with(llvm_ty, "float") || string_starts_with(llvm_ty, "double");
+
+    match un_op {
+        &mir_types::MirUnOp::Neg => {
+            if is_float {
+                ctx.emit_binop(res, "fneg", llvm_ty, v, "");
+            } else {
+                ctx.emit_binop(res, "sub", llvm_ty, "0", v);
+            }
+        }
+        &mir_types::MirUnOp::Not => {
+            if is_float {
+                // Not doesn't make sense for floats - emit error
+                ctx.write("    ; ERROR: bitwise NOT on float\n");
+                ctx.emit_binop(res, "fadd", llvm_ty, v, "0.0");
+            } else {
+                ctx.emit_binop(res, "xor", llvm_ty, v, "-1");
+            }
+        }
+    }
+
+    result
+}
+
+/// Emits a cast operation, returning the result value.
+/// Takes the source type and target type to determine the correct cast instruction.
+fn emit_cast_with_types(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    val: &String,
+    source_ty: &hir_ty::Type,
+    target_ty: &hir_ty::Type,
+) -> String {
+    let src_llvm = codegen_types::type_to_llvm(source_ty);
+    let tgt_llvm = codegen_types::type_to_llvm(target_ty);
+    let result = ctx.fresh_temp();
+
+    // Determine the cast instruction based on types
+    let src_is_int = codegen_types::is_integer(source_ty);
+    let tgt_is_int = codegen_types::is_integer(target_ty);
+    let src_is_float = codegen_types::is_float(source_ty);
+    let tgt_is_float = codegen_types::is_float(target_ty);
+    let src_is_signed = codegen_types::is_signed(source_ty);
+    let src_is_ptr = codegen_types::is_pointer_like(source_ty);
+    let tgt_is_ptr = codegen_types::is_pointer_like(target_ty);
+
+    let src_size = codegen_types::get_layout(source_ty).size;
+    let tgt_size = codegen_types::get_layout(target_ty).size;
+
+    if src_is_int && tgt_is_int {
+        // Integer to integer cast
+        if tgt_size < src_size {
+            ctx.emit_cast(result.as_str(), "trunc", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
+        } else if tgt_size > src_size {
+            if src_is_signed {
+                ctx.emit_cast(result.as_str(), "sext", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
+            } else {
+                ctx.emit_cast(result.as_str(), "zext", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
+            }
+        } else {
+            // Same size - bitcast or just copy
+            return clone_string(val);
+        }
+    } else if src_is_float && tgt_is_float {
+        // Float to float cast
+        if tgt_size < src_size {
+            ctx.emit_cast(result.as_str(), "fptrunc", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
+        } else if tgt_size > src_size {
+            ctx.emit_cast(result.as_str(), "fpext", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
+        } else {
+            return clone_string(val);
+        }
+    } else if src_is_int && tgt_is_float {
+        // Integer to float
+        if src_is_signed {
+            ctx.emit_cast(result.as_str(), "sitofp", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
+        } else {
+            ctx.emit_cast(result.as_str(), "uitofp", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
+        }
+    } else if src_is_float && tgt_is_int {
+        // Float to integer
+        let tgt_is_signed = codegen_types::is_signed(target_ty);
+        if tgt_is_signed {
+            ctx.emit_cast(result.as_str(), "fptosi", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
+        } else {
+            ctx.emit_cast(result.as_str(), "fptoui", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
+        }
+    } else if src_is_ptr && tgt_is_int {
+        // Pointer to integer
+        ctx.emit_cast(result.as_str(), "ptrtoint", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
+    } else if src_is_int && tgt_is_ptr {
+        // Integer to pointer
+        ctx.emit_cast(result.as_str(), "inttoptr", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
+    } else if src_is_ptr && tgt_is_ptr {
+        // Pointer to pointer
+        ctx.emit_cast(result.as_str(), "bitcast", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
+    } else {
+        // Fallback - bitcast
+        ctx.emit_cast(result.as_str(), "bitcast", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
+    }
+
+    result
+}
+
+/// Emits a cast operation without source type (fallback).
+fn emit_cast(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    val: &String,
+    _target_ty: &hir_ty::Type,
+) -> String {
+    // Without source type info, we can't emit proper casts
+    // Just return the value as-is (legacy behavior)
+    clone_string(val)
+}
+
+/// Emits an aggregate construction.
+fn emit_aggregate(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    dest: &str,
+    kind: &mir_types::AggregateKind,
+    operands: &Vec<mir_types::Operand>,
+) {
+    match kind {
+        &mir_types::AggregateKind::Tuple => {
+            // Store each field at the appropriate offset
+            let mut i: usize = 0;
+            while i < operands.len() {
+                let field_val = emit_operand(ctx, &operands[i]);
+                let field_ptr = ctx.fresh_temp();
+                let mut indices: Vec<String> = Vec::new();
+                indices.push(common::make_string("0"));
+                indices.push(codegen_types::format_u64(i as u64));
+                ctx.emit_gep(field_ptr.as_str(), "{ i64 }", dest, &indices);
+                ctx.emit_store("i64", field_val.as_str(), field_ptr.as_str());
+                i = i + 1;
+            }
+        }
+        &mir_types::AggregateKind::Array(ref _elem_ty) => {
+            let mut i: usize = 0;
+            while i < operands.len() {
+                let elem_val = emit_operand(ctx, &operands[i]);
+                let elem_ptr = ctx.fresh_temp();
+                let mut indices: Vec<String> = Vec::new();
+                indices.push(codegen_types::format_u64(i as u64));
+                ctx.emit_gep(elem_ptr.as_str(), "i64", dest, &indices);
+                ctx.emit_store("i64", elem_val.as_str(), elem_ptr.as_str());
+                i = i + 1;
+            }
+        }
+        &mir_types::AggregateKind::Adt { def_id: _, variant_idx, type_args: _ } => {
+            // For structs, variant_idx is 0
+            // For enums, variant_idx indicates which variant
+            if variant_idx == 0 {
+                // Struct or first enum variant - store fields directly
+                let mut i: usize = 0;
+                while i < operands.len() {
+                    let field_val = emit_operand(ctx, &operands[i]);
+                    let field_ptr = ctx.fresh_temp();
+                    let mut indices: Vec<String> = Vec::new();
+                    indices.push(common::make_string("0"));
+                    indices.push(codegen_types::format_u64(i as u64));
+                    ctx.emit_gep(field_ptr.as_str(), "{ i64 }", dest, &indices);
+                    ctx.emit_store("i64", field_val.as_str(), field_ptr.as_str());
+                    i = i + 1;
+                }
+            } else {
+                // Enum variant - store discriminant then fields
+                let discr_val = codegen_types::format_u64(variant_idx as u64);
+                ctx.emit_store("i64", discr_val.as_str(), dest);
+
+                // Store fields at offset 1
+                let data_ptr = ctx.fresh_temp();
+                let mut indices: Vec<String> = Vec::new();
+                indices.push(common::make_string("0"));
+                indices.push(common::make_string("1"));
+                ctx.emit_gep(data_ptr.as_str(), "{ i64, i64 }", dest, &indices);
+
+                let mut i: usize = 0;
+                while i < operands.len() {
+                    let field_val = emit_operand(ctx, &operands[i]);
+                    let field_ptr = ctx.fresh_temp();
+                    let mut field_indices: Vec<String> = Vec::new();
+                    field_indices.push(common::make_string("0"));
+                    field_indices.push(codegen_types::format_u64(i as u64));
+                    ctx.emit_gep(field_ptr.as_str(), "{ i64 }", data_ptr.as_str(), &field_indices);
+                    ctx.emit_store("i64", field_val.as_str(), field_ptr.as_str());
+                    i = i + 1;
+                }
+            }
+        }
+        &mir_types::AggregateKind::Record => {
+            // Extensible records - store fields like struct
+            let mut i: usize = 0;
+            while i < operands.len() {
+                let field_val = emit_operand(ctx, &operands[i]);
+                let field_ptr = ctx.fresh_temp();
+                let mut indices: Vec<String> = Vec::new();
+                indices.push(common::make_string("0"));
+                indices.push(codegen_types::format_u64(i as u64));
+                ctx.emit_gep(field_ptr.as_str(), "{ i64 }", dest, &indices);
+                ctx.emit_store("i64", field_val.as_str(), field_ptr.as_str());
+                i = i + 1;
+            }
+        }
+        &mir_types::AggregateKind::Closure { def_id: _ } => {
+            // Closures: store captures
+            let mut i: usize = 0;
+            while i < operands.len() {
+                let cap_val = emit_operand(ctx, &operands[i]);
+                let cap_ptr = ctx.fresh_temp();
+                let mut indices: Vec<String> = Vec::new();
+                indices.push(common::make_string("0"));
+                indices.push(codegen_types::format_u64(i as u64));
+                ctx.emit_gep(cap_ptr.as_str(), "{ i64 }", dest, &indices);
+                ctx.emit_store("i64", cap_val.as_str(), cap_ptr.as_str());
+                i = i + 1;
+            }
+        }
+        &mir_types::AggregateKind::Range { element: _, inclusive: _ } => {
+            // Ranges: store start and end (and optionally step)
+            let mut i: usize = 0;
+            while i < operands.len() {
+                let val = emit_operand(ctx, &operands[i]);
+                let ptr = ctx.fresh_temp();
+                let mut indices: Vec<String> = Vec::new();
+                indices.push(common::make_string("0"));
+                indices.push(codegen_types::format_u64(i as u64));
+                ctx.emit_gep(ptr.as_str(), "{ i64 }", dest, &indices);
+                ctx.emit_store("i64", val.as_str(), ptr.as_str());
+                i = i + 1;
+            }
+        }
+    }
+}
+
+// ============================================================
+// String Helpers
+// ============================================================
+
+/// Clones a String.
+fn clone_string(s: &String) -> String {
+    let mut result = String::new();
+    let bytes = s.as_bytes();
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        result.push(bytes[i] as char);
+        i = i + 1;
+    }
+    result
+}

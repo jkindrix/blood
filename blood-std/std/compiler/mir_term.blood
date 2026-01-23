@@ -1,0 +1,349 @@
+// Blood Self-Hosted Compiler - MIR Terminators
+//
+// This module defines MIR terminators - the control flow operations that
+// end each basic block and determine which block(s) execute next.
+
+mod common;
+mod hir_def;
+mod hir_ty;
+mod mir_def;
+mod mir_types;
+
+// ============================================================
+// Terminator
+// ============================================================
+
+/// A terminator that ends a basic block.
+///
+/// Terminators determine control flow - where execution goes after
+/// the block's statements have executed.
+pub struct Terminator {
+    /// The kind of terminator.
+    pub kind: TerminatorKind,
+    /// The source location of this terminator.
+    pub span: common::Span,
+}
+
+impl Terminator {
+    /// Creates a new terminator.
+    pub fn new(kind: TerminatorKind, span: common::Span) -> Terminator {
+        Terminator { kind, span }
+    }
+
+    /// Creates an unconditional goto terminator.
+    pub fn goto(target: mir_def::BasicBlockId, span: common::Span) -> Terminator {
+        Terminator {
+            kind: TerminatorKind::Goto { target },
+            span: span,
+        }
+    }
+
+    /// Creates a return terminator.
+    pub fn return_term(span: common::Span) -> Terminator {
+        Terminator {
+            kind: TerminatorKind::Return,
+            span: span,
+        }
+    }
+
+    /// Creates an unreachable terminator.
+    pub fn unreachable(span: common::Span) -> Terminator {
+        Terminator {
+            kind: TerminatorKind::Unreachable,
+            span: span,
+        }
+    }
+
+    /// Returns the successor blocks of this terminator.
+    pub fn successors(self: &Terminator) -> Vec<mir_def::BasicBlockId> {
+        match &self.kind {
+            &TerminatorKind::Goto { target } => {
+                let mut result = Vec::new();
+                result.push(target);
+                result
+            }
+            &TerminatorKind::SwitchInt { ref targets, discr: _ } => {
+                targets.all_targets()
+            }
+            &TerminatorKind::Return => Vec::new(),
+            &TerminatorKind::Call { ref target, ref unwind, func: _, args: _, destination: _ } => {
+                let mut result = Vec::new();
+                match target {
+                    &Option::Some(t) => result.push(t),
+                    &Option::None => {}
+                }
+                match unwind {
+                    &Option::Some(u) => result.push(u),
+                    &Option::None => {}
+                }
+                result
+            }
+            &TerminatorKind::Assert { target, ref unwind, cond: _, expected: _, msg: _ } => {
+                let mut result = Vec::new();
+                result.push(target);
+                match unwind {
+                    &Option::Some(u) => result.push(u),
+                    &Option::None => {}
+                }
+                result
+            }
+            &TerminatorKind::Perform { ref target, effect_id: _, op_index: _, args: _, destination: _, is_tail_resumptive: _ } => {
+                let mut result = Vec::new();
+                match target {
+                    &Option::Some(t) => result.push(t),
+                    &Option::None => {}
+                }
+                result
+            }
+            &TerminatorKind::Resume { value: _ } => Vec::new(),
+            &TerminatorKind::Unreachable => Vec::new(),
+            &TerminatorKind::Drop { target, ref unwind, place: _ } => {
+                let mut result = Vec::new();
+                result.push(target);
+                match unwind {
+                    &Option::Some(u) => result.push(u),
+                    &Option::None => {}
+                }
+                result
+            }
+        }
+    }
+
+    /// Returns true if this terminator has no successors (diverges).
+    pub fn is_diverging(self: &Terminator) -> bool {
+        match &self.kind {
+            &TerminatorKind::Return => true,
+            &TerminatorKind::Unreachable => true,
+            &TerminatorKind::Resume { value: _ } => true,
+            &TerminatorKind::Goto { target: _ } => false,
+            &TerminatorKind::SwitchInt { discr: _, targets: _ } => false,
+            &TerminatorKind::Call { func: _, args: _, destination: _, target: _, unwind: _ } => false,
+            &TerminatorKind::Assert { cond: _, expected: _, msg: _, target: _, unwind: _ } => false,
+            &TerminatorKind::Perform { effect_id: _, op_index: _, args: _, destination: _, target: _, is_tail_resumptive: _ } => false,
+            &TerminatorKind::Drop { place: _, target: _, unwind: _ } => false,
+        }
+    }
+}
+
+// ============================================================
+// Terminator Kind
+// ============================================================
+
+/// The kind of a terminator.
+pub enum TerminatorKind {
+    /// Unconditional jump to a target block.
+    Goto {
+        /// The target basic block.
+        target: mir_def::BasicBlockId,
+    },
+    /// Conditional switch on an integer value.
+    SwitchInt {
+        /// The value to switch on.
+        discr: mir_types::Operand,
+        /// The switch targets.
+        targets: mir_types::SwitchTargets,
+    },
+    /// Return from the function.
+    Return,
+    /// Function call.
+    Call {
+        /// The function to call.
+        func: mir_types::Operand,
+        /// Arguments to the call.
+        args: Vec<mir_types::Operand>,
+        /// Where to store the result.
+        destination: mir_types::Place,
+        /// The block to jump to on normal return (None if diverging).
+        target: Option<mir_def::BasicBlockId>,
+        /// The block to jump to on panic/unwind (None if cannot unwind).
+        unwind: Option<mir_def::BasicBlockId>,
+    },
+    /// Runtime assertion.
+    Assert {
+        /// The condition to check.
+        cond: mir_types::Operand,
+        /// Expected value of the condition.
+        expected: bool,
+        /// Error message if assertion fails.
+        msg: String,
+        /// Block to jump to on success.
+        target: mir_def::BasicBlockId,
+        /// Block to jump to on failure (None if cannot unwind).
+        unwind: Option<mir_def::BasicBlockId>,
+    },
+    /// Perform an effect operation.
+    Perform {
+        /// The effect being performed.
+        effect_id: hir_def::DefId,
+        /// The index of the operation within the effect.
+        op_index: u32,
+        /// Arguments to the operation.
+        args: Vec<mir_types::Operand>,
+        /// Where to store the result.
+        destination: mir_types::Place,
+        /// The continuation block after the operation completes.
+        target: Option<mir_def::BasicBlockId>,
+        /// Whether this is a tail-resumptive operation.
+        is_tail_resumptive: bool,
+    },
+    /// Resume from an effect handler.
+    Resume {
+        /// The value to return to the continuation.
+        value: mir_types::Operand,
+    },
+    /// Indicate unreachable code.
+    Unreachable,
+    /// Drop a value and continue.
+    Drop {
+        /// The place to drop.
+        place: mir_types::Place,
+        /// The block to jump to after dropping.
+        target: mir_def::BasicBlockId,
+        /// The block to jump to on panic during drop.
+        unwind: Option<mir_def::BasicBlockId>,
+    },
+}
+
+// ============================================================
+// Terminator Construction Helpers
+// ============================================================
+
+/// Creates a boolean conditional terminator.
+pub fn switch_bool(
+    cond: mir_types::Operand,
+    true_block: mir_def::BasicBlockId,
+    false_block: mir_def::BasicBlockId,
+    span: common::Span,
+) -> Terminator {
+    Terminator {
+        kind: TerminatorKind::SwitchInt {
+            discr: cond,
+            targets: mir_types::SwitchTargets::bool_switch(false_block, true_block),
+        },
+        span: span,
+    }
+}
+
+/// Creates a function call terminator.
+pub fn call(
+    func: mir_types::Operand,
+    args: Vec<mir_types::Operand>,
+    destination: mir_types::Place,
+    target: mir_def::BasicBlockId,
+    span: common::Span,
+) -> Terminator {
+    Terminator {
+        kind: TerminatorKind::Call {
+            func: func,
+            args: args,
+            destination: destination,
+            target: Option::Some(target),
+            unwind: Option::None,
+        },
+        span: span,
+    }
+}
+
+/// Creates a diverging call terminator (no return).
+pub fn call_diverging(
+    func: mir_types::Operand,
+    args: Vec<mir_types::Operand>,
+    span: common::Span,
+) -> Terminator {
+    Terminator {
+        kind: TerminatorKind::Call {
+            func: func,
+            args: args,
+            destination: mir_types::Place::return_place(),
+            target: Option::None,
+            unwind: Option::None,
+        },
+        span: span,
+    }
+}
+
+/// Creates an assertion terminator.
+pub fn assert_term(
+    cond: mir_types::Operand,
+    expected: bool,
+    msg: String,
+    target: mir_def::BasicBlockId,
+    span: common::Span,
+) -> Terminator {
+    Terminator {
+        kind: TerminatorKind::Assert {
+            cond: cond,
+            expected: expected,
+            msg: msg,
+            target: target,
+            unwind: Option::None,
+        },
+        span: span,
+    }
+}
+
+/// Creates an effect perform terminator.
+pub fn effect_perform(
+    effect_id: hir_def::DefId,
+    op_index: u32,
+    args: Vec<mir_types::Operand>,
+    destination: mir_types::Place,
+    target: mir_def::BasicBlockId,
+    span: common::Span,
+) -> Terminator {
+    Terminator {
+        kind: TerminatorKind::Perform {
+            effect_id: effect_id,
+            op_index: op_index,
+            args: args,
+            destination: destination,
+            target: Option::Some(target),
+            is_tail_resumptive: false,
+        },
+        span: span,
+    }
+}
+
+/// Creates a drop terminator.
+pub fn drop_term(
+    place: mir_types::Place,
+    target: mir_def::BasicBlockId,
+    span: common::Span,
+) -> Terminator {
+    Terminator {
+        kind: TerminatorKind::Drop {
+            place: place,
+            target: target,
+            unwind: Option::None,
+        },
+        span: span,
+    }
+}
+
+// ============================================================
+// Unwind Action
+// ============================================================
+
+/// What to do on unwinding (panicking).
+pub enum UnwindAction {
+    /// Continue unwinding to the caller.
+    Continue,
+    /// Abort the program.
+    Abort,
+    /// Jump to a cleanup block.
+    Cleanup(mir_def::BasicBlockId),
+    /// Cannot unwind (e.g., in a destructor).
+    CannotUnwind,
+}
+
+impl UnwindAction {
+    /// Returns the cleanup block, if any.
+    pub fn cleanup_block(self: &UnwindAction) -> Option<mir_def::BasicBlockId> {
+        match self {
+            &UnwindAction::Cleanup(bb) => Option::Some(bb),
+            &UnwindAction::Continue => Option::None,
+            &UnwindAction::Abort => Option::None,
+            &UnwindAction::CannotUnwind => Option::None,
+        }
+    }
+}
