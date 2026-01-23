@@ -9,6 +9,7 @@ mod hir_ty;
 mod hir_expr;
 mod mir_def;
 mod mir_types;
+mod mir_lower_ctx;
 
 // ============================================================
 // Helper Functions
@@ -284,6 +285,7 @@ pub fn is_copy_type(ty: &hir_ty::Type) -> bool {
         &hir_ty::TypeKind::Param(_) => false,
         &hir_ty::TypeKind::Record { fields: _, row_var: _ } => false,
         &hir_ty::TypeKind::Forall { params: _, body: _ } => false,
+        &hir_ty::TypeKind::Ownership { qualifier: _, inner: _ } => false, // Linear/affine types are not Copy
         &hir_ty::TypeKind::Error => true,
     }
 }
@@ -295,6 +297,139 @@ pub fn operand_from_place(place: mir_types::Place, ty: &hir_ty::Type) -> mir_typ
     } else {
         mir_types::Operand::Move(place)
     }
+}
+
+/// Creates an operand with move tracking.
+///
+/// This function:
+/// 1. Checks if the place (if a local) has already been moved
+/// 2. If moved, returns None (caller should report use-after-move error)
+/// 3. If not moved and type is non-Copy, tracks the move
+/// 4. Returns the operand
+///
+/// # Returns
+/// - Some(operand) if the place is valid to use
+/// - None if the place has been moved (use-after-move)
+pub fn operand_from_place_tracked(
+    ctx: &mut mir_lower_ctx::MirLowerCtx,
+    place: mir_types::Place,
+    ty: &hir_ty::Type,
+    span: common::Span,
+) -> Option<mir_types::Operand> {
+    // If the place is just a local (no projection), check move status
+    if place.projection.len() == 0 {
+        // Check if already moved
+        let moved_span = ctx.move_tracker.check_moved(place.local);
+        if moved_span.is_some() {
+            // Place has been moved - caller should report error
+            return Option::None;
+        }
+    }
+
+    // Create the operand
+    let operand = operand_from_place(copy_place(&place), ty);
+
+    // If it's a Move operand and the place is a local, track the move
+    match &operand {
+        &mir_types::Operand::Move(ref p) => {
+            if p.projection.len() == 0 {
+                ctx.move_tracker.track_move(p.local, span);
+            }
+        }
+        &mir_types::Operand::Copy(_) => {
+            // Copy doesn't consume the place
+        }
+        &mir_types::Operand::Constant(_) => {
+            // Constants don't have places
+        }
+    }
+
+    Option::Some(operand)
+}
+
+/// Creates a copy of a Place.
+fn copy_place(place: &mir_types::Place) -> mir_types::Place {
+    let mut proj_copy: Vec<mir_types::PlaceElem> = Vec::new();
+    let mut i: usize = 0;
+    while i < place.projection.len() {
+        proj_copy.push(copy_place_elem(&place.projection[i]));
+        i = i + 1;
+    }
+    mir_types::Place {
+        local: place.local,
+        projection: proj_copy,
+    }
+}
+
+/// Creates a copy of a PlaceElem.
+fn copy_place_elem(elem: &mir_types::PlaceElem) -> mir_types::PlaceElem {
+    match elem {
+        &mir_types::PlaceElem::Deref => mir_types::PlaceElem::Deref,
+        &mir_types::PlaceElem::Field(idx) => mir_types::PlaceElem::Field(idx),
+        &mir_types::PlaceElem::Index(local) => mir_types::PlaceElem::Index(local),
+        &mir_types::PlaceElem::ConstantIndex { offset, min_length, from_end } => {
+            mir_types::PlaceElem::ConstantIndex { offset, min_length, from_end }
+        }
+        &mir_types::PlaceElem::Subslice { from, to, from_end } => {
+            mir_types::PlaceElem::Subslice { from, to, from_end }
+        }
+        &mir_types::PlaceElem::Downcast(idx) => mir_types::PlaceElem::Downcast(idx),
+    }
+}
+
+/// Creates a copy of an Operand.
+fn copy_operand(operand: &mir_types::Operand) -> mir_types::Operand {
+    match operand {
+        &mir_types::Operand::Copy(ref p) => mir_types::Operand::Copy(copy_place(p)),
+        &mir_types::Operand::Move(ref p) => mir_types::Operand::Move(copy_place(p)),
+        &mir_types::Operand::Constant(ref c) => mir_types::Operand::Constant(copy_constant(c)),
+    }
+}
+
+/// Creates a copy of a Constant.
+fn copy_constant(c: &mir_types::Constant) -> mir_types::Constant {
+    mir_types::Constant {
+        ty: hir_ty::copy_type(&c.ty),
+        kind: copy_constant_kind(&c.kind),
+    }
+}
+
+/// Creates a copy of a ConstantKind.
+fn copy_constant_kind(k: &mir_types::ConstantKind) -> mir_types::ConstantKind {
+    match k {
+        &mir_types::ConstantKind::Int(i) => mir_types::ConstantKind::Int(i),
+        &mir_types::ConstantKind::Uint(u) => mir_types::ConstantKind::Uint(u),
+        &mir_types::ConstantKind::Float(f) => mir_types::ConstantKind::Float(f),
+        &mir_types::ConstantKind::Bool(b) => mir_types::ConstantKind::Bool(b),
+        &mir_types::ConstantKind::Char(c) => mir_types::ConstantKind::Char(c),
+        &mir_types::ConstantKind::String(ref s) => mir_types::ConstantKind::String(clone_string(s)),
+        &mir_types::ConstantKind::ByteString(ref bytes) => {
+            mir_types::ConstantKind::ByteString(clone_bytes(bytes))
+        }
+        &mir_types::ConstantKind::Unit => mir_types::ConstantKind::Unit,
+        &mir_types::ConstantKind::FnDef(def_id) => mir_types::ConstantKind::FnDef(def_id),
+        &mir_types::ConstantKind::ConstDef(def_id) => mir_types::ConstantKind::ConstDef(def_id),
+        &mir_types::ConstantKind::StaticDef(def_id) => mir_types::ConstantKind::StaticDef(def_id),
+        &mir_types::ConstantKind::ZeroSized => mir_types::ConstantKind::ZeroSized,
+    }
+}
+
+/// Creates a copy of a Vec<u8>.
+fn clone_bytes(bytes: &Vec<u8>) -> Vec<u8> {
+    let mut result: Vec<u8> = Vec::new();
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        result.push(bytes[i]);
+        i = i + 1;
+    }
+    result
+}
+
+/// Clears the move status of a local after reassignment.
+///
+/// Call this after assigning to a local to allow it to be used again.
+pub fn clear_move_on_assign(ctx: &mut mir_lower_ctx::MirLowerCtx, local: mir_def::MirLocalId) {
+    ctx.move_tracker.clear_move(local);
 }
 
 // ============================================================
@@ -451,6 +586,12 @@ impl hir_ty::TypeKind {
             }
             &hir_ty::TypeKind::Never => hir_ty::TypeKind::Never,
             &hir_ty::TypeKind::Error => hir_ty::TypeKind::Error,
+            &hir_ty::TypeKind::Ownership { ref qualifier, ref inner } => {
+                hir_ty::TypeKind::Ownership {
+                    qualifier: qualifier.clone(),
+                    inner: Box::new(inner.as_ref().clone()),
+                }
+            }
         }
     }
 }

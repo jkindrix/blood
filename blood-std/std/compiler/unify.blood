@@ -308,6 +308,12 @@ pub fn substitute_type_params(ty: &hir_ty::Type, subst: &TypeParamSubst) -> hir_
                 body: Box::new(substitute_type_params(body.as_ref(), subst)),
             })
         }
+        &hir_ty::TypeKind::Ownership { qualifier, ref inner } => {
+            hir_ty::Type::new(hir_ty::TypeKind::Ownership {
+                qualifier: qualifier,
+                inner: Box::new(substitute_type_params(inner.as_ref(), subst)),
+            })
+        }
     }
 }
 
@@ -1037,6 +1043,12 @@ pub fn apply_substs(table: &SubstTable, ty: &hir_ty::Type) -> hir_ty::Type {
                 body: Box::new(apply_substs(table, body.as_ref())),
             })
         }
+        &hir_ty::TypeKind::Ownership { qualifier, ref inner } => {
+            hir_ty::Type::new(hir_ty::TypeKind::Ownership {
+                qualifier: qualifier,
+                inner: Box::new(apply_substs(table, inner.as_ref())),
+            })
+        }
     }
 }
 
@@ -1131,6 +1143,9 @@ pub fn occurs_in(var_id: hir_def::TyVarId, ty: &hir_ty::Type) -> bool {
         }
         &hir_ty::TypeKind::Forall { params: _, ref body } => {
             occurs_in(var_id, body.as_ref())
+        }
+        &hir_ty::TypeKind::Ownership { qualifier: _, ref inner } => {
+            occurs_in(var_id, inner.as_ref())
         }
     }
 }
@@ -1382,6 +1397,30 @@ fn unify_resolved(
                 _ => UnifyResult::Err(UnifyError::mismatch(span))
             }
         }
+
+        // Ownership types: same qualifier, unify inner types
+        (&hir_ty::TypeKind::Ownership { qualifier, ref inner }, other_kind) => {
+            let qualifier_a = qualifier;
+            let inner_a = inner;
+            match other_kind {
+                &hir_ty::TypeKind::Ownership { qualifier, ref inner } => {
+                    if !ownership_qualifiers_equal(qualifier_a, qualifier) {
+                        return UnifyResult::Err(UnifyError::mismatch(span));
+                    }
+                    unify(table, unifier, inner_a.as_ref(), inner.as_ref(), span)
+                }
+                _ => UnifyResult::Err(UnifyError::mismatch(span))
+            }
+        }
+    }
+}
+
+/// Checks if two ownership qualifiers are equal.
+fn ownership_qualifiers_equal(a: hir_ty::OwnershipQualifier, b: hir_ty::OwnershipQualifier) -> bool {
+    match (a, b) {
+        (hir_ty::OwnershipQualifier::Linear, hir_ty::OwnershipQualifier::Linear) => true,
+        (hir_ty::OwnershipQualifier::Affine, hir_ty::OwnershipQualifier::Affine) => true,
+        _ => false,
     }
 }
 
@@ -1622,6 +1661,10 @@ fn types_equal(a: &hir_ty::Type, b: &hir_ty::Type) -> bool {
         (&hir_ty::TypeKind::Error, &hir_ty::TypeKind::Error) => true,
         (&hir_ty::TypeKind::Infer(va), &hir_ty::TypeKind::Infer(vb)) => {
             va.index == vb.index
+        }
+        (&hir_ty::TypeKind::Ownership { qualifier: qa, ref inner },
+         &hir_ty::TypeKind::Ownership { qualifier: qb, inner: ref inner_b }) => {
+            ownership_qualifiers_equal(qa, qb) && types_equal(inner.as_ref(), inner_b.as_ref())
         }
         _ => false // Conservative: non-primitive types need unification
     }

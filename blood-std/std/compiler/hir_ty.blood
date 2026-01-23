@@ -153,6 +153,29 @@ pub enum TypeKind {
     Never,
     /// An error type (used for error recovery)
     Error,
+    /// An ownership-qualified type: linear T or affine T
+    Ownership {
+        qualifier: OwnershipQualifier,
+        inner: Box<Type>,
+    },
+}
+
+/// Ownership qualifiers for linear types.
+pub enum OwnershipQualifier {
+    /// Linear: must be used exactly once.
+    Linear,
+    /// Affine: may be used at most once.
+    Affine,
+}
+
+impl OwnershipQualifier {
+    /// Clones an ownership qualifier.
+    pub fn clone(self: &OwnershipQualifier) -> OwnershipQualifier {
+        match self {
+            &OwnershipQualifier::Linear => OwnershipQualifier::Linear,
+            &OwnershipQualifier::Affine => OwnershipQualifier::Affine,
+        }
+    }
 }
 
 // ============================================================
@@ -245,6 +268,11 @@ impl EffectRow {
     /// Creates a polymorphic effect row.
     pub fn polymorphic(row_var: hir_def::EffectRowVarId) -> EffectRow {
         EffectRow { effects: Vec::new(), row_var: Some(row_var) }
+    }
+
+    /// Creates an effect row with both effects and a row variable.
+    pub fn with_effects_and_var(effects: Vec<EffectRef>, row_var: hir_def::EffectRowVarId) -> EffectRow {
+        EffectRow { effects, row_var: Some(row_var) }
     }
 
     /// Returns true if this is a pure (empty) effect row.
@@ -527,6 +555,12 @@ fn copy_type_kind(kind: &TypeKind) -> TypeKind {
             TypeKind::Forall {
                 params: copied_params,
                 body: Box::new(copy_type(body.as_ref())),
+            }
+        }
+        &TypeKind::Ownership { qualifier, ref inner } => {
+            TypeKind::Ownership {
+                qualifier: qualifier,
+                inner: Box::new(copy_type(inner.as_ref())),
             }
         }
     }

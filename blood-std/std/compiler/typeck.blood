@@ -789,6 +789,11 @@ fn types_match_for_impl(impl_ty: &hir_ty::Type, target_ty: &hir_ty::Type) -> boo
         // Inference variables match anything (will be constrained during checking)
         (&hir_ty::TypeKind::Infer(_), _) => true,
         (_, &hir_ty::TypeKind::Infer(_)) => true,
+        // Ownership types - compare inner types
+        (&hir_ty::TypeKind::Ownership { qualifier: impl_q, ref inner },
+         &hir_ty::TypeKind::Ownership { qualifier: target_q, inner: ref target_inner }) => {
+            impl_q == target_q && types_match_for_impl(inner.as_ref(), target_inner.as_ref())
+        }
         // Other combinations don't match
         _ => false,
     }
@@ -848,6 +853,11 @@ fn types_structurally_equal(a: &hir_ty::Type, b: &hir_ty::Type) -> bool {
                 i = i + 1;
             }
             true
+        }
+        // Ownership types - compare qualifier and inner type
+        (&hir_ty::TypeKind::Ownership { qualifier: qa, ref inner },
+         &hir_ty::TypeKind::Ownership { qualifier: qb, inner: ref inner_b }) => {
+            qa == qb && types_structurally_equal(inner.as_ref(), inner_b.as_ref())
         }
         _ => false,
     }
@@ -1124,6 +1134,10 @@ fn get_type_constructors(checker: &mut TypeChecker, ty: &hir_ty::Type) -> Vec<Co
         }
         &hir_ty::TypeKind::Never => {
             // Never type has no constructors (uninhabited)
+        }
+        &hir_ty::TypeKind::Ownership { qualifier: _, ref inner } => {
+            // Ownership type uses inner type's constructors
+            return get_type_constructors(checker, inner.as_ref());
         }
         _ => {
             // Other types - treat as single wildcard

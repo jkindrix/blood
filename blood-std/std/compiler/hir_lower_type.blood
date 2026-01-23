@@ -85,7 +85,7 @@ pub fn lower_type(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> hir_t
                 effects: effect_row,
             })
         }
-        &ast::TypeKind::Record { ref fields, rest: _ } => {
+        &ast::TypeKind::Record { ref fields, ref rest } => {
             let mut hir_fields: Vec<hir_ty::RecordField> = Vec::new();
             let mut i: usize = 0;
             while i < fields.len() {
@@ -95,42 +95,62 @@ pub fn lower_type(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> hir_t
                 hir_fields.push(hir_field);
                 i = i + 1;
             }
+            // Handle row polymorphism: if `rest` is Some, this is an open record
+            // with a row variable (e.g., { x: i32, ..r })
+            let row_var = match rest {
+                &Option::Some(ref _row_var_name) => {
+                    // Allocate a fresh record row variable
+                    // Note: The row variable name is not currently tracked in the scope.
+                    // Full row polymorphism would require adding it to a type parameter scope.
+                    Option::Some(ctx.alloc_record_row_var())
+                }
+                &Option::None => Option::None,
+            };
             hir_ty::Type::new(hir_ty::TypeKind::Record {
                 fields: hir_fields,
-                row_var: Option::None, // TODO: Handle row polymorphism
+                row_var: row_var,
             })
         }
-        &ast::TypeKind::Ownership { qualifier: _, ref inner } => {
-            // For now, just lower the inner type
-            // TODO: Track ownership qualifiers
-            lower_type(ctx, inner.as_ref())
+        &ast::TypeKind::Ownership { ref qualifier, ref inner } => {
+            // Convert AST ownership qualifier to HIR ownership qualifier
+            let hir_qualifier = match qualifier {
+                &ast::OwnershipQualifier::Linear => hir_ty::OwnershipQualifier::Linear,
+                &ast::OwnershipQualifier::Affine => hir_ty::OwnershipQualifier::Affine,
+            };
+            let inner_ty = lower_type(ctx, inner.as_ref());
+            hir_ty::Type::new(hir_ty::TypeKind::Ownership {
+                qualifier: hir_qualifier,
+                inner: Box::new(inner_ty),
+            })
         }
         &ast::TypeKind::Forall { ref params, ref body } => {
             // Lower forall type: forall<T, U> Body
             //
-            // For each type parameter, allocate a type variable ID.
-            // These become the quantified parameters in the Forall type.
-            //
-            // NOTE: Currently, the body type cannot properly reference these
-            // parameters by name because they are not added to the resolver scope.
-            // Full forall type support would require:
-            // 1. Pushing a type parameter scope before lowering body
-            // 2. Adding each parameter name -> TyVarId mapping
-            // 3. Popping the scope after lowering
-            // 4. Making type path resolution check type parameter scope first
-            //
-            // For now, we create the structure but body type param references
-            // won't resolve correctly.
+            // For each type parameter, allocate a type variable ID and
+            // register it in the resolver scope so the body type can
+            // reference the parameters by name.
 
+            // Push a type parameter scope
+            ctx.resolver.push_scope(resolve::ScopeKind::TypeParams);
+
+            // Allocate type variables and register them in scope
             let mut param_ids: Vec<hir_def::TyVarId> = Vec::new();
             let mut i: usize = 0;
             while i < params.len() {
                 let var_id = ctx.alloc_ty_var();
                 param_ids.push(var_id);
+
+                // Register the type parameter in the scope
+                let param = &params[i];
+                let _ = ctx.resolver.define_type_param(param.symbol, var_id);
                 i = i + 1;
             }
 
+            // Lower the body type (now type params can be resolved)
             let body_ty = lower_type(ctx, body.as_ref());
+
+            // Pop the type parameter scope
+            ctx.resolver.pop_scope();
 
             hir_ty::Type::new(hir_ty::TypeKind::Forall {
                 params: param_ids,
@@ -159,6 +179,19 @@ fn lower_type_path(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath) -
             let prim = try_primitive_type(seg.name.symbol);
             if prim.is_some() {
                 return prim.unwrap();
+            }
+        }
+    }
+
+    // Check for type parameter (single-segment, no args)
+    // Type parameters take precedence over other type definitions
+    if path.segments.len() == 1 {
+        let seg = &path.segments[0];
+        if seg.args.is_none() {
+            let type_param = ctx.resolver.lookup_type_param(seg.name.symbol);
+            if type_param.is_some() {
+                let ty_var_id = type_param.unwrap();
+                return hir_ty::Type::new(hir_ty::TypeKind::Infer(ty_var_id));
             }
         }
     }
@@ -335,7 +368,7 @@ pub fn lower_effect_row(ctx: &mut hir_lower_ctx::LoweringCtx, row: &ast::EffectR
         &ast::EffectRowKind::Pure => {
             hir_ty::EffectRow::empty()
         }
-        &ast::EffectRowKind::Effects { ref effects, rest: _ } => {
+        &ast::EffectRowKind::Effects { ref effects, ref rest } => {
             let mut hir_effects: Vec<hir_ty::EffectRef> = Vec::new();
             let mut i: usize = 0;
             while i < effects.len() {
@@ -345,11 +378,24 @@ pub fn lower_effect_row(ctx: &mut hir_lower_ctx::LoweringCtx, row: &ast::EffectR
                 }
                 i = i + 1;
             }
-            hir_ty::EffectRow::with_effects(hir_effects)
+            // Handle row polymorphism: if `rest` is Some, this is an open effect row
+            // with a row variable (e.g., Read, Write | r)
+            match rest {
+                &Option::Some(ref _row_var_name) => {
+                    // Allocate a fresh effect row variable
+                    let row_var = ctx.alloc_effect_row_var();
+                    hir_ty::EffectRow::with_effects_and_var(hir_effects, row_var)
+                }
+                &Option::None => {
+                    hir_ty::EffectRow::with_effects(hir_effects)
+                }
+            }
         }
-        &ast::EffectRowKind::Var(_) => {
-            // TODO: Handle effect row variables
-            hir_ty::EffectRow::empty()
+        &ast::EffectRowKind::Var(ref _var_name) => {
+            // Effect row variable reference (e.g., just `e` in a type)
+            // Allocate a fresh effect row variable
+            let row_var = ctx.alloc_effect_row_var();
+            hir_ty::EffectRow::polymorphic(row_var)
         }
     }
 }
