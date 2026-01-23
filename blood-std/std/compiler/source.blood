@@ -4,9 +4,9 @@
 // contents. It handles reading files, tracking line positions, and
 // converting between byte offsets and line/column positions.
 //
-// Note: The actual file reading requires runtime support via @unsafe
-// extern functions. The SourceMap and SourceFile abstractions work
-// with in-memory strings until proper file I/O is available.
+// File I/O is provided by blood-rust builtins:
+// - file_read_to_string(&str) -> &str - read entire file as string
+// - file_exists(&str) -> bool - check if file exists
 
 mod common;
 
@@ -239,20 +239,30 @@ impl ReadFileResult {
 
 /// Reads a file from the filesystem.
 ///
-/// Note: This is a stub that returns an error. Actual file reading
-/// requires runtime support that connects to the host filesystem.
-/// When blood-rust supports FFI or provides file I/O primitives,
-/// this function should be updated.
-pub fn read_file(_path: &str) -> ReadFileResult {
-    ReadFileResult::err(common::make_string("File reading not yet implemented"))
+/// Uses the blood-rust `file_read_to_string` builtin to read the entire
+/// file contents as a string. Returns an error if the file doesn't exist
+/// or cannot be read.
+pub fn read_file(path: &str) -> ReadFileResult {
+    // Check if file exists first
+    if !file_exists(path) {
+        let mut msg = common::make_string("File not found: ");
+        msg.push_str(path);
+        return ReadFileResult::err(msg);
+    }
+
+    // Read the file content using blood-rust builtin
+    let content_ref: &str = file_read_to_string(path);
+
+    // Convert &str to owned String
+    let content = common::make_string(content_ref);
+
+    // Check if read succeeded (empty file is valid, but error returns empty)
+    // We already checked file_exists, so empty content means empty file
+    ReadFileResult::ok(content)
 }
 
-/// Checks if a file exists.
-///
-/// Note: Stub implementation - always returns false.
-pub fn file_exists(_path: &str) -> bool {
-    false
-}
+// Note: file_exists is provided by blood-rust as a builtin function.
+// It is called directly without declaration: file_exists(path: &str) -> bool
 
 /// Gets the directory containing a path.
 ///

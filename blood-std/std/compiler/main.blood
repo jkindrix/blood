@@ -4,8 +4,11 @@
 // It orchestrates parsing arguments, reading source files, and running
 // the compilation pipeline.
 //
-// Note: Actual file I/O requires runtime support. This module provides
-// the structure and can be extended when file operations are available.
+// CLI and I/O is provided by blood-rust builtins:
+// - args_count() -> i32 - get number of CLI arguments
+// - args_get(i32) -> &str - get argument at index
+// - print_str(&str) - print string without newline
+// - println_str(&str) - print string with newline
 
 mod common;
 mod ast;
@@ -118,11 +121,23 @@ pub fn main() -> i32 {
     }
 }
 
-/// Stub argument parser (returns check command for testing).
+/// Parses command line arguments using blood-rust builtins.
+///
+/// Uses args_count() and args_get() builtins to access actual CLI args.
 fn parse_args_stub() -> Args {
-    // Without runtime FFI, we can't access actual command line args
-    // This stub demonstrates the structure and allows testing
-    Args::default()
+    let argc = args_count();
+
+    // Build argv vector from CLI args
+    let mut argv: Vec<String> = Vec::new();
+    let mut i: i32 = 0;
+    while i < argc {
+        let arg_ref: &str = args_get(i);
+        argv.push(common::make_string(arg_ref));
+        i = i + 1;
+    }
+
+    // Use existing parse_args function
+    parse_args(argc, &argv)
 }
 
 // ============================================================
@@ -350,16 +365,17 @@ fn print_info(msg: &str) {
     print_string(&output);
 }
 
-/// Prints a string to stdout.
-/// Note: This is a stub - actual printing requires runtime support.
-fn print_string(_s: &String) {
-    // Stub implementation - actual printing requires FFI
-    // The runtime would implement this via @extern
+/// Prints a string to stdout using blood-rust println_str builtin.
+fn print_string(s: &String) {
+    // Convert String to &str for builtin call
+    // Note: We iterate and print char by char because
+    // println_str expects &str, not &String
+    print_str(s.as_str());
 }
 
-/// Prints a newline.
+/// Prints a newline using blood-rust builtin.
 fn print_newline() {
-    // Stub implementation
+    println_str("");
 }
 
 // ============================================================

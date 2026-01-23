@@ -232,40 +232,58 @@ Most previous blood-rust limitations have been resolved. Current remaining limit
 
 ---
 
-## Blood-Rust Runtime Limitations
+## Blood-Rust Runtime Support
 
-The following features are **NOT available** in the blood-rust runtime, blocking full standalone operation:
+The blood-rust runtime provides comprehensive builtin functions for standalone operation:
 
-### File I/O (NOT AVAILABLE)
+### File I/O (AVAILABLE)
 
-The blood-rust runtime does not provide file I/O functions. The `source.blood` stub correctly returns an error:
+File I/O functions are available and used by `source.blood`:
 ```blood
-pub fn read_file(_path: &str) -> ReadFileResult {
-    ReadFileResult::err(common::make_string("File reading not yet implemented"))
+pub fn read_file(path: &str) -> ReadFileResult {
+    if !file_exists(path) {
+        return ReadFileResult::err(...);
+    }
+    let content_ref: &str = file_read_to_string(path);
+    ReadFileResult::ok(common::make_string(content_ref))
 }
 ```
 
-**Impact**: The compiler cannot read source files from disk when running standalone.
-**Workaround**: Use the `driver.compile()` function with in-memory source strings.
-**Resolution**: Requires adding file I/O builtins to blood-rust (outside this repository).
+**Available builtins:**
+- `file_read_to_string(&str) -> &str` - read entire file as string
+- `file_write_string(&str, &str) -> bool` - write string to file
+- `file_append_string(&str, &str) -> bool` - append to file
+- `file_exists(&str) -> bool` - check if file exists
+- `file_size(&str) -> i64` - get file size
+- `file_delete(&str) -> bool` - delete file
+- `file_open(&str, &str) -> i64` - low-level open with mode
+- `file_read(i64, u64, u64) -> i64` - low-level read
+- `file_write(i64, u64, u64) -> i64` - low-level write
+- `file_close(i64) -> i32` - low-level close
 
-### Command Line Arguments (NOT AVAILABLE)
+### Command Line Arguments (AVAILABLE)
 
-The blood-rust runtime does not provide argc/argv access. The `main.blood` stub correctly returns defaults:
+CLI argument functions are available and used by `main.blood`:
 ```blood
-fn parse_args_stub() -> Args {
-    // Without runtime FFI, we can't access actual command line args
-    Args::default()
+fn parse_args_from_cli() -> Args {
+    let argc = args_count();
+    let mut argv: Vec<String> = Vec::new();
+    let mut i: i32 = 0;
+    while i < argc {
+        argv.push(common::make_string(args_get(i)));
+        i = i + 1;
+    }
+    parse_args(argc, &argv)
 }
 ```
 
-**Impact**: The compiler cannot parse command line arguments when running standalone.
-**Workaround**: Programmatically construct `Args` structs.
-**Resolution**: Requires adding CLI argument builtins to blood-rust.
+**Available builtins:**
+- `args_count() -> i32` - get number of CLI arguments
+- `args_get(i32) -> &str` - get argument at index
+- `args_join() -> &str` - get all arguments as space-separated string
 
-### Available Runtime Functions
+### Other Runtime Functions
 
-The blood-rust runtime DOES provide:
 - Print functions: `print_str`, `println_str`, `print_int`, `println_int`, etc.
 - String operations: `str_len`, `str_eq`, `str_concat`
 - Memory allocation: `alloc`, `free`, `realloc`, `memcpy`
@@ -290,7 +308,7 @@ done
 
 ### In-Memory Pipeline Testing
 
-Since file I/O is not available, end-to-end testing uses in-memory source strings:
+For unit testing individual compiler phases, in-memory source strings work well:
 
 ```blood
 // Example: Full pipeline test
@@ -309,22 +327,55 @@ Test coverage includes:
 - MIR Lowering: HIR to MIR conversion with pattern compilation
 - Code Generation: MIR to LLVM IR with type-aware output
 
+### File-Based Testing
+
+With blood-rust file I/O support, the compiler can now read source files directly:
+
+```bash
+# Check a Blood source file for errors
+blood check myprogram.blood
+
+# Build a Blood source file to LLVM IR
+blood build myprogram.blood
+```
+
+The `source::read_file()` function uses blood-rust builtins to read source files,
+enabling real file-based compilation workflows.
+
 ### LLVM IR Verification
 
 Generated LLVM IR can be verified using `llc`:
 ```bash
-# Compile Blood program to LLVM IR (via in-memory test)
-# Then verify the IR is syntactically valid:
+# Compile Blood program to LLVM IR
+blood build myprogram.blood > output.ll
+
+# Verify the IR is syntactically valid:
 llc -filetype=null output.ll
 ```
 
-### End-to-End Testing (Future)
+### End-to-End Testing
 
-Once blood-rust adds file I/O support, full end-to-end testing will:
+Full end-to-end testing workflow:
 1. Compile the self-hosted compiler with blood-rust → executable
 2. Use that executable to compile test Blood programs → LLVM IR
 3. Compile LLVM IR with clang → native executable
 4. Run and verify output matches expected results
+
+Example:
+```bash
+# Step 1: Build the self-hosted compiler
+blood build blood-std/std/compiler/main.blood -o bloodc.ll
+llc bloodc.ll -o bloodc.o
+clang bloodc.o -o bloodc
+
+# Step 2: Use self-hosted compiler to compile a test program
+./bloodc build test_program.blood > test.ll
+
+# Step 3: Build and run the test program
+llc test.ll -o test.o
+clang test.o -o test
+./test
+```
 
 ---
 
@@ -389,4 +440,15 @@ When modifying the compiler:
   - Removed redundant clone_type/clone_primitive functions
   - Verified all MIR rvalues, statements, and terminators are fully handled in codegen
   - Verified all TypeKind variants have LLVM type mapping
+  - All 53 compiler files continue to pass type checking
+- **2026-01**: Blood-rust runtime integration (standalone operation now possible):
+  - Implemented file I/O using blood-rust builtins (source.blood)
+    - `read_file()` now uses `file_read_to_string` and `file_exists` builtins
+    - Compiler can now read source files from disk
+  - Implemented CLI argument parsing using blood-rust builtins (main.blood)
+    - `parse_args_stub()` now uses `args_count` and `args_get` builtins
+    - Compiler can now accept command-line arguments
+  - Implemented output using blood-rust print builtins (main.blood)
+    - `print_string()` now uses `print_str` builtin
+  - Updated documentation: "Blood-Rust Runtime Limitations" → "Blood-Rust Runtime Support"
   - All 53 compiler files continue to pass type checking
