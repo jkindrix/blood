@@ -17,70 +17,6 @@ mod hir;
 mod unify;
 
 // ============================================================
-// Type Context
-// ============================================================
-
-/// The context for type checking a function or closure.
-///
-/// Note: Methods that modify Vec fields are omitted due to blood-rust
-/// limitations. The actual type checking implementation will be added
-/// when the compiler supports this pattern.
-pub struct TypeContext {
-    /// Counter for generating fresh type variables.
-    pub next_ty_var: u32,
-    /// The expected return type of the current function.
-    pub return_ty: Option<hir_ty::Type>,
-    /// The current function's DefId.
-    pub current_fn: Option<hir_def::DefId>,
-    /// Whether we're in a loop (for break/continue checking).
-    pub in_loop: bool,
-    /// The type of the current loop (for break value checking).
-    pub loop_ty: Option<hir_ty::Type>,
-}
-
-impl TypeContext {
-    /// Creates a new type context.
-    pub fn new() -> TypeContext {
-        TypeContext {
-            next_ty_var: 0,
-            return_ty: None,
-            current_fn: None,
-            in_loop: false,
-            loop_ty: None,
-        }
-    }
-
-    /// Generates a fresh type variable.
-    pub fn fresh_ty_var(self: &mut Self) -> hir_def::TyVarId {
-        let id = hir_def::TyVarId::new(self.next_ty_var);
-        self.next_ty_var = self.next_ty_var + 1;
-        id
-    }
-
-    /// Creates a fresh inference type.
-    pub fn fresh_infer(self: &mut Self) -> hir_ty::Type {
-        hir_ty::Type::infer(self.fresh_ty_var())
-    }
-
-    /// Sets the return type for the current function.
-    pub fn set_return_ty(self: &mut Self, ty: hir_ty::Type) {
-        self.return_ty = Some(ty);
-    }
-
-    /// Enters a loop context.
-    pub fn enter_loop(self: &mut Self, ty: hir_ty::Type) {
-        self.in_loop = true;
-        self.loop_ty = Some(ty);
-    }
-
-    /// Exits a loop context.
-    pub fn exit_loop(self: &mut Self) {
-        self.in_loop = false;
-        self.loop_ty = None;
-    }
-}
-
-// ============================================================
 // Type Error
 // ============================================================
 
@@ -202,6 +138,8 @@ pub struct StructInfo {
     pub num_generics: u32,
     /// Field names (in order).
     pub field_names: Vec<common::Symbol>,
+    /// Field info with types (for type checking).
+    pub fields: Vec<FieldInfo>,
 }
 
 impl StructInfo {
@@ -211,12 +149,14 @@ impl StructInfo {
         name: common::Symbol,
         num_generics: u32,
         field_names: Vec<common::Symbol>,
+        fields: Vec<FieldInfo>,
     ) -> StructInfo {
         StructInfo {
             def_id: def_id,
             name: name,
             num_generics: num_generics,
             field_names: field_names,
+            fields: fields,
         }
     }
 }
@@ -231,6 +171,8 @@ pub struct EnumInfo {
     pub num_generics: u32,
     /// Variant names (in order).
     pub variant_names: Vec<common::Symbol>,
+    /// Variant info with types (for type checking).
+    pub variants: Vec<VariantInfo>,
 }
 
 impl EnumInfo {
@@ -240,12 +182,14 @@ impl EnumInfo {
         name: common::Symbol,
         num_generics: u32,
         variant_names: Vec<common::Symbol>,
+        variants: Vec<VariantInfo>,
     ) -> EnumInfo {
         EnumInfo {
             def_id: def_id,
             name: name,
             num_generics: num_generics,
             variant_names: variant_names,
+            variants: variants,
         }
     }
 }
@@ -404,6 +348,122 @@ pub enum ExhaustivenessResult {
     NonExhaustive(Vec<Witness>),
 }
 
+impl ExhaustivenessResult {
+    /// Returns true if the result is exhaustive.
+    pub fn is_exhaustive(self: &ExhaustivenessResult) -> bool {
+        match self {
+            &ExhaustivenessResult::Exhaustive => true,
+            &ExhaustivenessResult::NonExhaustive(_) => false,
+        }
+    }
+}
+
+/// A deconstructed pattern for exhaustiveness checking.
+pub enum DeconstructedPattern {
+    /// A wildcard pattern that matches anything.
+    Wildcard,
+    /// A literal pattern (integer, bool, char).
+    Literal { value: i128 },
+    /// A struct variant pattern.
+    Variant {
+        def_id: hir_def::DefId,
+        variant_idx: u32,
+        fields: Vec<DeconstructedPattern>,
+    },
+    /// A struct pattern (non-enum).
+    Struct {
+        def_id: hir_def::DefId,
+        fields: Vec<DeconstructedPattern>,
+    },
+    /// A tuple pattern.
+    Tuple { fields: Vec<DeconstructedPattern> },
+    /// An or-pattern (alternative patterns).
+    Or { pats: Vec<DeconstructedPattern> },
+    /// Missing pattern (for non-exhaustiveness witnesses).
+    Missing,
+}
+
+impl DeconstructedPattern {
+    /// Creates a wildcard pattern.
+    pub fn wildcard() -> DeconstructedPattern {
+        DeconstructedPattern::Wildcard
+    }
+
+    /// Creates a literal pattern.
+    pub fn literal(value: i128) -> DeconstructedPattern {
+        DeconstructedPattern::Literal { value: value }
+    }
+
+    /// Creates a variant pattern.
+    pub fn variant(def_id: hir_def::DefId, variant_idx: u32, fields: Vec<DeconstructedPattern>) -> DeconstructedPattern {
+        DeconstructedPattern::Variant { def_id: def_id, variant_idx: variant_idx, fields: fields }
+    }
+
+    /// Creates a struct pattern.
+    pub fn struct_pat(def_id: hir_def::DefId, fields: Vec<DeconstructedPattern>) -> DeconstructedPattern {
+        DeconstructedPattern::Struct { def_id: def_id, fields: fields }
+    }
+
+    /// Creates a tuple pattern.
+    pub fn tuple(fields: Vec<DeconstructedPattern>) -> DeconstructedPattern {
+        DeconstructedPattern::Tuple { fields: fields }
+    }
+
+    /// Returns true if this pattern is a wildcard.
+    pub fn is_wildcard(self: &DeconstructedPattern) -> bool {
+        match self {
+            &DeconstructedPattern::Wildcard => true,
+            _ => false,
+        }
+    }
+}
+
+/// A row in the pattern matrix.
+pub struct PatternRow {
+    /// The patterns in this row (one per column).
+    pub patterns: Vec<DeconstructedPattern>,
+}
+
+impl PatternRow {
+    /// Creates a new pattern row.
+    pub fn new(patterns: Vec<DeconstructedPattern>) -> PatternRow {
+        PatternRow { patterns: patterns }
+    }
+}
+
+/// A pattern matrix for exhaustiveness checking.
+pub struct PatternMatrix {
+    /// The rows of the matrix.
+    pub rows: Vec<PatternRow>,
+    /// Number of columns (patterns per row).
+    pub width: usize,
+}
+
+impl PatternMatrix {
+    /// Creates a new empty pattern matrix.
+    pub fn new(width: usize) -> PatternMatrix {
+        PatternMatrix {
+            rows: Vec::new(),
+            width: width,
+        }
+    }
+
+    /// Adds a row to the matrix.
+    pub fn push_row(self: &mut PatternMatrix, row: PatternRow) {
+        self.rows.push(row);
+    }
+
+    /// Returns the number of rows.
+    pub fn row_count(self: &PatternMatrix) -> usize {
+        self.rows.len()
+    }
+
+    /// Returns true if the matrix is empty.
+    pub fn is_empty(self: &PatternMatrix) -> bool {
+        self.rows.len() == 0
+    }
+}
+
 // ============================================================
 // Type Checking Results
 // ============================================================
@@ -532,6 +592,246 @@ impl LocalInfo {
 }
 
 // ============================================================
+// Stored Signature Info
+// ============================================================
+
+/// Stored info about a function signature for type checking.
+pub struct FnSigInfo {
+    /// Parameter types.
+    pub param_tys: Vec<hir_ty::Type>,
+    /// Return type.
+    pub return_ty: hir_ty::Type,
+    /// Number of generic type parameters.
+    pub num_generics: u32,
+}
+
+impl FnSigInfo {
+    /// Creates a new function signature info.
+    pub fn new(param_tys: Vec<hir_ty::Type>, return_ty: hir_ty::Type, num_generics: u32) -> FnSigInfo {
+        FnSigInfo { param_tys, return_ty, num_generics }
+    }
+}
+
+/// Stored info about a struct field.
+pub struct FieldInfo {
+    /// Field name symbol.
+    pub name: common::Symbol,
+    /// Field type.
+    pub ty: hir_ty::Type,
+}
+
+impl FieldInfo {
+    /// Creates a new field info.
+    pub fn new(name: common::Symbol, ty: hir_ty::Type) -> FieldInfo {
+        FieldInfo { name, ty }
+    }
+}
+
+/// Stored info about an enum variant.
+pub struct VariantInfo {
+    /// Variant name symbol.
+    pub name: common::Symbol,
+    /// Field types for tuple variants.
+    pub field_tys: Vec<hir_ty::Type>,
+    /// Variant index within the enum (for pattern matching).
+    pub variant_index: u32,
+}
+
+impl VariantInfo {
+    /// Creates a new variant info.
+    pub fn new(name: common::Symbol, field_tys: Vec<hir_ty::Type>, variant_index: u32) -> VariantInfo {
+        VariantInfo { name, field_tys, variant_index }
+    }
+}
+
+/// Stored info about a constant.
+pub struct ConstInfo {
+    /// The DefId of the constant.
+    pub def_id: hir_def::DefId,
+    /// The name of the constant.
+    pub name: common::Symbol,
+    /// The type of the constant.
+    pub ty: hir_ty::Type,
+}
+
+impl ConstInfo {
+    /// Creates a new const info.
+    pub fn new(def_id: hir_def::DefId, name: common::Symbol, ty: hir_ty::Type) -> ConstInfo {
+        ConstInfo { def_id, name, ty }
+    }
+}
+
+/// Stored info about a static.
+pub struct StaticInfo {
+    /// The DefId of the static.
+    pub def_id: hir_def::DefId,
+    /// The name of the static.
+    pub name: common::Symbol,
+    /// The type of the static.
+    pub ty: hir_ty::Type,
+    /// Whether the static is mutable.
+    pub mutable: bool,
+}
+
+impl StaticInfo {
+    /// Creates a new static info.
+    pub fn new(def_id: hir_def::DefId, name: common::Symbol, ty: hir_ty::Type, mutable: bool) -> StaticInfo {
+        StaticInfo { def_id, name, ty, mutable }
+    }
+}
+
+/// Stored info about a method in an impl block.
+pub struct MethodInfo {
+    /// The DefId of the method.
+    pub def_id: hir_def::DefId,
+    /// The name of the method.
+    pub name: common::Symbol,
+    /// Parameter types (excluding self).
+    pub param_tys: Vec<hir_ty::Type>,
+    /// Return type.
+    pub return_ty: hir_ty::Type,
+    /// Whether the method takes self by reference.
+    pub takes_self_ref: bool,
+    /// Whether the method takes self by mutable reference.
+    pub takes_self_mut: bool,
+}
+
+impl MethodInfo {
+    /// Creates a new method info.
+    pub fn new(
+        def_id: hir_def::DefId,
+        name: common::Symbol,
+        param_tys: Vec<hir_ty::Type>,
+        return_ty: hir_ty::Type,
+        takes_self_ref: bool,
+        takes_self_mut: bool,
+    ) -> MethodInfo {
+        MethodInfo { def_id, name, param_tys, return_ty, takes_self_ref, takes_self_mut }
+    }
+}
+
+/// Stored info about an impl block.
+pub struct ImplInfo {
+    /// The DefId of the impl block.
+    pub def_id: hir_def::DefId,
+    /// The self type this impl is for.
+    pub self_ty: hir_ty::Type,
+    /// Number of generic parameters on the impl.
+    pub num_generics: u32,
+    /// Methods in this impl block.
+    pub methods: Vec<MethodInfo>,
+}
+
+impl ImplInfo {
+    /// Creates a new impl info.
+    pub fn new(
+        def_id: hir_def::DefId,
+        self_ty: hir_ty::Type,
+        num_generics: u32,
+        methods: Vec<MethodInfo>,
+    ) -> ImplInfo {
+        ImplInfo { def_id, self_ty, num_generics, methods }
+    }
+}
+
+// ============================================================
+// Trait Information
+// ============================================================
+
+/// Information about a trait for type checking.
+pub struct TraitInfo {
+    /// The DefId of the trait.
+    pub def_id: hir_def::DefId,
+    /// The name of the trait.
+    pub name: common::Symbol,
+    /// Number of generic type parameters.
+    pub num_generics: u32,
+    /// Methods required by this trait.
+    pub methods: Vec<TraitMethodInfo>,
+    /// Associated types in this trait.
+    pub assoc_types: Vec<common::Symbol>,
+}
+
+impl TraitInfo {
+    /// Creates new trait info.
+    pub fn new(
+        def_id: hir_def::DefId,
+        name: common::Symbol,
+        num_generics: u32,
+        methods: Vec<TraitMethodInfo>,
+        assoc_types: Vec<common::Symbol>,
+    ) -> TraitInfo {
+        TraitInfo { def_id, name, num_generics, methods, assoc_types }
+    }
+}
+
+/// Information about a trait method.
+pub struct TraitMethodInfo {
+    /// The name of the method.
+    pub name: common::Symbol,
+    /// Parameter types (excluding self).
+    pub param_tys: Vec<hir_ty::Type>,
+    /// Return type.
+    pub return_ty: hir_ty::Type,
+    /// Whether the method takes &self.
+    pub takes_self_ref: bool,
+    /// Whether the method takes &mut self.
+    pub takes_self_mut: bool,
+    /// Whether this method has a default implementation.
+    pub has_default: bool,
+}
+
+impl TraitMethodInfo {
+    /// Creates new trait method info.
+    pub fn new(
+        name: common::Symbol,
+        param_tys: Vec<hir_ty::Type>,
+        return_ty: hir_ty::Type,
+        takes_self_ref: bool,
+        takes_self_mut: bool,
+        has_default: bool,
+    ) -> TraitMethodInfo {
+        TraitMethodInfo {
+            name, param_tys, return_ty,
+            takes_self_ref, takes_self_mut, has_default,
+        }
+    }
+}
+
+/// Information about a trait implementation.
+pub struct TraitImplInfo {
+    /// The DefId of this impl block.
+    pub impl_def_id: hir_def::DefId,
+    /// The DefId of the trait being implemented.
+    pub trait_def_id: hir_def::DefId,
+    /// The type implementing the trait.
+    pub self_ty: hir_ty::Type,
+    /// Type arguments for the trait (if generic).
+    pub trait_args: Vec<hir_ty::Type>,
+    /// Number of generic parameters on the impl.
+    pub num_generics: u32,
+    /// Where clause predicates for this impl.
+    pub where_predicates: Vec<Predicate>,
+}
+
+impl TraitImplInfo {
+    /// Creates new trait impl info.
+    pub fn new(
+        impl_def_id: hir_def::DefId,
+        trait_def_id: hir_def::DefId,
+        self_ty: hir_ty::Type,
+        trait_args: Vec<hir_ty::Type>,
+        num_generics: u32,
+        where_predicates: Vec<Predicate>,
+    ) -> TraitImplInfo {
+        TraitImplInfo {
+            impl_def_id, trait_def_id, self_ty,
+            trait_args, num_generics, where_predicates,
+        }
+    }
+}
+
+// ============================================================
 // Type Checker
 // ============================================================
 
@@ -543,6 +843,7 @@ impl LocalInfo {
 /// - Type variable generator
 /// - Current function context
 /// - Errors collected during type checking
+/// - Registered item signatures for lookup
 pub struct TypeChecker {
     /// Substitution table for type unification.
     pub subst_table: unify::SubstTable,
@@ -558,6 +859,22 @@ pub struct TypeChecker {
     pub locals: Vec<LocalInfo>,
     /// Type errors collected during checking.
     pub errors: Vec<TypeError>,
+    /// Function signature info by DefId.index for O(1) lookup.
+    pub fn_sigs: Vec<Option<FnSigInfo>>,
+    /// Struct info by DefId.index for O(1) lookup.
+    pub structs: Vec<Option<StructInfo>>,
+    /// Enum info by DefId.index for O(1) lookup.
+    pub enums: Vec<Option<EnumInfo>>,
+    /// Const info by DefId.index for O(1) lookup.
+    pub consts: Vec<Option<ConstInfo>>,
+    /// Static info by DefId.index for O(1) lookup.
+    pub statics: Vec<Option<StaticInfo>>,
+    /// Impl blocks for method resolution.
+    pub impls: Vec<ImplInfo>,
+    /// Trait definitions by DefId.index for O(1) lookup.
+    pub traits: Vec<Option<TraitInfo>>,
+    /// Trait implementations for trait resolution.
+    pub trait_impls: Vec<TraitImplInfo>,
 }
 
 impl TypeChecker {
@@ -571,6 +888,14 @@ impl TypeChecker {
             loop_ty: Option::None,
             locals: Vec::new(),
             errors: Vec::new(),
+            fn_sigs: Vec::new(),
+            structs: Vec::new(),
+            enums: Vec::new(),
+            consts: Vec::new(),
+            statics: Vec::new(),
+            impls: Vec::new(),
+            traits: Vec::new(),
+            trait_impls: Vec::new(),
         }
     }
 
@@ -591,7 +916,7 @@ impl TypeChecker {
     pub fn get_local_ty(self: &Self, id: hir_def::LocalId) -> Option<hir_ty::Type> {
         let idx = id.index as usize;
         if idx < self.locals.len() {
-            Some(copy_type(&self.locals[idx].ty))
+            Some(hir_ty::copy_type(&self.locals[idx].ty))
         } else {
             Option::None
         }
@@ -669,120 +994,884 @@ impl TypeChecker {
     pub fn clear_locals(self: &mut Self) {
         self.locals = Vec::new();
     }
+
+    // ========================================================
+    // Item Registration (for type checking support)
+    // ========================================================
+
+    /// Registers a function signature for later lookup.
+    pub fn register_fn_sig(self: &mut Self, def_id: hir_def::DefId, sig: &hir_item::FnSig) {
+        // Extract parameter types
+        let mut param_tys: Vec<hir_ty::Type> = Vec::new();
+        let mut i: usize = 0;
+        while i < sig.params.len() {
+            param_tys.push(hir_ty::copy_type(&sig.params[i].ty));
+            i = i + 1;
+        }
+
+        // Get the number of generic parameters
+        let num_generics = sig.generics.params.len() as u32;
+
+        // Create the info
+        let info = FnSigInfo::new(param_tys, hir_ty::copy_type(&sig.return_ty), num_generics);
+
+        // Store at def_id.index
+        let def_idx = def_id.index as usize;
+        while self.fn_sigs.len() <= def_idx {
+            self.fn_sigs.push(Option::None);
+        }
+        self.fn_sigs[def_idx] = Some(info);
+    }
+
+    /// Registers a struct definition for later lookup.
+    pub fn register_struct(self: &mut Self, def_id: hir_def::DefId, name: common::Symbol, struct_def: &hir_item::StructDef) {
+        // Extract field names and field info based on struct body
+        let mut field_names: Vec<common::Symbol> = Vec::new();
+        let mut fields: Vec<FieldInfo> = Vec::new();
+        match &struct_def.body {
+            &hir_item::StructBody::Record(ref struct_fields) => {
+                let mut i: usize = 0;
+                while i < struct_fields.len() {
+                    let f = &struct_fields[i];
+                    field_names.push(f.name.symbol);
+                    let info = FieldInfo::new(f.name.symbol, hir_ty::copy_type(&f.ty));
+                    fields.push(info);
+                    i = i + 1;
+                }
+            }
+            &hir_item::StructBody::Tuple(ref types) => {
+                // Tuple structs don't have named fields
+            }
+            &hir_item::StructBody::Unit => {
+                // Unit structs have no fields
+            }
+        }
+
+        // Count generic parameters
+        let num_generics = struct_def.generics.params.len() as u32;
+
+        // Create the info
+        let info = StructInfo::new(def_id, name, num_generics, field_names, fields);
+
+        // Store at def_id.index
+        let def_idx = def_id.index as usize;
+        while self.structs.len() <= def_idx {
+            self.structs.push(Option::None);
+        }
+        self.structs[def_idx] = Some(info);
+    }
+
+    /// Registers an enum definition for later lookup.
+    pub fn register_enum(self: &mut Self, def_id: hir_def::DefId, name: common::Symbol, enum_def: &hir_item::EnumDef) {
+        // Extract variant names and variant info
+        let mut variant_names: Vec<common::Symbol> = Vec::new();
+        let mut variants: Vec<VariantInfo> = Vec::new();
+        let mut i: usize = 0;
+        while i < enum_def.variants.len() {
+            let v = &enum_def.variants[i];
+            variant_names.push(v.name.symbol);
+
+            // Extract field types based on variant kind
+            let mut field_tys: Vec<hir_ty::Type> = Vec::new();
+            match &v.kind {
+                &hir_item::VariantKind::Unit => {
+                    // No fields
+                }
+                &hir_item::VariantKind::Tuple(ref types) => {
+                    let mut j: usize = 0;
+                    while j < types.len() {
+                        field_tys.push(hir_ty::copy_type(&types[j]));
+                        j = j + 1;
+                    }
+                }
+                &hir_item::VariantKind::Record(ref struct_fields) => {
+                    // For record variants, store field types in order
+                    let mut j: usize = 0;
+                    while j < struct_fields.len() {
+                        field_tys.push(hir_ty::copy_type(&struct_fields[j].ty));
+                        j = j + 1;
+                    }
+                }
+            }
+
+            let info = VariantInfo::new(v.name.symbol, field_tys, i as u32);
+            variants.push(info);
+            i = i + 1;
+        }
+
+        // Count generic parameters
+        let num_generics = enum_def.generics.params.len() as u32;
+
+        // Create the info
+        let info = EnumInfo::new(def_id, name, num_generics, variant_names, variants);
+
+        // Store at def_id.index
+        let def_idx = def_id.index as usize;
+        while self.enums.len() <= def_idx {
+            self.enums.push(Option::None);
+        }
+        self.enums[def_idx] = Some(info);
+    }
+
+    // ========================================================
+    // Item Lookup
+    // ========================================================
+
+    /// Gets a function signature by DefId in O(1) time.
+    pub fn get_fn_sig(self: &Self, def_id: hir_def::DefId) -> Option<&FnSigInfo> {
+        let def_idx = def_id.index as usize;
+        if def_idx >= self.fn_sigs.len() {
+            return Option::None;
+        }
+        match &self.fn_sigs[def_idx] {
+            &Some(ref info) => Some(info),
+            &None => Option::None,
+        }
+    }
+
+    /// Gets a struct info by DefId in O(1) time.
+    pub fn get_struct(self: &Self, def_id: hir_def::DefId) -> Option<&StructInfo> {
+        let def_idx = def_id.index as usize;
+        if def_idx >= self.structs.len() {
+            return Option::None;
+        }
+        match &self.structs[def_idx] {
+            &Some(ref info) => Some(info),
+            &None => Option::None,
+        }
+    }
+
+    /// Gets an enum info by DefId in O(1) time.
+    pub fn get_enum(self: &Self, def_id: hir_def::DefId) -> Option<&EnumInfo> {
+        let def_idx = def_id.index as usize;
+        if def_idx >= self.enums.len() {
+            return Option::None;
+        }
+        match &self.enums[def_idx] {
+            &Some(ref info) => Some(info),
+            &None => Option::None,
+        }
+    }
+
+    /// Gets the field type for a struct field by name.
+    pub fn get_struct_field_ty(self: &Self, def_id: hir_def::DefId, field_name: common::Symbol) -> Option<hir_ty::Type> {
+        let struct_info = self.get_struct(def_id);
+        match struct_info {
+            Some(info) => {
+                let mut i: usize = 0;
+                while i < info.fields.len() {
+                    if info.fields[i].name.index == field_name.index {
+                        return Some(hir_ty::copy_type(&info.fields[i].ty));
+                    }
+                    i = i + 1;
+                }
+                Option::None
+            }
+            None => Option::None,
+        }
+    }
+
+    /// Gets a const info by DefId in O(1) time.
+    pub fn get_const(self: &Self, def_id: hir_def::DefId) -> Option<&ConstInfo> {
+        let def_idx = def_id.index as usize;
+        if def_idx >= self.consts.len() {
+            return Option::None;
+        }
+        match &self.consts[def_idx] {
+            &Some(ref info) => Some(info),
+            &None => Option::None,
+        }
+    }
+
+    /// Gets a static info by DefId in O(1) time.
+    pub fn get_static(self: &Self, def_id: hir_def::DefId) -> Option<&StaticInfo> {
+        let def_idx = def_id.index as usize;
+        if def_idx >= self.statics.len() {
+            return Option::None;
+        }
+        match &self.statics[def_idx] {
+            &Some(ref info) => Some(info),
+            &None => Option::None,
+        }
+    }
+
+    /// Registers a constant definition for later lookup.
+    pub fn register_const(self: &mut Self, def_id: hir_def::DefId, name: common::Symbol, ty: hir_ty::Type) {
+        let info = ConstInfo::new(def_id, name, ty);
+        let def_idx = def_id.index as usize;
+        while self.consts.len() <= def_idx {
+            self.consts.push(Option::None);
+        }
+        self.consts[def_idx] = Some(info);
+    }
+
+    /// Registers a static definition for later lookup.
+    pub fn register_static(self: &mut Self, def_id: hir_def::DefId, name: common::Symbol, ty: hir_ty::Type, mutable: bool) {
+        let info = StaticInfo::new(def_id, name, ty, mutable);
+        let def_idx = def_id.index as usize;
+        while self.statics.len() <= def_idx {
+            self.statics.push(Option::None);
+        }
+        self.statics[def_idx] = Some(info);
+    }
+
+    /// Registers an impl block for method resolution.
+    pub fn register_impl(self: &mut Self, impl_info: ImplInfo) {
+        self.impls.push(impl_info);
+    }
+
+    /// Looks up a method on a type by name.
+    /// Returns the method info and the impl it belongs to, or None if not found.
+    pub fn lookup_method(self: &Self, ty: &hir_ty::Type, method_name: common::Symbol) -> Option<MethodLookupResult> {
+        let mut impl_idx: usize = 0;
+        while impl_idx < self.impls.len() {
+            let impl_info = &self.impls[impl_idx];
+
+            // Check if this impl's self_ty matches the target type
+            if types_match_for_impl(&impl_info.self_ty, ty) {
+                // Search methods in this impl
+                let mut method_idx: usize = 0;
+                while method_idx < impl_info.methods.len() {
+                    let method = &impl_info.methods[method_idx];
+                    if method.name.index == method_name.index {
+                        return Some(MethodLookupResult {
+                            impl_index: impl_idx,
+                            method_index: method_idx,
+                        });
+                    }
+                    method_idx = method_idx + 1;
+                }
+            }
+            impl_idx = impl_idx + 1;
+        }
+        Option::None
+    }
+
+    /// Gets method info from a lookup result.
+    pub fn get_method_from_lookup(self: &Self, result: &MethodLookupResult) -> &MethodInfo {
+        &self.impls[result.impl_index].methods[result.method_index]
+    }
+
+    /// Gets the impl info from a lookup result.
+    pub fn get_impl_from_lookup(self: &Self, result: &MethodLookupResult) -> &ImplInfo {
+        &self.impls[result.impl_index]
+    }
+
+    /// Gets a variant's index by name within an enum.
+    pub fn get_variant_index(self: &Self, enum_def_id: hir_def::DefId, variant_name: common::Symbol) -> Option<u32> {
+        let enum_info = self.get_enum(enum_def_id);
+        match enum_info {
+            Some(info) => {
+                let mut i: usize = 0;
+                while i < info.variants.len() {
+                    if info.variants[i].name.index == variant_name.index {
+                        return Some(info.variants[i].variant_index);
+                    }
+                    i = i + 1;
+                }
+                Option::None
+            }
+            None => Option::None,
+        }
+    }
+
+    // ========================================================
+    // Trait Registration and Resolution
+    // ========================================================
+
+    /// Registers a trait definition for later lookup.
+    pub fn register_trait(self: &mut Self, def_id: hir_def::DefId, info: TraitInfo) {
+        let def_idx = def_id.index as usize;
+        while self.traits.len() <= def_idx {
+            self.traits.push(Option::None);
+        }
+        self.traits[def_idx] = Some(info);
+    }
+
+    /// Gets a trait definition by DefId.
+    pub fn get_trait(self: &Self, def_id: hir_def::DefId) -> Option<&TraitInfo> {
+        let def_idx = def_id.index as usize;
+        if def_idx < self.traits.len() {
+            match &self.traits[def_idx] {
+                &Option::Some(ref info) => Some(info),
+                &Option::None => Option::None,
+            }
+        } else {
+            Option::None
+        }
+    }
+
+    /// Registers a trait implementation.
+    pub fn register_trait_impl(self: &mut Self, impl_info: TraitImplInfo) {
+        self.trait_impls.push(impl_info);
+    }
+
+    /// Checks if a type implements a trait.
+    /// Returns true if an implementation exists.
+    pub fn type_implements_trait(self: &Self, ty: &hir_ty::Type, trait_ref: &hir_ty::TraitRef) -> bool {
+        // Search for an impl that matches
+        let mut i: usize = 0;
+        while i < self.trait_impls.len() {
+            let impl_info = &self.trait_impls[i];
+
+            // Check if this impl is for the right trait
+            if impl_info.trait_def_id.index == trait_ref.def_id.index {
+                // Check if the self type matches
+                if types_match_for_impl(&impl_info.self_ty, ty) {
+                    // For now, we don't check where clause predicates
+                    // A full implementation would recursively check them
+                    return true;
+                }
+            }
+            i = i + 1;
+        }
+        false
+    }
+
+    /// Resolves an obligation (checks if a predicate is satisfied).
+    /// Returns true if the obligation is satisfied.
+    pub fn resolve_obligation(self: &Self, obligation: &Obligation) -> bool {
+        match &obligation.predicate {
+            &Predicate::Trait(ref trait_ref) => {
+                // For trait bounds, we need to find an impl
+                // The trait ref contains the type parameter that must implement the trait
+                // For now, we check if any impl exists for the trait
+                self.has_impl_for_trait(trait_ref.def_id)
+            }
+            &Predicate::TypeEqual { ref left, ref right } => {
+                // For type equality, types must unify
+                // We can't mutate here, so do a simple structural check
+                types_structurally_equal(left, right)
+            }
+            &Predicate::WellFormed(_) => {
+                // WF predicates are assumed satisfied for now
+                true
+            }
+        }
+    }
+
+    /// Checks if any implementation exists for a trait.
+    fn has_impl_for_trait(self: &Self, trait_def_id: hir_def::DefId) -> bool {
+        let mut i: usize = 0;
+        while i < self.trait_impls.len() {
+            if self.trait_impls[i].trait_def_id.index == trait_def_id.index {
+                return true;
+            }
+            i = i + 1;
+        }
+        false
+    }
+
+    /// Collects obligations from a function call based on where clauses.
+    /// Returns obligations that must be satisfied.
+    pub fn collect_call_obligations(
+        self: &Self,
+        fn_sig: &FnSigInfo,
+        type_args: &Vec<hir_ty::Type>,
+        span: common::Span,
+    ) -> Vec<Obligation> {
+        let mut obligations: Vec<Obligation> = Vec::new();
+
+        // Check where predicates (would be stored in FnSigInfo if we extended it)
+        // For now, create obligations for each type argument implementing basic traits
+        // This is a simplified implementation
+
+        let _ = fn_sig;
+        let _ = type_args;
+        let _ = span;
+
+        obligations
+    }
+
+    /// Checks all collected obligations and reports errors for unsatisfied ones.
+    pub fn check_obligations(self: &mut Self, obligations: &Vec<Obligation>) {
+        let mut i: usize = 0;
+        while i < obligations.len() {
+            if !self.resolve_obligation(&obligations[i]) {
+                // Report error for unsatisfied obligation
+                self.error(TypeErrorKind::TraitNotImplemented, obligations[i].span);
+            }
+            i = i + 1;
+        }
+    }
 }
 
-// ============================================================
-// Type Copying (for internal use)
-// ============================================================
-
-/// Creates a shallow copy of a type (Blood lacks Clone).
-fn copy_type(ty: &hir_ty::Type) -> hir_ty::Type {
-    hir_ty::Type { kind: copy_type_kind(&ty.kind) }
+/// Result of a method lookup.
+pub struct MethodLookupResult {
+    /// Index into the impls vector.
+    pub impl_index: usize,
+    /// Index into the impl's methods vector.
+    pub method_index: usize,
 }
 
-/// Creates a copy of a TypeKind.
-fn copy_type_kind(kind: &hir_ty::TypeKind) -> hir_ty::TypeKind {
-    match kind {
-        &hir_ty::TypeKind::Primitive(prim) => hir_ty::TypeKind::Primitive(prim),
-        &hir_ty::TypeKind::Never => hir_ty::TypeKind::Never,
-        &hir_ty::TypeKind::Error => hir_ty::TypeKind::Error,
-        &hir_ty::TypeKind::Infer(var_id) => hir_ty::TypeKind::Infer(var_id),
-        &hir_ty::TypeKind::Param(var_id) => hir_ty::TypeKind::Param(var_id),
-        &hir_ty::TypeKind::Tuple(ref types) => {
-            let mut copied: Vec<hir_ty::Type> = Vec::new();
+/// Checks if a type matches an impl's self type for method lookup.
+/// This handles basic cases; generic matching requires instantiation.
+fn types_match_for_impl(impl_ty: &hir_ty::Type, target_ty: &hir_ty::Type) -> bool {
+    match (&impl_ty.kind, &target_ty.kind) {
+        // ADT types match if same def_id (generic args checked during instantiation)
+        (&hir_ty::TypeKind::Adt { def_id: impl_def, args: _ }, &hir_ty::TypeKind::Adt { def_id: target_def, args: _ }) => {
+            impl_def.index == target_def.index
+        }
+        // Primitive types must match exactly
+        (&hir_ty::TypeKind::Primitive(impl_prim), &hir_ty::TypeKind::Primitive(target_prim)) => {
+            unify::primitives_equal(impl_prim, target_prim)
+        }
+        // Reference types - check inner type
+        (&hir_ty::TypeKind::Ref { ref inner, mutable: impl_mut }, &hir_ty::TypeKind::Ref { inner: ref target_inner, mutable: target_mut }) => {
+            impl_mut == target_mut && types_match_for_impl(inner.as_ref(), target_inner.as_ref())
+        }
+        // Slice types
+        (&hir_ty::TypeKind::Slice { ref element }, &hir_ty::TypeKind::Slice { element: ref target_elem }) => {
+            types_match_for_impl(element.as_ref(), target_elem.as_ref())
+        }
+        // Array types
+        (&hir_ty::TypeKind::Array { ref element, size }, &hir_ty::TypeKind::Array { element: ref target_elem, size: target_size }) => {
+            size == target_size && types_match_for_impl(element.as_ref(), target_elem.as_ref())
+        }
+        // Inference variables match anything (will be constrained during checking)
+        (&hir_ty::TypeKind::Infer(_), _) => true,
+        (_, &hir_ty::TypeKind::Infer(_)) => true,
+        // Other combinations don't match
+        _ => false,
+    }
+}
+
+/// Checks if two types are structurally equal (for obligation resolution).
+/// This is a simplified check that doesn't handle inference variables.
+fn types_structurally_equal(a: &hir_ty::Type, b: &hir_ty::Type) -> bool {
+    match (&a.kind, &b.kind) {
+        (&hir_ty::TypeKind::Never, &hir_ty::TypeKind::Never) => true,
+        (&hir_ty::TypeKind::Error, &hir_ty::TypeKind::Error) => true,
+        (&hir_ty::TypeKind::Primitive(ref pa), &hir_ty::TypeKind::Primitive(ref pb)) => {
+            unify::primitives_equal(*pa, *pb)
+        }
+        (&hir_ty::TypeKind::Tuple(ref elems_a), &hir_ty::TypeKind::Tuple(ref elems_b)) => {
+            if elems_a.len() != elems_b.len() {
+                return false;
+            }
             let mut i: usize = 0;
-            while i < types.len() {
-                copied.push(copy_type(&types[i]));
+            while i < elems_a.len() {
+                if !types_structurally_equal(&elems_a[i], &elems_b[i]) {
+                    return false;
+                }
                 i = i + 1;
             }
-            hir_ty::TypeKind::Tuple(copied)
+            true
         }
-        &hir_ty::TypeKind::Array { ref element, size } => {
-            hir_ty::TypeKind::Array {
-                element: Box::new(copy_type(element.as_ref())),
-                size: size,
+        (&hir_ty::TypeKind::Ref { ref inner, mutable: ma },
+         &hir_ty::TypeKind::Ref { inner: ref inner_b, mutable: mb }) => {
+            ma == mb && types_structurally_equal(inner.as_ref(), inner_b.as_ref())
+        }
+        (&hir_ty::TypeKind::Ptr { ref inner, mutable: ma },
+         &hir_ty::TypeKind::Ptr { inner: ref inner_b, mutable: mb }) => {
+            ma == mb && types_structurally_equal(inner.as_ref(), inner_b.as_ref())
+        }
+        (&hir_ty::TypeKind::Array { ref element, size: sa },
+         &hir_ty::TypeKind::Array { element: ref elem_b, size: sb }) => {
+            sa == sb && types_structurally_equal(element.as_ref(), elem_b.as_ref())
+        }
+        (&hir_ty::TypeKind::Slice { ref element },
+         &hir_ty::TypeKind::Slice { element: ref elem_b }) => {
+            types_structurally_equal(element.as_ref(), elem_b.as_ref())
+        }
+        (&hir_ty::TypeKind::Adt { def_id: da, ref args },
+         &hir_ty::TypeKind::Adt { def_id: db, args: ref args_b }) => {
+            if da.index != db.index {
+                return false;
             }
-        }
-        &hir_ty::TypeKind::Slice { ref element } => {
-            hir_ty::TypeKind::Slice {
-                element: Box::new(copy_type(element.as_ref())),
+            if args.len() != args_b.len() {
+                return false;
             }
-        }
-        &hir_ty::TypeKind::Ref { ref inner, mutable } => {
-            hir_ty::TypeKind::Ref {
-                inner: Box::new(copy_type(inner.as_ref())),
-                mutable: mutable,
-            }
-        }
-        &hir_ty::TypeKind::Ptr { ref inner, mutable } => {
-            hir_ty::TypeKind::Ptr {
-                inner: Box::new(copy_type(inner.as_ref())),
-                mutable: mutable,
-            }
-        }
-        &hir_ty::TypeKind::Adt { def_id, ref args } => {
-            let mut copied_args: Vec<hir_ty::Type> = Vec::new();
             let mut i: usize = 0;
             while i < args.len() {
-                copied_args.push(copy_type(&args[i]));
+                if !types_structurally_equal(&args[i], &args_b[i]) {
+                    return false;
+                }
                 i = i + 1;
             }
-            hir_ty::TypeKind::Adt {
-                def_id: def_id,
-                args: copied_args,
+            true
+        }
+        _ => false,
+    }
+}
+
+// ============================================================
+// Pattern Exhaustiveness Checking Implementation
+// ============================================================
+
+/// Checks if a set of match arms is exhaustive for a given type.
+/// Returns ExhaustivenessResult indicating whether patterns cover all cases.
+pub fn check_exhaustiveness_arms(
+    checker: &mut TypeChecker,
+    scrutinee_ty: &hir_ty::Type,
+    arms: &Vec<hir_expr::MatchArm>,
+    _span: common::Span,
+) -> ExhaustivenessResult {
+    // Convert HIR patterns to deconstructed patterns
+    let mut matrix = PatternMatrix::new(1);
+
+    let mut i: usize = 0;
+    while i < arms.len() {
+        let decon = deconstruct_pattern(checker, &arms[i].pattern);
+        let row = PatternRow::new(vec_of_one(decon));
+        matrix.push_row(row);
+        i = i + 1;
+    }
+
+    // Check if the matrix is exhaustive
+    let witnesses = compute_witnesses(checker, scrutinee_ty, &matrix);
+
+    if witnesses.len() == 0 {
+        ExhaustivenessResult::Exhaustive
+    } else {
+        ExhaustivenessResult::NonExhaustive(witnesses)
+    }
+}
+
+/// Converts an HIR pattern to a deconstructed pattern.
+fn deconstruct_pattern(checker: &mut TypeChecker, pattern: &hir_expr::Pattern) -> DeconstructedPattern {
+    match &pattern.kind {
+        &hir_expr::PatternKind::Wildcard => DeconstructedPattern::Wildcard,
+        &hir_expr::PatternKind::Binding { local_id: _, ref name, mode: _, ref subpattern } => {
+            // Binding acts as wildcard unless it has a sub-pattern
+            let _ = name;
+            match subpattern {
+                &Option::Some(ref sub) => deconstruct_pattern(checker, sub.as_ref()),
+                &Option::None => DeconstructedPattern::Wildcard,
             }
         }
-        &hir_ty::TypeKind::Fn { ref params, ref ret, ref effects } => {
-            let mut copied_params: Vec<hir_ty::Type> = Vec::new();
+        &hir_expr::PatternKind::Literal(ref lit) => {
+            deconstruct_literal(lit)
+        }
+        &hir_expr::PatternKind::Tuple(ref pats) => {
+            let mut fields: Vec<DeconstructedPattern> = Vec::new();
             let mut i: usize = 0;
-            while i < params.len() {
-                copied_params.push(copy_type(&params[i]));
+            while i < pats.len() {
+                fields.push(deconstruct_pattern(checker, &pats[i]));
                 i = i + 1;
             }
-            hir_ty::TypeKind::Fn {
-                params: copied_params,
-                ret: Box::new(copy_type(ret.as_ref())),
-                effects: copy_effect_row(effects),
-            }
+            DeconstructedPattern::Tuple { fields: fields }
         }
-        &hir_ty::TypeKind::Record { ref fields, ref row_var } => {
-            let mut copied_fields: Vec<hir_ty::RecordField> = Vec::new();
+        &hir_expr::PatternKind::Struct { ref path, ref fields, has_rest } => {
+            // Extract the DefId directly from ResolvedPath
+            let def_id = path.def_id;
+            let mut field_pats: Vec<DeconstructedPattern> = Vec::new();
             let mut i: usize = 0;
             while i < fields.len() {
-                copied_fields.push(hir_ty::RecordField::new(
-                    fields[i].name,
-                    copy_type(&fields[i].ty),
-                ));
+                field_pats.push(deconstruct_pattern(checker, &fields[i].pattern));
                 i = i + 1;
             }
-            hir_ty::TypeKind::Record {
-                fields: copied_fields,
-                row_var: *row_var,
+            // If there's a rest pattern (..), patterns not listed are wildcards
+            let _ = has_rest;
+            DeconstructedPattern::Struct { def_id: def_id, fields: field_pats }
+        }
+        &hir_expr::PatternKind::TupleStruct { ref path, ref fields } => {
+            // Tuple struct pattern - could be enum variant with fields
+            let def_id = path.def_id;
+            let variant_idx = match path.variant_index {
+                Option::Some(idx) => idx,
+                Option::None => 0,
+            };
+            let mut field_pats: Vec<DeconstructedPattern> = Vec::new();
+            let mut i: usize = 0;
+            while i < fields.len() {
+                field_pats.push(deconstruct_pattern(checker, &fields[i]));
+                i = i + 1;
             }
+            DeconstructedPattern::Variant { def_id: def_id, variant_idx: variant_idx, fields: field_pats }
+        }
+        &hir_expr::PatternKind::Or(ref pats) => {
+            let mut alts: Vec<DeconstructedPattern> = Vec::new();
+            let mut i: usize = 0;
+            while i < pats.len() {
+                alts.push(deconstruct_pattern(checker, &pats[i]));
+                i = i + 1;
+            }
+            DeconstructedPattern::Or { pats: alts }
+        }
+        &hir_expr::PatternKind::Ref { ref inner, mutable: _ } => {
+            // Reference pattern - unwrap and deconstruct the inner pattern
+            deconstruct_pattern(checker, inner.as_ref())
+        }
+        &hir_expr::PatternKind::Range { ref start, ref end_val, inclusive: _ } => {
+            // Range patterns are complex - treat as partial coverage for now
+            let _ = start;
+            let _ = end_val;
+            DeconstructedPattern::Missing
+        }
+        &hir_expr::PatternKind::Slice { ref prefix, ref rest, ref suffix } => {
+            // Slice patterns - simplified handling
+            let _ = prefix;
+            let _ = rest;
+            let _ = suffix;
+            DeconstructedPattern::Wildcard
+        }
+        &hir_expr::PatternKind::Path(ref path) => {
+            // Path patterns (could be enum variant or const)
+            let def_id = path.def_id;
+            let variant_idx = match path.variant_index {
+                Option::Some(idx) => idx,
+                Option::None => 0,
+            };
+            DeconstructedPattern::Variant { def_id: def_id, variant_idx: variant_idx, fields: Vec::new() }
+        }
+        &hir_expr::PatternKind::Rest => {
+            // Rest pattern (..) - matches any number of elements
+            DeconstructedPattern::Wildcard
+        }
+        &hir_expr::PatternKind::Error => {
+            // Error pattern - treat as wildcard for recovery
+            DeconstructedPattern::Wildcard
         }
     }
 }
 
-/// Creates a copy of an EffectRow.
-fn copy_effect_row(row: &hir_ty::EffectRow) -> hir_ty::EffectRow {
-    let mut copied_effects: Vec<hir_ty::EffectRef> = Vec::new();
-    let mut i: usize = 0;
-    while i < row.effects.len() {
-        let eff = &row.effects[i];
-        let mut copied_args: Vec<hir_ty::Type> = Vec::new();
-        let mut j: usize = 0;
-        while j < eff.args.len() {
-            copied_args.push(copy_type(&eff.args[j]));
-            j = j + 1;
+/// Converts a literal to a deconstructed pattern.
+fn deconstruct_literal(lit: &hir_expr::Literal) -> DeconstructedPattern {
+    match &lit.kind {
+        &hir_expr::LiteralKind::Int { val, ty: _ } => {
+            DeconstructedPattern::Literal { value: val as i128 }
         }
-        copied_effects.push(hir_ty::EffectRef {
-            def_id: eff.def_id,
-            args: copied_args,
-        });
+        &hir_expr::LiteralKind::Bool(b) => {
+            let value = if b { 1i128 } else { 0i128 };
+            DeconstructedPattern::Literal { value: value }
+        }
+        &hir_expr::LiteralKind::Char(c) => {
+            DeconstructedPattern::Literal { value: c as i128 }
+        }
+        &hir_expr::LiteralKind::Float { bits: _, ty: _ } => {
+            // Float patterns - treat as partial
+            DeconstructedPattern::Missing
+        }
+        &hir_expr::LiteralKind::Str(_) => {
+            // String patterns - treat as partial
+            DeconstructedPattern::Missing
+        }
+        &hir_expr::LiteralKind::ByteStr(_) => {
+            DeconstructedPattern::Missing
+        }
+    }
+}
+
+/// Computes witnesses for non-exhaustiveness.
+/// Returns empty vector if patterns are exhaustive.
+fn compute_witnesses(
+    checker: &mut TypeChecker,
+    scrutinee_ty: &hir_ty::Type,
+    matrix: &PatternMatrix,
+) -> Vec<Witness> {
+    // For exhaustiveness, we need to check if every possible constructor of
+    // the scrutinee type is covered by the pattern matrix.
+
+    // Get all constructors for the type
+    let constructors = get_type_constructors(checker, scrutinee_ty);
+
+    // If no constructors, the type is uninhabited (like Never)
+    if constructors.len() == 0 {
+        return Vec::new(); // Exhaustive by vacuity
+    }
+
+    let mut witnesses: Vec<Witness> = Vec::new();
+
+    // For each constructor, check if it's covered
+    let mut i: usize = 0;
+    while i < constructors.len() {
+        let ctor = &constructors[i];
+
+        // Check if this constructor is matched by any row in the matrix
+        if !constructor_is_covered(matrix, ctor) {
+            // This constructor is not covered - it's a witness
+            witnesses.push(Witness::new(clone_string_helper(&ctor.description)));
+        }
         i = i + 1;
     }
-    hir_ty::EffectRow {
-        effects: copied_effects,
-        row_var: row.row_var,
+
+    witnesses
+}
+
+/// A constructor for a type (represents one way to create a value).
+struct Constructor {
+    /// Description of this constructor for error messages.
+    description: String,
+    /// For enum variants, the variant index.
+    variant_idx: Option<u32>,
+    /// For literals, the specific value (if finite).
+    literal_value: Option<i128>,
+}
+
+impl Constructor {
+    fn new(description: String) -> Constructor {
+        Constructor {
+            description: description,
+            variant_idx: Option::None,
+            literal_value: Option::None,
+        }
     }
+
+    fn variant(name: String, idx: u32) -> Constructor {
+        Constructor {
+            description: name,
+            variant_idx: Option::Some(idx),
+            literal_value: Option::None,
+        }
+    }
+}
+
+/// Gets all constructors for a type.
+fn get_type_constructors(checker: &mut TypeChecker, ty: &hir_ty::Type) -> Vec<Constructor> {
+    let mut ctors: Vec<Constructor> = Vec::new();
+
+    match &ty.kind {
+        &hir_ty::TypeKind::Primitive(ref prim) => {
+            match prim {
+                &hir_ty::PrimitiveTy::Bool => {
+                    // Bool has two constructors: true and false
+                    ctors.push(Constructor::new(common::make_string("true")));
+                    ctors.push(Constructor::new(common::make_string("false")));
+                }
+                _ => {
+                    // Other primitives (integers, etc.) have infinite constructors
+                    // Treat as single wildcard constructor for simplicity
+                    ctors.push(Constructor::new(common::make_string("_")));
+                }
+            }
+        }
+        &hir_ty::TypeKind::Adt { def_id, args: _ } => {
+            // Check if it's an enum
+            match checker.get_enum(def_id) {
+                Option::Some(enum_info) => {
+                    // Add one constructor per variant
+                    let mut i: usize = 0;
+                    while i < enum_info.variants.len() {
+                        let variant = &enum_info.variants[i];
+                        let mut name = common::make_string("");
+                        // Note: We'd need to convert Symbol to String here
+                        // For now, use a placeholder
+                        name.push_str("Variant");
+                        let idx_str = usize_to_string(i);
+                        name.push_str(idx_str.as_str());
+                        ctors.push(Constructor::variant(name, variant.variant_index));
+                        i = i + 1;
+                    }
+                }
+                Option::None => {
+                    // It's a struct - single constructor
+                    ctors.push(Constructor::new(common::make_string("_")));
+                }
+            }
+        }
+        &hir_ty::TypeKind::Tuple(_) => {
+            // Tuple has single constructor
+            ctors.push(Constructor::new(common::make_string("(..)")));
+        }
+        &hir_ty::TypeKind::Never => {
+            // Never type has no constructors (uninhabited)
+        }
+        _ => {
+            // Other types - treat as single wildcard
+            ctors.push(Constructor::new(common::make_string("_")));
+        }
+    }
+
+    ctors
+}
+
+/// Checks if a constructor is covered by the pattern matrix.
+fn constructor_is_covered(matrix: &PatternMatrix, ctor: &Constructor) -> bool {
+    // A constructor is covered if some row in the matrix matches it
+    let mut i: usize = 0;
+    while i < matrix.rows.len() {
+        if matrix.width > 0 {
+            let first_pat = &matrix.rows[i].patterns[0];
+            if pattern_matches_constructor(first_pat, ctor) {
+                return true;
+            }
+        }
+        i = i + 1;
+    }
+    false
+}
+
+/// Checks if a pattern matches a constructor.
+fn pattern_matches_constructor(pat: &DeconstructedPattern, ctor: &Constructor) -> bool {
+    match pat {
+        &DeconstructedPattern::Wildcard => true,
+        &DeconstructedPattern::Variant { def_id: _, variant_idx, fields: _ } => {
+            match ctor.variant_idx {
+                Option::Some(ctor_idx) => variant_idx == ctor_idx,
+                Option::None => false,
+            }
+        }
+        &DeconstructedPattern::Literal { value } => {
+            match ctor.literal_value {
+                Option::Some(ctor_val) => value == ctor_val,
+                Option::None => true, // Literal matches wildcard constructor
+            }
+        }
+        &DeconstructedPattern::Struct { def_id: _, fields: _ } => {
+            // Struct pattern matches single struct constructor
+            ctor.variant_idx.is_none()
+        }
+        &DeconstructedPattern::Tuple { fields: _ } => {
+            // Tuple pattern matches tuple constructor
+            true
+        }
+        &DeconstructedPattern::Or { ref pats } => {
+            // Or pattern matches if any alternative matches
+            let mut i: usize = 0;
+            while i < pats.len() {
+                if pattern_matches_constructor(&pats[i], ctor) {
+                    return true;
+                }
+                i = i + 1;
+            }
+            false
+        }
+        &DeconstructedPattern::Missing => false,
+    }
+}
+
+/// Creates a Vec with a single element.
+fn vec_of_one(p: DeconstructedPattern) -> Vec<DeconstructedPattern> {
+    let mut v: Vec<DeconstructedPattern> = Vec::new();
+    v.push(p);
+    v
+}
+
+/// Clones a String (helper function).
+fn clone_string_helper(s: &String) -> String {
+    let mut result = String::new();
+    let bytes = s.as_bytes();
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        result.push(bytes[i] as char);
+        i = i + 1;
+    }
+    result
+}
+
+/// Converts a usize to a String.
+fn usize_to_string(n: usize) -> String {
+    if n == 0 {
+        return common::make_string("0");
+    }
+
+    let mut result = String::new();
+    let mut num = n;
+    let mut digits: Vec<char> = Vec::new();
+
+    while num > 0 {
+        let digit = (num % 10) as u8;
+        digits.push((digit + 48) as char); // 48 is ASCII '0'
+        num = num / 10;
+    }
+
+    // Reverse the digits
+    let mut i = digits.len();
+    while i > 0 {
+        i = i - 1;
+        result.push(digits[i]);
+    }
+
+    result
 }

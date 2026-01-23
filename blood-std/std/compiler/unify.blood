@@ -137,6 +137,191 @@ impl RecordRowSubst {
 }
 
 // ============================================================
+// Type Parameter Substitution (for generics)
+// ============================================================
+
+/// A substitution entry mapping a type parameter index to a concrete type.
+/// This is used during generic instantiation (e.g., calling Vec::new::<i32>()).
+pub struct TypeParamEntry {
+    /// The index of the type parameter (0 for T, 1 for U, etc.)
+    pub param_index: u32,
+    /// The concrete type to substitute.
+    pub ty: hir_ty::Type,
+}
+
+impl TypeParamEntry {
+    /// Creates a new type parameter entry.
+    pub fn new(param_index: u32, ty: hir_ty::Type) -> TypeParamEntry {
+        TypeParamEntry { param_index, ty }
+    }
+}
+
+/// A substitution map for generic type parameters.
+/// Maps type parameter indices to their concrete types during instantiation.
+pub struct TypeParamSubst {
+    /// The substitution entries.
+    pub entries: Vec<TypeParamEntry>,
+}
+
+impl TypeParamSubst {
+    /// Creates an empty type parameter substitution.
+    pub fn new() -> TypeParamSubst {
+        TypeParamSubst { entries: Vec::new() }
+    }
+
+    /// Creates a substitution from a list of types (indexed 0, 1, 2, ...).
+    pub fn from_types(types: &Vec<hir_ty::Type>) -> TypeParamSubst {
+        let mut subst = TypeParamSubst::new();
+        let mut i: usize = 0;
+        while i < types.len() {
+            subst.entries.push(TypeParamEntry::new(i as u32, hir_ty::copy_type(&types[i])));
+            i = i + 1;
+        }
+        subst
+    }
+
+    /// Adds a substitution entry.
+    pub fn add(self: &mut Self, param_index: u32, ty: hir_ty::Type) {
+        self.entries.push(TypeParamEntry::new(param_index, ty));
+    }
+
+    /// Looks up a type parameter by index.
+    pub fn lookup(self: &Self, param_index: u32) -> Option<hir_ty::Type> {
+        let mut i: usize = 0;
+        while i < self.entries.len() {
+            if self.entries[i].param_index == param_index {
+                return Some(hir_ty::copy_type(&self.entries[i].ty));
+            }
+            i = i + 1;
+        }
+        Option::None
+    }
+
+    /// Returns true if this substitution is empty.
+    pub fn is_empty(self: &Self) -> bool {
+        self.entries.len() == 0
+    }
+}
+
+/// Substitutes type parameters in a type according to the given substitution.
+/// This is used to instantiate generic types with concrete type arguments.
+pub fn substitute_type_params(ty: &hir_ty::Type, subst: &TypeParamSubst) -> hir_ty::Type {
+    if subst.is_empty() {
+        return hir_ty::copy_type(ty);
+    }
+
+    match &ty.kind {
+        &hir_ty::TypeKind::Param(param_id) => {
+            // Look up the type parameter in the substitution
+            match subst.lookup(param_id.index) {
+                Some(concrete_ty) => concrete_ty,
+                Option::None => hir_ty::copy_type(ty), // Parameter not in substitution, keep as-is
+            }
+        }
+        &hir_ty::TypeKind::Primitive(_) => hir_ty::copy_type(ty),
+        &hir_ty::TypeKind::Never => hir_ty::copy_type(ty),
+        &hir_ty::TypeKind::Error => hir_ty::copy_type(ty),
+        &hir_ty::TypeKind::Infer(_) => hir_ty::copy_type(ty),
+        &hir_ty::TypeKind::Tuple(ref types) => {
+            let mut result: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < types.len() {
+                result.push(substitute_type_params(&types[i], subst));
+                i = i + 1;
+            }
+            hir_ty::Type::new(hir_ty::TypeKind::Tuple(result))
+        }
+        &hir_ty::TypeKind::Array { ref element, size } => {
+            hir_ty::Type::new(hir_ty::TypeKind::Array {
+                element: Box::new(substitute_type_params(element.as_ref(), subst)),
+                size: size,
+            })
+        }
+        &hir_ty::TypeKind::Slice { ref element } => {
+            hir_ty::Type::new(hir_ty::TypeKind::Slice {
+                element: Box::new(substitute_type_params(element.as_ref(), subst)),
+            })
+        }
+        &hir_ty::TypeKind::Ref { ref inner, mutable } => {
+            hir_ty::Type::new(hir_ty::TypeKind::Ref {
+                inner: Box::new(substitute_type_params(inner.as_ref(), subst)),
+                mutable: mutable,
+            })
+        }
+        &hir_ty::TypeKind::Ptr { ref inner, mutable } => {
+            hir_ty::Type::new(hir_ty::TypeKind::Ptr {
+                inner: Box::new(substitute_type_params(inner.as_ref(), subst)),
+                mutable: mutable,
+            })
+        }
+        &hir_ty::TypeKind::Adt { def_id, ref args } => {
+            let mut result_args: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < args.len() {
+                result_args.push(substitute_type_params(&args[i], subst));
+                i = i + 1;
+            }
+            hir_ty::Type::new(hir_ty::TypeKind::Adt {
+                def_id: def_id,
+                args: result_args,
+            })
+        }
+        &hir_ty::TypeKind::Fn { ref params, ref ret, ref effects } => {
+            let mut result_params: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < params.len() {
+                result_params.push(substitute_type_params(&params[i], subst));
+                i = i + 1;
+            }
+            hir_ty::Type::new(hir_ty::TypeKind::Fn {
+                params: result_params,
+                ret: Box::new(substitute_type_params(ret.as_ref(), subst)),
+                effects: substitute_effect_row_params(effects, subst),
+            })
+        }
+        &hir_ty::TypeKind::Record { ref fields, ref row_var } => {
+            let mut result_fields: Vec<hir_ty::RecordField> = Vec::new();
+            let mut i: usize = 0;
+            while i < fields.len() {
+                result_fields.push(hir_ty::RecordField::new(
+                    fields[i].name,
+                    substitute_type_params(&fields[i].ty, subst),
+                ));
+                i = i + 1;
+            }
+            hir_ty::Type::new(hir_ty::TypeKind::Record {
+                fields: result_fields,
+                row_var: *row_var,
+            })
+        }
+    }
+}
+
+/// Substitutes type parameters in an effect row.
+fn substitute_effect_row_params(row: &hir_ty::EffectRow, subst: &TypeParamSubst) -> hir_ty::EffectRow {
+    let mut result_effects: Vec<hir_ty::EffectRef> = Vec::new();
+    let mut i: usize = 0;
+    while i < row.effects.len() {
+        let eff = &row.effects[i];
+        let mut result_args: Vec<hir_ty::Type> = Vec::new();
+        let mut j: usize = 0;
+        while j < eff.args.len() {
+            result_args.push(substitute_type_params(&eff.args[j], subst));
+            j = j + 1;
+        }
+        result_effects.push(hir_ty::EffectRef {
+            def_id: eff.def_id,
+            args: result_args,
+        });
+        i = i + 1;
+    }
+    hir_ty::EffectRow {
+        effects: result_effects,
+        row_var: row.row_var,
+    }
+}
+
+// ============================================================
 // Unifier State
 // ============================================================
 
@@ -659,7 +844,7 @@ impl SubstTable {
         let mut i: usize = 0;
         while i < self.ty_substs.len() {
             if self.ty_substs[i].var_id.index == var_id.index {
-                return Some(copy_type(&self.ty_substs[i].ty));
+                return Some(hir_ty::copy_type(&self.ty_substs[i].ty));
             }
             i = i + 1;
         }
@@ -677,127 +862,11 @@ impl SubstTable {
         let mut i: usize = 0;
         while i < self.effect_substs.len() {
             if self.effect_substs[i].var_id.index == var_id.index {
-                return Some(copy_effect_row(&self.effect_substs[i].row));
+                return Some(hir_ty::copy_effect_row(&self.effect_substs[i].row));
             }
             i = i + 1;
         }
         Option::None
-    }
-}
-
-// ============================================================
-// Type Copying (Blood lacks Clone)
-// ============================================================
-
-/// Creates a shallow copy of a type.
-fn copy_type(ty: &hir_ty::Type) -> hir_ty::Type {
-    hir_ty::Type { kind: copy_type_kind(&ty.kind) }
-}
-
-/// Creates a copy of a TypeKind.
-fn copy_type_kind(kind: &hir_ty::TypeKind) -> hir_ty::TypeKind {
-    match kind {
-        &hir_ty::TypeKind::Primitive(prim) => hir_ty::TypeKind::Primitive(prim),
-        &hir_ty::TypeKind::Never => hir_ty::TypeKind::Never,
-        &hir_ty::TypeKind::Error => hir_ty::TypeKind::Error,
-        &hir_ty::TypeKind::Infer(var_id) => hir_ty::TypeKind::Infer(var_id),
-        &hir_ty::TypeKind::Param(var_id) => hir_ty::TypeKind::Param(var_id),
-        &hir_ty::TypeKind::Tuple(ref types) => {
-            let mut copied: Vec<hir_ty::Type> = Vec::new();
-            let mut i: usize = 0;
-            while i < types.len() {
-                copied.push(copy_type(&types[i]));
-                i = i + 1;
-            }
-            hir_ty::TypeKind::Tuple(copied)
-        }
-        &hir_ty::TypeKind::Array { ref element, size } => {
-            hir_ty::TypeKind::Array {
-                element: Box::new(copy_type(element.as_ref())),
-                size: size,
-            }
-        }
-        &hir_ty::TypeKind::Slice { ref element } => {
-            hir_ty::TypeKind::Slice {
-                element: Box::new(copy_type(element.as_ref())),
-            }
-        }
-        &hir_ty::TypeKind::Ref { ref inner, mutable } => {
-            hir_ty::TypeKind::Ref {
-                inner: Box::new(copy_type(inner.as_ref())),
-                mutable: mutable,
-            }
-        }
-        &hir_ty::TypeKind::Ptr { ref inner, mutable } => {
-            hir_ty::TypeKind::Ptr {
-                inner: Box::new(copy_type(inner.as_ref())),
-                mutable: mutable,
-            }
-        }
-        &hir_ty::TypeKind::Adt { def_id, ref args } => {
-            let mut copied_args: Vec<hir_ty::Type> = Vec::new();
-            let mut i: usize = 0;
-            while i < args.len() {
-                copied_args.push(copy_type(&args[i]));
-                i = i + 1;
-            }
-            hir_ty::TypeKind::Adt {
-                def_id: def_id,
-                args: copied_args,
-            }
-        }
-        &hir_ty::TypeKind::Fn { ref params, ref ret, ref effects } => {
-            let mut copied_params: Vec<hir_ty::Type> = Vec::new();
-            let mut i: usize = 0;
-            while i < params.len() {
-                copied_params.push(copy_type(&params[i]));
-                i = i + 1;
-            }
-            hir_ty::TypeKind::Fn {
-                params: copied_params,
-                ret: Box::new(copy_type(ret.as_ref())),
-                effects: copy_effect_row(effects),
-            }
-        }
-        &hir_ty::TypeKind::Record { ref fields, ref row_var } => {
-            let mut copied_fields: Vec<hir_ty::RecordField> = Vec::new();
-            let mut i: usize = 0;
-            while i < fields.len() {
-                copied_fields.push(hir_ty::RecordField::new(
-                    fields[i].name,
-                    copy_type(&fields[i].ty),
-                ));
-                i = i + 1;
-            }
-            hir_ty::TypeKind::Record {
-                fields: copied_fields,
-                row_var: *row_var,
-            }
-        }
-    }
-}
-
-/// Creates a copy of an EffectRow.
-fn copy_effect_row(row: &hir_ty::EffectRow) -> hir_ty::EffectRow {
-    let mut copied_effects: Vec<hir_ty::EffectRef> = Vec::new();
-    let mut i: usize = 0;
-    while i < row.effects.len() {
-        let eff = &row.effects[i];
-        let mut copied_args: Vec<hir_ty::Type> = Vec::new();
-        let mut j: usize = 0;
-        while j < eff.args.len() {
-            copied_args.push(copy_type(&eff.args[j]));
-            j = j + 1;
-        }
-        copied_effects.push(hir_ty::EffectRef {
-            def_id: eff.def_id,
-            args: copied_args,
-        });
-        i = i + 1;
-    }
-    hir_ty::EffectRow {
-        effects: copied_effects,
-        row_var: row.row_var,
     }
 }
 
@@ -818,14 +887,14 @@ pub fn apply_substs(table: &SubstTable, ty: &hir_ty::Type) -> hir_ty::Type {
                 }
                 Option::None => {
                     // Variable not yet resolved
-                    copy_type(ty)
+                    hir_ty::copy_type(ty)
                 }
             }
         }
-        &hir_ty::TypeKind::Primitive(_) => copy_type(ty),
-        &hir_ty::TypeKind::Never => copy_type(ty),
-        &hir_ty::TypeKind::Error => copy_type(ty),
-        &hir_ty::TypeKind::Param(_) => copy_type(ty),
+        &hir_ty::TypeKind::Primitive(_) => hir_ty::copy_type(ty),
+        &hir_ty::TypeKind::Never => hir_ty::copy_type(ty),
+        &hir_ty::TypeKind::Error => hir_ty::copy_type(ty),
+        &hir_ty::TypeKind::Param(_) => hir_ty::copy_type(ty),
         &hir_ty::TypeKind::Tuple(ref types) => {
             let mut resolved: Vec<hir_ty::Type> = Vec::new();
             let mut i: usize = 0;
@@ -1031,7 +1100,7 @@ fn unify_resolved(
                 UnifyResult::Ok
             } else {
                 // Bind one to the other
-                table.add_ty_subst(var_a, copy_type(b));
+                table.add_ty_subst(var_a, hir_ty::copy_type(b));
                 UnifyResult::Ok
             }
         }
@@ -1040,7 +1109,7 @@ fn unify_resolved(
             if occurs_in(var_id, b) {
                 return UnifyResult::Err(UnifyError::occurs(span));
             }
-            table.add_ty_subst(var_id, copy_type(b));
+            table.add_ty_subst(var_id, hir_ty::copy_type(b));
             UnifyResult::Ok
         }
         (_, &hir_ty::TypeKind::Infer(var_id)) => {
@@ -1048,7 +1117,7 @@ fn unify_resolved(
             if occurs_in(var_id, a) {
                 return UnifyResult::Err(UnifyError::occurs(span));
             }
-            table.add_ty_subst(var_id, copy_type(a));
+            table.add_ty_subst(var_id, hir_ty::copy_type(a));
             UnifyResult::Ok
         }
 
@@ -1177,11 +1246,12 @@ fn unify_resolved(
         }
 
         // Function types: unify params, return, and effects
-        (&hir_ty::TypeKind::Fn { ref params, ref ret, effects: _ }, other_kind) => {
+        (&hir_ty::TypeKind::Fn { ref params, ref ret, ref effects }, other_kind) => {
             let params_a = params;
             let ret_a = ret;
+            let effects_a = effects;
             match other_kind {
-                &hir_ty::TypeKind::Fn { ref params, ref ret, effects: _ } => {
+                &hir_ty::TypeKind::Fn { ref params, ref ret, ref effects } => {
                     if params_a.len() != params.len() {
                         return UnifyResult::Err(UnifyError::arity(span));
                     }
@@ -1194,8 +1264,12 @@ fn unify_resolved(
                         i = i + 1;
                     }
                     // Unify return types
-                    unify(table, unifier, ret_a.as_ref(), ret.as_ref(), span)
-                    // TODO: Unify effect rows
+                    match unify(table, unifier, ret_a.as_ref(), ret.as_ref(), span) {
+                        UnifyResult::Err(e) => { return UnifyResult::Err(e); }
+                        UnifyResult::Ok => {}
+                    }
+                    // Unify effect rows
+                    unify_effect_rows(table, unifier, effects_a, effects, span)
                 }
                 _ => UnifyResult::Err(UnifyError::mismatch(span))
             }
@@ -1228,5 +1302,126 @@ fn unify_resolved(
                 _ => UnifyResult::Err(UnifyError::mismatch(span))
             }
         }
+    }
+}
+
+// ============================================================
+// Effect Row Unification
+// ============================================================
+
+/// Unifies two effect rows.
+///
+/// Effect row unification rules:
+/// 1. If both rows are closed (no row_var): check effect sets are equal
+/// 2. If one has a row_var (open row): bind the var to the difference
+/// 3. If both have row_vars: create fresh var for intersection
+pub fn unify_effect_rows(
+    table: &mut SubstTable,
+    unifier: &mut Unifier,
+    a: &hir_ty::EffectRow,
+    b: &hir_ty::EffectRow,
+    span: common::Span,
+) -> UnifyResult {
+    // Check if both rows are closed (no row variables)
+    let a_closed = a.row_var.is_none();
+    let b_closed = b.row_var.is_none();
+
+    if a_closed && b_closed {
+        // Both closed: effects must match exactly
+        if !effect_sets_equal(&a.effects, &b.effects) {
+            return UnifyResult::Err(UnifyError::new(UnifyErrorKind::EffectMismatch, span));
+        }
+        return UnifyResult::Ok;
+    }
+
+    // At least one row is open (has a row variable)
+    // For now, accept if the known effects overlap
+    // A full implementation would bind the row variable to the difference
+
+    // Check that all effects in the smaller set are in the larger set
+    let smaller = if a.effects.len() <= b.effects.len() { &a.effects } else { &b.effects };
+    let larger = if a.effects.len() <= b.effects.len() { &b.effects } else { &a.effects };
+
+    let mut i: usize = 0;
+    while i < smaller.len() {
+        if !effect_list_contains(larger, &smaller[i]) {
+            return UnifyResult::Err(UnifyError::new(UnifyErrorKind::EffectMismatch, span));
+        }
+        i = i + 1;
+    }
+
+    // If we get here, the effects are compatible
+    // In a full implementation, we'd bind row variables here
+    let _ = table;
+    let _ = unifier;
+
+    UnifyResult::Ok
+}
+
+/// Checks if two effect sets are equal (ignoring order).
+fn effect_sets_equal(a: &Vec<hir_ty::EffectRef>, b: &Vec<hir_ty::EffectRef>) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+
+    // Check that every effect in a is in b
+    let mut i: usize = 0;
+    while i < a.len() {
+        if !effect_list_contains(b, &a[i]) {
+            return false;
+        }
+        i = i + 1;
+    }
+
+    true
+}
+
+/// Checks if an effect list contains a specific effect.
+fn effect_list_contains(list: &Vec<hir_ty::EffectRef>, eff_ref: &hir_ty::EffectRef) -> bool {
+    let mut i: usize = 0;
+    while i < list.len() {
+        if effects_equal(&list[i], eff_ref) {
+            return true;
+        }
+        i = i + 1;
+    }
+    false
+}
+
+/// Checks if two effect references are equal.
+fn effects_equal(a: &hir_ty::EffectRef, b: &hir_ty::EffectRef) -> bool {
+    // Check DefIds match
+    if a.def_id.index != b.def_id.index {
+        return false;
+    }
+
+    // Check type arguments match
+    if a.args.len() != b.args.len() {
+        return false;
+    }
+
+    let mut i: usize = 0;
+    while i < a.args.len() {
+        if !types_equal(&a.args[i], &b.args[i]) {
+            return false;
+        }
+        i = i + 1;
+    }
+
+    true
+}
+
+/// Simple structural type equality check.
+fn types_equal(a: &hir_ty::Type, b: &hir_ty::Type) -> bool {
+    match (&a.kind, &b.kind) {
+        (&hir_ty::TypeKind::Primitive(pa), &hir_ty::TypeKind::Primitive(pb)) => {
+            primitives_equal(pa, pb)
+        }
+        (&hir_ty::TypeKind::Never, &hir_ty::TypeKind::Never) => true,
+        (&hir_ty::TypeKind::Error, &hir_ty::TypeKind::Error) => true,
+        (&hir_ty::TypeKind::Infer(va), &hir_ty::TypeKind::Infer(vb)) => {
+            va.index == vb.index
+        }
+        _ => false // Conservative: non-primitive types need unification
     }
 }

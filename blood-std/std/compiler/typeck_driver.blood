@@ -93,6 +93,146 @@ pub fn check_types(ctx: &hir_lower_ctx::LoweringCtx) -> TypeCheckResult {
     }
 }
 
+/// Type check using a LowerResult (for driver integration).
+///
+/// This is the preferred entry point when integrating with the driver,
+/// since the driver has LowerResult not LoweringCtx.
+pub fn check_lower_result(result: &hir_lower_ctx::LowerResult) -> TypeCheckResult {
+    let mut checker = typeck::TypeChecker::new();
+
+    // Phase 1: Collect type information from items
+    collect_item_signatures(&mut checker, &result.items);
+
+    // Phase 2: Type check all function bodies
+    let mut i: usize = 0;
+    while i < result.bodies.len() {
+        check_body(&mut checker, &result.bodies[i].body);
+        i = i + 1;
+    }
+
+    // Return result
+    if checker.has_errors() {
+        TypeCheckResult::failed(checker.errors)
+    } else {
+        TypeCheckResult::ok()
+    }
+}
+
+/// Collects type signatures from HIR items.
+///
+/// This populates the type checker with information about struct, enum,
+/// and function definitions so it can resolve types during body checking.
+fn collect_item_signatures(
+    checker: &mut typeck::TypeChecker,
+    items: &Vec<hir_lower_ctx::ItemEntry>,
+) {
+    let mut i: usize = 0;
+    while i < items.len() {
+        let entry = &items[i];
+        match &entry.item.kind {
+            &hir_item::ItemKind::Fn(ref fn_def) => {
+                // Register function signature
+                checker.register_fn_sig(entry.def_id, &fn_def.sig);
+            }
+            &hir_item::ItemKind::Struct(ref struct_def) => {
+                // Register struct definition
+                checker.register_struct(entry.def_id, entry.item.name.symbol, struct_def);
+            }
+            &hir_item::ItemKind::Enum(ref enum_def) => {
+                // Register enum definition
+                checker.register_enum(entry.def_id, entry.item.name.symbol, enum_def);
+            }
+            &hir_item::ItemKind::Const(ref const_def) => {
+                // Register constant definition
+                checker.register_const(entry.def_id, entry.item.name.symbol, hir_ty::copy_type(&const_def.ty));
+            }
+            &hir_item::ItemKind::Static(ref static_def) => {
+                // Register static definition
+                checker.register_static(entry.def_id, entry.item.name.symbol, hir_ty::copy_type(&static_def.ty), static_def.mutable);
+            }
+            &hir_item::ItemKind::Impl(ref impl_def) => {
+                // Register impl block for method resolution
+                register_impl(checker, entry.def_id, impl_def);
+            }
+            // Other items don't need registration for basic type checking
+            &hir_item::ItemKind::TypeAlias(_) => {}
+            &hir_item::ItemKind::Trait(_) => {}
+            &hir_item::ItemKind::Effect(_) => {}
+            &hir_item::ItemKind::Handler(_) => {}
+            &hir_item::ItemKind::Module(_) => {}
+            &hir_item::ItemKind::Macro(_) => {}
+            &hir_item::ItemKind::Foreign(_) => {}
+        }
+        i = i + 1;
+    }
+}
+
+/// Registers an impl block for method resolution.
+fn register_impl(
+    checker: &mut typeck::TypeChecker,
+    def_id: hir_def::DefId,
+    impl_def: &hir_item::ImplDef,
+) {
+    // Extract method info from associated items
+    let mut methods: Vec<typeck::MethodInfo> = Vec::new();
+    let mut i: usize = 0;
+    while i < impl_def.items.len() {
+        match &impl_def.items[i] {
+            &hir_item::AssocItem::Fn(ref assoc_fn) => {
+                // Extract parameter types from signature (skipping self param)
+                let mut param_tys: Vec<hir_ty::Type> = Vec::new();
+                let mut takes_self_ref = false;
+                let mut takes_self_mut = false;
+
+                // Check if first param is self
+                if assoc_fn.sig.params.len() > 0 {
+                    // Check first param for self pattern
+                    // For now, assume first param might be self and check params
+                    let mut j: usize = 0;
+                    while j < assoc_fn.sig.params.len() {
+                        // Skip self parameter (index 0) if this looks like a method
+                        // In HIR, self is encoded in the first parameter
+                        if j == 0 && assoc_fn.sig.params[j].is_self {
+                            takes_self_ref = true;
+                            takes_self_mut = assoc_fn.sig.params[j].mutable;
+                        } else {
+                            param_tys.push(hir_ty::copy_type(&assoc_fn.sig.params[j].ty));
+                        }
+                        j = j + 1;
+                    }
+                }
+
+                let method_info = typeck::MethodInfo::new(
+                    assoc_fn.def_id,
+                    assoc_fn.name.symbol,
+                    param_tys,
+                    hir_ty::copy_type(&assoc_fn.sig.return_ty),
+                    takes_self_ref,
+                    takes_self_mut,
+                );
+                methods.push(method_info);
+            }
+            &hir_item::AssocItem::Type(_) => {
+                // Associated types don't need registration for basic method resolution
+            }
+            &hir_item::AssocItem::Const(_) => {
+                // Associated consts don't need registration for basic method resolution
+            }
+        }
+        i = i + 1;
+    }
+
+    // Create and register impl info
+    let num_generics = impl_def.generics.params.len() as u32;
+    let impl_info = typeck::ImplInfo::new(
+        def_id,
+        hir_ty::copy_type(&impl_def.self_ty),
+        num_generics,
+        methods,
+    );
+    checker.register_impl(impl_info);
+}
+
 // ============================================================
 // Body Type Checking
 // ============================================================
@@ -108,7 +248,7 @@ fn check_body(checker: &mut typeck::TypeChecker, body: &hir_expr::Body) {
         let local = &body.locals[i];
         // Add local with its declared type
         checker.add_local(
-            copy_type(&local.ty),
+            hir_ty::copy_type(&local.ty),
             local.mutable,
             local.span,
         );
@@ -117,7 +257,7 @@ fn check_body(checker: &mut typeck::TypeChecker, body: &hir_expr::Body) {
 
     // Set return type from the first local (local 0 is the return slot in HIR convention)
     if body.locals.len() > 0 {
-        checker.set_return_ty(copy_type(&body.locals[0].ty));
+        checker.set_return_ty(hir_ty::copy_type(&body.locals[0].ty));
     }
 
     // Type check the body expression
@@ -133,120 +273,4 @@ fn check_body(checker: &mut typeck::TypeChecker, body: &hir_expr::Body) {
 
     // Clear return type
     checker.clear_return_ty();
-}
-
-// ============================================================
-// Type Copying (Blood lacks Clone)
-// ============================================================
-
-/// Creates a shallow copy of a type.
-fn copy_type(ty: &hir_ty::Type) -> hir_ty::Type {
-    hir_ty::Type { kind: copy_type_kind(&ty.kind) }
-}
-
-/// Creates a copy of a TypeKind.
-fn copy_type_kind(kind: &hir_ty::TypeKind) -> hir_ty::TypeKind {
-    match kind {
-        &hir_ty::TypeKind::Primitive(prim) => hir_ty::TypeKind::Primitive(prim),
-        &hir_ty::TypeKind::Never => hir_ty::TypeKind::Never,
-        &hir_ty::TypeKind::Error => hir_ty::TypeKind::Error,
-        &hir_ty::TypeKind::Infer(var_id) => hir_ty::TypeKind::Infer(var_id),
-        &hir_ty::TypeKind::Param(var_id) => hir_ty::TypeKind::Param(var_id),
-        &hir_ty::TypeKind::Tuple(ref types) => {
-            let mut copied: Vec<hir_ty::Type> = Vec::new();
-            let mut i: usize = 0;
-            while i < types.len() {
-                copied.push(copy_type(&types[i]));
-                i = i + 1;
-            }
-            hir_ty::TypeKind::Tuple(copied)
-        }
-        &hir_ty::TypeKind::Array { ref element, size } => {
-            hir_ty::TypeKind::Array {
-                element: Box::new(copy_type(element.as_ref())),
-                size: size,
-            }
-        }
-        &hir_ty::TypeKind::Slice { ref element } => {
-            hir_ty::TypeKind::Slice {
-                element: Box::new(copy_type(element.as_ref())),
-            }
-        }
-        &hir_ty::TypeKind::Ref { ref inner, mutable } => {
-            hir_ty::TypeKind::Ref {
-                inner: Box::new(copy_type(inner.as_ref())),
-                mutable: mutable,
-            }
-        }
-        &hir_ty::TypeKind::Ptr { ref inner, mutable } => {
-            hir_ty::TypeKind::Ptr {
-                inner: Box::new(copy_type(inner.as_ref())),
-                mutable: mutable,
-            }
-        }
-        &hir_ty::TypeKind::Adt { def_id, ref args } => {
-            let mut copied_args: Vec<hir_ty::Type> = Vec::new();
-            let mut i: usize = 0;
-            while i < args.len() {
-                copied_args.push(copy_type(&args[i]));
-                i = i + 1;
-            }
-            hir_ty::TypeKind::Adt {
-                def_id: def_id,
-                args: copied_args,
-            }
-        }
-        &hir_ty::TypeKind::Fn { ref params, ref ret, ref effects } => {
-            let mut copied_params: Vec<hir_ty::Type> = Vec::new();
-            let mut i: usize = 0;
-            while i < params.len() {
-                copied_params.push(copy_type(&params[i]));
-                i = i + 1;
-            }
-            hir_ty::TypeKind::Fn {
-                params: copied_params,
-                ret: Box::new(copy_type(ret.as_ref())),
-                effects: copy_effect_row(effects),
-            }
-        }
-        &hir_ty::TypeKind::Record { ref fields, ref row_var } => {
-            let mut copied_fields: Vec<hir_ty::RecordField> = Vec::new();
-            let mut i: usize = 0;
-            while i < fields.len() {
-                copied_fields.push(hir_ty::RecordField::new(
-                    fields[i].name,
-                    copy_type(&fields[i].ty),
-                ));
-                i = i + 1;
-            }
-            hir_ty::TypeKind::Record {
-                fields: copied_fields,
-                row_var: *row_var,
-            }
-        }
-    }
-}
-
-/// Creates a copy of an EffectRow.
-fn copy_effect_row(row: &hir_ty::EffectRow) -> hir_ty::EffectRow {
-    let mut copied_effects: Vec<hir_ty::EffectRef> = Vec::new();
-    let mut i: usize = 0;
-    while i < row.effects.len() {
-        let eff = &row.effects[i];
-        let mut copied_args: Vec<hir_ty::Type> = Vec::new();
-        let mut j: usize = 0;
-        while j < eff.args.len() {
-            copied_args.push(copy_type(&eff.args[j]));
-            j = j + 1;
-        }
-        copied_effects.push(hir_ty::EffectRef {
-            def_id: eff.def_id,
-            args: copied_args,
-        });
-        i = i + 1;
-    }
-    hir_ty::EffectRow {
-        effects: copied_effects,
-        row_var: row.row_var,
-    }
 }
