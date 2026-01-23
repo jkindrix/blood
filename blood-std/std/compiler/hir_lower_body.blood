@@ -18,10 +18,12 @@ mod hir_lower_expr;
 // ============================================================
 
 /// Lower a function body.
+/// ast_params is used to generate destructuring let statements for complex parameter patterns.
 pub fn lower_fn_body(
     ctx: &mut hir_lower_ctx::LoweringCtx,
     body_id: hir_def::BodyId,
     params: &Vec<hir_item::FnParam>,
+    ast_params: &Vec<ast::Param>,
     body_expr: &Option<ast::Expr>,
     body_block: &Option<ast::Block>,
 ) -> hir_expr::Body {
@@ -45,7 +47,7 @@ pub fn lower_fn_body(
     let param_count = params.len() as u32;
 
     // Lower the body expression
-    let expr = match body_expr {
+    let mut body_lowered = match body_expr {
         &Some(ref e) => hir_lower_expr::lower_expr(ctx, e),
         &None => {
             match body_block {
@@ -62,5 +64,163 @@ pub fn lower_fn_body(
         }
     };
 
-    hir_expr::Body::new(body_id, locals, param_count, expr)
+    // Generate destructuring let statements for complex parameter patterns
+    let destructure_stmts = generate_param_destructures(ctx, params, ast_params, &mut locals);
+
+    // If we have destructuring statements, wrap the body in a block with those statements
+    if destructure_stmts.len() > 0 {
+        body_lowered = wrap_with_destructures(body_lowered, destructure_stmts);
+    }
+
+    hir_expr::Body::new(body_id, locals, param_count, body_lowered)
+}
+
+/// Check if a pattern needs destructuring (is not a simple identifier or wildcard).
+fn needs_destructuring(pattern: &ast::Pattern) -> bool {
+    match &pattern.kind {
+        &ast::PatternKind::Ident { by_ref: _, is_mut: _, name: _, ref subpattern } => {
+            // Simple ident with no subpattern doesn't need destructuring
+            subpattern.is_some()
+        }
+        &ast::PatternKind::Wildcard => false,
+        &ast::PatternKind::Ref { is_mut: _, ref inner } => {
+            needs_destructuring(inner.as_ref())
+        }
+        _ => true
+    }
+}
+
+/// Generate destructuring let statements for complex parameter patterns.
+fn generate_param_destructures(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    params: &Vec<hir_item::FnParam>,
+    ast_params: &Vec<ast::Param>,
+    locals: &mut Vec<hir_expr::Local>,
+) -> Vec<hir_expr::Stmt> {
+    let mut stmts: Vec<hir_expr::Stmt> = Vec::new();
+
+    let mut i: usize = 0;
+    while i < ast_params.len() && i < params.len() {
+        let ast_param = &ast_params[i];
+
+        if needs_destructuring(&ast_param.pattern) {
+            // Get the synthetic parameter's local_id
+            let param_local_id = hir_def::LocalId::new(i as u32);
+
+            // Lower the pattern
+            let pattern_hir = hir_lower_expr::lower_pattern(ctx, &ast_param.pattern);
+
+            // Collect local IDs from the pattern and add them to locals
+            collect_pattern_locals(&pattern_hir, locals);
+
+            // Create a reference to the synthetic parameter
+            let param_ty = hir_ty::copy_type(&params[i].ty);
+            let param_ref = hir_expr::Expr::new(
+                hir_expr::ExprKind::Local(param_local_id),
+                param_ty,
+                ast_param.span,
+            );
+
+            // Create the let statement: let <pattern> = <param>;
+            let let_stmt = hir_expr::Stmt::Let {
+                pattern: pattern_hir,
+                ty: Option::None,
+                init: Some(param_ref),
+                span: ast_param.span,
+            };
+
+            stmts.push(let_stmt);
+        }
+
+        i = i + 1;
+    }
+
+    stmts
+}
+
+/// Collect local IDs from a pattern and add them to the locals vector.
+fn collect_pattern_locals(pattern: &hir_expr::Pattern, locals: &mut Vec<hir_expr::Local>) {
+    match &pattern.kind {
+        &hir_expr::PatternKind::Binding { local_id, ref name, mode: _, ref subpattern } => {
+            // Add this binding to locals
+            let local = hir_expr::Local::new(
+                local_id,
+                *name,
+                hir_ty::copy_type(&pattern.ty),
+                false,  // Mutability determined by binding mode
+                pattern.span,
+            );
+            locals.push(local);
+
+            // Recurse into subpattern if present
+            if subpattern.is_some() {
+                collect_pattern_locals(subpattern.as_ref().unwrap().as_ref(), locals);
+            }
+        }
+        &hir_expr::PatternKind::Tuple(ref fields) => {
+            let mut i: usize = 0;
+            while i < fields.len() {
+                collect_pattern_locals(&fields[i], locals);
+                i = i + 1;
+            }
+        }
+        &hir_expr::PatternKind::TupleStruct { path: _, ref fields } => {
+            let mut i: usize = 0;
+            while i < fields.len() {
+                collect_pattern_locals(&fields[i], locals);
+                i = i + 1;
+            }
+        }
+        &hir_expr::PatternKind::Struct { path: _, ref fields, has_rest: _ } => {
+            let mut i: usize = 0;
+            while i < fields.len() {
+                collect_pattern_locals(&fields[i].pattern, locals);
+                i = i + 1;
+            }
+        }
+        &hir_expr::PatternKind::Ref { mutable: _, ref inner } => {
+            collect_pattern_locals(inner.as_ref(), locals);
+        }
+        &hir_expr::PatternKind::Or(ref patterns) => {
+            // For Or patterns, all arms bind the same variables
+            // Just collect from the first arm
+            if patterns.len() > 0 {
+                collect_pattern_locals(&patterns[0], locals);
+            }
+        }
+        &hir_expr::PatternKind::Slice { ref prefix, ref rest, ref suffix } => {
+            let mut i: usize = 0;
+            while i < prefix.len() {
+                collect_pattern_locals(&prefix[i], locals);
+                i = i + 1;
+            }
+            if rest.is_some() {
+                collect_pattern_locals(rest.as_ref().unwrap().as_ref(), locals);
+            }
+            let mut i: usize = 0;
+            while i < suffix.len() {
+                collect_pattern_locals(&suffix[i], locals);
+                i = i + 1;
+            }
+        }
+        // These pattern kinds don't introduce bindings
+        &hir_expr::PatternKind::Wildcard => {}
+        &hir_expr::PatternKind::Rest => {}
+        &hir_expr::PatternKind::Literal(_) => {}
+        &hir_expr::PatternKind::Path(_) => {}
+        &hir_expr::PatternKind::Range { start: _, end_val: _, inclusive: _ } => {}
+        &hir_expr::PatternKind::Error => {}
+    }
+}
+
+/// Wrap an expression with destructuring let statements.
+fn wrap_with_destructures(body: hir_expr::Expr, stmts: Vec<hir_expr::Stmt>) -> hir_expr::Expr {
+    // Create a block with the destructuring statements followed by the body expression
+    let span = body.span;
+    let block = hir_expr::Block::new(stmts, Some(Box::new(body)), span);
+    hir_expr::Expr::new(
+        hir_expr::ExprKind::Block(block),
+        hir_ty::Type::infer(hir_def::TyVarId::new(0)),  // Type will be inferred
+        span,
+    )
 }

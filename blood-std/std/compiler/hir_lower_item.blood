@@ -29,46 +29,35 @@ pub fn lower_fn_params(ctx: &mut hir_lower_ctx::LoweringCtx, params: &Vec<ast::P
     let mut result: Vec<hir_item::FnParam> = Vec::new();
     let mut i: usize = 0;
     while i < params.len() {
-        let param = lower_fn_param(ctx, &params[i]);
-        if param.is_some() {
-            result.push(param.unwrap());
-        }
+        let param = lower_fn_param(ctx, &params[i], i as u32);
+        result.push(param);
         i = i + 1;
     }
     result
 }
 
 /// Lower a single function parameter.
-fn lower_fn_param(ctx: &mut hir_lower_ctx::LoweringCtx, param: &ast::Param) -> Option<hir_item::FnParam> {
+/// param_index is used for generating synthetic names for complex patterns.
+fn lower_fn_param(ctx: &mut hir_lower_ctx::LoweringCtx, param: &ast::Param, param_index: u32) -> hir_item::FnParam {
     let ty = hir_lower_type::lower_type(ctx, &param.ty);
 
     // Extract the parameter name from the pattern
-    let name_and_mutability = extract_param_name(&param.pattern);
-    match name_and_mutability {
-        Some((name, is_mut)) => {
-            // Allocate a DefId for the parameter
-            let def_id = ctx.alloc_def_id();
+    // For complex patterns, this generates a synthetic name
+    let (name, is_mut, _needs_destructure) = extract_param_name(&param.pattern, param_index);
 
-            // Check for qualifier-based mutability
-            let mutable = is_mut || match &param.qualifier {
-                &Some(ast::ParamQualifier::Mut) => true,
-                _ => false,
-            };
+    // Allocate a DefId for the parameter
+    let def_id = ctx.alloc_def_id();
 
-            // Check if this is a self parameter by checking the name
-            let is_self = is_self_param_name(name.symbol);
+    // Check for qualifier-based mutability
+    let mutable = is_mut || match &param.qualifier {
+        &Some(ast::ParamQualifier::Mut) => true,
+        _ => false,
+    };
 
-            Some(hir_item::FnParam::new(def_id, name, ty, mutable, is_self, param.span))
-        }
-        Option::None => {
-            ctx.error(
-                hir::DiagnosticCode::E0103,
-                common::make_string("cannot determine parameter name from pattern"),
-                param.span,
-            );
-            Option::None
-        }
-    }
+    // Check if this is a self parameter by checking the name
+    let is_self = is_self_param_name(name.symbol);
+
+    hir_item::FnParam::new(def_id, name, ty, mutable, is_self, param.span)
 }
 
 /// Checks if a parameter name symbol represents "self".
@@ -79,11 +68,14 @@ fn is_self_param_name(symbol: common::Symbol) -> bool {
 }
 
 /// Extract the parameter name and mutability from a pattern.
-/// Returns Some((name, is_mut)) for simple identifier patterns.
-fn extract_param_name(pattern: &ast::Pattern) -> Option<(common::SpannedSymbol, bool)> {
+/// Returns (name, is_mut, needs_destructuring) for all patterns.
+/// For complex patterns, generates a synthetic name and signals that destructuring is needed.
+fn extract_param_name(pattern: &ast::Pattern, param_index: u32) -> (common::SpannedSymbol, bool, bool) {
     match &pattern.kind {
-        &ast::PatternKind::Ident { by_ref: _, is_mut, ref name, subpattern: _ } => {
-            Some((*name, is_mut))
+        &ast::PatternKind::Ident { by_ref: _, is_mut, ref name, ref subpattern } => {
+            // Simple ident without subpattern is trivial
+            let needs_destructure = subpattern.is_some();
+            (*name, is_mut, needs_destructure)
         }
         &ast::PatternKind::Wildcard => {
             // Create a synthetic name for wildcard parameters
@@ -91,15 +83,22 @@ fn extract_param_name(pattern: &ast::Pattern) -> Option<(common::SpannedSymbol, 
             let span = pattern.span;
             let sym = common::Symbol::new(0);
             let spanned = common::SpannedSymbol { symbol: sym, span };
-            Some((spanned, false))
+            (spanned, false, false)
         }
         &ast::PatternKind::Ref { is_mut: _, ref inner } => {
             // Look through reference patterns
-            extract_param_name(inner.as_ref())
+            extract_param_name(inner.as_ref(), param_index)
         }
         _ => {
-            // More complex patterns not yet supported for parameter names
-            Option::None
+            // Complex pattern: generate synthetic name __param_N
+            // The actual destructuring happens at the start of the function body
+            let span = pattern.span;
+            // Use a synthetic symbol. Symbol index encodes __param_N where N is param_index.
+            // We'll use a high symbol index range (10000 + param_index) to avoid conflicts.
+            let synthetic_index = 10000u32 + param_index;
+            let sym = common::Symbol::new(synthetic_index);
+            let spanned = common::SpannedSymbol { symbol: sym, span };
+            (spanned, false, true)
         }
     }
 }
@@ -254,10 +253,27 @@ pub fn lower_declaration(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Decla
         &ast::Declaration::Impl(ref i) => {
             lower_impl_decl(ctx, i);
         }
-        // Bridge, Module, Macro not yet supported
-        &ast::Declaration::Bridge(_) => {}
-        &ast::Declaration::Module(_) => {}
-        &ast::Declaration::Macro(_) => {}
+        &ast::Declaration::Bridge(ref b) => {
+            ctx.error(
+                hir::DiagnosticCode::E0104,
+                common::make_string("bridge declarations not yet supported"),
+                b.span,
+            );
+        }
+        &ast::Declaration::Module(ref m) => {
+            ctx.error(
+                hir::DiagnosticCode::E0104,
+                common::make_string("module declarations not yet supported"),
+                m.span,
+            );
+        }
+        &ast::Declaration::Macro(ref m) => {
+            ctx.error(
+                hir::DiagnosticCode::E0104,
+                common::make_string("macro declarations not yet supported"),
+                m.span,
+            );
+        }
     }
 }
 
@@ -546,6 +562,7 @@ fn lower_assoc_fn(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl, is_trai
             ctx,
             bid,
             &params,
+            &f.params,      // AST params for complex pattern destructuring
             &Option::None,
             &f.body,
         );
