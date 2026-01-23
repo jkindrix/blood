@@ -16,18 +16,6 @@ mod hir;
 mod resolve;
 
 // ============================================================
-// Helper Functions
-// ============================================================
-
-/// Create a String from a string literal.
-/// Blood-rust requires this helper since string literals are &str.
-pub fn make_string(s: &str) -> String {
-    let mut result = String::new();
-    result.push_str(s);
-    result
-}
-
-// ============================================================
 // Lowering Result
 // ============================================================
 
@@ -37,14 +25,39 @@ pub struct LowerResult {
     pub crate_data: Option<hir::Crate>,
     /// Any diagnostics (errors, warnings) from lowering.
     pub diagnostics: Vec<hir::Diagnostic>,
+    /// Lowered items (available when successful).
+    pub items: Vec<ItemEntry>,
+    /// Index from DefId.index to items Vec index for O(1) lookup.
+    pub item_index: Vec<Option<usize>>,
+    /// Lowered bodies (available when successful).
+    pub bodies: Vec<BodyEntry>,
 }
 
 impl LowerResult {
-    /// Creates a successful result.
+    /// Creates a successful result with items, item_index, and bodies.
+    pub fn success_with_data(
+        crate_data: hir::Crate,
+        items: Vec<ItemEntry>,
+        item_index: Vec<Option<usize>>,
+        bodies: Vec<BodyEntry>,
+    ) -> LowerResult {
+        LowerResult {
+            crate_data: Option::Some(crate_data),
+            diagnostics: Vec::new(),
+            items: items,
+            item_index: item_index,
+            bodies: bodies,
+        }
+    }
+
+    /// Creates a successful result (legacy, no items/bodies).
     pub fn success(crate_data: hir::Crate) -> LowerResult {
         LowerResult {
-            crate_data: Some(crate_data),
+            crate_data: Option::Some(crate_data),
             diagnostics: Vec::new(),
+            items: Vec::new(),
+            item_index: Vec::new(),
+            bodies: Vec::new(),
         }
     }
 
@@ -53,12 +66,42 @@ impl LowerResult {
         LowerResult {
             crate_data: Option::None,
             diagnostics: diagnostics,
+            items: Vec::new(),
+            item_index: Vec::new(),
+            bodies: Vec::new(),
         }
     }
 
     /// Returns true if lowering was successful.
     pub fn is_ok(self: &Self) -> bool {
         self.crate_data.is_some()
+    }
+
+    /// Gets the number of bodies.
+    pub fn body_count(self: &Self) -> usize {
+        self.bodies.len()
+    }
+
+    /// Gets a body by index.
+    pub fn get_body(self: &Self, index: usize) -> Option<&BodyEntry> {
+        if index < self.bodies.len() {
+            Option::Some(&self.bodies[index])
+        } else {
+            Option::None
+        }
+    }
+
+    /// Gets an item by DefId in O(1) time.
+    /// Returns None if the DefId doesn't correspond to an item.
+    pub fn get_item(self: &Self, def_id: hir_def::DefId) -> Option<&ItemEntry> {
+        let def_idx = def_id.index as usize;
+        if def_idx >= self.item_index.len() {
+            return Option::None;
+        }
+        match &self.item_index[def_idx] {
+            &Some(idx) => Some(&self.items[idx]),
+            &None => Option::None,
+        }
     }
 }
 
@@ -83,8 +126,10 @@ pub struct LoweringCtx {
     pub next_ty_var: u32,
     /// Collected diagnostics.
     pub diagnostics: Vec<hir::Diagnostic>,
-    /// Items by DefId index.
+    /// Lowered items.
     pub items: Vec<ItemEntry>,
+    /// Index from DefId.index to items Vec index for O(1) lookup.
+    pub item_index: Vec<Option<usize>>,
     /// Bodies by BodyId index.
     pub bodies: Vec<BodyEntry>,
     /// The entry point DefId (main function), if found.
@@ -126,6 +171,7 @@ impl LoweringCtx {
             next_ty_var: 0,
             diagnostics: Vec::new(),
             items: Vec::new(),
+            item_index: Vec::new(),
             bodies: Vec::new(),
             entry_point: Option::None,
         }
@@ -188,8 +234,29 @@ impl LoweringCtx {
 
     /// Adds an item to the lowered items.
     pub fn add_item(self: &mut Self, def_id: hir_def::DefId, item: hir_item::Item) {
+        let idx = self.items.len();
         let entry = ItemEntry::new(def_id, item);
         self.items.push(entry);
+
+        // Ensure item_index is large enough
+        let def_idx = def_id.index as usize;
+        while self.item_index.len() <= def_idx {
+            self.item_index.push(Option::None);
+        }
+        self.item_index[def_idx] = Some(idx);
+    }
+
+    /// Gets an item by DefId in O(1) time.
+    /// Returns None if the DefId doesn't correspond to an item.
+    pub fn get_item(self: &Self, def_id: hir_def::DefId) -> Option<&ItemEntry> {
+        let def_idx = def_id.index as usize;
+        if def_idx >= self.item_index.len() {
+            return Option::None;
+        }
+        match &self.item_index[def_idx] {
+            &Some(idx) => Some(&self.items[idx]),
+            &None => Option::None,
+        }
     }
 
     /// Adds a body to the lowered bodies.

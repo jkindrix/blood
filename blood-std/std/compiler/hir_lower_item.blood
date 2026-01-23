@@ -13,9 +13,12 @@ mod ast;
 mod hir_def;
 mod hir_ty;
 mod hir_item;
+mod hir_expr;
 mod hir;
 mod hir_lower_ctx;
 mod hir_lower_type;
+mod hir_lower_expr;
+mod hir_lower_body;
 
 // ============================================================
 // Function Parameter Lowering
@@ -52,17 +55,27 @@ fn lower_fn_param(ctx: &mut hir_lower_ctx::LoweringCtx, param: &ast::Param) -> O
                 _ => false,
             };
 
-            Some(hir_item::FnParam::new(def_id, name, ty, mutable, param.span))
+            // Check if this is a self parameter by checking the name
+            let is_self = is_self_param_name(name.symbol);
+
+            Some(hir_item::FnParam::new(def_id, name, ty, mutable, is_self, param.span))
         }
         Option::None => {
             ctx.error(
                 hir::DiagnosticCode::E0103,
-                hir_lower_ctx::make_string("cannot determine parameter name from pattern"),
+                common::make_string("cannot determine parameter name from pattern"),
                 param.span,
             );
             Option::None
         }
     }
+}
+
+/// Checks if a parameter name symbol represents "self".
+/// "self" is pre-interned at index 19 in the interner.
+fn is_self_param_name(symbol: common::Symbol) -> bool {
+    // "self" is pre-interned at index 19 (see interner.blood)
+    symbol.index == 19
 }
 
 /// Extract the parameter name and mutability from a pattern.
@@ -220,14 +233,28 @@ pub fn lower_declaration(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Decla
         &ast::Declaration::Enum(ref e) => {
             lower_enum_decl(ctx, e);
         }
-        // TODO: Lower other declaration types
-        &ast::Declaration::TypeAlias(_) => {}
-        &ast::Declaration::Const(_) => {}
-        &ast::Declaration::Static(_) => {}
-        &ast::Declaration::Trait(_) => {}
-        &ast::Declaration::Effect(_) => {}
-        &ast::Declaration::Handler(_) => {}
-        &ast::Declaration::Impl(_) => {}
+        &ast::Declaration::TypeAlias(ref ta) => {
+            lower_type_alias_decl(ctx, ta);
+        }
+        &ast::Declaration::Const(ref c) => {
+            lower_const_decl(ctx, c);
+        }
+        &ast::Declaration::Static(ref s) => {
+            lower_static_decl(ctx, s);
+        }
+        &ast::Declaration::Trait(ref t) => {
+            lower_trait_decl(ctx, t);
+        }
+        &ast::Declaration::Effect(ref e) => {
+            lower_effect_decl(ctx, e);
+        }
+        &ast::Declaration::Handler(ref h) => {
+            lower_handler_decl(ctx, h);
+        }
+        &ast::Declaration::Impl(ref i) => {
+            lower_impl_decl(ctx, i);
+        }
+        // Bridge, Module, Macro not yet supported
         &ast::Declaration::Bridge(_) => {}
         &ast::Declaration::Module(_) => {}
         &ast::Declaration::Macro(_) => {}
@@ -333,4 +360,548 @@ fn lower_enum_decl(ctx: &mut hir_lower_ctx::LoweringCtx, e: &ast::EnumDecl) {
         e.span,
     );
     ctx.add_item(def_id, item);
+}
+
+/// Lower a type alias declaration.
+fn lower_type_alias_decl(ctx: &mut hir_lower_ctx::LoweringCtx, ta: &ast::TypeAliasDecl) {
+    let lookup = ctx.resolver.lookup(ta.name.symbol);
+    if lookup.is_none() { return; }
+    let result = lookup.unwrap();
+    let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+    let def_id = binding.def_id;
+
+    // Lower generics
+    let no_where: Option<ast::WhereClause> = Option::None;
+    let generics = hir_lower_type::lower_generics(ctx, &ta.type_params, &no_where);
+
+    // Lower the aliased type
+    let ty = hir_lower_type::lower_type(ctx, &ta.ty);
+
+    let alias_def = hir_item::TypeAliasDef::new(generics, ty);
+    let item_kind = hir_item::ItemKind::TypeAlias(alias_def);
+    let item = hir_item::Item::new(
+        def_id,
+        ta.name,
+        item_kind,
+        ta.vis,
+        ta.span,
+    );
+    ctx.add_item(def_id, item);
+}
+
+/// Lower a const declaration.
+fn lower_const_decl(ctx: &mut hir_lower_ctx::LoweringCtx, c: &ast::ConstDecl) {
+    let lookup = ctx.resolver.lookup(c.name.symbol);
+    if lookup.is_none() { return; }
+    let result = lookup.unwrap();
+    let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+    let def_id = binding.def_id;
+
+    // Lower the type
+    let ty = hir_lower_type::lower_type(ctx, &c.ty);
+
+    // Allocate a body for the initializer
+    let body_id = ctx.alloc_body_id();
+
+    // Lower the initializer expression to HIR
+    let init_expr = hir_lower_expr::lower_expr(ctx, &c.init_value);
+
+    // Create the body (consts have no parameters or locals)
+    let locals: Vec<hir_expr::Local> = Vec::new();
+    let body = hir_expr::Body::new(body_id, locals, 0, init_expr);
+    ctx.add_body(body_id, body);
+
+    let const_def = hir_item::ConstDef::new(ty, body_id);
+    let item_kind = hir_item::ItemKind::Const(const_def);
+    let item = hir_item::Item::new(
+        def_id,
+        c.name,
+        item_kind,
+        c.vis,
+        c.span,
+    );
+    ctx.add_item(def_id, item);
+}
+
+/// Lower a static declaration.
+fn lower_static_decl(ctx: &mut hir_lower_ctx::LoweringCtx, s: &ast::StaticDecl) {
+    let lookup = ctx.resolver.lookup(s.name.symbol);
+    if lookup.is_none() { return; }
+    let result = lookup.unwrap();
+    let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+    let def_id = binding.def_id;
+
+    // Lower the type
+    let ty = hir_lower_type::lower_type(ctx, &s.ty);
+
+    // Allocate a body for the initializer
+    let body_id = ctx.alloc_body_id();
+
+    // Lower the initializer expression to HIR
+    let init_expr = hir_lower_expr::lower_expr(ctx, &s.init_value);
+
+    // Create the body (statics have no parameters or locals)
+    let locals: Vec<hir_expr::Local> = Vec::new();
+    let body = hir_expr::Body::new(body_id, locals, 0, init_expr);
+    ctx.add_body(body_id, body);
+
+    let static_def = hir_item::StaticDef::new(ty, s.is_mut, body_id);
+    let item_kind = hir_item::ItemKind::Static(static_def);
+    let item = hir_item::Item::new(
+        def_id,
+        s.name,
+        item_kind,
+        s.vis,
+        s.span,
+    );
+    ctx.add_item(def_id, item);
+}
+
+// ============================================================
+// Trait Declaration Lowering
+// ============================================================
+
+/// Lower a trait declaration.
+fn lower_trait_decl(ctx: &mut hir_lower_ctx::LoweringCtx, t: &ast::TraitDecl) {
+    let lookup = ctx.resolver.lookup(t.name.symbol);
+    if lookup.is_none() { return; }
+    let result = lookup.unwrap();
+    let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+    let def_id = binding.def_id;
+
+    // Lower generics
+    let generics = hir_lower_type::lower_generics(ctx, &t.type_params, &t.where_clause);
+
+    // Lower supertraits
+    let mut supertraits: Vec<hir_ty::TraitRef> = Vec::new();
+    let mut i: usize = 0;
+    while i < t.supertraits.len() {
+        let supertrait_ty = hir_lower_type::lower_type(ctx, &t.supertraits[i]);
+        let trait_ref = type_to_trait_ref(&supertrait_ty, t.supertraits[i].span);
+        if trait_ref.is_some() {
+            supertraits.push(trait_ref.unwrap());
+        }
+        i = i + 1;
+    }
+
+    // Lower associated items
+    let mut items: Vec<hir_item::AssocItem> = Vec::new();
+    let mut i: usize = 0;
+    while i < t.items.len() {
+        let assoc_item = lower_trait_item(ctx, &t.items[i]);
+        if assoc_item.is_some() {
+            items.push(assoc_item.unwrap());
+        }
+        i = i + 1;
+    }
+
+    let trait_def = hir_item::TraitDef::new(generics, supertraits, items);
+    let item_kind = hir_item::ItemKind::Trait(trait_def);
+    let item = hir_item::Item::new(
+        def_id,
+        t.name,
+        item_kind,
+        t.vis,
+        t.span,
+    );
+    ctx.add_item(def_id, item);
+}
+
+/// Lower a trait item to an AssocItem.
+fn lower_trait_item(ctx: &mut hir_lower_ctx::LoweringCtx, item: &ast::TraitItem) -> Option<hir_item::AssocItem> {
+    match item {
+        &ast::TraitItem::Function(ref f) => {
+            let assoc_fn = lower_assoc_fn(ctx, f, true);
+            Option::Some(hir_item::AssocItem::Fn(assoc_fn))
+        }
+        &ast::TraitItem::TypeAlias(ref ta) => {
+            let assoc_ty = lower_assoc_type(ctx, ta);
+            Option::Some(hir_item::AssocItem::Type(assoc_ty))
+        }
+        &ast::TraitItem::Const(ref c) => {
+            let assoc_const = lower_assoc_const(ctx, c);
+            Option::Some(hir_item::AssocItem::Const(assoc_const))
+        }
+    }
+}
+
+/// Lower an associated function.
+fn lower_assoc_fn(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl, is_trait_item: bool) -> hir_item::AssocFn {
+    let def_id = ctx.alloc_def_id();
+    let generics = hir_lower_type::lower_generics(ctx, &f.type_params, &f.where_clause);
+    let sig = hir_item::FnSig::new(
+        generics,
+        lower_fn_params(ctx, &f.params),
+        lower_return_type(ctx, &f.return_type),
+        lower_effects(ctx, &f.effects),
+        f.qualifiers,
+        f.span,
+    );
+
+    // Lower body if present
+    let body_id = if f.body.is_some() {
+        let bid = ctx.alloc_body_id();
+        let params = lower_fn_params(ctx, &f.params);
+        let body = hir_lower_body::lower_fn_body(
+            ctx,
+            bid,
+            &params,
+            &Option::None,
+            &f.body,
+        );
+        ctx.add_body(bid, body);
+        Option::Some(bid)
+    } else {
+        Option::None
+    };
+
+    let has_default = body_id.is_some();
+    hir_item::AssocFn::new(def_id, f.name, sig, body_id, has_default)
+}
+
+/// Lower an associated type.
+fn lower_assoc_type(ctx: &mut hir_lower_ctx::LoweringCtx, ta: &ast::TypeAliasDecl) -> hir_item::AssocType {
+    let def_id = ctx.alloc_def_id();
+    let no_where: Option<ast::WhereClause> = Option::None;
+    let generics = hir_lower_type::lower_generics(ctx, &ta.type_params, &no_where);
+    let ty = hir_lower_type::lower_type(ctx, &ta.ty);
+    let bounds: Vec<hir_ty::TraitRef> = Vec::new();
+    hir_item::AssocType::new(def_id, ta.name, generics, bounds, Option::Some(ty))
+}
+
+/// Lower an associated constant.
+fn lower_assoc_const(ctx: &mut hir_lower_ctx::LoweringCtx, c: &ast::ConstDecl) -> hir_item::AssocConst {
+    let def_id = ctx.alloc_def_id();
+    let ty = hir_lower_type::lower_type(ctx, &c.ty);
+
+    // Lower the initializer body
+    let body_id = ctx.alloc_body_id();
+    let init_expr = hir_lower_expr::lower_expr(ctx, &c.init_value);
+    let locals: Vec<hir_expr::Local> = Vec::new();
+    let body = hir_expr::Body::new(body_id, locals, 0, init_expr);
+    ctx.add_body(body_id, body);
+
+    hir_item::AssocConst::new(def_id, c.name, ty, Option::Some(body_id))
+}
+
+/// Convert a type to a TraitRef.
+fn type_to_trait_ref(ty: &hir_ty::Type, span: common::Span) -> Option<hir_ty::TraitRef> {
+    match &ty.kind {
+        &hir_ty::TypeKind::Adt { def_id, ref args } => {
+            // Copy the args vector
+            let mut args_copy: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < args.len() {
+                args_copy.push(hir_ty::copy_type(&args[i]));
+                i = i + 1;
+            }
+            Option::Some(hir_ty::TraitRef::new(def_id, args_copy, span))
+        }
+        _ => Option::None
+    }
+}
+
+// ============================================================
+// Effect Declaration Lowering
+// ============================================================
+
+/// Lower an effect declaration.
+fn lower_effect_decl(ctx: &mut hir_lower_ctx::LoweringCtx, e: &ast::EffectDecl) {
+    let lookup = ctx.resolver.lookup(e.name.symbol);
+    if lookup.is_none() { return; }
+    let result = lookup.unwrap();
+    let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+    let def_id = binding.def_id;
+
+    // Lower generics (effects don't have where clauses in AST)
+    let no_where: Option<ast::WhereClause> = Option::None;
+    let generics = hir_lower_type::lower_generics(ctx, &e.type_params, &no_where);
+
+    // Lower parent effects
+    let mut parents: Vec<hir_ty::EffectRef> = Vec::new();
+    let mut i: usize = 0;
+    while i < e.parent_effects.len() {
+        let parent_ty = hir_lower_type::lower_type(ctx, &e.parent_effects[i]);
+        let effect_ref = type_to_effect_ref(&parent_ty);
+        if effect_ref.is_some() {
+            parents.push(effect_ref.unwrap());
+        }
+        i = i + 1;
+    }
+
+    // Lower operations
+    let mut operations: Vec<hir_item::EffectOp> = Vec::new();
+    let mut i: usize = 0;
+    while i < e.operations.len() {
+        let eff_op = lower_effect_op(ctx, &e.operations[i]);
+        operations.push(eff_op);
+        i = i + 1;
+    }
+
+    let effect_def = hir_item::EffectDef::new(generics, parents, operations);
+    let item_kind = hir_item::ItemKind::Effect(effect_def);
+    // Effects don't have visibility in the AST, use public
+    let item = hir_item::Item::new(
+        def_id,
+        e.name,
+        item_kind,
+        common::Visibility::Public,
+        e.span,
+    );
+    ctx.add_item(def_id, item);
+}
+
+/// Lower an effect operation.
+fn lower_effect_op(ctx: &mut hir_lower_ctx::LoweringCtx, oper: &ast::OperationDecl) -> hir_item::EffectOp {
+    let def_id = ctx.alloc_def_id();
+    let no_where: Option<ast::WhereClause> = Option::None;
+    let generics = hir_lower_type::lower_generics(ctx, &oper.type_params, &no_where);
+
+    // Lower parameter types
+    let mut param_tys: Vec<hir_ty::Type> = Vec::new();
+    let mut i: usize = 0;
+    while i < oper.params.len() {
+        let ty = hir_lower_type::lower_type(ctx, &oper.params[i].ty);
+        param_tys.push(ty);
+        i = i + 1;
+    }
+
+    let return_ty = hir_lower_type::lower_type(ctx, &oper.return_type);
+
+    hir_item::EffectOp::new(def_id, oper.name, generics, param_tys, return_ty, oper.span)
+}
+
+/// Convert a type to an EffectRef.
+fn type_to_effect_ref(ty: &hir_ty::Type) -> Option<hir_ty::EffectRef> {
+    match &ty.kind {
+        &hir_ty::TypeKind::Adt { def_id, ref args } => {
+            let mut args_copy: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < args.len() {
+                args_copy.push(hir_ty::copy_type(&args[i]));
+                i = i + 1;
+            }
+            Option::Some(hir_ty::EffectRef::new(def_id, args_copy))
+        }
+        _ => Option::None
+    }
+}
+
+// ============================================================
+// Handler Declaration Lowering
+// ============================================================
+
+/// Lower a handler declaration.
+fn lower_handler_decl(ctx: &mut hir_lower_ctx::LoweringCtx, h: &ast::HandlerDecl) {
+    let lookup = ctx.resolver.lookup(h.name.symbol);
+    if lookup.is_none() { return; }
+    let result = lookup.unwrap();
+    let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+    let def_id = binding.def_id;
+
+    // Lower generics
+    let generics = hir_lower_type::lower_generics(ctx, &h.type_params, &h.where_clause);
+
+    // Lower the handled effect
+    let effect_ty = hir_lower_type::lower_type(ctx, &h.effect);
+    let handled_effect = type_to_effect_ref(&effect_ty);
+    if handled_effect.is_none() {
+        ctx.error(
+            hir::DiagnosticCode::E0104,
+            common::make_string("invalid effect type in handler"),
+            h.span,
+        );
+        return;
+    }
+
+    // Lower state fields
+    let mut state: Vec<hir_item::HandlerState> = Vec::new();
+    let mut i: usize = 0;
+    while i < h.state.len() {
+        let hs = lower_handler_state(ctx, &h.state[i]);
+        state.push(hs);
+        i = i + 1;
+    }
+
+    // Lower return clause
+    let return_clause = match &h.return_clause {
+        &Some(ref rc) => {
+            let hs = lower_handler_return(ctx, rc);
+            Option::Some(hs)
+        }
+        &None => Option::None,
+    };
+
+    // Lower operation implementations
+    let mut op_impls: Vec<hir_item::OpImpl> = Vec::new();
+    let mut i: usize = 0;
+    while i < h.operations.len() {
+        let oper_impl = lower_op_impl(ctx, &h.operations[i]);
+        op_impls.push(oper_impl);
+        i = i + 1;
+    }
+
+    let handler_def = hir_item::HandlerDef::new(
+        generics,
+        handled_effect.unwrap(),
+        h.kind,
+        state,
+        return_clause,
+        op_impls,
+    );
+    let item_kind = hir_item::ItemKind::Handler(handler_def);
+    // Handlers don't have visibility in AST, use public
+    let item = hir_item::Item::new(
+        def_id,
+        h.name,
+        item_kind,
+        common::Visibility::Public,
+        h.span,
+    );
+    ctx.add_item(def_id, item);
+}
+
+/// Lower handler state field.
+fn lower_handler_state(ctx: &mut hir_lower_ctx::LoweringCtx, hs: &ast::HandlerState) -> hir_item::HandlerState {
+    let def_id = ctx.alloc_def_id();
+    let ty = hir_lower_type::lower_type(ctx, &hs.ty);
+
+    let default_body = match &hs.default_val {
+        &Some(ref expr) => {
+            let body_id = ctx.alloc_body_id();
+            let init_expr = hir_lower_expr::lower_expr(ctx, expr);
+            let locals: Vec<hir_expr::Local> = Vec::new();
+            let body = hir_expr::Body::new(body_id, locals, 0, init_expr);
+            ctx.add_body(body_id, body);
+            Option::Some(body_id)
+        }
+        &None => Option::None,
+    };
+
+    hir_item::HandlerState::new(def_id, hs.name, ty, hs.is_mut, default_body)
+}
+
+/// Lower handler return clause.
+fn lower_handler_return(ctx: &mut hir_lower_ctx::LoweringCtx, rc: &ast::ReturnClause) -> hir_item::HandlerReturn {
+    // Lower the body
+    let body_id = ctx.alloc_body_id();
+    let body_expr = hir_lower_expr::lower_block_to_expr(ctx, &rc.body);
+    let locals: Vec<hir_expr::Local> = Vec::new();
+    let body = hir_expr::Body::new(body_id, locals, 0, body_expr);
+    ctx.add_body(body_id, body);
+
+    hir_item::HandlerReturn::new(rc.param, body_id)
+}
+
+/// Lower operation implementation.
+fn lower_op_impl(ctx: &mut hir_lower_ctx::LoweringCtx, oper: &ast::OperationImpl) -> hir_item::OpImpl {
+    let def_id = ctx.alloc_def_id();
+
+    // Lower parameter patterns to extract names
+    let mut param_names: Vec<common::SpannedSymbol> = Vec::new();
+    let mut i: usize = 0;
+    while i < oper.params.len() {
+        let name = extract_pattern_name(&oper.params[i]);
+        if name.is_some() {
+            param_names.push(name.unwrap());
+        }
+        i = i + 1;
+    }
+
+    // Lower the body
+    let body_id = ctx.alloc_body_id();
+    let body_expr = hir_lower_expr::lower_block_to_expr(ctx, &oper.body);
+    let locals: Vec<hir_expr::Local> = Vec::new();
+    let body = hir_expr::Body::new(body_id, locals, 0, body_expr);
+    ctx.add_body(body_id, body);
+
+    hir_item::OpImpl::new(def_id, oper.name, param_names, body_id, oper.span)
+}
+
+/// Extract a name from a pattern (for parameter names).
+fn extract_pattern_name(pattern: &ast::Pattern) -> Option<common::SpannedSymbol> {
+    match &pattern.kind {
+        &ast::PatternKind::Ident { by_ref: _, is_mut: _, ref name, subpattern: _ } => {
+            Option::Some(*name)
+        }
+        &ast::PatternKind::Wildcard => {
+            // Create a placeholder name for wildcard
+            let sym = common::Symbol::new(0);
+            let spanned = common::SpannedSymbol { symbol: sym, span: pattern.span };
+            Option::Some(spanned)
+        }
+        _ => Option::None
+    }
+}
+
+// ============================================================
+// Impl Declaration Lowering
+// ============================================================
+
+/// Lower an impl block.
+fn lower_impl_decl(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::ImplBlock) {
+    // Impl blocks don't have names, so we allocate a fresh DefId
+    let def_id = ctx.alloc_def_id();
+
+    // Lower generics
+    let generics = hir_lower_type::lower_generics(ctx, &imp.type_params, &imp.where_clause);
+
+    // Lower trait ref if this is a trait impl
+    let trait_ref = match &imp.trait_ty {
+        &Some(ref trait_ty) => {
+            let lowered_ty = hir_lower_type::lower_type(ctx, trait_ty);
+            type_to_trait_ref(&lowered_ty, trait_ty.span)
+        }
+        &None => Option::None,
+    };
+
+    // Lower self type
+    let self_ty = hir_lower_type::lower_type(ctx, &imp.self_ty);
+
+    // Lower associated items
+    let mut items: Vec<hir_item::AssocItem> = Vec::new();
+    let mut i: usize = 0;
+    while i < imp.items.len() {
+        let assoc_item = lower_impl_item(ctx, &imp.items[i]);
+        if assoc_item.is_some() {
+            items.push(assoc_item.unwrap());
+        }
+        i = i + 1;
+    }
+
+    let impl_def = hir_item::ImplDef::new(generics, trait_ref, self_ty, items);
+    let item_kind = hir_item::ItemKind::Impl(impl_def);
+
+    // Impl blocks don't have names - create a placeholder
+    let placeholder_name = common::SpannedSymbol {
+        symbol: common::Symbol::new(0),
+        span: imp.span,
+    };
+
+    let item = hir_item::Item::new(
+        def_id,
+        placeholder_name,
+        item_kind,
+        common::Visibility::Private,
+        imp.span,
+    );
+    ctx.add_item(def_id, item);
+}
+
+/// Lower an impl item to an AssocItem.
+fn lower_impl_item(ctx: &mut hir_lower_ctx::LoweringCtx, item: &ast::ImplItem) -> Option<hir_item::AssocItem> {
+    match item {
+        &ast::ImplItem::Function(ref f) => {
+            let assoc_fn = lower_assoc_fn(ctx, f, false);
+            Option::Some(hir_item::AssocItem::Fn(assoc_fn))
+        }
+        &ast::ImplItem::TypeAlias(ref ta) => {
+            let assoc_ty = lower_assoc_type(ctx, ta);
+            Option::Some(hir_item::AssocItem::Type(assoc_ty))
+        }
+        &ast::ImplItem::Const(ref c) => {
+            let assoc_const = lower_assoc_const(ctx, c);
+            Option::Some(hir_item::AssocItem::Const(assoc_const))
+        }
+    }
 }

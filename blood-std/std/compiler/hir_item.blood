@@ -136,6 +136,8 @@ pub struct FnParam {
     pub ty: hir_ty::Type,
     /// Whether the parameter is mutable.
     pub mutable: bool,
+    /// Whether this is a self parameter.
+    pub is_self: bool,
     /// Span of the parameter.
     pub span: common::Span,
 }
@@ -147,9 +149,32 @@ impl FnParam {
         name: common::SpannedSymbol,
         ty: hir_ty::Type,
         mutable: bool,
+        is_self: bool,
         span: common::Span,
     ) -> FnParam {
-        FnParam { def_id, name, ty, mutable, span }
+        FnParam { def_id, name, ty, mutable, is_self, span }
+    }
+
+    /// Creates a new non-self function parameter (convenience).
+    pub fn regular(
+        def_id: hir_def::DefId,
+        name: common::SpannedSymbol,
+        ty: hir_ty::Type,
+        mutable: bool,
+        span: common::Span,
+    ) -> FnParam {
+        FnParam { def_id, name, ty, mutable, is_self: false, span }
+    }
+
+    /// Creates a self parameter.
+    pub fn self_param(
+        def_id: hir_def::DefId,
+        name: common::SpannedSymbol,
+        ty: hir_ty::Type,
+        mutable: bool,
+        span: common::Span,
+    ) -> FnParam {
+        FnParam { def_id, name, ty, mutable, is_self: true, span }
     }
 }
 

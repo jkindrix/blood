@@ -13,7 +13,10 @@ mod ast;
 mod hir_def;
 mod hir_ty;
 mod hir;
+mod resolve;
 mod hir_lower_ctx;
+mod interner;
+mod const_eval;
 
 // ============================================================
 // Type Lowering
@@ -39,12 +42,12 @@ pub fn lower_type(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> hir_t
                 mutable: is_mut,
             })
         }
-        &ast::TypeKind::Array { ref element, size: _ } => {
-            // TODO: Evaluate const size expression
+        &ast::TypeKind::Array { ref element, ref size } => {
             let elem_ty = lower_type(ctx, element.as_ref());
+            let array_size = const_eval::eval_array_size_u64(size.as_ref());
             hir_ty::Type::new(hir_ty::TypeKind::Array {
                 element: Box::new(elem_ty),
-                size: 0, // Placeholder until const evaluation
+                size: array_size,
             })
         }
         &ast::TypeKind::Slice { ref element } => {
@@ -155,7 +158,7 @@ fn lower_type_path(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath) -
         } else {
             ctx.error(
                 hir::DiagnosticCode::E0102,
-                hir_lower_ctx::make_string("unknown type"),
+                common::make_string("unknown type"),
                 seg.name.span,
             );
             return hir_ty::Type::error();
@@ -163,19 +166,100 @@ fn lower_type_path(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath) -
     }
 
     // Multi-segment paths (e.g., module::Type)
-    // TODO: Handle module paths properly
+    // Extract the names from path segments
+    let mut names: Vec<common::SpannedSymbol> = Vec::new();
+    let mut i: usize = 0;
+    while i < path.segments.len() {
+        names.push(path.segments[i].name);
+        i = i + 1;
+    }
+
+    let resolved = ctx.resolver.resolve_qualified_path(&names);
+    if resolved.is_some() {
+        let result = resolved.unwrap();
+        // Get type args from last segment
+        let last_seg = &path.segments[path.segments.len() - 1];
+        let type_args = match &last_seg.args {
+            &Some(ref args) => lower_type_args(ctx, args),
+            &None => Vec::new(),
+        };
+
+        return hir_ty::Type::new(hir_ty::TypeKind::Adt {
+            def_id: result.def_id,
+            args: type_args,
+        });
+    }
+
+    // Not found - report error
     ctx.error(
         hir::DiagnosticCode::E0102,
-        hir_lower_ctx::make_string("qualified type paths not yet supported"),
+        common::make_string("undefined qualified type path"),
         path.span,
     );
     hir_ty::Type::error()
 }
 
 /// Try to convert a symbol to a primitive type.
+///
+/// Compares the symbol index against pre-interned primitive type names.
+/// Returns the corresponding HIR type if the symbol is a primitive, None otherwise.
 fn try_primitive_type(sym: common::Symbol) -> Option<hir_ty::Type> {
-    // TODO: Implement symbol comparison once we have string interning
-    // For now, return None and rely on type lookup
+    let index = sym.index;
+
+    // Check against pre-interned primitive type indices (41-57)
+    if index == interner::Primitives::bool_sym().index {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Bool)));
+    }
+    if index == interner::Primitives::i8_sym().index {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::I8)));
+    }
+    if index == interner::Primitives::i16_sym().index {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::I16)));
+    }
+    if index == interner::Primitives::i32_sym().index {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::I32)));
+    }
+    if index == interner::Primitives::i64_sym().index {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::I64)));
+    }
+    if index == interner::Primitives::i128_sym().index {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::I128)));
+    }
+    if index == interner::Primitives::isize_sym().index {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Isize)));
+    }
+    if index == interner::Primitives::u8_sym().index {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::U8)));
+    }
+    if index == interner::Primitives::u16_sym().index {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::U16)));
+    }
+    if index == interner::Primitives::u32_sym().index {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::U32)));
+    }
+    if index == interner::Primitives::u64_sym().index {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::U64)));
+    }
+    if index == interner::Primitives::u128_sym().index {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::U128)));
+    }
+    if index == interner::Primitives::usize_sym().index {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Usize)));
+    }
+    if index == interner::Primitives::f32_sym().index {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::F32)));
+    }
+    if index == interner::Primitives::f64_sym().index {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::F64)));
+    }
+    if index == interner::Primitives::char_sym().index {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Char)));
+    }
+    if index == interner::Primitives::str_sym().index {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Str)));
+    }
+
+    // Not a primitive type
     Option::None
 }
 
@@ -252,7 +336,7 @@ fn lower_effect_ref(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> Opt
             }
             ctx.error(
                 hir::DiagnosticCode::E0102,
-                hir_lower_ctx::make_string("unknown effect"),
+                common::make_string("unknown effect"),
                 ty.span,
             );
             Option::None
@@ -260,7 +344,7 @@ fn lower_effect_ref(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> Opt
         _ => {
             ctx.error(
                 hir::DiagnosticCode::E0102,
-                hir_lower_ctx::make_string("invalid effect type"),
+                common::make_string("invalid effect type"),
                 ty.span,
             );
             Option::None
@@ -341,7 +425,47 @@ pub fn lower_generics(ctx: &mut hir_lower_ctx::LoweringCtx, type_params: &Option
         &None => {}
     }
 
-    // TODO: Also lower explicit where clause predicates
+    // Lower explicit where clause predicates
+    match where_clause {
+        &Some(ref wc) => {
+            let mut i: usize = 0;
+            while i < wc.predicates.len() {
+                match &wc.predicates[i] {
+                    &ast::WherePredicate::TypeBound { ref ty, ref bounds, span } => {
+                        let lowered_ty = lower_type(ctx, ty);
+                        let mut trait_refs: Vec<hir_ty::TraitRef> = Vec::new();
+                        let mut j: usize = 0;
+                        while j < bounds.len() {
+                            let bound_ty = lower_type(ctx, &bounds[j]);
+                            let trait_ref = type_to_trait_ref(&bound_ty, bounds[j].span);
+                            if trait_ref.is_some() {
+                                trait_refs.push(trait_ref.unwrap());
+                            }
+                            j = j + 1;
+                        }
+                        if trait_refs.len() > 0 {
+                            let pred = hir_ty::WherePredicate::TypeBound {
+                                ty: lowered_ty,
+                                bounds: trait_refs,
+                                span,
+                            };
+                            where_predicates.push(pred);
+                        }
+                    }
+                    &ast::WherePredicate::Lifetime { ref lifetime, ref bound, span } => {
+                        let pred = hir_ty::WherePredicate::LifetimeBound {
+                            lifetime: lifetime.symbol,
+                            bound: bound.symbol,
+                            span,
+                        };
+                        where_predicates.push(pred);
+                    }
+                }
+                i = i + 1;
+            }
+        }
+        &None => {}
+    }
 
     hir_ty::Generics { params, where_predicates }
 }
@@ -354,7 +478,7 @@ fn type_to_trait_ref(ty: &hir_ty::Type, span: common::Span) -> Option<hir_ty::Tr
             let mut args_copy: Vec<hir_ty::Type> = Vec::new();
             let mut i: usize = 0;
             while i < args.len() {
-                args_copy.push(copy_type(&args[i]));
+                args_copy.push(hir_ty::copy_type(&args[i]));
                 i = i + 1;
             }
             Some(hir_ty::TraitRef::new(def_id, args_copy, span))
@@ -364,16 +488,4 @@ fn type_to_trait_ref(ty: &hir_ty::Type, span: common::Span) -> Option<hir_ty::Tr
             Option::None
         }
     }
-}
-
-/// Copy a type (shallow copy since Type is small).
-fn copy_type(ty: &hir_ty::Type) -> hir_ty::Type {
-    hir_ty::Type { kind: copy_type_kind(&ty.kind) }
-}
-
-/// Copy a TypeKind (shallow for simple kinds).
-fn copy_type_kind(kind: &hir_ty::TypeKind) -> hir_ty::TypeKind {
-    // For now, return error type for complex kinds
-    // TODO: Implement proper deep copy when needed
-    hir_ty::TypeKind::Error
 }

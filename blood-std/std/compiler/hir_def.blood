@@ -173,17 +173,30 @@ pub struct ResolvedPath {
     pub type_arg_count: u32,
     /// The span of the path in source code.
     pub span: common::Span,
+    /// For enum variant paths, the variant index within the parent enum.
+    /// None for non-variant paths.
+    pub variant_index: Option<u32>,
 }
 
 impl ResolvedPath {
     /// Creates a new ResolvedPath.
     pub fn new(def_id: DefId, type_arg_count: u32, span: common::Span) -> ResolvedPath {
-        ResolvedPath { def_id, type_arg_count, span }
+        ResolvedPath { def_id, type_arg_count, span, variant_index: Option::None }
     }
 
     /// Creates a ResolvedPath with no type arguments.
     pub fn simple(def_id: DefId, span: common::Span) -> ResolvedPath {
-        ResolvedPath { def_id, type_arg_count: 0, span }
+        ResolvedPath { def_id, type_arg_count: 0, span, variant_index: Option::None }
+    }
+
+    /// Creates a ResolvedPath for an enum variant with its index.
+    pub fn variant(def_id: DefId, span: common::Span, variant_index: u32) -> ResolvedPath {
+        ResolvedPath {
+            def_id: def_id,
+            type_arg_count: 0,
+            span: span,
+            variant_index: Option::Some(variant_index),
+        }
     }
 }
 
@@ -245,11 +258,25 @@ pub struct DefInfo {
     pub span: common::Span,
     /// The parent definition (for nested items).
     pub parent: Option<DefId>,
+    /// For Variant definitions, the index within the parent enum.
+    /// None for non-variant definitions.
+    pub variant_index: Option<u32>,
 }
 
 impl DefInfo {
     /// Creates a new DefInfo.
     pub fn new(kind: DefKind, name: common::Symbol, span: common::Span, parent: Option<DefId>) -> DefInfo {
-        DefInfo { kind, name, span, parent }
+        DefInfo { kind, name, span, parent, variant_index: Option::None }
+    }
+
+    /// Creates a new DefInfo for an enum variant with its index.
+    pub fn variant(name: common::Symbol, span: common::Span, parent: DefId, variant_index: u32) -> DefInfo {
+        DefInfo {
+            kind: DefKind::Variant,
+            name: name,
+            span: span,
+            parent: Option::Some(parent),
+            variant_index: Option::Some(variant_index),
+        }
     }
 }

@@ -5,7 +5,7 @@
 // with resolved names and semantic types.
 //
 // The lowering process:
-// 1. Create LoweringContext with a fresh Resolver
+// 1. Create LoweringCtx with a fresh Resolver
 // 2. First pass: Register all type names (structs, enums, traits, effects)
 // 3. Second pass: Register all other declarations (functions, consts, statics)
 // 4. Third pass: Lower all declarations to HIR items
@@ -30,18 +30,8 @@ mod hir_lower_ctx;
 mod hir_lower_type;
 mod hir_lower_item;
 mod hir_lower_expr;
-
-// ============================================================
-// Helper Functions
-// ============================================================
-
-/// Create a String from a string literal.
-/// Blood-rust requires this helper since string literals are &str.
-fn make_string(s: &str) -> String {
-    let mut result = String::new();
-    result.push_str(s);
-    result
-}
+mod hir_lower_body;
+mod interner;
 
 // ============================================================
 // Main Lowering Pipeline
@@ -89,7 +79,8 @@ pub fn lower_program(program: &ast::Program) -> hir_lower_ctx::LowerResult {
         body_count: ctx.bodies.len() as u32,
     };
 
-    hir_lower_ctx::LowerResult::success(crate_data)
+    // Transfer items, item_index, and bodies to the result
+    hir_lower_ctx::LowerResult::success_with_data(crate_data, ctx.items, ctx.item_index, ctx.bodies)
 }
 
 // ============================================================
@@ -114,7 +105,7 @@ fn register_type_name(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declarat
             if !success {
                 ctx.error(
                     hir::DiagnosticCode::E0101,
-                    make_string("duplicate definition"),
+                    common::make_string("duplicate definition"),
                     s.name.span,
                 );
             } else {
@@ -133,7 +124,7 @@ fn register_type_name(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declarat
             if !success {
                 ctx.error(
                     hir::DiagnosticCode::E0101,
-                    make_string("duplicate definition"),
+                    common::make_string("duplicate definition"),
                     e.name.span,
                 );
             } else {
@@ -152,7 +143,7 @@ fn register_type_name(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declarat
             if !success {
                 ctx.error(
                     hir::DiagnosticCode::E0101,
-                    make_string("duplicate definition"),
+                    common::make_string("duplicate definition"),
                     t.name.span,
                 );
             } else {
@@ -171,7 +162,7 @@ fn register_type_name(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declarat
             if !success {
                 ctx.error(
                     hir::DiagnosticCode::E0101,
-                    make_string("duplicate definition"),
+                    common::make_string("duplicate definition"),
                     eff.name.span,
                 );
             } else {
@@ -190,7 +181,7 @@ fn register_type_name(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declarat
             if !success {
                 ctx.error(
                     hir::DiagnosticCode::E0101,
-                    make_string("duplicate definition"),
+                    common::make_string("duplicate definition"),
                     ta.name.span,
                 );
             } else {
@@ -237,7 +228,7 @@ fn register_declaration(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declar
             if !success {
                 ctx.error(
                     hir::DiagnosticCode::E0101,
-                    make_string("duplicate definition"),
+                    common::make_string("duplicate definition"),
                     f.name.span,
                 );
             } else {
@@ -249,7 +240,9 @@ fn register_declaration(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declar
                     Option::None,
                 );
                 // Check if this is the main function
-                // TODO: Compare symbol to "main" when we have string interning
+                if f.name.symbol.index == interner::SpecialIdents::main_sym().index {
+                    ctx.entry_point = Option::Some(def_id);
+                }
             }
         }
         &ast::Declaration::Const(ref c) => {
@@ -258,7 +251,7 @@ fn register_declaration(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declar
             if !success {
                 ctx.error(
                     hir::DiagnosticCode::E0101,
-                    make_string("duplicate definition"),
+                    common::make_string("duplicate definition"),
                     c.name.span,
                 );
             } else {
@@ -277,7 +270,7 @@ fn register_declaration(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declar
             if !success {
                 ctx.error(
                     hir::DiagnosticCode::E0101,
-                    make_string("duplicate definition"),
+                    common::make_string("duplicate definition"),
                     s.name.span,
                 );
             } else {
@@ -296,7 +289,7 @@ fn register_declaration(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declar
             if !success {
                 ctx.error(
                     hir::DiagnosticCode::E0101,
-                    make_string("duplicate definition"),
+                    common::make_string("duplicate definition"),
                     h.name.span,
                 );
             } else {
@@ -371,7 +364,7 @@ fn lower_single_fn_body(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl) {
     let params = hir_lower_item::lower_fn_params(ctx, &f.params);
 
     // Lower the body
-    let body = hir_lower_expr::lower_fn_body(
+    let body = hir_lower_body::lower_fn_body(
         ctx,
         body_id,
         &params,
