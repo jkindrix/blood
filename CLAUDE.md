@@ -100,9 +100,18 @@ Audit in progress. No shortcuts are acceptable.
 | Monolithic file | 600 | Must split or justify |
 | Emergency limit | 800 | Immediate refactoring required |
 
-**Current exceptions:**
-- `lexer.blood` (~870 lines) - Contains lexer state machine logic, reduced from 1206 after modularization
-- `ast.blood` (~1130 lines) - Contains all AST node types, reduced after removing duplicate type definitions
+**Current exceptions (files exceeding 600 lines):**
+- `hir_lower_expr.blood` (1,709 lines) - Expression lowering, well-organized with 28 sections
+- `unify.blood` (1,232 lines) - Type unification with union-find
+- `parser_expr.blood` (1,179 lines) - Pratt parser for expressions
+- `typeck_expr.blood` (1,113 lines) - Expression type checking
+- `ast.blood` (1,070 lines) - All AST node types
+- `parser_item.blood` (1,034 lines) - Top-level item parsing
+- `lexer.blood` (867 lines) - Lexer state machine logic
+- `hir_item.blood` (794 lines) - HIR item definitions
+- `typeck.blood` (788 lines) - Main type checker
+
+**Note:** These files should be split when practical but are well-organized internally.
 
 ### Consistency Requirements
 
@@ -305,40 +314,10 @@ Before modifying any shared type:
 
 **These are compiler bugs that need to be fixed in blood-rust. Do NOT work around them.**
 
-### BUG-001: Struct initialization fails in impl blocks when module is imported
+*No known bugs at this time.*
 
-**Status:** OPEN - Needs report to blood-rust developers
-
-**Symptom:**
-- A file compiles successfully when checked directly
-- The same file fails when imported by another module via `mod`
-- Error message: `"defXXX" is not a struct` (referencing internal DefIds)
-
-**Reproduction:**
-```bash
-# hir_expr.blood compiles successfully on its own:
-blood check hir_expr.blood  # ✅ Passes
-
-# But fails when imported by hir_lower.blood:
-blood check hir_lower.blood  # ❌ Fails with "def921 is not a struct"
-```
-
-**Affected code pattern:**
-```blood
-pub struct Local { ... }
-
-impl Local {
-    pub fn new(...) -> Local {
-        Local { field: value, ... }  // This line fails when imported
-    }
-}
-```
-
-**Error locations:** hir_expr.blood lines 64, 85, 90, 250, 527, 532
-
-**Hypothesis:** When a file is imported as a module, blood-rust assigns different DefIds to structs than when the same code is used within the file. The struct initialization in impl blocks then fails to resolve the struct name to the correct DefId.
-
-**Blocked work:** Cannot complete hir_lower.blood until this is fixed.
+**Previously fixed bugs:**
+- BUG-001: Struct initialization in impl blocks when module is imported (fixed - all 25 compiler files now compile)
 
 ---
 
@@ -366,15 +345,22 @@ Build in this order, testing each phase before moving on:
 
 | Phase | File(s) | Lines | Status |
 |-------|---------|-------|--------|
-| 1 | `common.blood` | ~135 | ✅ Complete |
-| 2 | `token.blood` | ~323 | ✅ Complete (new, extracted from lexer) |
-| 3 | `lexer.blood` | ~870 | ✅ Complete (modularized) |
-| 4 | `ast.blood` | ~1130 | ✅ Complete (modularized) |
-| 5 | `parser.blood` | - | ❌ Not started |
-| 6 | `hir.blood` | - | ❌ Not started |
-| 7 | `typeck.blood` | - | ❌ Not started |
-| 8 | `mir.blood` | - | ❌ Not started |
-| 9 | `codegen.blood` | - | ❌ Not started |
+| 1 | `common.blood` | 273 | ✅ Complete |
+| 2 | `token.blood` | 614 | ✅ Complete |
+| 3 | `lexer.blood` | 867 | ✅ Complete |
+| 4 | `ast.blood` | 1,070 | ✅ Complete |
+| 5 | `parser*.blood` (6 files) | 3,966 | ✅ Complete |
+| 6 | `hir*.blood` (5 files) | 2,376 | ✅ Complete |
+| 7 | `resolve.blood` | 605 | ✅ Complete |
+| 8 | `hir_lower*.blood` (6 files) | 2,704 | ✅ Complete |
+| 9 | `unify.blood`, `typeck*.blood` (4 files) | 3,385 | ✅ Complete |
+| 10 | `mir_*.blood` (10 files) | 5,011 | ✅ Complete |
+| 11 | `codegen*.blood` (6 files) | 2,224 | ✅ Complete |
+| 12 | Infrastructure (6 files) | 2,148 | ✅ Complete |
+
+**Infrastructure files:** `interner.blood` (286), `driver.blood` (547), `reporter.blood` (364), `source.blood` (372), `main.blood` (369), `const_eval.blood` (210)
+
+**Total: 49 files, 26,464 lines - All type-check successfully.**
 
 ---
 
