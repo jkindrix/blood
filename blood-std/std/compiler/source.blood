@@ -261,6 +261,17 @@ pub fn read_file(path: &str) -> ReadFileResult {
     ReadFileResult::ok(content)
 }
 
+/// Reads a file from a String path.
+///
+/// This version accepts &String for dynamic path construction.
+/// It reconstructs the path as a &str internally for the builtins.
+pub fn read_file_string(path: &String) -> ReadFileResult {
+    // Convert String to &str by getting the underlying data
+    // Use as_str() method which should return &str from String
+    let path_str: &str = path.as_str();
+    read_file(path_str)
+}
+
 // Note: file_exists is provided by blood-rust as a builtin function.
 // It is called directly without declaration: file_exists(path: &str) -> bool
 

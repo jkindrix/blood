@@ -19,6 +19,7 @@ mod hir_lower_ctx;
 mod hir_lower_type;
 mod hir_lower_expr;
 mod hir_lower_body;
+mod resolve;
 
 // ============================================================
 // Function Parameter Lowering
@@ -261,11 +262,12 @@ pub fn lower_declaration(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Decla
             );
         }
         &ast::Declaration::Module(ref m) => {
-            ctx.error(
-                hir::DiagnosticCode::E0104,
-                common::make_string("module declarations not yet supported"),
-                m.span,
-            );
+            match &m.body {
+                &Option::Some(ref declarations) => {
+                    lower_module_decl(ctx, m, declarations);
+                }
+                &Option::None => {} // External module - lowered in Phase 3b
+            }
         }
         &ast::Declaration::Macro(ref m) => {
             ctx.error(
@@ -921,4 +923,238 @@ fn lower_impl_item(ctx: &mut hir_lower_ctx::LoweringCtx, item: &ast::ImplItem) -
             Option::Some(hir_item::AssocItem::Const(assoc_const))
         }
     }
+}
+
+// ============================================================
+// Module Declaration Lowering
+// ============================================================
+
+/// Lower a module declaration.
+fn lower_module_decl(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    m: &ast::ModItemDecl,
+    declarations: &Vec<ast::Declaration>,
+) {
+    // Look up the module's DefId from registration
+    let lookup = ctx.resolver.lookup(m.name.symbol);
+    if lookup.is_none() {
+        // Should not happen if registration succeeded
+        return;
+    }
+    let result = lookup.unwrap();
+    let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+    let def_id = hir_def::DefId::new(binding.def_id.index);
+
+    // Push a Module scope for lowering nested items
+    // This allows unqualified name resolution within the module
+    ctx.resolver.push_scope(resolve::ScopeKind::Module);
+
+    // Add all module items to the new scope for unqualified access within the module
+    add_module_items_to_scope(ctx, def_id, declarations);
+
+    // Lower all nested declarations
+    lower_declarations(ctx, declarations);
+
+    // Collect DefIds of the items we lowered
+    let item_def_ids = collect_item_def_ids(ctx, def_id);
+
+    // Pop the module scope
+    ctx.resolver.pop_scope();
+
+    // Create the ModuleDef
+    let mod_def = hir_item::ModuleDef::new(item_def_ids);
+    let item_kind = hir_item::ItemKind::Module(mod_def);
+
+    // Create the Item
+    let item = hir_item::Item::new(
+        def_id,
+        m.name,
+        item_kind,
+        m.vis,
+        m.span,
+    );
+    ctx.add_item(def_id, item);
+}
+
+/// Add module items to the current scope for unqualified access.
+fn add_module_items_to_scope(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    parent_def_id: hir_def::DefId,
+    declarations: &Vec<ast::Declaration>,
+) {
+    let mut i: usize = 0;
+    while i < declarations.len() {
+        add_decl_to_scope(ctx, parent_def_id, &declarations[i]);
+        i = i + 1;
+    }
+}
+
+/// Add a single declaration to the current scope.
+fn add_decl_to_scope(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    parent_def_id: hir_def::DefId,
+    decl: &ast::Declaration,
+) {
+    match decl {
+        &ast::Declaration::Struct(ref s) => {
+            // Find the DefId from def_info
+            let def_id = ctx.resolver.lookup_in_parent(parent_def_id, s.name.symbol);
+            if def_id.is_some() {
+                let binding = resolve::Binding::def(def_id.unwrap());
+                ctx.resolver.define(s.name.symbol, binding);
+            }
+        }
+        &ast::Declaration::Enum(ref e) => {
+            let def_id = ctx.resolver.lookup_in_parent(parent_def_id, e.name.symbol);
+            if def_id.is_some() {
+                let binding = resolve::Binding::def(def_id.unwrap());
+                ctx.resolver.define(e.name.symbol, binding);
+            }
+        }
+        &ast::Declaration::Function(ref f) => {
+            let def_id = ctx.resolver.lookup_in_parent(parent_def_id, f.name.symbol);
+            if def_id.is_some() {
+                let binding = resolve::Binding::def(def_id.unwrap());
+                ctx.resolver.define(f.name.symbol, binding);
+            }
+        }
+        &ast::Declaration::Const(ref c) => {
+            let def_id = ctx.resolver.lookup_in_parent(parent_def_id, c.name.symbol);
+            if def_id.is_some() {
+                let binding = resolve::Binding::def(def_id.unwrap());
+                ctx.resolver.define(c.name.symbol, binding);
+            }
+        }
+        &ast::Declaration::Static(ref s) => {
+            let def_id = ctx.resolver.lookup_in_parent(parent_def_id, s.name.symbol);
+            if def_id.is_some() {
+                let binding = resolve::Binding::def(def_id.unwrap());
+                ctx.resolver.define(s.name.symbol, binding);
+            }
+        }
+        &ast::Declaration::Trait(ref t) => {
+            let def_id = ctx.resolver.lookup_in_parent(parent_def_id, t.name.symbol);
+            if def_id.is_some() {
+                let binding = resolve::Binding::def(def_id.unwrap());
+                ctx.resolver.define(t.name.symbol, binding);
+            }
+        }
+        &ast::Declaration::Effect(ref e) => {
+            let def_id = ctx.resolver.lookup_in_parent(parent_def_id, e.name.symbol);
+            if def_id.is_some() {
+                let binding = resolve::Binding::def(def_id.unwrap());
+                ctx.resolver.define(e.name.symbol, binding);
+            }
+        }
+        &ast::Declaration::TypeAlias(ref ta) => {
+            let def_id = ctx.resolver.lookup_in_parent(parent_def_id, ta.name.symbol);
+            if def_id.is_some() {
+                let binding = resolve::Binding::def(def_id.unwrap());
+                ctx.resolver.define(ta.name.symbol, binding);
+            }
+        }
+        &ast::Declaration::Handler(ref h) => {
+            let def_id = ctx.resolver.lookup_in_parent(parent_def_id, h.name.symbol);
+            if def_id.is_some() {
+                let binding = resolve::Binding::def(def_id.unwrap());
+                ctx.resolver.define(h.name.symbol, binding);
+            }
+        }
+        &ast::Declaration::Module(ref m) => {
+            // Nested modules are also added to scope
+            match &m.body {
+                &Option::Some(_) => {
+                    let def_id = ctx.resolver.lookup_in_parent(parent_def_id, m.name.symbol);
+                    if def_id.is_some() {
+                        let binding = resolve::Binding::mod_binding(def_id.unwrap());
+                        ctx.resolver.define(m.name.symbol, binding);
+                    }
+                }
+                &Option::None => {}
+            }
+        }
+        // Impl blocks don't have names - skip
+        &ast::Declaration::Impl(_) => {}
+        &ast::Declaration::Bridge(_) => {}
+        &ast::Declaration::Macro(_) => {}
+    }
+}
+
+/// Collect DefIds of items that belong to a module.
+fn collect_item_def_ids(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    parent_def_id: hir_def::DefId,
+) -> Vec<hir_def::DefId> {
+    let mut result: Vec<hir_def::DefId> = Vec::new();
+
+    // Search through def_info for items with this parent
+    let mut i: usize = 0;
+    while i < ctx.resolver.def_info.len() {
+        let entry = &ctx.resolver.def_info[i];
+        match &entry.info.parent {
+            &Option::Some(p) => {
+                if p.index == parent_def_id.index {
+                    result.push(hir_def::DefId::new(entry.def_id.index));
+                }
+            }
+            &Option::None => {}
+        }
+        i = i + 1;
+    }
+
+    result
+}
+
+/// Lower the contents of an external module.
+/// Called during Phase 3b for external modules that were loaded in Phase 1.
+/// This creates a Module item and lowers all declarations within the module scope.
+pub fn lower_module_contents(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    module_def_id: hir_def::DefId,
+    declarations: &Vec<ast::Declaration>,
+) {
+    // Get the module's name from def_info
+    let def_info = ctx.resolver.get_def_info(module_def_id);
+    if def_info.is_none() {
+        // Should not happen if registration succeeded
+        return;
+    }
+    let info = def_info.unwrap();
+    let name_symbol = info.name;
+    let name_span = info.span;
+
+    // Create a SpannedSymbol for the module name
+    let name = common::SpannedSymbol {
+        symbol: name_symbol,
+        span: name_span,
+    };
+
+    // Push a Module scope for lowering nested items
+    ctx.resolver.push_scope(resolve::ScopeKind::Module);
+
+    // Add all module items to the new scope for unqualified access within the module
+    add_module_items_to_scope(ctx, module_def_id, declarations);
+
+    // Lower all nested declarations
+    lower_declarations(ctx, declarations);
+
+    // Collect DefIds of the items we lowered
+    let item_def_ids = collect_item_def_ids(ctx, module_def_id);
+
+    // Pop the module scope
+    ctx.resolver.pop_scope();
+
+    // Create the ModuleDef
+    let mod_def = hir_item::ModuleDef::new(item_def_ids);
+    let item_kind = hir_item::ItemKind::Module(mod_def);
+
+    // Create the Item (use Public visibility for external modules)
+    let item = hir_item::Item::new(
+        module_def_id,
+        name,
+        item_kind,
+        common::Visibility::Public,
+        name_span,
+    );
+    ctx.add_item(module_def_id, item);
 }

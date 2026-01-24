@@ -257,6 +257,8 @@ These features are intentionally deferred to Phase 2 and will return explicit "n
 | Deref coercion | ✅ Complete | - |
 | Ownership tracking | ✅ Integrated | - |
 | Local item handling | ✅ Name registration | - |
+| Inline modules | ✅ Complete | - |
+| External modules | ✅ Complete | - |
 
 ---
 
@@ -535,3 +537,23 @@ When modifying the compiler:
     - Added `clear_move_on_assign` for reassignment handling
     - Added copy helper functions for MIR types
   - All compiler files continue to pass type checking
+- **2026-01**: Inline module support:
+  - Implemented inline module declarations (`mod foo { ... }`) in hir_lower.blood:
+    - Phase 1: Register module DefId and recursively register nested type names
+    - Phase 2: Recursively register nested function/const/static declarations
+    - Phase 4: Recursively lower function bodies inside modules
+  - Implemented module lowering in hir_lower_item.blood:
+    - `lower_module_decl()` creates ModuleDef with nested item DefIds
+    - Pushes Module scope for unqualified name access within module
+    - `add_module_items_to_scope()` adds items to scope for unqualified lookups
+    - `collect_item_def_ids()` gathers child DefIds by searching def_info
+  - Qualified path resolution (`mod::Item`) uses existing `lookup_in_parent()` mechanism
+  - Nested modules fully supported
+  - External modules (`mod foo;`) fully implemented:
+    - File loading via `source::read_file_string()`
+    - Base directory tracking via `LoweringCtx.base_dir`
+    - Circular import prevention via `LoweringCtx.loaded_modules`
+    - Symbol resolution via `LoweringCtx.interner`
+    - Phase 3b/4b processing for external module declarations and function bodies
+  - File-based compilation via `driver::compile_file()` and `driver::check_file()`
+  - All 53 compiler files continue to pass type checking

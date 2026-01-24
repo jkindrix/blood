@@ -514,6 +514,26 @@ impl Resolver {
         self.def_info.push(entry);
     }
 
+    /// Gets definition info by DefId.
+    /// Returns None if the DefId is not registered.
+    pub fn get_def_info(self: &Self, def_id: hir_def::DefId) -> Option<hir_def::DefInfo> {
+        let mut i: usize = 0;
+        while i < self.def_info.len() {
+            if self.def_info[i].def_id.index == def_id.index {
+                // Clone the DefInfo to return it
+                let entry = &self.def_info[i].info;
+                return Option::Some(hir_def::DefInfo::new(
+                    entry.kind,
+                    entry.name,
+                    entry.span,
+                    clone_optional_def_id(&entry.parent),
+                ));
+            }
+            i = i + 1;
+        }
+        Option::None
+    }
+
     /// Looks up a name in the current scope chain.
     pub fn lookup(self: &Self, name: common::Symbol) -> Option<LookupResult> {
         // Search through scope stack from innermost to outermost
@@ -709,4 +729,16 @@ impl Resolver {
 pub struct QualifiedPathResult {
     pub def_id: hir_def::DefId,
     pub is_module: bool,
+}
+
+// ============================================================
+// Helper Functions
+// ============================================================
+
+/// Clones an Option<DefId>.
+fn clone_optional_def_id(opt: &Option<hir_def::DefId>) -> Option<hir_def::DefId> {
+    match opt {
+        &Option::Some(d) => Option::Some(hir_def::DefId::new(d.index)),
+        &Option::None => Option::None,
+    }
 }

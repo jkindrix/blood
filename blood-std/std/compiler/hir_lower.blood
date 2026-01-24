@@ -32,6 +32,8 @@ mod hir_lower_item;
 mod hir_lower_expr;
 mod hir_lower_body;
 mod interner;
+mod source;
+mod parser;
 
 // ============================================================
 // Main Lowering Pipeline
@@ -39,7 +41,13 @@ mod interner;
 
 /// Lower an AST Program to an HIR Crate.
 pub fn lower_program(program: &ast::Program) -> hir_lower_ctx::LowerResult {
-    let mut ctx = hir_lower_ctx::LoweringCtx::new();
+    lower_program_with_base_dir(program, common::make_string("."))
+}
+
+/// Lower an AST Program to an HIR Crate with a specified base directory.
+/// The base directory is used for resolving external module paths.
+pub fn lower_program_with_base_dir(program: &ast::Program, base_dir: String) -> hir_lower_ctx::LowerResult {
+    let mut ctx = hir_lower_ctx::LoweringCtx::with_base_dir(base_dir);
 
     // Allocate root module DefId
     let root_def_id = ctx.alloc_def_id();
@@ -58,6 +66,9 @@ pub fn lower_program(program: &ast::Program) -> hir_lower_ctx::LowerResult {
     // Phase 3: Lower declarations to HIR items
     hir_lower_item::lower_declarations(&mut ctx, &program.declarations);
 
+    // Phase 3b: Lower external module declarations
+    lower_external_module_declarations(&mut ctx);
+
     // Check for errors from item lowering
     if ctx.has_errors() {
         return hir_lower_ctx::LowerResult::failure(ctx.diagnostics);
@@ -65,6 +76,9 @@ pub fn lower_program(program: &ast::Program) -> hir_lower_ctx::LowerResult {
 
     // Phase 4: Lower function bodies to HIR bodies
     lower_fn_bodies(&mut ctx, &program.declarations);
+
+    // Phase 4b: Lower external module function bodies
+    lower_external_module_fn_bodies(&mut ctx);
 
     // Check for errors from body lowering
     if ctx.has_errors() {
@@ -201,7 +215,433 @@ fn register_type_name(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declarat
         &ast::Declaration::Impl(_) => {}
         &ast::Declaration::Handler(_) => {}
         &ast::Declaration::Bridge(_) => {}
-        &ast::Declaration::Module(_) => {}
+        &ast::Declaration::Module(ref m) => {
+            match &m.body {
+                &Option::Some(ref declarations) => {
+                    // Inline module: register the module DefId and nested type names
+                    let def_id = ctx.alloc_def_id();
+                    let success = ctx.resolver.define_global(m.name.symbol, def_id);
+                    if !success {
+                        ctx.error(
+                            hir::DiagnosticCode::E0101,
+                            common::make_string("duplicate definition"),
+                            m.name.span,
+                        );
+                    } else {
+                        ctx.resolver.register_def_info(
+                            def_id,
+                            hir_def::DefKind::Module,
+                            m.name.symbol,
+                            m.name.span,
+                            Option::None,
+                        );
+                        // Recursively register nested type names
+                        register_module_type_names(ctx, def_id, declarations);
+                    }
+                }
+                &Option::None => {
+                    // External module - load from file
+                    load_external_module(ctx, m.name.symbol, m.name.span, m.vis, m.span);
+                }
+            }
+        }
+        &ast::Declaration::Macro(_) => {}
+    }
+}
+
+// ============================================================
+// External Module Loading
+// ============================================================
+
+/// Loads an external module from a file.
+/// Builds the file path, reads, parses, and registers the module's contents.
+fn load_external_module(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    name: common::Symbol,
+    name_span: common::Span,
+    vis: common::Visibility,
+    span: common::Span,
+) {
+    // Build the file path: base_dir/module_name.blood
+    let module_name = resolve_symbol_to_string(ctx, name);
+    let mut file_path = clone_string(ctx.get_base_dir());
+    file_path.push('/');
+    append_string(&mut file_path, &module_name);
+    file_path.push_str(".blood");
+
+    // Check for circular import
+    let existing = ctx.find_loaded_module(&file_path);
+    if existing.is_some() {
+        // Module already loaded - just define the name pointing to existing DefId
+        let existing_def_id = existing.unwrap();
+        let success = ctx.resolver.define_global(name, existing_def_id);
+        if !success {
+            ctx.error(
+                hir::DiagnosticCode::E0101,
+                common::make_string("duplicate definition"),
+                name_span,
+            );
+        }
+        return;
+    }
+
+    // Read the file
+    let read_result = source::read_file_string(&file_path);
+    if !read_result.success {
+        let mut msg = common::make_string("failed to load module '");
+        append_string(&mut msg, &module_name);
+        msg.push_str("': ");
+        match &read_result.error {
+            &Option::Some(ref e) => msg.push_str(e.as_str()),
+            &Option::None => msg.push_str("unknown error"),
+        }
+        ctx.error(hir::DiagnosticCode::E0104, msg, span);
+        return;
+    }
+
+    let content = match &read_result.content {
+        &Option::Some(ref c) => c,
+        &Option::None => {
+            ctx.error(
+                hir::DiagnosticCode::E0104,
+                common::make_string("module file has no content"),
+                span,
+            );
+            return;
+        }
+    };
+
+    // Parse the file
+    let parse_result = parser::parse_file(content.as_str());
+    if parse_result.errors.len() > 0 {
+        let mut msg = common::make_string("parse error in module '");
+        append_string(&mut msg, &module_name);
+        msg.push_str("'");
+        ctx.error(hir::DiagnosticCode::E0104, msg, span);
+        return;
+    }
+
+    let program = match &parse_result.program {
+        &Option::Some(ref p) => p,
+        &Option::None => {
+            ctx.error(
+                hir::DiagnosticCode::E0104,
+                common::make_string("no program produced from module file"),
+                span,
+            );
+            return;
+        }
+    };
+
+    // Allocate DefId for the module
+    let def_id = ctx.alloc_def_id();
+    let success = ctx.resolver.define_global(name, def_id);
+    if !success {
+        ctx.error(
+            hir::DiagnosticCode::E0101,
+            common::make_string("duplicate definition"),
+            name_span,
+        );
+        return;
+    }
+
+    ctx.resolver.register_def_info(
+        def_id,
+        hir_def::DefKind::Module,
+        name,
+        name_span,
+        Option::None,
+    );
+
+    // Track the loaded module to prevent circular imports
+    ctx.add_loaded_module(name, def_id, clone_string(&file_path));
+
+    // Phase 1: Register nested type names from the loaded module
+    register_module_type_names(ctx, def_id, &program.declarations);
+
+    // Phase 2: Register declarations (functions, consts, statics) from the loaded module
+    register_module_declarations(ctx, def_id, &program.declarations);
+}
+
+/// Resolves a symbol to a string for file path construction.
+fn resolve_symbol_to_string(ctx: &mut hir_lower_ctx::LoweringCtx, symbol: common::Symbol) -> String {
+    ctx.resolve_symbol(symbol)
+}
+
+/// Clones a String.
+fn clone_string(s: &String) -> String {
+    let mut result = String::new();
+    let bytes = s.as_bytes();
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        result.push(bytes[i] as char);
+        i = i + 1;
+    }
+    result
+}
+
+/// Appends a String to another String.
+fn append_string(dest: &mut String, src: &String) {
+    let bytes = src.as_bytes();
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        dest.push(bytes[i] as char);
+        i = i + 1;
+    }
+}
+
+// ============================================================
+// External Module Processing (Phase 3b and 4b)
+// ============================================================
+
+/// Collects external module info (path, def_id) to avoid borrow conflicts.
+struct ExternalModuleInfo {
+    path: String,
+    def_id: hir_def::DefId,
+}
+
+impl ExternalModuleInfo {
+    fn new(path: String, def_id: hir_def::DefId) -> ExternalModuleInfo {
+        ExternalModuleInfo { path, def_id }
+    }
+}
+
+/// Collects info about all external modules.
+fn collect_external_modules(ctx: &mut hir_lower_ctx::LoweringCtx) -> Vec<ExternalModuleInfo> {
+    let mut result: Vec<ExternalModuleInfo> = Vec::new();
+    let mut i: usize = 0;
+    while i < ctx.loaded_modules.len() {
+        let path = clone_string(&ctx.loaded_modules[i].path);
+        let def_id = hir_def::DefId::new(ctx.loaded_modules[i].def_id.index);
+        result.push(ExternalModuleInfo::new(path, def_id));
+        i = i + 1;
+    }
+    result
+}
+
+/// Phase 3b: Lower declarations from external modules.
+fn lower_external_module_declarations(ctx: &mut hir_lower_ctx::LoweringCtx) {
+    // Collect module info first to avoid borrow conflicts
+    let modules = collect_external_modules(ctx);
+
+    let mut i: usize = 0;
+    while i < modules.len() {
+        let path = &modules[i].path;
+        let def_id = modules[i].def_id;
+
+        // Re-parse the external module
+        let read_result = source::read_file_string(path);
+        if !read_result.success {
+            // Skip - error should have been reported in Phase 1
+            i = i + 1;
+            continue;
+        }
+
+        let content = match &read_result.content {
+            &Option::Some(ref c) => c,
+            &Option::None => {
+                i = i + 1;
+                continue;
+            }
+        };
+
+        let parse_result = parser::parse_file(content.as_str());
+        if parse_result.errors.len() > 0 {
+            // Skip - error should have been reported in Phase 1
+            i = i + 1;
+            continue;
+        }
+
+        let program = match &parse_result.program {
+            &Option::Some(ref p) => p,
+            &Option::None => {
+                i = i + 1;
+                continue;
+            }
+        };
+
+        // Lower the module's declarations as if they're inside the module
+        hir_lower_item::lower_module_contents(ctx, def_id, &program.declarations);
+
+        i = i + 1;
+    }
+}
+
+/// Phase 4b: Lower function bodies from external modules.
+fn lower_external_module_fn_bodies(ctx: &mut hir_lower_ctx::LoweringCtx) {
+    // Collect module info first to avoid borrow conflicts
+    let modules = collect_external_modules(ctx);
+
+    let mut i: usize = 0;
+    while i < modules.len() {
+        let path = &modules[i].path;
+
+        // Re-parse the external module
+        let read_result = source::read_file_string(path);
+        if !read_result.success {
+            i = i + 1;
+            continue;
+        }
+
+        let content = match &read_result.content {
+            &Option::Some(ref c) => c,
+            &Option::None => {
+                i = i + 1;
+                continue;
+            }
+        };
+
+        let parse_result = parser::parse_file(content.as_str());
+        if parse_result.errors.len() > 0 {
+            i = i + 1;
+            continue;
+        }
+
+        let program = match &parse_result.program {
+            &Option::Some(ref p) => p,
+            &Option::None => {
+                i = i + 1;
+                continue;
+            }
+        };
+
+        // Lower the module's function bodies
+        lower_fn_bodies(ctx, &program.declarations);
+
+        i = i + 1;
+    }
+}
+
+/// Appends a u32 as decimal to a string.
+fn append_u32(s: &mut String, n: u32) {
+    if n == 0 {
+        s.push('0');
+        return;
+    }
+    let mut digits: Vec<char> = Vec::new();
+    let mut val = n;
+    while val > 0 {
+        let digit = (val % 10) as u8;
+        digits.push((48u8 + digit) as char);
+        val = val / 10;
+    }
+    let len = digits.len();
+    let mut i: usize = 0;
+    while i < len {
+        s.push(digits[len - 1 - i]);
+        i = i + 1;
+    }
+}
+
+// ============================================================
+// Helper: Register Module Type Names (Phase 1 recursive)
+// ============================================================
+
+/// Recursively register type names within a module.
+fn register_module_type_names(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    parent_def_id: hir_def::DefId,
+    decls: &Vec<ast::Declaration>,
+) {
+    let mut i: usize = 0;
+    while i < decls.len() {
+        register_module_type_name(ctx, parent_def_id, &decls[i]);
+        i = i + 1;
+    }
+}
+
+/// Register a single type name within a module.
+/// Note: Nested items are NOT added to any scope - they're only accessible via qualified paths.
+/// We just register them in def_info with the correct parent for lookup_in_parent to find.
+fn register_module_type_name(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    parent_def_id: hir_def::DefId,
+    decl: &ast::Declaration,
+) {
+    match decl {
+        &ast::Declaration::Struct(ref s) => {
+            let def_id = ctx.alloc_def_id();
+            // Only register in def_info - accessible via qualified paths (e.g., mod::Struct)
+            ctx.resolver.register_def_info(
+                def_id,
+                hir_def::DefKind::Struct,
+                s.name.symbol,
+                s.name.span,
+                Option::Some(parent_def_id),
+            );
+        }
+        &ast::Declaration::Enum(ref e) => {
+            let def_id = ctx.alloc_def_id();
+            ctx.resolver.register_def_info(
+                def_id,
+                hir_def::DefKind::Enum,
+                e.name.symbol,
+                e.name.span,
+                Option::Some(parent_def_id),
+            );
+        }
+        &ast::Declaration::Trait(ref t) => {
+            let def_id = ctx.alloc_def_id();
+            ctx.resolver.register_def_info(
+                def_id,
+                hir_def::DefKind::Trait,
+                t.name.symbol,
+                t.name.span,
+                Option::Some(parent_def_id),
+            );
+        }
+        &ast::Declaration::Effect(ref eff) => {
+            let def_id = ctx.alloc_def_id();
+            ctx.resolver.register_def_info(
+                def_id,
+                hir_def::DefKind::Effect,
+                eff.name.symbol,
+                eff.name.span,
+                Option::Some(parent_def_id),
+            );
+        }
+        &ast::Declaration::TypeAlias(ref ta) => {
+            let def_id = ctx.alloc_def_id();
+            ctx.resolver.register_def_info(
+                def_id,
+                hir_def::DefKind::TypeAlias,
+                ta.name.symbol,
+                ta.name.span,
+                Option::Some(parent_def_id),
+            );
+        }
+        &ast::Declaration::Module(ref m) => {
+            // Nested module
+            match &m.body {
+                &Option::Some(ref nested_decls) => {
+                    let def_id = ctx.alloc_def_id();
+                    ctx.resolver.register_def_info(
+                        def_id,
+                        hir_def::DefKind::Module,
+                        m.name.symbol,
+                        m.name.span,
+                        Option::Some(parent_def_id),
+                    );
+                    // Recursively register nested module's type names
+                    register_module_type_names(ctx, def_id, nested_decls);
+                }
+                &Option::None => {
+                    // External module within inline module - not supported
+                    ctx.error(
+                        hir::DiagnosticCode::E0104,
+                        common::make_string("external modules not yet supported in self-hosted compiler"),
+                        m.span,
+                    );
+                }
+            }
+        }
+        // Non-type declarations handled in phase 2
+        &ast::Declaration::Function(_) => {}
+        &ast::Declaration::Const(_) => {}
+        &ast::Declaration::Static(_) => {}
+        &ast::Declaration::Impl(_) => {}
+        &ast::Declaration::Handler(_) => {}
+        &ast::Declaration::Bridge(_) => {}
         &ast::Declaration::Macro(_) => {}
     }
 }
@@ -312,7 +752,115 @@ fn register_declaration(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declar
         &ast::Declaration::Impl(_) => {}
         // Bridge, Module, Macro need special handling
         &ast::Declaration::Bridge(_) => {}
-        &ast::Declaration::Module(_) => {}
+        &ast::Declaration::Module(ref m) => {
+            match &m.body {
+                &Option::Some(ref declarations) => {
+                    // Look up the module's DefId from Phase 1
+                    let lookup = ctx.resolver.lookup(m.name.symbol);
+                    if lookup.is_some() {
+                        let result = lookup.unwrap();
+                        let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+                        let mod_def_id = hir_def::DefId::new(binding.def_id.index);
+                        // Recursively register nested declarations
+                        register_module_declarations(ctx, mod_def_id, declarations);
+                    }
+                }
+                &Option::None => {} // Already errored in Phase 1
+            }
+        }
+        &ast::Declaration::Macro(_) => {}
+    }
+}
+
+// ============================================================
+// Helper: Register Module Declarations (Phase 2 recursive)
+// ============================================================
+
+/// Recursively register declarations (functions, consts, statics) within a module.
+fn register_module_declarations(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    parent_def_id: hir_def::DefId,
+    decls: &Vec<ast::Declaration>,
+) {
+    let mut i: usize = 0;
+    while i < decls.len() {
+        register_module_declaration(ctx, parent_def_id, &decls[i]);
+        i = i + 1;
+    }
+}
+
+/// Register a single declaration within a module.
+fn register_module_declaration(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    parent_def_id: hir_def::DefId,
+    decl: &ast::Declaration,
+) {
+    match decl {
+        &ast::Declaration::Function(ref f) => {
+            let def_id = ctx.alloc_def_id();
+            // Note: Don't use define_global - nested items are accessed via qualified paths
+            // Register in def_info with parent so lookup_in_parent can find it
+            ctx.resolver.register_def_info(
+                def_id,
+                hir_def::DefKind::Fn,
+                f.name.symbol,
+                f.name.span,
+                Option::Some(parent_def_id),
+            );
+        }
+        &ast::Declaration::Const(ref c) => {
+            let def_id = ctx.alloc_def_id();
+            ctx.resolver.register_def_info(
+                def_id,
+                hir_def::DefKind::Const,
+                c.name.symbol,
+                c.name.span,
+                Option::Some(parent_def_id),
+            );
+        }
+        &ast::Declaration::Static(ref s) => {
+            let def_id = ctx.alloc_def_id();
+            ctx.resolver.register_def_info(
+                def_id,
+                hir_def::DefKind::Static,
+                s.name.symbol,
+                s.name.span,
+                Option::Some(parent_def_id),
+            );
+        }
+        &ast::Declaration::Handler(ref h) => {
+            let def_id = ctx.alloc_def_id();
+            ctx.resolver.register_def_info(
+                def_id,
+                hir_def::DefKind::Handler,
+                h.name.symbol,
+                h.name.span,
+                Option::Some(parent_def_id),
+            );
+        }
+        &ast::Declaration::Module(ref m) => {
+            // Nested module - look up its DefId and recurse
+            match &m.body {
+                &Option::Some(ref nested_decls) => {
+                    // Find the nested module's DefId (registered in Phase 1)
+                    let nested_mod_def = ctx.resolver.lookup_in_parent(parent_def_id, m.name.symbol);
+                    if nested_mod_def.is_some() {
+                        let nested_def_id = nested_mod_def.unwrap();
+                        register_module_declarations(ctx, nested_def_id, nested_decls);
+                    }
+                }
+                &Option::None => {} // Already errored
+            }
+        }
+        // Types already registered in Phase 1
+        &ast::Declaration::Struct(_) => {}
+        &ast::Declaration::Enum(_) => {}
+        &ast::Declaration::Trait(_) => {}
+        &ast::Declaration::Effect(_) => {}
+        &ast::Declaration::TypeAlias(_) => {}
+        // Impl blocks don't have names
+        &ast::Declaration::Impl(_) => {}
+        &ast::Declaration::Bridge(_) => {}
         &ast::Declaration::Macro(_) => {}
     }
 }
@@ -350,7 +898,15 @@ fn lower_fn_body_if_present(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::De
         &ast::Declaration::Impl(_) => {}
         &ast::Declaration::Handler(_) => {}
         &ast::Declaration::Bridge(_) => {}
-        &ast::Declaration::Module(_) => {}
+        &ast::Declaration::Module(ref m) => {
+            match &m.body {
+                &Option::Some(ref declarations) => {
+                    // Recursively lower function bodies inside the module
+                    lower_fn_bodies(ctx, declarations);
+                }
+                &Option::None => {} // External module - already errored
+            }
+        }
         &ast::Declaration::Macro(_) => {}
     }
 }

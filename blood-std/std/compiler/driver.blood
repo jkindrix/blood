@@ -25,6 +25,7 @@ mod interner;
 mod unify;
 mod typeck;
 mod typeck_driver;
+mod source;
 
 // ============================================================
 // Compilation Result
@@ -254,6 +255,159 @@ impl Compiler {
 
         // Lower to HIR
         let lower_result = hir_lower::lower_program(program);
+        if has_error_diagnostics(&lower_result.diagnostics) {
+            let errors = convert_hir_diagnostics(&lower_result.diagnostics);
+            return CheckResult {
+                success: false,
+                errors: errors,
+            };
+        }
+
+        // Check succeeded
+        CheckResult {
+            success: true,
+            errors: Vec::new(),
+        }
+    }
+
+    /// Compiles source code with a specified base directory for module resolution.
+    pub fn compile_with_base_dir(self: &mut Compiler, source: &str, base_dir: String) -> CompileResult {
+        // Phase 1: Parse
+        let parse_result = parser::parse_file(source);
+        if parse_result.errors.len() > 0 {
+            let errors = convert_parse_errors(&parse_result.errors);
+            return CompileResult::err(errors);
+        }
+
+        let program = match &parse_result.program {
+            &Option::Some(ref p) => p,
+            &Option::None => {
+                let mut errors = Vec::new();
+                errors.push(error::CompileError::new(
+                    error::CompilePhase::Parse,
+                    common::make_string("No program produced by parser"),
+                ));
+                return CompileResult::err(errors);
+            }
+        };
+
+        // Phase 2: Lower to HIR with base_dir
+        let lower_result = hir_lower::lower_program_with_base_dir(program, base_dir);
+        if has_error_diagnostics(&lower_result.diagnostics) {
+            let errors = convert_hir_diagnostics(&lower_result.diagnostics);
+            return CompileResult::err(errors);
+        }
+
+        let crate_data = match &lower_result.crate_data {
+            &Option::Some(ref c) => c,
+            &Option::None => {
+                let mut errors = Vec::new();
+                errors.push(error::CompileError::new(
+                    error::CompilePhase::Lower,
+                    common::make_string("No HIR crate produced"),
+                ));
+                return CompileResult::err(errors);
+            }
+        };
+
+        // Phase 3: Type checking
+        let typeck_result = typeck_driver::check_lower_result(&lower_result);
+        if !typeck_result.success {
+            let errors = convert_type_errors(&typeck_result.errors);
+            return CompileResult::err(errors);
+        }
+
+        // Phase 4: Lower HIR bodies to MIR
+        let mut mir_functions: Vec<(String, mir_body::MirBody)> = Vec::new();
+        let mut body_idx: usize = 0;
+        while body_idx < lower_result.bodies.len() {
+            let body_entry = &lower_result.bodies[body_idx];
+            let hir_body = &body_entry.body;
+            let body_id = body_entry.body_id;
+
+            // Find the Item for this body to get name and return type
+            let fn_info = find_fn_for_body(&lower_result.items, body_id);
+
+            // Get return type from function signature, or default to unit
+            let return_ty = match &fn_info {
+                &Option::Some(ref info) => hir_ty::copy_type(&info.return_ty),
+                &Option::None => hir_ty::Type::unit(),
+            };
+
+            // Get span from function item, or use dummy span
+            let span = match &fn_info {
+                &Option::Some(ref info) => info.span,
+                &Option::None => common::Span::new(0, 0, 1, 1),
+            };
+
+            // Get function name or generate one
+            let fn_name = match &fn_info {
+                &Option::Some(ref info) => resolve_symbol(&self.interner, info.name),
+                &Option::None => make_fn_name(body_idx),
+            };
+
+            // Get DefId from function info or use body index
+            let def_id = match &fn_info {
+                &Option::Some(ref info) => info.def_id,
+                &Option::None => hir_def::DefId::new(body_idx as u32),
+            };
+
+            // Lower the body to MIR
+            let mir_body = mir_lower::lower_body(
+                def_id,
+                hir_body,
+                return_ty,
+                span,
+            );
+
+            mir_functions.push((fn_name, mir_body));
+
+            body_idx = body_idx + 1;
+        }
+
+        // Phase 5: Generate LLVM IR from MIR
+        let codegen_result = codegen::generate_module("main", &mir_functions);
+        if !codegen_result.success {
+            let mut errors = Vec::new();
+            errors.push(error::CompileError::new(
+                error::CompilePhase::Codegen,
+                common::make_string("Code generation failed"),
+            ));
+            return CompileResult::err(errors);
+        }
+
+        CompileResult::ok(codegen_result.llvm_ir)
+    }
+
+    /// Checks source code with a specified base directory for module resolution.
+    pub fn check_with_base_dir(self: &mut Compiler, source: &str, base_dir: String) -> CheckResult {
+        // Parse
+        let parse_result = parser::parse_file(source);
+        if parse_result.errors.len() > 0 {
+            let errors = convert_parse_errors(&parse_result.errors);
+            return CheckResult {
+                success: false,
+                errors: errors,
+            };
+        }
+
+        let program = match &parse_result.program {
+            &Option::Some(ref p) => p,
+            &Option::None => {
+                let mut errors = Vec::new();
+                errors.push(error::CompileError::new(
+                    error::CompilePhase::Parse,
+                    common::make_string("No program produced by parser"),
+                ));
+                return CheckResult {
+                    success: false,
+                    errors: errors,
+                };
+            }
+        };
+
+        // Lower to HIR with base_dir
+        let lower_result = hir_lower::lower_program_with_base_dir(program, base_dir);
         if has_error_diagnostics(&lower_result.diagnostics) {
             let errors = convert_hir_diagnostics(&lower_result.diagnostics);
             return CheckResult {
@@ -525,4 +679,94 @@ pub fn check(source: &str) -> CheckResult {
 pub fn parse(source: &str) -> ParseOnlyResult {
     let mut compiler = Compiler::new();
     compiler.parse(source)
+}
+
+// ============================================================
+// File-Based Compilation
+// ============================================================
+
+/// Compiles a file to LLVM IR using its directory as the base for module resolution.
+pub fn compile_file(path: &str) -> CompileResult {
+    // Read the file
+    let read_result = source::read_file(path);
+    if !read_result.success {
+        let mut errors: Vec<error::CompileError> = Vec::new();
+        let msg = match &read_result.error {
+            &Option::Some(ref e) => clone_string_from_ref(e),
+            &Option::None => common::make_string("Unknown file read error"),
+        };
+        errors.push(error::CompileError::new(error::CompilePhase::Parse, msg));
+        return CompileResult::err(errors);
+    }
+
+    let content = match &read_result.content {
+        &Option::Some(ref c) => c,
+        &Option::None => {
+            let mut errors: Vec<error::CompileError> = Vec::new();
+            errors.push(error::CompileError::new(
+                error::CompilePhase::Parse,
+                common::make_string("No content in file"),
+            ));
+            return CompileResult::err(errors);
+        }
+    };
+
+    // Get the base directory for module resolution
+    let base_dir = source::parent_dir(path);
+
+    // Create compiler and compile with base_dir
+    let mut compiler = Compiler::new();
+    compiler.compile_with_base_dir(content.as_str(), base_dir)
+}
+
+/// Checks a file for errors without generating code.
+pub fn check_file(path: &str) -> CheckResult {
+    // Read the file
+    let read_result = source::read_file(path);
+    if !read_result.success {
+        let mut errors: Vec<error::CompileError> = Vec::new();
+        let msg = match &read_result.error {
+            &Option::Some(ref e) => clone_string_from_ref(e),
+            &Option::None => common::make_string("Unknown file read error"),
+        };
+        errors.push(error::CompileError::new(error::CompilePhase::Parse, msg));
+        return CheckResult {
+            success: false,
+            errors: errors,
+        };
+    }
+
+    let content = match &read_result.content {
+        &Option::Some(ref c) => c,
+        &Option::None => {
+            let mut errors: Vec<error::CompileError> = Vec::new();
+            errors.push(error::CompileError::new(
+                error::CompilePhase::Parse,
+                common::make_string("No content in file"),
+            ));
+            return CheckResult {
+                success: false,
+                errors: errors,
+            };
+        }
+    };
+
+    // Get the base directory for module resolution
+    let base_dir = source::parent_dir(path);
+
+    // Create compiler and check with base_dir
+    let mut compiler = Compiler::new();
+    compiler.check_with_base_dir(content.as_str(), base_dir)
+}
+
+/// Clones a String from a reference.
+fn clone_string_from_ref(s: &String) -> String {
+    let mut result = String::new();
+    let bytes = s.as_bytes();
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        result.push(bytes[i] as char);
+        i = i + 1;
+    }
+    result
 }
