@@ -178,11 +178,11 @@ pub fn lower_struct_field(ctx: &mut hir_lower_ctx::LoweringCtx, field: &ast::Str
 // ============================================================
 
 /// Lower enum variants to HIR.
-pub fn lower_enum_variants(ctx: &mut hir_lower_ctx::LoweringCtx, variants: &Vec<ast::EnumVariant>) -> Vec<hir_item::Variant> {
+pub fn lower_enum_variants(ctx: &mut hir_lower_ctx::LoweringCtx, parent_def_id: hir_def::DefId, variants: &Vec<ast::EnumVariant>) -> Vec<hir_item::Variant> {
     let mut result: Vec<hir_item::Variant> = Vec::new();
     let mut i: usize = 0;
     while i < variants.len() {
-        let variant = lower_enum_variant(ctx, &variants[i], i as u32);
+        let variant = lower_enum_variant(ctx, parent_def_id, &variants[i], i as u32);
         result.push(variant);
         i = i + 1;
     }
@@ -190,10 +190,30 @@ pub fn lower_enum_variants(ctx: &mut hir_lower_ctx::LoweringCtx, variants: &Vec<
 }
 
 /// Lower a single enum variant to HIR.
-fn lower_enum_variant(ctx: &mut hir_lower_ctx::LoweringCtx, variant: &ast::EnumVariant, discriminant: u32) -> hir_item::Variant {
+fn lower_enum_variant(ctx: &mut hir_lower_ctx::LoweringCtx, parent_def_id: hir_def::DefId, variant: &ast::EnumVariant, discriminant: u32) -> hir_item::Variant {
     let def_id = ctx.alloc_def_id();
+
+    // Re-intern the variant name from span for consistent symbol indices
+    let name_str = ctx.span_to_string(variant.name.span);
+    let name_symbol = ctx.intern(name_str.as_str());
+
+    // Register the variant def_info with the enum as its parent
+    ctx.resolver.register_def_info(
+        def_id,
+        hir_def::DefKind::Variant,
+        name_symbol,
+        variant.name.span,
+        Option::Some(parent_def_id),
+    );
+
+    // Create re-interned SpannedSymbol for the HIR variant
+    let hir_name = common::SpannedSymbol {
+        symbol: name_symbol,
+        span: variant.name.span,
+    };
+
     let kind = lower_variant_kind(ctx, &variant.body);
-    hir_item::Variant::new(def_id, variant.name, discriminant, kind, variant.span)
+    hir_item::Variant::new(def_id, hir_name, discriminant, kind, variant.span)
 }
 
 /// Lower a variant body to a VariantKind.
@@ -416,8 +436,8 @@ fn lower_enum_decl(ctx: &mut hir_lower_ctx::LoweringCtx, e: &ast::EnumDecl) {
     let no_where: Option<ast::WhereClause> = Option::None;
     let generics = hir_lower_type::lower_generics(ctx, &e.type_params, &no_where);
 
-    // Lower variants
-    let variants = lower_enum_variants(ctx, &e.variants);
+    // Lower variants, passing the enum's DefId as parent
+    let variants = lower_enum_variants(ctx, def_id, &e.variants);
 
     let enum_def = hir_item::EnumDef::new(generics, variants);
     let item_kind = hir_item::ItemKind::Enum(enum_def);
