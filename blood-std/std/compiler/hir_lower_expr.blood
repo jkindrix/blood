@@ -397,10 +397,16 @@ fn lower_path_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprPath, s
     if path.segments.len() == 1 {
         let seg = &path.segments[0];
 
+        // Re-intern the symbol from the span to ensure consistent symbol indices
+        // The parser uses a separate interner, so we need to re-intern using
+        // the same interner that was used during parameter registration
+        let name_str = ctx.span_to_string(seg.name.span);
+        let lookup_symbol = ctx.intern(name_str.as_str());
+
         // Try to look up as a local or global
         print_str("[lower_path_expr] Looking up symbol index: ");
-        println_int(seg.name.symbol.index as i32);
-        let lookup = ctx.resolver.lookup(seg.name.symbol);
+        println_int(lookup_symbol.index as i32);
+        let lookup = ctx.resolver.lookup(lookup_symbol);
         if lookup.is_some() {
             let result = lookup.unwrap();
             let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
@@ -986,6 +992,15 @@ pub fn lower_pattern(ctx: &mut hir_lower_ctx::LoweringCtx, pattern: &ast::Patter
             // Allocate a local ID for this binding
             let local_id = ctx.alloc_local_id();
 
+            // Re-intern the name from the span to ensure consistent symbol indices.
+            // The parser uses a separate interner, so we need to re-intern using
+            // the global interner that's used during lookup.
+            let name_str = ctx.span_to_string(name.span);
+            let re_interned_symbol = ctx.intern(name_str.as_str());
+
+            // Register the local variable in the resolver scope
+            let _success = ctx.resolver.define_local(re_interned_symbol, local_id, is_mut, name.span);
+
             let mode = if by_ref {
                 if is_mut {
                     hir_expr::BindingMode::ByMutRef
@@ -1001,9 +1016,15 @@ pub fn lower_pattern(ctx: &mut hir_lower_ctx::LoweringCtx, pattern: &ast::Patter
                 &None => Option::None,
             };
 
+            // Create SpannedSymbol with the re-interned symbol
+            let hir_name = common::SpannedSymbol {
+                symbol: re_interned_symbol,
+                span: name.span,
+            };
+
             hir_expr::PatternKind::Binding {
                 local_id: local_id,
-                name: *name,
+                name: hir_name,
                 mode: mode,
                 subpattern: subpat_hir,
             }
