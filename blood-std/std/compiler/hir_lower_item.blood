@@ -297,8 +297,10 @@ pub fn lower_declaration(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Decla
 /// Lower a function declaration.
 fn lower_function_decl(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl) {
     println_str("[lower_fn] Starting...");
-    // Look up the DefId we registered
-    let lookup = ctx.resolver.lookup(f.name.symbol);
+    // Look up the DefId we registered (re-intern from span for consistent indices)
+    let name_str = ctx.span_to_string(f.name.span);
+    let lookup_symbol = ctx.intern(name_str.as_str());
+    let lookup = ctx.resolver.lookup(lookup_symbol);
     if lookup.is_none() {
         // Should not happen if registration succeeded
         println_str("[lower_fn] Lookup failed");
@@ -371,7 +373,10 @@ fn lower_function_decl(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl) {
 
 /// Lower a struct declaration.
 fn lower_struct_decl(ctx: &mut hir_lower_ctx::LoweringCtx, s: &ast::StructDecl) {
-    let lookup = ctx.resolver.lookup(s.name.symbol);
+    // Re-intern from span for consistent symbol indices
+    let name_str = ctx.span_to_string(s.name.span);
+    let lookup_symbol = ctx.intern(name_str.as_str());
+    let lookup = ctx.resolver.lookup(lookup_symbol);
     if lookup.is_none() { return; }
     let result = lookup.unwrap();
     let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
@@ -398,7 +403,10 @@ fn lower_struct_decl(ctx: &mut hir_lower_ctx::LoweringCtx, s: &ast::StructDecl) 
 
 /// Lower an enum declaration.
 fn lower_enum_decl(ctx: &mut hir_lower_ctx::LoweringCtx, e: &ast::EnumDecl) {
-    let lookup = ctx.resolver.lookup(e.name.symbol);
+    // Re-intern from span for consistent symbol indices
+    let name_str = ctx.span_to_string(e.name.span);
+    let lookup_symbol = ctx.intern(name_str.as_str());
+    let lookup = ctx.resolver.lookup(lookup_symbol);
     if lookup.is_none() { return; }
     let result = lookup.unwrap();
     let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
@@ -425,7 +433,10 @@ fn lower_enum_decl(ctx: &mut hir_lower_ctx::LoweringCtx, e: &ast::EnumDecl) {
 
 /// Lower a type alias declaration.
 fn lower_type_alias_decl(ctx: &mut hir_lower_ctx::LoweringCtx, ta: &ast::TypeAliasDecl) {
-    let lookup = ctx.resolver.lookup(ta.name.symbol);
+    // Re-intern from span for consistent symbol indices
+    let name_str = ctx.span_to_string(ta.name.span);
+    let lookup_symbol = ctx.intern(name_str.as_str());
+    let lookup = ctx.resolver.lookup(lookup_symbol);
     if lookup.is_none() { return; }
     let result = lookup.unwrap();
     let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
@@ -452,7 +463,10 @@ fn lower_type_alias_decl(ctx: &mut hir_lower_ctx::LoweringCtx, ta: &ast::TypeAli
 
 /// Lower a const declaration.
 fn lower_const_decl(ctx: &mut hir_lower_ctx::LoweringCtx, c: &ast::ConstDecl) {
-    let lookup = ctx.resolver.lookup(c.name.symbol);
+    // Re-intern from span for consistent symbol indices
+    let name_str = ctx.span_to_string(c.name.span);
+    let lookup_symbol = ctx.intern(name_str.as_str());
+    let lookup = ctx.resolver.lookup(lookup_symbol);
     if lookup.is_none() { return; }
     let result = lookup.unwrap();
     let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
@@ -486,7 +500,10 @@ fn lower_const_decl(ctx: &mut hir_lower_ctx::LoweringCtx, c: &ast::ConstDecl) {
 
 /// Lower a static declaration.
 fn lower_static_decl(ctx: &mut hir_lower_ctx::LoweringCtx, s: &ast::StaticDecl) {
-    let lookup = ctx.resolver.lookup(s.name.symbol);
+    // Re-intern from span for consistent symbol indices
+    let name_str = ctx.span_to_string(s.name.span);
+    let lookup_symbol = ctx.intern(name_str.as_str());
+    let lookup = ctx.resolver.lookup(lookup_symbol);
     if lookup.is_none() { return; }
     let result = lookup.unwrap();
     let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
@@ -524,7 +541,10 @@ fn lower_static_decl(ctx: &mut hir_lower_ctx::LoweringCtx, s: &ast::StaticDecl) 
 
 /// Lower a trait declaration.
 fn lower_trait_decl(ctx: &mut hir_lower_ctx::LoweringCtx, t: &ast::TraitDecl) {
-    let lookup = ctx.resolver.lookup(t.name.symbol);
+    // Re-intern from span for consistent symbol indices
+    let name_str = ctx.span_to_string(t.name.span);
+    let lookup_symbol = ctx.intern(name_str.as_str());
+    let lookup = ctx.resolver.lookup(lookup_symbol);
     if lookup.is_none() { return; }
     let result = lookup.unwrap();
     let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
@@ -669,7 +689,10 @@ fn type_to_trait_ref(ty: &hir_ty::Type, span: common::Span) -> Option<hir_ty::Tr
 
 /// Lower an effect declaration.
 fn lower_effect_decl(ctx: &mut hir_lower_ctx::LoweringCtx, e: &ast::EffectDecl) {
-    let lookup = ctx.resolver.lookup(e.name.symbol);
+    // Re-intern from span for consistent symbol indices
+    let name_str = ctx.span_to_string(e.name.span);
+    let lookup_symbol = ctx.intern(name_str.as_str());
+    let lookup = ctx.resolver.lookup(lookup_symbol);
     if lookup.is_none() { return; }
     let result = lookup.unwrap();
     let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
@@ -755,7 +778,10 @@ fn type_to_effect_ref(ty: &hir_ty::Type) -> Option<hir_ty::EffectRef> {
 
 /// Lower a handler declaration.
 fn lower_handler_decl(ctx: &mut hir_lower_ctx::LoweringCtx, h: &ast::HandlerDecl) {
-    let lookup = ctx.resolver.lookup(h.name.symbol);
+    // Re-intern from span for consistent symbol indices
+    let name_str = ctx.span_to_string(h.name.span);
+    let lookup_symbol = ctx.intern(name_str.as_str());
+    let lookup = ctx.resolver.lookup(lookup_symbol);
     if lookup.is_none() { return; }
     let result = lookup.unwrap();
     let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
@@ -979,7 +1005,10 @@ fn lower_module_decl(
     declarations: &Vec<ast::Declaration>,
 ) {
     // Look up the module's DefId from registration
-    let lookup = ctx.resolver.lookup(m.name.symbol);
+    // Re-intern from span for consistent symbol indices
+    let name_str = ctx.span_to_string(m.name.span);
+    let lookup_symbol = ctx.intern(name_str.as_str());
+    let lookup = ctx.resolver.lookup(lookup_symbol);
     if lookup.is_none() {
         // Should not happen if registration succeeded
         return;

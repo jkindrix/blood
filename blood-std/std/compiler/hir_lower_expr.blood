@@ -712,7 +712,10 @@ fn lower_record_expr(
             &None => {
                 // Shorthand: field name is also the variable name
                 // Create a path expression for the variable
-                let lookup = ctx.resolver.lookup(f.name.symbol);
+                // Re-intern from span for consistent symbol indices
+                let name_str = ctx.span_to_string(f.name.span);
+                let lookup_symbol = ctx.intern(name_str.as_str());
+                let lookup = ctx.resolver.lookup(lookup_symbol);
                 if lookup.is_some() {
                     let result = lookup.unwrap();
                     let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
@@ -775,7 +778,10 @@ fn lower_anon_record_expr(
             &Some(ref v) => lower_expr(ctx, v),
             &None => {
                 // Shorthand: { name } means { name: name }
-                let local = ctx.resolver.lookup(f.name.symbol);
+                // Re-intern from span for consistent symbol indices
+                let name_str = ctx.span_to_string(f.name.span);
+                let lookup_symbol = ctx.intern(name_str.as_str());
+                let local = ctx.resolver.lookup(lookup_symbol);
                 match local {
                     Option::Some(result) => {
                         let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
@@ -1866,7 +1872,10 @@ fn lower_perform_expr(
         &Some(ref path) => {
             if path.segments.len() >= 1 {
                 let seg = &path.segments[0];
-                let lookup = ctx.resolver.lookup(seg.name.symbol);
+                // Re-intern from span for consistent symbol indices
+                let name_str = ctx.span_to_string(seg.name.span);
+                let lookup_symbol = ctx.intern(name_str.as_str());
+                let lookup = ctx.resolver.lookup(lookup_symbol);
                 if lookup.is_some() {
                     let result = lookup.unwrap();
                     let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);

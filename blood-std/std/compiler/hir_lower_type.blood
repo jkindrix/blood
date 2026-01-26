@@ -200,7 +200,10 @@ fn lower_type_path(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath) -
     // Look up the type in the resolver
     if path.segments.len() == 1 {
         let seg = &path.segments[0];
-        let lookup = ctx.resolver.lookup(seg.name.symbol);
+        // Re-intern from span for consistent symbol indices
+        let name_str = ctx.span_to_string(seg.name.span);
+        let lookup_symbol = ctx.intern(name_str.as_str());
+        let lookup = ctx.resolver.lookup(lookup_symbol);
         if lookup.is_some() {
             let result = lookup.unwrap();
             let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
@@ -489,7 +492,10 @@ fn lower_effect_ref(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> Opt
         &ast::TypeKind::Path(ref path) => {
             if path.segments.len() == 1 {
                 let seg = &path.segments[0];
-                let lookup = ctx.resolver.lookup(seg.name.symbol);
+                // Re-intern from span for consistent symbol indices
+                let name_str = ctx.span_to_string(seg.name.span);
+                let lookup_symbol = ctx.intern(name_str.as_str());
+                let lookup = ctx.resolver.lookup(lookup_symbol);
                 if lookup.is_some() {
                     let result = lookup.unwrap();
                     let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);

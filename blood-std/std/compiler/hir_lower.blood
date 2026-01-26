@@ -818,7 +818,10 @@ fn register_declaration(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declar
             match &m.body {
                 &Option::Some(ref declarations) => {
                     // Look up the module's DefId from Phase 1
-                    let lookup = ctx.resolver.lookup(m.name.symbol);
+                    // Re-intern from span for consistent symbol indices
+                    let name_str = ctx.span_to_string(m.name.span);
+                    let lookup_symbol = ctx.intern(name_str.as_str());
+                    let lookup = ctx.resolver.lookup(lookup_symbol);
                     if lookup.is_some() {
                         let result = lookup.unwrap();
                         let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
