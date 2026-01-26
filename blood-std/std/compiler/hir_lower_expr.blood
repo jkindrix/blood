@@ -644,7 +644,10 @@ fn lower_record_expr(
     let (def_id, type_args) = if p.segments.len() == 1 {
         // Single-segment path: use direct lookup
         let seg = &p.segments[0];
-        let lookup = ctx.resolver.lookup(seg.name.symbol);
+        // Re-intern the symbol from span to ensure consistent symbol indices
+        let name_str = ctx.span_to_string(seg.name.span);
+        let lookup_symbol = ctx.intern(name_str.as_str());
+        let lookup = ctx.resolver.lookup(lookup_symbol);
 
         if lookup.is_none() {
             ctx.error(
@@ -664,10 +667,14 @@ fn lower_record_expr(
         (binding.def_id, args)
     } else {
         // Multi-segment path (e.g., module::StructName): use qualified path resolution
+        // Re-intern all segment names from their spans
         let mut names: Vec<common::SpannedSymbol> = Vec::new();
         let mut i: usize = 0;
         while i < p.segments.len() {
-            names.push(p.segments[i].name);
+            let seg = &p.segments[i];
+            let name_str = ctx.span_to_string(seg.name.span);
+            let re_interned = ctx.intern(name_str.as_str());
+            names.push(common::SpannedSymbol { symbol: re_interned, span: seg.name.span });
             i = i + 1;
         }
 

@@ -147,7 +147,10 @@ fn register_type_name(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declarat
     match decl {
         &ast::Declaration::Struct(ref s) => {
             let def_id = ctx.alloc_def_id();
-            let success = ctx.resolver.define_global(s.name.symbol, def_id);
+            // Re-intern the name from span to ensure consistent symbol indices
+            let name_str = ctx.span_to_string(s.name.span);
+            let name_symbol = ctx.intern(name_str.as_str());
+            let success = ctx.resolver.define_global(name_symbol, def_id);
             if !success {
                 ctx.error(
                     hir::DiagnosticCode::E0101,
@@ -158,7 +161,7 @@ fn register_type_name(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declarat
                 ctx.resolver.register_def_info(
                     def_id,
                     hir_def::DefKind::Struct,
-                    s.name.symbol,
+                    name_symbol,
                     s.name.span,
                     Option::None,
                 );
@@ -166,7 +169,10 @@ fn register_type_name(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declarat
         }
         &ast::Declaration::Enum(ref e) => {
             let def_id = ctx.alloc_def_id();
-            let success = ctx.resolver.define_global(e.name.symbol, def_id);
+            // Re-intern the name from span to ensure consistent symbol indices
+            let name_str = ctx.span_to_string(e.name.span);
+            let name_symbol = ctx.intern(name_str.as_str());
+            let success = ctx.resolver.define_global(name_symbol, def_id);
             if !success {
                 ctx.error(
                     hir::DiagnosticCode::E0101,
@@ -177,7 +183,7 @@ fn register_type_name(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declarat
                 ctx.resolver.register_def_info(
                     def_id,
                     hir_def::DefKind::Enum,
-                    e.name.symbol,
+                    name_symbol,
                     e.name.span,
                     Option::None,
                 );
@@ -185,7 +191,10 @@ fn register_type_name(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declarat
         }
         &ast::Declaration::Trait(ref t) => {
             let def_id = ctx.alloc_def_id();
-            let success = ctx.resolver.define_global(t.name.symbol, def_id);
+            // Re-intern the name from span to ensure consistent symbol indices
+            let name_str = ctx.span_to_string(t.name.span);
+            let name_symbol = ctx.intern(name_str.as_str());
+            let success = ctx.resolver.define_global(name_symbol, def_id);
             if !success {
                 ctx.error(
                     hir::DiagnosticCode::E0101,
@@ -196,7 +205,7 @@ fn register_type_name(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declarat
                 ctx.resolver.register_def_info(
                     def_id,
                     hir_def::DefKind::Trait,
-                    t.name.symbol,
+                    name_symbol,
                     t.name.span,
                     Option::None,
                 );
@@ -204,7 +213,10 @@ fn register_type_name(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declarat
         }
         &ast::Declaration::Effect(ref eff) => {
             let def_id = ctx.alloc_def_id();
-            let success = ctx.resolver.define_global(eff.name.symbol, def_id);
+            // Re-intern the name from span to ensure consistent symbol indices
+            let name_str = ctx.span_to_string(eff.name.span);
+            let name_symbol = ctx.intern(name_str.as_str());
+            let success = ctx.resolver.define_global(name_symbol, def_id);
             if !success {
                 ctx.error(
                     hir::DiagnosticCode::E0101,
@@ -215,7 +227,7 @@ fn register_type_name(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declarat
                 ctx.resolver.register_def_info(
                     def_id,
                     hir_def::DefKind::Effect,
-                    eff.name.symbol,
+                    name_symbol,
                     eff.name.span,
                     Option::None,
                 );
@@ -223,7 +235,10 @@ fn register_type_name(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declarat
         }
         &ast::Declaration::TypeAlias(ref ta) => {
             let def_id = ctx.alloc_def_id();
-            let success = ctx.resolver.define_global(ta.name.symbol, def_id);
+            // Re-intern the name from span to ensure consistent symbol indices
+            let name_str = ctx.span_to_string(ta.name.span);
+            let name_symbol = ctx.intern(name_str.as_str());
+            let success = ctx.resolver.define_global(name_symbol, def_id);
             if !success {
                 ctx.error(
                     hir::DiagnosticCode::E0101,
@@ -234,7 +249,7 @@ fn register_type_name(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declarat
                 ctx.resolver.register_def_info(
                     def_id,
                     hir_def::DefKind::TypeAlias,
-                    ta.name.symbol,
+                    name_symbol,
                     ta.name.span,
                     Option::None,
                 );
@@ -252,7 +267,10 @@ fn register_type_name(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declarat
                 &Option::Some(ref declarations) => {
                     // Inline module: register the module DefId and nested type names
                     let def_id = ctx.alloc_def_id();
-                    let success = ctx.resolver.define_global(m.name.symbol, def_id);
+                    // Re-intern the name from span to ensure consistent symbol indices
+                    let name_str = ctx.span_to_string(m.name.span);
+                    let name_symbol = ctx.intern(name_str.as_str());
+                    let success = ctx.resolver.define_global(name_symbol, def_id);
                     if !success {
                         ctx.error(
                             hir::DiagnosticCode::E0101,
@@ -263,7 +281,7 @@ fn register_type_name(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declarat
                         ctx.resolver.register_def_info(
                             def_id,
                             hir_def::DefKind::Module,
-                            m.name.symbol,
+                            name_symbol,
                             m.name.span,
                             Option::None,
                         );
@@ -696,7 +714,10 @@ fn register_declaration(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declar
     match decl {
         &ast::Declaration::Function(ref f) => {
             let def_id = ctx.alloc_def_id();
-            let success = ctx.resolver.define_global(f.name.symbol, def_id);
+            // Re-intern the name from span to ensure consistent symbol indices
+            let name_str = ctx.span_to_string(f.name.span);
+            let name_symbol = ctx.intern(name_str.as_str());
+            let success = ctx.resolver.define_global(name_symbol, def_id);
             if !success {
                 ctx.error(
                     hir::DiagnosticCode::E0101,
@@ -707,19 +728,22 @@ fn register_declaration(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declar
                 ctx.resolver.register_def_info(
                     def_id,
                     hir_def::DefKind::Fn,
-                    f.name.symbol,
+                    name_symbol,
                     f.name.span,
                     Option::None,
                 );
                 // Check if this is the main function
-                if f.name.symbol.index == interner::SpecialIdents::main_sym().index {
+                if name_symbol.index == interner::SpecialIdents::main_sym().index {
                     ctx.entry_point = Option::Some(def_id);
                 }
             }
         }
         &ast::Declaration::Const(ref c) => {
             let def_id = ctx.alloc_def_id();
-            let success = ctx.resolver.define_global(c.name.symbol, def_id);
+            // Re-intern the name from span to ensure consistent symbol indices
+            let name_str = ctx.span_to_string(c.name.span);
+            let name_symbol = ctx.intern(name_str.as_str());
+            let success = ctx.resolver.define_global(name_symbol, def_id);
             if !success {
                 ctx.error(
                     hir::DiagnosticCode::E0101,
@@ -730,7 +754,7 @@ fn register_declaration(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declar
                 ctx.resolver.register_def_info(
                     def_id,
                     hir_def::DefKind::Const,
-                    c.name.symbol,
+                    name_symbol,
                     c.name.span,
                     Option::None,
                 );
@@ -738,7 +762,10 @@ fn register_declaration(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declar
         }
         &ast::Declaration::Static(ref s) => {
             let def_id = ctx.alloc_def_id();
-            let success = ctx.resolver.define_global(s.name.symbol, def_id);
+            // Re-intern the name from span to ensure consistent symbol indices
+            let name_str = ctx.span_to_string(s.name.span);
+            let name_symbol = ctx.intern(name_str.as_str());
+            let success = ctx.resolver.define_global(name_symbol, def_id);
             if !success {
                 ctx.error(
                     hir::DiagnosticCode::E0101,
@@ -749,7 +776,7 @@ fn register_declaration(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declar
                 ctx.resolver.register_def_info(
                     def_id,
                     hir_def::DefKind::Static,
-                    s.name.symbol,
+                    name_symbol,
                     s.name.span,
                     Option::None,
                 );
@@ -757,7 +784,10 @@ fn register_declaration(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declar
         }
         &ast::Declaration::Handler(ref h) => {
             let def_id = ctx.alloc_def_id();
-            let success = ctx.resolver.define_global(h.name.symbol, def_id);
+            // Re-intern the name from span to ensure consistent symbol indices
+            let name_str = ctx.span_to_string(h.name.span);
+            let name_symbol = ctx.intern(name_str.as_str());
+            let success = ctx.resolver.define_global(name_symbol, def_id);
             if !success {
                 ctx.error(
                     hir::DiagnosticCode::E0101,
@@ -768,7 +798,7 @@ fn register_declaration(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declar
                 ctx.resolver.register_def_info(
                     def_id,
                     hir_def::DefKind::Handler,
-                    h.name.symbol,
+                    name_symbol,
                     h.name.span,
                     Option::None,
                 );
