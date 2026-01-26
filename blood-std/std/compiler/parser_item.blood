@@ -102,7 +102,12 @@ fn parse_attribute(parser: &mut parser_base::Parser) -> ast::Attribute {
 
 /// Parse visibility: pub, pub(crate), pub(super), pub(in path), or private (no keyword).
 pub fn parse_visibility(parser: &mut parser_base::Parser) -> common::Visibility {
-    if !parser.check(token::TokenKind::Pub) {
+    println_str("[parse_visibility] Starting...");
+    println_str("[parse_visibility] Checking for Pub...");
+    let is_pub = parser.check(token::TokenKind::Pub);
+    println_str("[parse_visibility] Check complete");
+    if !is_pub {
+        println_str("[parse_visibility] Not pub, returning Private");
         return common::Visibility::Private;
     }
 
@@ -304,7 +309,10 @@ pub fn parse_fn_decl(parser: &mut parser_base::Parser, attrs: Vec<ast::Attribute
     let start = parser.current.span;
     parser.advance(); // consume 'fn'
 
+    println_str("[parse_fn_decl] Parsing name...");
     let name = parser.parse_spanned_symbol();
+    print_str("[parse_fn_decl] name.symbol.index = ");
+    println_int(name.symbol.index as i32);
 
     // Parse type parameters if present
     let type_params = if parser.check(token::TokenKind::Lt) {
@@ -348,7 +356,9 @@ pub fn parse_fn_decl(parser: &mut parser_base::Parser, attrs: Vec<ast::Attribute
     };
 
     let end_span = parser.previous.span;
-    ast::FnDecl {
+    print_str("[parse_fn_decl] Before struct, name.symbol.index = ");
+    println_int(name.symbol.index as i32);
+    let result = ast::FnDecl {
         attrs: attrs,
         vis: vis,
         qualifiers: common::FnQualifiers { is_const: false, is_async: false, is_unsafe: false },
@@ -360,21 +370,32 @@ pub fn parse_fn_decl(parser: &mut parser_base::Parser, attrs: Vec<ast::Attribute
         where_clause: where_clause,
         body: body,
         span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
-    }
+    };
+    print_str("[parse_fn_decl] After struct, result.name.symbol.index = ");
+    println_int(result.name.symbol.index as i32);
+    result
 }
 
 fn parse_fn_params(parser: &mut parser_base::Parser) -> Vec<ast::Param> {
+    println_str("[parse_fn_params] Creating Vec...");
     let mut params: Vec<ast::Param> = Vec::new();
+    print_str("[parse_fn_params] Vec created, initial len = ");
+    println_int(params.len() as i32);
 
     while !parser.check(token::TokenKind::RParen) && !parser.is_at_end() {
+        println_str("[parse_fn_params] Parsing param...");
         let param = parse_fn_param(parser);
         params.push(param);
+        print_str("[parse_fn_params] After push, len = ");
+        println_int(params.len() as i32);
 
         if !parser.try_consume(token::TokenKind::Comma) {
             break;
         }
     }
 
+    print_str("[parse_fn_params] Final len = ");
+    println_int(params.len() as i32);
     params
 }
 
@@ -996,10 +1017,17 @@ fn parse_trait_item(parser: &mut parser_base::Parser) -> ast::TraitItem {
 
 /// Parse a top-level declaration.
 pub fn parse_declaration(parser: &mut parser_base::Parser) -> ast::Declaration {
+    println_str("[parse_declaration] Starting...");
+    println_str("[parse_declaration] Parsing attributes...");
     let attrs = parse_attributes(parser);
+    println_str("[parse_declaration] Parsing visibility...");
     let vis = parse_visibility(parser);
+    println_str("[parse_declaration] Checking token kind...");
+    let kind = parser.current.kind;
+    print_str("[parse_declaration] kind = ");
+    println_int(kind as i32);
 
-    match parser.current.kind {
+    match kind {
         token::TokenKind::Fn => ast::Declaration::Function(parse_fn_decl(parser, attrs, vis)),
         token::TokenKind::Struct => ast::Declaration::Struct(parse_struct_decl(parser, attrs, vis)),
         token::TokenKind::Enum => ast::Declaration::Enum(parse_enum_decl(parser, attrs, vis)),

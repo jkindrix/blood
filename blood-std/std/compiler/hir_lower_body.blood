@@ -12,6 +12,7 @@ mod hir_item;
 mod hir_lower_ctx;
 mod hir_lower_type;
 mod hir_lower_expr;
+mod resolve;
 
 // ============================================================
 // Body Lowering
@@ -27,20 +28,41 @@ pub fn lower_fn_body(
     body_expr: &Option<ast::Expr>,
     body_block: &Option<ast::Block>,
 ) -> hir_expr::Body {
-    // Create locals for parameters
+    // Push a function scope for parameter bindings
+    ctx.resolver.push_scope(resolve::ScopeKind::Function);
+
+    // Create locals for parameters and register them in scope
     let mut locals: Vec<hir_expr::Local> = Vec::new();
     let mut i: usize = 0;
-    while i < params.len() {
+    while i < params.len() && i < ast_params.len() {
         let p = &params[i];
+        let ast_p = &ast_params[i];
         let local_id = hir_def::LocalId::new(i as u32);
+
+        // Extract the correct symbol from the AST pattern's span
+        // (The FnParam's symbol may have garbage due to struct layout issues)
+        let param_symbol = extract_param_symbol_from_ast(ctx, &ast_p.pattern);
+
+        // Create a properly corrected SpannedSymbol for the local
+        let corrected_name = common::SpannedSymbol {
+            symbol: param_symbol,
+            span: p.name.span,
+        };
+
         let local = hir_expr::Local::new(
             local_id,
-            p.name,
+            corrected_name,
             hir_ty::copy_type(&p.ty),
             p.mutable,
             p.span,
         );
         locals.push(local);
+
+        // Register parameter in scope so it can be looked up in the body
+        print_str("[lower_fn_body] Registering param symbol index: ");
+        println_int(param_symbol.index as i32);
+        ctx.resolver.define_local(param_symbol, local_id, p.mutable, p.span);
+
         i = i + 1;
     }
 
@@ -71,6 +93,9 @@ pub fn lower_fn_body(
     if destructure_stmts.len() > 0 {
         body_lowered = wrap_with_destructures(body_lowered, destructure_stmts);
     }
+
+    // Pop the function scope
+    ctx.resolver.pop_scope();
 
     hir_expr::Body::new(body_id, locals, param_count, body_lowered)
 }
@@ -223,4 +248,28 @@ fn wrap_with_destructures(body: hir_expr::Expr, stmts: Vec<hir_expr::Stmt>) -> h
         hir_ty::Type::infer(hir_def::TyVarId::new(0)),  // Type will be inferred
         span,
     )
+}
+
+/// Extract the parameter symbol from an AST pattern using span-based lookup.
+/// This works around struct layout issues where reading the symbol directly
+/// from the AST enum variant gives garbage values.
+fn extract_param_symbol_from_ast(ctx: &mut hir_lower_ctx::LoweringCtx, pattern: &ast::Pattern) -> common::Symbol {
+    match &pattern.kind {
+        &ast::PatternKind::Ident { by_ref: _, is_mut: _, name: _, subpattern: _ } => {
+            // Use the pattern's span to extract the actual name string
+            // (name.span might be garbage due to struct layout issues)
+            let name_str = ctx.span_to_string(pattern.span);
+            // Intern the string to get a symbol that matches what expression lowering uses
+            ctx.intern(name_str.as_str())
+        }
+        &ast::PatternKind::Ref { is_mut: _, ref inner } => {
+            // Look through reference patterns
+            extract_param_symbol_from_ast(ctx, inner.as_ref())
+        }
+        _ => {
+            // For wildcards and complex patterns, return a dummy symbol
+            // Complex patterns are handled by destructuring
+            common::Symbol::new(0)
+        }
+    }
 }

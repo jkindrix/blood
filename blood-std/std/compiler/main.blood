@@ -108,11 +108,15 @@ impl Args {
 
 /// Main function - entry point for the compiler.
 pub fn main() -> i32 {
+    println_str("[main] Starting...");
     // Parse command line arguments
     // Note: Without FFI for argument access, we use a stub
+    println_str("[main] Parsing args...");
     let args = parse_args_stub();
+    println_str("[main] Args parsed");
 
     // Execute the command
+    println_str("[main] Executing command...");
     match &args.command {
         &Command::Check => run_check(&args),
         &Command::Build => run_build(&args),
@@ -147,33 +151,35 @@ fn parse_args_stub() -> Args {
 
 /// Runs the check command.
 fn run_check(args: &Args) -> i32 {
+    println_str("[run_check] Starting...");
     match &args.source_file {
         &Option::Some(ref path) => {
+            println_str("[run_check] Got path, reading file...");
             // Read the source file
             let read_result = source::read_file(path.as_str());
-            if !read_result.success {
-                print_error("Failed to read file");
-                match &read_result.error {
-                    &Option::Some(ref msg) => {
-                        print_string(msg);
-                        print_newline();
-                    }
-                    &Option::None => {}
-                }
-                return 1;
-            }
-
-            // Get source content
+            println_str("[run_check] File read complete");
+            println_str("[run_check] Checking success...");
+            let is_success = read_result.success;
+            print_str("[run_check] success = ");
+            if is_success { println_str("true"); } else { println_str("false"); }
+            println_str("[run_check] About to get content...");
+            // Skip error handling for now, directly get content
             let content = match &read_result.content {
-                &Option::Some(ref c) => c.as_str(),
+                &Option::Some(ref c) => {
+                    println_str("[run_check] Got content");
+                    c.as_str()
+                }
                 &Option::None => {
-                    print_error("No content in read result");
+                    println_str("[run_check] Content is None");
                     return 1;
                 }
             };
+            println_str("[run_check] Content extracted");
+            println_str("[run_check] Calling driver::check...");
 
             // Run the check
             let result = driver::check(content);
+            println_str("[run_check] Check complete");
             if result.success {
                 print_success("Check passed");
                 0

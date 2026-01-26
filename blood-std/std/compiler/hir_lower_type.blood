@@ -176,7 +176,8 @@ fn lower_type_path(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath) -
     if path.segments.len() == 1 {
         let seg = &path.segments[0];
         if seg.args.is_none() {
-            let prim = try_primitive_type(seg.name.symbol);
+            // Use span-based lookup instead of symbol index comparison
+            let prim = try_primitive_type_by_span(ctx, seg.name.span);
             if prim.is_some() {
                 return prim.unwrap();
             }
@@ -259,7 +260,89 @@ fn lower_type_path(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath) -
     hir_ty::Type::error()
 }
 
-/// Try to convert a symbol to a primitive type.
+/// Try to convert a span to a primitive type by looking up the actual string content.
+///
+/// Uses the source text from the context to get the type name string,
+/// then compares against known primitive type names.
+/// Returns the corresponding HIR type if the name is a primitive, None otherwise.
+fn try_primitive_type_by_span(ctx: &mut hir_lower_ctx::LoweringCtx, span: common::Span) -> Option<hir_ty::Type> {
+    let name = ctx.span_to_string(span);
+
+    // Compare against primitive type names using string content
+    if str_eq(&name, "bool") {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Bool)));
+    }
+    if str_eq(&name, "i8") {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::I8)));
+    }
+    if str_eq(&name, "i16") {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::I16)));
+    }
+    if str_eq(&name, "i32") {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::I32)));
+    }
+    if str_eq(&name, "i64") {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::I64)));
+    }
+    if str_eq(&name, "i128") {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::I128)));
+    }
+    if str_eq(&name, "isize") {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Isize)));
+    }
+    if str_eq(&name, "u8") {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::U8)));
+    }
+    if str_eq(&name, "u16") {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::U16)));
+    }
+    if str_eq(&name, "u32") {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::U32)));
+    }
+    if str_eq(&name, "u64") {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::U64)));
+    }
+    if str_eq(&name, "u128") {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::U128)));
+    }
+    if str_eq(&name, "usize") {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Usize)));
+    }
+    if str_eq(&name, "f32") {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::F32)));
+    }
+    if str_eq(&name, "f64") {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::F64)));
+    }
+    if str_eq(&name, "char") {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Char)));
+    }
+    if str_eq(&name, "str") {
+        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Str)));
+    }
+
+    // Not a primitive type
+    Option::None
+}
+
+/// Helper function to compare a String with a &str.
+fn str_eq(s: &String, other: &str) -> bool {
+    let bytes = s.as_bytes();
+    let other_bytes = other.as_bytes();
+    if bytes.len() != other_bytes.len() {
+        return false;
+    }
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        if bytes[i] != other_bytes[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    true
+}
+
+/// Try to convert a symbol to a primitive type (deprecated - use try_primitive_type_by_span).
 ///
 /// Compares the symbol index against pre-interned primitive type names.
 /// Returns the corresponding HIR type if the symbol is a primitive, None otherwise.
@@ -444,9 +527,18 @@ fn lower_effect_ref(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> Opt
 
 /// Lower AST type parameters to HIR generics.
 pub fn lower_generics(ctx: &mut hir_lower_ctx::LoweringCtx, type_params: &Option<ast::TypeParams>, where_clause: &Option<ast::WhereClause>) -> hir_ty::Generics {
+    println_str("[lower_generics] Starting...");
     let mut params: Vec<hir_ty::GenericParam> = Vec::new();
+    println_str("[lower_generics] Created params vec");
     let mut where_predicates: Vec<hir_ty::WherePredicate> = Vec::new();
+    println_str("[lower_generics] Created where_predicates vec");
 
+    println_str("[lower_generics] Matching type_params...");
+    println_str("[lower_generics] About to check is_some on type_params...");
+    let tp_is_some = type_params.is_some();
+    print_str("[lower_generics] type_params.is_some() = ");
+    if tp_is_some { println_str("true"); } else { println_str("false"); }
+    println_str("[lower_generics] Starting match...");
     match type_params {
         &Some(ref tp) => {
             let mut i: usize = 0;
@@ -508,14 +600,35 @@ pub fn lower_generics(ctx: &mut hir_lower_ctx::LoweringCtx, type_params: &Option
                 i = i + 1;
             }
         }
-        &None => {}
+        &None => {
+            println_str("[lower_generics] type_params is None");
+        }
     }
+    println_str("[lower_generics] After type_params match");
 
     // Lower explicit where clause predicates
-    match where_clause {
-        &Some(ref wc) => {
+    println_str("[lower_generics] Matching where_clause...");
+    println_str("[lower_generics] Checking is_some...");
+    let is_some = where_clause.is_some();
+    print_str("[lower_generics] is_some = ");
+    if is_some { println_str("true"); } else { println_str("false"); }
+    if is_some {
+        println_str("[lower_generics] where_clause is Some, getting wc...");
+        let wc = where_clause.as_ref().unwrap();
+        let pred_len = wc.predicates.len();
+        print_str("[lower_generics] wc.predicates.len() = ");
+        println_int(pred_len as i32);
+        println_str("[lower_generics] About to enter loop block...");
+        {
+            println_str("[lower_generics] Inside loop block");
             let mut i: usize = 0;
-            while i < wc.predicates.len() {
+            print_str("[lower_generics] i = ");
+            println_int(i as i32);
+            print_str("[lower_generics] pred_len = ");
+            println_int(pred_len as i32);
+            println_str("[lower_generics] About to check i < pred_len...");
+            while i < pred_len {
+                println_str("[lower_generics] Inside while loop");
                 match &wc.predicates[i] {
                     &ast::WherePredicate::TypeBound { ref ty, ref bounds, span } => {
                         let lowered_ty = lower_type(ctx, ty);
@@ -549,9 +662,13 @@ pub fn lower_generics(ctx: &mut hir_lower_ctx::LoweringCtx, type_params: &Option
                 }
                 i = i + 1;
             }
+            println_str("[lower_generics] After loop");
         }
-        &None => {}
+        println_str("[lower_generics] After block");
+    } else {
+        println_str("[lower_generics] where_clause is None");
     }
+    println_str("[lower_generics] Creating result...");
 
     hir_ty::Generics { params, where_predicates }
 }

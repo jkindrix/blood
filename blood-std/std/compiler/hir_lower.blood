@@ -40,60 +40,92 @@ mod parser;
 // ============================================================
 
 /// Lower an AST Program to an HIR Crate.
-pub fn lower_program(program: &ast::Program) -> hir_lower_ctx::LowerResult {
-    lower_program_with_base_dir(program, common::make_string("."))
+pub fn lower_program(program: &ast::Program, source: &str) -> hir_lower_ctx::LowerResult {
+    lower_program_with_base_dir(program, common::make_string("."), source)
 }
 
 /// Lower an AST Program to an HIR Crate with a specified base directory.
 /// The base directory is used for resolving external module paths.
-pub fn lower_program_with_base_dir(program: &ast::Program, base_dir: String) -> hir_lower_ctx::LowerResult {
-    let mut ctx = hir_lower_ctx::LoweringCtx::with_base_dir(base_dir);
+pub fn lower_program_with_base_dir(program: &ast::Program, base_dir: String, source: &str) -> hir_lower_ctx::LowerResult {
+    println_str("[lower] Creating context...");
+    let mut ctx = hir_lower_ctx::LoweringCtx::with_base_dir(base_dir, common::make_string(source));
+    println_str("[lower] Context created");
 
     // Allocate root module DefId
+    println_str("[lower] Allocating root DefId...");
     let root_def_id = ctx.alloc_def_id();
+    println_str("[lower] Root DefId allocated");
 
     // Phase 1: Register type names (structs, enums, traits, effects)
+    println_str("[lower] Phase 1: register_type_names...");
     register_type_names(&mut ctx, &program.declarations);
+    println_str("[lower] Phase 1 complete");
 
     // Phase 2: Register other declarations (functions, consts, statics)
+    println_str("[lower] Phase 2: register_declarations...");
     register_declarations(&mut ctx, &program.declarations);
+    println_str("[lower] Phase 2 complete");
 
     // Check for errors from registration
     if ctx.has_errors() {
+        println_str("[lower] Errors in registration, returning");
         return hir_lower_ctx::LowerResult::failure(ctx.diagnostics);
     }
 
     // Phase 3: Lower declarations to HIR items
+    println_str("[lower] Phase 3: lower_declarations...");
     hir_lower_item::lower_declarations(&mut ctx, &program.declarations);
+    println_str("[lower] Phase 3 complete");
 
     // Phase 3b: Lower external module declarations
+    println_str("[lower] Phase 3b: lower_external_module_declarations...");
     lower_external_module_declarations(&mut ctx);
+    println_str("[lower] Phase 3b complete");
 
     // Check for errors from item lowering
     if ctx.has_errors() {
+        print_str("[lower] Errors in item lowering: ");
+        println_int(ctx.diagnostics.len() as i32);
+        // Print first few error messages
+        let mut i: usize = 0;
+        while i < ctx.diagnostics.len() && i < 5 {
+            print_str("[lower] Error ");
+            println_int(i as i32);
+            print_str("  message: ");
+            println_str(ctx.diagnostics[i].message.as_str());
+            i = i + 1;
+        }
         return hir_lower_ctx::LowerResult::failure(ctx.diagnostics);
     }
 
     // Phase 4: Lower function bodies to HIR bodies
+    println_str("[lower] Phase 4: lower_fn_bodies...");
     lower_fn_bodies(&mut ctx, &program.declarations);
+    println_str("[lower] Phase 4 complete");
 
     // Phase 4b: Lower external module function bodies
+    println_str("[lower] Phase 4b: lower_external_module_fn_bodies...");
     lower_external_module_fn_bodies(&mut ctx);
+    println_str("[lower] Phase 4b complete");
 
     // Check for errors from body lowering
     if ctx.has_errors() {
+        println_str("[lower] Errors in body lowering, returning");
         return hir_lower_ctx::LowerResult::failure(ctx.diagnostics);
     }
 
     // Build the Crate
+    println_str("[lower] Building Crate...");
     let crate_data = hir::Crate {
         entry: ctx.entry_point,
         root_module: root_def_id,
         item_count: ctx.items.len() as u32,
         body_count: ctx.bodies.len() as u32,
     };
+    println_str("[lower] Crate built");
 
     // Transfer items, item_index, and bodies to the result
+    println_str("[lower] Creating result...");
     hir_lower_ctx::LowerResult::success_with_data(crate_data, ctx.items, ctx.item_index, ctx.bodies)
 }
 
@@ -913,10 +945,15 @@ fn lower_fn_body_if_present(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::De
 
 /// Lower a single function's body.
 fn lower_single_fn_body(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl) {
+    println_str("[lower_single_fn_body] Starting...");
+    print_str("[lower_single_fn_body] f.params.len() = ");
+    println_int(f.params.len() as i32);
+
     // Allocate a BodyId for this function
     let body_id = ctx.alloc_body_id();
 
     // Lower the function parameters (for creating locals)
+    println_str("[lower_single_fn_body] Calling lower_fn_params...");
     let params = hir_lower_item::lower_fn_params(ctx, &f.params);
 
     // Lower the body

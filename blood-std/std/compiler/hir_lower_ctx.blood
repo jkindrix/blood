@@ -146,6 +146,8 @@ pub struct LoweringCtx {
     /// Loaded modules for circular import prevention.
     /// Each entry is (module_name_symbol, def_id, file_path).
     pub loaded_modules: Vec<LoadedModule>,
+    /// Source text for resolving span-based symbols.
+    pub source: String,
 }
 
 /// Tracks a loaded external module to prevent circular imports.
@@ -191,7 +193,7 @@ impl LoadedModule {
 
 impl LoweringCtx {
     /// Creates a new lowering context with current directory as base.
-    pub fn new() -> LoweringCtx {
+    pub fn new(source: String) -> LoweringCtx {
         LoweringCtx {
             resolver: resolve::Resolver::new(),
             interner: interner::StringInterner::new(),
@@ -208,11 +210,12 @@ impl LoweringCtx {
             entry_point: Option::None,
             base_dir: common::make_string("."),
             loaded_modules: Vec::new(),
+            source: source,
         }
     }
 
     /// Creates a new lowering context with a specified base directory.
-    pub fn with_base_dir(base_dir: String) -> LoweringCtx {
+    pub fn with_base_dir(base_dir: String, source: String) -> LoweringCtx {
         LoweringCtx {
             resolver: resolve::Resolver::new(),
             interner: interner::StringInterner::new(),
@@ -229,6 +232,7 @@ impl LoweringCtx {
             entry_point: Option::None,
             base_dir: base_dir,
             loaded_modules: Vec::new(),
+            source: source,
         }
     }
 
@@ -381,6 +385,20 @@ impl LoweringCtx {
     /// Interns a string and returns its symbol.
     pub fn intern(self: &mut Self, s: &str) -> common::Symbol {
         self.interner.intern(s)
+    }
+
+    /// Extracts a string from source text given a span.
+    pub fn span_to_string(self: &Self, span: common::Span) -> String {
+        let start = span.start;
+        let end = span.end;
+        let src_bytes = self.source.as_bytes();
+        let mut result = String::new();
+        let mut i = start;
+        while i < end && i < src_bytes.len() {
+            result.push(src_bytes[i] as char);
+            i = i + 1;
+        }
+        result
     }
 }
 

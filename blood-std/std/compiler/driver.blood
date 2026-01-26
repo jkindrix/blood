@@ -117,7 +117,7 @@ impl Compiler {
         };
 
         // Phase 2: Lower to HIR
-        let lower_result = hir_lower::lower_program(program);
+        let lower_result = hir_lower::lower_program(program, source);
         if has_error_diagnostics(&lower_result.diagnostics) {
             let errors = convert_hir_diagnostics(&lower_result.diagnostics);
             return CompileResult::err(errors);
@@ -228,8 +228,13 @@ impl Compiler {
     ///
     /// Runs parsing and HIR lowering to check for errors.
     pub fn check(self: &mut Compiler, source: &str) -> CheckResult {
+        println_str("[Compiler::check] Starting...");
         // Parse
+        print_str("[Compiler::check] source len = ");
+        println_int(source.len() as i32);
+        println_str("[Compiler::check] Calling parser::parse_file...");
         let parse_result = parser::parse_file(source);
+        println_str("[Compiler::check] Parse complete");
         if parse_result.errors.len() > 0 {
             let errors = convert_parse_errors(&parse_result.errors);
             return CheckResult {
@@ -254,7 +259,7 @@ impl Compiler {
         };
 
         // Lower to HIR
-        let lower_result = hir_lower::lower_program(program);
+        let lower_result = hir_lower::lower_program(program, source);
         if has_error_diagnostics(&lower_result.diagnostics) {
             let errors = convert_hir_diagnostics(&lower_result.diagnostics);
             return CheckResult {
@@ -292,7 +297,7 @@ impl Compiler {
         };
 
         // Phase 2: Lower to HIR with base_dir
-        let lower_result = hir_lower::lower_program_with_base_dir(program, base_dir);
+        let lower_result = hir_lower::lower_program_with_base_dir(program, base_dir, source);
         if has_error_diagnostics(&lower_result.diagnostics) {
             let errors = convert_hir_diagnostics(&lower_result.diagnostics);
             return CompileResult::err(errors);
@@ -407,7 +412,7 @@ impl Compiler {
         };
 
         // Lower to HIR with base_dir
-        let lower_result = hir_lower::lower_program_with_base_dir(program, base_dir);
+        let lower_result = hir_lower::lower_program_with_base_dir(program, base_dir, source);
         if has_error_diagnostics(&lower_result.diagnostics) {
             let errors = convert_hir_diagnostics(&lower_result.diagnostics);
             return CheckResult {
@@ -671,7 +676,9 @@ pub fn compile(source: &str) -> CompileResult {
 
 /// Checks source code without generating code.
 pub fn check(source: &str) -> CheckResult {
+    println_str("[driver::check] Creating compiler...");
     let mut compiler = Compiler::new();
+    println_str("[driver::check] Compiler created, calling check...");
     compiler.check(source)
 }
 
