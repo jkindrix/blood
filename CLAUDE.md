@@ -314,7 +314,50 @@ Before modifying any shared type:
 
 **These are compiler bugs that need to be fixed in blood-rust. Do NOT work around them.**
 
-*No known bugs at this time.*
+### BUG-002: Enum payload corruption when moving structs with large enum fields into another enum
+
+**Status:** Active - blocking self-hosted compiler codegen
+
+**Description:**
+When a struct containing an enum with a large payload (e.g., `i128`) is moved into another enum variant, the payload data gets corrupted.
+
+**Reproduction:**
+```blood
+// This is simplified - actual case involves ConstantKind, Constant, Operand, Rvalue
+enum Inner {
+    Int(i128),  // 128-bit payload
+    ZeroSized,
+}
+
+struct Container {
+    kind: Inner,
+}
+
+enum Outer {
+    Wrap(Container),
+}
+
+fn test() {
+    let container = Container { kind: Inner::Int(42) };
+    // At this point, container.kind == Inner::Int(42) ✅
+    let outer = Outer::Wrap(container);
+    // At this point, accessing inner.kind shows corrupted data ❌
+}
+```
+
+**Actual case:**
+- `mir_types::ConstantKind::Int(i128)` value (42) is correct before wrapping
+- After `mir_types::Operand::Constant(constant)` where `constant: Constant { ty, kind }`, the `kind` field is corrupted
+- The discriminant appears to change to a different variant (e.g., `ZeroSized` instead of `Int`)
+
+**Impact:**
+- Self-hosted compiler generates `undef` instead of actual constant values
+- LLVM IR output: `store i64 undef, ptr %_0` instead of `store i32 42, ptr %_0`
+
+**Workaround:**
+None known. This requires a fix in blood-rust's codegen for enum payloads.
+
+---
 
 **Previously fixed bugs:**
 - BUG-001: Struct initialization in impl blocks when module is imported (fixed - all 25 compiler files now compile)
