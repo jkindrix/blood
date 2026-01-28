@@ -361,6 +361,8 @@ None known. This requires a fix in blood-rust's codegen for enum payloads.
 
 **Previously fixed bugs:**
 - BUG-001: Struct initialization in impl blocks when module is imported (fixed - all 25 compiler files now compile)
+- BUG-003: Option<&Struct> return corruption (fixed - blood-rust devs added `by_ref` field tracking)
+- BUG-004: Option::Some(Box::new(expr)) corruption (fixed - blood-rust devs added auto-deref insertion for ref bindings in method calls)
 
 ---
 
