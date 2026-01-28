@@ -61,11 +61,11 @@ fn lower_params_from_body(
     let mut i: u32 = 0;
     while i < body.param_count {
         let local = &body.locals[i as usize];
-        // Create MIR local for the parameter
-        let mir_local = ctx.builder.body.new_local(
+        // Create MIR local for the parameter using add_param which
+        // correctly increments param_count (new_local does not).
+        let mir_local = ctx.builder.add_param(
             local.ty.clone(),
-            mir_def::LocalKind::Arg,
-            Option::None,
+            String::new(),
             local.span,
         );
         // Register mapping from HIR local to MIR local
@@ -115,10 +115,10 @@ fn lower_closure_params(
     let mut i: usize = 0;
     while i < params.len() {
         let param = &params[i];
-        let mir_local = ctx.builder.body.new_local(
+        // Use add_param to correctly increment param_count
+        let mir_local = ctx.builder.add_param(
             param.ty.clone(),
-            mir_def::LocalKind::Arg,
-            Option::None,
+            String::new(),
             span,
         );
         // Pattern binding for closure params
