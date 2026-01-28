@@ -357,6 +357,54 @@ fn test() {
 **Workaround:**
 None known. This requires a fix in blood-rust's codegen for enum payloads.
 
+### BUG-005: Mutations through `&mut field_of_ref` lost when passed as function arguments
+
+**Status:** Active - worked around in self-hosted compiler type checker
+
+**Description:**
+When you take `&mut` of a field accessed through another reference (e.g., `&mut checker.subst_table` where `checker` is `&mut TypeChecker`) and pass it as a function argument, mutations made inside the called function are lost when the function returns. blood-rust appears to copy the field to a stack temporary and pass `&mut` to the copy instead of computing a GEP pointer to the original field.
+
+**Reproduction:**
+```blood
+struct Inner {
+    pub values: Vec<i32>,
+}
+
+struct Outer {
+    pub inner: Inner,
+}
+
+fn add_value(inner: &mut Inner) {
+    inner.values.push(42);  // This mutation is LOST
+}
+
+fn test(outer: &mut Outer) {
+    add_value(&mut outer.inner);  // Bug: &mut field_of_ref
+    // outer.inner.values is still empty here!
+
+    // But this works:
+    outer.inner.values.push(42);  // Direct method call chain — mutation preserved
+}
+```
+
+**What works and what doesn't:**
+
+| Pattern | Works? |
+|---------|--------|
+| `outer.inner.method()` (direct method call through ref chain) | ✅ |
+| `helper(outer)` where `outer: &mut Outer` (pass whole ref) | ✅ |
+| `helper(&mut local_var)` where `local_var` is a local | ✅ |
+| `helper(&mut outer.inner)` — `&mut field_of_ref` as fn arg | ❌ |
+
+**Impact:**
+- All `unify::unify(&mut self.subst_table, &mut self.unifier, ...)` calls silently lost substitution table entries, breaking type inference entirely.
+
+**Workaround (applied in `typeck.blood`):**
+Clone SubstTable and Unifier to local variables, pass `&mut local` to `unify::unify` (which works), then copy new entries back via direct method calls (which also work).
+
+**Root cause:**
+blood-rust codegen likely evaluates `&mut expr.field` as a function argument by: (1) loading the field value to a stack temporary, (2) taking `&mut` of the temporary. It should instead compute the address via GEP on the struct pointer.
+
 ---
 
 **Previously fixed bugs:**
