@@ -27,18 +27,13 @@ mod resolve;
 
 /// Lower function parameters.
 pub fn lower_fn_params(ctx: &mut hir_lower_ctx::LoweringCtx, params: &Vec<ast::Param>) -> Vec<hir_item::FnParam> {
-    println_str("[lower_fn_params] Starting...");
     let mut result: Vec<hir_item::FnParam> = Vec::new();
-    print_str("[lower_fn_params] params.len() = ");
-    println_int(params.len() as i32);
     let mut i: usize = 0;
     while i < params.len() {
-        println_str("[lower_fn_params] Lowering param...");
         let param = lower_fn_param(ctx, &params[i], i as u32);
         result.push(param);
         i = i + 1;
     }
-    println_str("[lower_fn_params] Done");
     result
 }
 
@@ -63,13 +58,7 @@ fn lower_fn_param(ctx: &mut hir_lower_ctx::LoweringCtx, param: &ast::Param, para
     // Check if this is a self parameter by checking the name
     let is_self = is_self_param_name(name.symbol);
 
-    print_str("[lower_fn_param] Creating FnParam with name symbol index: ");
-    println_int(name.symbol.index as i32);
-
     let result = hir_item::FnParam::new(def_id, name, ty, mutable, is_self, param.span);
-
-    print_str("[lower_fn_param] FnParam created, result.name.symbol.index: ");
-    println_int(result.name.symbol.index as i32);
 
     result
 }
@@ -89,8 +78,6 @@ fn extract_param_name(pattern: &ast::Pattern, param_index: u32) -> (common::Span
         &ast::PatternKind::Ident { by_ref: _, is_mut, ref name, ref subpattern } => {
             // Simple ident without subpattern is trivial
             let needs_destructure = subpattern.is_some();
-            print_str("[extract_param_name] Ident pattern, name symbol index: ");
-            println_int(name.symbol.index as i32);
             (*name, is_mut, needs_destructure)
         }
         &ast::PatternKind::Wildcard => {
@@ -316,53 +303,31 @@ pub fn lower_declaration(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Decla
 
 /// Lower a function declaration.
 fn lower_function_decl(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl) {
-    println_str("[lower_fn] Starting...");
     // Look up the DefId we registered (re-intern from span for consistent indices)
-    print_str("[lower_fn] span.start = ");
-    println_int(f.name.span.start as i32);
-    print_str("[lower_fn] span.end = ");
-    println_int(f.name.span.end as i32);
     let name_str = ctx.span_to_string(f.name.span);
-    print_str("[lower_fn] name_str len = ");
-    println_int(name_str.len() as i32);
-    print_str("[lower_fn] name_str = '");
-    print_str(name_str.as_str());
-    println_str("'");
     let lookup_symbol = ctx.intern(name_str.as_str());
     let lookup = ctx.resolver.lookup(lookup_symbol);
     if lookup.is_none() {
         // Should not happen if registration succeeded
-        println_str("[lower_fn] Lookup failed");
         return;
     }
     let result = lookup.unwrap();
-    println_str("[lower_fn] Got lookup result");
     let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
     let def_id = binding.def_id;
-    println_str("[lower_fn] Got def_id");
 
     // Lower generics
-    println_str("[lower_fn] Lowering generics...");
     let generics = hir_lower_type::lower_generics(ctx, &f.type_params, &f.where_clause);
-    println_str("[lower_fn] Generics done");
 
     // Lower parameters
-    println_str("[lower_fn] Lowering params...");
     let params = lower_fn_params(ctx, &f.params);
-    println_str("[lower_fn] Params done");
 
     // Lower return type
-    println_str("[lower_fn] Lowering return type...");
     let return_ty = lower_return_type(ctx, &f.return_type);
-    println_str("[lower_fn] Return type done");
 
     // Lower effects
-    println_str("[lower_fn] Lowering effects...");
     let effects = lower_effects(ctx, &f.effects);
-    println_str("[lower_fn] Effects done");
 
     // Create function signature
-    println_str("[lower_fn] Creating FnSig...");
     let sig = hir_item::FnSig::new(
         generics,
         params,
@@ -371,41 +336,25 @@ fn lower_function_decl(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl) {
         f.qualifiers,
         f.span,
     );
-    println_str("[lower_fn] FnSig done");
 
     // Pre-allocate body_id if function has a body (actual lowering in Phase 4)
     let body_id = if f.body.is_some() {
         let bid = ctx.alloc_body_id();
-        print_str("[lower_fn] Pre-allocated body_id.index = ");
-        println_int(bid.index as i32);
         Option::Some(bid)
     } else {
         Option::None
     };
 
     // Create function definition with pre-allocated body_id
-    println_str("[lower_fn] Creating FnDef...");
     let fn_def = hir_item::FnDef::new(sig, body_id);
-    println_str("[lower_fn] FnDef done");
-    println_str("[lower_fn] Creating ItemKind::Fn...");
     let item_kind = hir_item::ItemKind::Fn(fn_def);
-    println_str("[lower_fn] ItemKind::Fn created");
-    println_str("[lower_fn] Creating Item...");
-    println_str("[lower_fn] About to call Item::new...");
-    print_str("[lower_fn] def_id.index = ");
-    println_int(def_id.index as i32);
-    print_str("[lower_fn] lookup_symbol.index = ");
-    println_int(lookup_symbol.index as i32);
 
     // Create HIR name with re-interned symbol (not AST symbol) so it resolves correctly
     let hir_name = common::SpannedSymbol {
         symbol: lookup_symbol,
         span: f.name.span,
     };
-    print_str("[lower_fn] hir_name.symbol.index = ");
-    println_int(hir_name.symbol.index as i32);
 
-    println_str("[lower_fn] Calling Item::new...");
     let item = hir_item::Item::new(
         def_id,
         hir_name,
@@ -413,10 +362,7 @@ fn lower_function_decl(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl) {
         f.vis,
         f.span,
     );
-    println_str("[lower_fn] Item::new returned");
-    println_str("[lower_fn] Adding item...");
     ctx.add_item(def_id, item);
-    println_str("[lower_fn] Done");
 }
 
 /// Lower a struct declaration.

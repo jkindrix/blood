@@ -847,8 +847,12 @@ pub fn lower_block(ctx: &mut hir_lower_ctx::LoweringCtx, block: &ast::Block) -> 
     }
 
     let expr_hir = match &block.expr {
-        &Some(ref e) => Some(Box::new(lower_expr(ctx, e.as_ref()))),
-        &None => Option::None,
+        &Some(ref e) => {
+            Some(Box::new(lower_expr(ctx, e.as_ref())))
+        }
+        &None => {
+            Option::None
+        }
     };
 
     hir_expr::Block::new(stmts_hir, expr_hir, block.span)

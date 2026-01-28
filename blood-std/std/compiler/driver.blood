@@ -228,13 +228,8 @@ impl Compiler {
     ///
     /// Runs parsing and HIR lowering to check for errors.
     pub fn check(self: &mut Compiler, source: &str) -> CheckResult {
-        println_str("[Compiler::check] Starting...");
         // Parse
-        print_str("[Compiler::check] source len = ");
-        println_int(source.len() as i32);
-        println_str("[Compiler::check] Calling parser::parse_file...");
         let parse_result = parser::parse_file(source);
-        println_str("[Compiler::check] Parse complete");
         if parse_result.errors.len() > 0 {
             let errors = convert_parse_errors(&parse_result.errors);
             return CheckResult {
@@ -676,9 +671,7 @@ pub fn compile(source: &str) -> CompileResult {
 
 /// Checks source code without generating code.
 pub fn check(source: &str) -> CheckResult {
-    println_str("[driver::check] Creating compiler...");
     let mut compiler = Compiler::new();
-    println_str("[driver::check] Compiler created, calling check...");
     compiler.check(source)
 }
 
