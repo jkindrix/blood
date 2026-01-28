@@ -54,74 +54,6 @@ impl CodegenResult {
     }
 }
 
-/// Generates LLVM IR for a single MIR body (function).
-pub fn generate_function(
-    body: &mir_body::MirBody,
-    fn_name: &str,
-) -> String {
-    let mut ctx = codegen_ctx::CodegenCtx::new();
-    ctx.begin_function(common::make_string(fn_name));
-
-    // Build parameter list
-    let mut params: Vec<(String, String)> = Vec::new();
-    let mut i: usize = 0;
-    while i < body.arg_count as usize {
-        if i < body.locals.len() {
-            let local = &body.locals[i];
-            let ty = codegen_types::type_to_llvm(&local.ty);
-            let mut arg_name = common::make_string("%arg");
-            let idx_str = codegen_types::format_u64(i as u64);
-            arg_name.push_str(idx_str.as_str());
-            params.push((ty, arg_name));
-        }
-        i = i + 1;
-    }
-
-    // Get return type (local _0)
-    let ret_ty = if body.locals.len() > 0 {
-        codegen_types::type_to_llvm(&body.locals[0].ty)
-    } else {
-        common::make_string("void")
-    };
-
-    // Emit function header
-    ctx.emit_fn_header(fn_name, &params, ret_ty.as_str());
-
-    // Emit entry label
-    ctx.write("entry:\n");
-
-    // Emit allocas for all locals
-    codegen_stmt::emit_allocas(&mut ctx, body);
-
-    // Store arguments into allocas
-    codegen_stmt::emit_arg_stores(&mut ctx, body);
-
-    // Jump to first basic block if there are any
-    if body.basic_blocks.len() > 0 {
-        let first_label = ctx.block_label(mir_def::BasicBlockId::new(0));
-        ctx.indent();
-        ctx.emit_br(first_label.as_str());
-        ctx.dedent();
-    } else {
-        ctx.indent();
-        ctx.emit_unreachable();
-        ctx.dedent();
-    }
-
-    // Emit all basic blocks
-    let mut block_idx: usize = 0;
-    while block_idx < body.basic_blocks.len() {
-        let block_id = mir_def::BasicBlockId::new(block_idx as u32);
-        codegen_term::emit_basic_block(&mut ctx, block_id, &body.basic_blocks[block_idx]);
-        block_idx = block_idx + 1;
-    }
-
-    ctx.emit_fn_footer();
-    ctx.end_function();
-
-    ctx.output
-}
-
 /// Generates LLVM IR for a module with multiple functions.
 pub fn generate_module(
     module_name: &str,
@@ -270,11 +202,6 @@ pub fn generate_constant_function(name: &str, value: i64) -> String {
     output.push_str(val_str.as_str());
     output.push_str("\n}\n");
     output
-}
-
-/// Generates LLVM IR for a main function that returns a value.
-pub fn generate_main(body: &mir_body::MirBody) -> String {
-    generate_function(body, "main")
 }
 
 // ============================================================

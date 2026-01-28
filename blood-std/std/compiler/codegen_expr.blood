@@ -289,8 +289,10 @@ pub fn emit_rvalue(
             // Get typed operands
             let (left_val, left_ty) = emit_operand_typed(ctx, left);
             let (right_val, _right_ty) = emit_operand_typed(ctx, right);
+            // Determine signedness from the left operand's type
+            let is_signed = operand_is_signed(ctx, left);
             // Use the left operand's type for the binary operation
-            let result = emit_binop_typed(ctx, bin_op, &left_val, &right_val, left_ty.as_str());
+            let result = emit_binop_typed(ctx, bin_op, &left_val, &right_val, left_ty.as_str(), is_signed);
             // For comparison operations, result is i1 (bool)
             if bin_op.is_comparison() {
                 ctx.emit_store("i1", result.as_str(), dest);
@@ -496,24 +498,27 @@ fn string_eq_str(s: &str, other: &str) -> bool {
 }
 
 /// Emits a binary operation, returning the result value.
-/// Uses i64 as the default type (legacy behavior).
+/// Uses i64 as the default type and assumes signed (legacy behavior).
 fn emit_binop(
     ctx: &mut codegen_ctx::CodegenCtx,
     bin_op: &mir_types::MirBinOp,
     left: &String,
     right: &String,
 ) -> String {
-    emit_binop_typed(ctx, bin_op, left, right, "i64")
+    emit_binop_typed(ctx, bin_op, left, right, "i64", true)
 }
 
 /// Emits a binary operation with explicit type, returning the result value.
 /// Handles both integer and floating-point operations based on the type.
+/// The `signed` parameter indicates whether the operands are signed integers
+/// (used for choosing sdiv vs udiv, srem vs urem, slt vs ult, etc.).
 pub fn emit_binop_typed(
     ctx: &mut codegen_ctx::CodegenCtx,
     bin_op: &mir_types::MirBinOp,
     left: &String,
     right: &String,
     llvm_ty: &str,
+    signed: bool,
 ) -> String {
     let result = ctx.fresh_temp();
     let l = left.as_str();
@@ -565,9 +570,8 @@ pub fn emit_binop_typed(
             &mir_types::MirBinOp::MulChecked => ctx.emit_binop(res, "fmul", llvm_ty, l, r),
         }
     } else {
-        // Integer operations (original behavior but with correct type)
-        // Check for unsigned types for division/comparison
-        let is_unsigned = string_starts_with(llvm_ty, "i") && !is_signed_int_type(llvm_ty);
+        // Integer operations with correct signedness
+        let is_unsigned = !signed;
 
         match bin_op {
             &mir_types::MirBinOp::Add => ctx.emit_binop(res, "add", llvm_ty, l, r),
@@ -630,13 +634,25 @@ pub fn emit_binop_typed(
             }
             // Checked operations - use LLVM overflow intrinsics and trap on overflow
             &mir_types::MirBinOp::AddChecked => {
-                emit_checked_binop(ctx, res, "sadd", llvm_ty, l, r);
+                if is_unsigned {
+                    emit_checked_binop(ctx, res, "uadd", llvm_ty, l, r);
+                } else {
+                    emit_checked_binop(ctx, res, "sadd", llvm_ty, l, r);
+                }
             }
             &mir_types::MirBinOp::SubChecked => {
-                emit_checked_binop(ctx, res, "ssub", llvm_ty, l, r);
+                if is_unsigned {
+                    emit_checked_binop(ctx, res, "usub", llvm_ty, l, r);
+                } else {
+                    emit_checked_binop(ctx, res, "ssub", llvm_ty, l, r);
+                }
             }
             &mir_types::MirBinOp::MulChecked => {
-                emit_checked_binop(ctx, res, "smul", llvm_ty, l, r);
+                if is_unsigned {
+                    emit_checked_binop(ctx, res, "umul", llvm_ty, l, r);
+                } else {
+                    emit_checked_binop(ctx, res, "smul", llvm_ty, l, r);
+                }
             }
         }
     }
@@ -739,13 +755,23 @@ fn string_starts_with(s: &str, prefix: &str) -> bool {
     true
 }
 
-/// Checks if a type is a signed integer type (heuristic based on LLVM type name).
-/// In practice, we'd need to track this through type info, but for codegen we use
-/// the fact that unsigned types are tracked separately.
-fn is_signed_int_type(_llvm_ty: &str) -> bool {
-    // Default to signed for integer types - proper tracking requires type metadata
-    // The correct behavior is to use the HIR type info to determine signedness
-    true
+/// Determines whether an operand is signed, using local signedness tracking
+/// for Copy/Move operands and HIR type info for constants.
+fn operand_is_signed(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    operand: &mir_types::Operand,
+) -> bool {
+    match operand {
+        &mir_types::Operand::Copy(ref place) => {
+            ctx.is_local_signed(place.local)
+        }
+        &mir_types::Operand::Move(ref place) => {
+            ctx.is_local_signed(place.local)
+        }
+        &mir_types::Operand::Constant(ref constant) => {
+            codegen_types::is_signed(&constant.ty)
+        }
+    }
 }
 
 /// Emits a unary operation, returning the result value.

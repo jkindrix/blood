@@ -184,34 +184,35 @@ pub fn emit_allocas(
         let ty = codegen_types::type_to_llvm(&local.ty);
         ctx.emit_alloca(name.as_str(), ty.as_str());
         ctx.register_local(local_id, clone_string(&name));
-        // Also register the type for this local
+        // Also register the type and signedness for this local
         ctx.register_local_type(local_id, clone_string(&ty));
+        ctx.register_local_signedness(local_id, codegen_types::is_signed(&local.ty));
         i = i + 1;
     }
     ctx.dedent();
 }
 
 /// Stores function arguments into their allocas.
+/// Parameters are locals[1..1+param_count], mapped to LLVM args %arg0, %arg1, etc.
 pub fn emit_arg_stores(
     ctx: &mut codegen_ctx::CodegenCtx,
     body: &mir_body::MirBody,
 ) {
     ctx.indent();
-    let mut i: usize = 0;
-    while i < body.arg_count as usize {
-        if i < body.locals.len() {
-            let local = &body.locals[i];
-            let local_id = mir_def::MirLocalId::new(i as u32);
-            let alloca_name = ctx.local_alloca_name(local_id);
-            let ty = codegen_types::type_to_llvm(&local.ty);
+    let mut i: usize = 1;
+    let param_end: usize = 1usize + (body.param_count as usize);
+    while i < param_end && i < body.locals.len() {
+        let local = &body.locals[i];
+        let local_id = mir_def::MirLocalId::new(i as u32);
+        let alloca_name = ctx.local_alloca_name(local_id);
+        let ty = codegen_types::type_to_llvm(&local.ty);
 
-            // Argument name is %arg0, %arg1, etc.
-            let mut arg_name = common::make_string("%arg");
-            let idx_str = codegen_types::format_u64(i as u64);
-            arg_name.push_str(idx_str.as_str());
+        // Argument name is %arg0, %arg1, etc. (i-1 because params start at local index 1)
+        let mut arg_name = common::make_string("%arg");
+        let idx_str = codegen_types::format_u64((i - 1) as u64);
+        arg_name.push_str(idx_str.as_str());
 
-            ctx.emit_store(ty.as_str(), arg_name.as_str(), alloca_name.as_str());
-        }
+        ctx.emit_store(ty.as_str(), arg_name.as_str(), alloca_name.as_str());
         i = i + 1;
     }
     ctx.dedent();

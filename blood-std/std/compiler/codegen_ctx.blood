@@ -31,6 +31,8 @@ pub struct CodegenCtx {
     local_names: Vec<LocalName>,
     /// Mapping from MIR locals to their LLVM type strings.
     local_types: Vec<LocalType>,
+    /// Mapping from MIR locals to their signedness (true = signed).
+    local_signedness: Vec<LocalSignedness>,
     /// The current function being generated.
     current_fn: Option<String>,
     /// String constants table for global string literals.
@@ -45,6 +47,12 @@ pub struct CodegenCtx {
 struct LocalType {
     local_id: u32,
     llvm_type: String,
+}
+
+/// Mapping from a MIR local to its signedness.
+struct LocalSignedness {
+    local_id: u32,
+    is_signed: bool,
 }
 
 /// Entry in the string constant table.
@@ -86,6 +94,7 @@ impl CodegenCtx {
             label_counter: 0,
             local_names: Vec::new(),
             local_types: Vec::new(),
+            local_signedness: Vec::new(),
             current_fn: Option::None,
             string_table: Vec::new(),
             string_counter: 0,
@@ -102,6 +111,7 @@ impl CodegenCtx {
             label_counter: 0,
             local_names: Vec::new(),
             local_types: Vec::new(),
+            local_signedness: Vec::new(),
             current_fn: Option::None,
             string_table: Vec::new(),
             string_counter: 0,
@@ -134,6 +144,7 @@ impl CodegenCtx {
         self.label_counter = 0;
         self.local_names = Vec::new();
         self.local_types = Vec::new();
+        self.local_signedness = Vec::new();
         self.current_fn = Option::None;
         // Note: string_table and def_names are preserved
     }
@@ -255,10 +266,32 @@ impl CodegenCtx {
         common::make_string("i64")
     }
 
-    /// Clears all local names and types (for reuse between functions).
+    /// Registers a local with its signedness (true = signed, false = unsigned).
+    pub fn register_local_signedness(self: &mut CodegenCtx, local: mir_def::MirLocalId, is_signed: bool) {
+        self.local_signedness.push(LocalSignedness {
+            local_id: local.index,
+            is_signed: is_signed,
+        });
+    }
+
+    /// Returns whether a local is signed. Defaults to true if not found.
+    pub fn is_local_signed(self: &CodegenCtx, local: mir_def::MirLocalId) -> bool {
+        let mut i: usize = 0;
+        while i < self.local_signedness.len() {
+            if self.local_signedness[i].local_id == local.index {
+                return self.local_signedness[i].is_signed;
+            }
+            i = i + 1;
+        }
+        // Default to signed if not found
+        true
+    }
+
+    /// Clears all local names, types, and signedness (for reuse between functions).
     pub fn clear_locals(self: &mut CodegenCtx) {
         self.local_names.clear();
         self.local_types.clear();
+        self.local_signedness.clear();
     }
 
     /// Generates the name for a MIR local alloca.
