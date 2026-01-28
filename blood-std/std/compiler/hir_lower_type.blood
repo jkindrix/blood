@@ -536,18 +536,9 @@ fn lower_effect_ref(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> Opt
 
 /// Lower AST type parameters to HIR generics.
 pub fn lower_generics(ctx: &mut hir_lower_ctx::LoweringCtx, type_params: &Option<ast::TypeParams>, where_clause: &Option<ast::WhereClause>) -> hir_ty::Generics {
-    println_str("[lower_generics] Starting...");
     let mut params: Vec<hir_ty::GenericParam> = Vec::new();
-    println_str("[lower_generics] Created params vec");
     let mut where_predicates: Vec<hir_ty::WherePredicate> = Vec::new();
-    println_str("[lower_generics] Created where_predicates vec");
 
-    println_str("[lower_generics] Matching type_params...");
-    println_str("[lower_generics] About to check is_some on type_params...");
-    let tp_is_some = type_params.is_some();
-    print_str("[lower_generics] type_params.is_some() = ");
-    if tp_is_some { println_str("true"); } else { println_str("false"); }
-    println_str("[lower_generics] Starting match...");
     match type_params {
         &Some(ref tp) => {
             let mut i: usize = 0;
@@ -609,35 +600,16 @@ pub fn lower_generics(ctx: &mut hir_lower_ctx::LoweringCtx, type_params: &Option
                 i = i + 1;
             }
         }
-        &None => {
-            println_str("[lower_generics] type_params is None");
-        }
+        &None => {}
     }
-    println_str("[lower_generics] After type_params match");
 
     // Lower explicit where clause predicates
-    println_str("[lower_generics] Matching where_clause...");
-    println_str("[lower_generics] Checking is_some...");
-    let is_some = where_clause.is_some();
-    print_str("[lower_generics] is_some = ");
-    if is_some { println_str("true"); } else { println_str("false"); }
-    if is_some {
-        println_str("[lower_generics] where_clause is Some, getting wc...");
+    if where_clause.is_some() {
         let wc = where_clause.as_ref().unwrap();
         let pred_len = wc.predicates.len();
-        print_str("[lower_generics] wc.predicates.len() = ");
-        println_int(pred_len as i32);
-        println_str("[lower_generics] About to enter loop block...");
         {
-            println_str("[lower_generics] Inside loop block");
             let mut i: usize = 0;
-            print_str("[lower_generics] i = ");
-            println_int(i as i32);
-            print_str("[lower_generics] pred_len = ");
-            println_int(pred_len as i32);
-            println_str("[lower_generics] About to check i < pred_len...");
             while i < pred_len {
-                println_str("[lower_generics] Inside while loop");
                 match &wc.predicates[i] {
                     &ast::WherePredicate::TypeBound { ref ty, ref bounds, span } => {
                         let lowered_ty = lower_type(ctx, ty);
@@ -671,13 +643,8 @@ pub fn lower_generics(ctx: &mut hir_lower_ctx::LoweringCtx, type_params: &Option
                 }
                 i = i + 1;
             }
-            println_str("[lower_generics] After loop");
         }
-        println_str("[lower_generics] After block");
-    } else {
-        println_str("[lower_generics] where_clause is None");
     }
-    println_str("[lower_generics] Creating result...");
 
     hir_ty::Generics { params, where_predicates }
 }
