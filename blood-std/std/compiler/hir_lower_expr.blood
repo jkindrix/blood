@@ -409,6 +409,18 @@ fn lower_path_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprPath, s
             let result = lookup.unwrap();
             let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
 
+            // Check if this is a local variable binding (parameter, let, etc.)
+            // Local bindings must produce ExprKind::Local, not ExprKind::Path,
+            // because their def_id is a dummy value (0xFFFFFFFF).
+            if binding.is_local() {
+                let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+                return hir_expr::Expr::new(
+                    hir_expr::ExprKind::Local(binding.local_id),
+                    ty,
+                    span,
+                );
+            }
+
             // Lower type arguments if present
             let type_args = match &seg.args {
                 &Some(ref args) => hir_lower_type::lower_type_args(ctx, args),
@@ -1039,6 +1051,18 @@ pub fn lower_pattern(ctx: &mut hir_lower_ctx::LoweringCtx, pattern: &ast::Patter
                 symbol: re_interned_symbol,
                 span: name.span,
             };
+
+            // Add this binding to the body_locals accumulator so it gets
+            // included in the Body's locals Vec. Without this, the type
+            // checker cannot find the local's type.
+            let body_local = hir_expr::Local::new(
+                local_id,
+                hir_name,
+                hir_ty::copy_type(&ty),
+                is_mut,
+                span,
+            );
+            ctx.body_locals.push(body_local);
 
             hir_expr::PatternKind::Binding {
                 local_id: local_id,

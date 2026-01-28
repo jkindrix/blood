@@ -369,6 +369,16 @@ impl Unifier {
         }
     }
 
+    /// Creates a new Unifier with the type variable counter starting at the given value.
+    /// This avoids TyVarId collisions with HIR-allocated inference variables.
+    pub fn new_from(start_ty_var: u32) -> Unifier {
+        Unifier {
+            next_ty_var: start_ty_var,
+            next_effect_var: 0,
+            next_record_var: 0,
+        }
+    }
+
     /// Generates a fresh type variable.
     pub fn fresh_ty_var(self: &mut Self) -> hir_def::TyVarId {
         let id = hir_def::TyVarId::new(self.next_ty_var);
@@ -393,6 +403,16 @@ impl Unifier {
     /// Creates a fresh inference type.
     pub fn fresh_infer(self: &mut Self) -> hir_ty::Type {
         hir_ty::Type::infer(self.fresh_ty_var())
+    }
+}
+
+/// Creates a copy of a Unifier.
+/// Needed to work around blood-rust BUG-003 (&mut field_of_ref mutations are lost).
+pub fn clone_unifier(u: &Unifier) -> Unifier {
+    Unifier {
+        next_ty_var: u.next_ty_var,
+        next_effect_var: u.next_effect_var,
+        next_record_var: u.next_record_var,
     }
 }
 
@@ -422,6 +442,57 @@ impl SubstTable {
             record_substs: Vec::new(),
         }
     }
+}
+
+/// Creates a deep clone of a SubstTable.
+///
+/// This is needed to pass a copy of the substitution table from type checking
+/// to each MIR lowering context, so that inference variables can be resolved
+/// to concrete types during MIR construction.
+pub fn clone_subst_table(table: &SubstTable) -> SubstTable {
+    let mut new_table = SubstTable::new();
+
+    // Clone type substitutions
+    let mut i: usize = 0;
+    while i < table.ty_substs.len() {
+        new_table.ty_substs.push(TySubst::new(
+            table.ty_substs[i].var_id,
+            hir_ty::copy_type(&table.ty_substs[i].ty),
+        ));
+        i = i + 1;
+    }
+
+    // Clone effect row substitutions
+    let mut i: usize = 0;
+    while i < table.effect_substs.len() {
+        new_table.effect_substs.push(EffectRowSubst::new(
+            table.effect_substs[i].var_id,
+            hir_ty::copy_effect_row(&table.effect_substs[i].row),
+        ));
+        i = i + 1;
+    }
+
+    // Clone record row substitutions
+    let mut i: usize = 0;
+    while i < table.record_substs.len() {
+        let mut fields: Vec<hir_ty::RecordField> = Vec::new();
+        let mut j: usize = 0;
+        while j < table.record_substs[i].fields.len() {
+            fields.push(hir_ty::RecordField::new(
+                table.record_substs[i].fields[j].name,
+                hir_ty::copy_type(&table.record_substs[i].fields[j].ty),
+            ));
+            j = j + 1;
+        }
+        new_table.record_substs.push(RecordRowSubst::new(
+            table.record_substs[i].var_id,
+            fields,
+            table.record_substs[i].rest,
+        ));
+        i = i + 1;
+    }
+
+    new_table
 }
 
 // ============================================================

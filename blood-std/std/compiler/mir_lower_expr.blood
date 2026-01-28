@@ -66,48 +66,52 @@ pub fn lower_expr(
     expr: &hir_expr::Expr,
     dest: mir_lower_ctx::Destination,
 ) {
+    // Resolve the expression's type through the substitution table
+    // so all sub-functions receive concrete types instead of TypeKind::Infer
+    let resolved_ty = ctx.resolve_type(&expr.ty);
+
     match &expr.kind {
         &hir_expr::ExprKind::Literal(ref lit) => {
-            lower_literal_expr(ctx, lit, &expr.ty, dest, expr.span);
+            lower_literal_expr(ctx, lit, &resolved_ty, dest, expr.span);
         }
         &hir_expr::ExprKind::Local(local_id) => {
-            lower_local_expr(ctx, local_id, &expr.ty, dest, expr.span);
+            lower_local_expr(ctx, local_id, &resolved_ty, dest, expr.span);
         }
         &hir_expr::ExprKind::Path(ref path) => {
-            lower_path_expr(ctx, path, &expr.ty, dest, expr.span);
+            lower_path_expr(ctx, path, &resolved_ty, dest, expr.span);
         }
         &hir_expr::ExprKind::Binary { op: the_op, ref left, ref right } => {
-            lower_binary_expr(ctx, the_op, left.as_ref(), right.as_ref(), &expr.ty, dest, expr.span);
+            lower_binary_expr(ctx, the_op, left.as_ref(), right.as_ref(), &resolved_ty, dest, expr.span);
         }
         &hir_expr::ExprKind::Unary { op: the_op, ref operand } => {
-            lower_unary_expr(ctx, the_op, operand.as_ref(), &expr.ty, dest, expr.span);
+            lower_unary_expr(ctx, the_op, operand.as_ref(), &resolved_ty, dest, expr.span);
         }
         &hir_expr::ExprKind::Call { ref callee, ref args } => {
-            lower_call_expr(ctx, callee.as_ref(), args, &expr.ty, dest, expr.span);
+            lower_call_expr(ctx, callee.as_ref(), args, &resolved_ty, dest, expr.span);
         }
         &hir_expr::ExprKind::MethodCall { ref receiver, ref method, method_def, ref type_args, ref args } => {
-            lower_method_call_expr(ctx, receiver.as_ref(), method, method_def, type_args, args, &expr.ty, dest, expr.span);
+            lower_method_call_expr(ctx, receiver.as_ref(), method, method_def, type_args, args, &resolved_ty, dest, expr.span);
         }
         &hir_expr::ExprKind::Field { ref base, ref field } => {
-            lower_field_expr(ctx, base.as_ref(), field, &expr.ty, dest, expr.span);
+            lower_field_expr(ctx, base.as_ref(), field, &resolved_ty, dest, expr.span);
         }
         &hir_expr::ExprKind::Index { ref base, ref idx } => {
-            lower_index_expr(ctx, base.as_ref(), idx.as_ref(), &expr.ty, dest, expr.span);
+            lower_index_expr(ctx, base.as_ref(), idx.as_ref(), &resolved_ty, dest, expr.span);
         }
         &hir_expr::ExprKind::Tuple(ref elems) => {
-            lower_tuple_expr(ctx, elems, &expr.ty, dest, expr.span);
+            lower_tuple_expr(ctx, elems, &resolved_ty, dest, expr.span);
         }
         &hir_expr::ExprKind::Array(ref arr) => {
-            lower_array_expr(ctx, arr, &expr.ty, dest, expr.span);
+            lower_array_expr(ctx, arr, &resolved_ty, dest, expr.span);
         }
         &hir_expr::ExprKind::Struct { ref path, ref fields, ref base } => {
-            lower_struct_expr(ctx, path, fields, base, &expr.ty, dest, expr.span);
+            lower_struct_expr(ctx, path, fields, base, &resolved_ty, dest, expr.span);
         }
         &hir_expr::ExprKind::AnonRecord { ref fields } => {
-            lower_anon_record_expr(ctx, fields, &expr.ty, dest, expr.span);
+            lower_anon_record_expr(ctx, fields, &resolved_ty, dest, expr.span);
         }
         &hir_expr::ExprKind::Range { ref start, ref end_val, inclusive } => {
-            lower_range_expr(ctx, start, end_val, inclusive, &expr.ty, dest, expr.span);
+            lower_range_expr(ctx, start, end_val, inclusive, &resolved_ty, dest, expr.span);
         }
         &hir_expr::ExprKind::Cast { expr: ref inner, ty: ref cast_ty } => {
             lower_cast_expr(ctx, inner.as_ref(), cast_ty, dest, expr.span);
@@ -116,22 +120,22 @@ pub fn lower_expr(
             lower_assign_expr(ctx, target.as_ref(), val.as_ref(), dest, expr.span);
         }
         &hir_expr::ExprKind::AssignOp { op: the_op, ref target, ref val } => {
-            lower_assign_op_expr(ctx, the_op, target.as_ref(), val.as_ref(), &expr.ty, dest, expr.span);
+            lower_assign_op_expr(ctx, the_op, target.as_ref(), val.as_ref(), &resolved_ty, dest, expr.span);
         }
         &hir_expr::ExprKind::AddrOf { mutable, expr: ref inner } => {
-            lower_addr_of_expr(ctx, mutable, inner.as_ref(), &expr.ty, dest, expr.span);
+            lower_addr_of_expr(ctx, mutable, inner.as_ref(), &resolved_ty, dest, expr.span);
         }
         &hir_expr::ExprKind::Block(ref block) => {
             lower_block_expr(ctx, block, dest, expr.span);
         }
         &hir_expr::ExprKind::If { ref condition, ref then_branch, ref else_branch } => {
-            lower_if_expr(ctx, condition.as_ref(), then_branch.as_ref(), else_branch, &expr.ty, dest, expr.span);
+            lower_if_expr(ctx, condition.as_ref(), then_branch.as_ref(), else_branch, &resolved_ty, dest, expr.span);
         }
         &hir_expr::ExprKind::Match { ref scrutinee, ref arms } => {
-            lower_match_expr(ctx, scrutinee.as_ref(), arms, &expr.ty, dest, expr.span);
+            lower_match_expr(ctx, scrutinee.as_ref(), arms, &resolved_ty, dest, expr.span);
         }
         &hir_expr::ExprKind::Loop { ref label, ref body } => {
-            lower_loop_expr(ctx, label, body.as_ref(), &expr.ty, dest, expr.span);
+            lower_loop_expr(ctx, label, body.as_ref(), &resolved_ty, dest, expr.span);
         }
         &hir_expr::ExprKind::Return(ref val) => {
             lower_return_expr(ctx, val, expr.span);
@@ -143,19 +147,19 @@ pub fn lower_expr(
             lower_continue_expr(ctx, label, expr.span);
         }
         &hir_expr::ExprKind::Closure { ref captures, ref params, ref return_ty, ref body, body_id } => {
-            lower_closure_expr(ctx, captures, params, return_ty, body.as_ref(), body_id, &expr.ty, dest, expr.span);
+            lower_closure_expr(ctx, captures, params, return_ty, body.as_ref(), body_id, &resolved_ty, dest, expr.span);
         }
         &hir_expr::ExprKind::WithHandle { ref handler, ref body } => {
-            lower_with_handle_expr(ctx, handler.as_ref(), body.as_ref(), &expr.ty, dest, expr.span);
+            lower_with_handle_expr(ctx, handler.as_ref(), body.as_ref(), &resolved_ty, dest, expr.span);
         }
         &hir_expr::ExprKind::Perform { effect_def, op_def, ref args } => {
-            lower_perform_expr(ctx, effect_def, op_def, args, &expr.ty, dest, expr.span);
+            lower_perform_expr(ctx, effect_def, op_def, args, &resolved_ty, dest, expr.span);
         }
         &hir_expr::ExprKind::Resume(ref val) => {
-            lower_resume_expr(ctx, val.as_ref(), &expr.ty, dest, expr.span);
+            lower_resume_expr(ctx, val.as_ref(), &resolved_ty, dest, expr.span);
         }
         &hir_expr::ExprKind::Try(ref inner) => {
-            lower_try_expr(ctx, inner.as_ref(), &expr.ty, dest, expr.span);
+            lower_try_expr(ctx, inner.as_ref(), &resolved_ty, dest, expr.span);
         }
         &hir_expr::ExprKind::Unsafe(ref inner) => {
             // Unsafe blocks are transparent in MIR
@@ -168,7 +172,7 @@ pub fn lower_expr(
                 Option::Some(place) => {
                     ctx.emit_assign(
                         place,
-                        mir_types::Rvalue::ZeroInit(expr.ty.clone()),
+                        mir_types::Rvalue::ZeroInit(resolved_ty),
                         expr.span,
                     );
                 }
@@ -181,7 +185,7 @@ pub fn lower_expr(
                 Option::Some(place) => {
                     ctx.emit_assign(
                         place,
-                        mir_types::Rvalue::ZeroInit(expr.ty.clone()),
+                        mir_types::Rvalue::ZeroInit(ctx.resolve_type(&expr.ty)),
                         expr.span,
                     );
                 }

@@ -13,6 +13,7 @@ mod mir_types;
 mod mir_stmt;
 mod mir_term;
 mod mir_body;
+mod unify;
 
 // ============================================================
 // MIR Lowering Context
@@ -31,6 +32,9 @@ pub struct MirLowerCtx {
     temp_counter: u32,
     /// Tracks moved places for use-after-move detection.
     pub move_tracker: MoveTracker,
+    /// Substitution table from type inference.
+    /// Used to resolve TypeKind::Infer variables to concrete types.
+    pub subst_table: unify::SubstTable,
 }
 
 /// Mapping from an HIR local to a MIR local.
@@ -45,6 +49,7 @@ impl MirLowerCtx {
         def_id: hir_def::DefId,
         return_ty: hir_ty::Type,
         span: common::Span,
+        subst_table: unify::SubstTable,
     ) -> MirLowerCtx {
         MirLowerCtx {
             builder: mir_body::MirBodyBuilder::new(def_id, return_ty, span),
@@ -52,6 +57,7 @@ impl MirLowerCtx {
             loop_stack: Vec::new(),
             temp_counter: 0,
             move_tracker: MoveTracker::new(),
+            subst_table: subst_table,
         }
     }
 
@@ -77,13 +83,22 @@ impl MirLowerCtx {
         Option::None
     }
 
+    /// Resolves type inference variables to concrete types using the substitution table.
+    /// This must be called on all types from HIR before they are used in MIR construction.
+    pub fn resolve_type(self: &Self, ty: &hir_ty::Type) -> hir_ty::Type {
+        unify::apply_substs(&self.subst_table, ty)
+    }
+
     /// Creates a new temporary and returns its ID.
+    /// The type is automatically resolved through the substitution table.
     pub fn new_temp(self: &mut MirLowerCtx, ty: hir_ty::Type, span: common::Span) -> mir_def::MirLocalId {
         self.temp_counter = self.temp_counter + 1;
-        self.builder.new_temp(ty, span)
+        let resolved = unify::apply_substs(&self.subst_table, &ty);
+        self.builder.new_temp(resolved, span)
     }
 
     /// Creates a new user variable and returns its ID.
+    /// The type is automatically resolved through the substitution table.
     pub fn new_var(
         self: &mut MirLowerCtx,
         ty: hir_ty::Type,
@@ -91,7 +106,8 @@ impl MirLowerCtx {
         mutable: bool,
         span: common::Span,
     ) -> mir_def::MirLocalId {
-        self.builder.new_var(ty, name, mutable, span)
+        let resolved = unify::apply_substs(&self.subst_table, &ty);
+        self.builder.new_var(resolved, name, mutable, span)
     }
 
     // ======== Block Management ========

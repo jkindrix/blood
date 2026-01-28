@@ -32,6 +32,10 @@ pub struct LowerResult {
     pub item_index: Vec<Option<usize>>,
     /// Lowered bodies (available when successful).
     pub bodies: Vec<BodyEntry>,
+    /// The next type variable ID after HIR lowering.
+    /// The type checker must start its counter at this value to avoid
+    /// TyVarId collisions with HIR-allocated inference variables.
+    pub next_ty_var: u32,
 }
 
 impl LowerResult {
@@ -41,6 +45,7 @@ impl LowerResult {
         items: Vec<ItemEntry>,
         item_index: Vec<Option<usize>>,
         bodies: Vec<BodyEntry>,
+        next_ty_var: u32,
     ) -> LowerResult {
         LowerResult {
             crate_data: Option::Some(crate_data),
@@ -48,6 +53,7 @@ impl LowerResult {
             items: items,
             item_index: item_index,
             bodies: bodies,
+            next_ty_var: next_ty_var,
         }
     }
 
@@ -59,6 +65,7 @@ impl LowerResult {
             items: Vec::new(),
             item_index: Vec::new(),
             bodies: Vec::new(),
+            next_ty_var: 0,
         }
     }
 
@@ -70,6 +77,7 @@ impl LowerResult {
             items: Vec::new(),
             item_index: Vec::new(),
             bodies: Vec::new(),
+            next_ty_var: 0,
         }
     }
 
@@ -148,6 +156,10 @@ pub struct LoweringCtx {
     pub loaded_modules: Vec<LoadedModule>,
     /// Source text for resolving span-based symbols.
     pub source: String,
+    /// Accumulated body locals from let-binding patterns during body lowering.
+    /// This is populated by lower_pattern when it creates binding patterns,
+    /// and drained by lower_fn_body to add them to the Body's locals Vec.
+    pub body_locals: Vec<hir_expr::Local>,
 }
 
 /// Tracks a loaded external module to prevent circular imports.
@@ -211,6 +223,7 @@ impl LoweringCtx {
             base_dir: common::make_string("."),
             loaded_modules: Vec::new(),
             source: source,
+            body_locals: Vec::new(),
         }
     }
 
@@ -233,6 +246,7 @@ impl LoweringCtx {
             base_dir: base_dir,
             loaded_modules: Vec::new(),
             source: source,
+            body_locals: Vec::new(),
         }
     }
 

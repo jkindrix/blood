@@ -33,22 +33,27 @@ pub struct TypeCheckResult {
     pub success: bool,
     /// Type errors encountered.
     pub errors: Vec<typeck::TypeError>,
+    /// The substitution table from type inference.
+    /// Contains resolved type variables that must be applied during MIR lowering.
+    pub subst_table: unify::SubstTable,
 }
 
 impl TypeCheckResult {
-    /// Creates a successful result.
-    pub fn ok() -> TypeCheckResult {
+    /// Creates a successful result with a substitution table.
+    pub fn ok(subst_table: unify::SubstTable) -> TypeCheckResult {
         TypeCheckResult {
             success: true,
             errors: Vec::new(),
+            subst_table: subst_table,
         }
     }
 
-    /// Creates a failed result with errors.
-    pub fn failed(errors: Vec<typeck::TypeError>) -> TypeCheckResult {
+    /// Creates a failed result with errors and a substitution table.
+    pub fn failed(errors: Vec<typeck::TypeError>, subst_table: unify::SubstTable) -> TypeCheckResult {
         TypeCheckResult {
             success: false,
             errors: errors,
+            subst_table: subst_table,
         }
     }
 
@@ -80,16 +85,17 @@ pub fn check_types(ctx: &hir_lower_ctx::LoweringCtx) -> TypeCheckResult {
     // Phase 2: Type check all function bodies
     let mut i: usize = 0;
     while i < ctx.bodies.len() {
-        check_body(&mut checker, &ctx.bodies[i].body);
+        let body_entry = &ctx.bodies[i];
+        let return_ty = find_return_type_for_body(&ctx.items, body_entry.body_id);
+        check_body(&mut checker, &body_entry.body, &return_ty);
         i = i + 1;
     }
 
-    // Return result
+    // Return result with substitution table for type resolution in MIR lowering
     if checker.has_errors() {
-        // Move errors from checker
-        TypeCheckResult::failed(checker.errors)
+        TypeCheckResult::failed(checker.errors, checker.subst_table)
     } else {
-        TypeCheckResult::ok()
+        TypeCheckResult::ok(checker.subst_table)
     }
 }
 
@@ -98,7 +104,9 @@ pub fn check_types(ctx: &hir_lower_ctx::LoweringCtx) -> TypeCheckResult {
 /// This is the preferred entry point when integrating with the driver,
 /// since the driver has LowerResult not LoweringCtx.
 pub fn check_lower_result(result: &hir_lower_ctx::LowerResult) -> TypeCheckResult {
-    let mut checker = typeck::TypeChecker::new();
+    // Start the type checker's TyVarId counter where HIR lowering left off
+    // to avoid collisions between HIR inference variables and type checker variables.
+    let mut checker = typeck::TypeChecker::new_from(result.next_ty_var);
 
     // Phase 1: Collect type information from items
     collect_item_signatures(&mut checker, &result.items);
@@ -106,15 +114,18 @@ pub fn check_lower_result(result: &hir_lower_ctx::LowerResult) -> TypeCheckResul
     // Phase 2: Type check all function bodies
     let mut i: usize = 0;
     while i < result.bodies.len() {
-        check_body(&mut checker, &result.bodies[i].body);
+        let body_entry = &result.bodies[i];
+        // Find the return type from the function signature for this body
+        let return_ty = find_return_type_for_body(&result.items, body_entry.body_id);
+        check_body(&mut checker, &body_entry.body, &return_ty);
         i = i + 1;
     }
 
-    // Return result
+    // Return result with substitution table for type resolution in MIR lowering
     if checker.has_errors() {
-        TypeCheckResult::failed(checker.errors)
+        TypeCheckResult::failed(checker.errors, checker.subst_table)
     } else {
-        TypeCheckResult::ok()
+        TypeCheckResult::ok(checker.subst_table)
     }
 }
 
@@ -234,11 +245,80 @@ fn register_impl(
 }
 
 // ============================================================
+// Body Return Type Lookup
+// ============================================================
+
+/// Finds the return type for a body by looking up the corresponding function item.
+///
+/// Searches the items list for a function whose body_id matches the target,
+/// and returns its signature's return type. Falls back to unit type if no
+/// matching function is found.
+fn find_return_type_for_body(
+    items: &Vec<hir_lower_ctx::ItemEntry>,
+    target_body_id: hir_def::BodyId,
+) -> hir_ty::Type {
+    let mut i: usize = 0;
+    while i < items.len() {
+        let entry = &items[i];
+        match &entry.item.kind {
+            &hir_item::ItemKind::Fn(ref fn_def) => {
+                match &fn_def.body_id {
+                    &Option::Some(ref bid) => {
+                        if bid.index == target_body_id.index {
+                            return hir_ty::copy_type(&fn_def.sig.return_ty);
+                        }
+                    }
+                    &Option::None => {}
+                }
+            }
+            &hir_item::ItemKind::Impl(ref impl_def) => {
+                // Check associated functions in impl blocks
+                let mut j: usize = 0;
+                while j < impl_def.items.len() {
+                    match &impl_def.items[j] {
+                        &hir_item::AssocItem::Fn(ref assoc_fn) => {
+                            match &assoc_fn.body_id {
+                                &Option::Some(ref bid) => {
+                                    if bid.index == target_body_id.index {
+                                        return hir_ty::copy_type(&assoc_fn.sig.return_ty);
+                                    }
+                                }
+                                &Option::None => {}
+                            }
+                        }
+                        &hir_item::AssocItem::Type(_) => {}
+                        &hir_item::AssocItem::Const(_) => {}
+                    }
+                    j = j + 1;
+                }
+            }
+            // Other item kinds don't have function bodies
+            &hir_item::ItemKind::Struct(_) => {}
+            &hir_item::ItemKind::Enum(_) => {}
+            &hir_item::ItemKind::TypeAlias(_) => {}
+            &hir_item::ItemKind::Const(_) => {}
+            &hir_item::ItemKind::Static(_) => {}
+            &hir_item::ItemKind::Trait(_) => {}
+            &hir_item::ItemKind::Effect(_) => {}
+            &hir_item::ItemKind::Handler(_) => {}
+            &hir_item::ItemKind::Module(_) => {}
+            &hir_item::ItemKind::Macro(_) => {}
+            &hir_item::ItemKind::Foreign(_) => {}
+        }
+        i = i + 1;
+    }
+    // Default to unit type if no matching function found
+    hir_ty::Type::unit()
+}
+
+// ============================================================
 // Body Type Checking
 // ============================================================
 
 /// Type checks a single function body.
-fn check_body(checker: &mut typeck::TypeChecker, body: &hir_expr::Body) {
+///
+/// The return_ty comes from the function signature (not from body locals).
+fn check_body(checker: &mut typeck::TypeChecker, body: &hir_expr::Body, return_ty: &hir_ty::Type) {
     // Clear locals for this body
     checker.clear_locals();
 
@@ -255,10 +335,8 @@ fn check_body(checker: &mut typeck::TypeChecker, body: &hir_expr::Body) {
         i = i + 1;
     }
 
-    // Set return type from the first local (local 0 is the return slot in HIR convention)
-    if body.locals.len() > 0 {
-        checker.set_return_ty(hir_ty::copy_type(&body.locals[0].ty));
-    }
+    // Set return type from the function signature
+    checker.set_return_ty(hir_ty::copy_type(return_ty));
 
     // Type check the body expression
     let body_ty = typeck_expr::infer_expr(checker, &body.expr);

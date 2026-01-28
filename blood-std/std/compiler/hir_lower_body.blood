@@ -66,6 +66,10 @@ pub fn lower_fn_body(
 
     let param_count = params.len() as u32;
 
+    // Clear the body_locals accumulator before lowering the body.
+    // During body lowering, lower_pattern will push binding locals here.
+    ctx.body_locals = Vec::new();
+
     // Lower the body expression
     let mut body_lowered = match body_expr {
         &Some(ref e) => hir_lower_expr::lower_expr(ctx, e),
@@ -91,6 +95,22 @@ pub fn lower_fn_body(
     if destructure_stmts.len() > 0 {
         body_lowered = wrap_with_destructures(body_lowered, destructure_stmts);
     }
+
+    // Merge accumulated body locals (from let-binding patterns) into the locals Vec.
+    // These were collected by lower_pattern during body expression lowering.
+    let mut bl_idx: usize = 0;
+    while bl_idx < ctx.body_locals.len() {
+        let bl = &ctx.body_locals[bl_idx];
+        locals.push(hir_expr::Local::new(
+            bl.id,
+            bl.name,
+            hir_ty::copy_type(&bl.ty),
+            bl.mutable,
+            bl.span,
+        ));
+        bl_idx = bl_idx + 1;
+    }
+    ctx.body_locals = Vec::new();
 
     // Pop the function scope
     ctx.resolver.pop_scope();

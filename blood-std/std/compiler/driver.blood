@@ -177,12 +177,13 @@ impl Compiler {
                 &Option::None => hir_def::DefId::new(body_idx as u32),
             };
 
-            // Lower the body to MIR
+            // Lower the body to MIR with substitution table for type resolution
             let mir_body = mir_lower::lower_body(
                 def_id,
                 hir_body,
                 return_ty,
                 span,
+                &typeck_result.subst_table,
             );
 
             mir_functions.push((fn_name, mir_body));
@@ -352,12 +353,13 @@ impl Compiler {
                 &Option::None => hir_def::DefId::new(body_idx as u32),
             };
 
-            // Lower the body to MIR
+            // Lower the body to MIR with substitution table for type resolution
             let mir_body = mir_lower::lower_body(
                 def_id,
                 hir_body,
                 return_ty,
                 span,
+                &typeck_result.subst_table,
             );
 
             mir_functions.push((fn_name, mir_body));

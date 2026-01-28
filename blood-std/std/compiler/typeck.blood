@@ -256,6 +256,28 @@ impl TypeChecker {
         }
     }
 
+    /// Creates a new TypeChecker with the type variable counter starting at the given value.
+    /// This avoids TyVarId collisions with HIR-allocated inference variables.
+    pub fn new_from(start_ty_var: u32) -> TypeChecker {
+        TypeChecker {
+            subst_table: unify::SubstTable::new(),
+            unifier: unify::Unifier::new_from(start_ty_var),
+            return_ty: Option::None,
+            in_loop: false,
+            loop_ty: Option::None,
+            locals: Vec::new(),
+            errors: Vec::new(),
+            fn_sigs: Vec::new(),
+            structs: Vec::new(),
+            enums: Vec::new(),
+            consts: Vec::new(),
+            statics: Vec::new(),
+            impls: Vec::new(),
+            traits: Vec::new(),
+            trait_impls: Vec::new(),
+        }
+    }
+
     /// Generates a fresh inference type variable.
     pub fn fresh_infer(self: &mut Self) -> hir_ty::Type {
         self.unifier.fresh_infer()
@@ -323,8 +345,67 @@ impl TypeChecker {
     }
 
     /// Unifies two types.
+    ///
+    /// Works around blood-rust BUG-003: mutations through `&mut field_of_ref` passed
+    /// as function arguments are lost. We clone SubstTable and Unifier to local
+    /// variables, call unify::unify with `&mut locals` (which works), then copy
+    /// new entries back via direct method calls (which also work).
     pub fn unify(self: &mut Self, a: &hir_ty::Type, b: &hir_ty::Type, span: common::Span) -> bool {
-        match unify::unify(&mut self.subst_table, &mut self.unifier, a, b, span) {
+        let original_ty_len = self.subst_table.ty_substs.len();
+        let original_effect_len = self.subst_table.effect_substs.len();
+        let original_record_len = self.subst_table.record_substs.len();
+
+        let mut local_table = unify::clone_subst_table(&self.subst_table);
+        let mut local_unifier = unify::clone_unifier(&self.unifier);
+
+        let result = unify::unify(&mut local_table, &mut local_unifier, a, b, span);
+
+        // Copy new type substitution entries back
+        let mut i: usize = original_ty_len;
+        while i < local_table.ty_substs.len() {
+            self.subst_table.add_ty_subst(
+                local_table.ty_substs[i].var_id,
+                hir_ty::copy_type(&local_table.ty_substs[i].ty),
+            );
+            i = i + 1;
+        }
+
+        // Copy new effect substitution entries back
+        let mut j: usize = original_effect_len;
+        while j < local_table.effect_substs.len() {
+            self.subst_table.add_effect_subst(
+                local_table.effect_substs[j].var_id,
+                hir_ty::copy_effect_row(&local_table.effect_substs[j].row),
+            );
+            j = j + 1;
+        }
+
+        // Copy new record substitution entries back
+        let mut k: usize = original_record_len;
+        while k < local_table.record_substs.len() {
+            let mut fields: Vec<hir_ty::RecordField> = Vec::new();
+            let mut f: usize = 0;
+            while f < local_table.record_substs[k].fields.len() {
+                fields.push(hir_ty::RecordField::new(
+                    local_table.record_substs[k].fields[f].name,
+                    hir_ty::copy_type(&local_table.record_substs[k].fields[f].ty),
+                ));
+                f = f + 1;
+            }
+            self.subst_table.add_record_subst(
+                local_table.record_substs[k].var_id,
+                fields,
+                local_table.record_substs[k].rest,
+            );
+            k = k + 1;
+        }
+
+        // Copy back unifier state
+        self.unifier.next_ty_var = local_unifier.next_ty_var;
+        self.unifier.next_effect_var = local_unifier.next_effect_var;
+        self.unifier.next_record_var = local_unifier.next_record_var;
+
+        match result {
             unify::UnifyResult::Ok => true,
             unify::UnifyResult::Err(e) => {
                 // Convert unify error to type error

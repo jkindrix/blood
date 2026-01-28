@@ -24,7 +24,7 @@ mod typeck;
 /// Infers the type of an expression.
 /// Returns the inferred type (may contain inference variables).
 pub fn infer_expr(checker: &mut typeck::TypeChecker, expr: &hir_expr::Expr) -> hir_ty::Type {
-    match &expr.kind {
+    let result = match &expr.kind {
         &hir_expr::ExprKind::Literal(ref lit) => infer_literal(checker, lit),
         &hir_expr::ExprKind::Local(id) => infer_local(checker, id, expr.span),
         &hir_expr::ExprKind::Path(ref path) => infer_path(checker, path, expr.span),
@@ -103,7 +103,17 @@ pub fn infer_expr(checker: &mut typeck::TypeChecker, expr: &hir_expr::Expr) -> h
             hir_ty::copy_type(&expr.ty)
         }
         &hir_expr::ExprKind::Error => hir_ty::Type::error(),
-    }
+    };
+
+    // Unify the inferred type with the expression's stored type variable.
+    // During HIR lowering, every expression gets a fresh Infer(TyVarId) type.
+    // The type checker computes types independently without reading expr.ty.
+    // This unification records the mapping from the HIR's type variable to
+    // the concrete inferred type in the SubstTable, so MIR lowering can
+    // resolve expression types via apply_substs.
+    checker.unify(&result, &expr.ty, expr.span);
+
+    result
 }
 
 /// Checks an expression against an expected type.
@@ -1316,9 +1326,11 @@ fn infer_stmt(checker: &mut typeck::TypeChecker, stmt: &hir_expr::Stmt) {
                 &None => {}
             }
 
-            // Add bindings from pattern
-            // For now, just handle simple patterns
-            // Full pattern type checking would be separate
+            // Unify the init type with the pattern's type variable.
+            // During HIR lowering, patterns get fresh Infer types.
+            // This ensures the pattern's type variable maps to the
+            // concrete type in the SubstTable for MIR lowering.
+            checker.unify(&init_ty, &pattern.ty, pattern.span);
         }
         &hir_expr::Stmt::Expr { ref expr, has_semi: _ } => {
             infer_expr(checker, expr);

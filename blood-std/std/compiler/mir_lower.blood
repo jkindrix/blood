@@ -17,6 +17,7 @@ mod mir_lower_ctx;
 mod mir_lower_util;
 mod mir_lower_pattern;
 mod mir_lower_expr;
+mod unify;
 
 // ============================================================
 // MIR Lowering Driver
@@ -25,15 +26,23 @@ mod mir_lower_expr;
 /// Lowers an HIR function body to MIR.
 ///
 /// This is the main entry point for MIR lowering. It takes a function's
-/// definition ID, the HIR body, and produces a complete MIR body.
+/// definition ID, the HIR body, and the substitution table from type
+/// inference, and produces a complete MIR body with resolved types.
 pub fn lower_body(
     def_id: hir_def::DefId,
     body: &hir_expr::Body,
     return_ty: hir_ty::Type,
     span: common::Span,
+    subst_table: &unify::SubstTable,
 ) -> mir_body::MirBody {
-    // Create lowering context
-    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, return_ty.clone(), span);
+    // Resolve the return type through the substitution table
+    let resolved_return = unify::apply_substs(subst_table, &return_ty);
+
+    // Clone the substitution table for this lowering context
+    let cloned_table = unify::clone_subst_table(subst_table);
+
+    // Create lowering context with the substitution table
+    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_return, span, cloned_table);
 
     // Lower parameters (first param_count locals are parameters)
     lower_params_from_body(&mut ctx, body, span);
@@ -61,10 +70,12 @@ fn lower_params_from_body(
     let mut i: u32 = 0;
     while i < body.param_count {
         let local = &body.locals[i as usize];
+        // Resolve the parameter type through the substitution table
+        let resolved_ty = ctx.resolve_type(&local.ty);
         // Create MIR local for the parameter using add_param which
         // correctly increments param_count (new_local does not).
         let mir_local = ctx.builder.add_param(
-            local.ty.clone(),
+            resolved_ty,
             String::new(),
             local.span,
         );
@@ -88,9 +99,12 @@ pub fn lower_closure(
     return_ty: hir_ty::Type,
     body_expr: &hir_expr::Expr,
     span: common::Span,
+    subst_table: &unify::SubstTable,
 ) -> mir_body::MirBody {
-    // Create lowering context
-    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, return_ty.clone(), span);
+    // Resolve return type and create lowering context with substitution table
+    let resolved_return = unify::apply_substs(subst_table, &return_ty);
+    let cloned_table = unify::clone_subst_table(subst_table);
+    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_return, span, cloned_table);
 
     // Lower closure parameters
     lower_closure_params(&mut ctx, params, span);
@@ -138,9 +152,12 @@ pub fn lower_static(
     ty: hir_ty::Type,
     init: &hir_expr::Expr,
     span: common::Span,
+    subst_table: &unify::SubstTable,
 ) -> mir_body::MirBody {
-    // Create context for the static initializer
-    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, ty, span);
+    // Resolve type and create context with substitution table
+    let resolved_ty = unify::apply_substs(subst_table, &ty);
+    let cloned_table = unify::clone_subst_table(subst_table);
+    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_ty, span, cloned_table);
 
     // Lower initializer expression
     mir_lower_expr::lower_expr_to_return(&mut ctx, init);
@@ -159,9 +176,10 @@ pub fn lower_const(
     ty: hir_ty::Type,
     init: &hir_expr::Expr,
     span: common::Span,
+    subst_table: &unify::SubstTable,
 ) -> mir_body::MirBody {
     // Constants are lowered the same way as statics
-    lower_static(def_id, ty, init, span)
+    lower_static(def_id, ty, init, span, subst_table)
 }
 
 // ============================================================
