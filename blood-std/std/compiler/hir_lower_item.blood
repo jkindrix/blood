@@ -318,7 +318,16 @@ pub fn lower_declaration(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Decla
 fn lower_function_decl(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl) {
     println_str("[lower_fn] Starting...");
     // Look up the DefId we registered (re-intern from span for consistent indices)
+    print_str("[lower_fn] span.start = ");
+    println_int(f.name.span.start as i32);
+    print_str("[lower_fn] span.end = ");
+    println_int(f.name.span.end as i32);
     let name_str = ctx.span_to_string(f.name.span);
+    print_str("[lower_fn] name_str len = ");
+    println_int(name_str.len() as i32);
+    print_str("[lower_fn] name_str = '");
+    print_str(name_str.as_str());
+    println_str("'");
     let lookup_symbol = ctx.intern(name_str.as_str());
     let lookup = ctx.resolver.lookup(lookup_symbol);
     if lookup.is_none() {
@@ -364,9 +373,19 @@ fn lower_function_decl(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl) {
     );
     println_str("[lower_fn] FnSig done");
 
-    // Create function definition (body lowered in Phase 4)
+    // Pre-allocate body_id if function has a body (actual lowering in Phase 4)
+    let body_id = if f.body.is_some() {
+        let bid = ctx.alloc_body_id();
+        print_str("[lower_fn] Pre-allocated body_id.index = ");
+        println_int(bid.index as i32);
+        Option::Some(bid)
+    } else {
+        Option::None
+    };
+
+    // Create function definition with pre-allocated body_id
     println_str("[lower_fn] Creating FnDef...");
-    let fn_def = hir_item::FnDef::new(sig, Option::None);
+    let fn_def = hir_item::FnDef::new(sig, body_id);
     println_str("[lower_fn] FnDef done");
     println_str("[lower_fn] Creating ItemKind::Fn...");
     let item_kind = hir_item::ItemKind::Fn(fn_def);
@@ -375,12 +394,21 @@ fn lower_function_decl(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl) {
     println_str("[lower_fn] About to call Item::new...");
     print_str("[lower_fn] def_id.index = ");
     println_int(def_id.index as i32);
-    print_str("[lower_fn] f.name.symbol.index = ");
-    println_int(f.name.symbol.index as i32);
+    print_str("[lower_fn] lookup_symbol.index = ");
+    println_int(lookup_symbol.index as i32);
+
+    // Create HIR name with re-interned symbol (not AST symbol) so it resolves correctly
+    let hir_name = common::SpannedSymbol {
+        symbol: lookup_symbol,
+        span: f.name.span,
+    };
+    print_str("[lower_fn] hir_name.symbol.index = ");
+    println_int(hir_name.symbol.index as i32);
+
     println_str("[lower_fn] Calling Item::new...");
     let item = hir_item::Item::new(
         def_id,
-        f.name,
+        hir_name,
         item_kind,
         f.vis,
         f.span,
