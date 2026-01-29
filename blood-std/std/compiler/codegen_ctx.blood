@@ -783,7 +783,22 @@ impl CodegenCtx {
 
         let mut i: usize = 0;
         while i < indices.len() {
-            self.write(", i64 ");
+            if i == 0 {
+                // First index is always a pointer offset — must be i64
+                self.write(", i64 ");
+            } else {
+                // Subsequent indices: SSA registers (%...) are array indices (i64),
+                // numeric constants are struct field indices (must be i32 per LLVM spec)
+                let ref idx = indices[i];
+                let bytes = idx.as_bytes();
+                if bytes.len() > 0 && bytes[0] == 37 {
+                    // 37 == '%' — SSA register, used for array indexing
+                    self.write(", i64 ");
+                } else {
+                    // Numeric constant — struct field index, must be i32
+                    self.write(", i32 ");
+                }
+            }
             self.write_string(&indices[i]);
             i = i + 1;
         }

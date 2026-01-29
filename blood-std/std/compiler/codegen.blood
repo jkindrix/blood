@@ -122,19 +122,9 @@ pub fn generate_module_with_items(
     ctx.emit_string_constants();
     str_output.push_str(ctx.output.as_str());
 
-    // Intrinsics declarations
-    output.push_str("\n; Intrinsic declarations\n");
-    output.push_str("declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)\n");
-    output.push_str("declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)\n");
-    output.push_str("declare void @llvm.trap()\n");
-
-    // Effect runtime declarations
-    output.push_str("\n; Effect runtime declarations\n");
-    output.push_str("declare void @blood_push_handler(i64, ptr)\n");
-    output.push_str("declare void @blood_pop_handler()\n");
-    output.push_str("declare void @blood_push_inline_handler(i64)\n");
-    output.push_str("declare i64 @blood_perform(i64, i64, i64)\n");
-    output.push_str("declare void @blood_resume(i64)\n");
+    // Intrinsic and runtime declarations (consolidated in intrinsic_declarations())
+    let decls = intrinsic_declarations();
+    output.push_str(decls.as_str());
 
     CodegenResult::ok(output)
 }
@@ -458,6 +448,10 @@ pub fn intrinsic_declarations() -> String {
     output.push_str("declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)\n");
     output.push_str("declare void @llvm.trap()\n");
     output.push_str("declare void @llvm.debugtrap()\n");
+
+    // C library declarations
+    output.push_str("\n; C library declarations\n");
+    output.push_str("declare i32 @puts(ptr)\n");
 
     // Effect runtime declarations
     output.push_str("\n; Effect runtime declarations\n");
