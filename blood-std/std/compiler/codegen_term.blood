@@ -108,7 +108,7 @@ fn emit_switch_int(
     discr: &mir_types::Operand,
     switch_targets: &mir_types::SwitchTargets,
 ) {
-    let discr_val = codegen_expr::emit_operand(ctx, discr);
+    let (discr_val, discr_ty) = codegen_expr::emit_operand_typed(ctx, discr);
 
     // Check if this is a simple boolean switch
     if switch_targets.targets.len() == 1 {
@@ -118,9 +118,9 @@ fn emit_switch_int(
         let case_label = ctx.block_label(case_target.target);
         let case_val = codegen_types::format_u128(case_target.value);
 
-        // Compare discriminant with case value
+        // Compare discriminant with case value using actual type
         let cmp_result = ctx.fresh_temp();
-        ctx.emit_icmp(cmp_result.as_str(), "eq", "i64", discr_val.as_str(), case_val.as_str());
+        ctx.emit_icmp(cmp_result.as_str(), "eq", discr_ty.as_str(), discr_val.as_str(), case_val.as_str());
         ctx.emit_cond_br(cmp_result.as_str(), case_label.as_str(), default_label.as_str());
     } else {
         // Multi-way switch
@@ -137,7 +137,7 @@ fn emit_switch_int(
             i = i + 1;
         }
 
-        ctx.emit_switch("i64", discr_val.as_str(), default_label.as_str(), &cases);
+        ctx.emit_switch(discr_ty.as_str(), discr_val.as_str(), default_label.as_str(), &cases);
     }
 }
 
