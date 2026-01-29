@@ -119,8 +119,29 @@ fn eval_literal(lit: &ast::Literal) -> ConstValue {
             // val is u128, convert to i64 (may truncate for very large values)
             ConstValue::int(val as i64)
         }
-        // Other literals not supported for const evaluation
-        _ => ConstValue::error(),
+        &ast::LiteralKind::Bool(b) => {
+            if b {
+                ConstValue::int(1)
+            } else {
+                ConstValue::int(0)
+            }
+        }
+        &ast::LiteralKind::Float { bits: _, suffix: _ } => {
+            // Float literals cannot be evaluated as integer const expressions
+            ConstValue::error()
+        }
+        &ast::LiteralKind::Str(_) => {
+            // String literals cannot be evaluated as integer const expressions
+            ConstValue::error()
+        }
+        &ast::LiteralKind::ByteStr(_) => {
+            // Byte string literals cannot be evaluated as integer const expressions
+            ConstValue::error()
+        }
+        &ast::LiteralKind::Char(_) => {
+            // Char literals cannot be evaluated as integer const expressions
+            ConstValue::error()
+        }
     }
 }
 
@@ -157,18 +178,47 @@ fn eval_binary(left: &ast::Expr, bin_op: common::BinOp, right: &ast::Expr) -> Co
         common::BinOp::BitAnd => ConstValue::int(l & r),
         common::BinOp::BitOr => ConstValue::int(l | r),
         common::BinOp::BitXor => ConstValue::int(l ^ r),
-        // Shift operations have complex type semantics, not supported in const eval
-        common::BinOp::Shl => ConstValue::error(),
-        common::BinOp::Shr => ConstValue::error(),
-        // Comparison and logical ops return bool, not int
-        common::BinOp::Eq => ConstValue::error(),
-        common::BinOp::Ne => ConstValue::error(),
-        common::BinOp::Lt => ConstValue::error(),
-        common::BinOp::Le => ConstValue::error(),
-        common::BinOp::Gt => ConstValue::error(),
-        common::BinOp::Ge => ConstValue::error(),
-        common::BinOp::And => ConstValue::error(),
-        common::BinOp::Or => ConstValue::error(),
+        common::BinOp::Shl => {
+            if r < 0 || r >= 64 {
+                ConstValue::error() // Shift amount out of range
+            } else {
+                ConstValue::int(l << r)
+            }
+        }
+        common::BinOp::Shr => {
+            if r < 0 || r >= 64 {
+                ConstValue::error() // Shift amount out of range
+            } else {
+                ConstValue::int(l >> r)
+            }
+        }
+        // Comparison ops return 1 (true) or 0 (false) as integer
+        common::BinOp::Eq => {
+            if l == r { ConstValue::int(1) } else { ConstValue::int(0) }
+        }
+        common::BinOp::Ne => {
+            if l != r { ConstValue::int(1) } else { ConstValue::int(0) }
+        }
+        common::BinOp::Lt => {
+            if l < r { ConstValue::int(1) } else { ConstValue::int(0) }
+        }
+        common::BinOp::Le => {
+            if l <= r { ConstValue::int(1) } else { ConstValue::int(0) }
+        }
+        common::BinOp::Gt => {
+            if l > r { ConstValue::int(1) } else { ConstValue::int(0) }
+        }
+        common::BinOp::Ge => {
+            if l >= r { ConstValue::int(1) } else { ConstValue::int(0) }
+        }
+        // Logical ops treat non-zero as true
+        common::BinOp::And => {
+            if l != 0 && r != 0 { ConstValue::int(1) } else { ConstValue::int(0) }
+        }
+        common::BinOp::Or => {
+            if l != 0 || r != 0 { ConstValue::int(1) } else { ConstValue::int(0) }
+        }
+        // Pipe operator is not meaningful for const evaluation
         common::BinOp::Pipe => ConstValue::error(),
     }
 }
