@@ -348,6 +348,16 @@ fn parse_primary_expr(parser: &mut parser_base::Parser) -> ast::Expr {
         token::TokenKind::ColonColon => {
             return parse_path_expr(parser);
         }
+        // Unsafe block: @unsafe { ... }
+        token::TokenKind::AtUnsafe => {
+            parser.advance();
+            let block = parse_block(parser);
+            let end_span = parser.previous.span;
+            return ast::Expr {
+                kind: ast::ExprKind::Unsafe(block),
+                span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+            };
+        }
         // Error recovery - return unit tuple as placeholder
         _ => {
             parser.error_expected("expression");

@@ -940,6 +940,9 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::ImplBlock) {
     // Lower self type
     let self_ty = hir_lower_type::lower_type(ctx, &imp.self_ty);
 
+    // Set the current Self type so that `Self` references resolve correctly
+    ctx.current_self_type = Option::Some(hir_ty::copy_type(&self_ty));
+
     // Lower associated items
     let mut items: Vec<hir_item::AssocItem> = Vec::new();
     let mut i: usize = 0;
@@ -950,6 +953,9 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::ImplBlock) {
         }
         i = i + 1;
     }
+
+    // Clear the Self type after processing the impl block
+    ctx.current_self_type = Option::None;
 
     let impl_def = hir_item::ImplDef::new(generics, trait_ref, self_ty, items);
     let item_kind = hir_item::ItemKind::Impl(impl_def);

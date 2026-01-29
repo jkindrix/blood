@@ -346,12 +346,15 @@ fn load_external_module(
     append_string(&mut file_path, &module_name);
     file_path.push_str(".blood");
 
+    // Re-intern the module name for consistent symbol indices
+    let re_interned_name = ctx.intern(module_name.as_str());
+
     // Check for circular import
     let existing = ctx.find_loaded_module(&file_path);
     if existing.is_some() {
         // Module already loaded - just define the name pointing to existing DefId
         let existing_def_id = existing.unwrap();
-        let success = ctx.resolver.define_global(name, existing_def_id);
+        let success = ctx.resolver.define_global(re_interned_name, existing_def_id);
         if !success {
             ctx.error(
                 hir::DiagnosticCode::E0101,
@@ -412,7 +415,7 @@ fn load_external_module(
 
     // Allocate DefId for the module
     let def_id = ctx.alloc_def_id();
-    let success = ctx.resolver.define_global(name, def_id);
+    let success = ctx.resolver.define_global(re_interned_name, def_id);
     if !success {
         ctx.error(
             hir::DiagnosticCode::E0101,
@@ -425,19 +428,27 @@ fn load_external_module(
     ctx.resolver.register_def_info(
         def_id,
         hir_def::DefKind::Module,
-        name,
+        re_interned_name,
         name_span,
         Option::None,
     );
 
     // Track the loaded module to prevent circular imports
-    ctx.add_loaded_module(name, def_id, clone_string(&file_path));
+    ctx.add_loaded_module(re_interned_name, def_id, clone_string(&file_path));
+
+    // Save current source and switch to the external module's source text
+    // so that span_to_string() works correctly during registration
+    let saved_source = clone_string(&ctx.source);
+    ctx.source = clone_string(content);
 
     // Phase 1: Register nested type names from the loaded module
     register_module_type_names(ctx, def_id, &program.declarations);
 
     // Phase 2: Register declarations (functions, consts, statics) from the loaded module
     register_module_declarations(ctx, def_id, &program.declarations);
+
+    // Restore the original source text
+    ctx.source = saved_source;
 }
 
 /// Resolves a symbol to a string for file path construction.
@@ -537,8 +548,15 @@ fn lower_external_module_declarations(ctx: &mut hir_lower_ctx::LoweringCtx) {
             }
         };
 
+        // Save current source and switch to external module's source
+        let saved_source = clone_string(&ctx.source);
+        ctx.source = clone_string(content);
+
         // Lower the module's declarations as if they're inside the module
         hir_lower_item::lower_module_contents(ctx, def_id, &program.declarations);
+
+        // Restore source
+        ctx.source = saved_source;
 
         i = i + 1;
     }
@@ -582,8 +600,15 @@ fn lower_external_module_fn_bodies(ctx: &mut hir_lower_ctx::LoweringCtx) {
             }
         };
 
+        // Save current source and switch to external module's source
+        let saved_source = clone_string(&ctx.source);
+        ctx.source = clone_string(content);
+
         // Lower the module's function bodies
         lower_fn_bodies(ctx, &program.declarations);
+
+        // Restore source
+        ctx.source = saved_source;
 
         i = i + 1;
     }
@@ -638,51 +663,61 @@ fn register_module_type_name(
     match decl {
         &ast::Declaration::Struct(ref s) => {
             let def_id = ctx.alloc_def_id();
-            // Only register in def_info - accessible via qualified paths (e.g., mod::Struct)
+            // Re-intern from span for consistent symbol indices across modules
+            let name_str = ctx.span_to_string(s.name.span);
+            let name_symbol = ctx.intern(name_str.as_str());
             ctx.resolver.register_def_info(
                 def_id,
                 hir_def::DefKind::Struct,
-                s.name.symbol,
+                name_symbol,
                 s.name.span,
                 Option::Some(parent_def_id),
             );
         }
         &ast::Declaration::Enum(ref e) => {
             let def_id = ctx.alloc_def_id();
+            let name_str = ctx.span_to_string(e.name.span);
+            let name_symbol = ctx.intern(name_str.as_str());
             ctx.resolver.register_def_info(
                 def_id,
                 hir_def::DefKind::Enum,
-                e.name.symbol,
+                name_symbol,
                 e.name.span,
                 Option::Some(parent_def_id),
             );
         }
         &ast::Declaration::Trait(ref t) => {
             let def_id = ctx.alloc_def_id();
+            let name_str = ctx.span_to_string(t.name.span);
+            let name_symbol = ctx.intern(name_str.as_str());
             ctx.resolver.register_def_info(
                 def_id,
                 hir_def::DefKind::Trait,
-                t.name.symbol,
+                name_symbol,
                 t.name.span,
                 Option::Some(parent_def_id),
             );
         }
         &ast::Declaration::Effect(ref eff) => {
             let def_id = ctx.alloc_def_id();
+            let name_str = ctx.span_to_string(eff.name.span);
+            let name_symbol = ctx.intern(name_str.as_str());
             ctx.resolver.register_def_info(
                 def_id,
                 hir_def::DefKind::Effect,
-                eff.name.symbol,
+                name_symbol,
                 eff.name.span,
                 Option::Some(parent_def_id),
             );
         }
         &ast::Declaration::TypeAlias(ref ta) => {
             let def_id = ctx.alloc_def_id();
+            let name_str = ctx.span_to_string(ta.name.span);
+            let name_symbol = ctx.intern(name_str.as_str());
             ctx.resolver.register_def_info(
                 def_id,
                 hir_def::DefKind::TypeAlias,
-                ta.name.symbol,
+                name_symbol,
                 ta.name.span,
                 Option::Some(parent_def_id),
             );
@@ -692,10 +727,12 @@ fn register_module_type_name(
             match &m.body {
                 &Option::Some(ref nested_decls) => {
                     let def_id = ctx.alloc_def_id();
+                    let name_str = ctx.span_to_string(m.name.span);
+                    let name_symbol = ctx.intern(name_str.as_str());
                     ctx.resolver.register_def_info(
                         def_id,
                         hir_def::DefKind::Module,
-                        m.name.symbol,
+                        name_symbol,
                         m.name.span,
                         Option::Some(parent_def_id),
                     );
@@ -703,12 +740,8 @@ fn register_module_type_name(
                     register_module_type_names(ctx, def_id, nested_decls);
                 }
                 &Option::None => {
-                    // External module within inline module - not supported
-                    ctx.error(
-                        hir::DiagnosticCode::E0104,
-                        common::make_string("external modules not yet supported in self-hosted compiler"),
-                        m.span,
-                    );
+                    // Nested external module - load recursively
+                    load_external_module(ctx, m.name.symbol, m.name.span, m.vis, m.span);
                 }
             }
         }
@@ -890,42 +923,49 @@ fn register_module_declaration(
     match decl {
         &ast::Declaration::Function(ref f) => {
             let def_id = ctx.alloc_def_id();
-            // Note: Don't use define_global - nested items are accessed via qualified paths
-            // Register in def_info with parent so lookup_in_parent can find it
+            // Re-intern from span for consistent symbol indices across modules
+            let name_str = ctx.span_to_string(f.name.span);
+            let name_symbol = ctx.intern(name_str.as_str());
             ctx.resolver.register_def_info(
                 def_id,
                 hir_def::DefKind::Fn,
-                f.name.symbol,
+                name_symbol,
                 f.name.span,
                 Option::Some(parent_def_id),
             );
         }
         &ast::Declaration::Const(ref c) => {
             let def_id = ctx.alloc_def_id();
+            let name_str = ctx.span_to_string(c.name.span);
+            let name_symbol = ctx.intern(name_str.as_str());
             ctx.resolver.register_def_info(
                 def_id,
                 hir_def::DefKind::Const,
-                c.name.symbol,
+                name_symbol,
                 c.name.span,
                 Option::Some(parent_def_id),
             );
         }
         &ast::Declaration::Static(ref s) => {
             let def_id = ctx.alloc_def_id();
+            let name_str = ctx.span_to_string(s.name.span);
+            let name_symbol = ctx.intern(name_str.as_str());
             ctx.resolver.register_def_info(
                 def_id,
                 hir_def::DefKind::Static,
-                s.name.symbol,
+                name_symbol,
                 s.name.span,
                 Option::Some(parent_def_id),
             );
         }
         &ast::Declaration::Handler(ref h) => {
             let def_id = ctx.alloc_def_id();
+            let name_str = ctx.span_to_string(h.name.span);
+            let name_symbol = ctx.intern(name_str.as_str());
             ctx.resolver.register_def_info(
                 def_id,
                 hir_def::DefKind::Handler,
-                h.name.symbol,
+                name_symbol,
                 h.name.span,
                 Option::Some(parent_def_id),
             );
@@ -935,13 +975,16 @@ fn register_module_declaration(
             match &m.body {
                 &Option::Some(ref nested_decls) => {
                     // Find the nested module's DefId (registered in Phase 1)
-                    let nested_mod_def = ctx.resolver.lookup_in_parent(parent_def_id, m.name.symbol);
+                    // Re-intern from span for consistent lookup
+                    let name_str = ctx.span_to_string(m.name.span);
+                    let name_symbol = ctx.intern(name_str.as_str());
+                    let nested_mod_def = ctx.resolver.lookup_in_parent(parent_def_id, name_symbol);
                     if nested_mod_def.is_some() {
                         let nested_def_id = nested_mod_def.unwrap();
                         register_module_declarations(ctx, nested_def_id, nested_decls);
                     }
                 }
-                &Option::None => {} // Already errored
+                &Option::None => {} // Handled by load_external_module in Phase 1
             }
         }
         // Types already registered in Phase 1

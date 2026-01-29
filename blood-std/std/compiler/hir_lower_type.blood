@@ -184,6 +184,29 @@ fn lower_type_path(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath) -
         }
     }
 
+    // Check for Self type (single-segment, no args)
+    if path.segments.len() == 1 {
+        let seg = &path.segments[0];
+        if seg.args.is_none() {
+            let name_str = ctx.span_to_string(seg.name.span);
+            if str_eq(&name_str, "Self") {
+                match &ctx.current_self_type {
+                    &Option::Some(ref self_ty) => {
+                        return hir_ty::copy_type(self_ty);
+                    }
+                    &Option::None => {
+                        ctx.error(
+                            hir::DiagnosticCode::E0102,
+                            common::make_string("Self used outside of impl block"),
+                            seg.name.span,
+                        );
+                        return hir_ty::Type::error();
+                    }
+                }
+            }
+        }
+    }
+
     // Check for type parameter (single-segment, no args)
     // Type parameters take precedence over other type definitions
     if path.segments.len() == 1 {

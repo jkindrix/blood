@@ -160,6 +160,8 @@ pub struct LoweringCtx {
     /// This is populated by lower_pattern when it creates binding patterns,
     /// and drained by lower_fn_body to add them to the Body's locals Vec.
     pub body_locals: Vec<hir_expr::Local>,
+    /// The current Self type when lowering inside an impl block.
+    pub current_self_type: Option<hir_ty::Type>,
 }
 
 /// Tracks a loaded external module to prevent circular imports.
@@ -224,6 +226,7 @@ impl LoweringCtx {
             loaded_modules: Vec::new(),
             source: source,
             body_locals: Vec::new(),
+            current_self_type: Option::None,
         }
     }
 
@@ -247,6 +250,7 @@ impl LoweringCtx {
             loaded_modules: Vec::new(),
             source: source,
             body_locals: Vec::new(),
+            current_self_type: Option::None,
         }
     }
 
