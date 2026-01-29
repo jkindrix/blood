@@ -129,8 +129,8 @@ pub fn lower_effects(ctx: &mut hir_lower_ctx::LoweringCtx, effects: &Option<ast:
 /// Lower a struct body to HIR.
 pub fn lower_struct_body(ctx: &mut hir_lower_ctx::LoweringCtx, body: &ast::StructBody) -> hir_item::StructBody {
     match body {
-        ast::StructBody::Unit => hir_item::StructBody::Unit,
-        ast::StructBody::Tuple(ref types) => {
+        &ast::StructBody::Unit => hir_item::StructBody::Unit,
+        &ast::StructBody::Tuple(ref types) => {
             let mut lowered: Vec<hir_ty::Type> = Vec::new();
             let mut i: usize = 0;
             while i < types.len() {
@@ -140,7 +140,7 @@ pub fn lower_struct_body(ctx: &mut hir_lower_ctx::LoweringCtx, body: &ast::Struc
             }
             hir_item::StructBody::Tuple(lowered)
         }
-        ast::StructBody::Record(ref fields) => {
+        &ast::StructBody::Record(ref fields) => {
             let mut lowered: Vec<hir_item::StructField> = Vec::new();
             let mut i: usize = 0;
             while i < fields.len() {
@@ -206,8 +206,10 @@ fn lower_enum_variant(ctx: &mut hir_lower_ctx::LoweringCtx, parent_def_id: hir_d
 /// Lower a variant body to a VariantKind.
 fn lower_variant_kind(ctx: &mut hir_lower_ctx::LoweringCtx, body: &ast::StructBody) -> hir_item::VariantKind {
     match body {
-        ast::StructBody::Unit => hir_item::VariantKind::Unit,
-        ast::StructBody::Tuple(ref types) => {
+        &ast::StructBody::Unit => {
+            hir_item::VariantKind::Unit
+        }
+        &ast::StructBody::Tuple(ref types) => {
             let mut lowered: Vec<hir_ty::Type> = Vec::new();
             let mut i: usize = 0;
             while i < types.len() {
@@ -217,7 +219,7 @@ fn lower_variant_kind(ctx: &mut hir_lower_ctx::LoweringCtx, body: &ast::StructBo
             }
             hir_item::VariantKind::Tuple(lowered)
         }
-        ast::StructBody::Record(ref fields) => {
+        &ast::StructBody::Record(ref fields) => {
             let mut lowered: Vec<hir_item::StructField> = Vec::new();
             let mut i: usize = 0;
             while i < fields.len() {
@@ -236,9 +238,30 @@ fn lower_variant_kind(ctx: &mut hir_lower_ctx::LoweringCtx, body: &ast::StructBo
 
 /// Lower all declarations to HIR items.
 pub fn lower_declarations(ctx: &mut hir_lower_ctx::LoweringCtx, decls: &Vec<ast::Declaration>) {
+    // Two-pass lowering: first non-impl declarations (enums, structs, traits,
+    // functions, etc.) to ensure all enum variants and type information is
+    // registered, then impl blocks whose method bodies may reference them.
+    // Without this, an `impl Type` block appearing before `enum TypeKind` in the
+    // source would fail to resolve `TypeKind::Error` in method bodies.
     let mut i: usize = 0;
     while i < decls.len() {
-        lower_declaration(ctx, &decls[i]);
+        match &decls[i] {
+            &ast::Declaration::Impl(_) => {}
+            _ => {
+                lower_declaration(ctx, &decls[i]);
+            }
+        }
+        i = i + 1;
+    }
+    // Pass 2: lower impl blocks (method bodies can now reference all enum variants)
+    i = 0;
+    while i < decls.len() {
+        match &decls[i] {
+            &ast::Declaration::Impl(ref imp) => {
+                lower_impl_decl(ctx, imp);
+            }
+            _ => {}
+        }
         i = i + 1;
     }
 }
@@ -276,12 +299,8 @@ pub fn lower_declaration(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Decla
         &ast::Declaration::Impl(ref i) => {
             lower_impl_decl(ctx, i);
         }
-        &ast::Declaration::Bridge(ref b) => {
-            ctx.error(
-                hir::DiagnosticCode::E0104,
-                common::make_string("bridge declarations not yet supported"),
-                b.span,
-            );
+        &ast::Declaration::Bridge(ref _b) => {
+            // Bridge declarations and use-placeholder declarations are silently skipped.
         }
         &ast::Declaration::Module(ref m) => {
             match &m.body {
@@ -298,6 +317,7 @@ pub fn lower_declaration(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Decla
                 m.span,
             );
         }
+        &ast::Declaration::Use(_) => {} // Already handled in Phase 1
     }
 }
 
@@ -1049,7 +1069,7 @@ fn lower_module_decl(
 }
 
 /// Add module items to the current scope for unqualified access.
-fn add_module_items_to_scope(
+pub fn add_module_items_to_scope(
     ctx: &mut hir_lower_ctx::LoweringCtx,
     parent_def_id: hir_def::DefId,
     declarations: &Vec<ast::Declaration>,
@@ -1062,6 +1082,10 @@ fn add_module_items_to_scope(
 }
 
 /// Add a single declaration to the current scope.
+/// NOTE: We must re-intern names from spans because the AST comes from a
+/// re-parsed external module whose parser has a different interner than
+/// the lowering context. Using parser-originated symbols directly would
+/// cause lookup_in_parent to fail due to mismatched symbol indices.
 fn add_decl_to_scope(
     ctx: &mut hir_lower_ctx::LoweringCtx,
     parent_def_id: hir_def::DefId,
@@ -1069,86 +1093,127 @@ fn add_decl_to_scope(
 ) {
     match decl {
         &ast::Declaration::Struct(ref s) => {
-            // Find the DefId from def_info
-            let def_id = ctx.resolver.lookup_in_parent(parent_def_id, s.name.symbol);
+            let name_str = ctx.span_to_string(s.name.span);
+            let name_sym = ctx.intern(name_str.as_str());
+            let def_id = ctx.resolver.lookup_in_parent(parent_def_id, name_sym);
             if def_id.is_some() {
                 let binding = resolve::Binding::def(def_id.unwrap());
-                ctx.resolver.define(s.name.symbol, binding);
+                ctx.resolver.define(name_sym, binding);
             }
         }
         &ast::Declaration::Enum(ref e) => {
-            let def_id = ctx.resolver.lookup_in_parent(parent_def_id, e.name.symbol);
+            let name_str = ctx.span_to_string(e.name.span);
+            let name_sym = ctx.intern(name_str.as_str());
+            let def_id = ctx.resolver.lookup_in_parent(parent_def_id, name_sym);
             if def_id.is_some() {
                 let binding = resolve::Binding::def(def_id.unwrap());
-                ctx.resolver.define(e.name.symbol, binding);
+                ctx.resolver.define(name_sym, binding);
             }
         }
         &ast::Declaration::Function(ref f) => {
-            let def_id = ctx.resolver.lookup_in_parent(parent_def_id, f.name.symbol);
+            let name_str = ctx.span_to_string(f.name.span);
+            let name_sym = ctx.intern(name_str.as_str());
+            let def_id = ctx.resolver.lookup_in_parent(parent_def_id, name_sym);
             if def_id.is_some() {
                 let binding = resolve::Binding::def(def_id.unwrap());
-                ctx.resolver.define(f.name.symbol, binding);
+                ctx.resolver.define(name_sym, binding);
             }
         }
         &ast::Declaration::Const(ref c) => {
-            let def_id = ctx.resolver.lookup_in_parent(parent_def_id, c.name.symbol);
+            let name_str = ctx.span_to_string(c.name.span);
+            let name_sym = ctx.intern(name_str.as_str());
+            let def_id = ctx.resolver.lookup_in_parent(parent_def_id, name_sym);
             if def_id.is_some() {
                 let binding = resolve::Binding::def(def_id.unwrap());
-                ctx.resolver.define(c.name.symbol, binding);
+                ctx.resolver.define(name_sym, binding);
             }
         }
         &ast::Declaration::Static(ref s) => {
-            let def_id = ctx.resolver.lookup_in_parent(parent_def_id, s.name.symbol);
+            let name_str = ctx.span_to_string(s.name.span);
+            let name_sym = ctx.intern(name_str.as_str());
+            let def_id = ctx.resolver.lookup_in_parent(parent_def_id, name_sym);
             if def_id.is_some() {
                 let binding = resolve::Binding::def(def_id.unwrap());
-                ctx.resolver.define(s.name.symbol, binding);
+                ctx.resolver.define(name_sym, binding);
             }
         }
         &ast::Declaration::Trait(ref t) => {
-            let def_id = ctx.resolver.lookup_in_parent(parent_def_id, t.name.symbol);
+            let name_str = ctx.span_to_string(t.name.span);
+            let name_sym = ctx.intern(name_str.as_str());
+            let def_id = ctx.resolver.lookup_in_parent(parent_def_id, name_sym);
             if def_id.is_some() {
                 let binding = resolve::Binding::def(def_id.unwrap());
-                ctx.resolver.define(t.name.symbol, binding);
+                ctx.resolver.define(name_sym, binding);
             }
         }
         &ast::Declaration::Effect(ref e) => {
-            let def_id = ctx.resolver.lookup_in_parent(parent_def_id, e.name.symbol);
+            let name_str = ctx.span_to_string(e.name.span);
+            let name_sym = ctx.intern(name_str.as_str());
+            let def_id = ctx.resolver.lookup_in_parent(parent_def_id, name_sym);
             if def_id.is_some() {
                 let binding = resolve::Binding::def(def_id.unwrap());
-                ctx.resolver.define(e.name.symbol, binding);
+                ctx.resolver.define(name_sym, binding);
             }
         }
         &ast::Declaration::TypeAlias(ref ta) => {
-            let def_id = ctx.resolver.lookup_in_parent(parent_def_id, ta.name.symbol);
+            let name_str = ctx.span_to_string(ta.name.span);
+            let name_sym = ctx.intern(name_str.as_str());
+            let def_id = ctx.resolver.lookup_in_parent(parent_def_id, name_sym);
             if def_id.is_some() {
                 let binding = resolve::Binding::def(def_id.unwrap());
-                ctx.resolver.define(ta.name.symbol, binding);
+                ctx.resolver.define(name_sym, binding);
             }
         }
         &ast::Declaration::Handler(ref h) => {
-            let def_id = ctx.resolver.lookup_in_parent(parent_def_id, h.name.symbol);
+            let name_str = ctx.span_to_string(h.name.span);
+            let name_sym = ctx.intern(name_str.as_str());
+            let def_id = ctx.resolver.lookup_in_parent(parent_def_id, name_sym);
             if def_id.is_some() {
                 let binding = resolve::Binding::def(def_id.unwrap());
-                ctx.resolver.define(h.name.symbol, binding);
+                ctx.resolver.define(name_sym, binding);
             }
         }
         &ast::Declaration::Module(ref m) => {
             // Nested modules are also added to scope
             match &m.body {
                 &Option::Some(_) => {
-                    let def_id = ctx.resolver.lookup_in_parent(parent_def_id, m.name.symbol);
+                    let name_str = ctx.span_to_string(m.name.span);
+                    let name_sym = ctx.intern(name_str.as_str());
+                    let def_id = ctx.resolver.lookup_in_parent(parent_def_id, name_sym);
                     if def_id.is_some() {
                         let binding = resolve::Binding::mod_binding(def_id.unwrap());
-                        ctx.resolver.define(m.name.symbol, binding);
+                        ctx.resolver.define(name_sym, binding);
                     }
                 }
-                &Option::None => {}
+                &Option::None => {
+                    // External module — needs to be added to scope for unqualified access
+                    let name_str = ctx.span_to_string(m.name.span);
+                    let name_sym = ctx.intern(name_str.as_str());
+                    // External modules are registered as globals; look up there
+                    let lookup = ctx.resolver.lookup(name_sym);
+                    if lookup.is_some() {
+                        let result = lookup.unwrap();
+                        let existing = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+                        let binding = resolve::Binding::mod_binding(existing.def_id);
+                        ctx.resolver.define(name_sym, binding);
+                    }
+                }
             }
         }
         // Impl blocks don't have names - skip
         &ast::Declaration::Impl(_) => {}
         &ast::Declaration::Bridge(_) => {}
         &ast::Declaration::Macro(_) => {}
+        &ast::Declaration::Use(ref u) => {
+            // pub use module::Item — add the re-exported name to the current scope
+            let item_name_str = ctx.span_to_string(u.item_name.span);
+            let item_sym = ctx.intern(item_name_str.as_str());
+            let item_def = ctx.resolver.lookup_in_parent(parent_def_id, item_sym);
+            if item_def.is_some() {
+                let binding = resolve::Binding::def(item_def.unwrap());
+                ctx.resolver.define(item_sym, binding);
+            }
+        }
     }
 }
 

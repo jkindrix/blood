@@ -217,9 +217,9 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx::LoweringCtx, expr: &ast::Expr) -> hir
         &ast::ExprKind::Closure { is_move: _, ref params, ref return_type, effects: _, ref body } => {
             lower_closure_expr(ctx, params, return_type, body.as_ref(), span)
         }
-        &ast::ExprKind::WithHandle { ref handler, ref body } => {
-            let handler_hir = lower_expr(ctx, handler.as_ref());
-            let body_hir = lower_expr(ctx, body.as_ref());
+        &ast::ExprKind::WithHandle { handler: ref handler_expr, body: ref body_expr } => {
+            let handler_hir = lower_expr(ctx, handler_expr.as_ref());
+            let body_hir = lower_expr(ctx, body_expr.as_ref());
             let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
             hir_expr::Expr::new(
                 hir_expr::ExprKind::WithHandle {
@@ -478,10 +478,20 @@ fn lower_path_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprPath, s
         );
     }
 
-    // Not found - report error
+    // Not found - report with full path text for diagnostics
+    let mut msg = common::make_string("undefined qualified path: ");
+    let mut j: usize = 0;
+    while j < names.len() {
+        if j > 0 {
+            msg.push_str("::");
+        }
+        let seg_str = ctx.span_to_string(names[j].span);
+        msg.push_str(seg_str.as_str());
+        j = j + 1;
+    }
     ctx.error(
         hir::DiagnosticCode::E0102,
-        common::make_string("undefined qualified path"),
+        msg,
         span,
     );
     hir_expr::Expr::error(span)
@@ -885,15 +895,20 @@ pub fn lower_block_to_expr(ctx: &mut hir_lower_ctx::LoweringCtx, block: &ast::Bl
 fn lower_stmt(ctx: &mut hir_lower_ctx::LoweringCtx, stmt: &ast::Statement) -> hir_expr::Stmt {
     match stmt {
         &ast::Statement::Let { ref pattern, ref ty, ref init_val, span } => {
-            let pattern_hir = lower_pattern(ctx, pattern);
+            // Lower the type annotation first (does not introduce bindings)
             let ty_hir = match ty {
                 &Some(ref t) => Some(hir_lower_type::lower_type(ctx, t)),
                 &None => Option::None,
             };
+            // Lower the init expression BEFORE the pattern, so the RHS is
+            // resolved in the scope without the new local binding. This prevents
+            // `let lexer = lexer::Lexer::new(...)` from shadowing the module.
             let init_hir = match init_val {
                 &Some(ref e) => Some(lower_expr(ctx, e)),
                 &None => Option::None,
             };
+            // Now lower the pattern (which registers bindings in scope)
+            let pattern_hir = lower_pattern(ctx, pattern);
             hir_expr::Stmt::Let {
                 pattern: pattern_hir,
                 ty: ty_hir,
@@ -959,6 +974,10 @@ fn lower_local_item(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declaratio
         }
         &ast::Declaration::Macro(_) => {
             // Not yet supported
+            return ctx.alloc_def_id();
+        }
+        &ast::Declaration::Use(_) => {
+            // Not applicable in local scope
             return ctx.alloc_def_id();
         }
     };

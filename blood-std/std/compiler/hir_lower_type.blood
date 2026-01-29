@@ -243,9 +243,12 @@ fn lower_type_path(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath) -
                 args: type_args,
             });
         } else {
+            let mut tmsg = common::make_string("unknown type: ");
+            let tname_str = ctx.span_to_string(seg.name.span);
+            tmsg.push_str(tname_str.as_str());
             ctx.error(
                 hir::DiagnosticCode::E0102,
-                common::make_string("unknown type"),
+                tmsg,
                 seg.name.span,
             );
             return hir_ty::Type::error();
@@ -280,10 +283,20 @@ fn lower_type_path(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath) -
         });
     }
 
-    // Not found - report error
+    // Not found - report error with path details for debugging
+    let mut msg = common::make_string("undefined qualified type path: ");
+    let mut j: usize = 0;
+    while j < names.len() {
+        if j > 0 {
+            msg.push_str("::");
+        }
+        let seg_str = ctx.span_to_string(names[j].span);
+        msg.push_str(seg_str.as_str());
+        j = j + 1;
+    }
     ctx.error(
         hir::DiagnosticCode::E0102,
-        common::make_string("undefined qualified type path"),
+        msg,
         path.span,
     );
     hir_ty::Type::error()

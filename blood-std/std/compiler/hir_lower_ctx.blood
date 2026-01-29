@@ -36,6 +36,15 @@ pub struct LowerResult {
     /// The type checker must start its counter at this value to avoid
     /// TyVarId collisions with HIR-allocated inference variables.
     pub next_ty_var: u32,
+    /// Next DefId index for allocating new DefIds (avoids collisions with HIR-allocated ones).
+    pub next_def_id: u32,
+    /// Builtin type DefIds for type checker registration.
+    pub builtin_string_def: Option<hir_def::DefId>,
+    pub builtin_vec_def: Option<hir_def::DefId>,
+    pub builtin_option_def: Option<hir_def::DefId>,
+    pub builtin_box_def: Option<hir_def::DefId>,
+    pub builtin_hashmap_def: Option<hir_def::DefId>,
+    pub builtin_result_def: Option<hir_def::DefId>,
 }
 
 impl LowerResult {
@@ -46,6 +55,13 @@ impl LowerResult {
         item_index: Vec<Option<usize>>,
         bodies: Vec<BodyEntry>,
         next_ty_var: u32,
+        next_def_id: u32,
+        builtin_string_def: Option<hir_def::DefId>,
+        builtin_vec_def: Option<hir_def::DefId>,
+        builtin_option_def: Option<hir_def::DefId>,
+        builtin_box_def: Option<hir_def::DefId>,
+        builtin_hashmap_def: Option<hir_def::DefId>,
+        builtin_result_def: Option<hir_def::DefId>,
     ) -> LowerResult {
         LowerResult {
             crate_data: Option::Some(crate_data),
@@ -54,6 +70,13 @@ impl LowerResult {
             item_index: item_index,
             bodies: bodies,
             next_ty_var: next_ty_var,
+            next_def_id: next_def_id,
+            builtin_string_def: builtin_string_def,
+            builtin_vec_def: builtin_vec_def,
+            builtin_option_def: builtin_option_def,
+            builtin_box_def: builtin_box_def,
+            builtin_hashmap_def: builtin_hashmap_def,
+            builtin_result_def: builtin_result_def,
         }
     }
 
@@ -66,6 +89,13 @@ impl LowerResult {
             item_index: Vec::new(),
             bodies: Vec::new(),
             next_ty_var: 0,
+            next_def_id: 0,
+            builtin_string_def: Option::None,
+            builtin_vec_def: Option::None,
+            builtin_option_def: Option::None,
+            builtin_box_def: Option::None,
+            builtin_hashmap_def: Option::None,
+            builtin_result_def: Option::None,
         }
     }
 
@@ -78,6 +108,13 @@ impl LowerResult {
             item_index: Vec::new(),
             bodies: Vec::new(),
             next_ty_var: 0,
+            next_def_id: 0,
+            builtin_string_def: Option::None,
+            builtin_vec_def: Option::None,
+            builtin_option_def: Option::None,
+            builtin_box_def: Option::None,
+            builtin_hashmap_def: Option::None,
+            builtin_result_def: Option::None,
         }
     }
 
@@ -162,6 +199,16 @@ pub struct LoweringCtx {
     pub body_locals: Vec<hir_expr::Local>,
     /// The current Self type when lowering inside an impl block.
     pub current_self_type: Option<hir_ty::Type>,
+    /// DefIds for builtin types (set during register_builtin_types).
+    pub builtin_string_def: Option<hir_def::DefId>,
+    pub builtin_vec_def: Option<hir_def::DefId>,
+    pub builtin_option_def: Option<hir_def::DefId>,
+    pub builtin_box_def: Option<hir_def::DefId>,
+    pub builtin_hashmap_def: Option<hir_def::DefId>,
+    pub builtin_result_def: Option<hir_def::DefId>,
+    /// Paths currently being loaded (for circular import detection during recursive loading).
+    /// Separates circular-import detection from loaded_modules ordering.
+    pub loading_paths: Vec<String>,
 }
 
 /// Tracks a loaded external module to prevent circular imports.
@@ -227,6 +274,13 @@ impl LoweringCtx {
             source: source,
             body_locals: Vec::new(),
             current_self_type: Option::None,
+            builtin_string_def: Option::None,
+            builtin_vec_def: Option::None,
+            builtin_option_def: Option::None,
+            builtin_box_def: Option::None,
+            builtin_hashmap_def: Option::None,
+            builtin_result_def: Option::None,
+            loading_paths: Vec::new(),
         }
     }
 
@@ -251,6 +305,13 @@ impl LoweringCtx {
             source: source,
             body_locals: Vec::new(),
             current_self_type: Option::None,
+            builtin_string_def: Option::None,
+            builtin_vec_def: Option::None,
+            builtin_option_def: Option::None,
+            builtin_box_def: Option::None,
+            builtin_hashmap_def: Option::None,
+            builtin_result_def: Option::None,
+            loading_paths: Vec::new(),
         }
     }
 
@@ -380,6 +441,20 @@ impl LoweringCtx {
         self.loaded_modules.push(entry);
     }
 
+    /// Checks if a file path is currently being loaded (circular import detection).
+    /// This is separate from find_loaded_module because loaded_modules uses
+    /// post-order insertion (dependencies before dependents) for correct Phase 3a ordering.
+    pub fn is_path_loading(self: &Self, path: &String) -> bool {
+        let mut i: usize = 0;
+        while i < self.loading_paths.len() {
+            if string_eq(&self.loading_paths[i], path) {
+                return true;
+            }
+            i = i + 1;
+        }
+        false
+    }
+
     /// Gets the base directory for resolving external modules.
     pub fn get_base_dir(self: &Self) -> &String {
         &self.base_dir
@@ -460,14 +535,7 @@ fn string_eq(a: &String, b: &String) -> bool {
 
 /// Clones a &String to a String.
 fn clone_str(s: &String) -> String {
-    let mut result = String::new();
-    let bytes = s.as_bytes();
-    let mut i: usize = 0;
-    while i < bytes.len() {
-        result.push(bytes[i] as char);
-        i = i + 1;
-    }
-    result
+    common::make_string(s.as_str())
 }
 
 /// Appends a u32 as decimal to a string.

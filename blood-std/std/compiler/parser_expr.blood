@@ -64,20 +64,12 @@ fn infix_precedence(kind: token::TokenKind) -> u8 {
     match kind {
         // Assignment (right-to-left, lowest)
         token::TokenKind::Eq => 1,
-        token::TokenKind::PlusEq => 1,
-        token::TokenKind::MinusEq => 1,
-        token::TokenKind::StarEq => 1,
-        token::TokenKind::SlashEq => 1,
-        token::TokenKind::PercentEq => 1,
-        token::TokenKind::AndEq => 1,
-        token::TokenKind::OrEq => 1,
-        token::TokenKind::CaretEq => 1,
-        token::TokenKind::ShlEq => 1,
-        token::TokenKind::ShrEq => 1,
 
-        // Range
-        token::TokenKind::DotDot => 2,
-        token::TokenKind::DotDotEq => 2,
+        // Note: Compound assignment (+=, -=, etc.) and range (.., ..=) operators
+        // are not included here. Blood lacks compound assignment operators.
+        // Range operators are lexed but not used in the compiler source.
+        // If needed, add them here WITH corresponding handling in parse_infix_expr
+        // to prevent infinite loops in the Pratt parser.
 
         // Logical or
         token::TokenKind::OrOr => 3,
@@ -548,6 +540,72 @@ fn parse_infix_expr(parser: &mut parser_base::Parser, left: ast::Expr, prec: u8)
                 span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
             };
         }
+        // Bitwise operators
+        token::TokenKind::And => {
+            parser.advance();
+            let right = parse_expr_with_precedence(parser, prec + 1);
+            let end_span = parser.previous.span;
+            return ast::Expr {
+                kind: ast::ExprKind::Binary {
+                    op: common::BinOp::BitAnd,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+                span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+            };
+        }
+        token::TokenKind::Or => {
+            parser.advance();
+            let right = parse_expr_with_precedence(parser, prec + 1);
+            let end_span = parser.previous.span;
+            return ast::Expr {
+                kind: ast::ExprKind::Binary {
+                    op: common::BinOp::BitOr,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+                span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+            };
+        }
+        token::TokenKind::Caret => {
+            parser.advance();
+            let right = parse_expr_with_precedence(parser, prec + 1);
+            let end_span = parser.previous.span;
+            return ast::Expr {
+                kind: ast::ExprKind::Binary {
+                    op: common::BinOp::BitXor,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+                span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+            };
+        }
+        token::TokenKind::Shl => {
+            parser.advance();
+            let right = parse_expr_with_precedence(parser, prec + 1);
+            let end_span = parser.previous.span;
+            return ast::Expr {
+                kind: ast::ExprKind::Binary {
+                    op: common::BinOp::Shl,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+                span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+            };
+        }
+        token::TokenKind::Shr => {
+            parser.advance();
+            let right = parse_expr_with_precedence(parser, prec + 1);
+            let end_span = parser.previous.span;
+            return ast::Expr {
+                kind: ast::ExprKind::Binary {
+                    op: common::BinOp::Shr,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+                span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+            };
+        }
         // Field access
         token::TokenKind::Dot => {
             parser.advance();
@@ -739,7 +797,21 @@ fn parse_match_expr(parser: &mut parser_base::Parser) -> ast::Expr {
         };
 
         parser.expect(token::TokenKind::FatArrow);
-        let body = parse_expr(parser);
+        // For compound expressions (block, if, match, loop, while, for),
+        // parse just the compound expression without entering the Pratt
+        // loop. Otherwise the Pratt parser would see `&` from the next
+        // arm's ref-pattern as the bitwise-AND infix operator and try to
+        // extend the body expression, causing an infinite parse.
+        let body = if parser.check(token::TokenKind::LBrace)
+                   || parser.check(token::TokenKind::If)
+                   || parser.check(token::TokenKind::Match)
+                   || parser.check(token::TokenKind::Loop)
+                   || parser.check(token::TokenKind::While)
+                   || parser.check(token::TokenKind::For) {
+            parse_prefix_expr(parser)
+        } else {
+            parse_expr(parser)
+        };
         let arm_end = parser.previous.span;
 
         let arm = ast::MatchArm {
@@ -750,8 +822,13 @@ fn parse_match_expr(parser: &mut parser_base::Parser) -> ast::Expr {
         };
         arms.push(arm);
 
+        // Try to consume trailing comma. Block bodies don't require one.
         if !parser.try_consume(token::TokenKind::Comma) {
-            break;
+            // No comma found. If previous token was '}' (block body), continue
+            // parsing — block arms don't need trailing commas. Otherwise break.
+            if parser.previous.kind != token::TokenKind::RBrace {
+                break;
+            }
         }
     }
 

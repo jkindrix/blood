@@ -22,6 +22,7 @@ mod hir_lower_ctx;
 mod unify;
 mod typeck;
 mod typeck_expr;
+mod interner;
 
 // ============================================================
 // Type Check Result
@@ -108,8 +109,20 @@ pub fn check_lower_result(result: &hir_lower_ctx::LowerResult) -> TypeCheckResul
     // to avoid collisions between HIR inference variables and type checker variables.
     let mut checker = typeck::TypeChecker::new_from(result.next_ty_var);
 
+    // Pass builtin type info from HIR lowering
+    checker.next_def_id = result.next_def_id;
+    checker.builtin_string_def = copy_opt_def_id(&result.builtin_string_def);
+    checker.builtin_vec_def = copy_opt_def_id(&result.builtin_vec_def);
+    checker.builtin_option_def = copy_opt_def_id(&result.builtin_option_def);
+    checker.builtin_box_def = copy_opt_def_id(&result.builtin_box_def);
+    checker.builtin_hashmap_def = copy_opt_def_id(&result.builtin_hashmap_def);
+    checker.builtin_result_def = copy_opt_def_id(&result.builtin_result_def);
+
     // Phase 1: Collect type information from items
     collect_item_signatures(&mut checker, &result.items);
+
+    // Phase 1b: Register builtin method signatures for String, Vec, Option, etc.
+    register_builtin_signatures(&mut checker);
 
     // Phase 2: Type check all function bodies
     let mut i: usize = 0;
@@ -351,4 +364,407 @@ fn check_body(checker: &mut typeck::TypeChecker, body: &hir_expr::Body, return_t
 
     // Clear return type
     checker.clear_return_ty();
+}
+
+// ============================================================
+// Builtin Method Registration
+// ============================================================
+
+/// Copies an Option<DefId> by value (for passing through references).
+fn copy_opt_def_id(opt: &Option<hir_def::DefId>) -> Option<hir_def::DefId> {
+    match opt {
+        &Option::Some(ref d) => Option::Some(hir_def::DefId::new(d.index)),
+        &Option::None => Option::None,
+    }
+}
+
+/// Helper: create a reference type &T.
+fn make_ref_ty(inner: hir_ty::Type) -> hir_ty::Type {
+    hir_ty::Type::new(hir_ty::TypeKind::Ref { inner: Box::new(inner), mutable: false })
+}
+
+/// Helper: create an ADT type with the given DefId and type args.
+fn make_adt(def_id: hir_def::DefId, args: Vec<hir_ty::Type>) -> hir_ty::Type {
+    hir_ty::Type::new(hir_ty::TypeKind::Adt { def_id: def_id, args: args })
+}
+
+/// Helper: create a type parameter Param(n).
+fn make_param(n: u32) -> hir_ty::Type {
+    hir_ty::Type::param(hir_def::TyVarId::new(n))
+}
+
+/// Helper: add a method to the methods list.
+fn add_method(
+    checker: &mut typeck::TypeChecker,
+    methods: &mut Vec<typeck::MethodInfo>,
+    name: &str,
+    params: Vec<hir_ty::Type>,
+    ret: hir_ty::Type,
+    self_mut: bool,
+) {
+    let def_id = checker.alloc_def_id();
+    let sym = interner::intern(name);
+    methods.push(typeck::MethodInfo::new(def_id, sym, params, ret, true, self_mut));
+}
+
+/// Registers builtin method signatures for all builtin types.
+fn register_builtin_signatures(checker: &mut typeck::TypeChecker) {
+    // String methods
+    match checker.builtin_string_def {
+        Option::Some(def_id) => {
+            register_string_methods(checker, def_id);
+        }
+        Option::None => {}
+    }
+
+    // Vec methods
+    match checker.builtin_vec_def {
+        Option::Some(def_id) => {
+            register_vec_methods(checker, def_id);
+        }
+        Option::None => {}
+    }
+
+    // Option methods
+    match checker.builtin_option_def {
+        Option::Some(def_id) => {
+            register_option_methods(checker, def_id);
+        }
+        Option::None => {}
+    }
+
+    // Box methods
+    match checker.builtin_box_def {
+        Option::Some(def_id) => {
+            register_box_methods(checker, def_id);
+        }
+        Option::None => {}
+    }
+
+    // HashMap methods
+    match checker.builtin_hashmap_def {
+        Option::Some(def_id) => {
+            register_hashmap_methods(checker, def_id);
+        }
+        Option::None => {}
+    }
+
+    // Result methods
+    match checker.builtin_result_def {
+        Option::Some(def_id) => {
+            register_result_methods(checker, def_id);
+        }
+        Option::None => {}
+    }
+}
+
+/// Registers String methods: len, is_empty, push_str, push, as_str, clone,
+/// contains, starts_with, ends_with, as_bytes.
+fn register_string_methods(checker: &mut typeck::TypeChecker, string_def: hir_def::DefId) {
+    let self_ty = make_adt(string_def, Vec::new());
+    let mut methods: Vec<typeck::MethodInfo> = Vec::new();
+
+    // len(&self) -> usize
+    add_method(checker, &mut methods, "len", Vec::new(), hir_ty::Type::usize_ty(), false);
+
+    // is_empty(&self) -> bool
+    add_method(checker, &mut methods, "is_empty", Vec::new(), hir_ty::Type::bool_ty(), false);
+
+    // push_str(&mut self, &str) -> ()
+    let mut push_str_params: Vec<hir_ty::Type> = Vec::new();
+    push_str_params.push(make_ref_ty(hir_ty::Type::str_ty()));
+    add_method(checker, &mut methods, "push_str", push_str_params, hir_ty::Type::unit(), true);
+
+    // push(&mut self, char) -> ()
+    let mut push_params: Vec<hir_ty::Type> = Vec::new();
+    push_params.push(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Char)));
+    add_method(checker, &mut methods, "push", push_params, hir_ty::Type::unit(), true);
+
+    // as_str(&self) -> &str
+    add_method(checker, &mut methods, "as_str", Vec::new(), make_ref_ty(hir_ty::Type::str_ty()), false);
+
+    // clone(&self) -> String
+    add_method(checker, &mut methods, "clone", Vec::new(), make_adt(string_def, Vec::new()), false);
+
+    // contains(&self, &str) -> bool
+    let mut contains_params: Vec<hir_ty::Type> = Vec::new();
+    contains_params.push(make_ref_ty(hir_ty::Type::str_ty()));
+    add_method(checker, &mut methods, "contains", contains_params, hir_ty::Type::bool_ty(), false);
+
+    // starts_with(&self, &str) -> bool
+    let mut sw_params: Vec<hir_ty::Type> = Vec::new();
+    sw_params.push(make_ref_ty(hir_ty::Type::str_ty()));
+    add_method(checker, &mut methods, "starts_with", sw_params, hir_ty::Type::bool_ty(), false);
+
+    // ends_with(&self, &str) -> bool
+    let mut ew_params: Vec<hir_ty::Type> = Vec::new();
+    ew_params.push(make_ref_ty(hir_ty::Type::str_ty()));
+    add_method(checker, &mut methods, "ends_with", ew_params, hir_ty::Type::bool_ty(), false);
+
+    // as_bytes(&self) -> &[u8]
+    let u8_slice = hir_ty::Type::new(hir_ty::TypeKind::Slice {
+        element: Box::new(hir_ty::Type::u8_ty()),
+    });
+    add_method(checker, &mut methods, "as_bytes", Vec::new(), make_ref_ty(u8_slice), false);
+
+    // Register the impl
+    let impl_def = checker.alloc_def_id();
+    let impl_info = typeck::ImplInfo::new(impl_def, self_ty, 0, methods);
+    checker.register_impl(impl_info);
+}
+
+/// Registers Vec<T> methods: push, pop, len, is_empty, get, last, clear,
+/// remove, insert, contains, clone.
+fn register_vec_methods(checker: &mut typeck::TypeChecker, vec_def: hir_def::DefId) {
+    let mut self_args: Vec<hir_ty::Type> = Vec::new();
+    self_args.push(make_param(0));
+    let self_ty = make_adt(vec_def, self_args);
+    let mut methods: Vec<typeck::MethodInfo> = Vec::new();
+
+    // push(&mut self, T) -> ()
+    let mut push_params: Vec<hir_ty::Type> = Vec::new();
+    push_params.push(make_param(0));
+    add_method(checker, &mut methods, "push", push_params, hir_ty::Type::unit(), true);
+
+    // pop(&mut self) -> Option<T>
+    let option_def = checker.builtin_option_def;
+    match option_def {
+        Option::Some(opt_def) => {
+            let mut opt_args: Vec<hir_ty::Type> = Vec::new();
+            opt_args.push(make_param(0));
+            add_method(checker, &mut methods, "pop", Vec::new(), make_adt(opt_def, opt_args), true);
+        }
+        Option::None => {
+            add_method(checker, &mut methods, "pop", Vec::new(), make_param(0), true);
+        }
+    }
+
+    // len(&self) -> usize
+    add_method(checker, &mut methods, "len", Vec::new(), hir_ty::Type::usize_ty(), false);
+
+    // is_empty(&self) -> bool
+    add_method(checker, &mut methods, "is_empty", Vec::new(), hir_ty::Type::bool_ty(), false);
+
+    // get(&self, usize) -> Option<&T>
+    match option_def {
+        Option::Some(opt_def) => {
+            let mut get_params: Vec<hir_ty::Type> = Vec::new();
+            get_params.push(hir_ty::Type::usize_ty());
+            let mut opt_args: Vec<hir_ty::Type> = Vec::new();
+            opt_args.push(make_ref_ty(make_param(0)));
+            add_method(checker, &mut methods, "get", get_params, make_adt(opt_def, opt_args), false);
+        }
+        Option::None => {
+            let mut get_params: Vec<hir_ty::Type> = Vec::new();
+            get_params.push(hir_ty::Type::usize_ty());
+            add_method(checker, &mut methods, "get", get_params, make_ref_ty(make_param(0)), false);
+        }
+    }
+
+    // last(&self) -> Option<&T>
+    match option_def {
+        Option::Some(opt_def) => {
+            let mut opt_args: Vec<hir_ty::Type> = Vec::new();
+            opt_args.push(make_ref_ty(make_param(0)));
+            add_method(checker, &mut methods, "last", Vec::new(), make_adt(opt_def, opt_args), false);
+        }
+        Option::None => {
+            add_method(checker, &mut methods, "last", Vec::new(), make_ref_ty(make_param(0)), false);
+        }
+    }
+
+    // clear(&mut self) -> ()
+    add_method(checker, &mut methods, "clear", Vec::new(), hir_ty::Type::unit(), true);
+
+    // remove(&mut self, usize) -> T
+    let mut remove_params: Vec<hir_ty::Type> = Vec::new();
+    remove_params.push(hir_ty::Type::usize_ty());
+    add_method(checker, &mut methods, "remove", remove_params, make_param(0), true);
+
+    // insert(&mut self, usize, T) -> ()
+    let mut insert_params: Vec<hir_ty::Type> = Vec::new();
+    insert_params.push(hir_ty::Type::usize_ty());
+    insert_params.push(make_param(0));
+    add_method(checker, &mut methods, "insert", insert_params, hir_ty::Type::unit(), true);
+
+    // contains(&self, &T) -> bool
+    let mut contains_params: Vec<hir_ty::Type> = Vec::new();
+    contains_params.push(make_ref_ty(make_param(0)));
+    add_method(checker, &mut methods, "contains", contains_params, hir_ty::Type::bool_ty(), false);
+
+    // clone(&self) -> Vec<T>
+    let mut clone_args: Vec<hir_ty::Type> = Vec::new();
+    clone_args.push(make_param(0));
+    add_method(checker, &mut methods, "clone", Vec::new(), make_adt(vec_def, clone_args), false);
+
+    // Register the impl
+    let impl_def = checker.alloc_def_id();
+    let impl_info = typeck::ImplInfo::new(impl_def, self_ty, 1, methods);
+    checker.register_impl(impl_info);
+}
+
+/// Registers Option<T> methods: is_some, is_none, unwrap, unwrap_or, expect, as_ref, clone.
+fn register_option_methods(checker: &mut typeck::TypeChecker, option_def: hir_def::DefId) {
+    let mut self_args: Vec<hir_ty::Type> = Vec::new();
+    self_args.push(make_param(0));
+    let self_ty = make_adt(option_def, self_args);
+    let mut methods: Vec<typeck::MethodInfo> = Vec::new();
+
+    // is_some(&self) -> bool
+    add_method(checker, &mut methods, "is_some", Vec::new(), hir_ty::Type::bool_ty(), false);
+
+    // is_none(&self) -> bool
+    add_method(checker, &mut methods, "is_none", Vec::new(), hir_ty::Type::bool_ty(), false);
+
+    // unwrap(self) -> T
+    add_method(checker, &mut methods, "unwrap", Vec::new(), make_param(0), false);
+
+    // unwrap_or(self, T) -> T
+    let mut unwrap_or_params: Vec<hir_ty::Type> = Vec::new();
+    unwrap_or_params.push(make_param(0));
+    add_method(checker, &mut methods, "unwrap_or", unwrap_or_params, make_param(0), false);
+
+    // expect(self, &str) -> T
+    let mut expect_params: Vec<hir_ty::Type> = Vec::new();
+    expect_params.push(make_ref_ty(hir_ty::Type::str_ty()));
+    add_method(checker, &mut methods, "expect", expect_params, make_param(0), false);
+
+    // as_ref(&self) -> Option<&T>
+    let mut as_ref_args: Vec<hir_ty::Type> = Vec::new();
+    as_ref_args.push(make_ref_ty(make_param(0)));
+    add_method(checker, &mut methods, "as_ref", Vec::new(), make_adt(option_def, as_ref_args), false);
+
+    // clone(&self) -> Option<T>
+    let mut clone_args: Vec<hir_ty::Type> = Vec::new();
+    clone_args.push(make_param(0));
+    add_method(checker, &mut methods, "clone", Vec::new(), make_adt(option_def, clone_args), false);
+
+    // Register the impl
+    let impl_def = checker.alloc_def_id();
+    let impl_info = typeck::ImplInfo::new(impl_def, self_ty, 1, methods);
+    checker.register_impl(impl_info);
+}
+
+/// Registers Box<T> methods: as_ref.
+fn register_box_methods(checker: &mut typeck::TypeChecker, box_def: hir_def::DefId) {
+    let mut self_args: Vec<hir_ty::Type> = Vec::new();
+    self_args.push(make_param(0));
+    let self_ty = make_adt(box_def, self_args);
+    let mut methods: Vec<typeck::MethodInfo> = Vec::new();
+
+    // as_ref(&self) -> &T
+    add_method(checker, &mut methods, "as_ref", Vec::new(), make_ref_ty(make_param(0)), false);
+
+    // Register the impl
+    let impl_def = checker.alloc_def_id();
+    let impl_info = typeck::ImplInfo::new(impl_def, self_ty, 1, methods);
+    checker.register_impl(impl_info);
+}
+
+/// Registers HashMap<K, V> methods: insert, get, contains_key, len, is_empty, remove, clone.
+fn register_hashmap_methods(checker: &mut typeck::TypeChecker, hashmap_def: hir_def::DefId) {
+    let mut self_args: Vec<hir_ty::Type> = Vec::new();
+    self_args.push(make_param(0));
+    self_args.push(make_param(1));
+    let self_ty = make_adt(hashmap_def, self_args);
+    let mut methods: Vec<typeck::MethodInfo> = Vec::new();
+
+    // insert(&mut self, K, V) -> Option<V>
+    let option_def = checker.builtin_option_def;
+    let mut insert_params: Vec<hir_ty::Type> = Vec::new();
+    insert_params.push(make_param(0));
+    insert_params.push(make_param(1));
+    match option_def {
+        Option::Some(opt_def) => {
+            let mut opt_args: Vec<hir_ty::Type> = Vec::new();
+            opt_args.push(make_param(1));
+            add_method(checker, &mut methods, "insert", insert_params, make_adt(opt_def, opt_args), true);
+        }
+        Option::None => {
+            add_method(checker, &mut methods, "insert", insert_params, make_param(1), true);
+        }
+    }
+
+    // get(&self, &K) -> Option<&V>
+    let mut get_params: Vec<hir_ty::Type> = Vec::new();
+    get_params.push(make_ref_ty(make_param(0)));
+    match option_def {
+        Option::Some(opt_def) => {
+            let mut opt_args: Vec<hir_ty::Type> = Vec::new();
+            opt_args.push(make_ref_ty(make_param(1)));
+            add_method(checker, &mut methods, "get", get_params, make_adt(opt_def, opt_args), false);
+        }
+        Option::None => {
+            add_method(checker, &mut methods, "get", get_params, make_ref_ty(make_param(1)), false);
+        }
+    }
+
+    // contains_key(&self, &K) -> bool
+    let mut ck_params: Vec<hir_ty::Type> = Vec::new();
+    ck_params.push(make_ref_ty(make_param(0)));
+    add_method(checker, &mut methods, "contains_key", ck_params, hir_ty::Type::bool_ty(), false);
+
+    // len(&self) -> usize
+    add_method(checker, &mut methods, "len", Vec::new(), hir_ty::Type::usize_ty(), false);
+
+    // is_empty(&self) -> bool
+    add_method(checker, &mut methods, "is_empty", Vec::new(), hir_ty::Type::bool_ty(), false);
+
+    // remove(&mut self, &K) -> Option<V>
+    let mut remove_params: Vec<hir_ty::Type> = Vec::new();
+    remove_params.push(make_ref_ty(make_param(0)));
+    match option_def {
+        Option::Some(opt_def) => {
+            let mut opt_args: Vec<hir_ty::Type> = Vec::new();
+            opt_args.push(make_param(1));
+            add_method(checker, &mut methods, "remove", remove_params, make_adt(opt_def, opt_args), true);
+        }
+        Option::None => {
+            add_method(checker, &mut methods, "remove", remove_params, make_param(1), true);
+        }
+    }
+
+    // clone(&self) -> HashMap<K, V>
+    let mut clone_args: Vec<hir_ty::Type> = Vec::new();
+    clone_args.push(make_param(0));
+    clone_args.push(make_param(1));
+    add_method(checker, &mut methods, "clone", Vec::new(), make_adt(hashmap_def, clone_args), false);
+
+    // Register the impl
+    let impl_def = checker.alloc_def_id();
+    let impl_info = typeck::ImplInfo::new(impl_def, self_ty, 2, methods);
+    checker.register_impl(impl_info);
+}
+
+/// Registers Result<T, E> methods: is_ok, is_err, unwrap, unwrap_or, expect.
+fn register_result_methods(checker: &mut typeck::TypeChecker, result_def: hir_def::DefId) {
+    let mut self_args: Vec<hir_ty::Type> = Vec::new();
+    self_args.push(make_param(0));
+    self_args.push(make_param(1));
+    let self_ty = make_adt(result_def, self_args);
+    let mut methods: Vec<typeck::MethodInfo> = Vec::new();
+
+    // is_ok(&self) -> bool
+    add_method(checker, &mut methods, "is_ok", Vec::new(), hir_ty::Type::bool_ty(), false);
+
+    // is_err(&self) -> bool
+    add_method(checker, &mut methods, "is_err", Vec::new(), hir_ty::Type::bool_ty(), false);
+
+    // unwrap(self) -> T
+    add_method(checker, &mut methods, "unwrap", Vec::new(), make_param(0), false);
+
+    // unwrap_or(self, T) -> T
+    let mut unwrap_or_params: Vec<hir_ty::Type> = Vec::new();
+    unwrap_or_params.push(make_param(0));
+    add_method(checker, &mut methods, "unwrap_or", unwrap_or_params, make_param(0), false);
+
+    // expect(self, &str) -> T
+    let mut expect_params: Vec<hir_ty::Type> = Vec::new();
+    expect_params.push(make_ref_ty(hir_ty::Type::str_ty()));
+    add_method(checker, &mut methods, "expect", expect_params, make_param(0), false);
+
+    // Register the impl
+    let impl_def = checker.alloc_def_id();
+    let impl_info = typeck::ImplInfo::new(impl_def, self_ty, 2, methods);
+    checker.register_impl(impl_info);
 }

@@ -191,7 +191,7 @@ pub fn parse_type_args(parser: &mut parser_base::Parser) -> ast::TypeArgs {
 
     let mut args: Vec<ast::TypeArg> = Vec::new();
 
-    while !parser.check(token::TokenKind::Gt) && !parser.is_at_end() {
+    while !parser.check_closing_angle() && !parser.is_at_end() {
         // Check for lifetime
         if parser.check(token::TokenKind::Lifetime) {
             let lt_sym = parser.parse_spanned_symbol();
@@ -202,12 +202,17 @@ pub fn parse_type_args(parser: &mut parser_base::Parser) -> ast::TypeArgs {
             args.push(ast::TypeArg::Type(ty));
         }
 
+        // After >> splitting, pending_gt may be set — don't consume
+        // the trailing comma that belongs to the enclosing context.
+        if parser.check_closing_angle() {
+            break;
+        }
         if !parser.try_consume(token::TokenKind::Comma) {
             break;
         }
     }
 
-    parser.expect(token::TokenKind::Gt);
+    parser.expect_closing_angle();
 
     let end_span = parser.previous.span;
     ast::TypeArgs {
@@ -618,15 +623,18 @@ fn parse_forall_type(parser: &mut parser_base::Parser) -> ast::Type {
     parser.expect(token::TokenKind::Lt);
 
     let mut params: Vec<common::SpannedSymbol> = Vec::new();
-    while !parser.check(token::TokenKind::Gt) && !parser.is_at_end() {
+    while !parser.check_closing_angle() && !parser.is_at_end() {
         params.push(parser.parse_spanned_symbol());
 
+        if parser.check_closing_angle() {
+            break;
+        }
         if !parser.try_consume(token::TokenKind::Comma) {
             break;
         }
     }
 
-    parser.expect(token::TokenKind::Gt);
+    parser.expect_closing_angle();
 
     let inner = parse_type(parser);
     let end_span = parser.previous.span;

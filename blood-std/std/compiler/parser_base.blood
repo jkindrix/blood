@@ -74,6 +74,9 @@ pub struct Parser<'src> {
     /// Whether struct literals are allowed in the current context.
     /// Set to false in condition contexts (if, while, for) to avoid ambiguity.
     pub allow_struct_literal: bool,
+    /// Whether a pending '>' remains from splitting a '>>' token.
+    /// Used for parsing nested generics like `Option<Vec<T>>`.
+    pub pending_gt: bool,
 }
 
 impl<'src> Parser<'src> {
@@ -101,6 +104,7 @@ impl<'src> Parser<'src> {
             panic_mode: false,
             interned: Vec::new(),
             allow_struct_literal: true,
+            pending_gt: false,
         }
     }
 
@@ -161,6 +165,41 @@ impl<'src> Parser<'src> {
     /// Check if current token can be used as an identifier.
     pub fn check_ident(self: &Self) -> bool {
         self.current.kind.can_be_ident()
+    }
+
+    // ============================================================
+    // Angle bracket helpers (for nested generics like Vec<Option<T>>)
+    // ============================================================
+
+    /// Check if we're at a closing angle bracket (handles >> splitting).
+    /// Returns true if current token is Gt, or Shr (>>), or pending_gt is set.
+    pub fn check_closing_angle(self: &Self) -> bool {
+        self.pending_gt || self.current.kind == token::TokenKind::Gt || self.current.kind == token::TokenKind::Shr
+    }
+
+    /// Consume a closing angle bracket (handles >> splitting).
+    /// For Gt: normal advance. For Shr (>>): advance past token, set pending_gt.
+    /// For pending_gt: just clear the flag.
+    /// Returns true if successful, false if no closing angle found (reports error).
+    pub fn expect_closing_angle(self: &mut Self) -> bool {
+        if self.pending_gt {
+            self.pending_gt = false;
+            self.previous = token::Token { kind: token::TokenKind::Gt, span: self.previous.span };
+            return true;
+        }
+        if self.current.kind == token::TokenKind::Gt {
+            self.advance();
+            return true;
+        }
+        if self.current.kind == token::TokenKind::Shr {
+            let shr_span = self.current.span;
+            self.pending_gt = true;
+            self.advance();
+            self.previous = token::Token { kind: token::TokenKind::Gt, span: shr_span };
+            return true;
+        }
+        self.error_expected_kind(token::TokenKind::Gt);
+        false
     }
 
     // ============================================================

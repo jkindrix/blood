@@ -89,8 +89,8 @@ pub fn infer_expr(checker: &mut typeck::TypeChecker, expr: &hir_expr::Expr) -> h
         &hir_expr::ExprKind::Closure { ref captures, ref params, ref return_ty, ref body, body_id } => {
             infer_closure(checker, captures, params, return_ty, body.as_ref(), body_id, expr.span)
         }
-        &hir_expr::ExprKind::WithHandle { ref handler, ref body } => {
-            infer_with_handle(checker, handler.as_ref(), body.as_ref(), expr.span)
+        &hir_expr::ExprKind::WithHandle { handler: ref handler_expr, body: ref body_expr } => {
+            infer_with_handle(checker, handler_expr.as_ref(), body_expr.as_ref(), expr.span)
         }
         &hir_expr::ExprKind::Perform { effect_def, op_def, ref args } => {
             infer_perform(checker, effect_def, op_def, args, expr.span)
@@ -1385,6 +1385,15 @@ fn infer_match(
     if arms.len() == 0 {
         // Empty match - type is never (or error)
         return hir_ty::Type::never();
+    }
+
+    // Unify each arm's pattern type with the scrutinee type.
+    // During HIR lowering, patterns get fresh Infer types. This ensures
+    // pattern bindings have correct types before we process arm bodies.
+    let mut pat_i: usize = 0;
+    while pat_i < arms.len() {
+        checker.unify(&scrut_ty, &arms[pat_i].pattern.ty, arms[pat_i].pattern.span);
+        pat_i = pat_i + 1;
     }
 
     // Infer type from first arm, unify all others

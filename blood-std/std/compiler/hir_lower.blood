@@ -62,16 +62,23 @@ pub fn lower_program_with_base_dir(program: &ast::Program, base_dir: String, sou
     // Phase 2: Register other declarations (functions, consts, statics)
     register_declarations(&mut ctx, &program.declarations);
 
+    // Phase 2b: Register builtin runtime functions (file I/O, args, print, etc.)
+    // This runs AFTER Phase 2 so user-defined functions (e.g., a custom `panic`)
+    // take priority — register_one_builtin silently skips names already defined.
+    register_builtin_functions(&mut ctx);
+
     // Check for errors from registration
     if ctx.has_errors() {
         return hir_lower_ctx::LowerResult::failure(ctx.diagnostics);
     }
 
-    // Phase 3: Lower declarations to HIR items
-    hir_lower_item::lower_declarations(&mut ctx, &program.declarations);
-
-    // Phase 3b: Lower external module declarations
+    // Phase 3a: Lower external module declarations first, so their enum
+    // variants and impl methods are registered before the current file's
+    // declarations reference them.
     lower_external_module_declarations(&mut ctx);
+
+    // Phase 3b: Lower current file's declarations to HIR items
+    hir_lower_item::lower_declarations(&mut ctx, &program.declarations);
 
     // Check for errors from item lowering
     if ctx.has_errors() {
@@ -99,7 +106,21 @@ pub fn lower_program_with_base_dir(program: &ast::Program, base_dir: String, sou
 
     // Transfer items, item_index, and bodies to the result
     let next_ty_var = ctx.next_ty_var;
-    hir_lower_ctx::LowerResult::success_with_data(crate_data, ctx.items, ctx.item_index, ctx.bodies, next_ty_var)
+    let next_def_id = ctx.next_def_id;
+    hir_lower_ctx::LowerResult::success_with_data(
+        crate_data,
+        ctx.items,
+        ctx.item_index,
+        ctx.bodies,
+        next_ty_var,
+        next_def_id,
+        ctx.builtin_string_def,
+        ctx.builtin_vec_def,
+        ctx.builtin_option_def,
+        ctx.builtin_box_def,
+        ctx.builtin_hashmap_def,
+        ctx.builtin_result_def,
+    )
 }
 
 // ============================================================
@@ -269,6 +290,7 @@ fn register_type_name(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declarat
             }
         }
         &ast::Declaration::Macro(_) => {}
+        &ast::Declaration::Use(_) => {} // Handled in register_module_type_name
     }
 }
 
@@ -288,39 +310,149 @@ fn register_builtin_types(ctx: &mut hir_lower_ctx::LoweringCtx) {
     let dummy_span = common::Span::dummy();
 
     // String — struct-like owned string type
-    register_one_builtin(ctx, "String", hir_def::DefKind::Struct, dummy_span);
+    ctx.builtin_string_def = Option::Some(register_one_builtin(ctx, "String", hir_def::DefKind::Struct, dummy_span));
 
     // Vec — struct-like growable array
-    register_one_builtin(ctx, "Vec", hir_def::DefKind::Struct, dummy_span);
+    ctx.builtin_vec_def = Option::Some(register_one_builtin(ctx, "Vec", hir_def::DefKind::Struct, dummy_span));
 
     // Option — enum with Some/None variants
-    register_one_builtin(ctx, "Option", hir_def::DefKind::Enum, dummy_span);
+    ctx.builtin_option_def = Option::Some(register_one_builtin(ctx, "Option", hir_def::DefKind::Enum, dummy_span));
 
     // Box — struct-like heap-allocated pointer
-    register_one_builtin(ctx, "Box", hir_def::DefKind::Struct, dummy_span);
+    ctx.builtin_box_def = Option::Some(register_one_builtin(ctx, "Box", hir_def::DefKind::Struct, dummy_span));
 
     // HashMap — struct-like key-value map
-    register_one_builtin(ctx, "HashMap", hir_def::DefKind::Struct, dummy_span);
+    ctx.builtin_hashmap_def = Option::Some(register_one_builtin(ctx, "HashMap", hir_def::DefKind::Struct, dummy_span));
 
     // Result — enum with Ok/Err variants
-    register_one_builtin(ctx, "Result", hir_def::DefKind::Enum, dummy_span);
+    ctx.builtin_result_def = Option::Some(register_one_builtin(ctx, "Result", hir_def::DefKind::Enum, dummy_span));
+
+    // Register associated functions and variant constructors
+    register_builtin_children(ctx);
 }
 
-/// Registers a single builtin type if not already defined.
+/// Registers a single builtin type if not already defined. Returns the DefId.
 fn register_one_builtin(
     ctx: &mut hir_lower_ctx::LoweringCtx,
     name: &str,
     kind: hir_def::DefKind,
     span: common::Span,
-) {
+) -> hir_def::DefId {
     let sym = ctx.intern(name);
-    // define_global returns false if name already exists — we silently skip
     let def_id = ctx.alloc_def_id();
     let success = ctx.resolver.define_global(sym, def_id);
     if success {
         ctx.resolver.register_def_info(def_id, kind, sym, span, Option::None);
     }
-    // If !success, user code already defined this name — no action needed
+    def_id
+}
+
+/// Registers associated functions and variant constructors for builtin types.
+fn register_builtin_children(ctx: &mut hir_lower_ctx::LoweringCtx) {
+    let dummy_span = common::Span::dummy();
+
+    // === String ===
+    match ctx.builtin_string_def {
+        Option::Some(parent) => {
+            register_builtin_child(ctx, parent, "new", hir_def::DefKind::Fn, dummy_span);
+            register_builtin_child(ctx, parent, "from", hir_def::DefKind::Fn, dummy_span);
+            register_builtin_child(ctx, parent, "with_capacity", hir_def::DefKind::Fn, dummy_span);
+        }
+        Option::None => {}
+    }
+
+    // === Vec ===
+    match ctx.builtin_vec_def {
+        Option::Some(parent) => {
+            register_builtin_child(ctx, parent, "new", hir_def::DefKind::Fn, dummy_span);
+            register_builtin_child(ctx, parent, "with_capacity", hir_def::DefKind::Fn, dummy_span);
+        }
+        Option::None => {}
+    }
+
+    // === Option ===
+    match ctx.builtin_option_def {
+        Option::Some(parent) => {
+            let some_def = register_builtin_child(ctx, parent, "Some", hir_def::DefKind::Variant, dummy_span);
+            let none_def = register_builtin_child(ctx, parent, "None", hir_def::DefKind::Variant, dummy_span);
+            // Also register as top-level names for bare Some/None usage
+            let some_sym = ctx.intern("Some");
+            ctx.resolver.define_global(some_sym, some_def);
+            let none_sym = ctx.intern("None");
+            ctx.resolver.define_global(none_sym, none_def);
+        }
+        Option::None => {}
+    }
+
+    // === Box ===
+    match ctx.builtin_box_def {
+        Option::Some(parent) => {
+            register_builtin_child(ctx, parent, "new", hir_def::DefKind::Fn, dummy_span);
+        }
+        Option::None => {}
+    }
+
+    // === HashMap ===
+    match ctx.builtin_hashmap_def {
+        Option::Some(parent) => {
+            register_builtin_child(ctx, parent, "new", hir_def::DefKind::Fn, dummy_span);
+        }
+        Option::None => {}
+    }
+
+    // === Result ===
+    match ctx.builtin_result_def {
+        Option::Some(parent) => {
+            let ok_def = register_builtin_child(ctx, parent, "Ok", hir_def::DefKind::Variant, dummy_span);
+            let err_def = register_builtin_child(ctx, parent, "Err", hir_def::DefKind::Variant, dummy_span);
+            // Also register as top-level names for bare Ok/Err usage
+            let ok_sym = ctx.intern("Ok");
+            ctx.resolver.define_global(ok_sym, ok_def);
+            let err_sym = ctx.intern("Err");
+            ctx.resolver.define_global(err_sym, err_def);
+        }
+        Option::None => {}
+    }
+}
+
+/// Registers a child function or variant under a parent builtin type.
+fn register_builtin_child(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    parent: hir_def::DefId,
+    name: &str,
+    kind: hir_def::DefKind,
+    span: common::Span,
+) -> hir_def::DefId {
+    let sym = ctx.intern(name);
+    let def_id = ctx.alloc_def_id();
+    ctx.resolver.register_def_info(def_id, kind, sym, span, Option::Some(parent));
+    def_id
+}
+
+/// Registers blood-rust runtime builtin free functions as global names.
+/// These functions are provided by the runtime and have no Blood source declaration.
+fn register_builtin_functions(ctx: &mut hir_lower_ctx::LoweringCtx) {
+    let dummy_span = common::Span::dummy();
+
+    // File I/O
+    register_one_builtin(ctx, "file_exists", hir_def::DefKind::Fn, dummy_span);
+    register_one_builtin(ctx, "file_read_to_string", hir_def::DefKind::Fn, dummy_span);
+    register_one_builtin(ctx, "file_write_string", hir_def::DefKind::Fn, dummy_span);
+
+    // Command-line arguments
+    register_one_builtin(ctx, "args_count", hir_def::DefKind::Fn, dummy_span);
+    register_one_builtin(ctx, "args_get", hir_def::DefKind::Fn, dummy_span);
+
+    // Console output
+    register_one_builtin(ctx, "print_str", hir_def::DefKind::Fn, dummy_span);
+    register_one_builtin(ctx, "println_str", hir_def::DefKind::Fn, dummy_span);
+    register_one_builtin(ctx, "eprintln_str", hir_def::DefKind::Fn, dummy_span);
+
+    // Panic (parsed as regular identifier, ! handled separately)
+    register_one_builtin(ctx, "panic", hir_def::DefKind::Fn, dummy_span);
+
+    // Process control
+    register_one_builtin(ctx, "process_exit", hir_def::DefKind::Fn, dummy_span);
 }
 
 // ============================================================
@@ -349,19 +481,20 @@ fn load_external_module(
     // Re-intern the module name for consistent symbol indices
     let re_interned_name = ctx.intern(module_name.as_str());
 
-    // Check for circular import
+    // Check if module is already loaded (imported by another file)
     let existing = ctx.find_loaded_module(&file_path);
     if existing.is_some() {
-        // Module already loaded - just define the name pointing to existing DefId
-        let existing_def_id = existing.unwrap();
-        let success = ctx.resolver.define_global(re_interned_name, existing_def_id);
-        if !success {
-            ctx.error(
-                hir::DiagnosticCode::E0101,
-                common::make_string("duplicate definition"),
-                name_span,
-            );
-        }
+        // Module already loaded — types and declarations already registered globally.
+        // No need to re-register; all scopes share the global namespace.
+        return;
+    }
+
+    // Check if module is currently being loaded (circular import detection)
+    if ctx.is_path_loading(&file_path) {
+        let mut msg = common::make_string("circular import detected for module '");
+        append_string(&mut msg, &module_name);
+        msg.push_str("'");
+        ctx.error(hir::DiagnosticCode::E0104, msg, span);
         return;
     }
 
@@ -433,8 +566,8 @@ fn load_external_module(
         Option::None,
     );
 
-    // Track the loaded module to prevent circular imports
-    ctx.add_loaded_module(re_interned_name, def_id, clone_string(&file_path));
+    // Mark path as loading for circular import detection
+    ctx.loading_paths.push(clone_string(&file_path));
 
     // Save current source and switch to the external module's source text
     // so that span_to_string() works correctly during registration
@@ -442,6 +575,8 @@ fn load_external_module(
     ctx.source = clone_string(content);
 
     // Phase 1: Register nested type names from the loaded module
+    // This recursively loads sub-modules, which will be added to loaded_modules
+    // BEFORE this module (post-order), ensuring dependencies are processed first in Phase 3a.
     register_module_type_names(ctx, def_id, &program.declarations);
 
     // Phase 2: Register declarations (functions, consts, statics) from the loaded module
@@ -449,6 +584,10 @@ fn load_external_module(
 
     // Restore the original source text
     ctx.source = saved_source;
+
+    // Add to loaded_modules AFTER sub-modules have been loaded (post-order).
+    // This ensures Phase 3a processes dependencies before dependents.
+    ctx.add_loaded_module(re_interned_name, def_id, clone_string(&file_path));
 }
 
 /// Resolves a symbol to a string for file path construction.
@@ -458,24 +597,12 @@ fn resolve_symbol_to_string(ctx: &mut hir_lower_ctx::LoweringCtx, symbol: common
 
 /// Clones a String.
 fn clone_string(s: &String) -> String {
-    let mut result = String::new();
-    let bytes = s.as_bytes();
-    let mut i: usize = 0;
-    while i < bytes.len() {
-        result.push(bytes[i] as char);
-        i = i + 1;
-    }
-    result
+    common::make_string(s.as_str())
 }
 
 /// Appends a String to another String.
 fn append_string(dest: &mut String, src: &String) {
-    let bytes = src.as_bytes();
-    let mut i: usize = 0;
-    while i < bytes.len() {
-        dest.push(bytes[i] as char);
-        i = i + 1;
-    }
+    dest.push_str(src.as_str());
 }
 
 // ============================================================
@@ -604,8 +731,17 @@ fn lower_external_module_fn_bodies(ctx: &mut hir_lower_ctx::LoweringCtx) {
         let saved_source = clone_string(&ctx.source);
         ctx.source = clone_string(content);
 
+        // Push a Module scope so unqualified names within the module
+        // (e.g. SubstTable inside unify.blood) resolve correctly.
+        let def_id = modules[i].def_id;
+        ctx.resolver.push_scope(resolve::ScopeKind::Module);
+        hir_lower_item::add_module_items_to_scope(ctx, def_id, &program.declarations);
+
         // Lower the module's function bodies
         lower_fn_bodies(ctx, &program.declarations);
+
+        // Pop the Module scope
+        ctx.resolver.pop_scope();
 
         // Restore source
         ctx.source = saved_source;
@@ -742,6 +878,22 @@ fn register_module_type_name(
                 &Option::None => {
                     // Nested external module - load recursively
                     load_external_module(ctx, m.name.symbol, m.name.span, m.vis, m.span);
+                    // Also register as a child of the parent module so that
+                    // chained paths like parent::submodule::Type work.
+                    let name_str = ctx.span_to_string(m.name.span);
+                    let name_sym = ctx.intern(name_str.as_str());
+                    let lookup = ctx.resolver.lookup(name_sym);
+                    if lookup.is_some() {
+                        let result = lookup.unwrap();
+                        let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+                        ctx.resolver.register_def_info(
+                            binding.def_id,
+                            hir_def::DefKind::Module,
+                            name_sym,
+                            m.name.span,
+                            Option::Some(parent_def_id),
+                        );
+                    }
                 }
             }
         }
@@ -753,6 +905,34 @@ fn register_module_type_name(
         &ast::Declaration::Handler(_) => {}
         &ast::Declaration::Bridge(_) => {}
         &ast::Declaration::Macro(_) => {}
+        &ast::Declaration::Use(ref u) => {
+            // pub use module::Item — register Item as a child of the current parent
+            let mod_name_str = ctx.span_to_string(u.module_name.span);
+            let mod_sym = ctx.intern(mod_name_str.as_str());
+            let mod_lookup = ctx.resolver.lookup(mod_sym);
+            if mod_lookup.is_some() {
+                let mod_result = mod_lookup.unwrap();
+                let mod_binding = ctx.resolver.scope_binding(mod_result.scope_index, mod_result.binding_index);
+                let mod_def_id = mod_binding.def_id;
+                let item_name_str = ctx.span_to_string(u.item_name.span);
+                let item_sym = ctx.intern(item_name_str.as_str());
+                let item_def = ctx.resolver.lookup_in_parent(mod_def_id, item_sym);
+                if item_def.is_some() {
+                    let existing_def_id = item_def.unwrap();
+                    let existing_info = ctx.resolver.get_def_info(existing_def_id);
+                    if existing_info.is_some() {
+                        let info = existing_info.unwrap();
+                        ctx.resolver.register_def_info(
+                            existing_def_id,
+                            info.kind,
+                            item_sym,
+                            info.span,
+                            Option::Some(parent_def_id),
+                        );
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -870,8 +1050,39 @@ fn register_declaration(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declar
         &ast::Declaration::Trait(_) => {}
         &ast::Declaration::Effect(_) => {}
         &ast::Declaration::TypeAlias(_) => {}
-        // Impl blocks don't have names
-        &ast::Declaration::Impl(_) => {}
+        // Impl blocks: register methods as children of the target type
+        &ast::Declaration::Impl(ref impl_block) => {
+            match &impl_block.self_ty.kind {
+                &ast::TypeKind::Path(ref type_path) => {
+                    if type_path.segments.len() > 0 {
+                        let first_seg = &type_path.segments[0];
+                        let type_name_str = ctx.span_to_string(first_seg.name.span);
+                        let type_name_sym = ctx.intern(type_name_str.as_str());
+                        let type_lookup = ctx.resolver.lookup(type_name_sym);
+                        if type_lookup.is_some() {
+                            let result = type_lookup.unwrap();
+                            let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+                            let type_def_id = hir_def::DefId::new(binding.def_id.index);
+                            register_impl_items(ctx, type_def_id, &impl_block.items);
+                        }
+                    }
+                }
+                &ast::TypeKind::Reference { ref inner, .. } => {
+                    // impl &Type or impl &mut Type — skip for now
+                }
+                &ast::TypeKind::Pointer { ref inner, .. } => {}
+                &ast::TypeKind::Array { ref element, ref size } => {}
+                &ast::TypeKind::Slice { ref element } => {}
+                &ast::TypeKind::Tuple(ref elems) => {}
+                &ast::TypeKind::Function { ref params, ref return_type, ref effects } => {}
+                &ast::TypeKind::Record { ref fields, ref rest } => {}
+                &ast::TypeKind::Ownership { ref qualifier, ref inner } => {}
+                &ast::TypeKind::Forall { ref params, ref body } => {}
+                &ast::TypeKind::Never => {}
+                &ast::TypeKind::Infer => {}
+                &ast::TypeKind::Paren(ref inner) => {}
+            }
+        }
         // Bridge, Module, Macro need special handling
         &ast::Declaration::Bridge(_) => {}
         &ast::Declaration::Module(ref m) => {
@@ -894,6 +1105,7 @@ fn register_declaration(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declar
             }
         }
         &ast::Declaration::Macro(_) => {}
+        &ast::Declaration::Use(_) => {} // Already handled in Phase 1
     }
 }
 
@@ -993,10 +1205,105 @@ fn register_module_declaration(
         &ast::Declaration::Trait(_) => {}
         &ast::Declaration::Effect(_) => {}
         &ast::Declaration::TypeAlias(_) => {}
-        // Impl blocks don't have names
-        &ast::Declaration::Impl(_) => {}
+        // Impl blocks: register methods as children of the target type
+        &ast::Declaration::Impl(ref impl_block) => {
+            match &impl_block.self_ty.kind {
+                &ast::TypeKind::Path(ref type_path) => {
+                    if type_path.segments.len() > 0 {
+                        let first_seg = &type_path.segments[0];
+                        let type_name_str = ctx.span_to_string(first_seg.name.span);
+                        let type_name_sym = ctx.intern(type_name_str.as_str());
+                        // Look up in parent module first, then fall back to global scope
+                        let type_def_opt = ctx.resolver.lookup_in_parent(parent_def_id, type_name_sym);
+                        let type_def_id_opt: Option<hir_def::DefId> = if type_def_opt.is_some() {
+                            Option::Some(type_def_opt.unwrap())
+                        } else {
+                            let global_lookup = ctx.resolver.lookup(type_name_sym);
+                            if global_lookup.is_some() {
+                                let result = global_lookup.unwrap();
+                                let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+                                Option::Some(hir_def::DefId::new(binding.def_id.index))
+                            } else {
+                                Option::None
+                            }
+                        };
+                        if type_def_id_opt.is_some() {
+                            let type_def_id = type_def_id_opt.unwrap();
+                            register_impl_items(ctx, type_def_id, &impl_block.items);
+                        }
+                    }
+                }
+                &ast::TypeKind::Reference { ref inner, .. } => {}
+                &ast::TypeKind::Pointer { ref inner, .. } => {}
+                &ast::TypeKind::Array { ref element, ref size } => {}
+                &ast::TypeKind::Slice { ref element } => {}
+                &ast::TypeKind::Tuple(ref elems) => {}
+                &ast::TypeKind::Function { ref params, ref return_type, ref effects } => {}
+                &ast::TypeKind::Record { ref fields, ref rest } => {}
+                &ast::TypeKind::Ownership { ref qualifier, ref inner } => {}
+                &ast::TypeKind::Forall { ref params, ref body } => {}
+                &ast::TypeKind::Never => {}
+                &ast::TypeKind::Infer => {}
+                &ast::TypeKind::Paren(ref inner) => {}
+            }
+        }
         &ast::Declaration::Bridge(_) => {}
         &ast::Declaration::Macro(_) => {}
+        &ast::Declaration::Use(_) => {}
+    }
+}
+
+// ============================================================
+// Helper: Register Impl Block Items
+// ============================================================
+
+/// Register all items in an impl block as children of the target type.
+fn register_impl_items(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    type_def_id: hir_def::DefId,
+    items: &Vec<ast::ImplItem>,
+) {
+    let mut j: usize = 0;
+    while j < items.len() {
+        match &items[j] {
+            &ast::ImplItem::Function(ref f) => {
+                let def_id = ctx.alloc_def_id();
+                let fn_name_str = ctx.span_to_string(f.name.span);
+                let fn_name_sym = ctx.intern(fn_name_str.as_str());
+                ctx.resolver.register_def_info(
+                    def_id,
+                    hir_def::DefKind::Fn,
+                    fn_name_sym,
+                    f.name.span,
+                    Option::Some(type_def_id),
+                );
+            }
+            &ast::ImplItem::TypeAlias(ref ta) => {
+                let def_id = ctx.alloc_def_id();
+                let ta_name_str = ctx.span_to_string(ta.name.span);
+                let ta_name_sym = ctx.intern(ta_name_str.as_str());
+                ctx.resolver.register_def_info(
+                    def_id,
+                    hir_def::DefKind::TypeAlias,
+                    ta_name_sym,
+                    ta.name.span,
+                    Option::Some(type_def_id),
+                );
+            }
+            &ast::ImplItem::Const(ref c) => {
+                let def_id = ctx.alloc_def_id();
+                let c_name_str = ctx.span_to_string(c.name.span);
+                let c_name_sym = ctx.intern(c_name_str.as_str());
+                ctx.resolver.register_def_info(
+                    def_id,
+                    hir_def::DefKind::Const,
+                    c_name_sym,
+                    c.name.span,
+                    Option::Some(type_def_id),
+                );
+            }
+        }
+        j = j + 1;
     }
 }
 
@@ -1043,6 +1350,7 @@ fn lower_fn_body_if_present(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::De
             }
         }
         &ast::Declaration::Macro(_) => {}
+        &ast::Declaration::Use(_) => {}
     }
 }
 

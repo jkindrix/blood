@@ -30,31 +30,18 @@ pub struct ParseResult {
 
 /// Parse a complete Blood source file.
 pub fn parse_file(source: &str) -> ParseResult {
-    println_str("[parse_file] Starting...");
-    println_str("[parse_file] Creating parser...");
     let mut parser = parser_base::Parser::new(source);
-    println_str("[parse_file] Parser created");
-    println_str("[parse_file] Getting start_span...");
     let start_span = parser.current.span;
-    println_str("[parse_file] Got start_span");
 
     // Parse module declaration if present
-    println_str("[parse_file] Parsing mod_decl...");
     let mod_decl = parse_module_decl(&mut parser);
-    println_str("[parse_file] Got mod_decl");
 
     // Parse imports
-    println_str("[parse_file] Parsing imports...");
     let imports = parse_imports(&mut parser);
-    println_str("[parse_file] Got imports");
 
     // Parse declarations
-    println_str("[parse_file] Creating declarations vec...");
     let mut declarations: Vec<ast::Declaration> = Vec::new();
-    println_str("[parse_file] Vec created");
-    println_str("[parse_file] Checking is_at_end...");
     while !parser.is_at_end() {
-        println_str("[parse_file] Parsing declaration...");
         let decl = parser_item::parse_declaration(&mut parser);
         declarations.push(decl);
     }

@@ -233,6 +233,15 @@ pub struct TypeChecker {
     pub traits: Vec<Option<typeck_info::TraitInfo>>,
     /// Trait implementations for trait resolution.
     pub trait_impls: Vec<typeck_info::TraitImplInfo>,
+    /// DefId counter for allocating synthetic builtin DefIds.
+    pub next_def_id: u32,
+    /// Builtin type DefIds.
+    pub builtin_string_def: Option<hir_def::DefId>,
+    pub builtin_vec_def: Option<hir_def::DefId>,
+    pub builtin_option_def: Option<hir_def::DefId>,
+    pub builtin_box_def: Option<hir_def::DefId>,
+    pub builtin_hashmap_def: Option<hir_def::DefId>,
+    pub builtin_result_def: Option<hir_def::DefId>,
 }
 
 impl TypeChecker {
@@ -254,6 +263,13 @@ impl TypeChecker {
             impls: Vec::new(),
             traits: Vec::new(),
             trait_impls: Vec::new(),
+            next_def_id: 0,
+            builtin_string_def: Option::None,
+            builtin_vec_def: Option::None,
+            builtin_option_def: Option::None,
+            builtin_box_def: Option::None,
+            builtin_hashmap_def: Option::None,
+            builtin_result_def: Option::None,
         }
     }
 
@@ -276,6 +292,13 @@ impl TypeChecker {
             impls: Vec::new(),
             traits: Vec::new(),
             trait_impls: Vec::new(),
+            next_def_id: 0,
+            builtin_string_def: Option::None,
+            builtin_vec_def: Option::None,
+            builtin_option_def: Option::None,
+            builtin_box_def: Option::None,
+            builtin_hashmap_def: Option::None,
+            builtin_result_def: Option::None,
         }
     }
 
@@ -343,6 +366,30 @@ impl TypeChecker {
     /// Returns whether any errors have been reported.
     pub fn has_errors(self: &Self) -> bool {
         self.errors.len() > 0
+    }
+
+    /// Allocates a fresh DefId for synthetic builtin registrations.
+    pub fn alloc_def_id(self: &mut Self) -> hir_def::DefId {
+        let id = hir_def::DefId::new(self.next_def_id);
+        self.next_def_id = self.next_def_id + 1;
+        id
+    }
+
+    /// Registers a function signature directly with explicit types.
+    /// Used for builtin associated functions like String::new(), Vec::new(), etc.
+    pub fn register_fn_sig_direct(
+        self: &mut Self,
+        def_id: hir_def::DefId,
+        param_tys: Vec<hir_ty::Type>,
+        return_ty: hir_ty::Type,
+        num_generics: u32,
+    ) {
+        let info = typeck_info::FnSigInfo::new(param_tys, return_ty, num_generics);
+        let def_idx = def_id.index as usize;
+        while self.fn_sigs.len() <= def_idx {
+            self.fn_sigs.push(Option::None);
+        }
+        self.fn_sigs[def_idx] = Some(info);
     }
 
     /// Unifies two types.

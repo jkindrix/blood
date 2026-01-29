@@ -342,13 +342,25 @@ fn parse_struct_pattern(parser: &mut parser_base::Parser, path: ast::TypePath) -
             break;
         }
 
+        // Check for ref/mut modifiers before field name
+        let by_ref = parser.try_consume(token::TokenKind::Ref);
+        let is_field_mut = if !by_ref { parser.try_consume(token::TokenKind::Mut) } else { parser.try_consume(token::TokenKind::Mut) };
+
         let field_start = parser.current.span;
         let field_name = parser.parse_spanned_symbol();
 
         let pattern = if parser.try_consume(token::TokenKind::Colon) {
             Option::Some(parse_pattern(parser))
         } else {
-            Option::None
+            // Shorthand: `field` or `ref field` or `mut field` or `ref mut field`
+            // All create an ident binding pattern equivalent to `field: field`
+            let pat_kind = ast::PatternKind::Ident {
+                by_ref: by_ref,
+                is_mut: is_field_mut,
+                name: field_name,
+                subpattern: Option::None,
+            };
+            Option::Some(ast::Pattern { kind: pat_kind, span: common::Span { start: field_start.start, end: parser.previous.span.end, line: field_start.line, column: field_start.column } })
         };
 
         let field_end = parser.previous.span;

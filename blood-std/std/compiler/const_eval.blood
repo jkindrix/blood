@@ -100,11 +100,11 @@ impl ConstValue {
 pub fn eval_const_expr(expr: &ast::Expr) -> ConstValue {
     match &expr.kind {
         &ast::ExprKind::Literal(ref lit) => eval_literal(lit),
-        &ast::ExprKind::Binary { ref left, op, ref right } => {
-            eval_binary(left.as_ref(), op, right.as_ref())
+        &ast::ExprKind::Binary { ref left, op: bin_op, ref right } => {
+            eval_binary(left.as_ref(), bin_op, right.as_ref())
         }
-        &ast::ExprKind::Unary { op, ref operand } => {
-            eval_unary(op, operand.as_ref())
+        &ast::ExprKind::Unary { op: unary_op, ref operand } => {
+            eval_unary(unary_op, operand.as_ref())
         }
         &ast::ExprKind::Paren(ref inner) => eval_const_expr(inner.as_ref()),
         // Other expressions cannot be evaluated at compile time
