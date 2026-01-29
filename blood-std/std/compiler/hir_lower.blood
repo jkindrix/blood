@@ -55,6 +55,10 @@ pub fn lower_program_with_base_dir(program: &ast::Program, base_dir: String, sou
     // Phase 1: Register type names (structs, enums, traits, effects)
     register_type_names(&mut ctx, &program.declarations);
 
+    // Phase 1b: Register builtin stdlib types (String, Vec, Option, Box, HashMap)
+    // Only registers names not already defined by user code
+    register_builtin_types(&mut ctx);
+
     // Phase 2: Register other declarations (functions, consts, statics)
     register_declarations(&mut ctx, &program.declarations);
 
@@ -269,6 +273,57 @@ fn register_type_name(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declarat
 }
 
 // ============================================================
+// Builtin Type Registration
+// ============================================================
+
+/// Registers builtin stdlib types (String, Vec, Option, Box, HashMap) in the
+/// resolver so they can be found during type lowering. Only registers a name
+/// if it has not already been defined by user code (Phase 1). This prevents
+/// E0102 "unknown type" errors for common stdlib types.
+///
+/// These types are registered as ADTs with synthetic DefIds. Full method/field
+/// support for these types requires additional work, but recognizing them in
+/// type position allows the compiler to proceed past type resolution.
+fn register_builtin_types(ctx: &mut hir_lower_ctx::LoweringCtx) {
+    let dummy_span = common::Span::dummy();
+
+    // String — struct-like owned string type
+    register_one_builtin(ctx, "String", hir_def::DefKind::Struct, dummy_span);
+
+    // Vec — struct-like growable array
+    register_one_builtin(ctx, "Vec", hir_def::DefKind::Struct, dummy_span);
+
+    // Option — enum with Some/None variants
+    register_one_builtin(ctx, "Option", hir_def::DefKind::Enum, dummy_span);
+
+    // Box — struct-like heap-allocated pointer
+    register_one_builtin(ctx, "Box", hir_def::DefKind::Struct, dummy_span);
+
+    // HashMap — struct-like key-value map
+    register_one_builtin(ctx, "HashMap", hir_def::DefKind::Struct, dummy_span);
+
+    // Result — enum with Ok/Err variants
+    register_one_builtin(ctx, "Result", hir_def::DefKind::Enum, dummy_span);
+}
+
+/// Registers a single builtin type if not already defined.
+fn register_one_builtin(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    name: &str,
+    kind: hir_def::DefKind,
+    span: common::Span,
+) {
+    let sym = ctx.intern(name);
+    // define_global returns false if name already exists — we silently skip
+    let def_id = ctx.alloc_def_id();
+    let success = ctx.resolver.define_global(sym, def_id);
+    if success {
+        ctx.resolver.register_def_info(def_id, kind, sym, span, Option::None);
+    }
+    // If !success, user code already defined this name — no action needed
+}
+
+// ============================================================
 // External Module Loading
 // ============================================================
 
@@ -282,7 +337,10 @@ fn load_external_module(
     span: common::Span,
 ) {
     // Build the file path: base_dir/module_name.blood
-    let module_name = resolve_symbol_to_string(ctx, name);
+    // Use span_to_string instead of resolve_symbol_to_string because the symbol
+    // came from the parser's interner, which is separate from the lowering context's
+    // interner. Span extraction always works regardless of interner state.
+    let module_name = ctx.span_to_string(name_span);
     let mut file_path = clone_string(ctx.get_base_dir());
     file_path.push('/');
     append_string(&mut file_path, &module_name);
