@@ -80,8 +80,16 @@ impl<'src> Parser<'src> {
     /// Create a new parser for the given source.
     pub fn new(source: &'src str) -> Parser<'src> {
         let mut lexer = lexer::Lexer::new(source);
-        let current = lexer.next_token();
-        let next = lexer.next_token();
+        let mut current = lexer.next_token();
+        // Skip any leading doc comments
+        while current.kind == token::TokenKind::DocComment {
+            current = lexer.next_token();
+        }
+        let mut next = lexer.next_token();
+        // Skip doc comments in lookahead
+        while next.kind == token::TokenKind::DocComment {
+            next = lexer.next_token();
+        }
 
         Parser {
             lexer,
@@ -116,10 +124,15 @@ impl<'src> Parser<'src> {
     }
 
     /// Advance to the next token, returning the previous.
+    /// Doc comments are automatically skipped.
     pub fn advance(self: &mut Self) -> token::Token {
         self.previous = self.current;
         self.current = self.next;
         self.next = self.lexer.next_token();
+        // Skip doc comments in lookahead
+        while self.next.kind == token::TokenKind::DocComment {
+            self.next = self.lexer.next_token();
+        }
         self.previous
     }
 
