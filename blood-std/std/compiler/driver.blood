@@ -167,7 +167,7 @@ impl Compiler {
 
             // Get function name or generate one
             let fn_name = match &fn_info {
-                &Option::Some(ref info) => resolve_symbol(&self.interner, info.name),
+                &Option::Some(ref info) => resolve_fn_name(source, info),
                 &Option::None => make_fn_name(body_idx),
             };
 
@@ -192,7 +192,7 @@ impl Compiler {
         }
 
         // Phase 5: Generate LLVM IR from MIR
-        let codegen_result = codegen::generate_module("main", &mir_functions);
+        let codegen_result = codegen::generate_module_with_items("main", &mir_functions, &lower_result.items);
         if !codegen_result.success {
             let mut errors = Vec::new();
             errors.push(error::CompileError::new(
@@ -343,7 +343,7 @@ impl Compiler {
 
             // Get function name or generate one
             let fn_name = match &fn_info {
-                &Option::Some(ref info) => resolve_symbol(&self.interner, info.name),
+                &Option::Some(ref info) => resolve_fn_name(source, info),
                 &Option::None => make_fn_name(body_idx),
             };
 
@@ -368,7 +368,7 @@ impl Compiler {
         }
 
         // Phase 5: Generate LLVM IR from MIR
-        let codegen_result = codegen::generate_module("main", &mir_functions);
+        let codegen_result = codegen::generate_module_with_items("main", &mir_functions, &lower_result.items);
         if !codegen_result.success {
             let mut errors = Vec::new();
             errors.push(error::CompileError::new(
@@ -557,6 +557,8 @@ pub struct FnInfo {
     pub def_id: hir_def::DefId,
     /// The function name (as Symbol).
     pub name: common::Symbol,
+    /// The span of the function name (for extracting name from source).
+    pub name_span: common::Span,
     /// The return type.
     pub return_ty: hir_ty::Type,
     /// The span of the function.
@@ -579,6 +581,7 @@ fn find_fn_for_body(
                             return Option::Some(FnInfo {
                                 def_id: entry.item.def_id,
                                 name: entry.item.name.symbol,
+                                name_span: entry.item.name.span,
                                 return_ty: hir_ty::copy_type(&fn_def.sig.return_ty),
                                 span: entry.item.span,
                             });
@@ -611,6 +614,28 @@ fn resolve_symbol(interner: &interner::StringInterner, symbol: common::Symbol) -
     match interner.resolve(symbol) {
         Option::Some(s) => clone_string(s),
         Option::None => make_fn_name(symbol.index as usize),
+    }
+}
+
+/// Extracts a string from source text given a span.
+fn span_to_string(source: &str, span: common::Span) -> String {
+    let src_bytes = source.as_bytes();
+    let mut result = String::new();
+    let mut i = span.start;
+    while i < span.end && i < src_bytes.len() {
+        result.push(src_bytes[i] as char);
+        i = i + 1;
+    }
+    result
+}
+
+/// Resolves a function name from FnInfo, using source text for span-based extraction.
+fn resolve_fn_name(source: &str, info: &FnInfo) -> String {
+    let name = span_to_string(source, info.name_span);
+    if name.len() > 0 {
+        name
+    } else {
+        make_fn_name(info.name.index as usize)
     }
 }
 

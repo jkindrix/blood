@@ -58,7 +58,43 @@ pub fn emit_statement(
             // Set the discriminant field of an enum
             let ptr = codegen_expr::emit_place_addr(ctx, place);
             let discr_val = codegen_types::format_u64(variant_idx as u64);
-            ctx.emit_store("i64", discr_val.as_str(), ptr.as_str());
+
+            // Try to look up enum layout for correct discriminant type
+            let mut discr_ty = common::make_string("i64");
+            let mut enum_llvm_ty = common::make_string("{ i64, i64 }");
+            let mut found_enum = false;
+
+            match ctx.get_local_hir_type(place.local) {
+                Option::Some(hir_type) => {
+                    match &hir_type.kind {
+                        &hir_ty::TypeKind::Adt { def_id, args: _ } => {
+                            match ctx.lookup_enum(def_id.index) {
+                                Option::Some(layout) => {
+                                    discr_ty = clone_string(&layout.discriminant_type);
+                                    enum_llvm_ty = clone_string(&layout.llvm_type);
+                                    found_enum = true;
+                                }
+                                Option::None => {}
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Option::None => {}
+            }
+
+            if found_enum {
+                // GEP to discriminant field (index 0) of the enum type
+                let discr_ptr = ctx.fresh_temp();
+                let mut indices: Vec<String> = Vec::new();
+                indices.push(common::make_string("0"));
+                indices.push(common::make_string("0"));
+                ctx.emit_gep(discr_ptr.as_str(), enum_llvm_ty.as_str(), ptr.as_str(), &indices);
+                ctx.emit_store(discr_ty.as_str(), discr_val.as_str(), discr_ptr.as_str());
+            } else {
+                // Fallback: store i64 directly
+                ctx.emit_store("i64", discr_val.as_str(), ptr.as_str());
+            }
         }
         &mir_stmt::StatementKind::CopyNonOverlapping { ref src, ref dst, ref count } => {
             // Emit memcpy intrinsic
@@ -170,6 +206,20 @@ pub fn emit_memset_zero(
 // Helper Functions for Locals
 // ============================================================
 
+/// Converts a type to LLVM IR, using the ADT registry for struct/enum types.
+/// Falls back to `codegen_types::type_to_llvm` for non-ADT types.
+fn type_to_llvm_with_ctx(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    ty: &hir_ty::Type,
+) -> String {
+    match &ty.kind {
+        &hir_ty::TypeKind::Adt { def_id, args: _ } => {
+            ctx.adt_llvm_type(def_id.index)
+        }
+        _ => codegen_types::type_to_llvm(ty),
+    }
+}
+
 /// Emits alloca instructions for all locals in a function.
 pub fn emit_allocas(
     ctx: &mut codegen_ctx::CodegenCtx,
@@ -181,12 +231,15 @@ pub fn emit_allocas(
         let local = &body.locals[i];
         let local_id = mir_def::MirLocalId::new(i as u32);
         let name = ctx.local_alloca_name(local_id);
-        let ty = codegen_types::type_to_llvm(&local.ty);
+        // Use context-aware type resolution for correct ADT alloca sizes
+        let ty = type_to_llvm_with_ctx(ctx, &local.ty);
         ctx.emit_alloca(name.as_str(), ty.as_str());
         ctx.register_local(local_id, clone_string(&name));
         // Also register the type and signedness for this local
         ctx.register_local_type(local_id, clone_string(&ty));
         ctx.register_local_signedness(local_id, codegen_types::is_signed(&local.ty));
+        // Register HIR type for ADT layout lookups during projection codegen
+        ctx.register_local_hir_type(local_id, hir_ty::copy_type(&local.ty));
         i = i + 1;
     }
     ctx.dedent();
@@ -205,7 +258,7 @@ pub fn emit_arg_stores(
         let local = &body.locals[i];
         let local_id = mir_def::MirLocalId::new(i as u32);
         let alloca_name = ctx.local_alloca_name(local_id);
-        let ty = codegen_types::type_to_llvm(&local.ty);
+        let ty = type_to_llvm_with_ctx(ctx, &local.ty);
 
         // Argument name is %arg0, %arg1, etc. (i-1 because params start at local index 1)
         let mut arg_name = common::make_string("%arg");

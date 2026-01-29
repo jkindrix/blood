@@ -14,6 +14,56 @@ mod mir_body;
 mod codegen_types;
 
 // ============================================================
+// ADT Layout Types
+// ============================================================
+
+/// Information about a single field's LLVM type.
+pub struct AdtFieldInfo {
+    /// The LLVM type string for this field (e.g., "i32", "ptr", "{ i32, i64 }").
+    pub llvm_type: String,
+}
+
+/// Layout of a struct type.
+pub struct StructLayout {
+    /// The DefId of the struct.
+    pub def_id: u32,
+    /// The fields in declaration order.
+    pub fields: Vec<AdtFieldInfo>,
+    /// The complete LLVM type string (e.g., "{ i32, i64, ptr }").
+    pub llvm_type: String,
+}
+
+/// Layout of a single enum variant.
+pub struct VariantLayout {
+    /// The variant's discriminant index.
+    pub variant_idx: u32,
+    /// The fields/payload types for this variant.
+    pub fields: Vec<AdtFieldInfo>,
+    /// The LLVM type for this variant's payload (e.g., "{ i32, ptr }"), or "{}" for unit.
+    pub payload_llvm_type: String,
+}
+
+/// Layout of an enum type.
+pub struct EnumLayout {
+    /// The DefId of the enum.
+    pub def_id: u32,
+    /// The LLVM type of the discriminant tag (e.g., "i8", "i32", "i64").
+    pub discriminant_type: String,
+    /// Layouts for each variant.
+    pub variants: Vec<VariantLayout>,
+    /// The complete LLVM type string (e.g., "{ i64, [16 x i8] }").
+    pub llvm_type: String,
+    /// The maximum payload size in bytes across all variants.
+    pub max_payload_size: u64,
+}
+
+/// An ADT registry entry: either a struct or an enum.
+pub enum AdtEntry {
+    Struct(StructLayout),
+    Enum(EnumLayout),
+}
+
+// ============================================================
 // Codegen Context
 // ============================================================
 
@@ -33,6 +83,8 @@ pub struct CodegenCtx {
     local_types: Vec<LocalType>,
     /// Mapping from MIR locals to their signedness (true = signed).
     local_signedness: Vec<LocalSignedness>,
+    /// Mapping from MIR locals to their HIR types (for ADT lookups during projection).
+    local_hir_types: Vec<LocalHirType>,
     /// The current function being generated.
     current_fn: Option<String>,
     /// String constants table for global string literals.
@@ -41,12 +93,20 @@ pub struct CodegenCtx {
     string_counter: u32,
     /// Mapping from DefIds to their global names (functions, consts, statics).
     def_names: Vec<DefNameEntry>,
+    /// ADT type registry: maps DefIds to their layout information.
+    pub adt_registry: Vec<AdtEntry>,
 }
 
 /// Mapping from a MIR local to its LLVM type.
 struct LocalType {
     local_id: u32,
     llvm_type: String,
+}
+
+/// Mapping from a MIR local to its HIR type (for ADT layout lookups).
+struct LocalHirType {
+    local_id: u32,
+    hir_type: hir_ty::Type,
 }
 
 /// Mapping from a MIR local to its signedness.
@@ -95,10 +155,12 @@ impl CodegenCtx {
             local_names: Vec::new(),
             local_types: Vec::new(),
             local_signedness: Vec::new(),
+            local_hir_types: Vec::new(),
             current_fn: Option::None,
             string_table: Vec::new(),
             string_counter: 0,
             def_names: Vec::new(),
+            adt_registry: Vec::new(),
         }
     }
 
@@ -112,10 +174,12 @@ impl CodegenCtx {
             local_names: Vec::new(),
             local_types: Vec::new(),
             local_signedness: Vec::new(),
+            local_hir_types: Vec::new(),
             current_fn: Option::None,
             string_table: Vec::new(),
             string_counter: 0,
             def_names: def_names,
+            adt_registry: Vec::new(),
         }
     }
 
@@ -287,11 +351,101 @@ impl CodegenCtx {
         true
     }
 
+    /// Registers a local with its HIR type.
+    pub fn register_local_hir_type(self: &mut CodegenCtx, local: mir_def::MirLocalId, hir_type: hir_ty::Type) {
+        self.local_hir_types.push(LocalHirType {
+            local_id: local.index,
+            hir_type: hir_type,
+        });
+    }
+
+    /// Gets the HIR type for a MIR local.
+    pub fn get_local_hir_type(self: &CodegenCtx, local: mir_def::MirLocalId) -> Option<&hir_ty::Type> {
+        let mut i: usize = 0;
+        while i < self.local_hir_types.len() {
+            if self.local_hir_types[i].local_id == local.index {
+                return Option::Some(&self.local_hir_types[i].hir_type);
+            }
+            i = i + 1;
+        }
+        Option::None
+    }
+
     /// Clears all local names, types, and signedness (for reuse between functions).
     pub fn clear_locals(self: &mut CodegenCtx) {
         self.local_names.clear();
         self.local_types.clear();
         self.local_signedness.clear();
+        self.local_hir_types.clear();
+    }
+
+    // ======== ADT Registry ========
+
+    /// Registers a struct layout in the ADT registry.
+    pub fn register_struct(self: &mut CodegenCtx, layout: StructLayout) {
+        self.adt_registry.push(AdtEntry::Struct(layout));
+    }
+
+    /// Registers an enum layout in the ADT registry.
+    pub fn register_enum(self: &mut CodegenCtx, layout: EnumLayout) {
+        self.adt_registry.push(AdtEntry::Enum(layout));
+    }
+
+    /// Looks up a struct layout by DefId.
+    pub fn lookup_struct(self: &CodegenCtx, def_id: u32) -> Option<&StructLayout> {
+        let mut i: usize = 0;
+        while i < self.adt_registry.len() {
+            match &self.adt_registry[i] {
+                &AdtEntry::Struct(ref layout) => {
+                    if layout.def_id == def_id {
+                        return Option::Some(layout);
+                    }
+                }
+                &AdtEntry::Enum(_) => {}
+            }
+            i = i + 1;
+        }
+        Option::None
+    }
+
+    /// Looks up an enum layout by DefId.
+    pub fn lookup_enum(self: &CodegenCtx, def_id: u32) -> Option<&EnumLayout> {
+        let mut i: usize = 0;
+        while i < self.adt_registry.len() {
+            match &self.adt_registry[i] {
+                &AdtEntry::Struct(_) => {}
+                &AdtEntry::Enum(ref layout) => {
+                    if layout.def_id == def_id {
+                        return Option::Some(layout);
+                    }
+                }
+            }
+            i = i + 1;
+        }
+        Option::None
+    }
+
+    /// Gets the LLVM type for an ADT (struct or enum) by DefId.
+    /// Returns "ptr" as fallback if not found in the registry.
+    pub fn adt_llvm_type(self: &CodegenCtx, def_id: u32) -> String {
+        let mut i: usize = 0;
+        while i < self.adt_registry.len() {
+            match &self.adt_registry[i] {
+                &AdtEntry::Struct(ref layout) => {
+                    if layout.def_id == def_id {
+                        return clone_string(&layout.llvm_type);
+                    }
+                }
+                &AdtEntry::Enum(ref layout) => {
+                    if layout.def_id == def_id {
+                        return clone_string(&layout.llvm_type);
+                    }
+                }
+            }
+            i = i + 1;
+        }
+        // Fallback: ADT not in registry, use opaque pointer
+        common::make_string("ptr")
     }
 
     /// Generates the name for a MIR local alloca.

@@ -181,88 +181,222 @@ pub fn emit_place_addr(
 ) -> String {
     let mut current = ctx.local_name(place.local);
 
+    // Resolve the local's ADT type for projection lookups
+    let base_type = resolve_local_base_type(ctx, place.local);
+
     let mut i: usize = 0;
+    // Track the current base type string through projections
+    let mut current_base = base_type;
+    // Track variant index after Downcast
+    let mut downcast_variant: Option<u32> = Option::None;
+    // Track the ADT def_id for field lookups
+    let mut current_adt_def_id: Option<u32> = resolve_local_adt_def_id(ctx, place.local);
+
     while i < place.projection.len() {
-        current = emit_projection(ctx, &current, &place.projection[i]);
+        let proj = &place.projection[i];
+        match proj {
+            &mir_types::PlaceElem::Deref => {
+                // Load the pointer value
+                let result = ctx.fresh_temp();
+                ctx.emit_load(result.as_str(), "ptr", current.as_str());
+                current = result;
+                // After deref, try to get the inner type's ADT info
+                current_adt_def_id = resolve_deref_adt_def_id(ctx, place.local, i);
+                current_base = match &current_adt_def_id {
+                    &Option::Some(def_id) => ctx.adt_llvm_type(def_id),
+                    &Option::None => common::make_string("{ i64 }"),
+                };
+                downcast_variant = Option::None;
+            }
+            &mir_types::PlaceElem::Field(idx) => {
+                let result = ctx.fresh_temp();
+                let mut indices: Vec<String> = Vec::new();
+                indices.push(common::make_string("0"));
+                indices.push(codegen_types::format_u64(idx as u64));
+
+                // Determine the GEP base type from context
+                let gep_type = match &downcast_variant {
+                    &Option::Some(vi) => {
+                        // After Downcast: use variant payload type
+                        resolve_variant_payload_type(ctx, &current_adt_def_id, vi)
+                    }
+                    &Option::None => {
+                        // Direct field access: use the struct/tuple LLVM type
+                        clone_string(&current_base)
+                    }
+                };
+
+                ctx.emit_gep(result.as_str(), gep_type.as_str(), current.as_str(), &indices);
+                current = result;
+                // After field access, we no longer have ADT type info for subsequent projections
+                current_adt_def_id = Option::None;
+                current_base = common::make_string("{ i64 }");
+                downcast_variant = Option::None;
+            }
+            &mir_types::PlaceElem::Index(ref local) => {
+                let idx_val = ctx.local_name(*local);
+                let idx_loaded = ctx.fresh_temp();
+                ctx.emit_load(idx_loaded.as_str(), "i64", idx_val.as_str());
+                let result = ctx.fresh_temp();
+                let mut indices: Vec<String> = Vec::new();
+                indices.push(clone_string(&idx_loaded));
+                ctx.emit_gep(result.as_str(), "i64", current.as_str(), &indices);
+                current = result;
+                current_adt_def_id = Option::None;
+                downcast_variant = Option::None;
+            }
+            &mir_types::PlaceElem::ConstantIndex { offset, min_length: _, from_end } => {
+                let result = ctx.fresh_temp();
+                let mut indices: Vec<String> = Vec::new();
+                if from_end {
+                    indices.push(codegen_types::format_u64(offset));
+                } else {
+                    indices.push(codegen_types::format_u64(offset));
+                }
+                ctx.emit_gep(result.as_str(), "i64", current.as_str(), &indices);
+                current = result;
+                current_adt_def_id = Option::None;
+                downcast_variant = Option::None;
+            }
+            &mir_types::PlaceElem::Subslice { from, to: _, from_end: _ } => {
+                let result = ctx.fresh_temp();
+                let mut indices: Vec<String> = Vec::new();
+                indices.push(codegen_types::format_u64(from));
+                ctx.emit_gep(result.as_str(), "i64", current.as_str(), &indices);
+                current = result;
+                current_adt_def_id = Option::None;
+                downcast_variant = Option::None;
+            }
+            &mir_types::PlaceElem::Downcast(variant_idx) => {
+                // Enum downcast: project into variant data for a specific variant.
+                ctx.write("    ; downcast to variant ");
+                ctx.write_string(&codegen_types::format_u64(variant_idx as u64));
+                ctx.write("\n");
+
+                let result = ctx.fresh_temp();
+                let mut indices: Vec<String> = Vec::new();
+                indices.push(common::make_string("0"));
+                // Skip discriminant at index 0, variant data at index 1
+                indices.push(common::make_string("1"));
+
+                // Use the enum's LLVM type from registry
+                ctx.emit_gep(result.as_str(), current_base.as_str(), current.as_str(), &indices);
+                current = result;
+                downcast_variant = Option::Some(variant_idx);
+                // Keep current_adt_def_id for field resolution after downcast
+            }
+        }
         i = i + 1;
     }
 
     current
 }
 
-/// Emits a projection, returning the new pointer.
-fn emit_projection(
+/// Resolves the LLVM base type for a MIR local.
+/// Returns the ADT's LLVM type if the local is a struct/enum, or a fallback type.
+fn resolve_local_base_type(
     ctx: &mut codegen_ctx::CodegenCtx,
-    base: &String,
-    proj: &mir_types::PlaceElem,
+    local: mir_def::MirLocalId,
 ) -> String {
-    match proj {
-        &mir_types::PlaceElem::Deref => {
-            // Load the pointer value
-            let result = ctx.fresh_temp();
-            ctx.emit_load(result.as_str(), "ptr", base.as_str());
-            result
-        }
-        &mir_types::PlaceElem::Field(idx) => {
-            let result = ctx.fresh_temp();
-            let mut indices: Vec<String> = Vec::new();
-            indices.push(common::make_string("0"));
-            indices.push(codegen_types::format_u64(idx as u64));
-            // Use opaque struct type - real implementation would use actual type
-            ctx.emit_gep(result.as_str(), "{ i64 }", base.as_str(), &indices);
-            result
-        }
-        &mir_types::PlaceElem::Index(ref local) => {
-            let idx_val = ctx.local_name(*local);
-            let idx_loaded = ctx.fresh_temp();
-            ctx.emit_load(idx_loaded.as_str(), "i64", idx_val.as_str());
-            let result = ctx.fresh_temp();
-            let mut indices: Vec<String> = Vec::new();
-            indices.push(clone_string(&idx_loaded));
-            ctx.emit_gep(result.as_str(), "i64", base.as_str(), &indices);
-            result
-        }
-        &mir_types::PlaceElem::ConstantIndex { offset, min_length: _, from_end } => {
-            let result = ctx.fresh_temp();
-            let mut indices: Vec<String> = Vec::new();
-            if from_end {
-                // Would need to compute length - offset
-                indices.push(codegen_types::format_u64(offset));
-            } else {
-                indices.push(codegen_types::format_u64(offset));
+    match ctx.get_local_hir_type(local) {
+        Option::Some(hir_type) => {
+            match &hir_type.kind {
+                &hir_ty::TypeKind::Adt { def_id, args: _ } => {
+                    ctx.adt_llvm_type(def_id.index)
+                }
+                &hir_ty::TypeKind::Tuple(ref _elems) => {
+                    codegen_types::type_to_llvm(hir_type)
+                }
+                _ => {
+                    codegen_types::type_to_llvm(hir_type)
+                }
             }
-            ctx.emit_gep(result.as_str(), "i64", base.as_str(), &indices);
-            result
         }
-        &mir_types::PlaceElem::Subslice { from, to: _, from_end: _ } => {
-            let result = ctx.fresh_temp();
-            let mut indices: Vec<String> = Vec::new();
-            indices.push(codegen_types::format_u64(from));
-            ctx.emit_gep(result.as_str(), "i64", base.as_str(), &indices);
-            result
-        }
-        &mir_types::PlaceElem::Downcast(variant_idx) => {
-            // Enum downcast: project into variant data for a specific variant.
-            // The variant_idx indicates which variant we're accessing.
-            //
-            // Blood uses a uniform enum layout (tagged union):
-            //   - Index 0: discriminant (i64)
-            //   - Index 1: variant payload (shared space for all variants)
-            //
-            // The GEP offset to variant data is the same regardless of variant,
-            // but we emit the variant index as a comment for debugging.
-            ctx.write("    ; downcast to variant ");
-            ctx.write_string(&codegen_types::format_u64(variant_idx as u64));
-            ctx.write("\n");
+        Option::None => common::make_string("{ i64 }"),
+    }
+}
 
-            let result = ctx.fresh_temp();
-            let mut indices: Vec<String> = Vec::new();
-            indices.push(common::make_string("0"));
-            // Skip discriminant at index 0, variant data at index 1
-            indices.push(common::make_string("1"));
-            ctx.emit_gep(result.as_str(), "{ i64, i64 }", base.as_str(), &indices);
-            result
+/// Resolves the ADT def_id for a MIR local, if it's an ADT type.
+fn resolve_local_adt_def_id(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    local: mir_def::MirLocalId,
+) -> Option<u32> {
+    match ctx.get_local_hir_type(local) {
+        Option::Some(hir_type) => {
+            match &hir_type.kind {
+                &hir_ty::TypeKind::Adt { def_id, args: _ } => {
+                    Option::Some(def_id.index)
+                }
+                _ => Option::None,
+            }
         }
+        Option::None => Option::None,
+    }
+}
+
+/// Resolves the ADT def_id for a deref'd local (Ref<Adt>).
+fn resolve_deref_adt_def_id(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    local: mir_def::MirLocalId,
+    deref_depth: usize,
+) -> Option<u32> {
+    match ctx.get_local_hir_type(local) {
+        Option::Some(hir_type) => {
+            // Walk through Ref types
+            let mut ty = hir_type;
+            let mut depth: usize = 0;
+            while depth <= deref_depth {
+                match &ty.kind {
+                    &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
+                        ty = inner.as_ref();
+                        depth = depth + 1;
+                    }
+                    &hir_ty::TypeKind::Ptr { ref inner, mutable: _ } => {
+                        ty = inner.as_ref();
+                        depth = depth + 1;
+                    }
+                    _ => {
+                        return Option::None;
+                    }
+                }
+            }
+            // Now check if the dereferenced type is an ADT
+            match &ty.kind {
+                &hir_ty::TypeKind::Adt { def_id, args: _ } => {
+                    Option::Some(def_id.index)
+                }
+                _ => Option::None,
+            }
+        }
+        Option::None => Option::None,
+    }
+}
+
+/// Resolves the LLVM type for a variant's payload.
+fn resolve_variant_payload_type(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    adt_def_id: &Option<u32>,
+    variant_idx: u32,
+) -> String {
+    match adt_def_id {
+        &Option::Some(def_id) => {
+            match ctx.lookup_enum(def_id) {
+                Option::Some(enum_layout) => {
+                    // Find the variant layout
+                    let mut i: usize = 0;
+                    while i < enum_layout.variants.len() {
+                        if enum_layout.variants[i].variant_idx == variant_idx {
+                            return clone_string(&enum_layout.variants[i].payload_llvm_type);
+                        }
+                        i = i + 1;
+                    }
+                    // Variant not found in registry, fallback
+                    common::make_string("{ i64 }")
+                }
+                Option::None => common::make_string("{ i64 }"),
+            }
+        }
+        &Option::None => common::make_string("{ i64 }"),
     }
 }
 
@@ -370,9 +504,55 @@ pub fn emit_rvalue(
         &mir_types::Rvalue::Discriminant(ref place) => {
             // Load discriminant field of enum
             let ptr = emit_place_addr(ctx, place);
-            let discr_val = ctx.fresh_temp();
-            ctx.emit_load(discr_val.as_str(), "i64", ptr.as_str());
-            ctx.emit_store("i64", discr_val.as_str(), dest);
+
+            // Try to look up enum layout for correct discriminant type
+            let mut discr_ty = common::make_string("i64");
+            let mut enum_llvm_ty = common::make_string("{ i64, i64 }");
+            let mut found_enum = false;
+
+            match ctx.get_local_hir_type(place.local) {
+                Option::Some(hir_type) => {
+                    match &hir_type.kind {
+                        &hir_ty::TypeKind::Adt { def_id, args: _ } => {
+                            match ctx.lookup_enum(def_id.index) {
+                                Option::Some(layout) => {
+                                    discr_ty = clone_string(&layout.discriminant_type);
+                                    enum_llvm_ty = clone_string(&layout.llvm_type);
+                                    found_enum = true;
+                                }
+                                Option::None => {}
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Option::None => {}
+            }
+
+            if found_enum {
+                // GEP to discriminant field (index 0) of the enum type
+                let discr_ptr = ctx.fresh_temp();
+                let mut indices: Vec<String> = Vec::new();
+                indices.push(common::make_string("0"));
+                indices.push(common::make_string("0"));
+                ctx.emit_gep(discr_ptr.as_str(), enum_llvm_ty.as_str(), ptr.as_str(), &indices);
+                let discr_val = ctx.fresh_temp();
+                ctx.emit_load(discr_val.as_str(), discr_ty.as_str(), discr_ptr.as_str());
+                // Extend discriminant to destination type if needed (dest is typically i64)
+                if string_eq_str(discr_ty.as_str(), "i64") {
+                    ctx.emit_store(discr_ty.as_str(), discr_val.as_str(), dest);
+                } else {
+                    // Zero-extend discriminant to i64 for use in switch
+                    let extended = ctx.fresh_temp();
+                    ctx.emit_cast(extended.as_str(), "zext", discr_ty.as_str(), discr_val.as_str(), "i64");
+                    ctx.emit_store("i64", extended.as_str(), dest);
+                }
+            } else {
+                // Fallback: load i64 directly
+                let discr_val = ctx.fresh_temp();
+                ctx.emit_load(discr_val.as_str(), "i64", ptr.as_str());
+                ctx.emit_store("i64", discr_val.as_str(), dest);
+            }
         }
     }
 }
@@ -910,6 +1090,157 @@ fn emit_cast(
     clone_string(val)
 }
 
+/// Gets the LLVM type string for an operand without emitting any IR.
+fn operand_llvm_type(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    operand: &mir_types::Operand,
+) -> String {
+    match operand {
+        &mir_types::Operand::Copy(ref place) => {
+            ctx.get_local_type(place.local)
+        }
+        &mir_types::Operand::Move(ref place) => {
+            ctx.get_local_type(place.local)
+        }
+        &mir_types::Operand::Constant(ref constant) => {
+            codegen_types::type_to_llvm(&constant.ty)
+        }
+    }
+}
+
+/// Builds an LLVM struct type string from operand types (for tuples, records, closures).
+/// Returns e.g. "{ i32, i64, ptr }".
+fn build_tuple_llvm_type(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    operands: &Vec<mir_types::Operand>,
+) -> String {
+    let mut result = common::make_string("{ ");
+    let mut i: usize = 0;
+    while i < operands.len() {
+        if i > 0 {
+            result.push_str(", ");
+        }
+        let ty = operand_llvm_type(ctx, &operands[i]);
+        result.push_str(ty.as_str());
+        i = i + 1;
+    }
+    result.push_str(" }");
+    result
+}
+
+/// Emits an ADT aggregate (struct or enum variant) using the ADT registry.
+fn emit_aggregate_adt(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    dest: &str,
+    def_id: u32,
+    variant_idx: u32,
+    operands: &Vec<mir_types::Operand>,
+) {
+    // Try struct first
+    match ctx.lookup_struct(def_id) {
+        Option::Some(layout) => {
+            let struct_ty = clone_string(&layout.llvm_type);
+            // Collect field types before the mutable borrow loop
+            let mut field_types: Vec<String> = Vec::new();
+            let mut fi: usize = 0;
+            while fi < layout.fields.len() {
+                field_types.push(clone_string(&layout.fields[fi].llvm_type));
+                fi = fi + 1;
+            }
+            // Store each field using actual types from the struct layout
+            let mut i: usize = 0;
+            while i < operands.len() {
+                let field_val = emit_operand(ctx, &operands[i]);
+                let field_ptr = ctx.fresh_temp();
+                let mut indices: Vec<String> = Vec::new();
+                indices.push(common::make_string("0"));
+                indices.push(codegen_types::format_u64(i as u64));
+                ctx.emit_gep(field_ptr.as_str(), struct_ty.as_str(), dest, &indices);
+                // Use actual field type if available, fallback to i64
+                if i < field_types.len() {
+                    ctx.emit_store(field_types[i].as_str(), field_val.as_str(), field_ptr.as_str());
+                } else {
+                    ctx.emit_store("i64", field_val.as_str(), field_ptr.as_str());
+                }
+                i = i + 1;
+            }
+            return;
+        }
+        Option::None => {}
+    }
+    // Try enum
+    match ctx.lookup_enum(def_id) {
+        Option::Some(layout) => {
+            let enum_ty = clone_string(&layout.llvm_type);
+            let discr_ty = clone_string(&layout.discriminant_type);
+            // Find the variant's payload type and field types
+            let mut payload_ty = common::make_string("{}");
+            let mut variant_field_types: Vec<String> = Vec::new();
+            let mut vi: usize = 0;
+            while vi < layout.variants.len() {
+                if layout.variants[vi].variant_idx == variant_idx {
+                    payload_ty = clone_string(&layout.variants[vi].payload_llvm_type);
+                    let mut vfi: usize = 0;
+                    while vfi < layout.variants[vi].fields.len() {
+                        variant_field_types.push(clone_string(&layout.variants[vi].fields[vfi].llvm_type));
+                        vfi = vfi + 1;
+                    }
+                }
+                vi = vi + 1;
+            }
+
+            // Store discriminant at field 0 of the enum type
+            let discr_ptr = ctx.fresh_temp();
+            let mut discr_indices: Vec<String> = Vec::new();
+            discr_indices.push(common::make_string("0"));
+            discr_indices.push(common::make_string("0"));
+            ctx.emit_gep(discr_ptr.as_str(), enum_ty.as_str(), dest, &discr_indices);
+            let discr_val = codegen_types::format_u64(variant_idx as u64);
+            ctx.emit_store(discr_ty.as_str(), discr_val.as_str(), discr_ptr.as_str());
+
+            // Get pointer to payload area (field 1 of enum type)
+            let data_ptr = ctx.fresh_temp();
+            let mut data_indices: Vec<String> = Vec::new();
+            data_indices.push(common::make_string("0"));
+            data_indices.push(common::make_string("1"));
+            ctx.emit_gep(data_ptr.as_str(), enum_ty.as_str(), dest, &data_indices);
+
+            // Store each operand field using the variant's payload type
+            let mut i: usize = 0;
+            while i < operands.len() {
+                let field_val = emit_operand(ctx, &operands[i]);
+                let field_ptr = ctx.fresh_temp();
+                let mut field_indices: Vec<String> = Vec::new();
+                field_indices.push(common::make_string("0"));
+                field_indices.push(codegen_types::format_u64(i as u64));
+                ctx.emit_gep(field_ptr.as_str(), payload_ty.as_str(), data_ptr.as_str(), &field_indices);
+                // Use actual field type if available
+                if i < variant_field_types.len() {
+                    ctx.emit_store(variant_field_types[i].as_str(), field_val.as_str(), field_ptr.as_str());
+                } else {
+                    ctx.emit_store("i64", field_val.as_str(), field_ptr.as_str());
+                }
+                i = i + 1;
+            }
+            return;
+        }
+        Option::None => {}
+    }
+    // Fallback: ADT not in registry, use old behavior with i64
+    ctx.write("    ; WARNING: ADT not in registry, using fallback\n");
+    let mut i: usize = 0;
+    while i < operands.len() {
+        let field_val = emit_operand(ctx, &operands[i]);
+        let field_ptr = ctx.fresh_temp();
+        let mut indices: Vec<String> = Vec::new();
+        indices.push(common::make_string("0"));
+        indices.push(codegen_types::format_u64(i as u64));
+        ctx.emit_gep(field_ptr.as_str(), "{ i64 }", dest, &indices);
+        ctx.emit_store("i64", field_val.as_str(), field_ptr.as_str());
+        i = i + 1;
+    }
+}
+
 /// Emits an aggregate construction.
 fn emit_aggregate(
     ctx: &mut codegen_ctx::CodegenCtx,
@@ -919,102 +1250,88 @@ fn emit_aggregate(
 ) {
     match kind {
         &mir_types::AggregateKind::Tuple => {
-            // Store each field at the appropriate offset
+            // Build the tuple LLVM type from operand types
+            let tuple_llvm = build_tuple_llvm_type(ctx, operands);
             let mut i: usize = 0;
             while i < operands.len() {
-                let field_val = emit_operand(ctx, &operands[i]);
+                let typed = emit_operand_typed(ctx, &operands[i]);
+                let field_val = typed.0;
+                let field_ty = typed.1;
                 let field_ptr = ctx.fresh_temp();
                 let mut indices: Vec<String> = Vec::new();
                 indices.push(common::make_string("0"));
                 indices.push(codegen_types::format_u64(i as u64));
-                ctx.emit_gep(field_ptr.as_str(), "{ i64 }", dest, &indices);
-                ctx.emit_store("i64", field_val.as_str(), field_ptr.as_str());
+                ctx.emit_gep(field_ptr.as_str(), tuple_llvm.as_str(), dest, &indices);
+                ctx.emit_store(field_ty.as_str(), field_val.as_str(), field_ptr.as_str());
                 i = i + 1;
             }
         }
-        &mir_types::AggregateKind::Array(ref _elem_ty) => {
+        &mir_types::AggregateKind::Array(ref elem_ty) => {
+            let elem_llvm = codegen_types::type_to_llvm(elem_ty);
             let mut i: usize = 0;
             while i < operands.len() {
                 let elem_val = emit_operand(ctx, &operands[i]);
                 let elem_ptr = ctx.fresh_temp();
                 let mut indices: Vec<String> = Vec::new();
                 indices.push(codegen_types::format_u64(i as u64));
-                ctx.emit_gep(elem_ptr.as_str(), "i64", dest, &indices);
-                ctx.emit_store("i64", elem_val.as_str(), elem_ptr.as_str());
+                ctx.emit_gep(elem_ptr.as_str(), elem_llvm.as_str(), dest, &indices);
+                ctx.emit_store(elem_llvm.as_str(), elem_val.as_str(), elem_ptr.as_str());
                 i = i + 1;
             }
         }
-        &mir_types::AggregateKind::Adt { def_id: _, variant_idx, type_args: _ } => {
-            // For structs, variant_idx is 0
-            // For enums, variant_idx indicates which variant
-            if variant_idx == 0 {
-                // Struct or first enum variant - store fields directly
-                let mut i: usize = 0;
-                while i < operands.len() {
-                    let field_val = emit_operand(ctx, &operands[i]);
-                    let field_ptr = ctx.fresh_temp();
-                    let mut indices: Vec<String> = Vec::new();
-                    indices.push(common::make_string("0"));
-                    indices.push(codegen_types::format_u64(i as u64));
-                    ctx.emit_gep(field_ptr.as_str(), "{ i64 }", dest, &indices);
-                    ctx.emit_store("i64", field_val.as_str(), field_ptr.as_str());
-                    i = i + 1;
-                }
-            } else {
-                // Enum variant - store discriminant then fields
-                let discr_val = codegen_types::format_u64(variant_idx as u64);
-                ctx.emit_store("i64", discr_val.as_str(), dest);
-
-                // Store fields at offset 1
-                let data_ptr = ctx.fresh_temp();
-                let mut indices: Vec<String> = Vec::new();
-                indices.push(common::make_string("0"));
-                indices.push(common::make_string("1"));
-                ctx.emit_gep(data_ptr.as_str(), "{ i64, i64 }", dest, &indices);
-
-                let mut i: usize = 0;
-                while i < operands.len() {
-                    let field_val = emit_operand(ctx, &operands[i]);
-                    let field_ptr = ctx.fresh_temp();
-                    let mut field_indices: Vec<String> = Vec::new();
-                    field_indices.push(common::make_string("0"));
-                    field_indices.push(codegen_types::format_u64(i as u64));
-                    ctx.emit_gep(field_ptr.as_str(), "{ i64 }", data_ptr.as_str(), &field_indices);
-                    ctx.emit_store("i64", field_val.as_str(), field_ptr.as_str());
-                    i = i + 1;
-                }
-            }
+        &mir_types::AggregateKind::Adt { ref def_id, variant_idx, type_args: _ } => {
+            // Look up the ADT in the registry to determine if it's a struct or enum
+            emit_aggregate_adt(ctx, dest, def_id.index, variant_idx, operands);
         }
         &mir_types::AggregateKind::Record => {
-            // Extensible records - store fields like struct
+            // Extensible records - store fields with actual types
+            let record_llvm = build_tuple_llvm_type(ctx, operands);
             let mut i: usize = 0;
             while i < operands.len() {
-                let field_val = emit_operand(ctx, &operands[i]);
+                let typed = emit_operand_typed(ctx, &operands[i]);
+                let field_val = typed.0;
+                let field_ty = typed.1;
                 let field_ptr = ctx.fresh_temp();
                 let mut indices: Vec<String> = Vec::new();
                 indices.push(common::make_string("0"));
                 indices.push(codegen_types::format_u64(i as u64));
-                ctx.emit_gep(field_ptr.as_str(), "{ i64 }", dest, &indices);
-                ctx.emit_store("i64", field_val.as_str(), field_ptr.as_str());
+                ctx.emit_gep(field_ptr.as_str(), record_llvm.as_str(), dest, &indices);
+                ctx.emit_store(field_ty.as_str(), field_val.as_str(), field_ptr.as_str());
                 i = i + 1;
             }
         }
         &mir_types::AggregateKind::Closure { def_id: _ } => {
-            // Closures: store captures
+            // Closures: store captures with actual types
+            let closure_llvm = build_tuple_llvm_type(ctx, operands);
             let mut i: usize = 0;
             while i < operands.len() {
-                let cap_val = emit_operand(ctx, &operands[i]);
+                let typed = emit_operand_typed(ctx, &operands[i]);
+                let cap_val = typed.0;
+                let cap_ty = typed.1;
                 let cap_ptr = ctx.fresh_temp();
                 let mut indices: Vec<String> = Vec::new();
                 indices.push(common::make_string("0"));
                 indices.push(codegen_types::format_u64(i as u64));
-                ctx.emit_gep(cap_ptr.as_str(), "{ i64 }", dest, &indices);
-                ctx.emit_store("i64", cap_val.as_str(), cap_ptr.as_str());
+                ctx.emit_gep(cap_ptr.as_str(), closure_llvm.as_str(), dest, &indices);
+                ctx.emit_store(cap_ty.as_str(), cap_val.as_str(), cap_ptr.as_str());
                 i = i + 1;
             }
         }
-        &mir_types::AggregateKind::Range { element: _, inclusive: _ } => {
-            // Ranges: store start and end (and optionally step)
+        &mir_types::AggregateKind::Range { ref element, inclusive: _ } => {
+            // Ranges: store start and end with element type
+            let elem_llvm = codegen_types::type_to_llvm(element);
+            // Range struct is { elem_type, elem_type } (start, end)
+            let mut range_llvm = common::make_string("{ ");
+            let mut fi: usize = 0;
+            while fi < operands.len() {
+                if fi > 0 {
+                    range_llvm.push_str(", ");
+                }
+                range_llvm.push_str(elem_llvm.as_str());
+                fi = fi + 1;
+            }
+            range_llvm.push_str(" }");
+
             let mut i: usize = 0;
             while i < operands.len() {
                 let val = emit_operand(ctx, &operands[i]);
@@ -1022,8 +1339,8 @@ fn emit_aggregate(
                 let mut indices: Vec<String> = Vec::new();
                 indices.push(common::make_string("0"));
                 indices.push(codegen_types::format_u64(i as u64));
-                ctx.emit_gep(ptr.as_str(), "{ i64 }", dest, &indices);
-                ctx.emit_store("i64", val.as_str(), ptr.as_str());
+                ctx.emit_gep(ptr.as_str(), range_llvm.as_str(), dest, &indices);
+                ctx.emit_store(elem_llvm.as_str(), val.as_str(), ptr.as_str());
                 i = i + 1;
             }
         }
