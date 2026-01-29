@@ -11,6 +11,7 @@ mod hir_expr;
 mod hir_item;
 mod hir;
 mod unify;
+mod interner;
 
 // Import submodules
 mod typeck_types;
@@ -1193,12 +1194,21 @@ fn get_type_constructors(checker: &mut TypeChecker, ty: &hir_ty::Type) -> Vec<Co
                     let mut i: usize = 0;
                     while i < enum_info.variants.len() {
                         let variant = &enum_info.variants[i];
-                        let mut name = common::make_string("");
-                        // Note: We'd need to convert Symbol to String here
-                        // For now, use a placeholder
-                        name.push_str("Variant");
-                        let idx_str = usize_to_string(i);
-                        name.push_str(idx_str.as_str());
+                        let name = match interner::resolve(variant.name) {
+                            Option::Some(resolved) => {
+                                // Clone the resolved string
+                                let mut s = common::make_string("");
+                                s.push_str(resolved.as_str());
+                                s
+                            }
+                            Option::None => {
+                                // Fallback if interner resolution fails
+                                let mut s = common::make_string("Variant");
+                                let idx_str = usize_to_string(i);
+                                s.push_str(idx_str.as_str());
+                                s
+                            }
+                        };
                         ctors.push(Constructor::variant(name, variant.variant_index));
                         i = i + 1;
                     }
