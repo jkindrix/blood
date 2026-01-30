@@ -153,25 +153,18 @@ fn parse_args_stub() -> Args {
 fn run_check(args: &Args) -> i32 {
     match &args.source_file {
         &Option::Some(ref path) => {
-            // Read the source file
-            let read_result = source::read_file(path.as_str());
-            let is_success = read_result.success;
-            // Skip error handling for now, directly get content
-            let content = match &read_result.content {
-                &Option::Some(ref c) => {
-                    c.as_str()
-                }
-                &Option::None => {
-                    return 1;
-                }
-            };
-
-            // Run the check
-            let result = driver::check(content);
+            // Use check_file for proper base_dir module resolution
+            let result = driver::check_file(path.as_str());
             if result.success {
                 print_success("Check passed");
                 0
             } else {
+                // Read the source content for error reporting
+                let read_result = source::read_file(path.as_str());
+                let content = match &read_result.content {
+                    &Option::Some(ref c) => c.as_str(),
+                    &Option::None => "",
+                };
                 // Format and print errors
                 let error_reporter = reporter::ErrorReporter::new(content, path.as_str());
                 let formatted = error_reporter.format_errors(&result.errors);
@@ -190,23 +183,8 @@ fn run_check(args: &Args) -> i32 {
 fn run_build(args: &Args) -> i32 {
     match &args.source_file {
         &Option::Some(ref path) => {
-            // Read the source file
-            let read_result = source::read_file(path.as_str());
-            if !read_result.success {
-                print_error("Failed to read file");
-                return 1;
-            }
-
-            let content = match &read_result.content {
-                &Option::Some(ref c) => c.as_str(),
-                &Option::None => {
-                    print_error("No content in read result");
-                    return 1;
-                }
-            };
-
-            // Compile to LLVM IR
-            let result = driver::compile(content);
+            // Use compile_file for proper base_dir module resolution
+            let result = driver::compile_file(path.as_str());
             if result.success {
                 // Output the LLVM IR
                 match &result.llvm_ir {
@@ -240,6 +218,12 @@ fn run_build(args: &Args) -> i32 {
                     }
                 }
             } else {
+                // Read the source content for error reporting
+                let read_result = source::read_file(path.as_str());
+                let content = match &read_result.content {
+                    &Option::Some(ref c) => c.as_str(),
+                    &Option::None => "",
+                };
                 // Format and print errors
                 let error_reporter = reporter::ErrorReporter::new(content, path.as_str());
                 let formatted = error_reporter.format_errors(&result.errors);

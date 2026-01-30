@@ -171,12 +171,19 @@ pub struct VariantInfo {
     pub field_tys: Vec<hir_ty::Type>,
     /// Variant index within the enum (for pattern matching).
     pub variant_index: u32,
+    /// The DefId of this variant (for matching patterns to constructors).
+    pub def_id: hir_def::DefId,
 }
 
 impl VariantInfo {
     /// Creates a new variant info.
     pub fn new(name: common::Symbol, field_tys: Vec<hir_ty::Type>, variant_index: u32) -> VariantInfo {
-        VariantInfo { name, field_tys, variant_index }
+        VariantInfo { name, field_tys, variant_index, def_id: hir_def::DefId::new(0) }
+    }
+
+    /// Creates a new variant info with a DefId.
+    pub fn with_def_id(name: common::Symbol, field_tys: Vec<hir_ty::Type>, variant_index: u32, def_id: hir_def::DefId) -> VariantInfo {
+        VariantInfo { name, field_tys, variant_index, def_id }
     }
 }
 

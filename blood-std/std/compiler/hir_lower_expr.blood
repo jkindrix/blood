@@ -548,11 +548,18 @@ fn lower_method_call_expr(
         i = i + 1;
     }
 
+    // Re-intern the method name through ctx.interner so it shares indices
+    // with the builtin method names registered by typeck_driver.
+    // (Parser has its own span-based interning producing different symbol indices.)
+    let method_str = ctx.span_to_string(method.span);
+    let method_sym = ctx.intern(method_str.as_str());
+    let re_method = common::SpannedSymbol { symbol: method_sym, span: method.span };
+
     let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
     hir_expr::Expr::new(
         hir_expr::ExprKind::MethodCall {
             receiver: Box::new(receiver_hir),
-            method: *method,
+            method: re_method,
             method_def: Option::None, // Resolved during type checking
             type_args: type_args_hir,
             args: args_hir,

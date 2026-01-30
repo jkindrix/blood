@@ -264,6 +264,16 @@ impl Compiler {
             };
         }
 
+        // Type check
+        let typeck_result = typeck_driver::check_lower_result(&lower_result);
+        if !typeck_result.success {
+            let errors = convert_type_errors(&typeck_result.errors);
+            return CheckResult {
+                success: false,
+                errors: errors,
+            };
+        }
+
         // Check succeeded
         CheckResult {
             success: true,
@@ -412,6 +422,16 @@ impl Compiler {
         let lower_result = hir_lower::lower_program_with_base_dir(program, base_dir, source);
         if has_error_diagnostics(&lower_result.diagnostics) {
             let errors = convert_hir_diagnostics(&lower_result.diagnostics);
+            return CheckResult {
+                success: false,
+                errors: errors,
+            };
+        }
+
+        // Type check
+        let typeck_result = typeck_driver::check_lower_result(&lower_result);
+        if !typeck_result.success {
+            let errors = convert_type_errors(&typeck_result.errors);
             return CheckResult {
                 success: false,
                 errors: errors,

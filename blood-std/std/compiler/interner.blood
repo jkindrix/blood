@@ -96,6 +96,35 @@ impl StringInterner {
         self.strings.push(common::make_string("f64"));        // 55
         self.strings.push(common::make_string("char"));       // 56
         self.strings.push(common::make_string("str"));        // 57
+
+        // Builtin method names - indices 58-82
+        // These must be pre-interned so all module-local interner instances
+        // share the same Symbol indices for method names used by the type checker.
+        self.strings.push(common::make_string("len"));          // 58
+        self.strings.push(common::make_string("is_empty"));     // 59
+        self.strings.push(common::make_string("push_str"));     // 60
+        self.strings.push(common::make_string("push"));         // 61
+        self.strings.push(common::make_string("as_str"));       // 62
+        self.strings.push(common::make_string("clone"));        // 63
+        self.strings.push(common::make_string("contains"));     // 64
+        self.strings.push(common::make_string("starts_with"));  // 65
+        self.strings.push(common::make_string("ends_with"));    // 66
+        self.strings.push(common::make_string("as_bytes"));     // 67
+        self.strings.push(common::make_string("pop"));          // 68
+        self.strings.push(common::make_string("get"));          // 69
+        self.strings.push(common::make_string("last"));         // 70
+        self.strings.push(common::make_string("clear"));        // 71
+        self.strings.push(common::make_string("remove"));       // 72
+        self.strings.push(common::make_string("insert"));       // 73
+        self.strings.push(common::make_string("is_some"));      // 74
+        self.strings.push(common::make_string("is_none"));      // 75
+        self.strings.push(common::make_string("unwrap"));       // 76
+        self.strings.push(common::make_string("unwrap_or"));    // 77
+        self.strings.push(common::make_string("expect"));       // 78
+        self.strings.push(common::make_string("as_ref"));       // 79
+        self.strings.push(common::make_string("contains_key")); // 80
+        self.strings.push(common::make_string("is_ok"));        // 81
+        self.strings.push(common::make_string("is_err"));       // 82
     }
 
     /// Interns a string, returning its symbol index.
@@ -259,6 +288,42 @@ impl Primitives {
     pub fn is_primitive(sym: common::Symbol) -> bool {
         sym.index >= 41 && sym.index <= 57
     }
+}
+
+// ============================================================
+// Builtin Method Symbol Constants
+// ============================================================
+
+/// Well-known symbol indices for builtin method names.
+/// These match the order in intern_keywords() after primitive types.
+pub struct BuiltinMethods {}
+
+impl BuiltinMethods {
+    pub fn len_sym() -> common::Symbol { common::Symbol::new(58) }
+    pub fn is_empty_sym() -> common::Symbol { common::Symbol::new(59) }
+    pub fn push_str_sym() -> common::Symbol { common::Symbol::new(60) }
+    pub fn push_sym() -> common::Symbol { common::Symbol::new(61) }
+    pub fn as_str_sym() -> common::Symbol { common::Symbol::new(62) }
+    pub fn clone_sym() -> common::Symbol { common::Symbol::new(63) }
+    pub fn contains_sym() -> common::Symbol { common::Symbol::new(64) }
+    pub fn starts_with_sym() -> common::Symbol { common::Symbol::new(65) }
+    pub fn ends_with_sym() -> common::Symbol { common::Symbol::new(66) }
+    pub fn as_bytes_sym() -> common::Symbol { common::Symbol::new(67) }
+    pub fn pop_sym() -> common::Symbol { common::Symbol::new(68) }
+    pub fn get_sym() -> common::Symbol { common::Symbol::new(69) }
+    pub fn last_sym() -> common::Symbol { common::Symbol::new(70) }
+    pub fn clear_sym() -> common::Symbol { common::Symbol::new(71) }
+    pub fn remove_sym() -> common::Symbol { common::Symbol::new(72) }
+    pub fn insert_sym() -> common::Symbol { common::Symbol::new(73) }
+    pub fn is_some_sym() -> common::Symbol { common::Symbol::new(74) }
+    pub fn is_none_sym() -> common::Symbol { common::Symbol::new(75) }
+    pub fn unwrap_sym() -> common::Symbol { common::Symbol::new(76) }
+    pub fn unwrap_or_sym() -> common::Symbol { common::Symbol::new(77) }
+    pub fn expect_sym() -> common::Symbol { common::Symbol::new(78) }
+    pub fn as_ref_sym() -> common::Symbol { common::Symbol::new(79) }
+    pub fn contains_key_sym() -> common::Symbol { common::Symbol::new(80) }
+    pub fn is_ok_sym() -> common::Symbol { common::Symbol::new(81) }
+    pub fn is_err_sym() -> common::Symbol { common::Symbol::new(82) }
 }
 
 // ============================================================

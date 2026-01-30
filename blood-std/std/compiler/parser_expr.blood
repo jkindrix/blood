@@ -606,10 +606,41 @@ fn parse_infix_expr(parser: &mut parser_base::Parser, left: ast::Expr, prec: u8)
                 span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
             };
         }
-        // Field access
+        // Field access or method call
         token::TokenKind::Dot => {
             parser.advance();
             let field_name = parser.parse_spanned_symbol();
+            // Check if this is a method call (followed by '(')
+            if parser.check(token::TokenKind::LParen) {
+                // Method call: x.method(args)
+                parser.advance(); // consume '('
+                let mut args: Vec<ast::CallArg> = Vec::new();
+                while !parser.check(token::TokenKind::RParen) && !parser.is_at_end() {
+                    let arg_start = parser.current.span;
+                    let arg_expr = parse_expr(parser);
+                    let arg_end = parser.previous.span;
+                    let call_arg = ast::CallArg {
+                        name: Option::None,
+                        val: arg_expr,
+                        span: common::Span { start: arg_start.start, end: arg_end.end, line: arg_start.line, column: arg_start.column },
+                    };
+                    args.push(call_arg);
+                    if !parser.try_consume(token::TokenKind::Comma) {
+                        break;
+                    }
+                }
+                parser.expect(token::TokenKind::RParen);
+                let end_span = parser.previous.span;
+                return ast::Expr {
+                    kind: ast::ExprKind::MethodCall {
+                        receiver: Box::new(left),
+                        method: field_name,
+                        type_args: Option::None,
+                        args: args,
+                    },
+                    span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+                };
+            }
             let end_span = parser.previous.span;
             return ast::Expr {
                 kind: ast::ExprKind::Field {

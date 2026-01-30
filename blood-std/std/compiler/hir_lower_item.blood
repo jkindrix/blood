@@ -652,7 +652,13 @@ fn lower_assoc_fn(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl, is_trai
     };
 
     let has_default = body_id.is_some();
-    hir_item::AssocFn::new(def_id, f.name, sig, body_id, has_default)
+    // Re-intern the function name through ctx.interner so it shares indices
+    // with the builtin method names registered by typeck_driver.
+    // (Parser has its own span-based interning producing different symbol indices.)
+    let fn_name_str = ctx.span_to_string(f.name.span);
+    let fn_name_sym = ctx.intern(fn_name_str.as_str());
+    let re_name = common::SpannedSymbol { symbol: fn_name_sym, span: f.name.span };
+    hir_item::AssocFn::new(def_id, re_name, sig, body_id, has_default)
 }
 
 /// Lower an associated type.

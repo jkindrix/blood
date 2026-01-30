@@ -105,12 +105,10 @@ pub fn infer_expr(checker: &mut typeck::TypeChecker, expr: &hir_expr::Expr) -> h
         &hir_expr::ExprKind::Error => hir_ty::Type::error(),
     };
 
-    // Unify the inferred type with the expression's stored type variable.
+    // Record the mapping from the HIR's type variable to the concrete inferred type.
     // During HIR lowering, every expression gets a fresh Infer(TyVarId) type.
-    // The type checker computes types independently without reading expr.ty.
-    // This unification records the mapping from the HIR's type variable to
-    // the concrete inferred type in the SubstTable, so MIR lowering can
-    // resolve expression types via apply_substs.
+    // We unify the inferred type with the expression's type variable so that
+    // MIR lowering can resolve expression types via apply_substs.
     checker.unify(&result, &expr.ty, expr.span);
 
     result
@@ -348,6 +346,17 @@ fn primitive_equal(a: &hir_ty::PrimitiveTy, b: &hir_ty::PrimitiveTy) -> bool {
         (&hir_ty::PrimitiveTy::F64, &hir_ty::PrimitiveTy::F64) => true,
         (&hir_ty::PrimitiveTy::Str, &hir_ty::PrimitiveTy::Str) => true,
         _ => false,
+    }
+}
+
+/// Strips reference wrappers from a type for auto-dereference.
+/// &T -> T, &&T -> T, &mut T -> T, T -> T (unchanged).
+fn strip_refs(ty: &hir_ty::Type) -> hir_ty::Type {
+    match &ty.kind {
+        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
+            strip_refs(inner.as_ref())
+        }
+        _ => hir_ty::copy_type(ty),
     }
 }
 
@@ -735,7 +744,8 @@ fn infer_method_call(
     span: common::Span,
 ) -> hir_ty::Type {
     let receiver_ty = infer_expr(checker, receiver);
-    let resolved_receiver = checker.resolve(&receiver_ty);
+    let resolved_receiver_raw = checker.resolve(&receiver_ty);
+    let resolved_receiver = strip_refs(&resolved_receiver_raw);
 
     // Look up the method on the receiver type
     match checker.lookup_method(&resolved_receiver, method.symbol) {
@@ -807,7 +817,8 @@ fn infer_field(
     span: common::Span,
 ) -> hir_ty::Type {
     let base_ty = infer_expr(checker, base);
-    let resolved_base = checker.resolve(&base_ty);
+    let resolved_base_raw = checker.resolve(&base_ty);
+    let resolved_base = strip_refs(&resolved_base_raw);
 
     match &resolved_base.kind {
         &hir_ty::TypeKind::Tuple(ref types) => {
@@ -919,7 +930,8 @@ fn infer_index(
 ) -> hir_ty::Type {
     let base_ty = infer_expr(checker, base);
     let idx_ty = infer_expr(checker, idx);
-    let resolved_base = checker.resolve(&base_ty);
+    let resolved_base_raw = checker.resolve(&base_ty);
+    let resolved_base = strip_refs(&resolved_base_raw);
 
     // Index should be usize
     let usize_ty = hir_ty::Type::usize_ty();
@@ -1380,7 +1392,8 @@ fn infer_match(
     arms: &Vec<hir_expr::MatchArm>,
     span: common::Span,
 ) -> hir_ty::Type {
-    let scrut_ty = infer_expr(checker, scrutinee);
+    let scrut_ty_raw = infer_expr(checker, scrutinee);
+    let scrut_ty = strip_refs(&scrut_ty_raw);
 
     if arms.len() == 0 {
         // Empty match - type is never (or error)
@@ -1619,3 +1632,4 @@ fn copy_option_type(opt: &Option<hir_ty::Type>) -> Option<hir_ty::Type> {
         &None => Option::None,
     }
 }
+

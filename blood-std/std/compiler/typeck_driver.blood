@@ -335,12 +335,26 @@ fn check_body(checker: &mut typeck::TypeChecker, body: &hir_expr::Body, return_t
     // Clear locals for this body
     checker.clear_locals();
 
-    // Register all locals from the body
+    // Register all locals from the body at their actual LocalId positions.
+    // HIR lowering allocates LocalIds globally (not per-body), so a body's
+    // locals may have non-zero starting indices. We must grow the locals
+    // vector to accommodate the highest LocalId, then place each local at
+    // its actual index.
     let mut i: usize = 0;
     while i < body.locals.len() {
         let local = &body.locals[i];
-        // Add local with its declared type
-        checker.add_local(
+        let target_idx = local.id.index as usize;
+        // Grow the locals vector to accommodate this index
+        while checker.locals.len() <= target_idx {
+            // Pad with dummy locals (will not be accessed for valid programs)
+            checker.add_local(
+                hir_ty::Type::error(),
+                false,
+                common::Span::new(0, 0, 1, 1),
+            );
+        }
+        // Overwrite with the real local's type
+        checker.locals[target_idx] = typeck::LocalInfo::new(
             hir_ty::copy_type(&local.ty),
             local.mutable,
             local.span,

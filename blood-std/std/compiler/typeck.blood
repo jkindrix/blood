@@ -394,64 +394,14 @@ impl TypeChecker {
 
     /// Unifies two types.
     ///
-    /// Works around blood-rust BUG-003: mutations through `&mut field_of_ref` passed
-    /// as function arguments are lost. We clone SubstTable and Unifier to local
-    /// variables, call unify::unify with `&mut locals` (which works), then copy
-    /// new entries back via direct method calls (which also work).
+    /// Passes &mut self.subst_table and &mut self.unifier directly to
+    /// unify::unify. This is the correct implementation.
+    ///
+    /// NOTE: Blocked by blood-rust BUG-005 — mutations through &mut field_of_ref
+    /// passed as function arguments are silently lost. Until BUG-005 is fixed,
+    /// the type checker will produce incorrect results (substitutions lost).
     pub fn unify(self: &mut Self, a: &hir_ty::Type, b: &hir_ty::Type, span: common::Span) -> bool {
-        let original_ty_len = self.subst_table.ty_substs.len();
-        let original_effect_len = self.subst_table.effect_substs.len();
-        let original_record_len = self.subst_table.record_substs.len();
-
-        let mut local_table = unify::clone_subst_table(&self.subst_table);
-        let mut local_unifier = unify::clone_unifier(&self.unifier);
-
-        let result = unify::unify(&mut local_table, &mut local_unifier, a, b, span);
-
-        // Copy new type substitution entries back
-        let mut i: usize = original_ty_len;
-        while i < local_table.ty_substs.len() {
-            self.subst_table.add_ty_subst(
-                local_table.ty_substs[i].var_id,
-                hir_ty::copy_type(&local_table.ty_substs[i].ty),
-            );
-            i = i + 1;
-        }
-
-        // Copy new effect substitution entries back
-        let mut j: usize = original_effect_len;
-        while j < local_table.effect_substs.len() {
-            self.subst_table.add_effect_subst(
-                local_table.effect_substs[j].var_id,
-                hir_ty::copy_effect_row(&local_table.effect_substs[j].row),
-            );
-            j = j + 1;
-        }
-
-        // Copy new record substitution entries back
-        let mut k: usize = original_record_len;
-        while k < local_table.record_substs.len() {
-            let mut fields: Vec<hir_ty::RecordField> = Vec::new();
-            let mut f: usize = 0;
-            while f < local_table.record_substs[k].fields.len() {
-                fields.push(hir_ty::RecordField::new(
-                    local_table.record_substs[k].fields[f].name,
-                    hir_ty::copy_type(&local_table.record_substs[k].fields[f].ty),
-                ));
-                f = f + 1;
-            }
-            self.subst_table.add_record_subst(
-                local_table.record_substs[k].var_id,
-                fields,
-                local_table.record_substs[k].rest,
-            );
-            k = k + 1;
-        }
-
-        // Copy back unifier state
-        self.unifier.next_ty_var = local_unifier.next_ty_var;
-        self.unifier.next_effect_var = local_unifier.next_effect_var;
-        self.unifier.next_record_var = local_unifier.next_record_var;
+        let result = unify::unify(&mut self.subst_table, &mut self.unifier, a, b, span);
 
         match result {
             unify::UnifyResult::Ok => true,
@@ -581,7 +531,7 @@ impl TypeChecker {
                 }
             }
 
-            let info = typeck_info::VariantInfo::new(v.name.symbol, field_tys, i as u32);
+            let info = typeck_info::VariantInfo::with_def_id(v.name.symbol, field_tys, i as u32, v.def_id);
             variants.push(info);
             i = i + 1;
         }
@@ -638,6 +588,28 @@ impl TypeChecker {
             &Some(ref info) => Some(info),
             &None => Option::None,
         }
+    }
+
+    /// Finds a variant's index by its DefId across all registered enums.
+    /// Returns (enum_def_id, variant_index) if found.
+    pub fn find_variant_index_by_def_id(self: &Self, variant_def_id: hir_def::DefId) -> Option<u32> {
+        let mut i: usize = 0;
+        while i < self.enums.len() {
+            match &self.enums[i] {
+                &Some(ref enum_info) => {
+                    let mut j: usize = 0;
+                    while j < enum_info.variants.len() {
+                        if enum_info.variants[j].def_id.index == variant_def_id.index {
+                            return Option::Some(enum_info.variants[j].variant_index);
+                        }
+                        j = j + 1;
+                    }
+                }
+                &None => {}
+            }
+            i = i + 1;
+        }
+        Option::None
     }
 
     /// Gets the field type for a struct field by name.
@@ -1067,7 +1039,12 @@ fn deconstruct_pattern(checker: &mut TypeChecker, pattern: &hir_expr::Pattern) -
             let def_id = path.def_id;
             let variant_idx = match path.variant_index {
                 Option::Some(idx) => idx,
-                Option::None => 0,
+                Option::None => {
+                    match checker.find_variant_index_by_def_id(def_id) {
+                        Option::Some(idx) => idx,
+                        Option::None => 0,
+                    }
+                }
             };
             let mut field_pats: Vec<DeconstructedPattern> = Vec::new();
             let mut i: usize = 0;
@@ -1108,7 +1085,13 @@ fn deconstruct_pattern(checker: &mut TypeChecker, pattern: &hir_expr::Pattern) -
             let def_id = path.def_id;
             let variant_idx = match path.variant_index {
                 Option::Some(idx) => idx,
-                Option::None => 0,
+                Option::None => {
+                    // variant_index not set by HIR lowering — look up by def_id
+                    match checker.find_variant_index_by_def_id(def_id) {
+                        Option::Some(idx) => idx,
+                        Option::None => 0,
+                    }
+                }
             };
             DeconstructedPattern::Variant { def_id: def_id, variant_idx: variant_idx, fields: Vec::new() }
         }
@@ -1275,6 +1258,10 @@ fn get_type_constructors(checker: &mut TypeChecker, ty: &hir_ty::Type) -> Vec<Co
         }
         &hir_ty::TypeKind::Ownership { qualifier: _, ref inner } => {
             // Ownership type uses inner type's constructors
+            return get_type_constructors(checker, inner.as_ref());
+        }
+        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
+            // Reference type uses inner type's constructors (auto-deref)
             return get_type_constructors(checker, inner.as_ref());
         }
         _ => {
