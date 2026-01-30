@@ -265,27 +265,40 @@ Blood's `::` is ONLY for:
 
 ### Rule 4: Blood-Rust Compiler Bugs Must Be Reported, NOT Worked Around
 
-**CRITICAL: When you encounter a blood-rust compiler bug, you MUST NOT work around it.**
+**CRITICAL: When you encounter a blood-rust compiler bug, you MUST NOT work around it. NO EXCEPTIONS.**
+
+**This means:**
+- Do NOT clone data structures to avoid mutation bugs — write the correct code
+- Do NOT add "optimizations" that bypass broken code paths — fix the root cause
+- Do NOT restructure correct code to avoid triggering compiler bugs — report the bug
+- Do NOT add any code whose purpose is to compensate for blood-rust misbehavior
+
+**Write the code the way it SHOULD work.** If blood-rust doesn't handle it correctly, that is a blood-rust bug. The self-hosted compiler code must be correct, not contorted to work around a broken bootstrap compiler.
 
 A blood-rust bug is identified when:
 - Code compiles in isolation but fails when imported by another module
 - The error message references internal DefIds (e.g., `"def921" is not a struct`)
 - Syntactically correct code is rejected
 - The same pattern works in one context but not another
+- Mutations through references are silently lost
+- Runtime behavior doesn't match what the code should do
 
 **When you identify a potential blood-rust bug:**
 
 1. **STOP** - Do not attempt workarounds, band-aids, or alternative syntax
-2. **Isolate** - Create a minimal reproduction case
-3. **Document** - Record the bug in the "Known Blood-Rust Bugs" section below
-4. **Report** - The bug must be communicated to blood-rust developers
-5. **Wait** - Do not proceed with workarounds; the bug must be fixed at the source
+2. **Write the correct code** - The self-hosted compiler must have the RIGHT implementation
+3. **Isolate** - Create a minimal reproduction case
+4. **Document** - Record the bug in the "Known Blood-Rust Bugs" section below
+5. **Report** - The bug must be communicated to blood-rust developers
+6. **Wait** - Do not proceed with workarounds; the bug must be fixed at the source
 
 **Why this matters:**
 - Workarounds create technical debt that compounds over time
 - Band-aids mask the real problem and make future debugging harder
+- Workarounds on top of workarounds create exponential complexity
 - The blood-rust compiler should be fixed to support valid Blood code
 - Shortcuts violate the Zero Shortcuts principle
+- A "working" workaround today becomes an unmaintainable mess tomorrow
 
 **What is NOT a blood-rust bug:**
 - Blood syntax that differs from Rust (documented in this file)
@@ -359,7 +372,7 @@ None known. This requires a fix in blood-rust's codegen for enum payloads.
 
 ### BUG-005: Mutations through `&mut field_of_ref` lost when passed as function arguments
 
-**Status:** Active - worked around in self-hosted compiler type checker
+**Status:** Active — **blocking self-hosted compiler type checker**
 
 **Description:**
 When you take `&mut` of a field accessed through another reference (e.g., `&mut checker.subst_table` where `checker` is `&mut TypeChecker`) and pass it as a function argument, mutations made inside the called function are lost when the function returns. blood-rust appears to copy the field to a stack temporary and pass `&mut` to the copy instead of computing a GEP pointer to the original field.
@@ -396,14 +409,25 @@ fn test(outer: &mut Outer) {
 | `helper(&mut local_var)` where `local_var` is a local | ✅ |
 | `helper(&mut outer.inner)` — `&mut field_of_ref` as fn arg | ❌ |
 
-**Impact:**
-- All `unify::unify(&mut self.subst_table, &mut self.unifier, ...)` calls silently lost substitution table entries, breaking type inference entirely.
+**Impact — correctness:**
+- `TypeChecker::unify()` calls `unify::unify(&mut self.subst_table, &mut self.unifier, ...)` — both `&mut field_of_ref` arguments lose all mutations on return
+- This means type inference silently produces wrong results (substitutions lost)
+- The type checker is written correctly in `typeck.blood` but blood-rust breaks it at codegen
 
-**Workaround (applied in `typeck.blood`):**
-Clone SubstTable and Unifier to local variables, pass `&mut local` to `unify::unify` (which works), then copy new entries back via direct method calls (which also work).
+**Impact — performance (if workaround were applied):**
+- A previous clone-and-copy-back workaround was attempted but created O(n²) performance: cloning the entire SubstTable (O(n)) per unify call × hundreds of unify calls per function body = quadratic total work
+- By function body 41 of lexer.blood, the table had 2297 entries, causing the type checker to hang (30+ seconds)
+- This demonstrates why workarounds must not be applied — they create cascading problems
+
+**Self-hosted compiler state:**
+- `typeck.blood` contains the CORRECT code: `unify::unify(&mut self.subst_table, &mut self.unifier, ...)`
+- This code is correct but produces wrong results until BUG-005 is fixed
+- No workaround is applied. The bug must be fixed in blood-rust.
 
 **Root cause:**
-blood-rust codegen likely evaluates `&mut expr.field` as a function argument by: (1) loading the field value to a stack temporary, (2) taking `&mut` of the temporary. It should instead compute the address via GEP on the struct pointer.
+blood-rust codegen evaluates `&mut expr.field` as a function argument by: (1) loading the field value to a stack temporary, (2) taking `&mut` of the temporary. It should instead compute the address via GEP on the struct pointer.
+
+**Workaround:** None. Write the correct code and wait for the fix.
 
 ---
 
