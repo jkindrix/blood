@@ -124,6 +124,9 @@ pub fn check_lower_result(result: &hir_lower_ctx::LowerResult) -> TypeCheckResul
     // Phase 1b: Register builtin method signatures for String, Vec, Option, etc.
     register_builtin_signatures(&mut checker);
 
+    // Phase 1c: Register builtin enum info (Option, Result) for exhaustiveness checking
+    register_builtin_enums(&mut checker);
+
     // Phase 2: Type check all function bodies
     let mut i: usize = 0;
     while i < result.bodies.len() {
@@ -470,6 +473,12 @@ fn register_builtin_signatures(checker: &mut typeck::TypeChecker) {
         }
         Option::None => {}
     }
+
+    // Primitive str methods
+    register_str_methods(checker);
+
+    // Slice methods
+    register_slice_methods(checker);
 }
 
 /// Registers String methods: len, is_empty, push_str, push, as_str, clone,
@@ -780,5 +789,146 @@ fn register_result_methods(checker: &mut typeck::TypeChecker, result_def: hir_de
     // Register the impl
     let impl_def = checker.alloc_def_id();
     let impl_info = typeck::ImplInfo::new(impl_def, self_ty, 2, methods);
+    checker.register_impl(impl_info);
+}
+
+/// Registers builtin enum definitions (Option, Result) for exhaustiveness checking.
+/// These enums may come from external modules and not be present in the HIR items list.
+fn register_builtin_enums(checker: &mut typeck::TypeChecker) {
+    // Register Option<T> enum: Some(T), None
+    match checker.builtin_option_def {
+        Option::Some(option_def) => {
+            // Only register if not already registered from HIR items
+            let def_idx = option_def.index as usize;
+            let already = if def_idx < checker.enums.len() {
+                match &checker.enums[def_idx] {
+                    &Option::Some(_) => true,
+                    &Option::None => false,
+                }
+            } else {
+                false
+            };
+            if !already {
+                let name_sym = interner::intern("Option");
+                let some_sym = interner::intern("Some");
+                let none_sym = interner::intern("None");
+                let mut variant_names: Vec<common::Symbol> = Vec::new();
+                variant_names.push(some_sym);
+                variant_names.push(none_sym);
+
+                let mut variants: Vec<typeck::VariantInfo> = Vec::new();
+                // Some(T) - has one field of type Param(0)
+                let mut some_fields: Vec<hir_ty::Type> = Vec::new();
+                some_fields.push(make_param(0));
+                variants.push(typeck::VariantInfo::new(some_sym, some_fields, 0));
+                // None - no fields
+                variants.push(typeck::VariantInfo::new(none_sym, Vec::new(), 1));
+
+                let info = typeck::EnumInfo::new(option_def, name_sym, 1, variant_names, variants);
+                while checker.enums.len() <= def_idx {
+                    checker.enums.push(Option::None);
+                }
+                checker.enums[def_idx] = Some(info);
+            }
+        }
+        Option::None => {}
+    }
+
+    // Register Result<T, E> enum: Ok(T), Err(E)
+    match checker.builtin_result_def {
+        Option::Some(result_def) => {
+            let def_idx = result_def.index as usize;
+            let already = if def_idx < checker.enums.len() {
+                match &checker.enums[def_idx] {
+                    &Option::Some(_) => true,
+                    &Option::None => false,
+                }
+            } else {
+                false
+            };
+            if !already {
+                let name_sym = interner::intern("Result");
+                let ok_sym = interner::intern("Ok");
+                let err_sym = interner::intern("Err");
+                let mut variant_names: Vec<common::Symbol> = Vec::new();
+                variant_names.push(ok_sym);
+                variant_names.push(err_sym);
+
+                let mut variants: Vec<typeck::VariantInfo> = Vec::new();
+                // Ok(T) - one field of type Param(0)
+                let mut ok_fields: Vec<hir_ty::Type> = Vec::new();
+                ok_fields.push(make_param(0));
+                variants.push(typeck::VariantInfo::new(ok_sym, ok_fields, 0));
+                // Err(E) - one field of type Param(1)
+                let mut err_fields: Vec<hir_ty::Type> = Vec::new();
+                err_fields.push(make_param(1));
+                variants.push(typeck::VariantInfo::new(err_sym, err_fields, 1));
+
+                let info = typeck::EnumInfo::new(result_def, name_sym, 2, variant_names, variants);
+                while checker.enums.len() <= def_idx {
+                    checker.enums.push(Option::None);
+                }
+                checker.enums[def_idx] = Some(info);
+            }
+        }
+        Option::None => {}
+    }
+}
+
+/// Registers primitive str methods: len, is_empty, as_bytes, contains,
+/// starts_with, ends_with.
+fn register_str_methods(checker: &mut typeck::TypeChecker) {
+    let self_ty = hir_ty::Type::str_ty();
+    let mut methods: Vec<typeck::MethodInfo> = Vec::new();
+
+    // len(&self) -> usize
+    add_method(checker, &mut methods, "len", Vec::new(), hir_ty::Type::usize_ty(), false);
+
+    // is_empty(&self) -> bool
+    add_method(checker, &mut methods, "is_empty", Vec::new(), hir_ty::Type::bool_ty(), false);
+
+    // as_bytes(&self) -> &[u8]
+    let u8_slice = hir_ty::Type::new(hir_ty::TypeKind::Slice {
+        element: Box::new(hir_ty::Type::u8_ty()),
+    });
+    add_method(checker, &mut methods, "as_bytes", Vec::new(), make_ref_ty(u8_slice), false);
+
+    // contains(&self, &str) -> bool
+    let mut contains_params: Vec<hir_ty::Type> = Vec::new();
+    contains_params.push(make_ref_ty(hir_ty::Type::str_ty()));
+    add_method(checker, &mut methods, "contains", contains_params, hir_ty::Type::bool_ty(), false);
+
+    // starts_with(&self, &str) -> bool
+    let mut sw_params: Vec<hir_ty::Type> = Vec::new();
+    sw_params.push(make_ref_ty(hir_ty::Type::str_ty()));
+    add_method(checker, &mut methods, "starts_with", sw_params, hir_ty::Type::bool_ty(), false);
+
+    // ends_with(&self, &str) -> bool
+    let mut ew_params: Vec<hir_ty::Type> = Vec::new();
+    ew_params.push(make_ref_ty(hir_ty::Type::str_ty()));
+    add_method(checker, &mut methods, "ends_with", ew_params, hir_ty::Type::bool_ty(), false);
+
+    // Register the impl
+    let impl_def = checker.alloc_def_id();
+    let impl_info = typeck::ImplInfo::new(impl_def, self_ty, 0, methods);
+    checker.register_impl(impl_info);
+}
+
+/// Registers slice [T] methods: len, is_empty.
+fn register_slice_methods(checker: &mut typeck::TypeChecker) {
+    let self_ty = hir_ty::Type::new(hir_ty::TypeKind::Slice {
+        element: Box::new(make_param(0)),
+    });
+    let mut methods: Vec<typeck::MethodInfo> = Vec::new();
+
+    // len(&self) -> usize
+    add_method(checker, &mut methods, "len", Vec::new(), hir_ty::Type::usize_ty(), false);
+
+    // is_empty(&self) -> bool
+    add_method(checker, &mut methods, "is_empty", Vec::new(), hir_ty::Type::bool_ty(), false);
+
+    // Register the impl
+    let impl_def = checker.alloc_def_id();
+    let impl_info = typeck::ImplInfo::new(impl_def, self_ty, 1, methods);
     checker.register_impl(impl_info);
 }

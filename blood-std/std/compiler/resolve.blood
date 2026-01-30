@@ -514,20 +514,37 @@ impl Resolver {
         self.def_info.push(entry);
     }
 
+    /// Registers a variant definition with its variant index.
+    pub fn register_variant_def_info(
+        self: &mut Self,
+        def_id: hir_def::DefId,
+        name: common::Symbol,
+        span: common::Span,
+        parent: hir_def::DefId,
+        variant_index: u32,
+    ) {
+        let info = hir_def::DefInfo::variant(name, span, parent, variant_index);
+        let entry = DefInfoEntry::new(def_id, info);
+        self.def_info.push(entry);
+    }
+
     /// Gets definition info by DefId.
     /// Returns None if the DefId is not registered.
     pub fn get_def_info(self: &Self, def_id: hir_def::DefId) -> Option<hir_def::DefInfo> {
         let mut i: usize = 0;
         while i < self.def_info.len() {
             if self.def_info[i].def_id.index == def_id.index {
-                // Clone the DefInfo to return it
+                // Clone the DefInfo to return it, preserving variant_index
                 let entry = &self.def_info[i].info;
-                return Option::Some(hir_def::DefInfo::new(
-                    entry.kind,
-                    entry.name,
-                    entry.span,
-                    clone_optional_def_id(&entry.parent),
-                ));
+                let cloned_parent = clone_optional_def_id(&entry.parent);
+                let cloned_vi = clone_optional_u32(&entry.variant_index);
+                return Option::Some(hir_def::DefInfo {
+                    kind: entry.kind,
+                    name: entry.name,
+                    span: entry.span,
+                    parent: cloned_parent,
+                    variant_index: cloned_vi,
+                });
             }
             i = i + 1;
         }
@@ -739,6 +756,14 @@ pub struct QualifiedPathResult {
 fn clone_optional_def_id(opt: &Option<hir_def::DefId>) -> Option<hir_def::DefId> {
     match opt {
         &Option::Some(d) => Option::Some(hir_def::DefId::new(d.index)),
+        &Option::None => Option::None,
+    }
+}
+
+/// Clones an Option<u32>.
+fn clone_optional_u32(opt: &Option<u32>) -> Option<u32> {
+    match opt {
+        &Option::Some(v) => Option::Some(v),
         &Option::None => Option::None,
     }
 }

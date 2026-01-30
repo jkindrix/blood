@@ -157,7 +157,11 @@ pub fn lower_struct_body(ctx: &mut hir_lower_ctx::LoweringCtx, body: &ast::Struc
 pub fn lower_struct_field(ctx: &mut hir_lower_ctx::LoweringCtx, field: &ast::StructField) -> hir_item::StructField {
     let def_id = ctx.alloc_def_id();
     let ty = hir_lower_type::lower_type(ctx, &field.ty);
-    hir_item::StructField::new(def_id, field.name, ty, field.vis, field.span)
+    // Re-intern field name for cross-module consistency
+    let name_str = ctx.span_to_string(field.name.span);
+    let name_sym = ctx.intern(name_str.as_str());
+    let re_name = common::SpannedSymbol { symbol: name_sym, span: field.name.span };
+    hir_item::StructField::new(def_id, re_name, ty, field.vis, field.span)
 }
 
 // ============================================================
@@ -184,13 +188,13 @@ fn lower_enum_variant(ctx: &mut hir_lower_ctx::LoweringCtx, parent_def_id: hir_d
     let name_str = ctx.span_to_string(variant.name.span);
     let name_symbol = ctx.intern(name_str.as_str());
 
-    // Register the variant def_info with the enum as its parent
-    ctx.resolver.register_def_info(
+    // Register the variant def_info with the enum as its parent and variant index
+    ctx.resolver.register_variant_def_info(
         def_id,
-        hir_def::DefKind::Variant,
         name_symbol,
         variant.name.span,
-        Option::Some(parent_def_id),
+        parent_def_id,
+        discriminant,
     );
 
     // Create re-interned SpannedSymbol for the HIR variant
@@ -773,7 +777,11 @@ fn lower_effect_op(ctx: &mut hir_lower_ctx::LoweringCtx, oper: &ast::OperationDe
 
     let return_ty = hir_lower_type::lower_type(ctx, &oper.return_type);
 
-    hir_item::EffectOp::new(def_id, oper.name, generics, param_tys, return_ty, oper.span)
+    // Re-intern operation name for cross-module consistency
+    let op_name_str = ctx.span_to_string(oper.name.span);
+    let op_name_sym = ctx.intern(op_name_str.as_str());
+    let re_op_name = common::SpannedSymbol { symbol: op_name_sym, span: oper.name.span };
+    hir_item::EffectOp::new(def_id, re_op_name, generics, param_tys, return_ty, oper.span)
 }
 
 /// Convert a type to an EffectRef.
@@ -923,7 +931,11 @@ fn lower_op_impl(ctx: &mut hir_lower_ctx::LoweringCtx, oper: &ast::OperationImpl
     let body = hir_expr::Body::new(body_id, locals, 0, body_expr);
     ctx.add_body(body_id, body);
 
-    hir_item::OpImpl::new(def_id, oper.name, param_names, body_id, oper.span)
+    // Re-intern operation name for cross-module consistency
+    let impl_name_str = ctx.span_to_string(oper.name.span);
+    let impl_name_sym = ctx.intern(impl_name_str.as_str());
+    let re_impl_name = common::SpannedSymbol { symbol: impl_name_sym, span: oper.name.span };
+    hir_item::OpImpl::new(def_id, re_impl_name, param_names, body_id, oper.span)
 }
 
 /// Extract a name from a pattern (for parameter names).

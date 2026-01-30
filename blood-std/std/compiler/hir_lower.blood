@@ -373,8 +373,8 @@ fn register_builtin_children(ctx: &mut hir_lower_ctx::LoweringCtx) {
     // === Option ===
     match ctx.builtin_option_def {
         Option::Some(parent) => {
-            let some_def = register_builtin_child(ctx, parent, "Some", hir_def::DefKind::Variant, dummy_span);
-            let none_def = register_builtin_child(ctx, parent, "None", hir_def::DefKind::Variant, dummy_span);
+            let some_def = register_builtin_variant(ctx, parent, "Some", dummy_span, 0);
+            let none_def = register_builtin_variant(ctx, parent, "None", dummy_span, 1);
             // Also register as top-level names for bare Some/None usage
             let some_sym = ctx.intern("Some");
             ctx.resolver.define_global(some_sym, some_def);
@@ -403,8 +403,8 @@ fn register_builtin_children(ctx: &mut hir_lower_ctx::LoweringCtx) {
     // === Result ===
     match ctx.builtin_result_def {
         Option::Some(parent) => {
-            let ok_def = register_builtin_child(ctx, parent, "Ok", hir_def::DefKind::Variant, dummy_span);
-            let err_def = register_builtin_child(ctx, parent, "Err", hir_def::DefKind::Variant, dummy_span);
+            let ok_def = register_builtin_variant(ctx, parent, "Ok", dummy_span, 0);
+            let err_def = register_builtin_variant(ctx, parent, "Err", dummy_span, 1);
             // Also register as top-level names for bare Ok/Err usage
             let ok_sym = ctx.intern("Ok");
             ctx.resolver.define_global(ok_sym, ok_def);
@@ -426,6 +426,21 @@ fn register_builtin_child(
     let sym = ctx.intern(name);
     let def_id = ctx.alloc_def_id();
     ctx.resolver.register_def_info(def_id, kind, sym, span, Option::Some(parent));
+    def_id
+}
+
+/// Registers an enum variant under a parent builtin enum type.
+/// Uses register_variant_def_info to set the variant_index in DefInfo.
+fn register_builtin_variant(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    parent: hir_def::DefId,
+    name: &str,
+    span: common::Span,
+    variant_index: u32,
+) -> hir_def::DefId {
+    let sym = ctx.intern(name);
+    let def_id = ctx.alloc_def_id();
+    ctx.resolver.register_variant_def_info(def_id, sym, span, parent, variant_index);
     def_id
 }
 

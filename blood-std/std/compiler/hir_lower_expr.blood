@@ -579,8 +579,12 @@ fn lower_field_expr(ctx: &mut hir_lower_ctx::LoweringCtx, base: &ast::Expr, fiel
 
     let field_hir = match field {
         &ast::FieldAccess::Named(ref name) => {
+            // Re-intern field name for cross-module consistency
+            let fname_str = ctx.span_to_string(name.span);
+            let fname_sym = ctx.intern(fname_str.as_str());
+            let re_name = common::SpannedSymbol { symbol: fname_sym, span: name.span };
             hir_expr::FieldAccess::Named {
-                name: *name,
+                name: re_name,
                 field_idx: Option::None, // Resolved during type checking
             }
         }
@@ -766,8 +770,12 @@ fn lower_record_expr(
                 }
             }
         };
+        // Re-intern field name for cross-module consistency
+        let flit_name_str = ctx.span_to_string(f.name.span);
+        let flit_name_sym = ctx.intern(flit_name_str.as_str());
+        let re_flit_name = common::SpannedSymbol { symbol: flit_name_sym, span: f.name.span };
         let field_hir = hir_expr::FieldExpr::new(
-            f.name,
+            re_flit_name,
             Option::None, // Field index resolved during type checking
             val_hir,
             f.span,
@@ -1237,10 +1245,14 @@ fn lower_struct_pattern(
                 // Shorthand: field name becomes binding name
                 let local_id = ctx.alloc_local_id();
                 let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+                // Re-intern binding name for cross-module consistency
+                let bind_name_str = ctx.span_to_string(f.name.span);
+                let bind_name_sym = ctx.intern(bind_name_str.as_str());
+                let re_bind_name = common::SpannedSymbol { symbol: bind_name_sym, span: f.name.span };
                 hir_expr::Pattern::new(
                     hir_expr::PatternKind::Binding {
                         local_id: local_id,
-                        name: f.name,
+                        name: re_bind_name,
                         mode: hir_expr::BindingMode::ByValue,
                         subpattern: Option::None,
                     },
@@ -1249,8 +1261,12 @@ fn lower_struct_pattern(
                 )
             }
         };
+        // Re-intern field pattern name for cross-module consistency
+        let fpat_name_str = ctx.span_to_string(f.name.span);
+        let fpat_name_sym = ctx.intern(fpat_name_str.as_str());
+        let re_fpat_name = common::SpannedSymbol { symbol: fpat_name_sym, span: f.name.span };
         let field_hir = hir_expr::FieldPattern::new(
-            f.name,
+            re_fpat_name,
             Option::None, // Field index resolved during type checking
             pat_hir,
             f.span,
@@ -1318,7 +1334,23 @@ fn resolve_type_path_for_pattern(ctx: &mut hir_lower_ctx::LoweringCtx, path: &as
             &None => Vec::new(),
         };
         let type_arg_count = type_args.len() as u32;
-        return hir_def::ResolvedPath::new(result.def_id, type_arg_count, span);
+        // Check if the resolved def is a variant - set variant_index if so
+        let def_info = ctx.resolver.get_def_info(result.def_id);
+        match def_info {
+            Option::Some(info) => {
+                match info.variant_index {
+                    Option::Some(vi) => {
+                        return hir_def::ResolvedPath::variant(result.def_id, span, vi);
+                    }
+                    Option::None => {
+                        return hir_def::ResolvedPath::new(result.def_id, type_arg_count, span);
+                    }
+                }
+            }
+            Option::None => {
+                return hir_def::ResolvedPath::new(result.def_id, type_arg_count, span);
+            }
+        }
     }
 
     // Unresolved

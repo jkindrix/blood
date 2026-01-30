@@ -370,71 +370,13 @@ fn test() {
 **Workaround:**
 None known. This requires a fix in blood-rust's codegen for enum payloads.
 
-### BUG-005: Mutations through `&mut field_of_ref` lost when passed as function arguments
-
-**Status:** Active — **blocking self-hosted compiler type checker**
-
-**Description:**
-When you take `&mut` of a field accessed through another reference (e.g., `&mut checker.subst_table` where `checker` is `&mut TypeChecker`) and pass it as a function argument, mutations made inside the called function are lost when the function returns. blood-rust appears to copy the field to a stack temporary and pass `&mut` to the copy instead of computing a GEP pointer to the original field.
-
-**Reproduction:**
-```blood
-struct Inner {
-    pub values: Vec<i32>,
-}
-
-struct Outer {
-    pub inner: Inner,
-}
-
-fn add_value(inner: &mut Inner) {
-    inner.values.push(42);  // This mutation is LOST
-}
-
-fn test(outer: &mut Outer) {
-    add_value(&mut outer.inner);  // Bug: &mut field_of_ref
-    // outer.inner.values is still empty here!
-
-    // But this works:
-    outer.inner.values.push(42);  // Direct method call chain — mutation preserved
-}
-```
-
-**What works and what doesn't:**
-
-| Pattern | Works? |
-|---------|--------|
-| `outer.inner.method()` (direct method call through ref chain) | ✅ |
-| `helper(outer)` where `outer: &mut Outer` (pass whole ref) | ✅ |
-| `helper(&mut local_var)` where `local_var` is a local | ✅ |
-| `helper(&mut outer.inner)` — `&mut field_of_ref` as fn arg | ❌ |
-
-**Impact — correctness:**
-- `TypeChecker::unify()` calls `unify::unify(&mut self.subst_table, &mut self.unifier, ...)` — both `&mut field_of_ref` arguments lose all mutations on return
-- This means type inference silently produces wrong results (substitutions lost)
-- The type checker is written correctly in `typeck.blood` but blood-rust breaks it at codegen
-
-**Impact — performance (if workaround were applied):**
-- A previous clone-and-copy-back workaround was attempted but created O(n²) performance: cloning the entire SubstTable (O(n)) per unify call × hundreds of unify calls per function body = quadratic total work
-- By function body 41 of lexer.blood, the table had 2297 entries, causing the type checker to hang (30+ seconds)
-- This demonstrates why workarounds must not be applied — they create cascading problems
-
-**Self-hosted compiler state:**
-- `typeck.blood` contains the CORRECT code: `unify::unify(&mut self.subst_table, &mut self.unifier, ...)`
-- This code is correct but produces wrong results until BUG-005 is fixed
-- No workaround is applied. The bug must be fixed in blood-rust.
-
-**Root cause:**
-blood-rust codegen evaluates `&mut expr.field` as a function argument by: (1) loading the field value to a stack temporary, (2) taking `&mut` of the temporary. It should instead compute the address via GEP on the struct pointer.
-
-**Workaround:** None. Write the correct code and wait for the fix.
-
 ---
 
 **Previously fixed bugs:**
 - BUG-001: Struct initialization in impl blocks when module is imported (fixed - all 25 compiler files now compile)
 - BUG-003: Option<&Struct> return corruption (fixed - blood-rust devs added `by_ref` field tracking)
 - BUG-004: Option::Some(Box::new(expr)) corruption (fixed - blood-rust devs added auto-deref insertion for ref bindings in method calls)
+- BUG-005: Mutations through `&mut field_of_ref` lost when passed as function arguments (fixed - blood-rust devs preserved `&mut field_of_ref` mutations)
 
 ---
 

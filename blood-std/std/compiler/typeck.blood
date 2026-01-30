@@ -612,6 +612,33 @@ impl TypeChecker {
         Option::None
     }
 
+    /// Finds the parent enum info for a variant DefId.
+    /// Returns the enum's DefId, number of generics, and the variant's field types.
+    pub fn find_enum_for_variant(self: &Self, variant_def_id: hir_def::DefId) -> Option<EnumVariantLookup> {
+        let mut i: usize = 0;
+        while i < self.enums.len() {
+            match &self.enums[i] {
+                &Some(ref enum_info) => {
+                    let mut j: usize = 0;
+                    while j < enum_info.variants.len() {
+                        if enum_info.variants[j].def_id.index == variant_def_id.index {
+                            return Option::Some(EnumVariantLookup {
+                                enum_def_id: enum_info.def_id,
+                                num_generics: enum_info.num_generics,
+                                variant_index: enum_info.variants[j].variant_index,
+                                field_tys: copy_type_vec(&enum_info.variants[j].field_tys),
+                            });
+                        }
+                        j = j + 1;
+                    }
+                }
+                &None => {}
+            }
+            i = i + 1;
+        }
+        Option::None
+    }
+
     /// Gets the field type for a struct field by name.
     pub fn get_struct_field_ty(self: &Self, def_id: hir_def::DefId, field_name: common::Symbol) -> Option<hir_ty::Type> {
         let struct_info = self.get_struct(def_id);
@@ -863,6 +890,29 @@ pub struct MethodLookupResult {
     pub method_index: usize,
 }
 
+/// Result of looking up a variant's parent enum.
+pub struct EnumVariantLookup {
+    /// The parent enum's DefId.
+    pub enum_def_id: hir_def::DefId,
+    /// Number of generic parameters on the enum.
+    pub num_generics: u32,
+    /// This variant's index within the enum.
+    pub variant_index: u32,
+    /// The variant's field types.
+    pub field_tys: Vec<hir_ty::Type>,
+}
+
+/// Copies a Vec of types.
+fn copy_type_vec(tys: &Vec<hir_ty::Type>) -> Vec<hir_ty::Type> {
+    let mut result: Vec<hir_ty::Type> = Vec::new();
+    let mut i: usize = 0;
+    while i < tys.len() {
+        result.push(hir_ty::copy_type(&tys[i]));
+        i = i + 1;
+    }
+    result
+}
+
 /// Checks if a type matches an impl's self type for method lookup.
 /// This handles basic cases; generic matching requires instantiation.
 fn types_match_for_impl(impl_ty: &hir_ty::Type, target_ty: &hir_ty::Type) -> bool {
@@ -890,6 +940,9 @@ fn types_match_for_impl(impl_ty: &hir_ty::Type, target_ty: &hir_ty::Type) -> boo
         // Inference variables match anything (will be constrained during checking)
         (&hir_ty::TypeKind::Infer(_), _) => true,
         (_, &hir_ty::TypeKind::Infer(_)) => true,
+        // Type parameters in impl self_ty match anything (generic impls)
+        (&hir_ty::TypeKind::Param(_), _) => true,
+        (_, &hir_ty::TypeKind::Param(_)) => true,
         // Ownership types - compare inner types
         (&hir_ty::TypeKind::Ownership { qualifier: impl_q, ref inner },
          &hir_ty::TypeKind::Ownership { qualifier: target_q, inner: ref target_inner }) => {

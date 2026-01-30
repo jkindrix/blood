@@ -538,11 +538,63 @@ fn infer_path(checker: &mut typeck::TypeChecker, path: &hir_def::ResolvedPath, s
         Option::None => {}
     }
 
-    // Check if it's an enum variant (returns the enum ADT type)
-    // Enum variants are looked up via the enum registry
-    // For now, if we can't resolve the path, return an inference variable
-    // A more complete implementation would also check for struct constructors,
-    // type aliases, etc.
+    // Check if it's an enum variant
+    match checker.find_enum_for_variant(def_id) {
+        Option::Some(ref lookup) => {
+            // Build the ADT type for the parent enum
+            let mut type_args: Vec<hir_ty::Type> = Vec::new();
+            let mut subst = unify::TypeParamSubst::new();
+            let mut g: u32 = 0;
+            while g < lookup.num_generics {
+                let fresh = checker.fresh_infer();
+                type_args.push(hir_ty::copy_type(&fresh));
+                subst.add(g, fresh);
+                g = g + 1;
+            }
+            let adt_ty = hir_ty::Type::new(hir_ty::TypeKind::Adt {
+                def_id: lookup.enum_def_id,
+                args: type_args,
+            });
+
+            if lookup.field_tys.len() == 0 {
+                // Unit variant - return the enum ADT type directly
+                return adt_ty;
+            } else {
+                // Tuple variant - return a function type (field_tys) -> Adt
+                let mut param_tys: Vec<hir_ty::Type> = Vec::new();
+                let mut fi: usize = 0;
+                while fi < lookup.field_tys.len() {
+                    param_tys.push(unify::substitute_type_params(&lookup.field_tys[fi], &subst));
+                    fi = fi + 1;
+                }
+                return hir_ty::Type::new(hir_ty::TypeKind::Fn {
+                    params: param_tys,
+                    ret: Box::new(adt_ty),
+                    effects: hir_ty::EffectRow::empty(),
+                });
+            }
+        }
+        Option::None => {}
+    }
+
+    // Check if it's a struct constructor (unit struct)
+    match checker.get_struct(def_id) {
+        Option::Some(ref struct_info) => {
+            let mut type_args: Vec<hir_ty::Type> = Vec::new();
+            let mut g: u32 = 0;
+            while g < struct_info.num_generics {
+                type_args.push(checker.fresh_infer());
+                g = g + 1;
+            }
+            return hir_ty::Type::new(hir_ty::TypeKind::Adt {
+                def_id: def_id,
+                args: type_args,
+            });
+        }
+        Option::None => {}
+    }
+
+    // Unresolved path - return inference variable
     checker.fresh_infer()
 }
 
@@ -944,6 +996,28 @@ fn infer_index(
         &hir_ty::TypeKind::Slice { ref element } => {
             hir_ty::copy_type(element.as_ref())
         }
+        &hir_ty::TypeKind::Adt { def_id, ref args } => {
+            // Vec<T>[usize] -> T
+            let is_vec = match &checker.builtin_vec_def {
+                &Option::Some(ref vec_def) => def_id.index == vec_def.index,
+                &Option::None => false,
+            };
+            if is_vec && args.len() > 0 {
+                hir_ty::copy_type(&args[0])
+            } else {
+                // String[usize] -> u8
+                let is_string = match &checker.builtin_string_def {
+                    &Option::Some(ref str_def) => def_id.index == str_def.index,
+                    &Option::None => false,
+                };
+                if is_string {
+                    hir_ty::Type::u8_ty()
+                } else {
+                    checker.error(typeck::TypeErrorKind::NotIndexable, span);
+                    hir_ty::Type::error()
+                }
+            }
+        }
         &hir_ty::TypeKind::Infer(_) => {
             checker.fresh_infer()
         }
@@ -1040,9 +1114,26 @@ fn infer_struct(
         &None => {}
     }
 
-    // Return the ADT type
+    // Check if the path refers to an enum variant (record variant construction)
+    match checker.find_enum_for_variant(path.def_id) {
+        Option::Some(ref lookup) => {
+            // Build ADT type using the parent enum's DefId
+            let mut args: Vec<hir_ty::Type> = Vec::new();
+            let mut g: u32 = 0;
+            while g < lookup.num_generics {
+                args.push(checker.fresh_infer());
+                g = g + 1;
+            }
+            return hir_ty::Type::new(hir_ty::TypeKind::Adt {
+                def_id: lookup.enum_def_id,
+                args: args,
+            });
+        }
+        Option::None => {}
+    }
+
+    // Regular struct construction
     // Generate inference variables for type arguments
-    // (actual types will be unified during type checking)
     let mut args: Vec<hir_ty::Type> = Vec::new();
     let mut i: u32 = 0;
     while i < path.type_arg_count {
@@ -1136,10 +1227,25 @@ fn infer_cast(
 /// - Same type (no-op cast)
 fn is_valid_cast(src_ty: &hir_ty::Type, dst_ty: &hir_ty::Type) -> bool {
     match (&src_ty.kind, &dst_ty.kind) {
-        // Same type is always valid
+        // Primitive to primitive casts
         (&hir_ty::TypeKind::Primitive(src_prim), &hir_ty::TypeKind::Primitive(dst_prim)) => {
             // Numeric to numeric casts are always valid
-            is_numeric_primitive(src_prim) && is_numeric_primitive(dst_prim)
+            if is_numeric_primitive(src_prim) && is_numeric_primitive(dst_prim) {
+                return true;
+            }
+            // Integer to char (u8 as char, u32 as char, etc.)
+            if is_numeric_primitive(src_prim) && is_char_primitive(dst_prim) {
+                return true;
+            }
+            // Char to integer (char as u32, char as u8, etc.)
+            if is_char_primitive(src_prim) && is_numeric_primitive(dst_prim) {
+                return true;
+            }
+            // Bool to integer (bool as u8, etc.)
+            if is_bool_primitive(src_prim) && is_numeric_primitive(dst_prim) {
+                return true;
+            }
+            false
         }
         // Raw pointer to usize/isize
         (&hir_ty::TypeKind::Ptr { inner: _, mutable: _ }, &hir_ty::TypeKind::Primitive(dst_prim)) => {
@@ -1228,6 +1334,52 @@ fn is_numeric_primitive(prim: hir_ty::PrimitiveTy) -> bool {
         hir_ty::PrimitiveTy::F32 => true,
         hir_ty::PrimitiveTy::F64 => true,
         hir_ty::PrimitiveTy::Bool => false,
+        hir_ty::PrimitiveTy::Char => false,
+        hir_ty::PrimitiveTy::Str => false,
+    }
+}
+
+/// Checks if a primitive type is char.
+fn is_char_primitive(prim: hir_ty::PrimitiveTy) -> bool {
+    match prim {
+        hir_ty::PrimitiveTy::Char => true,
+        hir_ty::PrimitiveTy::I8 => false,
+        hir_ty::PrimitiveTy::I16 => false,
+        hir_ty::PrimitiveTy::I32 => false,
+        hir_ty::PrimitiveTy::I64 => false,
+        hir_ty::PrimitiveTy::I128 => false,
+        hir_ty::PrimitiveTy::Isize => false,
+        hir_ty::PrimitiveTy::U8 => false,
+        hir_ty::PrimitiveTy::U16 => false,
+        hir_ty::PrimitiveTy::U32 => false,
+        hir_ty::PrimitiveTy::U64 => false,
+        hir_ty::PrimitiveTy::U128 => false,
+        hir_ty::PrimitiveTy::Usize => false,
+        hir_ty::PrimitiveTy::F32 => false,
+        hir_ty::PrimitiveTy::F64 => false,
+        hir_ty::PrimitiveTy::Bool => false,
+        hir_ty::PrimitiveTy::Str => false,
+    }
+}
+
+/// Checks if a primitive type is bool.
+fn is_bool_primitive(prim: hir_ty::PrimitiveTy) -> bool {
+    match prim {
+        hir_ty::PrimitiveTy::Bool => true,
+        hir_ty::PrimitiveTy::I8 => false,
+        hir_ty::PrimitiveTy::I16 => false,
+        hir_ty::PrimitiveTy::I32 => false,
+        hir_ty::PrimitiveTy::I64 => false,
+        hir_ty::PrimitiveTy::I128 => false,
+        hir_ty::PrimitiveTy::Isize => false,
+        hir_ty::PrimitiveTy::U8 => false,
+        hir_ty::PrimitiveTy::U16 => false,
+        hir_ty::PrimitiveTy::U32 => false,
+        hir_ty::PrimitiveTy::U64 => false,
+        hir_ty::PrimitiveTy::U128 => false,
+        hir_ty::PrimitiveTy::Usize => false,
+        hir_ty::PrimitiveTy::F32 => false,
+        hir_ty::PrimitiveTy::F64 => false,
         hir_ty::PrimitiveTy::Char => false,
         hir_ty::PrimitiveTy::Str => false,
     }
@@ -1419,8 +1571,9 @@ fn infer_match(
         i = i + 1;
     }
 
-    // Check pattern exhaustiveness
-    let exhaustiveness = typeck::check_exhaustiveness_arms(checker, &scrut_ty, arms, span);
+    // Check pattern exhaustiveness (resolve inference variables first)
+    let resolved_scrut = checker.resolve(&scrut_ty);
+    let exhaustiveness = typeck::check_exhaustiveness_arms(checker, &resolved_scrut, arms, span);
     if !exhaustiveness.is_exhaustive() {
         checker.error(typeck::TypeErrorKind::NonExhaustive, span);
     }
