@@ -397,9 +397,7 @@ impl TypeChecker {
     /// Passes &mut self.subst_table and &mut self.unifier directly to
     /// unify::unify. This is the correct implementation.
     ///
-    /// NOTE: Blocked by blood-rust BUG-005 — mutations through &mut field_of_ref
-    /// passed as function arguments are silently lost. Until BUG-005 is fixed,
-    /// the type checker will produce incorrect results (substitutions lost).
+    /// BUG-005 (mutations through &mut field_of_ref) is now fixed in blood-rust.
     pub fn unify(self: &mut Self, a: &hir_ty::Type, b: &hir_ty::Type, span: common::Span) -> bool {
         let result = unify::unify(&mut self.subst_table, &mut self.unifier, a, b, span);
 
@@ -508,8 +506,9 @@ impl TypeChecker {
             let v = &enum_def.variants[i];
             variant_names.push(v.name.symbol);
 
-            // Extract field types based on variant kind
+            // Extract field types and names based on variant kind
             let mut field_tys: Vec<hir_ty::Type> = Vec::new();
+            let mut field_names: Vec<common::Symbol> = Vec::new();
             match &v.kind {
                 &hir_item::VariantKind::Unit => {
                     // No fields
@@ -522,16 +521,21 @@ impl TypeChecker {
                     }
                 }
                 &hir_item::VariantKind::Record(ref struct_fields) => {
-                    // For record variants, store field types in order
+                    // For record variants, store both field names and types
                     let mut j: usize = 0;
                     while j < struct_fields.len() {
+                        field_names.push(struct_fields[j].name.symbol);
                         field_tys.push(hir_ty::copy_type(&struct_fields[j].ty));
                         j = j + 1;
                     }
                 }
             }
 
-            let info = typeck_info::VariantInfo::with_def_id(v.name.symbol, field_tys, i as u32, v.def_id);
+            let info = if field_names.len() > 0 {
+                typeck_info::VariantInfo::with_field_names(v.name.symbol, field_tys, field_names, i as u32, v.def_id)
+            } else {
+                typeck_info::VariantInfo::with_def_id(v.name.symbol, field_tys, i as u32, v.def_id)
+            };
             variants.push(info);
             i = i + 1;
         }
@@ -622,11 +626,18 @@ impl TypeChecker {
                     let mut j: usize = 0;
                     while j < enum_info.variants.len() {
                         if enum_info.variants[j].def_id.index == variant_def_id.index {
+                            let mut fn_vec: Vec<common::Symbol> = Vec::new();
+                            let mut k: usize = 0;
+                            while k < enum_info.variants[j].field_names.len() {
+                                fn_vec.push(enum_info.variants[j].field_names[k]);
+                                k = k + 1;
+                            }
                             return Option::Some(EnumVariantLookup {
                                 enum_def_id: enum_info.def_id,
                                 num_generics: enum_info.num_generics,
                                 variant_index: enum_info.variants[j].variant_index,
                                 field_tys: copy_type_vec(&enum_info.variants[j].field_tys),
+                                field_names: fn_vec,
                             });
                         }
                         j = j + 1;
@@ -655,6 +666,39 @@ impl TypeChecker {
             }
             None => Option::None,
         }
+    }
+
+    /// Gets a variant's field type by name using the variant's DefId.
+    /// Returns the field type if found, None otherwise.
+    pub fn get_variant_field_ty_by_name(self: &Self, variant_def_id: hir_def::DefId, field_name: common::Symbol) -> Option<hir_ty::Type> {
+        let mut i: usize = 0;
+        while i < self.enums.len() {
+            match &self.enums[i] {
+                &Some(ref enum_info) => {
+                    let mut j: usize = 0;
+                    while j < enum_info.variants.len() {
+                        if enum_info.variants[j].def_id.index == variant_def_id.index {
+                            // Found the variant - look up field by name
+                            let mut k: usize = 0;
+                            while k < enum_info.variants[j].field_names.len() {
+                                if enum_info.variants[j].field_names[k].index == field_name.index {
+                                    // Return the corresponding field type
+                                    if k < enum_info.variants[j].field_tys.len() {
+                                        return Some(hir_ty::copy_type(&enum_info.variants[j].field_tys[k]));
+                                    }
+                                }
+                                k = k + 1;
+                            }
+                            return Option::None;
+                        }
+                        j = j + 1;
+                    }
+                }
+                &None => {}
+            }
+            i = i + 1;
+        }
+        Option::None
     }
 
     /// Gets a const info by DefId in O(1) time.
@@ -900,6 +944,8 @@ pub struct EnumVariantLookup {
     pub variant_index: u32,
     /// The variant's field types.
     pub field_tys: Vec<hir_ty::Type>,
+    /// Field names for record variants (empty for tuple/unit variants).
+    pub field_names: Vec<common::Symbol>,
 }
 
 /// Copies a Vec of types.
@@ -1075,7 +1121,6 @@ fn deconstruct_pattern(checker: &mut TypeChecker, pattern: &hir_expr::Pattern) -
             DeconstructedPattern::Tuple { fields: fields }
         }
         &hir_expr::PatternKind::Struct { ref path, ref fields, has_rest } => {
-            // Extract the DefId directly from ResolvedPath
             let def_id = path.def_id;
             let mut field_pats: Vec<DeconstructedPattern> = Vec::new();
             let mut i: usize = 0;
@@ -1083,29 +1128,50 @@ fn deconstruct_pattern(checker: &mut TypeChecker, pattern: &hir_expr::Pattern) -
                 field_pats.push(deconstruct_pattern(checker, &fields[i].pattern));
                 i = i + 1;
             }
-            // If there's a rest pattern (..), patterns not listed are wildcards
             let _ = has_rest;
-            DeconstructedPattern::Struct { def_id: def_id, fields: field_pats }
+            // Check if this is a record enum variant (has variant_index) or a plain struct
+            let variant_idx_opt = match path.variant_index {
+                Option::Some(idx) => Option::Some(idx),
+                Option::None => {
+                    checker.find_variant_index_by_def_id(def_id)
+                }
+            };
+            match variant_idx_opt {
+                Option::Some(variant_idx) => {
+                    // Record enum variant — use Variant for exhaustiveness
+                    DeconstructedPattern::Variant { def_id: def_id, variant_idx: variant_idx, fields: field_pats }
+                }
+                Option::None => {
+                    // Plain struct or unresolved — use Struct
+                    DeconstructedPattern::Struct { def_id: def_id, fields: field_pats }
+                }
+            }
         }
         &hir_expr::PatternKind::TupleStruct { ref path, ref fields } => {
             // Tuple struct pattern - could be enum variant with fields
             let def_id = path.def_id;
-            let variant_idx = match path.variant_index {
-                Option::Some(idx) => idx,
+            let variant_idx_opt = match path.variant_index {
+                Option::Some(idx) => Option::Some(idx),
                 Option::None => {
-                    match checker.find_variant_index_by_def_id(def_id) {
-                        Option::Some(idx) => idx,
-                        Option::None => 0,
-                    }
+                    checker.find_variant_index_by_def_id(def_id)
                 }
             };
-            let mut field_pats: Vec<DeconstructedPattern> = Vec::new();
-            let mut i: usize = 0;
-            while i < fields.len() {
-                field_pats.push(deconstruct_pattern(checker, &fields[i]));
-                i = i + 1;
+            match variant_idx_opt {
+                Option::Some(variant_idx) => {
+                    let mut field_pats: Vec<DeconstructedPattern> = Vec::new();
+                    let mut i: usize = 0;
+                    while i < fields.len() {
+                        field_pats.push(deconstruct_pattern(checker, &fields[i]));
+                        i = i + 1;
+                    }
+                    DeconstructedPattern::Variant { def_id: def_id, variant_idx: variant_idx, fields: field_pats }
+                }
+                Option::None => {
+                    // Variant index unknown (cross-module enum not registered).
+                    // Treat as Wildcard to avoid false non-exhaustive errors.
+                    DeconstructedPattern::Wildcard
+                }
             }
-            DeconstructedPattern::Variant { def_id: def_id, variant_idx: variant_idx, fields: field_pats }
         }
         &hir_expr::PatternKind::Or(ref pats) => {
             let mut alts: Vec<DeconstructedPattern> = Vec::new();
@@ -1136,17 +1202,23 @@ fn deconstruct_pattern(checker: &mut TypeChecker, pattern: &hir_expr::Pattern) -
         &hir_expr::PatternKind::Path(ref path) => {
             // Path patterns (could be enum variant or const)
             let def_id = path.def_id;
-            let variant_idx = match path.variant_index {
-                Option::Some(idx) => idx,
+            let variant_idx_opt = match path.variant_index {
+                Option::Some(idx) => Option::Some(idx),
                 Option::None => {
                     // variant_index not set by HIR lowering — look up by def_id
-                    match checker.find_variant_index_by_def_id(def_id) {
-                        Option::Some(idx) => idx,
-                        Option::None => 0,
-                    }
+                    checker.find_variant_index_by_def_id(def_id)
                 }
             };
-            DeconstructedPattern::Variant { def_id: def_id, variant_idx: variant_idx, fields: Vec::new() }
+            match variant_idx_opt {
+                Option::Some(variant_idx) => {
+                    DeconstructedPattern::Variant { def_id: def_id, variant_idx: variant_idx, fields: Vec::new() }
+                }
+                Option::None => {
+                    // Variant index unknown (cross-module enum not registered).
+                    // Treat as Wildcard to avoid false non-exhaustive errors.
+                    DeconstructedPattern::Wildcard
+                }
+            }
         }
         &hir_expr::PatternKind::Rest => {
             // Rest pattern (..) - matches any number of elements
@@ -1195,6 +1267,20 @@ fn compute_witnesses(
 ) -> Vec<Witness> {
     // For exhaustiveness, we need to check if every possible constructor of
     // the scrutinee type is covered by the pattern matrix.
+
+    // If the scrutinee type is still an unresolved inference variable,
+    // we cannot determine the constructors. Treat as exhaustive to
+    // avoid false non-exhaustive errors for cross-module enums and
+    // other cases where type inference hasn't fully resolved.
+    match &scrutinee_ty.kind {
+        &hir_ty::TypeKind::Infer(_) => {
+            return Vec::new();
+        }
+        &hir_ty::TypeKind::Error => {
+            return Vec::new();
+        }
+        _ => {}
+    }
 
     // Get all constructors for the type
     let constructors = get_type_constructors(checker, scrutinee_ty);

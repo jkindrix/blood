@@ -41,6 +41,23 @@ pub fn parse_expr_no_struct(parser: &mut parser_base::Parser) -> ast::Expr {
     expr
 }
 
+/// Returns true if the expression is block-like (ends with a `}`).
+/// Used to prevent treating `(` after block-like expressions as function calls.
+fn is_block_like_expr(expr: &ast::Expr) -> bool {
+    match &expr.kind {
+        &ast::ExprKind::Block(ref _b) => true,
+        &ast::ExprKind::If { condition: _, then_branch: _, else_branch: _ } => true,
+        &ast::ExprKind::IfLet { pattern: _, scrutinee: _, then_branch: _, else_branch: _ } => true,
+        &ast::ExprKind::Match { scrutinee: _, arms: _ } => true,
+        &ast::ExprKind::Loop { label: _, body: _ } => true,
+        &ast::ExprKind::While { label: _, condition: _, body: _ } => true,
+        &ast::ExprKind::WhileLet { label: _, pattern: _, scrutinee: _, body: _ } => true,
+        &ast::ExprKind::For { label: _, pattern: _, iter: _, body: _ } => true,
+        &ast::ExprKind::Unsafe(ref _b) => true,
+        _ => false,
+    }
+}
+
 /// Parse an expression with a minimum precedence level (Pratt parser).
 pub fn parse_expr_with_precedence(parser: &mut parser_base::Parser, min_prec: u8) -> ast::Expr {
     // Parse prefix/primary expression
@@ -51,6 +68,16 @@ pub fn parse_expr_with_precedence(parser: &mut parser_base::Parser, min_prec: u8
         let prec = infix_precedence(parser.current.kind);
         if prec < min_prec {
             break;
+        }
+
+        // Do not treat '(' or '[' as call/index after block-like expressions.
+        // This prevents parsing `while { ... }(tuple)` as a call.
+        if is_block_like_expr(&left) {
+            match parser.current.kind {
+                token::TokenKind::LParen => { break; }
+                token::TokenKind::LBracket => { break; }
+                _ => {}
+            }
         }
 
         left = parse_infix_expr(parser, left, prec);
@@ -609,6 +636,20 @@ fn parse_infix_expr(parser: &mut parser_base::Parser, left: ast::Expr, prec: u8)
         // Field access or method call
         token::TokenKind::Dot => {
             parser.advance();
+            // Check for tuple index access (e.g., expr.0, expr.1)
+            if parser.check(token::TokenKind::IntLit) {
+                let idx_span = parser.current.span;
+                let idx_val = parse_int_value_from_span(parser, idx_span) as u32;
+                parser.advance();
+                let end_span = parser.previous.span;
+                return ast::Expr {
+                    kind: ast::ExprKind::Field {
+                        base: Box::new(left),
+                        field: ast::FieldAccess::Index(idx_val, idx_span),
+                    },
+                    span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+                };
+            }
             let field_name = parser.parse_spanned_symbol();
             // Check if this is a method call (followed by '(')
             if parser.check(token::TokenKind::LParen) {

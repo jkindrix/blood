@@ -88,6 +88,11 @@ pub fn lower_program_with_base_dir(program: &ast::Program, base_dir: String, sou
     // Phase 4: Lower function bodies to HIR bodies
     lower_fn_bodies(&mut ctx, &program.declarations);
 
+    // Record how many bodies are from the main file before adding external module bodies.
+    // The type checker should only check these bodies; external module bodies may have
+    // unresolved cross-module paths that produce false errors.
+    let main_body_count = ctx.bodies.len();
+
     // Phase 4b: Lower external module function bodies
     lower_external_module_fn_bodies(&mut ctx);
 
@@ -112,6 +117,7 @@ pub fn lower_program_with_base_dir(program: &ast::Program, base_dir: String, sou
         ctx.items,
         ctx.item_index,
         ctx.bodies,
+        main_body_count,
         next_ty_var,
         next_def_id,
         ctx.builtin_string_def,

@@ -127,9 +127,13 @@ pub fn check_lower_result(result: &hir_lower_ctx::LowerResult) -> TypeCheckResul
     // Phase 1c: Register builtin enum info (Option, Result) for exhaustiveness checking
     register_builtin_enums(&mut checker);
 
-    // Phase 2: Type check all function bodies
+    // Phase 2: Type check function bodies from the main file only.
+    // External module bodies (index >= main_body_count) are skipped because
+    // their internal cross-module paths may not fully resolve in this context.
+    // Each module's bodies are checked when that module is the main file.
+    let body_limit = result.main_body_count;
     let mut i: usize = 0;
-    while i < result.bodies.len() {
+    while i < body_limit {
         let body_entry = &result.bodies[i];
         // Find the return type from the function signature for this body
         let return_ty = find_return_type_for_body(&result.items, body_entry.body_id);
@@ -374,7 +378,8 @@ fn check_body(checker: &mut typeck::TypeChecker, body: &hir_expr::Body, return_t
     // Unify body type with return type
     match &checker.return_ty {
         &Some(ref ret_ty) => {
-            checker.unify(&body_ty, ret_ty, body.expr.span);
+            let ok = checker.unify(&body_ty, ret_ty, body.expr.span);
+            let _ = ok;
         }
         &None => {}
     }

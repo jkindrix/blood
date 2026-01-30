@@ -32,6 +32,10 @@ pub struct LowerResult {
     pub item_index: Vec<Option<usize>>,
     /// Lowered bodies (available when successful).
     pub bodies: Vec<BodyEntry>,
+    /// Number of bodies from the main file (the first N entries in bodies).
+    /// Bodies after this index are from external modules and should be skipped
+    /// during type checking to avoid false errors from incomplete scope resolution.
+    pub main_body_count: usize,
     /// The next type variable ID after HIR lowering.
     /// The type checker must start its counter at this value to avoid
     /// TyVarId collisions with HIR-allocated inference variables.
@@ -54,6 +58,7 @@ impl LowerResult {
         items: Vec<ItemEntry>,
         item_index: Vec<Option<usize>>,
         bodies: Vec<BodyEntry>,
+        main_body_count: usize,
         next_ty_var: u32,
         next_def_id: u32,
         builtin_string_def: Option<hir_def::DefId>,
@@ -69,6 +74,7 @@ impl LowerResult {
             items: items,
             item_index: item_index,
             bodies: bodies,
+            main_body_count: main_body_count,
             next_ty_var: next_ty_var,
             next_def_id: next_def_id,
             builtin_string_def: builtin_string_def,
@@ -88,6 +94,7 @@ impl LowerResult {
             items: Vec::new(),
             item_index: Vec::new(),
             bodies: Vec::new(),
+            main_body_count: 0,
             next_ty_var: 0,
             next_def_id: 0,
             builtin_string_def: Option::None,
@@ -107,6 +114,7 @@ impl LowerResult {
             items: Vec::new(),
             item_index: Vec::new(),
             bodies: Vec::new(),
+            main_body_count: 0,
             next_ty_var: 0,
             next_def_id: 0,
             builtin_string_def: Option::None,

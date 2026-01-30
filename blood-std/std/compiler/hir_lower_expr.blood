@@ -698,6 +698,7 @@ fn lower_record_expr(
             &Some(ref args) => hir_lower_type::lower_type_args(ctx, args),
             &None => Vec::new(),
         };
+
         (binding.def_id, args)
     } else {
         // Multi-segment path (e.g., module::StructName): use qualified path resolution
@@ -875,6 +876,8 @@ fn lower_block_expr(ctx: &mut hir_lower_ctx::LoweringCtx, block: &ast::Block, sp
 
 /// Lower a block to HIR Block.
 pub fn lower_block(ctx: &mut hir_lower_ctx::LoweringCtx, block: &ast::Block) -> hir_expr::Block {
+    ctx.resolver.push_scope(resolve::ScopeKind::Block);
+
     let mut stmts_hir: Vec<hir_expr::Stmt> = Vec::new();
     let mut i: usize = 0;
     while i < block.statements.len() {
@@ -892,6 +895,7 @@ pub fn lower_block(ctx: &mut hir_lower_ctx::LoweringCtx, block: &ast::Block) -> 
         }
     };
 
+    ctx.resolver.pop_scope();
     hir_expr::Block::new(stmts_hir, expr_hir, block.span)
 }
 
@@ -1086,13 +1090,33 @@ pub fn lower_pattern(ctx: &mut hir_lower_ctx::LoweringCtx, pattern: &ast::Patter
                 span: name.span,
             };
 
+            // Build the local's type based on binding mode:
+            // - ByValue: local type = pattern type (T)
+            // - ByRef: local type = &T (reference to matched value)
+            // - ByMutRef: local type = &mut T
+            let local_ty = if by_ref {
+                if is_mut {
+                    hir_ty::Type::new(hir_ty::TypeKind::Ref {
+                        inner: Box::new(hir_ty::copy_type(&ty)),
+                        mutable: true,
+                    })
+                } else {
+                    hir_ty::Type::new(hir_ty::TypeKind::Ref {
+                        inner: Box::new(hir_ty::copy_type(&ty)),
+                        mutable: false,
+                    })
+                }
+            } else {
+                hir_ty::copy_type(&ty)
+            };
+
             // Add this binding to the body_locals accumulator so it gets
             // included in the Body's locals Vec. Without this, the type
             // checker cannot find the local's type.
             let body_local = hir_expr::Local::new(
                 local_id,
                 hir_name,
-                hir_ty::copy_type(&ty),
+                local_ty,
                 is_mut,
                 span,
             );
@@ -1489,12 +1513,14 @@ fn lower_match_expr(
     let mut i: usize = 0;
     while i < arms.len() {
         let arm = &arms[i];
+        ctx.resolver.push_scope(resolve::ScopeKind::MatchArm);
         let pattern_hir = lower_pattern(ctx, &arm.pattern);
         let guard_hir = match &arm.guard {
             &Some(ref g) => Some(lower_expr(ctx, g)),
             &None => Option::None,
         };
         let body_hir = lower_expr(ctx, &arm.body);
+        ctx.resolver.pop_scope();
         let arm_hir = hir_expr::MatchArm::new(
             pattern_hir,
             guard_hir,
@@ -2155,4 +2181,5 @@ fn copy_expr_vec(exprs: &Vec<ast::Expr>) -> Vec<ast::Expr> {
     // For now, return empty and handle specially
     Vec::new()
 }
+
 

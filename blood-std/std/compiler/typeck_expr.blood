@@ -799,6 +799,21 @@ fn infer_method_call(
     let resolved_receiver_raw = checker.resolve(&receiver_ty);
     let resolved_receiver = strip_refs(&resolved_receiver_raw);
 
+    // If receiver type is still an unresolved inference variable, we cannot
+    // reliably look up methods because types_match_for_impl would match ANY
+    // impl. Infer all arg types and return fresh inference variable.
+    match &resolved_receiver.kind {
+        &hir_ty::TypeKind::Infer(_) => {
+            let mut i: usize = 0;
+            while i < args.len() {
+                infer_expr(checker, &args[i]);
+                i = i + 1;
+            }
+            return checker.fresh_infer();
+        }
+        _ => {}
+    }
+
     // Look up the method on the receiver type
     match checker.lookup_method(&resolved_receiver, method.symbol) {
         Some(lookup_result) => {
@@ -807,7 +822,7 @@ fn infer_method_call(
             let impl_info = checker.get_impl_from_lookup(&lookup_result);
 
             // Build type argument substitution
-            // If explicit type args provided, use them; otherwise infer
+            // If explicit type args provided, use them; otherwise extract from receiver
             let mut subst = unify::TypeParamSubst::new();
             if type_args.len() > 0 {
                 let mut i: usize = 0;
@@ -816,10 +831,17 @@ fn infer_method_call(
                     i = i + 1;
                 }
             } else if impl_info.num_generics > 0 {
-                // Create fresh inference variables for impl's type parameters
+                // Extract type params by matching impl's self_ty against actual receiver
+                unify::extract_type_params_from_self_ty(&impl_info.self_ty, &resolved_receiver, &mut subst);
+                // Fill in any remaining params with fresh inference variables
                 let mut i: u32 = 0;
                 while i < impl_info.num_generics {
-                    subst.add(i, checker.fresh_infer());
+                    match subst.lookup(i) {
+                        Option::Some(_) => {}
+                        Option::None => {
+                            subst.add(i, checker.fresh_infer());
+                        }
+                    }
                     i = i + 1;
                 }
             }
@@ -1135,10 +1157,10 @@ fn infer_struct(
     // Regular struct construction
     // Generate inference variables for type arguments
     let mut args: Vec<hir_ty::Type> = Vec::new();
-    let mut i: u32 = 0;
-    while i < path.type_arg_count {
+    let mut ta: u32 = 0;
+    while ta < path.type_arg_count {
         args.push(checker.fresh_infer());
-        i = i + 1;
+        ta = ta + 1;
     }
     hir_ty::Type::new(hir_ty::TypeKind::Adt {
         def_id: path.def_id,
@@ -1227,6 +1249,12 @@ fn infer_cast(
 /// - Same type (no-op cast)
 fn is_valid_cast(src_ty: &hir_ty::Type, dst_ty: &hir_ty::Type) -> bool {
     match (&src_ty.kind, &dst_ty.kind) {
+        // If either type is an unresolved inference variable, accept the cast.
+        // The actual validity will depend on what the variable resolves to.
+        // This handles cases like `10 as char` where the literal's type is
+        // still Infer($x) at cast-checking time.
+        (&hir_ty::TypeKind::Infer(_), _) => true,
+        (_, &hir_ty::TypeKind::Infer(_)) => true,
         // Primitive to primitive casts
         (&hir_ty::TypeKind::Primitive(src_prim), &hir_ty::TypeKind::Primitive(dst_prim)) => {
             // Numeric to numeric casts are always valid
@@ -1458,22 +1486,33 @@ fn infer_block(
     block: &hir_expr::Block,
     span: common::Span,
 ) -> hir_ty::Type {
-    // Process all statements
+    // Process all statements, tracking the last statement's type
+    let mut last_stmt_ty: hir_ty::Type = hir_ty::Type::new(hir_ty::TypeKind::Tuple(Vec::new()));
     let mut i: usize = 0;
     while i < block.stmts.len() {
-        infer_stmt(checker, &block.stmts[i]);
+        last_stmt_ty = infer_stmt(checker, &block.stmts[i]);
         i = i + 1;
     }
 
-    // Block type is the type of the final expression, or unit
+    // Block type is the type of the final expression, or unit.
+    // Exception: if there's no trailing expression but the last statement
+    // diverges (Never type from return/break/continue/panic), the block
+    // type is Never — this allows match arms with `return` to not
+    // poison the match expression's type as `()`.
     match &block.expr {
         &Some(ref e) => infer_expr(checker, e.as_ref()),
-        &None => hir_ty::Type::new(hir_ty::TypeKind::Tuple(Vec::new())),
+        &None => {
+            match &last_stmt_ty.kind {
+                &hir_ty::TypeKind::Never => hir_ty::Type::never(),
+                &hir_ty::TypeKind::Error => hir_ty::Type::error(),
+                _ => hir_ty::Type::new(hir_ty::TypeKind::Tuple(Vec::new())),
+            }
+        }
     }
 }
 
 /// Infers the type of a statement.
-fn infer_stmt(checker: &mut typeck::TypeChecker, stmt: &hir_expr::Stmt) {
+fn infer_stmt(checker: &mut typeck::TypeChecker, stmt: &hir_expr::Stmt) -> hir_ty::Type {
     match stmt {
         &hir_expr::Stmt::Let { ref pattern, ref ty, ref init, span: _ } => {
             // Infer or check initializer type
@@ -1490,17 +1529,19 @@ fn infer_stmt(checker: &mut typeck::TypeChecker, stmt: &hir_expr::Stmt) {
                 &None => {}
             }
 
-            // Unify the init type with the pattern's type variable.
-            // During HIR lowering, patterns get fresh Infer types.
-            // This ensures the pattern's type variable maps to the
-            // concrete type in the SubstTable for MIR lowering.
-            checker.unify(&init_ty, &pattern.ty, pattern.span);
+            // Propagate the init type through the pattern structure.
+            // This unifies the pattern's type variable with the concrete
+            // type AND walks sub-patterns (struct fields, ref bindings, etc.)
+            // to ensure all inner inference variables are properly constrained.
+            propagate_pattern_types(checker, pattern, &init_ty);
+            hir_ty::Type::new(hir_ty::TypeKind::Tuple(Vec::new()))
         }
         &hir_expr::Stmt::Expr { ref expr, has_semi: _ } => {
-            infer_expr(checker, expr);
+            infer_expr(checker, expr)
         }
         &hir_expr::Stmt::Item(_def_id) => {
             // Item statements are handled during item collection
+            hir_ty::Type::new(hir_ty::TypeKind::Tuple(Vec::new()))
         }
     }
 }
@@ -1524,9 +1565,23 @@ fn infer_if(
     match else_branch {
         &Some(ref e) => {
             let else_ty = infer_expr(checker, e.as_ref());
-            // Both branches must have same type
-            checker.unify(&then_ty, &else_ty, span);
-            checker.resolve(&then_ty)
+            // Handle diverging branches: if one branch is Never,
+            // the if-expression's type is the other branch's type.
+            match (&then_ty.kind, &else_ty.kind) {
+                (&hir_ty::TypeKind::Never, _) => {
+                    // Then branch diverges; use else branch type
+                    checker.resolve(&else_ty)
+                }
+                (_, &hir_ty::TypeKind::Never) => {
+                    // Else branch diverges; use then branch type
+                    checker.resolve(&then_ty)
+                }
+                _ => {
+                    // Both branches must have same type
+                    checker.unify(&then_ty, &else_ty, span);
+                    checker.resolve(&then_ty)
+                }
+            }
         }
         &None => {
             // No else branch - then branch must be unit, or whole if is unit
@@ -1552,22 +1607,35 @@ fn infer_match(
         return hir_ty::Type::never();
     }
 
-    // Unify each arm's pattern type with the scrutinee type.
-    // During HIR lowering, patterns get fresh Infer types. This ensures
-    // pattern bindings have correct types before we process arm bodies.
+    // Propagate types through each pattern using match ergonomics.
+    // This unifies each pattern's type with the scrutinee type AND
+    // walks sub-patterns (struct fields, ref bindings, etc.) to ensure
+    // all inner inference variables are properly constrained.
+    // The raw scrutinee type (with refs) is passed so match ergonomics
+    // can auto-strip refs for non-Ref patterns.
     let mut pat_i: usize = 0;
     while pat_i < arms.len() {
-        checker.unify(&scrut_ty, &arms[pat_i].pattern.ty, arms[pat_i].pattern.span);
+        propagate_match_pattern_types(checker, &arms[pat_i].pattern, &scrut_ty_raw);
         pat_i = pat_i + 1;
     }
 
-    // Infer type from first arm, unify all others
-    let result_ty = infer_expr(checker, &arms[0].body);
+    // Infer type from first arm, unify all others.
+    // When an arm diverges (Never type from return/break/panic),
+    // adopt the next non-diverging arm's type as the result.
+    let mut result_ty = infer_expr(checker, &arms[0].body);
 
     let mut i: usize = 1;
     while i < arms.len() {
         let arm_ty = infer_expr(checker, &arms[i].body);
-        checker.unify(&arm_ty, &result_ty, arms[i].body.span);
+        match &result_ty.kind {
+            &hir_ty::TypeKind::Never => {
+                // Previous result was Never (diverging); adopt this arm's type
+                result_ty = arm_ty;
+            }
+            _ => {
+                checker.unify(&arm_ty, &result_ty, arms[i].body.span);
+            }
+        }
         i = i + 1;
     }
 
@@ -1783,6 +1851,474 @@ fn copy_option_type(opt: &Option<hir_ty::Type>) -> Option<hir_ty::Type> {
     match opt {
         &Some(ref ty) => Some(hir_ty::copy_type(ty)),
         &None => Option::None,
+    }
+}
+
+// ============================================================
+// Pattern Type Propagation
+// ============================================================
+
+/// Propagates type information from a resolved type down through a pattern's
+/// sub-patterns. After unifying a pattern's top-level type with the scrutinee
+/// or initializer, this function walks the pattern structure to ensure all
+/// inner patterns (bindings, fields, ref patterns, etc.) also have their
+/// inference variables unified with the correct concrete types.
+///
+/// Without this propagation, inner bindings remain as unconstrained Infer
+/// variables, causing method lookup to match incorrect impls and producing
+/// cascading type errors.
+pub fn propagate_pattern_types(
+    checker: &mut typeck::TypeChecker,
+    pattern: &hir_expr::Pattern,
+    expected_ty: &hir_ty::Type,
+) {
+    propagate_pattern_types_inner(checker, pattern, expected_ty, false);
+}
+
+/// Propagates types with match ergonomics (auto-deref for non-ref patterns).
+/// Used by match expressions where the scrutinee's raw type (with refs) is passed.
+/// This unifies the top-level pattern type — use propagate_match_sub_patterns
+/// when the top-level type is already set (e.g., by infer_match Phase 1).
+pub fn propagate_match_pattern_types(
+    checker: &mut typeck::TypeChecker,
+    pattern: &hir_expr::Pattern,
+    expected_ty: &hir_ty::Type,
+) {
+    propagate_pattern_types_inner(checker, pattern, expected_ty, true);
+}
+
+/// Propagates types through a match pattern's SUB-patterns only.
+/// The top-level pattern type is NOT modified (already set by the caller).
+/// This is used by infer_match's Phase 2: after Phase 1 sets pattern.ty to
+/// the stripped scrutinee (for exhaustiveness), this function walks the pattern
+/// tree to assign correct types to bindings, struct fields, etc.
+///
+/// The raw_scrutinee includes reference layers so Ref patterns can strip them.
+fn propagate_match_sub_patterns(
+    checker: &mut typeck::TypeChecker,
+    pattern: &hir_expr::Pattern,
+    raw_scrutinee: &hir_ty::Type,
+) {
+    // Determine the value type for sub-pattern propagation.
+    // For Ref patterns, use the raw type (they strip one layer).
+    // For non-Ref patterns, strip refs (match ergonomics auto-deref).
+    let is_ref_pattern = match &pattern.kind {
+        &hir_expr::PatternKind::Ref { mutable: _, inner: _ } => true,
+        _ => false,
+    };
+
+    let value_ty = if is_ref_pattern {
+        hir_ty::copy_type(raw_scrutinee)
+    } else {
+        strip_refs(raw_scrutinee)
+    };
+
+    let resolved = checker.resolve(&value_ty);
+
+    match &pattern.kind {
+        &hir_expr::PatternKind::Binding {
+            local_id: _,
+            ref name,
+            ref mode,
+            ref subpattern,
+        } => {
+            let _ = name;
+            let _ = mode;
+            // Binding type was set by Phase 1 unification.
+            // Propagate to subpattern if present.
+            match subpattern {
+                &Some(ref sub) => {
+                    propagate_pattern_types(checker, sub.as_ref(), &resolved);
+                }
+                &None => {}
+            }
+        }
+
+        &hir_expr::PatternKind::Ref { mutable: _, ref inner } => {
+            // Strip one reference layer and propagate to inner pattern.
+            let deref_ty = strip_one_ref(&resolved);
+            match deref_ty {
+                Option::Some(ref dt) => {
+                    // Inner pattern gets the dereferenced type with full unification.
+                    propagate_pattern_types(checker, inner.as_ref(), dt);
+                }
+                Option::None => {
+                    // Raw scrutinee is not a reference — can't strip
+                }
+            }
+        }
+
+        &hir_expr::PatternKind::Struct {
+            ref path,
+            ref fields,
+            has_rest: _,
+        } => {
+            propagate_struct_pattern_fields(checker, &resolved, path, fields);
+        }
+
+        &hir_expr::PatternKind::TupleStruct {
+            ref path,
+            ref fields,
+        } => {
+            propagate_tuple_struct_pattern_fields(checker, &resolved, path, fields);
+        }
+
+        &hir_expr::PatternKind::Tuple(ref pats) => {
+            match &resolved.kind {
+                &hir_ty::TypeKind::Tuple(ref elem_tys) => {
+                    let mut i: usize = 0;
+                    let limit = if pats.len() < elem_tys.len() { pats.len() } else { elem_tys.len() };
+                    while i < limit {
+                        propagate_pattern_types(checker, &pats[i], &elem_tys[i]);
+                        i = i + 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        &hir_expr::PatternKind::Slice {
+            ref prefix,
+            ref rest,
+            ref suffix,
+        } => {
+            let elem_ty = get_element_type(&resolved);
+            match elem_ty {
+                Option::Some(ref et) => {
+                    let mut i: usize = 0;
+                    while i < prefix.len() {
+                        propagate_pattern_types(checker, &prefix[i], et);
+                        i = i + 1;
+                    }
+                    match rest {
+                        &Some(ref r) => {
+                            propagate_pattern_types(checker, r.as_ref(), &resolved);
+                        }
+                        &None => {}
+                    }
+                    let mut j: usize = 0;
+                    while j < suffix.len() {
+                        propagate_pattern_types(checker, &suffix[j], et);
+                        j = j + 1;
+                    }
+                }
+                Option::None => {}
+            }
+        }
+
+        &hir_expr::PatternKind::Or(ref alternatives) => {
+            // Each alternative sees the same raw scrutinee
+            let mut i: usize = 0;
+            while i < alternatives.len() {
+                propagate_match_sub_patterns(checker, &alternatives[i], raw_scrutinee);
+                i = i + 1;
+            }
+        }
+
+        // These pattern kinds have no sub-patterns that need propagation
+        &hir_expr::PatternKind::Wildcard => {}
+        &hir_expr::PatternKind::Rest => {}
+        &hir_expr::PatternKind::Literal(_) => {}
+        &hir_expr::PatternKind::Range { ref start, ref end_val, inclusive: _ } => {
+            let _ = start;
+            let _ = end_val;
+        }
+        &hir_expr::PatternKind::Path(_) => {}
+        &hir_expr::PatternKind::Error => {}
+    }
+}
+
+fn propagate_pattern_types_inner(
+    checker: &mut typeck::TypeChecker,
+    pattern: &hir_expr::Pattern,
+    expected_ty: &hir_ty::Type,
+    match_ergonomics: bool,
+) {
+    // Handle match ergonomics: if the expected type is a reference but the
+    // pattern is not a Ref pattern, auto-strip refs (like Rust's match ergonomics).
+    // Ref patterns explicitly consume one reference layer.
+    // This ONLY applies when match_ergonomics is true (match expressions).
+    // For let patterns, types are used as-is.
+    let is_ref_pattern = match &pattern.kind {
+        &hir_expr::PatternKind::Ref { mutable: _, inner: _ } => true,
+        _ => false,
+    };
+
+    let effective_ty = if match_ergonomics && !is_ref_pattern {
+        // Auto-deref: strip all reference layers for non-ref patterns
+        strip_refs(expected_ty)
+    } else {
+        hir_ty::copy_type(expected_ty)
+    };
+
+    // Unify this pattern's type with the effective type
+    checker.unify(&pattern.ty, &effective_ty, pattern.span);
+
+    // Resolve to get the concrete type for sub-pattern propagation
+    let resolved = checker.resolve(&effective_ty);
+
+    match &pattern.kind {
+        &hir_expr::PatternKind::Binding {
+            local_id: _,
+            ref name,
+            ref mode,
+            ref subpattern,
+        } => {
+            // The binding's local type was already set during HIR lowering:
+            // - ByValue: local_ty = Infer($x) (same as pattern.ty)
+            // - ByRef: local_ty = &Infer($x)
+            // - ByMutRef: local_ty = &mut Infer($x)
+            // Since pattern.ty was unified with expected_ty above,
+            // Infer($x) now resolves to the correct concrete type,
+            // and the local's reference wrapper works automatically.
+            let _ = name;
+
+            // Propagate to subpattern if present
+            match subpattern {
+                &Some(ref sub) => {
+                    propagate_pattern_types(checker, sub.as_ref(), &resolved);
+                }
+                &None => {}
+            }
+        }
+
+        &hir_expr::PatternKind::Ref { mutable: _, ref inner } => {
+            // &pat or &mut pat: strip one reference layer from the expected type
+            // (not the resolved type which was auto-stripped).
+            // The effective_ty for Ref patterns kept references, so strip one layer.
+            let deref_ty = strip_one_ref(&resolved);
+            match deref_ty {
+                Option::Some(ref dt) => {
+                    // Pass the deref'd type to the inner pattern.
+                    // The inner pattern will handle further auto-deref if needed.
+                    propagate_pattern_types(checker, inner.as_ref(), dt);
+                }
+                Option::None => {
+                    // Type doesn't have reference structure — don't propagate
+                }
+            }
+        }
+
+        &hir_expr::PatternKind::Struct {
+            ref path,
+            ref fields,
+            has_rest: _,
+        } => {
+            propagate_struct_pattern_fields(checker, &resolved, path, fields);
+        }
+
+        &hir_expr::PatternKind::TupleStruct {
+            ref path,
+            ref fields,
+        } => {
+            propagate_tuple_struct_pattern_fields(checker, &resolved, path, fields);
+        }
+
+        &hir_expr::PatternKind::Tuple(ref pats) => {
+            match &resolved.kind {
+                &hir_ty::TypeKind::Tuple(ref elem_tys) => {
+                    let mut i: usize = 0;
+                    let limit = if pats.len() < elem_tys.len() { pats.len() } else { elem_tys.len() };
+                    while i < limit {
+                        propagate_pattern_types(checker, &pats[i], &elem_tys[i]);
+                        i = i + 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        &hir_expr::PatternKind::Slice {
+            ref prefix,
+            ref rest,
+            ref suffix,
+        } => {
+            let elem_ty = get_element_type(&resolved);
+            match elem_ty {
+                Option::Some(ref et) => {
+                    let mut i: usize = 0;
+                    while i < prefix.len() {
+                        propagate_pattern_types(checker, &prefix[i], et);
+                        i = i + 1;
+                    }
+                    match rest {
+                        &Some(ref r) => {
+                            // rest pattern matches the whole slice/array type
+                            propagate_pattern_types(checker, r.as_ref(), &resolved);
+                        }
+                        &None => {}
+                    }
+                    let mut j: usize = 0;
+                    while j < suffix.len() {
+                        propagate_pattern_types(checker, &suffix[j], et);
+                        j = j + 1;
+                    }
+                }
+                Option::None => {}
+            }
+        }
+
+        &hir_expr::PatternKind::Or(ref alternatives) => {
+            let mut i: usize = 0;
+            while i < alternatives.len() {
+                propagate_pattern_types(checker, &alternatives[i], &resolved);
+                i = i + 1;
+            }
+        }
+
+        // These pattern kinds have no sub-patterns to propagate to
+        &hir_expr::PatternKind::Wildcard => {}
+        &hir_expr::PatternKind::Rest => {}
+        &hir_expr::PatternKind::Literal(_) => {}
+        &hir_expr::PatternKind::Range { ref start, ref end_val, inclusive: _ } => {
+            let _ = start;
+            let _ = end_val;
+        }
+        &hir_expr::PatternKind::Path(_) => {}
+        &hir_expr::PatternKind::Error => {}
+    }
+}
+
+/// Strips one layer of reference from a type.
+/// Returns the inner type if the type is a reference, None otherwise.
+fn strip_one_ref(ty: &hir_ty::Type) -> Option<hir_ty::Type> {
+    match &ty.kind {
+        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
+            Some(hir_ty::copy_type(inner.as_ref()))
+        }
+        _ => Option::None,
+    }
+}
+
+/// Extracts the element type from an array or slice type.
+fn get_element_type(ty: &hir_ty::Type) -> Option<hir_ty::Type> {
+    match &ty.kind {
+        &hir_ty::TypeKind::Array { ref element, size: _ } => {
+            Some(hir_ty::copy_type(element.as_ref()))
+        }
+        &hir_ty::TypeKind::Slice { ref element } => {
+            Some(hir_ty::copy_type(element.as_ref()))
+        }
+        _ => Option::None,
+    }
+}
+
+/// Propagates types through a struct pattern's fields.
+/// Handles both struct patterns and record enum variant patterns.
+fn propagate_struct_pattern_fields(
+    checker: &mut typeck::TypeChecker,
+    resolved_ty: &hir_ty::Type,
+    path: &hir_def::ResolvedPath,
+    fields: &Vec<hir_expr::FieldPattern>,
+) {
+    let def_id = path.def_id;
+
+    // Build a type parameter substitution from the ADT's type args
+    let subst = match &resolved_ty.kind {
+        &hir_ty::TypeKind::Adt { def_id: _, ref args } => {
+            unify::TypeParamSubst::from_types(args)
+        }
+        _ => unify::TypeParamSubst::new(),
+    };
+
+    // Try as a struct first
+    let is_struct = match checker.get_struct(def_id) {
+        Some(_) => true,
+        None => false,
+    };
+
+    if is_struct {
+        // Struct pattern — look up field types by name
+        let mut i: usize = 0;
+        while i < fields.len() {
+            let field_name = fields[i].name.symbol;
+            match checker.get_struct_field_ty(def_id, field_name) {
+                Some(raw_ty) => {
+                    let concrete_ty = unify::substitute_type_params(&raw_ty, &subst);
+                    propagate_pattern_types(checker, &fields[i].pattern, &concrete_ty);
+                }
+                Option::None => {
+                    // Field not found — type checker will report the error elsewhere
+                }
+            }
+            i = i + 1;
+        }
+        return;
+    }
+
+    // Try as an enum variant (record variant)
+    match checker.find_enum_for_variant(def_id) {
+        Option::Some(ref lookup) => {
+            // Build substitution from the enum's generic args
+            let enum_subst = match &resolved_ty.kind {
+                &hir_ty::TypeKind::Adt { def_id: _, ref args } => {
+                    unify::TypeParamSubst::from_types(args)
+                }
+                _ => unify::TypeParamSubst::new(),
+            };
+
+            // Match field patterns by name against variant's field_names
+            let mut i: usize = 0;
+            while i < fields.len() {
+                let field_name = fields[i].name.symbol;
+                // Find matching field name in variant
+                let mut found: bool = false;
+                let mut k: usize = 0;
+                while k < lookup.field_names.len() {
+                    if lookup.field_names[k].index == field_name.index {
+                        // Found matching field — get its type
+                        if k < lookup.field_tys.len() {
+                            let raw_ty = &lookup.field_tys[k];
+                            let concrete_ty = unify::substitute_type_params(raw_ty, &enum_subst);
+                            propagate_pattern_types(checker, &fields[i].pattern, &concrete_ty);
+                        }
+                        found = true;
+                    }
+                    k = k + 1;
+                }
+                let _ = found;
+                i = i + 1;
+            }
+        }
+        Option::None => {
+            // Neither struct nor known variant — cannot propagate
+        }
+    }
+}
+
+/// Propagates types through a tuple struct pattern's fields.
+/// Handles enum variants with tuple payloads.
+fn propagate_tuple_struct_pattern_fields(
+    checker: &mut typeck::TypeChecker,
+    resolved_ty: &hir_ty::Type,
+    path: &hir_def::ResolvedPath,
+    fields: &Vec<hir_expr::Pattern>,
+) {
+    let def_id = path.def_id;
+
+    // Build a type parameter substitution from the ADT's type args
+    let subst = match &resolved_ty.kind {
+        &hir_ty::TypeKind::Adt { def_id: _, ref args } => {
+            unify::TypeParamSubst::from_types(args)
+        }
+        _ => unify::TypeParamSubst::new(),
+    };
+
+    // Look up the variant's field types
+    match checker.find_enum_for_variant(def_id) {
+        Option::Some(ref lookup) => {
+            let limit = if fields.len() < lookup.field_tys.len() { fields.len() } else { lookup.field_tys.len() };
+            let mut i: usize = 0;
+            while i < limit {
+                let raw_ty = &lookup.field_tys[i];
+                let concrete_ty = unify::substitute_type_params(raw_ty, &subst);
+                propagate_pattern_types(checker, &fields[i], &concrete_ty);
+                i = i + 1;
+            }
+        }
+        Option::None => {
+            // Variant not found — type checker will report the error elsewhere
+        }
     }
 }
 

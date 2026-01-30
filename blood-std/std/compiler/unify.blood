@@ -317,6 +317,149 @@ pub fn substitute_type_params(ty: &hir_ty::Type, subst: &TypeParamSubst) -> hir_
     }
 }
 
+/// Extracts type parameter bindings by matching an impl's self_ty against
+/// the actual receiver type. For example, if self_ty is `Box<Param(0)>` and
+/// receiver is `Box<Expr>`, this produces `{0 → Expr}`.
+///
+/// This is used during method call type inference to constrain the impl's
+/// type parameters to the concrete types from the receiver.
+pub fn extract_type_params_from_self_ty(
+    self_ty: &hir_ty::Type,
+    receiver: &hir_ty::Type,
+    subst: &mut TypeParamSubst,
+) {
+    extract_params_recursive(self_ty, receiver, subst);
+}
+
+/// Recursive helper for type parameter extraction.
+fn extract_params_recursive(
+    pattern: &hir_ty::Type,
+    actual: &hir_ty::Type,
+    subst: &mut TypeParamSubst,
+) {
+    match &pattern.kind {
+        &hir_ty::TypeKind::Param(param_id) => {
+            // Found a type parameter — bind it to the corresponding actual type
+            subst.add(param_id.index, hir_ty::copy_type(actual));
+        }
+        &hir_ty::TypeKind::Adt { def_id: _, ref args } => {
+            // Match ADT type arguments pairwise
+            extract_params_adt_args(args, actual, subst);
+        }
+        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
+            extract_params_ref_inner(inner.as_ref(), actual, subst);
+        }
+        &hir_ty::TypeKind::Ptr { ref inner, mutable: _ } => {
+            extract_params_ptr_inner(inner.as_ref(), actual, subst);
+        }
+        &hir_ty::TypeKind::Slice { ref element } => {
+            extract_params_slice_elem(element.as_ref(), actual, subst);
+        }
+        &hir_ty::TypeKind::Array { ref element, size: _ } => {
+            extract_params_array_elem(element.as_ref(), actual, subst);
+        }
+        &hir_ty::TypeKind::Tuple(ref elems) => {
+            extract_params_tuple_elems(elems, actual, subst);
+        }
+        // Primitive, Never, Error, Infer, etc. — no type params to extract
+        _ => {}
+    }
+}
+
+/// Helper: extract params from ADT type arguments.
+fn extract_params_adt_args(
+    pattern_args: &Vec<hir_ty::Type>,
+    actual: &hir_ty::Type,
+    subst: &mut TypeParamSubst,
+) {
+    match &actual.kind {
+        &hir_ty::TypeKind::Adt { def_id: _, ref args } => {
+            let mut i: usize = 0;
+            let limit = if pattern_args.len() < args.len() { pattern_args.len() } else { args.len() };
+            while i < limit {
+                extract_params_recursive(&pattern_args[i], &args[i], subst);
+                i = i + 1;
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Helper: extract params from reference inner type.
+fn extract_params_ref_inner(
+    pattern_inner: &hir_ty::Type,
+    actual: &hir_ty::Type,
+    subst: &mut TypeParamSubst,
+) {
+    match &actual.kind {
+        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
+            extract_params_recursive(pattern_inner, inner.as_ref(), subst);
+        }
+        _ => {}
+    }
+}
+
+/// Helper: extract params from pointer inner type.
+fn extract_params_ptr_inner(
+    pattern_inner: &hir_ty::Type,
+    actual: &hir_ty::Type,
+    subst: &mut TypeParamSubst,
+) {
+    match &actual.kind {
+        &hir_ty::TypeKind::Ptr { ref inner, mutable: _ } => {
+            extract_params_recursive(pattern_inner, inner.as_ref(), subst);
+        }
+        _ => {}
+    }
+}
+
+/// Helper: extract params from slice element type.
+fn extract_params_slice_elem(
+    pattern_elem: &hir_ty::Type,
+    actual: &hir_ty::Type,
+    subst: &mut TypeParamSubst,
+) {
+    match &actual.kind {
+        &hir_ty::TypeKind::Slice { ref element } => {
+            extract_params_recursive(pattern_elem, element.as_ref(), subst);
+        }
+        _ => {}
+    }
+}
+
+/// Helper: extract params from array element type.
+fn extract_params_array_elem(
+    pattern_elem: &hir_ty::Type,
+    actual: &hir_ty::Type,
+    subst: &mut TypeParamSubst,
+) {
+    match &actual.kind {
+        &hir_ty::TypeKind::Array { ref element, size: _ } => {
+            extract_params_recursive(pattern_elem, element.as_ref(), subst);
+        }
+        _ => {}
+    }
+}
+
+/// Helper: extract params from tuple element types.
+fn extract_params_tuple_elems(
+    pattern_elems: &Vec<hir_ty::Type>,
+    actual: &hir_ty::Type,
+    subst: &mut TypeParamSubst,
+) {
+    match &actual.kind {
+        &hir_ty::TypeKind::Tuple(ref elems) => {
+            let mut i: usize = 0;
+            let limit = if pattern_elems.len() < elems.len() { pattern_elems.len() } else { elems.len() };
+            while i < limit {
+                extract_params_recursive(&pattern_elems[i], &elems[i], subst);
+                i = i + 1;
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Substitutes type parameters in an effect row.
 fn substitute_effect_row_params(row: &hir_ty::EffectRow, subst: &TypeParamSubst) -> hir_ty::EffectRow {
     let mut result_effects: Vec<hir_ty::EffectRef> = Vec::new();
@@ -1483,6 +1626,12 @@ fn unify_resolved(
                 _ => UnifyResult::Err(UnifyError::mismatch(span))
             }
         }
+
+        // Catch-all: any other combination is a type mismatch
+        // This handles cases like (Primitive, Adt), (Tuple, Ref), etc.
+        _ => {
+            UnifyResult::Err(UnifyError::mismatch(span))
+        }
     }
 }
 
@@ -1929,4 +2078,122 @@ fn collect_fields_by_indices(
         i = i + 1;
     }
     result
+}
+
+// ============================================================
+// Debug Helpers (temporary for root cause analysis)
+// ============================================================
+
+/// Debug: returns primitive type name.
+fn debug_prim_name(p: hir_ty::PrimitiveTy) -> String {
+    match p {
+        hir_ty::PrimitiveTy::Bool => common::make_string("bool"),
+        hir_ty::PrimitiveTy::I8 => common::make_string("i8"),
+        hir_ty::PrimitiveTy::I16 => common::make_string("i16"),
+        hir_ty::PrimitiveTy::I32 => common::make_string("i32"),
+        hir_ty::PrimitiveTy::I64 => common::make_string("i64"),
+        hir_ty::PrimitiveTy::I128 => common::make_string("i128"),
+        hir_ty::PrimitiveTy::Isize => common::make_string("isize"),
+        hir_ty::PrimitiveTy::U8 => common::make_string("u8"),
+        hir_ty::PrimitiveTy::U16 => common::make_string("u16"),
+        hir_ty::PrimitiveTy::U32 => common::make_string("u32"),
+        hir_ty::PrimitiveTy::U64 => common::make_string("u64"),
+        hir_ty::PrimitiveTy::U128 => common::make_string("u128"),
+        hir_ty::PrimitiveTy::Usize => common::make_string("usize"),
+        hir_ty::PrimitiveTy::F32 => common::make_string("f32"),
+        hir_ty::PrimitiveTy::F64 => common::make_string("f64"),
+        hir_ty::PrimitiveTy::Char => common::make_string("char"),
+        hir_ty::PrimitiveTy::Str => common::make_string("str"),
+    }
+}
+
+/// Debug: returns a string describing a type kind.
+pub fn debug_type_kind_name(ty: &hir_ty::Type) -> String {
+    match &ty.kind {
+        &hir_ty::TypeKind::Primitive(p) => {
+            let mut s = common::make_string("Prim(");
+            s.push_str(debug_prim_name(p).as_str());
+            s.push_str(")");
+            s
+        }
+        &hir_ty::TypeKind::Tuple(_) => common::make_string("Tuple"),
+        &hir_ty::TypeKind::Array { element: _, size: _ } => common::make_string("Array"),
+        &hir_ty::TypeKind::Slice { element: _ } => common::make_string("Slice"),
+        &hir_ty::TypeKind::Ref { ref inner, mutable } => {
+            let mut s = common::make_string("&");
+            if mutable { s.push_str("mut "); }
+            s.push_str(debug_type_kind_name(inner.as_ref()).as_str());
+            s
+        }
+        &hir_ty::TypeKind::Ptr { inner: _, mutable: _ } => common::make_string("Ptr"),
+        &hir_ty::TypeKind::Fn { params: _, ret: _, effects: _ } => common::make_string("Fn"),
+        &hir_ty::TypeKind::Adt { def_id, ref args } => {
+            let mut s = common::make_string("Adt(d");
+            s.push_str(usize_to_str(def_id.index as usize).as_str());
+            if args.len() > 0 {
+                s.push_str("<");
+                let mut i: usize = 0;
+                while i < args.len() {
+                    if i > 0 { s.push_str(","); }
+                    s.push_str(debug_type_kind_name(&args[i]).as_str());
+                    i = i + 1;
+                }
+                s.push_str(">");
+            }
+            s.push_str(")");
+            s
+        }
+        &hir_ty::TypeKind::Infer(var_id) => {
+            let mut s = common::make_string("$");
+            s.push_str(usize_to_str(var_id.index as usize).as_str());
+            s
+        }
+        &hir_ty::TypeKind::Param(param_id) => {
+            let mut s = common::make_string("P");
+            s.push_str(usize_to_str(param_id.index as usize).as_str());
+            s
+        }
+        &hir_ty::TypeKind::Record { fields: _, row_var: _ } => common::make_string("Record"),
+        &hir_ty::TypeKind::Forall { params: _, body: _ } => common::make_string("Forall"),
+        &hir_ty::TypeKind::Ownership { qualifier: _, inner: _ } => common::make_string("Own"),
+        &hir_ty::TypeKind::Never => common::make_string("!"),
+        &hir_ty::TypeKind::Error => common::make_string("ERR"),
+    }
+}
+
+/// Helper: convert usize to string.
+fn usize_to_str(n: usize) -> String {
+    if n == 0 {
+        return common::make_string("0");
+    }
+    let mut val = n;
+    let mut digits = String::new();
+    while val > 0 {
+        let d = val % 10;
+        let c = (d as u8 + 48) as char;
+        let mut tmp = String::new();
+        tmp.push(c);
+        tmp.push_str(digits.as_str());
+        digits = tmp;
+        val = val / 10;
+    }
+    digits
+}
+
+/// Debug: prints type mismatch details for the catch-all arm.
+fn debug_mismatch(a: &hir_ty::Type, b: &hir_ty::Type) {
+    let mut msg = common::make_string("[UNIFY] catch-all: ");
+    msg.push_str(debug_type_kind_name(a).as_str());
+    msg.push_str(" vs ");
+    msg.push_str(debug_type_kind_name(b).as_str());
+    eprintln_str(msg.as_str());
+}
+
+/// Debug: prints ADT def_id mismatch details.
+fn debug_adt_mismatch(def_a: hir_def::DefId, def_b: hir_def::DefId) {
+    let mut msg = common::make_string("[UNIFY] Adt def_id: d");
+    msg.push_str(usize_to_str(def_a.index as usize).as_str());
+    msg.push_str(" vs d");
+    msg.push_str(usize_to_str(def_b.index as usize).as_str());
+    eprintln_str(msg.as_str());
 }
