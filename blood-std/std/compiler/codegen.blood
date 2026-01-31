@@ -164,7 +164,7 @@ pub fn generate_function_with_ctx(
     let param_end: usize = 1usize + (body.param_count as usize);
     while p < param_end && p < body.locals.len() {
         let local = &body.locals[p];
-        let ty = codegen_types::type_to_llvm(&local.ty);
+        let ty = codegen_stmt::type_to_llvm_with_ctx(ctx, &local.ty);
         let mut arg_name = common::make_string("%arg");
         let idx_str = codegen_types::format_u64((p - 1) as u64);
         arg_name.push_str(idx_str.as_str());
@@ -173,10 +173,16 @@ pub fn generate_function_with_ctx(
     }
 
     // Get return type (local _0)
-    let ret_ty = if body.locals.len() > 0 {
-        codegen_types::type_to_llvm(&body.locals[0].ty)
+    // Normalize {} (empty struct / unit) to void for LLVM function signatures
+    let ret_ty_raw = if body.locals.len() > 0 {
+        codegen_stmt::type_to_llvm_with_ctx(ctx, &body.locals[0].ty)
     } else {
         common::make_string("void")
+    };
+    let ret_ty = if is_empty_struct_type(ret_ty_raw.as_str()) {
+        common::make_string("void")
+    } else {
+        ret_ty_raw
     };
 
     // Emit function header
@@ -225,16 +231,20 @@ pub fn generate_function_with_ctx(
 // ============================================================
 
 /// Populates the ADT registry from HIR items.
+/// Uses a two-pass approach: first register all ADTs with placeholder field types,
+/// then rebuild layouts using the now-populated registry for correct nested ADT types.
 pub fn populate_adt_registry(
     ctx: &mut codegen_ctx::CodegenCtx,
     items: &Vec<hir_lower_ctx::ItemEntry>,
 ) {
+    // Pass 1: Register all ADTs with basic (possibly ptr) field types.
+    // This ensures all ADT def_ids are known before resolving nested types.
     let mut i: usize = 0;
     while i < items.len() {
         let entry = &items[i];
         match &entry.item.kind {
             &hir_item::ItemKind::Struct(ref struct_def) => {
-                let layout = build_struct_layout(entry.def_id.index, struct_def);
+                let layout = build_struct_layout_basic(entry.def_id.index, struct_def);
                 ctx.register_struct(layout);
             }
             &hir_item::ItemKind::Enum(ref enum_def) => {
@@ -255,10 +265,32 @@ pub fn populate_adt_registry(
         }
         i = i + 1;
     }
+
+    // Pass 2+: Rebuild struct layouts using context-aware type resolution.
+    // Each pass resolves one more level of nesting. Since lookup_struct and
+    // adt_llvm_type scan from the end, new entries override old ones.
+    // Repeat until all types stabilize (typically 2-3 iterations).
+    let mut pass: u32 = 0;
+    while pass < 4 {
+        let mut j: usize = 0;
+        while j < items.len() {
+            let entry = &items[j];
+            match &entry.item.kind {
+                &hir_item::ItemKind::Struct(ref struct_def) => {
+                    let layout = build_struct_layout_with_ctx(ctx, entry.def_id.index, struct_def);
+                    ctx.register_struct(layout);
+                }
+                _ => {}
+            }
+            j = j + 1;
+        }
+        pass = pass + 1;
+    }
 }
 
-/// Builds a StructLayout from a struct definition.
-fn build_struct_layout(def_id: u32, struct_def: &hir_item::StructDef) -> codegen_ctx::StructLayout {
+/// Builds a StructLayout using basic type resolution (no ADT registry lookups).
+/// Used in pass 1 to get all ADTs registered before resolving nested types.
+fn build_struct_layout_basic(def_id: u32, struct_def: &hir_item::StructDef) -> codegen_ctx::StructLayout {
     let mut fields: Vec<codegen_ctx::AdtFieldInfo> = Vec::new();
     let mut llvm_type = common::make_string("{ ");
 
@@ -295,6 +327,59 @@ fn build_struct_layout(def_id: u32, struct_def: &hir_item::StructDef) -> codegen
     llvm_type.push_str(" }");
 
     // Handle edge case: empty struct
+    if fields.len() == 0 {
+        llvm_type = common::make_string("{}");
+    }
+
+    codegen_ctx::StructLayout {
+        def_id: def_id,
+        fields: fields,
+        llvm_type: llvm_type,
+    }
+}
+
+/// Builds a StructLayout using context-aware type resolution.
+/// ADT fields resolve to their actual struct/enum types from the registry.
+fn build_struct_layout_with_ctx(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    def_id: u32,
+    struct_def: &hir_item::StructDef,
+) -> codegen_ctx::StructLayout {
+    let mut fields: Vec<codegen_ctx::AdtFieldInfo> = Vec::new();
+    let mut llvm_type = common::make_string("{ ");
+
+    match &struct_def.body {
+        &hir_item::StructBody::Record(ref struct_fields) => {
+            let mut fi: usize = 0;
+            while fi < struct_fields.len() {
+                if fi > 0 {
+                    llvm_type.push_str(", ");
+                }
+                let field_ty = codegen_stmt::type_to_llvm_with_ctx(ctx, &struct_fields[fi].ty);
+                llvm_type.push_str(field_ty.as_str());
+                fields.push(codegen_ctx::AdtFieldInfo { llvm_type: field_ty });
+                fi = fi + 1;
+            }
+        }
+        &hir_item::StructBody::Tuple(ref tuple_fields) => {
+            let mut fi: usize = 0;
+            while fi < tuple_fields.len() {
+                if fi > 0 {
+                    llvm_type.push_str(", ");
+                }
+                let field_ty = codegen_stmt::type_to_llvm_with_ctx(ctx, &tuple_fields[fi]);
+                llvm_type.push_str(field_ty.as_str());
+                fields.push(codegen_ctx::AdtFieldInfo { llvm_type: field_ty });
+                fi = fi + 1;
+            }
+        }
+        &hir_item::StructBody::Unit => {
+            // Unit struct: empty
+        }
+    }
+
+    llvm_type.push_str(" }");
+
     if fields.len() == 0 {
         llvm_type = common::make_string("{}");
     }
@@ -452,6 +537,10 @@ pub fn intrinsic_declarations() -> String {
     output.push_str("\n; C library declarations\n");
     output.push_str("declare i32 @puts(ptr)\n");
 
+    // Box runtime declarations
+    output.push_str("\n; Box runtime declarations\n");
+    output.push_str("declare ptr @box_new(ptr, i64)\n");
+
     // Effect runtime declarations
     output.push_str("\n; Effect runtime declarations\n");
     output.push_str("declare void @blood_push_handler(i64, ptr)\n");
@@ -459,6 +548,57 @@ pub fn intrinsic_declarations() -> String {
     output.push_str("declare void @blood_push_inline_handler(i64)\n");
     output.push_str("declare i64 @blood_perform(i64, i64, i64)\n");
     output.push_str("declare void @blood_resume(i64)\n");
+
+    // Builtin constructor stubs (used as function pointers for match dispatch, not called directly)
+    output.push_str("\n; Builtin constructor stubs\n");
+    output.push_str("define void @option_none_ctor() { ret void }\n");
+    output.push_str("define void @option_some_ctor(ptr %0) { ret void }\n");
+    output.push_str("declare void @string_new(ptr)\n");
+    output.push_str("declare void @vec_new(i64, ptr)\n");
+
+    // Builtin method runtime declarations
+    // These are runtime functions called by builtin method resolution.
+    // Signatures match blood-rust's codegen/context/mod.rs.
+    output.push_str("\n; String method runtime declarations\n");
+    output.push_str("declare i64 @string_len(ptr)\n");
+    output.push_str("declare void @string_push(ptr, i32)\n");
+    output.push_str("declare void @string_push_str(ptr, ptr)\n");
+    output.push_str("declare ptr @string_as_str(ptr)\n");
+    output.push_str("declare ptr @string_as_bytes(ptr)\n");
+
+    output.push_str("\n; str method runtime declarations\n");
+    output.push_str("declare ptr @str_as_bytes(ptr)\n");
+
+    output.push_str("\n; Vec method runtime declarations\n");
+    output.push_str("declare i64 @vec_len(ptr)\n");
+    output.push_str("declare void @vec_push(ptr, ptr, i64)\n");
+    output.push_str("declare i32 @vec_pop(ptr, i64, ptr)\n");
+    output.push_str("declare void @vec_clear(ptr)\n");
+
+    output.push_str("\n; Option method runtime declarations\n");
+    output.push_str("declare i32 @option_is_some(ptr)\n");
+    output.push_str("declare i32 @option_is_none(ptr)\n");
+    output.push_str("declare void @option_unwrap(ptr, i64, ptr)\n");
+    output.push_str("declare void @option_as_ref(ptr, i64, ptr)\n");
+
+    output.push_str("\n; Slice method runtime declarations\n");
+    output.push_str("declare i64 @slice_len(ptr)\n");
+
+    // Region memory management runtime wrappers
+    // The runtime uses blood_region_* prefix; we provide region_* wrappers for codegen
+    output.push_str("\n; Region memory management\n");
+    output.push_str("declare i64 @blood_region_create(i64, i64)\n");
+    output.push_str("declare void @blood_region_destroy(i64)\n");
+    output.push_str("declare void @blood_region_activate(i64)\n");
+    output.push_str("declare void @blood_region_deactivate()\n");
+    output.push_str("declare i64 @blood_region_alloc(i64, i64, i64)\n");
+    output.push_str("declare i32 @blood_region_exit_scope(i64)\n");
+    output.push_str("define i64 @region_create(i64 %0, i64 %1) { %r = call i64 @blood_region_create(i64 %0, i64 %1) ret i64 %r }\n");
+    output.push_str("define void @region_destroy(i64 %0) { call void @blood_region_destroy(i64 %0) ret void }\n");
+    output.push_str("define void @region_activate(i64 %0) { call void @blood_region_activate(i64 %0) ret void }\n");
+    output.push_str("define void @region_deactivate() { call void @blood_region_deactivate() ret void }\n");
+    output.push_str("define i64 @region_alloc(i64 %0, i64 %1, i64 %2) { %r = call i64 @blood_region_alloc(i64 %0, i64 %1, i64 %2) ret i64 %r }\n");
+    output.push_str("define i32 @region_exit_scope(i64 %0) { %r = call i32 @blood_region_exit_scope(i64 %0) ret i32 %r }\n");
 
     output
 }
@@ -490,6 +630,16 @@ pub fn extern_function(name: &str, params: &Vec<String>, ret_ty: &str) -> String
 // ============================================================
 // String Helpers
 // ============================================================
+
+/// Checks if an LLVM type string is "{}" (empty struct / unit type).
+fn is_empty_struct_type(ty: &str) -> bool {
+    let bytes = ty.as_bytes();
+    if bytes.len() == 2 {
+        bytes[0] == 123 && bytes[1] == 125
+    } else {
+        false
+    }
+}
 
 /// Clones a String.
 fn clone_string(s: &String) -> String {
