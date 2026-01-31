@@ -48,6 +48,29 @@ pub use typeck_info::TraitMethodInfo;
 pub use typeck_info::TraitImplInfo;
 
 // ============================================================
+// Builtin DefId Name Mapping
+// ============================================================
+
+/// Maps a synthetic builtin DefId to its runtime function name.
+/// Used to tell codegen what symbol name to emit for method calls
+/// on builtin types (String, Vec, Option, etc.).
+pub struct BuiltinDefName {
+    /// The DefId index allocated by the type checker.
+    pub def_id_index: u32,
+    /// The runtime function name (e.g., "string_push_str", "vec_push").
+    pub runtime_name: String,
+}
+
+impl BuiltinDefName {
+    pub fn new(def_id_index: u32, runtime_name: String) -> BuiltinDefName {
+        BuiltinDefName {
+            def_id_index: def_id_index,
+            runtime_name: runtime_name,
+        }
+    }
+}
+
+// ============================================================
 // Generic Parameter Helpers
 // ============================================================
 
@@ -267,6 +290,13 @@ pub struct TypeChecker {
     pub builtin_result_def: Option<hir_def::DefId>,
     /// Effect info by DefId.index for O(1) lookup.
     pub effects: Vec<Option<typeck_info::EffectInfo>>,
+    /// Builtin DefId-to-runtime-name mapping.
+    /// Populated during register_builtin_signatures.
+    pub builtin_def_names: Vec<BuiltinDefName>,
+    /// Method resolution side table.
+    /// Records resolved method DefIds keyed by expression span start,
+    /// so MIR lowering can look up methods that were resolved during type checking.
+    pub method_resolutions: Vec<common::MethodResEntry>,
 }
 
 impl TypeChecker {
@@ -296,6 +326,8 @@ impl TypeChecker {
             builtin_hashmap_def: Option::None,
             builtin_result_def: Option::None,
             effects: Vec::new(),
+            builtin_def_names: Vec::new(),
+            method_resolutions: Vec::new(),
         }
     }
 
@@ -326,6 +358,8 @@ impl TypeChecker {
             builtin_hashmap_def: Option::None,
             builtin_result_def: Option::None,
             effects: Vec::new(),
+            builtin_def_names: Vec::new(),
+            method_resolutions: Vec::new(),
         }
     }
 
@@ -393,6 +427,13 @@ impl TypeChecker {
     /// Returns whether any errors have been reported.
     pub fn has_errors(self: &Self) -> bool {
         self.errors.len() > 0
+    }
+
+    /// Records a resolved method DefId for a method call expression.
+    /// The span_start is the byte offset of the call expression, used as the key.
+    /// The def_id_index is the DefId.index of the resolved method.
+    pub fn record_method_resolution(self: &mut Self, span_start: usize, def_id_index: u32) {
+        self.method_resolutions.push(common::MethodResEntry::new(span_start, def_id_index));
     }
 
     /// Allocates a fresh DefId for synthetic builtin registrations.

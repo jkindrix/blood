@@ -597,7 +597,7 @@ fn lower_method_call_expr(
         i = i + 1;
     }
 
-    // Get method function
+    // Get method function - first check HIR-stored DefId, then side table from type checker
     let func_operand = match method_def {
         Option::Some(def_id) => {
             mir_types::Operand::Constant(mir_types::Constant::new(
@@ -606,8 +606,19 @@ fn lower_method_call_expr(
             ))
         }
         Option::None => {
-            // Method not resolved - error recovery
-            mir_types::Operand::Constant(mir_types::Constant::unit())
+            // Look up from type checker's resolution side table
+            match ctx.lookup_method_def(span.start) {
+                Option::Some(resolved_def) => {
+                    mir_types::Operand::Constant(mir_types::Constant::new(
+                        hir_ty::Type::error(),
+                        mir_types::ConstantKind::FnDef(resolved_def),
+                    ))
+                }
+                Option::None => {
+                    // Truly unresolved - error recovery
+                    mir_types::Operand::Constant(mir_types::Constant::unit())
+                }
+            }
         }
     };
 

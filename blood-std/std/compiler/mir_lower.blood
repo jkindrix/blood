@@ -28,12 +28,15 @@ mod unify;
 /// This is the main entry point for MIR lowering. It takes a function's
 /// definition ID, the HIR body, and the substitution table from type
 /// inference, and produces a complete MIR body with resolved types.
+/// The method_resolutions parameter carries resolved method DefIds from
+/// the type checker for method call expressions.
 pub fn lower_body(
     def_id: hir_def::DefId,
     body: &hir_expr::Body,
     return_ty: hir_ty::Type,
     span: common::Span,
     subst_table: &unify::SubstTable,
+    method_resolutions: &Vec<common::MethodResEntry>,
 ) -> mir_body::MirBody {
     // Resolve the return type through the substitution table
     let resolved_return = unify::apply_substs(subst_table, &return_ty);
@@ -41,8 +44,11 @@ pub fn lower_body(
     // Clone the substitution table for this lowering context
     let cloned_table = unify::clone_subst_table(subst_table);
 
-    // Create lowering context with the substitution table
-    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_return, span, cloned_table);
+    // Clone method resolutions for this lowering context
+    let cloned_resolutions = clone_method_resolutions(method_resolutions);
+
+    // Create lowering context with the substitution table and method resolutions
+    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_return, span, cloned_table, cloned_resolutions);
 
     // Lower parameters (first param_count locals are parameters)
     lower_params_from_body(&mut ctx, body, span);
@@ -104,7 +110,7 @@ pub fn lower_closure(
     // Resolve return type and create lowering context with substitution table
     let resolved_return = unify::apply_substs(subst_table, &return_ty);
     let cloned_table = unify::clone_subst_table(subst_table);
-    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_return, span, cloned_table);
+    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_return, span, cloned_table, Vec::new());
 
     // Lower closure parameters
     lower_closure_params(&mut ctx, params, span);
@@ -157,7 +163,7 @@ pub fn lower_static(
     // Resolve type and create context with substitution table
     let resolved_ty = unify::apply_substs(subst_table, &ty);
     let cloned_table = unify::clone_subst_table(subst_table);
-    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_ty, span, cloned_table);
+    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_ty, span, cloned_table, Vec::new());
 
     // Lower initializer expression
     mir_lower_expr::lower_expr_to_return(&mut ctx, init);
@@ -271,4 +277,15 @@ pub fn get_return_type(body: &mir_body::MirBody) -> hir_ty::Type {
     } else {
         hir_ty::Type::unit()
     }
+}
+
+/// Clones a method resolution table for passing to a new MirLowerCtx.
+fn clone_method_resolutions(src: &Vec<common::MethodResEntry>) -> Vec<common::MethodResEntry> {
+    let mut result: Vec<common::MethodResEntry> = Vec::new();
+    let mut i: usize = 0;
+    while i < src.len() {
+        result.push(common::MethodResEntry::new(src[i].span_start, src[i].def_id_index));
+        i = i + 1;
+    }
+    result
 }

@@ -288,6 +288,33 @@ pub fn make_string(s: &str) -> String {
 // Copy Utilities
 // ============================================================
 
+// ============================================================
+// Method Resolution Entry
+// ============================================================
+
+/// Entry mapping an expression span to its resolved method DefId.
+///
+/// The type checker records these during method resolution so that
+/// MIR lowering can look up the resolved method for each call site.
+/// Uses u32 for def_id_index to avoid pulling hir_def into common.
+pub struct MethodResEntry {
+    /// The start byte offset of the method call expression's span.
+    pub span_start: usize,
+    /// The DefId.index of the resolved method.
+    pub def_id_index: u32,
+}
+
+impl MethodResEntry {
+    /// Creates a new method resolution entry.
+    pub fn new(span_start: usize, def_id_index: u32) -> MethodResEntry {
+        MethodResEntry { span_start, def_id_index }
+    }
+}
+
+// ============================================================
+// Copy Utilities
+// ============================================================
+
 /// Creates a copy of a SpannedSymbol.
 pub fn copy_spanned_symbol(ss: &SpannedSymbol) -> SpannedSymbol {
     SpannedSymbol {
