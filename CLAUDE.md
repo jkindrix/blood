@@ -327,56 +327,29 @@ Before modifying any shared type:
 
 **These are compiler bugs that need to be fixed in blood-rust. Do NOT work around them.**
 
-### BUG-002: Enum payload corruption when moving structs with large enum fields into another enum
+### No Active Bugs
 
-**Status:** Active - blocking self-hosted compiler codegen
+All previously reported bugs have been fixed.
 
-**Description:**
-When a struct containing an enum with a large payload (e.g., `i128`) is moved into another enum variant, the payload data gets corrupted.
+### Known Blood-Rust Limitations (NOT Bugs)
 
-**Reproduction:**
-```blood
-// This is simplified - actual case involves ConstantKind, Constant, Operand, Rvalue
-enum Inner {
-    Int(i128),  // 128-bit payload
-    ZeroSized,
-}
+**No destructors/drop:** Blood-rust compiled binaries do not free heap allocations when values go out of scope. Every String, Vec, and heap-allocated struct lives until process exit. This causes:
+- `./main check main.blood` uses ~19 GB RAM (53 files, 30K lines)
+- `./main build main.blood` uses ~62 GB RAM and is OOM-killed
+- Fix requires blood-rust to implement drop glue / destructors
 
-struct Container {
-    kind: Inner,
-}
+**No `file_append_string` builtin:** Despite being documented in COMPILER_NOTES.md, the `file_append_string(&str, &str) -> bool` runtime function is NOT declared in blood-rust's codegen. Only `file_write_string`, `file_read_to_string`, and `file_exists` are available. This prevents streaming IR output per-function to avoid OOM.
 
-enum Outer {
-    Wrap(Container),
-}
-
-fn test() {
-    let container = Container { kind: Inner::Int(42) };
-    // At this point, container.kind == Inner::Int(42) ✅
-    let outer = Outer::Wrap(container);
-    // At this point, accessing inner.kind shows corrupted data ❌
-}
-```
-
-**Actual case:**
-- `mir_types::ConstantKind::Int(i128)` value (42) is correct before wrapping
-- After `mir_types::Operand::Constant(constant)` where `constant: Constant { ty, kind }`, the `kind` field is corrupted
-- The discriminant appears to change to a different variant (e.g., `ZeroSized` instead of `Int`)
-
-**Impact:**
-- Self-hosted compiler generates `undef` instead of actual constant values
-- LLVM IR output: `store i64 undef, ptr %_0` instead of `store i32 42, ptr %_0`
-
-**Workaround:**
-None known. This requires a fix in blood-rust's codegen for enum payloads.
-
----
+**Module resolution limits:** Adding `mod codegen_ctx;` to driver.blood caused `source::read_file` and `source::parent_dir` to become unresolvable in later functions. Workaround: avoid adding new module imports to files near the resolution limit.
 
 **Previously fixed bugs:**
-- BUG-001: Struct initialization in impl blocks when module is imported (fixed - all 25 compiler files now compile)
-- BUG-003: Option<&Struct> return corruption (fixed - blood-rust devs added `by_ref` field tracking)
-- BUG-004: Option::Some(Box::new(expr)) corruption (fixed - blood-rust devs added auto-deref insertion for ref bindings in method calls)
-- BUG-005: Mutations through `&mut field_of_ref` lost when passed as function arguments (fixed - blood-rust devs preserved `&mut field_of_ref` mutations)
+- BUG-001: Struct initialization in impl blocks when module is imported (fixed)
+- BUG-002: Enum payload corruption when moving structs with large enum fields into another enum (fixed — verified 2026-01-31, all payload tests pass)
+- BUG-003: Option<&Struct> return corruption (fixed — blood-rust devs added `by_ref` field tracking)
+- BUG-004: Option::Some(Box::new(expr)) corruption (fixed — blood-rust devs added auto-deref insertion)
+- BUG-005: Mutations through `&mut field_of_ref` lost when passed as function arguments (fixed)
+- BUG-006: Match on enum reference (`&Enum`) always falls to last arm (fixed — verified 2026-01-31, by-ref match now dispatches correctly)
+- BUG-007: Generic type params not registered in resolver scope at runtime (fixed — blood-rust devs fixed nested mutable struct field codegen)
 
 ---
 
