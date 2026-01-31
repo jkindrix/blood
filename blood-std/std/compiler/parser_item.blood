@@ -467,8 +467,9 @@ fn parse_effect_row(parser: &mut parser_base::Parser) -> ast::EffectRow {
     let start = parser.current.span;
     parser.advance(); // consume '/'
 
-    // Check for "pure" effect row
-    if parser.check(token::TokenKind::LBrace) || parser.check(token::TokenKind::Where) || parser.is_at_end() {
+    // Check for "pure" keyword
+    if parser.check(token::TokenKind::Pure) {
+        parser.advance();
         let end_span = parser.previous.span;
         return ast::EffectRow {
             kind: ast::EffectRowKind::Pure,
@@ -476,6 +477,66 @@ fn parse_effect_row(parser: &mut parser_base::Parser) -> ast::EffectRow {
         };
     }
 
+    // Brace-wrapped effect row: / {Effect1, Effect2, ... | rest}
+    if parser.check(token::TokenKind::LBrace) {
+        parser.advance(); // consume '{'
+
+        // Empty braces: / {} means pure
+        if parser.try_consume(token::TokenKind::RBrace) {
+            let end_span = parser.previous.span;
+            return ast::EffectRow {
+                kind: ast::EffectRowKind::Pure,
+                span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+            };
+        }
+
+        let mut effects: Vec<ast::Type> = Vec::new();
+        let mut rest: Option<common::SpannedSymbol> = Option::None;
+
+        // Parse comma-separated effects
+        let done = false;
+        while !done {
+            // Check for row variable: | e
+            if parser.try_consume(token::TokenKind::Or) {
+                if parser.check(token::TokenKind::Ident) || parser.check(token::TokenKind::TypeIdent) {
+                    rest = Option::Some(parser.parse_spanned_symbol());
+                }
+                break;
+            }
+
+            let eff = parser_type::parse_type(parser);
+            effects.push(eff);
+
+            if !parser.try_consume(token::TokenKind::Comma) {
+                // Check for trailing row variable: Effect | e
+                if parser.try_consume(token::TokenKind::Or) {
+                    if parser.check(token::TokenKind::Ident) || parser.check(token::TokenKind::TypeIdent) {
+                        rest = Option::Some(parser.parse_spanned_symbol());
+                    }
+                }
+                break;
+            }
+        }
+
+        parser.expect(token::TokenKind::RBrace);
+        let end_span = parser.previous.span;
+        let kind = ast::EffectRowKind::Effects { effects: effects, rest: rest };
+        return ast::EffectRow {
+            kind: kind,
+            span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        };
+    }
+
+    // Check for where or end → pure
+    if parser.check(token::TokenKind::Where) || parser.is_at_end() {
+        let end_span = parser.previous.span;
+        return ast::EffectRow {
+            kind: ast::EffectRowKind::Pure,
+            span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        };
+    }
+
+    // Bare effect row: / Effect1 + Effect2
     let mut effects: Vec<ast::Type> = Vec::new();
     let rest: Option<common::SpannedSymbol> = Option::None;
 
@@ -1042,6 +1103,22 @@ pub fn parse_declaration(parser: &mut parser_base::Parser) -> ast::Declaration {
                 span,
             })
         }
+        token::TokenKind::Effect => {
+            let effect_decl = parse_effect_decl(parser, attrs);
+            ast::Declaration::Effect(effect_decl)
+        }
+        token::TokenKind::Handler => {
+            let handler_decl = parse_handler_decl(parser, attrs);
+            ast::Declaration::Handler(handler_decl)
+        }
+        token::TokenKind::Deep => {
+            let handler_decl = parse_handler_decl(parser, attrs);
+            ast::Declaration::Handler(handler_decl)
+        }
+        token::TokenKind::Shallow => {
+            let handler_decl = parse_handler_decl(parser, attrs);
+            ast::Declaration::Handler(handler_decl)
+        }
         _ => {
             // Error recovery
             parser.error_expected("declaration");
@@ -1063,5 +1140,247 @@ pub fn parse_declaration(parser: &mut parser_base::Parser) -> ast::Declaration {
             };
             ast::Declaration::Function(placeholder)
         }
+    }
+}
+
+// ============================================================
+// Effect Declaration Parsing
+// ============================================================
+
+/// Parse an effect declaration: effect Name<T> extends Parent { op ... }
+fn parse_effect_decl(parser: &mut parser_base::Parser, attrs: Vec<ast::Attribute>) -> ast::EffectDecl {
+    let start = parser.current.span;
+    parser.advance(); // consume 'effect'
+
+    let name = parser.parse_spanned_symbol();
+
+    // Optional type params: <T, U>
+    let type_params = if parser.check(token::TokenKind::Lt) {
+        Option::Some(parse_type_params(parser))
+    } else {
+        Option::None
+    };
+
+    // Optional parent effects: extends Effect1, Effect2
+    let mut parent_effects: Vec<ast::Type> = Vec::new();
+    if parser.try_consume(token::TokenKind::Extends) {
+        let eff = parser_type::parse_type(parser);
+        parent_effects.push(eff);
+        while parser.try_consume(token::TokenKind::Comma) {
+            let eff = parser_type::parse_type(parser);
+            parent_effects.push(eff);
+        }
+    }
+
+    parser.expect(token::TokenKind::LBrace);
+
+    // Parse operations
+    let mut operations: Vec<ast::OperationDecl> = Vec::new();
+    while !parser.check(token::TokenKind::RBrace) && !parser.is_at_end() {
+        if parser.check(token::TokenKind::Op) {
+            let oper = parse_operation_decl(parser);
+            operations.push(oper);
+        } else if parser.check(token::TokenKind::RBrace) {
+            break;
+        } else {
+            parser.error_expected("keyword `op`");
+            // Error recovery: skip to next op or }
+            while !parser.check(token::TokenKind::Op)
+                && !parser.check(token::TokenKind::RBrace)
+                && !parser.is_at_end() {
+                parser.advance();
+            }
+        }
+    }
+
+    parser.expect(token::TokenKind::RBrace);
+    let end_span = parser.previous.span;
+
+    ast::EffectDecl {
+        attrs,
+        name,
+        type_params,
+        parent_effects,
+        operations,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+/// Parse an operation declaration: op name<T>(params) -> ReturnType;
+fn parse_operation_decl(parser: &mut parser_base::Parser) -> ast::OperationDecl {
+    let start = parser.current.span;
+    parser.advance(); // consume 'op'
+
+    let name = parser.parse_spanned_symbol();
+
+    // Optional type params
+    let type_params = if parser.check(token::TokenKind::Lt) {
+        Option::Some(parse_type_params(parser))
+    } else {
+        Option::None
+    };
+
+    // Parameters
+    parser.expect(token::TokenKind::LParen);
+    let params = parse_fn_params(parser);
+    parser.expect(token::TokenKind::RParen);
+
+    // Return type: -> Type
+    parser.expect(token::TokenKind::Arrow);
+    let return_type = parser_type::parse_type(parser);
+
+    parser.expect(token::TokenKind::Semi);
+    let end_span = parser.previous.span;
+
+    ast::OperationDecl {
+        name,
+        type_params,
+        params,
+        return_type,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+// ============================================================
+// Handler Declaration Parsing
+// ============================================================
+
+/// Parse a handler declaration: [deep|shallow] handler Name<T> for Effect where ... { ... }
+fn parse_handler_decl(parser: &mut parser_base::Parser, attrs: Vec<ast::Attribute>) -> ast::HandlerDecl {
+    let start = parser.current.span;
+
+    // Optional deep/shallow qualifier
+    let kind = if parser.try_consume(token::TokenKind::Deep) {
+        common::HandlerKind::Deep
+    } else if parser.try_consume(token::TokenKind::Shallow) {
+        common::HandlerKind::Shallow
+    } else {
+        common::HandlerKind::Deep // default
+    };
+
+    parser.expect(token::TokenKind::Handler);
+
+    let name = parser.parse_spanned_symbol();
+
+    // Optional type params
+    let type_params = if parser.check(token::TokenKind::Lt) {
+        Option::Some(parse_type_params(parser))
+    } else {
+        Option::None
+    };
+
+    // Required: for EffectType
+    parser.expect(token::TokenKind::For);
+    let effect_ty = parser_type::parse_type(parser);
+
+    // Optional where clause
+    let where_clause = if parser.check(token::TokenKind::Where) {
+        Option::Some(parse_where_clause(parser))
+    } else {
+        Option::None
+    };
+
+    parser.expect(token::TokenKind::LBrace);
+
+    // Parse handler state: let [mut] name: Type [= expr];
+    let mut state: Vec<ast::HandlerState> = Vec::new();
+    while parser.check(token::TokenKind::Let) {
+        let s = parse_handler_state(parser);
+        state.push(s);
+    }
+
+    // Parse return clause: return(param) { body }
+    let return_clause = if parser.check(token::TokenKind::Return) {
+        Option::Some(parse_return_clause(parser))
+    } else {
+        Option::None
+    };
+
+    // Parse operation implementations: op name(params) { body }
+    let mut operations: Vec<ast::OperationImpl> = Vec::new();
+    while parser.check(token::TokenKind::Op) {
+        let oper = parse_operation_impl(parser);
+        operations.push(oper);
+    }
+
+    parser.expect(token::TokenKind::RBrace);
+    let end_span = parser.previous.span;
+
+    ast::HandlerDecl {
+        attrs,
+        kind,
+        name,
+        type_params,
+        effect: effect_ty,
+        where_clause,
+        state,
+        return_clause,
+        operations,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+/// Parse handler state: let [mut] name: Type [= expr];
+fn parse_handler_state(parser: &mut parser_base::Parser) -> ast::HandlerState {
+    let start = parser.current.span;
+    parser.advance(); // consume 'let'
+    let is_mut = parser.try_consume(token::TokenKind::Mut);
+    let name = parser.parse_spanned_symbol();
+    parser.expect(token::TokenKind::Colon);
+    let ty = parser_type::parse_type(parser);
+    let default_val = if parser.try_consume(token::TokenKind::Eq) {
+        Option::Some(parser_expr::parse_expr(parser))
+    } else {
+        Option::None
+    };
+    parser.try_consume(token::TokenKind::Semi);
+    let end_span = parser.previous.span;
+    ast::HandlerState {
+        is_mut,
+        name,
+        ty,
+        default_val,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+/// Parse return clause: return(param) { body }
+fn parse_return_clause(parser: &mut parser_base::Parser) -> ast::ReturnClause {
+    let start = parser.current.span;
+    parser.advance(); // consume 'return'
+    parser.expect(token::TokenKind::LParen);
+    let param = parser.parse_spanned_symbol();
+    parser.expect(token::TokenKind::RParen);
+    let body = parser_expr::parse_block(parser);
+    let end_span = parser.previous.span;
+    ast::ReturnClause {
+        param,
+        body,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+/// Parse operation implementation: op name(params) { body }
+fn parse_operation_impl(parser: &mut parser_base::Parser) -> ast::OperationImpl {
+    let start = parser.current.span;
+    parser.advance(); // consume 'op'
+    let name = parser.parse_spanned_symbol();
+    parser.expect(token::TokenKind::LParen);
+    let mut params: Vec<ast::Pattern> = Vec::new();
+    while !parser.check(token::TokenKind::RParen) && !parser.is_at_end() {
+        let pat = parser_pattern::parse_pattern(parser);
+        params.push(pat);
+        if !parser.try_consume(token::TokenKind::Comma) {
+            break;
+        }
+    }
+    parser.expect(token::TokenKind::RParen);
+    let body = parser_expr::parse_block(parser);
+    let end_span = parser.previous.span;
+    ast::OperationImpl {
+        name,
+        params,
+        body,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }

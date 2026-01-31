@@ -339,7 +339,7 @@ fn parse_primary_expr(parser: &mut parser_base::Parser) -> ast::Expr {
             return parse_continue_expr(parser);
         }
         // Closure
-        token::TokenKind::Pipe => {
+        token::TokenKind::Or => {
             return parse_closure_expr(parser);
         }
         token::TokenKind::OrOr => {
@@ -367,6 +367,13 @@ fn parse_primary_expr(parser: &mut parser_base::Parser) -> ast::Expr {
         token::TokenKind::ColonColon => {
             return parse_path_expr(parser);
         }
+        // Keywords that can be used as identifiers in expression position
+        token::TokenKind::Default => {
+            return parse_path_expr(parser);
+        }
+        token::TokenKind::Handle => {
+            return parse_path_expr(parser);
+        }
         // Unsafe block: @unsafe { ... }
         token::TokenKind::AtUnsafe => {
             parser.advance();
@@ -376,6 +383,22 @@ fn parse_primary_expr(parser: &mut parser_base::Parser) -> ast::Expr {
                 kind: ast::ExprKind::Unsafe(block),
                 span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
             };
+        }
+        // Effect expressions
+        token::TokenKind::Perform => {
+            return parse_perform_expr(parser);
+        }
+        token::TokenKind::Resume => {
+            return parse_resume_expr(parser);
+        }
+        token::TokenKind::With => {
+            return parse_with_handle_expr(parser);
+        }
+        token::TokenKind::Try => {
+            return parse_try_with_expr(parser);
+        }
+        token::TokenKind::Region => {
+            return parse_region_expr(parser);
         }
         // Error recovery - return unit tuple as placeholder
         _ => {
@@ -786,21 +809,48 @@ fn parse_array_expr(parser: &mut parser_base::Parser) -> ast::Expr {
     let start = parser.current.span;
     parser.advance(); // consume '['
 
-    let mut elements: Vec<ast::Expr> = Vec::new();
+    // Empty array
+    if parser.check(token::TokenKind::RBracket) {
+        parser.advance();
+        let end_span = parser.previous.span;
+        return ast::Expr {
+            kind: ast::ExprKind::Array(ast::ArrayExpr::List(Vec::new())),
+            span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        };
+    }
 
-    while !parser.check(token::TokenKind::RBracket) && !parser.is_at_end() {
-        elements.push(parse_expr(parser));
-        if !parser.try_consume(token::TokenKind::Comma) {
-            break;
+    // Parse first element
+    let first = parse_expr(parser);
+
+    // Check for repeat syntax: [expr; count]
+    if parser.try_consume(token::TokenKind::Semi) {
+        let count = parse_expr(parser);
+        parser.expect(token::TokenKind::RBracket);
+        let end_span = parser.previous.span;
+        return ast::Expr {
+            kind: ast::ExprKind::Array(ast::ArrayExpr::Repeat {
+                val: Box::new(first),
+                count: Box::new(count),
+            }),
+            span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        };
+    }
+
+    // List syntax: [expr, expr, ...]
+    let mut elements: Vec<ast::Expr> = Vec::new();
+    elements.push(first);
+    while parser.try_consume(token::TokenKind::Comma) {
+        if parser.check(token::TokenKind::RBracket) {
+            break; // trailing comma
         }
+        elements.push(parse_expr(parser));
     }
 
     parser.expect(token::TokenKind::RBracket);
     let end_span = parser.previous.span;
 
-    let array_expr = ast::ArrayExpr::List(elements);
     ast::Expr {
-        kind: ast::ExprKind::Array(array_expr),
+        kind: ast::ExprKind::Array(ast::ArrayExpr::List(elements)),
         span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
@@ -1025,9 +1075,9 @@ fn parse_closure_expr(parser: &mut parser_base::Parser) -> ast::Expr {
     if parser.try_consume(token::TokenKind::OrOr) {
         // Empty parameter list ||
     } else {
-        parser.expect(token::TokenKind::Pipe);
+        parser.expect(token::TokenKind::Or);
 
-        while !parser.check(token::TokenKind::Pipe) && !parser.is_at_end() {
+        while !parser.check(token::TokenKind::Or) && !parser.is_at_end() {
             let param_start = parser.current.span;
             let pattern = parser_pattern::parse_pattern(parser);
             let ty = if parser.try_consume(token::TokenKind::Colon) {
@@ -1049,12 +1099,19 @@ fn parse_closure_expr(parser: &mut parser_base::Parser) -> ast::Expr {
             }
         }
 
-        parser.expect(token::TokenKind::Pipe);
+        parser.expect(token::TokenKind::Or);
     }
 
     // Optional return type
     let return_type = if parser.try_consume(token::TokenKind::Arrow) {
         Option::Some(parser_type::parse_type(parser))
+    } else {
+        Option::None
+    };
+
+    // Optional effects clause: / {Effect1, Effect2}
+    let effects: Option<ast::EffectRow> = if parser.check(token::TokenKind::Slash) {
+        Option::Some(parser_type::parse_fn_type_effect_row(parser))
     } else {
         Option::None
     };
@@ -1065,9 +1122,261 @@ fn parse_closure_expr(parser: &mut parser_base::Parser) -> ast::Expr {
 
     ast::Expr {
         kind: ast::ExprKind::Closure {
+            is_move: false,
             params: params,
             return_type: return_type,
+            effects: effects,
             body: Box::new(body),
+        },
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+// ============================================================
+// Effect Expression Parsers
+// ============================================================
+
+/// Parse a perform expression: `perform Effect.operation(args)` or `perform operation(args)`
+fn parse_perform_expr(parser: &mut parser_base::Parser) -> ast::Expr {
+    let start = parser.current.span;
+    parser.advance(); // consume 'perform'
+
+    // Parse the effect path (could be Effect.op or just op)
+    let path = parser_type::parse_type_path(parser);
+
+    let effect_path: Option<ast::TypePath>;
+    let operation: common::SpannedSymbol;
+
+    if parser.try_consume(token::TokenKind::Dot) {
+        // Dot syntax: Effect.operation
+        effect_path = Option::Some(path);
+        if parser.check_ident() || parser.check(token::TokenKind::TypeIdent) {
+            operation = parser.parse_spanned_symbol();
+        } else {
+            parser.error_expected("operation name");
+            operation = common::SpannedSymbol {
+                symbol: common::Symbol::new(0),
+                span: parser.current.span,
+            };
+        }
+    } else {
+        // No dot: path is just the operation name (single segment)
+        effect_path = Option::None;
+        if path.segments.len() > 0 {
+            operation = path.segments[0].name;
+        } else {
+            operation = common::SpannedSymbol {
+                symbol: common::Symbol::new(0),
+                span: start,
+            };
+        }
+    }
+
+    // Parse arguments
+    parser.expect(token::TokenKind::LParen);
+    let mut args: Vec<ast::Expr> = Vec::new();
+    while !parser.check(token::TokenKind::RParen) && !parser.is_at_end() {
+        args.push(parse_expr(parser));
+        if !parser.try_consume(token::TokenKind::Comma) {
+            break;
+        }
+    }
+    parser.expect(token::TokenKind::RParen);
+
+    let end_span = parser.previous.span;
+    ast::Expr {
+        kind: ast::ExprKind::Perform {
+            effect: effect_path,
+            operation: operation,
+            args: args,
+        },
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+/// Parse a resume expression: `resume(value)`
+fn parse_resume_expr(parser: &mut parser_base::Parser) -> ast::Expr {
+    let start = parser.current.span;
+    parser.advance(); // consume 'resume'
+    parser.expect(token::TokenKind::LParen);
+    let value = parse_expr(parser);
+    parser.expect(token::TokenKind::RParen);
+    let end_span = parser.previous.span;
+    ast::Expr {
+        kind: ast::ExprKind::Resume(Box::new(value)),
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+/// Parse a with-handle expression: `with handler handle { body }`
+fn parse_with_handle_expr(parser: &mut parser_base::Parser) -> ast::Expr {
+    let start = parser.current.span;
+    parser.advance(); // consume 'with'
+
+    let handler_expr = parse_expr(parser);
+
+    parser.expect(token::TokenKind::Handle);
+
+    let body = if parser.check(token::TokenKind::LBrace) {
+        let block = parse_block(parser);
+        let block_span = block.span;
+        ast::Expr {
+            kind: ast::ExprKind::Block(block),
+            span: block_span,
+        }
+    } else {
+        parse_expr(parser)
+    };
+
+    let end_span = parser.previous.span;
+    ast::Expr {
+        kind: ast::ExprKind::WithHandle {
+            handler: Box::new(handler_expr),
+            body: Box::new(body),
+        },
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+/// Parse a try-with expression: `try { body } with { Effect.op(params) => { handler_body }, ... }`
+fn parse_try_with_expr(parser: &mut parser_base::Parser) -> ast::Expr {
+    let start = parser.current.span;
+    parser.advance(); // consume 'try'
+
+    // Parse the body block
+    let body = parse_block(parser);
+
+    // Expect 'with'
+    parser.expect(token::TokenKind::With);
+
+    // Parse handler clauses in braces
+    parser.expect(token::TokenKind::LBrace);
+
+    let mut handlers: Vec<ast::TryWithHandler> = Vec::new();
+    while !parser.check(token::TokenKind::RBrace) && !parser.is_at_end() {
+        let handler_start = parser.current.span;
+
+        // Parse Effect.operation or Effect::operation pattern
+        let effect_path = parser_type::parse_type_path(parser);
+
+        let handler_effect: ast::TypePath;
+        let handler_operation: common::SpannedSymbol;
+
+        if parser.try_consume(token::TokenKind::Dot) {
+            // Dot syntax: Effect.operation
+            handler_effect = effect_path;
+            if parser.check_ident() || parser.check(token::TokenKind::TypeIdent) {
+                handler_operation = parser.parse_spanned_symbol();
+            } else {
+                parser.error_expected("operation name after '.'");
+                handler_operation = common::SpannedSymbol {
+                    symbol: common::Symbol::new(0),
+                    span: parser.current.span,
+                };
+            }
+        } else if effect_path.segments.len() >= 2 {
+            // Path syntax: Effect::operation — last segment is operation
+            let seg_len = effect_path.segments.len();
+            handler_operation = effect_path.segments[seg_len - 1].name;
+            // Build effect path from all but last segment
+            let mut effect_segs: Vec<ast::TypePathSegment> = Vec::new();
+            let mut si: usize = 0;
+            while si < seg_len - 1 {
+                effect_segs.push(ast::TypePathSegment {
+                    name: effect_path.segments[si].name,
+                    args: Option::None,
+                });
+                si = si + 1;
+            }
+            handler_effect = ast::TypePath {
+                segments: effect_segs,
+                span: effect_path.span,
+            };
+        } else if effect_path.segments.len() == 1 {
+            // Single segment — just the operation name, no effect path
+            handler_operation = effect_path.segments[0].name;
+            handler_effect = ast::TypePath {
+                segments: Vec::new(),
+                span: effect_path.span,
+            };
+        } else {
+            parser.error_expected("Effect.operation pattern");
+            handler_operation = common::SpannedSymbol {
+                symbol: common::Symbol::new(0),
+                span: parser.current.span,
+            };
+            handler_effect = ast::TypePath {
+                segments: Vec::new(),
+                span: parser.current.span,
+            };
+        }
+
+        // Parse parameters
+        parser.expect(token::TokenKind::LParen);
+        let mut params: Vec<ast::Pattern> = Vec::new();
+        while !parser.check(token::TokenKind::RParen) && !parser.is_at_end() {
+            let pat = parser_pattern::parse_pattern(parser);
+            params.push(pat);
+            if !parser.try_consume(token::TokenKind::Comma) {
+                break;
+            }
+        }
+        parser.expect(token::TokenKind::RParen);
+
+        // Expect '=>' or ':'
+        if parser.check(token::TokenKind::FatArrow) || parser.check(token::TokenKind::Colon) {
+            parser.advance();
+        } else {
+            parser.expect(token::TokenKind::FatArrow);
+        }
+
+        // Parse handler body
+        let handler_body = parse_block(parser);
+        let handler_end = parser.previous.span;
+
+        handlers.push(ast::TryWithHandler {
+            effect: handler_effect,
+            operation: handler_operation,
+            params: params,
+            body: handler_body,
+            span: common::Span { start: handler_start.start, end: handler_end.end, line: handler_start.line, column: handler_start.column },
+        });
+
+        // Consume optional comma between handlers
+        parser.try_consume(token::TokenKind::Comma);
+    }
+
+    parser.expect(token::TokenKind::RBrace);
+
+    let end_span = parser.previous.span;
+    ast::Expr {
+        kind: ast::ExprKind::TryWith {
+            body: body,
+            handlers: handlers,
+        },
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+/// Parse a region expression: `region 'name { body }` or `region { body }`
+fn parse_region_expr(parser: &mut parser_base::Parser) -> ast::Expr {
+    let start = parser.current.span;
+    parser.advance(); // consume 'region'
+
+    let region_name = if parser.check(token::TokenKind::Lifetime) {
+        let name = parser.parse_spanned_symbol();
+        Option::Some(name)
+    } else {
+        Option::None
+    };
+
+    let body = parse_block(parser);
+    let end_span = parser.previous.span;
+
+    ast::Expr {
+        kind: ast::ExprKind::Region {
+            name: region_name,
+            body: body,
         },
         span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }

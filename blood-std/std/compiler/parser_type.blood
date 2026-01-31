@@ -431,9 +431,10 @@ fn parse_const_primary(parser: &mut parser_base::Parser) -> ast::Expr {
     match parser.current.kind {
         // Integer literal
         token::TokenKind::IntLit => {
+            let int_val = parse_const_int_value(parser, start);
             parser.advance();
             let lit = ast::Literal {
-                kind: ast::LiteralKind::Int { val: 0, suffix: Option::None },
+                kind: ast::LiteralKind::Int { val: int_val, suffix: Option::None },
                 span: start,
             };
             return ast::Expr {
@@ -504,6 +505,71 @@ fn parse_const_primary(parser: &mut parser_base::Parser) -> ast::Expr {
     }
 }
 
+/// Parse an integer value from the source text at the given span.
+/// Handles decimal, hex (0x), octal (0o), and binary (0b) formats.
+/// Skips underscore separators and stops at type suffix characters.
+fn parse_const_int_value(parser: &mut parser_base::Parser, span: common::Span) -> u128 {
+    let start = span.start;
+    let end = span.end;
+    let mut pos = start;
+    let mut val: u128 = 0;
+    let mut base: u128 = 10;
+
+    // Check for 0x/0o/0b prefix
+    if pos + 1 < end {
+        let first = parser.source_byte_at(pos);
+        let second = parser.source_byte_at(pos + 1);
+        if first == 48 {
+            // '0' prefix
+            if second == 120 || second == 88 {
+                // 'x' or 'X' — hex
+                base = 16;
+                pos = pos + 2;
+            } else if second == 111 || second == 79 {
+                // 'o' or 'O' — octal
+                base = 8;
+                pos = pos + 2;
+            } else if second == 98 || second == 66 {
+                // 'b' or 'B' — binary
+                base = 2;
+                pos = pos + 2;
+            }
+        }
+    }
+
+    // Parse digits, stop at suffix or end
+    while pos < end {
+        let byte = parser.source_byte_at(pos);
+        if byte == 95 {
+            // Skip underscore separators
+            pos = pos + 1;
+        } else if byte >= 48 && byte <= 57 {
+            // Decimal digit '0'-'9'
+            let digit = (byte - 48) as u128;
+            if digit >= base {
+                break; // Invalid digit for this base (e.g., '8' in octal)
+            }
+            val = val * base + digit;
+            pos = pos + 1;
+        } else if byte >= 97 && byte <= 102 && base == 16 {
+            // Hex digit 'a'-'f'
+            let digit = (byte - 97 + 10) as u128;
+            val = val * base + digit;
+            pos = pos + 1;
+        } else if byte >= 65 && byte <= 70 && base == 16 {
+            // Hex digit 'A'-'F'
+            let digit = (byte - 65 + 10) as u128;
+            val = val * base + digit;
+            pos = pos + 1;
+        } else {
+            // Suffix character or other non-digit — stop
+            break;
+        }
+    }
+
+    val
+}
+
 /// Parse a simple path for constant expressions.
 fn parse_const_path(parser: &mut parser_base::Parser) -> ast::ExprPath {
     let start = parser.current.span;
@@ -555,13 +621,105 @@ fn parse_fn_type(parser: &mut parser_base::Parser) -> ast::Type {
         }
     };
 
+    // Optional effects clause: / {Effect1, Effect2} or / Effect
+    let effects: Option<ast::EffectRow> = if parser.check(token::TokenKind::Slash) {
+        Option::Some(parse_fn_type_effect_row(parser))
+    } else {
+        Option::None
+    };
+
     let end_span = parser.previous.span;
     ast::Type {
         kind: ast::TypeKind::Function {
             params: params,
             return_type: Box::new(return_type),
-            effects: Option::None,
+            effects: effects,
         },
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+/// Parse an effect row in a function type: / {Effect1, Effect2} or / Effect
+pub fn parse_fn_type_effect_row(parser: &mut parser_base::Parser) -> ast::EffectRow {
+    let start = parser.current.span;
+    parser.advance(); // consume '/'
+
+    // Check for "pure" keyword
+    if parser.check(token::TokenKind::Pure) {
+        parser.advance();
+        let end_span = parser.previous.span;
+        return ast::EffectRow {
+            kind: ast::EffectRowKind::Pure,
+            span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        };
+    }
+
+    // Brace-wrapped effect row: / {Effect1, Effect2}
+    if parser.check(token::TokenKind::LBrace) {
+        parser.advance(); // consume '{'
+
+        // Empty braces: / {} means pure
+        if parser.try_consume(token::TokenKind::RBrace) {
+            let end_span = parser.previous.span;
+            return ast::EffectRow {
+                kind: ast::EffectRowKind::Pure,
+                span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+            };
+        }
+
+        let mut effects: Vec<ast::Type> = Vec::new();
+        let mut rest: Option<common::SpannedSymbol> = Option::None;
+
+        // Parse comma-separated effects
+        let done = false;
+        while !done {
+            // Check for row variable: | e
+            if parser.try_consume(token::TokenKind::Or) {
+                if parser.check(token::TokenKind::Ident) || parser.check(token::TokenKind::TypeIdent) {
+                    rest = Option::Some(parser.parse_spanned_symbol());
+                }
+                break;
+            }
+
+            let eff = parse_type(parser);
+            effects.push(eff);
+
+            if !parser.try_consume(token::TokenKind::Comma) {
+                // Check for trailing row variable: Effect | e
+                if parser.try_consume(token::TokenKind::Or) {
+                    if parser.check(token::TokenKind::Ident) || parser.check(token::TokenKind::TypeIdent) {
+                        rest = Option::Some(parser.parse_spanned_symbol());
+                    }
+                }
+                break;
+            }
+        }
+
+        parser.expect(token::TokenKind::RBrace);
+        let end_span = parser.previous.span;
+        let kind = ast::EffectRowKind::Effects { effects: effects, rest: rest };
+        return ast::EffectRow {
+            kind: kind,
+            span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        };
+    }
+
+    // Bare effect: / Effect1 + Effect2
+    let mut effects: Vec<ast::Type> = Vec::new();
+    let rest: Option<common::SpannedSymbol> = Option::None;
+
+    let eff = parse_type(parser);
+    effects.push(eff);
+
+    while parser.try_consume(token::TokenKind::Plus) {
+        let eff = parse_type(parser);
+        effects.push(eff);
+    }
+
+    let end_span = parser.previous.span;
+    let kind = ast::EffectRowKind::Effects { effects: effects, rest: rest };
+    ast::EffectRow {
+        kind: kind,
         span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
