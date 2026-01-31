@@ -208,7 +208,7 @@ pub fn emit_memset_zero(
 
 /// Converts a type to LLVM IR, using the ADT registry for struct/enum types.
 /// Falls back to `codegen_types::type_to_llvm` for non-ADT types.
-fn type_to_llvm_with_ctx(
+pub fn type_to_llvm_with_ctx(
     ctx: &mut codegen_ctx::CodegenCtx,
     ty: &hir_ty::Type,
 ) -> String {
@@ -233,7 +233,12 @@ pub fn emit_allocas(
         let name = ctx.local_alloca_name(local_id);
         // Use context-aware type resolution for correct ADT alloca sizes
         let ty = type_to_llvm_with_ctx(ctx, &local.ty);
-        ctx.emit_alloca(name.as_str(), ty.as_str());
+        // Normalize void to {} for allocas (LLVM allows alloca {} but not alloca void)
+        if is_void_or_empty_type(ty.as_str()) {
+            ctx.emit_alloca(name.as_str(), "{}");
+        } else {
+            ctx.emit_alloca(name.as_str(), ty.as_str());
+        }
         ctx.register_local(local_id, clone_string(&name));
         // Also register the type and signedness for this local
         ctx.register_local_type(local_id, clone_string(&ty));
@@ -276,6 +281,20 @@ pub fn emit_arg_stores(
 // ============================================================
 
 /// Clones a String.
+/// Checks if an LLVM type is void or {} (empty struct / unit).
+fn is_void_or_empty_type(ty: &str) -> bool {
+    let bytes = ty.as_bytes();
+    // Check "void"
+    if bytes.len() == 4 && bytes[0] == 118 && bytes[1] == 111 && bytes[2] == 105 && bytes[3] == 100 {
+        return true;
+    }
+    // Check "{}"
+    if bytes.len() == 2 && bytes[0] == 123 && bytes[1] == 125 {
+        return true;
+    }
+    false
+}
+
 fn clone_string(s: &String) -> String {
     let mut result = String::new();
     let bytes = s.as_bytes();

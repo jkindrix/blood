@@ -49,8 +49,26 @@ pub fn emit_operand_typed(
         }
         &mir_types::Operand::Constant(ref constant) => {
             let val = emit_constant(ctx, constant);
-            let ty = codegen_types::type_to_llvm(&constant.ty);
-            (val, ty)
+            // Global references (functions, consts, statics) are ptr-typed in LLVM.
+            let is_global_ref = match &constant.kind {
+                &mir_types::ConstantKind::FnDef(_) => true,
+                &mir_types::ConstantKind::ConstDef(_) => true,
+                &mir_types::ConstantKind::StaticDef(_) => true,
+                _ => false,
+            };
+            let is_float = match &constant.kind {
+                &mir_types::ConstantKind::Float(_) => true,
+                _ => false,
+            };
+            if is_global_ref {
+                (val, common::make_string("ptr"))
+            } else if is_float {
+                // Float hex constants are only valid for double type in LLVM
+                (val, common::make_string("double"))
+            } else {
+                let ty = codegen_types::type_to_llvm(&constant.ty);
+                (val, ty)
+            }
         }
     }
 }
@@ -181,7 +199,8 @@ pub fn emit_place_addr(
 ) -> String {
     let mut current = ctx.local_name(place.local);
 
-    // Resolve the local's ADT type for projection lookups
+    // Resolve the local's ADT type for projection lookups.
+    // This looks through Ref types to find the inner ADT.
     let base_type = resolve_local_base_type(ctx, place.local);
 
     let mut i: usize = 0;
@@ -191,6 +210,22 @@ pub fn emit_place_addr(
     let mut downcast_variant: Option<u32> = Option::None;
     // Track the ADT def_id for field lookups
     let mut current_adt_def_id: Option<u32> = resolve_local_adt_def_id(ctx, place.local);
+
+    // Auto-deref: if the local is a reference type and the first projection is Field,
+    // insert an implicit load of the pointer. The MIR should have a Deref projection
+    // but the self-hosted compiler sometimes omits it for &self field access.
+    if place.projection.len() > 0 && is_local_ref_type(ctx, place.local) {
+        let first_is_field = match &place.projection[0] {
+            &mir_types::PlaceElem::Field(_) => true,
+            &mir_types::PlaceElem::Downcast(_) => true,
+            _ => false,
+        };
+        if first_is_field {
+            let loaded = ctx.fresh_temp();
+            ctx.emit_load(loaded.as_str(), "ptr", current.as_str());
+            current = loaded;
+        }
+    }
 
     while i < place.projection.len() {
         let proj = &place.projection[i];
@@ -210,9 +245,6 @@ pub fn emit_place_addr(
             }
             &mir_types::PlaceElem::Field(idx) => {
                 let result = ctx.fresh_temp();
-                let mut indices: Vec<String> = Vec::new();
-                indices.push(common::make_string("0"));
-                indices.push(codegen_types::format_u64(idx as u64));
 
                 // Determine the GEP base type from context
                 let gep_type = match &downcast_variant {
@@ -226,7 +258,25 @@ pub fn emit_place_addr(
                     }
                 };
 
-                ctx.emit_gep(result.as_str(), gep_type.as_str(), current.as_str(), &indices);
+                // If GEP base type is a scalar (not struct/array), use byte offset
+                // instead of struct field indexing. Scalars like i64, ptr can't be
+                // indexed with struct field indices.
+                // Also bounds-check: if the field index exceeds the struct's field
+                // count, fall back to byte-offset GEP.
+                let field_count = count_struct_fields(&gep_type);
+                if is_struct_or_array_type(&gep_type) && (idx as u64) < (field_count as u64) {
+                    let mut indices: Vec<String> = Vec::new();
+                    indices.push(common::make_string("0"));
+                    indices.push(codegen_types::format_u64(idx as u64));
+                    ctx.emit_gep(result.as_str(), gep_type.as_str(), current.as_str(), &indices);
+                } else {
+                    // Byte offset: each field is assumed 8 bytes (i64)
+                    let byte_offset = (idx as u64) * 8;
+                    let mut indices: Vec<String> = Vec::new();
+                    indices.push(codegen_types::format_u64(byte_offset));
+                    ctx.emit_gep(result.as_str(), "i8", current.as_str(), &indices);
+                }
+
                 current = result;
                 // After field access, we no longer have ADT type info for subsequent projections
                 current_adt_def_id = Option::None;
@@ -274,13 +324,20 @@ pub fn emit_place_addr(
                 ctx.write("\n");
 
                 let result = ctx.fresh_temp();
-                let mut indices: Vec<String> = Vec::new();
-                indices.push(common::make_string("0"));
-                // Skip discriminant at index 0, variant data at index 1
-                indices.push(common::make_string("1"));
 
-                // Use the enum's LLVM type from registry
-                ctx.emit_gep(result.as_str(), current_base.as_str(), current.as_str(), &indices);
+                if is_struct_or_array_type(&current_base) {
+                    let mut indices: Vec<String> = Vec::new();
+                    indices.push(common::make_string("0"));
+                    // Skip discriminant at index 0, variant data at index 1
+                    indices.push(common::make_string("1"));
+                    ctx.emit_gep(result.as_str(), current_base.as_str(), current.as_str(), &indices);
+                } else {
+                    // Scalar base type (ptr, i64): use byte-offset GEP
+                    // Discriminant is 8 bytes, so variant data starts at offset 8
+                    let mut indices: Vec<String> = Vec::new();
+                    indices.push(common::make_string("8"));
+                    ctx.emit_gep(result.as_str(), "i8", current.as_str(), &indices);
+                }
                 current = result;
                 downcast_variant = Option::Some(variant_idx);
                 // Keep current_adt_def_id for field resolution after downcast
@@ -300,19 +357,34 @@ fn resolve_local_base_type(
 ) -> String {
     match ctx.get_local_hir_type(local) {
         Option::Some(hir_type) => {
-            match &hir_type.kind {
-                &hir_ty::TypeKind::Adt { def_id, args: _ } => {
-                    ctx.adt_llvm_type(def_id.index)
-                }
-                &hir_ty::TypeKind::Tuple(ref _elems) => {
-                    codegen_types::type_to_llvm(hir_type)
-                }
-                _ => {
-                    codegen_types::type_to_llvm(hir_type)
-                }
-            }
+            resolve_base_type_from_hir(ctx, hir_type)
         }
         Option::None => common::make_string("{ i64 }"),
+    }
+}
+
+/// Resolves the LLVM base type for a given HIR type, looking through references.
+fn resolve_base_type_from_hir(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    hir_type: &hir_ty::Type,
+) -> String {
+    match &hir_type.kind {
+        &hir_ty::TypeKind::Adt { def_id, args: _ } => {
+            ctx.adt_llvm_type(def_id.index)
+        }
+        &hir_ty::TypeKind::Tuple(ref _elems) => {
+            codegen_types::type_to_llvm(hir_type)
+        }
+        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
+            // Look through reference to get the pointed-to type
+            resolve_base_type_from_hir(ctx, inner.as_ref())
+        }
+        &hir_ty::TypeKind::Ptr { ref inner, mutable: _ } => {
+            resolve_base_type_from_hir(ctx, inner.as_ref())
+        }
+        _ => {
+            codegen_types::type_to_llvm(hir_type)
+        }
     }
 }
 
@@ -323,14 +395,42 @@ fn resolve_local_adt_def_id(
 ) -> Option<u32> {
     match ctx.get_local_hir_type(local) {
         Option::Some(hir_type) => {
-            match &hir_type.kind {
-                &hir_ty::TypeKind::Adt { def_id, args: _ } => {
-                    Option::Some(def_id.index)
-                }
-                _ => Option::None,
-            }
+            resolve_adt_def_id_from_hir(hir_type)
         }
         Option::None => Option::None,
+    }
+}
+
+/// Returns true if the local's HIR type is a reference (Ref or Ptr).
+fn is_local_ref_type(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    local: mir_def::MirLocalId,
+) -> bool {
+    match ctx.get_local_hir_type(local) {
+        Option::Some(hir_type) => {
+            match &hir_type.kind {
+                &hir_ty::TypeKind::Ref { inner: _, mutable: _ } => true,
+                &hir_ty::TypeKind::Ptr { inner: _, mutable: _ } => true,
+                _ => false,
+            }
+        }
+        Option::None => false,
+    }
+}
+
+/// Extracts the ADT def_id from an HIR type, looking through references.
+fn resolve_adt_def_id_from_hir(hir_type: &hir_ty::Type) -> Option<u32> {
+    match &hir_type.kind {
+        &hir_ty::TypeKind::Adt { def_id, args: _ } => {
+            Option::Some(def_id.index)
+        }
+        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
+            resolve_adt_def_id_from_hir(inner.as_ref())
+        }
+        &hir_ty::TypeKind::Ptr { ref inner, mutable: _ } => {
+            resolve_adt_def_id_from_hir(inner.as_ref())
+        }
+        _ => Option::None,
     }
 }
 
@@ -422,11 +522,34 @@ pub fn emit_rvalue(
         &mir_types::Rvalue::BinaryOp { op: ref bin_op, ref left, ref right } => {
             // Get typed operands
             let (left_val, left_ty) = emit_operand_typed(ctx, left);
-            let (right_val, _right_ty) = emit_operand_typed(ctx, right);
+            let (right_val, right_ty) = emit_operand_typed(ctx, right);
             // Determine signedness from the left operand's type
             let is_signed = operand_is_signed(ctx, left);
+            // Coerce right operand to match left type if they differ
+            let coerced_right = if !string_eq_str(left_ty.as_str(), right_ty.as_str()) {
+                let left_w = llvm_int_bit_width(left_ty.as_str());
+                let right_w = llvm_int_bit_width(right_ty.as_str());
+                if left_w > 0 && right_w > 0 {
+                    // Both are integer types - truncate or extend
+                    let cast = ctx.fresh_temp();
+                    if right_w > left_w {
+                        ctx.emit_cast(cast.as_str(), "trunc", right_ty.as_str(), right_val.as_str(), left_ty.as_str());
+                    } else {
+                        if is_signed {
+                            ctx.emit_cast(cast.as_str(), "sext", right_ty.as_str(), right_val.as_str(), left_ty.as_str());
+                        } else {
+                            ctx.emit_cast(cast.as_str(), "zext", right_ty.as_str(), right_val.as_str(), left_ty.as_str());
+                        }
+                    }
+                    cast
+                } else {
+                    right_val
+                }
+            } else {
+                right_val
+            };
             // Use the left operand's type for the binary operation
-            let result = emit_binop_typed(ctx, bin_op, &left_val, &right_val, left_ty.as_str(), is_signed);
+            let result = emit_binop_typed(ctx, bin_op, &left_val, &coerced_right, left_ty.as_str(), is_signed);
             // For comparison operations, result is i1 (bool)
             if bin_op.is_comparison() {
                 ctx.emit_store("i1", result.as_str(), dest);
@@ -678,6 +801,124 @@ fn get_int_type_size(llvm_ty: &str) -> u64 {
     if n == 0 { 64 } else { n }
 }
 
+/// Returns the bit width for an LLVM integer type string (e.g., "i32" -> 32).
+/// Checks if an LLVM type string is a struct or array type (starts with '{' or '[').
+fn is_struct_or_array_type(ty: &String) -> bool {
+    let bytes = ty.as_bytes();
+    if bytes.len() > 0 {
+        bytes[0] == 123 || bytes[0] == 91 // '{' or '['
+    } else {
+        false
+    }
+}
+
+/// Returns 0 for non-integer types.
+fn llvm_int_bit_width(ty: &str) -> u32 {
+    let bytes = ty.as_bytes();
+    if bytes.len() < 2 {
+        return 0;
+    }
+    if bytes[0] != 105 { // 'i'
+        return 0;
+    }
+    // Parse the number after 'i'
+    let mut val: u32 = 0;
+    let mut idx: usize = 1;
+    while idx < bytes.len() {
+        let b = bytes[idx];
+        if b >= 48 && b <= 57 {
+            val = val * 10 + ((b - 48) as u32);
+        } else {
+            return 0; // Non-digit character means not a simple integer type
+        }
+        idx = idx + 1;
+    }
+    val
+}
+
+/// Extracts the first field type from a struct type string.
+/// E.g., "{ i8 }" -> "i8", "{ i64, ptr }" -> "i64".
+/// Returns "i64" as fallback if parsing fails.
+fn extract_first_field_type(struct_ty: &str) -> String {
+    let bytes = struct_ty.as_bytes();
+    // Find start: skip "{ " (or just past '{')
+    let mut start: usize = 0;
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        if bytes[i] == 123 {
+            // '{'
+            start = i + 1;
+            // Skip whitespace
+            while start < bytes.len() && bytes[start] == 32 {
+                start = start + 1;
+            }
+            break;
+        }
+        i = i + 1;
+    }
+    // Find end: first ',', ' }', or '}'
+    let mut end: usize = start;
+    while end < bytes.len() {
+        if bytes[end] == 44 || bytes[end] == 125 {
+            // ',' or '}'
+            break;
+        }
+        end = end + 1;
+    }
+    // Trim trailing whitespace
+    while end > start && bytes[end - 1] == 32 {
+        end = end - 1;
+    }
+    if end > start {
+        let mut result = String::new();
+        let mut j: usize = start;
+        while j < end {
+            result.push(bytes[j] as char);
+            j = j + 1;
+        }
+        result
+    } else {
+        common::make_string("i64")
+    }
+}
+
+/// Counts the number of top-level fields in a struct type string.
+/// E.g., "{ i8 }" -> 1, "{ i64, ptr }" -> 2, "{ i8, [17 x i8] }" -> 2.
+/// Returns 0 for non-struct types.
+fn count_struct_fields(ty: &String) -> u32 {
+    let bytes = ty.as_bytes();
+    if bytes.len() < 2 || bytes[0] != 123 {
+        return 0;
+    }
+    // Count commas at nesting depth 0 (inside the outermost braces)
+    let mut count: u32 = 1; // At least 1 field if it's a struct
+    let mut depth: u32 = 0;
+    let mut i: usize = 1; // Skip opening '{'
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == 123 || b == 91 {
+            // '{' or '['
+            depth = depth + 1;
+        } else if b == 125 || b == 93 {
+            // '}' or ']'
+            if depth > 0 {
+                depth = depth - 1;
+            } else {
+                break; // End of outermost struct
+            }
+        } else if b == 44 && depth == 0 {
+            // ',' at top level
+            count = count + 1;
+        }
+        i = i + 1;
+    }
+    // Handle empty struct "{}"
+    if bytes.len() == 2 && bytes[0] == 123 && bytes[1] == 125 {
+        return 0;
+    }
+    count
+}
+
 /// Compares string with &str.
 fn string_eq_str(s: &str, other: &str) -> bool {
     let s_bytes = s.as_bytes();
@@ -718,6 +959,31 @@ pub fn emit_binop_typed(
     llvm_ty: &str,
     signed: bool,
 ) -> String {
+    // If the type is an aggregate (struct), extract the first field for comparison.
+    // LLVM icmp/binops don't work on aggregate types.
+    let ty_bytes = llvm_ty.as_bytes();
+    if ty_bytes.len() > 0 && ty_bytes[0] == 123 {
+        // Aggregate type - extract first element and compare as that type
+        let inner_ty = extract_first_field_type(llvm_ty);
+        let left_elem = ctx.fresh_temp();
+        ctx.write_indent();
+        ctx.write_string(&left_elem);
+        ctx.write(" = extractvalue ");
+        ctx.write(llvm_ty);
+        ctx.write(" ");
+        ctx.write_string(left);
+        ctx.write(", 0\n");
+        let right_elem = ctx.fresh_temp();
+        ctx.write_indent();
+        ctx.write_string(&right_elem);
+        ctx.write(" = extractvalue ");
+        ctx.write(llvm_ty);
+        ctx.write(" ");
+        ctx.write_string(right);
+        ctx.write(", 0\n");
+        return emit_binop_typed(ctx, bin_op, &left_elem, &right_elem, inner_ty.as_str(), signed);
+    }
+
     let result = ctx.fresh_temp();
     let l = left.as_str();
     let r = right.as_str();
@@ -1154,20 +1420,56 @@ fn emit_aggregate_adt(
                 field_types.push(clone_string(&layout.fields[fi].llvm_type));
                 fi = fi + 1;
             }
-            // Store each field using actual types from the struct layout
+            // Store each field using actual types from the struct layout.
+            // If the operand type differs from the field type (e.g., i64 vs i32),
+            // emit a trunc or zext to match the target field width.
             let mut i: usize = 0;
             while i < operands.len() {
-                let field_val = emit_operand(ctx, &operands[i]);
+                let typed = emit_operand_typed(ctx, &operands[i]);
+                let operand_val = typed.0;
+                let operand_ty = typed.1;
                 let field_ptr = ctx.fresh_temp();
                 let mut indices: Vec<String> = Vec::new();
                 indices.push(common::make_string("0"));
                 indices.push(codegen_types::format_u64(i as u64));
                 ctx.emit_gep(field_ptr.as_str(), struct_ty.as_str(), dest, &indices);
                 // Use actual field type if available, fallback to i64
-                if i < field_types.len() {
-                    ctx.emit_store(field_types[i].as_str(), field_val.as_str(), field_ptr.as_str());
+                let field_ty_str = if i < field_types.len() {
+                    field_types[i].as_str()
                 } else {
-                    ctx.emit_store("i64", field_val.as_str(), field_ptr.as_str());
+                    "i64"
+                };
+                // Check if operand type matches field type
+                if string_eq_str(operand_ty.as_str(), field_ty_str) {
+                    ctx.emit_store(field_ty_str, operand_val.as_str(), field_ptr.as_str());
+                } else {
+                    let src_w = llvm_int_bit_width(operand_ty.as_str());
+                    let dst_w = llvm_int_bit_width(field_ty_str);
+                    if src_w > dst_w && dst_w > 0 {
+                        // Wider to narrower: truncate
+                        let cast_tmp = ctx.fresh_temp();
+                        ctx.emit_cast(cast_tmp.as_str(), "trunc", operand_ty.as_str(), operand_val.as_str(), field_ty_str);
+                        ctx.emit_store(field_ty_str, cast_tmp.as_str(), field_ptr.as_str());
+                    } else if src_w < dst_w && src_w > 0 {
+                        // Narrower to wider: zero-extend
+                        let cast_tmp = ctx.fresh_temp();
+                        ctx.emit_cast(cast_tmp.as_str(), "zext", operand_ty.as_str(), operand_val.as_str(), field_ty_str);
+                        ctx.emit_store(field_ty_str, cast_tmp.as_str(), field_ptr.as_str());
+                    } else if src_w > 0 && string_eq_str(field_ty_str, "ptr") {
+                        // Integer to pointer: inttoptr
+                        let cast_tmp = ctx.fresh_temp();
+                        ctx.emit_cast(cast_tmp.as_str(), "inttoptr", operand_ty.as_str(), operand_val.as_str(), "ptr");
+                        ctx.emit_store("ptr", cast_tmp.as_str(), field_ptr.as_str());
+                    } else if dst_w > 0 && string_eq_str(operand_ty.as_str(), "ptr") {
+                        // Pointer to integer: ptrtoint
+                        let cast_tmp = ctx.fresh_temp();
+                        ctx.emit_cast(cast_tmp.as_str(), "ptrtoint", "ptr", operand_val.as_str(), field_ty_str);
+                        ctx.emit_store(field_ty_str, cast_tmp.as_str(), field_ptr.as_str());
+                    } else {
+                        // Other mismatch (e.g., i64 vs struct type from unresolved inference).
+                        // Store with the operand's own type so the IR is valid.
+                        ctx.emit_store(operand_ty.as_str(), operand_val.as_str(), field_ptr.as_str());
+                    }
                 }
                 i = i + 1;
             }
@@ -1233,17 +1535,42 @@ fn emit_aggregate_adt(
         }
         Option::None => {}
     }
-    // Fallback: ADT not in registry, use old behavior with i64
-    ctx.write("    ; WARNING: ADT not in registry, using fallback\n");
+    // Fallback: ADT not in registry. Emit all operands first to collect
+    // their types, build a struct type from them, then GEP + store each.
+    let mut vals: Vec<String> = Vec::new();
+    let mut tys: Vec<String> = Vec::new();
+    let mut k: usize = 0;
+    while k < operands.len() {
+        let typed = emit_operand_typed(ctx, &operands[k]);
+        vals.push(typed.0);
+        tys.push(typed.1);
+        k = k + 1;
+    }
+
+    // Build struct type string from collected types: "{ ty0, ty1, ... }"
+    let mut fallback_ty = common::make_string("{ ");
+    let mut t: usize = 0;
+    while t < tys.len() {
+        if t > 0 {
+            fallback_ty.push_str(", ");
+        }
+        fallback_ty.push_str(tys[t].as_str());
+        t = t + 1;
+    }
+    fallback_ty.push_str(" }");
+    if tys.len() == 0 {
+        fallback_ty = common::make_string("{}");
+    }
+
+    // Store each field
     let mut i: usize = 0;
-    while i < operands.len() {
-        let field_val = emit_operand(ctx, &operands[i]);
+    while i < vals.len() {
         let field_ptr = ctx.fresh_temp();
         let mut indices: Vec<String> = Vec::new();
         indices.push(common::make_string("0"));
         indices.push(codegen_types::format_u64(i as u64));
-        ctx.emit_gep(field_ptr.as_str(), "{ i64 }", dest, &indices);
-        ctx.emit_store("i64", field_val.as_str(), field_ptr.as_str());
+        ctx.emit_gep(field_ptr.as_str(), fallback_ty.as_str(), dest, &indices);
+        ctx.emit_store(tys[i].as_str(), vals[i].as_str(), field_ptr.as_str());
         i = i + 1;
     }
 }

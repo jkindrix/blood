@@ -200,6 +200,17 @@ impl CodegenCtx {
         Option::None
     }
 
+    /// Returns the number of registered def_names.
+    pub fn def_names_count(self: &CodegenCtx) -> usize {
+        self.def_names.len()
+    }
+
+    /// Returns the def_id and name for a def_name entry at the given index.
+    pub fn def_name_at(self: &CodegenCtx, index: usize) -> (u32, String) {
+        let entry = &self.def_names[index];
+        (entry.def_id, clone_string(&entry.name))
+    }
+
     /// Resets per-function state while keeping global state (def_names).
     pub fn reset_function_state(self: &mut CodegenCtx) {
         self.output = String::new();
@@ -392,9 +403,12 @@ impl CodegenCtx {
     }
 
     /// Looks up a struct layout by DefId.
+    /// Scans from the end so that later registrations (e.g., pass 2 with resolved
+    /// nested ADT types) take precedence over earlier ones.
     pub fn lookup_struct(self: &CodegenCtx, def_id: u32) -> Option<&StructLayout> {
-        let mut i: usize = 0;
-        while i < self.adt_registry.len() {
+        let mut i: usize = self.adt_registry.len();
+        while i > 0 {
+            i = i - 1;
             match &self.adt_registry[i] {
                 &AdtEntry::Struct(ref layout) => {
                     if layout.def_id == def_id {
@@ -403,15 +417,16 @@ impl CodegenCtx {
                 }
                 &AdtEntry::Enum(_) => {}
             }
-            i = i + 1;
         }
         Option::None
     }
 
     /// Looks up an enum layout by DefId.
+    /// Scans from the end so that later registrations take precedence.
     pub fn lookup_enum(self: &CodegenCtx, def_id: u32) -> Option<&EnumLayout> {
-        let mut i: usize = 0;
-        while i < self.adt_registry.len() {
+        let mut i: usize = self.adt_registry.len();
+        while i > 0 {
+            i = i - 1;
             match &self.adt_registry[i] {
                 &AdtEntry::Struct(_) => {}
                 &AdtEntry::Enum(ref layout) => {
@@ -420,16 +435,18 @@ impl CodegenCtx {
                     }
                 }
             }
-            i = i + 1;
         }
         Option::None
     }
 
     /// Gets the LLVM type for an ADT (struct or enum) by DefId.
     /// Returns "ptr" as fallback if not found in the registry.
+    /// Scans from the end so that pass 2 entries (with resolved nested types)
+    /// take precedence over pass 1 entries.
     pub fn adt_llvm_type(self: &CodegenCtx, def_id: u32) -> String {
-        let mut i: usize = 0;
-        while i < self.adt_registry.len() {
+        let mut i: usize = self.adt_registry.len();
+        while i > 0 {
+            i = i - 1;
             match &self.adt_registry[i] {
                 &AdtEntry::Struct(ref layout) => {
                     if layout.def_id == def_id {
@@ -442,7 +459,6 @@ impl CodegenCtx {
                     }
                 }
             }
-            i = i + 1;
         }
         // Fallback: ADT not in registry, use opaque pointer
         common::make_string("ptr")

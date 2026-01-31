@@ -168,8 +168,21 @@ fn emit_call(
     destination: &mir_types::Place,
     target: &Option<mir_def::BasicBlockId>,
 ) {
-    // Get function name/pointer
-    let func_val = codegen_expr::emit_operand(ctx, func);
+    // Get function name/pointer with type information
+    let func_typed = codegen_expr::emit_operand_typed(ctx, func);
+    let raw_func = func_typed.0;
+    let func_ty = func_typed.1;
+    // LLVM requires call targets to be ptr type.
+    // - Direct function references (@name) are already ptr-typed.
+    // - SSA values loaded as ptr are already correct.
+    // - SSA values loaded as i64 need inttoptr conversion.
+    let func_val = if starts_with_percent(&raw_func) && !string_eq_str(func_ty.as_str(), "ptr") {
+        let cast = ctx.fresh_temp();
+        ctx.emit_cast(cast.as_str(), "inttoptr", func_ty.as_str(), raw_func.as_str(), "ptr");
+        cast
+    } else {
+        raw_func
+    };
 
     // Emit arguments with their types
     let mut llvm_args: Vec<(String, String)> = Vec::new();
@@ -297,6 +310,33 @@ fn emit_operand_list(
         i = i + 1;
     }
     result
+}
+
+/// Compares a &str against a &str for equality.
+fn string_eq_str(a: &str, b: &str) -> bool {
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+    if a_bytes.len() != b_bytes.len() {
+        return false;
+    }
+    let mut i: usize = 0;
+    while i < a_bytes.len() {
+        if a_bytes[i] != b_bytes[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    true
+}
+
+/// Checks if a string starts with '%' (SSA register name).
+fn starts_with_percent(s: &String) -> bool {
+    let bytes = s.as_bytes();
+    if bytes.len() > 0 {
+        bytes[0] == 37 // '%'
+    } else {
+        false
+    }
 }
 
 // ============================================================

@@ -156,20 +156,9 @@ fn adt_to_llvm(_args: &Vec<hir_ty::Type>) -> String {
 }
 
 /// Converts a function type to LLVM IR.
-fn fn_to_llvm(params: &Vec<hir_ty::Type>, return_ty: &hir_ty::Type) -> String {
-    let mut result = type_to_llvm(return_ty);
-    result.push_str(" (");
-    let mut i: usize = 0;
-    while i < params.len() {
-        if i > 0 {
-            result.push_str(", ");
-        }
-        let param_str = type_to_llvm(&params[i]);
-        result.push_str(param_str.as_str());
-        i = i + 1;
-    }
-    result.push_str(")*");
-    result
+/// In opaque pointer mode, function pointers are just `ptr`.
+fn fn_to_llvm(_params: &Vec<hir_ty::Type>, _return_ty: &hir_ty::Type) -> String {
+    common::make_string("ptr")
 }
 
 /// Converts a type parameter to LLVM IR.
