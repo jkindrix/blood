@@ -22,6 +22,7 @@ mod hir_lower_ctx;
 mod unify;
 mod typeck;
 mod typeck_expr;
+mod typeck_info;
 mod interner;
 
 // ============================================================
@@ -111,6 +112,9 @@ pub fn check_types(ctx: &hir_lower_ctx::LoweringCtx) -> TypeCheckResult {
         i = i + 1;
     }
 
+    // Phase 3: Deferred method resolution for Infer-receiver calls
+    resolve_pending_methods(&mut checker);
+
     // Return result with substitution table for type resolution in MIR lowering
     if checker.has_errors() {
         TypeCheckResult::failed(checker.errors, checker.subst_table, checker.method_resolutions)
@@ -146,10 +150,7 @@ pub fn check_lower_result(result: &hir_lower_ctx::LowerResult) -> TypeCheckResul
     // Phase 1c: Register builtin enum info (Option, Result) for exhaustiveness checking
     register_builtin_enums(&mut checker);
 
-    // Phase 2: Type check function bodies from the main file only.
-    // External module bodies (index >= main_body_count) are skipped because
-    // their internal cross-module paths may not fully resolve in this context.
-    // Each module's bodies are checked when that module is the main file.
+    // Phase 2: Type check main file bodies (determines success/failure).
     let body_limit = result.main_body_count;
     let mut i: usize = 0;
     while i < body_limit {
@@ -158,6 +159,29 @@ pub fn check_lower_result(result: &hir_lower_ctx::LowerResult) -> TypeCheckResul
         check_body(&mut checker, &body_entry.body, &return_ty);
         i = i + 1;
     }
+
+    // Capture main-file error count before checking external bodies.
+    let main_error_count = checker.errors.len();
+
+    // Phase 2b: Type check external module bodies to record method resolutions.
+    // These bodies are MIR-lowered and code-generated, so their method calls
+    // must be resolved. Errors from external bodies are discarded since each
+    // module is authoritative only when compiled as the main file.
+    let mut j: usize = body_limit;
+    while j < result.bodies.len() {
+        let body_entry = &result.bodies[j];
+        let return_ty = find_return_type_for_body(&result.items, body_entry.body_id);
+        check_body(&mut checker, &body_entry.body, &return_ty);
+        j = j + 1;
+    }
+
+    // Discard errors from external bodies by truncating back to main error count.
+    while checker.errors.len() > main_error_count {
+        checker.errors.pop();
+    }
+
+    // Phase 3: Deferred method resolution for Infer-receiver calls
+    resolve_pending_methods(&mut checker);
 
     // Return result with substitution table for type resolution in MIR lowering
     if checker.has_errors() {
@@ -516,6 +540,93 @@ fn check_body(checker: &mut typeck::TypeChecker, body: &hir_expr::Body, return_t
 
     // Clear return type
     checker.clear_return_ty();
+}
+
+// ============================================================
+// Deferred Method Resolution
+// ============================================================
+
+/// Resolves pending method calls whose receivers were Infer variables.
+/// Uses a fixpoint loop: resolving one call may produce a return type
+/// that allows another receiver to become concrete.
+fn resolve_pending_methods(checker: &mut typeck::TypeChecker) {
+    let mut resolved_count: usize = 1;
+    while resolved_count > 0 {
+        resolved_count = 0;
+        let mut i: usize = 0;
+        while i < checker.pending_method_calls.len() {
+            let span_start = checker.pending_method_calls[i].span_start;
+            let receiver_var = checker.pending_method_calls[i].receiver_var;
+            let method_symbol = checker.pending_method_calls[i].method_symbol;
+            let return_ty_var = checker.pending_method_calls[i].return_ty_var;
+
+            // Skip if already resolved in a previous iteration
+            if is_already_resolved(checker, span_start) {
+                i = i + 1;
+                continue;
+            }
+
+            // Try to resolve the receiver type variable
+            let infer_ty = hir_ty::Type::new(hir_ty::TypeKind::Infer(
+                hir_def::TyVarId::new(receiver_var)
+            ));
+            let receiver_ty = checker.resolve(&infer_ty);
+            let stripped = typeck_expr::strip_refs(&receiver_ty);
+
+            match &stripped.kind {
+                &hir_ty::TypeKind::Infer(_) => {
+                    // Still unresolved, skip for now
+                }
+                _ => {
+                    // Receiver is now concrete - look up the method
+                    match checker.lookup_method(&stripped, method_symbol) {
+                        Option::Some(ref lookup_result) => {
+                            let method_def_id_index = checker.get_method_from_lookup(lookup_result).def_id.index;
+                            let method_return_ty = hir_ty::copy_type(&checker.get_method_from_lookup(lookup_result).return_ty);
+                            let impl_num_generics = checker.get_impl_from_lookup(lookup_result).num_generics;
+                            let impl_self_ty = hir_ty::copy_type(&checker.get_impl_from_lookup(lookup_result).self_ty);
+
+                            // Record the resolution
+                            checker.record_method_resolution(span_start, method_def_id_index);
+
+                            // Unify return type with actual method return type
+                            let mut subst = unify::TypeParamSubst::new();
+                            if impl_num_generics > 0 {
+                                unify::extract_type_params_from_self_ty(
+                                    &impl_self_ty, &stripped, &mut subst
+                                );
+                            }
+                            let actual_ret = unify::substitute_type_params(
+                                &method_return_ty, &subst
+                            );
+                            let return_infer = hir_ty::Type::new(hir_ty::TypeKind::Infer(
+                                hir_def::TyVarId::new(return_ty_var)
+                            ));
+                            checker.unify(&return_infer, &actual_ret, common::Span::dummy());
+
+                            resolved_count = resolved_count + 1;
+                        }
+                        Option::None => {
+                            // Method not found even with concrete receiver
+                        }
+                    }
+                }
+            }
+            i = i + 1;
+        }
+    }
+}
+
+/// Checks if a method call at the given span_start has already been resolved.
+fn is_already_resolved(checker: &mut typeck::TypeChecker, span_start: usize) -> bool {
+    let mut i: usize = 0;
+    while i < checker.method_resolutions.len() {
+        if checker.method_resolutions[i].span_start == span_start {
+            return true;
+        }
+        i = i + 1;
+    }
+    false
 }
 
 // ============================================================

@@ -311,6 +311,27 @@ impl MethodResEntry {
     }
 }
 
+/// A deferred method call whose receiver was an unresolved Infer type
+/// during initial type checking. After all bodies are checked, Infer
+/// variables may be resolved, allowing the method to be looked up.
+pub struct PendingMethodCall {
+    /// The byte offset of the method call expression span.
+    pub span_start: usize,
+    /// The TyVarId.index of the receiver's Infer variable.
+    pub receiver_var: u32,
+    /// The interned symbol of the method name.
+    pub method_symbol: Symbol,
+    /// The TyVarId.index of the return type's Infer variable.
+    pub return_ty_var: u32,
+}
+
+impl PendingMethodCall {
+    /// Creates a new pending method call entry.
+    pub fn new(span_start: usize, receiver_var: u32, method_symbol: Symbol, return_ty_var: u32) -> PendingMethodCall {
+        PendingMethodCall { span_start, receiver_var, method_symbol, return_ty_var }
+    }
+}
+
 // ============================================================
 // Copy Utilities
 // ============================================================

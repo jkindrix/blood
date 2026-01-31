@@ -351,7 +351,7 @@ fn primitive_equal(a: &hir_ty::PrimitiveTy, b: &hir_ty::PrimitiveTy) -> bool {
 
 /// Strips reference wrappers from a type for auto-dereference.
 /// &T -> T, &&T -> T, &mut T -> T, T -> T (unchanged).
-fn strip_refs(ty: &hir_ty::Type) -> hir_ty::Type {
+pub fn strip_refs(ty: &hir_ty::Type) -> hir_ty::Type {
     match &ty.kind {
         &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
             strip_refs(inner.as_ref())
@@ -801,15 +801,21 @@ fn infer_method_call(
 
     // If receiver type is still an unresolved inference variable, we cannot
     // reliably look up methods because types_match_for_impl would match ANY
-    // impl. Infer all arg types and return fresh inference variable.
+    // impl. Infer all arg types and record a pending call for deferred resolution.
     match &resolved_receiver.kind {
-        &hir_ty::TypeKind::Infer(_) => {
+        &hir_ty::TypeKind::Infer(ref var_id) => {
             let mut i: usize = 0;
             while i < args.len() {
                 infer_expr(checker, &args[i]);
                 i = i + 1;
             }
-            return checker.fresh_infer();
+            let return_ty = checker.fresh_infer();
+            let return_var = match &return_ty.kind {
+                &hir_ty::TypeKind::Infer(ref ret_var) => ret_var.index,
+                _ => 0,
+            };
+            checker.record_pending_method_call(span.start, var_id.index, method.symbol, return_var);
+            return return_ty;
         }
         _ => {}
     }

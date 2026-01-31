@@ -297,6 +297,9 @@ pub struct TypeChecker {
     /// Records resolved method DefIds keyed by expression span start,
     /// so MIR lowering can look up methods that were resolved during type checking.
     pub method_resolutions: Vec<common::MethodResEntry>,
+    /// Deferred method calls whose receiver was an unresolved Infer variable.
+    /// After all bodies are type-checked, these are revisited to resolve methods.
+    pub pending_method_calls: Vec<common::PendingMethodCall>,
 }
 
 impl TypeChecker {
@@ -328,6 +331,7 @@ impl TypeChecker {
             effects: Vec::new(),
             builtin_def_names: Vec::new(),
             method_resolutions: Vec::new(),
+            pending_method_calls: Vec::new(),
         }
     }
 
@@ -360,6 +364,7 @@ impl TypeChecker {
             effects: Vec::new(),
             builtin_def_names: Vec::new(),
             method_resolutions: Vec::new(),
+            pending_method_calls: Vec::new(),
         }
     }
 
@@ -434,6 +439,11 @@ impl TypeChecker {
     /// The def_id_index is the DefId.index of the resolved method.
     pub fn record_method_resolution(self: &mut Self, span_start: usize, def_id_index: u32) {
         self.method_resolutions.push(common::MethodResEntry::new(span_start, def_id_index));
+    }
+
+    /// Records a deferred method call whose receiver is still an Infer variable.
+    pub fn record_pending_method_call(self: &mut Self, span_start: usize, receiver_var: u32, method_symbol: common::Symbol, return_ty_var: u32) {
+        self.pending_method_calls.push(common::PendingMethodCall::new(span_start, receiver_var, method_symbol, return_ty_var));
     }
 
     /// Allocates a fresh DefId for synthetic builtin registrations.
