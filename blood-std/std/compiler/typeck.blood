@@ -47,6 +47,28 @@ pub use typeck_info::TraitMethodInfo;
 pub use typeck_info::TraitImplInfo;
 
 // ============================================================
+// Generic Parameter Helpers
+// ============================================================
+
+/// Counts only type parameters in a generics param list, excluding
+/// lifetime parameters and const parameters.
+fn count_type_params(params: &Vec<hir_ty::GenericParam>) -> u32 {
+    let mut count: u32 = 0;
+    let mut i: usize = 0;
+    while i < params.len() {
+        match &params[i] {
+            &hir_ty::GenericParam::TypeParam(_) => {
+                count = count + 1;
+            }
+            &hir_ty::GenericParam::LifetimeParam(_) => {}
+            &hir_ty::GenericParam::ConstParam(_) => {}
+        }
+        i = i + 1;
+    }
+    count
+}
+
+// ============================================================
 // Exhaustiveness Checking
 // ============================================================
 
@@ -443,8 +465,8 @@ impl TypeChecker {
             i = i + 1;
         }
 
-        // Get the number of generic parameters
-        let num_generics = sig.generics.params.len() as u32;
+        // Count only type parameters (not lifetime or const params)
+        let num_generics = count_type_params(&sig.generics.params);
 
         // Create the info
         let info = typeck_info::FnSigInfo::new(param_tys, hir_ty::copy_type(&sig.return_ty), num_generics);
@@ -482,8 +504,8 @@ impl TypeChecker {
             }
         }
 
-        // Count generic parameters
-        let num_generics = struct_def.generics.params.len() as u32;
+        // Count only type parameters (not lifetime or const params)
+        let num_generics = count_type_params(&struct_def.generics.params);
 
         // Create the info
         let info = typeck_info::StructInfo::new(def_id, name, num_generics, field_names, fields);
@@ -540,8 +562,8 @@ impl TypeChecker {
             i = i + 1;
         }
 
-        // Count generic parameters
-        let num_generics = enum_def.generics.params.len() as u32;
+        // Count only type parameters (not lifetime or const params)
+        let num_generics = count_type_params(&enum_def.generics.params);
 
         // Create the info
         let info = typeck_info::EnumInfo::new(def_id, name, num_generics, variant_names, variants);
@@ -579,6 +601,32 @@ impl TypeChecker {
         match &self.structs[def_idx] {
             &Some(ref info) => Some(info),
             &None => Option::None,
+        }
+    }
+
+    /// Gets the number of generic parameters for a struct by DefId.
+    /// Returns 0 if the struct is not found (non-generic default).
+    /// This returns a value type (u32) to avoid Option<&T> reference issues.
+    pub fn get_struct_num_generics(self: &Self, def_id: hir_def::DefId) -> u32 {
+        let def_idx = def_id.index as usize;
+        if def_idx >= self.structs.len() {
+            return 0;
+        }
+        match &self.structs[def_idx] {
+            &Some(ref info) => info.num_generics,
+            &None => 0,
+        }
+    }
+
+    /// Returns true if a struct with the given DefId is registered.
+    pub fn has_struct(self: &Self, def_id: hir_def::DefId) -> bool {
+        let def_idx = def_id.index as usize;
+        if def_idx >= self.structs.len() {
+            return false;
+        }
+        match &self.structs[def_idx] {
+            &Some(_) => true,
+            &None => false,
         }
     }
 

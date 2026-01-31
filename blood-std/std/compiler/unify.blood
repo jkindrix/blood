@@ -1547,13 +1547,14 @@ fn unify_resolved(
             }
         }
 
-        // Function types: unify params, return, and effects
-        (&hir_ty::TypeKind::Fn { ref params, ref ret, ref effects }, other_kind) => {
+        // Function types: unify params and return type.
+        // Effects are NOT unified here — they are checked at call sites,
+        // matching blood-rust's behavior where Fn-Fn unification ignores effects.
+        (&hir_ty::TypeKind::Fn { ref params, ref ret, effects: _ }, other_kind) => {
             let params_a = params;
             let ret_a = ret;
-            let effects_a = effects;
             match other_kind {
-                &hir_ty::TypeKind::Fn { ref params, ref ret, ref effects } => {
+                &hir_ty::TypeKind::Fn { ref params, ref ret, effects: _ } => {
                     if params_a.len() != params.len() {
                         return UnifyResult::Err(UnifyError::arity(span));
                     }
@@ -1566,12 +1567,7 @@ fn unify_resolved(
                         i = i + 1;
                     }
                     // Unify return types
-                    match unify(table, unifier, ret_a.as_ref(), ret.as_ref(), span) {
-                        UnifyResult::Err(e) => { return UnifyResult::Err(e); }
-                        UnifyResult::Ok => {}
-                    }
-                    // Unify effect rows
-                    unify_effect_rows(table, unifier, effects_a, effects, span)
+                    unify(table, unifier, ret_a.as_ref(), ret.as_ref(), span)
                 }
                 _ => UnifyResult::Err(UnifyError::mismatch(span))
             }

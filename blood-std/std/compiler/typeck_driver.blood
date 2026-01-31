@@ -135,7 +135,6 @@ pub fn check_lower_result(result: &hir_lower_ctx::LowerResult) -> TypeCheckResul
     let mut i: usize = 0;
     while i < body_limit {
         let body_entry = &result.bodies[i];
-        // Find the return type from the function signature for this body
         let return_ty = find_return_type_for_body(&result.items, body_entry.body_id);
         check_body(&mut checker, &body_entry.body, &return_ty);
         i = i + 1;
@@ -254,7 +253,7 @@ fn register_impl(
     }
 
     // Create and register impl info
-    let num_generics = impl_def.generics.params.len() as u32;
+    let num_generics = count_type_params(&impl_def.generics.params);
     let impl_info = typeck::ImplInfo::new(
         def_id,
         hir_ty::copy_type(&impl_def.self_ty),
@@ -265,14 +264,37 @@ fn register_impl(
 }
 
 // ============================================================
+// Generic Parameter Counting
+// ============================================================
+
+/// Counts only type parameters in a generics param list, excluding
+/// lifetime parameters and const parameters.
+fn count_type_params(params: &Vec<hir_ty::GenericParam>) -> u32 {
+    let mut count: u32 = 0;
+    let mut i: usize = 0;
+    while i < params.len() {
+        match &params[i] {
+            &hir_ty::GenericParam::TypeParam(_) => {
+                count = count + 1;
+            }
+            &hir_ty::GenericParam::LifetimeParam(_) => {}
+            &hir_ty::GenericParam::ConstParam(_) => {}
+        }
+        i = i + 1;
+    }
+    count
+}
+
+// ============================================================
 // Body Return Type Lookup
 // ============================================================
 
 /// Finds the return type for a body by looking up the corresponding function item.
 ///
 /// Searches the items list for a function whose body_id matches the target,
-/// and returns its signature's return type. Falls back to unit type if no
-/// matching function is found.
+/// and returns its signature's return type directly (no substitution needed —
+/// TypeParam nodes unify naturally through the type checker).
+/// Falls back to unit type if no matching function is found.
 fn find_return_type_for_body(
     items: &Vec<hir_lower_ctx::ItemEntry>,
     target_body_id: hir_def::BodyId,

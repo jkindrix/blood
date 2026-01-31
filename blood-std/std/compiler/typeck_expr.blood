@@ -86,8 +86,8 @@ pub fn infer_expr(checker: &mut typeck::TypeChecker, expr: &hir_expr::Expr) -> h
         &hir_expr::ExprKind::Continue { ref label } => {
             infer_continue(checker, label, expr.span)
         }
-        &hir_expr::ExprKind::Closure { ref captures, ref params, ref return_ty, ref body, body_id } => {
-            infer_closure(checker, captures, params, return_ty, body.as_ref(), body_id, expr.span)
+        &hir_expr::ExprKind::Closure { ref captures, ref params, ref return_ty, ref effects, ref body, body_id } => {
+            infer_closure(checker, captures, params, return_ty, effects, body.as_ref(), body_id, expr.span)
         }
         &hir_expr::ExprKind::WithHandle { handler: ref handler_expr, body: ref body_expr } => {
             infer_with_handle(checker, handler_expr.as_ref(), body_expr.as_ref(), expr.span)
@@ -415,7 +415,7 @@ fn is_lvalue(expr: &hir_expr::Expr) -> bool {
         &hir_expr::ExprKind::Assign { target: _, val: _ } => false,
         &hir_expr::ExprKind::AssignOp { op: _, target: _, val: _ } => false,
         &hir_expr::ExprKind::AddrOf { mutable: _, expr: _ } => false,
-        &hir_expr::ExprKind::Closure { captures: _, params: _, return_ty: _, body: _, body_id: _ } => false,
+        &hir_expr::ExprKind::Closure { captures: _, params: _, return_ty: _, effects: _, body: _, body_id: _ } => false,
         &hir_expr::ExprKind::WithHandle { handler: _, body: _ } => false,
         &hir_expr::ExprKind::Perform { effect_def: _, op_def: _, args: _ } => false,
         &hir_expr::ExprKind::Resume(ref _val) => false,
@@ -1007,9 +1007,38 @@ fn infer_index(
     let resolved_base_raw = checker.resolve(&base_ty);
     let resolved_base = strip_refs(&resolved_base_raw);
 
-    // Index should be usize
-    let usize_ty = hir_ty::Type::usize_ty();
-    checker.unify(&idx_ty, &usize_ty, idx.span);
+    // Index must be an integer type. Accept any integer (signed or unsigned),
+    // matching blood-rust's behavior. Default inference variables to usize.
+    let resolved_idx = checker.resolve(&idx_ty);
+    match &resolved_idx.kind {
+        &hir_ty::TypeKind::Primitive(prim) => {
+            match prim {
+                hir_ty::PrimitiveTy::I8 => {}
+                hir_ty::PrimitiveTy::I16 => {}
+                hir_ty::PrimitiveTy::I32 => {}
+                hir_ty::PrimitiveTy::I64 => {}
+                hir_ty::PrimitiveTy::I128 => {}
+                hir_ty::PrimitiveTy::Isize => {}
+                hir_ty::PrimitiveTy::U8 => {}
+                hir_ty::PrimitiveTy::U16 => {}
+                hir_ty::PrimitiveTy::U32 => {}
+                hir_ty::PrimitiveTy::U64 => {}
+                hir_ty::PrimitiveTy::U128 => {}
+                hir_ty::PrimitiveTy::Usize => {}
+                _ => {
+                    checker.error(typeck::TypeErrorKind::TypeMismatch, idx.span);
+                }
+            }
+        }
+        &hir_ty::TypeKind::Infer(_) => {
+            let usize_ty = hir_ty::Type::usize_ty();
+            checker.unify(&idx_ty, &usize_ty, idx.span);
+        }
+        &hir_ty::TypeKind::Error => {}
+        _ => {
+            checker.error(typeck::TypeErrorKind::TypeMismatch, idx.span);
+        }
+    }
 
     match &resolved_base.kind {
         &hir_ty::TypeKind::Array { ref element, size: _ } => {
@@ -1155,10 +1184,21 @@ fn infer_struct(
     }
 
     // Regular struct construction
-    // Generate inference variables for type arguments
+    // Look up the struct definition's actual number of generics, rather than
+    // relying on explicit type args at the call site (which may be omitted).
+    // This matches blood-rust's behavior of always creating the right number
+    // of fresh inference variables for generic structs.
+    //
+    // Uses has_struct + get_struct_num_generics (value-type returns) instead of
+    // get_struct (Option<&StructInfo>) to avoid blood-rust reference return bugs.
+    let num_gen = if checker.has_struct(path.def_id) {
+        checker.get_struct_num_generics(path.def_id)
+    } else {
+        path.type_arg_count
+    };
     let mut args: Vec<hir_ty::Type> = Vec::new();
     let mut ta: u32 = 0;
-    while ta < path.type_arg_count {
+    while ta < num_gen {
         args.push(checker.fresh_infer());
         ta = ta + 1;
     }
@@ -1753,6 +1793,7 @@ fn infer_closure(
     captures: &Vec<hir_expr::Capture>,
     params: &Vec<hir_expr::ClosureParam>,
     return_ty: &hir_ty::Type,
+    effects: &hir_ty::EffectRow,
     body: &hir_expr::Expr,
     _body_id: hir_def::BodyId,
     span: common::Span,
@@ -1780,7 +1821,7 @@ fn infer_closure(
     hir_ty::Type::new(hir_ty::TypeKind::Fn {
         params: param_types,
         ret: Box::new(hir_ty::copy_type(return_ty)),
-        effects: hir_ty::EffectRow::empty(),
+        effects: hir_ty::copy_effect_row(effects),
     })
 }
 
