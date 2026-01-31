@@ -31,6 +31,7 @@ mod mir_lower;
 mod codegen;
 mod codegen_ctx;
 mod codegen_streaming;
+mod codegen_types;
 mod interner;
 mod unify;
 mod typeck;
@@ -154,12 +155,23 @@ fn parse_args_stub() -> Args {
 // ============================================================
 
 /// Runs the check command.
+///
+/// Wraps the entire check in a region so all front-end allocations (parse, HIR,
+/// typeck for all transitive imports) are bulk-freed when check completes.
 fn run_check(args: &Args) -> i32 {
     match &args.source_file {
         &Option::Some(ref path) => {
-            // Use check_file for proper base_dir module resolution
+            // Create region for all check allocations.
+            // 4 MB initial, 20 GB max — virtual address reservation via mmap,
+            // physical pages committed on demand.
+            let check_region = region_create(4194304, 21474836480);
+            region_activate(check_region);
+
+            // Run check (all parse/HIR/typeck allocations go to check_region)
             let result = driver::check_file(path.as_str());
-            if result.success {
+
+            // Print results while region is still alive (strings are in the region)
+            let exit_code = if result.success {
                 print_success("Check passed");
                 0
             } else {
@@ -174,7 +186,13 @@ fn run_check(args: &Args) -> i32 {
                 let formatted = error_reporter.format_errors(&result.errors);
                 print_string(&formatted);
                 1
-            }
+            };
+
+            // Deactivate and destroy — bulk-frees all front-end data
+            region_deactivate();
+            region_destroy(check_region);
+
+            exit_code
         }
         &Option::None => {
             print_error("No source file specified");
@@ -185,25 +203,63 @@ fn run_check(args: &Args) -> i32 {
 
 /// Runs the build command.
 /// Uses streaming codegen to write IR directly to file, avoiding OOM.
+/// Then invokes llc-14 to produce an object file and clang-14 to link an executable.
 fn run_build(args: &Args) -> i32 {
     match &args.source_file {
         &Option::Some(ref path) => {
-            // Determine output path
-            let output_path = match &args.output_file {
+            // Determine output path for LLVM IR
+            let ll_path = match &args.output_file {
                 &Option::Some(ref out) => clone_string(out),
                 &Option::None => default_ll_path(path),
             };
 
-            // Use streaming compilation to write IR directly to file
-            let result = compile_file_streaming(path.as_str(), output_path.as_str());
-            if result {
-                print_success("Wrote LLVM IR to: ");
-                print_str(output_path.as_str());
-                print_newline();
-                0
-            } else {
-                1
+            // Phase 1: Generate LLVM IR via streaming codegen
+            let result = compile_file_streaming(path.as_str(), ll_path.as_str());
+            if !result {
+                return 1;
             }
+            print_success("Wrote LLVM IR to: ");
+            print_str(ll_path.as_str());
+            print_newline();
+
+            // Phase 2: Compile IR to object file with llc-14
+            // Derive obj and bin paths from ll_path base (strip .ll extension)
+            let base_path = strip_ll_ext(&ll_path);
+            let mut obj_path = common::make_string(base_path.as_str());
+            obj_path.push_str(".o");
+            let mut llc_cmd = String::new();
+            llc_cmd.push_str("llc-14 --opaque-pointers ");
+            llc_cmd.push_str(ll_path.as_str());
+            llc_cmd.push_str(" -filetype=obj -o ");
+            llc_cmd.push_str(obj_path.as_str());
+            let llc_result = system(llc_cmd.as_str());
+            if llc_result != 0 {
+                print_error("llc-14 failed to compile IR to object file");
+                return 1;
+            }
+            print_success("Wrote object file to: ");
+            print_str(obj_path.as_str());
+            print_newline();
+
+            // Phase 3: Link with clang-14, blood runtime, and C runtime stub
+            let bin_path = base_path;
+            let mut clang_cmd = String::new();
+            clang_cmd.push_str("clang-14 ");
+            clang_cmd.push_str(obj_path.as_str());
+            clang_cmd.push_str(" /home/jkindrix/blood-rust/runtime/runtime.o");
+            clang_cmd.push_str(" /home/jkindrix/blood-rust/target/release/libblood_runtime.a");
+            clang_cmd.push_str(" -lm -ldl -lpthread -no-pie -o ");
+            clang_cmd.push_str(bin_path.as_str());
+            let clang_result = system(clang_cmd.as_str());
+            if clang_result != 0 {
+                print_error("clang-14 linking failed");
+                return 1;
+            }
+            print_success("Wrote executable to: ");
+            print_str(bin_path.as_str());
+            print_newline();
+
+            0
         }
         &Option::None => {
             print_error("No source file specified");
@@ -213,59 +269,46 @@ fn run_build(args: &Args) -> i32 {
 }
 
 /// Runs the run command.
-///
-/// This command compiles the source to LLVM IR and then attempts to execute it.
-///
-/// # Current Limitation
-///
-/// The run command currently only generates LLVM IR. Full execution would require:
-/// 1. A shell execution builtin to run external commands
-/// 2. Access to LLVM tools (llc) to compile IR to object code
-/// 3. Access to a linker (ld, clang, gcc) to create an executable
-/// 4. Running the resulting binary and capturing its exit code
-///
-/// To run a Blood program manually after compilation:
-/// 1. Use `blood build file.blood -o output.ll` to generate LLVM IR
-/// 2. Run `llc output.ll -filetype=obj -o output.o` to create object file
-/// 3. Run `clang output.o -o output` to link into executable
-/// 4. Run `./output` to execute
+/// Compiles source to LLVM IR, invokes llc-14 and clang-14, then executes the result.
 fn run_run(args: &Args) -> i32 {
     match &args.source_file {
         &Option::Some(ref path) => {
-            // Generate LLVM IR
+            // Phase 1: Generate LLVM IR
             let ll_path = default_ll_path(path);
             let result = compile_file_streaming(path.as_str(), ll_path.as_str());
             if !result {
                 return 1;
             }
 
-            // Compile IR to object file with llc
+            // Phase 2: Compile IR to object file with llc-14
             let obj_path = replace_ext(path, ".o");
             let mut llc_cmd = String::new();
-            llc_cmd.push_str("llc ");
+            llc_cmd.push_str("llc-14 --opaque-pointers ");
             llc_cmd.push_str(ll_path.as_str());
             llc_cmd.push_str(" -filetype=obj -o ");
             llc_cmd.push_str(obj_path.as_str());
             let llc_result = system(llc_cmd.as_str());
             if llc_result != 0 {
-                print_error("llc failed");
+                print_error("llc-14 failed to compile IR to object file");
                 return 1;
             }
 
-            // Link with clang
+            // Phase 3: Link with clang-14, blood runtime, and C runtime stub
             let bin_path = strip_blood_ext(path);
             let mut clang_cmd = String::new();
-            clang_cmd.push_str("clang ");
+            clang_cmd.push_str("clang-14 ");
             clang_cmd.push_str(obj_path.as_str());
-            clang_cmd.push_str(" -o ");
+            clang_cmd.push_str(" /home/jkindrix/blood-rust/runtime/runtime.o");
+            clang_cmd.push_str(" /home/jkindrix/blood-rust/target/release/libblood_runtime.a");
+            clang_cmd.push_str(" -lm -ldl -lpthread -no-pie -o ");
             clang_cmd.push_str(bin_path.as_str());
             let clang_result = system(clang_cmd.as_str());
             if clang_result != 0 {
-                print_error("clang linking failed");
+                print_error("clang-14 linking failed");
                 return 1;
             }
 
-            // Execute the binary
+            // Phase 4: Execute the binary
             let mut run_cmd = String::new();
             run_cmd.push_str("./");
             run_cmd.push_str(bin_path.as_str());
@@ -483,6 +526,328 @@ fn clone_string(s: &String) -> String {
     common::make_string(s.as_str())
 }
 
+/// Constructs a unique, mangled function name for LLVM IR.
+///
+/// Uses the lowering context's interner to resolve the bare name, then
+/// qualifies it with the DefId to ensure uniqueness (many types share
+/// method names like "new", "len", etc.).
+///
+/// Format: `def{N}_{name}` for regular functions, `blood_main` for the
+/// entry point (matching blood-rust's runtime convention).
+fn make_mangled_fn_name(intern: &interner::StringInterner, info: &driver::FnInfo) -> String {
+    // Resolve bare name from interner
+    let bare_name = match intern.resolve(info.name) {
+        Option::Some(s) => common::make_string(s.as_str()),
+        Option::None => {
+            // Fallback: use DefId-based name
+            return driver::make_fn_name(info.def_id.index as usize);
+        }
+    };
+
+    // Entry point: blood-rust runtime expects "blood_main"
+    if str_equals(&bare_name, "main") {
+        return common::make_string("blood_main");
+    }
+
+    // Regular function: def{N}_{name}
+    let mut result = String::new();
+    result.push_str("def");
+    push_usize(&mut result, info.def_id.index as usize);
+    result.push(95 as char); // '_'
+    result.push_str(bare_name.as_str());
+    result
+}
+
+/// Resolves a Symbol to a string using the lowering interner.
+/// Returns the bare name or a fallback "sym_{index}".
+/// Returns true if the given name is a region_* builtin that is handled
+/// by intrinsic_declarations() as a wrapper around blood_region_*.
+fn is_region_builtin(name: &str) -> bool {
+    if str_eq(name, "region_create") { return true; }
+    if str_eq(name, "region_destroy") { return true; }
+    if str_eq(name, "region_activate") { return true; }
+    if str_eq(name, "region_deactivate") { return true; }
+    if str_eq(name, "region_alloc") { return true; }
+    if str_eq(name, "region_exit_scope") { return true; }
+    false
+}
+
+fn resolve_symbol(intern: &interner::StringInterner, sym: common::Symbol) -> String {
+    match intern.resolve(sym) {
+        Option::Some(s) => common::make_string(s.as_str()),
+        Option::None => {
+            let mut fallback = String::new();
+            fallback.push_str("sym");
+            push_usize(&mut fallback, sym.index as usize);
+            fallback
+        }
+    }
+}
+
+/// Builds a DefId-qualified name: def{N}_{name}.
+fn make_def_name(def_id: u32, name: &String) -> String {
+    let mut result = String::new();
+    result.push_str("def");
+    push_usize(&mut result, def_id as usize);
+    result.push(95 as char); // '_'
+    result.push_str(name.as_str());
+    result
+}
+
+/// Generates minimal stub functions for registered def_names that don't have bodies.
+/// These are enum variant constructors, struct constructors from items, etc. that are
+/// referenced as function pointers but have no HIR bodies. The stub is a minimal
+/// function that exists so the symbol is defined.
+fn generate_missing_stubs(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    defined_names: &Vec<String>,
+    output_path: &str,
+) {
+    let mut stubs = String::new();
+    // Track names we've already emitted stubs for (avoid duplicates from def_names)
+    let mut emitted: Vec<String> = Vec::new();
+
+    let count = ctx.def_names_count();
+    let mut i: usize = 0;
+    while i < count {
+        let entry = ctx.def_name_at(i);
+        let name = entry.1;
+
+        // Check if this name was already defined as a body
+        let mut has_body = false;
+        let mut j: usize = 0;
+        while j < defined_names.len() {
+            if str_equals(&name, defined_names[j].as_str()) {
+                has_body = true;
+                break;
+            }
+            j = j + 1;
+        }
+
+        if !has_body {
+            // Check if we already emitted a stub for this name
+            let mut already_emitted = false;
+            let mut k: usize = 0;
+            while k < emitted.len() {
+                if str_equals(&name, emitted[k].as_str()) {
+                    already_emitted = true;
+                    break;
+                }
+                k = k + 1;
+            }
+
+            if !already_emitted {
+                // Skip runtime builtins (not prefixed with "def") — they're declared elsewhere
+                let name_bytes = name.as_bytes();
+                let is_def_name = name_bytes.len() > 3
+                    && name_bytes[0] == 100  // 'd'
+                    && name_bytes[1] == 101  // 'e'
+                    && name_bytes[2] == 102; // 'f'
+
+                if is_def_name {
+                    // Emit a minimal stub: define void @name() { ret void }
+                    stubs.push_str("define void @");
+                    stubs.push_str(name.as_str());
+                    stubs.push_str("() {\n  ret void\n}\n");
+                    emitted.push(clone_string(&name));
+                }
+            }
+        }
+        i = i + 1;
+    }
+
+    if stubs.len() > 0 {
+        let mut header = String::new();
+        header.push_str("\n; Synthetic stubs for function-pointer-only symbols\n");
+        header.push_str(stubs.as_str());
+        file_append_string(output_path, header.as_str());
+    }
+}
+
+/// Registers def_names for all function-like items in the items list.
+///
+/// This covers functions without bodies (foreign/builtin functions, trait declarations)
+/// and associated functions in impl/trait blocks. Foreign functions use their bare
+/// names (matching blood-rust runtime symbols); all others use def{N}_{name} format.
+fn register_all_item_names(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    intern: &interner::StringInterner,
+    items: &Vec<hir_lower_ctx::ItemEntry>,
+) {
+    let mut i: usize = 0;
+    while i < items.len() {
+        let entry = &items[i];
+        match &entry.item.kind {
+            &hir_item::ItemKind::Fn(ref fn_def) => {
+                let name = resolve_symbol(intern, entry.item.name.symbol);
+                if str_equals(&name, "main") {
+                    ctx.register_def_name(entry.def_id.index, common::make_string("blood_main"));
+                } else {
+                    let mangled = make_def_name(entry.def_id.index, &name);
+                    ctx.register_def_name(entry.def_id.index, mangled);
+                }
+            }
+            &hir_item::ItemKind::Foreign(ref foreign_def) => {
+                // Foreign functions use bare names (matching runtime symbols)
+                let mut fi: usize = 0;
+                while fi < foreign_def.items.len() {
+                    match &foreign_def.items[fi] {
+                        &hir_item::ForeignItem::Fn(ref ff) => {
+                            let name = resolve_symbol(intern, ff.name.symbol);
+                            ctx.register_def_name(ff.def_id.index, name);
+                        }
+                        &hir_item::ForeignItem::Static(ref _fs) => {}
+                        &hir_item::ForeignItem::OpaqueType(ref _ot) => {}
+                    }
+                    fi = fi + 1;
+                }
+            }
+            &hir_item::ItemKind::Impl(ref impl_def) => {
+                let mut ai: usize = 0;
+                while ai < impl_def.items.len() {
+                    match &impl_def.items[ai] {
+                        &hir_item::AssocItem::Fn(ref assoc_fn) => {
+                            let name = resolve_symbol(intern, assoc_fn.name.symbol);
+                            let mangled = make_def_name(assoc_fn.def_id.index, &name);
+                            ctx.register_def_name(assoc_fn.def_id.index, mangled);
+                        }
+                        &hir_item::AssocItem::Type(ref _at) => {}
+                        &hir_item::AssocItem::Const(ref _ac) => {}
+                    }
+                    ai = ai + 1;
+                }
+            }
+            &hir_item::ItemKind::Trait(ref trait_def) => {
+                let mut ti: usize = 0;
+                while ti < trait_def.items.len() {
+                    match &trait_def.items[ti] {
+                        &hir_item::AssocItem::Fn(ref assoc_fn) => {
+                            let name = resolve_symbol(intern, assoc_fn.name.symbol);
+                            let mangled = make_def_name(assoc_fn.def_id.index, &name);
+                            ctx.register_def_name(assoc_fn.def_id.index, mangled);
+                        }
+                        &hir_item::AssocItem::Type(ref _at) => {}
+                        &hir_item::AssocItem::Const(ref _ac) => {}
+                    }
+                    ti = ti + 1;
+                }
+            }
+            &hir_item::ItemKind::Struct(ref _s) => {}
+            &hir_item::ItemKind::Enum(ref _e) => {}
+            &hir_item::ItemKind::TypeAlias(ref _ta) => {}
+            &hir_item::ItemKind::Const(ref _c) => {}
+            &hir_item::ItemKind::Static(ref _s) => {}
+            &hir_item::ItemKind::Effect(ref _ef) => {}
+            &hir_item::ItemKind::Handler(ref _h) => {}
+            &hir_item::ItemKind::Module(ref _m) => {}
+            &hir_item::ItemKind::Macro(ref _m) => {}
+        }
+        i = i + 1;
+    }
+}
+
+/// Registers def_names for all enum variant constructors.
+/// Each variant gets a name like def{enum_def_id}_{variant_name} so the codegen
+/// can emit identifiable references instead of @fn_NNN.
+fn register_enum_variant_names(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    intern: &interner::StringInterner,
+    items: &Vec<hir_lower_ctx::ItemEntry>,
+) {
+    let mut i: usize = 0;
+    while i < items.len() {
+        let entry = &items[i];
+        match &entry.item.kind {
+            &hir_item::ItemKind::Enum(ref enum_def) => {
+                let enum_name = resolve_symbol(intern, entry.item.name.symbol);
+                let mut vi: usize = 0;
+                while vi < enum_def.variants.len() {
+                    let variant = &enum_def.variants[vi];
+                    let variant_name = resolve_symbol(intern, variant.name.symbol);
+                    let mut mangled = String::new();
+                    mangled.push_str("def");
+                    push_usize(&mut mangled, entry.def_id.index as usize);
+                    mangled.push(95 as char); // '_'
+                    mangled.push_str(enum_name.as_str());
+                    mangled.push_str("__");
+                    mangled.push_str(variant_name.as_str());
+                    ctx.register_def_name(variant.def_id.index, mangled);
+                    vi = vi + 1;
+                }
+            }
+            _ => {}
+        }
+        i = i + 1;
+    }
+}
+
+/// Generates LLVM `declare` statements for all foreign functions in the items list.
+/// These are runtime builtins that need extern declarations for linking.
+fn generate_foreign_declarations(
+    intern: &interner::StringInterner,
+    items: &Vec<hir_lower_ctx::ItemEntry>,
+) -> String {
+    let mut output = String::new();
+    output.push_str("\n; Foreign function declarations (blood-rust runtime)\n");
+
+    let mut i: usize = 0;
+    while i < items.len() {
+        let entry = &items[i];
+        match &entry.item.kind {
+            &hir_item::ItemKind::Foreign(ref foreign_def) => {
+                let mut fi: usize = 0;
+                while fi < foreign_def.items.len() {
+                    match &foreign_def.items[fi] {
+                        &hir_item::ForeignItem::Fn(ref ff) => {
+                            let name = resolve_symbol(intern, ff.name.symbol);
+                            // Skip region_* functions - they are defined as
+                            // wrappers around blood_region_* in intrinsic_declarations()
+                            if is_region_builtin(name.as_str()) {
+                                fi = fi + 1;
+                                continue;
+                            }
+                            let ret_ty = codegen_types::type_to_llvm(&ff.return_ty);
+                            output.push_str("declare ");
+                            output.push_str(ret_ty.as_str());
+                            output.push_str(" @");
+                            output.push_str(name.as_str());
+                            output.push_str("(");
+                            let mut pi: usize = 0;
+                            while pi < ff.param_tys.len() {
+                                if pi > 0 {
+                                    output.push_str(", ");
+                                }
+                                let param_ty = codegen_types::type_to_llvm(&ff.param_tys[pi]);
+                                output.push_str(param_ty.as_str());
+                                pi = pi + 1;
+                            }
+                            output.push_str(")\n");
+                        }
+                        &hir_item::ForeignItem::Static(ref _fs) => {}
+                        &hir_item::ForeignItem::OpaqueType(ref _ot) => {}
+                    }
+                    fi = fi + 1;
+                }
+            }
+            &hir_item::ItemKind::Fn(ref _f) => {}
+            &hir_item::ItemKind::Struct(ref _s) => {}
+            &hir_item::ItemKind::Enum(ref _e) => {}
+            &hir_item::ItemKind::TypeAlias(ref _ta) => {}
+            &hir_item::ItemKind::Const(ref _c) => {}
+            &hir_item::ItemKind::Static(ref _s) => {}
+            &hir_item::ItemKind::Trait(ref _t) => {}
+            &hir_item::ItemKind::Effect(ref _ef) => {}
+            &hir_item::ItemKind::Handler(ref _h) => {}
+            &hir_item::ItemKind::Module(ref _m) => {}
+            &hir_item::ItemKind::Impl(ref _im) => {}
+            &hir_item::ItemKind::Macro(ref _m) => {}
+        }
+        i = i + 1;
+    }
+
+    output
+}
+
 // ============================================================
 // Path Helpers
 // ============================================================
@@ -532,14 +897,46 @@ fn strip_blood_ext(source_path: &String) -> String {
     replace_ext(source_path, "")
 }
 
+/// Strips the .ll extension from a path.
+fn strip_ll_ext(path: &String) -> String {
+    let bytes = path.as_bytes();
+    let ll_ext = ".ll";
+    let ext_bytes = ll_ext.as_bytes();
+    if bytes.len() >= ext_bytes.len() {
+        let start = bytes.len() - ext_bytes.len();
+        let mut matches = true;
+        let mut k: usize = 0;
+        while k < ext_bytes.len() {
+            if bytes[start + k] != ext_bytes[k] {
+                matches = false;
+            }
+            k = k + 1;
+        }
+        if matches {
+            let mut result = String::new();
+            let mut j: usize = 0;
+            while j < start {
+                result.push(bytes[j] as char);
+                j = j + 1;
+            }
+            return result;
+        }
+    }
+    common::make_string(path.as_str())
+}
+
 // ============================================================
 // Streaming Compilation
 // ============================================================
 
 /// Compiles a source file using streaming codegen, writing IR directly to output_path.
 /// Returns true on success, false on error (errors are printed directly).
+///
+/// Uses phase-scoped regions to manage memory:
+/// - Front-end region: holds parse/HIR/typeck data (deactivated before codegen, destroyed after)
+/// - Per-function MIR regions: hold MIR bodies (destroyed after each function's IR is written)
 fn compile_file_streaming(path: &str, output_path: &str) -> bool {
-    // Phase 1: Read the source file
+    // Phase 1: Read source file and compute base_dir (global allocator — small)
     let read_result = source::read_file(path);
     if !read_result.success {
         print_error("Failed to read source file");
@@ -554,7 +951,15 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
         }
     };
 
-    // Phase 2: Parse
+    let base_dir = source::parent_dir(path);
+
+    // Create front-end region for heavy compilation phases (parse + HIR lower + typeck).
+    // 4 MB initial, 20 GB max — virtual address reservation via mmap,
+    // physical pages committed on demand as allocations grow.
+    let front_region = region_create(4194304, 21474836480);
+    region_activate(front_region);
+
+    // Phase 2: Parse (allocations go to front_region)
     let parse_result = parser::parse_file(content.as_str());
     if parse_result.errors.len() > 0 {
         print_error("Parse errors:");
@@ -569,6 +974,8 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
             print_str(msg.as_str());
             i = i + 1;
         }
+        region_deactivate();
+        region_destroy(front_region);
         return false;
     }
 
@@ -576,12 +983,13 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
         &Option::Some(ref p) => p,
         &Option::None => {
             print_error("No program produced by parser");
+            region_deactivate();
+            region_destroy(front_region);
             return false;
         }
     };
 
-    // Phase 3: Lower to HIR with base_dir for module resolution
-    let base_dir = source::parent_dir(path);
+    // Phase 3: Lower to HIR with base_dir for module resolution (allocations in front_region)
     let lower_result = hir_lower::lower_program_with_base_dir(program, base_dir, content.as_str());
 
     // Check for HIR lowering errors
@@ -601,10 +1009,12 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
     }
     if has_hir_errors {
         print_error("HIR lowering errors");
+        region_deactivate();
+        region_destroy(front_region);
         return false;
     }
 
-    // Phase 4: Type checking
+    // Phase 4: Type checking (allocations in front_region)
     let typeck_result = typeck_driver::check_lower_result(&lower_result);
     if !typeck_result.success {
         let mut ti: usize = 0;
@@ -617,21 +1027,26 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
             print_str(msg.as_str());
             ti = ti + 1;
         }
+        region_deactivate();
+        region_destroy(front_region);
         return false;
     }
 
-    // Phase 5: Streaming codegen
-    // Initialize streaming context with module header
+    // Deactivate front-end region — data remains readable for codegen.
+    // New allocations (codegen ctx, def_names) go to global allocator.
+    region_deactivate();
+
+    // Phase 5: Streaming codegen (global allocator for ctx persistent state)
     let mut ctx = codegen_streaming::begin_streaming_module("main", output_path, &lower_result.items);
 
-    // Pass 1: Register def_names for all function bodies
+    // Pass 1a: Register def_names for all function bodies (global allocator)
     let mut body_idx: usize = 0;
     while body_idx < lower_result.bodies.len() {
         let body_entry = &lower_result.bodies[body_idx];
         let body_id = body_entry.body_id;
         let fn_info = driver::find_fn_for_body(&lower_result.items, body_id);
         let fn_name = match &fn_info {
-            &Option::Some(ref info) => driver::resolve_fn_name(content.as_str(), info),
+            &Option::Some(ref info) => make_mangled_fn_name(&lower_result.interner, info),
             &Option::None => driver::make_fn_name(body_idx),
         };
         let def_id = match &fn_info {
@@ -642,7 +1057,37 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
         body_idx = body_idx + 1;
     }
 
-    // Pass 2: For each body, lower to MIR and stream IR to file
+    // Pass 1b: Register def_names for ALL function-like items (including those without bodies).
+    // This ensures that calls to foreign/builtin functions resolve to the correct name.
+    register_all_item_names(&mut ctx, &lower_result.interner, &lower_result.items);
+
+    // Pass 1c: Register def_names for builtin constructors (String::new, Vec::new, etc.).
+    // These DefIds are allocated by the HIR lowering and map to runtime function names.
+    let mut bfi: usize = 0;
+    while bfi < lower_result.builtin_fn_defs.len() {
+        let entry = &lower_result.builtin_fn_defs[bfi];
+        ctx.register_def_name(entry.def_id_index, clone_string(&entry.runtime_name));
+        bfi = bfi + 1;
+    }
+
+    // Pass 1e: Register def_names for enum variant constructors.
+    // Enum variants have their own DefIds used when constructing variants (e.g., TokenKind::Ident(...)).
+    register_enum_variant_names(&mut ctx, &lower_result.interner, &lower_result.items);
+
+    // Pass 1d: Register def_names for synthetic builtin methods (String::push_str, Vec::push, etc.).
+    // These DefIds are allocated by the type checker and map to runtime function names.
+    let mut bi: usize = 0;
+    while bi < typeck_result.builtin_def_names.len() {
+        let entry = &typeck_result.builtin_def_names[bi];
+        ctx.register_def_name(entry.def_id_index, clone_string(&entry.runtime_name));
+        bi = bi + 1;
+    }
+
+    // Track which function names were defined (for stub generation after pass 2)
+    let mut defined_names: Vec<String> = Vec::new();
+
+    // Pass 2: For each body, lower to MIR and stream IR to file.
+    // Per-function MIR regions nest inside the (now deactivated) front-end region.
     let mut body_idx2: usize = 0;
     while body_idx2 < lower_result.bodies.len() {
         let body_entry = &lower_result.bodies[body_idx2];
@@ -660,44 +1105,57 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
             &Option::None => common::Span::new(0, 0, 1, 1),
         };
         let fn_name = match &fn_info {
-            &Option::Some(ref info) => driver::resolve_fn_name(content.as_str(), info),
+            &Option::Some(ref info) => make_mangled_fn_name(&lower_result.interner, info),
             &Option::None => driver::make_fn_name(body_idx2),
         };
         let def_id = match &fn_info {
             &Option::Some(ref info) => info.def_id,
             &Option::None => hir_def::DefId::new(body_idx2 as u32),
         };
+        defined_names.push(clone_string(&fn_name));
 
-        // Activate a region for MIR lowering so its allocations are bulk-freed.
+        // Per-function MIR region: isolates MIR lowering allocations.
         // Deactivate before codegen so ctx's persistent state uses global allocator.
-        let region_id = region_create(1048576, 134217728);
-        region_activate(region_id);
+        let mir_region = region_create(1048576, 134217728);
+        region_activate(mir_region);
 
-        // Lower to MIR (allocations go to region)
+        // Lower to MIR (allocations go to mir_region)
         let mir_body = mir_lower::lower_body(
             def_id,
             hir_body,
             return_ty,
             span,
             &typeck_result.subst_table,
+            &typeck_result.method_resolutions,
         );
 
-        // Deactivate region before codegen — codegen modifies ctx state
-        // (string_table, output buffer) that must persist across iterations.
-        // MIR body memory remains readable until region_destroy.
+        // Deactivate mir_region — MIR body remains readable until destroy.
+        // Codegen modifies ctx state (string_table, output buffer) that must persist.
         region_deactivate();
 
-        // Stream this function's IR to file (reads MIR body, writes to global allocator)
+        // Stream this function's IR to file (reads MIR, writes to global allocator)
         codegen_streaming::generate_function_to_file(&mut ctx, &mir_body, fn_name.as_str(), output_path);
 
-        // Destroy region — frees MIR body and all temporaries from lowering
-        region_destroy(region_id);
+        // Destroy mir_region — frees MIR body and all lowering temporaries
+        region_destroy(mir_region);
 
         body_idx2 = body_idx2 + 1;
     }
 
+    // Pass 3: Generate stub functions for registered names without bodies.
+    // These are enum variant constructors and other synthetic functions that are
+    // referenced as function pointers but don't have HIR bodies.
+    generate_missing_stubs(&mut ctx, &defined_names, output_path);
+
     // Finish: write string constants and intrinsic declarations
     codegen_streaming::finish_streaming_module(&mut ctx, output_path);
+
+    // Write foreign function declarations (runtime builtins)
+    let foreign_decls = generate_foreign_declarations(&lower_result.interner, &lower_result.items);
+    file_append_string(output_path, foreign_decls.as_str());
+
+    // Destroy front-end region — bulk-frees all parse, HIR, and typeck data
+    region_destroy(front_region);
 
     true
 }
