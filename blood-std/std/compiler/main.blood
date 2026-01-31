@@ -668,7 +668,12 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
             &Option::None => hir_def::DefId::new(body_idx2 as u32),
         };
 
-        // Lower to MIR
+        // Activate a region for MIR lowering so its allocations are bulk-freed.
+        // Deactivate before codegen so ctx's persistent state uses global allocator.
+        let region_id = region_create(1048576, 134217728);
+        region_activate(region_id);
+
+        // Lower to MIR (allocations go to region)
         let mir_body = mir_lower::lower_body(
             def_id,
             hir_body,
@@ -677,8 +682,16 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
             &typeck_result.subst_table,
         );
 
-        // Stream this function's IR to file
+        // Deactivate region before codegen — codegen modifies ctx state
+        // (string_table, output buffer) that must persist across iterations.
+        // MIR body memory remains readable until region_destroy.
+        region_deactivate();
+
+        // Stream this function's IR to file (reads MIR body, writes to global allocator)
         codegen_streaming::generate_function_to_file(&mut ctx, &mir_body, fn_name.as_str(), output_path);
+
+        // Destroy region — frees MIR body and all temporaries from lowering
+        region_destroy(region_id);
 
         body_idx2 = body_idx2 + 1;
     }

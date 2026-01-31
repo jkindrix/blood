@@ -682,6 +682,14 @@ fn register_builtin_functions(ctx: &mut hir_lower_ctx::LoweringCtx) {
         Option::None => {}
     }
 
+    // === Region Memory Management ===
+    register_builtin_fn(ctx, &mut items, "region_create", bi_params_2(bi_u64(), bi_u64()), bi_u64());
+    register_builtin_fn(ctx, &mut items, "region_destroy", bi_params_1(bi_u64()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "region_activate", bi_params_1(bi_u64()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "region_deactivate", bi_params_0(), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "region_alloc", bi_params_3(bi_u64(), bi_u64(), bi_u64()), bi_u64());
+    register_builtin_fn(ctx, &mut items, "region_exit_scope", bi_params_1(bi_u64()), hir_ty::Type::i32_ty());
+
     // === Builtins requiring Option type ===
     match ctx.builtin_option_def {
         Option::Some(option_def) => {
