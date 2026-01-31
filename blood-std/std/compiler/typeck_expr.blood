@@ -92,8 +92,8 @@ pub fn infer_expr(checker: &mut typeck::TypeChecker, expr: &hir_expr::Expr) -> h
         &hir_expr::ExprKind::WithHandle { handler: ref handler_expr, body: ref body_expr } => {
             infer_with_handle(checker, handler_expr.as_ref(), body_expr.as_ref(), expr.span)
         }
-        &hir_expr::ExprKind::Perform { effect_def, op_def, ref args } => {
-            infer_perform(checker, effect_def, op_def, args, expr.span)
+        &hir_expr::ExprKind::Perform { effect_def, op_def, op_name, ref args } => {
+            infer_perform(checker, effect_def, op_def, op_name, args, expr.span)
         }
         &hir_expr::ExprKind::Resume(ref val) => infer_resume(checker, val.as_ref(), expr.span),
         &hir_expr::ExprKind::Try(ref inner) => infer_try(checker, inner.as_ref(), expr.span),
@@ -417,7 +417,7 @@ fn is_lvalue(expr: &hir_expr::Expr) -> bool {
         &hir_expr::ExprKind::AddrOf { mutable: _, expr: _ } => false,
         &hir_expr::ExprKind::Closure { captures: _, params: _, return_ty: _, effects: _, body: _, body_id: _ } => false,
         &hir_expr::ExprKind::WithHandle { handler: _, body: _ } => false,
-        &hir_expr::ExprKind::Perform { effect_def: _, op_def: _, args: _ } => false,
+        &hir_expr::ExprKind::Perform { effect_def: _, op_def: _, op_name: _, args: _ } => false,
         &hir_expr::ExprKind::Resume(ref _val) => false,
         &hir_expr::ExprKind::Try(ref _inner) => false,
         &hir_expr::ExprKind::Unsafe(ref _inner) => false,
@@ -1844,20 +1844,83 @@ fn infer_with_handle(
 /// Infers the type of an effect operation invocation.
 fn infer_perform(
     checker: &mut typeck::TypeChecker,
-    _effect_def: hir_def::DefId,
+    effect_def: hir_def::DefId,
     _op_def: hir_def::DefId,
+    op_name: common::Symbol,
     args: &Vec<hir_expr::Expr>,
     span: common::Span,
 ) -> hir_ty::Type {
-    // Check all arguments
+    // Infer argument types first
+    let mut arg_tys: Vec<hir_ty::Type> = Vec::new();
     let mut i: usize = 0;
     while i < args.len() {
-        infer_expr(checker, &args[i]);
+        let arg_ty = infer_expr(checker, &args[i]);
+        arg_tys.push(arg_ty);
         i = i + 1;
     }
 
-    // Return type depends on effect operation - need to look up
-    checker.fresh_infer()
+    // Look up the effect to find the operation
+    if checker.has_effect(effect_def) {
+        let def_idx = effect_def.index as usize;
+        // Find the matching operation by name
+        let num_ops = checker.get_effect_num_ops(effect_def);
+
+        // Check if the effect has generic parameters — if so, we cannot
+        // unify concrete argument types against uninstantiated generic param types.
+        // Fall back to arity checking only for generic effects.
+        let mut effect_is_generic = false;
+        match &checker.effects[def_idx] {
+            &Some(ref info) => {
+                if info.num_generics > 0 {
+                    effect_is_generic = true;
+                }
+            }
+            &None => {}
+        }
+
+        let mut found = false;
+        let mut result_ty = checker.fresh_infer();
+        let mut oi: u32 = 0;
+        while oi < num_ops {
+            let oi_usize = oi as usize;
+            match &checker.effects[def_idx] {
+                &Some(ref info) => {
+                    let effect_op = &info.operations[oi_usize];
+                    if effect_op.name.index == op_name.index {
+                        // Found the operation - check argument count
+                        if arg_tys.len() != effect_op.param_tys.len() {
+                            checker.error(typeck::TypeErrorKind::ArityMismatch, span);
+                        } else if !effect_is_generic {
+                            // Only unify when the effect is non-generic
+                            let mut ai: usize = 0;
+                            while ai < arg_tys.len() {
+                                checker.unify(&arg_tys[ai], &effect_op.param_tys[ai], span);
+                                ai = ai + 1;
+                            }
+                        }
+                        if effect_is_generic {
+                            // Generic effect — return type has uninstantiated params,
+                            // use fresh inference variable instead
+                            result_ty = checker.fresh_infer();
+                        } else {
+                            result_ty = hir_ty::copy_type(&effect_op.return_ty);
+                        }
+                        found = true;
+                    }
+                }
+                &None => {}
+            }
+            oi = oi + 1;
+        }
+        if !found {
+            // Operation not found in effect - report error
+            checker.error(typeck::TypeErrorKind::UnhandledEffect, span);
+        }
+        result_ty
+    } else {
+        // Effect not registered (cross-module or unknown) - fall back to inference
+        checker.fresh_infer()
+    }
 }
 
 /// Infers the type of a resume expression.

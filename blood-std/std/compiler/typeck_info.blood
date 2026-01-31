@@ -125,6 +125,8 @@ pub struct EffectInfo {
     pub num_generics: u32,
     /// Operation names.
     pub op_names: Vec<common::Symbol>,
+    /// Detailed operation info (types for each operation).
+    pub operations: Vec<EffectOpInfo>,
 }
 
 impl EffectInfo {
@@ -134,12 +136,43 @@ impl EffectInfo {
         name: common::Symbol,
         num_generics: u32,
         op_names: Vec<common::Symbol>,
+        operations: Vec<EffectOpInfo>,
     ) -> EffectInfo {
         EffectInfo {
             def_id: def_id,
             name: name,
             num_generics: num_generics,
             op_names: op_names,
+            operations: operations,
+        }
+    }
+}
+
+/// Information about an effect operation for type checking.
+pub struct EffectOpInfo {
+    /// The DefId of the operation.
+    pub def_id: hir_def::DefId,
+    /// The name of the operation.
+    pub name: common::Symbol,
+    /// Parameter types.
+    pub param_tys: Vec<hir_ty::Type>,
+    /// Return type.
+    pub return_ty: hir_ty::Type,
+}
+
+impl EffectOpInfo {
+    /// Creates new effect operation info.
+    pub fn new(
+        def_id: hir_def::DefId,
+        name: common::Symbol,
+        param_tys: Vec<hir_ty::Type>,
+        return_ty: hir_ty::Type,
+    ) -> EffectOpInfo {
+        EffectOpInfo {
+            def_id: def_id,
+            name: name,
+            param_tys: param_tys,
+            return_ty: return_ty,
         }
     }
 }

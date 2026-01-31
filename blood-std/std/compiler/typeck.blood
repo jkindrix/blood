@@ -35,6 +35,7 @@ pub use typeck_info::StructInfo;
 pub use typeck_info::EnumInfo;
 pub use typeck_info::FnInfo;
 pub use typeck_info::EffectInfo;
+pub use typeck_info::EffectOpInfo;
 pub use typeck_info::FieldInfo;
 pub use typeck_info::VariantInfo;
 pub use typeck_info::FnSigInfo;
@@ -264,6 +265,8 @@ pub struct TypeChecker {
     pub builtin_box_def: Option<hir_def::DefId>,
     pub builtin_hashmap_def: Option<hir_def::DefId>,
     pub builtin_result_def: Option<hir_def::DefId>,
+    /// Effect info by DefId.index for O(1) lookup.
+    pub effects: Vec<Option<typeck_info::EffectInfo>>,
 }
 
 impl TypeChecker {
@@ -292,6 +295,7 @@ impl TypeChecker {
             builtin_box_def: Option::None,
             builtin_hashmap_def: Option::None,
             builtin_result_def: Option::None,
+            effects: Vec::new(),
         }
     }
 
@@ -321,6 +325,7 @@ impl TypeChecker {
             builtin_box_def: Option::None,
             builtin_hashmap_def: Option::None,
             builtin_result_def: Option::None,
+            effects: Vec::new(),
         }
     }
 
@@ -882,6 +887,39 @@ impl TypeChecker {
     /// Registers a trait implementation.
     pub fn register_trait_impl(self: &mut Self, impl_info: typeck_info::TraitImplInfo) {
         self.trait_impls.push(impl_info);
+    }
+
+    /// Registers an effect definition.
+    pub fn register_effect(self: &mut Self, def_id: hir_def::DefId, info: typeck_info::EffectInfo) {
+        let def_idx = def_id.index as usize;
+        while self.effects.len() <= def_idx {
+            self.effects.push(Option::None);
+        }
+        self.effects[def_idx] = Some(info);
+    }
+
+    /// Checks if an effect is registered.
+    pub fn has_effect(self: &Self, def_id: hir_def::DefId) -> bool {
+        let def_idx = def_id.index as usize;
+        if def_idx >= self.effects.len() {
+            return false;
+        }
+        match &self.effects[def_idx] {
+            &Some(_) => true,
+            &None => false,
+        }
+    }
+
+    /// Gets the number of operations for an effect.
+    pub fn get_effect_num_ops(self: &Self, def_id: hir_def::DefId) -> u32 {
+        let def_idx = def_id.index as usize;
+        if def_idx >= self.effects.len() {
+            return 0;
+        }
+        match &self.effects[def_idx] {
+            &Some(ref info) => info.operations.len() as u32,
+            &None => 0,
+        }
     }
 
     /// Checks if a type implements a trait.

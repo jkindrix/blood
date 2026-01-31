@@ -187,7 +187,9 @@ fn collect_item_signatures(
             // Other items don't need registration for basic type checking
             &hir_item::ItemKind::TypeAlias(_) => {}
             &hir_item::ItemKind::Trait(_) => {}
-            &hir_item::ItemKind::Effect(_) => {}
+            &hir_item::ItemKind::Effect(ref effect_def) => {
+                register_effect(checker, entry.def_id, entry.item.name.symbol, effect_def);
+            }
             &hir_item::ItemKind::Handler(_) => {}
             &hir_item::ItemKind::Module(_) => {}
             &hir_item::ItemKind::Macro(_) => {}
@@ -261,6 +263,52 @@ fn register_impl(
         methods,
     );
     checker.register_impl(impl_info);
+}
+
+/// Registers an effect definition for type checking.
+fn register_effect(
+    checker: &mut typeck::TypeChecker,
+    def_id: hir_def::DefId,
+    name: common::Symbol,
+    effect_def: &hir_item::EffectDef,
+) {
+    let num_generics = count_type_params(&effect_def.generics.params);
+
+    // Collect operation names
+    let mut op_names: Vec<common::Symbol> = Vec::new();
+    let mut operations: Vec<typeck::EffectOpInfo> = Vec::new();
+
+    let mut i: usize = 0;
+    while i < effect_def.operations.len() {
+        let effect_op = &effect_def.operations[i];
+        op_names.push(effect_op.name.symbol);
+
+        // Copy parameter types
+        let mut param_tys: Vec<hir_ty::Type> = Vec::new();
+        let mut j: usize = 0;
+        while j < effect_op.param_tys.len() {
+            param_tys.push(hir_ty::copy_type(&effect_op.param_tys[j]));
+            j = j + 1;
+        }
+
+        let op_info = typeck::EffectOpInfo::new(
+            effect_op.def_id,
+            effect_op.name.symbol,
+            param_tys,
+            hir_ty::copy_type(&effect_op.return_ty),
+        );
+        operations.push(op_info);
+        i = i + 1;
+    }
+
+    let info = typeck::EffectInfo::new(
+        def_id,
+        name,
+        num_generics,
+        op_names,
+        operations,
+    );
+    checker.register_effect(def_id, info);
 }
 
 // ============================================================

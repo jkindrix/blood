@@ -2043,11 +2043,16 @@ fn lower_perform_expr(
     // Operation DefId will be resolved during type checking
     let op_def_id = hir_def::DefId::new(0);
 
+    // Re-intern operation name from span for consistent symbol indices
+    let op_name_str = ctx.span_to_string(operation.span);
+    let op_name_sym = ctx.intern(op_name_str.as_str());
+
     let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
     hir_expr::Expr::new(
         hir_expr::ExprKind::Perform {
             effect_def: effect_def_id,
             op_def: op_def_id,
+            op_name: op_name_sym,
             args: args_hir,
         },
         ty,
