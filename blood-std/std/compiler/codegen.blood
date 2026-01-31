@@ -118,9 +118,8 @@ pub fn generate_module_with_items(
     }
 
     // Append string constants from the context
-    let mut str_output = String::new();
     ctx.emit_string_constants();
-    str_output.push_str(ctx.output.as_str());
+    output.push_str(ctx.output.as_str());
 
     // Intrinsic and runtime declarations (consolidated in intrinsic_declarations())
     let decls = intrinsic_declarations();
@@ -131,7 +130,7 @@ pub fn generate_module_with_items(
 
 /// Generates LLVM IR for a function with access to def names table.
 /// Legacy function for backward compatibility.
-fn generate_function_with_defs(
+pub fn generate_function_with_defs(
     body: &mir_body::MirBody,
     fn_name: &str,
     def_names: &Vec<codegen_ctx::DefNameEntry>,
@@ -149,7 +148,7 @@ fn generate_function_with_defs(
 }
 
 /// Generates LLVM IR for a single function using a shared codegen context.
-fn generate_function_with_ctx(
+pub fn generate_function_with_ctx(
     ctx: &mut codegen_ctx::CodegenCtx,
     body: &mir_body::MirBody,
     fn_name: &str,
@@ -226,7 +225,7 @@ fn generate_function_with_ctx(
 // ============================================================
 
 /// Populates the ADT registry from HIR items.
-fn populate_adt_registry(
+pub fn populate_adt_registry(
     ctx: &mut codegen_ctx::CodegenCtx,
     items: &Vec<hir_lower_ctx::ItemEntry>,
 ) {

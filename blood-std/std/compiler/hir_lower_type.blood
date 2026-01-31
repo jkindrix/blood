@@ -208,14 +208,25 @@ fn lower_type_path(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath) -
     }
 
     // Check for type parameter (single-segment, no args)
-    // Type parameters take precedence over other type definitions
+    // Type parameters take precedence over other type definitions.
+    // Try both the raw AST symbol and a re-interned symbol to handle
+    // any symbol index mismatches between parser and interner.
     if path.segments.len() == 1 {
         let seg = &path.segments[0];
         if seg.args.is_none() {
+            // First try the raw AST symbol
             let type_param = ctx.resolver.lookup_type_param(seg.name.symbol);
             if type_param.is_some() {
                 let ty_var_id = type_param.unwrap();
                 return hir_ty::Type::new(hir_ty::TypeKind::Infer(ty_var_id));
+            }
+            // Then try re-interned symbol
+            let tp_name_str = ctx.span_to_string(seg.name.span);
+            let tp_symbol = ctx.intern(tp_name_str.as_str());
+            let type_param2 = ctx.resolver.lookup_type_param(tp_symbol);
+            if type_param2.is_some() {
+                let ty_var_id2 = type_param2.unwrap();
+                return hir_ty::Type::new(hir_ty::TypeKind::Infer(ty_var_id2));
             }
         }
     }
@@ -571,9 +582,16 @@ fn lower_effect_ref(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> Opt
 // ============================================================
 
 /// Lower AST type parameters to HIR generics.
+/// Always pushes a TypeParams scope that the caller MUST pop
+/// by calling ctx.resolver.pop_scope() after lowering all
+/// types that may reference the generic parameters.
 pub fn lower_generics(ctx: &mut hir_lower_ctx::LoweringCtx, type_params: &Option<ast::TypeParams>, where_clause: &Option<ast::WhereClause>) -> hir_ty::Generics {
     let mut params: Vec<hir_ty::GenericParam> = Vec::new();
     let mut where_predicates: Vec<hir_ty::WherePredicate> = Vec::new();
+
+    // Always push a type parameter scope. Even for items without generics,
+    // an empty scope is harmless and simplifies the caller contract.
+    ctx.resolver.push_scope(resolve::ScopeKind::TypeParams);
 
     match type_params {
         &Some(ref tp) => {
@@ -589,6 +607,16 @@ pub fn lower_generics(ctx: &mut hir_lower_ctx::LoweringCtx, type_params: &Option
                         );
                         let param = hir_ty::GenericParam::TypeParam(type_param_def);
                         params.push(param);
+
+                        // Register type param in resolver scope so it can be looked up.
+                        // Use both the AST symbol AND a re-interned symbol to ensure
+                        // consistent lookup regardless of which symbol index is used.
+                        let _ = ctx.resolver.define_type_param(type_param.name.symbol, var_id);
+                        let param_name_str = ctx.span_to_string(type_param.name.span);
+                        let param_symbol = ctx.intern(param_name_str.as_str());
+                        if param_symbol.index != type_param.name.symbol.index {
+                            let _ = ctx.resolver.define_type_param(param_symbol, var_id);
+                        }
 
                         // If there are bounds, add them as where predicates
                         if type_param.bounds.len() > 0 {

@@ -214,8 +214,8 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx::LoweringCtx, expr: &ast::Expr) -> hir
                 span,
             )
         }
-        &ast::ExprKind::Closure { is_move: _, ref params, ref return_type, effects: _, ref body } => {
-            lower_closure_expr(ctx, params, return_type, body.as_ref(), span)
+        &ast::ExprKind::Closure { is_move: _, ref params, ref return_type, ref effects, ref body } => {
+            lower_closure_expr(ctx, params, return_type, effects, body.as_ref(), span)
         }
         &ast::ExprKind::WithHandle { handler: ref handler_expr, body: ref body_expr } => {
             let handler_hir = lower_expr(ctx, handler_expr.as_ref());
@@ -1924,6 +1924,7 @@ fn lower_closure_expr(
     ctx: &mut hir_lower_ctx::LoweringCtx,
     params: &Vec<ast::ClosureParam>,
     return_type: &Option<ast::Type>,
+    effects: &Option<ast::EffectRow>,
     body: &ast::Expr,
     span: common::Span,
 ) -> hir_expr::Expr {
@@ -1951,6 +1952,12 @@ fn lower_closure_expr(
         &None => hir_ty::Type::infer(ctx.alloc_ty_var()),
     };
 
+    // Lower effects
+    let effects_hir = match effects {
+        &Some(ref eff) => hir_lower_type::lower_effect_row(ctx, eff),
+        &None => hir_ty::EffectRow::empty(),
+    };
+
     // Lower body
     let body_hir = lower_expr(ctx, body);
 
@@ -1963,6 +1970,7 @@ fn lower_closure_expr(
             captures: captures,
             params: params_hir,
             return_ty: ret_ty,
+            effects: effects_hir,
             body: Box::new(body_hir),
             body_id: body_id,
         },

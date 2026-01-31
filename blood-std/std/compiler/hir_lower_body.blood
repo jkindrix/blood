@@ -66,6 +66,12 @@ pub fn lower_fn_body(
 
     let param_count = params.len() as u32;
 
+    // Ensure body let-bindings get LocalIds that don't collide with parameter IDs.
+    // Parameters use hardcoded LocalId(0..n-1), so body locals must start at n.
+    if ctx.next_local_id < param_count {
+        ctx.next_local_id = param_count;
+    }
+
     // Clear the body_locals accumulator before lowering the body.
     // During body lowering, lower_pattern will push binding locals here.
     ctx.body_locals = Vec::new();

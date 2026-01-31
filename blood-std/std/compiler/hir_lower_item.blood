@@ -339,7 +339,7 @@ fn lower_function_decl(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl) {
     let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
     let def_id = binding.def_id;
 
-    // Lower generics
+    // Lower generics (pushes a TypeParams scope internally)
     let generics = hir_lower_type::lower_generics(ctx, &f.type_params, &f.where_clause);
 
     // Lower parameters
@@ -350,6 +350,9 @@ fn lower_function_decl(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl) {
 
     // Lower effects
     let effects = lower_effects(ctx, &f.effects);
+
+    // Pop the TypeParams scope pushed by lower_generics
+    ctx.resolver.pop_scope();
 
     // Create function signature
     let sig = hir_item::FnSig::new(
@@ -404,8 +407,11 @@ fn lower_struct_decl(ctx: &mut hir_lower_ctx::LoweringCtx, s: &ast::StructDecl) 
     let no_where: Option<ast::WhereClause> = Option::None;
     let generics = hir_lower_type::lower_generics(ctx, &s.type_params, &no_where);
 
-    // Lower struct body
+    // Lower struct body (field types may reference generic params)
     let struct_body = lower_struct_body(ctx, &s.body);
+
+    // Pop type param scope after lowering all types that reference generics
+    ctx.resolver.pop_scope();
 
     let struct_def = hir_item::StructDef::new(generics, struct_body);
     let item_kind = hir_item::ItemKind::Struct(struct_def);
@@ -437,6 +443,9 @@ fn lower_enum_decl(ctx: &mut hir_lower_ctx::LoweringCtx, e: &ast::EnumDecl) {
     // Lower variants, passing the enum's DefId as parent
     let variants = lower_enum_variants(ctx, def_id, &e.variants);
 
+    // Pop type param scope after lowering all types that reference generics
+    ctx.resolver.pop_scope();
+
     let enum_def = hir_item::EnumDef::new(generics, variants);
     let item_kind = hir_item::ItemKind::Enum(enum_def);
     let item = hir_item::Item::new(
@@ -464,8 +473,11 @@ fn lower_type_alias_decl(ctx: &mut hir_lower_ctx::LoweringCtx, ta: &ast::TypeAli
     let no_where: Option<ast::WhereClause> = Option::None;
     let generics = hir_lower_type::lower_generics(ctx, &ta.type_params, &no_where);
 
-    // Lower the aliased type
+    // Lower the aliased type (may reference generic params)
     let ty = hir_lower_type::lower_type(ctx, &ta.ty);
+
+    // Pop type param scope after lowering all types that reference generics
+    ctx.resolver.pop_scope();
 
     let alias_def = hir_item::TypeAliasDef::new(generics, ty);
     let item_kind = hir_item::ItemKind::TypeAlias(alias_def);
@@ -568,7 +580,7 @@ fn lower_trait_decl(ctx: &mut hir_lower_ctx::LoweringCtx, t: &ast::TraitDecl) {
     let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
     let def_id = binding.def_id;
 
-    // Lower generics
+    // Lower generics (pushes type param scope if generics exist)
     let generics = hir_lower_type::lower_generics(ctx, &t.type_params, &t.where_clause);
 
     // Lower supertraits
@@ -593,6 +605,9 @@ fn lower_trait_decl(ctx: &mut hir_lower_ctx::LoweringCtx, t: &ast::TraitDecl) {
         }
         i = i + 1;
     }
+
+    // Pop type param scope after lowering all types that reference generics
+    ctx.resolver.pop_scope();
 
     let trait_def = hir_item::TraitDef::new(generics, supertraits, items);
     let item_kind = hir_item::ItemKind::Trait(trait_def);
@@ -637,7 +652,7 @@ fn lower_assoc_fn(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl, is_trai
         f.span,
     );
 
-    // Lower body if present
+    // Lower body if present (TypeParams scope still active for parameter type resolution)
     let body_id = if f.body.is_some() {
         let bid = ctx.alloc_body_id();
         let params = lower_fn_params(ctx, &f.params);
@@ -655,6 +670,10 @@ fn lower_assoc_fn(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl, is_trai
         Option::None
     };
 
+    // Pop type param scope after lowering ALL types that reference generics,
+    // including the body parameters and any type annotations within the body
+    ctx.resolver.pop_scope();
+
     let has_default = body_id.is_some();
     // Re-intern the function name through ctx.interner so it shares indices
     // with the builtin method names registered by typeck_driver.
@@ -671,6 +690,10 @@ fn lower_assoc_type(ctx: &mut hir_lower_ctx::LoweringCtx, ta: &ast::TypeAliasDec
     let no_where: Option<ast::WhereClause> = Option::None;
     let generics = hir_lower_type::lower_generics(ctx, &ta.type_params, &no_where);
     let ty = hir_lower_type::lower_type(ctx, &ta.ty);
+
+    // Pop type param scope after lowering the aliased type
+    ctx.resolver.pop_scope();
+
     let bounds: Vec<hir_ty::TraitRef> = Vec::new();
     hir_item::AssocType::new(def_id, ta.name, generics, bounds, Option::Some(ty))
 }
@@ -747,6 +770,9 @@ fn lower_effect_decl(ctx: &mut hir_lower_ctx::LoweringCtx, e: &ast::EffectDecl) 
         i = i + 1;
     }
 
+    // Pop type param scope after lowering all types that reference generics
+    ctx.resolver.pop_scope();
+
     let effect_def = hir_item::EffectDef::new(generics, parents, operations);
     let item_kind = hir_item::ItemKind::Effect(effect_def);
     // Effects don't have visibility in the AST, use public
@@ -776,6 +802,9 @@ fn lower_effect_op(ctx: &mut hir_lower_ctx::LoweringCtx, oper: &ast::OperationDe
     }
 
     let return_ty = hir_lower_type::lower_type(ctx, &oper.return_type);
+
+    // Pop type param scope after lowering all types that reference generics
+    ctx.resolver.pop_scope();
 
     // Re-intern operation name for cross-module consistency
     let op_name_str = ctx.span_to_string(oper.name.span);
@@ -815,13 +844,15 @@ fn lower_handler_decl(ctx: &mut hir_lower_ctx::LoweringCtx, h: &ast::HandlerDecl
     let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
     let def_id = binding.def_id;
 
-    // Lower generics
+    // Lower generics (pushes type param scope if generics exist)
     let generics = hir_lower_type::lower_generics(ctx, &h.type_params, &h.where_clause);
 
     // Lower the handled effect
     let effect_ty = hir_lower_type::lower_type(ctx, &h.effect);
     let handled_effect = type_to_effect_ref(&effect_ty);
     if handled_effect.is_none() {
+        // Pop scope before early return
+        ctx.resolver.pop_scope();
         ctx.error(
             hir::DiagnosticCode::E0104,
             common::make_string("invalid effect type in handler"),
@@ -856,6 +887,9 @@ fn lower_handler_decl(ctx: &mut hir_lower_ctx::LoweringCtx, h: &ast::HandlerDecl
         op_impls.push(oper_impl);
         i = i + 1;
     }
+
+    // Pop type param scope after lowering all types that reference generics
+    ctx.resolver.pop_scope();
 
     let handler_def = hir_item::HandlerDef::new(
         generics,
@@ -963,7 +997,7 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::ImplBlock) {
     // Impl blocks don't have names, so we allocate a fresh DefId
     let def_id = ctx.alloc_def_id();
 
-    // Lower generics
+    // Lower generics (pushes type param scope if generics exist)
     let generics = hir_lower_type::lower_generics(ctx, &imp.type_params, &imp.where_clause);
 
     // Lower trait ref if this is a trait impl
@@ -994,6 +1028,9 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::ImplBlock) {
 
     // Clear the Self type after processing the impl block
     ctx.current_self_type = Option::None;
+
+    // Pop type param scope after lowering all types that reference generics
+    ctx.resolver.pop_scope();
 
     let impl_def = hir_item::ImplDef::new(generics, trait_ref, self_ty, items);
     let item_kind = hir_item::ItemKind::Impl(impl_def);

@@ -1414,6 +1414,12 @@ fn lower_single_fn_body(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl) {
         }
     };
 
+    // Re-establish TypeParams scope for body lowering.
+    // Phase 3 (lower_function_decl) popped the scope after lowering the signature.
+    // Phase 4 needs it active for re-lowering parameter types and any type
+    // annotations within the body.
+    let _generics = hir_lower_type::lower_generics(ctx, &f.type_params, &f.where_clause);
+
     // Lower the function parameters (for creating locals)
     let params = hir_lower_item::lower_fn_params(ctx, &f.params);
 
@@ -1426,6 +1432,9 @@ fn lower_single_fn_body(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl) {
         &Option::None,  // No expression body (Blood uses block bodies)
         &f.body,
     );
+
+    // Pop the TypeParams scope pushed by lower_generics
+    ctx.resolver.pop_scope();
 
     // Store the body
     ctx.add_body(body_id, body);
