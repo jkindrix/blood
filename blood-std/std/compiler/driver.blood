@@ -586,7 +586,7 @@ pub struct FnInfo {
 }
 
 /// Finds the function Item that corresponds to a given BodyId.
-fn find_fn_for_body(
+pub fn find_fn_for_body(
     items: &Vec<hir_lower_ctx::ItemEntry>,
     target_body_id: hir_def::BodyId,
 ) -> Option<FnInfo> {
@@ -656,7 +656,7 @@ fn find_fn_for_body(
 }
 
 /// Resolves a Symbol to a String using the interner.
-fn resolve_symbol(interner: &interner::StringInterner, symbol: common::Symbol) -> String {
+pub fn resolve_symbol(interner: &interner::StringInterner, symbol: common::Symbol) -> String {
     match interner.resolve(symbol) {
         Option::Some(s) => clone_string(s),
         Option::None => make_fn_name(symbol.index as usize),
@@ -664,7 +664,7 @@ fn resolve_symbol(interner: &interner::StringInterner, symbol: common::Symbol) -
 }
 
 /// Extracts a string from source text given a span.
-fn span_to_string(source: &str, span: common::Span) -> String {
+pub fn span_to_string(source: &str, span: common::Span) -> String {
     let src_bytes = source.as_bytes();
     let mut result = String::new();
     let mut i = span.start;
@@ -676,7 +676,7 @@ fn span_to_string(source: &str, span: common::Span) -> String {
 }
 
 /// Resolves a function name from FnInfo, using source text for span-based extraction.
-fn resolve_fn_name(source: &str, info: &FnInfo) -> String {
+pub fn resolve_fn_name(source: &str, info: &FnInfo) -> String {
     let name = span_to_string(source, info.name_span);
     if name.len() > 0 {
         name
@@ -695,7 +695,7 @@ fn clone_string(s: &String) -> String {
 }
 
 /// Generates a function name from an index.
-fn make_fn_name(index: usize) -> String {
+pub fn make_fn_name(index: usize) -> String {
     let mut name = common::make_string("fn_");
     append_usize(&mut name, index);
     name

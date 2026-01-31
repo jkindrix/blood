@@ -1,0 +1,93 @@
+// Blood Self-Hosted Compiler - Streaming Code Generator
+//
+// This module provides streaming codegen functions that write LLVM IR
+// to disk one function at a time, avoiding OOM on large programs.
+// Blood has no destructors, so without streaming the memory grows unbounded.
+
+mod common;
+mod hir_def;
+mod hir_ty;
+mod hir_item;
+mod hir_lower_ctx;
+mod mir_def;
+mod mir_types;
+mod mir_stmt;
+mod mir_term;
+mod mir_body;
+mod codegen_types;
+mod codegen_ctx;
+mod codegen_expr;
+mod codegen_stmt;
+mod codegen_term;
+mod codegen;
+
+// ============================================================
+// Streaming Code Generation
+// ============================================================
+
+/// Begins streaming module generation by writing the module header to a file.
+/// Returns a CodegenCtx that the caller uses for per-function generation.
+/// The caller must register def_names and call generate_function_to_file for each body,
+/// then call finish_streaming_module to write trailing declarations.
+pub fn begin_streaming_module(
+    module_name: &str,
+    output_path: &str,
+    items: &Vec<hir_lower_ctx::ItemEntry>,
+) -> codegen_ctx::CodegenCtx {
+    let mut ctx = codegen_ctx::CodegenCtx::new();
+
+    // Populate ADT registry from HIR items
+    codegen::populate_adt_registry(&mut ctx, items);
+
+    // Build module header
+    let mut header = String::new();
+    header.push_str("; ModuleID = '");
+    header.push_str(module_name);
+    header.push_str("'\n");
+    header.push_str("source_filename = \"");
+    header.push_str(module_name);
+    header.push_str(".blood\"\n");
+    header.push_str("target datalayout = \"e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128\"\n");
+    header.push_str("target triple = \"x86_64-unknown-linux-gnu\"\n");
+    header.push_str("\n");
+
+    // Write header to file (overwrite/create)
+    file_write_string(output_path, header.as_str());
+
+    ctx
+}
+
+/// Generates LLVM IR for a single function and appends it to the output file.
+/// Returns true on success.
+pub fn generate_function_to_file(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    body: &mir_body::MirBody,
+    fn_name: &str,
+    output_path: &str,
+) -> bool {
+    // Generate the function IR using the shared codegen logic
+    let fn_ir = codegen::generate_function_with_ctx(ctx, body, fn_name);
+
+    // Append the function IR to file
+    file_append_string(output_path, fn_ir.as_str());
+
+    true
+}
+
+/// Finishes streaming module generation by appending string constants and declarations.
+/// Returns true on success.
+pub fn finish_streaming_module(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    output_path: &str,
+) -> bool {
+    // Emit string constants
+    ctx.output = String::new();
+    ctx.emit_string_constants();
+    file_append_string(output_path, ctx.output.as_str());
+
+    // Emit intrinsic declarations
+    let decls = codegen::intrinsic_declarations();
+    file_append_string(output_path, decls.as_str());
+
+    true
+}
