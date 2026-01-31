@@ -610,7 +610,34 @@ fn find_fn_for_body(
                     &Option::None => {}
                 }
             }
-            // Other item kinds don't have bodies in the same way
+            &hir_item::ItemKind::Impl(ref impl_def) => {
+                // Check associated functions in impl blocks
+                let mut j: usize = 0;
+                while j < impl_def.items.len() {
+                    match &impl_def.items[j] {
+                        &hir_item::AssocItem::Fn(ref assoc_fn) => {
+                            match &assoc_fn.body_id {
+                                &Option::Some(ref bid) => {
+                                    if bid.index == target_body_id.index {
+                                        return Option::Some(FnInfo {
+                                            def_id: assoc_fn.def_id,
+                                            name: assoc_fn.name.symbol,
+                                            name_span: assoc_fn.name.span,
+                                            return_ty: hir_ty::copy_type(&assoc_fn.sig.return_ty),
+                                            span: assoc_fn.name.span,
+                                        });
+                                    }
+                                }
+                                &Option::None => {}
+                            }
+                        }
+                        &hir_item::AssocItem::Type(_) => {}
+                        &hir_item::AssocItem::Const(_) => {}
+                    }
+                    j = j + 1;
+                }
+            }
+            // Other item kinds don't have function bodies
             &hir_item::ItemKind::Struct(_) => {}
             &hir_item::ItemKind::Enum(_) => {}
             &hir_item::ItemKind::TypeAlias(_) => {}
@@ -620,7 +647,6 @@ fn find_fn_for_body(
             &hir_item::ItemKind::Effect(_) => {}
             &hir_item::ItemKind::Handler(_) => {}
             &hir_item::ItemKind::Module(_) => {}
-            &hir_item::ItemKind::Impl(_) => {}
             &hir_item::ItemKind::Macro(_) => {}
             &hir_item::ItemKind::Foreign(_) => {}
         }

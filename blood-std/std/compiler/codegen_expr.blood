@@ -512,8 +512,12 @@ pub fn emit_rvalue(
 
             match ctx.get_local_hir_type(place.local) {
                 Option::Some(hir_type) => {
-                    match &hir_type.kind {
-                        &hir_ty::TypeKind::Adt { def_id, args: _ } => {
+                    // Extract the enum DefId, unwrapping through Ref/Ptr.
+                    // When matching on `&Enum`, the local's type is Ref { inner: Adt },
+                    // not Adt directly.
+                    let enum_def = extract_adt_def_id(hir_type);
+                    match enum_def {
+                        Option::Some(def_id) => {
                             match ctx.lookup_enum(def_id.index) {
                                 Option::Some(layout) => {
                                     discr_ty = clone_string(&layout.discriminant_type);
@@ -523,7 +527,7 @@ pub fn emit_rvalue(
                                 Option::None => {}
                             }
                         }
-                        _ => {}
+                        Option::None => {}
                     }
                 }
                 Option::None => {}
@@ -554,6 +558,20 @@ pub fn emit_rvalue(
                 ctx.emit_store("i64", discr_val.as_str(), dest);
             }
         }
+    }
+}
+
+/// Extracts the Adt DefId from a type, unwrapping through Ref and Ptr layers.
+/// Returns None if the underlying type is not an Adt.
+fn extract_adt_def_id(ty: &hir_ty::Type) -> Option<hir_def::DefId> {
+    match &ty.kind {
+        &hir_ty::TypeKind::Adt { def_id, args: _ } => {
+            Option::Some(hir_def::DefId::new(def_id.index))
+        }
+        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
+            extract_adt_def_id(inner.as_ref())
+        }
+        _ => Option::None,
     }
 }
 
