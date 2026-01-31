@@ -754,13 +754,24 @@ fn lower_record_expr(
                 if lookup.is_some() {
                     let result = lookup.unwrap();
                     let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
-                    let resolved = hir_def::ResolvedPath::new(binding.def_id, 0, f.name.span);
-                    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
-                    hir_expr::Expr::new(
-                        hir_expr::ExprKind::Path(resolved),
-                        ty,
-                        f.name.span,
-                    )
+                    // Local bindings must produce ExprKind::Local, not ExprKind::Path,
+                    // because their def_id is a dummy value (0xFFFFFFFF).
+                    if binding.is_local() {
+                        let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+                        hir_expr::Expr::new(
+                            hir_expr::ExprKind::Local(binding.local_id),
+                            ty,
+                            f.name.span,
+                        )
+                    } else {
+                        let resolved = hir_def::ResolvedPath::new(binding.def_id, 0, f.name.span);
+                        let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+                        hir_expr::Expr::new(
+                            hir_expr::ExprKind::Path(resolved),
+                            ty,
+                            f.name.span,
+                        )
+                    }
                 } else {
                     ctx.error(
                         hir::DiagnosticCode::E0102,

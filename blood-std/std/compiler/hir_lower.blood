@@ -109,6 +109,12 @@ pub fn lower_program_with_base_dir(program: &ast::Program, base_dir: String, sou
         body_count: ctx.bodies.len() as u32,
     };
 
+    // Collect all function-like DefIds from the resolver for codegen name registration.
+    // This catches functions that are registered in the resolver but may not appear
+    // as top-level items (e.g., builtin children, struct fields used as constructors,
+    // or functions from modules whose items aren't fully traversed).
+    collect_resolver_fn_defs(&mut ctx);
+
     // Transfer items, item_index, and bodies to the result
     let next_ty_var = ctx.next_ty_var;
     let next_def_id = ctx.next_def_id;
@@ -126,6 +132,8 @@ pub fn lower_program_with_base_dir(program: &ast::Program, base_dir: String, sou
         ctx.builtin_box_def,
         ctx.builtin_hashmap_def,
         ctx.builtin_result_def,
+        ctx.interner,
+        ctx.builtin_fn_defs,
     )
 }
 
@@ -360,9 +368,12 @@ fn register_builtin_children(ctx: &mut hir_lower_ctx::LoweringCtx) {
     // === String ===
     match ctx.builtin_string_def {
         Option::Some(parent) => {
-            register_builtin_child(ctx, parent, "new", hir_def::DefKind::Fn, dummy_span);
-            register_builtin_child(ctx, parent, "from", hir_def::DefKind::Fn, dummy_span);
-            register_builtin_child(ctx, parent, "with_capacity", hir_def::DefKind::Fn, dummy_span);
+            let d = register_builtin_child(ctx, parent, "new", hir_def::DefKind::Fn, dummy_span);
+            ctx.builtin_fn_defs.push(hir_lower_ctx::BuiltinFnDef::new(d.index, common::make_string("string_new")));
+            let d2 = register_builtin_child(ctx, parent, "from", hir_def::DefKind::Fn, dummy_span);
+            ctx.builtin_fn_defs.push(hir_lower_ctx::BuiltinFnDef::new(d2.index, common::make_string("string_from")));
+            let d3 = register_builtin_child(ctx, parent, "with_capacity", hir_def::DefKind::Fn, dummy_span);
+            ctx.builtin_fn_defs.push(hir_lower_ctx::BuiltinFnDef::new(d3.index, common::make_string("string_with_capacity")));
         }
         Option::None => {}
     }
@@ -370,8 +381,10 @@ fn register_builtin_children(ctx: &mut hir_lower_ctx::LoweringCtx) {
     // === Vec ===
     match ctx.builtin_vec_def {
         Option::Some(parent) => {
-            register_builtin_child(ctx, parent, "new", hir_def::DefKind::Fn, dummy_span);
-            register_builtin_child(ctx, parent, "with_capacity", hir_def::DefKind::Fn, dummy_span);
+            let d = register_builtin_child(ctx, parent, "new", hir_def::DefKind::Fn, dummy_span);
+            ctx.builtin_fn_defs.push(hir_lower_ctx::BuiltinFnDef::new(d.index, common::make_string("vec_new")));
+            let d2 = register_builtin_child(ctx, parent, "with_capacity", hir_def::DefKind::Fn, dummy_span);
+            ctx.builtin_fn_defs.push(hir_lower_ctx::BuiltinFnDef::new(d2.index, common::make_string("vec_with_capacity")));
         }
         Option::None => {}
     }
@@ -380,7 +393,9 @@ fn register_builtin_children(ctx: &mut hir_lower_ctx::LoweringCtx) {
     match ctx.builtin_option_def {
         Option::Some(parent) => {
             let some_def = register_builtin_variant(ctx, parent, "Some", dummy_span, 0);
+            ctx.builtin_fn_defs.push(hir_lower_ctx::BuiltinFnDef::new(some_def.index, common::make_string("option_some_ctor")));
             let none_def = register_builtin_variant(ctx, parent, "None", dummy_span, 1);
+            ctx.builtin_fn_defs.push(hir_lower_ctx::BuiltinFnDef::new(none_def.index, common::make_string("option_none_ctor")));
             // Also register as top-level names for bare Some/None usage
             let some_sym = ctx.intern("Some");
             ctx.resolver.define_global(some_sym, some_def);
@@ -393,7 +408,8 @@ fn register_builtin_children(ctx: &mut hir_lower_ctx::LoweringCtx) {
     // === Box ===
     match ctx.builtin_box_def {
         Option::Some(parent) => {
-            register_builtin_child(ctx, parent, "new", hir_def::DefKind::Fn, dummy_span);
+            let d = register_builtin_child(ctx, parent, "new", hir_def::DefKind::Fn, dummy_span);
+            ctx.builtin_fn_defs.push(hir_lower_ctx::BuiltinFnDef::new(d.index, common::make_string("box_new")));
         }
         Option::None => {}
     }
@@ -401,7 +417,8 @@ fn register_builtin_children(ctx: &mut hir_lower_ctx::LoweringCtx) {
     // === HashMap ===
     match ctx.builtin_hashmap_def {
         Option::Some(parent) => {
-            register_builtin_child(ctx, parent, "new", hir_def::DefKind::Fn, dummy_span);
+            let d = register_builtin_child(ctx, parent, "new", hir_def::DefKind::Fn, dummy_span);
+            ctx.builtin_fn_defs.push(hir_lower_ctx::BuiltinFnDef::new(d.index, common::make_string("hashmap_new")));
         }
         Option::None => {}
     }
@@ -410,7 +427,9 @@ fn register_builtin_children(ctx: &mut hir_lower_ctx::LoweringCtx) {
     match ctx.builtin_result_def {
         Option::Some(parent) => {
             let ok_def = register_builtin_variant(ctx, parent, "Ok", dummy_span, 0);
+            ctx.builtin_fn_defs.push(hir_lower_ctx::BuiltinFnDef::new(ok_def.index, common::make_string("result_ok_ctor")));
             let err_def = register_builtin_variant(ctx, parent, "Err", dummy_span, 1);
+            ctx.builtin_fn_defs.push(hir_lower_ctx::BuiltinFnDef::new(err_def.index, common::make_string("result_err_ctor")));
             // Also register as top-level names for bare Ok/Err usage
             let ok_sym = ctx.intern("Ok");
             ctx.resolver.define_global(ok_sym, ok_def);
@@ -1684,4 +1703,37 @@ fn lower_single_fn_body(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl) {
 
     // Store the body
     ctx.add_body(body_id, body);
+}
+
+// ============================================================
+// Catch-All: Collect Resolver DefIds for Codegen
+// ============================================================
+
+/// Collects all DefIds from the resolver's def_info and registers them
+/// with generic mangled names (def{N}_{name}) in builtin_fn_defs.
+///
+/// This acts as a catch-all: any DefId that appears as FnDef in MIR
+/// will get a name. More specific registrations (bodies, items, builtins)
+/// happen first in main.blood and take priority because lookup_def_name
+/// returns the first match.
+fn collect_resolver_fn_defs(ctx: &mut hir_lower_ctx::LoweringCtx) {
+    let mut i: usize = 0;
+    while i < ctx.resolver.def_info.len() {
+        let entry = &ctx.resolver.def_info[i];
+        let name_opt = ctx.interner.resolve(entry.info.name);
+        match name_opt {
+            Option::Some(name_str) => {
+                let mut mangled = String::new();
+                mangled.push_str("def");
+                hir_lower_ctx::append_u32_to_string(&mut mangled, entry.def_id.index);
+                mangled.push(95 as char); // '_'
+                mangled.push_str(name_str.as_str());
+                ctx.builtin_fn_defs.push(
+                    hir_lower_ctx::BuiltinFnDef::new(entry.def_id.index, mangled),
+                );
+            }
+            Option::None => {}
+        }
+        i = i + 1;
+    }
 }
