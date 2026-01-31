@@ -193,7 +193,48 @@ fn collect_item_signatures(
             &hir_item::ItemKind::Handler(_) => {}
             &hir_item::ItemKind::Module(_) => {}
             &hir_item::ItemKind::Macro(_) => {}
-            &hir_item::ItemKind::Foreign(_) => {}
+            &hir_item::ItemKind::Foreign(ref foreign_def) => {
+                register_foreign_fns(checker, foreign_def);
+            }
+        }
+        i = i + 1;
+    }
+}
+
+/// Registers function signatures from a foreign (bridge) definition.
+///
+/// This processes ForeignFn items and registers their typed signatures
+/// so the type checker can validate calls to builtin/FFI functions.
+fn register_foreign_fns(
+    checker: &mut typeck::TypeChecker,
+    foreign_def: &hir_item::ForeignDef,
+) {
+    let mut i: usize = 0;
+    while i < foreign_def.items.len() {
+        match &foreign_def.items[i] {
+            &hir_item::ForeignItem::Fn(ref foreign_fn) => {
+                let mut param_tys: Vec<hir_ty::Type> = Vec::new();
+                let mut j: usize = 0;
+                while j < foreign_fn.param_tys.len() {
+                    param_tys.push(hir_ty::copy_type(&foreign_fn.param_tys[j]));
+                    j = j + 1;
+                }
+                checker.register_fn_sig_direct(
+                    foreign_fn.def_id,
+                    param_tys,
+                    hir_ty::copy_type(&foreign_fn.return_ty),
+                    0,
+                );
+            }
+            &hir_item::ForeignItem::Static(ref foreign_static) => {
+                checker.register_static(
+                    foreign_static.def_id,
+                    foreign_static.name.symbol,
+                    hir_ty::copy_type(&foreign_static.ty),
+                    foreign_static.mutable,
+                );
+            }
+            &hir_item::ForeignItem::OpaqueType(_) => {}
         }
         i = i + 1;
     }

@@ -450,30 +450,268 @@ fn register_builtin_variant(
     def_id
 }
 
-/// Registers blood-rust runtime builtin free functions as global names.
-/// These functions are provided by the runtime and have no Blood source declaration.
+// ============================================================
+// Builtin Type Construction Helpers
+// ============================================================
+
+/// Constructs &str type for builtin signatures.
+fn bi_ref_str() -> hir_ty::Type {
+    hir_ty::Type::new(hir_ty::TypeKind::Ref {
+        inner: Box::new(hir_ty::Type::str_ty()),
+        mutable: false,
+    })
+}
+
+fn bi_i8() -> hir_ty::Type { hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::I8)) }
+fn bi_i16() -> hir_ty::Type { hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::I16)) }
+fn bi_i64() -> hir_ty::Type { hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::I64)) }
+fn bi_i128() -> hir_ty::Type { hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::I128)) }
+fn bi_u16() -> hir_ty::Type { hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::U16)) }
+fn bi_u32() -> hir_ty::Type { hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::U32)) }
+fn bi_u64() -> hir_ty::Type { hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::U64)) }
+fn bi_u128() -> hir_ty::Type { hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::U128)) }
+fn bi_f32() -> hir_ty::Type { hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::F32)) }
+fn bi_f64() -> hir_ty::Type { hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::F64)) }
+fn bi_char() -> hir_ty::Type { hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Char)) }
+
+/// Constructs an ADT type with no type arguments (e.g. String).
+fn bi_adt(def_id: hir_def::DefId) -> hir_ty::Type {
+    hir_ty::Type::new(hir_ty::TypeKind::Adt { def_id: def_id, args: Vec::new() })
+}
+
+/// Constructs Option<T> type.
+fn bi_option_of(option_def: hir_def::DefId, inner: hir_ty::Type) -> hir_ty::Type {
+    let mut args: Vec<hir_ty::Type> = Vec::new();
+    args.push(inner);
+    hir_ty::Type::new(hir_ty::TypeKind::Adt { def_id: option_def, args: args })
+}
+
+// ============================================================
+// Builtin Parameter List Helpers
+// ============================================================
+
+fn bi_params_0() -> Vec<hir_ty::Type> { Vec::new() }
+
+fn bi_params_1(a: hir_ty::Type) -> Vec<hir_ty::Type> {
+    let mut v: Vec<hir_ty::Type> = Vec::new();
+    v.push(a);
+    v
+}
+
+fn bi_params_2(a: hir_ty::Type, b: hir_ty::Type) -> Vec<hir_ty::Type> {
+    let mut v: Vec<hir_ty::Type> = Vec::new();
+    v.push(a);
+    v.push(b);
+    v
+}
+
+fn bi_params_3(a: hir_ty::Type, b: hir_ty::Type, c: hir_ty::Type) -> Vec<hir_ty::Type> {
+    let mut v: Vec<hir_ty::Type> = Vec::new();
+    v.push(a);
+    v.push(b);
+    v.push(c);
+    v
+}
+
+// ============================================================
+// Builtin Foreign Function Registration
+// ============================================================
+
+/// Registers a single builtin function as both a global name (for name resolution)
+/// and a ForeignFn item (for type checking via the Foreign pipeline).
+fn register_builtin_fn(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    foreign_items: &mut Vec<hir_item::ForeignItem>,
+    name: &str,
+    param_tys: Vec<hir_ty::Type>,
+    return_ty: hir_ty::Type,
+) {
+    let sym = ctx.intern(name);
+    let def_id = ctx.alloc_def_id();
+    let success = ctx.resolver.define_global(sym, def_id);
+    if success {
+        let dummy_span = common::Span::dummy();
+        ctx.resolver.register_def_info(def_id, hir_def::DefKind::Fn, sym, dummy_span, Option::None);
+        let spanned_name = common::SpannedSymbol { symbol: sym, span: dummy_span };
+        let foreign_fn = hir_item::ForeignFn::new(
+            def_id, spanned_name, param_tys, return_ty, false, dummy_span,
+        );
+        foreign_items.push(hir_item::ForeignItem::Fn(foreign_fn));
+    }
+}
+
+/// Registers all blood-rust runtime builtin functions.
+///
+/// Each builtin gets:
+/// 1. A DefId and global name in the resolver (for name resolution)
+/// 2. A ForeignFn item with typed signature (for type checking)
+///
+/// The ForeignFn items are wrapped in a ForeignDef and added to ctx.items,
+/// where the type checker's collect_item_signatures will register their
+/// signatures via the Foreign pipeline.
+///
+/// This matches all 101 free-standing builtins from blood-rust's builtins.rs.
+/// When bridge block parsing is implemented, these registrations will be
+/// replaced by parsed `bridge "C" runtime { ... }` declarations.
 fn register_builtin_functions(ctx: &mut hir_lower_ctx::LoweringCtx) {
-    let dummy_span = common::Span::dummy();
+    let mut items: Vec<hir_item::ForeignItem> = Vec::new();
 
-    // File I/O
-    register_one_builtin(ctx, "file_exists", hir_def::DefKind::Fn, dummy_span);
-    register_one_builtin(ctx, "file_read_to_string", hir_def::DefKind::Fn, dummy_span);
-    register_one_builtin(ctx, "file_write_string", hir_def::DefKind::Fn, dummy_span);
+    // === Console Output ===
+    register_builtin_fn(ctx, &mut items, "print", bi_params_1(bi_ref_str()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "println", bi_params_1(bi_ref_str()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "print_str", bi_params_1(bi_ref_str()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "println_str", bi_params_1(bi_ref_str()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "eprint", bi_params_1(bi_ref_str()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "eprintln", bi_params_1(bi_ref_str()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "eprint_str", bi_params_1(bi_ref_str()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "eprintln_str", bi_params_1(bi_ref_str()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "print_int", bi_params_1(hir_ty::Type::i32_ty()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "println_int", bi_params_1(hir_ty::Type::i32_ty()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "print_i64", bi_params_1(bi_i64()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "println_i64", bi_params_1(bi_i64()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "print_u64", bi_params_1(bi_u64()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "println_u64", bi_params_1(bi_u64()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "print_f64", bi_params_1(bi_f64()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "println_f64", bi_params_1(bi_f64()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "print_f32", bi_params_1(bi_f32()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "println_f32", bi_params_1(bi_f32()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "print_bool", bi_params_1(hir_ty::Type::bool_ty()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "println_bool", bi_params_1(hir_ty::Type::bool_ty()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "print_char", bi_params_1(bi_char()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "println_char", bi_params_1(bi_char()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "print_newline", bi_params_0(), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "print_f64_prec", bi_params_2(bi_f64(), hir_ty::Type::i32_ty()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "println_f64_prec", bi_params_2(bi_f64(), hir_ty::Type::i32_ty()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "print_f32_prec", bi_params_2(bi_f32(), hir_ty::Type::i32_ty()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "println_f32_prec", bi_params_2(bi_f32(), hir_ty::Type::i32_ty()), hir_ty::Type::unit());
 
-    // Command-line arguments
-    register_one_builtin(ctx, "args_count", hir_def::DefKind::Fn, dummy_span);
-    register_one_builtin(ctx, "args_get", hir_def::DefKind::Fn, dummy_span);
+    // === Control Flow / Assertions ===
+    register_builtin_fn(ctx, &mut items, "panic", bi_params_1(bi_ref_str()), hir_ty::Type::never());
+    register_builtin_fn(ctx, &mut items, "assert", bi_params_1(hir_ty::Type::bool_ty()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "assert_eq_int", bi_params_2(hir_ty::Type::i32_ty(), hir_ty::Type::i32_ty()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "assert_eq_bool", bi_params_2(hir_ty::Type::bool_ty(), hir_ty::Type::bool_ty()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "unreachable", bi_params_0(), hir_ty::Type::never());
+    register_builtin_fn(ctx, &mut items, "todo", bi_params_0(), hir_ty::Type::never());
+    register_builtin_fn(ctx, &mut items, "process_exit", bi_params_1(hir_ty::Type::i32_ty()), hir_ty::Type::never());
 
-    // Console output
-    register_one_builtin(ctx, "print_str", hir_def::DefKind::Fn, dummy_span);
-    register_one_builtin(ctx, "println_str", hir_def::DefKind::Fn, dummy_span);
-    register_one_builtin(ctx, "eprintln_str", hir_def::DefKind::Fn, dummy_span);
+    // === Memory ===
+    register_builtin_fn(ctx, &mut items, "size_of_i32", bi_params_0(), bi_i64());
+    register_builtin_fn(ctx, &mut items, "size_of_i64", bi_params_0(), bi_i64());
+    register_builtin_fn(ctx, &mut items, "size_of_bool", bi_params_0(), bi_i64());
+    register_builtin_fn(ctx, &mut items, "alloc", bi_params_1(bi_u64()), bi_u64());
+    register_builtin_fn(ctx, &mut items, "realloc", bi_params_2(bi_u64(), bi_u64()), bi_u64());
+    register_builtin_fn(ctx, &mut items, "free", bi_params_1(bi_u64()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "memcpy", bi_params_3(bi_u64(), bi_u64(), bi_u64()), bi_u64());
 
-    // Panic (parsed as regular identifier, ! handled separately)
-    register_one_builtin(ctx, "panic", hir_def::DefKind::Fn, dummy_span);
+    // === Pointer Operations ===
+    register_builtin_fn(ctx, &mut items, "ptr_read_i32", bi_params_1(bi_u64()), hir_ty::Type::i32_ty());
+    register_builtin_fn(ctx, &mut items, "ptr_write_i32", bi_params_2(bi_u64(), hir_ty::Type::i32_ty()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "ptr_read_i64", bi_params_1(bi_u64()), bi_i64());
+    register_builtin_fn(ctx, &mut items, "ptr_write_i64", bi_params_2(bi_u64(), bi_i64()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "ptr_read_u64", bi_params_1(bi_u64()), bi_u64());
+    register_builtin_fn(ctx, &mut items, "ptr_write_u64", bi_params_2(bi_u64(), bi_u64()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "ptr_read_u8", bi_params_1(bi_u64()), hir_ty::Type::u8_ty());
+    register_builtin_fn(ctx, &mut items, "ptr_write_u8", bi_params_2(bi_u64(), hir_ty::Type::u8_ty()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "ptr_read_f64", bi_params_1(bi_u64()), bi_f64());
+    register_builtin_fn(ctx, &mut items, "ptr_write_f64", bi_params_2(bi_u64(), bi_f64()), hir_ty::Type::unit());
 
-    // Process control
-    register_one_builtin(ctx, "process_exit", hir_def::DefKind::Fn, dummy_span);
+    // === String Operations ===
+    register_builtin_fn(ctx, &mut items, "str_len", bi_params_1(bi_ref_str()), bi_i64());
+    register_builtin_fn(ctx, &mut items, "str_eq", bi_params_2(bi_ref_str(), bi_ref_str()), hir_ty::Type::bool_ty());
+    register_builtin_fn(ctx, &mut items, "str_concat", bi_params_2(bi_ref_str(), bi_ref_str()), bi_ref_str());
+
+    // === Input ===
+    register_builtin_fn(ctx, &mut items, "read_int", bi_params_0(), hir_ty::Type::i32_ty());
+
+    // === Conversion ===
+    register_builtin_fn(ctx, &mut items, "i8_to_string", bi_params_1(bi_i8()), bi_ref_str());
+    register_builtin_fn(ctx, &mut items, "i16_to_string", bi_params_1(bi_i16()), bi_ref_str());
+    register_builtin_fn(ctx, &mut items, "int_to_string", bi_params_1(hir_ty::Type::i32_ty()), bi_ref_str());
+    register_builtin_fn(ctx, &mut items, "i64_to_string", bi_params_1(bi_i64()), bi_ref_str());
+    register_builtin_fn(ctx, &mut items, "i128_to_string", bi_params_1(bi_i128()), bi_ref_str());
+    register_builtin_fn(ctx, &mut items, "u8_to_string", bi_params_1(hir_ty::Type::u8_ty()), bi_ref_str());
+    register_builtin_fn(ctx, &mut items, "u16_to_string", bi_params_1(bi_u16()), bi_ref_str());
+    register_builtin_fn(ctx, &mut items, "u32_to_string", bi_params_1(bi_u32()), bi_ref_str());
+    register_builtin_fn(ctx, &mut items, "u64_to_string", bi_params_1(bi_u64()), bi_ref_str());
+    register_builtin_fn(ctx, &mut items, "u128_to_string", bi_params_1(bi_u128()), bi_ref_str());
+    register_builtin_fn(ctx, &mut items, "bool_to_string", bi_params_1(hir_ty::Type::bool_ty()), bi_ref_str());
+    register_builtin_fn(ctx, &mut items, "char_to_string", bi_params_1(bi_char()), bi_ref_str());
+    register_builtin_fn(ctx, &mut items, "f32_to_string", bi_params_1(bi_f32()), bi_ref_str());
+    register_builtin_fn(ctx, &mut items, "f64_to_string", bi_params_1(bi_f64()), bi_ref_str());
+    register_builtin_fn(ctx, &mut items, "i32_to_i64", bi_params_1(hir_ty::Type::i32_ty()), bi_i64());
+    register_builtin_fn(ctx, &mut items, "i64_to_i32", bi_params_1(bi_i64()), hir_ty::Type::i32_ty());
+
+    // === Math (LLVM Intrinsics) ===
+    register_builtin_fn(ctx, &mut items, "sqrt", bi_params_1(bi_f64()), bi_f64());
+    register_builtin_fn(ctx, &mut items, "sqrt_f32", bi_params_1(bi_f32()), bi_f32());
+    register_builtin_fn(ctx, &mut items, "abs", bi_params_1(bi_f64()), bi_f64());
+    register_builtin_fn(ctx, &mut items, "abs_f32", bi_params_1(bi_f32()), bi_f32());
+    register_builtin_fn(ctx, &mut items, "floor", bi_params_1(bi_f64()), bi_f64());
+    register_builtin_fn(ctx, &mut items, "ceil", bi_params_1(bi_f64()), bi_f64());
+    register_builtin_fn(ctx, &mut items, "sin", bi_params_1(bi_f64()), bi_f64());
+    register_builtin_fn(ctx, &mut items, "cos", bi_params_1(bi_f64()), bi_f64());
+    register_builtin_fn(ctx, &mut items, "exp", bi_params_1(bi_f64()), bi_f64());
+    register_builtin_fn(ctx, &mut items, "log", bi_params_1(bi_f64()), bi_f64());
+    register_builtin_fn(ctx, &mut items, "pow", bi_params_2(bi_f64(), bi_f64()), bi_f64());
+
+    // === File I/O ===
+    register_builtin_fn(ctx, &mut items, "file_open", bi_params_2(bi_ref_str(), bi_ref_str()), bi_i64());
+    register_builtin_fn(ctx, &mut items, "file_read", bi_params_3(bi_i64(), bi_u64(), bi_u64()), bi_i64());
+    register_builtin_fn(ctx, &mut items, "file_write", bi_params_3(bi_i64(), bi_u64(), bi_u64()), bi_i64());
+    register_builtin_fn(ctx, &mut items, "file_close", bi_params_1(bi_i64()), hir_ty::Type::i32_ty());
+    register_builtin_fn(ctx, &mut items, "file_read_to_string", bi_params_1(bi_ref_str()), bi_ref_str());
+    register_builtin_fn(ctx, &mut items, "file_write_string", bi_params_2(bi_ref_str(), bi_ref_str()), hir_ty::Type::bool_ty());
+    register_builtin_fn(ctx, &mut items, "file_append_string", bi_params_2(bi_ref_str(), bi_ref_str()), hir_ty::Type::bool_ty());
+    register_builtin_fn(ctx, &mut items, "file_exists", bi_params_1(bi_ref_str()), hir_ty::Type::bool_ty());
+    register_builtin_fn(ctx, &mut items, "file_delete", bi_params_1(bi_ref_str()), hir_ty::Type::bool_ty());
+    register_builtin_fn(ctx, &mut items, "file_size", bi_params_1(bi_ref_str()), bi_i64());
+
+    // === System ===
+    register_builtin_fn(ctx, &mut items, "system", bi_params_1(bi_ref_str()), hir_ty::Type::i32_ty());
+
+    // === Command-line Arguments ===
+    register_builtin_fn(ctx, &mut items, "args_count", bi_params_0(), hir_ty::Type::i32_ty());
+    register_builtin_fn(ctx, &mut items, "args_get", bi_params_1(hir_ty::Type::i32_ty()), bi_ref_str());
+    register_builtin_fn(ctx, &mut items, "args_join", bi_params_0(), bi_ref_str());
+
+    // === Builtins requiring String type ===
+    match ctx.builtin_string_def {
+        Option::Some(string_def) => {
+            register_builtin_fn(ctx, &mut items, "read_line", bi_params_0(), bi_adt(string_def));
+        }
+        Option::None => {}
+    }
+
+    // === Builtins requiring Option type ===
+    match ctx.builtin_option_def {
+        Option::Some(option_def) => {
+            register_builtin_fn(ctx, &mut items, "parse_f64", bi_params_1(bi_ref_str()), bi_option_of(option_def, bi_f64()));
+            register_builtin_fn(ctx, &mut items, "parse_i64_radix", bi_params_2(bi_ref_str(), bi_u32()), bi_option_of(option_def, bi_i64()));
+            register_builtin_fn(ctx, &mut items, "parse_u8_radix", bi_params_2(bi_ref_str(), bi_u32()), bi_option_of(option_def, hir_ty::Type::u8_ty()));
+            register_builtin_fn(ctx, &mut items, "parse_u32_radix", bi_params_2(bi_ref_str(), bi_u32()), bi_option_of(option_def, bi_u32()));
+            register_builtin_fn(ctx, &mut items, "char_from_u32", bi_params_1(bi_u32()), bi_option_of(option_def, bi_char()));
+        }
+        Option::None => {}
+    }
+
+    // Wrap all builtins in a single ForeignDef item for the type checker.
+    // The typeck_driver's collect_item_signatures will process this via
+    // the Foreign pipeline, registering FnSig for each ForeignFn.
+    if items.len() > 0 {
+        let dummy_span = common::Span::dummy();
+        let container_def_id = ctx.alloc_def_id();
+        let name_sym = ctx.intern("__builtins");
+        let spanned_name = common::SpannedSymbol { symbol: name_sym, span: dummy_span };
+        let foreign_def = hir_item::ForeignDef::new(hir_item::Abi::C, items);
+        let item = hir_item::Item::new(
+            container_def_id,
+            spanned_name,
+            hir_item::ItemKind::Foreign(foreign_def),
+            common::Visibility::Public,
+            dummy_span,
+        );
+        ctx.items.push(hir_lower_ctx::ItemEntry::new(container_def_id, item));
+    }
 }
 
 // ============================================================
