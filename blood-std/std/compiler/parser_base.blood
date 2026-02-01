@@ -192,7 +192,7 @@ impl<'src> Parser<'src> {
     pub fn expect_closing_angle(self: &mut Self) -> bool {
         if self.pending_gt {
             self.pending_gt = false;
-            self.previous = token::Token { kind: token::TokenKind::Gt, span: self.previous.span };
+            self.previous = token::Token { kind: token::TokenKind::Gt, span: self.previous.span, leading_trivia: Vec::new() };
             return true;
         }
         if self.current.kind == token::TokenKind::Gt {
@@ -203,7 +203,7 @@ impl<'src> Parser<'src> {
             let shr_span = self.current.span;
             self.pending_gt = true;
             self.advance();
-            self.previous = token::Token { kind: token::TokenKind::Gt, span: shr_span };
+            self.previous = token::Token { kind: token::TokenKind::Gt, span: shr_span, leading_trivia: Vec::new() };
             return true;
         }
         self.error_expected_kind(token::TokenKind::Gt);

@@ -597,18 +597,62 @@ impl TokenKind {
     }
 }
 
-/// A token with its kind and source span
-pub struct Token {
-    pub kind: TokenKind,
+// ============================================================
+// Trivia
+// ============================================================
+
+/// The kind of trivia (whitespace/comments) attached to a token.
+pub enum TriviaKind {
+    /// Spaces and tabs.
+    Whitespace,
+    /// A newline character (LF or CR+LF).
+    Newline,
+    /// A line comment (// ...).
+    LineComment,
+    /// A block comment (/* ... */).
+    BlockComment,
+}
+
+/// A piece of trivia (whitespace or comment) preceding a token.
+pub struct Trivia {
+    /// The kind of trivia.
+    pub kind: TriviaKind,
+    /// The source span of this trivia.
     pub span: common::Span,
+}
+
+impl Trivia {
+    /// Creates a new trivia node.
+    pub fn new(kind: TriviaKind, span: common::Span) -> Trivia {
+        Trivia { kind: kind, span: span }
+    }
+}
+
+// ============================================================
+// Token
+// ============================================================
+
+/// A token with its kind, source span, and leading trivia.
+pub struct Token {
+    /// The token kind.
+    pub kind: TokenKind,
+    /// The source span of the token itself.
+    pub span: common::Span,
+    /// Leading trivia (whitespace and comments) before this token.
+    pub leading_trivia: Vec<Trivia>,
 }
 
 impl Token {
     pub fn new(kind: TokenKind, span: common::Span) -> Token {
-        Token { kind, span }
+        Token { kind, span, leading_trivia: Vec::new() }
     }
 
     pub fn dummy(kind: TokenKind) -> Token {
-        Token { kind, span: common::Span::dummy() }
+        Token { kind, span: common::Span::dummy(), leading_trivia: Vec::new() }
+    }
+
+    /// Creates a token with attached leading trivia.
+    pub fn with_trivia(kind: TokenKind, span: common::Span, trivia: Vec<Trivia>) -> Token {
+        Token { kind, span, leading_trivia: trivia }
     }
 }

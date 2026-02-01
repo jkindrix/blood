@@ -23,6 +23,8 @@ pub struct Lexer<'src> {
     token_column: u32,
     /// Flag for unterminated block comment
     has_unterminated_comment: bool,
+    /// Pending trivia to attach to the next token
+    pending_trivia: Vec<token::Trivia>,
 }
 
 impl<'src> Lexer<'src> {
@@ -37,6 +39,7 @@ impl<'src> Lexer<'src> {
             token_line: 1,
             token_column: 1,
             has_unterminated_comment: false,
+            pending_trivia: Vec::new(),
         }
     }
 
@@ -93,8 +96,9 @@ impl<'src> Lexer<'src> {
         self.token_column = self.column;
     }
 
-    /// Create a token with the current span
-    fn make_token(self: &Self, kind: token::TokenKind) -> token::Token {
+    /// Create a token with the current span and attached trivia.
+    fn make_token(self: &mut Self, kind: token::TokenKind) -> token::Token {
+        let trivia = self.take_pending_trivia();
         token::Token {
             kind,
             span: token::common::Span {
@@ -103,28 +107,92 @@ impl<'src> Lexer<'src> {
                 line: self.token_line,
                 column: self.token_column,
             },
+            leading_trivia: trivia,
         }
     }
 
-    /// Skip whitespace and comments
-    fn skip_whitespace(self: &mut Self) {
+    /// Takes the pending trivia, replacing it with an empty vec.
+    fn take_pending_trivia(self: &mut Self) -> Vec<token::Trivia> {
+        let trivia = self.pending_trivia;
+        self.pending_trivia = Vec::new();
+        trivia
+    }
+
+    /// Collect trivia (whitespace and comments), returning them as a vector.
+    /// Trivia is preserved for formatting tools; the parser ignores it.
+    fn collect_trivia(self: &mut Self) -> Vec<token::Trivia> {
+        let mut trivia: Vec<token::Trivia> = Vec::new();
         loop {
             let c = self.current();
-            if c == 32 || c == 9 || c == 13 || c == 10 {
-                // space, tab, CR, LF
+            if c == 10 {
+                // LF newline
+                let start_pos = self.pos;
+                let start_line = self.line;
+                let start_col = self.column;
                 self.advance();
+                let span = token::common::Span {
+                    start: start_pos,
+                    end: self.pos,
+                    line: start_line,
+                    column: start_col,
+                };
+                trivia.push(token::Trivia::new(token::TriviaKind::Newline, span));
+            } else if c == 13 {
+                // CR or CR+LF
+                let start_pos = self.pos;
+                let start_line = self.line;
+                let start_col = self.column;
+                self.advance();
+                if self.current() == 10 {
+                    self.advance();
+                }
+                let span = token::common::Span {
+                    start: start_pos,
+                    end: self.pos,
+                    line: start_line,
+                    column: start_col,
+                };
+                trivia.push(token::Trivia::new(token::TriviaKind::Newline, span));
+            } else if c == 32 || c == 9 {
+                // space or tab — collect contiguous whitespace
+                let start_pos = self.pos;
+                let start_line = self.line;
+                let start_col = self.column;
+                while self.current() == 32 || self.current() == 9 {
+                    self.advance();
+                }
+                let span = token::common::Span {
+                    start: start_pos,
+                    end: self.pos,
+                    line: start_line,
+                    column: start_col,
+                };
+                trivia.push(token::Trivia::new(token::TriviaKind::Whitespace, span));
             } else if c == 47 && self.peek() == 47 {
                 // // line comment
                 if self.peek_at(2usize) == 47 && self.peek_at(3usize) != 47 {
-                    // /// doc comment - don't skip
+                    // /// doc comment - don't skip, it's a real token
                     break;
                 }
-                // Regular line comment - skip to end of line
+                // Regular line comment - collect as trivia
+                let start_pos = self.pos;
+                let start_line = self.line;
+                let start_col = self.column;
                 while self.current() != 0 && self.current() != 10 {
                     self.advance();
                 }
+                let span = token::common::Span {
+                    start: start_pos,
+                    end: self.pos,
+                    line: start_line,
+                    column: start_col,
+                };
+                trivia.push(token::Trivia::new(token::TriviaKind::LineComment, span));
             } else if c == 47 && self.peek() == 42 {
                 // /* block comment */
+                let start_pos = self.pos;
+                let start_line = self.line;
+                let start_col = self.column;
                 self.advance(); // skip /
                 self.advance(); // skip *
                 let mut depth: i32 = 1;
@@ -144,10 +212,18 @@ impl<'src> Lexer<'src> {
                 if depth > 0 {
                     self.has_unterminated_comment = true;
                 }
+                let span = token::common::Span {
+                    start: start_pos,
+                    end: self.pos,
+                    line: start_line,
+                    column: start_col,
+                };
+                trivia.push(token::Trivia::new(token::TriviaKind::BlockComment, span));
             } else {
                 break;
             }
         }
+        trivia
     }
 
     /// Check if byte is a digit
@@ -172,7 +248,7 @@ impl<'src> Lexer<'src> {
 
     /// Get the next token
     pub fn next_token(self: &mut Self) -> token::Token {
-        self.skip_whitespace();
+        self.pending_trivia = self.collect_trivia();
         self.start_token();
 
         if self.has_unterminated_comment {
