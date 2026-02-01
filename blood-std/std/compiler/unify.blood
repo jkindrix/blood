@@ -317,6 +317,160 @@ pub fn substitute_type_params(ty: &hir_ty::Type, subst: &TypeParamSubst) -> hir_
     }
 }
 
+/// Substitutes forall-bound type variables in a type.
+/// Unlike substitute_type_params, this correctly handles variable capture in
+/// nested forall types by filtering out inner-bound params from the substitution.
+fn substitute_forall_vars(ty: &hir_ty::Type, subst: &TypeParamSubst) -> hir_ty::Type {
+    if subst.is_empty() {
+        return hir_ty::copy_type(ty);
+    }
+
+    match &ty.kind {
+        &hir_ty::TypeKind::Param(param_id) => {
+            match subst.lookup(param_id.index) {
+                Some(concrete_ty) => concrete_ty,
+                Option::None => hir_ty::copy_type(ty),
+            }
+        }
+        &hir_ty::TypeKind::Primitive(_) => hir_ty::copy_type(ty),
+        &hir_ty::TypeKind::Never => hir_ty::copy_type(ty),
+        &hir_ty::TypeKind::Error => hir_ty::copy_type(ty),
+        &hir_ty::TypeKind::Infer(_) => hir_ty::copy_type(ty),
+        &hir_ty::TypeKind::Tuple(ref types) => {
+            let mut result: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < types.len() {
+                result.push(substitute_forall_vars(&types[i], subst));
+                i = i + 1;
+            }
+            hir_ty::Type::new(hir_ty::TypeKind::Tuple(result))
+        }
+        &hir_ty::TypeKind::Array { ref element, size } => {
+            hir_ty::Type::new(hir_ty::TypeKind::Array {
+                element: Box::new(substitute_forall_vars(element.as_ref(), subst)),
+                size: size,
+            })
+        }
+        &hir_ty::TypeKind::Slice { ref element } => {
+            hir_ty::Type::new(hir_ty::TypeKind::Slice {
+                element: Box::new(substitute_forall_vars(element.as_ref(), subst)),
+            })
+        }
+        &hir_ty::TypeKind::Ref { ref inner, mutable } => {
+            hir_ty::Type::new(hir_ty::TypeKind::Ref {
+                inner: Box::new(substitute_forall_vars(inner.as_ref(), subst)),
+                mutable: mutable,
+            })
+        }
+        &hir_ty::TypeKind::Ptr { ref inner, mutable } => {
+            hir_ty::Type::new(hir_ty::TypeKind::Ptr {
+                inner: Box::new(substitute_forall_vars(inner.as_ref(), subst)),
+                mutable: mutable,
+            })
+        }
+        &hir_ty::TypeKind::Adt { def_id, ref args } => {
+            let mut result_args: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < args.len() {
+                result_args.push(substitute_forall_vars(&args[i], subst));
+                i = i + 1;
+            }
+            hir_ty::Type::new(hir_ty::TypeKind::Adt {
+                def_id: def_id,
+                args: result_args,
+            })
+        }
+        &hir_ty::TypeKind::Fn { ref params, ref ret, ref effects } => {
+            let mut result_params: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < params.len() {
+                result_params.push(substitute_forall_vars(&params[i], subst));
+                i = i + 1;
+            }
+            hir_ty::Type::new(hir_ty::TypeKind::Fn {
+                params: result_params,
+                ret: Box::new(substitute_forall_vars(ret.as_ref(), subst)),
+                effects: substitute_forall_effect_row(effects, subst),
+            })
+        }
+        &hir_ty::TypeKind::Record { ref fields, ref row_var } => {
+            let mut result_fields: Vec<hir_ty::RecordField> = Vec::new();
+            let mut i: usize = 0;
+            while i < fields.len() {
+                result_fields.push(hir_ty::RecordField::new(
+                    fields[i].name,
+                    substitute_forall_vars(&fields[i].ty, subst),
+                ));
+                i = i + 1;
+            }
+            hir_ty::Type::new(hir_ty::TypeKind::Record {
+                fields: result_fields,
+                row_var: *row_var,
+            })
+        }
+        &hir_ty::TypeKind::Forall { ref params, ref body } => {
+            // Avoid variable capture: filter out inner-bound params from subst
+            let mut filtered = TypeParamSubst::new();
+            let mut i: usize = 0;
+            while i < subst.entries.len() {
+                let entry = &subst.entries[i];
+                let mut is_bound: bool = false;
+                let mut j: usize = 0;
+                while j < params.len() {
+                    if params[j].index == entry.param_index {
+                        is_bound = true;
+                    }
+                    j = j + 1;
+                }
+                if !is_bound {
+                    filtered.add(entry.param_index, hir_ty::copy_type(&entry.ty));
+                }
+                i = i + 1;
+            }
+            let mut copied_params: Vec<hir_def::TyVarId> = Vec::new();
+            let mut k: usize = 0;
+            while k < params.len() {
+                copied_params.push(params[k]);
+                k = k + 1;
+            }
+            hir_ty::Type::new(hir_ty::TypeKind::Forall {
+                params: copied_params,
+                body: Box::new(substitute_forall_vars(body.as_ref(), &filtered)),
+            })
+        }
+        &hir_ty::TypeKind::Ownership { qualifier, ref inner } => {
+            hir_ty::Type::new(hir_ty::TypeKind::Ownership {
+                qualifier: qualifier,
+                inner: Box::new(substitute_forall_vars(inner.as_ref(), subst)),
+            })
+        }
+    }
+}
+
+/// Substitutes forall-bound type variables in an effect row.
+fn substitute_forall_effect_row(row: &hir_ty::EffectRow, subst: &TypeParamSubst) -> hir_ty::EffectRow {
+    let mut result_effects: Vec<hir_ty::EffectRef> = Vec::new();
+    let mut i: usize = 0;
+    while i < row.effects.len() {
+        let eff = &row.effects[i];
+        let mut result_args: Vec<hir_ty::Type> = Vec::new();
+        let mut j: usize = 0;
+        while j < eff.args.len() {
+            result_args.push(substitute_forall_vars(&eff.args[j], subst));
+            j = j + 1;
+        }
+        result_effects.push(hir_ty::EffectRef {
+            def_id: eff.def_id,
+            args: result_args,
+        });
+        i = i + 1;
+    }
+    hir_ty::EffectRow {
+        effects: result_effects,
+        row_var: row.row_var,
+    }
+}
+
 /// Extracts type parameter bindings by matching an impl's self_ty against
 /// the actual receiver type. For example, if self_ty is `Box<Param(0)>` and
 /// receiver is `Box<Expr>`, this produces `{0 → Expr}`.
@@ -1431,6 +1585,82 @@ fn unify_resolved(
         (&hir_ty::TypeKind::Never, _) => UnifyResult::Ok,
         (_, &hir_ty::TypeKind::Never) => UnifyResult::Ok,
 
+        // Forall types: must come before specific type arms so that
+        // (non-Forall, Forall) cases are instantiated rather than rejected.
+        (&hir_ty::TypeKind::Forall { ref params, ref body }, other_kind) => {
+            let params_a = params;
+            let body_a = body;
+            match other_kind {
+                &hir_ty::TypeKind::Forall { ref params, ref body } => {
+                    // Two forall types unify if they have the same number of params
+                    // and their bodies unify under alpha-renaming
+                    if params_a.len() != params.len() {
+                        return UnifyResult::Err(UnifyError::mismatch(span));
+                    }
+                    // Create fresh inference variables for alpha-renaming
+                    let mut fresh_vars: Vec<hir_ty::Type> = Vec::new();
+                    let mut i: usize = 0;
+                    while i < params_a.len() {
+                        fresh_vars.push(unifier.fresh_infer());
+                        i = i + 1;
+                    }
+                    // Build substitution for left forall (params_a -> fresh)
+                    let mut subst_a = TypeParamSubst::new();
+                    i = 0;
+                    while i < params_a.len() {
+                        subst_a.add(params_a[i].index, hir_ty::copy_type(&fresh_vars[i]));
+                        i = i + 1;
+                    }
+                    // Build substitution for right forall (params -> fresh)
+                    let mut subst_b = TypeParamSubst::new();
+                    i = 0;
+                    while i < params.len() {
+                        subst_b.add(params[i].index, hir_ty::copy_type(&fresh_vars[i]));
+                        i = i + 1;
+                    }
+                    // Instantiate both bodies with the same fresh variables
+                    let body_a_inst = substitute_forall_vars(body_a.as_ref(), &subst_a);
+                    let body_b_inst = substitute_forall_vars(body.as_ref(), &subst_b);
+                    // Unify the instantiated bodies
+                    unify(table, unifier, &body_a_inst, &body_b_inst, span)
+                }
+                _ => {
+                    // Forall on left, non-Forall on right: instantiate forall
+                    let mut fresh_vars: Vec<hir_ty::Type> = Vec::new();
+                    let mut i: usize = 0;
+                    while i < params_a.len() {
+                        fresh_vars.push(unifier.fresh_infer());
+                        i = i + 1;
+                    }
+                    let mut subst_a = TypeParamSubst::new();
+                    i = 0;
+                    while i < params_a.len() {
+                        subst_a.add(params_a[i].index, hir_ty::copy_type(&fresh_vars[i]));
+                        i = i + 1;
+                    }
+                    let body_inst = substitute_forall_vars(body_a.as_ref(), &subst_a);
+                    unify(table, unifier, &body_inst, b, span)
+                }
+            }
+        }
+        // Non-Forall on left, Forall on right: instantiate the forall
+        (_, &hir_ty::TypeKind::Forall { ref params, ref body }) => {
+            let mut fresh_vars: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < params.len() {
+                fresh_vars.push(unifier.fresh_infer());
+                i = i + 1;
+            }
+            let mut subst_b = TypeParamSubst::new();
+            i = 0;
+            while i < params.len() {
+                subst_b.add(params[i].index, hir_ty::copy_type(&fresh_vars[i]));
+                i = i + 1;
+            }
+            let body_inst = substitute_forall_vars(body.as_ref(), &subst_b);
+            unify(table, unifier, a, &body_inst, span)
+        }
+
         // Primitives must be equal
         (&hir_ty::TypeKind::Primitive(prim_a), &hir_ty::TypeKind::Primitive(prim_b)) => {
             if primitives_equal(prim_a, prim_b) {
@@ -1582,27 +1812,6 @@ fn unify_resolved(
                     let fields_b = fields;
                     let row_var_b = row_var;
                     unify_record_rows(table, unifier, fields_a, row_var_a, fields_b, row_var_b, span)
-                }
-                _ => UnifyResult::Err(UnifyError::mismatch(span))
-            }
-        }
-
-        // Forall types: unify quantified types
-        // Full support would require instantiation and subsumption checking
-        (&hir_ty::TypeKind::Forall { ref params, ref body }, other_kind) => {
-            let params_a = params;
-            let body_a = body;
-            match other_kind {
-                &hir_ty::TypeKind::Forall { ref params, ref body } => {
-                    // For now, require same number of quantified params
-                    if params_a.len() != params.len() {
-                        return UnifyResult::Err(UnifyError::mismatch(span));
-                    }
-                    // Unify the body types
-                    // NOTE: This is a simplified implementation. Full forall unification
-                    // would require skolemization (replacing quantified vars with fresh
-                    // rigid vars) to properly check impredicative polymorphism.
-                    unify(table, unifier, body_a.as_ref(), body.as_ref(), span)
                 }
                 _ => UnifyResult::Err(UnifyError::mismatch(span))
             }
