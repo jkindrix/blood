@@ -112,6 +112,12 @@ pub enum TypeKind {
         ret: Box<Type>,
         effects: EffectRow,
     },
+    /// A closure type: |T1, T2| -> R with captured environment.
+    Closure {
+        def_id: hir_def::DefId,
+        params: Vec<Type>,
+        ret: Box<Type>,
+    },
     /// An algebraic data type (struct, enum): Name<T1, T2>
     Adt {
         def_id: hir_def::DefId,
@@ -528,6 +534,19 @@ fn copy_type_kind(kind: &TypeKind) -> TypeKind {
                 params: copied_params,
                 ret: Box::new(copy_type(ret.as_ref())),
                 effects: copy_effect_row(effects),
+            }
+        }
+        &TypeKind::Closure { def_id, ref params, ref ret } => {
+            let mut copied_params: Vec<Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < params.len() {
+                copied_params.push(copy_type(&params[i]));
+                i = i + 1;
+            }
+            TypeKind::Closure {
+                def_id: def_id,
+                params: copied_params,
+                ret: Box::new(copy_type(ret.as_ref())),
             }
         }
         &TypeKind::Record { ref fields, ref row_var } => {

@@ -280,6 +280,7 @@ pub fn is_copy_type(ty: &hir_ty::Type) -> bool {
         // ADT types would need TypeContext access to check Copy trait impl.
         &hir_ty::TypeKind::Slice { element: _ } => false,
         &hir_ty::TypeKind::Fn { params: _, ret: _, effects: _ } => false,
+        &hir_ty::TypeKind::Closure { def_id: _, params: _, ret: _ } => false,
         &hir_ty::TypeKind::Adt { def_id: _, args: _ } => false,
         &hir_ty::TypeKind::Infer(_) => false,
         &hir_ty::TypeKind::Param(_) => false,
@@ -533,6 +534,19 @@ impl hir_ty::TypeKind {
                     params: cloned_params,
                     ret: Box::new(ret.as_ref().clone()),
                     effects: effects.clone(),
+                }
+            }
+            &hir_ty::TypeKind::Closure { def_id, ref params, ref ret } => {
+                let mut cloned_params = Vec::new();
+                let mut i: usize = 0;
+                while i < params.len() {
+                    cloned_params.push(params[i].clone());
+                    i = i + 1;
+                }
+                hir_ty::TypeKind::Closure {
+                    def_id: def_id,
+                    params: cloned_params,
+                    ret: Box::new(ret.as_ref().clone()),
                 }
             }
             &hir_ty::TypeKind::Adt { ref def_id, ref args } => {

@@ -67,6 +67,7 @@ pub fn type_to_llvm(ty: &hir_ty::Type) -> String {
         &hir_ty::TypeKind::Ptr { ref inner, mutable: _ } => ptr_to_llvm(inner.as_ref()),
         &hir_ty::TypeKind::Adt { def_id: _, ref args } => adt_to_llvm(args),
         &hir_ty::TypeKind::Fn { ref params, ref ret, effects: _ } => fn_to_llvm(params, ret.as_ref()),
+        &hir_ty::TypeKind::Closure { def_id: _, ref params, ref ret } => fn_to_llvm(params, ret.as_ref()),
         &hir_ty::TypeKind::Param(ref var_id) => param_to_llvm(var_id),
         &hir_ty::TypeKind::Infer(_) => common::make_string("i64"),
         &hir_ty::TypeKind::Record { fields: _, row_var: _ } => common::make_string("ptr"),
@@ -183,6 +184,7 @@ pub fn get_layout(ty: &hir_ty::Type) -> TypeLayout {
         &hir_ty::TypeKind::Ptr { inner: _, mutable: _ } => TypeLayout::pointer(),
         &hir_ty::TypeKind::Adt { def_id: _, args: _ } => TypeLayout::pointer(),
         &hir_ty::TypeKind::Fn { params: _, ret: _, effects: _ } => TypeLayout::pointer(),
+        &hir_ty::TypeKind::Closure { def_id: _, params: _, ret: _ } => TypeLayout::pointer(),
         &hir_ty::TypeKind::Param(_) => TypeLayout::pointer(),
         &hir_ty::TypeKind::Infer(_) => TypeLayout::new(8, 8, common::make_string("i64")),
         &hir_ty::TypeKind::Record { fields: _, row_var: _ } => TypeLayout::pointer(),
@@ -288,8 +290,8 @@ pub fn format_u64(n: u64) -> String {
     result
 }
 
-/// Converts an i64 to its string representation.
-pub fn i64_to_string(n: i64) -> String {
+/// Converts an i64 to its string representation (returns owned String).
+pub fn format_i64(n: i64) -> String {
     if n < 0 {
         let mut result = common::make_string("-");
         let abs_val = (0i64 - n) as u64;
@@ -328,8 +330,8 @@ pub fn format_u128(n: u128) -> String {
     result
 }
 
-/// Converts an i128 to its string representation.
-pub fn i128_to_string(n: i128) -> String {
+/// Converts an i128 to its string representation (returns owned String).
+pub fn format_i128(n: i128) -> String {
     if n < 0 {
         let mut result = common::make_string("-");
         let abs_val = (0i128 - n) as u128;

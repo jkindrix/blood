@@ -1592,6 +1592,9 @@ fn classify_handler_state(ty: &hir_ty::Type) -> mir_stmt::HandlerStateKind {
         &hir_ty::TypeKind::Fn { ref params, ref ret, ref effects } => {
             mir_stmt::HandlerStateKind::Dynamic
         }
+        &hir_ty::TypeKind::Closure { def_id: _, params: _, ret: _ } => {
+            mir_stmt::HandlerStateKind::Dynamic
+        }
         &hir_ty::TypeKind::Param(_) => mir_stmt::HandlerStateKind::Dynamic,
         &hir_ty::TypeKind::Infer(_) => mir_stmt::HandlerStateKind::Dynamic,
         &hir_ty::TypeKind::Error => mir_stmt::HandlerStateKind::Dynamic,
@@ -1620,6 +1623,7 @@ fn extract_handler_def_id(ty: &hir_ty::Type) -> hir_def::DefId {
         &hir_ty::TypeKind::Ref { inner: _, mutable: _ } => hir_def::DefId::dummy(),
         &hir_ty::TypeKind::Ptr { inner: _, mutable: _ } => hir_def::DefId::dummy(),
         &hir_ty::TypeKind::Fn { params: _, ret: _, effects: _ } => hir_def::DefId::dummy(),
+        &hir_ty::TypeKind::Closure { def_id, params: _, ret: _ } => def_id,
         &hir_ty::TypeKind::Infer(_) => hir_def::DefId::dummy(),
         &hir_ty::TypeKind::Param(_) => hir_def::DefId::dummy(),
         &hir_ty::TypeKind::Record { fields: _, row_var: _ } => hir_def::DefId::dummy(),

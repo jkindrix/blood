@@ -1858,11 +1858,11 @@ fn infer_closure(
     // Restore context
     checker.return_ty = prev_return;
 
-    // Return function type
-    hir_ty::Type::new(hir_ty::TypeKind::Fn {
+    // Return closure type (captures environment unlike plain Fn)
+    hir_ty::Type::new(hir_ty::TypeKind::Closure {
+        def_id: hir_def::DefId::dummy(),
         params: param_types,
         ret: Box::new(hir_ty::copy_type(return_ty)),
-        effects: hir_ty::copy_effect_row(effects),
     })
 }
 

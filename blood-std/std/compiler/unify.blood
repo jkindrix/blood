@@ -279,6 +279,19 @@ pub fn substitute_type_params(ty: &hir_ty::Type, subst: &TypeParamSubst) -> hir_
                 effects: substitute_effect_row_params(effects, subst),
             })
         }
+        &hir_ty::TypeKind::Closure { def_id, ref params, ref ret } => {
+            let mut result_params: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < params.len() {
+                result_params.push(substitute_type_params(&params[i], subst));
+                i = i + 1;
+            }
+            hir_ty::Type::new(hir_ty::TypeKind::Closure {
+                def_id: def_id,
+                params: result_params,
+                ret: Box::new(substitute_type_params(ret.as_ref(), subst)),
+            })
+        }
         &hir_ty::TypeKind::Record { ref fields, ref row_var } => {
             let mut result_fields: Vec<hir_ty::RecordField> = Vec::new();
             let mut i: usize = 0;
@@ -391,6 +404,19 @@ fn substitute_forall_vars(ty: &hir_ty::Type, subst: &TypeParamSubst) -> hir_ty::
                 params: result_params,
                 ret: Box::new(substitute_forall_vars(ret.as_ref(), subst)),
                 effects: substitute_forall_effect_row(effects, subst),
+            })
+        }
+        &hir_ty::TypeKind::Closure { def_id, ref params, ref ret } => {
+            let mut result_params: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < params.len() {
+                result_params.push(substitute_forall_vars(&params[i], subst));
+                i = i + 1;
+            }
+            hir_ty::Type::new(hir_ty::TypeKind::Closure {
+                def_id: def_id,
+                params: result_params,
+                ret: Box::new(substitute_forall_vars(ret.as_ref(), subst)),
             })
         }
         &hir_ty::TypeKind::Record { ref fields, ref row_var } => {
@@ -1383,6 +1409,19 @@ pub fn apply_substs(table: &SubstTable, ty: &hir_ty::Type) -> hir_ty::Type {
                 effects: apply_substs_to_effect_row(table, effects),
             })
         }
+        &hir_ty::TypeKind::Closure { def_id, ref params, ref ret } => {
+            let mut resolved_params: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < params.len() {
+                resolved_params.push(apply_substs(table, &params[i]));
+                i = i + 1;
+            }
+            hir_ty::Type::new(hir_ty::TypeKind::Closure {
+                def_id: def_id,
+                params: resolved_params,
+                ret: Box::new(apply_substs(table, ret.as_ref())),
+            })
+        }
         &hir_ty::TypeKind::Record { ref fields, ref row_var } => {
             let mut resolved_fields: Vec<hir_ty::RecordField> = Vec::new();
             let mut i: usize = 0;
@@ -1490,6 +1529,16 @@ pub fn occurs_in(var_id: hir_def::TyVarId, ty: &hir_ty::Type) -> bool {
             false
         }
         &hir_ty::TypeKind::Fn { ref params, ref ret, effects: _ } => {
+            let mut i: usize = 0;
+            while i < params.len() {
+                if occurs_in(var_id, &params[i]) {
+                    return true;
+                }
+                i = i + 1;
+            }
+            occurs_in(var_id, ret.as_ref())
+        }
+        &hir_ty::TypeKind::Closure { def_id: _, ref params, ref ret } => {
             let mut i: usize = 0;
             while i < params.len() {
                 if occurs_in(var_id, &params[i]) {
@@ -1797,6 +1846,44 @@ fn unify_resolved(
                         i = i + 1;
                     }
                     // Unify return types
+                    unify(table, unifier, ret_a.as_ref(), ret.as_ref(), span)
+                }
+                _ => UnifyResult::Err(UnifyError::mismatch(span))
+            }
+        }
+
+        // Closure types: unify with other closures or coerce to Fn
+        (&hir_ty::TypeKind::Closure { def_id: _, ref params, ref ret }, other_kind) => {
+            let params_a = params;
+            let ret_a = ret;
+            match other_kind {
+                &hir_ty::TypeKind::Closure { def_id: _, ref params, ref ret } => {
+                    if params_a.len() != params.len() {
+                        return UnifyResult::Err(UnifyError::arity(span));
+                    }
+                    let mut i: usize = 0;
+                    while i < params_a.len() {
+                        match unify(table, unifier, &params_a[i], &params[i], span) {
+                            UnifyResult::Err(e) => { return UnifyResult::Err(e); }
+                            UnifyResult::Ok => {}
+                        }
+                        i = i + 1;
+                    }
+                    unify(table, unifier, ret_a.as_ref(), ret.as_ref(), span)
+                }
+                &hir_ty::TypeKind::Fn { ref params, ref ret, effects: _ } => {
+                    // Closure coerces to Fn type
+                    if params_a.len() != params.len() {
+                        return UnifyResult::Err(UnifyError::arity(span));
+                    }
+                    let mut i: usize = 0;
+                    while i < params_a.len() {
+                        match unify(table, unifier, &params_a[i], &params[i], span) {
+                            UnifyResult::Err(e) => { return UnifyResult::Err(e); }
+                            UnifyResult::Ok => {}
+                        }
+                        i = i + 1;
+                    }
                     unify(table, unifier, ret_a.as_ref(), ret.as_ref(), span)
                 }
                 _ => UnifyResult::Err(UnifyError::mismatch(span))
@@ -2332,6 +2419,7 @@ pub fn debug_type_kind_name(ty: &hir_ty::Type) -> String {
         }
         &hir_ty::TypeKind::Ptr { inner: _, mutable: _ } => common::make_string("Ptr"),
         &hir_ty::TypeKind::Fn { params: _, ret: _, effects: _ } => common::make_string("Fn"),
+        &hir_ty::TypeKind::Closure { def_id: _, params: _, ret: _ } => common::make_string("Closure"),
         &hir_ty::TypeKind::Adt { def_id, ref args } => {
             let mut s = common::make_string("Adt(d");
             s.push_str(usize_to_str(def_id.index as usize).as_str());
