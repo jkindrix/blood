@@ -277,10 +277,10 @@ Depends on MIR being correct and complete.
 
 | Phase | Total | Done | Remaining |
 |-------|-------|------|-----------|
-| 1. Incorrect Implementations | 15 | 14 | 1 |
-| 2. Parser Completeness | 16 | 6 | 10 |
-| 3. HIR & Name Resolution | 15 | 0 | 15 |
-| 4. Type Checking | 17 | 0 | 17 |
-| 5. MIR Generation | 16 | 0 | 16 |
-| 6. Codegen & Runtime | 17 | 0 | 17 |
-| **Total** | **96** | **20** | **76** |
+| 1. Incorrect Implementations | 15 | 15 | 0 |
+| 2. Parser Completeness | 16 | 16 | 0 |
+| 3. HIR & Name Resolution | 17 | 17 | 0 |
+| 4. Type Checking | 19 | 19 | 0 |
+| 5. MIR Generation | 16 | 16 | 0 |
+| 6. Codegen & Runtime | 18 | 18 | 0 |
+| **Total** | **101** | **101** | **0** |
