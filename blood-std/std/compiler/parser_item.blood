@@ -93,30 +93,43 @@ fn parse_attribute(parser: &mut parser_base::Parser) -> ast::Attribute {
     // Parse optional arguments
     let args: Option<ast::AttributeArgs> = if parser.check(token::TokenKind::LParen) {
         parser.advance();
-        // For now, skip to closing paren and return empty list
-        let mut depth: i32 = 1;
-        while depth > 0 && !parser.is_at_end() {
-            if parser.check(token::TokenKind::LParen) {
-                depth = depth + 1;
-            }
-            if parser.check(token::TokenKind::RParen) {
-                depth = depth - 1;
-            }
-            if depth > 0 {
-                parser.advance();
+        // Parse comma-separated list of attribute arguments
+        let mut arg_list: Vec<ast::AttributeArg> = Vec::new();
+        while !parser.check(token::TokenKind::RParen) && !parser.is_at_end() {
+            let arg = parse_attribute_arg(parser);
+            arg_list.push(arg);
+            if !parser.try_consume(token::TokenKind::Comma) {
+                break;
             }
         }
         parser.expect(token::TokenKind::RParen);
-        Option::Some(ast::AttributeArgs::List(Vec::new()))
+        Option::Some(ast::AttributeArgs::List(arg_list))
     } else if parser.try_consume(token::TokenKind::Eq) {
-        // #[attr = "value"] - parse string literal
-        // For now, create a placeholder literal and skip to ]
-        let placeholder_lit = ast::Literal {
-            kind: ast::LiteralKind::Str(String::new()),
-            span: parser.current.span,
+        // #[attr = "value"] - parse the actual literal value
+        let lit_span = parser.current.span;
+        let lit = if parser.check(token::TokenKind::StringLit) {
+            let s = parser_base::parse_string_from_span(parser, lit_span);
+            parser.advance();
+            ast::Literal {
+                kind: ast::LiteralKind::Str(s),
+                span: lit_span,
+            }
+        } else if parser.check(token::TokenKind::IntLit) {
+            let s = parser_base::parse_string_from_span(parser, lit_span);
+            parser.advance();
+            ast::Literal {
+                kind: ast::LiteralKind::Str(s),
+                span: lit_span,
+            }
+        } else {
+            // Unknown literal — advance and use empty
+            parser.advance();
+            ast::Literal {
+                kind: ast::LiteralKind::Str(String::new()),
+                span: lit_span,
+            }
         };
-        parser.advance(); // skip the literal value
-        Option::Some(ast::AttributeArgs::Eq(placeholder_lit))
+        Option::Some(ast::AttributeArgs::Eq(lit))
     } else {
         Option::None
     };
@@ -130,6 +143,85 @@ fn parse_attribute(parser: &mut parser_base::Parser) -> ast::Attribute {
         args: args,
         span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
+}
+
+/// Parse a single attribute argument.
+/// Supports: ident, ident = "literal", ident(literal), bare literal
+fn parse_attribute_arg(parser: &mut parser_base::Parser) -> ast::AttributeArg {
+    let arg_span = parser.current.span;
+
+    // Check for string literal (bare literal arg)
+    if parser.check(token::TokenKind::StringLit) {
+        let s = parser_base::parse_string_from_span(parser, arg_span);
+        parser.advance();
+        let lit = ast::Literal {
+            kind: ast::LiteralKind::Str(s),
+            span: arg_span,
+        };
+        return ast::AttributeArg::Lit(lit);
+    }
+
+    // Check for integer literal (bare literal arg)
+    if parser.check(token::TokenKind::IntLit) {
+        let s = parser_base::parse_string_from_span(parser, arg_span);
+        parser.advance();
+        let lit = ast::Literal {
+            kind: ast::LiteralKind::Str(s),
+            span: arg_span,
+        };
+        return ast::AttributeArg::Lit(lit);
+    }
+
+    // Must be an identifier-based arg
+    let name = parser.parse_spanned_symbol();
+
+    // Check for key = value
+    if parser.try_consume(token::TokenKind::Eq) {
+        let val_span = parser.current.span;
+        let val_lit = if parser.check(token::TokenKind::StringLit) {
+            let s = parser_base::parse_string_from_span(parser, val_span);
+            parser.advance();
+            ast::Literal {
+                kind: ast::LiteralKind::Str(s),
+                span: val_span,
+            }
+        } else {
+            // Non-string value — capture as string
+            let s = parser_base::parse_string_from_span(parser, val_span);
+            parser.advance();
+            ast::Literal {
+                kind: ast::LiteralKind::Str(s),
+                span: val_span,
+            }
+        };
+        return ast::AttributeArg::KeyValue { key: name, val: val_lit };
+    }
+
+    // Check for call syntax: name(literal)
+    if parser.check(token::TokenKind::LParen) {
+        parser.advance();
+        let call_span = parser.current.span;
+        let call_lit = if parser.check(token::TokenKind::StringLit) {
+            let s = parser_base::parse_string_from_span(parser, call_span);
+            parser.advance();
+            ast::Literal {
+                kind: ast::LiteralKind::Str(s),
+                span: call_span,
+            }
+        } else {
+            let s = parser_base::parse_string_from_span(parser, call_span);
+            parser.advance();
+            ast::Literal {
+                kind: ast::LiteralKind::Str(s),
+                span: call_span,
+            }
+        };
+        parser.expect(token::TokenKind::RParen);
+        return ast::AttributeArg::Call { name: name, arg: call_lit };
+    }
+
+    // Plain identifier
+    ast::AttributeArg::Ident(name)
 }
 
 /// Parse visibility: pub, pub(crate), pub(super), pub(in path), or private (no keyword).
@@ -886,8 +978,8 @@ pub fn parse_impl_block(parser: &mut parser_base::Parser, attrs: Vec<ast::Attrib
     let first_type = parser_type::parse_type(parser);
 
     // Check for trait impl: impl Trait for Type
-    let trait_ty: Option<ast::Type>;
-    let self_ty: ast::Type;
+    let mut trait_ty: Option<ast::Type>;
+    let mut self_ty: ast::Type;
 
     if parser.try_consume(token::TokenKind::For) {
         // This is a trait impl - first_type is the trait

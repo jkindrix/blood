@@ -1329,8 +1329,8 @@ fn parse_perform_expr(parser: &mut parser_base::Parser) -> ast::Expr {
     // Parse the effect path (could be Effect.op or just op)
     let path = parser_type::parse_type_path(parser);
 
-    let effect_path: Option<ast::TypePath>;
-    let operation: common::SpannedSymbol;
+    let mut effect_path: Option<ast::TypePath>;
+    let mut operation: common::SpannedSymbol;
 
     if parser.try_consume(token::TokenKind::Dot) {
         // Dot syntax: Effect.operation
@@ -1444,8 +1444,8 @@ fn parse_try_with_expr(parser: &mut parser_base::Parser) -> ast::Expr {
         // Parse Effect.operation or Effect::operation pattern
         let effect_path = parser_type::parse_type_path(parser);
 
-        let handler_effect: ast::TypePath;
-        let handler_operation: common::SpannedSymbol;
+        let mut handler_effect: ast::TypePath;
+        let mut handler_operation: common::SpannedSymbol;
 
         if parser.try_consume(token::TokenKind::Dot) {
             // Dot syntax: Effect.operation
@@ -1996,13 +1996,32 @@ fn parse_format_macro_args(parser: &mut parser_base::Parser) -> ast::MacroCallKi
         }
     };
 
-    // Parse remaining arguments
+    // Parse remaining arguments (positional and named)
     let mut args: Vec<ast::Expr> = Vec::new();
+    let mut named_args: Vec<ast::NamedFormatArg> = Vec::new();
     while parser.try_consume(token::TokenKind::Comma) {
         if parser.check(token::TokenKind::RParen) {
             break;
         }
-        args.push(parse_expr(parser));
+        // Check for named arg: ident = expr
+        // Use lookahead: if current is Ident and next is Eq, it's a named arg
+        if parser.check(token::TokenKind::Ident) {
+            let is_named = match &parser.next.kind {
+                &token::TokenKind::Eq => true,
+                _ => false,
+            };
+            if is_named {
+                let name = parser.parse_spanned_symbol();
+                parser.expect(token::TokenKind::Eq);
+                let val = parse_expr(parser);
+                let named = ast::NamedFormatArg { name: name, val: val };
+                named_args.push(named);
+            } else {
+                args.push(parse_expr(parser));
+            }
+        } else {
+            args.push(parse_expr(parser));
+        }
     }
 
     parser.expect(token::TokenKind::RParen);
@@ -2010,6 +2029,7 @@ fn parse_format_macro_args(parser: &mut parser_base::Parser) -> ast::MacroCallKi
     ast::MacroCallKind::Format {
         format_str: fmt_str,
         args: args,
+        named_args: named_args,
     }
 }
 
