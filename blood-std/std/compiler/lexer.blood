@@ -21,6 +21,8 @@ pub struct Lexer<'src> {
     token_line: u32,
     /// Start column of current token
     token_column: u32,
+    /// Flag for unterminated block comment
+    has_unterminated_comment: bool,
 }
 
 impl<'src> Lexer<'src> {
@@ -34,6 +36,7 @@ impl<'src> Lexer<'src> {
             token_start: 0,
             token_line: 1,
             token_column: 1,
+            has_unterminated_comment: false,
         }
     }
 
@@ -138,6 +141,9 @@ impl<'src> Lexer<'src> {
                         self.advance();
                     }
                 }
+                if depth > 0 {
+                    self.has_unterminated_comment = true;
+                }
             } else {
                 break;
             }
@@ -168,6 +174,11 @@ impl<'src> Lexer<'src> {
     pub fn next_token(self: &mut Self) -> token::Token {
         self.skip_whitespace();
         self.start_token();
+
+        if self.has_unterminated_comment {
+            self.has_unterminated_comment = false;
+            return self.make_token(token::TokenKind::Error);
+        }
 
         if self.at_end() {
             return self.make_token(token::TokenKind::Eof);

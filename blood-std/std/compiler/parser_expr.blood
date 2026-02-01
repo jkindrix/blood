@@ -92,11 +92,21 @@ fn infix_precedence(kind: token::TokenKind) -> u8 {
         // Assignment (right-to-left, lowest)
         token::TokenKind::Eq => 1,
 
-        // Note: Compound assignment (+=, -=, etc.) and range (.., ..=) operators
-        // are not included here. Blood lacks compound assignment operators.
-        // Range operators are lexed but not used in the compiler source.
-        // If needed, add them here WITH corresponding handling in parse_infix_expr
-        // to prevent infinite loops in the Pratt parser.
+        // Compound assignment (right-to-left, same precedence as assignment)
+        token::TokenKind::PlusEq => 1,
+        token::TokenKind::MinusEq => 1,
+        token::TokenKind::StarEq => 1,
+        token::TokenKind::SlashEq => 1,
+        token::TokenKind::PercentEq => 1,
+        token::TokenKind::AndEq => 1,
+        token::TokenKind::OrEq => 1,
+        token::TokenKind::CaretEq => 1,
+        token::TokenKind::ShlEq => 1,
+        token::TokenKind::ShrEq => 1,
+
+        // Range operators (lower than logical or, higher than assignment)
+        token::TokenKind::DotDot => 2,
+        token::TokenKind::DotDotEq => 2,
 
         // Logical or
         token::TokenKind::OrOr => 3,
@@ -203,6 +213,43 @@ fn parse_prefix_expr(parser: &mut parser_base::Parser) -> ast::Expr {
                 kind: ast::ExprKind::Unary {
                     op: unary_op,
                     operand: Box::new(operand),
+                },
+                span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+            };
+        }
+        // Prefix range: ..expr or ..=expr
+        token::TokenKind::DotDot => {
+            parser.advance();
+            let inclusive = false;
+            let end_val = if can_start_expr(parser.current.kind) {
+                Option::Some(Box::new(parse_expr_with_precedence(parser, 3)))
+            } else {
+                Option::None
+            };
+            let end_span = parser.previous.span;
+            return ast::Expr {
+                kind: ast::ExprKind::Range {
+                    start: Option::None,
+                    end_val: end_val,
+                    inclusive: inclusive,
+                },
+                span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+            };
+        }
+        token::TokenKind::DotDotEq => {
+            parser.advance();
+            let inclusive = true;
+            let end_val = if can_start_expr(parser.current.kind) {
+                Option::Some(Box::new(parse_expr_with_precedence(parser, 3)))
+            } else {
+                Option::None
+            };
+            let end_span = parser.previous.span;
+            return ast::Expr {
+                kind: ast::ExprKind::Range {
+                    start: Option::None,
+                    end_val: end_val,
+                    inclusive: inclusive,
                 },
                 span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
             };
@@ -731,6 +778,52 @@ fn parse_infix_expr(parser: &mut parser_base::Parser, left: ast::Expr, prec: u8)
                 kind: ast::ExprKind::Assign {
                     target: Box::new(left),
                     val: Box::new(right),
+                },
+                span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+            };
+        }
+        // Compound assignment (right-associative, same as =)
+        token::TokenKind::PlusEq => { return parse_assign_op(parser, left, common::BinOp::Add, prec); }
+        token::TokenKind::MinusEq => { return parse_assign_op(parser, left, common::BinOp::Sub, prec); }
+        token::TokenKind::StarEq => { return parse_assign_op(parser, left, common::BinOp::Mul, prec); }
+        token::TokenKind::SlashEq => { return parse_assign_op(parser, left, common::BinOp::Div, prec); }
+        token::TokenKind::PercentEq => { return parse_assign_op(parser, left, common::BinOp::Rem, prec); }
+        token::TokenKind::AndEq => { return parse_assign_op(parser, left, common::BinOp::BitAnd, prec); }
+        token::TokenKind::OrEq => { return parse_assign_op(parser, left, common::BinOp::BitOr, prec); }
+        token::TokenKind::CaretEq => { return parse_assign_op(parser, left, common::BinOp::BitXor, prec); }
+        token::TokenKind::ShlEq => { return parse_assign_op(parser, left, common::BinOp::Shl, prec); }
+        token::TokenKind::ShrEq => { return parse_assign_op(parser, left, common::BinOp::Shr, prec); }
+        // Range (infix): expr..expr, expr..=expr, expr..
+        token::TokenKind::DotDot => {
+            parser.advance();
+            let end_val = if can_start_expr(parser.current.kind) {
+                Option::Some(Box::new(parse_expr_with_precedence(parser, 3)))
+            } else {
+                Option::None
+            };
+            let end_span = parser.previous.span;
+            return ast::Expr {
+                kind: ast::ExprKind::Range {
+                    start: Option::Some(Box::new(left)),
+                    end_val: end_val,
+                    inclusive: false,
+                },
+                span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+            };
+        }
+        token::TokenKind::DotDotEq => {
+            parser.advance();
+            let end_val = if can_start_expr(parser.current.kind) {
+                Option::Some(Box::new(parse_expr_with_precedence(parser, 3)))
+            } else {
+                Option::None
+            };
+            let end_span = parser.previous.span;
+            return ast::Expr {
+                kind: ast::ExprKind::Range {
+                    start: Option::Some(Box::new(left)),
+                    end_val: end_val,
+                    inclusive: true,
                 },
                 span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
             };
@@ -1596,6 +1689,63 @@ fn parse_call_expr(parser: &mut parser_base::Parser, callee: ast::Expr) -> ast::
             args: args,
         },
         span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+/// Check if a token kind can start an expression.
+/// Used by range operators to decide whether to parse a right-hand side.
+fn can_start_expr(kind: token::TokenKind) -> bool {
+    match kind {
+        // Literals
+        token::TokenKind::IntLit => true,
+        token::TokenKind::FloatLit => true,
+        token::TokenKind::StringLit => true,
+        token::TokenKind::CharLit => true,
+        token::TokenKind::True => true,
+        token::TokenKind::False => true,
+        // Identifiers and paths
+        token::TokenKind::Ident => true,
+        token::TokenKind::TypeIdent => true,
+        token::TokenKind::ColonColon => true,
+        // Grouping and collection
+        token::TokenKind::LParen => true,
+        token::TokenKind::LBracket => true,
+        token::TokenKind::LBrace => true,
+        // Prefix operators
+        token::TokenKind::Minus => true,
+        token::TokenKind::Not => true,
+        token::TokenKind::Star => true,
+        token::TokenKind::And => true,
+        // Keywords that start expressions
+        token::TokenKind::If => true,
+        token::TokenKind::Match => true,
+        token::TokenKind::Loop => true,
+        token::TokenKind::While => true,
+        token::TokenKind::For => true,
+        token::TokenKind::Return => true,
+        token::TokenKind::Break => true,
+        token::TokenKind::Continue => true,
+        token::TokenKind::Move => true,
+        token::TokenKind::Unsafe => true,
+        // Prefix range
+        token::TokenKind::DotDot => true,
+        token::TokenKind::DotDotEq => true,
+        _ => false,
+    }
+}
+
+/// Parse a compound assignment expression (+=, -=, etc.).
+fn parse_assign_op(parser: &mut parser_base::Parser, left: ast::Expr, bin_op: common::BinOp, prec: u8) -> ast::Expr {
+    parser.advance();
+    let right = parse_expr_with_precedence(parser, prec);
+    let end_span = parser.previous.span;
+    ast::Expr {
+        kind: ast::ExprKind::AssignOp {
+            op: bin_op,
+            target: Box::new(left),
+            val: Box::new(right),
+        },
+        span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
     }
 }
 

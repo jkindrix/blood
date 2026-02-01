@@ -56,13 +56,47 @@ pub fn parse_pattern(parser: &mut parser_base::Parser) -> ast::Pattern {
 /// Parse a pattern kind.
 fn parse_pattern_kind(parser: &mut parser_base::Parser) -> ast::PatternKind {
     match parser.current.kind {
+        // Negative literal pattern: -42, -3.14 (with range check: -1..=1)
+        token::TokenKind::Minus => {
+            let neg_start = parser.current.span;
+            parser.advance(); // consume '-'
+            if parser.check(token::TokenKind::IntLit) {
+                let pat_start = parser.current.span;
+                let int_val = parser_base::parse_int_value_from_span(parser, pat_start);
+                let int_suffix = parser_base::parse_int_suffix_from_span(parser, pat_start);
+                parser.advance();
+                let neg_span = common::Span { start: neg_start.start, end: pat_start.end, line: neg_start.line, column: neg_start.column };
+                let lit = ast::Literal {
+                    kind: ast::LiteralKind::Int { val: int_val, suffix: int_suffix },
+                    span: neg_span,
+                };
+                return maybe_range_pattern(parser, ast::PatternKind::Literal(lit), neg_span);
+            } else if parser.check(token::TokenKind::FloatLit) {
+                let pat_start = parser.current.span;
+                let float_bits = parser_base::parse_float_bits_from_span(parser, pat_start);
+                let float_suffix = parser_base::parse_float_suffix_from_span(parser, pat_start);
+                parser.advance();
+                // Negate by flipping the sign bit (bit 63)
+                let neg_bits = float_bits ^ 9223372036854775808;
+                let neg_span = common::Span { start: neg_start.start, end: pat_start.end, line: neg_start.line, column: neg_start.column };
+                let lit = ast::Literal {
+                    kind: ast::LiteralKind::Float { bits: neg_bits, suffix: float_suffix },
+                    span: neg_span,
+                };
+                return maybe_range_pattern(parser, ast::PatternKind::Literal(lit), neg_span);
+            } else {
+                parser.error_expected("number after `-`");
+                return ast::PatternKind::Wildcard;
+            }
+        }
+
         // Rest pattern: ..
         token::TokenKind::DotDot => {
             parser.advance();
             return ast::PatternKind::Rest;
         }
 
-        // Literal patterns
+        // Literal patterns (with range check: 0..5, 0..=9)
         token::TokenKind::IntLit => {
             let pat_start = parser.current.span;
             let int_val = parser_base::parse_int_value_from_span(parser, pat_start);
@@ -72,7 +106,7 @@ fn parse_pattern_kind(parser: &mut parser_base::Parser) -> ast::PatternKind {
                 kind: ast::LiteralKind::Int { val: int_val, suffix: int_suffix },
                 span: pat_start,
             };
-            return ast::PatternKind::Literal(lit);
+            return maybe_range_pattern(parser, ast::PatternKind::Literal(lit), pat_start);
         }
         token::TokenKind::FloatLit => {
             let pat_start = parser.current.span;
@@ -83,7 +117,7 @@ fn parse_pattern_kind(parser: &mut parser_base::Parser) -> ast::PatternKind {
                 kind: ast::LiteralKind::Float { bits: float_bits, suffix: float_suffix },
                 span: pat_start,
             };
-            return ast::PatternKind::Literal(lit);
+            return maybe_range_pattern(parser, ast::PatternKind::Literal(lit), pat_start);
         }
         token::TokenKind::StringLit => {
             let pat_start = parser.current.span;
@@ -103,7 +137,7 @@ fn parse_pattern_kind(parser: &mut parser_base::Parser) -> ast::PatternKind {
                 kind: ast::LiteralKind::Char(char_val),
                 span: pat_start,
             };
-            return ast::PatternKind::Literal(lit);
+            return maybe_range_pattern(parser, ast::PatternKind::Literal(lit), pat_start);
         }
         token::TokenKind::True => {
             let pat_start = parser.current.span;
@@ -448,4 +482,42 @@ fn parse_tuple_struct_pattern(parser: &mut parser_base::Parser, path: ast::TypeP
         fields: fields,
         rest_pos: rest_pos,
     }
+}
+
+/// Check if the current token is `..` or `..=` and if so, parse a range pattern.
+/// Otherwise return the given pattern kind as-is.
+fn maybe_range_pattern(parser: &mut parser_base::Parser, start_kind: ast::PatternKind, start_span: common::Span) -> ast::PatternKind {
+    if parser.check(token::TokenKind::DotDot) {
+        parser.advance();
+        let end_pat = parse_pattern_kind(parser);
+        let end_span = parser.previous.span;
+        return ast::PatternKind::Range {
+            start: Option::Some(Box::new(ast::Pattern {
+                kind: start_kind,
+                span: start_span,
+            })),
+            end_val: Option::Some(Box::new(ast::Pattern {
+                kind: end_pat,
+                span: end_span,
+            })),
+            inclusive: false,
+        };
+    }
+    if parser.check(token::TokenKind::DotDotEq) {
+        parser.advance();
+        let end_pat = parse_pattern_kind(parser);
+        let end_span = parser.previous.span;
+        return ast::PatternKind::Range {
+            start: Option::Some(Box::new(ast::Pattern {
+                kind: start_kind,
+                span: start_span,
+            })),
+            end_val: Option::Some(Box::new(ast::Pattern {
+                kind: end_pat,
+                span: end_span,
+            })),
+            inclusive: true,
+        };
+    }
+    start_kind
 }

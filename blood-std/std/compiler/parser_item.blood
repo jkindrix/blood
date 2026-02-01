@@ -303,6 +303,12 @@ fn parse_where_predicate(parser: &mut parser_base::Parser) -> ast::WherePredicat
 /// Parse a function declaration.
 pub fn parse_fn_decl(parser: &mut parser_base::Parser, attrs: Vec<ast::Attribute>, vis: common::Visibility) -> ast::FnDecl {
     let start = parser.current.span;
+
+    // Parse optional qualifiers: const, async, unsafe
+    let is_const = parser.try_consume(token::TokenKind::Const);
+    let is_async = parser.try_consume(token::TokenKind::Async);
+    let is_unsafe = parser.try_consume(token::TokenKind::Unsafe);
+
     parser.advance(); // consume 'fn'
 
     let name = parser.parse_spanned_symbol();
@@ -353,7 +359,7 @@ pub fn parse_fn_decl(parser: &mut parser_base::Parser, attrs: Vec<ast::Attribute
     let result = ast::FnDecl {
         attrs: attrs,
         vis: vis,
-        qualifiers: common::FnQualifiers { is_const: false, is_async: false, is_unsafe: false },
+        qualifiers: common::FnQualifiers { is_const: is_const, is_async: is_async, is_unsafe: is_unsafe },
         name: name,
         type_params: type_params,
         params: params,
@@ -902,8 +908,18 @@ fn parse_impl_item(parser: &mut parser_base::Parser) -> ast::ImplItem {
             ast::ImplItem::Function(fn_decl)
         }
         token::TokenKind::Const => {
-            let const_decl = parse_const_decl(parser, attrs, vis);
-            ast::ImplItem::Const(const_decl)
+            if parser.check_next(token::TokenKind::Fn) {
+                ast::ImplItem::Function(parse_fn_decl(parser, attrs, vis))
+            } else {
+                let const_decl = parse_const_decl(parser, attrs, vis);
+                ast::ImplItem::Const(const_decl)
+            }
+        }
+        token::TokenKind::Async => {
+            ast::ImplItem::Function(parse_fn_decl(parser, attrs, vis))
+        }
+        token::TokenKind::Unsafe => {
+            ast::ImplItem::Function(parse_fn_decl(parser, attrs, vis))
         }
         token::TokenKind::Type => {
             let type_decl = parse_type_alias_decl(parser, attrs, vis);
@@ -1126,8 +1142,18 @@ fn parse_trait_item(parser: &mut parser_base::Parser) -> ast::TraitItem {
             ast::TraitItem::Function(fn_decl)
         }
         token::TokenKind::Const => {
-            let const_decl = parse_const_decl(parser, attrs, vis);
-            ast::TraitItem::Const(const_decl)
+            if parser.check_next(token::TokenKind::Fn) {
+                ast::TraitItem::Function(parse_fn_decl(parser, attrs, vis))
+            } else {
+                let const_decl = parse_const_decl(parser, attrs, vis);
+                ast::TraitItem::Const(const_decl)
+            }
+        }
+        token::TokenKind::Async => {
+            ast::TraitItem::Function(parse_fn_decl(parser, attrs, vis))
+        }
+        token::TokenKind::Unsafe => {
+            ast::TraitItem::Function(parse_fn_decl(parser, attrs, vis))
         }
         token::TokenKind::Type => {
             let type_decl = parse_type_alias_decl(parser, attrs, vis);
@@ -1171,7 +1197,38 @@ pub fn parse_declaration(parser: &mut parser_base::Parser) -> ast::Declaration {
         token::TokenKind::Trait => ast::Declaration::Trait(parse_trait_decl(parser, attrs, vis)),
         token::TokenKind::Impl => ast::Declaration::Impl(parse_impl_block(parser, attrs)),
         token::TokenKind::Type => ast::Declaration::TypeAlias(parse_type_alias_decl(parser, attrs, vis)),
-        token::TokenKind::Const => ast::Declaration::Const(parse_const_decl(parser, attrs, vis)),
+        token::TokenKind::Const => {
+            if parser.check_next(token::TokenKind::Fn) {
+                ast::Declaration::Function(parse_fn_decl(parser, attrs, vis))
+            } else {
+                ast::Declaration::Const(parse_const_decl(parser, attrs, vis))
+            }
+        }
+        token::TokenKind::Async => {
+            ast::Declaration::Function(parse_fn_decl(parser, attrs, vis))
+        }
+        token::TokenKind::Unsafe => {
+            if parser.check_next(token::TokenKind::Fn) {
+                ast::Declaration::Function(parse_fn_decl(parser, attrs, vis))
+            } else {
+                // unsafe block or other uses - fall through to expression
+                parser.error_expected("declaration");
+                parser.advance();
+                ast::Declaration::Function(ast::FnDecl {
+                    attrs: Vec::new(),
+                    vis: common::Visibility::Private,
+                    qualifiers: common::FnQualifiers { is_const: false, is_async: false, is_unsafe: false },
+                    name: common::SpannedSymbol { symbol: common::Symbol { index: 0 }, span: parser.previous.span },
+                    type_params: Option::None,
+                    params: Vec::new(),
+                    return_type: Option::None,
+                    effects: Option::None,
+                    where_clause: Option::None,
+                    body: Option::None,
+                    span: parser.previous.span,
+                })
+            }
+        }
         token::TokenKind::Static => ast::Declaration::Static(parse_static_decl(parser, attrs, vis)),
         token::TokenKind::Mod => ast::Declaration::Module(parse_mod_decl(parser, attrs, vis)),
         token::TokenKind::Use => {
