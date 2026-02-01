@@ -621,21 +621,41 @@ impl OpImpl {
 // Module Definition
 // ============================================================
 
+/// A re-export entry from `pub use`.
+pub struct ReexportEntry {
+    /// The local name this re-export is bound to.
+    pub local_name: common::Symbol,
+    /// The original definition being re-exported.
+    pub original_def: hir_def::DefId,
+    /// The visibility of the re-export.
+    pub visibility: common::Visibility,
+}
+
+impl ReexportEntry {
+    pub fn new(local_name: common::Symbol, original_def: hir_def::DefId, visibility: common::Visibility) -> ReexportEntry {
+        ReexportEntry { local_name, original_def, visibility }
+    }
+}
+
 /// A module definition.
 pub struct ModuleDef {
     /// Items in this module (by DefId).
     pub items: Vec<hir_def::DefId>,
+    /// Whether this is an external module (loaded from file) or inline.
+    pub is_external: bool,
+    /// Re-exported items via `pub use`.
+    pub reexports: Vec<ReexportEntry>,
 }
 
 impl ModuleDef {
     /// Creates a new module definition.
     pub fn new(items: Vec<hir_def::DefId>) -> ModuleDef {
-        ModuleDef { items }
+        ModuleDef { items, is_external: false, reexports: Vec::new() }
     }
 
     /// Creates an empty module definition.
     pub fn empty() -> ModuleDef {
-        ModuleDef { items: Vec::new() }
+        ModuleDef { items: Vec::new(), is_external: false, reexports: Vec::new() }
     }
 }
 
