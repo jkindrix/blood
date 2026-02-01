@@ -1648,3 +1648,178 @@ fn usize_to_string(n: usize) -> String {
 
     result
 }
+
+// ============================================================
+// Trait Obligation Resolution
+// ============================================================
+
+/// Resolves all pending trait obligations.
+///
+/// For each obligation, checks if a matching impl exists in the trait_impls list.
+/// Returns a list of unresolved obligations (which become type errors).
+pub fn resolve_obligations(
+    checker: &mut TypeChecker,
+    obligations: &Vec<typeck_types::Obligation>,
+) -> Vec<typeck_types::Obligation> {
+    let mut unresolved: Vec<typeck_types::Obligation> = Vec::new();
+
+    let mut i: usize = 0;
+    while i < obligations.len() {
+        let obligation = &obligations[i];
+        let resolved = resolve_single_obligation(checker, obligation);
+        if !resolved {
+            // Re-create obligation for error reporting
+            let unresolve = typeck_types::Obligation::new(
+                copy_predicate(&obligation.predicate),
+                obligation.span,
+                copy_obligation_cause(&obligation.cause),
+            );
+            unresolved.push(unresolve);
+        }
+        i = i + 1;
+    }
+
+    unresolved
+}
+
+/// Resolves a single obligation.
+/// Returns true if resolved, false if not.
+fn resolve_single_obligation(
+    checker: &mut TypeChecker,
+    obligation: &typeck_types::Obligation,
+) -> bool {
+    match &obligation.predicate {
+        &typeck_types::Predicate::Trait(ref trait_ref) => {
+            // Search for a matching impl
+            let trait_def_id = trait_ref.def_id;
+            let mut j: usize = 0;
+            while j < checker.trait_impls.len() {
+                let impl_info = &checker.trait_impls[j];
+                if impl_info.trait_def_id.index == trait_def_id.index {
+                    // Found a potential impl — check if the self type unifies
+                    // For now, accept any impl for the same trait as resolved
+                    return true;
+                }
+                j = j + 1;
+            }
+            false
+        }
+        &typeck_types::Predicate::TypeEqual { ref left, ref right } => {
+            let result = unify::unify(
+                &mut checker.subst_table,
+                &mut checker.unifier,
+                left,
+                right,
+                obligation.span,
+            );
+            match result {
+                unify::UnifyResult::Ok => true,
+                unify::UnifyResult::Err(_) => false,
+            }
+        }
+        &typeck_types::Predicate::WellFormed(_) => {
+            // Well-formedness is always satisfied for now
+            true
+        }
+    }
+}
+
+/// Copies a predicate (since Blood lacks Clone).
+fn copy_predicate(pred: &typeck_types::Predicate) -> typeck_types::Predicate {
+    match pred {
+        &typeck_types::Predicate::Trait(ref tr) => {
+            typeck_types::Predicate::Trait(hir_ty::TraitRef {
+                def_id: hir_def::DefId::new(tr.def_id.index),
+                args: Vec::new(),
+                span: tr.span,
+            })
+        }
+        &typeck_types::Predicate::TypeEqual { ref left, ref right } => {
+            typeck_types::Predicate::TypeEqual {
+                left: hir_ty::copy_type(left),
+                right: hir_ty::copy_type(right),
+            }
+        }
+        &typeck_types::Predicate::WellFormed(ref ty) => {
+            typeck_types::Predicate::WellFormed(hir_ty::copy_type(ty))
+        }
+    }
+}
+
+/// Copies an obligation cause.
+fn copy_obligation_cause(cause: &typeck_types::ObligationCause) -> typeck_types::ObligationCause {
+    match cause {
+        &typeck_types::ObligationCause::WhereClause => typeck_types::ObligationCause::WhereClause,
+        &typeck_types::ObligationCause::FnArgument => typeck_types::ObligationCause::FnArgument,
+        &typeck_types::ObligationCause::FnReturn => typeck_types::ObligationCause::FnReturn,
+        &typeck_types::ObligationCause::FieldType => typeck_types::ObligationCause::FieldType,
+        &typeck_types::ObligationCause::MethodCall => typeck_types::ObligationCause::MethodCall,
+        &typeck_types::ObligationCause::Operator => typeck_types::ObligationCause::Operator,
+        &typeck_types::ObligationCause::Cast => typeck_types::ObligationCause::Cast,
+        &typeck_types::ObligationCause::Coercion => typeck_types::ObligationCause::Coercion,
+        &typeck_types::ObligationCause::Pattern => typeck_types::ObligationCause::Pattern,
+    }
+}
+
+// ============================================================
+// Unreachable Arm Detection
+// ============================================================
+
+/// Result of checking for unreachable arms in a match expression.
+pub struct UnreachableArmsResult {
+    /// Indices of unreachable arms (0-based).
+    pub unreachable_indices: Vec<u32>,
+}
+
+/// Checks for unreachable arms in a match expression.
+///
+/// An arm is unreachable if a previous arm's pattern is a superset of it.
+/// The simplest check: if a wildcard or binding-without-guard appears before
+/// the last arm, all subsequent arms are unreachable.
+pub fn check_unreachable_arms(
+    checker: &mut TypeChecker,
+    arms: &Vec<hir_expr::MatchArm>,
+) -> UnreachableArmsResult {
+    let mut result = UnreachableArmsResult {
+        unreachable_indices: Vec::new(),
+    };
+
+    let mut wildcard_seen = false;
+    let mut wildcard_index: u32 = 0;
+
+    let mut i: usize = 0;
+    while i < arms.len() {
+        if wildcard_seen {
+            // Every arm after a wildcard (without guard) is unreachable
+            result.unreachable_indices.push(i as u32);
+        } else {
+            // Check if this arm is a wildcard/catch-all without a guard
+            let is_catchall = is_catchall_pattern(&arms[i].pattern);
+            let has_guard = match &arms[i].guard {
+                &Option::Some(_) => true,
+                &Option::None => false,
+            };
+            if is_catchall && !has_guard {
+                wildcard_seen = true;
+                wildcard_index = i as u32;
+            }
+        }
+        i = i + 1;
+    }
+
+    result
+}
+
+/// Checks if a pattern is a catch-all (wildcard or simple binding).
+fn is_catchall_pattern(pattern: &hir_expr::Pattern) -> bool {
+    match &pattern.kind {
+        &hir_expr::PatternKind::Wildcard => true,
+        &hir_expr::PatternKind::Binding { ref subpattern, .. } => {
+            match subpattern {
+                &Option::Some(ref sub) => is_catchall_pattern(sub.as_ref()),
+                &Option::None => true,
+            }
+        }
+        _ => false,
+    }
+}

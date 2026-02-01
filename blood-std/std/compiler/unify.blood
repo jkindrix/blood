@@ -2552,3 +2552,141 @@ fn debug_adt_mismatch(def_a: hir_def::DefId, def_b: hir_def::DefId) {
     msg.push_str(usize_to_str(def_b.index as usize).as_str());
     eprintln_str(msg.as_str());
 }
+
+// ============================================================
+// Constraint Solver
+// ============================================================
+
+/// Result of solving a single constraint.
+pub enum ConstraintSolveResult {
+    /// Constraint solved successfully.
+    Solved,
+    /// Constraint failed to solve.
+    Failed(ConstraintError),
+    /// Constraint deferred for later solving.
+    Deferred,
+}
+
+/// An error from constraint solving.
+pub struct ConstraintError {
+    /// The failed constraint.
+    pub constraint: Constraint,
+    /// Human-readable message.
+    pub message: String,
+}
+
+/// Solve a list of deferred constraints.
+///
+/// Algorithm:
+/// 1. Sort constraints by priority (lower is higher priority)
+/// 2. For TypeEqual: call unify()
+/// 3. For TraitBound: check if a matching impl exists (placeholder for now)
+/// 4. For EffectSubset: check effect containment
+/// 5. Return unsolved constraints as errors
+pub fn solve_constraints(
+    constraints: &Vec<DeferredConstraint>,
+    subst: &mut SubstTable,
+    unifier: &mut Unifier,
+) -> Vec<ConstraintError> {
+    let mut errors: Vec<ConstraintError> = Vec::new();
+
+    // Process constraints in priority order (lower priority value = higher priority)
+    // Since we can't sort in Blood easily, iterate multiple times by priority level
+    let mut priority: u32 = 0;
+    while priority < 10 {
+        let mut i: usize = 0;
+        while i < constraints.len() {
+            if constraints[i].priority == priority {
+                let result = solve_single_constraint(&constraints[i].constraint, subst, unifier);
+                match result {
+                    ConstraintSolveResult::Failed(err) => {
+                        errors.push(err);
+                    }
+                    ConstraintSolveResult::Solved => {}
+                    ConstraintSolveResult::Deferred => {}
+                }
+            }
+            i = i + 1;
+        }
+        priority = priority + 1;
+    }
+
+    errors
+}
+
+/// Solve a single constraint.
+fn solve_single_constraint(
+    constraint: &Constraint,
+    subst: &mut SubstTable,
+    unifier: &mut Unifier,
+) -> ConstraintSolveResult {
+    match constraint {
+        &Constraint::TypeEqual { ref expected, ref actual, span } => {
+            let result = unify(subst, unifier, expected, actual, span);
+            match result {
+                UnifyResult::Ok => ConstraintSolveResult::Solved,
+                UnifyResult::Err(err) => {
+                    let mut msg = common::make_string("type mismatch: expected `");
+                    msg.push_str(debug_type_kind_name(expected).as_str());
+                    msg.push_str("`, found `");
+                    msg.push_str(debug_type_kind_name(actual).as_str());
+                    msg.push_str("`");
+                    ConstraintSolveResult::Failed(ConstraintError {
+                        constraint: Constraint::TypeEqual {
+                            expected: hir_ty::copy_type(expected),
+                            actual: hir_ty::copy_type(actual),
+                            span: span,
+                        },
+                        message: msg,
+                    })
+                }
+            }
+        }
+        &Constraint::TraitBound { ref ty, ref trait_ref, span } => {
+            // Trait bound checking is deferred to the type checker,
+            // which has access to the impl registry.
+            // For now, defer — the type checker will handle this.
+            ConstraintSolveResult::Deferred
+        }
+        &Constraint::EffectSubset { ref subset, ref superset, span } => {
+            // Check that every effect in subset appears in superset
+            let mut all_found = true;
+            let mut ei: usize = 0;
+            while ei < subset.effects.len() {
+                let eff_ref = &subset.effects[ei];
+                let mut found = false;
+                let mut sj: usize = 0;
+                while sj < superset.effects.len() {
+                    if superset.effects[sj].def_id.index == eff_ref.def_id.index {
+                        found = true;
+                    }
+                    sj = sj + 1;
+                }
+                // If superset has an open row variable, effects can flow through
+                match &superset.row_var {
+                    &Option::Some(_) => {
+                        found = true;
+                    }
+                    &Option::None => {}
+                }
+                if !found {
+                    all_found = false;
+                }
+                ei = ei + 1;
+            }
+            if all_found {
+                ConstraintSolveResult::Solved
+            } else {
+                let msg = common::make_string("effect not in scope");
+                ConstraintSolveResult::Failed(ConstraintError {
+                    constraint: Constraint::EffectSubset {
+                        subset: hir_ty::EffectRow::empty(),
+                        superset: hir_ty::EffectRow::empty(),
+                        span: span,
+                    },
+                    message: msg,
+                })
+            }
+        }
+    }
+}

@@ -519,6 +519,100 @@ fn format_u64(val: u64) -> String {
     result
 }
 
+// ============================================================
+// Handler State Classification (Static Evidence Analysis)
+// ============================================================
+
+/// Classification of handler state requirements.
+pub enum HandlerStateKind {
+    /// Handler has no state.
+    Stateless,
+    /// Handler state is a compile-time constant.
+    Constant,
+    /// Handler state starts at zero/default.
+    ZeroInit,
+    /// Handler state requires dynamic initialization.
+    Dynamic,
+}
+
+/// How evidence should be passed for a handler.
+pub enum InlineEvidenceMode {
+    /// Evidence can be inlined directly (single handler).
+    Inline,
+    /// Two handlers — use specialized pair.
+    SpecializedPair,
+    /// Many handlers — use evidence vector.
+    Vector,
+}
+
+/// Classifies handler state requirements.
+///
+/// Analyzes the operations to determine if state is needed and what kind.
+pub fn classify_handler_state(operations: &Vec<OperationEvidence>) -> HandlerStateKind {
+    if operations.len() == 0 {
+        return HandlerStateKind::Stateless;
+    }
+
+    // If all operations are tail-resumptive, the handler is effectively stateless
+    let mut all_tail_resumptive = true;
+    let mut i: usize = 0;
+    while i < operations.len() {
+        if !operations[i].is_tail_resumptive {
+            all_tail_resumptive = false;
+        }
+        i = i + 1;
+    }
+
+    if all_tail_resumptive {
+        HandlerStateKind::Stateless
+    } else {
+        // Conservatively classify as dynamic
+        // A more precise analysis would inspect the handler body
+        HandlerStateKind::Dynamic
+    }
+}
+
+/// Computes the evidence passing mode based on handler stack depth.
+pub fn compute_inline_mode(depth: u32) -> InlineEvidenceMode {
+    if depth <= 1 {
+        InlineEvidenceMode::Inline
+    } else if depth == 2 {
+        InlineEvidenceMode::SpecializedPair
+    } else {
+        InlineEvidenceMode::Vector
+    }
+}
+
+/// Annotates evidence with optimization hints.
+pub struct EvidenceOptHints {
+    /// The handler state classification.
+    pub state_kind: HandlerStateKind,
+    /// The evidence passing mode.
+    pub inline_mode: InlineEvidenceMode,
+    /// Whether the handler can be statically resolved.
+    pub is_static: bool,
+}
+
+impl EvidenceOptHints {
+    /// Creates default optimization hints.
+    pub fn default_hints() -> EvidenceOptHints {
+        EvidenceOptHints {
+            state_kind: HandlerStateKind::Dynamic,
+            inline_mode: InlineEvidenceMode::Vector,
+            is_static: false,
+        }
+    }
+
+    /// Creates optimized hints for a known handler.
+    pub fn for_handler(operations: &Vec<OperationEvidence>, depth: u32) -> EvidenceOptHints {
+        EvidenceOptHints {
+            state_kind: classify_handler_state(operations),
+            inline_mode: compute_inline_mode(depth),
+            is_static: depth <= 1,
+        }
+    }
+}
+
 /// Formats a usize as a string.
 fn format_usize(val: usize) -> String {
     let mut result = String::new();
