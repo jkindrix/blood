@@ -238,11 +238,13 @@ impl MirLowerCtx {
         label: Option<common::Symbol>,
         break_block: mir_def::BasicBlockId,
         continue_block: mir_def::BasicBlockId,
+        result_dest: Destination,
     ) {
         self.loop_stack.push(LoopContext {
             label: label,
             break_block: break_block,
             continue_block: continue_block,
+            result_dest: result_dest,
         });
     }
 
@@ -311,6 +313,34 @@ impl MirLowerCtx {
         }
     }
 
+    /// Finds the result destination for the given label (or innermost loop if None).
+    pub fn find_break_dest(self: &MirLowerCtx, label: Option<common::Symbol>) -> Destination {
+        match label {
+            Option::Some(lbl) => {
+                let mut i = self.loop_stack.len();
+                while i > 0 {
+                    i = i - 1;
+                    match &self.loop_stack[i].label {
+                        &Option::Some(loop_lbl) => {
+                            if loop_lbl.index == lbl.index {
+                                return self.loop_stack[i].result_dest.clone();
+                            }
+                        }
+                        &Option::None => {}
+                    }
+                }
+                Destination::Ignore
+            }
+            Option::None => {
+                if self.loop_stack.len() > 0 {
+                    self.loop_stack[self.loop_stack.len() - 1].result_dest.clone()
+                } else {
+                    Destination::Ignore
+                }
+            }
+        }
+    }
+
     // ======== Finalization ========
 
     /// Finishes building and returns the MIR body.
@@ -331,6 +361,8 @@ pub struct LoopContext {
     pub break_block: mir_def::BasicBlockId,
     /// The block to jump to on continue.
     pub continue_block: mir_def::BasicBlockId,
+    /// The destination where break values should be stored.
+    pub result_dest: Destination,
 }
 
 // ============================================================

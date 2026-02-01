@@ -1278,8 +1278,8 @@ fn lower_loop_expr(
     ctx.set_current_block(loop_header);
     ctx.terminate_goto(loop_body, span);
 
-    // Push loop context
-    ctx.push_loop(*label, break_block, loop_header);
+    // Push loop context with result destination for break values
+    ctx.push_loop(*label, break_block, loop_header, dest);
 
     // Lower body
     ctx.set_current_block(loop_body);
@@ -1322,10 +1322,11 @@ fn lower_break_expr(
     val: &Option<Box<hir_expr::Expr>>,
     span: common::Span,
 ) {
-    // Evaluate break value if present
+    // Evaluate break value into the loop's result destination
+    let break_dest = ctx.find_break_dest(*label);
     match val {
         &Option::Some(ref e) => {
-            lower_expr(ctx, e.as_ref(), mir_lower_ctx::destination_ignore());
+            lower_expr(ctx, e.as_ref(), break_dest);
         }
         &Option::None => {}
     }
@@ -1691,7 +1692,7 @@ fn lower_resume_expr(
     );
 
     ctx.builder.terminate(mir_term::Terminator::new(
-        mir_term::TerminatorKind::Resume { value: operand },
+        mir_term::TerminatorKind::Resume { value: Option::Some(operand) },
         span,
     ));
 }

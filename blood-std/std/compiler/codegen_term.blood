@@ -78,13 +78,20 @@ pub fn emit_terminator(
         }
         &mir_term::TerminatorKind::Resume { ref value } => {
             // Resume from handler - call runtime to transfer control back
-            let val = codegen_expr::emit_operand(ctx, value);
-
-            // Call @blood_resume(value)
-            ctx.write_indent();
-            ctx.write("call void @blood_resume(i64 ");
-            ctx.write_string(&val);
-            ctx.write(")\n");
+            match value {
+                &Option::Some(ref v) => {
+                    let val = codegen_expr::emit_operand(ctx, v);
+                    ctx.write_indent();
+                    ctx.write("call void @blood_resume(i64 ");
+                    ctx.write_string(&val);
+                    ctx.write(")\n");
+                }
+                &Option::None => {
+                    // Unit-resume: pass 0
+                    ctx.write_indent();
+                    ctx.write("call void @blood_resume(i64 0)\n");
+                }
+            }
 
             // Resume doesn't return, emit unreachable (runtime handles control transfer)
             ctx.emit_unreachable();
