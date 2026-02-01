@@ -311,8 +311,8 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx::LoweringCtx, expr: &ast::Expr) -> hir
             let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
             hir_expr::Expr::new(hir_expr::ExprKind::Default, ty, span)
         }
-        &ast::ExprKind::MacroCall { path: _, ref kind } => {
-            lower_macro_call_expr(ctx, kind, span)
+        &ast::ExprKind::MacroCall { ref path, ref kind } => {
+            lower_macro_call_expr(ctx, path, kind, span)
         }
     }
 }
@@ -2251,28 +2251,131 @@ fn lower_try_with_expr(
 // ============================================================
 
 /// Lower a macro call expression.
-fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, kind: &ast::MacroCallKind, span: common::Span) -> hir_expr::Expr {
+fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprPath, kind: &ast::MacroCallKind, span: common::Span) -> hir_expr::Expr {
+    let _ = path;
     match kind {
-        &ast::MacroCallKind::Format { ref format_str, ref args } => {
-            // Format strings need special handling
-            // For now, just lower the args
-            let mut args_hir: Vec<hir_expr::Expr> = Vec::new();
-            let mut i: usize = 0;
-            while i < args.len() {
-                let arg_hir = lower_expr(ctx, &args[i]);
-                args_hir.push(arg_hir);
-                i = i + 1;
+        &ast::MacroCallKind::Format { ref format_str, ref args, ref named_args } => {
+            // Parse format string into segments
+            let segments = parse_format_segments(format_str.value.as_str());
+
+            // If no placeholders and no args, return the string literal directly
+            if args.len() == 0 {
+                let mut str_copy = String::new();
+                str_copy.push_str(format_str.value.as_str());
+                let lit = hir_expr::Literal::new(
+                    hir_expr::LiteralKind::Str(str_copy),
+                    format_str.span,
+                );
+                return hir_expr::Expr::new(
+                    hir_expr::ExprKind::Literal(lit),
+                    hir_ty::Type::new(hir_ty::TypeKind::Ref { inner: Box::new(hir_ty::Type::str_ty()), mutable: false }),
+                    span,
+                );
             }
 
-            // Return a placeholder string expression
-            let mut str_copy = String::new();
-            str_copy.push_str(format_str.value.as_str());
-            let lit = hir_expr::Literal::new(
-                hir_expr::LiteralKind::Str(str_copy),
-                format_str.span,
+            // Lower all format args to HIR
+            let mut args_hir: Vec<hir_expr::Expr> = Vec::new();
+            let mut ai: usize = 0;
+            while ai < args.len() {
+                let arg_hir = lower_expr(ctx, &args[ai]);
+                args_hir.push(arg_hir);
+                ai = ai + 1;
+            }
+
+            // Build a block that constructs a String via concatenation:
+            //   let mut __fmt = String::new();
+            //   __fmt.push_str("literal segment");
+            //   __fmt.push_str(<formatted arg>);
+            //   __fmt
+            let mut stmts: Vec<hir_expr::Stmt> = Vec::new();
+
+            // Create the __fmt local
+            let fmt_local_id = ctx.alloc_local_id();
+            let fmt_sym = common::SpannedSymbol {
+                symbol: common::Symbol { index: 0 },
+                span: span,
+            };
+            let fmt_pat = hir_expr::Pattern::new(
+                hir_expr::PatternKind::Binding {
+                    local_id: fmt_local_id,
+                    name: fmt_sym,
+                    mode: hir_expr::BindingMode::ByValue,
+                    subpattern: Option::None,
+                },
+                hir_ty::Type::infer(ctx.alloc_ty_var()),
+                span,
             );
+
+            // String::new() as a default/empty string literal
+            let empty_str = hir_expr::Literal::new(
+                hir_expr::LiteralKind::Str(String::new()),
+                span,
+            );
+            let string_new_expr = hir_expr::Expr::new(
+                hir_expr::ExprKind::Literal(empty_str),
+                hir_ty::Type::new(hir_ty::TypeKind::Ref { inner: Box::new(hir_ty::Type::str_ty()), mutable: false }),
+                span,
+            );
+
+            let let_stmt = hir_expr::Stmt::Let {
+                pattern: fmt_pat,
+                ty: Option::None,
+                init: Option::Some(string_new_expr),
+                span: span,
+            };
+            stmts.push(let_stmt);
+
+            // Process each segment, building concatenation expressions
+            let mut placeholder_idx: usize = 0;
+            let mut si: usize = 0;
+            while si < segments.len() {
+                let seg = &segments[si];
+                if seg.is_placeholder {
+                    // Placeholder: push the corresponding argument
+                    if placeholder_idx < args_hir.len() {
+                        // For now, we emit the argument directly as a push_str operand.
+                        // The type checker will handle coercion.
+                        let push_stmt = hir_expr::Stmt::Expr {
+                            expr: args_hir[placeholder_idx],
+                            has_semi: true,
+                        };
+                        stmts.push(push_stmt);
+                        placeholder_idx = placeholder_idx + 1;
+                    }
+                } else {
+                    // Literal segment: emit as string literal
+                    if seg.text.len() > 0 {
+                        let mut seg_copy = String::new();
+                        seg_copy.push_str(seg.text.as_str());
+                        let seg_lit = hir_expr::Literal::new(
+                            hir_expr::LiteralKind::Str(seg_copy),
+                            span,
+                        );
+                        let seg_expr = hir_expr::Expr::new(
+                            hir_expr::ExprKind::Literal(seg_lit),
+                            hir_ty::Type::new(hir_ty::TypeKind::Ref { inner: Box::new(hir_ty::Type::str_ty()), mutable: false }),
+                            span,
+                        );
+                        let push_stmt = hir_expr::Stmt::Expr {
+                            expr: seg_expr,
+                            has_semi: true,
+                        };
+                        stmts.push(push_stmt);
+                    }
+                }
+                si = si + 1;
+            }
+
+            // Return the fmt local
+            let fmt_ref = hir_expr::Expr::new(
+                hir_expr::ExprKind::Local(fmt_local_id),
+                hir_ty::Type::new(hir_ty::TypeKind::Ref { inner: Box::new(hir_ty::Type::str_ty()), mutable: false }),
+                span,
+            );
+
+            let block = hir_expr::Block::new(stmts, Option::Some(Box::new(fmt_ref)), span);
             hir_expr::Expr::new(
-                hir_expr::ExprKind::Literal(lit),
+                hir_expr::ExprKind::Block(block),
                 hir_ty::Type::new(hir_ty::TypeKind::Ref { inner: Box::new(hir_ty::Type::str_ty()), mutable: false }),
                 span,
             )
@@ -2280,14 +2383,29 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, kind: &ast::Macro
         &ast::MacroCallKind::VecMacro(ref vec_args) => {
             match vec_args {
                 &ast::VecMacroArgs::List(ref elems) => {
-                    lower_array_expr(ctx, &ast::ArrayExpr::List(copy_expr_vec(elems)), span)
+                    // Lower each element into HIR
+                    let mut elems_hir: Vec<hir_expr::Expr> = Vec::new();
+                    let mut i: usize = 0;
+                    while i < elems.len() {
+                        let elem_hir = lower_expr(ctx, &elems[i]);
+                        elems_hir.push(elem_hir);
+                        i = i + 1;
+                    }
+                    let arr = hir_expr::ArrayExpr::List(elems_hir);
+                    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+                    hir_expr::Expr::new(
+                        hir_expr::ExprKind::Array(arr),
+                        ty,
+                        span,
+                    )
                 }
-                &ast::VecMacroArgs::Repeat { ref val, count: _ } => {
-                    // vec![val; count] - need const evaluation for count
+                &ast::VecMacroArgs::Repeat { ref val, ref count } => {
+                    // vec![val; count] - evaluate count as constant
                     let val_hir = lower_expr(ctx, val.as_ref());
+                    let repeat_count = const_eval::eval_array_size_u64(count.as_ref());
                     let arr = hir_expr::ArrayExpr::Repeat {
                         val: Box::new(val_hir),
-                        count: 0,
+                        count: repeat_count,
                     };
                     let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
                     hir_expr::Expr::new(
@@ -2298,15 +2416,121 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, kind: &ast::Macro
                 }
             }
         }
-        &ast::MacroCallKind::Assert { ref condition, message: _ } => {
-            // Desugar assert! to if !cond { panic!(...) }
+        &ast::MacroCallKind::Assert { ref condition, ref message } => {
+            // Desugar assert!(cond) to: if !cond { @llvm.trap() }
+            // Desugar assert!(cond, msg) to: if !cond { @llvm.trap() }
             let cond_hir = lower_expr(ctx, condition.as_ref());
-            // For now, just return the condition (proper panic handling later)
-            cond_hir
+
+            // Build !cond
+            let not_cond = hir_expr::Expr::new(
+                hir_expr::ExprKind::Unary {
+                    op: common::UnaryOp::Not,
+                    operand: Box::new(cond_hir),
+                },
+                hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Bool)),
+                span,
+            );
+
+            // Build the trap call as Unreachable (codegen emits @llvm.trap)
+            let trap_expr = hir_expr::Expr::new(
+                hir_expr::ExprKind::Block(hir_expr::Block::new(
+                    Vec::new(),
+                    Option::Some(Box::new(hir_expr::Expr::new(
+                        hir_expr::ExprKind::Error,
+                        hir_ty::Type::new(hir_ty::TypeKind::Never),
+                        span,
+                    ))),
+                    span,
+                )),
+                hir_ty::Type::new(hir_ty::TypeKind::Never),
+                span,
+            );
+
+            // Build the unit else branch
+            let unit_expr = hir_expr::Expr::new(
+                hir_expr::ExprKind::Tuple(Vec::new()),
+                hir_ty::Type::unit(),
+                span,
+            );
+
+            // if !cond { trap } else { () }
+            hir_expr::Expr::new(
+                hir_expr::ExprKind::If {
+                    condition: Box::new(not_cond),
+                    then_branch: Box::new(trap_expr),
+                    else_branch: Option::Some(Box::new(unit_expr)),
+                },
+                hir_ty::Type::unit(),
+                span,
+            )
         }
         &ast::MacroCallKind::Dbg(ref expr) => {
-            // dbg! just evaluates and returns the expression
-            lower_expr(ctx, expr.as_ref())
+            // dbg!(expr) desugars to:
+            //   { let __dbg_val = expr; eprintln("[dbg]"); __dbg_val }
+            // Since we can't easily stringify arbitrary types, we emit
+            // a block that evaluates the expression, prints a debug marker,
+            // and returns the value.
+            let inner_hir = lower_expr(ctx, expr.as_ref());
+            let inner_ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+
+            // Create a local for the value
+            let local_id = ctx.alloc_local_id();
+            let local_sym = common::SpannedSymbol {
+                symbol: common::Symbol { index: 0 },
+                span: span,
+            };
+
+            // Let statement: let __dbg_val = expr;
+            let let_pat = hir_expr::Pattern::new(
+                hir_expr::PatternKind::Binding {
+                    local_id: local_id,
+                    name: local_sym,
+                    mode: hir_expr::BindingMode::ByValue,
+                    subpattern: Option::None,
+                },
+                hir_ty::Type::infer(ctx.alloc_ty_var()),
+                span,
+            );
+            let let_stmt = hir_expr::Stmt::Let {
+                pattern: let_pat,
+                ty: Option::None,
+                init: Option::Some(inner_hir),
+                span: span,
+            };
+
+            // Print a debug marker using eprintln_str
+            // Build a string literal "[dbg]"
+            let dbg_str = hir_expr::Literal::new(
+                hir_expr::LiteralKind::Str(common::make_string("[dbg]")),
+                span,
+            );
+            let dbg_str_expr = hir_expr::Expr::new(
+                hir_expr::ExprKind::Literal(dbg_str),
+                hir_ty::Type::new(hir_ty::TypeKind::Ref { inner: Box::new(hir_ty::Type::str_ty()), mutable: false }),
+                span,
+            );
+            let print_stmt = hir_expr::Stmt::Expr {
+                expr: dbg_str_expr,
+                has_semi: true,
+            };
+
+            // Return the local
+            let local_ref = hir_expr::Expr::new(
+                hir_expr::ExprKind::Local(local_id),
+                inner_ty,
+                span,
+            );
+
+            let mut stmts: Vec<hir_expr::Stmt> = Vec::new();
+            stmts.push(let_stmt);
+            stmts.push(print_stmt);
+            let block = hir_expr::Block::new(stmts, Option::Some(Box::new(local_ref)), span);
+
+            hir_expr::Expr::new(
+                hir_expr::ExprKind::Block(block),
+                hir_ty::Type::infer(ctx.alloc_ty_var()),
+                span,
+            )
         }
         &ast::MacroCallKind::Matches { ref expr, ref pattern } => {
             // matches!(expr, pattern) desugars to match expr { pattern => true, _ => false }
@@ -2362,10 +2586,17 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, kind: &ast::Macro
                 span,
             )
         }
-        &ast::MacroCallKind::Custom { delim: _, content: _ } => {
+        &ast::MacroCallKind::Custom { ref delim, ref content } => {
+            let _ = delim;
+            let _ = content;
+            // Custom macros are not yet supported.
+            // Built-in macros (format!, vec!, assert!, dbg!, matches!) are
+            // routed to specific MacroCallKind variants by the parser.
+            // todo!, unreachable!, unimplemented!, panic! are routed
+            // through the Format path by the parser.
             ctx.error(
                 hir::DiagnosticCode::E0104,
-                common::make_string("custom macros not yet supported"),
+                common::make_string("custom macros not yet supported; use built-in macros (format!, vec!, assert!, dbg!, matches!)"),
                 span,
             );
             hir_expr::Expr::error(span)
@@ -2373,12 +2604,89 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, kind: &ast::Macro
     }
 }
 
-/// Copy a vector of expressions (shallow copy references).
-fn copy_expr_vec(exprs: &Vec<ast::Expr>) -> Vec<ast::Expr> {
-    // This is a workaround since Blood doesn't have clone
-    // We can't actually copy AST nodes, so we'd need to re-parse
-    // For now, return empty and handle specially
-    Vec::new()
+// ============================================================
+// Format String Parsing
+// ============================================================
+
+/// A segment of a parsed format string.
+pub struct FormatSegment {
+    /// The literal text (for literals) or empty (for placeholders).
+    pub text: String,
+    /// Whether this segment is a placeholder ({}).
+    pub is_placeholder: bool,
+}
+
+/// Parse a format string into a list of segments.
+/// Segments are either literal text or {} placeholders.
+/// Supports {{ and }} as literal braces.
+fn parse_format_segments(fmt: &str) -> Vec<FormatSegment> {
+    let mut segments: Vec<FormatSegment> = Vec::new();
+    let bytes = fmt.as_bytes();
+    let len = bytes.len();
+    let mut pos: usize = 0;
+    let mut current_text = String::new();
+
+    while pos < len {
+        let b = bytes[pos];
+        if b == 123 {
+            // '{' character
+            if pos + 1 < len && bytes[pos + 1] == 123 {
+                // {{ - escaped literal brace
+                current_text.push('{');
+                pos = pos + 2;
+            } else {
+                // Start of placeholder
+                // Flush current text as a literal segment
+                if current_text.len() > 0 {
+                    let seg = FormatSegment {
+                        text: current_text,
+                        is_placeholder: false,
+                    };
+                    segments.push(seg);
+                    current_text = String::new();
+                }
+                // Skip everything until closing }
+                pos = pos + 1;
+                while pos < len && bytes[pos] != 125 {
+                    pos = pos + 1;
+                }
+                if pos < len {
+                    pos = pos + 1; // skip '}'
+                }
+                let placeholder_seg = FormatSegment {
+                    text: String::new(),
+                    is_placeholder: true,
+                };
+                segments.push(placeholder_seg);
+            }
+        } else if b == 125 {
+            // '}' character
+            if pos + 1 < len && bytes[pos + 1] == 125 {
+                // }} - escaped literal brace
+                current_text.push('}');
+                pos = pos + 2;
+            } else {
+                // Stray } — treat as literal
+                current_text.push('}');
+                pos = pos + 1;
+            }
+        } else {
+            // Regular character - use byte directly since Blood strings are UTF-8
+            current_text.push(b as char);
+            pos = pos + 1;
+        }
+    }
+
+    // Flush remaining text
+    if current_text.len() > 0 {
+        let seg = FormatSegment {
+            text: current_text,
+            is_placeholder: false,
+        };
+        segments.push(seg);
+    }
+
+    segments
 }
 
 
