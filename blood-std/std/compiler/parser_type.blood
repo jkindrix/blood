@@ -724,7 +724,7 @@ pub fn parse_fn_type_effect_row(parser: &mut parser_base::Parser) -> ast::Effect
     }
 }
 
-/// Parse a record type: {x: T, y: U, ..}.
+/// Parse a record type: {x: T, y: U | R}.
 fn parse_record_type(parser: &mut parser_base::Parser) -> ast::Type {
     let start = parser.current.span;
     parser.advance(); // consume '{'
@@ -733,11 +733,9 @@ fn parse_record_type(parser: &mut parser_base::Parser) -> ast::Type {
     let mut rest: Option<common::SpannedSymbol> = Option::None;
 
     while !parser.check(token::TokenKind::RBrace) && !parser.is_at_end() {
-        // Check for rest pattern: ..name or just ..
-        if parser.check(token::TokenKind::DotDot) {
-            parser.advance();
-            // Check if there's a name after ..
-            if parser.check(token::TokenKind::Ident) {
+        // Check for row variable: | R
+        if parser.try_consume(token::TokenKind::Or) {
+            if parser.check(token::TokenKind::Ident) || parser.check(token::TokenKind::TypeIdent) {
                 rest = Option::Some(parser.parse_spanned_symbol());
             }
             break;
@@ -757,6 +755,12 @@ fn parse_record_type(parser: &mut parser_base::Parser) -> ast::Type {
         fields.push(field);
 
         if !parser.try_consume(token::TokenKind::Comma) {
+            // Check for trailing row variable: | R (after last field without comma)
+            if parser.try_consume(token::TokenKind::Or) {
+                if parser.check(token::TokenKind::Ident) || parser.check(token::TokenKind::TypeIdent) {
+                    rest = Option::Some(parser.parse_spanned_symbol());
+                }
+            }
             break;
         }
     }
