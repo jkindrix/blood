@@ -1,0 +1,36 @@
+// Test: parse token.blood with larger initial region
+
+mod common;
+mod ast;
+mod parser;
+mod parser_base;
+mod source;
+
+pub fn main() -> i32 {
+    let read_result = source::read_file("token.blood");
+    let content = match &read_result.content {
+        &Option::Some(ref c) => c,
+        &Option::None => {
+            println_str("failed to read");
+            return 1;
+        }
+    };
+
+    // Try 16 MB initial, 1 GB max
+    let rid = region_create(16777216, 1073741824);
+    region_activate(rid);
+
+    println_str("parsing token.blood with 16MB region...");
+    let parse_result = parser::parse_file(content.as_str());
+    println_str("parsed!");
+
+    region_deactivate();
+    region_destroy(rid);
+
+    if parse_result.errors.len() == 0 {
+        println_str("pass");
+    } else {
+        println_str("fail");
+    }
+    0
+}

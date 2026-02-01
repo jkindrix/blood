@@ -1,0 +1,30 @@
+mod token;
+
+pub struct Lexer {
+    pub source: Vec<u8>,
+    pub pos: usize,
+}
+
+impl Lexer {
+    pub fn new(input: &str) -> Lexer {
+        let bytes = input.as_bytes();
+        let mut source: Vec<u8> = Vec::new();
+        let mut i: usize = 0;
+        while i < bytes.len() {
+            source.push(bytes[i]);
+            i = i + 1;
+        }
+        Lexer {
+            source: source,
+            pos: 0,
+        }
+    }
+
+    pub fn peek(self: &Self) -> u8 {
+        if self.pos < self.source.len() {
+            self.source[self.pos]
+        } else {
+            0
+        }
+    }
+}

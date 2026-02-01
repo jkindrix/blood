@@ -1,0 +1,39 @@
+// Test: file I/O and parsing with region active
+
+mod common;
+mod token;
+mod parser;
+mod parser_base;
+mod source;
+mod ast;
+
+pub fn main() -> i32 {
+    // Read file BEFORE region (like compile_file_streaming)
+    let read_result = source::read_file("common.blood");
+    let content = match &read_result.content {
+        &Option::Some(ref c) => c,
+        &Option::None => {
+            println_str("failed to read");
+            return 1;
+        }
+    };
+
+    // Activate region, then parse
+    let rid = region_create(1048576, 1073741824);
+    region_activate(rid);
+
+    let parse_result = parser::parse_file(content.as_str());
+
+    region_deactivate();
+
+    if parse_result.errors.len() == 0 {
+        println_str("parse ok");
+    } else {
+        println_str("parse errors");
+    }
+
+    region_destroy(rid);
+
+    println_str("done");
+    0
+}

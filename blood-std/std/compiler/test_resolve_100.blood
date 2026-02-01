@@ -1,0 +1,100 @@
+// Blood Self-Hosted Compiler - Name Resolution Types
+//
+// This module defines the types for name resolution. The actual resolution
+// algorithms are implemented in hir.blood which orchestrates the lowering.
+//
+// Note: Some methods are omitted due to blood-rust Vec<T> type inference
+// limitations with struct field access. These will be added when the
+// compiler supports this pattern.
+
+mod common;
+mod hir_def;
+
+// ============================================================
+// Resolution Errors
+// ============================================================
+
+/// Error codes for name resolution.
+pub enum ResolveErrorCode {
+    NotFound,
+    Ambiguous,
+    PrivateAccess,
+    ImportNotFound,
+    CircularImport,
+    DuplicateDefinition,
+    InvalidPath,
+    ModuleNotFound,
+}
+
+/// A name resolution error.
+pub struct ResolveError {
+    pub name_sym: common::Symbol,
+    pub span: common::Span,
+    pub code: ResolveErrorCode,
+}
+
+impl ResolveError {
+    pub fn new(name_sym: common::Symbol, span: common::Span, code: ResolveErrorCode) -> ResolveError {
+        ResolveError { name_sym, span, code }
+    }
+
+    pub fn not_found(name_sym: common::Symbol, span: common::Span) -> ResolveError {
+        ResolveError::new(name_sym, span, ResolveErrorCode::NotFound)
+    }
+
+    pub fn duplicate(name_sym: common::Symbol, span: common::Span) -> ResolveError {
+        ResolveError::new(name_sym, span, ResolveErrorCode::DuplicateDefinition)
+    }
+}
+
+// ============================================================
+// Bindings
+// ============================================================
+
+/// The kind of a binding.
+pub enum BindingKind {
+    /// A local variable binding.
+    Local,
+    /// A reference to a definition (function, struct, etc.).
+    Def,
+    /// A reference to a module.
+    Module,
+    /// A type parameter binding (for forall types and generic functions).
+    TypeParam,
+}
+
+/// A binding in a scope.
+///
+/// Due to Blood-rust limitations with struct-like enum variants,
+/// we use a struct with a kind discriminant instead.
+pub struct Binding {
+    /// The kind of binding.
+    pub kind: BindingKind,
+    /// For Local: the local variable ID. For others: dummy.
+    pub local_id: hir_def::LocalId,
+    /// For Def/Module: the definition ID. For others: dummy.
+    pub def_id: hir_def::DefId,
+    /// For TypeParam: the type variable ID. For others: dummy.
+    pub ty_var_id: hir_def::TyVarId,
+    /// For Local: whether the variable is mutable.
+    pub mutable: bool,
+    /// For Local: the declaration span.
+    pub span: common::Span,
+}
+
+impl Binding {
+    /// Creates a local variable binding.
+    pub fn local(local_id: hir_def::LocalId, mutable: bool, span: common::Span) -> Binding {
+        Binding {
+            kind: BindingKind::Local,
+            local_id: local_id,
+            def_id: hir_def::DefId::dummy(),
+            ty_var_id: hir_def::TyVarId::dummy(),
+            mutable: mutable,
+            span: span,
+        }
+    }
+
+    /// Creates a definition binding.
+    pub fn def(def_id: hir_def::DefId) -> Binding {
+        Binding {

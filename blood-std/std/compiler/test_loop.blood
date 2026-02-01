@@ -1,0 +1,61 @@
+mod token;
+
+pub struct Lexer {
+    pub source: Vec<u8>,
+    pub pos: usize,
+}
+
+impl Lexer {
+    pub fn current(self: &Self) -> u8 {
+        if self.pos < self.source.len() {
+            self.source[self.pos]
+        } else {
+            0
+        }
+    }
+
+    pub fn peek(self: &Self) -> u8 {
+        let next = self.pos + 1;
+        if next < self.source.len() {
+            self.source[next]
+        } else {
+            0
+        }
+    }
+
+    pub fn advance(self: &mut Self) {
+        self.pos = self.pos + 1;
+    }
+
+    fn skip_whitespace(self: &mut Self) {
+        loop {
+            let c = self.current();
+            if c == 32 || c == 9 || c == 13 || c == 10 {
+                self.advance();
+            } else if c == 47 && self.peek() == 47 {
+                while self.current() != 0 && self.current() != 10 {
+                    self.advance();
+                }
+            } else if c == 47 && self.peek() == 42 {
+                self.advance();
+                self.advance();
+                let mut depth: i32 = 1;
+                while depth > 0 && self.current() != 0 {
+                    if self.current() == 47 && self.peek() == 42 {
+                        self.advance();
+                        self.advance();
+                        depth = depth + 1;
+                    } else if self.current() == 42 && self.peek() == 47 {
+                        self.advance();
+                        self.advance();
+                        depth = depth - 1;
+                    } else {
+                        self.advance();
+                    }
+                }
+            } else {
+                break;
+            }
+        }
+    }
+}

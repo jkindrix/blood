@@ -1,0 +1,65 @@
+mod token;
+
+pub struct Lexer<'src> {
+    source: &'src str,
+    pos: usize,
+}
+
+impl<'src> Lexer<'src> {
+    fn at_end(self: &Self) -> bool {
+        self.pos >= self.source.len()
+    }
+
+    fn byte_at(self: &Self, pos: usize) -> u8 {
+        if pos >= self.source.len() { 0 } else {
+            let ptr = @unsafe { self.source as *const u8 };
+            let offset_ptr = @unsafe { (ptr as usize + pos) as *const u8 };
+            @unsafe { *offset_ptr }
+        }
+    }
+
+    fn current(self: &Self) -> u8 { self.byte_at(self.pos) }
+    fn peek(self: &Self) -> u8 { self.byte_at(self.pos + 1) }
+
+    fn advance(self: &mut Self) {
+        if !self.at_end() {
+            let c = self.current();
+            self.pos = self.pos + 1;
+            if c == 10 {
+                // newline tracking would go here
+            }
+        }
+    }
+
+    fn test(self: &mut Self) {
+        loop {
+            let c = self.current();
+            if c == 32 || c == 9 || c == 13 || c == 10 {
+                self.advance();
+            } else if c == 47 && self.peek() == 47 {
+                while self.current() != 0 && self.current() != 10 {
+                    self.advance();
+                }
+            } else if c == 47 && self.peek() == 42 {
+                self.advance();
+                self.advance();
+                let mut depth: i32 = 1;
+                while depth > 0 && self.current() != 0 {
+                    if self.current() == 47 && self.peek() == 42 {
+                        self.advance();
+                        self.advance();
+                        depth = depth + 1;
+                    } else if self.current() == 42 && self.peek() == 47 {
+                        self.advance();
+                        self.advance();
+                        depth = depth - 1;
+                    } else {
+                        self.advance();
+                    }
+                }
+            } else {
+                break;
+            }
+        }
+    }
+}

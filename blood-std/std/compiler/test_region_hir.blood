@@ -1,0 +1,84 @@
+// Test: full check pipeline with region active
+
+mod common;
+mod ast;
+mod hir;
+mod hir_def;
+mod hir_ty;
+mod hir_item;
+mod hir_expr;
+mod hir_lower;
+mod hir_lower_ctx;
+mod parser;
+mod parser_base;
+mod resolve;
+mod interner;
+mod unify;
+mod typeck;
+mod typeck_driver;
+mod source;
+
+pub fn main() -> i32 {
+    println_str("step 0: entering main");
+    interner::init_global_interner();
+    println_str("step 1: interner ok");
+
+    let read_result = source::read_file("token.blood");
+    let content = match &read_result.content {
+        &Option::Some(ref c) => c,
+        &Option::None => {
+            println_str("failed to read");
+            return 1;
+        }
+    };
+    println_str("step 2: file read ok");
+
+    let base_dir = source::parent_dir("token.blood");
+    println_str("step 3: base_dir ok");
+
+    // Activate region for parse + lower + typeck
+    let rid = region_create(1048576, 1073741824);
+    println_str("step 4: region created");
+    region_activate(rid);
+    println_str("step 5: region activated");
+
+    // Parse
+    let parse_result = parser::parse_file(content.as_str());
+    println_str("step 6: parsed");
+    if parse_result.errors.len() > 0 {
+        println_str("parse error");
+        region_deactivate();
+        region_destroy(rid);
+        return 1;
+    }
+
+    let program = match &parse_result.program {
+        &Option::Some(ref p) => p,
+        &Option::None => {
+            println_str("no program");
+            region_deactivate();
+            region_destroy(rid);
+            return 1;
+        }
+    };
+    println_str("step 7: program extracted");
+
+    // HIR lower
+    let lower_result = hir_lower::lower_program_with_base_dir(program, base_dir, content.as_str());
+    println_str("step 8: lowered");
+
+    // Type check
+    let typeck_result = typeck_driver::check_lower_result(&lower_result);
+    if typeck_result.success {
+        println_str("step 9: typeck ok");
+    } else {
+        println_str("step 9: typeck errors");
+    }
+
+    region_deactivate();
+    println_str("step 10: deactivated");
+    region_destroy(rid);
+    println_str("step 11: destroyed");
+
+    0
+}

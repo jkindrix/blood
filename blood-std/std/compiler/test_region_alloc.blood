@@ -1,0 +1,31 @@
+// Minimal test: allocate with region active
+
+pub fn main() -> i32 {
+    // Create and activate a region
+    let rid = region_create(1048576, 1073741824);
+    region_activate(rid);
+
+    // Simple allocation: String
+    let mut s = String::new();
+    s.push_str("hello");
+    s.push_str(" world");
+    println_str(s.as_str());
+
+    // Vec allocation
+    let mut v: Vec<i32> = Vec::new();
+    v.push(1);
+    v.push(2);
+    v.push(3);
+
+    // Nested allocation: Vec<String>
+    let mut vs: Vec<String> = Vec::new();
+    let mut s2 = String::new();
+    s2.push_str("test");
+    vs.push(s2);
+
+    region_deactivate();
+    region_destroy(rid);
+
+    println_str("done");
+    0
+}

@@ -1,0 +1,85 @@
+mod token;
+
+pub struct Lexer {
+    pub source: Vec<u8>,
+    pub pos: usize,
+    pub line: u32,
+    pub column: u32,
+    pub start_pos: usize,
+    pub start_line: u32,
+    pub start_column: u32,
+}
+
+impl Lexer {
+    pub fn new(input: &str) -> Lexer {
+        Lexer { source: Vec::new(), pos: 0, line: 1, column: 1, start_pos: 0, start_line: 1, start_column: 1 }
+    }
+    fn at_end(self: &Self) -> bool { self.pos >= self.source.len() }
+    fn byte_at(self: &Self, pos: usize) -> u8 {
+        if pos >= self.source.len() { 0 } else { self.source[pos] }
+    }
+    fn current(self: &Self) -> u8 { self.byte_at(self.pos) }
+    fn peek(self: &Self) -> u8 { self.byte_at(self.pos + 1) }
+    fn peek_at(self: &Self, offset: usize) -> u8 { self.byte_at(self.pos + offset) }
+    fn advance(self: &mut Self) {
+        if self.pos < self.source.len() {
+            if self.source[self.pos] == 10 {
+                self.line = self.line + 1;
+                self.column = 1;
+            } else {
+                self.column = self.column + 1;
+            }
+            self.pos = self.pos + 1;
+        }
+    }
+    fn start_token(self: &mut Self) {
+        self.start_pos = self.pos;
+        self.start_line = self.line;
+        self.start_column = self.column;
+    }
+    fn make_token(self: &Self, kind: token::TokenKind) -> token::Token {
+        let span = token::common::Span::new(self.start_pos, self.pos, self.start_line, self.start_column);
+        token::Token::new(kind, span)
+    }
+    fn skip_whitespace(self: &mut Self) {
+        loop {
+            let c = self.current();
+            if c == 32 || c == 9 || c == 13 || c == 10 {
+                self.advance();
+            } else if c == 47 && self.peek() == 47 {
+                if self.peek_at(2usize) == 47 && self.peek_at(3usize) != 47 {
+                    break;
+                }
+                while self.current() != 0 && self.current() != 10 {
+                    self.advance();
+                }
+            } else if c == 47 && self.peek() == 42 {
+                self.advance();
+                self.advance();
+                let mut depth: i32 = 1;
+                while depth > 0 && self.current() != 0 {
+                    if self.current() == 47 && self.peek() == 42 {
+                        self.advance();
+                        self.advance();
+                        depth = depth + 1;
+                    } else if self.current() == 42 && self.peek() == 47 {
+                        self.advance();
+                        self.advance();
+                        depth = depth - 1;
+                    } else {
+                        self.advance();
+                    }
+                }
+            } else {
+                break;
+            }
+        }
+    }
+    pub fn next_token(self: &mut Self) -> token::Token {
+        self.skip_whitespace();
+        self.start_token();
+        let c = self.current();
+        self.advance();
+        self.make_token(token::TokenKind::Eof)
+    }
+}

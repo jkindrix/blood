@@ -1,0 +1,39 @@
+mod common;
+mod ast;
+mod parser;
+mod parser_base;
+mod source;
+
+pub fn main() -> i32 {
+    let read_result = source::read_file("token.blood");
+    let content = match &read_result.content {
+        &Option::Some(ref c) => c,
+        &Option::None => { return 1; }
+    };
+
+    // Try 2 MB initial
+    let rid2 = region_create(2097152, 1073741824);
+    region_activate(rid2);
+    let r2 = parser::parse_file(content.as_str());
+    region_deactivate();
+    region_destroy(rid2);
+    if r2.errors.len() == 0 { println_str("2MB: pass"); } else { println_str("2MB: fail"); }
+
+    // Try 4 MB initial
+    let rid4 = region_create(4194304, 1073741824);
+    region_activate(rid4);
+    let r4 = parser::parse_file(content.as_str());
+    region_deactivate();
+    region_destroy(rid4);
+    if r4.errors.len() == 0 { println_str("4MB: pass"); } else { println_str("4MB: fail"); }
+
+    // Try 8 MB initial
+    let rid8 = region_create(8388608, 1073741824);
+    region_activate(rid8);
+    let r8 = parser::parse_file(content.as_str());
+    region_deactivate();
+    region_destroy(rid8);
+    if r8.errors.len() == 0 { println_str("8MB: pass"); } else { println_str("8MB: fail"); }
+
+    0
+}

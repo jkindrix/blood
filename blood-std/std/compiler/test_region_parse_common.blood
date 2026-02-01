@@ -1,0 +1,35 @@
+// Test: parse common.blood with region (same imports as token test)
+
+mod common;
+mod ast;
+mod parser;
+mod parser_base;
+mod source;
+
+pub fn main() -> i32 {
+    let read_result = source::read_file("common.blood");
+    let content = match &read_result.content {
+        &Option::Some(ref c) => c,
+        &Option::None => {
+            println_str("failed to read");
+            return 1;
+        }
+    };
+
+    let rid = region_create(1048576, 1073741824);
+    region_activate(rid);
+
+    println_str("parsing common.blood...");
+    let parse_result = parser::parse_file(content.as_str());
+    println_str("parsed!");
+
+    region_deactivate();
+    region_destroy(rid);
+
+    if parse_result.errors.len() == 0 {
+        println_str("pass");
+    } else {
+        println_str("fail");
+    }
+    0
+}

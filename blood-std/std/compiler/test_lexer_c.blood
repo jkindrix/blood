@@ -1,0 +1,122 @@
+// Blood Self-Hosted Compiler - Lexer
+//
+// This module tokenizes Blood source code into a stream of tokens.
+// Written to be compiled by blood-rust.
+
+mod token;
+
+/// The lexer for Blood source code
+pub struct Lexer<'src> {
+    /// Source text
+    source: &'src str,
+    /// Current position in source (byte offset)
+    pos: usize,
+    /// Current line (1-based)
+    line: u32,
+    /// Current column (1-based)
+    column: u32,
+    /// Start position of current token
+    token_start: usize,
+    /// Start line of current token
+    token_line: u32,
+    /// Start column of current token
+    token_column: u32,
+}
+
+impl<'src> Lexer<'src> {
+    /// Create a new lexer for the given source
+    pub fn new(source: &'src str) -> Lexer<'src> {
+        Lexer {
+            source,
+            pos: 0,
+            line: 1,
+            column: 1,
+            token_start: 0,
+            token_line: 1,
+            token_column: 1,
+        }
+    }
+
+    /// Check if we're at the end of input
+    fn at_end(self: &Self) -> bool {
+        self.pos >= self.source.len()
+    }
+
+    /// Get byte at position (returns 0 if out of bounds)
+    fn byte_at(self: &Self, pos: usize) -> u8 {
+        if pos >= self.source.len() {
+            0
+        } else {
+            let ptr = @unsafe { self.source as *const u8 };
+            let offset_ptr = @unsafe { (ptr as usize + pos) as *const u8 };
+            @unsafe { *offset_ptr }
+        }
+    }
+
+    /// Get current byte (or 0 if at end)
+    fn current(self: &Self) -> u8 {
+        self.byte_at(self.pos)
+    }
+
+    /// Peek at the next byte (or 0 if at end)
+    fn peek(self: &Self) -> u8 {
+        self.byte_at(self.pos + 1)
+    }
+
+    /// Peek at byte at offset from current (or 0 if out of bounds)
+    fn peek_at(self: &Self, offset: usize) -> u8 {
+        self.byte_at(self.pos + offset)
+    }
+
+    /// Advance by one byte
+    fn advance(self: &mut Self) {
+        if !self.at_end() {
+            let c = self.current();
+            self.pos = self.pos + 1;
+            if c == 10 {
+                // newline
+                self.line = self.line + 1;
+                self.column = 1;
+            } else {
+                self.column = self.column + 1;
+            }
+        }
+    }
+
+    /// Mark the start of a token
+    fn start_token(self: &mut Self) {
+        self.token_start = self.pos;
+        self.token_line = self.line;
+        self.token_column = self.column;
+    }
+
+    /// Create a token with the current span
+    fn make_token(self: &Self, kind: token::TokenKind) -> token::Token {
+        token::Token {
+            kind,
+            span: token::common::Span {
+                start: self.token_start,
+                end: self.pos,
+                line: self.token_line,
+                column: self.token_column,
+            },
+            leading_trivia: Vec::new(),
+        }
+    }
+
+    /// Skip whitespace and comments
+    fn skip_whitespace(self: &mut Self) {
+        loop {
+            let c = self.current();
+            if c == 32 || c == 9 || c == 13 || c == 10 {
+                // space, tab, CR, LF
+                self.advance();
+            } else if c == 47 && self.peek() == 47 {
+                // // line comment
+                if self.peek_at(2usize) == 47 && self.peek_at(3usize) != 47 {
+                    // /// doc comment - don't skip
+                    break;
+                }
+                // Regular line comment - skip to end of line
+                while self.current() != 0 && self.current() != 10 {
+}

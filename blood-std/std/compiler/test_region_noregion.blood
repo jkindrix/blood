@@ -1,0 +1,47 @@
+// Test: same imports as test_region_hir but NO region calls
+
+mod common;
+mod ast;
+mod hir;
+mod hir_def;
+mod hir_ty;
+mod hir_item;
+mod hir_expr;
+mod hir_lower;
+mod hir_lower_ctx;
+mod parser;
+mod parser_base;
+mod resolve;
+mod interner;
+mod unify;
+mod typeck;
+mod typeck_driver;
+mod source;
+
+pub fn main() -> i32 {
+    println_str("starting");
+    interner::init_global_interner();
+    println_str("interner ok");
+
+    let read_result = source::read_file("token.blood");
+    let content = match &read_result.content {
+        &Option::Some(ref c) => c,
+        &Option::None => {
+            println_str("failed to read");
+            return 1;
+        }
+    };
+    println_str("file read ok");
+
+    let base_dir = source::parent_dir("token.blood");
+    println_str("base_dir ok");
+
+    let parse_result = parser::parse_file(content.as_str());
+    if parse_result.errors.len() > 0 {
+        println_str("parse error");
+        return 1;
+    }
+    println_str("parsed ok");
+
+    0
+}

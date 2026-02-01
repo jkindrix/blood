@@ -1,0 +1,49 @@
+// Test: complex allocations with region active
+
+pub fn main() -> i32 {
+    let rid = region_create(1048576, 1073741824);
+    region_activate(rid);
+
+    // HashMap allocation
+    let mut map: HashMap<u32, String> = HashMap::new();
+    let mut s1 = String::new();
+    s1.push_str("value1");
+    map.insert(1, s1);
+    let mut s2 = String::new();
+    s2.push_str("value2");
+    map.insert(2, s2);
+
+    // Box allocation
+    let b: Box<i32> = Box::new(42);
+
+    // Large string (trigger reallocation)
+    let mut big = String::new();
+    let mut i: i32 = 0;
+    while i < 10000 {
+        big.push_str("abcdefghij");
+        i = i + 1;
+    }
+
+    // Vec with many elements (trigger multiple reallocations)
+    let mut vb: Vec<u32> = Vec::new();
+    let mut j: u32 = 0;
+    while j < 10000 {
+        vb.push(j);
+        j = j + 1;
+    }
+
+    region_deactivate();
+
+    // Access after deactivate but before destroy
+    let len = big.len();
+
+    region_destroy(rid);
+
+    if len == 100000 {
+        println_str("pass");
+        0
+    } else {
+        println_str("fail");
+        1
+    }
+}
