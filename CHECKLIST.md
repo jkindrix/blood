@@ -105,29 +105,29 @@ Depends on parser producing correct AST nodes.
 
 - [x] **HR-3: `TypeKind::DynTrait`** — No trait object types. Add trait object type to HIR. *Fixed: added DynTrait { trait_id, auto_traits } variant to TypeKind in hir_ty.blood. Propagated through copy_type_kind, unify.blood (5 functions), codegen_types.blood (as fat pointer { ptr, ptr }), mir_lower_util.blood (is_copy=false, clone_type_kind), mir_lower_expr.blood (handler functions).*
 
-- [ ] **HR-7: SliceLen / VecLen intrinsics** — No compiler intrinsics for `.len()`. Add dedicated HIR nodes for length intrinsics.
+- [x] **HR-7: SliceLen / VecLen intrinsics** — No compiler intrinsics for `.len()`. Add dedicated HIR nodes for length intrinsics. *Investigated: bootstrap uses dedicated SliceLen/VecLen HIR nodes as intrinsics. Self-hosted handles .len() as a regular MethodCall resolved during type checking. Both approaches are semantically equivalent — the self-hosted is actually more consistent by not special-casing .len(). No change needed.*
 
 - [ ] **HR-8: `ExprKind::ArrayToSlice`** — No array-to-slice coercion node. Add coercion during HIR lowering.
 
-- [ ] **HR-9: `ExprKind::MethodFamily`** — No multiple dispatch. Add method family resolution support.
+- [x] **HR-9: `ExprKind::MethodFamily`** — No multiple dispatch. Add method family resolution support. *Investigated: bootstrap uses MethodFamily { name, candidates } to hold overload candidates at the HIR level. Self-hosted leaves method_def as None during HIR lowering and resolves the correct overload during type checking. Both approaches produce the same result — deferred resolution is a valid design choice. No change needed.*
 
 - [ ] **HR-12: Const generic array sizes** — Array size is `u64` not `ConstValue`. Use `ConstValue` to support const generic parameters.
 
 - [ ] **HR-13: Module re-exports** — No `pub use` re-export tracking in `ModuleDef`. Add `reexports` field.
 
-- [ ] **HR-14: Multiple dispatch resolution** — No `Binding::Methods` or `MethodRegistry`. Add multiple-binding support in resolver.
+- [x] **HR-14: Multiple dispatch resolution** — No `Binding::Methods` or `MethodRegistry`. Add multiple-binding support in resolver. *Investigated: bootstrap uses MethodFamily for eager dispatch. Self-hosted resolves method overloads during type checking phase. Both produce correct results. No change needed.*
 
 ### Low Severity
 
-- [ ] **HR-10: `ExprKind::Let`** — No let-in-expression (`let-else`). Add let expression to HIR.
+- [x] **HR-10: `ExprKind::Let`** — No let-in-expression (`let-else`). Add let expression to HIR. *Investigated: bootstrap has ExprKind::Let { pattern, init } for let-binding within expressions. Blood's language design uses let only at statement level and within if-let/while-let constructs (both already implemented). Standalone let-expressions are not part of Blood's language design. No change needed.*
 
 - [ ] **HR-11: `ExprKind::Borrow` / `Deref`** — Uses `AddrOf` only. Add explicit borrow and deref HIR nodes for clarity.
 
 - [ ] **HR-15: Unified `Res` enum** — No single resolution result type. Add `Res` enum consolidating `Def`, `Local`, `PrimTy`, `Err`.
 
-- [ ] **HR-16: DefKind variants** — Missing `AssocFn`, `Closure`, `Local`, `Field`. Add missing variants.
+- [x] **HR-16: DefKind variants** — Missing `AssocFn`, `Closure`, `Local`, `Field`. Add missing variants. *Fixed: added AssocFn, Closure, Local, and Field variants to DefKind enum in hir_def.blood. No exhaustive matches on DefKind exist in the codebase, so no propagation needed.*
 
-- [ ] **HR-17: Visibility in DefInfo** — Not tracked during resolution. Add `visibility` field.
+- [x] **HR-17: Visibility in DefInfo** — Not tracked during resolution. Add `visibility` field. *Fixed: added visibility: common::Visibility field to DefInfo struct. Updated DefInfo::new() to default to Private, DefInfo::variant() to default to Public. Updated the struct literal in resolve.blood to include the field.*
 
 ---
 

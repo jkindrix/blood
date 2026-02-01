@@ -256,6 +256,14 @@ pub enum DefKind {
     LifetimeParam,
     /// A const generic parameter.
     ConstParam,
+    /// An associated function (method in impl block).
+    AssocFn,
+    /// A closure definition.
+    Closure,
+    /// A local variable.
+    Local,
+    /// A struct or enum field.
+    Field,
 }
 
 /// Information about a definition stored in the resolver.
@@ -271,12 +279,14 @@ pub struct DefInfo {
     /// For Variant definitions, the index within the parent enum.
     /// None for non-variant definitions.
     pub variant_index: Option<u32>,
+    /// The visibility of this definition.
+    pub visibility: common::Visibility,
 }
 
 impl DefInfo {
     /// Creates a new DefInfo.
     pub fn new(kind: DefKind, name: common::Symbol, span: common::Span, parent: Option<DefId>) -> DefInfo {
-        DefInfo { kind, name, span, parent, variant_index: Option::None }
+        DefInfo { kind, name, span, parent, variant_index: Option::None, visibility: common::Visibility::Private }
     }
 
     /// Creates a new DefInfo for an enum variant with its index.
@@ -287,6 +297,7 @@ impl DefInfo {
             span: span,
             parent: Option::Some(parent),
             variant_index: Option::Some(variant_index),
+            visibility: common::Visibility::Public,
         }
     }
 }
