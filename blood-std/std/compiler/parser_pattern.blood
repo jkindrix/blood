@@ -20,14 +20,36 @@ mod parser_type;
 // Pattern Parsing
 // ============================================================
 
-/// Parse a pattern.
+/// Parse a pattern, including or-patterns: `A | B | C`.
 pub fn parse_pattern(parser: &mut parser_base::Parser) -> ast::Pattern {
     let start = parser.current.span;
     let kind = parse_pattern_kind(parser);
     let end_span = parser.previous.span;
-    ast::Pattern {
+    let first = ast::Pattern {
         kind: kind,
         span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    };
+
+    // Check for or-pattern: `A | B | C`
+    if parser.check(token::TokenKind::Or) {
+        let mut patterns: Vec<ast::Pattern> = Vec::new();
+        patterns.push(first);
+        while parser.try_consume(token::TokenKind::Or) {
+            let alt_start = parser.current.span;
+            let alt_kind = parse_pattern_kind(parser);
+            let alt_end = parser.previous.span;
+            patterns.push(ast::Pattern {
+                kind: alt_kind,
+                span: common::Span { start: alt_start.start, end: alt_end.end, line: alt_start.line, column: alt_start.column },
+            });
+        }
+        let or_end = parser.previous.span;
+        ast::Pattern {
+            kind: ast::PatternKind::Or(patterns),
+            span: common::Span { start: start.start, end: or_end.end, line: start.line, column: start.column },
+        }
+    } else {
+        first
     }
 }
 

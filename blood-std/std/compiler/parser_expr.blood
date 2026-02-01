@@ -874,6 +874,35 @@ fn parse_if_expr(parser: &mut parser_base::Parser) -> ast::Expr {
     let start = parser.current.span;
     parser.advance(); // consume 'if'
 
+    // Check for if-let: `if let PATTERN = EXPR { } else { }`
+    if parser.try_consume(token::TokenKind::Let) {
+        let pattern = parser_pattern::parse_pattern(parser);
+        parser.expect(token::TokenKind::Eq);
+        let scrutinee = parse_expr_no_struct(parser);
+        let then_branch = parse_block(parser);
+
+        let else_branch = if parser.try_consume(token::TokenKind::Else) {
+            if parser.check(token::TokenKind::If) {
+                Option::Some(ast::ElseBranch::If(Box::new(parse_if_expr(parser))))
+            } else {
+                Option::Some(ast::ElseBranch::Block(parse_block(parser)))
+            }
+        } else {
+            Option::None
+        };
+
+        let end_span = parser.previous.span;
+        return ast::Expr {
+            kind: ast::ExprKind::IfLet {
+                pattern: pattern,
+                scrutinee: Box::new(scrutinee),
+                then_branch: then_branch,
+                else_branch: else_branch,
+            },
+            span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        };
+    }
+
     let condition = parse_expr_no_struct(parser);
     let then_branch = parse_block(parser);
 
@@ -985,6 +1014,25 @@ fn parse_loop_expr(parser: &mut parser_base::Parser) -> ast::Expr {
 fn parse_while_expr(parser: &mut parser_base::Parser) -> ast::Expr {
     let start = parser.current.span;
     parser.advance(); // consume 'while'
+
+    // Check for while-let: `while let PATTERN = EXPR { }`
+    if parser.try_consume(token::TokenKind::Let) {
+        let pattern = parser_pattern::parse_pattern(parser);
+        parser.expect(token::TokenKind::Eq);
+        let scrutinee = parse_expr_no_struct(parser);
+        let body = parse_block(parser);
+        let end_span = parser.previous.span;
+
+        return ast::Expr {
+            kind: ast::ExprKind::WhileLet {
+                label: Option::None,
+                pattern: pattern,
+                scrutinee: Box::new(scrutinee),
+                body: body,
+            },
+            span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        };
+    }
 
     let condition = parse_expr_no_struct(parser);
     let body = parse_block(parser);
@@ -1390,6 +1438,16 @@ fn parse_path_expr(parser: &mut parser_base::Parser) -> ast::Expr {
     let start = parser.current.span;
     let path = parse_expr_path(parser);
 
+    // Check for macro call: path!(args) or path![args] or path!{args}
+    if parser.check(token::TokenKind::Not) {
+        if parser.check_next(token::TokenKind::LParen)
+            || parser.check_next(token::TokenKind::LBracket)
+            || parser.check_next(token::TokenKind::LBrace)
+        {
+            return parse_macro_call(parser, path, start);
+        }
+    }
+
     // Check for struct literal: Path { ... }
     if parser.allow_struct_literal && parser.check(token::TokenKind::LBrace) {
         // Convert ExprPath to TypePath for struct expression
@@ -1649,6 +1707,251 @@ pub fn parse_block(parser: &mut parser_base::Parser) -> ast::Block {
         statements: stmts,
         expr: final_expr,
         span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+// ============================================================
+// Macro Call Parsing
+// ============================================================
+
+/// Parse a macro call after the path and before the `!`.
+fn parse_macro_call(parser: &mut parser_base::Parser, path: ast::ExprPath, start: common::Span) -> ast::Expr {
+    parser.advance(); // consume '!'
+
+    // Get the macro name span from the last segment
+    let last_idx = path.segments.len() - 1;
+    let name_span = path.segments[last_idx].name.span;
+
+    // Dispatch based on macro name
+    let kind = if is_format_macro_name(parser.source, name_span) {
+        parse_format_macro_args(parser)
+    } else if span_text_eq(parser.source, name_span, "vec") {
+        parse_vec_macro_args(parser)
+    } else if span_text_eq(parser.source, name_span, "assert") || span_text_eq(parser.source, name_span, "debug_assert") {
+        parse_assert_macro_args(parser)
+    } else if span_text_eq(parser.source, name_span, "dbg") {
+        parse_dbg_macro_args(parser)
+    } else if span_text_eq(parser.source, name_span, "matches") {
+        parse_matches_macro_args(parser)
+    } else {
+        parse_custom_macro_args(parser)
+    };
+
+    let end_span = parser.previous.span;
+    ast::Expr {
+        kind: ast::ExprKind::MacroCall {
+            path: path,
+            kind: kind,
+        },
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+/// Check if source text at a span equals a target string.
+fn span_text_eq(source: &str, span: common::Span, target: &str) -> bool {
+    let src = source.as_bytes();
+    let tgt = target.as_bytes();
+    let len = span.end - span.start;
+    if len != tgt.len() {
+        return false;
+    }
+    let mut i: usize = 0;
+    while i < len {
+        if src[span.start + i] != tgt[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    true
+}
+
+/// Check if the macro name is a format-style macro.
+fn is_format_macro_name(source: &str, span: common::Span) -> bool {
+    if span_text_eq(source, span, "format") { return true; }
+    if span_text_eq(source, span, "println") { return true; }
+    if span_text_eq(source, span, "print") { return true; }
+    if span_text_eq(source, span, "eprintln") { return true; }
+    if span_text_eq(source, span, "eprint") { return true; }
+    if span_text_eq(source, span, "panic") { return true; }
+    if span_text_eq(source, span, "write") { return true; }
+    if span_text_eq(source, span, "writeln") { return true; }
+    if span_text_eq(source, span, "todo") { return true; }
+    if span_text_eq(source, span, "unimplemented") { return true; }
+    if span_text_eq(source, span, "unreachable") { return true; }
+    false
+}
+
+/// Parse format-style macro args: format!("fmt", arg1, arg2)
+fn parse_format_macro_args(parser: &mut parser_base::Parser) -> ast::MacroCallKind {
+    parser.expect(token::TokenKind::LParen);
+
+    // First argument must be a string literal (the format string)
+    let fmt_span = parser.current.span;
+    let fmt_str = if parser.check(token::TokenKind::StringLit) {
+        let s = parser_base::parse_string_from_span(parser, fmt_span);
+        parser.advance();
+        common::SpannedString {
+            value: s,
+            span: fmt_span,
+        }
+    } else {
+        // Not a string — create empty format string and let HIR handle the error
+        common::SpannedString {
+            value: String::new(),
+            span: fmt_span,
+        }
+    };
+
+    // Parse remaining arguments
+    let mut args: Vec<ast::Expr> = Vec::new();
+    while parser.try_consume(token::TokenKind::Comma) {
+        if parser.check(token::TokenKind::RParen) {
+            break;
+        }
+        args.push(parse_expr(parser));
+    }
+
+    parser.expect(token::TokenKind::RParen);
+
+    ast::MacroCallKind::Format {
+        format_str: fmt_str,
+        args: args,
+    }
+}
+
+/// Parse vec macro args: vec![1, 2, 3] or vec![0; 10]
+fn parse_vec_macro_args(parser: &mut parser_base::Parser) -> ast::MacroCallKind {
+    parser.expect(token::TokenKind::LBracket);
+
+    if parser.check(token::TokenKind::RBracket) {
+        parser.advance();
+        return ast::MacroCallKind::VecMacro(ast::VecMacroArgs::List(Vec::new()));
+    }
+
+    let first = parse_expr(parser);
+
+    // Check for repeat syntax: vec![val; count]
+    if parser.try_consume(token::TokenKind::Semi) {
+        let count = parse_expr(parser);
+        parser.expect(token::TokenKind::RBracket);
+        return ast::MacroCallKind::VecMacro(ast::VecMacroArgs::Repeat {
+            val: Box::new(first),
+            count: Box::new(count),
+        });
+    }
+
+    // List syntax: vec![a, b, c]
+    let mut elems: Vec<ast::Expr> = Vec::new();
+    elems.push(first);
+    while parser.try_consume(token::TokenKind::Comma) {
+        if parser.check(token::TokenKind::RBracket) {
+            break;
+        }
+        elems.push(parse_expr(parser));
+    }
+
+    parser.expect(token::TokenKind::RBracket);
+    ast::MacroCallKind::VecMacro(ast::VecMacroArgs::List(elems))
+}
+
+/// Parse assert macro args: assert!(cond) or assert!(cond, "msg")
+fn parse_assert_macro_args(parser: &mut parser_base::Parser) -> ast::MacroCallKind {
+    parser.expect(token::TokenKind::LParen);
+    let condition = parse_expr(parser);
+
+    let message = if parser.try_consume(token::TokenKind::Comma) {
+        if parser.check(token::TokenKind::RParen) {
+            Option::None
+        } else {
+            Option::Some(Box::new(parse_expr(parser)))
+        }
+    } else {
+        Option::None
+    };
+
+    parser.expect(token::TokenKind::RParen);
+    ast::MacroCallKind::Assert {
+        condition: Box::new(condition),
+        message: message,
+    }
+}
+
+/// Parse dbg macro args: dbg!(expr)
+fn parse_dbg_macro_args(parser: &mut parser_base::Parser) -> ast::MacroCallKind {
+    parser.expect(token::TokenKind::LParen);
+    let expr = parse_expr(parser);
+    parser.expect(token::TokenKind::RParen);
+    ast::MacroCallKind::Dbg(Box::new(expr))
+}
+
+/// Parse matches macro args: matches!(expr, pattern)
+fn parse_matches_macro_args(parser: &mut parser_base::Parser) -> ast::MacroCallKind {
+    parser.expect(token::TokenKind::LParen);
+    let expr = parse_expr(parser);
+    parser.expect(token::TokenKind::Comma);
+    let pattern = parser_pattern::parse_pattern(parser);
+    parser.expect(token::TokenKind::RParen);
+    ast::MacroCallKind::Matches {
+        expr: Box::new(expr),
+        pattern: Box::new(pattern),
+    }
+}
+
+/// Parse custom/unknown macro args as raw content.
+fn parse_custom_macro_args(parser: &mut parser_base::Parser) -> ast::MacroCallKind {
+    let delim = if parser.check(token::TokenKind::LParen) {
+        parser.advance();
+        ast::MacroDelimiter::Paren
+    } else if parser.check(token::TokenKind::LBracket) {
+        parser.advance();
+        ast::MacroDelimiter::Bracket
+    } else {
+        parser.advance(); // consume LBrace
+        ast::MacroDelimiter::Brace
+    };
+
+    // Skip tokens until matching close delimiter, tracking nesting
+    let content_start = parser.current.span.start;
+    let mut depth: u32 = 1;
+    while depth > 0 && parser.current.kind != token::TokenKind::Eof {
+        match parser.current.kind {
+            token::TokenKind::LParen => { depth = depth + 1; }
+            token::TokenKind::RParen => {
+                match delim { ast::MacroDelimiter::Paren => { depth = depth - 1; } _ => {} }
+            }
+            token::TokenKind::LBracket => { depth = depth + 1; }
+            token::TokenKind::RBracket => {
+                match delim { ast::MacroDelimiter::Bracket => { depth = depth - 1; } _ => {} }
+            }
+            token::TokenKind::LBrace => { depth = depth + 1; }
+            token::TokenKind::RBrace => {
+                match delim { ast::MacroDelimiter::Brace => { depth = depth - 1; } _ => {} }
+            }
+            _ => {}
+        }
+        if depth > 0 {
+            parser.advance();
+        }
+    }
+
+    // Extract content text from source
+    let content_end = parser.current.span.start;
+    let mut content = String::new();
+    let src = parser.source.as_bytes();
+    let mut i: usize = content_start;
+    while i < content_end && i < src.len() {
+        content.push(src[i] as char);
+        i = i + 1;
+    }
+
+    // Consume closing delimiter
+    if depth == 0 {
+        parser.advance();
+    }
+
+    ast::MacroCallKind::Custom {
+        delim: delim,
+        content: content,
     }
 }
 
