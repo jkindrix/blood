@@ -363,15 +363,19 @@ fn parse_primary_expr(parser: &mut parser_base::Parser) -> ast::Expr {
         token::TokenKind::Match => {
             return parse_match_expr(parser);
         }
+        // Labeled loop: 'label: loop/while/for
+        token::TokenKind::Lifetime => {
+            return parse_labeled_loop(parser);
+        }
         // Loop expressions
         token::TokenKind::Loop => {
-            return parse_loop_expr(parser);
+            return parse_loop_expr(parser, Option::None);
         }
         token::TokenKind::While => {
-            return parse_while_expr(parser);
+            return parse_while_expr(parser, Option::None);
         }
         token::TokenKind::For => {
-            return parse_for_expr(parser);
+            return parse_for_expr(parser, Option::None);
         }
         // Return expression
         token::TokenKind::Return => {
@@ -385,11 +389,14 @@ fn parse_primary_expr(parser: &mut parser_base::Parser) -> ast::Expr {
         token::TokenKind::Continue => {
             return parse_continue_expr(parser);
         }
-        // Closure
+        // Closure (|args| body, || body, move |args| body)
         token::TokenKind::Or => {
             return parse_closure_expr(parser);
         }
         token::TokenKind::OrOr => {
+            return parse_closure_expr(parser);
+        }
+        token::TokenKind::Move => {
             return parse_closure_expr(parser);
         }
         // Identifier or path
@@ -1088,7 +1095,26 @@ fn parse_match_expr(parser: &mut parser_base::Parser) -> ast::Expr {
     }
 }
 
-fn parse_loop_expr(parser: &mut parser_base::Parser) -> ast::Expr {
+fn parse_labeled_loop(parser: &mut parser_base::Parser) -> ast::Expr {
+    let label = parser.parse_spanned_symbol();
+    parser.expect(token::TokenKind::Colon);
+    match parser.current.kind {
+        token::TokenKind::Loop => { return parse_loop_expr(parser, Option::Some(label)); }
+        token::TokenKind::While => { return parse_while_expr(parser, Option::Some(label)); }
+        token::TokenKind::For => { return parse_for_expr(parser, Option::Some(label)); }
+        _ => {
+            parser.error_expected("loop, while, or for after label");
+            let end_span = parser.previous.span;
+            let empty_block = ast::Block { statements: Vec::new(), expr: Option::None, span: end_span };
+            return ast::Expr {
+                kind: ast::ExprKind::Loop { label: Option::Some(label), body: empty_block },
+                span: common::Span { start: label.span.start, end: end_span.end, line: label.span.line, column: label.span.column },
+            };
+        }
+    }
+}
+
+fn parse_loop_expr(parser: &mut parser_base::Parser, label: Option<common::SpannedSymbol>) -> ast::Expr {
     let start = parser.current.span;
     parser.advance(); // consume 'loop'
 
@@ -1097,14 +1123,14 @@ fn parse_loop_expr(parser: &mut parser_base::Parser) -> ast::Expr {
 
     ast::Expr {
         kind: ast::ExprKind::Loop {
-            label: Option::None,
+            label: label,
             body: body,
         },
         span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
-fn parse_while_expr(parser: &mut parser_base::Parser) -> ast::Expr {
+fn parse_while_expr(parser: &mut parser_base::Parser, label: Option<common::SpannedSymbol>) -> ast::Expr {
     let start = parser.current.span;
     parser.advance(); // consume 'while'
 
@@ -1118,7 +1144,7 @@ fn parse_while_expr(parser: &mut parser_base::Parser) -> ast::Expr {
 
         return ast::Expr {
             kind: ast::ExprKind::WhileLet {
-                label: Option::None,
+                label: label,
                 pattern: pattern,
                 scrutinee: Box::new(scrutinee),
                 body: body,
@@ -1133,7 +1159,7 @@ fn parse_while_expr(parser: &mut parser_base::Parser) -> ast::Expr {
 
     ast::Expr {
         kind: ast::ExprKind::While {
-            label: Option::None,
+            label: label,
             condition: Box::new(condition),
             body: body,
         },
@@ -1141,7 +1167,7 @@ fn parse_while_expr(parser: &mut parser_base::Parser) -> ast::Expr {
     }
 }
 
-fn parse_for_expr(parser: &mut parser_base::Parser) -> ast::Expr {
+fn parse_for_expr(parser: &mut parser_base::Parser, label: Option<common::SpannedSymbol>) -> ast::Expr {
     let start = parser.current.span;
     parser.advance(); // consume 'for'
 
@@ -1153,7 +1179,7 @@ fn parse_for_expr(parser: &mut parser_base::Parser) -> ast::Expr {
 
     ast::Expr {
         kind: ast::ExprKind::For {
-            label: Option::None,
+            label: label,
             pattern: pattern,
             iter: Box::new(iter),
             body: body,
@@ -1183,6 +1209,13 @@ fn parse_break_expr(parser: &mut parser_base::Parser) -> ast::Expr {
     let start = parser.current.span;
     parser.advance(); // consume 'break'
 
+    // Check for label: break 'label
+    let label = if parser.check(token::TokenKind::Lifetime) {
+        Option::Some(parser.parse_spanned_symbol())
+    } else {
+        Option::None
+    };
+
     let val = if !parser.check(token::TokenKind::Semi) && !parser.check(token::TokenKind::RBrace) {
         Option::Some(Box::new(parse_expr(parser)))
     } else {
@@ -1191,7 +1224,7 @@ fn parse_break_expr(parser: &mut parser_base::Parser) -> ast::Expr {
 
     let end_span = parser.previous.span;
     ast::Expr {
-        kind: ast::ExprKind::Break { label: Option::None, val: val },
+        kind: ast::ExprKind::Break { label: label, val: val },
         span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
@@ -1199,16 +1232,27 @@ fn parse_break_expr(parser: &mut parser_base::Parser) -> ast::Expr {
 fn parse_continue_expr(parser: &mut parser_base::Parser) -> ast::Expr {
     let start = parser.current.span;
     parser.advance(); // consume 'continue'
+
+    // Check for label: continue 'label
+    let label = if parser.check(token::TokenKind::Lifetime) {
+        Option::Some(parser.parse_spanned_symbol())
+    } else {
+        Option::None
+    };
+
     let end_span = parser.previous.span;
 
     ast::Expr {
-        kind: ast::ExprKind::Continue { label: Option::None },
+        kind: ast::ExprKind::Continue { label: label },
         span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
 fn parse_closure_expr(parser: &mut parser_base::Parser) -> ast::Expr {
     let start = parser.current.span;
+
+    // Check for `move` keyword
+    let is_move = parser.try_consume(token::TokenKind::Move);
 
     // Parse parameters
     let mut params: Vec<ast::ClosureParam> = Vec::new();
@@ -1263,7 +1307,7 @@ fn parse_closure_expr(parser: &mut parser_base::Parser) -> ast::Expr {
 
     ast::Expr {
         kind: ast::ExprKind::Closure {
-            is_move: false,
+            is_move: is_move,
             params: params,
             return_type: return_type,
             effects: effects,

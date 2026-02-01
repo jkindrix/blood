@@ -858,6 +858,39 @@ pub fn parse_string_from_span(parser: &mut Parser, span: common::Span) -> String
             } else if esc == 39 {
                 // \'
                 result.push(39 as char);
+            } else if esc == 120 {
+                // \x## — hex escape (2 hex digits)
+                pos = pos + 1;
+                let mut hex_val: u32 = 0;
+                if pos < end {
+                    let h1 = parser.source_byte_at(pos);
+                    hex_val = hex_digit_value(h1);
+                    pos = pos + 1;
+                }
+                if pos < end {
+                    let h2 = parser.source_byte_at(pos);
+                    hex_val = hex_val * 16 + hex_digit_value(h2);
+                }
+                result.push(hex_val as char);
+            } else if esc == 117 {
+                // \u{####} — unicode escape
+                pos = pos + 1;
+                if pos < end && parser.source_byte_at(pos) == 123 {
+                    // skip '{'
+                    pos = pos + 1;
+                    let mut code_point: u32 = 0;
+                    while pos < end && parser.source_byte_at(pos) != 125 {
+                        let digit = parser.source_byte_at(pos);
+                        code_point = code_point * 16 + hex_digit_value(digit);
+                        pos = pos + 1;
+                    }
+                    // skip '}'
+                    if pos < end && parser.source_byte_at(pos) == 125 {
+                        pos = pos + 1;
+                    }
+                    result.push(code_point as char);
+                    pos = pos - 1; // adjust for outer pos = pos + 1
+                }
             } else {
                 // Unknown escape — include as-is
                 result.push(92 as char);
@@ -895,8 +928,48 @@ pub fn parse_char_from_span(parser: &mut Parser, span: common::Span) -> char {
         if esc == 39 { return 39 as char; }        // \'
         if esc == 48 { return 0 as char; }         // \0
         if esc == 34 { return 34 as char; }        // \"
+        if esc == 120 {
+            // \x## — hex escape
+            let mut hex_val: u32 = 0;
+            if pos + 2 < end {
+                hex_val = hex_digit_value(parser.source_byte_at(pos + 2));
+            }
+            if pos + 3 < end {
+                hex_val = hex_val * 16 + hex_digit_value(parser.source_byte_at(pos + 3));
+            }
+            return hex_val as char;
+        }
+        if esc == 117 {
+            // \u{####} — unicode escape
+            let mut idx = pos + 2;
+            if idx < end && parser.source_byte_at(idx) == 123 {
+                idx = idx + 1;
+                let mut code_point: u32 = 0;
+                while idx < end && parser.source_byte_at(idx) != 125 {
+                    code_point = code_point * 16 + hex_digit_value(parser.source_byte_at(idx));
+                    idx = idx + 1;
+                }
+                return code_point as char;
+            }
+        }
         return esc as char;
     }
 
     b as char
+}
+
+/// Convert a hex digit byte to its numeric value (0-15).
+fn hex_digit_value(b: u8) -> u32 {
+    if b >= 48 && b <= 57 {
+        // '0'-'9'
+        (b - 48) as u32
+    } else if b >= 65 && b <= 70 {
+        // 'A'-'F'
+        (b - 55) as u32
+    } else if b >= 97 && b <= 102 {
+        // 'a'-'f'
+        (b - 87) as u32
+    } else {
+        0
+    }
 }

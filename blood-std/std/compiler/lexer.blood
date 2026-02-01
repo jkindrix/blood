@@ -590,9 +590,7 @@ impl<'src> Lexer<'src> {
             if self.current() == 92 {
                 // backslash escape
                 self.advance();
-                if self.current() != 0 {
-                    self.advance();
-                }
+                self.skip_escape_body();
             } else {
                 self.advance();
             }
@@ -609,9 +607,7 @@ impl<'src> Lexer<'src> {
         if self.current() == 92 {
             // backslash escape
             self.advance();
-            if self.current() != 0 {
-                self.advance();
-            }
+            self.skip_escape_body();
         } else if self.current() != 39 && self.current() != 0 {
             self.advance();
         }
@@ -628,9 +624,7 @@ impl<'src> Lexer<'src> {
         while self.current() != 0 && self.current() != 34 {
             if self.current() == 92 {
                 self.advance();
-                if self.current() != 0 {
-                    self.advance();
-                }
+                self.skip_escape_body();
             } else {
                 self.advance();
             }
@@ -868,6 +862,37 @@ impl<'src> Lexer<'src> {
         self.byte_at(start) == b0 && self.byte_at(start + 1) == b1 && self.byte_at(start + 2) == b2 &&
         self.byte_at(start + 3) == b3 && self.byte_at(start + 4) == b4 && self.byte_at(start + 5) == b5 &&
         self.byte_at(start + 6) == b6
+    }
+
+    /// Skip the body of an escape sequence (after the backslash).
+    /// Handles \x## (2 hex digits), \u{...} (unicode), and single-char escapes.
+    fn skip_escape_body(self: &mut Self) {
+        if self.current() == 0 {
+            return;
+        }
+        let esc = self.current();
+        if esc == 120 {
+            // \x — hex escape: 2 hex digits
+            self.advance(); // skip 'x'
+            if Lexer::is_hex_digit(self.current()) { self.advance(); }
+            if Lexer::is_hex_digit(self.current()) { self.advance(); }
+        } else if esc == 117 {
+            // \u — unicode escape: \u{...}
+            self.advance(); // skip 'u'
+            if self.current() == 123 {
+                // skip '{'
+                self.advance();
+                while self.current() != 0 && self.current() != 125 {
+                    self.advance();
+                }
+                if self.current() == 125 {
+                    self.advance(); // skip '}'
+                }
+            }
+        } else {
+            // Single-char escape: \n, \t, \r, \\, \", \', \0, etc.
+            self.advance();
+        }
     }
 
     fn match_bytes8(self: &Self, start: usize, b0: u8, b1: u8, b2: u8, b3: u8, b4: u8, b5: u8, b6: u8, b7: u8) -> bool {
