@@ -428,7 +428,23 @@ fn lower_path_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprPath, s
             };
             let type_arg_count = type_args.len() as u32;
 
-            let resolved = hir_def::ResolvedPath::new(binding.def_id, type_arg_count, span);
+            // Check if the resolved def is a variant - set variant_index if so
+            let def_info = ctx.resolver.get_def_info(binding.def_id);
+            let resolved = match def_info {
+                Option::Some(info) => {
+                    match info.variant_index {
+                        Option::Some(vi) => {
+                            hir_def::ResolvedPath::variant(binding.def_id, span, vi)
+                        }
+                        Option::None => {
+                            hir_def::ResolvedPath::new(binding.def_id, type_arg_count, span)
+                        }
+                    }
+                }
+                Option::None => {
+                    hir_def::ResolvedPath::new(binding.def_id, type_arg_count, span)
+                }
+            };
             let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
             return hir_expr::Expr::new(
                 hir_expr::ExprKind::Path(resolved),
@@ -469,7 +485,23 @@ fn lower_path_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprPath, s
         };
         let type_arg_count = type_args.len() as u32;
 
-        let resolved_path = hir_def::ResolvedPath::new(result.def_id, type_arg_count, span);
+        // Check if the resolved def is a variant - set variant_index if so
+        let def_info = ctx.resolver.get_def_info(result.def_id);
+        let resolved_path = match def_info {
+            Option::Some(info) => {
+                match info.variant_index {
+                    Option::Some(vi) => {
+                        hir_def::ResolvedPath::variant(result.def_id, span, vi)
+                    }
+                    Option::None => {
+                        hir_def::ResolvedPath::new(result.def_id, type_arg_count, span)
+                    }
+                }
+            }
+            Option::None => {
+                hir_def::ResolvedPath::new(result.def_id, type_arg_count, span)
+            }
+        };
         let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
         return hir_expr::Expr::new(
             hir_expr::ExprKind::Path(resolved_path),

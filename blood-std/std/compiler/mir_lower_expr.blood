@@ -833,12 +833,17 @@ fn lower_struct_expr(
 
     match dest.as_place() {
         Option::Some(place) => {
+            // Use actual variant index from path (0 for plain structs)
+            let variant_idx = match path.variant_index {
+                Option::Some(vi) => vi,
+                Option::None => 0,
+            };
             ctx.emit_assign(
                 place,
                 mir_types::Rvalue::Aggregate {
                     kind: mir_types::AggregateKind::Adt {
                         def_id: path.def_id,
-                        variant_idx: 0,
+                        variant_idx: variant_idx,
                         type_args: Vec::new(),
                     },
                     operands: operands,
