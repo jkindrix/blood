@@ -101,17 +101,16 @@ Audit in progress. No shortcuts are acceptable.
 | Emergency limit | 800 | Immediate refactoring required |
 
 **Current exceptions (files exceeding 600 lines):**
-- `hir_lower_expr.blood` (1,709 lines) - Expression lowering, well-organized with 28 sections
-- `unify.blood` (1,232 lines) - Type unification with union-find
-- `parser_expr.blood` (1,179 lines) - Pratt parser for expressions
-- `typeck_expr.blood` (1,113 lines) - Expression type checking
-- `ast.blood` (1,070 lines) - All AST node types
-- `parser_item.blood` (1,034 lines) - Top-level item parsing
-- `lexer.blood` (867 lines) - Lexer state machine logic
-- `hir_item.blood` (794 lines) - HIR item definitions
-- `typeck.blood` (788 lines) - Main type checker
-
-**Note:** These files should be split when practical but are well-organized internally.
+These files are well-organized internally and contain inherently large logical units:
+- `hir_lower_expr.blood` - Expression lowering, 28+ match sections
+- `unify.blood` - Type unification with union-find
+- `parser_expr.blood` - Pratt parser for expressions
+- `typeck_expr.blood` - Expression type checking
+- `ast.blood` - All AST node type definitions
+- `parser_item.blood` - Top-level item parsing
+- `lexer.blood` - Lexer state machine logic
+- `hir_item.blood` - HIR item definitions
+- `typeck.blood` - Main type checker
 
 ### Consistency Requirements
 
@@ -333,12 +332,7 @@ All previously reported bugs have been fixed.
 
 ### Known Blood-Rust Limitations (NOT Bugs)
 
-**No destructors/drop:** Blood-rust compiled binaries do not free heap allocations when values go out of scope. Every String, Vec, and heap-allocated struct lives until process exit. This causes:
-- `./main check main.blood` uses ~19 GB RAM (53 files, 30K lines)
-- `./main build main.blood` uses ~62 GB RAM and is OOM-killed
-- Fix requires blood-rust to implement drop glue / destructors
-
-**No `file_append_string` builtin:** Despite being documented in COMPILER_NOTES.md, the `file_append_string(&str, &str) -> bool` runtime function is NOT declared in blood-rust's codegen. Only `file_write_string`, `file_read_to_string`, and `file_exists` are available. This prevents streaming IR output per-function to avoid OOM.
+**Self-hosted codegen leaks memory:** The self-hosted compiler emits no-op comments for StorageDead and Drop MIR statements, so heap-allocated locals (String, Vec, etc.) are never freed during compilation. This causes high RAM usage when compiling the full compiler. The runtime functions exist (blood_free, blood_unregister_allocation), but codegen does not call them yet. This will be resolved by wiring StorageDead/Drop to the memory management runtime, gated on escape analysis integration.
 
 **Module resolution limits:** Adding `mod codegen_ctx;` to driver.blood caused `source::read_file` and `source::parent_dir` to become unresolvable in later functions. Workaround: avoid adding new module imports to files near the resolution limit.
 
@@ -378,24 +372,20 @@ All previously reported bugs have been fixed.
 
 Build in this order, testing each phase before moving on:
 
-| Phase | File(s) | Lines | Status |
-|-------|---------|-------|--------|
-| 1 | `common.blood` | 273 | ✅ Complete |
-| 2 | `token.blood` | 614 | ✅ Complete |
-| 3 | `lexer.blood` | 867 | ✅ Complete |
-| 4 | `ast.blood` | 1,070 | ✅ Complete |
-| 5 | `parser*.blood` (6 files) | 3,966 | ✅ Complete |
-| 6 | `hir*.blood` (5 files) | 2,376 | ✅ Complete |
-| 7 | `resolve.blood` | 605 | ✅ Complete |
-| 8 | `hir_lower*.blood` (6 files) | 2,704 | ✅ Complete |
-| 9 | `unify.blood`, `typeck*.blood` (6 files) | 5,312 | ✅ Complete |
-| 10 | `mir_*.blood` (10 files) | 5,011 | ✅ Complete |
-| 11 | `codegen*.blood` (6 files) | 2,224 | ✅ Complete |
-| 12 | Infrastructure (6 files) | 2,148 | ✅ Complete |
+1. **Common types** - `common.blood`
+2. **Tokens** - `token.blood`
+3. **Lexer** - `lexer.blood`
+4. **AST** - `ast.blood`
+5. **Parser** - `parser*.blood` files
+6. **HIR definitions** - `hir*.blood` files
+7. **Name resolution** - `resolve.blood`
+8. **HIR lowering** - `hir_lower*.blood` files
+9. **Type checking** - `unify.blood`, `typeck*.blood` files
+10. **MIR** - `mir_*.blood` files
+11. **Codegen** - `codegen*.blood` files
+12. **Infrastructure** - `interner.blood`, `driver.blood`, `reporter.blood`, `source.blood`, `main.blood`, `const_eval.blood`
 
-**Infrastructure files:** `interner.blood` (286), `driver.blood` (547), `reporter.blood` (364), `source.blood` (372), `main.blood` (369), `const_eval.blood` (210)
-
-**Total: 53 files, 30,631 lines - All type-check successfully.**
+All phases are complete and type-check successfully.
 
 ---
 
