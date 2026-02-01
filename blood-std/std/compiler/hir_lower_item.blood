@@ -595,6 +595,15 @@ fn lower_trait_decl(ctx: &mut hir_lower_ctx::LoweringCtx, t: &ast::TraitDecl) {
         i = i + 1;
     }
 
+    // Set Self type for trait method signatures.
+    // In a trait definition, Self refers to the trait's own type, analogous
+    // to how impl blocks set Self to the concrete implementing type.
+    let trait_self_ty = hir_ty::Type::new(hir_ty::TypeKind::Adt {
+        def_id: hir_def::DefId::new(def_id.index),
+        args: Vec::new(),
+    });
+    ctx.current_self_type = Option::Some(trait_self_ty);
+
     // Lower associated items
     let mut items: Vec<hir_item::AssocItem> = Vec::new();
     let mut i: usize = 0;
@@ -605,6 +614,9 @@ fn lower_trait_decl(ctx: &mut hir_lower_ctx::LoweringCtx, t: &ast::TraitDecl) {
         }
         i = i + 1;
     }
+
+    // Clear Self type after trait lowering
+    ctx.current_self_type = Option::None;
 
     // Pop type param scope after lowering all types that reference generics
     ctx.resolver.pop_scope();
