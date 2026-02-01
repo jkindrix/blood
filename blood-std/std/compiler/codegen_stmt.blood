@@ -79,12 +79,14 @@ pub fn emit_statement(
         &mir_stmt::StatementKind::Drop(ref place) => {
             // Check if this is a ref type pointing to a region-allocated value
             let mut is_ref_region = false;
+            let mut drop_size: u64 = 0;
             match ctx.get_local_hir_type(place.local) {
                 Option::Some(hir_type) => {
                     match &hir_type.kind {
-                        &hir_ty::TypeKind::Ref { inner: _, mutable: _ } => {
+                        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
                             if ctx.is_region_allocated(place.local) {
                                 is_ref_region = true;
+                                drop_size = codegen_types::type_size_bytes(inner.as_ref());
                             }
                         }
                         _ => {}
@@ -100,10 +102,10 @@ pub fn emit_statement(
                 ctx.emit_load(addr_val.as_str(), "ptr", ptr.as_str());
                 let int_val = ctx.fresh_temp();
                 ctx.emit_cast(int_val.as_str(), "ptrtoint", "ptr", addr_val.as_str(), "i64");
-                // Size is not statically known here; pass 0 to let runtime handle it
+                let size_str = codegen_types::format_u64(drop_size);
                 let mut args: Vec<(String, String)> = Vec::new();
                 args.push((common::make_string("i64"), clone_string(&int_val)));
-                args.push((common::make_string("i64"), common::make_string("0")));
+                args.push((common::make_string("i64"), size_str));
                 ctx.emit_call(Option::None, "void", "@blood_free", &args);
             } else {
                 let _ptr = codegen_expr::emit_place_addr(ctx, place);
