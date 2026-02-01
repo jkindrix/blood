@@ -243,10 +243,10 @@ fn try_unsize_coerce(
 
 /// Attempts function pointer coercion: fn item/closure -> fn pointer
 fn try_fn_pointer_coerce(
-    _checker: &mut typeck::TypeChecker,
+    checker: &mut typeck::TypeChecker,
     from_ty: &hir_ty::Type,
     to_ty: &hir_ty::Type,
-    _span: common::Span,
+    span: common::Span,
 ) -> typeck::CoercionResult {
     match (&from_ty.kind, &to_ty.kind) {
         // Fn type to fn pointer (when signatures match)
@@ -256,10 +256,18 @@ fn try_fn_pointer_coerce(
             if params.len() != to_params.len() {
                 return typeck::CoercionResult::Err;
             }
-            // For now, accept if lengths match (full check would verify each param)
-            // This is simplified - a full implementation would check param subtyping
-            let _ = ret;
-            let _ = to_ret;
+            // Verify each parameter type is compatible
+            let mut i: usize = 0;
+            while i < params.len() {
+                if !checker.unify(&params[i], &to_params[i], span) {
+                    return typeck::CoercionResult::Err;
+                }
+                i = i + 1;
+            }
+            // Verify return type is compatible
+            if !checker.unify(ret.as_ref(), to_ret.as_ref(), span) {
+                return typeck::CoercionResult::Err;
+            }
             return typeck::CoercionResult::Ok(typeck::Coercion::FnPointer);
         }
         _ => {}
