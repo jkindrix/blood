@@ -78,20 +78,25 @@ pub struct Parser<'src> {
     /// Whether a pending '>' remains from splitting a '>>' token.
     /// Used for parsing nested generics like `Option<Vec<T>>`.
     pub pending_gt: bool,
+    /// Accumulated doc comment tokens, drained in parse_attributes().
+    pub pending_doc_comments: Vec<token::Token>,
 }
 
 impl<'src> Parser<'src> {
     /// Create a new parser for the given source.
     pub fn new(source: &'src str) -> Parser<'src> {
         let mut lexer = lexer::Lexer::new(source);
+        let mut pending_doc_comments: Vec<token::Token> = Vec::new();
         let mut current = lexer.next_token();
-        // Skip any leading doc comments
+        // Accumulate any leading doc comments
         while current.kind == token::TokenKind::DocComment {
+            pending_doc_comments.push(current);
             current = lexer.next_token();
         }
         let mut next = lexer.next_token();
-        // Skip doc comments in lookahead
+        // Accumulate doc comments in lookahead
         while next.kind == token::TokenKind::DocComment {
+            pending_doc_comments.push(next);
             next = lexer.next_token();
         }
 
@@ -106,6 +111,7 @@ impl<'src> Parser<'src> {
             interned: Vec::new(),
             allow_struct_literal: true,
             pending_gt: false,
+            pending_doc_comments: pending_doc_comments,
         }
     }
 
@@ -134,8 +140,9 @@ impl<'src> Parser<'src> {
         self.previous = self.current;
         self.current = self.next;
         self.next = self.lexer.next_token();
-        // Skip doc comments in lookahead
+        // Accumulate doc comments in lookahead
         while self.next.kind == token::TokenKind::DocComment {
+            self.pending_doc_comments.push(self.next);
             self.next = self.lexer.next_token();
         }
         self.previous
@@ -510,6 +517,26 @@ impl<'src> Parser<'src> {
         let end = tok.span.end as usize;
         // Check length is 1 and the byte is '_' (95)
         (end - start) == 1 && self.source_byte_at(start) == 95
+    }
+
+    /// Extract doc text from a DocComment token.
+    /// The token span covers `/// text here` (from `///` to end of line).
+    /// Skip first 3 bytes (`///`), then skip one optional leading space.
+    pub fn extract_doc_text(self: &Self, tok: token::Token) -> String {
+        let start = tok.span.start as usize;
+        let end = tok.span.end as usize;
+        let mut pos = start + 3; // skip "///"
+        // Skip one optional leading space
+        if pos < end && self.source_byte_at(pos) == 32 {
+            pos = pos + 1;
+        }
+        let mut result = String::new();
+        while pos < end {
+            let b = self.source_byte_at(pos);
+            result.push(b as char);
+            pos = pos + 1;
+        }
+        result
     }
 }
 

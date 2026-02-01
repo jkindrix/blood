@@ -27,9 +27,41 @@ mod parser_expr;
 // Attribute and Visibility Parsing
 // ============================================================
 
+/// Sentinel symbol index for "doc" in doc comment attributes.
+/// Downstream code can check for this sentinel when resolving attribute paths.
+const DOC_SYMBOL_INDEX: u32 = 0xFFFFFFFE;
+
 /// Parse attributes: #[attr], #[attr(value)], etc.
+/// Also converts any accumulated doc comments into #[doc = "text"] attributes.
 pub fn parse_attributes(parser: &mut parser_base::Parser) -> Vec<ast::Attribute> {
     let mut attrs: Vec<ast::Attribute> = Vec::new();
+
+    // Drain accumulated doc comments and convert to #[doc = "text"] attributes
+    let doc_tokens = parser.pending_doc_comments;
+    parser.pending_doc_comments = Vec::new();
+    let mut di: usize = 0;
+    while di < doc_tokens.len() {
+        let doc_tok = doc_tokens[di];
+        let text = parser.extract_doc_text(doc_tok);
+        let span = doc_tok.span;
+        let mut path: Vec<common::SpannedSymbol> = Vec::new();
+        path.push(common::SpannedSymbol {
+            symbol: common::Symbol { index: DOC_SYMBOL_INDEX },
+            span: span,
+        });
+        let lit = ast::Literal {
+            kind: ast::LiteralKind::Str(text),
+            span: span,
+        };
+        let attr = ast::Attribute {
+            is_inner: false,
+            path: path,
+            args: Option::Some(ast::AttributeArgs::Eq(lit)),
+            span: span,
+        };
+        attrs.push(attr);
+        di = di + 1;
+    }
 
     while parser.check(token::TokenKind::Hash) {
         let attr = parse_attribute(parser);
