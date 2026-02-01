@@ -19,11 +19,11 @@ Bugs in existing code that produce wrong behavior. These take priority over new 
 
 - [x] **IC-5: Forall unification** — Self-hosted directly unifies forall bodies without alpha-renaming; bootstrap creates fresh variables. Fix to alpha-rename before unification. *Fixed: added substitute_forall_vars with nested capture prevention, alpha-renamed both forall bodies with same fresh inference vars before unifying, added Forall-vs-non-Forall instantiation, moved Forall arms before specific type arms.*
 
-- [ ] **IC-6: Function pointer coercion** — Self-hosted only checks parameter count, does not verify parameter types or return type. Add full signature checking.
+- [x] **IC-6: Function pointer coercion** — Self-hosted only checks parameter count, does not verify parameter types or return type. Add full signature checking. *Fixed: try_fn_pointer_coerce now calls checker.unify on each parameter pair and the return type, matching bootstrap behavior.*
 
-- [ ] **IC-7: Enum variant construction** — Bootstrap has explicit `ExprKind::Variant`; self-hosted routes through `Struct` path, which may fail for non-struct-like variants. Verify or add dedicated variant handling.
+- [x] **IC-7: Enum variant construction** — Bootstrap has explicit `ExprKind::Variant`; self-hosted routes through `Struct` path, which may fail for non-struct-like variants. Verify or add dedicated variant handling. *Fixed: expression path lowering now checks DefInfo::variant_index for both single-segment and multi-segment paths (matching pattern lowering). lower_struct_expr now uses path.variant_index instead of hardcoded 0.*
 
-- [ ] **IC-8: Record type rest syntax** — Bootstrap uses `| R` (pipe + ident) for row variables in record types. Self-hosted uses `.. name` (dot-dot + ident). Align with bootstrap syntax.
+- [x] **IC-8: Record type rest syntax** — Bootstrap uses `| R` (pipe + ident) for row variables in record types. Self-hosted uses `.. name` (dot-dot + ident). Align with bootstrap syntax. *Fixed: changed parser_type.blood to use Or token instead of DotDot, added trailing row variable support after last field.*
 
 - [ ] **IC-9: Function call ABI** — Self-hosted passes all args as `i64` via `ptrtoint`. Incorrect for floats, struct-by-value, multi-arg conventions. Emit typed LLVM arguments matching callee signature.
 
@@ -277,10 +277,10 @@ Depends on MIR being correct and complete.
 
 | Phase | Total | Done | Remaining |
 |-------|-------|------|-----------|
-| 1. Incorrect Implementations | 15 | 5 | 10 |
+| 1. Incorrect Implementations | 15 | 8 | 7 |
 | 2. Parser Completeness | 16 | 0 | 16 |
 | 3. HIR & Name Resolution | 15 | 0 | 15 |
 | 4. Type Checking | 17 | 0 | 17 |
 | 5. MIR Generation | 16 | 0 | 16 |
 | 6. Codegen & Runtime | 17 | 0 | 17 |
-| **Total** | **96** | **5** | **91** |
+| **Total** | **96** | **8** | **88** |
