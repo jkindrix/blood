@@ -1216,6 +1216,8 @@ pub fn parse_declaration(parser: &mut parser_base::Parser) -> ast::Declaration {
             let handler_decl = parse_handler_decl(parser, attrs);
             ast::Declaration::Handler(handler_decl)
         }
+        token::TokenKind::Bridge => ast::Declaration::Bridge(parse_bridge_decl(parser, attrs)),
+        token::TokenKind::Macro => ast::Declaration::Macro(parse_macro_decl(parser, attrs, vis)),
         _ => {
             // Error recovery
             parser.error_expected("declaration");
@@ -1478,6 +1480,250 @@ fn parse_operation_impl(parser: &mut parser_base::Parser) -> ast::OperationImpl 
         name,
         params,
         body,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+// ============================================================
+// Bridge Declaration Parsing
+// ============================================================
+
+/// Parse a bridge declaration: bridge "C" name { ... }
+fn parse_bridge_decl(parser: &mut parser_base::Parser, attrs: Vec<ast::Attribute>) -> ast::BridgeDecl {
+    let start = parser.current.span;
+    parser.advance(); // consume 'bridge'
+
+    // Parse language specifier (string literal)
+    let language = if parser.check(token::TokenKind::StringLit) {
+        let span = parser.current.span;
+        let text = parser_base::parse_string_from_span(parser, span);
+        parser.advance();
+        common::SpannedString { value: text, span: span }
+    } else {
+        parser.error_expected("language string");
+        common::SpannedString { value: String::new(), span: parser.current.span }
+    };
+
+    // Parse bridge name
+    let name = parser.parse_spanned_symbol();
+
+    // Parse body: { bridge_item* }
+    parser.expect(token::TokenKind::LBrace);
+    let mut items: Vec<ast::BridgeItem> = Vec::new();
+    while !parser.check(token::TokenKind::RBrace) && parser.current.kind != token::TokenKind::Eof {
+        match parse_bridge_item(parser) {
+            Option::Some(item) => { items.push(item); }
+            Option::None => { parser.advance(); }
+        }
+    }
+    parser.expect(token::TokenKind::RBrace);
+
+    let end_span = parser.previous.span;
+    ast::BridgeDecl {
+        attrs: attrs,
+        language: language,
+        name: name,
+        items: items,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+/// Parse a single bridge item.
+fn parse_bridge_item(parser: &mut parser_base::Parser) -> Option<ast::BridgeItem> {
+    let attrs = parse_attributes(parser);
+    match parser.current.kind {
+        token::TokenKind::Fn => {
+            Option::Some(ast::BridgeItem::Function(parse_bridge_fn(parser, attrs)))
+        }
+        token::TokenKind::Type => {
+            Option::Some(ast::BridgeItem::OpaqueType(parse_bridge_opaque_type(parser)))
+        }
+        token::TokenKind::Struct => {
+            Option::Some(ast::BridgeItem::Struct(parse_bridge_struct(parser, attrs)))
+        }
+        token::TokenKind::Enum => {
+            Option::Some(ast::BridgeItem::Enum(parse_bridge_enum(parser, attrs)))
+        }
+        _ => {
+            Option::None
+        }
+    }
+}
+
+/// Parse a bridge function: fn name(param: Type, ...) -> RetType;
+fn parse_bridge_fn(parser: &mut parser_base::Parser, attrs: Vec<ast::Attribute>) -> ast::BridgeFn {
+    let start = parser.current.span;
+    parser.advance(); // consume 'fn'
+    let name = parser.parse_spanned_symbol();
+
+    parser.expect(token::TokenKind::LParen);
+    let mut params: Vec<ast::BridgeParam> = Vec::new();
+    let mut is_variadic = false;
+    while !parser.check(token::TokenKind::RParen) && parser.current.kind != token::TokenKind::Eof {
+        if parser.check(token::TokenKind::DotDot) {
+            parser.advance();
+            is_variadic = true;
+            break;
+        }
+        let p_start = parser.current.span;
+        let p_name = parser.parse_spanned_symbol();
+        parser.expect(token::TokenKind::Colon);
+        let p_ty = parser_type::parse_type(parser);
+        let p_end = parser.previous.span;
+        params.push(ast::BridgeParam {
+            name: p_name,
+            ty: p_ty,
+            ownership: Option::None,
+            span: common::Span { start: p_start.start, end: p_end.end, line: p_start.line, column: p_start.column },
+        });
+        if !parser.try_consume(token::TokenKind::Comma) {
+            break;
+        }
+    }
+    parser.expect(token::TokenKind::RParen);
+
+    let return_type = if parser.try_consume(token::TokenKind::Arrow) {
+        Option::Some(parser_type::parse_type(parser))
+    } else {
+        Option::None
+    };
+    let end_span = parser.current.span;
+    parser.expect(token::TokenKind::Semi);
+
+    ast::BridgeFn {
+        attrs: attrs,
+        name: name,
+        params: params,
+        is_variadic: is_variadic,
+        return_type: return_type,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+/// Parse a bridge opaque type: type Name;
+fn parse_bridge_opaque_type(parser: &mut parser_base::Parser) -> ast::BridgeOpaqueType {
+    let start = parser.current.span;
+    parser.advance(); // consume 'type'
+    let name = parser.parse_spanned_symbol();
+    let end_span = parser.current.span;
+    parser.expect(token::TokenKind::Semi);
+    ast::BridgeOpaqueType {
+        name: name,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+/// Parse a bridge struct: struct Name { field: Type, ... }
+fn parse_bridge_struct(parser: &mut parser_base::Parser, attrs: Vec<ast::Attribute>) -> ast::BridgeStruct {
+    let start = parser.current.span;
+    parser.advance(); // consume 'struct'
+    let name = parser.parse_spanned_symbol();
+    parser.expect(token::TokenKind::LBrace);
+    let mut fields: Vec<ast::BridgeField> = Vec::new();
+    while !parser.check(token::TokenKind::RBrace) && parser.current.kind != token::TokenKind::Eof {
+        let f_start = parser.current.span;
+        let f_name = parser.parse_spanned_symbol();
+        parser.expect(token::TokenKind::Colon);
+        let f_ty = parser_type::parse_type(parser);
+        let f_end = parser.previous.span;
+        fields.push(ast::BridgeField {
+            name: f_name,
+            ty: f_ty,
+            span: common::Span { start: f_start.start, end: f_end.end, line: f_start.line, column: f_start.column },
+        });
+        if !parser.try_consume(token::TokenKind::Comma) {
+            break;
+        }
+    }
+    parser.expect(token::TokenKind::RBrace);
+    let end_span = parser.previous.span;
+    ast::BridgeStruct {
+        attrs: attrs,
+        name: name,
+        fields: fields,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+/// Parse a bridge enum: enum Name { Variant = 0, ... }
+fn parse_bridge_enum(parser: &mut parser_base::Parser, attrs: Vec<ast::Attribute>) -> ast::BridgeEnum {
+    let start = parser.current.span;
+    parser.advance(); // consume 'enum'
+    let name = parser.parse_spanned_symbol();
+    parser.expect(token::TokenKind::LBrace);
+    let mut variants: Vec<ast::BridgeEnumVariant> = Vec::new();
+    while !parser.check(token::TokenKind::RBrace) && parser.current.kind != token::TokenKind::Eof {
+        let v_start = parser.current.span;
+        let v_name = parser.parse_spanned_symbol();
+        let discriminant = if parser.try_consume(token::TokenKind::Eq) {
+            // Parse integer literal as discriminant
+            let lit_span = parser.current.span;
+            let val = parser_base::parse_int_value_from_span(parser, lit_span);
+            let suffix = parser_base::parse_int_suffix_from_span(parser, lit_span);
+            parser.advance();
+            Option::Some(ast::Literal {
+                kind: ast::LiteralKind::Int { val: val, suffix: suffix },
+                span: lit_span,
+            })
+        } else {
+            Option::None
+        };
+        let v_end = parser.previous.span;
+        variants.push(ast::BridgeEnumVariant {
+            name: v_name,
+            discriminant: discriminant,
+            span: common::Span { start: v_start.start, end: v_end.end, line: v_start.line, column: v_start.column },
+        });
+        if !parser.try_consume(token::TokenKind::Comma) {
+            break;
+        }
+    }
+    parser.expect(token::TokenKind::RBrace);
+    let end_span = parser.previous.span;
+    ast::BridgeEnum {
+        attrs: attrs,
+        name: name,
+        variants: variants,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+// ============================================================
+// Macro Declaration Parsing
+// ============================================================
+
+/// Parse a macro declaration: macro name! { ... }
+/// Parses the header and skips the body content (macro rules are not yet expanded).
+fn parse_macro_decl(parser: &mut parser_base::Parser, attrs: Vec<ast::Attribute>, vis: common::Visibility) -> ast::MacroDecl {
+    let start = parser.current.span;
+    parser.advance(); // consume 'macro'
+
+    let name = parser.parse_spanned_symbol();
+    parser.expect(token::TokenKind::Not); // consume '!'
+
+    // Skip body tokens between braces (full macro rule parsing deferred)
+    parser.expect(token::TokenKind::LBrace);
+    let mut depth: u32 = 1;
+    while depth > 0 && parser.current.kind != token::TokenKind::Eof {
+        match parser.current.kind {
+            token::TokenKind::LBrace => { depth = depth + 1; }
+            token::TokenKind::RBrace => { depth = depth - 1; }
+            _ => {}
+        }
+        if depth > 0 {
+            parser.advance();
+        }
+    }
+    if parser.check(token::TokenKind::RBrace) {
+        parser.advance();
+    }
+
+    let end_span = parser.previous.span;
+    ast::MacroDecl {
+        attrs: attrs,
+        vis: vis,
+        name: name,
+        rules: Vec::new(),
         span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
