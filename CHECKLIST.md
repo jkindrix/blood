@@ -47,11 +47,11 @@ The parser is the foundation. Downstream phases cannot handle what the parser do
 
 ### High Severity
 
-- [ ] **LP-4: `if let` expression parsing** — AST has `IfLet` but parser never generates it. Add `let` keyword check after `if` in `parse_if_expr`. *Resolves stub: ExprKind::IfLet (ast.blood:672).*
+- [x] **LP-4: `if let` expression parsing** — AST has `IfLet` but parser never generates it. Add `let` keyword check after `if` in `parse_if_expr`. *Resolves stub: ExprKind::IfLet (ast.blood:672).* *Fixed: added try_consume(Let) check after consuming `if`. Parses pattern, expects `=`, parses scrutinee, builds ExprKind::IfLet. Else handling shared with regular if.*
 
-- [ ] **LP-5: `while let` expression parsing** — AST has `WhileLet` but parser never generates it. Add `let` keyword check after `while`. *Resolves stub: ExprKind::WhileLet (ast.blood:691).*
+- [x] **LP-5: `while let` expression parsing** — AST has `WhileLet` but parser never generates it. Add `let` keyword check after `while`. *Resolves stub: ExprKind::WhileLet (ast.blood:691).* *Fixed: added try_consume(Let) check after consuming `while`. Parses pattern, expects `=`, parses scrutinee, builds ExprKind::WhileLet matching bootstrap.*
 
-- [ ] **LP-6: Or-patterns** — `PatternKind::Or` in AST but `|` not checked between pattern alternatives. Add `|` parsing after each pattern. *Resolves stub: PatternKind::Or (ast.blood:919).*
+- [x] **LP-6: Or-patterns** — `PatternKind::Or` in AST but `|` not checked between pattern alternatives. Add `|` parsing after each pattern. *Resolves stub: PatternKind::Or (ast.blood:919).* *Fixed: parse_pattern now checks for Or token after primary pattern. Collects alternatives into Vec and wraps in PatternKind::Or, matching bootstrap's parse_pattern_or strategy.*
 
 - [ ] **LP-3: Macro call expressions** — `ExprKind::MacroCall` in AST but no parsing for `format!`, `vec!`, `println!`, etc. Implement macro call dispatch in expression parsing. *Resolves stub: ExprKind::MacroCall (ast.blood:740).*
 
