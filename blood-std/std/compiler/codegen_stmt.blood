@@ -37,17 +37,78 @@ pub fn emit_statement(
             ctx.newline();
         }
         &mir_stmt::StatementKind::StorageDead(ref local) => {
-            // Storage dead is also a no-op in basic LLVM IR codegen
             let name = ctx.local_alloca_name(*local);
-            ctx.write("    ; storage dead ");
-            ctx.write_string(&name);
-            ctx.newline();
+            if ctx.is_region_allocated(*local) {
+                // Region-allocated local: unregister from allocation tracker
+                ctx.write("    ; storage dead (region) ");
+                ctx.write_string(&name);
+                ctx.newline();
+                let ptr_val = ctx.fresh_temp();
+                ctx.emit_load(ptr_val.as_str(), "ptr", name.as_str());
+                let int_val = ctx.fresh_temp();
+                ctx.emit_cast(int_val.as_str(), "ptrtoint", "ptr", ptr_val.as_str(), "i64");
+                let mut args: Vec<(String, String)> = Vec::new();
+                args.push((common::make_string("i64"), clone_string(&int_val)));
+                ctx.emit_call(Option::None, "void", "@blood_unregister_allocation", &args);
+            } else if ctx.is_persistent_allocated(*local) {
+                // Persistent-allocated local: decrement reference count
+                ctx.write("    ; storage dead (persistent) ");
+                ctx.write_string(&name);
+                ctx.newline();
+                let slot_val = ctx.fresh_temp();
+                ctx.emit_load(slot_val.as_str(), "i64", name.as_str());
+                // Only decrement if slot_id != 0 (0 means uninitialized)
+                let cmp_val = ctx.fresh_temp();
+                ctx.emit_icmp(cmp_val.as_str(), "ne", "i64", slot_val.as_str(), "0");
+                let then_label = ctx.fresh_label();
+                let end_label = ctx.fresh_label();
+                ctx.emit_cond_br(cmp_val.as_str(), then_label.as_str(), end_label.as_str());
+                ctx.emit_label(then_label.as_str());
+                let mut args: Vec<(String, String)> = Vec::new();
+                args.push((common::make_string("i64"), clone_string(&slot_val)));
+                ctx.emit_call(Option::None, "void", "@blood_persistent_decrement", &args);
+                ctx.emit_br(end_label.as_str());
+                ctx.emit_label(end_label.as_str());
+            } else {
+                // Stack-allocated local: no cleanup needed
+                ctx.write("    ; storage dead ");
+                ctx.write_string(&name);
+                ctx.newline();
+            }
         }
         &mir_stmt::StatementKind::Drop(ref place) => {
-            // Drop - for now just emit a comment
-            // A full implementation would call destructors
-            let _ptr = codegen_expr::emit_place_addr(ctx, place);
-            ctx.write("    ; drop\n");
+            // Check if this is a ref type pointing to a region-allocated value
+            let mut is_ref_region = false;
+            match ctx.get_local_hir_type(place.local) {
+                Option::Some(hir_type) => {
+                    match &hir_type.kind {
+                        &hir_ty::TypeKind::Ref { inner: _, mutable: _ } => {
+                            if ctx.is_region_allocated(place.local) {
+                                is_ref_region = true;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Option::None => {}
+            }
+            if is_ref_region {
+                // Region-allocated reference: free the pointed-to memory
+                let ptr = codegen_expr::emit_place_addr(ctx, place);
+                ctx.write("    ; drop (region free)\n");
+                let addr_val = ctx.fresh_temp();
+                ctx.emit_load(addr_val.as_str(), "ptr", ptr.as_str());
+                let int_val = ctx.fresh_temp();
+                ctx.emit_cast(int_val.as_str(), "ptrtoint", "ptr", addr_val.as_str(), "i64");
+                // Size is not statically known here; pass 0 to let runtime handle it
+                let mut args: Vec<(String, String)> = Vec::new();
+                args.push((common::make_string("i64"), clone_string(&int_val)));
+                args.push((common::make_string("i64"), common::make_string("0")));
+                ctx.emit_call(Option::None, "void", "@blood_free", &args);
+            } else {
+                let _ptr = codegen_expr::emit_place_addr(ctx, place);
+                ctx.write("    ; drop (no-op)\n");
+            }
         }
         &mir_stmt::StatementKind::Deinit(ref place) => {
             // Deinit - mark as uninitialized (no-op in simple codegen)
