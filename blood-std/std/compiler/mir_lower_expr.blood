@@ -1608,6 +1608,8 @@ fn classify_handler_state(ty: &hir_ty::Type) -> mir_stmt::HandlerStateKind {
             // Classify based on inner type
             classify_handler_state(inner.as_ref())
         }
+        &hir_ty::TypeKind::Range { element: _, inclusive: _ } => mir_stmt::HandlerStateKind::Dynamic,
+        &hir_ty::TypeKind::DynTrait { trait_id: _, auto_traits: _ } => mir_stmt::HandlerStateKind::Dynamic,
     }
 }
 
@@ -1631,6 +1633,8 @@ fn extract_handler_def_id(ty: &hir_ty::Type) -> hir_def::DefId {
         &hir_ty::TypeKind::Never => hir_def::DefId::dummy(),
         &hir_ty::TypeKind::Error => hir_def::DefId::dummy(),
         &hir_ty::TypeKind::Ownership { qualifier: _, ref inner } => extract_handler_def_id(inner.as_ref()),
+        &hir_ty::TypeKind::Range { element: _, inclusive: _ } => hir_def::DefId::dummy(),
+        &hir_ty::TypeKind::DynTrait { trait_id, auto_traits: _ } => trait_id,
     }
 }
 

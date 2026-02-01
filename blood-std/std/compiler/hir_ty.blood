@@ -155,6 +155,16 @@ pub enum TypeKind {
         /// The body type (may reference the params).
         body: Box<Type>,
     },
+    /// A range type: Range<T> or RangeInclusive<T>
+    Range {
+        element: Box<Type>,
+        inclusive: bool,
+    },
+    /// A trait object type: dyn Trait
+    DynTrait {
+        trait_id: hir_def::DefId,
+        auto_traits: Vec<hir_def::DefId>,
+    },
     /// The never type (!)
     Never,
     /// An error type (used for error recovery)
@@ -580,6 +590,24 @@ fn copy_type_kind(kind: &TypeKind) -> TypeKind {
             TypeKind::Ownership {
                 qualifier: qualifier,
                 inner: Box::new(copy_type(inner.as_ref())),
+            }
+        }
+        &TypeKind::Range { ref element, inclusive } => {
+            TypeKind::Range {
+                element: Box::new(copy_type(element.as_ref())),
+                inclusive: inclusive,
+            }
+        }
+        &TypeKind::DynTrait { trait_id, ref auto_traits } => {
+            let mut copied_auto: Vec<hir_def::DefId> = Vec::new();
+            let mut i: usize = 0;
+            while i < auto_traits.len() {
+                copied_auto.push(auto_traits[i]);
+                i = i + 1;
+            }
+            TypeKind::DynTrait {
+                trait_id: trait_id,
+                auto_traits: copied_auto,
             }
         }
     }

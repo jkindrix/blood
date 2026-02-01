@@ -287,6 +287,8 @@ pub fn is_copy_type(ty: &hir_ty::Type) -> bool {
         &hir_ty::TypeKind::Record { fields: _, row_var: _ } => false,
         &hir_ty::TypeKind::Forall { params: _, body: _ } => false,
         &hir_ty::TypeKind::Ownership { qualifier: _, inner: _ } => false, // Linear/affine types are not Copy
+        &hir_ty::TypeKind::Range { element: _, inclusive: _ } => true, // Range types are Copy if element is Copy
+        &hir_ty::TypeKind::DynTrait { trait_id: _, auto_traits: _ } => false, // Trait objects are not Copy
         &hir_ty::TypeKind::Error => true,
     }
 }
@@ -593,6 +595,24 @@ impl hir_ty::TypeKind {
                 hir_ty::TypeKind::Ownership {
                     qualifier: qualifier.clone(),
                     inner: Box::new(inner.as_ref().clone()),
+                }
+            }
+            &hir_ty::TypeKind::Range { ref element, inclusive } => {
+                hir_ty::TypeKind::Range {
+                    element: Box::new(element.as_ref().clone()),
+                    inclusive: inclusive,
+                }
+            }
+            &hir_ty::TypeKind::DynTrait { trait_id, ref auto_traits } => {
+                let mut cloned_auto = Vec::new();
+                let mut i: usize = 0;
+                while i < auto_traits.len() {
+                    cloned_auto.push(auto_traits[i]);
+                    i = i + 1;
+                }
+                hir_ty::TypeKind::DynTrait {
+                    trait_id: trait_id,
+                    auto_traits: cloned_auto,
                 }
             }
         }

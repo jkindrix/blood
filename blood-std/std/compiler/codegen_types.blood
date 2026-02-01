@@ -75,6 +75,18 @@ pub fn type_to_llvm(ty: &hir_ty::Type) -> String {
         &hir_ty::TypeKind::Forall { params: _, body: _ } => common::make_string("ptr"),
         // Ownership qualifiers don't affect runtime representation
         &hir_ty::TypeKind::Ownership { qualifier: _, ref inner } => type_to_llvm(inner.as_ref()),
+        // Range types are represented as a struct { element, element } or { element, element, bool }
+        &hir_ty::TypeKind::Range { ref element, inclusive: _ } => {
+            let elem_llvm = type_to_llvm(element.as_ref());
+            let mut s = common::make_string("{ ");
+            s.push_str(elem_llvm.as_str());
+            s.push_str(", ");
+            s.push_str(elem_llvm.as_str());
+            s.push_str(" }");
+            s
+        }
+        // Trait objects are fat pointers (data ptr + vtable ptr)
+        &hir_ty::TypeKind::DynTrait { trait_id: _, auto_traits: _ } => common::make_string("{ ptr, ptr }"),
         &hir_ty::TypeKind::Error => common::make_string("i64"),
     }
 }
@@ -191,6 +203,16 @@ pub fn get_layout(ty: &hir_ty::Type) -> TypeLayout {
         &hir_ty::TypeKind::Forall { params: _, body: _ } => TypeLayout::pointer(),
         // Ownership qualifiers don't affect layout
         &hir_ty::TypeKind::Ownership { qualifier: _, ref inner } => get_layout(inner.as_ref()),
+        // Range types: { element, element }
+        &hir_ty::TypeKind::Range { ref element, inclusive: _ } => {
+            let elem_layout = get_layout(element.as_ref());
+            TypeLayout::new(elem_layout.size * 2, elem_layout.align, type_to_llvm(&hir_ty::Type::new(hir_ty::TypeKind::Range {
+                element: Box::new(hir_ty::copy_type(element.as_ref())),
+                inclusive: false,
+            })))
+        }
+        // Trait objects: fat pointer { ptr, ptr }
+        &hir_ty::TypeKind::DynTrait { trait_id: _, auto_traits: _ } => TypeLayout::new(16, 8, common::make_string("{ ptr, ptr }")),
         &hir_ty::TypeKind::Error => TypeLayout::new(8, 8, common::make_string("i64")),
     }
 }
