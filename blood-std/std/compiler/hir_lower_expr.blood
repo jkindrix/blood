@@ -251,10 +251,8 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx::LoweringCtx, expr: &ast::Expr) -> hir
                 span,
             )
         }
-        &ast::ExprKind::TryWith { ref body, handlers: _ } => {
-            // Desugar try-with to regular error handling
-            let body_hir = lower_block_to_expr(ctx, body);
-            body_hir
+        &ast::ExprKind::TryWith { ref body, ref handlers } => {
+            lower_try_with_expr(ctx, body, handlers, span)
         }
         &ast::ExprKind::Unsafe(ref block) => {
             let block_hir = lower_block_to_expr(ctx, block);
@@ -2132,6 +2130,116 @@ fn lower_perform_expr(
             op_def: op_def_id,
             op_name: op_name_sym,
             args: args_hir,
+        },
+        ty,
+        span,
+    )
+}
+
+// ============================================================
+// TryWith Lowering
+// ============================================================
+
+/// Lower a try-with expression to an InlineHandle HIR node.
+fn lower_try_with_expr(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    body: &ast::Block,
+    handlers: &Vec<ast::TryWithHandler>,
+    span: common::Span,
+) -> hir_expr::Expr {
+    // Lower the body block
+    let body_hir = lower_block_to_expr(ctx, body);
+
+    // Lower each handler
+    let mut hir_handlers: Vec<hir_expr::InlineOpHandler> = Vec::new();
+    let mut i: usize = 0;
+    while i < handlers.len() {
+        let hdlr = &handlers[i];
+
+        // Resolve the effect path
+        let effect_def_id = if hdlr.effect.segments.len() >= 1 {
+            let seg = &hdlr.effect.segments[0];
+            let name_str = ctx.span_to_string(seg.name.span);
+            let lookup_symbol = ctx.intern(name_str.as_str());
+            let lookup = ctx.resolver.lookup(lookup_symbol);
+            if lookup.is_some() {
+                let result = lookup.unwrap();
+                let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+                binding.def_id
+            } else {
+                ctx.error(
+                    hir::DiagnosticCode::E0102,
+                    common::make_string("unknown effect in try-with handler"),
+                    hdlr.effect.span,
+                );
+                hir_def::DefId::new(0)
+            }
+        } else {
+            ctx.error(
+                hir::DiagnosticCode::E0102,
+                common::make_string("invalid effect path in try-with handler"),
+                hdlr.span,
+            );
+            hir_def::DefId::new(0)
+        };
+
+        // Re-intern operation name
+        let op_name_str = ctx.span_to_string(hdlr.operation.span);
+        let op_name_sym = ctx.intern(op_name_str.as_str());
+
+        // Push a scope for handler parameters
+        ctx.resolver.push_scope(resolve::ScopeKind::Block);
+
+        // Allocate locals for handler parameters
+        let mut param_ids: Vec<hir_def::LocalId> = Vec::new();
+        let mut param_types: Vec<hir_ty::Type> = Vec::new();
+        let mut j: usize = 0;
+        while j < hdlr.params.len() {
+            let param = &hdlr.params[j];
+            // Lower the pattern (which allocates local IDs and registers bindings)
+            let _pat_hir = lower_pattern(ctx, param);
+            // Extract the local ID from the pattern if it's a binding
+            match &_pat_hir.kind {
+                &hir_expr::PatternKind::Binding { local_id, name: _, mode: _, subpattern: _ } => {
+                    param_ids.push(local_id);
+                    param_types.push(hir_ty::Type::infer(ctx.alloc_ty_var()));
+                }
+                _ => {
+                    // Non-binding patterns still get a fresh local for positional tracking
+                    let fresh_id = ctx.alloc_local_id();
+                    param_ids.push(fresh_id);
+                    param_types.push(hir_ty::Type::infer(ctx.alloc_ty_var()));
+                }
+            }
+            j = j + 1;
+        }
+
+        // Lower handler body
+        let handler_body_hir = lower_block_to_expr(ctx, &hdlr.body);
+
+        // Pop handler scope
+        ctx.resolver.pop_scope();
+
+        // Return type is inferred
+        let return_ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+
+        let op_handler = hir_expr::InlineOpHandler {
+            effect_id: effect_def_id,
+            op_name: op_name_sym,
+            params: param_ids,
+            param_types: param_types,
+            return_ty: return_ty,
+            body: handler_body_hir,
+        };
+        hir_handlers.push(op_handler);
+        i = i + 1;
+    }
+
+    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    hir_expr::Expr::new(
+        hir_expr::ExprKind::InlineHandle {
+            body: Box::new(body_hir),
+            handlers: hir_handlers,
         },
         ty,
         span,

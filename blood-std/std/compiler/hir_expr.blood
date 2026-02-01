@@ -221,6 +221,11 @@ pub enum ExprKind {
         handler: Box<Expr>,
         body: Box<Expr>,
     },
+    /// Inline effect handling: try { body } with Effect::op(params) { handler }
+    InlineHandle {
+        body: Box<Expr>,
+        handlers: Vec<InlineOpHandler>,
+    },
     /// Effect operation invocation: perform Effect.op(args)
     Perform {
         effect_def: hir_def::DefId,
@@ -380,6 +385,26 @@ impl MatchArm {
     pub fn new(pattern: Pattern, guard: Option<Expr>, body: Expr, span: common::Span) -> MatchArm {
         MatchArm { pattern: pattern, guard: guard, body: body, span: span }
     }
+}
+
+// ============================================================
+// Inline Effect Handlers
+// ============================================================
+
+/// An inline operation handler in a try-with expression.
+pub struct InlineOpHandler {
+    /// The effect being handled.
+    pub effect_id: hir_def::DefId,
+    /// The operation name being handled.
+    pub op_name: common::Symbol,
+    /// Parameter local IDs for the operation parameters.
+    pub params: Vec<hir_def::LocalId>,
+    /// Parameter types for the operation.
+    pub param_types: Vec<hir_ty::Type>,
+    /// The return type of the operation.
+    pub return_ty: hir_ty::Type,
+    /// The handler body.
+    pub body: Expr,
 }
 
 // ============================================================

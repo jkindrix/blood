@@ -92,6 +92,17 @@ pub fn infer_expr(checker: &mut typeck::TypeChecker, expr: &hir_expr::Expr) -> h
         &hir_expr::ExprKind::WithHandle { handler: ref handler_expr, body: ref body_expr } => {
             infer_with_handle(checker, handler_expr.as_ref(), body_expr.as_ref(), expr.span)
         }
+        &hir_expr::ExprKind::InlineHandle { ref body, ref handlers } => {
+            // Type check the body
+            let body_ty = infer_expr(checker, body.as_ref());
+            // Type check each handler body
+            let mut i: usize = 0;
+            while i < handlers.len() {
+                let _hdlr_ty = infer_expr(checker, &handlers[i].body);
+                i = i + 1;
+            }
+            body_ty
+        }
         &hir_expr::ExprKind::Perform { effect_def, op_def, op_name, ref args } => {
             infer_perform(checker, effect_def, op_def, op_name, args, expr.span)
         }
@@ -436,6 +447,7 @@ fn is_lvalue(expr: &hir_expr::Expr) -> bool {
         &hir_expr::ExprKind::AddrOf { mutable: _, expr: _ } => false,
         &hir_expr::ExprKind::Closure { captures: _, params: _, return_ty: _, effects: _, body: _, body_id: _ } => false,
         &hir_expr::ExprKind::WithHandle { handler: _, body: _ } => false,
+        &hir_expr::ExprKind::InlineHandle { body: _, handlers: _ } => false,
         &hir_expr::ExprKind::Perform { effect_def: _, op_def: _, op_name: _, args: _ } => false,
         &hir_expr::ExprKind::Resume(ref _val) => false,
         &hir_expr::ExprKind::Try(ref _inner) => false,

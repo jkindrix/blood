@@ -152,6 +152,16 @@ pub fn lower_expr(
         &hir_expr::ExprKind::WithHandle { handler: ref handler_expr, body: ref body_expr } => {
             lower_with_handle_expr(ctx, handler_expr.as_ref(), body_expr.as_ref(), &resolved_ty, dest, expr.span);
         }
+        &hir_expr::ExprKind::InlineHandle { ref body, ref handlers } => {
+            // Lower body; handler dispatch will be wired during effect runtime integration
+            lower_expr(ctx, body.as_ref(), dest);
+            // Lower each handler body (for side effects / local allocation)
+            let mut i: usize = 0;
+            while i < handlers.len() {
+                lower_expr(ctx, &handlers[i].body, mir_lower_ctx::destination_ignore());
+                i = i + 1;
+            }
+        }
         &hir_expr::ExprKind::Perform { effect_def, op_def, op_name: _, ref args } => {
             lower_perform_expr(ctx, effect_def, op_def, args, &resolved_ty, dest, expr.span);
         }
