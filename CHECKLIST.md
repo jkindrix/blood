@@ -55,9 +55,9 @@ The parser is the foundation. Downstream phases cannot handle what the parser do
 
 - [ ] **LP-3: Macro call expressions** — `ExprKind::MacroCall` in AST but no parsing for `format!`, `vec!`, `println!`, etc. Implement macro call dispatch in expression parsing. *Resolves stub: ExprKind::MacroCall (ast.blood:740).*
 
-- [ ] **LP-1: Bridge declaration parsing** — AST `BridgeDecl` exists but `parse_declaration()` has no arm for `Bridge` token. Add dispatch arm. *Resolves stub: Declaration::Bridge (ast.blood:81), all Bridge\* types (ast.blood:338-449).*
+- [x] **LP-1: Bridge declaration parsing** — AST `BridgeDecl` exists but `parse_declaration()` has no arm for `Bridge` token. Add dispatch arm. *Resolves stub: Declaration::Bridge (ast.blood:81), all Bridge\* types (ast.blood:338-449).* *Fixed: added Bridge dispatch arm and full parsing for bridge header, fn, opaque type, struct, enum items.*
 
-- [ ] **LP-2: Macro declaration parsing** — AST `MacroDecl` exists but `parse_declaration()` has no arm for `Macro` token. Add dispatch arm. *Resolves stub: Declaration::Macro (ast.blood:84), all Macro\* types (ast.blood:967-1079).*
+- [x] **LP-2: Macro declaration parsing** — AST `MacroDecl` exists but `parse_declaration()` has no arm for `Macro` token. Add dispatch arm. *Resolves stub: Declaration::Macro (ast.blood:84), all Macro\* types (ast.blood:967-1079).* *Fixed: added Macro dispatch arm, parses header (name + !), skips body tokens between braces (full rule parsing deferred).*
 
 ### Medium Severity
 
@@ -278,9 +278,9 @@ Depends on MIR being correct and complete.
 | Phase | Total | Done | Remaining |
 |-------|-------|------|-----------|
 | 1. Incorrect Implementations | 15 | 14 | 1 |
-| 2. Parser Completeness | 16 | 0 | 16 |
+| 2. Parser Completeness | 16 | 6 | 10 |
 | 3. HIR & Name Resolution | 15 | 0 | 15 |
 | 4. Type Checking | 17 | 0 | 17 |
 | 5. MIR Generation | 16 | 0 | 16 |
 | 6. Codegen & Runtime | 17 | 0 | 17 |
-| **Total** | **96** | **14** | **82** |
+| **Total** | **96** | **20** | **76** |
