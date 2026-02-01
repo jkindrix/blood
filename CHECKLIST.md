@@ -27,7 +27,7 @@ Bugs in existing code that produce wrong behavior. These take priority over new 
 
 - [x] **IC-9: Function call ABI** — Self-hosted passes all args as `i64` via `ptrtoint`. Incorrect for floats, struct-by-value, multi-arg conventions. Emit typed LLVM arguments matching callee signature. *Investigated: gap analysis was incorrect. type_to_llvm already maps primitives to correct LLVM types (i32, double, i1), ADTs/refs to ptr. emit_operand_typed returns (value, type) pairs. emit_call already emits properly typed arguments. No change needed.*
 
-- [ ] **IC-10: String literal representation** — Self-hosted emits raw `ptr`. Bootstrap emits `{ ptr, i64 }` slice. Code expecting `.len()` fails. Emit proper slice representation. *Investigated: confirmed difference. Self-hosted uses null-terminated ptr, bootstrap uses { ptr, i64 } fat pointer. Fix requires coordinated changes to type_to_llvm (Str → { ptr, i64 }), string constant emission (create struct), and all string-using code paths. Deferred — current representation works for self-compilation because runtime handles length.*
+- [x] **IC-10: String literal representation** — Self-hosted emits raw `ptr`. Bootstrap emits `{ ptr, i64 }` slice. Code expecting `.len()` fails. Emit proper slice representation. *Fixed: changed primitive_to_llvm Str from "ptr" to "{ ptr, i64 }", primitive_layout Str from pointer() to TypeLayout::new(16, 8, ...), and emit_constant for String/ByteString now builds fat pointer struct values `{ ptr @label, i64 len }`. codegen_term puts() path unaffected (uses add_string_constant directly).*
 
 - [x] **IC-11: Type size/layout fallback** — Self-hosted defaults unknown types to `{ size: 8, align: 8 }`. `DynTrait` (16), `Range`, `Record`, `Forall`, `Ownership` all get wrong sizes. Handle all type variants. *Investigated: gap analysis was incorrect. get_layout handles all TypeKind variants explicitly. DynTrait and Range don't exist in self-hosted TypeKind. Record/Forall/Param are pointer-based (8,8,ptr) which is correct. Ownership delegates to inner. No missing cases.*
 
@@ -81,7 +81,7 @@ The parser is the foundation. Downstream phases cannot handle what the parser do
 
 - [x] **LP-15: `\x##` and `\u{####}` string escapes** — Not implemented in lexer. Add hex and unicode escape parsing. *Fixed: lexer skip_escape_body handles \x (2 hex digits) and \u{...} (unicode). parse_string_from_span and parse_char_from_span now decode hex and unicode escapes with hex_digit_value helper.*
 
-- [ ] **LP-16: Doc comment to attribute conversion** — Comments skipped rather than becoming `#[doc = "..."]` attributes. Convert during parsing. *Deferred: requires significant refactor of parser_base token skipping. DocComment tokens are currently filtered at initialization, advance, and lookahead. Low severity — doc text preserved in source.*
+- [x] **LP-16: Doc comment to attribute conversion** — Comments skipped rather than becoming `#[doc = "..."]` attributes. Convert during parsing. *Fixed: parser_base now accumulates DocComment tokens in pending_doc_comments field (Vec<Token>) instead of discarding them at new(), advance() lookahead. parse_attributes() in parser_item drains accumulated tokens and converts each to ast::Attribute with path=[Symbol{index:0xFFFFFFFE}] ("doc" sentinel), args=Eq(Literal::Str(text)). extract_doc_text helper strips "///" prefix and optional leading space.*
 
 ---
 
