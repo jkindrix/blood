@@ -567,6 +567,18 @@ fn is_region_builtin(name: &str) -> bool {
     false
 }
 
+/// Returns true if the given name is a format runtime function that is
+/// already declared with correct { ptr, i64 } return type in
+/// intrinsic_declarations(). These must be skipped in the dynamic
+/// foreign function declaration loop to avoid duplicate declarations
+/// with conflicting signatures.
+fn is_format_runtime_builtin(name: &str) -> bool {
+    if str_eq(name, "int_to_string") { return true; }
+    if str_eq(name, "bool_to_string") { return true; }
+    if str_eq(name, "char_to_string") { return true; }
+    false
+}
+
 fn resolve_symbol(intern: &interner::StringInterner, sym: common::Symbol) -> String {
     match intern.resolve(sym) {
         Option::Some(s) => common::make_string(s.as_str()),
@@ -798,6 +810,12 @@ fn generate_foreign_declarations(
                             // Skip region_* functions - they are defined as
                             // wrappers around blood_region_* in intrinsic_declarations()
                             if is_region_builtin(name.as_str()) {
+                                fi = fi + 1;
+                                continue;
+                            }
+                            // Skip format runtime builtins - they are declared with
+                            // correct { ptr, i64 } return type in intrinsic_declarations()
+                            if is_format_runtime_builtin(name.as_str()) {
                                 fi = fi + 1;
                                 continue;
                             }
