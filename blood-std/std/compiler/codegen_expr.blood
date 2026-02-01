@@ -189,8 +189,8 @@ fn emit_place_load(
 ) -> String {
     let ptr = emit_place_addr(ctx, place);
     let result = ctx.fresh_temp();
-    // Get the LLVM type for this local
-    let llvm_ty = ctx.get_local_type(place.local);
+    // Use the projected type (accounts for field access, deref, etc.)
+    let llvm_ty = resolve_place_elem_type(ctx, place);
     ctx.emit_load(result.as_str(), llvm_ty.as_str(), ptr.as_str());
     result
 }
@@ -202,9 +202,102 @@ fn emit_place_load_with_type(
 ) -> (String, String) {
     let ptr = emit_place_addr(ctx, place);
     let result = ctx.fresh_temp();
-    let llvm_ty = ctx.get_local_type(place.local);
+    // Use the projected type (accounts for field access, deref, etc.)
+    let llvm_ty = resolve_place_elem_type(ctx, place);
     ctx.emit_load(result.as_str(), llvm_ty.as_str(), ptr.as_str());
     (result, llvm_ty)
+}
+
+/// Computes the LLVM type for the value at a place after all projections.
+/// When a place has projections (Field, Deref, Downcast), the loaded type
+/// differs from the base local's type. For example, loading field 0 of a
+/// `{ i32, i32 }` struct should use `i32`, not the struct type.
+fn resolve_place_elem_type(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    place: &mir_types::Place,
+) -> String {
+    // If no projections, use the local's registered LLVM type
+    if place.projection.len() == 0 {
+        return ctx.get_local_type(place.local);
+    }
+
+    // Check the last projection to determine the final type
+    let last_idx = place.projection.len() - 1;
+    match &place.projection[last_idx] {
+        &mir_types::PlaceElem::Field(field_idx) => {
+            // Field access: look up the field's type from the struct/enum layout.
+            // Count Deref projections and check for Downcast before this field.
+            let mut deref_count: usize = 0;
+            let mut downcast_variant: Option<u32> = Option::None;
+            let mut j: usize = 0;
+            while j < last_idx {
+                match &place.projection[j] {
+                    &mir_types::PlaceElem::Deref => {
+                        deref_count = deref_count + 1;
+                    }
+                    &mir_types::PlaceElem::Downcast(vi) => {
+                        downcast_variant = Option::Some(vi);
+                    }
+                    _ => {}
+                }
+                j = j + 1;
+            }
+
+            // Resolve the ADT def_id by walking through Ref/Ptr layers
+            let adt_def_id = if deref_count > 0 {
+                resolve_deref_adt_def_id(ctx, place.local, deref_count - 1)
+            } else {
+                match ctx.get_local_hir_type(place.local) {
+                    Option::Some(ty) => resolve_adt_def_id_from_hir(ty),
+                    Option::None => Option::None,
+                }
+            };
+
+            match &adt_def_id {
+                &Option::Some(def_id) => {
+                    match &downcast_variant {
+                        &Option::Some(vi) => {
+                            // Enum variant field
+                            match ctx.lookup_enum(def_id) {
+                                Option::Some(layout) => {
+                                    let mut k: usize = 0;
+                                    while k < layout.variants.len() {
+                                        if layout.variants[k].variant_idx == vi {
+                                            if (field_idx as usize) < layout.variants[k].fields.len() {
+                                                return clone_string(&layout.variants[k].fields[field_idx as usize].llvm_type);
+                                            }
+                                            break;
+                                        }
+                                        k = k + 1;
+                                    }
+                                }
+                                Option::None => {}
+                            }
+                        }
+                        &Option::None => {
+                            // Struct field
+                            match ctx.lookup_struct(def_id) {
+                                Option::Some(layout) => {
+                                    if (field_idx as usize) < layout.fields.len() {
+                                        return clone_string(&layout.fields[field_idx as usize].llvm_type);
+                                    }
+                                }
+                                Option::None => {}
+                            }
+                        }
+                    }
+                }
+                &Option::None => {}
+            }
+
+            // Fallback: use the local's type
+            ctx.get_local_type(place.local)
+        }
+        _ => {
+            // For Deref, Index, and other projections, use the local's type
+            ctx.get_local_type(place.local)
+        }
+    }
 }
 
 /// Emits the address of a place, returning the pointer value.
