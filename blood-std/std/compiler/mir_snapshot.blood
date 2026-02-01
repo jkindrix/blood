@@ -1,0 +1,284 @@
+// Blood Self-Hosted Compiler - MIR Generation Snapshot Analysis
+//
+// Tracks generation values at handler entry points for the generational
+// pointer model. Builds parent-child chains for nested handlers.
+// Used by codegen to insert generation validation checks.
+
+mod common;
+mod hir_def;
+mod mir_def;
+mod mir_types;
+mod mir_stmt;
+mod mir_term;
+mod mir_body;
+
+// ============================================================
+// Snapshot Entry
+// ============================================================
+
+/// A single entry in a generation snapshot.
+///
+/// Records the generation value of a memory address at a specific
+/// point in execution (typically a handler entry).
+pub struct SnapshotEntry {
+    /// The place whose generation is recorded.
+    pub place: mir_types::Place,
+    /// The generation value at the time of the snapshot.
+    pub generation: u32,
+}
+
+impl SnapshotEntry {
+    /// Creates a new snapshot entry.
+    pub fn new(place: mir_types::Place, generation: u32) -> SnapshotEntry {
+        SnapshotEntry {
+            place: place,
+            generation: generation,
+        }
+    }
+}
+
+// ============================================================
+// Snapshot Info
+// ============================================================
+
+/// A generation snapshot taken at a handler entry point.
+///
+/// Each time an effect handler is pushed, a snapshot records the
+/// current generation values of relevant allocations. When the
+/// handler is popped, these values are used to validate that no
+/// stale references remain.
+pub struct SnapshotInfo {
+    /// Unique identifier for this snapshot.
+    pub id: u32,
+    /// Parent snapshot (for nested handlers), or None for top-level.
+    pub parent: Option<u32>,
+    /// The entries in this snapshot.
+    pub entries: Vec<SnapshotEntry>,
+    /// The basic block where the handler is pushed.
+    pub handler_block: mir_def::BasicBlockId,
+    /// The DefId of the handler that triggered this snapshot.
+    pub handler_id: hir_def::DefId,
+    /// The span of the handler push.
+    pub span: common::Span,
+}
+
+impl SnapshotInfo {
+    /// Creates a new snapshot.
+    pub fn new(
+        id: u32,
+        handler_block: mir_def::BasicBlockId,
+        handler_id: hir_def::DefId,
+        span: common::Span,
+    ) -> SnapshotInfo {
+        SnapshotInfo {
+            id: id,
+            parent: Option::None,
+            entries: Vec::new(),
+            handler_block: handler_block,
+            handler_id: handler_id,
+            span: span,
+        }
+    }
+
+    /// Sets the parent snapshot for nested handlers.
+    pub fn set_parent(self: &mut SnapshotInfo, parent_id: u32) {
+        self.parent = Option::Some(parent_id);
+    }
+
+    /// Adds an entry to this snapshot.
+    pub fn add_entry(self: &mut SnapshotInfo, entry: SnapshotEntry) {
+        self.entries.push(entry);
+    }
+
+    /// Returns the number of entries.
+    pub fn entry_count(self: &SnapshotInfo) -> usize {
+        self.entries.len()
+    }
+
+    /// Returns true if this is a nested handler (has a parent).
+    pub fn is_nested(self: &SnapshotInfo) -> bool {
+        match &self.parent {
+            &Option::Some(_) => true,
+            &Option::None => false,
+        }
+    }
+
+    /// Returns the nesting depth (0 = top-level).
+    pub fn depth(self: &SnapshotInfo, all_snapshots: &Vec<SnapshotInfo>) -> u32 {
+        match &self.parent {
+            &Option::None => 0,
+            &Option::Some(parent_id) => {
+                // Find parent snapshot and compute its depth + 1
+                let mut i: usize = 0;
+                while i < all_snapshots.len() {
+                    if all_snapshots[i].id == parent_id {
+                        return all_snapshots[i].depth(all_snapshots) + 1;
+                    }
+                    i = i + 1;
+                }
+                1 // Parent not found — assume depth 1
+            }
+        }
+    }
+}
+
+// ============================================================
+// Snapshot Analysis Result
+// ============================================================
+
+/// The result of snapshot analysis for a function body.
+pub struct SnapshotAnalysis {
+    /// All snapshots found in the function.
+    pub snapshots: Vec<SnapshotInfo>,
+    /// Maximum nesting depth of handlers.
+    pub max_depth: u32,
+}
+
+impl SnapshotAnalysis {
+    /// Creates a new empty analysis.
+    pub fn new() -> SnapshotAnalysis {
+        SnapshotAnalysis {
+            snapshots: Vec::new(),
+            max_depth: 0,
+        }
+    }
+
+    /// Returns the number of snapshots.
+    pub fn snapshot_count(self: &SnapshotAnalysis) -> usize {
+        self.snapshots.len()
+    }
+
+    /// Returns true if any handlers were found.
+    pub fn has_handlers(self: &SnapshotAnalysis) -> bool {
+        self.snapshots.len() > 0
+    }
+
+    /// Finds a snapshot by its ID.
+    pub fn find_snapshot(self: &SnapshotAnalysis, id: u32) -> Option<usize> {
+        let mut i: usize = 0;
+        while i < self.snapshots.len() {
+            if self.snapshots[i].id == id {
+                return Option::Some(i);
+            }
+            i = i + 1;
+        }
+        Option::None
+    }
+}
+
+// ============================================================
+// Snapshot Analysis Algorithm
+// ============================================================
+
+/// Analyzes a MIR body for handler push/pop patterns and builds
+/// generation snapshots.
+///
+/// Algorithm:
+/// 1. Walk blocks in order, tracking active handler stack
+/// 2. On PushHandler, create a new snapshot with current generation
+/// 3. On PopHandler, close the current snapshot
+/// 4. Build parent-child relationships for nested handlers
+pub fn analyze_snapshots(body: &mir_body::MirBody) -> SnapshotAnalysis {
+    let mut result = SnapshotAnalysis::new();
+    let mut next_id: u32 = 0;
+    let mut handler_stack: Vec<u32> = Vec::new(); // Stack of snapshot IDs
+
+    // Walk blocks in order
+    let mut bb_idx: usize = 0;
+    while bb_idx < body.basic_blocks.len() {
+        let block = &body.basic_blocks[bb_idx];
+        let block_id = mir_def::BasicBlockId::new(bb_idx as u32);
+
+        // Scan statements for handler push/pop
+        let mut stmt_idx: usize = 0;
+        while stmt_idx < block.statements.len() {
+            match &block.statements[stmt_idx].kind {
+                &mir_stmt::StatementKind::PushHandler { handler_id, ref state_place, state_kind: _ } => {
+                    let snapshot_id = next_id;
+                    next_id = next_id + 1;
+
+                    let mut snapshot = SnapshotInfo::new(
+                        snapshot_id,
+                        block_id,
+                        handler_id,
+                        block.statements[stmt_idx].span,
+                    );
+
+                    // Set parent if we're nested inside another handler
+                    if handler_stack.len() > 0 {
+                        let parent_id = handler_stack[handler_stack.len() - 1];
+                        snapshot.set_parent(parent_id);
+                    }
+
+                    // Record the state place as a snapshot entry
+                    let entry = SnapshotEntry::new(
+                        mir_types::Place::local(state_place.local),
+                        snapshot_id, // Use snapshot ID as generation marker
+                    );
+                    snapshot.add_entry(entry);
+
+                    handler_stack.push(snapshot_id);
+                    result.snapshots.push(snapshot);
+                }
+                &mir_stmt::StatementKind::PopHandler => {
+                    if handler_stack.len() > 0 {
+                        let _popped = handler_stack[handler_stack.len() - 1];
+                        // Remove last element
+                        let mut new_stack: Vec<u32> = Vec::new();
+                        let mut k: usize = 0;
+                        while k < handler_stack.len() - 1 {
+                            new_stack.push(handler_stack[k]);
+                            k = k + 1;
+                        }
+                        handler_stack = new_stack;
+                    }
+                }
+                &mir_stmt::StatementKind::PushInlineHandler { effect_id, operations: _ } => {
+                    let snapshot_id = next_id;
+                    next_id = next_id + 1;
+
+                    let mut snapshot = SnapshotInfo::new(
+                        snapshot_id,
+                        block_id,
+                        effect_id,
+                        block.statements[stmt_idx].span,
+                    );
+
+                    if handler_stack.len() > 0 {
+                        let parent_id = handler_stack[handler_stack.len() - 1];
+                        snapshot.set_parent(parent_id);
+                    }
+
+                    handler_stack.push(snapshot_id);
+                    result.snapshots.push(snapshot);
+                }
+                &mir_stmt::StatementKind::Assign { place: _, rvalue: _ } => {}
+                &mir_stmt::StatementKind::StorageLive(_) => {}
+                &mir_stmt::StatementKind::StorageDead(_) => {}
+                &mir_stmt::StatementKind::Drop(_) => {}
+                &mir_stmt::StatementKind::CallReturnClause { handler_id: _, handler_name: _, body_result: _, state_place: _, destination: _ } => {}
+                &mir_stmt::StatementKind::Deinit(_) => {}
+                &mir_stmt::StatementKind::SetDiscriminant { place: _, variant_idx: _ } => {}
+                &mir_stmt::StatementKind::CopyNonOverlapping { src: _, dst: _, count: _ } => {}
+                &mir_stmt::StatementKind::Nop => {}
+            }
+            stmt_idx = stmt_idx + 1;
+        }
+
+        bb_idx = bb_idx + 1;
+    }
+
+    // Compute max nesting depth
+    let mut max: u32 = 0;
+    let mut s: usize = 0;
+    while s < result.snapshots.len() {
+        let d = result.snapshots[s].depth(&result.snapshots);
+        if d > max {
+            max = d;
+        }
+        s = s + 1;
+    }
+    result.max_depth = max;
+
+    result
+}

@@ -1,0 +1,318 @@
+// Blood Self-Hosted Compiler - Linearity Checking
+//
+// Enforces ownership qualifiers:
+// - Linear types must be used exactly once
+// - Affine types may be used at most once
+// Runs as a post-pass after body type checking.
+
+mod common;
+mod hir_def;
+mod hir_ty;
+mod hir_expr;
+
+// ============================================================
+// Usage Tracking
+// ============================================================
+
+/// Tracks usage of a local variable for linearity checking.
+pub struct UsageEntry {
+    /// The local variable id.
+    pub local_id: hir_def::LocalId,
+    /// The type of the local.
+    pub ty: hir_ty::Type,
+    /// Ownership qualifier, if any.
+    pub qualifier: Option<hir_ty::OwnershipQualifier>,
+    /// Number of times this local has been used.
+    pub use_count: u32,
+    /// Span where the local was defined.
+    pub def_span: common::Span,
+    /// Spans of each use.
+    pub use_spans: Vec<common::Span>,
+}
+
+impl UsageEntry {
+    /// Creates a new usage entry.
+    pub fn new(
+        local_id: hir_def::LocalId,
+        ty: hir_ty::Type,
+        qualifier: Option<hir_ty::OwnershipQualifier>,
+        def_span: common::Span,
+    ) -> UsageEntry {
+        UsageEntry {
+            local_id: local_id,
+            ty: ty,
+            qualifier: qualifier,
+            use_count: 0,
+            def_span: def_span,
+            use_spans: Vec::new(),
+        }
+    }
+
+    /// Records a use of this local.
+    pub fn record_use(self: &mut Self, span: common::Span) {
+        self.use_count = self.use_count + 1;
+        self.use_spans.push(span);
+    }
+}
+
+// ============================================================
+// Linearity Errors
+// ============================================================
+
+/// An error from linearity checking.
+pub struct LinearityError {
+    /// The kind of error.
+    pub kind: LinearityErrorKind,
+    /// The primary span.
+    pub span: common::Span,
+}
+
+/// Kinds of linearity errors.
+pub enum LinearityErrorKind {
+    /// A linear type was used more than once.
+    LinearUsedMultipleTimes {
+        local_id: hir_def::LocalId,
+        use_count: u32,
+    },
+    /// A linear type was never used.
+    LinearNotUsed {
+        local_id: hir_def::LocalId,
+    },
+    /// An affine type was used more than once.
+    AffineUsedMultipleTimes {
+        local_id: hir_def::LocalId,
+        use_count: u32,
+    },
+    /// A value was used after being moved.
+    MovedAfterUse {
+        local_id: hir_def::LocalId,
+        first_use: common::Span,
+    },
+}
+
+// ============================================================
+// Linearity Checker
+// ============================================================
+
+/// Checks linearity constraints on a function body.
+pub struct LinearityChecker {
+    /// Usage tracking entries for locals.
+    pub entries: Vec<UsageEntry>,
+    /// Errors found during checking.
+    pub errors: Vec<LinearityError>,
+}
+
+impl LinearityChecker {
+    /// Creates a new linearity checker.
+    pub fn new() -> LinearityChecker {
+        LinearityChecker {
+            entries: Vec::new(),
+            errors: Vec::new(),
+        }
+    }
+
+    /// Registers a local variable for tracking.
+    pub fn register_local(
+        self: &mut Self,
+        local_id: hir_def::LocalId,
+        ty: hir_ty::Type,
+        def_span: common::Span,
+    ) {
+        // Extract ownership qualifier from the type
+        let qualifier = extract_qualifier(&ty);
+        let entry = UsageEntry::new(local_id, ty, qualifier, def_span);
+        self.entries.push(entry);
+    }
+
+    /// Records a use of a local variable.
+    pub fn record_use(self: &mut Self, local_id: hir_def::LocalId, span: common::Span) {
+        let mut i: usize = 0;
+        while i < self.entries.len() {
+            if self.entries[i].local_id.index == local_id.index {
+                self.entries[i].record_use(span);
+                return;
+            }
+            i = i + 1;
+        }
+    }
+
+    /// Finalizes checking and collects linearity violations.
+    pub fn finalize(self: &mut Self) {
+        let mut i: usize = 0;
+        while i < self.entries.len() {
+            let entry = &self.entries[i];
+            match &entry.qualifier {
+                &Option::Some(ref q) => {
+                    match q {
+                        &hir_ty::OwnershipQualifier::Linear => {
+                            if entry.use_count == 0 {
+                                let err = LinearityError {
+                                    kind: LinearityErrorKind::LinearNotUsed {
+                                        local_id: hir_def::LocalId::new(entry.local_id.index),
+                                    },
+                                    span: entry.def_span,
+                                };
+                                self.errors.push(err);
+                            } else if entry.use_count > 1 {
+                                let err = LinearityError {
+                                    kind: LinearityErrorKind::LinearUsedMultipleTimes {
+                                        local_id: hir_def::LocalId::new(entry.local_id.index),
+                                        use_count: entry.use_count,
+                                    },
+                                    span: entry.def_span,
+                                };
+                                self.errors.push(err);
+                            }
+                        }
+                        &hir_ty::OwnershipQualifier::Affine => {
+                            if entry.use_count > 1 {
+                                let err = LinearityError {
+                                    kind: LinearityErrorKind::AffineUsedMultipleTimes {
+                                        local_id: hir_def::LocalId::new(entry.local_id.index),
+                                        use_count: entry.use_count,
+                                    },
+                                    span: entry.def_span,
+                                };
+                                self.errors.push(err);
+                            }
+                        }
+                    }
+                }
+                &Option::None => {
+                    // No ownership qualifier — no linearity constraints
+                }
+            }
+            i = i + 1;
+        }
+    }
+}
+
+// ============================================================
+// Walk HIR Body for Usage Collection
+// ============================================================
+
+/// Walk an expression tree and collect variable usages.
+pub fn collect_usages(checker: &mut LinearityChecker, expr: &hir_expr::Expr) {
+    match &expr.kind {
+        &hir_expr::ExprKind::Local(ref local_id) => {
+            checker.record_use(hir_def::LocalId::new(local_id.index), expr.span);
+        }
+        &hir_expr::ExprKind::Binary { ref left, ref right, op: _ } => {
+            collect_usages(checker, left.as_ref());
+            collect_usages(checker, right.as_ref());
+        }
+        &hir_expr::ExprKind::Unary { ref operand, op: _ } => {
+            collect_usages(checker, operand.as_ref());
+        }
+        &hir_expr::ExprKind::Call { ref callee, ref args } => {
+            collect_usages(checker, callee.as_ref());
+            let mut i: usize = 0;
+            while i < args.len() {
+                collect_usages(checker, &args[i]);
+                i = i + 1;
+            }
+        }
+        &hir_expr::ExprKind::MethodCall { ref receiver, ref args, .. } => {
+            collect_usages(checker, receiver.as_ref());
+            let mut i: usize = 0;
+            while i < args.len() {
+                collect_usages(checker, &args[i]);
+                i = i + 1;
+            }
+        }
+        &hir_expr::ExprKind::If { ref condition, ref then_branch, ref else_branch } => {
+            collect_usages(checker, condition.as_ref());
+            collect_usages(checker, then_branch.as_ref());
+            match else_branch {
+                &Option::Some(ref eb) => {
+                    collect_usages(checker, eb.as_ref());
+                }
+                &Option::None => {}
+            }
+        }
+        &hir_expr::ExprKind::Block(ref block) => {
+            collect_usages_block(checker, block);
+        }
+        &hir_expr::ExprKind::Match { ref scrutinee, ref arms } => {
+            collect_usages(checker, scrutinee.as_ref());
+            let mut i: usize = 0;
+            while i < arms.len() {
+                collect_usages(checker, &arms[i].body);
+                i = i + 1;
+            }
+        }
+        &hir_expr::ExprKind::Assign { ref target, ref val } => {
+            collect_usages(checker, target.as_ref());
+            collect_usages(checker, val.as_ref());
+        }
+        &hir_expr::ExprKind::Return(ref opt_val) => {
+            match opt_val {
+                &Option::Some(ref v) => {
+                    collect_usages(checker, v.as_ref());
+                }
+                &Option::None => {}
+            }
+        }
+        &hir_expr::ExprKind::Field { ref base, .. } => {
+            collect_usages(checker, base.as_ref());
+        }
+        &hir_expr::ExprKind::Index { ref base, ref idx } => {
+            collect_usages(checker, base.as_ref());
+            collect_usages(checker, idx.as_ref());
+        }
+        &hir_expr::ExprKind::AddrOf { ref expr, .. } => {
+            collect_usages(checker, expr.as_ref());
+        }
+        &hir_expr::ExprKind::Cast { ref expr, .. } => {
+            collect_usages(checker, expr.as_ref());
+        }
+        &hir_expr::ExprKind::Loop { ref body, .. } => {
+            collect_usages(checker, body.as_ref());
+        }
+        _ => {
+            // Literal, Path, Error, Default, Tuple, etc. — no local usage to track
+        }
+    }
+}
+
+/// Walk a block and collect usages.
+fn collect_usages_block(checker: &mut LinearityChecker, block: &hir_expr::Block) {
+    let mut i: usize = 0;
+    while i < block.stmts.len() {
+        match &block.stmts[i] {
+            &hir_expr::Stmt::Expr { ref expr, .. } => {
+                collect_usages(checker, expr);
+            }
+            &hir_expr::Stmt::Let { ref init, .. } => {
+                match init {
+                    &Option::Some(ref init_expr) => {
+                        collect_usages(checker, init_expr);
+                    }
+                    &Option::None => {}
+                }
+            }
+            &hir_expr::Stmt::Item(_) => {}
+        }
+        i = i + 1;
+    }
+    match &block.expr {
+        &Option::Some(ref e) => {
+            collect_usages(checker, e.as_ref());
+        }
+        &Option::None => {}
+    }
+}
+
+// ============================================================
+// Helpers
+// ============================================================
+
+/// Extracts the ownership qualifier from a type, if present.
+fn extract_qualifier(ty: &hir_ty::Type) -> Option<hir_ty::OwnershipQualifier> {
+    match &ty.kind {
+        &hir_ty::TypeKind::Ownership { ref qualifier, .. } => {
+            Option::Some(qualifier.clone())
+        }
+        _ => Option::None,
+    }
+}

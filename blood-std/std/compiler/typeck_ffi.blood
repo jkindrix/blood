@@ -1,0 +1,169 @@
+// Blood Self-Hosted Compiler - FFI Type Validation
+//
+// Validates types used in bridge (FFI) declarations to ensure they are
+// compatible with C ABI conventions.
+
+mod common;
+mod hir_def;
+mod hir_ty;
+
+// ============================================================
+// FFI Safety Classification
+// ============================================================
+
+/// Classification of a type's FFI safety.
+pub enum FfiSafety {
+    /// Type is safe to use in FFI.
+    Safe,
+    /// Type works but may have portability issues.
+    Warning,
+    /// Type is not safe for FFI.
+    Unsafe,
+}
+
+/// An FFI validation error.
+pub struct FfiError {
+    /// The kind of error.
+    pub kind: FfiErrorKind,
+    /// The span of the problematic type.
+    pub span: common::Span,
+    /// A human-readable message.
+    pub message: String,
+}
+
+/// Kinds of FFI errors.
+pub enum FfiErrorKind {
+    /// Type is not FFI-safe.
+    UnsafeType,
+    /// Type has portability issues.
+    PortabilityWarning,
+    /// Missing required annotation.
+    MissingAnnotation,
+}
+
+// ============================================================
+// FFI Type Validation
+// ============================================================
+
+/// Validates whether a type is safe for FFI usage.
+pub fn validate_ffi_type(ty: &hir_ty::Type) -> FfiSafety {
+    match &ty.kind {
+        &hir_ty::TypeKind::Primitive(ref prim) => {
+            validate_ffi_primitive(prim)
+        }
+        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
+            // References become pointers in FFI — validate inner type
+            validate_ffi_type(inner.as_ref())
+        }
+        &hir_ty::TypeKind::Ptr { ref inner, mutable: _ } => {
+            // Raw pointers are FFI-safe
+            let _ = inner;
+            FfiSafety::Safe
+        }
+        &hir_ty::TypeKind::Tuple(ref fields) => {
+            if fields.len() == 0 {
+                // Unit type is safe (void)
+                FfiSafety::Safe
+            } else {
+                // Tuples are not generally FFI-safe
+                FfiSafety::Unsafe
+            }
+        }
+        &hir_ty::TypeKind::Fn { .. } => {
+            // Function pointers have portability considerations
+            FfiSafety::Warning
+        }
+        &hir_ty::TypeKind::Adt { .. } => {
+            // ADTs need #[repr(C)] to be FFI-safe — warn by default
+            FfiSafety::Warning
+        }
+        &hir_ty::TypeKind::Never => {
+            FfiSafety::Unsafe
+        }
+        &hir_ty::TypeKind::Error => {
+            FfiSafety::Unsafe
+        }
+        _ => {
+            // Infer, TypeParam, DynTrait, Ownership, etc. — not FFI-safe
+            FfiSafety::Unsafe
+        }
+    }
+}
+
+/// Validates an FFI primitive type.
+fn validate_ffi_primitive(prim: &hir_ty::PrimitiveTy) -> FfiSafety {
+    match prim {
+        &hir_ty::PrimitiveTy::Bool => FfiSafety::Safe,
+        &hir_ty::PrimitiveTy::I8 => FfiSafety::Safe,
+        &hir_ty::PrimitiveTy::I16 => FfiSafety::Safe,
+        &hir_ty::PrimitiveTy::I32 => FfiSafety::Safe,
+        &hir_ty::PrimitiveTy::I64 => FfiSafety::Safe,
+        &hir_ty::PrimitiveTy::U8 => FfiSafety::Safe,
+        &hir_ty::PrimitiveTy::U16 => FfiSafety::Safe,
+        &hir_ty::PrimitiveTy::U32 => FfiSafety::Safe,
+        &hir_ty::PrimitiveTy::U64 => FfiSafety::Safe,
+        &hir_ty::PrimitiveTy::F32 => FfiSafety::Safe,
+        &hir_ty::PrimitiveTy::F64 => FfiSafety::Safe,
+        &hir_ty::PrimitiveTy::Char => FfiSafety::Safe,
+        &hir_ty::PrimitiveTy::Str => FfiSafety::Unsafe, // &str is a fat pointer
+        &hir_ty::PrimitiveTy::I128 => FfiSafety::Warning, // Platform-dependent
+        &hir_ty::PrimitiveTy::U128 => FfiSafety::Warning,
+        &hir_ty::PrimitiveTy::Isize => FfiSafety::Warning, // Platform-dependent size
+        &hir_ty::PrimitiveTy::Usize => FfiSafety::Warning,
+    }
+}
+
+/// Checks all types in a bridge item for FFI safety.
+pub fn check_bridge_types(
+    param_tys: &Vec<hir_ty::Type>,
+    return_ty: &Option<hir_ty::Type>,
+    span: common::Span,
+) -> Vec<FfiError> {
+    let mut errors: Vec<FfiError> = Vec::new();
+
+    let mut i: usize = 0;
+    while i < param_tys.len() {
+        let safety = validate_ffi_type(&param_tys[i]);
+        match safety {
+            FfiSafety::Unsafe => {
+                let err = FfiError {
+                    kind: FfiErrorKind::UnsafeType,
+                    span: span,
+                    message: common::make_string("parameter type is not FFI-safe"),
+                };
+                errors.push(err);
+            }
+            FfiSafety::Warning => {
+                let err = FfiError {
+                    kind: FfiErrorKind::PortabilityWarning,
+                    span: span,
+                    message: common::make_string("parameter type may have portability issues in FFI"),
+                };
+                errors.push(err);
+            }
+            FfiSafety::Safe => {}
+        }
+        i = i + 1;
+    }
+
+    match return_ty {
+        &Option::Some(ref ret) => {
+            let safety = validate_ffi_type(ret);
+            match safety {
+                FfiSafety::Unsafe => {
+                    let err = FfiError {
+                        kind: FfiErrorKind::UnsafeType,
+                        span: span,
+                        message: common::make_string("return type is not FFI-safe"),
+                    };
+                    errors.push(err);
+                }
+                FfiSafety::Warning => {}
+                FfiSafety::Safe => {}
+            }
+        }
+        &Option::None => {}
+    }
+
+    errors
+}

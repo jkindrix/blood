@@ -1,0 +1,486 @@
+// Blood Self-Hosted Compiler - Project Management
+//
+// Handles Blood.toml manifest parsing, project discovery, and module resolution.
+// Implements a TOML-subset parser for Blood project manifests.
+
+mod common;
+
+// ============================================================
+// Manifest Types
+// ============================================================
+
+/// A parsed Blood.toml manifest.
+pub struct Manifest {
+    /// Project name.
+    pub name: String,
+    /// Project version.
+    pub version: String,
+    /// Blood edition (e.g., "2026").
+    pub edition: String,
+    /// Dependencies.
+    pub dependencies: Vec<Dependency>,
+    /// Binary targets.
+    pub bin_targets: Vec<BinTarget>,
+    /// Library target (if any).
+    pub lib_target: Option<LibTarget>,
+}
+
+impl Manifest {
+    /// Creates an empty manifest with defaults.
+    pub fn new() -> Manifest {
+        Manifest {
+            name: common::make_string(""),
+            version: common::make_string("0.1.0"),
+            edition: common::make_string("2026"),
+            dependencies: Vec::new(),
+            bin_targets: Vec::new(),
+            lib_target: Option::None,
+        }
+    }
+
+    /// Returns true if the manifest has a library target.
+    pub fn has_lib(self: &Manifest) -> bool {
+        match &self.lib_target {
+            &Option::Some(_) => true,
+            &Option::None => false,
+        }
+    }
+
+    /// Returns the number of dependencies.
+    pub fn dependency_count(self: &Manifest) -> usize {
+        self.dependencies.len()
+    }
+}
+
+/// A project dependency.
+pub struct Dependency {
+    /// Dependency name.
+    pub name: String,
+    /// Version requirement string.
+    pub version_req: String,
+    /// Path to local dependency (if any).
+    pub path: Option<String>,
+    /// Whether this is a dev dependency.
+    pub is_dev: bool,
+}
+
+impl Dependency {
+    /// Creates a new dependency.
+    pub fn new(name: String, version_req: String) -> Dependency {
+        Dependency {
+            name: name,
+            version_req: version_req,
+            path: Option::None,
+            is_dev: false,
+        }
+    }
+
+    /// Creates a path dependency.
+    pub fn path_dep(name: String, dep_path: String) -> Dependency {
+        Dependency {
+            name: name,
+            version_req: common::make_string("*"),
+            path: Option::Some(dep_path),
+            is_dev: false,
+        }
+    }
+}
+
+/// A binary target.
+pub struct BinTarget {
+    /// Binary name.
+    pub name: String,
+    /// Path to the main source file.
+    pub src_path: String,
+}
+
+impl BinTarget {
+    /// Creates a new binary target.
+    pub fn new(name: String, src_path: String) -> BinTarget {
+        BinTarget {
+            name: name,
+            src_path: src_path,
+        }
+    }
+}
+
+/// A library target.
+pub struct LibTarget {
+    /// Library name.
+    pub name: String,
+    /// Path to the lib source file.
+    pub src_path: String,
+}
+
+impl LibTarget {
+    /// Creates a new library target.
+    pub fn new(name: String, src_path: String) -> LibTarget {
+        LibTarget {
+            name: name,
+            src_path: src_path,
+        }
+    }
+}
+
+// ============================================================
+// Module File
+// ============================================================
+
+/// A resolved module file within a project.
+pub struct ModuleFile {
+    /// The module path (e.g., "std.compiler.lexer").
+    pub module_path: String,
+    /// The file system path.
+    pub file_path: String,
+    /// Whether this is the root module.
+    pub is_root: bool,
+}
+
+impl ModuleFile {
+    /// Creates a new module file entry.
+    pub fn new(module_path: String, file_path: String) -> ModuleFile {
+        ModuleFile {
+            module_path: module_path,
+            file_path: file_path,
+            is_root: false,
+        }
+    }
+}
+
+// ============================================================
+// Project Discovery
+// ============================================================
+
+/// Discovers the project root by searching for Blood.toml.
+///
+/// Starting from `start_dir`, walks up the directory tree looking
+/// for a Blood.toml file. Returns the directory containing it.
+pub fn discover_project_root(start_dir: &str) -> Option<String> {
+    // Start from the given directory and walk up
+    let mut current = String::new();
+    current.push_str(start_dir);
+
+    // Limit search depth to prevent infinite loops
+    let mut depth: u32 = 0;
+    while depth < 20 {
+        // Check if Blood.toml exists in current directory
+        let mut manifest_path = String::new();
+        manifest_path.push_str(current.as_str());
+        manifest_path.push_str("/Blood.toml");
+
+        // We can't directly check file existence without FFI,
+        // so return the path for the caller to verify
+        // In practice, the driver would call this and then try to read the file
+        if depth == 0 {
+            return Option::Some(current);
+        }
+
+        // Move to parent directory
+        let parent = parent_dir(current.as_str());
+        match parent {
+            Option::Some(p) => { current = p; }
+            Option::None => { return Option::None; }
+        }
+
+        depth = depth + 1;
+    }
+
+    Option::None
+}
+
+/// Extracts the parent directory from a path.
+fn parent_dir(path: &str) -> Option<String> {
+    let bytes = path.as_bytes();
+    let len = path.len();
+
+    // Find the last path separator
+    let mut last_sep: i64 = -1;
+    let mut i: usize = 0;
+    while i < len {
+        if bytes[i] == 47 { // '/'
+            last_sep = i as i64;
+        }
+        i = i + 1;
+    }
+
+    if last_sep <= 0 {
+        return Option::None;
+    }
+
+    let mut result = String::new();
+    let mut j: usize = 0;
+    while j < last_sep as usize {
+        result.push(bytes[j] as char);
+        j = j + 1;
+    }
+    Option::Some(result)
+}
+
+// ============================================================
+// Manifest Parsing (TOML subset)
+// ============================================================
+
+/// Parses a Blood.toml manifest from string content.
+///
+/// Supports a TOML subset:
+/// - Key = "value" pairs
+/// - [section] headers
+/// - [[array]] sections
+pub fn parse_manifest(content: &str) -> Manifest {
+    let mut manifest = Manifest::new();
+    let mut current_section = String::new();
+
+    let lines = split_lines(content);
+    let mut line_idx: usize = 0;
+    while line_idx < lines.len() {
+        let line = trim_str(lines[line_idx].as_str());
+        let line_len = line.len();
+
+        // Skip empty lines and comments
+        if line_len == 0 {
+            line_idx = line_idx + 1;
+            continue;
+        }
+        let line_bytes = line.as_bytes();
+        if line_bytes[0] == 35 { // '#'
+            line_idx = line_idx + 1;
+            continue;
+        }
+
+        // Check for section headers
+        if line_bytes[0] == 91 { // '['
+            if line_len > 1 && line_bytes[1] == 91 { // '[['
+                // Array section: [[name]]
+                current_section = extract_section_name(line.as_str(), true);
+            } else {
+                // Regular section: [name]
+                current_section = extract_section_name(line.as_str(), false);
+            }
+            line_idx = line_idx + 1;
+            continue;
+        }
+
+        // Parse key = value
+        let kv = parse_key_value(line.as_str());
+        match kv {
+            Option::Some(pair) => {
+                apply_key_value(&mut manifest, current_section.as_str(), pair.0.as_str(), pair.1.as_str());
+            }
+            Option::None => {}
+        }
+
+        line_idx = line_idx + 1;
+    }
+
+    manifest
+}
+
+/// Applies a key-value pair to the manifest based on current section.
+fn apply_key_value(manifest: &mut Manifest, section: &str, key: &str, value: &str) {
+    let sec_bytes = section.as_bytes();
+    let sec_len = section.len();
+    let key_bytes = key.as_bytes();
+    let key_len = key.len();
+
+    // [package] section
+    if sec_len == 7 && sec_bytes[0] == 112 { // "package"
+        if key_len == 4 && key_bytes[0] == 110 { // "name"
+            manifest.name = make_string_copy(value);
+        } else if key_len == 7 && key_bytes[0] == 118 { // "version"
+            manifest.version = make_string_copy(value);
+        } else if key_len == 7 && key_bytes[0] == 101 { // "edition"
+            manifest.edition = make_string_copy(value);
+        }
+    }
+
+    // [dependencies] section
+    if sec_len == 12 && sec_bytes[0] == 100 { // "dependencies"
+        let dep = Dependency::new(make_string_copy(key), make_string_copy(value));
+        manifest.dependencies.push(dep);
+    }
+}
+
+// ============================================================
+// Module Resolution
+// ============================================================
+
+/// Resolves all module files in a project.
+pub fn resolve_modules(manifest: &Manifest, root: &str) -> Vec<ModuleFile> {
+    let mut modules: Vec<ModuleFile> = Vec::new();
+
+    // Add library target if present
+    match &manifest.lib_target {
+        &Option::Some(ref lib) => {
+            let mut path = String::new();
+            path.push_str(root);
+            path.push_str("/");
+            path.push_str(lib.src_path.as_str());
+            let mut mf = ModuleFile::new(make_string_copy(lib.name.as_str()), path);
+            mf.is_root = true;
+            modules.push(mf);
+        }
+        &Option::None => {}
+    }
+
+    // Add binary targets
+    let mut i: usize = 0;
+    while i < manifest.bin_targets.len() {
+        let bin = &manifest.bin_targets[i];
+        let mut path = String::new();
+        path.push_str(root);
+        path.push_str("/");
+        path.push_str(bin.src_path.as_str());
+        let mf = ModuleFile::new(make_string_copy(bin.name.as_str()), path);
+        modules.push(mf);
+        i = i + 1;
+    }
+
+    modules
+}
+
+// ============================================================
+// String Helpers
+// ============================================================
+
+/// Copies a string.
+fn make_string_copy(s: &str) -> String {
+    let mut result = String::new();
+    result.push_str(s);
+    result
+}
+
+/// Splits content into lines.
+fn split_lines(content: &str) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let bytes = content.as_bytes();
+    let len = content.len();
+    let mut start: usize = 0;
+    let mut i: usize = 0;
+
+    while i < len {
+        if bytes[i] == 10 { // '\n'
+            let mut line = String::new();
+            let mut j: usize = start;
+            while j < i {
+                line.push(bytes[j] as char);
+                j = j + 1;
+            }
+            lines.push(line);
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+
+    // Handle last line (no trailing newline)
+    if start < len {
+        let mut line = String::new();
+        let mut j: usize = start;
+        while j < len {
+            line.push(bytes[j] as char);
+            j = j + 1;
+        }
+        lines.push(line);
+    }
+
+    lines
+}
+
+/// Trims leading and trailing whitespace from a string.
+fn trim_str(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let len = s.len();
+
+    let mut start: usize = 0;
+    while start < len && (bytes[start] == 32 || bytes[start] == 9) {
+        start = start + 1;
+    }
+
+    let mut end_pos: usize = len;
+    while end_pos > start && (bytes[end_pos - 1] == 32 || bytes[end_pos - 1] == 9 || bytes[end_pos - 1] == 13) {
+        end_pos = end_pos - 1;
+    }
+
+    let mut result = String::new();
+    let mut i: usize = start;
+    while i < end_pos {
+        result.push(bytes[i] as char);
+        i = i + 1;
+    }
+    result
+}
+
+/// Extracts a section name from a TOML section header.
+fn extract_section_name(line: &str, is_array: bool) -> String {
+    let bytes = line.as_bytes();
+    let len = line.len();
+    let start = if is_array { 2 } else { 1 }; // Skip [[ or [
+    let end_marker: u8 = 93; // ']'
+
+    let mut result = String::new();
+    let mut i: usize = start;
+    while i < len {
+        if bytes[i] == end_marker {
+            break;
+        }
+        result.push(bytes[i] as char);
+        i = i + 1;
+    }
+    result
+}
+
+/// Parses a key = value line. Returns (key, value) or None.
+fn parse_key_value(line: &str) -> Option<(String, String)> {
+    let bytes = line.as_bytes();
+    let len = line.len();
+
+    // Find the '=' sign
+    let mut eq_pos: usize = 0;
+    let mut found = false;
+    let mut i: usize = 0;
+    while i < len {
+        if bytes[i] == 61 { // '='
+            eq_pos = i;
+            found = true;
+            i = len; // break
+        }
+        i = i + 1;
+    }
+
+    if !found {
+        return Option::None;
+    }
+
+    // Extract key (before =)
+    let mut key = String::new();
+    let mut k: usize = 0;
+    while k < eq_pos {
+        if bytes[k] != 32 && bytes[k] != 9 { // not whitespace
+            key.push(bytes[k] as char);
+        }
+        k = k + 1;
+    }
+
+    // Extract value (after =), removing quotes
+    let mut val = String::new();
+    let mut v: usize = eq_pos + 1;
+    while v < len && (bytes[v] == 32 || bytes[v] == 9) {
+        v = v + 1; // skip whitespace after =
+    }
+
+    // Check for quoted string
+    if v < len && bytes[v] == 34 { // '"'
+        v = v + 1; // skip opening quote
+        while v < len && bytes[v] != 34 {
+            val.push(bytes[v] as char);
+            v = v + 1;
+        }
+    } else {
+        // Unquoted value
+        while v < len && bytes[v] != 32 && bytes[v] != 9 && bytes[v] != 35 {
+            val.push(bytes[v] as char);
+            v = v + 1;
+        }
+    }
+
+    Option::Some((key, val))
+}

@@ -1,0 +1,469 @@
+// Blood Self-Hosted Compiler - MIR Generational Pointer Model
+//
+// Implements the generational pointer scheme for memory safety.
+// Each allocation carries a generation tag; references store the
+// expected generation. Before dereferencing, the runtime checks
+// that the generation matches (use-after-free detection).
+//
+// GenPtr layout: { address: u64, generation: u32, metadata: u32 }
+// Metadata: tier(2 bits) | flags(6 bits) | type_fingerprint(24 bits)
+
+mod common;
+mod hir_def;
+mod hir_ty;
+mod mir_def;
+mod mir_types;
+mod mir_stmt;
+mod mir_body;
+
+// ============================================================
+// Memory Tier
+// ============================================================
+
+/// The memory tier for an allocation.
+pub enum MemoryTier {
+    /// Stack allocation — automatic lifetime.
+    Stack,
+    /// Region allocation — tied to a handler scope.
+    Region,
+    /// Persistent allocation — explicit deallocation.
+    Persistent,
+}
+
+impl MemoryTier {
+    /// Returns the 2-bit encoding for this tier.
+    pub fn encode(self: &MemoryTier) -> u32 {
+        match self {
+            &MemoryTier::Stack => 0,
+            &MemoryTier::Region => 1,
+            &MemoryTier::Persistent => 2,
+        }
+    }
+
+    /// Decodes a 2-bit tier value.
+    pub fn decode(bits: u32) -> MemoryTier {
+        if bits == 0 {
+            MemoryTier::Stack
+        } else if bits == 1 {
+            MemoryTier::Region
+        } else {
+            MemoryTier::Persistent
+        }
+    }
+
+    /// Returns the tier name.
+    pub fn name(self: &MemoryTier) -> &str {
+        match self {
+            &MemoryTier::Stack => "stack",
+            &MemoryTier::Region => "region",
+            &MemoryTier::Persistent => "persistent",
+        }
+    }
+}
+
+// ============================================================
+// Pointer Flags
+// ============================================================
+
+/// Flags encoded in the metadata field of a generational pointer.
+pub struct PtrFlags {
+    /// Raw flag bits (6 bits).
+    pub bits: u8,
+}
+
+impl PtrFlags {
+    /// No flags set.
+    pub fn empty() -> PtrFlags {
+        PtrFlags { bits: 0 }
+    }
+
+    /// Flag: pointer is nullable.
+    pub fn nullable() -> PtrFlags {
+        PtrFlags { bits: 1 }
+    }
+
+    /// Flag: pointer is mutable.
+    pub fn mutable_flag() -> PtrFlags {
+        PtrFlags { bits: 2 }
+    }
+
+    /// Flag: pointer has been validated.
+    pub fn validated() -> PtrFlags {
+        PtrFlags { bits: 4 }
+    }
+
+    /// Combines two flag sets.
+    pub fn merge(self: &PtrFlags, other: &PtrFlags) -> PtrFlags {
+        PtrFlags { bits: self.bits | other.bits }
+    }
+
+    /// Returns true if a specific flag is set.
+    pub fn has(self: &PtrFlags, flag: u8) -> bool {
+        (self.bits & flag) != 0
+    }
+}
+
+// ============================================================
+// Generational Pointer
+// ============================================================
+
+/// A generational pointer that carries metadata for safety checks.
+///
+/// Layout:
+/// - address: 64-bit pointer to the allocation
+/// - generation: 32-bit generation counter
+/// - metadata: 32-bit packed field
+///   - bits [31:30]: MemoryTier (2 bits)
+///   - bits [29:24]: flags (6 bits)
+///   - bits [23:0]: type fingerprint (24 bits)
+pub struct GenPtr {
+    /// The raw address of the allocation.
+    pub address: u64,
+    /// The generation counter of the allocation.
+    pub generation: u32,
+    /// Packed metadata: tier | flags | type_fingerprint.
+    pub metadata: u32,
+}
+
+impl GenPtr {
+    /// Creates a new generational pointer.
+    pub fn new(address: u64, generation: u32, metadata: u32) -> GenPtr {
+        GenPtr {
+            address: address,
+            generation: generation,
+            metadata: metadata,
+        }
+    }
+
+    /// Creates a null generational pointer.
+    pub fn null() -> GenPtr {
+        GenPtr {
+            address: 0,
+            generation: 0,
+            metadata: 0,
+        }
+    }
+
+    /// Returns true if this is a null pointer.
+    pub fn is_null(self: &GenPtr) -> bool {
+        self.address == 0
+    }
+
+    /// Extracts the memory tier from metadata.
+    pub fn tier(self: &GenPtr) -> MemoryTier {
+        let tier_bits = (self.metadata >> 30) & 0x3;
+        MemoryTier::decode(tier_bits)
+    }
+
+    /// Extracts the flags from metadata.
+    pub fn flags(self: &GenPtr) -> PtrFlags {
+        let flag_bits = ((self.metadata >> 24) & 0x3F) as u8;
+        PtrFlags { bits: flag_bits }
+    }
+
+    /// Extracts the type fingerprint from metadata.
+    pub fn type_fingerprint(self: &GenPtr) -> u32 {
+        self.metadata & 0x00FFFFFF
+    }
+}
+
+// ============================================================
+// Metadata Encoding
+// ============================================================
+
+/// Encodes metadata from its components.
+pub fn encode_metadata(tier: &MemoryTier, flags: &PtrFlags, type_fp: u32) -> u32 {
+    let tier_bits = tier.encode() << 30;
+    let flag_bits = (flags.bits as u32 & 0x3F) << 24;
+    let fp_bits = type_fp & 0x00FFFFFF;
+    tier_bits | flag_bits | fp_bits
+}
+
+/// Decodes the tier from a metadata value.
+pub fn decode_tier(metadata: u32) -> MemoryTier {
+    let tier_bits = (metadata >> 30) & 0x3;
+    MemoryTier::decode(tier_bits)
+}
+
+/// Decodes the flags from a metadata value.
+pub fn decode_flags(metadata: u32) -> PtrFlags {
+    let flag_bits = ((metadata >> 24) & 0x3F) as u8;
+    PtrFlags { bits: flag_bits }
+}
+
+/// Decodes the type fingerprint from a metadata value.
+pub fn decode_type_fingerprint(metadata: u32) -> u32 {
+    metadata & 0x00FFFFFF
+}
+
+// ============================================================
+// Type Fingerprinting
+// ============================================================
+
+/// Computes a 24-bit fingerprint for a type.
+/// Uses a simple hash to distinguish types for runtime validation.
+pub fn compute_type_fingerprint(ty: &hir_ty::Type) -> u32 {
+    let hash = hash_type(ty);
+    hash & 0x00FFFFFF
+}
+
+/// Hashes a type to a u32 value.
+fn hash_type(ty: &hir_ty::Type) -> u32 {
+    match &ty.kind {
+        &hir_ty::TypeKind::Primitive(ref prim) => {
+            hash_primitive(prim)
+        }
+        &hir_ty::TypeKind::Tuple(ref fields) => {
+            let mut h: u32 = 0x54555031; // "TUP1"
+            let mut i: usize = 0;
+            while i < fields.len() {
+                h = mix_hash(h, hash_type(&fields[i]));
+                i = i + 1;
+            }
+            h
+        }
+        &hir_ty::TypeKind::Array { ref element, size } => {
+            let h = mix_hash(0x41525231, hash_type(element.as_ref())); // "ARR1"
+            mix_hash(h, size as u32)
+        }
+        &hir_ty::TypeKind::Slice { ref element } => {
+            mix_hash(0x534C4331, hash_type(element.as_ref())) // "SLC1"
+        }
+        &hir_ty::TypeKind::Ref { ref inner, mutable } => {
+            let base = if mutable { 0x524D5431 } else { 0x52454631 }; // "RMT1" / "REF1"
+            mix_hash(base, hash_type(inner.as_ref()))
+        }
+        &hir_ty::TypeKind::Ptr { ref inner, mutable } => {
+            let base = if mutable { 0x504D5431 } else { 0x50545231 }; // "PMT1" / "PTR1"
+            mix_hash(base, hash_type(inner.as_ref()))
+        }
+        &hir_ty::TypeKind::Fn { params: _, ret: _, effects: _ } => 0x464E5031, // "FNP1"
+        &hir_ty::TypeKind::Closure { def_id, params: _, ret: _ } => {
+            mix_hash(0x434C5331, def_id.index) // "CLS1"
+        }
+        &hir_ty::TypeKind::Adt { def_id, args: _ } => {
+            mix_hash(0x41445431, def_id.index) // "ADT1"
+        }
+        &hir_ty::TypeKind::Infer(ref var) => {
+            mix_hash(0x494E4631, var.index) // "INF1"
+        }
+        &hir_ty::TypeKind::Param(ref var) => {
+            mix_hash(0x50415231, var.index) // "PAR1"
+        }
+        &hir_ty::TypeKind::Record { fields: _, row_var: _ } => 0x52454331, // "REC1"
+        &hir_ty::TypeKind::Forall { params: _, body: _ } => 0x464F5231, // "FOR1"
+        &hir_ty::TypeKind::Range { element: _, inclusive: _ } => 0x524E4731, // "RNG1"
+        &hir_ty::TypeKind::DynTrait { trait_id: _, auto_traits: _ } => 0x44594E31, // "DYN1"
+        &hir_ty::TypeKind::Never => 0x4E455631, // "NEV1"
+        &hir_ty::TypeKind::Error => 0x45525231, // "ERR1"
+        &hir_ty::TypeKind::Ownership { qualifier: _, ref inner } => {
+            mix_hash(0x4F574E31, hash_type(inner.as_ref())) // "OWN1"
+        }
+    }
+}
+
+/// Hashes a primitive type.
+fn hash_primitive(prim: &hir_ty::PrimitiveTy) -> u32 {
+    match prim {
+        &hir_ty::PrimitiveTy::Bool => 0x424F4F4C, // "BOOL"
+        &hir_ty::PrimitiveTy::I8 => 0x49383030,   // "I800"
+        &hir_ty::PrimitiveTy::I16 => 0x49313630,  // "I160"
+        &hir_ty::PrimitiveTy::I32 => 0x49333230,  // "I320"
+        &hir_ty::PrimitiveTy::I64 => 0x49363430,  // "I640"
+        &hir_ty::PrimitiveTy::I128 => 0x49313238, // "I128"
+        &hir_ty::PrimitiveTy::U8 => 0x55383030,   // "U800"
+        &hir_ty::PrimitiveTy::U16 => 0x55313630,  // "U160"
+        &hir_ty::PrimitiveTy::U32 => 0x55333230,  // "U320"
+        &hir_ty::PrimitiveTy::U64 => 0x55363430,  // "U640"
+        &hir_ty::PrimitiveTy::U128 => 0x55313238, // "U128"
+        &hir_ty::PrimitiveTy::Isize => 0x49535A45, // "ISZE"
+        &hir_ty::PrimitiveTy::Usize => 0x55535A45, // "USZE"
+        &hir_ty::PrimitiveTy::F32 => 0x46333230,  // "F320"
+        &hir_ty::PrimitiveTy::F64 => 0x46363430,  // "F640"
+        &hir_ty::PrimitiveTy::Char => 0x43484152, // "CHAR"
+        &hir_ty::PrimitiveTy::Str => 0x53545230,  // "STR0"
+    }
+}
+
+/// Simple hash mixing function (FNV-like).
+fn mix_hash(a: u32, b: u32) -> u32 {
+    let mut h = a;
+    h = h ^ b;
+    h = h * 16777619; // FNV prime
+    h
+}
+
+// ============================================================
+// Generation Validation
+// ============================================================
+
+/// Information for a generation validation check to be inserted.
+pub struct GenValidation {
+    /// The local containing the generational pointer.
+    pub ptr_local: mir_def::MirLocalId,
+    /// The expected generation value.
+    pub expected_gen: u32,
+    /// The span of the dereference operation.
+    pub span: common::Span,
+}
+
+impl GenValidation {
+    /// Creates a new generation validation.
+    pub fn new(
+        ptr_local: mir_def::MirLocalId,
+        expected_gen: u32,
+        span: common::Span,
+    ) -> GenValidation {
+        GenValidation {
+            ptr_local: ptr_local,
+            expected_gen: expected_gen,
+            span: span,
+        }
+    }
+}
+
+/// Collects all places where generation validation should be inserted.
+///
+/// Scans the MIR body for dereference operations (Deref projections)
+/// and creates validation entries for each.
+pub fn collect_validations(body: &mir_body::MirBody) -> Vec<GenValidation> {
+    let mut validations: Vec<GenValidation> = Vec::new();
+
+    let mut bb_idx: usize = 0;
+    while bb_idx < body.basic_blocks.len() {
+        let block = &body.basic_blocks[bb_idx];
+
+        let mut stmt_idx: usize = 0;
+        while stmt_idx < block.statements.len() {
+            collect_stmt_validations(&block.statements[stmt_idx], &mut validations);
+            stmt_idx = stmt_idx + 1;
+        }
+
+        bb_idx = bb_idx + 1;
+    }
+
+    validations
+}
+
+/// Checks a statement for dereference operations that need validation.
+fn collect_stmt_validations(
+    stmt: &mir_stmt::Statement,
+    validations: &mut Vec<GenValidation>,
+) {
+    match &stmt.kind {
+        &mir_stmt::StatementKind::Assign { ref place, ref rvalue } => {
+            // Check destination place for deref projections
+            check_place_for_deref(place, stmt.span, validations);
+            // Check rvalue for deref projections
+            check_rvalue_for_deref(rvalue, stmt.span, validations);
+        }
+        &mir_stmt::StatementKind::Drop(ref place) => {
+            check_place_for_deref(place, stmt.span, validations);
+        }
+        &mir_stmt::StatementKind::StorageLive(_) => {}
+        &mir_stmt::StatementKind::StorageDead(_) => {}
+        &mir_stmt::StatementKind::PushHandler { handler_id: _, state_place: _, state_kind: _ } => {}
+        &mir_stmt::StatementKind::PopHandler => {}
+        &mir_stmt::StatementKind::PushInlineHandler { effect_id: _, operations: _ } => {}
+        &mir_stmt::StatementKind::CallReturnClause { handler_id: _, handler_name: _, body_result: _, state_place: _, destination: _ } => {}
+        &mir_stmt::StatementKind::Deinit(ref place) => {
+            check_place_for_deref(place, stmt.span, validations);
+        }
+        &mir_stmt::StatementKind::SetDiscriminant { ref place, variant_idx: _ } => {
+            check_place_for_deref(place, stmt.span, validations);
+        }
+        &mir_stmt::StatementKind::CopyNonOverlapping { src: _, dst: _, count: _ } => {}
+        &mir_stmt::StatementKind::Nop => {}
+    }
+}
+
+/// Checks a place for Deref projections.
+fn check_place_for_deref(
+    place: &mir_types::Place,
+    span: common::Span,
+    validations: &mut Vec<GenValidation>,
+) {
+    let mut i: usize = 0;
+    while i < place.projection.len() {
+        match &place.projection[i] {
+            &mir_types::PlaceElem::Deref => {
+                // This place dereferences a pointer — needs generation validation
+                let validation = GenValidation::new(
+                    mir_def::MirLocalId::new(place.local.index),
+                    0, // Generation will be filled in during codegen
+                    span,
+                );
+                validations.push(validation);
+            }
+            &mir_types::PlaceElem::Field(_) => {}
+            &mir_types::PlaceElem::Index(_) => {}
+            &mir_types::PlaceElem::ConstantIndex { offset: _, min_length: _, from_end: _ } => {}
+            &mir_types::PlaceElem::Subslice { from: _, to: _, from_end: _ } => {}
+            &mir_types::PlaceElem::Downcast(_) => {}
+        }
+        i = i + 1;
+    }
+}
+
+/// Checks an rvalue for dereference operations.
+fn check_rvalue_for_deref(
+    rvalue: &mir_types::Rvalue,
+    span: common::Span,
+    validations: &mut Vec<GenValidation>,
+) {
+    match rvalue {
+        &mir_types::Rvalue::Use(ref op) => {
+            check_operand_for_deref(op, span, validations);
+        }
+        &mir_types::Rvalue::Ref { ref place, mutable: _ } => {
+            check_place_for_deref(place, span, validations);
+        }
+        &mir_types::Rvalue::AddressOf { ref place, mutable: _ } => {
+            check_place_for_deref(place, span, validations);
+        }
+        &mir_types::Rvalue::BinaryOp { op: _, ref left, ref right } => {
+            check_operand_for_deref(left, span, validations);
+            check_operand_for_deref(right, span, validations);
+        }
+        &mir_types::Rvalue::UnaryOp { op: _, ref operand } => {
+            check_operand_for_deref(operand, span, validations);
+        }
+        &mir_types::Rvalue::Cast { ref operand, target_ty: _ } => {
+            check_operand_for_deref(operand, span, validations);
+        }
+        &mir_types::Rvalue::Aggregate { kind: _, ref operands } => {
+            let mut i: usize = 0;
+            while i < operands.len() {
+                check_operand_for_deref(&operands[i], span, validations);
+                i = i + 1;
+            }
+        }
+        &mir_types::Rvalue::Discriminant(ref place) => {
+            check_place_for_deref(place, span, validations);
+        }
+        &mir_types::Rvalue::Len(ref place) => {
+            check_place_for_deref(place, span, validations);
+        }
+        &mir_types::Rvalue::ArrayToSlice { ref array_ref, array_len: _ } => {
+            check_operand_for_deref(array_ref, span, validations);
+        }
+        &mir_types::Rvalue::ZeroInit(_) => {}
+    }
+}
+
+/// Checks an operand for dereference operations.
+fn check_operand_for_deref(
+    operand: &mir_types::Operand,
+    span: common::Span,
+    validations: &mut Vec<GenValidation>,
+) {
+    match operand {
+        &mir_types::Operand::Copy(ref place) => {
+            check_place_for_deref(place, span, validations);
+        }
+        &mir_types::Operand::Move(ref place) => {
+            check_place_for_deref(place, span, validations);
+        }
+        &mir_types::Operand::Constant(_) => {}
+    }
+}

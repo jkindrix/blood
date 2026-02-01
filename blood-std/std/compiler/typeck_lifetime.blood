@@ -1,0 +1,298 @@
+// Blood Self-Hosted Compiler - Lifetime Checking
+//
+// Implements basic lifetime constraint checking for references.
+// Ensures that references don't outlive their referents.
+
+mod common;
+mod hir_def;
+mod hir_ty;
+
+// ============================================================
+// Lifetime Variables and Constraints
+// ============================================================
+
+/// A lifetime variable identifier.
+pub struct LifetimeVar {
+    pub index: u32,
+}
+
+impl LifetimeVar {
+    /// Creates a new lifetime variable.
+    pub fn new(index: u32) -> LifetimeVar {
+        LifetimeVar { index: index }
+    }
+}
+
+/// A lifetime constraint.
+pub enum LifetimeConstraint {
+    /// 'a: 'b — lifetime `long` outlives lifetime `short`
+    Outlives {
+        short: LifetimeVar,
+        long: LifetimeVar,
+        span: common::Span,
+    },
+    /// 'a == 'b — two lifetimes are equal
+    Equal {
+        a: LifetimeVar,
+        b: LifetimeVar,
+        span: common::Span,
+    },
+    /// 'a: 'static — lifetime must be static
+    Static {
+        var: LifetimeVar,
+        span: common::Span,
+    },
+}
+
+// ============================================================
+// Region Info
+// ============================================================
+
+/// Information about a lifetime region.
+pub struct RegionInfo {
+    /// The lifetime variable for this region.
+    pub var: LifetimeVar,
+    /// The scope depth where this region is valid.
+    pub scope_depth: u32,
+    /// Whether this region is 'static.
+    pub is_static: bool,
+    /// The span of the region definition.
+    pub span: common::Span,
+}
+
+impl RegionInfo {
+    /// Creates a new region info.
+    pub fn new(var: LifetimeVar, scope_depth: u32, span: common::Span) -> RegionInfo {
+        RegionInfo {
+            var: var,
+            scope_depth: scope_depth,
+            is_static: false,
+            span: span,
+        }
+    }
+
+    /// Creates a static region.
+    pub fn static_region(var: LifetimeVar, span: common::Span) -> RegionInfo {
+        RegionInfo {
+            var: var,
+            scope_depth: 0,
+            is_static: true,
+            span: span,
+        }
+    }
+}
+
+// ============================================================
+// Lifetime Errors
+// ============================================================
+
+/// An error from lifetime checking.
+pub struct LifetimeError {
+    /// The kind of error.
+    pub kind: LifetimeErrorKind,
+    /// Primary span.
+    pub span: common::Span,
+}
+
+/// Kinds of lifetime errors.
+pub enum LifetimeErrorKind {
+    /// A reference outlives its referent.
+    BorrowOutlivesReferent {
+        borrow_span: common::Span,
+        referent_span: common::Span,
+    },
+    /// Conflicting lifetime constraints.
+    ConflictingConstraints {
+        constraint_a: common::Span,
+        constraint_b: common::Span,
+    },
+    /// A reference is returned that doesn't live long enough.
+    ReturnDoesNotLiveLongEnough {
+        return_span: common::Span,
+    },
+}
+
+// ============================================================
+// Lifetime Checker
+// ============================================================
+
+/// Checks lifetime constraints on a function body.
+pub struct LifetimeChecker {
+    /// Collected lifetime constraints.
+    pub constraints: Vec<LifetimeConstraint>,
+    /// Region information.
+    pub regions: Vec<RegionInfo>,
+    /// Errors found during checking.
+    pub errors: Vec<LifetimeError>,
+    /// Next lifetime variable id.
+    pub next_var: u32,
+    /// Current scope depth.
+    pub scope_depth: u32,
+}
+
+impl LifetimeChecker {
+    /// Creates a new lifetime checker.
+    pub fn new() -> LifetimeChecker {
+        LifetimeChecker {
+            constraints: Vec::new(),
+            regions: Vec::new(),
+            errors: Vec::new(),
+            next_var: 0,
+            scope_depth: 0,
+        }
+    }
+
+    /// Allocates a fresh lifetime variable.
+    pub fn fresh_var(self: &mut Self) -> LifetimeVar {
+        let var = LifetimeVar::new(self.next_var);
+        self.next_var = self.next_var + 1;
+        var
+    }
+
+    /// Creates a region at the current scope depth.
+    pub fn create_region(self: &mut Self, span: common::Span) -> LifetimeVar {
+        let var = self.fresh_var();
+        let reg = RegionInfo::new(
+            LifetimeVar::new(var.index),
+            self.scope_depth,
+            span,
+        );
+        self.regions.push(reg);
+        var
+    }
+
+    /// Enters a new scope (increases depth).
+    pub fn enter_scope(self: &mut Self) {
+        self.scope_depth = self.scope_depth + 1;
+    }
+
+    /// Exits the current scope (decreases depth).
+    pub fn exit_scope(self: &mut Self) {
+        if self.scope_depth > 0 {
+            self.scope_depth = self.scope_depth - 1;
+        }
+    }
+
+    /// Adds an outlives constraint: short must outlive long.
+    pub fn add_outlives(self: &mut Self, short: LifetimeVar, long: LifetimeVar, span: common::Span) {
+        let constraint = LifetimeConstraint::Outlives {
+            short: LifetimeVar::new(short.index),
+            long: LifetimeVar::new(long.index),
+            span: span,
+        };
+        self.constraints.push(constraint);
+    }
+
+    /// Adds an equality constraint.
+    pub fn add_equal(self: &mut Self, a: LifetimeVar, b: LifetimeVar, span: common::Span) {
+        let constraint = LifetimeConstraint::Equal {
+            a: LifetimeVar::new(a.index),
+            b: LifetimeVar::new(b.index),
+            span: span,
+        };
+        self.constraints.push(constraint);
+    }
+
+    /// Adds a static lifetime constraint.
+    pub fn add_static(self: &mut Self, var: LifetimeVar, span: common::Span) {
+        let constraint = LifetimeConstraint::Static {
+            var: LifetimeVar::new(var.index),
+            span: span,
+        };
+        self.constraints.push(constraint);
+    }
+
+    /// Solves all collected constraints.
+    /// Uses scope-based region inference: a region at depth D outlives
+    /// all regions at depth > D.
+    pub fn solve(self: &mut Self) {
+        let mut i: usize = 0;
+        while i < self.constraints.len() {
+            match &self.constraints[i] {
+                &LifetimeConstraint::Outlives { ref short, ref long, span } => {
+                    // short must live at least as long as long
+                    let short_depth = self.region_depth(short.index);
+                    let long_depth = self.region_depth(long.index);
+                    // A region at lower depth lives longer.
+                    // If short has greater depth than long, it dies first — violation.
+                    if short_depth > long_depth {
+                        let err = LifetimeError {
+                            kind: LifetimeErrorKind::BorrowOutlivesReferent {
+                                borrow_span: span,
+                                referent_span: self.region_span(short.index),
+                            },
+                            span: span,
+                        };
+                        self.errors.push(err);
+                    }
+                }
+                &LifetimeConstraint::Equal { ref a, ref b, span } => {
+                    // Both must be at the same scope depth
+                    let depth_a = self.region_depth(a.index);
+                    let depth_b = self.region_depth(b.index);
+                    if depth_a != depth_b {
+                        let err = LifetimeError {
+                            kind: LifetimeErrorKind::ConflictingConstraints {
+                                constraint_a: self.region_span(a.index),
+                                constraint_b: self.region_span(b.index),
+                            },
+                            span: span,
+                        };
+                        self.errors.push(err);
+                    }
+                }
+                &LifetimeConstraint::Static { ref var, span } => {
+                    // Must be at scope depth 0 (static)
+                    let depth = self.region_depth(var.index);
+                    let is_static = self.region_is_static(var.index);
+                    if !is_static && depth > 0 {
+                        let err = LifetimeError {
+                            kind: LifetimeErrorKind::ReturnDoesNotLiveLongEnough {
+                                return_span: span,
+                            },
+                            span: span,
+                        };
+                        self.errors.push(err);
+                    }
+                }
+            }
+            i = i + 1;
+        }
+    }
+
+    /// Gets the scope depth for a region by variable index.
+    fn region_depth(self: &Self, var_index: u32) -> u32 {
+        let mut i: usize = 0;
+        while i < self.regions.len() {
+            if self.regions[i].var.index == var_index {
+                return self.regions[i].scope_depth;
+            }
+            i = i + 1;
+        }
+        0 // Unknown region defaults to static depth
+    }
+
+    /// Gets the span for a region by variable index.
+    fn region_span(self: &Self, var_index: u32) -> common::Span {
+        let mut i: usize = 0;
+        while i < self.regions.len() {
+            if self.regions[i].var.index == var_index {
+                return self.regions[i].span;
+            }
+            i = i + 1;
+        }
+        common::Span::dummy()
+    }
+
+    /// Checks if a region is static.
+    fn region_is_static(self: &Self, var_index: u32) -> bool {
+        let mut i: usize = 0;
+        while i < self.regions.len() {
+            if self.regions[i].var.index == var_index {
+                return self.regions[i].is_static;
+            }
+            i = i + 1;
+        }
+        false
+    }
+}

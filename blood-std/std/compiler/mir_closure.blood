@@ -1,0 +1,516 @@
+// Blood Self-Hosted Compiler - MIR Closure Capture Analysis
+//
+// Analyzes closures to determine:
+// 1. Which locals are captured and how (by ref, by mut, by value)
+// 2. Environment size for allocation decisions
+// 3. Whether the closure is an inline candidate (small env)
+// 4. Whether the closure is stateless (no captures)
+
+mod common;
+mod hir_def;
+mod hir_ty;
+mod mir_def;
+mod mir_types;
+mod mir_stmt;
+mod mir_term;
+mod mir_body;
+
+// ============================================================
+// Capture Mode
+// ============================================================
+
+/// How a local is captured by a closure.
+pub enum CaptureMode {
+    /// Captured by shared reference (read-only access).
+    ByRef,
+    /// Captured by mutable reference (read-write access).
+    ByMut,
+    /// Captured by value (ownership transferred to closure).
+    ByValue,
+}
+
+impl CaptureMode {
+    /// Returns the name of this capture mode.
+    pub fn name(self: &CaptureMode) -> &str {
+        match self {
+            &CaptureMode::ByRef => "by_ref",
+            &CaptureMode::ByMut => "by_mut",
+            &CaptureMode::ByValue => "by_value",
+        }
+    }
+
+    /// Returns the more permissive of two capture modes.
+    /// ByValue > ByMut > ByRef
+    pub fn join(self: &CaptureMode, other: &CaptureMode) -> CaptureMode {
+        match self {
+            &CaptureMode::ByValue => CaptureMode::ByValue,
+            &CaptureMode::ByMut => {
+                match other {
+                    &CaptureMode::ByValue => CaptureMode::ByValue,
+                    &CaptureMode::ByMut => CaptureMode::ByMut,
+                    &CaptureMode::ByRef => CaptureMode::ByMut,
+                }
+            }
+            &CaptureMode::ByRef => {
+                match other {
+                    &CaptureMode::ByValue => CaptureMode::ByValue,
+                    &CaptureMode::ByMut => CaptureMode::ByMut,
+                    &CaptureMode::ByRef => CaptureMode::ByRef,
+                }
+            }
+        }
+    }
+}
+
+// ============================================================
+// Capture Info
+// ============================================================
+
+/// Information about a single captured variable.
+pub struct CaptureInfo {
+    /// The local being captured.
+    pub local_id: mir_def::MirLocalId,
+    /// How the local is captured.
+    pub mode: CaptureMode,
+    /// The type of the captured value.
+    pub ty: hir_ty::Type,
+    /// The span where the capture occurs.
+    pub span: common::Span,
+}
+
+impl CaptureInfo {
+    /// Creates a new capture info.
+    pub fn new(
+        local_id: mir_def::MirLocalId,
+        mode: CaptureMode,
+        ty: hir_ty::Type,
+        span: common::Span,
+    ) -> CaptureInfo {
+        CaptureInfo {
+            local_id: local_id,
+            mode: mode,
+            ty: ty,
+            span: span,
+        }
+    }
+}
+
+// ============================================================
+// Closure Info
+// ============================================================
+
+/// Complete analysis result for a closure.
+pub struct ClosureInfo {
+    /// The DefId of the closure.
+    pub def_id: hir_def::DefId,
+    /// All captured variables.
+    pub captures: Vec<CaptureInfo>,
+    /// Estimated environment size in bytes.
+    pub env_size: u64,
+    /// Whether this closure is a candidate for inlining.
+    pub is_inline_candidate: bool,
+    /// Whether this closure captures nothing (stateless).
+    pub is_stateless: bool,
+}
+
+impl ClosureInfo {
+    /// Creates a new closure info.
+    pub fn new(def_id: hir_def::DefId) -> ClosureInfo {
+        ClosureInfo {
+            def_id: def_id,
+            captures: Vec::new(),
+            env_size: 0,
+            is_inline_candidate: false,
+            is_stateless: true,
+        }
+    }
+
+    /// Adds a capture and updates computed fields.
+    pub fn add_capture(self: &mut ClosureInfo, capture: CaptureInfo) {
+        let type_size = estimate_type_size(&capture.ty);
+        self.env_size = self.env_size + type_size;
+        self.is_stateless = false;
+        self.captures.push(capture);
+    }
+
+    /// Finalizes the analysis after all captures are added.
+    pub fn finalize(self: &mut ClosureInfo) {
+        // Inline candidate if environment fits in 2 machine words (16 bytes)
+        self.is_inline_candidate = self.env_size <= 16;
+    }
+
+    /// Returns the number of captures.
+    pub fn capture_count(self: &ClosureInfo) -> usize {
+        self.captures.len()
+    }
+
+    /// Returns true if any capture is by mutable reference.
+    pub fn has_mutable_captures(self: &ClosureInfo) -> bool {
+        let mut i: usize = 0;
+        while i < self.captures.len() {
+            match &self.captures[i].mode {
+                &CaptureMode::ByMut => { return true; }
+                &CaptureMode::ByRef => {}
+                &CaptureMode::ByValue => {}
+            }
+            i = i + 1;
+        }
+        false
+    }
+
+    /// Returns true if any capture is by value.
+    pub fn has_value_captures(self: &ClosureInfo) -> bool {
+        let mut i: usize = 0;
+        while i < self.captures.len() {
+            match &self.captures[i].mode {
+                &CaptureMode::ByValue => { return true; }
+                &CaptureMode::ByRef => {}
+                &CaptureMode::ByMut => {}
+            }
+            i = i + 1;
+        }
+        false
+    }
+}
+
+// ============================================================
+// Closure Analysis
+// ============================================================
+
+/// Analyzes a closure body to determine capture information.
+///
+/// Walks the closure's MIR body and identifies references to locals
+/// from the enclosing function. Classifies each reference as ByRef,
+/// ByMut, or ByValue based on usage.
+pub fn analyze_closure(
+    closure_body: &mir_body::MirBody,
+    enclosing_body: &mir_body::MirBody,
+    closure_def_id: hir_def::DefId,
+) -> ClosureInfo {
+    let mut info = ClosureInfo::new(closure_def_id);
+    let enclosing_local_count = enclosing_body.locals.len() as u32;
+
+    // Track which enclosing locals are referenced and how
+    let mut capture_modes: Vec<CaptureMode> = Vec::new();
+    let mut captured: Vec<bool> = Vec::new();
+    let mut i: usize = 0;
+    while i < enclosing_body.locals.len() {
+        capture_modes.push(CaptureMode::ByRef);
+        captured.push(false);
+        i = i + 1;
+    }
+
+    // Walk all blocks in the closure body
+    let mut bb_idx: usize = 0;
+    while bb_idx < closure_body.basic_blocks.len() {
+        let block = &closure_body.basic_blocks[bb_idx];
+
+        // Analyze statements
+        let mut stmt_idx: usize = 0;
+        while stmt_idx < block.statements.len() {
+            analyze_stmt_captures(
+                &block.statements[stmt_idx],
+                enclosing_local_count,
+                &mut captured,
+                &mut capture_modes,
+            );
+            stmt_idx = stmt_idx + 1;
+        }
+
+        // Analyze terminator
+        match &block.terminator {
+            &Option::Some(ref term) => {
+                analyze_term_captures(
+                    term,
+                    enclosing_local_count,
+                    &mut captured,
+                    &mut capture_modes,
+                );
+            }
+            &Option::None => {}
+        }
+
+        bb_idx = bb_idx + 1;
+    }
+
+    // Build capture info from analysis
+    let mut j: usize = 0;
+    while j < enclosing_body.locals.len() {
+        if captured[j] {
+            let local = &enclosing_body.locals[j];
+            let mode = copy_capture_mode(&capture_modes[j]);
+            let cap = CaptureInfo::new(
+                mir_def::MirLocalId::new(j as u32),
+                mode,
+                hir_ty::copy_type(&local.ty),
+                local.span,
+            );
+            info.add_capture(cap);
+        }
+        j = j + 1;
+    }
+
+    info.finalize();
+    info
+}
+
+/// Copies a capture mode.
+fn copy_capture_mode(mode: &CaptureMode) -> CaptureMode {
+    match mode {
+        &CaptureMode::ByRef => CaptureMode::ByRef,
+        &CaptureMode::ByMut => CaptureMode::ByMut,
+        &CaptureMode::ByValue => CaptureMode::ByValue,
+    }
+}
+
+/// Checks if a local index refers to an enclosing function's local.
+fn is_enclosing_local(local: mir_def::MirLocalId, enclosing_count: u32) -> bool {
+    // Closure bodies reference enclosing locals through captured upvars.
+    // In MIR, these appear as locals with indices >= the closure's own param count.
+    // For simplicity, we check if the index falls within the enclosing range.
+    local.index < enclosing_count
+}
+
+/// Analyzes a statement for captures from enclosing scope.
+fn analyze_stmt_captures(
+    stmt: &mir_stmt::Statement,
+    enclosing_count: u32,
+    captured: &mut Vec<bool>,
+    modes: &mut Vec<CaptureMode>,
+) {
+    match &stmt.kind {
+        &mir_stmt::StatementKind::Assign { ref place, ref rvalue } => {
+            // Check if assigning TO an enclosing local (implies ByMut or ByValue)
+            if is_enclosing_local(place.local, enclosing_count) {
+                let idx = place.local.as_usize();
+                captured[idx] = true;
+                let new_mode = modes[idx].join(&CaptureMode::ByMut);
+                modes[idx] = new_mode;
+            }
+            // Check rvalue for reads of enclosing locals
+            mark_rvalue_captures(rvalue, enclosing_count, captured, modes);
+        }
+        &mir_stmt::StatementKind::Drop(ref place) => {
+            if is_enclosing_local(place.local, enclosing_count) {
+                let idx = place.local.as_usize();
+                captured[idx] = true;
+                let new_mode = modes[idx].join(&CaptureMode::ByValue);
+                modes[idx] = new_mode;
+            }
+        }
+        &mir_stmt::StatementKind::StorageLive(_) => {}
+        &mir_stmt::StatementKind::StorageDead(_) => {}
+        &mir_stmt::StatementKind::PushHandler { handler_id: _, state_place: _, state_kind: _ } => {}
+        &mir_stmt::StatementKind::PopHandler => {}
+        &mir_stmt::StatementKind::PushInlineHandler { effect_id: _, operations: _ } => {}
+        &mir_stmt::StatementKind::CallReturnClause { handler_id: _, handler_name: _, body_result: _, state_place: _, destination: _ } => {}
+        &mir_stmt::StatementKind::Deinit(_) => {}
+        &mir_stmt::StatementKind::SetDiscriminant { place: _, variant_idx: _ } => {}
+        &mir_stmt::StatementKind::CopyNonOverlapping { src: _, dst: _, count: _ } => {}
+        &mir_stmt::StatementKind::Nop => {}
+    }
+}
+
+/// Analyzes a terminator for captures from enclosing scope.
+fn analyze_term_captures(
+    term: &mir_term::Terminator,
+    enclosing_count: u32,
+    captured: &mut Vec<bool>,
+    modes: &mut Vec<CaptureMode>,
+) {
+    match &term.kind {
+        &mir_term::TerminatorKind::Call { func: _, ref args, destination: _, target: _, unwind: _ } => {
+            let mut i: usize = 0;
+            while i < args.len() {
+                mark_operand_capture(&args[i], enclosing_count, captured, modes, false);
+                i = i + 1;
+            }
+        }
+        &mir_term::TerminatorKind::SwitchInt { ref discr, targets: _ } => {
+            mark_operand_capture(discr, enclosing_count, captured, modes, false);
+        }
+        &mir_term::TerminatorKind::Return => {}
+        &mir_term::TerminatorKind::Goto { target: _ } => {}
+        &mir_term::TerminatorKind::Assert { ref cond, expected: _, msg: _, target: _, unwind: _ } => {
+            mark_operand_capture(cond, enclosing_count, captured, modes, false);
+        }
+        &mir_term::TerminatorKind::Perform { effect_id: _, op_index: _, ref args, destination: _, target: _, is_tail_resumptive: _ } => {
+            let mut i: usize = 0;
+            while i < args.len() {
+                mark_operand_capture(&args[i], enclosing_count, captured, modes, false);
+                i = i + 1;
+            }
+        }
+        &mir_term::TerminatorKind::Resume { ref value } => {
+            match value {
+                &Option::Some(ref op) => {
+                    mark_operand_capture(op, enclosing_count, captured, modes, false);
+                }
+                &Option::None => {}
+            }
+        }
+        &mir_term::TerminatorKind::Unreachable => {}
+        &mir_term::TerminatorKind::Drop { ref place, target: _, unwind: _ } => {
+            if is_enclosing_local(place.local, enclosing_count) {
+                let idx = place.local.as_usize();
+                captured[idx] = true;
+                let new_mode = modes[idx].join(&CaptureMode::ByValue);
+                modes[idx] = new_mode;
+            }
+        }
+    }
+}
+
+/// Marks enclosing locals referenced by an operand as captured.
+fn mark_operand_capture(
+    operand: &mir_types::Operand,
+    enclosing_count: u32,
+    captured: &mut Vec<bool>,
+    modes: &mut Vec<CaptureMode>,
+    is_move: bool,
+) {
+    match operand {
+        &mir_types::Operand::Copy(ref place) => {
+            if is_enclosing_local(place.local, enclosing_count) {
+                let idx = place.local.as_usize();
+                captured[idx] = true;
+                // Copy implies ByRef at minimum
+            }
+        }
+        &mir_types::Operand::Move(ref place) => {
+            if is_enclosing_local(place.local, enclosing_count) {
+                let idx = place.local.as_usize();
+                captured[idx] = true;
+                let new_mode = modes[idx].join(&CaptureMode::ByValue);
+                modes[idx] = new_mode;
+            }
+        }
+        &mir_types::Operand::Constant(_) => {}
+    }
+    let _ = is_move;
+}
+
+/// Marks enclosing locals referenced by an rvalue as captured.
+fn mark_rvalue_captures(
+    rvalue: &mir_types::Rvalue,
+    enclosing_count: u32,
+    captured: &mut Vec<bool>,
+    modes: &mut Vec<CaptureMode>,
+) {
+    match rvalue {
+        &mir_types::Rvalue::Use(ref op) => {
+            mark_operand_capture(op, enclosing_count, captured, modes, false);
+        }
+        &mir_types::Rvalue::Ref { ref place, mutable } => {
+            if is_enclosing_local(place.local, enclosing_count) {
+                let idx = place.local.as_usize();
+                captured[idx] = true;
+                if mutable {
+                    let new_mode = modes[idx].join(&CaptureMode::ByMut);
+                    modes[idx] = new_mode;
+                }
+                // Immutable ref is ByRef (already the default)
+            }
+        }
+        &mir_types::Rvalue::AddressOf { ref place, mutable: _ } => {
+            if is_enclosing_local(place.local, enclosing_count) {
+                let idx = place.local.as_usize();
+                captured[idx] = true;
+                // Raw pointer implies at least ByMut
+                let new_mode = modes[idx].join(&CaptureMode::ByMut);
+                modes[idx] = new_mode;
+            }
+        }
+        &mir_types::Rvalue::BinaryOp { op: _, ref left, ref right } => {
+            mark_operand_capture(left, enclosing_count, captured, modes, false);
+            mark_operand_capture(right, enclosing_count, captured, modes, false);
+        }
+        &mir_types::Rvalue::UnaryOp { op: _, ref operand } => {
+            mark_operand_capture(operand, enclosing_count, captured, modes, false);
+        }
+        &mir_types::Rvalue::Cast { ref operand, target_ty: _ } => {
+            mark_operand_capture(operand, enclosing_count, captured, modes, false);
+        }
+        &mir_types::Rvalue::Aggregate { kind: _, ref operands } => {
+            let mut i: usize = 0;
+            while i < operands.len() {
+                mark_operand_capture(&operands[i], enclosing_count, captured, modes, false);
+                i = i + 1;
+            }
+        }
+        &mir_types::Rvalue::Discriminant(_) => {}
+        &mir_types::Rvalue::Len(_) => {}
+        &mir_types::Rvalue::ArrayToSlice { ref array_ref, array_len: _ } => {
+            mark_operand_capture(array_ref, enclosing_count, captured, modes, false);
+        }
+        &mir_types::Rvalue::ZeroInit(_) => {}
+    }
+}
+
+// ============================================================
+// Type Size Estimation
+// ============================================================
+
+/// Estimates the size of a type in bytes for environment size calculation.
+/// Uses conservative estimates based on common type sizes.
+fn estimate_type_size(ty: &hir_ty::Type) -> u64 {
+    match &ty.kind {
+        &hir_ty::TypeKind::Primitive(ref prim) => {
+            estimate_primitive_size(prim)
+        }
+        &hir_ty::TypeKind::Ref { inner: _, mutable: _ } => 8, // pointer size
+        &hir_ty::TypeKind::Ptr { inner: _, mutable: _ } => 8,
+        &hir_ty::TypeKind::Tuple(ref fields) => {
+            let mut total: u64 = 0;
+            let mut i: usize = 0;
+            while i < fields.len() {
+                total = total + estimate_type_size(&fields[i]);
+                i = i + 1;
+            }
+            total
+        }
+        &hir_ty::TypeKind::Array { ref element, size } => {
+            estimate_type_size(element.as_ref()) * size
+        }
+        &hir_ty::TypeKind::Adt { def_id: _, args: _ } => 8, // Conservative: pointer-sized
+        &hir_ty::TypeKind::Fn { params: _, ret: _, effects: _ } => 8, // Function pointer
+        &hir_ty::TypeKind::Closure { def_id: _, params: _, ret: _ } => 16, // Fat pointer
+        &hir_ty::TypeKind::Slice { element: _ } => 16, // Fat pointer (ptr + len)
+        &hir_ty::TypeKind::Infer(_) => 8, // Unknown, assume pointer-sized
+        &hir_ty::TypeKind::Param(_) => 8,
+        &hir_ty::TypeKind::Never => 0,
+        &hir_ty::TypeKind::Error => 0,
+        &hir_ty::TypeKind::Ownership { qualifier: _, ref inner } => {
+            estimate_type_size(inner.as_ref())
+        }
+        &hir_ty::TypeKind::Record { fields: _, row_var: _ } => 8,
+        &hir_ty::TypeKind::Forall { params: _, ref body } => {
+            estimate_type_size(body.as_ref())
+        }
+        &hir_ty::TypeKind::Range { element: _, inclusive: _ } => 16,
+        &hir_ty::TypeKind::DynTrait { trait_id: _, auto_traits: _ } => 16, // Fat pointer
+    }
+}
+
+/// Estimates the size of a primitive type in bytes.
+fn estimate_primitive_size(prim: &hir_ty::PrimitiveTy) -> u64 {
+    match prim {
+        &hir_ty::PrimitiveTy::Bool => 1,
+        &hir_ty::PrimitiveTy::I8 => 1,
+        &hir_ty::PrimitiveTy::U8 => 1,
+        &hir_ty::PrimitiveTy::I16 => 2,
+        &hir_ty::PrimitiveTy::U16 => 2,
+        &hir_ty::PrimitiveTy::I32 => 4,
+        &hir_ty::PrimitiveTy::U32 => 4,
+        &hir_ty::PrimitiveTy::I64 => 8,
+        &hir_ty::PrimitiveTy::U64 => 8,
+        &hir_ty::PrimitiveTy::I128 => 16,
+        &hir_ty::PrimitiveTy::U128 => 16,
+        &hir_ty::PrimitiveTy::Isize => 8,
+        &hir_ty::PrimitiveTy::Usize => 8,
+        &hir_ty::PrimitiveTy::F32 => 4,
+        &hir_ty::PrimitiveTy::F64 => 8,
+        &hir_ty::PrimitiveTy::Char => 4,
+        &hir_ty::PrimitiveTy::Str => 16, // Fat pointer (ptr + len)
+    }
+}

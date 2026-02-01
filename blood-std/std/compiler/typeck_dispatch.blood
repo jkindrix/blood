@@ -1,0 +1,173 @@
+// Blood Self-Hosted Compiler - Method Dispatch Resolution
+//
+// Implements method resolution for multiple dispatch:
+// 1. Collect all impl blocks with matching method name
+// 2. Filter by receiver type compatibility
+// 3. Rank by specificity
+// 4. Report ambiguity if tied
+
+mod common;
+mod hir_def;
+mod hir_ty;
+
+// ============================================================
+// Method Candidates
+// ============================================================
+
+/// A method candidate found during resolution.
+pub struct MethodCandidate {
+    /// The DefId of the method.
+    pub def_id: hir_def::DefId,
+    /// The DefId of the impl block containing this method.
+    pub impl_id: hir_def::DefId,
+    /// The self type of the impl block.
+    pub self_ty: hir_ty::Type,
+    /// Specificity score (higher = more specific).
+    pub specificity: u32,
+    /// Whether this is from a trait impl.
+    pub is_trait_impl: bool,
+}
+
+impl MethodCandidate {
+    /// Creates a new method candidate.
+    pub fn new(
+        def_id: hir_def::DefId,
+        impl_id: hir_def::DefId,
+        self_ty: hir_ty::Type,
+        specificity: u32,
+        is_trait_impl: bool,
+    ) -> MethodCandidate {
+        MethodCandidate {
+            def_id: def_id,
+            impl_id: impl_id,
+            self_ty: self_ty,
+            specificity: specificity,
+            is_trait_impl: is_trait_impl,
+        }
+    }
+}
+
+// ============================================================
+// Dispatch Result
+// ============================================================
+
+/// Result of method dispatch resolution.
+pub enum DispatchResult {
+    /// A single best candidate was found.
+    Found(MethodCandidate),
+    /// Multiple candidates with equal specificity.
+    Ambiguous {
+        candidates: Vec<MethodCandidate>,
+    },
+    /// No matching candidate found.
+    NotFound,
+}
+
+// ============================================================
+// Dispatch Resolver
+// ============================================================
+
+/// Resolves method dispatch given a set of candidates.
+pub struct DispatchResolver {
+    /// All collected candidates.
+    pub candidates: Vec<MethodCandidate>,
+}
+
+impl DispatchResolver {
+    /// Creates a new resolver.
+    pub fn new() -> DispatchResolver {
+        DispatchResolver {
+            candidates: Vec::new(),
+        }
+    }
+
+    /// Adds a candidate.
+    pub fn add_candidate(self: &mut Self, candidate: MethodCandidate) {
+        self.candidates.push(candidate);
+    }
+
+    /// Resolves to the best candidate.
+    pub fn resolve(self: &Self) -> DispatchResult {
+        if self.candidates.len() == 0 {
+            return DispatchResult::NotFound;
+        }
+
+        if self.candidates.len() == 1 {
+            // Single candidate — return it directly
+            let c = &self.candidates[0];
+            return DispatchResult::Found(MethodCandidate::new(
+                hir_def::DefId::new(c.def_id.index),
+                hir_def::DefId::new(c.impl_id.index),
+                hir_ty::copy_type(&c.self_ty),
+                c.specificity,
+                c.is_trait_impl,
+            ));
+        }
+
+        // Find the candidate with highest specificity
+        let mut best_idx: usize = 0;
+        let mut best_specificity: u32 = self.candidates[0].specificity;
+        let mut tie_count: u32 = 1;
+
+        let mut i: usize = 1;
+        while i < self.candidates.len() {
+            if self.candidates[i].specificity > best_specificity {
+                best_idx = i;
+                best_specificity = self.candidates[i].specificity;
+                tie_count = 1;
+            } else if self.candidates[i].specificity == best_specificity {
+                tie_count = tie_count + 1;
+            }
+            i = i + 1;
+        }
+
+        if tie_count > 1 {
+            // Ambiguous — collect all tied candidates
+            let mut tied: Vec<MethodCandidate> = Vec::new();
+            let mut j: usize = 0;
+            while j < self.candidates.len() {
+                if self.candidates[j].specificity == best_specificity {
+                    let c = &self.candidates[j];
+                    tied.push(MethodCandidate::new(
+                        hir_def::DefId::new(c.def_id.index),
+                        hir_def::DefId::new(c.impl_id.index),
+                        hir_ty::copy_type(&c.self_ty),
+                        c.specificity,
+                        c.is_trait_impl,
+                    ));
+                }
+                j = j + 1;
+            }
+            DispatchResult::Ambiguous { candidates: tied }
+        } else {
+            let c = &self.candidates[best_idx];
+            DispatchResult::Found(MethodCandidate::new(
+                hir_def::DefId::new(c.def_id.index),
+                hir_def::DefId::new(c.impl_id.index),
+                hir_ty::copy_type(&c.self_ty),
+                c.specificity,
+                c.is_trait_impl,
+            ))
+        }
+    }
+}
+
+// ============================================================
+// Specificity Calculation
+// ============================================================
+
+/// Computes specificity score for a type.
+/// Concrete types are more specific than generic ones.
+pub fn compute_specificity(ty: &hir_ty::Type) -> u32 {
+    match &ty.kind {
+        &hir_ty::TypeKind::Primitive(_) => 10,
+        &hir_ty::TypeKind::Adt { .. } => 8,
+        &hir_ty::TypeKind::Tuple(_) => 7,
+        &hir_ty::TypeKind::Ref { ref inner, .. } => {
+            compute_specificity(inner.as_ref())
+        }
+        &hir_ty::TypeKind::TypeParam { .. } => 1, // Generic — least specific
+        &hir_ty::TypeKind::Infer(_) => 0, // Unknown
+        _ => 5, // Default
+    }
+}

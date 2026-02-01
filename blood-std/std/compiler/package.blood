@@ -1,0 +1,445 @@
+// Blood Self-Hosted Compiler - Package Management
+//
+// Implements version parsing, constraint checking, and lockfile
+// management for Blood packages.
+
+mod common;
+
+// ============================================================
+// Semantic Version
+// ============================================================
+
+/// A semantic version (major.minor.patch).
+pub struct Version {
+    /// Major version.
+    pub major: u32,
+    /// Minor version.
+    pub minor: u32,
+    /// Patch version.
+    pub patch: u32,
+}
+
+impl Version {
+    /// Creates a new version.
+    pub fn new(major: u32, minor: u32, patch: u32) -> Version {
+        Version {
+            major: major,
+            minor: minor,
+            patch: patch,
+        }
+    }
+
+    /// Creates version 0.0.0.
+    pub fn zero() -> Version {
+        Version { major: 0, minor: 0, patch: 0 }
+    }
+
+    /// Compares two versions. Returns:
+    /// -1 if self < other
+    ///  0 if self == other
+    ///  1 if self > other
+    pub fn compare(self: &Version, other: &Version) -> i32 {
+        if self.major < other.major { return -1; }
+        if self.major > other.major { return 1; }
+        if self.minor < other.minor { return -1; }
+        if self.minor > other.minor { return 1; }
+        if self.patch < other.patch { return -1; }
+        if self.patch > other.patch { return 1; }
+        0
+    }
+
+    /// Returns true if this version equals another.
+    pub fn equals(self: &Version, other: &Version) -> bool {
+        self.major == other.major && self.minor == other.minor && self.patch == other.patch
+    }
+
+    /// Formats the version as a string.
+    pub fn to_string(self: &Version) -> String {
+        let mut result = String::new();
+        append_u32(&mut result, self.major);
+        result.push('.');
+        append_u32(&mut result, self.minor);
+        result.push('.');
+        append_u32(&mut result, self.patch);
+        result
+    }
+}
+
+// ============================================================
+// Version Requirement
+// ============================================================
+
+/// A version constraint comparator.
+pub enum Comparator {
+    /// Exact match (=).
+    Exact,
+    /// Caret (^) — compatible updates.
+    Caret,
+    /// Tilde (~) — patch-level updates.
+    Tilde,
+    /// Greater than (>).
+    Gt,
+    /// Greater than or equal (>=).
+    Ge,
+    /// Less than (<).
+    Lt,
+    /// Less than or equal (<=).
+    Le,
+    /// Any version (*).
+    Star,
+}
+
+/// A version requirement (comparator + version).
+pub struct VersionReq {
+    /// The comparator.
+    pub comparator: Comparator,
+    /// The version to compare against.
+    pub version: Version,
+}
+
+impl VersionReq {
+    /// Creates a new version requirement.
+    pub fn new(comparator: Comparator, version: Version) -> VersionReq {
+        VersionReq {
+            comparator: comparator,
+            version: version,
+        }
+    }
+
+    /// Creates a requirement that matches any version.
+    pub fn any() -> VersionReq {
+        VersionReq {
+            comparator: Comparator::Star,
+            version: Version::zero(),
+        }
+    }
+}
+
+/// Checks if a version matches a requirement.
+pub fn version_matches(req: &VersionReq, ver: &Version) -> bool {
+    match &req.comparator {
+        &Comparator::Exact => ver.equals(&req.version),
+        &Comparator::Gt => ver.compare(&req.version) > 0,
+        &Comparator::Ge => ver.compare(&req.version) >= 0,
+        &Comparator::Lt => ver.compare(&req.version) < 0,
+        &Comparator::Le => ver.compare(&req.version) <= 0,
+        &Comparator::Star => true,
+        &Comparator::Caret => {
+            // ^X.Y.Z: allow changes that do not modify the left-most non-zero digit
+            if req.version.major > 0 {
+                // ^1.2.3 := >=1.2.3, <2.0.0
+                ver.major == req.version.major
+                    && ver.compare(&req.version) >= 0
+            } else if req.version.minor > 0 {
+                // ^0.2.3 := >=0.2.3, <0.3.0
+                ver.major == 0
+                    && ver.minor == req.version.minor
+                    && ver.compare(&req.version) >= 0
+            } else {
+                // ^0.0.3 := =0.0.3
+                ver.equals(&req.version)
+            }
+        }
+        &Comparator::Tilde => {
+            // ~X.Y.Z: allow patch-level changes
+            // ~1.2.3 := >=1.2.3, <1.3.0
+            ver.major == req.version.major
+                && ver.minor == req.version.minor
+                && ver.patch >= req.version.patch
+        }
+    }
+}
+
+// ============================================================
+// Version Parsing
+// ============================================================
+
+/// Parses a version string (e.g., "1.2.3").
+pub fn parse_version(s: &str) -> Option<Version> {
+    let bytes = s.as_bytes();
+    let len = s.len();
+
+    if len == 0 {
+        return Option::None;
+    }
+
+    // Parse major
+    let mut pos: usize = 0;
+    let major_result = parse_u32_at(bytes, len, pos);
+    match major_result {
+        Option::None => { return Option::None; }
+        Option::Some(pair) => {
+            let major = pair.0;
+            pos = pair.1;
+
+            // Expect '.'
+            if pos >= len || bytes[pos] != 46 { // '.'
+                return Option::Some(Version::new(major, 0, 0));
+            }
+            pos = pos + 1;
+
+            // Parse minor
+            let minor_result = parse_u32_at(bytes, len, pos);
+            match minor_result {
+                Option::None => { return Option::Some(Version::new(major, 0, 0)); }
+                Option::Some(pair2) => {
+                    let minor = pair2.0;
+                    pos = pair2.1;
+
+                    // Expect '.'
+                    if pos >= len || bytes[pos] != 46 {
+                        return Option::Some(Version::new(major, minor, 0));
+                    }
+                    pos = pos + 1;
+
+                    // Parse patch
+                    let patch_result = parse_u32_at(bytes, len, pos);
+                    match patch_result {
+                        Option::None => {
+                            Option::Some(Version::new(major, minor, 0))
+                        }
+                        Option::Some(pair3) => {
+                            let patch = pair3.0;
+                            let _ = pair3.1;
+                            Option::Some(Version::new(major, minor, patch))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Parses a version requirement string (e.g., "^1.2.3", ">=0.5.0").
+pub fn parse_version_req(s: &str) -> Option<VersionReq> {
+    let bytes = s.as_bytes();
+    let len = s.len();
+
+    if len == 0 {
+        return Option::None;
+    }
+
+    // Check for star
+    if bytes[0] == 42 { // '*'
+        return Option::Some(VersionReq::any());
+    }
+
+    // Check for comparator prefix
+    let mut pos: usize = 0;
+    let comp: Comparator;
+
+    if bytes[0] == 94 { // '^'
+        comp = Comparator::Caret;
+        pos = 1;
+    } else if bytes[0] == 126 { // '~'
+        comp = Comparator::Tilde;
+        pos = 1;
+    } else if bytes[0] == 62 { // '>'
+        if pos + 1 < len && bytes[1] == 61 { // '>='
+            comp = Comparator::Ge;
+            pos = 2;
+        } else {
+            comp = Comparator::Gt;
+            pos = 1;
+        }
+    } else if bytes[0] == 60 { // '<'
+        if pos + 1 < len && bytes[1] == 61 { // '<='
+            comp = Comparator::Le;
+            pos = 2;
+        } else {
+            comp = Comparator::Lt;
+            pos = 1;
+        }
+    } else if bytes[0] == 61 { // '='
+        comp = Comparator::Exact;
+        pos = 1;
+    } else {
+        // No comparator prefix — default to caret
+        comp = Comparator::Caret;
+    }
+
+    // Parse version from remaining string
+    let mut ver_str = String::new();
+    while pos < len {
+        ver_str.push(bytes[pos] as char);
+        pos = pos + 1;
+    }
+
+    let ver_opt = parse_version(ver_str.as_str());
+    match ver_opt {
+        Option::Some(ver) => {
+            Option::Some(VersionReq::new(comp, ver))
+        }
+        Option::None => Option::None,
+    }
+}
+
+// ============================================================
+// Lockfile
+// ============================================================
+
+/// A locked package entry from Blood.lock.
+pub struct LockedPackage {
+    /// Package name.
+    pub name: String,
+    /// Locked version.
+    pub version: Version,
+    /// Content hash for integrity checking.
+    pub content_hash: String,
+    /// Dependencies of this package.
+    pub deps: Vec<String>,
+}
+
+impl LockedPackage {
+    /// Creates a new locked package.
+    pub fn new(name: String, version: Version) -> LockedPackage {
+        LockedPackage {
+            name: name,
+            version: version,
+            content_hash: String::new(),
+            deps: Vec::new(),
+        }
+    }
+}
+
+/// Parses a lockfile from string content.
+pub fn parse_lockfile(content: &str) -> Vec<LockedPackage> {
+    let mut packages: Vec<LockedPackage> = Vec::new();
+    let bytes = content.as_bytes();
+    let len = content.len();
+
+    // Simple line-based parsing
+    // Format: name version hash
+    let mut line_start: usize = 0;
+    let mut i: usize = 0;
+    while i < len {
+        if bytes[i] == 10 { // '\n'
+            if i > line_start {
+                let pkg_opt = parse_lockfile_line(bytes, line_start, i);
+                match pkg_opt {
+                    Option::Some(pkg) => { packages.push(pkg); }
+                    Option::None => {}
+                }
+            }
+            line_start = i + 1;
+        }
+        i = i + 1;
+    }
+
+    // Handle last line
+    if line_start < len {
+        let pkg_opt = parse_lockfile_line(bytes, line_start, len);
+        match pkg_opt {
+            Option::Some(pkg) => { packages.push(pkg); }
+            Option::None => {}
+        }
+    }
+
+    packages
+}
+
+/// Parses a single lockfile line.
+fn parse_lockfile_line(bytes: &[u8], start: usize, end_pos: usize) -> Option<LockedPackage> {
+    // Skip comment lines
+    if start < end_pos && bytes[start] == 35 { // '#'
+        return Option::None;
+    }
+
+    // Parse: name version
+    let mut name = String::new();
+    let mut pos: usize = start;
+
+    // Read name
+    while pos < end_pos && bytes[pos] != 32 && bytes[pos] != 9 {
+        name.push(bytes[pos] as char);
+        pos = pos + 1;
+    }
+
+    if name.len() == 0 {
+        return Option::None;
+    }
+
+    // Skip whitespace
+    while pos < end_pos && (bytes[pos] == 32 || bytes[pos] == 9) {
+        pos = pos + 1;
+    }
+
+    // Read version
+    let mut ver_str = String::new();
+    while pos < end_pos && bytes[pos] != 32 && bytes[pos] != 9 {
+        ver_str.push(bytes[pos] as char);
+        pos = pos + 1;
+    }
+
+    let ver = match parse_version(ver_str.as_str()) {
+        Option::Some(v) => v,
+        Option::None => Version::zero(),
+    };
+
+    Option::Some(LockedPackage::new(name, ver))
+}
+
+/// Writes a lockfile from a list of locked packages.
+pub fn write_lockfile(packages: &Vec<LockedPackage>) -> String {
+    let mut output = String::new();
+    output.push_str("# Blood.lock - auto-generated, do not edit\n");
+
+    let mut i: usize = 0;
+    while i < packages.len() {
+        let pkg = &packages[i];
+        output.push_str(pkg.name.as_str());
+        output.push(' ');
+        let ver_str = pkg.version.to_string();
+        output.push_str(ver_str.as_str());
+        if pkg.content_hash.len() > 0 {
+            output.push(' ');
+            output.push_str(pkg.content_hash.as_str());
+        }
+        output.push('\n');
+        i = i + 1;
+    }
+
+    output
+}
+
+// ============================================================
+// Number Helpers
+// ============================================================
+
+/// Parses a u32 from bytes starting at `pos`. Returns (value, new_pos).
+fn parse_u32_at(bytes: &[u8], len: usize, start: usize) -> Option<(u32, usize)> {
+    let mut pos = start;
+    if pos >= len || bytes[pos] < 48 || bytes[pos] > 57 {
+        return Option::None;
+    }
+
+    let mut val: u32 = 0;
+    while pos < len && bytes[pos] >= 48 && bytes[pos] <= 57 {
+        val = val * 10 + (bytes[pos] - 48) as u32;
+        pos = pos + 1;
+    }
+
+    Option::Some((val, pos))
+}
+
+/// Appends a u32 to a string.
+fn append_u32(s: &mut String, val: u32) {
+    if val == 0 {
+        s.push('0');
+        return;
+    }
+
+    let mut digits: Vec<u8> = Vec::new();
+    let mut n = val;
+    while n > 0 {
+        let digit = (n % 10) as u8 + 48;
+        digits.push(digit);
+        n = n / 10;
+    }
+
+    let mut i: usize = digits.len();
+    while i > 0 {
+        i = i - 1;
+        s.push(digits[i] as char);
+    }
+}
