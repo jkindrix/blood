@@ -53,7 +53,7 @@ The parser is the foundation. Downstream phases cannot handle what the parser do
 
 - [x] **LP-6: Or-patterns** — `PatternKind::Or` in AST but `|` not checked between pattern alternatives. Add `|` parsing after each pattern. *Resolves stub: PatternKind::Or (ast.blood:919).* *Fixed: parse_pattern now checks for Or token after primary pattern. Collects alternatives into Vec and wraps in PatternKind::Or, matching bootstrap's parse_pattern_or strategy.*
 
-- [ ] **LP-3: Macro call expressions** — `ExprKind::MacroCall` in AST but no parsing for `format!`, `vec!`, `println!`, etc. Implement macro call dispatch in expression parsing. *Resolves stub: ExprKind::MacroCall (ast.blood:740).*
+- [x] **LP-3: Macro call expressions** — `ExprKind::MacroCall` in AST but no parsing for `format!`, `vec!`, `println!`, etc. Implement macro call dispatch in expression parsing. *Resolves stub: ExprKind::MacroCall (ast.blood:740).* *Fixed: added detection in parse_path_expr for `path!` followed by delimiter, with dispatch for format/vec/assert/dbg/matches/custom macros.*
 
 - [x] **LP-1: Bridge declaration parsing** — AST `BridgeDecl` exists but `parse_declaration()` has no arm for `Bridge` token. Add dispatch arm. *Resolves stub: Declaration::Bridge (ast.blood:81), all Bridge\* types (ast.blood:338-449).* *Fixed: added Bridge dispatch arm and full parsing for bridge header, fn, opaque type, struct, enum items.*
 
@@ -61,27 +61,27 @@ The parser is the foundation. Downstream phases cannot handle what the parser do
 
 ### Medium Severity
 
-- [ ] **LP-7: Compound assignment (`+=`, `-=`, etc.)** — Tokens exist but not in precedence table. Add to `infix_precedence` and generate `ExprKind::AssignOp`. *Resolves stub: ExprKind::AssignOp (ast.blood:661).*
+- [x] **LP-7: Compound assignment (`+=`, `-=`, etc.)** — Tokens exist but not in precedence table. Add to `infix_precedence` and generate `ExprKind::AssignOp`. *Resolves stub: ExprKind::AssignOp (ast.blood:661).* *Fixed: added 10 compound assignment tokens to infix_precedence at precedence 1, added match arms in parse_infix_expr via parse_assign_op helper.*
 
-- [ ] **LP-8: Range expressions** — `..`/`..=` not in infix precedence for expressions. Add range operator to expression parser. *Resolves stub: ExprKind::Range (ast.blood:648).*
+- [x] **LP-8: Range expressions** — `..`/`..=` not in infix precedence for expressions. Add range operator to expression parser. *Resolves stub: ExprKind::Range (ast.blood:648).* *Fixed: added DotDot/DotDotEq at precedence 2, implemented both infix (expr..expr) and prefix (..expr) forms with can_start_expr helper for open-ended ranges.*
 
-- [ ] **LP-11: Function qualifiers** — `const fn`, `async fn`, `unsafe fn` not parsed. Parse qualifier keywords before `fn`.
+- [x] **LP-11: Function qualifiers** — `const fn`, `async fn`, `unsafe fn` not parsed. Parse qualifier keywords before `fn`. *Fixed: parse_fn_decl now consumes optional const/async/unsafe before fn. Dispatch sites in parse_declaration, parse_impl_item, parse_trait_item updated to route Const+Fn, Async, Unsafe to parse_fn_decl.*
 
-- [ ] **LP-12: Negative literal patterns** — `-42` not handled in pattern position. Add `Minus` handling in pattern parsing.
+- [x] **LP-12: Negative literal patterns** — `-42` not handled in pattern position. Add `Minus` handling in pattern parsing. *Fixed: added Minus arm in parse_pattern_kind, consumes minus then parses int/float literal. Float values negated by flipping sign bit. Int values stored as-is (sign handled in type checking, matching bootstrap).*
 
-- [ ] **LP-13: Range patterns** — `0..=9` not parsed in patterns. Add `..`/`..=` check after literal patterns. *Resolves stub: PatternKind::Range (ast.blood:920).*
+- [x] **LP-13: Range patterns** — `0..=9` not parsed in patterns. Add `..`/`..=` check after literal patterns. *Resolves stub: PatternKind::Range (ast.blood:920).* *Fixed: added maybe_range_pattern helper that checks for DotDot/DotDotEq after literal/char patterns, producing PatternKind::Range nodes. Applied to int, float, char, and negative literal patterns.*
 
-- [ ] **LP-14: Unclosed block comment error** — Lexer silently eats source to EOF. Emit error token when EOF reached inside block comment.
+- [x] **LP-14: Unclosed block comment error** — Lexer silently eats source to EOF. Emit error token when EOF reached inside block comment. *Fixed: added has_unterminated_comment flag to Lexer, set when block comment loop exits with depth>0, checked in next_token to emit Error token.*
 
-- [ ] **LP-9: `move` closures** — Always `is_move: false`. Parse `move` keyword before closure `|`.
+- [x] **LP-9: `move` closures** — Always `is_move: false`. Parse `move` keyword before closure `|`. *Fixed: added Move token arm in primary expression dispatch, parse_closure_expr now consumes optional move keyword and passes to is_move field.*
 
 ### Low Severity
 
-- [ ] **LP-10: Loop labels** — Always `None` for `Loop`, `While`, `For`, `Break`, `Continue`. Parse `'label:` syntax before loop keywords.
+- [x] **LP-10: Loop labels** — Always `None` for `Loop`, `While`, `For`, `Break`, `Continue`. Parse `'label:` syntax before loop keywords. *Fixed: added Lifetime token arm with parse_labeled_loop dispatcher. loop/while/for parsers accept optional label parameter. break/continue check for Lifetime token after keyword.*
 
-- [ ] **LP-15: `\x##` and `\u{####}` string escapes** — Not implemented in lexer. Add hex and unicode escape parsing.
+- [x] **LP-15: `\x##` and `\u{####}` string escapes** — Not implemented in lexer. Add hex and unicode escape parsing. *Fixed: lexer skip_escape_body handles \x (2 hex digits) and \u{...} (unicode). parse_string_from_span and parse_char_from_span now decode hex and unicode escapes with hex_digit_value helper.*
 
-- [ ] **LP-16: Doc comment to attribute conversion** — Comments skipped rather than becoming `#[doc = "..."]` attributes. Convert during parsing.
+- [ ] **LP-16: Doc comment to attribute conversion** — Comments skipped rather than becoming `#[doc = "..."]` attributes. Convert during parsing. *Deferred: requires significant refactor of parser_base token skipping. DocComment tokens are currently filtered at initialization, advance, and lookahead. Low severity — doc text preserved in source.*
 
 ---
 
