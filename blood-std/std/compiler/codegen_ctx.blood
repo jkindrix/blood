@@ -85,6 +85,10 @@ pub struct CodegenCtx {
     local_signedness: Vec<LocalSignedness>,
     /// Mapping from MIR locals to their HIR types (for ADT lookups during projection).
     local_hir_types: Vec<LocalHirType>,
+    /// Locals allocated via region allocator (freed on StorageDead).
+    region_locals: Vec<RegionLocalEntry>,
+    /// Locals allocated via persistent (ref-counted) allocator (decremented on StorageDead).
+    persistent_locals: Vec<PersistentLocalEntry>,
     /// The current function being generated.
     current_fn: Option<String>,
     /// String constants table for global string literals.
@@ -131,6 +135,16 @@ struct LocalName {
     name: String,
 }
 
+/// Tracks a local that was allocated via a region allocator.
+struct RegionLocalEntry {
+    local_id: u32,
+}
+
+/// Tracks a local that was allocated via persistent (ref-counted) allocation.
+struct PersistentLocalEntry {
+    local_id: u32,
+}
+
 /// Mapping from a DefId to its global name (for functions, consts, statics).
 pub struct DefNameEntry {
     pub def_id: u32,
@@ -156,6 +170,8 @@ impl CodegenCtx {
             local_types: Vec::new(),
             local_signedness: Vec::new(),
             local_hir_types: Vec::new(),
+            region_locals: Vec::new(),
+            persistent_locals: Vec::new(),
             current_fn: Option::None,
             string_table: Vec::new(),
             string_counter: 0,
@@ -175,6 +191,8 @@ impl CodegenCtx {
             local_types: Vec::new(),
             local_signedness: Vec::new(),
             local_hir_types: Vec::new(),
+            region_locals: Vec::new(),
+            persistent_locals: Vec::new(),
             current_fn: Option::None,
             string_table: Vec::new(),
             string_counter: 0,
@@ -382,12 +400,48 @@ impl CodegenCtx {
         Option::None
     }
 
+    /// Marks a local as region-allocated (will be unregistered on StorageDead).
+    pub fn mark_region_allocated(self: &mut CodegenCtx, local: mir_def::MirLocalId) {
+        self.region_locals.push(RegionLocalEntry { local_id: local.index });
+    }
+
+    /// Marks a local as persistent-allocated (will be decremented on StorageDead).
+    pub fn mark_persistent_allocated(self: &mut CodegenCtx, local: mir_def::MirLocalId) {
+        self.persistent_locals.push(PersistentLocalEntry { local_id: local.index });
+    }
+
+    /// Returns true if a local is region-allocated.
+    pub fn is_region_allocated(self: &CodegenCtx, local: mir_def::MirLocalId) -> bool {
+        let mut i: usize = 0;
+        while i < self.region_locals.len() {
+            if self.region_locals[i].local_id == local.index {
+                return true;
+            }
+            i = i + 1;
+        }
+        false
+    }
+
+    /// Returns true if a local is persistent-allocated.
+    pub fn is_persistent_allocated(self: &CodegenCtx, local: mir_def::MirLocalId) -> bool {
+        let mut i: usize = 0;
+        while i < self.persistent_locals.len() {
+            if self.persistent_locals[i].local_id == local.index {
+                return true;
+            }
+            i = i + 1;
+        }
+        false
+    }
+
     /// Clears all local names, types, and signedness (for reuse between functions).
     pub fn clear_locals(self: &mut CodegenCtx) {
         self.local_names.clear();
         self.local_types.clear();
         self.local_signedness.clear();
         self.local_hir_types.clear();
+        self.region_locals.clear();
+        self.persistent_locals.clear();
     }
 
     // ======== ADT Registry ========
