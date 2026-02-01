@@ -165,6 +165,33 @@ pub fn lower_expr(
             // Unsafe blocks are transparent in MIR
             lower_expr(ctx, inner.as_ref(), dest);
         }
+        &hir_expr::ExprKind::Region { name: _, ref stmts, expr: ref region_expr } => {
+            // Region blocks: lower body like a block for now.
+            // Full region lifecycle (create/activate/deactivate/destroy)
+            // will be added when runtime integration is complete.
+            let mut i: usize = 0;
+            while i < stmts.len() {
+                lower_stmt(ctx, &stmts[i]);
+                i = i + 1;
+            }
+            match region_expr {
+                &Option::Some(ref e) => {
+                    lower_expr(ctx, e.as_ref(), dest);
+                }
+                &Option::None => {
+                    match dest.as_place() {
+                        Option::Some(place) => {
+                            ctx.emit_assign(
+                                place,
+                                mir_types::Rvalue::Use(mir_types::Operand::Constant(mir_types::Constant::unit())),
+                                expr.span,
+                            );
+                        }
+                        Option::None => {}
+                    }
+                }
+            }
+        }
         &hir_expr::ExprKind::Default => {
             // Default expression: produce zero-initialized value
             // TODO: In the future, call Default trait method if available

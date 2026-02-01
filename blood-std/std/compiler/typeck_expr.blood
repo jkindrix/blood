@@ -98,6 +98,17 @@ pub fn infer_expr(checker: &mut typeck::TypeChecker, expr: &hir_expr::Expr) -> h
         &hir_expr::ExprKind::Resume(ref val) => infer_resume(checker, val.as_ref(), expr.span),
         &hir_expr::ExprKind::Try(ref inner) => infer_try(checker, inner.as_ref(), expr.span),
         &hir_expr::ExprKind::Unsafe(ref inner) => infer_expr(checker, inner.as_ref()),
+        &hir_expr::ExprKind::Region { name: _, ref stmts, ref expr } => {
+            let mut i: usize = 0;
+            while i < stmts.len() {
+                infer_stmt(checker, &stmts[i]);
+                i = i + 1;
+            }
+            match expr {
+                &Some(ref e) => infer_expr(checker, e.as_ref()),
+                &None => hir_ty::Type::unit(),
+            }
+        }
         &hir_expr::ExprKind::Default => {
             // Default expression type comes from context; return expression's type variable
             hir_ty::copy_type(&expr.ty)
@@ -429,6 +440,7 @@ fn is_lvalue(expr: &hir_expr::Expr) -> bool {
         &hir_expr::ExprKind::Resume(ref _val) => false,
         &hir_expr::ExprKind::Try(ref _inner) => false,
         &hir_expr::ExprKind::Unsafe(ref _inner) => false,
+        &hir_expr::ExprKind::Region { name: _, stmts: _, expr: _ } => false,
         &hir_expr::ExprKind::Default => false,
         &hir_expr::ExprKind::Error => false,
     }

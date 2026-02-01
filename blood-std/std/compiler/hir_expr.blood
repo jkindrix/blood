@@ -232,6 +232,13 @@ pub enum ExprKind {
     Resume(Box<Expr>),
     /// Try expression: expr?
     Try(Box<Expr>),
+    /// Region block: `region { body }` or `region 'name { body }`
+    /// Creates a memory region, activates it for the body, then destroys it.
+    Region {
+        name: Option<common::Symbol>,
+        stmts: Vec<Stmt>,
+        expr: Option<Box<Expr>>,
+    },
     /// Unsafe block.
     Unsafe(Box<Expr>),
     /// A default expression (produces default value of expected type).

@@ -265,9 +265,44 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx::LoweringCtx, expr: &ast::Expr) -> hir
                 span,
             )
         }
-        &ast::ExprKind::Region { name: _, ref body } => {
-            // Regions lower to regular blocks for now
-            lower_block_expr(ctx, body, span)
+        &ast::ExprKind::Region { ref name, ref body } => {
+            // Lower region block preserving region semantics
+            ctx.resolver.push_scope(resolve::ScopeKind::Block);
+
+            let mut stmts_hir: Vec<hir_expr::Stmt> = Vec::new();
+            let mut i: usize = 0;
+            while i < body.statements.len() {
+                let stmt_hir = lower_stmt(ctx, &body.statements[i]);
+                stmts_hir.push(stmt_hir);
+                i = i + 1;
+            }
+
+            let expr_hir = match &body.expr {
+                &Some(ref e) => {
+                    Some(Box::new(lower_expr(ctx, e.as_ref())))
+                }
+                &None => {
+                    Option::None
+                }
+            };
+
+            ctx.resolver.pop_scope();
+
+            let region_name = match name {
+                &Some(ref sym) => Option::Some(sym.symbol),
+                &None => Option::None,
+            };
+
+            let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+            hir_expr::Expr::new(
+                hir_expr::ExprKind::Region {
+                    name: region_name,
+                    stmts: stmts_hir,
+                    expr: expr_hir,
+                },
+                ty,
+                span,
+            )
         }
         &ast::ExprKind::Paren(ref inner) => {
             // Parentheses are purely syntactic
