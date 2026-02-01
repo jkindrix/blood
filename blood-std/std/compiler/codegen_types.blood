@@ -110,7 +110,7 @@ fn primitive_to_llvm(prim: &hir_ty::PrimitiveTy) -> String {
         &hir_ty::PrimitiveTy::Usize => common::make_string("i64"),
         &hir_ty::PrimitiveTy::F32 => common::make_string("float"),
         &hir_ty::PrimitiveTy::F64 => common::make_string("double"),
-        &hir_ty::PrimitiveTy::Str => common::make_string("ptr"),
+        &hir_ty::PrimitiveTy::Str => common::make_string("{ ptr, i64 }"),
     }
 }
 
@@ -236,7 +236,7 @@ fn primitive_layout(prim: &hir_ty::PrimitiveTy) -> TypeLayout {
         &hir_ty::PrimitiveTy::Usize => TypeLayout::primitive(8, common::make_string("i64")),
         &hir_ty::PrimitiveTy::F32 => TypeLayout::primitive(4, common::make_string("float")),
         &hir_ty::PrimitiveTy::F64 => TypeLayout::primitive(8, common::make_string("double")),
-        &hir_ty::PrimitiveTy::Str => TypeLayout::pointer(),
+        &hir_ty::PrimitiveTy::Str => TypeLayout::new(16, 8, common::make_string("{ ptr, i64 }")),
     }
 }
 

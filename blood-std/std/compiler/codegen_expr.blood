@@ -100,8 +100,15 @@ fn emit_constant(
             codegen_types::f64_bits_to_llvm_hex(bits)
         }
         &mir_types::ConstantKind::String(ref s) => {
-            // Add string to the string table and return the global label
-            ctx.add_string_constant(s)
+            // Build fat pointer: { ptr @.str.N, i64 len }
+            let label = ctx.add_string_constant(s);
+            let mut result = common::make_string("{ ptr ");
+            result.push_str(label.as_str());
+            result.push_str(", i64 ");
+            let len_str = codegen_types::format_u64(s.len() as u64);
+            result.push_str(len_str.as_str());
+            result.push_str(" }");
+            result
         }
         &mir_types::ConstantKind::ByteString(ref bytes) => {
             // Convert byte string to regular string for storage
@@ -111,7 +118,15 @@ fn emit_constant(
                 s.push(bytes[i] as char);
                 i = i + 1;
             }
-            ctx.add_string_constant(&s)
+            // Build fat pointer: { ptr @.str.N, i64 len }
+            let label = ctx.add_string_constant(&s);
+            let mut result = common::make_string("{ ptr ");
+            result.push_str(label.as_str());
+            result.push_str(", i64 ");
+            let len_str = codegen_types::format_u64(bytes.len() as u64);
+            result.push_str(len_str.as_str());
+            result.push_str(" }");
+            result
         }
         &mir_types::ConstantKind::Unit => common::make_string("undef"),
         &mir_types::ConstantKind::FnDef(ref def_id) => {
