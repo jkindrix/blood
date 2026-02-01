@@ -43,36 +43,42 @@ fn parse_pattern_kind(parser: &mut parser_base::Parser) -> ast::PatternKind {
         // Literal patterns
         token::TokenKind::IntLit => {
             let pat_start = parser.current.span;
+            let int_val = parser_base::parse_int_value_from_span(parser, pat_start);
+            let int_suffix = parser_base::parse_int_suffix_from_span(parser, pat_start);
             parser.advance();
             let lit = ast::Literal {
-                kind: ast::LiteralKind::Int { val: 0, suffix: Option::None },
+                kind: ast::LiteralKind::Int { val: int_val, suffix: int_suffix },
                 span: pat_start,
             };
             return ast::PatternKind::Literal(lit);
         }
         token::TokenKind::FloatLit => {
             let pat_start = parser.current.span;
+            let float_bits = parser_base::parse_float_bits_from_span(parser, pat_start);
+            let float_suffix = parser_base::parse_float_suffix_from_span(parser, pat_start);
             parser.advance();
             let lit = ast::Literal {
-                kind: ast::LiteralKind::Float { bits: 0, suffix: Option::None },
+                kind: ast::LiteralKind::Float { bits: float_bits, suffix: float_suffix },
                 span: pat_start,
             };
             return ast::PatternKind::Literal(lit);
         }
         token::TokenKind::StringLit => {
             let pat_start = parser.current.span;
+            let str_val = parser_base::parse_string_from_span(parser, pat_start);
             parser.advance();
             let lit = ast::Literal {
-                kind: ast::LiteralKind::Str(String::new()),
+                kind: ast::LiteralKind::Str(str_val),
                 span: pat_start,
             };
             return ast::PatternKind::Literal(lit);
         }
         token::TokenKind::CharLit => {
             let pat_start = parser.current.span;
+            let char_val = parser_base::parse_char_from_span(parser, pat_start);
             parser.advance();
             let lit = ast::Literal {
-                kind: ast::LiteralKind::Char('?'),
+                kind: ast::LiteralKind::Char(char_val),
                 span: pat_start,
             };
             return ast::PatternKind::Literal(lit);

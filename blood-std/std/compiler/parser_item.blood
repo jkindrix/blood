@@ -384,72 +384,123 @@ fn parse_fn_params(parser: &mut parser_base::Parser) -> Vec<ast::Param> {
 fn parse_fn_param(parser: &mut parser_base::Parser) -> ast::Param {
     let start = parser.current.span;
 
-    // Check for self parameter
-    let is_self = parser.check(token::TokenKind::SelfLower);
-    let is_ref_self = parser.check(token::TokenKind::And);
+    // Case 1: &self — current is &, next is self
+    if parser.check(token::TokenKind::And) && parser.check_next(token::TokenKind::SelfLower) {
+        parser.advance(); // consume &
+        parser.advance(); // consume self
+        let self_span = parser.previous.span;
 
-    // Check for optional qualifier (mut)
-    let qualifier: Option<ast::ParamQualifier> = if parser.check(token::TokenKind::Mut) && !is_self && !is_ref_self {
+        let ty = if parser.try_consume(token::TokenKind::Colon) {
+            parser_type::parse_type(parser)
+        } else {
+            make_ref_self_type(self_span, false)
+        };
+
+        let end_span = parser.previous.span;
+        return ast::Param {
+            qualifier: Option::None,
+            pattern: make_self_pattern(self_span),
+            ty: ty,
+            span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        };
+    }
+
+    // Case 2: &mut self — current is &, next is mut, then self
+    if parser.check(token::TokenKind::And) && parser.check_next(token::TokenKind::Mut) {
+        // Speculatively check: save position, consume &, check mut + self
+        // We don't have check_after_next, so use lookahead via check_next for Mut
+        // and rely on the fact that &mut followed by self is unambiguous
+        parser.advance(); // consume &
+        if parser.check(token::TokenKind::Mut) && parser.check_next(token::TokenKind::SelfLower) {
+            parser.advance(); // consume mut
+            parser.advance(); // consume self
+            let self_span = parser.previous.span;
+
+            let ty = if parser.try_consume(token::TokenKind::Colon) {
+                parser_type::parse_type(parser)
+            } else {
+                make_ref_self_type(self_span, true)
+            };
+
+            let end_span = parser.previous.span;
+            return ast::Param {
+                qualifier: Option::None,
+                pattern: make_self_pattern(self_span),
+                ty: ty,
+                span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+            };
+        }
+        // Not &mut self — this is a regular parameter starting with &
+        // The & was consumed speculatively; parse as reference pattern parameter.
+        // This means we need to handle &pattern: Type. Construct a Ref pattern.
+        let inner_pat = parser_pattern::parse_pattern(parser);
+        let ref_pattern = ast::Pattern {
+            kind: ast::PatternKind::Ref {
+                is_mut: false,
+                inner: Box::new(inner_pat),
+            },
+            span: common::Span { start: start.start, end: parser.previous.span.end, line: start.line, column: start.column },
+        };
+        parser.expect(token::TokenKind::Colon);
+        let ty = parser_type::parse_type(parser);
+        let end_span = parser.previous.span;
+        return ast::Param {
+            qualifier: Option::None,
+            pattern: ref_pattern,
+            ty: ty,
+            span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        };
+    }
+
+    // Case 3: self — current is self
+    if parser.check(token::TokenKind::SelfLower) {
+        parser.advance(); // consume self
+        let self_span = parser.previous.span;
+
+        let ty = if parser.try_consume(token::TokenKind::Colon) {
+            parser_type::parse_type(parser)
+        } else {
+            make_self_type(self_span)
+        };
+
+        let end_span = parser.previous.span;
+        return ast::Param {
+            qualifier: Option::None,
+            pattern: make_self_pattern(self_span),
+            ty: ty,
+            span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        };
+    }
+
+    // Case 4: mut self — current is mut, next is self
+    if parser.check(token::TokenKind::Mut) && parser.check_next(token::TokenKind::SelfLower) {
+        parser.advance(); // consume mut
+        parser.advance(); // consume self
+        let self_span = parser.previous.span;
+
+        let ty = if parser.try_consume(token::TokenKind::Colon) {
+            parser_type::parse_type(parser)
+        } else {
+            make_self_type(self_span)
+        };
+
+        let end_span = parser.previous.span;
+        return ast::Param {
+            qualifier: Option::Some(ast::ParamQualifier::Mut),
+            pattern: make_self_pattern(self_span),
+            ty: ty,
+            span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        };
+    }
+
+    // Regular parameter: [mut] pattern: Type
+    let qualifier: Option<ast::ParamQualifier> = if parser.check(token::TokenKind::Mut) {
         parser.advance();
         Option::Some(ast::ParamQualifier::Mut)
     } else {
         Option::None
     };
 
-    // Handle self parameters
-    if is_self || is_ref_self {
-        // Handle &self, &mut self, self, mut self
-        let self_span = parser.current.span;
-        parser.expect(token::TokenKind::SelfLower);
-
-        // Create a self pattern
-        let self_pattern = ast::Pattern {
-            kind: ast::PatternKind::Ident {
-                by_ref: is_ref_self,
-                is_mut: false,
-                name: common::SpannedSymbol {
-                    symbol: common::Symbol { index: 19 }, // self (Keywords::self_kw index)
-                    span: self_span,
-                },
-                subpattern: Option::None,
-            },
-            span: self_span,
-        };
-
-        // Optional type annotation: self: Type
-        let ty = if parser.try_consume(token::TokenKind::Colon) {
-            parser_type::parse_type(parser)
-        } else {
-            // Create Self type as a Path
-            let self_segment = ast::TypePathSegment {
-                name: common::SpannedSymbol {
-                    symbol: common::Symbol { index: 20 }, // Self (Keywords::self_ty index)
-                    span: self_span,
-                },
-                args: Option::None,
-            };
-            let mut segments: Vec<ast::TypePathSegment> = Vec::new();
-            segments.push(self_segment);
-            let self_type_path = ast::TypePath {
-                segments: segments,
-                span: self_span,
-            };
-            ast::Type {
-                kind: ast::TypeKind::Path(self_type_path),
-                span: self_span,
-            }
-        };
-
-        let end_span = parser.previous.span;
-        return ast::Param {
-            qualifier: qualifier,
-            pattern: self_pattern,
-            ty: ty,
-            span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
-        };
-    }
-
-    // Regular parameter: pattern: Type
     let pattern = parser_pattern::parse_pattern(parser);
     parser.expect(token::TokenKind::Colon);
     let ty = parser_type::parse_type(parser);
@@ -460,6 +511,52 @@ fn parse_fn_param(parser: &mut parser_base::Parser) -> ast::Param {
         pattern: pattern,
         ty: ty,
         span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+/// Create an Ident pattern for 'self'.
+fn make_self_pattern(span: common::Span) -> ast::Pattern {
+    ast::Pattern {
+        kind: ast::PatternKind::Ident {
+            by_ref: false,
+            is_mut: false,
+            name: common::SpannedSymbol {
+                symbol: common::Symbol { index: 19 }, // self keyword index
+                span: span,
+            },
+            subpattern: Option::None,
+        },
+        span: span,
+    }
+}
+
+/// Create a Self type path.
+fn make_self_type(span: common::Span) -> ast::Type {
+    let self_segment = ast::TypePathSegment {
+        name: common::SpannedSymbol {
+            symbol: common::Symbol { index: 20 }, // Self keyword index
+            span: span,
+        },
+        args: Option::None,
+    };
+    let mut segments: Vec<ast::TypePathSegment> = Vec::new();
+    segments.push(self_segment);
+    ast::Type {
+        kind: ast::TypeKind::Path(ast::TypePath { segments: segments, span: span }),
+        span: span,
+    }
+}
+
+/// Create a &Self or &mut Self reference type.
+fn make_ref_self_type(span: common::Span, is_mut: bool) -> ast::Type {
+    let inner = make_self_type(span);
+    ast::Type {
+        kind: ast::TypeKind::Reference {
+            lifetime: Option::None,
+            is_mut: is_mut,
+            inner: Box::new(inner),
+        },
+        span: span,
     }
 }
 

@@ -221,8 +221,8 @@ fn parse_primary_expr(parser: &mut parser_base::Parser) -> ast::Expr {
     match parser.current.kind {
         // Integer literal
         token::TokenKind::IntLit => {
-            let int_val = parse_int_value_from_span(parser, start);
-            let int_suffix = parse_int_suffix_from_span(parser, start);
+            let int_val = parser_base::parse_int_value_from_span(parser, start);
+            let int_suffix = parser_base::parse_int_suffix_from_span(parser, start);
             parser.advance();
             let lit = ast::Literal {
                 kind: ast::LiteralKind::Int { val: int_val, suffix: int_suffix },
@@ -235,8 +235,8 @@ fn parse_primary_expr(parser: &mut parser_base::Parser) -> ast::Expr {
         }
         // Float literal
         token::TokenKind::FloatLit => {
-            let float_bits = parse_float_bits_from_span(parser, start);
-            let float_suffix = parse_float_suffix_from_span(parser, start);
+            let float_bits = parser_base::parse_float_bits_from_span(parser, start);
+            let float_suffix = parser_base::parse_float_suffix_from_span(parser, start);
             parser.advance();
             let lit = ast::Literal {
                 kind: ast::LiteralKind::Float { bits: float_bits, suffix: float_suffix },
@@ -249,7 +249,7 @@ fn parse_primary_expr(parser: &mut parser_base::Parser) -> ast::Expr {
         }
         // String literal
         token::TokenKind::StringLit => {
-            let str_val = parse_string_from_span(parser, start);
+            let str_val = parser_base::parse_string_from_span(parser, start);
             parser.advance();
             let lit = ast::Literal {
                 kind: ast::LiteralKind::Str(str_val),
@@ -262,7 +262,7 @@ fn parse_primary_expr(parser: &mut parser_base::Parser) -> ast::Expr {
         }
         // Char literal
         token::TokenKind::CharLit => {
-            let char_val = parse_char_from_span(parser, start);
+            let char_val = parser_base::parse_char_from_span(parser, start);
             parser.advance();
             let lit = ast::Literal {
                 kind: ast::LiteralKind::Char(char_val),
@@ -662,7 +662,7 @@ fn parse_infix_expr(parser: &mut parser_base::Parser, left: ast::Expr, prec: u8)
             // Check for tuple index access (e.g., expr.0, expr.1)
             if parser.check(token::TokenKind::IntLit) {
                 let idx_span = parser.current.span;
-                let idx_val = parse_int_value_from_span(parser, idx_span) as u32;
+                let idx_val = parser_base::parse_int_value_from_span(parser, idx_span) as u32;
                 parser.advance();
                 let end_span = parser.previous.span;
                 return ast::Expr {
@@ -1653,393 +1653,15 @@ pub fn parse_block(parser: &mut parser_base::Parser) -> ast::Block {
 }
 
 // ============================================================
-// Literal Value Extraction from Source Text
+// Literal Value Extraction — delegated to parser_base
 // ============================================================
 
-/// Parse an integer value from the source text at the given span.
-/// Handles decimal, hex (0x), octal (0o), and binary (0b) formats.
-/// Skips underscore separators and stops at suffix characters.
-fn parse_int_value_from_span(parser: &mut parser_base::Parser, span: common::Span) -> u128 {
-    let start = span.start;
-    let end = span.end;
-    let mut pos = start;
-    let mut val: u128 = 0;
-    let mut base: u128 = 10;
-
-    // Check for 0x/0o/0b prefix
-    if pos + 1 < end {
-        let first = parser.source_byte_at(pos);
-        let second = parser.source_byte_at(pos + 1);
-        if first == 48 {
-            // '0' prefix
-            if second == 120 || second == 88 {
-                // 'x' or 'X' — hex
-                base = 16;
-                pos = pos + 2;
-            } else if second == 111 || second == 79 {
-                // 'o' or 'O' — octal
-                base = 8;
-                pos = pos + 2;
-            } else if second == 98 || second == 66 {
-                // 'b' or 'B' — binary
-                base = 2;
-                pos = pos + 2;
-            }
-        }
-    }
-
-    // Parse digits, stop at suffix or end
-    while pos < end {
-        let b = parser.source_byte_at(pos);
-        if b == 95 {
-            // Underscore separator — skip
-            pos = pos + 1;
-        } else if b >= 48 && b <= 57 {
-            // '0'-'9'
-            let digit = (b - 48) as u128;
-            if digit < base {
-                val = val * base + digit;
-            }
-            pos = pos + 1;
-        } else if base == 16 && b >= 97 && b <= 102 {
-            // 'a'-'f' (hex lowercase)
-            let digit = (b - 97 + 10) as u128;
-            val = val * base + digit;
-            pos = pos + 1;
-        } else if base == 16 && b >= 65 && b <= 70 {
-            // 'A'-'F' (hex uppercase)
-            let digit = (b - 65 + 10) as u128;
-            val = val * base + digit;
-            pos = pos + 1;
-        } else {
-            // Hit suffix or other non-digit character
-            break;
-        }
-    }
-
-    val
-}
-
-/// Extract the integer suffix from the source text at the given span.
-/// Integer suffixes start with 'i' or 'u' (e.g., i32, u64, isize, usize).
-fn parse_int_suffix_from_span(parser: &mut parser_base::Parser, span: common::Span) -> Option<ast::IntSuffix> {
-    let start = span.start;
-    let end = span.end;
-    let mut pos = start;
-
-    // Skip past 0x/0o/0b prefix
-    if pos + 1 < end {
-        let first = parser.source_byte_at(pos);
-        let second = parser.source_byte_at(pos + 1);
-        if first == 48 && (second == 120 || second == 88 || second == 111 || second == 79 || second == 98 || second == 66) {
-            pos = pos + 2;
-        }
-    }
-
-    // Skip past digits and underscores
-    while pos < end {
-        let b = parser.source_byte_at(pos);
-        if b == 95 || (b >= 48 && b <= 57) {
-            // Underscore or decimal digit
-            pos = pos + 1;
-        } else if b >= 97 && b <= 102 {
-            // Could be hex digit or start of suffix
-            if b == 105 || b == 117 {
-                // 'i' or 'u' — this is a suffix
-                break;
-            }
-            pos = pos + 1;
-        } else if b >= 65 && b <= 70 {
-            // Uppercase hex digit
-            pos = pos + 1;
-        } else {
-            // Non-digit, non-hex — start of suffix
-            break;
-        }
-    }
-
-    // Parse suffix if present
-    if pos >= end {
-        return Option::None;
-    }
-
-    let first = parser.source_byte_at(pos);
-    let suffix_len = end - pos;
-
-    if first == 105 {
-        // 'i' prefix
-        if suffix_len == 2 && parser.source_byte_at(pos + 1) == 56 {
-            // "i8"
-            return Option::Some(ast::IntSuffix::I8);
-        }
-        if suffix_len == 3 && parser.source_byte_at(pos + 1) == 49 && parser.source_byte_at(pos + 2) == 54 {
-            // "i16"
-            return Option::Some(ast::IntSuffix::I16);
-        }
-        if suffix_len == 3 && parser.source_byte_at(pos + 1) == 51 && parser.source_byte_at(pos + 2) == 50 {
-            // "i32"
-            return Option::Some(ast::IntSuffix::I32);
-        }
-        if suffix_len == 3 && parser.source_byte_at(pos + 1) == 54 && parser.source_byte_at(pos + 2) == 52 {
-            // "i64"
-            return Option::Some(ast::IntSuffix::I64);
-        }
-        if suffix_len == 4 && parser.source_byte_at(pos + 1) == 49 && parser.source_byte_at(pos + 2) == 50 && parser.source_byte_at(pos + 3) == 56 {
-            // "i128"
-            return Option::Some(ast::IntSuffix::I128);
-        }
-        if suffix_len == 5 && parser.source_byte_at(pos + 1) == 115 && parser.source_byte_at(pos + 2) == 105 && parser.source_byte_at(pos + 3) == 122 && parser.source_byte_at(pos + 4) == 101 {
-            // "isize"
-            return Option::Some(ast::IntSuffix::Isize);
-        }
-    }
-
-    if first == 117 {
-        // 'u' prefix
-        if suffix_len == 2 && parser.source_byte_at(pos + 1) == 56 {
-            // "u8"
-            return Option::Some(ast::IntSuffix::U8);
-        }
-        if suffix_len == 3 && parser.source_byte_at(pos + 1) == 49 && parser.source_byte_at(pos + 2) == 54 {
-            // "u16"
-            return Option::Some(ast::IntSuffix::U16);
-        }
-        if suffix_len == 3 && parser.source_byte_at(pos + 1) == 51 && parser.source_byte_at(pos + 2) == 50 {
-            // "u32"
-            return Option::Some(ast::IntSuffix::U32);
-        }
-        if suffix_len == 3 && parser.source_byte_at(pos + 1) == 54 && parser.source_byte_at(pos + 2) == 52 {
-            // "u64"
-            return Option::Some(ast::IntSuffix::U64);
-        }
-        if suffix_len == 4 && parser.source_byte_at(pos + 1) == 49 && parser.source_byte_at(pos + 2) == 50 && parser.source_byte_at(pos + 3) == 56 {
-            // "u128"
-            return Option::Some(ast::IntSuffix::U128);
-        }
-        if suffix_len == 5 && parser.source_byte_at(pos + 1) == 115 && parser.source_byte_at(pos + 2) == 105 && parser.source_byte_at(pos + 3) == 122 && parser.source_byte_at(pos + 4) == 101 {
-            // "usize"
-            return Option::Some(ast::IntSuffix::Usize);
-        }
-    }
-
-    Option::None
-}
-
-/// Parse a float value from the source text and return its bits as u64.
-/// Parses the decimal representation and converts to IEEE 754 f64 bits.
-fn parse_float_bits_from_span(parser: &mut parser_base::Parser, span: common::Span) -> u64 {
-    let start = span.start;
-    let end = span.end;
-
-    // Extract the numeric part (before any suffix)
-    let mut num_end = start;
-    while num_end < end {
-        let b = parser.source_byte_at(num_end);
-        if (b >= 48 && b <= 57) || b == 46 || b == 95 || b == 101 || b == 69 || b == 43 || b == 45 {
-            // digit, '.', '_', 'e', 'E', '+', '-'
-            num_end = num_end + 1;
-        } else {
-            break;
-        }
-    }
-
-    // Parse integer part
-    let mut pos = start;
-    let mut int_part: u64 = 0;
-    while pos < num_end {
-        let b = parser.source_byte_at(pos);
-        if b >= 48 && b <= 57 {
-            int_part = int_part * 10 + ((b - 48) as u64);
-        } else if b == 46 || b == 101 || b == 69 {
-            break;
-        }
-        // Skip underscores
-        pos = pos + 1;
-    }
-
-    // Parse fractional part
-    let mut frac_val: u64 = 0;
-    let mut frac_digits: u32 = 0;
-    if pos < num_end && parser.source_byte_at(pos) == 46 {
-        pos = pos + 1;
-        while pos < num_end {
-            let b = parser.source_byte_at(pos);
-            if b >= 48 && b <= 57 {
-                frac_val = frac_val * 10 + ((b - 48) as u64);
-                frac_digits = frac_digits + 1;
-            } else if b == 101 || b == 69 {
-                break;
-            }
-            // Skip underscores
-            pos = pos + 1;
-        }
-    }
-
-    // Parse exponent
-    let mut exp: i32 = 0;
-    let mut exp_neg = false;
-    if pos < num_end && (parser.source_byte_at(pos) == 101 || parser.source_byte_at(pos) == 69) {
-        pos = pos + 1;
-        if pos < num_end && parser.source_byte_at(pos) == 45 {
-            exp_neg = true;
-            pos = pos + 1;
-        } else if pos < num_end && parser.source_byte_at(pos) == 43 {
-            pos = pos + 1;
-        }
-        while pos < num_end {
-            let b = parser.source_byte_at(pos);
-            if b >= 48 && b <= 57 {
-                exp = exp * 10 + ((b - 48) as i32);
-            }
-            pos = pos + 1;
-        }
-        if exp_neg {
-            exp = 0 - exp;
-        }
-    }
-
-    // Convert to f64 bits
-    // Simple approach: construct the value as integer_part.fractional_part * 10^exp
-    // Use f64 arithmetic via bit manipulation
-    // For now, use a simple decimal-to-f64 conversion
-    let mut result: f64 = int_part as f64;
-
-    // Add fractional part
-    if frac_digits > 0 {
-        let mut divisor: f64 = 1.0;
-        let mut d: u32 = 0;
-        while d < frac_digits {
-            divisor = divisor * 10.0;
-            d = d + 1;
-        }
-        result = result + (frac_val as f64) / divisor;
-    }
-
-    // Apply exponent
-    if exp > 0 {
-        let mut e: i32 = 0;
-        while e < exp {
-            result = result * 10.0;
-            e = e + 1;
-        }
-    } else if exp < 0 {
-        let mut e: i32 = exp;
-        while e < 0 {
-            result = result / 10.0;
-            e = e + 1;
-        }
-    }
-
-    // Convert f64 to bits
-    @unsafe { *(&result as *const u64) }
-}
-
-/// Extract the float suffix from the source text (f32 or f64).
-fn parse_float_suffix_from_span(parser: &mut parser_base::Parser, span: common::Span) -> Option<ast::FloatSuffix> {
-    let end = span.end;
-
-    // Check if span ends with f32 or f64
-    if end >= span.start + 3 {
-        let b0 = parser.source_byte_at(end - 3);
-        let b1 = parser.source_byte_at(end - 2);
-        let b2 = parser.source_byte_at(end - 1);
-        if b0 == 102 {
-            // 'f'
-            if b1 == 51 && b2 == 50 {
-                // "f32"
-                return Option::Some(ast::FloatSuffix::F32);
-            }
-            if b1 == 54 && b2 == 52 {
-                // "f64"
-                return Option::Some(ast::FloatSuffix::F64);
-            }
-        }
-    }
-
-    Option::None
-}
-
-/// Parse a string literal from the source text (strips quotes, handles escape sequences).
-fn parse_string_from_span(parser: &mut parser_base::Parser, span: common::Span) -> String {
-    let start = span.start;
-    let end = span.end;
-    let mut result = String::new();
-
-    // Skip opening quote
-    let mut pos = start + 1;
-
-    // Parse until closing quote
-    while pos < end {
-        let b = parser.source_byte_at(pos);
-        if b == 34 {
-            // '"' — closing quote
-            break;
-        }
-        if b == 92 && pos + 1 < end {
-            // '\' — escape sequence
-            pos = pos + 1;
-            let esc = parser.source_byte_at(pos);
-            if esc == 110 {
-                // \n
-                result.push(10 as char);
-            } else if esc == 116 {
-                // \t
-                result.push(9 as char);
-            } else if esc == 114 {
-                // \r
-                result.push(13 as char);
-            } else if esc == 92 {
-                // \\
-                result.push(92 as char);
-            } else if esc == 34 {
-                // \"
-                result.push(34 as char);
-            } else if esc == 48 {
-                // \0
-                result.push(0 as char);
-            } else if esc == 39 {
-                // \'
-                result.push(39 as char);
-            } else {
-                // Unknown escape — include as-is
-                result.push(92 as char);
-                result.push(esc as char);
-            }
-        } else {
-            result.push(b as char);
-        }
-        pos = pos + 1;
-    }
-
-    result
-}
-
-/// Parse a character literal from the source text (strips quotes, handles escapes).
-fn parse_char_from_span(parser: &mut parser_base::Parser, span: common::Span) -> char {
-    let start = span.start;
-    let end = span.end;
-
-    // Skip opening quote '
-    let pos = start + 1;
-
-    if pos >= end {
-        return '?';
-    }
-
-    let b = parser.source_byte_at(pos);
-    if b == 92 && pos + 1 < end {
-        // Escape sequence
-        let esc = parser.source_byte_at(pos + 1);
-        if esc == 110 { return 10 as char; }       // \n
-        if esc == 116 { return 9 as char; }        // \t
-        if esc == 114 { return 13 as char; }       // \r
-        if esc == 92 { return 92 as char; }        // \\
-        if esc == 39 { return 39 as char; }        // \'
-        if esc == 48 { return 0 as char; }         // \0
-        if esc == 34 { return 34 as char; }        // \"
-        return esc as char;
-    }
-
-    b as char
-}
+// The following functions have been moved to parser_base.blood
+// so both parser_expr and parser_pattern can use them:
+//   parser_base::parse_int_value_from_span
+//   parser_base::parse_int_suffix_from_span
+//   parser_base::parse_float_bits_from_span
+//   parser_base::parse_float_suffix_from_span
+//   parser_base::parse_string_from_span
+//   parser_base::parse_char_from_span
 
