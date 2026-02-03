@@ -557,3 +557,26 @@ When modifying the compiler:
     - Phase 3b/4b processing for external module declarations and function bodies
   - File-based compilation via `driver::compile_file()` and `driver::check_file()`
   - All 53 compiler files continue to pass type checking
+
+- **2026-02**: Memory investigation (OOM during self-hosting):
+  - **Problem**: Self-hosting attempt (`./main build main.blood`) hits OOM ("region allocation failed")
+  - **Root cause**: Region allocator retains ALL memory until destroy, while reference compiler frees incrementally via Rust's drop semantics
+  - **Measurements** (200 let bindings test):
+    | Phase | Region Used | Per-let |
+    |-------|-------------|---------|
+    | After Parse | 16,252 KB | 81 KB |
+    | After HIR Lower | 27,806 KB | 58 KB |
+    | After Typeck | 47,469 KB | 98 KB |
+    | **Total** | **47,469 KB** | **237 KB** |
+  - **Key factors**:
+    - AST `Statement` enum sized to largest variant (~500+ bytes per statement)
+    - Vec growth leaks old buffers (region dealloc is no-op)
+    - `copy_type()` creates many intermediate allocations
+    - Token trivia Vecs allocated per token
+  - **Reference compiler comparison**: Uses ~24 MB flat regardless of code size (Rust heap with drop)
+  - **Added instrumentation**: `region_used()` builtin to query region usage, traced driver phases
+  - **Potential solutions** (not yet implemented):
+    1. Box large enum variants to reduce inline size
+    2. Use reference-counted types or interning to avoid deep copies
+    3. Hierarchical sub-regions destroyed between phases
+    4. Streaming compilation processing functions one at a time

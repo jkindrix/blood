@@ -185,6 +185,7 @@ impl Compiler {
                 span,
                 &typeck_result.subst_table,
                 &typeck_result.method_resolutions,
+                &typeck_result.field_resolutions,
             );
 
             mir_functions.push((fn_name, mir_body));
@@ -372,6 +373,7 @@ impl Compiler {
                 span,
                 &typeck_result.subst_table,
                 &typeck_result.method_resolutions,
+                &typeck_result.field_resolutions,
             );
 
             mir_functions.push((fn_name, mir_body));
@@ -432,6 +434,90 @@ impl Compiler {
 
         // Type check
         let typeck_result = typeck_driver::check_lower_result(&lower_result);
+        if !typeck_result.success {
+            let errors = convert_type_errors(&typeck_result.errors);
+            return CheckResult {
+                success: false,
+                errors: errors,
+            };
+        }
+
+        // Check succeeded
+        CheckResult {
+            success: true,
+            errors: Vec::new(),
+        }
+    }
+
+    /// Instrumented version of check_with_base_dir that traces region memory usage.
+    /// Pass region_id from region_create() to enable tracing, or 0 to disable.
+    pub fn check_with_base_dir_traced(self: &mut Compiler, source: &str, base_dir: String, region_id: u64) -> CheckResult {
+        let trace = region_id != 0;
+
+        if trace {
+            let used0 = region_used(region_id);
+            print_str("[TRACE] Before parse: ");
+            println_u64(used0);
+        }
+
+        // Parse
+        let parse_result = parser::parse_file(source);
+
+        if trace {
+            let used1 = region_used(region_id);
+            print_str("[TRACE] After parse: ");
+            println_u64(used1);
+        }
+
+        if parse_result.errors.len() > 0 {
+            let errors = convert_parse_errors(&parse_result.errors);
+            return CheckResult {
+                success: false,
+                errors: errors,
+            };
+        }
+
+        let program = match &parse_result.program {
+            &Option::Some(ref p) => p,
+            &Option::None => {
+                let mut errors = Vec::new();
+                errors.push(error::CompileError::new(
+                    error::CompilePhase::Parse,
+                    common::make_string("No program produced by parser"),
+                ));
+                return CheckResult {
+                    success: false,
+                    errors: errors,
+                };
+            }
+        };
+
+        // Lower to HIR with base_dir
+        let lower_result = hir_lower::lower_program_with_base_dir(program, base_dir, source);
+
+        if trace {
+            let used2 = region_used(region_id);
+            print_str("[TRACE] After HIR lower: ");
+            println_u64(used2);
+        }
+
+        if has_error_diagnostics(&lower_result.diagnostics) {
+            let errors = convert_hir_diagnostics(&lower_result.diagnostics);
+            return CheckResult {
+                success: false,
+                errors: errors,
+            };
+        }
+
+        // Type check
+        let typeck_result = typeck_driver::check_lower_result(&lower_result);
+
+        if trace {
+            let used3 = region_used(region_id);
+            print_str("[TRACE] After typeck: ");
+            println_u64(used3);
+        }
+
         if !typeck_result.success {
             let errors = convert_type_errors(&typeck_result.errors);
             return CheckResult {
@@ -634,7 +720,22 @@ pub fn find_fn_for_body(
                             }
                         }
                         &hir_item::AssocItem::Type(_) => {}
-                        &hir_item::AssocItem::Const(_) => {}
+                        &hir_item::AssocItem::Const(ref assoc_const) => {
+                            match &assoc_const.body_id {
+                                &Option::Some(ref bid) => {
+                                    if bid.index == target_body_id.index {
+                                        return Option::Some(FnInfo {
+                                            def_id: assoc_const.def_id,
+                                            name: assoc_const.name.symbol,
+                                            name_span: assoc_const.name.span,
+                                            return_ty: hir_ty::copy_type(&assoc_const.ty),
+                                            span: assoc_const.name.span,
+                                        });
+                                    }
+                                }
+                                &Option::None => {}
+                            }
+                        }
                     }
                     j = j + 1;
                 }
@@ -643,8 +744,28 @@ pub fn find_fn_for_body(
             &hir_item::ItemKind::Struct(_) => {}
             &hir_item::ItemKind::Enum(_) => {}
             &hir_item::ItemKind::TypeAlias(_) => {}
-            &hir_item::ItemKind::Const(_) => {}
-            &hir_item::ItemKind::Static(_) => {}
+            &hir_item::ItemKind::Const(ref const_def) => {
+                if const_def.body_id.index == target_body_id.index {
+                    return Option::Some(FnInfo {
+                        def_id: entry.item.def_id,
+                        name: entry.item.name.symbol,
+                        name_span: entry.item.name.span,
+                        return_ty: hir_ty::copy_type(&const_def.ty),
+                        span: entry.item.span,
+                    });
+                }
+            }
+            &hir_item::ItemKind::Static(ref static_def) => {
+                if static_def.body_id.index == target_body_id.index {
+                    return Option::Some(FnInfo {
+                        def_id: entry.item.def_id,
+                        name: entry.item.name.symbol,
+                        name_span: entry.item.name.span,
+                        return_ty: hir_ty::copy_type(&static_def.ty),
+                        span: entry.item.span,
+                    });
+                }
+            }
             &hir_item::ItemKind::Trait(_) => {}
             &hir_item::ItemKind::Effect(_) => {}
             &hir_item::ItemKind::Handler(_) => {}
@@ -825,6 +946,46 @@ pub fn check_file(path: &str) -> CheckResult {
     // Create compiler and check with base_dir
     let mut compiler = Compiler::new();
     compiler.check_with_base_dir(content.as_str(), base_dir)
+}
+
+/// Instrumented version of check_file that traces region memory usage.
+pub fn check_file_traced(path: &str, region_id: u64) -> CheckResult {
+    // Read the file
+    let read_result = source::read_file(path);
+    if !read_result.success {
+        let mut errors: Vec<error::CompileError> = Vec::new();
+        let msg = match &read_result.error {
+            &Option::Some(ref e) => clone_string_from_ref(e),
+            &Option::None => common::make_string("Unknown file read error"),
+        };
+        errors.push(error::CompileError::new(error::CompilePhase::Parse, msg));
+        return CheckResult {
+            success: false,
+            errors: errors,
+        };
+    }
+
+    let content = match &read_result.content {
+        &Option::Some(ref c) => c,
+        &Option::None => {
+            let mut errors: Vec<error::CompileError> = Vec::new();
+            errors.push(error::CompileError::new(
+                error::CompilePhase::Parse,
+                common::make_string("No content in file"),
+            ));
+            return CheckResult {
+                success: false,
+                errors: errors,
+            };
+        }
+    };
+
+    // Get the base directory for module resolution
+    let base_dir = source::parent_dir(path);
+
+    // Create compiler and check with base_dir (traced)
+    let mut compiler = Compiler::new();
+    compiler.check_with_base_dir_traced(content.as_str(), base_dir, region_id)
 }
 
 /// Clones a String from a reference.

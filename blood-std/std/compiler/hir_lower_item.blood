@@ -637,7 +637,7 @@ fn lower_trait_decl(ctx: &mut hir_lower_ctx::LoweringCtx, t: &ast::TraitDecl) {
 fn lower_trait_item(ctx: &mut hir_lower_ctx::LoweringCtx, item: &ast::TraitItem) -> Option<hir_item::AssocItem> {
     match item {
         &ast::TraitItem::Function(ref f) => {
-            let assoc_fn = lower_assoc_fn(ctx, f, true);
+            let assoc_fn = lower_assoc_fn(ctx, f, true, Option::None);
             Option::Some(hir_item::AssocItem::Fn(assoc_fn))
         }
         &ast::TraitItem::TypeAlias(ref ta) => {
@@ -652,8 +652,24 @@ fn lower_trait_item(ctx: &mut hir_lower_ctx::LoweringCtx, item: &ast::TraitItem)
 }
 
 /// Lower an associated function.
-fn lower_assoc_fn(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl, is_trait_item: bool) -> hir_item::AssocFn {
-    let def_id = ctx.alloc_def_id();
+/// When `impl_type_def_id` is Some, this is an impl method and we look up
+/// the DefId that was pre-registered during phase 2 (register_impl_items)
+/// instead of allocating a fresh one. This ensures call sites that resolve
+/// through lookup_in_parent find the same DefId as the function body.
+fn lower_assoc_fn(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl, is_trait_item: bool, impl_type_def_id: Option<hir_def::DefId>) -> hir_item::AssocFn {
+    let def_id = match &impl_type_def_id {
+        &Option::Some(ref type_def_id) => {
+            // Look up the DefId registered in phase 2 for this method
+            let fn_name_str = ctx.span_to_string(f.name.span);
+            let fn_name_sym = ctx.intern(fn_name_str.as_str());
+            let found = ctx.resolver.lookup_in_parent(hir_def::DefId::new(type_def_id.index), fn_name_sym);
+            match found {
+                Option::Some(id) => id,
+                Option::None => ctx.alloc_def_id(),
+            }
+        }
+        &Option::None => ctx.alloc_def_id(),
+    };
     let generics = hir_lower_type::lower_generics(ctx, &f.type_params, &f.where_clause);
     let sig = hir_item::FnSig::new(
         generics,
@@ -1027,11 +1043,42 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::ImplBlock) {
     // Set the current Self type so that `Self` references resolve correctly
     ctx.current_self_type = Option::Some(hir_ty::copy_type(&self_ty));
 
+    // Resolve the impl's target type DefId so we can look up pre-registered
+    // method DefIds from phase 2 (register_impl_items). This ensures the
+    // DefId used in the HIR matches the one resolved by lookup_in_parent.
+    // Store as bool + u32 to reconstruct Option in loop (avoids ownership issues).
+    let mut has_impl_type: bool = false;
+    let mut impl_type_idx: u32 = 0;
+    match &imp.self_ty.kind {
+        &ast::TypeKind::Path(ref type_path) => {
+            if type_path.segments.len() > 0 {
+                let first_seg = &type_path.segments[0];
+                let type_name_str = ctx.span_to_string(first_seg.name.span);
+                let type_name_sym = ctx.intern(type_name_str.as_str());
+                let type_lookup = ctx.resolver.lookup(type_name_sym);
+                match type_lookup {
+                    Option::Some(result) => {
+                        let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+                        has_impl_type = true;
+                        impl_type_idx = binding.def_id.index;
+                    }
+                    Option::None => {}
+                }
+            }
+        }
+        _ => {}
+    }
+
     // Lower associated items
     let mut items: Vec<hir_item::AssocItem> = Vec::new();
     let mut i: usize = 0;
     while i < imp.items.len() {
-        let assoc_item = lower_impl_item(ctx, &imp.items[i]);
+        let type_id_opt: Option<hir_def::DefId> = if has_impl_type {
+            Option::Some(hir_def::DefId::new(impl_type_idx))
+        } else {
+            Option::None
+        };
+        let assoc_item = lower_impl_item(ctx, &imp.items[i], type_id_opt);
         if assoc_item.is_some() {
             items.push(assoc_item.unwrap());
         }
@@ -1064,10 +1111,10 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::ImplBlock) {
 }
 
 /// Lower an impl item to an AssocItem.
-fn lower_impl_item(ctx: &mut hir_lower_ctx::LoweringCtx, item: &ast::ImplItem) -> Option<hir_item::AssocItem> {
+fn lower_impl_item(ctx: &mut hir_lower_ctx::LoweringCtx, item: &ast::ImplItem, impl_type_def_id: Option<hir_def::DefId>) -> Option<hir_item::AssocItem> {
     match item {
         &ast::ImplItem::Function(ref f) => {
-            let assoc_fn = lower_assoc_fn(ctx, f, false);
+            let assoc_fn = lower_assoc_fn(ctx, f, false, impl_type_def_id);
             Option::Some(hir_item::AssocItem::Fn(assoc_fn))
         }
         &ast::ImplItem::TypeAlias(ref ta) => {

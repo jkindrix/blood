@@ -291,18 +291,63 @@ fn lower_path_expr(
 ) {
     match dest.as_place() {
         Option::Some(place) => {
-            // Path could be a function, constant, or static
-            let constant = mir_types::Constant::new(
-                ty.clone(),
-                mir_types::ConstantKind::FnDef(path.def_id),
-            );
-            ctx.emit_assign(
-                place,
-                mir_types::Rvalue::Use(mir_types::Operand::Constant(constant)),
-                span,
-            );
+            // Check if this is a unit enum variant.
+            // Unit variants have variant_index set AND their type is Adt (not Fn).
+            // Tuple/record variant constructors also have variant_index but their
+            // type is Fn (they're used as callees), so they remain as FnDef.
+            let is_unit_variant = match path.variant_index {
+                Option::Some(_) => is_adt_type(ty),
+                Option::None => false,
+            };
+            if is_unit_variant {
+                let vi = match path.variant_index {
+                    Option::Some(v) => v,
+                    Option::None => 0,
+                };
+                // Unit enum variant — emit Aggregate with the enum's DefId from the type.
+                let enum_def_id = extract_adt_def_id(ty);
+                ctx.emit_assign(
+                    place,
+                    mir_types::Rvalue::Aggregate {
+                        kind: mir_types::AggregateKind::Adt {
+                            def_id: enum_def_id,
+                            variant_idx: vi,
+                            type_args: Vec::new(),
+                        },
+                        operands: Vec::new(),
+                    },
+                    span,
+                );
+            } else {
+                // Path is a function, constant, static, or variant constructor
+                let constant = mir_types::Constant::new(
+                    ty.clone(),
+                    mir_types::ConstantKind::FnDef(path.def_id),
+                );
+                ctx.emit_assign(
+                    place,
+                    mir_types::Rvalue::Use(mir_types::Operand::Constant(constant)),
+                    span,
+                );
+            }
         }
         Option::None => {}
+    }
+}
+
+/// Extracts the DefId from an Adt type. Returns a dummy DefId if the type is not Adt.
+fn extract_adt_def_id(ty: &hir_ty::Type) -> hir_def::DefId {
+    match &ty.kind {
+        &hir_ty::TypeKind::Adt { def_id, args: _ } => hir_def::DefId::new(def_id.index),
+        _ => hir_def::DefId::dummy(),
+    }
+}
+
+/// Returns true if the type is an Adt type (not a function type or other).
+fn is_adt_type(ty: &hir_ty::Type) -> bool {
+    match &ty.kind {
+        &hir_ty::TypeKind::Adt { def_id: _, args: _ } => true,
+        _ => false,
     }
 }
 
@@ -566,9 +611,76 @@ fn lower_call_expr(
     dest: mir_lower_ctx::Destination,
     span: common::Span,
 ) {
-    // Evaluate callee
-    let func_temp = ctx.new_temp(callee.ty.clone(), span);
-    lower_expr(ctx, callee, mir_lower_ctx::destination_local(func_temp));
+    // Check if this is an enum variant constructor call (e.g., Option::Some(42)).
+    // Payload enum variants are represented as Path callees with variant_index set.
+    // Instead of emitting a function call (which would reference a non-existent
+    // function), emit Rvalue::Aggregate to construct the enum value inline.
+    match &callee.kind {
+        &hir_expr::ExprKind::Path(ref path) => {
+            match path.variant_index {
+                Option::Some(vi) => {
+                    // This is a payload enum variant constructor — emit Aggregate.
+                    // Evaluate arguments (variant fields).
+                    let mut operands = Vec::new();
+                    let mut i: usize = 0;
+                    while i < args.len() {
+                        let arg = &args[i];
+                        let arg_temp = ctx.new_temp(arg.ty.clone(), span);
+                        lower_expr(ctx, arg, mir_lower_ctx::destination_local(arg_temp));
+                        operands.push(mir_lower_util::operand_from_place(
+                            mir_types::Place::local(arg_temp),
+                            &arg.ty,
+                        ));
+                        i = i + 1;
+                    }
+
+                    // The return type `ty` is the enum Adt type — extract its DefId.
+                    let enum_def_id = extract_adt_def_id(ty);
+                    let dest_place = match dest.as_place() {
+                        Option::Some(p) => p,
+                        Option::None => {
+                            let temp = ctx.new_temp(ty.clone(), span);
+                            mir_types::Place::local(temp)
+                        }
+                    };
+                    ctx.emit_assign(
+                        dest_place,
+                        mir_types::Rvalue::Aggregate {
+                            kind: mir_types::AggregateKind::Adt {
+                                def_id: enum_def_id,
+                                variant_idx: vi,
+                                type_args: Vec::new(),
+                            },
+                            operands,
+                        },
+                        span,
+                    );
+                    return;
+                }
+                Option::None => {}
+            }
+        }
+        _ => {}
+    }
+
+    // Regular function call path (not an enum variant constructor).
+    // Build function operand — for direct Path callees, use FnDef constant
+    // directly to enable direct calls in codegen (avoiding store/load indirection).
+    let func_operand = match &callee.kind {
+        &hir_expr::ExprKind::Path(ref path) => {
+            // Direct function reference — emit as FnDef constant
+            mir_types::Operand::Constant(mir_types::Constant::new(
+                callee.ty.clone(),
+                mir_types::ConstantKind::FnDef(path.def_id),
+            ))
+        }
+        _ => {
+            // Indirect call (closure, function pointer, etc.) — evaluate callee
+            let func_temp = ctx.new_temp(callee.ty.clone(), span);
+            lower_expr(ctx, callee, mir_lower_ctx::destination_local(func_temp));
+            mir_types::Operand::Copy(mir_types::Place::local(func_temp))
+        }
+    };
 
     // Evaluate arguments
     let mut arg_operands = Vec::new();
@@ -593,7 +705,6 @@ fn lower_call_expr(
         }
     };
 
-    let func_operand = mir_types::Operand::Copy(mir_types::Place::local(func_temp));
     let next_block = ctx.new_block();
     ctx.terminate_call(func_operand, arg_operands, dest_place, next_block, span);
     ctx.set_current_block(next_block);
@@ -614,11 +725,26 @@ fn lower_method_call_expr(
     let recv_temp = ctx.new_temp(receiver.ty.clone(), span);
     lower_expr(ctx, receiver, mir_lower_ctx::destination_local(recv_temp));
 
-    // Build argument list (receiver first)
+    // Build argument list (receiver first).
+    // Methods take self by reference (&Self or &mut Self), so we need to
+    // auto-borrow the receiver: create a Ref rvalue to get &receiver.
     let mut arg_operands = Vec::new();
+    let recv_ref_ty = hir_ty::Type::new(hir_ty::TypeKind::Ref {
+        inner: Box::new(hir_ty::copy_type(&receiver.ty)),
+        mutable: false,
+    });
+    let recv_ref_temp = ctx.new_temp(recv_ref_ty.clone(), span);
+    ctx.emit_assign(
+        mir_types::Place::local(recv_ref_temp),
+        mir_types::Rvalue::Ref {
+            place: mir_types::Place::local(recv_temp),
+            mutable: false,
+        },
+        span,
+    );
     arg_operands.push(mir_lower_util::operand_from_place(
-        mir_types::Place::local(recv_temp),
-        &receiver.ty,
+        mir_types::Place::local(recv_ref_temp),
+        &recv_ref_ty,
     ));
 
     // Evaluate remaining arguments
@@ -685,12 +811,20 @@ fn lower_field_expr(
     let base_temp = ctx.new_temp(base.ty.clone(), span);
     lower_expr(ctx, base, mir_lower_ctx::destination_local(base_temp));
 
-    // Get field index
+    // Get field index — for named fields, look up from the type checker's
+    // field resolution side table; fall back to HIR-stored index if present.
     let field_idx = match field {
         &hir_expr::FieldAccess::Named { name: _, field_idx } => {
-            match field_idx {
-                Option::Some(idx) => idx,
-                Option::None => 0,
+            // First try the field resolution side table (populated during type checking)
+            match ctx.lookup_field_idx(span.start) {
+                Option::Some(resolved_idx) => resolved_idx,
+                Option::None => {
+                    // Fall back to HIR-stored field index
+                    match field_idx {
+                        Option::Some(idx) => idx,
+                        Option::None => 0,
+                    }
+                }
             }
         }
         &hir_expr::FieldAccess::Index(idx) => idx,
@@ -850,7 +984,7 @@ fn lower_struct_expr(
     path: &hir_def::ResolvedPath,
     fields: &Vec<hir_expr::FieldExpr>,
     _base: &Option<Box<hir_expr::Expr>>,
-    _ty: &hir_ty::Type,
+    ty: &hir_ty::Type,
     dest: mir_lower_ctx::Destination,
     span: common::Span,
 ) {
@@ -875,11 +1009,18 @@ fn lower_struct_expr(
                 Option::Some(vi) => vi,
                 Option::None => 0,
             };
+            // For enum variants, use the enum's DefId from the expression type
+            // (the resolved type is the parent enum's ADT type).
+            // For plain structs, path.def_id equals the struct's DefId.
+            let adt_def_id = match path.variant_index {
+                Option::Some(_) => extract_adt_def_id(ty),
+                Option::None => path.def_id,
+            };
             ctx.emit_assign(
                 place,
                 mir_types::Rvalue::Aggregate {
                     kind: mir_types::AggregateKind::Adt {
-                        def_id: path.def_id,
+                        def_id: adt_def_id,
                         variant_idx: variant_idx,
                         type_args: Vec::new(),
                     },

@@ -38,6 +38,9 @@ pub struct MirLowerCtx {
     /// Method resolution side table from type checking.
     /// Maps expression span starts to resolved method DefIds.
     pub method_resolutions: Vec<common::MethodResEntry>,
+    /// Field resolution side table from type checking.
+    /// Maps field access expression span starts to resolved field indices.
+    pub field_resolutions: Vec<common::FieldResEntry>,
 }
 
 /// Mapping from an HIR local to a MIR local.
@@ -54,6 +57,7 @@ impl MirLowerCtx {
         span: common::Span,
         subst_table: unify::SubstTable,
         method_resolutions: Vec<common::MethodResEntry>,
+        field_resolutions: Vec<common::FieldResEntry>,
     ) -> MirLowerCtx {
         MirLowerCtx {
             builder: mir_body::MirBodyBuilder::new(def_id, return_ty, span),
@@ -63,6 +67,7 @@ impl MirLowerCtx {
             move_tracker: MoveTracker::new(),
             subst_table: subst_table,
             method_resolutions: method_resolutions,
+            field_resolutions: field_resolutions,
         }
     }
 
@@ -101,6 +106,19 @@ impl MirLowerCtx {
         while i < self.method_resolutions.len() {
             if self.method_resolutions[i].span_start == span_start {
                 return Option::Some(hir_def::DefId::new(self.method_resolutions[i].def_id_index));
+            }
+            i = i + 1;
+        }
+        Option::None
+    }
+
+    /// Looks up a resolved field index by the expression's span start.
+    /// Returns the field index if the type checker recorded a resolution for this span.
+    pub fn lookup_field_idx(self: &MirLowerCtx, span_start: usize) -> Option<u32> {
+        let mut i: usize = 0;
+        while i < self.field_resolutions.len() {
+            if self.field_resolutions[i].span_start == span_start {
+                return Option::Some(self.field_resolutions[i].field_idx);
             }
             i = i + 1;
         }

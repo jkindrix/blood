@@ -981,6 +981,13 @@ fn infer_field(
                     // Look up the field type from the struct definition
                     match checker.get_struct_field_ty(def_id, name.symbol) {
                         Some(field_ty) => {
+                            // Record the resolved field index for MIR lowering
+                            match checker.get_struct_field_idx(def_id, name.symbol) {
+                                Option::Some(idx) => {
+                                    checker.record_field_resolution(span.start, idx);
+                                }
+                                Option::None => {}
+                            }
                             // If the struct has type arguments, substitute them
                             if args.len() > 0 {
                                 let subst = unify::TypeParamSubst::from_types(args);

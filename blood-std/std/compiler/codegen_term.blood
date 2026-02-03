@@ -175,20 +175,42 @@ fn emit_call(
     destination: &mir_types::Place,
     target: &Option<mir_def::BasicBlockId>,
 ) {
-    // Get function name/pointer with type information
-    let func_typed = codegen_expr::emit_operand_typed(ctx, func);
-    let raw_func = func_typed.0;
-    let func_ty = func_typed.1;
-    // LLVM requires call targets to be ptr type.
-    // - Direct function references (@name) are already ptr-typed.
-    // - SSA values loaded as ptr are already correct.
-    // - SSA values loaded as i64 need inttoptr conversion.
-    let func_val = if starts_with_percent(&raw_func) && !string_eq_str(func_ty.as_str(), "ptr") {
-        let cast = ctx.fresh_temp();
-        ctx.emit_cast(cast.as_str(), "inttoptr", func_ty.as_str(), raw_func.as_str(), "ptr");
-        cast
-    } else {
-        raw_func
+    // Try to extract a direct function name from the operand to avoid
+    // unnecessary store/load indirection for known function references.
+    let func_val = match extract_direct_fn_name(ctx, func) {
+        Option::Some(name) => name,
+        Option::None => {
+            // Fallback: emit the operand normally (may produce %tmp from a local load)
+            let func_typed = codegen_expr::emit_operand_typed(ctx, func);
+            let raw_func = func_typed.0;
+            let func_ty = func_typed.1;
+            // LLVM requires call targets to be ptr type.
+            // SSA values loaded as i64 need inttoptr conversion.
+            // Fat pointers (struct { ptr, i64 }) need extractvalue instead.
+            if starts_with_percent(&raw_func) && !string_eq_str(func_ty.as_str(), "ptr") {
+                let func_ty_bytes = func_ty.as_bytes();
+                let is_fat_ptr = func_ty_bytes.len() > 0 && func_ty_bytes[0] == 123; // '{'
+                if is_fat_ptr {
+                    // Fat pointer: extract the data pointer (field 0)
+                    let extracted = ctx.fresh_temp();
+                    ctx.write_indent();
+                    ctx.write_string(&extracted);
+                    ctx.write(" = extractvalue ");
+                    ctx.write_string(&func_ty);
+                    ctx.write(" ");
+                    ctx.write_string(&raw_func);
+                    ctx.write(", 0\n");
+                    extracted
+                } else {
+                    // Integer type: use inttoptr
+                    let cast = ctx.fresh_temp();
+                    ctx.emit_cast(cast.as_str(), "inttoptr", func_ty.as_str(), raw_func.as_str(), "ptr");
+                    cast
+                }
+            } else {
+                raw_func
+            }
+        }
     };
 
     // Emit arguments with their types
@@ -237,6 +259,37 @@ fn emit_call(
         &Option::None => {
             ctx.emit_unreachable();
         }
+    }
+}
+
+/// Extracts a direct function name from a MIR operand.
+/// Returns Some("@fn_name") if the operand is a Constant(FnDef(...)),
+/// None otherwise (for Copy/Move of locals, which need the load path).
+fn extract_direct_fn_name(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    operand: &mir_types::Operand,
+) -> Option<String> {
+    match operand {
+        &mir_types::Operand::Constant(ref constant) => {
+            match &constant.kind {
+                &mir_types::ConstantKind::FnDef(ref def_id) => {
+                    match ctx.lookup_def_name(def_id.index) {
+                        Option::Some(name) => {
+                            let mut result = common::make_string("@");
+                            result.push_str(name.as_str());
+                            Option::Some(result)
+                        }
+                        Option::None => {
+                            let mut result = common::make_string("@fn_");
+                            result.push_str(codegen_types::format_u64(def_id.index as u64).as_str());
+                            Option::Some(result)
+                        }
+                    }
+                }
+                _ => Option::None,
+            }
+        }
+        _ => Option::None,
     }
 }
 

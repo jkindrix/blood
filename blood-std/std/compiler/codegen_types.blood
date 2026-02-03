@@ -91,6 +91,22 @@ pub fn type_to_llvm(ty: &hir_ty::Type) -> String {
     }
 }
 
+/// Converts an HIR type to LLVM IR for use as a function return type.
+/// This is the same as type_to_llvm except that unit `()` becomes `void`
+/// instead of `{}`, which is required for LLVM function declarations.
+pub fn return_type_to_llvm(ty: &hir_ty::Type) -> String {
+    // Check for unit type (empty tuple)
+    match &ty.kind {
+        &hir_ty::TypeKind::Tuple(ref elems) => {
+            if elems.len() == 0 {
+                return common::make_string("void");
+            }
+            tuple_to_llvm(elems)
+        }
+        _ => type_to_llvm(ty),
+    }
+}
+
 /// Converts a primitive type to LLVM IR.
 fn primitive_to_llvm(prim: &hir_ty::PrimitiveTy) -> String {
     match prim {
@@ -152,14 +168,44 @@ fn slice_to_llvm(_elem: &hir_ty::Type) -> String {
     common::make_string("{ ptr, i64 }")
 }
 
+/// Checks if a type is unsized (requires fat pointer when referenced).
+fn is_unsized_type(ty: &hir_ty::Type) -> bool {
+    match &ty.kind {
+        // str is an unsized primitive type
+        &hir_ty::TypeKind::Primitive(ref prim) => {
+            match prim {
+                &hir_ty::PrimitiveTy::Str => true,
+                _ => false,
+            }
+        }
+        // Slices are unsized
+        &hir_ty::TypeKind::Slice { element: _ } => true,
+        // Trait objects are unsized
+        &hir_ty::TypeKind::DynTrait { trait_id: _, auto_traits: _ } => true,
+        _ => false,
+    }
+}
+
 /// Converts a reference type to LLVM IR.
-fn ref_to_llvm(_inner: &hir_ty::Type) -> String {
-    common::make_string("ptr")
+/// References to unsized types (str, slices, dyn Trait) are fat pointers.
+fn ref_to_llvm(inner: &hir_ty::Type) -> String {
+    if is_unsized_type(inner) {
+        // Fat pointer for unsized types
+        common::make_string("{ ptr, i64 }")
+    } else {
+        common::make_string("ptr")
+    }
 }
 
 /// Converts a raw pointer type to LLVM IR.
-fn ptr_to_llvm(_inner: &hir_ty::Type) -> String {
-    common::make_string("ptr")
+/// Pointers to unsized types are fat pointers.
+fn ptr_to_llvm(inner: &hir_ty::Type) -> String {
+    if is_unsized_type(inner) {
+        // Fat pointer for unsized types
+        common::make_string("{ ptr, i64 }")
+    } else {
+        common::make_string("ptr")
+    }
 }
 
 /// Converts an ADT (struct/enum) type to LLVM IR.
@@ -192,8 +238,22 @@ pub fn get_layout(ty: &hir_ty::Type) -> TypeLayout {
         &hir_ty::TypeKind::Tuple(ref elems) => tuple_layout(elems),
         &hir_ty::TypeKind::Array { ref element, size } => array_layout(element.as_ref(), size),
         &hir_ty::TypeKind::Slice { element: _ } => TypeLayout::new(16, 8, common::make_string("{ ptr, i64 }")),
-        &hir_ty::TypeKind::Ref { inner: _, mutable: _ } => TypeLayout::pointer(),
-        &hir_ty::TypeKind::Ptr { inner: _, mutable: _ } => TypeLayout::pointer(),
+        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
+            if is_unsized_type(inner.as_ref()) {
+                // Fat pointer for references to unsized types
+                TypeLayout::new(16, 8, common::make_string("{ ptr, i64 }"))
+            } else {
+                TypeLayout::pointer()
+            }
+        }
+        &hir_ty::TypeKind::Ptr { ref inner, mutable: _ } => {
+            if is_unsized_type(inner.as_ref()) {
+                // Fat pointer for pointers to unsized types
+                TypeLayout::new(16, 8, common::make_string("{ ptr, i64 }"))
+            } else {
+                TypeLayout::pointer()
+            }
+        }
         &hir_ty::TypeKind::Adt { def_id: _, args: _ } => TypeLayout::pointer(),
         &hir_ty::TypeKind::Fn { params: _, ret: _, effects: _ } => TypeLayout::pointer(),
         &hir_ty::TypeKind::Closure { def_id: _, params: _, ret: _ } => TypeLayout::pointer(),

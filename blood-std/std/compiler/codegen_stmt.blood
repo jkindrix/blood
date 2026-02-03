@@ -13,6 +13,7 @@ mod mir_body;
 mod codegen_types;
 mod codegen_ctx;
 mod codegen_expr;
+mod mir_escape;
 
 // ============================================================
 // Statement Codegen
@@ -313,6 +314,146 @@ pub fn emit_allocas(
     ctx.dedent();
 }
 
+/// Emits allocas with escape-aware allocation decisions.
+/// NoEscape locals use stack (alloca), ArgEscape use region, GlobalEscape use persistent.
+pub fn emit_allocas_with_escapes(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    body: &mir_body::MirBody,
+    escapes: &mir_escape::EscapeAnalysis,
+) {
+    ctx.indent();
+    let mut i: usize = 0;
+    while i < body.locals.len() {
+        let local = &body.locals[i];
+        let local_id = mir_def::MirLocalId::new(i as u32);
+        let name = ctx.local_alloca_name(local_id);
+        let ty_str = type_to_llvm_with_ctx(ctx, &local.ty);
+
+        // Get recommended tier from escape analysis
+        // Copy types always use stack regardless of escape state
+        let tier = if is_copy_type(&local.ty) {
+            mir_escape::MemoryTier::Stack
+        } else {
+            escapes.recommended_tier(local_id)
+        };
+
+        match &tier {
+            &mir_escape::MemoryTier::Stack => {
+                // Stack allocation (default path)
+                emit_stack_local(ctx, &name, &ty_str);
+            }
+            &mir_escape::MemoryTier::Region => {
+                // Region allocation
+                emit_region_local(ctx, &local.ty, &name);
+                ctx.mark_region_allocated(local_id);
+            }
+            &mir_escape::MemoryTier::Persistent => {
+                // Persistent allocation
+                emit_persistent_local(ctx, &local.ty, &name);
+                ctx.mark_persistent_allocated(local_id);
+            }
+        }
+
+        // Register local metadata (same for all tiers)
+        ctx.register_local(local_id, common::make_string(name.as_str()));
+        ctx.register_local_type(local_id, common::make_string(ty_str.as_str()));
+        ctx.register_local_signedness(local_id, codegen_types::is_signed(&local.ty));
+        ctx.register_local_hir_type(local_id, hir_ty::copy_type(&local.ty));
+        i = i + 1;
+    }
+    ctx.dedent();
+}
+
+/// Emits a stack-allocated local (alloca).
+fn emit_stack_local(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    name: &String,
+    ty_str: &String,
+) {
+    if is_void_or_empty_type(ty_str.as_str()) {
+        ctx.emit_alloca(name.as_str(), "{}");
+    } else {
+        ctx.emit_alloca(name.as_str(), ty_str.as_str());
+    }
+}
+
+/// Emits a region-allocated local.
+fn emit_region_local(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    ty: &hir_ty::Type,
+    name: &String,
+) {
+    // Allocate pointer slot on stack
+    ctx.emit_alloca(name.as_str(), "ptr");
+
+    // Call @blood_region_alloc(region_id=0, size, align)
+    let size = codegen_types::type_size_bytes(ty);
+    let size_str = codegen_types::format_u64(size);
+    let result_tmp = ctx.fresh_temp();
+    let mut args: Vec<(String, String)> = Vec::new();
+    args.push((common::make_string("i64"), common::make_string("0")));
+    args.push((common::make_string("i64"), size_str));
+    args.push((common::make_string("i64"), common::make_string("8")));
+    ctx.emit_call(Option::Some(result_tmp.as_str()), "i64", "@blood_region_alloc", &args);
+
+    // Convert i64 to ptr and store
+    let ptr_tmp = ctx.fresh_temp();
+    ctx.emit_cast(ptr_tmp.as_str(), "inttoptr", "i64", result_tmp.as_str(), "ptr");
+    ctx.emit_store("ptr", ptr_tmp.as_str(), name.as_str());
+}
+
+/// Emits a persistent-allocated local.
+fn emit_persistent_local(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    ty: &hir_ty::Type,
+    name: &String,
+) {
+    // Allocate pointer slot on stack
+    ctx.emit_alloca(name.as_str(), "ptr");
+
+    // Call @blood_persistent_alloc(size, align, refcount=1, destructor=null)
+    let size = codegen_types::type_size_bytes(ty);
+    let size_str = codegen_types::format_u64(size);
+    let result_tmp = ctx.fresh_temp();
+    let mut args: Vec<(String, String)> = Vec::new();
+    args.push((common::make_string("i64"), size_str));
+    args.push((common::make_string("i64"), common::make_string("8")));
+    args.push((common::make_string("i32"), common::make_string("1")));
+    args.push((common::make_string("ptr"), common::make_string("null")));
+    ctx.emit_call(Option::Some(result_tmp.as_str()), "ptr", "@blood_persistent_alloc", &args);
+
+    // Store returned pointer
+    ctx.emit_store("ptr", result_tmp.as_str(), name.as_str());
+}
+
+/// Returns true if the type is Copy (can be stack-allocated regardless of escape).
+fn is_copy_type(ty: &hir_ty::Type) -> bool {
+    match &ty.kind {
+        &hir_ty::TypeKind::Primitive(_) => true,
+        &hir_ty::TypeKind::Ref { inner: _, mutable: _ } => true,
+        &hir_ty::TypeKind::Ptr { inner: _, mutable: _ } => true,
+        &hir_ty::TypeKind::Fn { params: _, ret: _, effects: _ } => true,
+        &hir_ty::TypeKind::Never => true,
+        &hir_ty::TypeKind::Tuple(ref elems) => {
+            if elems.len() == 0 {
+                return true;
+            }
+            let mut i: usize = 0;
+            while i < elems.len() {
+                if !is_copy_type(&elems[i]) {
+                    return false;
+                }
+                i = i + 1;
+            }
+            true
+        }
+        &hir_ty::TypeKind::Array { ref element, size: _ } => {
+            is_copy_type(element.as_ref())
+        }
+        _ => false,
+    }
+}
+
 /// Stores function arguments into their allocas.
 /// Parameters are locals[1..1+param_count], mapped to LLVM args %arg0, %arg1, etc.
 pub fn emit_arg_stores(
@@ -358,7 +499,7 @@ fn is_void_or_empty_type(ty: &str) -> bool {
     false
 }
 
-fn clone_string(s: &String) -> String {
+pub fn clone_string(s: &String) -> String {
     let mut result = String::new();
     let bytes = s.as_bytes();
     let mut i: usize = 0;

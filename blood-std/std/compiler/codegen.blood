@@ -19,6 +19,7 @@ mod codegen_ctx;
 mod codegen_expr;
 mod codegen_stmt;
 mod codegen_term;
+mod mir_escape;
 
 // ============================================================
 // Module Generation
@@ -109,12 +110,42 @@ pub fn generate_module_with_items(
     output.push_str("\n");
 
     // Generate each function using the shared context
+    // Skip duplicate function definitions (keep only the first one with each name)
+    // This is a workaround for missing proper monomorphization
+    let mut generated_names: Vec<String> = Vec::new();
+    let mut skip_count: usize = 0;
     let mut i: usize = 0;
     while i < functions.len() {
         let (ref name, ref body) = functions[i];
-        let fn_ir = generate_function_with_ctx(&mut ctx, body, name.as_str());
-        output.push_str(fn_ir.as_str());
+        // Check if this function name has already been generated
+        let mut already_generated = false;
+        let mut gi: usize = 0;
+        while gi < generated_names.len() {
+            if string_eq_str(generated_names[gi].as_str(), name.as_str()) {
+                already_generated = true;
+                gi = generated_names.len(); // break
+            }
+            gi = gi + 1;
+        }
+        if !already_generated {
+            let fn_ir = generate_function_with_ctx(&mut ctx, body, name.as_str());
+            output.push_str(fn_ir.as_str());
+            generated_names.push(clone_string(name));
+        } else {
+            skip_count = skip_count + 1;
+            // Emit a comment noting the skipped duplicate
+            output.push_str("; DUPLICATE SKIPPED: @");
+            output.push_str(name.as_str());
+            output.push_str("\n");
+        }
         i = i + 1;
+    }
+    // Debug: emit total skip count as comment
+    if skip_count > 0 {
+        output.push_str("; TOTAL DUPLICATES SKIPPED: ");
+        let skip_str = codegen_types::format_u64(skip_count as u64);
+        output.push_str(skip_str.as_str());
+        output.push_str("\n");
     }
 
     // Append string constants from the context
@@ -191,8 +222,11 @@ pub fn generate_function_with_ctx(
     // Emit entry label
     ctx.write("entry:\n");
 
-    // Emit allocas for all locals
-    codegen_stmt::emit_allocas(ctx, body);
+    // Run escape analysis to determine allocation tiers
+    let escape_result = mir_escape::analyze_escapes(body);
+
+    // Emit allocas with escape-aware allocation decisions
+    codegen_stmt::emit_allocas_with_escapes(ctx, body, &escape_result);
 
     // Store arguments into allocas
     codegen_stmt::emit_arg_stores(ctx, body);
@@ -540,6 +574,7 @@ pub fn intrinsic_declarations() -> String {
     // Box runtime declarations
     output.push_str("\n; Box runtime declarations\n");
     output.push_str("declare ptr @box_new(ptr, i64)\n");
+    output.push_str("declare ptr @box_as_ref(ptr)\n");
 
     // Effect runtime declarations
     output.push_str("\n; Effect runtime declarations\n");
@@ -601,12 +636,14 @@ pub fn intrinsic_declarations() -> String {
     output.push_str("declare void @blood_region_deactivate()\n");
     output.push_str("declare i64 @blood_region_alloc(i64, i64, i64)\n");
     output.push_str("declare i32 @blood_region_exit_scope(i64)\n");
+    output.push_str("declare i64 @blood_region_used(i64)\n");
     output.push_str("define i64 @region_create(i64 %0, i64 %1) { %r = call i64 @blood_region_create(i64 %0, i64 %1) ret i64 %r }\n");
     output.push_str("define void @region_destroy(i64 %0) { call void @blood_region_destroy(i64 %0) ret void }\n");
     output.push_str("define void @region_activate(i64 %0) { call void @blood_region_activate(i64 %0) ret void }\n");
     output.push_str("define void @region_deactivate() { call void @blood_region_deactivate() ret void }\n");
     output.push_str("define i64 @region_alloc(i64 %0, i64 %1, i64 %2) { %r = call i64 @blood_region_alloc(i64 %0, i64 %1, i64 %2) ret i64 %r }\n");
     output.push_str("define i32 @region_exit_scope(i64 %0) { %r = call i32 @blood_region_exit_scope(i64 %0) ret i32 %r }\n");
+    output.push_str("define i64 @region_used(i64 %0) { %r = call i64 @blood_region_used(i64 %0) ret i64 %r }\n");
 
     // Memory management - generational references
     output.push_str("\n; Memory management - generational references\n");
@@ -675,6 +712,45 @@ fn clone_string(s: &String) -> String {
         i = i + 1;
     }
     result
+}
+
+/// Compares two &str for equality.
+fn string_eq_str(a: &str, b: &str) -> bool {
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+    if a_bytes.len() != b_bytes.len() {
+        return false;
+    }
+    let mut i: usize = 0;
+    while i < a_bytes.len() {
+        if a_bytes[i] != b_bytes[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    true
+}
+
+/// Appends a u32 as decimal digits to a string.
+fn append_u32(s: &mut String, n: u32) {
+    if n == 0 {
+        s.push('0');
+        return;
+    }
+    let mut val = n;
+    // Stack-based digit buffer
+    let mut digits: [u8; 10] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+    let mut count: usize = 0;
+    while val > 0 {
+        digits[count] = ((val % 10) as u8) + 48u8; // '0' = 48
+        val = val / 10;
+        count = count + 1;
+    }
+    // Reverse order
+    while count > 0 {
+        count = count - 1;
+        s.push(digits[count] as char);
+    }
 }
 
 // ============================================================

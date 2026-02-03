@@ -292,6 +292,24 @@ pub fn make_string(s: &str) -> String {
 // Method Resolution Entry
 // ============================================================
 
+/// Entry mapping a field access expression span to its resolved field index.
+///
+/// The type checker records these during field access type checking so that
+/// MIR lowering can look up the correct field index for named fields.
+pub struct FieldResEntry {
+    /// The start byte offset of the field access expression's span.
+    pub span_start: usize,
+    /// The resolved positional field index within the struct.
+    pub field_idx: u32,
+}
+
+impl FieldResEntry {
+    /// Creates a new field resolution entry.
+    pub fn new(span_start: usize, field_idx: u32) -> FieldResEntry {
+        FieldResEntry { span_start, field_idx }
+    }
+}
+
 /// Entry mapping an expression span to its resolved method DefId.
 ///
 /// The type checker records these during method resolution so that

@@ -297,6 +297,10 @@ pub struct TypeChecker {
     /// Records resolved method DefIds keyed by expression span start,
     /// so MIR lowering can look up methods that were resolved during type checking.
     pub method_resolutions: Vec<common::MethodResEntry>,
+    /// Field resolution side table.
+    /// Records resolved field indices keyed by expression span start,
+    /// so MIR lowering can look up the correct field index for named fields.
+    pub field_resolutions: Vec<common::FieldResEntry>,
     /// Deferred method calls whose receiver was an unresolved Infer variable.
     /// After all bodies are type-checked, these are revisited to resolve methods.
     pub pending_method_calls: Vec<common::PendingMethodCall>,
@@ -331,6 +335,7 @@ impl TypeChecker {
             effects: Vec::new(),
             builtin_def_names: Vec::new(),
             method_resolutions: Vec::new(),
+            field_resolutions: Vec::new(),
             pending_method_calls: Vec::new(),
         }
     }
@@ -364,6 +369,7 @@ impl TypeChecker {
             effects: Vec::new(),
             builtin_def_names: Vec::new(),
             method_resolutions: Vec::new(),
+            field_resolutions: Vec::new(),
             pending_method_calls: Vec::new(),
         }
     }
@@ -439,6 +445,31 @@ impl TypeChecker {
     /// The def_id_index is the DefId.index of the resolved method.
     pub fn record_method_resolution(self: &mut Self, span_start: usize, def_id_index: u32) {
         self.method_resolutions.push(common::MethodResEntry::new(span_start, def_id_index));
+    }
+
+    /// Records a resolved field index for a named field access expression.
+    /// The span_start is the byte offset of the field access expression.
+    pub fn record_field_resolution(self: &mut Self, span_start: usize, field_idx: u32) {
+        self.field_resolutions.push(common::FieldResEntry::new(span_start, field_idx));
+    }
+
+    /// Gets the field index for a struct field by name.
+    /// Returns Some(index) where index is the positional index of the field.
+    pub fn get_struct_field_idx(self: &Self, def_id: hir_def::DefId, field_name: common::Symbol) -> Option<u32> {
+        let struct_info = self.get_struct(def_id);
+        match struct_info {
+            Some(info) => {
+                let mut i: usize = 0;
+                while i < info.fields.len() {
+                    if info.fields[i].name.index == field_name.index {
+                        return Option::Some(i as u32);
+                    }
+                    i = i + 1;
+                }
+                Option::None
+            }
+            None => Option::None,
+        }
     }
 
     /// Records a deferred method call whose receiver is still an Infer variable.

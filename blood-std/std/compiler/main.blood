@@ -162,9 +162,10 @@ fn run_check(args: &Args) -> i32 {
     match &args.source_file {
         &Option::Some(ref path) => {
             // Create region for all check allocations.
-            // 4 MB initial, 20 GB max — virtual address reservation via mmap,
+            // 16 MB initial, 50 GB max — virtual address reservation via mmap,
             // physical pages committed on demand.
-            let check_region = region_create(4194304, 21474836480);
+            // Self-hosting requires ~21 GB for HIR + additional for typeck.
+            let check_region = region_create(16777216, 53687091200);
             region_activate(check_region);
 
             // Run check (all parse/HIR/typeck allocations go to check_region)
@@ -564,6 +565,7 @@ fn is_region_builtin(name: &str) -> bool {
     if str_eq(name, "region_deactivate") { return true; }
     if str_eq(name, "region_alloc") { return true; }
     if str_eq(name, "region_exit_scope") { return true; }
+    if str_eq(name, "region_used") { return true; }
     false
 }
 
@@ -601,74 +603,72 @@ fn make_def_name(def_id: u32, name: &String) -> String {
     result
 }
 
-/// Generates minimal stub functions for registered def_names that don't have bodies.
-/// These are enum variant constructors, struct constructors from items, etc. that are
-/// referenced as function pointers but have no HIR bodies. The stub is a minimal
-/// function that exists so the symbol is defined.
+/// Generates minimal stub declarations for functions that are referenced but not defined.
+/// This handles enum variant constructors that are used as discriminant values in match.
+/// Writes directly to the output file since ctx.output will be cleared by finish_streaming_module.
 fn generate_missing_stubs(
-    ctx: &mut codegen_ctx::CodegenCtx,
+    ctx: &codegen_ctx::CodegenCtx,
     defined_names: &Vec<String>,
     output_path: &str,
 ) {
-    let mut stubs = String::new();
-    // Track names we've already emitted stubs for (avoid duplicates from def_names)
-    let mut emitted: Vec<String> = Vec::new();
-
+    // Collect all referenced function names from the generated IR
+    // that need stub declarations (used as pointer values in match)
+    // Track which stubs we've already generated to avoid duplicates
+    let mut generated_stubs: Vec<String> = Vec::new();
     let count = ctx.def_names_count();
-    let mut i: usize = 0;
-    while i < count {
-        let entry = ctx.def_name_at(i);
-        let name = entry.1;
+    let mut stubs = String::new();
+    stubs.push_str("\n; Stub functions for enum variant constructors\n");
+    let mut stub_idx: usize = 0;
+    while stub_idx < count {
+        let entry = ctx.def_name_at(stub_idx);
+        let name = entry.1; // (def_id, name) tuple - get name
 
-        // Check if this name was already defined as a body
-        let mut has_body = false;
-        let mut j: usize = 0;
-        while j < defined_names.len() {
-            if str_equals(&name, defined_names[j].as_str()) {
-                has_body = true;
-                break;
-            }
-            j = j + 1;
+        // Only generate stubs for user-defined functions (names starting with "def")
+        // Skip runtime/intrinsic functions (like box_new, vec_new, etc.) which are
+        // already declared in intrinsic_declarations()
+        let name_bytes = name.as_bytes();
+        let is_user_fn = name_bytes.len() >= 3
+            && name_bytes[0] == 100  // 'd'
+            && name_bytes[1] == 101  // 'e'
+            && name_bytes[2] == 102; // 'f'
+        if !is_user_fn {
+            stub_idx = stub_idx + 1;
+            continue;
         }
 
-        if !has_body {
-            // Check if we already emitted a stub for this name
-            let mut already_emitted = false;
-            let mut k: usize = 0;
-            while k < emitted.len() {
-                if str_equals(&name, emitted[k].as_str()) {
-                    already_emitted = true;
-                    break;
-                }
-                k = k + 1;
+        // Check if already defined in Pass 2
+        let mut is_defined = false;
+        let mut di: usize = 0;
+        while di < defined_names.len() {
+            if str_equals(&defined_names[di], name.as_str()) {
+                is_defined = true;
+                di = defined_names.len(); // break
             }
-
-            if !already_emitted {
-                // Skip runtime builtins (not prefixed with "def") — they're declared elsewhere
-                let name_bytes = name.as_bytes();
-                let is_def_name = name_bytes.len() > 3
-                    && name_bytes[0] == 100  // 'd'
-                    && name_bytes[1] == 101  // 'e'
-                    && name_bytes[2] == 102; // 'f'
-
-                if is_def_name {
-                    // Emit a minimal stub: define void @name() { ret void }
-                    stubs.push_str("define void @");
-                    stubs.push_str(name.as_str());
-                    stubs.push_str("() {\n  ret void\n}\n");
-                    emitted.push(clone_string(&name));
+            di = di + 1;
+        }
+        // Also check if we already generated a stub for this name
+        if !is_defined {
+            let mut already_stubbed = false;
+            let mut si: usize = 0;
+            while si < generated_stubs.len() {
+                if str_equals(&generated_stubs[si], name.as_str()) {
+                    already_stubbed = true;
+                    si = generated_stubs.len(); // break
                 }
+                si = si + 1;
+            }
+            if !already_stubbed {
+                // Generate stub and track it
+                stubs.push_str("define void @");
+                stubs.push_str(name.as_str());
+                stubs.push_str("() { ret void }\n");
+                generated_stubs.push(clone_string(&name));
             }
         }
-        i = i + 1;
+        stub_idx = stub_idx + 1;
     }
-
-    if stubs.len() > 0 {
-        let mut header = String::new();
-        header.push_str("\n; Synthetic stubs for function-pointer-only symbols\n");
-        header.push_str(stubs.as_str());
-        file_append_string(output_path, header.as_str());
-    }
+    // Write stubs directly to file
+    file_append_string(output_path, stubs.as_str());
 }
 
 /// Registers def_names for all function-like items in the items list.
@@ -819,7 +819,7 @@ fn generate_foreign_declarations(
                                 fi = fi + 1;
                                 continue;
                             }
-                            let ret_ty = codegen_types::type_to_llvm(&ff.return_ty);
+                            let ret_ty = codegen_types::return_type_to_llvm(&ff.return_ty);
                             output.push_str("declare ");
                             output.push_str(ret_ty.as_str());
                             output.push_str(" @");
@@ -946,7 +946,8 @@ fn strip_ll_ext(path: &String) -> String {
 /// Returns true on success, false on error (errors are printed directly).
 ///
 /// Uses phase-scoped regions to manage memory:
-/// - Front-end region: holds parse/HIR/typeck data (deactivated before codegen, destroyed after)
+/// - Parse region: holds AST nodes (destroyed after HIR lowering)
+/// - HIR region: holds HIR/typeck data (destroyed after codegen)
 /// - Per-function MIR regions: hold MIR bodies (destroyed after each function's IR is written)
 fn compile_file_streaming(path: &str, output_path: &str) -> bool {
     // Phase 1: Read source file and compute base_dir (global allocator — small)
@@ -966,13 +967,12 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
 
     let base_dir = source::parent_dir(path);
 
-    // Create front-end region for heavy compilation phases (parse + HIR lower + typeck).
-    // 4 MB initial, 20 GB max — virtual address reservation via mmap,
-    // physical pages committed on demand as allocations grow.
-    let front_region = region_create(4194304, 21474836480);
-    region_activate(front_region);
+    // === Parse Phase (parse_region) ===
+    // 2 MB initial, 10 GB max — holds AST nodes, tokens, spans.
+    // Destroyed after HIR lowering to free AST memory early.
+    let parse_region = region_create(2097152, 10737418240);
+    region_activate(parse_region);
 
-    // Phase 2: Parse (allocations go to front_region)
     let parse_result = parser::parse_file(content.as_str());
     if parse_result.errors.len() > 0 {
         print_error("Parse errors:");
@@ -988,7 +988,7 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
             i = i + 1;
         }
         region_deactivate();
-        region_destroy(front_region);
+        region_destroy(parse_region);
         return false;
     }
 
@@ -997,12 +997,20 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
         &Option::None => {
             print_error("No program produced by parser");
             region_deactivate();
-            region_destroy(front_region);
+            region_destroy(parse_region);
             return false;
         }
     };
 
-    // Phase 3: Lower to HIR with base_dir for module resolution (allocations in front_region)
+    // Deactivate parse_region — AST remains readable for HIR lowering.
+    region_deactivate();
+
+    // === HIR Lower Phase (hir_region) ===
+    // 16 MB initial, 50 GB max — holds HIR items, bodies, types, typeck info.
+    // Self-hosting requires ~21 GB for HIR + additional for typeck.
+    let hir_region = region_create(16777216, 53687091200);
+    region_activate(hir_region);
+
     let lower_result = hir_lower::lower_program_with_base_dir(program, base_dir, content.as_str());
 
     // Check for HIR lowering errors
@@ -1023,11 +1031,20 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
     if has_hir_errors {
         print_error("HIR lowering errors");
         region_deactivate();
-        region_destroy(front_region);
+        region_destroy(hir_region);
+        region_destroy(parse_region);
         return false;
     }
 
-    // Phase 4: Type checking (allocations in front_region)
+    // Deactivate hir_region temporarily to destroy parse_region
+    region_deactivate();
+
+    // AST no longer needed — free parse memory early (before type checking)
+    region_destroy(parse_region);
+
+    // === Type Check Phase (hir_region) ===
+    region_activate(hir_region);
+
     let typeck_result = typeck_driver::check_lower_result(&lower_result);
     if !typeck_result.success {
         let mut ti: usize = 0;
@@ -1041,11 +1058,11 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
             ti = ti + 1;
         }
         region_deactivate();
-        region_destroy(front_region);
+        region_destroy(hir_region);
         return false;
     }
 
-    // Deactivate front-end region — data remains readable for codegen.
+    // Deactivate hir_region — data remains readable for codegen.
     // New allocations (codegen ctx, def_names) go to global allocator.
     region_deactivate();
 
@@ -1097,7 +1114,9 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
     }
 
     // Track which function names were defined (for stub generation after pass 2)
+    // Also track DefIds to skip duplicate function definitions from generic instantiations
     let mut defined_names: Vec<String> = Vec::new();
+    let mut defined_def_ids: Vec<u32> = Vec::new();
 
     // Pass 2: For each body, lower to MIR and stream IR to file.
     // Per-function MIR regions nest inside the (now deactivated) front-end region.
@@ -1125,11 +1144,28 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
             &Option::Some(ref info) => info.def_id,
             &Option::None => hir_def::DefId::new(body_idx2 as u32),
         };
+
+        // Check if this DefId was already processed (skip duplicates from generic instantiations)
+        let mut is_duplicate = false;
+        let mut di: usize = 0;
+        while di < defined_def_ids.len() {
+            if defined_def_ids[di] == def_id.index {
+                is_duplicate = true;
+                di = defined_def_ids.len(); // break
+            }
+            di = di + 1;
+        }
+        if is_duplicate {
+            body_idx2 = body_idx2 + 1;
+            continue;
+        }
+        defined_def_ids.push(def_id.index);
         defined_names.push(clone_string(&fn_name));
 
         // Per-function MIR region: isolates MIR lowering allocations.
         // Deactivate before codegen so ctx's persistent state uses global allocator.
-        let mir_region = region_create(1048576, 134217728);
+        // Large functions (e.g., match expressions with many arms) may need significant memory.
+        let mir_region = region_create(4194304, 1073741824);  // 4 MB init, 1 GB max
         region_activate(mir_region);
 
         // Lower to MIR (allocations go to mir_region)
@@ -1140,6 +1176,7 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
             span,
             &typeck_result.subst_table,
             &typeck_result.method_resolutions,
+            &typeck_result.field_resolutions,
         );
 
         // Deactivate mir_region — MIR body remains readable until destroy.
@@ -1158,7 +1195,7 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
     // Pass 3: Generate stub functions for registered names without bodies.
     // These are enum variant constructors and other synthetic functions that are
     // referenced as function pointers but don't have HIR bodies.
-    generate_missing_stubs(&mut ctx, &defined_names, output_path);
+    generate_missing_stubs(&ctx, &defined_names, output_path);
 
     // Finish: write string constants and intrinsic declarations
     codegen_streaming::finish_streaming_module(&mut ctx, output_path);
@@ -1167,8 +1204,9 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
     let foreign_decls = generate_foreign_declarations(&lower_result.interner, &lower_result.items);
     file_append_string(output_path, foreign_decls.as_str());
 
-    // Destroy front-end region — bulk-frees all parse, HIR, and typeck data
-    region_destroy(front_region);
+    // Destroy HIR region — bulk-frees all HIR and typeck data
+    // (parse_region was already destroyed after HIR lowering)
+    region_destroy(hir_region);
 
     true
 }

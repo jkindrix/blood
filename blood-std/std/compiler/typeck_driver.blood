@@ -44,6 +44,9 @@ pub struct TypeCheckResult {
     /// Method resolution side table from type checking.
     /// Maps expression span starts to resolved method DefIds for MIR lowering.
     pub method_resolutions: Vec<common::MethodResEntry>,
+    /// Field resolution side table from type checking.
+    /// Maps field access expression span starts to resolved field indices.
+    pub field_resolutions: Vec<common::FieldResEntry>,
 }
 
 impl TypeCheckResult {
@@ -53,6 +56,7 @@ impl TypeCheckResult {
         subst_table: unify::SubstTable,
         builtin_def_names: Vec<typeck::BuiltinDefName>,
         method_resolutions: Vec<common::MethodResEntry>,
+        field_resolutions: Vec<common::FieldResEntry>,
     ) -> TypeCheckResult {
         TypeCheckResult {
             success: true,
@@ -60,6 +64,7 @@ impl TypeCheckResult {
             subst_table: subst_table,
             builtin_def_names: builtin_def_names,
             method_resolutions: method_resolutions,
+            field_resolutions: field_resolutions,
         }
     }
 
@@ -68,6 +73,7 @@ impl TypeCheckResult {
         errors: Vec<typeck::TypeError>,
         subst_table: unify::SubstTable,
         method_resolutions: Vec<common::MethodResEntry>,
+        field_resolutions: Vec<common::FieldResEntry>,
     ) -> TypeCheckResult {
         TypeCheckResult {
             success: false,
@@ -75,6 +81,7 @@ impl TypeCheckResult {
             subst_table: subst_table,
             builtin_def_names: Vec::new(),
             method_resolutions: method_resolutions,
+            field_resolutions: field_resolutions,
         }
     }
 
@@ -117,9 +124,9 @@ pub fn check_types(ctx: &hir_lower_ctx::LoweringCtx) -> TypeCheckResult {
 
     // Return result with substitution table for type resolution in MIR lowering
     if checker.has_errors() {
-        TypeCheckResult::failed(checker.errors, checker.subst_table, checker.method_resolutions)
+        TypeCheckResult::failed(checker.errors, checker.subst_table, checker.method_resolutions, checker.field_resolutions)
     } else {
-        TypeCheckResult::ok(checker.subst_table, checker.builtin_def_names, checker.method_resolutions)
+        TypeCheckResult::ok(checker.subst_table, checker.builtin_def_names, checker.method_resolutions, checker.field_resolutions)
     }
 }
 
@@ -185,9 +192,9 @@ pub fn check_lower_result(result: &hir_lower_ctx::LowerResult) -> TypeCheckResul
 
     // Return result with substitution table for type resolution in MIR lowering
     if checker.has_errors() {
-        TypeCheckResult::failed(checker.errors, checker.subst_table, checker.method_resolutions)
+        TypeCheckResult::failed(checker.errors, checker.subst_table, checker.method_resolutions, checker.field_resolutions)
     } else {
-        TypeCheckResult::ok(checker.subst_table, checker.builtin_def_names, checker.method_resolutions)
+        TypeCheckResult::ok(checker.subst_table, checker.builtin_def_names, checker.method_resolutions, checker.field_resolutions)
     }
 }
 
@@ -327,6 +334,12 @@ fn register_impl(
                     takes_self_mut,
                 );
                 methods.push(method_info);
+
+                // Also register the full function signature in fn_sigs so that
+                // infer_path can find associated functions by DefId. Without this,
+                // calls like Counter::new(10) would fail to resolve the return type,
+                // leaving downstream method call receivers as Infer variables.
+                checker.register_fn_sig(assoc_fn.def_id, &assoc_fn.sig);
             }
             &hir_item::AssocItem::Type(_) => {
                 // Associated types don't need registration for basic method resolution
@@ -461,7 +474,16 @@ fn find_return_type_for_body(
                             }
                         }
                         &hir_item::AssocItem::Type(_) => {}
-                        &hir_item::AssocItem::Const(_) => {}
+                        &hir_item::AssocItem::Const(ref assoc_const) => {
+                            match &assoc_const.body_id {
+                                &Option::Some(ref bid) => {
+                                    if bid.index == target_body_id.index {
+                                        return hir_ty::copy_type(&assoc_const.ty);
+                                    }
+                                }
+                                &Option::None => {}
+                            }
+                        }
                     }
                     j = j + 1;
                 }
@@ -470,8 +492,16 @@ fn find_return_type_for_body(
             &hir_item::ItemKind::Struct(_) => {}
             &hir_item::ItemKind::Enum(_) => {}
             &hir_item::ItemKind::TypeAlias(_) => {}
-            &hir_item::ItemKind::Const(_) => {}
-            &hir_item::ItemKind::Static(_) => {}
+            &hir_item::ItemKind::Const(ref const_def) => {
+                if const_def.body_id.index == target_body_id.index {
+                    return hir_ty::copy_type(&const_def.ty);
+                }
+            }
+            &hir_item::ItemKind::Static(ref static_def) => {
+                if static_def.body_id.index == target_body_id.index {
+                    return hir_ty::copy_type(&static_def.ty);
+                }
+            }
             &hir_item::ItemKind::Trait(_) => {}
             &hir_item::ItemKind::Effect(_) => {}
             &hir_item::ItemKind::Handler(_) => {}

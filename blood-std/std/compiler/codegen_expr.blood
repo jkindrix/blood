@@ -841,6 +841,8 @@ fn emit_cast_from_llvm_types(
     let tgt_is_float = string_starts_with(tgt_ty, "float") || string_starts_with(tgt_ty, "double");
     let src_is_ptr = string_starts_with(src_ty, "ptr");
     let tgt_is_ptr = string_starts_with(tgt_ty, "ptr");
+    // Fat pointers (structs like { ptr, i64 }) should also be treated as ptr-like
+    let src_is_fat_ptr = string_starts_with(src_ty, "{");
 
     if src_is_float && tgt_is_float {
         // Float to float
@@ -859,11 +861,31 @@ fn emit_cast_from_llvm_types(
     } else if src_is_float && !tgt_is_float {
         // Float to int (default signed)
         ctx.emit_cast(result.as_str(), "fptosi", src_ty, val.as_str(), tgt_ty);
+    } else if src_is_fat_ptr && tgt_is_ptr {
+        // Fat pointer to thin pointer: extract the data pointer (field 0)
+        ctx.write_indent();
+        ctx.write_string(&result);
+        ctx.write(" = extractvalue ");
+        ctx.write(src_ty);
+        ctx.write(" ");
+        ctx.write_string(val);
+        ctx.write(", 0\n");
+    } else if src_is_fat_ptr && !tgt_is_ptr {
+        // Fat pointer to int: extract ptr, then ptrtoint
+        let extracted = ctx.fresh_temp();
+        ctx.write_indent();
+        ctx.write_string(&extracted);
+        ctx.write(" = extractvalue ");
+        ctx.write(src_ty);
+        ctx.write(" ");
+        ctx.write_string(val);
+        ctx.write(", 0\n");
+        ctx.emit_cast(result.as_str(), "ptrtoint", "ptr", extracted.as_str(), tgt_ty);
     } else if src_is_ptr && !tgt_is_ptr {
         // Pointer to int
         ctx.emit_cast(result.as_str(), "ptrtoint", src_ty, val.as_str(), tgt_ty);
-    } else if !src_is_ptr && tgt_is_ptr {
-        // Int to pointer
+    } else if !src_is_ptr && !src_is_fat_ptr && tgt_is_ptr {
+        // Int to pointer (but not fat pointer source)
         ctx.emit_cast(result.as_str(), "inttoptr", src_ty, val.as_str(), tgt_ty);
     } else if src_is_ptr && tgt_is_ptr {
         // Pointer to pointer - bitcast
@@ -1462,10 +1484,49 @@ fn emit_cast_with_types(
         ctx.emit_cast(result.as_str(), "inttoptr", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
     } else if src_is_ptr && tgt_is_ptr {
         // Pointer to pointer
-        ctx.emit_cast(result.as_str(), "bitcast", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
+        // Check if source is a fat pointer (struct) being cast to thin pointer
+        let src_bytes = src_llvm.as_bytes();
+        let tgt_bytes = tgt_llvm.as_bytes();
+        let src_is_fat = src_bytes.len() > 0 && src_bytes[0] == 123;  // '{'
+        let tgt_is_thin = tgt_bytes.len() > 0 && tgt_bytes[0] == 112; // 'p' for "ptr"
+        if src_is_fat && tgt_is_thin {
+            // Fat pointer to thin pointer: extract the data pointer (field 0)
+            ctx.write_indent();
+            ctx.write_string(&result);
+            ctx.write(" = extractvalue ");
+            ctx.write_string(&src_llvm);
+            ctx.write(" ");
+            ctx.write_string(val);
+            ctx.write(", 0\n");
+        } else if src_is_fat {
+            // Fat pointer to fat pointer: just copy
+            return clone_string(val);
+        } else {
+            // Thin pointer to pointer: bitcast or just copy if same
+            if string_eq_str(src_llvm.as_str(), tgt_llvm.as_str()) {
+                return clone_string(val);
+            } else {
+                ctx.emit_cast(result.as_str(), "bitcast", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
+            }
+        }
     } else {
-        // Fallback - bitcast
-        ctx.emit_cast(result.as_str(), "bitcast", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
+        // Fallback - check for fat pointer to thin pointer case here too
+        let src_bytes = src_llvm.as_bytes();
+        let tgt_bytes = tgt_llvm.as_bytes();
+        let src_is_fat = src_bytes.len() > 0 && src_bytes[0] == 123;  // '{'
+        let tgt_is_thin = tgt_bytes.len() > 0 && tgt_bytes[0] == 112; // 'p' for "ptr"
+        if src_is_fat && tgt_is_thin {
+            // Fat pointer to thin pointer: extract the data pointer (field 0)
+            ctx.write_indent();
+            ctx.write_string(&result);
+            ctx.write(" = extractvalue ");
+            ctx.write_string(&src_llvm);
+            ctx.write(" ");
+            ctx.write_string(val);
+            ctx.write(", 0\n");
+        } else {
+            ctx.emit_cast(result.as_str(), "bitcast", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
+        }
     }
 
     result
@@ -1615,29 +1676,66 @@ fn emit_aggregate_adt(
             let discr_val = codegen_types::format_u64(variant_idx as u64);
             ctx.emit_store(discr_ty.as_str(), discr_val.as_str(), discr_ptr.as_str());
 
-            // Get pointer to payload area (field 1 of enum type)
-            let data_ptr = ctx.fresh_temp();
-            let mut data_indices: Vec<String> = Vec::new();
-            data_indices.push(common::make_string("0"));
-            data_indices.push(common::make_string("1"));
-            ctx.emit_gep(data_ptr.as_str(), enum_ty.as_str(), dest, &data_indices);
+            // Store payload fields only if there are operands
+            if operands.len() > 0 {
+                // Get pointer to payload area (field 1 of enum type)
+                let data_ptr = ctx.fresh_temp();
+                let mut data_indices: Vec<String> = Vec::new();
+                data_indices.push(common::make_string("0"));
+                data_indices.push(common::make_string("1"));
+                ctx.emit_gep(data_ptr.as_str(), enum_ty.as_str(), dest, &data_indices);
 
-            // Store each operand field using the variant's payload type
-            let mut i: usize = 0;
-            while i < operands.len() {
-                let field_val = emit_operand(ctx, &operands[i]);
-                let field_ptr = ctx.fresh_temp();
-                let mut field_indices: Vec<String> = Vec::new();
-                field_indices.push(common::make_string("0"));
-                field_indices.push(codegen_types::format_u64(i as u64));
-                ctx.emit_gep(field_ptr.as_str(), payload_ty.as_str(), data_ptr.as_str(), &field_indices);
-                // Use actual field type if available
-                if i < variant_field_types.len() {
-                    ctx.emit_store(variant_field_types[i].as_str(), field_val.as_str(), field_ptr.as_str());
-                } else {
-                    ctx.emit_store("i64", field_val.as_str(), field_ptr.as_str());
+                // Store each operand field using the variant's payload type
+                let mut i: usize = 0;
+                while i < operands.len() {
+                    let typed = emit_operand_typed(ctx, &operands[i]);
+                    let operand_val = typed.0;
+                    let operand_ty = typed.1;
+                    let field_ptr = ctx.fresh_temp();
+                    let mut field_indices: Vec<String> = Vec::new();
+                    field_indices.push(common::make_string("0"));
+                    field_indices.push(codegen_types::format_u64(i as u64));
+                    ctx.emit_gep(field_ptr.as_str(), payload_ty.as_str(), data_ptr.as_str(), &field_indices);
+                    // Use actual field type if available, with type conversion if needed
+                    let field_ty_str = if i < variant_field_types.len() {
+                        variant_field_types[i].as_str()
+                    } else {
+                        "i64"
+                    };
+                    // Check if operand type matches field type
+                    if string_eq_str(operand_ty.as_str(), field_ty_str) {
+                        ctx.emit_store(field_ty_str, operand_val.as_str(), field_ptr.as_str());
+                    } else {
+                        let src_w = llvm_int_bit_width(operand_ty.as_str());
+                        let dst_w = llvm_int_bit_width(field_ty_str);
+                        if src_w > dst_w && dst_w > 0 {
+                            // Wider to narrower: truncate
+                            let cast_tmp = ctx.fresh_temp();
+                            ctx.emit_cast(cast_tmp.as_str(), "trunc", operand_ty.as_str(), operand_val.as_str(), field_ty_str);
+                            ctx.emit_store(field_ty_str, cast_tmp.as_str(), field_ptr.as_str());
+                        } else if src_w < dst_w && src_w > 0 {
+                            // Narrower to wider: zero-extend
+                            let cast_tmp = ctx.fresh_temp();
+                            ctx.emit_cast(cast_tmp.as_str(), "zext", operand_ty.as_str(), operand_val.as_str(), field_ty_str);
+                            ctx.emit_store(field_ty_str, cast_tmp.as_str(), field_ptr.as_str());
+                        } else if src_w > 0 && string_eq_str(field_ty_str, "ptr") {
+                            // Integer to pointer: inttoptr
+                            let cast_tmp = ctx.fresh_temp();
+                            ctx.emit_cast(cast_tmp.as_str(), "inttoptr", operand_ty.as_str(), operand_val.as_str(), "ptr");
+                            ctx.emit_store("ptr", cast_tmp.as_str(), field_ptr.as_str());
+                        } else if dst_w > 0 && string_eq_str(operand_ty.as_str(), "ptr") {
+                            // Pointer to integer: ptrtoint
+                            let cast_tmp = ctx.fresh_temp();
+                            ctx.emit_cast(cast_tmp.as_str(), "ptrtoint", "ptr", operand_val.as_str(), field_ty_str);
+                            ctx.emit_store(field_ty_str, cast_tmp.as_str(), field_ptr.as_str());
+                        } else {
+                            // Other mismatch (e.g., aggregate type from nested enum).
+                            // Store with the operand's own type so the IR is valid.
+                            ctx.emit_store(operand_ty.as_str(), operand_val.as_str(), field_ptr.as_str());
+                        }
+                    }
+                    i = i + 1;
                 }
-                i = i + 1;
             }
             return;
         }

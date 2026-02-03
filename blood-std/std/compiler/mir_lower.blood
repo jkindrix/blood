@@ -37,6 +37,7 @@ pub fn lower_body(
     span: common::Span,
     subst_table: &unify::SubstTable,
     method_resolutions: &Vec<common::MethodResEntry>,
+    field_resolutions: &Vec<common::FieldResEntry>,
 ) -> mir_body::MirBody {
     // Resolve the return type through the substitution table
     let resolved_return = unify::apply_substs(subst_table, &return_ty);
@@ -47,8 +48,11 @@ pub fn lower_body(
     // Clone method resolutions for this lowering context
     let cloned_resolutions = clone_method_resolutions(method_resolutions);
 
-    // Create lowering context with the substitution table and method resolutions
-    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_return, span, cloned_table, cloned_resolutions);
+    // Clone field resolutions for this lowering context
+    let cloned_field_res = clone_field_resolutions(field_resolutions);
+
+    // Create lowering context with the substitution table, method and field resolutions
+    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_return, span, cloned_table, cloned_resolutions, cloned_field_res);
 
     // Lower parameters (first param_count locals are parameters)
     lower_params_from_body(&mut ctx, body, span);
@@ -110,7 +114,7 @@ pub fn lower_closure(
     // Resolve return type and create lowering context with substitution table
     let resolved_return = unify::apply_substs(subst_table, &return_ty);
     let cloned_table = unify::clone_subst_table(subst_table);
-    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_return, span, cloned_table, Vec::new());
+    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_return, span, cloned_table, Vec::new(), Vec::new());
 
     // Lower closure parameters
     lower_closure_params(&mut ctx, params, span);
@@ -163,7 +167,7 @@ pub fn lower_static(
     // Resolve type and create context with substitution table
     let resolved_ty = unify::apply_substs(subst_table, &ty);
     let cloned_table = unify::clone_subst_table(subst_table);
-    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_ty, span, cloned_table, Vec::new());
+    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_ty, span, cloned_table, Vec::new(), Vec::new());
 
     // Lower initializer expression
     mir_lower_expr::lower_expr_to_return(&mut ctx, init);
@@ -285,6 +289,17 @@ fn clone_method_resolutions(src: &Vec<common::MethodResEntry>) -> Vec<common::Me
     let mut i: usize = 0;
     while i < src.len() {
         result.push(common::MethodResEntry::new(src[i].span_start, src[i].def_id_index));
+        i = i + 1;
+    }
+    result
+}
+
+/// Clones a field resolution table for passing to a new MirLowerCtx.
+fn clone_field_resolutions(src: &Vec<common::FieldResEntry>) -> Vec<common::FieldResEntry> {
+    let mut result: Vec<common::FieldResEntry> = Vec::new();
+    let mut i: usize = 0;
+    while i < src.len() {
+        result.push(common::FieldResEntry::new(src[i].span_start, src[i].field_idx));
         i = i + 1;
     }
     result
