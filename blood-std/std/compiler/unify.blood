@@ -11,6 +11,7 @@
 mod common;
 mod hir_def;
 mod hir_ty;
+mod hashmap;
 
 // ============================================================
 // Unification Result
@@ -161,12 +162,17 @@ impl TypeParamEntry {
 pub struct TypeParamSubst {
     /// The substitution entries.
     pub entries: Vec<TypeParamEntry>,
+    /// Hash index for O(1) param lookup (param_index → vec index).
+    pub hash_index: hashmap::HashMapU64U32,
 }
 
 impl TypeParamSubst {
     /// Creates an empty type parameter substitution.
     pub fn new() -> TypeParamSubst {
-        TypeParamSubst { entries: Vec::new() }
+        TypeParamSubst {
+            entries: Vec::new(),
+            hash_index: hashmap::HashMapU64U32::new(),
+        }
     }
 
     /// Creates a substitution from a list of types (indexed 0, 1, 2, ...).
@@ -174,7 +180,9 @@ impl TypeParamSubst {
         let mut subst = TypeParamSubst::new();
         let mut i: usize = 0;
         while i < types.len() {
+            let vec_idx = subst.entries.len() as u32;
             subst.entries.push(TypeParamEntry::new(i as u32, hir_ty::copy_type(&types[i])));
+            subst.hash_index.insert(i as u64, vec_idx);
             i = i + 1;
         }
         subst
@@ -182,11 +190,24 @@ impl TypeParamSubst {
 
     /// Adds a substitution entry.
     pub fn add(self: &mut Self, param_index: u32, ty: hir_ty::Type) {
+        let vec_idx = self.entries.len() as u32;
         self.entries.push(TypeParamEntry::new(param_index, ty));
+        self.hash_index.insert(param_index as u64, vec_idx);
     }
 
     /// Looks up a type parameter by index.
     pub fn lookup(self: &Self, param_index: u32) -> Option<hir_ty::Type> {
+        // O(1) hash lookup
+        match self.hash_index.get(param_index as u64) {
+            Option::Some(vec_idx) => {
+                let idx = vec_idx as usize;
+                if idx < self.entries.len() {
+                    return Option::Some(hir_ty::copy_type(&self.entries[idx].ty));
+                }
+            }
+            Option::None => {}
+        }
+        // Fallback to linear scan for collision handling
         let mut i: usize = 0;
         while i < self.entries.len() {
             if self.entries[i].param_index == param_index {
@@ -790,6 +811,12 @@ pub struct SubstTable {
     pub effect_substs: Vec<EffectRowSubst>,
     /// Record row variable substitutions.
     pub record_substs: Vec<RecordRowSubst>,
+    /// Hash index for O(1) type variable lookup (var_id.index → vec index).
+    pub ty_hash: hashmap::HashMapU64U32,
+    /// Hash index for O(1) effect variable lookup.
+    pub effect_hash: hashmap::HashMapU64U32,
+    /// Hash index for O(1) record variable lookup.
+    pub record_hash: hashmap::HashMapU64U32,
 }
 
 impl SubstTable {
@@ -799,6 +826,9 @@ impl SubstTable {
             ty_substs: Vec::new(),
             effect_substs: Vec::new(),
             record_substs: Vec::new(),
+            ty_hash: hashmap::HashMapU64U32::new(),
+            effect_hash: hashmap::HashMapU64U32::new(),
+            record_hash: hashmap::HashMapU64U32::new(),
         }
     }
 }
@@ -814,26 +844,34 @@ pub fn clone_subst_table(table: &SubstTable) -> SubstTable {
     // Clone type substitutions
     let mut i: usize = 0;
     while i < table.ty_substs.len() {
+        let vec_idx = new_table.ty_substs.len() as u32;
+        let var_id = table.ty_substs[i].var_id;
         new_table.ty_substs.push(TySubst::new(
-            table.ty_substs[i].var_id,
+            var_id,
             hir_ty::copy_type(&table.ty_substs[i].ty),
         ));
+        new_table.ty_hash.insert(var_id.index as u64, vec_idx);
         i = i + 1;
     }
 
     // Clone effect row substitutions
     let mut i: usize = 0;
     while i < table.effect_substs.len() {
+        let vec_idx = new_table.effect_substs.len() as u32;
+        let var_id = table.effect_substs[i].var_id;
         new_table.effect_substs.push(EffectRowSubst::new(
-            table.effect_substs[i].var_id,
+            var_id,
             hir_ty::copy_effect_row(&table.effect_substs[i].row),
         ));
+        new_table.effect_hash.insert(var_id.index as u64, vec_idx);
         i = i + 1;
     }
 
     // Clone record row substitutions
     let mut i: usize = 0;
     while i < table.record_substs.len() {
+        let vec_idx = new_table.record_substs.len() as u32;
+        let var_id = table.record_substs[i].var_id;
         let mut fields: Vec<hir_ty::RecordField> = Vec::new();
         let mut j: usize = 0;
         while j < table.record_substs[i].fields.len() {
@@ -844,10 +882,11 @@ pub fn clone_subst_table(table: &SubstTable) -> SubstTable {
             j = j + 1;
         }
         new_table.record_substs.push(RecordRowSubst::new(
-            table.record_substs[i].var_id,
+            var_id,
             fields,
             table.record_substs[i].rest,
         ));
+        new_table.record_hash.insert(var_id.index as u64, vec_idx);
         i = i + 1;
     }
 
@@ -1284,13 +1323,26 @@ impl DeferredConstraint {
 impl SubstTable {
     /// Adds a type variable substitution.
     pub fn add_ty_subst(self: &mut Self, var_id: hir_def::TyVarId, ty: hir_ty::Type) {
+        let vec_idx = self.ty_substs.len() as u32;
         let subst = TySubst::new(var_id, ty);
         self.ty_substs.push(subst);
+        self.ty_hash.insert(var_id.index as u64, vec_idx);
     }
 
     /// Looks up a type variable in the substitution table.
     /// Returns Some(ty) if the variable is bound, None otherwise.
     pub fn lookup_ty(self: &Self, var_id: hir_def::TyVarId) -> Option<hir_ty::Type> {
+        // O(1) hash lookup
+        match self.ty_hash.get(var_id.index as u64) {
+            Option::Some(vec_idx) => {
+                let idx = vec_idx as usize;
+                if idx < self.ty_substs.len() {
+                    return Option::Some(hir_ty::copy_type(&self.ty_substs[idx].ty));
+                }
+            }
+            Option::None => {}
+        }
+        // Fallback to linear scan for collision handling
         let mut i: usize = 0;
         while i < self.ty_substs.len() {
             if self.ty_substs[i].var_id.index == var_id.index {
@@ -1303,12 +1355,25 @@ impl SubstTable {
 
     /// Adds an effect row variable substitution.
     pub fn add_effect_subst(self: &mut Self, var_id: hir_def::EffectRowVarId, row: hir_ty::EffectRow) {
+        let vec_idx = self.effect_substs.len() as u32;
         let subst = EffectRowSubst::new(var_id, row);
         self.effect_substs.push(subst);
+        self.effect_hash.insert(var_id.index as u64, vec_idx);
     }
 
     /// Looks up an effect row variable.
     pub fn lookup_effect(self: &Self, var_id: hir_def::EffectRowVarId) -> Option<hir_ty::EffectRow> {
+        // O(1) hash lookup
+        match self.effect_hash.get(var_id.index as u64) {
+            Option::Some(vec_idx) => {
+                let idx = vec_idx as usize;
+                if idx < self.effect_substs.len() {
+                    return Option::Some(hir_ty::copy_effect_row(&self.effect_substs[idx].row));
+                }
+            }
+            Option::None => {}
+        }
+        // Fallback to linear scan for collision handling
         let mut i: usize = 0;
         while i < self.effect_substs.len() {
             if self.effect_substs[i].var_id.index == var_id.index {
@@ -1329,8 +1394,10 @@ impl SubstTable {
         fields: Vec<hir_ty::RecordField>,
         rest: Option<hir_def::RecordRowVarId>,
     ) {
+        let vec_idx = self.record_substs.len() as u32;
         let subst = RecordRowSubst::new(var_id, fields, rest);
         self.record_substs.push(subst);
+        self.record_hash.insert(var_id.index as u64, vec_idx);
     }
 
     /// Looks up a record row variable.
@@ -1338,6 +1405,31 @@ impl SubstTable {
     /// Returns the fields and optional rest row variable that the given
     /// row variable is bound to.
     pub fn lookup_record(self: &Self, var_id: hir_def::RecordRowVarId) -> Option<RecordRowSubst> {
+        // O(1) hash lookup
+        match self.record_hash.get(var_id.index as u64) {
+            Option::Some(vec_idx) => {
+                let idx = vec_idx as usize;
+                if idx < self.record_substs.len() {
+                    // Return a copy of the substitution
+                    let mut copied_fields: Vec<hir_ty::RecordField> = Vec::new();
+                    let mut j: usize = 0;
+                    while j < self.record_substs[idx].fields.len() {
+                        copied_fields.push(hir_ty::RecordField {
+                            name: self.record_substs[idx].fields[j].name,
+                            ty: hir_ty::copy_type(&self.record_substs[idx].fields[j].ty),
+                        });
+                        j = j + 1;
+                    }
+                    return Option::Some(RecordRowSubst {
+                        var_id: self.record_substs[idx].var_id,
+                        fields: copied_fields,
+                        rest: self.record_substs[idx].rest,
+                    });
+                }
+            }
+            Option::None => {}
+        }
+        // Fallback to linear scan for collision handling
         let mut i: usize = 0;
         while i < self.record_substs.len() {
             if self.record_substs[i].var_id.index == var_id.index {

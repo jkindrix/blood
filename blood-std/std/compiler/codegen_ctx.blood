@@ -12,15 +12,18 @@ mod mir_stmt;
 mod mir_term;
 mod mir_body;
 mod codegen_types;
+mod hashmap;
 
 // ============================================================
 // ADT Layout Types
 // ============================================================
 
-/// Information about a single field's LLVM type.
+/// Information about a single field's type (LLVM and optionally HIR).
 pub struct AdtFieldInfo {
     /// The LLVM type string for this field (e.g., "i32", "ptr", "{ i32, i64 }").
     pub llvm_type: String,
+    /// The HIR type for this field, if known. Used for computing element sizes during indexing.
+    pub hir_type: Option<hir_ty::Type>,
 }
 
 /// Layout of a struct type.
@@ -99,6 +102,23 @@ pub struct CodegenCtx {
     def_names: Vec<DefNameEntry>,
     /// ADT type registry: maps DefIds to their layout information.
     pub adt_registry: Vec<AdtEntry>,
+    // Hash indexes for O(1) lookups
+    /// Hash index for def_names: def_id -> index in def_names vec
+    def_names_hash: hashmap::HashMapU64U32,
+    /// Hash index for local_names: local_id -> index in local_names vec
+    local_names_hash: hashmap::HashMapU64U32,
+    /// Hash index for local_types: local_id -> index in local_types vec
+    local_types_hash: hashmap::HashMapU64U32,
+    /// Hash index for local_signedness: local_id -> index in local_signedness vec
+    local_signedness_hash: hashmap::HashMapU64U32,
+    /// Hash index for local_hir_types: local_id -> index in local_hir_types vec
+    local_hir_types_hash: hashmap::HashMapU64U32,
+    /// Hash set for region_locals: local_id -> 1 if present
+    region_locals_hash: hashmap::HashMapU64U32,
+    /// Hash set for persistent_locals: local_id -> 1 if present
+    persistent_locals_hash: hashmap::HashMapU64U32,
+    /// Hash index for string_table: string content hash -> index in string_table vec
+    string_table_hash: hashmap::HashMapU64U32,
 }
 
 /// Mapping from a MIR local to its LLVM type.
@@ -177,11 +197,27 @@ impl CodegenCtx {
             string_counter: 0,
             def_names: Vec::new(),
             adt_registry: Vec::new(),
+            def_names_hash: hashmap::HashMapU64U32::new(),
+            local_names_hash: hashmap::HashMapU64U32::new(),
+            local_types_hash: hashmap::HashMapU64U32::new(),
+            local_signedness_hash: hashmap::HashMapU64U32::new(),
+            local_hir_types_hash: hashmap::HashMapU64U32::new(),
+            region_locals_hash: hashmap::HashMapU64U32::new(),
+            persistent_locals_hash: hashmap::HashMapU64U32::new(),
+            string_table_hash: hashmap::HashMapU64U32::new(),
         }
     }
 
     /// Creates a new codegen context with pre-populated def names.
     pub fn with_def_names(def_names: Vec<DefNameEntry>) -> CodegenCtx {
+        // Build hash index for def_names
+        let mut def_names_hash = hashmap::HashMapU64U32::with_capacity(def_names.len());
+        let mut i: usize = 0;
+        while i < def_names.len() {
+            def_names_hash.insert(def_names[i].def_id as u64, i as u32);
+            i = i + 1;
+        }
+
         CodegenCtx {
             output: String::new(),
             indent_level: 0,
@@ -198,16 +234,34 @@ impl CodegenCtx {
             string_counter: 0,
             def_names: def_names,
             adt_registry: Vec::new(),
+            def_names_hash: def_names_hash,
+            local_names_hash: hashmap::HashMapU64U32::new(),
+            local_types_hash: hashmap::HashMapU64U32::new(),
+            local_signedness_hash: hashmap::HashMapU64U32::new(),
+            local_hir_types_hash: hashmap::HashMapU64U32::new(),
+            region_locals_hash: hashmap::HashMapU64U32::new(),
+            persistent_locals_hash: hashmap::HashMapU64U32::new(),
+            string_table_hash: hashmap::HashMapU64U32::new(),
         }
     }
 
     /// Registers a DefId with its global name.
     pub fn register_def_name(self: &mut CodegenCtx, def_id: u32, name: String) {
+        let idx = self.def_names.len() as u32;
         self.def_names.push(DefNameEntry { def_id, name });
+        self.def_names_hash.insert(def_id as u64, idx);
     }
 
     /// Looks up the global name for a DefId.
     pub fn lookup_def_name(self: &CodegenCtx, def_id: u32) -> Option<String> {
+        // Fast path: hash lookup
+        match self.def_names_hash.get(def_id as u64) {
+            Option::Some(idx) => {
+                return Option::Some(clone_string(&self.def_names[idx as usize].name));
+            }
+            Option::None => {}
+        }
+        // Fallback: linear scan (should not happen)
         let mut i: usize = 0;
         while i < self.def_names.len() {
             if self.def_names[i].def_id == def_id {
@@ -316,12 +370,12 @@ impl CodegenCtx {
 
     /// Gets the LLVM name for a MIR local.
     pub fn local_name(self: &CodegenCtx, local: mir_def::MirLocalId) -> String {
-        let mut i: usize = 0;
-        while i < self.local_names.len() {
-            if self.local_names[i].local_id == local.index {
-                return clone_string(&self.local_names[i].name);
+        // Fast path: hash lookup
+        match self.local_names_hash.get(local.index as u64) {
+            Option::Some(idx) => {
+                return clone_string(&self.local_names[idx as usize].name);
             }
-            i = i + 1;
+            Option::None => {}
         }
         // Fallback: generate name from index
         let mut name = common::make_string("%_");
@@ -332,28 +386,32 @@ impl CodegenCtx {
 
     /// Registers a local with its LLVM name.
     pub fn register_local(self: &mut CodegenCtx, local: mir_def::MirLocalId, name: String) {
+        let idx = self.local_names.len() as u32;
         self.local_names.push(LocalName {
             local_id: local.index,
             name: name,
         });
+        self.local_names_hash.insert(local.index as u64, idx);
     }
 
     /// Registers a local with its LLVM type.
     pub fn register_local_type(self: &mut CodegenCtx, local: mir_def::MirLocalId, llvm_type: String) {
+        let idx = self.local_types.len() as u32;
         self.local_types.push(LocalType {
             local_id: local.index,
             llvm_type: llvm_type,
         });
+        self.local_types_hash.insert(local.index as u64, idx);
     }
 
     /// Gets the LLVM type for a MIR local.
     pub fn get_local_type(self: &CodegenCtx, local: mir_def::MirLocalId) -> String {
-        let mut i: usize = 0;
-        while i < self.local_types.len() {
-            if self.local_types[i].local_id == local.index {
-                return clone_string(&self.local_types[i].llvm_type);
+        // Fast path: hash lookup
+        match self.local_types_hash.get(local.index as u64) {
+            Option::Some(idx) => {
+                return clone_string(&self.local_types[idx as usize].llvm_type);
             }
-            i = i + 1;
+            Option::None => {}
         }
         // Fallback: return i64 if type not found
         common::make_string("i64")
@@ -361,20 +419,22 @@ impl CodegenCtx {
 
     /// Registers a local with its signedness (true = signed, false = unsigned).
     pub fn register_local_signedness(self: &mut CodegenCtx, local: mir_def::MirLocalId, is_signed: bool) {
+        let idx = self.local_signedness.len() as u32;
         self.local_signedness.push(LocalSignedness {
             local_id: local.index,
             is_signed: is_signed,
         });
+        self.local_signedness_hash.insert(local.index as u64, idx);
     }
 
     /// Returns whether a local is signed. Defaults to true if not found.
     pub fn is_local_signed(self: &CodegenCtx, local: mir_def::MirLocalId) -> bool {
-        let mut i: usize = 0;
-        while i < self.local_signedness.len() {
-            if self.local_signedness[i].local_id == local.index {
-                return self.local_signedness[i].is_signed;
+        // Fast path: hash lookup
+        match self.local_signedness_hash.get(local.index as u64) {
+            Option::Some(idx) => {
+                return self.local_signedness[idx as usize].is_signed;
             }
-            i = i + 1;
+            Option::None => {}
         }
         // Default to signed if not found
         true
@@ -382,20 +442,22 @@ impl CodegenCtx {
 
     /// Registers a local with its HIR type.
     pub fn register_local_hir_type(self: &mut CodegenCtx, local: mir_def::MirLocalId, hir_type: hir_ty::Type) {
+        let idx = self.local_hir_types.len() as u32;
         self.local_hir_types.push(LocalHirType {
             local_id: local.index,
             hir_type: hir_type,
         });
+        self.local_hir_types_hash.insert(local.index as u64, idx);
     }
 
     /// Gets the HIR type for a MIR local.
     pub fn get_local_hir_type(self: &CodegenCtx, local: mir_def::MirLocalId) -> Option<&hir_ty::Type> {
-        let mut i: usize = 0;
-        while i < self.local_hir_types.len() {
-            if self.local_hir_types[i].local_id == local.index {
-                return Option::Some(&self.local_hir_types[i].hir_type);
+        // Fast path: hash lookup
+        match self.local_hir_types_hash.get(local.index as u64) {
+            Option::Some(idx) => {
+                return Option::Some(&self.local_hir_types[idx as usize].hir_type);
             }
-            i = i + 1;
+            Option::None => {}
         }
         Option::None
     }
@@ -403,35 +465,23 @@ impl CodegenCtx {
     /// Marks a local as region-allocated (will be unregistered on StorageDead).
     pub fn mark_region_allocated(self: &mut CodegenCtx, local: mir_def::MirLocalId) {
         self.region_locals.push(RegionLocalEntry { local_id: local.index });
+        self.region_locals_hash.insert(local.index as u64, 1);
     }
 
     /// Marks a local as persistent-allocated (will be decremented on StorageDead).
     pub fn mark_persistent_allocated(self: &mut CodegenCtx, local: mir_def::MirLocalId) {
         self.persistent_locals.push(PersistentLocalEntry { local_id: local.index });
+        self.persistent_locals_hash.insert(local.index as u64, 1);
     }
 
     /// Returns true if a local is region-allocated.
     pub fn is_region_allocated(self: &CodegenCtx, local: mir_def::MirLocalId) -> bool {
-        let mut i: usize = 0;
-        while i < self.region_locals.len() {
-            if self.region_locals[i].local_id == local.index {
-                return true;
-            }
-            i = i + 1;
-        }
-        false
+        self.region_locals_hash.contains_key(local.index as u64)
     }
 
     /// Returns true if a local is persistent-allocated.
     pub fn is_persistent_allocated(self: &CodegenCtx, local: mir_def::MirLocalId) -> bool {
-        let mut i: usize = 0;
-        while i < self.persistent_locals.len() {
-            if self.persistent_locals[i].local_id == local.index {
-                return true;
-            }
-            i = i + 1;
-        }
-        false
+        self.persistent_locals_hash.contains_key(local.index as u64)
     }
 
     /// Clears all local names, types, and signedness (for reuse between functions).
@@ -442,6 +492,13 @@ impl CodegenCtx {
         self.local_hir_types.clear();
         self.region_locals.clear();
         self.persistent_locals.clear();
+        // Clear hash indexes too
+        self.local_names_hash = hashmap::HashMapU64U32::new();
+        self.local_types_hash = hashmap::HashMapU64U32::new();
+        self.local_signedness_hash = hashmap::HashMapU64U32::new();
+        self.local_hir_types_hash = hashmap::HashMapU64U32::new();
+        self.region_locals_hash = hashmap::HashMapU64U32::new();
+        self.persistent_locals_hash = hashmap::HashMapU64U32::new();
     }
 
     // ======== ADT Registry ========
@@ -493,6 +550,23 @@ impl CodegenCtx {
         Option::None
     }
 
+    /// Looks up a struct field's HIR type by struct DefId and field index.
+    pub fn lookup_field_hir_type(self: &CodegenCtx, def_id: u32, field_idx: u32) -> Option<&hir_ty::Type> {
+        match self.lookup_struct(def_id) {
+            Option::Some(layout) => {
+                if (field_idx as usize) < layout.fields.len() {
+                    match &layout.fields[field_idx as usize].hir_type {
+                        &Option::Some(ref ty) => Option::Some(ty),
+                        &Option::None => Option::None,
+                    }
+                } else {
+                    Option::None
+                }
+            }
+            Option::None => Option::None,
+        }
+    }
+
     /// Gets the LLVM type for an ADT (struct or enum) by DefId.
     /// Returns "ptr" as fallback if not found in the registry.
     /// Scans from the end so that pass 2 entries (with resolved nested types)
@@ -516,6 +590,18 @@ impl CodegenCtx {
         }
         // Fallback: ADT not in registry, use opaque pointer
         common::make_string("ptr")
+    }
+
+    /// Converts a type to LLVM IR, using the ADT registry for struct/enum types.
+    /// This is the context-aware version that properly resolves ADT types.
+    /// Falls back to `codegen_types::type_to_llvm` for non-ADT types.
+    pub fn type_to_llvm_with_ctx(self: &CodegenCtx, ty: &hir_ty::Type) -> String {
+        match &ty.kind {
+            &hir_ty::TypeKind::Adt { def_id, args: _ } => {
+                self.adt_llvm_type(def_id.index)
+            }
+            _ => codegen_types::type_to_llvm(ty),
+        }
     }
 
     /// Generates the name for a MIR local alloca.
@@ -562,7 +648,39 @@ impl CodegenCtx {
 
     /// Adds a string constant to the table and returns its global label.
     pub fn add_string_constant(self: &mut CodegenCtx, content: &String) -> String {
-        // Check if this string is already in the table
+        // Fast path: check hash index
+        let hash = hashmap::hash_string(content);
+        match self.string_table_hash.get(hash) {
+            Option::Some(idx) => {
+                // Verify it's the same string (handle hash collisions)
+                if string_equal(&self.string_table[idx as usize].content, content) {
+                    return clone_string(&self.string_table[idx as usize].label);
+                }
+                // Hash collision - fall through to linear scan
+            }
+            Option::None => {
+                // Definitely new, add it
+                let n = self.string_counter;
+                self.string_counter = self.string_counter + 1;
+                let mut label = common::make_string("@.str.");
+                let num_str = codegen_types::format_u64(n as u64);
+                label.push_str(num_str.as_str());
+
+                let length = content.len() + 1; // +1 for null terminator
+                let idx = self.string_table.len() as u32;
+
+                self.string_table.push(StringConstant {
+                    label: clone_string(&label),
+                    content: clone_string(content),
+                    length: length,
+                });
+                self.string_table_hash.insert(hash, idx);
+
+                return label;
+            }
+        }
+
+        // Hash collision case: linear scan
         let mut i: usize = 0;
         while i < self.string_table.len() {
             if string_equal(&self.string_table[i].content, content) {
@@ -571,14 +689,14 @@ impl CodegenCtx {
             i = i + 1;
         }
 
-        // Create a new entry
+        // Not found, add new (collision case)
         let n = self.string_counter;
         self.string_counter = self.string_counter + 1;
         let mut label = common::make_string("@.str.");
         let num_str = codegen_types::format_u64(n as u64);
         label.push_str(num_str.as_str());
 
-        let length = content.len() + 1; // +1 for null terminator
+        let length = content.len() + 1;
 
         self.string_table.push(StringConstant {
             label: clone_string(&label),

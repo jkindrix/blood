@@ -9,6 +9,7 @@
 
 mod common;
 mod hir_def;
+mod hashmap;
 
 // ============================================================
 // Resolution Errors
@@ -276,6 +277,12 @@ pub struct Resolver {
     pub next_def_id: u32,
     /// Counter for allocating LocalIds (reset per function).
     pub next_local_id: u32,
+    /// Hash index for O(1) global name lookup: name.index → vec index
+    pub globals_hash: hashmap::HashMapU64U32,
+    /// Hash index for O(1) def_info lookup: def_id.index → vec index
+    pub def_info_hash: hashmap::HashMapU64U32,
+    /// Hash index for O(1) child lookup: (parent_def.index, name.index) combined → def_id.index
+    pub child_def_hash: hashmap::HashMapU64U64,
 }
 
 impl Resolver {
@@ -289,6 +296,9 @@ impl Resolver {
             errors: Vec::new(),
             next_def_id: 0,
             next_local_id: 0,
+            globals_hash: hashmap::HashMapU64U32::new(),
+            def_info_hash: hashmap::HashMapU64U32::new(),
+            child_def_hash: hashmap::HashMapU64U64::new(),
         };
         // Create the root module scope
         let root_scope = Scope {
@@ -406,18 +416,17 @@ impl Resolver {
         name: common::Symbol,
         def_id: hir_def::DefId,
     ) -> bool {
-        // Check for duplicates in globals
-        let mut i: usize = 0;
-        while i < self.globals.len() {
-            if self.globals[i].name.index == name.index {
-                return false; // Duplicate
-            }
-            i = i + 1;
+        // O(1) check for duplicates in globals using hash
+        match self.globals_hash.get(name.index as u64) {
+            Option::Some(_) => { return false; } // Duplicate
+            Option::None => {}
         }
 
-        // Add to globals
+        // Add to globals and hash
+        let vec_idx = self.globals.len() as u32;
         let entry = GlobalEntry::new(name, def_id);
         self.globals.push(entry);
+        self.globals_hash.insert(name.index as u64, vec_idx);
 
         // Also add to root module scope
         let binding = Binding::def(def_id);
@@ -509,9 +518,19 @@ impl Resolver {
         span: common::Span,
         parent: Option<hir_def::DefId>,
     ) {
+        let vec_idx = self.def_info.len() as u32;
         let info = hir_def::DefInfo::new(kind, name, span, parent);
         let entry = DefInfoEntry::new(def_id, info);
         self.def_info.push(entry);
+        // Populate hash indexes
+        self.def_info_hash.insert(def_id.index as u64, vec_idx);
+        match &parent {
+            &Option::Some(p) => {
+                let combined = hashmap::combine_u32_usize(p.index, name.index as usize);
+                self.child_def_hash.insert(combined, def_id.index as u64);
+            }
+            &Option::None => {}
+        }
     }
 
     /// Registers a variant definition with its variant index.
@@ -523,14 +542,40 @@ impl Resolver {
         parent: hir_def::DefId,
         variant_index: u32,
     ) {
+        let vec_idx = self.def_info.len() as u32;
         let info = hir_def::DefInfo::variant(name, span, parent, variant_index);
         let entry = DefInfoEntry::new(def_id, info);
         self.def_info.push(entry);
+        // Populate hash indexes
+        self.def_info_hash.insert(def_id.index as u64, vec_idx);
+        let combined = hashmap::combine_u32_usize(parent.index, name.index as usize);
+        self.child_def_hash.insert(combined, def_id.index as u64);
     }
 
     /// Gets definition info by DefId.
     /// Returns None if the DefId is not registered.
     pub fn get_def_info(self: &Self, def_id: hir_def::DefId) -> Option<hir_def::DefInfo> {
+        // O(1) hash lookup
+        match self.def_info_hash.get(def_id.index as u64) {
+            Option::Some(vec_idx) => {
+                let idx = vec_idx as usize;
+                if idx < self.def_info.len() {
+                    let entry = &self.def_info[idx].info;
+                    let cloned_parent = clone_optional_def_id(&entry.parent);
+                    let cloned_vi = clone_optional_u32(&entry.variant_index);
+                    return Option::Some(hir_def::DefInfo {
+                        kind: entry.kind,
+                        name: entry.name,
+                        span: entry.span,
+                        parent: cloned_parent,
+                        variant_index: cloned_vi,
+                        visibility: entry.visibility,
+                    });
+                }
+            }
+            Option::None => {}
+        }
+        // Fallback to linear scan
         let mut i: usize = 0;
         while i < self.def_info.len() {
             if self.def_info[i].def_id.index == def_id.index {
@@ -576,17 +621,16 @@ impl Resolver {
             }
         }
 
-        // Check globals as fallback
-        let mut global_idx: usize = 0;
-        while global_idx < self.globals.len() {
-            if self.globals[global_idx].name.index == name.index {
+        // O(1) check globals using hash
+        match self.globals_hash.get(name.index as u64) {
+            Option::Some(global_idx) => {
                 return Some(LookupResult {
                     scope_index: 0,
-                    binding_index: global_idx,
+                    binding_index: global_idx as usize,
                     is_global: true,
                 });
             }
-            global_idx = global_idx + 1;
+            Option::None => {}
         }
 
         None
@@ -674,7 +718,15 @@ impl Resolver {
     /// Looks up a child definition within a parent's namespace.
     /// Used for resolving qualified paths like module::Item.
     pub fn lookup_in_parent(self: &Self, parent_def: hir_def::DefId, name: common::Symbol) -> Option<hir_def::DefId> {
-        // Search through definitions for one that has the given parent and name
+        // O(1) hash lookup using combined (parent, name) key
+        let combined = hashmap::combine_u32_usize(parent_def.index, name.index as usize);
+        match self.child_def_hash.get(combined) {
+            Option::Some(def_id_index) => {
+                return Some(hir_def::DefId::new(def_id_index as u32));
+            }
+            Option::None => {}
+        }
+        // Fallback to linear scan
         let mut i: usize = 0;
         while i < self.def_info.len() {
             let entry = &self.def_info[i];

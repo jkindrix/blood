@@ -14,6 +14,7 @@ mod mir_stmt;
 mod mir_term;
 mod mir_body;
 mod unify;
+mod hashmap;
 
 // ============================================================
 // MIR Lowering Context
@@ -36,11 +37,20 @@ pub struct MirLowerCtx {
     /// Used to resolve TypeKind::Infer variables to concrete types.
     pub subst_table: unify::SubstTable,
     /// Method resolution side table from type checking.
-    /// Maps expression span starts to resolved method DefIds.
+    /// Maps (body_def_id, span_start) to resolved method DefIds.
     pub method_resolutions: Vec<common::MethodResEntry>,
     /// Field resolution side table from type checking.
     /// Maps field access expression span starts to resolved field indices.
     pub field_resolutions: Vec<common::FieldResEntry>,
+    /// The DefId of the current function body being lowered.
+    /// Used to scope method resolution lookups to this body.
+    pub body_def_id: u32,
+    /// Hash-based index for O(1) method resolution lookup.
+    /// Key: combined (body_def_id, span_start), Value: def_id_index
+    method_hash: hashmap::HashMapU64U32,
+    /// Hash-based index for O(1) field resolution lookup.
+    /// Key: span_start, Value: field_idx
+    field_hash: hashmap::HashMapU64U32,
 }
 
 /// Mapping from an HIR local to a MIR local.
@@ -59,6 +69,26 @@ impl MirLowerCtx {
         method_resolutions: Vec<common::MethodResEntry>,
         field_resolutions: Vec<common::FieldResEntry>,
     ) -> MirLowerCtx {
+        // Build hash indexes for O(1) lookup
+        let mut method_hash = hashmap::HashMapU64U32::with_capacity(method_resolutions.len());
+        let mut i: usize = 0;
+        while i < method_resolutions.len() {
+            let key = hashmap::combine_u32_usize(
+                method_resolutions[i].body_def_id,
+                method_resolutions[i].span_start
+            );
+            method_hash.insert(key, method_resolutions[i].def_id_index);
+            i = i + 1;
+        }
+
+        let mut field_hash = hashmap::HashMapU64U32::with_capacity(field_resolutions.len());
+        i = 0;
+        while i < field_resolutions.len() {
+            let key = field_resolutions[i].span_start as u64;
+            field_hash.insert(key, field_resolutions[i].field_idx);
+            i = i + 1;
+        }
+
         MirLowerCtx {
             builder: mir_body::MirBodyBuilder::new(def_id, return_ty, span),
             local_map: Vec::new(),
@@ -68,6 +98,9 @@ impl MirLowerCtx {
             subst_table: subst_table,
             method_resolutions: method_resolutions,
             field_resolutions: field_resolutions,
+            body_def_id: def_id.index,
+            method_hash: method_hash,
+            field_hash: field_hash,
         }
     }
 
@@ -99,13 +132,55 @@ impl MirLowerCtx {
         unify::apply_substs(&self.subst_table, ty)
     }
 
-    /// Looks up a resolved method DefId by the expression's span start.
-    /// Returns the DefId if the type checker recorded a resolution for this span.
+    /// Looks up a resolved method DefId by the body's DefId and expression's span start.
+    /// Returns the DefId if the type checker recorded a resolution for this body+span.
+    ///
+    /// Uses hash-based lookup for O(1) average case.
+    /// Filters by both body_def_id and span_start to handle span collisions across files
+    /// (each file's spans start at byte 0, so span_start alone is not unique).
     pub fn lookup_method_def(self: &MirLowerCtx, span_start: usize) -> Option<hir_def::DefId> {
+        // Fast path: hash-based lookup
+        let key = hashmap::combine_u32_usize(self.body_def_id, span_start);
+        match self.method_hash.get(key) {
+            Option::Some(def_id_index) => {
+                return Option::Some(hir_def::DefId::new(def_id_index));
+            }
+            Option::None => {}
+        }
+
+        // Hash lookup failed - fall back to linear scan for debugging
         let mut i: usize = 0;
         while i < self.method_resolutions.len() {
-            if self.method_resolutions[i].span_start == span_start {
+            if self.method_resolutions[i].body_def_id == self.body_def_id &&
+               self.method_resolutions[i].span_start == span_start {
                 return Option::Some(hir_def::DefId::new(self.method_resolutions[i].def_id_index));
+            }
+            i = i + 1;
+        }
+        // DEBUG: Print on lookup failure
+        print_str("[MIR LOOKUP FAILED] body_def_id=");
+        print_u64(self.body_def_id as u64);
+        print_str(" span_start=");
+        print_u64(span_start as u64);
+        print_str(" checked ");
+        print_u64(self.method_resolutions.len() as u64);
+        print_str(" entries\n");
+        // Print entries that partially match (same body OR same span)
+        i = 0;
+        while i < self.method_resolutions.len() {
+            if self.method_resolutions[i].body_def_id == self.body_def_id {
+                print_str("  SAME BODY [");
+                print_u64(i as u64);
+                print_str("]: span=");
+                print_u64(self.method_resolutions[i].span_start as u64);
+                print_str("\n");
+            }
+            if self.method_resolutions[i].span_start == span_start {
+                print_str("  SAME SPAN [");
+                print_u64(i as u64);
+                print_str("]: body=");
+                print_u64(self.method_resolutions[i].body_def_id as u64);
+                print_str("\n");
             }
             i = i + 1;
         }
@@ -114,7 +189,19 @@ impl MirLowerCtx {
 
     /// Looks up a resolved field index by the expression's span start.
     /// Returns the field index if the type checker recorded a resolution for this span.
+    ///
+    /// Uses hash-based lookup for O(1) average case.
     pub fn lookup_field_idx(self: &MirLowerCtx, span_start: usize) -> Option<u32> {
+        // Fast path: hash-based lookup
+        let key = span_start as u64;
+        match self.field_hash.get(key) {
+            Option::Some(field_idx) => {
+                return Option::Some(field_idx);
+            }
+            Option::None => {}
+        }
+
+        // Fallback to linear scan (should not happen with correct hash population)
         let mut i: usize = 0;
         while i < self.field_resolutions.len() {
             if self.field_resolutions[i].span_start == span_start {
@@ -597,3 +684,5 @@ impl MoveTracker {
         }
     }
 }
+
+// force recompile

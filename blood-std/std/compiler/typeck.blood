@@ -12,6 +12,7 @@ mod hir_item;
 mod hir;
 mod unify;
 mod interner;
+mod hashmap;
 
 // Import submodules
 mod typeck_types;
@@ -304,6 +305,13 @@ pub struct TypeChecker {
     /// Deferred method calls whose receiver was an unresolved Infer variable.
     /// After all bodies are type-checked, these are revisited to resolve methods.
     pub pending_method_calls: Vec<common::PendingMethodCall>,
+    /// Current body's DefId for scoping method/field resolutions.
+    /// Set before type-checking each function body.
+    pub current_body_def_id: u32,
+    /// Hash index for O(1) variant lookup: variant_def_id.index → (enum_idx << 32) | variant_idx
+    pub variant_hash: hashmap::HashMapU64U64,
+    /// Hash index for O(1) trait impl existence check: trait_def_id.index → 1
+    pub trait_impl_hash: hashmap::HashMapU64U32,
 }
 
 impl TypeChecker {
@@ -337,6 +345,9 @@ impl TypeChecker {
             method_resolutions: Vec::new(),
             field_resolutions: Vec::new(),
             pending_method_calls: Vec::new(),
+            current_body_def_id: 0,
+            variant_hash: hashmap::HashMapU64U64::new(),
+            trait_impl_hash: hashmap::HashMapU64U32::new(),
         }
     }
 
@@ -371,6 +382,9 @@ impl TypeChecker {
             method_resolutions: Vec::new(),
             field_resolutions: Vec::new(),
             pending_method_calls: Vec::new(),
+            current_body_def_id: 0,
+            variant_hash: hashmap::HashMapU64U64::new(),
+            trait_impl_hash: hashmap::HashMapU64U32::new(),
         }
     }
 
@@ -444,7 +458,16 @@ impl TypeChecker {
     /// The span_start is the byte offset of the call expression, used as the key.
     /// The def_id_index is the DefId.index of the resolved method.
     pub fn record_method_resolution(self: &mut Self, span_start: usize, def_id_index: u32) {
-        self.method_resolutions.push(common::MethodResEntry::new(span_start, def_id_index));
+        // Debug: print recording for specific body_def_ids of interest
+        if self.current_body_def_id == 1031 || self.current_body_def_id == 1967 {
+            print("[RECORD RESOLUTION] body_def_id=");
+            print_int(self.current_body_def_id as i32);
+            print(" span_start=");
+            print_int(span_start as i32);
+            print(" method_def_id=");
+            println_int(def_id_index as i32);
+        }
+        self.method_resolutions.push(common::MethodResEntry::new(self.current_body_def_id, span_start, def_id_index));
     }
 
     /// Records a resolved field index for a named field access expression.
@@ -474,7 +497,14 @@ impl TypeChecker {
 
     /// Records a deferred method call whose receiver is still an Infer variable.
     pub fn record_pending_method_call(self: &mut Self, span_start: usize, receiver_var: u32, method_symbol: common::Symbol, return_ty_var: u32) {
-        self.pending_method_calls.push(common::PendingMethodCall::new(span_start, receiver_var, method_symbol, return_ty_var));
+        // Debug: print pending for specific body_def_ids of interest
+        if self.current_body_def_id == 1031 || self.current_body_def_id == 1967 {
+            print("[RECORD PENDING] body_def_id=");
+            print_int(self.current_body_def_id as i32);
+            print(" span_start=");
+            println_int(span_start as i32);
+        }
+        self.pending_method_calls.push(common::PendingMethodCall::new(self.current_body_def_id, span_start, receiver_var, method_symbol, return_ty_var));
     }
 
     /// Allocates a fresh DefId for synthetic builtin registrations.
@@ -661,6 +691,16 @@ impl TypeChecker {
             self.enums.push(Option::None);
         }
         self.enums[def_idx] = Some(info);
+
+        // Populate variant_hash for O(1) variant lookups
+        let mut vi: usize = 0;
+        while vi < enum_def.variants.len() {
+            let var_def_id = enum_def.variants[vi].def_id;
+            // Combine enum_idx and variant_idx into a single u64
+            let combined = hashmap::combine_u32_usize(def_id.index, vi);
+            self.variant_hash.insert(var_def_id.index as u64, combined);
+            vi = vi + 1;
+        }
     }
 
     // ========================================================
@@ -732,6 +772,16 @@ impl TypeChecker {
     /// Finds a variant's index by its DefId across all registered enums.
     /// Returns (enum_def_id, variant_index) if found.
     pub fn find_variant_index_by_def_id(self: &Self, variant_def_id: hir_def::DefId) -> Option<u32> {
+        // O(1) hash lookup
+        match self.variant_hash.get(variant_def_id.index as u64) {
+            Option::Some(combined) => {
+                // Extract variant_idx from combined value (lower 32 bits)
+                let variant_idx = (combined & 0xFFFFFFFF) as u32;
+                return Option::Some(variant_idx);
+            }
+            Option::None => {}
+        }
+        // Fallback to linear scan
         let mut i: usize = 0;
         while i < self.enums.len() {
             match &self.enums[i] {
@@ -754,6 +804,38 @@ impl TypeChecker {
     /// Finds the parent enum info for a variant DefId.
     /// Returns the enum's DefId, number of generics, and the variant's field types.
     pub fn find_enum_for_variant(self: &Self, variant_def_id: hir_def::DefId) -> Option<EnumVariantLookup> {
+        // O(1) hash lookup
+        match self.variant_hash.get(variant_def_id.index as u64) {
+            Option::Some(combined) => {
+                // Extract enum_idx and variant_idx from combined value
+                let enum_idx = (combined >> 32) as usize;
+                let variant_idx = (combined & 0xFFFFFFFF) as usize;
+                if enum_idx < self.enums.len() {
+                    match &self.enums[enum_idx] {
+                        &Some(ref enum_info) => {
+                            if variant_idx < enum_info.variants.len() {
+                                let mut fn_vec: Vec<common::Symbol> = Vec::new();
+                                let mut k: usize = 0;
+                                while k < enum_info.variants[variant_idx].field_names.len() {
+                                    fn_vec.push(enum_info.variants[variant_idx].field_names[k]);
+                                    k = k + 1;
+                                }
+                                return Option::Some(EnumVariantLookup {
+                                    enum_def_id: enum_info.def_id,
+                                    num_generics: enum_info.num_generics,
+                                    variant_index: enum_info.variants[variant_idx].variant_index,
+                                    field_tys: copy_type_vec(&enum_info.variants[variant_idx].field_tys),
+                                    field_names: fn_vec,
+                                });
+                            }
+                        }
+                        &None => {}
+                    }
+                }
+            }
+            Option::None => {}
+        }
+        // Fallback to linear scan
         let mut i: usize = 0;
         while i < self.enums.len() {
             match &self.enums[i] {
@@ -806,6 +888,35 @@ impl TypeChecker {
     /// Gets a variant's field type by name using the variant's DefId.
     /// Returns the field type if found, None otherwise.
     pub fn get_variant_field_ty_by_name(self: &Self, variant_def_id: hir_def::DefId, field_name: common::Symbol) -> Option<hir_ty::Type> {
+        // O(1) hash lookup for variant location
+        match self.variant_hash.get(variant_def_id.index as u64) {
+            Option::Some(combined) => {
+                let enum_idx = (combined >> 32) as usize;
+                let variant_idx = (combined & 0xFFFFFFFF) as usize;
+                if enum_idx < self.enums.len() {
+                    match &self.enums[enum_idx] {
+                        &Some(ref enum_info) => {
+                            if variant_idx < enum_info.variants.len() {
+                                // Found the variant - look up field by name
+                                let mut k: usize = 0;
+                                while k < enum_info.variants[variant_idx].field_names.len() {
+                                    if enum_info.variants[variant_idx].field_names[k].index == field_name.index {
+                                        if k < enum_info.variants[variant_idx].field_tys.len() {
+                                            return Some(hir_ty::copy_type(&enum_info.variants[variant_idx].field_tys[k]));
+                                        }
+                                    }
+                                    k = k + 1;
+                                }
+                                return Option::None;
+                            }
+                        }
+                        &None => {}
+                    }
+                }
+            }
+            Option::None => {}
+        }
+        // Fallback to linear scan
         let mut i: usize = 0;
         while i < self.enums.len() {
             match &self.enums[i] {
@@ -968,6 +1079,8 @@ impl TypeChecker {
 
     /// Registers a trait implementation.
     pub fn register_trait_impl(self: &mut Self, impl_info: typeck_info::TraitImplInfo) {
+        // Mark this trait as having at least one impl
+        self.trait_impl_hash.insert(impl_info.trait_def_id.index as u64, 1);
         self.trait_impls.push(impl_info);
     }
 
@@ -1007,6 +1120,11 @@ impl TypeChecker {
     /// Checks if a type implements a trait.
     /// Returns true if an implementation exists.
     pub fn type_implements_trait(self: &Self, ty: &hir_ty::Type, trait_ref: &hir_ty::TraitRef) -> bool {
+        // Quick O(1) check: if no impl exists for this trait, return false immediately
+        match self.trait_impl_hash.get(trait_ref.def_id.index as u64) {
+            Option::Some(_) => {}
+            Option::None => { return false; }
+        }
         // Search for an impl that matches
         let mut i: usize = 0;
         while i < self.trait_impls.len() {
@@ -1050,14 +1168,11 @@ impl TypeChecker {
 
     /// Checks if any implementation exists for a trait.
     fn has_impl_for_trait(self: &Self, trait_def_id: hir_def::DefId) -> bool {
-        let mut i: usize = 0;
-        while i < self.trait_impls.len() {
-            if self.trait_impls[i].trait_def_id.index == trait_def_id.index {
-                return true;
-            }
-            i = i + 1;
+        // O(1) hash lookup
+        match self.trait_impl_hash.get(trait_def_id.index as u64) {
+            Option::Some(_) => true,
+            Option::None => false,
         }
-        false
     }
 
     /// Collects obligations from a function call based on where clauses.
@@ -1721,19 +1836,12 @@ fn resolve_single_obligation(
 ) -> bool {
     match &obligation.predicate {
         &typeck_types::Predicate::Trait(ref trait_ref) => {
-            // Search for a matching impl
+            // O(1) hash lookup to check if any impl exists for this trait
             let trait_def_id = trait_ref.def_id;
-            let mut j: usize = 0;
-            while j < checker.trait_impls.len() {
-                let impl_info = &checker.trait_impls[j];
-                if impl_info.trait_def_id.index == trait_def_id.index {
-                    // Found a potential impl — check if the self type unifies
-                    // For now, accept any impl for the same trait as resolved
-                    return true;
-                }
-                j = j + 1;
+            match checker.trait_impl_hash.get(trait_def_id.index as u64) {
+                Option::Some(_) => true,
+                Option::None => false,
             }
-            false
         }
         &typeck_types::Predicate::TypeEqual { ref left, ref right } => {
             let result = unify::unify(

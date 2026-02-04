@@ -3,8 +3,11 @@
 // This module provides string interning for identifiers and symbols.
 // Interning ensures that identical strings share the same storage and
 // can be compared efficiently via their indices.
+//
+// PERFORMANCE: Uses HashMap for O(1) average-case lookup instead of O(n) linear scan.
 
 mod common;
+mod hashmap;
 
 // ============================================================
 // String Interner
@@ -15,9 +18,14 @@ mod common;
 /// The interner stores strings and returns `Symbol` indices that can be
 /// used for efficient comparison and storage. Each unique string is only
 /// stored once.
+///
+/// Uses a hash map for O(1) average-case lookup instead of O(n) linear scan.
 pub struct StringInterner {
-    /// Storage for interned strings.
+    /// Storage for interned strings (symbol index → string).
     strings: Vec<String>,
+    /// Hash-based reverse lookup (string hash → symbol index).
+    /// Multiple strings may hash to the same value; we verify with str_equals.
+    hash_index: hashmap::HashMapU64U32,
 }
 
 impl StringInterner {
@@ -25,6 +33,7 @@ impl StringInterner {
     pub fn new() -> StringInterner {
         let mut interner = StringInterner {
             strings: Vec::new(),
+            hash_index: hashmap::HashMapU64U32::with_capacity(256),
         };
         // Pre-intern common strings at known indices
         interner.intern_keywords();
@@ -125,14 +134,54 @@ impl StringInterner {
         self.strings.push(common::make_string("contains_key")); // 80
         self.strings.push(common::make_string("is_ok"));        // 81
         self.strings.push(common::make_string("is_err"));       // 82
+
+        // Builtin type/variant names - indices 83-88
+        // Used by register_builtin_enums for Option and Result registration.
+        self.strings.push(common::make_string("Option"));       // 83
+        self.strings.push(common::make_string("Some"));         // 84
+        self.strings.push(common::make_string("None"));         // 85
+        self.strings.push(common::make_string("Result"));       // 86
+        self.strings.push(common::make_string("Ok"));           // 87
+        self.strings.push(common::make_string("Err"));          // 88
+
+        // Populate hash index for all pre-interned strings
+        let mut i: usize = 0;
+        while i < self.strings.len() {
+            let hash = hashmap::hash_string(&self.strings[i]);
+            self.hash_index.insert(hash, i as u32);
+            i = i + 1;
+        }
     }
 
     /// Interns a string, returning its symbol index.
     ///
     /// If the string is already interned, returns the existing index.
     /// Otherwise, adds the string and returns a new index.
+    ///
+    /// Uses hash-based lookup for O(1) average case instead of O(n) linear scan.
     pub fn intern(self: &mut StringInterner, s: &str) -> common::Symbol {
-        // Check if already interned (linear search)
+        let hash = hashmap::hash_str(s);
+
+        // Fast path: check hash index for existing entry
+        match self.hash_index.get(hash) {
+            Option::Some(idx) => {
+                // Found a candidate - verify it's the same string (handle collisions)
+                if str_equals(&self.strings[idx as usize], s) {
+                    return common::Symbol::new(idx);
+                }
+                // Hash collision - fall through to linear scan for this rare case
+            }
+            Option::None => {
+                // Not in hash index - definitely new, add it
+                let index = self.strings.len() as u32;
+                self.strings.push(common::make_string(s));
+                self.hash_index.insert(hash, index);
+                return common::Symbol::new(index);
+            }
+        }
+
+        // Hash collision case: linear scan to find or add
+        // This is rare with good hash function
         let mut i: usize = 0;
         while i < self.strings.len() {
             if str_equals(&self.strings[i], s) {
@@ -141,9 +190,10 @@ impl StringInterner {
             i = i + 1;
         }
 
-        // Not found, add new string
+        // Not found, add new string (collision case - hash already in use)
         let index = self.strings.len() as u32;
         self.strings.push(common::make_string(s));
+        // Note: We don't overwrite the hash_index entry since another string has this hash
         common::Symbol::new(index)
     }
 
@@ -180,6 +230,39 @@ impl StringInterner {
     /// Checks if the interner is empty.
     pub fn is_empty(self: &StringInterner) -> bool {
         self.strings.len() == 0
+    }
+
+    /// Finds a string that was previously interned.
+    /// Returns the Symbol if found, None if not found.
+    /// Unlike intern(), this does not modify the interner.
+    ///
+    /// Uses hash-based lookup for O(1) average case.
+    pub fn find(self: &StringInterner, s: &str) -> Option<common::Symbol> {
+        let hash = hashmap::hash_str(s);
+
+        // Fast path: check hash index
+        match self.hash_index.get(hash) {
+            Option::Some(idx) => {
+                // Verify it's the same string (handle collisions)
+                if str_equals(&self.strings[idx as usize], s) {
+                    return Option::Some(common::Symbol::new(idx));
+                }
+                // Hash collision - fall through to linear scan
+            }
+            Option::None => {
+                return Option::None;
+            }
+        }
+
+        // Hash collision case: linear scan
+        let mut i: usize = 0;
+        while i < self.strings.len() {
+            if str_equals(&self.strings[i], s) {
+                return Option::Some(common::Symbol::new(i as u32));
+            }
+            i = i + 1;
+        }
+        Option::None
     }
 
     /// Gets the string at a specific index (for debugging).
@@ -403,9 +486,3 @@ fn str_equals(s: &String, other: &str) -> bool {
     true
 }
 
-/// Panic function for unrecoverable errors.
-fn panic(msg: &str) -> ! {
-    // In a real implementation, this would abort or unwind
-    // For now, we use an infinite loop (Blood doesn't have panic! macro)
-    loop {}
-}
