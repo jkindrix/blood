@@ -315,7 +315,12 @@ impl FieldResEntry {
 /// The type checker records these during method resolution so that
 /// MIR lowering can look up the resolved method for each call site.
 /// Uses u32 for def_id_index to avoid pulling hir_def into common.
+/// The body_def_id scopes resolutions to their containing function body,
+/// preventing collisions when multiple files have method calls at the
+/// same byte offset.
 pub struct MethodResEntry {
+    /// The DefId.index of the containing function body.
+    pub body_def_id: u32,
     /// The start byte offset of the method call expression's span.
     pub span_start: usize,
     /// The DefId.index of the resolved method.
@@ -324,8 +329,8 @@ pub struct MethodResEntry {
 
 impl MethodResEntry {
     /// Creates a new method resolution entry.
-    pub fn new(span_start: usize, def_id_index: u32) -> MethodResEntry {
-        MethodResEntry { span_start, def_id_index }
+    pub fn new(body_def_id: u32, span_start: usize, def_id_index: u32) -> MethodResEntry {
+        MethodResEntry { body_def_id, span_start, def_id_index }
     }
 }
 
@@ -333,6 +338,8 @@ impl MethodResEntry {
 /// during initial type checking. After all bodies are checked, Infer
 /// variables may be resolved, allowing the method to be looked up.
 pub struct PendingMethodCall {
+    /// The DefId.index of the containing function body.
+    pub body_def_id: u32,
     /// The byte offset of the method call expression span.
     pub span_start: usize,
     /// The TyVarId.index of the receiver's Infer variable.
@@ -345,8 +352,8 @@ pub struct PendingMethodCall {
 
 impl PendingMethodCall {
     /// Creates a new pending method call entry.
-    pub fn new(span_start: usize, receiver_var: u32, method_symbol: Symbol, return_ty_var: u32) -> PendingMethodCall {
-        PendingMethodCall { span_start, receiver_var, method_symbol, return_ty_var }
+    pub fn new(body_def_id: u32, span_start: usize, receiver_var: u32, method_symbol: Symbol, return_ty_var: u32) -> PendingMethodCall {
+        PendingMethodCall { body_def_id, span_start, receiver_var, method_symbol, return_ty_var }
     }
 }
 
