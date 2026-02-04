@@ -132,6 +132,10 @@ pub fn lower_program_with_base_dir(program: &ast::Program, base_dir: String, sou
         ctx.builtin_box_def,
         ctx.builtin_hashmap_def,
         ctx.builtin_result_def,
+        ctx.builtin_option_some_def,
+        ctx.builtin_option_none_def,
+        ctx.builtin_result_ok_def,
+        ctx.builtin_result_err_def,
         ctx.interner,
         ctx.builtin_fn_defs,
     )
@@ -394,8 +398,10 @@ fn register_builtin_children(ctx: &mut hir_lower_ctx::LoweringCtx) {
         Option::Some(parent) => {
             let some_def = register_builtin_variant(ctx, parent, "Some", dummy_span, 0);
             ctx.builtin_fn_defs.push(hir_lower_ctx::BuiltinFnDef::new(some_def.index, common::make_string("option_some_ctor")));
+            ctx.builtin_option_some_def = Option::Some(some_def);
             let none_def = register_builtin_variant(ctx, parent, "None", dummy_span, 1);
             ctx.builtin_fn_defs.push(hir_lower_ctx::BuiltinFnDef::new(none_def.index, common::make_string("option_none_ctor")));
+            ctx.builtin_option_none_def = Option::Some(none_def);
             // Also register as top-level names for bare Some/None usage
             let some_sym = ctx.intern("Some");
             ctx.resolver.define_global(some_sym, some_def);
@@ -428,8 +434,10 @@ fn register_builtin_children(ctx: &mut hir_lower_ctx::LoweringCtx) {
         Option::Some(parent) => {
             let ok_def = register_builtin_variant(ctx, parent, "Ok", dummy_span, 0);
             ctx.builtin_fn_defs.push(hir_lower_ctx::BuiltinFnDef::new(ok_def.index, common::make_string("result_ok_ctor")));
+            ctx.builtin_result_ok_def = Option::Some(ok_def);
             let err_def = register_builtin_variant(ctx, parent, "Err", dummy_span, 1);
             ctx.builtin_fn_defs.push(hir_lower_ctx::BuiltinFnDef::new(err_def.index, common::make_string("result_err_ctor")));
+            ctx.builtin_result_err_def = Option::Some(err_def);
             // Also register as top-level names for bare Ok/Err usage
             let ok_sym = ctx.intern("Ok");
             ctx.resolver.define_global(ok_sym, ok_def);

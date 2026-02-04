@@ -67,6 +67,11 @@ pub struct LowerResult {
     pub builtin_box_def: Option<hir_def::DefId>,
     pub builtin_hashmap_def: Option<hir_def::DefId>,
     pub builtin_result_def: Option<hir_def::DefId>,
+    /// Builtin variant DefIds for type checker variant resolution.
+    pub builtin_option_some_def: Option<hir_def::DefId>,
+    pub builtin_option_none_def: Option<hir_def::DefId>,
+    pub builtin_result_ok_def: Option<hir_def::DefId>,
+    pub builtin_result_err_def: Option<hir_def::DefId>,
     /// The string interner from the lowering context.
     /// Contains all symbol-to-string mappings created during lowering.
     /// Codegen uses this to resolve function names from Symbol indices.
@@ -93,6 +98,10 @@ impl LowerResult {
         builtin_box_def: Option<hir_def::DefId>,
         builtin_hashmap_def: Option<hir_def::DefId>,
         builtin_result_def: Option<hir_def::DefId>,
+        builtin_option_some_def: Option<hir_def::DefId>,
+        builtin_option_none_def: Option<hir_def::DefId>,
+        builtin_result_ok_def: Option<hir_def::DefId>,
+        builtin_result_err_def: Option<hir_def::DefId>,
         interner: interner::StringInterner,
         builtin_fn_defs: Vec<BuiltinFnDef>,
     ) -> LowerResult {
@@ -111,6 +120,10 @@ impl LowerResult {
             builtin_box_def: builtin_box_def,
             builtin_hashmap_def: builtin_hashmap_def,
             builtin_result_def: builtin_result_def,
+            builtin_option_some_def: builtin_option_some_def,
+            builtin_option_none_def: builtin_option_none_def,
+            builtin_result_ok_def: builtin_result_ok_def,
+            builtin_result_err_def: builtin_result_err_def,
             interner: interner,
             builtin_fn_defs: builtin_fn_defs,
         }
@@ -133,6 +146,10 @@ impl LowerResult {
             builtin_box_def: Option::None,
             builtin_hashmap_def: Option::None,
             builtin_result_def: Option::None,
+            builtin_option_some_def: Option::None,
+            builtin_option_none_def: Option::None,
+            builtin_result_ok_def: Option::None,
+            builtin_result_err_def: Option::None,
             interner: interner::StringInterner::new(),
             builtin_fn_defs: Vec::new(),
         }
@@ -155,6 +172,10 @@ impl LowerResult {
             builtin_box_def: Option::None,
             builtin_hashmap_def: Option::None,
             builtin_result_def: Option::None,
+            builtin_option_some_def: Option::None,
+            builtin_option_none_def: Option::None,
+            builtin_result_ok_def: Option::None,
+            builtin_result_err_def: Option::None,
             interner: interner::StringInterner::new(),
             builtin_fn_defs: Vec::new(),
         }
@@ -248,6 +269,11 @@ pub struct LoweringCtx {
     pub builtin_box_def: Option<hir_def::DefId>,
     pub builtin_hashmap_def: Option<hir_def::DefId>,
     pub builtin_result_def: Option<hir_def::DefId>,
+    /// DefIds for builtin enum variants (set during register_builtin_children).
+    pub builtin_option_some_def: Option<hir_def::DefId>,
+    pub builtin_option_none_def: Option<hir_def::DefId>,
+    pub builtin_result_ok_def: Option<hir_def::DefId>,
+    pub builtin_result_err_def: Option<hir_def::DefId>,
     /// Paths currently being loaded (for circular import detection during recursive loading).
     /// Separates circular-import detection from loaded_modules ordering.
     pub loading_paths: Vec<String>,
@@ -324,6 +350,10 @@ impl LoweringCtx {
             builtin_box_def: Option::None,
             builtin_hashmap_def: Option::None,
             builtin_result_def: Option::None,
+            builtin_option_some_def: Option::None,
+            builtin_option_none_def: Option::None,
+            builtin_result_ok_def: Option::None,
+            builtin_result_err_def: Option::None,
             loading_paths: Vec::new(),
             builtin_fn_defs: Vec::new(),
         }
@@ -356,6 +386,10 @@ impl LoweringCtx {
             builtin_box_def: Option::None,
             builtin_hashmap_def: Option::None,
             builtin_result_def: Option::None,
+            builtin_option_some_def: Option::None,
+            builtin_option_none_def: Option::None,
+            builtin_result_ok_def: Option::None,
+            builtin_result_err_def: Option::None,
             loading_paths: Vec::new(),
             builtin_fn_defs: Vec::new(),
         }
