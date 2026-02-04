@@ -778,8 +778,12 @@ fn lower_method_call_expr(
                     ))
                 }
                 Option::None => {
-                    // Truly unresolved - error recovery
-                    mir_types::Operand::Constant(mir_types::Constant::unit())
+                    // Truly unresolved - create a dummy DefId to produce a linker error
+                    // instead of a cryptic runtime crash from calling undef
+                    mir_types::Operand::Constant(mir_types::Constant::new(
+                        hir_ty::Type::error(),
+                        mir_types::ConstantKind::FnDef(hir_def::DefId::new(0xFFFFFFFE)),
+                    ))
                 }
             }
         }

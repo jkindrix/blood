@@ -97,115 +97,33 @@ impl Compiler {
     /// 4. Lower HIR to MIR
     /// 5. Generate LLVM IR from MIR
     pub fn compile(self: &mut Compiler, source: &str) -> CompileResult {
-        // Phase 1: Parse
-        let parse_result = parser::parse_file(source);
-        if parse_result.errors.len() > 0 {
-            let errors = convert_parse_errors(&parse_result.errors);
-            return CompileResult::err(errors);
-        }
-
-        let program = match &parse_result.program {
-            &Option::Some(ref p) => p,
-            &Option::None => {
-                let mut errors = Vec::new();
-                errors.push(error::CompileError::new(
-                    error::CompilePhase::Parse,
-                    common::make_string("No program produced by parser"),
-                ));
-                return CompileResult::err(errors);
-            }
-        };
-
-        // Phase 2: Lower to HIR
-        let lower_result = hir_lower::lower_program(program, source);
-        if has_error_diagnostics(&lower_result.diagnostics) {
-            let errors = convert_hir_diagnostics(&lower_result.diagnostics);
-            return CompileResult::err(errors);
-        }
-
-        let crate_data = match &lower_result.crate_data {
-            &Option::Some(ref c) => c,
-            &Option::None => {
-                let mut errors = Vec::new();
-                errors.push(error::CompileError::new(
-                    error::CompilePhase::Lower,
-                    common::make_string("No HIR crate produced"),
-                ));
-                return CompileResult::err(errors);
-            }
-        };
-
-        // Phase 3: Type checking
-        let typeck_result = typeck_driver::check_lower_result(&lower_result);
-        if !typeck_result.success {
-            let errors = convert_type_errors(&typeck_result.errors);
-            return CompileResult::err(errors);
-        }
-
-        // Phase 4: Lower HIR bodies to MIR
-        let mut mir_functions: Vec<(String, mir_body::MirBody)> = Vec::new();
-        let mut body_idx: usize = 0;
-        while body_idx < lower_result.bodies.len() {
-            let body_entry = &lower_result.bodies[body_idx];
-            let hir_body = &body_entry.body;
-            let body_id = body_entry.body_id;
-
-            // Find the Item for this body to get name and return type
-            let fn_info = find_fn_for_body(&lower_result.items, body_id);
-
-            // Get return type from function signature, or default to unit
-            let return_ty = match &fn_info {
-                &Option::Some(ref info) => hir_ty::copy_type(&info.return_ty),
-                &Option::None => hir_ty::Type::unit(),
-            };
-
-            // Get span from function item, or use dummy span
-            let span = match &fn_info {
-                &Option::Some(ref info) => info.span,
-                &Option::None => common::Span::new(0, 0, 1, 1),
-            };
-
-            // Get function name or generate one
-            let fn_name = match &fn_info {
-                &Option::Some(ref info) => resolve_fn_name(source, info),
-                &Option::None => make_fn_name(body_idx),
-            };
-
-            // Get DefId from function info or use body index
-            let def_id = match &fn_info {
-                &Option::Some(ref info) => info.def_id,
-                &Option::None => hir_def::DefId::new(body_idx as u32),
-            };
-
-            // Lower the body to MIR with substitution table for type resolution
-            let mir_body = mir_lower::lower_body(
-                def_id,
-                hir_body,
-                return_ty,
-                span,
-                &typeck_result.subst_table,
-                &typeck_result.method_resolutions,
-                &typeck_result.field_resolutions,
-            );
-
-            mir_functions.push((fn_name, mir_body));
-
-            body_idx = body_idx + 1;
-        }
-
-        // Phase 5: Generate LLVM IR from MIR
-        let codegen_result = codegen::generate_module_with_items("main", &mir_functions, &lower_result.items);
-        if !codegen_result.success {
-            let mut errors = Vec::new();
-            errors.push(error::CompileError::new(
-                error::CompilePhase::Codegen,
-                common::make_string("Code generation failed"),
-            ));
-            return CompileResult::err(errors);
-        }
-
-        CompileResult::ok(codegen_result.llvm_ir)
+        // Delegate to compile_with_base_dir with empty base dir
+        self.compile_with_base_dir(source, common::make_string(""))
     }
+
+    // Old compile is now compile_with_base_dir_internal, commented out
+    // pub fn compile_OLD(self: &mut Compiler, source: &str) -> CompileResult {
+    //     // Phase 1: Parse
+    //     let parse_result = parser::parse_file(source);
+    //     if parse_result.errors.len() > 0 {
+    //         let errors = convert_parse_errors(&parse_result.errors);
+    //         return CompileResult::err(errors);
+    //     }
+    //
+    //     let program = match &parse_result.program {
+    //         &Option::Some(ref p) => p,
+    //         &Option::None => {
+    //             let mut errors = Vec::new();
+    //             errors.push(error::CompileError::new(
+    //                 error::CompilePhase::Parse,
+    //                 common::make_string("No program produced by parser"),
+    //             ));
+    //             return CompileResult::err(errors);
+    //         }
+    //     };
+    //
+    //     // Phase 2: Lower to HIR
+    //     ... (orphaned code removed - functionality is in compile_with_base_dir)
 
     /// Parses source code and returns the AST.
     pub fn parse(self: &mut Compiler, source: &str) -> ParseOnlyResult {
@@ -359,11 +277,24 @@ impl Compiler {
                 &Option::None => make_fn_name(body_idx),
             };
 
-            // Get DefId from function info or use body index
+            // Get DefId from function info or use body_id's index as fallback.
+            // This fallback must match typeck_driver's find_def_id_for_body fallback
+            // to ensure method resolution lookups use consistent keys.
             let def_id = match &fn_info {
                 &Option::Some(ref info) => info.def_id,
-                &Option::None => hir_def::DefId::new(body_idx as u32),
+                &Option::None => hir_def::DefId::new(body_id.index),
             };
+
+            // Debug: Print body_idx, body_id, and def_id for comparison with typeck
+            // Only print for external module bodies (body_idx >= 810 based on typeck output)
+            if body_idx >= 810 {
+                print("[MIR LOWER] body_index=");
+                print_int(body_idx as i32);
+                print(" body_id=");
+                print_int(body_id.index as i32);
+                print(" def_id=");
+                println_int(def_id.index as i32);
+            }
 
             // Lower the body to MIR with substitution table for type resolution
             let mir_body = mir_lower::lower_body(
