@@ -326,13 +326,39 @@ Before modifying any shared type:
 
 **These are compiler bugs that need to be fixed in blood-rust. Do NOT work around them.**
 
-### No Active Bugs
+### BUG-008: If-expression with inline function call condition is miscompiled (ACTIVE)
 
-All previously reported bugs have been fixed.
+**Severity:** Critical (blocks self-hosting)
+
+**Pattern that triggers the bug:**
+```blood
+fn example(arg: &Type) -> String {
+    if some_function(arg) {
+        common::make_string("result_a")
+    } else {
+        common::make_string("result_b")
+    }
+}
+```
+
+**Symptom:** The conditional branch is eliminated entirely. Generated LLVM IR unconditionally executes the `else` branch, ignoring the function call result.
+
+**Affected code:**
+- `codegen_types.blood:ref_to_llvm` (lines 191-198)
+- `codegen_types.blood:ptr_to_llvm` (lines 202-209)
+
+**Impact:** All `&str` parameters in foreign function declarations are declared as `ptr` instead of `{ ptr, i64 }`. This causes calling convention mismatch for runtime functions like `file_append_string`, `print`, `panic`, etc. The self-hosted compiler's output (`main_self.ll`) has truncated intrinsic declarations and the resulting binary segfaults.
+
+**Evidence:**
+- `main_self.ll:217886-217907` - `ref_to_llvm` unconditionally returns "ptr"
+- `main.ll:274204-274262` - `is_unsized_type` has unreachable match branches
+- `main_self.ll` declarations use `ptr` where `main.ll` uses `{ ptr, i64 }`
+
+**Status:** Awaiting fix from blood-rust developers. DO NOT WORK AROUND.
 
 ### Known Blood-Rust Limitations (NOT Bugs)
 
-**Self-hosted codegen leaks memory:** The self-hosted compiler emits no-op comments for StorageDead and Drop MIR statements, so heap-allocated locals (String, Vec, etc.) are never freed during compilation. This causes high RAM usage when compiling the full compiler. The runtime functions exist (blood_free, blood_unregister_allocation), but codegen does not call them yet. This will be resolved by wiring StorageDead/Drop to the memory management runtime, gated on escape analysis integration.
+**Memory reuse requires active region:** The runtime now includes a Generation-Aware Slab Allocator that enables memory reuse within regions. For compiled Blood programs to benefit, they must create and activate a region at startup. The `blood_alloc_simple`, `blood_realloc`, and `blood_free_simple` functions are now region-aware: when a region is active, allocations come from the region and freed memory is added to per-size-class free lists for reuse. The codegen already calls `blood_unregister_allocation` for region-allocated locals in StorageDead statements.
 
 **Module resolution limits:** Adding `mod codegen_ctx;` to driver.blood caused `source::read_file` and `source::parent_dir` to become unresolvable in later functions. Workaround: avoid adding new module imports to files near the resolution limit.
 
