@@ -337,7 +337,11 @@ fn build_struct_layout_basic(def_id: u32, struct_def: &hir_item::StructDef) -> c
                 }
                 let field_ty = codegen_types::type_to_llvm(&struct_fields[fi].ty);
                 llvm_type.push_str(field_ty.as_str());
-                fields.push(codegen_ctx::AdtFieldInfo { llvm_type: field_ty });
+                // Store HIR type for indexing element size calculation
+                fields.push(codegen_ctx::AdtFieldInfo {
+                    llvm_type: field_ty,
+                    hir_type: Option::Some(hir_ty::copy_type(&struct_fields[fi].ty)),
+                });
                 fi = fi + 1;
             }
         }
@@ -349,7 +353,11 @@ fn build_struct_layout_basic(def_id: u32, struct_def: &hir_item::StructDef) -> c
                 }
                 let field_ty = codegen_types::type_to_llvm(&tuple_fields[fi]);
                 llvm_type.push_str(field_ty.as_str());
-                fields.push(codegen_ctx::AdtFieldInfo { llvm_type: field_ty });
+                // Store HIR type for indexing element size calculation
+                fields.push(codegen_ctx::AdtFieldInfo {
+                    llvm_type: field_ty,
+                    hir_type: Option::Some(hir_ty::copy_type(&tuple_fields[fi])),
+                });
                 fi = fi + 1;
             }
         }
@@ -391,7 +399,11 @@ fn build_struct_layout_with_ctx(
                 }
                 let field_ty = codegen_stmt::type_to_llvm_with_ctx(ctx, &struct_fields[fi].ty);
                 llvm_type.push_str(field_ty.as_str());
-                fields.push(codegen_ctx::AdtFieldInfo { llvm_type: field_ty });
+                // Store HIR type for indexing element size calculation
+                fields.push(codegen_ctx::AdtFieldInfo {
+                    llvm_type: field_ty,
+                    hir_type: Option::Some(hir_ty::copy_type(&struct_fields[fi].ty)),
+                });
                 fi = fi + 1;
             }
         }
@@ -403,7 +415,11 @@ fn build_struct_layout_with_ctx(
                 }
                 let field_ty = codegen_stmt::type_to_llvm_with_ctx(ctx, &tuple_fields[fi]);
                 llvm_type.push_str(field_ty.as_str());
-                fields.push(codegen_ctx::AdtFieldInfo { llvm_type: field_ty });
+                // Store HIR type for indexing element size calculation
+                fields.push(codegen_ctx::AdtFieldInfo {
+                    llvm_type: field_ty,
+                    hir_type: Option::Some(hir_ty::copy_type(&tuple_fields[fi])),
+                });
                 fi = fi + 1;
             }
         }
@@ -451,7 +467,10 @@ fn build_enum_layout(def_id: u32, enum_def: &hir_item::EnumDef) -> codegen_ctx::
                     let field_ty = codegen_types::type_to_llvm(&tuple_fields[fi]);
                     payload_size = payload_size + codegen_types::type_size_bytes(&tuple_fields[fi]);
                     pt.push_str(field_ty.as_str());
-                    fields.push(codegen_ctx::AdtFieldInfo { llvm_type: field_ty });
+                    fields.push(codegen_ctx::AdtFieldInfo {
+                        llvm_type: field_ty,
+                        hir_type: Option::Some(hir_ty::copy_type(&tuple_fields[fi])),
+                    });
                     fi = fi + 1;
                 }
                 pt.push_str(" }");
@@ -469,7 +488,10 @@ fn build_enum_layout(def_id: u32, enum_def: &hir_item::EnumDef) -> codegen_ctx::
                     let field_ty = codegen_types::type_to_llvm(&record_fields[fi].ty);
                     payload_size = payload_size + codegen_types::type_size_bytes(&record_fields[fi].ty);
                     pt.push_str(field_ty.as_str());
-                    fields.push(codegen_ctx::AdtFieldInfo { llvm_type: field_ty });
+                    fields.push(codegen_ctx::AdtFieldInfo {
+                        llvm_type: field_ty,
+                        hir_type: Option::Some(hir_ty::copy_type(&record_fields[fi].ty)),
+                    });
                     fi = fi + 1;
                 }
                 pt.push_str(" }");
