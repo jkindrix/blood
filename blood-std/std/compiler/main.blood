@@ -577,6 +577,7 @@ fn is_region_builtin(name: &str) -> bool {
 fn is_format_runtime_builtin(name: &str) -> bool {
     if str_eq(name, "int_to_string") { return true; }
     if str_eq(name, "bool_to_string") { return true; }
+    if str_eq(name, "float_to_string") { return true; }
     if str_eq(name, "char_to_string") { return true; }
     false
 }
@@ -586,30 +587,48 @@ fn is_format_runtime_builtin(name: &str) -> bool {
 /// to avoid duplicate declarations or conflicting signatures.
 fn is_intrinsic_wrapper_builtin(name: &str) -> bool {
     // print/println/eprint/eprintln wrappers → *_str runtime variants
+    // Both the Blood-side wrapper names AND the runtime target names must be skipped,
+    // since intrinsic_declarations() declares both (define @print + declare @print_str).
     if str_eq(name, "print") { return true; }
     if str_eq(name, "println") { return true; }
     if str_eq(name, "eprint") { return true; }
     if str_eq(name, "eprintln") { return true; }
+    if str_eq(name, "print_str") { return true; }
+    if str_eq(name, "println_str") { return true; }
+    if str_eq(name, "eprint_str") { return true; }
+    if str_eq(name, "eprintln_str") { return true; }
     // assert wrappers → blood_assert* runtime functions
     if str_eq(name, "assert") { return true; }
     if str_eq(name, "assert_eq_int") { return true; }
     if str_eq(name, "assert_eq_bool") { return true; }
+    if str_eq(name, "blood_assert") { return true; }
+    if str_eq(name, "blood_assert_eq_int") { return true; }
+    if str_eq(name, "blood_assert_eq_bool") { return true; }
     // unreachable/todo → inline panic implementations
     if str_eq(name, "unreachable") { return true; }
     if str_eq(name, "todo") { return true; }
     // process_exit → libc exit
     if str_eq(name, "process_exit") { return true; }
+    if str_eq(name, "exit") { return true; }
     // Low-level memory → blood_alloc_simple etc.
     if str_eq(name, "alloc") { return true; }
     if str_eq(name, "realloc") { return true; }
     if str_eq(name, "free") { return true; }
     if str_eq(name, "memcpy") { return true; }
+    if str_eq(name, "blood_alloc_simple") { return true; }
+    if str_eq(name, "blood_realloc") { return true; }
+    if str_eq(name, "blood_free_simple") { return true; }
+    if str_eq(name, "blood_memcpy") { return true; }
     // str_concat → blood_str_concat
     if str_eq(name, "str_concat") { return true; }
+    if str_eq(name, "blood_str_concat") { return true; }
     // Math library name mismatches (Blood name → libm name)
     if str_eq(name, "abs") { return true; }
     if str_eq(name, "abs_f32") { return true; }
     if str_eq(name, "sqrt_f32") { return true; }
+    if str_eq(name, "fabs") { return true; }
+    if str_eq(name, "fabsf") { return true; }
+    if str_eq(name, "sqrtf") { return true; }
     false
 }
 
