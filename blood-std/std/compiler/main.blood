@@ -581,6 +581,38 @@ fn is_format_runtime_builtin(name: &str) -> bool {
     false
 }
 
+/// Returns true if the given name is a builtin that has a wrapper/define
+/// in intrinsic_declarations(). These must be skipped in generate_foreign_declarations
+/// to avoid duplicate declarations or conflicting signatures.
+fn is_intrinsic_wrapper_builtin(name: &str) -> bool {
+    // print/println/eprint/eprintln wrappers → *_str runtime variants
+    if str_eq(name, "print") { return true; }
+    if str_eq(name, "println") { return true; }
+    if str_eq(name, "eprint") { return true; }
+    if str_eq(name, "eprintln") { return true; }
+    // assert wrappers → blood_assert* runtime functions
+    if str_eq(name, "assert") { return true; }
+    if str_eq(name, "assert_eq_int") { return true; }
+    if str_eq(name, "assert_eq_bool") { return true; }
+    // unreachable/todo → inline panic implementations
+    if str_eq(name, "unreachable") { return true; }
+    if str_eq(name, "todo") { return true; }
+    // process_exit → libc exit
+    if str_eq(name, "process_exit") { return true; }
+    // Low-level memory → blood_alloc_simple etc.
+    if str_eq(name, "alloc") { return true; }
+    if str_eq(name, "realloc") { return true; }
+    if str_eq(name, "free") { return true; }
+    if str_eq(name, "memcpy") { return true; }
+    // str_concat → blood_str_concat
+    if str_eq(name, "str_concat") { return true; }
+    // Math library name mismatches (Blood name → libm name)
+    if str_eq(name, "abs") { return true; }
+    if str_eq(name, "abs_f32") { return true; }
+    if str_eq(name, "sqrt_f32") { return true; }
+    false
+}
+
 fn resolve_symbol(intern: &interner::StringInterner, sym: common::Symbol) -> String {
     match intern.resolve(sym) {
         Option::Some(s) => common::make_string(s.as_str()),
@@ -823,6 +855,12 @@ fn generate_foreign_declarations(
                             // Skip format runtime builtins - they are declared with
                             // correct { ptr, i64 } return type in intrinsic_declarations()
                             if is_format_runtime_builtin(name.as_str()) {
+                                fi = fi + 1;
+                                continue;
+                            }
+                            // Skip builtins that have wrapper definitions in
+                            // intrinsic_declarations() (print→print_str, assert→blood_assert, etc.)
+                            if is_intrinsic_wrapper_builtin(name.as_str()) {
                                 fi = fi + 1;
                                 continue;
                             }

@@ -683,6 +683,63 @@ pub fn intrinsic_declarations() -> String {
     output.push_str("declare ptr @blood_persistent_alloc(i64, i64, i32, ptr)\n");
     output.push_str("declare void @blood_persistent_decrement(i64)\n");
 
+    // Blood-name → runtime-name wrappers
+    // Blood registers builtins with user-friendly names (e.g., "print"),
+    // but the runtime exports them under different names (e.g., "print_str").
+    // These wrappers bridge the gap. Uses named temps to avoid SSA numbering issues.
+    output.push_str("\n; Blood builtin name wrappers\n");
+
+    // print/println/eprint/eprintln → *_str runtime variants (for &str args)
+    output.push_str("declare void @print_str({ ptr, i64 })\n");
+    output.push_str("declare void @println_str({ ptr, i64 })\n");
+    output.push_str("declare void @eprint_str({ ptr, i64 })\n");
+    output.push_str("declare void @eprintln_str({ ptr, i64 })\n");
+    output.push_str("define void @print({ ptr, i64 } %s) {\n  call void @print_str({ ptr, i64 } %s)\n  ret void\n}\n");
+    output.push_str("define void @println({ ptr, i64 } %s) {\n  call void @println_str({ ptr, i64 } %s)\n  ret void\n}\n");
+    output.push_str("define void @eprint({ ptr, i64 } %s) {\n  call void @eprint_str({ ptr, i64 } %s)\n  ret void\n}\n");
+    output.push_str("define void @eprintln({ ptr, i64 } %s) {\n  call void @eprintln_str({ ptr, i64 } %s)\n  ret void\n}\n");
+
+    // assert → blood_assert (Blood bool/i1 → runtime i32 conversion)
+    output.push_str("declare void @blood_assert(i32)\n");
+    output.push_str("declare void @blood_assert_eq_int(i32, i32)\n");
+    output.push_str("declare void @blood_assert_eq_bool(i32, i32)\n");
+    output.push_str("define void @assert(i1 %cond) {\n  %ext = zext i1 %cond to i32\n  call void @blood_assert(i32 %ext)\n  ret void\n}\n");
+    output.push_str("define void @assert_eq_int(i32 %a, i32 %b) {\n  call void @blood_assert_eq_int(i32 %a, i32 %b)\n  ret void\n}\n");
+    output.push_str("define void @assert_eq_bool(i1 %a, i1 %b) {\n  %ea = zext i1 %a to i32\n  %eb = zext i1 %b to i32\n  call void @blood_assert_eq_bool(i32 %ea, i32 %eb)\n  ret void\n}\n");
+
+    // unreachable/todo → panic with message string constants
+    output.push_str("@.str.unreachable = private unnamed_addr constant [26 x i8] c\"unreachable code reached!\\00\"\n");
+    output.push_str("@.str.todo = private unnamed_addr constant [22 x i8] c\"not yet implemented!\\00\"\n");
+    output.push_str("define void @unreachable() noreturn {\n  call void @panic({ ptr, i64 } { ptr @.str.unreachable, i64 25 })\n  unreachable\n}\n");
+    output.push_str("define void @todo() noreturn {\n  call void @panic({ ptr, i64 } { ptr @.str.todo, i64 20 })\n  unreachable\n}\n");
+
+    // process_exit → libc exit
+    output.push_str("declare void @exit(i32) noreturn\n");
+    output.push_str("define void @process_exit(i32 %code) noreturn {\n  call void @exit(i32 %code)\n  unreachable\n}\n");
+
+    // Low-level memory builtins → blood runtime (all i64 addresses)
+    output.push_str("declare i64 @blood_alloc_simple(i64)\n");
+    output.push_str("declare i64 @blood_realloc(i64, i64)\n");
+    output.push_str("declare void @blood_free_simple(i64)\n");
+    output.push_str("declare i64 @blood_memcpy(i64, i64, i64)\n");
+    output.push_str("define i64 @alloc(i64 %sz) {\n  %r = call i64 @blood_alloc_simple(i64 %sz)\n  ret i64 %r\n}\n");
+    output.push_str("define i64 @realloc(i64 %p, i64 %sz) {\n  %r = call i64 @blood_realloc(i64 %p, i64 %sz)\n  ret i64 %r\n}\n");
+    output.push_str("define void @free(i64 %p) {\n  call void @blood_free_simple(i64 %p)\n  ret void\n}\n");
+    output.push_str("define i64 @memcpy(i64 %d, i64 %s, i64 %n) {\n  %r = call i64 @blood_memcpy(i64 %d, i64 %s, i64 %n)\n  ret i64 %r\n}\n");
+
+    // str_concat → blood_str_concat
+    output.push_str("declare { ptr, i64 } @blood_str_concat({ ptr, i64 }, { ptr, i64 })\n");
+    output.push_str("define { ptr, i64 } @str_concat({ ptr, i64 } %a, { ptr, i64 } %b) {\n  %r = call { ptr, i64 } @blood_str_concat({ ptr, i64 } %a, { ptr, i64 } %b)\n  ret { ptr, i64 } %r\n}\n");
+
+    // Math library wrappers (Blood name → libm name where they differ)
+    output.push_str("\n; Math library wrappers\n");
+    output.push_str("declare double @fabs(double)\n");
+    output.push_str("declare float @fabsf(float)\n");
+    output.push_str("declare float @sqrtf(float)\n");
+    output.push_str("define double @abs(double %x) {\n  %r = call double @fabs(double %x)\n  ret double %r\n}\n");
+    output.push_str("define float @abs_f32(float %x) {\n  %r = call float @fabsf(float %x)\n  ret float %r\n}\n");
+    output.push_str("define float @sqrt_f32(float %x) {\n  %r = call float @sqrtf(float %x)\n  ret float %r\n}\n");
+
     output
 }
 
