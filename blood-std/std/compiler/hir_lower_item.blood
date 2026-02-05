@@ -518,9 +518,16 @@ fn lower_const_decl(ctx: &mut hir_lower_ctx::LoweringCtx, c: &ast::ConstDecl) {
 
     let const_def = hir_item::ConstDef::new(ty, body_id);
     let item_kind = hir_item::ItemKind::Const(const_def);
+
+    // Create HIR name with re-interned symbol (not AST symbol) so it resolves correctly
+    let hir_name = common::SpannedSymbol {
+        symbol: lookup_symbol,
+        span: c.name.span,
+    };
+
     let item = hir_item::Item::new(
         def_id,
-        c.name,
+        hir_name,
         item_kind,
         c.vis,
         c.span,
@@ -555,9 +562,16 @@ fn lower_static_decl(ctx: &mut hir_lower_ctx::LoweringCtx, s: &ast::StaticDecl) 
 
     let static_def = hir_item::StaticDef::new(ty, s.is_mut, body_id);
     let item_kind = hir_item::ItemKind::Static(static_def);
+
+    // Create HIR name with re-interned symbol (not AST symbol) so it resolves correctly
+    let hir_name = common::SpannedSymbol {
+        symbol: lookup_symbol,
+        span: s.name.span,
+    };
+
     let item = hir_item::Item::new(
         def_id,
-        s.name,
+        hir_name,
         item_kind,
         s.vis,
         s.span,

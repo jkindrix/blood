@@ -21,12 +21,23 @@ pub struct Place {
     pub local: mir_def::MirLocalId,
     /// Projections applied to the local to reach the final place.
     pub projection: Vec<PlaceElem>,
+    /// If this place refers to a static variable, the DefId of that static.
+    pub static_def_id: Option<hir_def::DefId>,
 }
 
 impl Place {
     /// Creates a place referring directly to a local variable.
     pub fn local(local: mir_def::MirLocalId) -> Place {
-        Place { local, projection: Vec::new() }
+        Place { local, projection: Vec::new(), static_def_id: Option::None }
+    }
+
+    /// Creates a place referring to a static variable.
+    pub fn static_place(def_id: hir_def::DefId) -> Place {
+        Place {
+            local: mir_def::MirLocalId::return_place(),  // Dummy local, not used for statics
+            projection: Vec::new(),
+            static_def_id: Option::Some(def_id),
+        }
     }
 
     /// Creates the return place (_0).
@@ -38,7 +49,7 @@ impl Place {
     pub fn project(self: Place, elem: PlaceElem) -> Place {
         let mut proj = self.projection;
         proj.push(elem);
-        Place { local: self.local, projection: proj }
+        Place { local: self.local, projection: proj, static_def_id: self.static_def_id }
     }
 
     /// Returns true if this is just a local with no projections.
@@ -49,6 +60,19 @@ impl Place {
     /// Returns true if this is the return place with no projections.
     pub fn is_return_place(self: &Place) -> bool {
         self.local.is_return_place() && self.projection.len() == 0
+    }
+
+    /// Returns true if this place refers to a static variable.
+    pub fn is_static(self: &Place) -> bool {
+        match &self.static_def_id {
+            Option::Some(_) => true,
+            Option::None => false,
+        }
+    }
+
+    /// Returns the DefId of the static variable, if this is a static place.
+    pub fn get_static_def_id(self: &Place) -> Option<hir_def::DefId> {
+        self.static_def_id
     }
 }
 

@@ -305,6 +305,33 @@ pub fn emit_place_addr(
     ctx: &mut codegen_ctx::CodegenCtx,
     place: &mir_types::Place,
 ) -> String {
+    // Check if this is a static place - use global variable address directly
+    if place.is_static() {
+        match place.get_static_def_id() {
+            Option::Some(def_id) => {
+                // Look up the global variable name for this static
+                match ctx.lookup_def_name(def_id.index) {
+                    Option::Some(name) => {
+                        // Return the global variable name with @ prefix.
+                        // Static global variables are already addresses.
+                        // Convention: names are stored without @, add it here.
+                        let mut result = common::make_string("@");
+                        result.push_str(name.as_str());
+                        return result;
+                    }
+                    Option::None => {
+                        // Fallback - shouldn't happen
+                        return common::make_string("null");
+                    }
+                }
+            }
+            Option::None => {
+                // Fallback - shouldn't happen
+                return common::make_string("null");
+            }
+        }
+    }
+
     let mut current = ctx.local_name(place.local);
 
     // Resolve the local's ADT type for projection lookups.

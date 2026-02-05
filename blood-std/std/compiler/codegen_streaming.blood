@@ -20,6 +20,7 @@ mod codegen_expr;
 mod codegen_stmt;
 mod codegen_term;
 mod codegen;
+mod interner;
 
 // ============================================================
 // Streaming Code Generation
@@ -90,4 +91,80 @@ pub fn finish_streaming_module(
     file_append_string(output_path, decls.as_str());
 
     true
+}
+
+/// Emits LLVM global variable declarations for static items with proper names.
+/// Should be called after begin_streaming_module but before generating functions.
+/// Uses the interner to get the actual static variable names.
+pub fn emit_static_globals_with_names(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    interner: &interner::StringInterner,
+    items: &Vec<hir_lower_ctx::ItemEntry>,
+    output_path: &str,
+) {
+    let mut output = String::new();
+    output.push_str("\n; Static global variables\n");
+
+    let mut i: usize = 0;
+    while i < items.len() {
+        let item = &items[i].item;
+        match &item.kind {
+            &hir_item::ItemKind::Static(ref static_def) => {
+                // Get mangled name for the static using the actual symbol name
+                // Convention: names are stored WITHOUT @ prefix, @ is added when emitting
+                let mut name = String::new();
+                name.push_str("def");
+                push_u32(&mut name, item.def_id.index);
+                name.push('_');
+                // Get the actual name from the interner
+                match interner.resolve(item.name.symbol) {
+                    Option::Some(symbol_name) => {
+                        name.push_str(symbol_name.as_str());
+                    }
+                    Option::None => {
+                        name.push_str("STATIC");
+                    }
+                }
+
+                // Get LLVM type for the static's type
+                let llvm_type = codegen_types::type_to_llvm(&static_def.ty);
+
+                // Emit global variable declaration
+                // Format: @name = global <type> zeroinitializer
+                output.push('@');
+                output.push_str(name.as_str());
+                output.push_str(" = global ");
+                output.push_str(llvm_type.as_str());
+                output.push_str(" zeroinitializer\n");
+
+                // Register the static's name (without @) and mark it as static
+                ctx.register_def_name(item.def_id.index, name);
+                ctx.register_static(item.def_id.index);
+            }
+            _ => {}
+        }
+        i = i + 1;
+    }
+
+    output.push('\n');
+    file_append_string(output_path, output.as_str());
+}
+
+/// Helper to push u32 as decimal string.
+fn push_u32(s: &mut String, val: u32) {
+    if val == 0 {
+        s.push('0');
+        return;
+    }
+    let mut digits: Vec<u8> = Vec::new();
+    let mut n = val;
+    while n > 0 {
+        digits.push((n % 10) as u8);
+        n = n / 10;
+    }
+    let mut j: usize = digits.len();
+    while j > 0 {
+        j = j - 1;
+        s.push((48 + (digits[j] as i32)) as char);
+    }
 }

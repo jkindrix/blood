@@ -621,7 +621,14 @@ fn generate_missing_stubs(
     let mut stub_idx: usize = 0;
     while stub_idx < count {
         let entry = ctx.def_name_at(stub_idx);
+        let def_id = entry.0; // (def_id, name) tuple - get def_id
         let name = entry.1; // (def_id, name) tuple - get name
+
+        // Skip static global variables - they are declared as globals, not functions
+        if ctx.is_static(def_id) {
+            stub_idx = stub_idx + 1;
+            continue;
+        }
 
         // Only generate stubs for user-defined functions (names starting with "def")
         // Skip runtime/intrinsic functions (like box_new, vec_new, etc.) which are
@@ -1069,21 +1076,53 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
     // Phase 5: Streaming codegen (global allocator for ctx persistent state)
     let mut ctx = codegen_streaming::begin_streaming_module("main", output_path, &lower_result.items);
 
+    // Collect static DefIds first - needed for name registration filtering.
+    let mut static_def_ids: Vec<u32> = Vec::new();
+    let mut si: usize = 0;
+    while si < lower_result.items.len() {
+        let item = &lower_result.items[si].item;
+        match &item.kind {
+            &hir_item::ItemKind::Static(ref _static_def) => {
+                static_def_ids.push(item.def_id.index);
+            }
+            _ => {}
+        }
+        si = si + 1;
+    }
+
+    // Pass 0: Emit static global variable declarations.
+    // This must happen before any functions that reference statics.
+    // Also registers static names in ctx using the interner.
+    codegen_streaming::emit_static_globals_with_names(&mut ctx, &lower_result.interner, &lower_result.items, output_path);
+
     // Pass 1a: Register def_names for all function bodies (global allocator)
+    // SKIP static bodies - their names are already registered by emit_static_globals_with_names
     let mut body_idx: usize = 0;
     while body_idx < lower_result.bodies.len() {
         let body_entry = &lower_result.bodies[body_idx];
         let body_id = body_entry.body_id;
         let fn_info = driver::find_fn_for_body(&lower_result.items, body_id);
-        let fn_name = match &fn_info {
-            &Option::Some(ref info) => make_mangled_fn_name(&lower_result.interner, info),
-            &Option::None => driver::make_fn_name(body_idx),
-        };
         let def_id = match &fn_info {
             &Option::Some(ref info) => info.def_id.index,
             &Option::None => body_idx as u32,
         };
-        ctx.register_def_name(def_id, fn_name);
+        // Skip static bodies
+        let mut is_static = false;
+        let mut sbi: usize = 0;
+        while sbi < static_def_ids.len() {
+            if static_def_ids[sbi] == def_id {
+                is_static = true;
+                sbi = static_def_ids.len();
+            }
+            sbi = sbi + 1;
+        }
+        if !is_static {
+            let fn_name = match &fn_info {
+                &Option::Some(ref info) => make_mangled_fn_name(&lower_result.interner, info),
+                &Option::None => driver::make_fn_name(body_idx),
+            };
+            ctx.register_def_name(def_id, fn_name);
+        }
         body_idx = body_idx + 1;
     }
 
@@ -1144,6 +1183,23 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
             &Option::Some(ref info) => info.def_id,
             &Option::None => hir_def::DefId::new(body_idx2 as u32),
         };
+
+        // Check if this body belongs to a static variable - skip if so.
+        // Static initializers are handled separately as global variable declarations,
+        // not as regular functions.
+        let mut is_static_body = false;
+        let mut sbi2: usize = 0;
+        while sbi2 < static_def_ids.len() {
+            if static_def_ids[sbi2] == def_id.index {
+                is_static_body = true;
+                sbi2 = static_def_ids.len(); // break
+            }
+            sbi2 = sbi2 + 1;
+        }
+        if is_static_body {
+            body_idx2 = body_idx2 + 1;
+            continue;
+        }
 
         // Check if this DefId was already processed (skip duplicates from generic instantiations)
         let mut is_duplicate = false;

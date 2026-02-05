@@ -119,6 +119,8 @@ pub struct CodegenCtx {
     persistent_locals_hash: hashmap::HashMapU64U32,
     /// Hash index for string_table: string content hash -> index in string_table vec
     string_table_hash: hashmap::HashMapU64U32,
+    /// Hash set for static def_ids: def_id -> 1 if static
+    static_defs_hash: hashmap::HashMapU64U32,
 }
 
 /// Mapping from a MIR local to its LLVM type.
@@ -205,6 +207,7 @@ impl CodegenCtx {
             region_locals_hash: hashmap::HashMapU64U32::new(),
             persistent_locals_hash: hashmap::HashMapU64U32::new(),
             string_table_hash: hashmap::HashMapU64U32::new(),
+            static_defs_hash: hashmap::HashMapU64U32::new(),
         }
     }
 
@@ -242,6 +245,7 @@ impl CodegenCtx {
             region_locals_hash: hashmap::HashMapU64U32::new(),
             persistent_locals_hash: hashmap::HashMapU64U32::new(),
             string_table_hash: hashmap::HashMapU64U32::new(),
+            static_defs_hash: hashmap::HashMapU64U32::new(),
         }
     }
 
@@ -281,6 +285,19 @@ impl CodegenCtx {
     pub fn def_name_at(self: &CodegenCtx, index: usize) -> (u32, String) {
         let entry = &self.def_names[index];
         (entry.def_id, clone_string(&entry.name))
+    }
+
+    /// Registers a DefId as a static variable.
+    pub fn register_static(self: &mut CodegenCtx, def_id: u32) {
+        self.static_defs_hash.insert(def_id as u64, 1);
+    }
+
+    /// Returns true if the given DefId is a static variable.
+    pub fn is_static(self: &CodegenCtx, def_id: u32) -> bool {
+        match self.static_defs_hash.get(def_id as u64) {
+            Option::Some(_) => true,
+            Option::None => false,
+        }
     }
 
     /// Resets per-function state while keeping global state (def_names).
