@@ -564,6 +564,10 @@ fn register_builtin_fn(
             def_id, spanned_name, param_tys, return_ty, false, dummy_span,
         );
         foreign_items.push(hir_item::ForeignItem::Fn(foreign_fn));
+        // Register in builtin_fn_defs so collect_resolver_fn_defs won't overwrite
+        // with a mangled name. Standalone builtins use their bare name as the
+        // runtime function name (e.g., "print", "panic", "file_read_to_string").
+        ctx.builtin_fn_defs.push(hir_lower_ctx::BuiltinFnDef::new(def_id.index, common::make_string(name)));
     }
 }
 
@@ -1722,23 +1726,41 @@ fn lower_single_fn_body(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl) {
 /// with generic mangled names (def{N}_{name}) in builtin_fn_defs.
 ///
 /// This acts as a catch-all: any DefId that appears as FnDef in MIR
-/// will get a name. More specific registrations (bodies, items, builtins)
-/// happen first in main.blood and take priority because lookup_def_name
-/// returns the first match.
+/// will get a name. DefIds that already have a runtime name registered
+/// (from register_builtin_fn or register_builtin_children) are skipped
+/// to preserve their correct runtime names (e.g., "vec_new", "print").
 fn collect_resolver_fn_defs(ctx: &mut hir_lower_ctx::LoweringCtx) {
     let mut i: usize = 0;
     while i < ctx.resolver.def_info.len() {
-        let entry = &ctx.resolver.def_info[i];
-        let name_opt = ctx.interner.resolve(entry.info.name);
+        let def_id_index = ctx.resolver.def_info[i].def_id.index;
+
+        // Check if this DefId already has a runtime name registered.
+        // If so, skip it to preserve the correct name (e.g., "vec_new", "print").
+        let mut already_registered: bool = false;
+        let mut j: usize = 0;
+        while j < ctx.builtin_fn_defs.len() {
+            if ctx.builtin_fn_defs[j].def_id_index == def_id_index {
+                already_registered = true;
+                j = ctx.builtin_fn_defs.len(); // break
+            }
+            j = j + 1;
+        }
+
+        if already_registered {
+            i = i + 1;
+            continue;
+        }
+
+        let name_opt = ctx.interner.resolve(ctx.resolver.def_info[i].info.name);
         match name_opt {
             Option::Some(name_str) => {
                 let mut mangled = String::new();
                 mangled.push_str("def");
-                hir_lower_ctx::append_u32_to_string(&mut mangled, entry.def_id.index);
+                hir_lower_ctx::append_u32_to_string(&mut mangled, def_id_index);
                 mangled.push(95 as char); // '_'
                 mangled.push_str(name_str.as_str());
                 ctx.builtin_fn_defs.push(
-                    hir_lower_ctx::BuiltinFnDef::new(entry.def_id.index, mangled),
+                    hir_lower_ctx::BuiltinFnDef::new(def_id_index, mangled),
                 );
             }
             Option::None => {}
