@@ -489,11 +489,24 @@ impl<'src> Lexer<'src> {
         }
 
         // Character literal or lifetime
+        // Distinguish 'a' (char) from 'a (lifetime) by checking for closing quote
         if c == 39 {
             let next = self.peek();
+            // If next is backslash, it's an escape sequence - must be a char literal
+            if next == 92 {
+                return self.lex_char();
+            }
+            // If next is alphanumeric/underscore, check if char after that is closing quote
             if Lexer::is_alpha(next) || next == 95 {
+                let after_next = self.peek_at(2);
+                // If closing quote follows immediately, it's a char literal ('a', '_')
+                if after_next == 39 {
+                    return self.lex_char();
+                }
+                // Otherwise, it's a lifetime ('a, 'static, etc.)
                 return self.lex_lifetime();
             }
+            // Non-alphanumeric single character literal (e.g., '!')
             return self.lex_char();
         }
 
