@@ -6,8 +6,9 @@
 #   ./build_selfhost.sh rebuild      # Skip blood-rust, reuse existing first_gen
 #   ./build_selfhost.sh test [bin]   # Smoke test a binary (default: second_gen)
 #   ./build_selfhost.sh ground-truth # Run ground-truth tests through first_gen
-#   ./build_selfhost.sh emit [stage] # Emit intermediate IR (ast|hir|mir|llvm-ir)
+#   ./build_selfhost.sh emit [stage] # Emit intermediate IR (ast|hir|mir|llvm-ir|llvm-ir-unopt)
 #   ./build_selfhost.sh timings      # Build first_gen with per-phase timing
+#   ./build_selfhost.sh release      # Build first_gen with --release optimizations
 #   ./build_selfhost.sh clean        # Remove build artifacts
 set -euo pipefail
 
@@ -195,9 +196,9 @@ run_smoke_tests() {
         total=$((total + 1))
 
         # Compile and run with the compiler
-        # Filter out blood-rust build messages (lines matching "Build successful:", "Parsed", etc.)
+        # Use --quiet to suppress build progress; filter remaining "Build successful:" line
         local actual exit_code=0
-        actual=$("$bin" run "$src" 2>/dev/null | grep -v '^Parsed \|^Type checking\|^Loaded \|^Content hashing\|^Using \|^Compilation:\|^Linking \|^Linked \|^Build successful:\|^Running:') || exit_code=$?
+        actual=$("$bin" run --quiet "$src" 2>/dev/null | grep -v '^Build successful:\|^Running:') || exit_code=$?
 
         if [ "$exit_code" -ne 0 ]; then
             fail "$name (exit code $exit_code)"
@@ -281,6 +282,10 @@ case "${1:-full}" in
         build_first_gen "--timings"
         ;;
 
+    release)
+        build_first_gen "--release --timings"
+        ;;
+
     clean)
         step "Cleaning build artifacts"
         rm -f first_gen second_gen
@@ -298,8 +303,9 @@ Commands:
   test [binary]     Smoke test a binary (default: second_gen)
   ground-truth [b]  Run ground-truth tests through binary (default: first_gen)
   smoke-tests [b]   Run smoke tests (tests/) through binary (default: blood-rust)
-  emit [stage]      Emit intermediate IR (ast|hir|mir|llvm-ir)
+  emit [stage]      Emit intermediate IR (ast|hir|mir|llvm-ir|llvm-ir-unopt)
   timings           Build first_gen with per-phase compilation timing
+  release           Build first_gen with --release optimizations
   clean             Remove build artifacts
 
 Environment:
