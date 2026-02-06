@@ -943,6 +943,13 @@ pub fn intrinsic_declarations() -> String {
     output.push_str("define internal float @abs_f32(float %x) {\n  %r = call float @fabsf(float %x)\n  ret float %r\n}\n");
     output.push_str("define internal float @sqrt_f32(float %x) {\n  %r = call float @sqrtf(float %x)\n  ret float %r\n}\n");
 
+    // Thread builtins → blood_thread_spawn / blood_thread_join runtime wrappers
+    output.push_str("\n; Thread runtime declarations\n");
+    output.push_str("declare i64 @blood_thread_spawn(i64, i64)\n");
+    output.push_str("declare i64 @blood_thread_join(i64)\n");
+    output.push_str("define internal i64 @thread_spawn(i64 %f, i64 %a) {\n  %r = call i64 @blood_thread_spawn(i64 %f, i64 %a)\n  ret i64 %r\n}\n");
+    output.push_str("define internal i64 @thread_join(i64 %h) {\n  %r = call i64 @blood_thread_join(i64 %h)\n  ret i64 %r\n}\n");
+
     output
 }
 

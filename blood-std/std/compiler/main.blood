@@ -637,6 +637,11 @@ fn is_intrinsic_wrapper_builtin(name: &str) -> bool {
     if str_eq(name, "parse_i64_radix") { return true; }
     if str_eq(name, "char_from_u32") { return true; }
     if str_eq(name, "read_line") { return true; }
+    // Thread builtins → blood_thread_spawn / blood_thread_join runtime functions
+    if str_eq(name, "thread_spawn") { return true; }
+    if str_eq(name, "thread_join") { return true; }
+    if str_eq(name, "blood_thread_spawn") { return true; }
+    if str_eq(name, "blood_thread_join") { return true; }
     false
 }
 
@@ -1124,6 +1129,74 @@ fn build_codegen_worklist(
 }
 
 // ============================================================
+// Parallel Codegen Infrastructure
+// ============================================================
+
+/// Arguments passed to each codegen worker thread via u64 address.
+/// All pointer-like fields are u64 addresses obtained via `&T as u64`.
+struct ThreadCodegenArg {
+    /// Address of the worker's CodegenCtx (&mut CodegenCtx as u64).
+    worker_ctx_addr: u64,
+    /// Address of the shared LowerResult (&LowerResult as u64).
+    lower_result_addr: u64,
+    /// Address of the shared TypeCheckResult (&TypeCheckResult as u64).
+    typeck_result_addr: u64,
+    /// Address of the shared CodegenWorkList (&CodegenWorkList as u64).
+    worklist_addr: u64,
+    /// Start index in worklist.items (inclusive).
+    chunk_start: usize,
+    /// End index in worklist.items (exclusive).
+    chunk_end: usize,
+    /// Address of the worker's output String (&mut String as u64).
+    output_ir_addr: u64,
+}
+
+/// Worker function for parallel codegen threads.
+/// Receives a ThreadCodegenArg via u64 address, processes its chunk of the
+/// worklist (MIR lowering + codegen), and writes IR to its output String.
+fn codegen_thread_worker(arg: u64) -> u64 {
+    let targ: &ThreadCodegenArg = arg as &ThreadCodegenArg;
+    let ctx: &mut codegen_ctx::CodegenCtx = targ.worker_ctx_addr as &mut codegen_ctx::CodegenCtx;
+    let lower: &hir_lower_ctx::LowerResult = targ.lower_result_addr as &hir_lower_ctx::LowerResult;
+    let typeck: &typeck_driver::TypeCheckResult = targ.typeck_result_addr as &typeck_driver::TypeCheckResult;
+    let wl: &CodegenWorkList = targ.worklist_addr as &CodegenWorkList;
+    let output: &mut String = targ.output_ir_addr as &mut String;
+
+    let mut i: usize = targ.chunk_start;
+    while i < targ.chunk_end {
+        let work = &wl.items[i];
+        let body_entry = &lower.bodies[work.body_idx];
+        let hir_body = &body_entry.body;
+
+        // Stage A: MIR lowering (per-function region)
+        let mir_region = region_create(4194304, 1073741824);  // 4 MB init, 1 GB max
+        region_activate(mir_region);
+
+        let body = mir_lower::lower_body(
+            work.def_id,
+            hir_body,
+            hir_ty::copy_type(&work.return_ty),
+            work.span,
+            &typeck.subst_table,
+            &typeck.method_resolutions,
+            &typeck.field_resolutions,
+        );
+
+        region_deactivate();
+
+        // Stage B: Codegen
+        let fn_ir = codegen::generate_function_with_ctx(ctx, &body, work.fn_name.as_str());
+        output.push_str(fn_ir.as_str());
+
+        // Stage C: Destroy MIR region
+        region_destroy(mir_region);
+
+        i = i + 1;
+    }
+    0
+}
+
+// ============================================================
 // Effect-Abstracted Codegen
 // ============================================================
 
@@ -1154,85 +1227,97 @@ deep handler FileEmitter for EmitIR {
     }
 }
 
-/// Runs the batched Pass 2 codegen loop under the EmitIR effect.
-/// Each batch of ~32 functions is lowered to MIR, codegen'd to LLVM IR,
-/// then emitted via `perform EmitIR.emit_section(batch_ir)`.
+/// Number of codegen threads to use for parallel dispatch.
+/// Each thread processes a contiguous chunk of the worklist independently.
+fn codegen_thread_count() -> usize {
+    4
+}
+
+/// Runs parallel Pass 2 codegen under the EmitIR effect.
+/// Splits the worklist across N threads, each with its own CodegenCtx and output String.
+/// After all threads join, merges string tables and emits IR in order via EmitIR effect.
 fn codegen_pass2(
     ctx: &mut codegen_ctx::CodegenCtx,
     worklist: &CodegenWorkList,
     lower_result: &hir_lower_ctx::LowerResult,
     typeck_result: &typeck_driver::TypeCheckResult,
 ) -> bool / {EmitIR} {
-    let batch_size: usize = 32;
     let total_items: usize = worklist.items.len();
-    let mut batch_start: usize = 0;
+    if total_items == 0 {
+        return true;
+    }
 
-    while batch_start < total_items {
-        // Determine batch end (exclusive)
-        let mut batch_end = batch_start + batch_size;
-        if batch_end > total_items {
-            batch_end = total_items;
-        }
-        let batch_len = batch_end - batch_start;
+    // Determine thread count (cap at CODEGEN_THREAD_COUNT or total items)
+    let max_threads: usize = codegen_thread_count();
+    let num_threads: usize = if total_items < max_threads { total_items } else { max_threads };
+    let chunk_size: usize = total_items / num_threads;
+    let remainder: usize = total_items % num_threads;
 
-        // Stage A: MIR lowering — create regions and lower all functions in this batch.
-        let mut mir_bodies: Vec<mir_body::MirBody> = Vec::new();
-        let mut mir_regions: Vec<u64> = Vec::new();
+    // Create worker contexts and output buffers
+    let mut worker_ctxs: Vec<codegen_ctx::CodegenCtx> = Vec::new();
+    let mut worker_outputs: Vec<String> = Vec::new();
+    let mut thread_args: Vec<ThreadCodegenArg> = Vec::new();
 
-        let mut bi: usize = 0;
-        while bi < batch_len {
-            let work = &worklist.items[batch_start + bi];
-            let body_entry = &lower_result.bodies[work.body_idx];
-            let hir_body = &body_entry.body;
+    let mut ti: usize = 0;
+    while ti < num_threads {
+        worker_ctxs.push(ctx.create_worker_ctx());
+        worker_outputs.push(String::new());
+        ti = ti + 1;
+    }
 
-            // Create and activate per-function MIR region
-            let mir_region = region_create(4194304, 1073741824);  // 4 MB init, 1 GB max
-            region_activate(mir_region);
+    // Build thread arguments with chunk boundaries
+    // First `remainder` threads get chunk_size+1 items, the rest get chunk_size
+    let mut arg_start: usize = 0;
+    let mut ai: usize = 0;
+    while ai < num_threads {
+        let this_chunk = if ai < remainder { chunk_size + 1 } else { chunk_size };
+        let arg_end = arg_start + this_chunk;
 
-            // Lower to MIR (allocations go to mir_region)
-            let body = mir_lower::lower_body(
-                work.def_id,
-                hir_body,
-                hir_ty::copy_type(&work.return_ty),
-                work.span,
-                &typeck_result.subst_table,
-                &typeck_result.method_resolutions,
-                &typeck_result.field_resolutions,
-            );
+        thread_args.push(ThreadCodegenArg {
+            worker_ctx_addr: &mut worker_ctxs[ai] as u64,
+            lower_result_addr: lower_result as u64,
+            typeck_result_addr: typeck_result as u64,
+            worklist_addr: worklist as u64,
+            chunk_start: arg_start,
+            chunk_end: arg_end,
+            output_ir_addr: &mut worker_outputs[ai] as u64,
+        });
 
-            // Deactivate region — MIR data remains readable until destroy.
-            region_deactivate();
+        arg_start = arg_end;
+        ai = ai + 1;
+    }
 
-            mir_bodies.push(body);
-            mir_regions.push(mir_region);
+    // Spawn worker threads
+    let worker_fn_ptr: u64 = codegen_thread_worker as u64;
+    let mut handles: Vec<u64> = Vec::new();
+    let mut si: usize = 0;
+    while si < num_threads {
+        let arg_addr: u64 = &thread_args[si] as u64;
+        let handle = thread_spawn(worker_fn_ptr, arg_addr);
+        handles.push(handle);
+        si = si + 1;
+    }
 
-            bi = bi + 1;
-        }
+    // Join all threads
+    let mut ji: usize = 0;
+    while ji < num_threads {
+        let _join_result = thread_join(handles[ji]);
+        ji = ji + 1;
+    }
 
-        // Stage B: Codegen — generate LLVM IR for each function, accumulate into batch string.
-        let mut batch_ir = String::new();
-        let mut ci: usize = 0;
-        while ci < batch_len {
-            let work = &worklist.items[batch_start + ci];
-            let mir_body_ref = &mir_bodies[ci];
+    // Collect results in order: merge string tables, remap labels, emit via effect
+    let mut mi: usize = 0;
+    while mi < num_threads {
+        // Merge worker's string table into main ctx
+        let remaps = codegen_ctx::merge_string_tables(ctx, &worker_ctxs[mi]);
 
-            let fn_ir = codegen::generate_function_with_ctx(ctx, mir_body_ref, work.fn_name.as_str());
-            batch_ir.push_str(fn_ir.as_str());
+        // Remap string labels in worker IR if needed
+        let final_ir = codegen_ctx::remap_string_labels(&worker_outputs[mi], &remaps);
 
-            ci = ci + 1;
-        }
+        // Emit the thread's IR via the EmitIR effect
+        perform EmitIR.emit_section(final_ir.as_str());
 
-        // Emit the entire batch via the EmitIR effect
-        perform EmitIR.emit_section(batch_ir.as_str());
-
-        // Stage C: Destroy all MIR regions in this batch.
-        let mut ri: usize = 0;
-        while ri < mir_regions.len() {
-            region_destroy(mir_regions[ri]);
-            ri = ri + 1;
-        }
-
-        batch_start = batch_end;
+        mi = mi + 1;
     }
 
     true

@@ -1170,10 +1170,69 @@ impl CodegenCtx {
             i = i + 1;
         }
 
-        // Clone adt_registry (read-only during codegen)
-        // Note: ADT registry entries contain Strings and Vecs that we must deep-clone.
-        // For now we share via the same registry reference pattern.
-        // TODO: deep-clone when actual parallelism is enabled.
+        // Deep-clone adt_registry (read-only during codegen, but each thread needs its own copy)
+        let mut worker_adt_registry: Vec<AdtEntry> = Vec::new();
+        let mut ai: usize = 0;
+        while ai < self.adt_registry.len() {
+            match &self.adt_registry[ai] {
+                &AdtEntry::Struct(ref sl) => {
+                    let mut cloned_fields: Vec<AdtFieldInfo> = Vec::new();
+                    let mut fi: usize = 0;
+                    while fi < sl.fields.len() {
+                        let field = &sl.fields[fi];
+                        let cloned_hir = match &field.hir_type {
+                            &Option::Some(ref ty) => Option::Some(hir_ty::copy_type(ty)),
+                            &Option::None => Option::None,
+                        };
+                        cloned_fields.push(AdtFieldInfo {
+                            llvm_type: clone_string(&field.llvm_type),
+                            hir_type: cloned_hir,
+                        });
+                        fi = fi + 1;
+                    }
+                    worker_adt_registry.push(AdtEntry::Struct(StructLayout {
+                        def_id: sl.def_id,
+                        fields: cloned_fields,
+                        llvm_type: clone_string(&sl.llvm_type),
+                    }));
+                }
+                &AdtEntry::Enum(ref el) => {
+                    let mut cloned_variants: Vec<VariantLayout> = Vec::new();
+                    let mut vi: usize = 0;
+                    while vi < el.variants.len() {
+                        let variant = &el.variants[vi];
+                        let mut cloned_vfields: Vec<AdtFieldInfo> = Vec::new();
+                        let mut vfi: usize = 0;
+                        while vfi < variant.fields.len() {
+                            let vf = &variant.fields[vfi];
+                            let cloned_hir = match &vf.hir_type {
+                                &Option::Some(ref ty) => Option::Some(hir_ty::copy_type(ty)),
+                                &Option::None => Option::None,
+                            };
+                            cloned_vfields.push(AdtFieldInfo {
+                                llvm_type: clone_string(&vf.llvm_type),
+                                hir_type: cloned_hir,
+                            });
+                            vfi = vfi + 1;
+                        }
+                        cloned_variants.push(VariantLayout {
+                            variant_idx: variant.variant_idx,
+                            fields: cloned_vfields,
+                            payload_llvm_type: clone_string(&variant.payload_llvm_type),
+                        });
+                        vi = vi + 1;
+                    }
+                    worker_adt_registry.push(AdtEntry::Enum(EnumLayout {
+                        def_id: el.def_id,
+                        discriminant_type: clone_string(&el.discriminant_type),
+                        variants: cloned_variants,
+                        llvm_type: clone_string(&el.llvm_type),
+                        max_payload_size: el.max_payload_size,
+                    }));
+                }
+            }
+            ai = ai + 1;
+        }
 
         let mut worker = CodegenCtx {
             output: String::new(),
@@ -1190,7 +1249,7 @@ impl CodegenCtx {
             string_table: Vec::new(),
             string_counter: 0,
             def_names: worker_def_names,
-            adt_registry: Vec::new(), // Populated below or shared
+            adt_registry: worker_adt_registry,
             def_names_hash: worker_def_hash,
             local_names_hash: hashmap::HashMapU64U32::new(),
             local_types_hash: hashmap::HashMapU64U32::new(),
