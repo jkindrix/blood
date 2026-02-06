@@ -121,6 +121,10 @@ pub struct CodegenCtx {
     string_table_hash: hashmap::HashMapU64U32,
     /// Hash set for static def_ids: def_id -> 1 if static
     static_defs_hash: hashmap::HashMapU64U32,
+    /// Write buffer for batching file I/O during streaming codegen.
+    write_buffer: String,
+    /// Output file path for streaming codegen.
+    output_path: String,
 }
 
 /// Mapping from a MIR local to its LLVM type.
@@ -208,6 +212,8 @@ impl CodegenCtx {
             persistent_locals_hash: hashmap::HashMapU64U32::new(),
             string_table_hash: hashmap::HashMapU64U32::new(),
             static_defs_hash: hashmap::HashMapU64U32::new(),
+            write_buffer: String::new(),
+            output_path: String::new(),
         }
     }
 
@@ -246,6 +252,8 @@ impl CodegenCtx {
             persistent_locals_hash: hashmap::HashMapU64U32::new(),
             string_table_hash: hashmap::HashMapU64U32::new(),
             static_defs_hash: hashmap::HashMapU64U32::new(),
+            write_buffer: String::new(),
+            output_path: String::new(),
         }
     }
 
@@ -360,6 +368,30 @@ impl CodegenCtx {
     pub fn dedent(self: &mut CodegenCtx) {
         if self.indent_level > 0 {
             self.indent_level = self.indent_level - 1;
+        }
+    }
+
+    // ======== Buffered File I/O ========
+
+    /// Sets the output file path for buffered streaming writes.
+    pub fn set_output_path(self: &mut CodegenCtx, path: &str) {
+        self.output_path = String::new();
+        self.output_path.push_str(path);
+    }
+
+    /// Appends text to the write buffer. Flushes to disk when buffer exceeds 65536 bytes.
+    pub fn buffer_write(self: &mut CodegenCtx, s: &str) {
+        self.write_buffer.push_str(s);
+        if self.write_buffer.len() > 65536 {
+            self.flush_write_buffer();
+        }
+    }
+
+    /// Flushes the write buffer to the output file.
+    pub fn flush_write_buffer(self: &mut CodegenCtx) {
+        if self.write_buffer.len() > 0 {
+            file_append_string(self.output_path.as_str(), self.write_buffer.as_str());
+            self.write_buffer = String::new();
         }
     }
 

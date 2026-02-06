@@ -663,11 +663,10 @@ fn make_def_name(def_id: u32, name: &String) -> String {
 
 /// Generates minimal stub declarations for functions that are referenced but not defined.
 /// This handles enum variant constructors that are used as discriminant values in match.
-/// Writes directly to the output file since ctx.output will be cleared by finish_streaming_module.
+/// Buffers output via ctx.buffer_write for batched file I/O.
 fn generate_missing_stubs(
-    ctx: &codegen_ctx::CodegenCtx,
+    ctx: &mut codegen_ctx::CodegenCtx,
     defined_names: &Vec<String>,
-    output_path: &str,
 ) {
     // Collect all referenced function names from the generated IR
     // that need stub declarations (used as pointer values in match)
@@ -732,8 +731,8 @@ fn generate_missing_stubs(
         }
         stub_idx = stub_idx + 1;
     }
-    // Write stubs directly to file
-    file_append_string(output_path, stubs.as_str());
+    // Buffer stubs for batched file I/O
+    ctx.buffer_write(stubs.as_str());
 }
 
 /// Registers def_names for all function-like items in the items list.
@@ -1171,7 +1170,7 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
     // Pass 0: Emit static global variable declarations.
     // This must happen before any functions that reference statics.
     // Also registers static names in ctx using the interner.
-    codegen_streaming::emit_static_globals_with_names(&mut ctx, &lower_result.interner, &lower_result.items, output_path);
+    codegen_streaming::emit_static_globals_with_names(&mut ctx, &lower_result.interner, &lower_result.items);
 
     // Pass 1a: Register def_names for all function bodies (global allocator)
     // SKIP static bodies - their names are already registered by emit_static_globals_with_names
@@ -1318,7 +1317,7 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
         region_deactivate();
 
         // Stream this function's IR to file (reads MIR, writes to global allocator)
-        codegen_streaming::generate_function_to_file(&mut ctx, &mir_body, fn_name.as_str(), output_path);
+        codegen_streaming::generate_function_to_file(&mut ctx, &mir_body, fn_name.as_str());
 
         // Destroy mir_region — frees MIR body and all lowering temporaries
         region_destroy(mir_region);
@@ -1329,14 +1328,17 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
     // Pass 3: Generate stub functions for registered names without bodies.
     // These are enum variant constructors and other synthetic functions that are
     // referenced as function pointers but don't have HIR bodies.
-    generate_missing_stubs(&ctx, &defined_names, output_path);
+    generate_missing_stubs(&mut ctx, &defined_names);
 
     // Finish: write string constants and intrinsic declarations
-    codegen_streaming::finish_streaming_module(&mut ctx, output_path);
+    codegen_streaming::finish_streaming_module(&mut ctx);
 
     // Write foreign function declarations (runtime builtins)
     let foreign_decls = generate_foreign_declarations(&lower_result.interner, &lower_result.items);
-    file_append_string(output_path, foreign_decls.as_str());
+    ctx.buffer_write(foreign_decls.as_str());
+
+    // Final flush: write any remaining buffered IR to disk
+    ctx.flush_write_buffer();
 
     // Destroy HIR region — bulk-frees all HIR and typeck data
     // (parse_region was already destroyed after HIR lowering)
