@@ -39,6 +39,7 @@ mod typeck_driver;
 mod driver;
 mod reporter;
 mod source;
+mod build_cache;
 
 // ============================================================
 // Command Line Arguments
@@ -1020,6 +1021,24 @@ fn strip_ll_ext(path: &String) -> String {
 /// - HIR region: holds HIR/typeck data (destroyed after codegen)
 /// - Per-function MIR regions: hold MIR bodies (destroyed after each function's IR is written)
 fn compile_file_streaming(path: &str, output_path: &str) -> bool {
+    // === Build cache check ===
+    let base_dir = source::parent_dir(path);
+    let cache_dir = build_cache::ensure_cache_dir(base_dir.as_str());
+    let source_hash = build_cache::try_cache(base_dir.as_str(), path);
+
+    if source_hash != 0 {
+        let cached_path = build_cache::cache_ll_path(cache_dir.as_str(), source_hash);
+        if file_exists(cached_path.as_str()) {
+            // Cache hit — copy cached IR to output
+            let cached_content: &str = file_read_to_string(cached_path.as_str());
+            file_write_string(output_path, cached_content);
+            print_str("[CACHE HIT] Using cached IR: ");
+            print_str(output_path);
+            print_newline();
+            return true;
+        }
+    }
+
     // Phase 1: Read source file and compute base_dir (global allocator — small)
     let read_result = source::read_file(path);
     if !read_result.success {
@@ -1034,8 +1053,6 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
             return false;
         }
     };
-
-    let base_dir = source::parent_dir(path);
 
     // === Parse Phase (parse_region) ===
     // 2 MB initial, 10 GB max — holds AST nodes, tokens, spans.
@@ -1343,6 +1360,13 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
     // Destroy HIR region — bulk-frees all HIR and typeck data
     // (parse_region was already destroyed after HIR lowering)
     region_destroy(hir_region);
+
+    // === Store in cache ===
+    if source_hash != 0 {
+        let cached_path = build_cache::cache_ll_path(cache_dir.as_str(), source_hash);
+        let compiled_ir: &str = file_read_to_string(output_path);
+        file_write_string(cached_path.as_str(), compiled_ir);
+    }
 
     true
 }

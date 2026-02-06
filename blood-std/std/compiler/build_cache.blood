@@ -1,0 +1,398 @@
+// Blood Self-Hosted Compiler - Build Cache
+//
+// Module-level source hash cache for the self-hosted compiler.
+// Hashes all source files (discovered by scanning mod declarations),
+// and caches the compiled .ll output. On cache hit, skips compilation
+// entirely and copies the cached IR to the output path.
+//
+// Uses FNV-1a hashing (same as hashmap.blood) for source content.
+// Cache files stored in .blood-cache/ next to the source files.
+
+mod hashmap;
+mod source;
+mod codegen_types;
+
+// ============================================================
+// Mod Declaration Scanner
+// ============================================================
+
+/// Scans source text for `mod <name>;` declarations.
+/// Returns a list of module names (strings).
+/// Skips comments, inline modules (with `{`), and non-mod lines.
+pub fn scan_mod_names(content: &str) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    let bytes = content.as_bytes();
+    let len = bytes.len();
+
+    // Scan line by line
+    let mut pos: usize = 0;
+    while pos < len {
+        // Find end of current line
+        let mut line_end: usize = pos;
+        while line_end < len && bytes[line_end] != 10 {
+            line_end = line_end + 1;
+        }
+
+        // Skip leading whitespace
+        let mut start: usize = pos;
+        while start < line_end && (bytes[start] == 32 || bytes[start] == 9) {
+            start = start + 1;
+        }
+
+        // Skip empty lines
+        if start < line_end {
+            // Skip comment lines (starts with //)
+            let is_comment = start + 1 < line_end
+                && bytes[start] == 47  // '/'
+                && bytes[start + 1] == 47; // '/'
+
+            if !is_comment {
+                // Check for "mod " or "pub mod "
+                let mut mod_name_start: usize = 0;
+                let mut found_mod = false;
+
+                // Check "mod "
+                if start + 4 <= line_end
+                    && bytes[start] == 109     // 'm'
+                    && bytes[start + 1] == 111 // 'o'
+                    && bytes[start + 2] == 100 // 'd'
+                    && bytes[start + 3] == 32  // ' '
+                {
+                    mod_name_start = start + 4;
+                    found_mod = true;
+                }
+
+                // Check "pub mod "
+                if !found_mod && start + 8 <= line_end
+                    && bytes[start] == 112     // 'p'
+                    && bytes[start + 1] == 117 // 'u'
+                    && bytes[start + 2] == 98  // 'b'
+                    && bytes[start + 3] == 32  // ' '
+                    && bytes[start + 4] == 109 // 'm'
+                    && bytes[start + 5] == 111 // 'o'
+                    && bytes[start + 6] == 100 // 'd'
+                    && bytes[start + 7] == 32  // ' '
+                {
+                    mod_name_start = start + 8;
+                    found_mod = true;
+                }
+
+                if found_mod {
+                    // Find semicolon on this line
+                    let mut semi_pos: usize = mod_name_start;
+                    let mut found_semi = false;
+                    let mut found_brace = false;
+                    while semi_pos < line_end {
+                        if bytes[semi_pos] == 59 { // ';'
+                            found_semi = true;
+                            semi_pos = line_end; // break
+                        } else if bytes[semi_pos] == 123 { // '{'
+                            found_brace = true;
+                            semi_pos = line_end; // break
+                        }
+                        semi_pos = semi_pos + 1;
+                    }
+
+                    // Only external modules (with ';', not '{')
+                    if found_semi && !found_brace {
+                        // Extract name between mod_name_start and semicolon
+                        // Re-find semicolon position
+                        let mut name_end: usize = mod_name_start;
+                        while name_end < line_end && bytes[name_end] != 59 {
+                            name_end = name_end + 1;
+                        }
+
+                        // Trim trailing whitespace from name
+                        let mut trimmed_end = name_end;
+                        while trimmed_end > mod_name_start && (bytes[trimmed_end - 1] == 32 || bytes[trimmed_end - 1] == 9) {
+                            trimmed_end = trimmed_end - 1;
+                        }
+
+                        if trimmed_end > mod_name_start {
+                            let mut name = String::new();
+                            let mut ni: usize = mod_name_start;
+                            while ni < trimmed_end {
+                                name.push(bytes[ni] as char);
+                                ni = ni + 1;
+                            }
+                            names.push(name);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Move to next line
+        pos = line_end + 1;
+    }
+
+    names
+}
+
+// ============================================================
+// Source File Collection
+// ============================================================
+
+/// Collects all source files transitively referenced from the entry file.
+/// Returns a sorted list of absolute file paths.
+pub fn collect_source_files(base_dir: &str, entry_path: &str) -> Vec<String> {
+    let mut visited: Vec<String> = Vec::new();
+    let mut queue: Vec<String> = Vec::new();
+
+    // Start with the entry file
+    queue.push(make_string(entry_path));
+
+    while queue.len() > 0 {
+        // Pop the last element
+        let current = pop_string(&mut queue);
+
+        // Check if already visited
+        let mut already_visited = false;
+        let mut vi: usize = 0;
+        while vi < visited.len() {
+            if str_eq_string(&visited[vi], current.as_str()) {
+                already_visited = true;
+                vi = visited.len(); // break
+            }
+            vi = vi + 1;
+        }
+
+        if already_visited {
+            continue;
+        }
+
+        // Mark as visited
+        visited.push(clone_string(&current));
+
+        // Read file and scan for mod declarations
+        if !file_exists(current.as_str()) {
+            continue;
+        }
+
+        let content_ref: &str = file_read_to_string(current.as_str());
+
+        // Get directory of current file for resolving relative mod paths
+        let current_dir = source::parent_dir(current.as_str());
+
+        let mod_names = scan_mod_names(content_ref);
+
+        // Resolve each mod name to a file path
+        let mut mi: usize = 0;
+        while mi < mod_names.len() {
+            let mod_name = &mod_names[mi];
+
+            // Try {dir}/{name}.blood
+            let mut file_path = String::new();
+            file_path.push_str(current_dir.as_str());
+            file_path.push('/');
+            file_path.push_str(mod_name.as_str());
+            file_path.push_str(".blood");
+
+            if file_exists(file_path.as_str()) {
+                queue.push(file_path);
+            } else {
+                // Try {dir}/{name}/mod.blood
+                let mut dir_path = String::new();
+                dir_path.push_str(current_dir.as_str());
+                dir_path.push('/');
+                dir_path.push_str(mod_name.as_str());
+                dir_path.push_str("/mod.blood");
+
+                if file_exists(dir_path.as_str()) {
+                    queue.push(dir_path);
+                }
+                // If neither exists, skip — compiler will error on actual compilation
+            }
+
+            mi = mi + 1;
+        }
+    }
+
+    // Sort visited list for deterministic hashing
+    sort_strings(&mut visited);
+
+    visited
+}
+
+// ============================================================
+// Hash Computation
+// ============================================================
+
+/// FNV-1a offset basis.
+fn fnv_offset() -> u64 {
+    14695981039346656037
+}
+
+/// FNV-1a prime.
+fn fnv_prime() -> u64 {
+    1099511628211
+}
+
+/// Computes a combined hash of all source files.
+/// Returns 0 on error (which disables caching).
+pub fn compute_combined_hash(files: &Vec<String>) -> u64 {
+    let mut combined: u64 = fnv_offset();
+
+    let mut i: usize = 0;
+    while i < files.len() {
+        let file_path = &files[i];
+
+        if !file_exists(file_path.as_str()) {
+            return 0;
+        }
+
+        let content_ref: &str = file_read_to_string(file_path.as_str());
+
+        // Hash the file path (so renaming invalidates cache)
+        let path_hash = hashmap::hash_string(file_path);
+        combined = (combined ^ path_hash) * fnv_prime();
+
+        // Hash the file content
+        let content_hash = hashmap::hash_str(content_ref);
+        combined = (combined ^ content_hash) * fnv_prime();
+
+        i = i + 1;
+    }
+
+    combined
+}
+
+// ============================================================
+// Cache Path Helpers
+// ============================================================
+
+/// Returns the cache file path for a given hash.
+pub fn cache_ll_path(cache_dir: &str, hash: u64) -> String {
+    let mut path = String::new();
+    path.push_str(cache_dir);
+    path.push('/');
+    let hash_str = codegen_types::format_u64(hash);
+    path.push_str(hash_str.as_str());
+    path.push_str(".ll");
+    path
+}
+
+/// Ensures the cache directory exists. Returns the cache dir path.
+pub fn ensure_cache_dir(base_dir: &str) -> String {
+    let mut cache_dir = String::new();
+    cache_dir.push_str(base_dir);
+    cache_dir.push_str("/.blood-cache");
+
+    let mut mkdir_cmd = String::new();
+    mkdir_cmd.push_str("mkdir -p ");
+    mkdir_cmd.push_str(cache_dir.as_str());
+    system(mkdir_cmd.as_str());
+
+    cache_dir
+}
+
+// ============================================================
+// Main Cache API
+// ============================================================
+
+/// Computes the source hash for the given entry file.
+/// Returns 0 if hashing fails (which disables caching).
+pub fn try_cache(base_dir: &str, entry_path: &str) -> u64 {
+    let files = collect_source_files(base_dir, entry_path);
+    if files.len() == 0 {
+        return 0;
+    }
+    compute_combined_hash(&files)
+}
+
+// ============================================================
+// String Helpers
+// ============================================================
+
+/// Creates an owned String from a &str.
+fn make_string(s: &str) -> String {
+    let mut result = String::new();
+    result.push_str(s);
+    result
+}
+
+/// Clones a String.
+fn clone_string(s: &String) -> String {
+    make_string(s.as_str())
+}
+
+/// Pops and returns the last element from a Vec<String>.
+fn pop_string(v: &mut Vec<String>) -> String {
+    let last_idx = v.len() - 1;
+    let result = clone_string(&v[last_idx]);
+    v.pop();
+    result
+}
+
+/// Compares a String with a &str for equality.
+fn str_eq_string(s: &String, other: &str) -> bool {
+    let a = s.as_bytes();
+    let b = other.as_bytes();
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i: usize = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    true
+}
+
+/// Simple insertion sort for Vec<String> (sufficient for ~65 files).
+fn sort_strings(v: &mut Vec<String>) {
+    let len = v.len();
+    if len <= 1 {
+        return;
+    }
+
+    let mut i: usize = 1;
+    while i < len {
+        // Extract the element to insert
+        let key = clone_string(&v[i]);
+        let mut j: i64 = (i as i64) - 1;
+
+        // Shift elements greater than key to the right
+        while j >= 0 && str_greater_than(&v[j as usize], &key) {
+            let src = clone_string(&v[j as usize]);
+            // v[j+1] = v[j]
+            overwrite_string(&mut v[(j + 1) as usize], &src);
+            j = j - 1;
+        }
+
+        // Place key in its correct position
+        overwrite_string(&mut v[(j + 1) as usize], &key);
+        i = i + 1;
+    }
+}
+
+/// Returns true if a > b lexicographically.
+fn str_greater_than(a: &String, b: &String) -> bool {
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+    let min_len = if a_bytes.len() < b_bytes.len() { a_bytes.len() } else { b_bytes.len() };
+
+    let mut i: usize = 0;
+    while i < min_len {
+        if a_bytes[i] > b_bytes[i] {
+            return true;
+        }
+        if a_bytes[i] < b_bytes[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+
+    // If equal up to min_len, longer string is "greater"
+    a_bytes.len() > b_bytes.len()
+}
+
+/// Overwrites a String with the content of another String.
+fn overwrite_string(dest: &mut String, src: &String) {
+    // Clear dest and push src content
+    // Blood String doesn't have clear(), so we create a new one
+    // and reassign. Since dest is &mut String, we can reassign.
+    *dest = clone_string(src);
+}

@@ -674,7 +674,7 @@ case "${1:-full}" in
         step "Cleaning build artifacts"
         rm -f first_gen second_gen second_gen_asan
         rm -f *.ll *.o *.bc core
-        rm -rf .bisect_*
+        rm -rf .bisect_* .blood-cache
         ok "Build artifacts removed"
         ;;
 
