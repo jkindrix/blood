@@ -326,11 +326,11 @@ Before modifying any shared type:
 
 **These are compiler bugs that need to be fixed in blood-rust. Do NOT work around them.**
 
-### BUG-008: If-expression with inline function call condition is miscompiled (ACTIVE)
+### BUG-008: If-expression with inline function call condition is miscompiled (FIXED)
 
-**Severity:** Critical (blocks self-hosting)
+**Severity:** Was critical (blocked self-hosting)
 
-**Pattern that triggers the bug:**
+**Pattern that triggered the bug:**
 ```blood
 fn example(arg: &Type) -> String {
     if some_function(arg) {
@@ -341,20 +341,13 @@ fn example(arg: &Type) -> String {
 }
 ```
 
-**Symptom:** The conditional branch is eliminated entirely. Generated LLVM IR unconditionally executes the `else` branch, ignoring the function call result.
+**Symptom:** The conditional branch was eliminated entirely. Generated LLVM IR unconditionally executed the `else` branch, ignoring the function call result.
 
-**Affected code:**
-- `codegen_types.blood:ref_to_llvm` (lines 191-198)
-- `codegen_types.blood:ptr_to_llvm` (lines 202-209)
+**Status:** FIXED by blood-rust developers. The branch elimination bug is resolved.
 
-**Impact:** All `&str` parameters in foreign function declarations are declared as `ptr` instead of `{ ptr, i64 }`. This causes calling convention mismatch for runtime functions like `file_append_string`, `print`, `panic`, etc. The self-hosted compiler's output (`main_self.ll`) has truncated intrinsic declarations and the resulting binary segfaults.
+**Related issue (also fixed):** The self-hosted compiler's hardcoded runtime call handlers had calling convention mismatches (`string_push_str`, `string_as_str`, `string_as_bytes`). These passed `{ ptr, i64 }` by value where the C ABI expects `ptr` to stack, and declared return types as `ptr` instead of `{ ptr, i64 }`. Fixed in `codegen.blood` (declarations) and `codegen_term.blood` (call emission). The generated IR now has correct calling conventions.
 
-**Evidence:**
-- `main_self.ll:217886-217907` - `ref_to_llvm` unconditionally returns "ptr"
-- `main.ll:274204-274262` - `is_unsized_type` has unreachable match branches
-- `main_self.ll` declarations use `ptr` where `main.ll` uses `{ ptr, i64 }`
-
-**Status:** Awaiting fix from blood-rust developers. DO NOT WORK AROUND.
+**Remaining issue:** The second-gen binary still segfaults at startup in `vec_push` called from `intern_keywords`. This is a separate issue from BUG-008 — likely another codegen or ABI mismatch in the self-hosted compiler's output that needs investigation.
 
 ### Known Blood-Rust Limitations (NOT Bugs)
 

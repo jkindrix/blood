@@ -937,9 +937,9 @@ fn emit_vec_clear_call(
 //   string_new(ptr out_ptr) -> void
 //   string_len(ptr self) -> i64
 //   string_push(ptr self, i32 char) -> void
-//   string_push_str(ptr self, {ptr, i64} str) -> void
-//   string_as_str(ptr self) -> ptr
-//   string_as_bytes(ptr self) -> ptr
+//   string_push_str(ptr self, ptr str_ref) -> void     (str_ref = ptr to {ptr, i64})
+//   string_as_str(ptr self) -> {ptr, i64}
+//   string_as_bytes(ptr self) -> {ptr, i64}
 
 /// Checks if the function name is @string_new.
 fn is_string_new(func_val: &String) -> bool {
@@ -1011,7 +1011,7 @@ fn emit_string_new_call(
 }
 
 /// Emits a string_push_str call with correct calling convention.
-/// Runtime signature: void @string_push_str(ptr self, {ptr, i64} str)
+/// Runtime signature: void @string_push_str(ptr self, ptr str_ref)
 fn emit_string_push_str_call(
     ctx: &mut codegen_ctx::CodegenCtx,
     args: &Vec<mir_types::Operand>,
@@ -1032,10 +1032,19 @@ fn emit_string_push_str_call(
     // Get the &str argument (fat pointer)
     let (arg_val, arg_ty) = codegen_expr::emit_operand_typed(ctx, &args[1]);
 
-    // Emit: call void @string_push_str(ptr self, {ptr, i64} str)
+    // Alloca temp for the &str fat pointer (runtime expects ptr to BloodStr)
+    let str_tmp = ctx.fresh_temp();
+    ctx.write_indent();
+    ctx.write_string(&str_tmp);
+    ctx.write(" = alloca { ptr, i64 }\n");
+
+    // Store the &str value into the temp
+    ctx.emit_store("{ ptr, i64 }", arg_val.as_str(), str_tmp.as_str());
+
+    // Emit: call void @string_push_str(ptr self, ptr str_ptr)
     let mut call_args: Vec<(String, String)> = Vec::new();
     call_args.push((common::make_string("ptr"), str_ptr));
-    call_args.push((arg_ty, arg_val));
+    call_args.push((common::make_string("ptr"), str_tmp));
 
     ctx.emit_call(Option::None, "void", "@string_push_str", &call_args);
 
@@ -1151,7 +1160,7 @@ fn emit_string_push_call(
 }
 
 /// Emits a string_as_str call with correct calling convention.
-/// Runtime signature: ptr @string_as_str(ptr self)
+/// Runtime signature: { ptr, i64 } @string_as_str(ptr self)
 fn emit_string_as_str_call(
     ctx: &mut codegen_ctx::CodegenCtx,
     args: &Vec<mir_types::Operand>,
@@ -1170,18 +1179,18 @@ fn emit_string_as_str_call(
     let str_ptr = ctx.fresh_temp();
     ctx.emit_load(str_ptr.as_str(), "ptr", str_ref.as_str());
 
-    // Emit: %result = call ptr @string_as_str(ptr self)
+    // Emit: %result = call { ptr, i64 } @string_as_str(ptr self)
     let result = ctx.fresh_temp();
     let mut call_args: Vec<(String, String)> = Vec::new();
     let mut str_ptr_copy = common::make_string("");
     str_ptr_copy.push_str(str_ptr.as_str());
     call_args.push((common::make_string("ptr"), str_ptr_copy));
 
-    ctx.emit_call(Option::Some(result.as_str()), "ptr", "@string_as_str", &call_args);
+    ctx.emit_call(Option::Some(result.as_str()), "{ ptr, i64 }", "@string_as_str", &call_args);
 
     // Store result to destination
     let dest_ptr = codegen_expr::emit_place_addr(ctx, destination);
-    ctx.emit_store("ptr", result.as_str(), dest_ptr.as_str());
+    ctx.emit_store("{ ptr, i64 }", result.as_str(), dest_ptr.as_str());
 
     // Jump to continuation
     match target {
@@ -1196,7 +1205,7 @@ fn emit_string_as_str_call(
 }
 
 /// Emits a string_as_bytes call with correct calling convention.
-/// Runtime signature: ptr @string_as_bytes(ptr self)
+/// Runtime signature: { ptr, i64 } @string_as_bytes(ptr self)
 fn emit_string_as_bytes_call(
     ctx: &mut codegen_ctx::CodegenCtx,
     args: &Vec<mir_types::Operand>,
@@ -1215,18 +1224,18 @@ fn emit_string_as_bytes_call(
     let str_ptr = ctx.fresh_temp();
     ctx.emit_load(str_ptr.as_str(), "ptr", str_ref.as_str());
 
-    // Emit: %result = call ptr @string_as_bytes(ptr self)
+    // Emit: %result = call { ptr, i64 } @string_as_bytes(ptr self)
     let result = ctx.fresh_temp();
     let mut call_args: Vec<(String, String)> = Vec::new();
     let mut str_ptr_copy = common::make_string("");
     str_ptr_copy.push_str(str_ptr.as_str());
     call_args.push((common::make_string("ptr"), str_ptr_copy));
 
-    ctx.emit_call(Option::Some(result.as_str()), "ptr", "@string_as_bytes", &call_args);
+    ctx.emit_call(Option::Some(result.as_str()), "{ ptr, i64 }", "@string_as_bytes", &call_args);
 
     // Store result to destination
     let dest_ptr = codegen_expr::emit_place_addr(ctx, destination);
-    ctx.emit_store("ptr", result.as_str(), dest_ptr.as_str());
+    ctx.emit_store("{ ptr, i64 }", result.as_str(), dest_ptr.as_str());
 
     // Jump to continuation
     match target {
