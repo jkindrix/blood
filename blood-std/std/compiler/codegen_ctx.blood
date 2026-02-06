@@ -1152,6 +1152,191 @@ impl CodegenCtx {
         self.write_indent();
         self.write("]\n");
     }
+    // ======== Worker Context for Parallel Codegen ========
+
+    /// Creates an isolated worker context that clones read-only state from the parent.
+    /// Worker contexts have their own string table, counters, and per-function state.
+    /// Used for parallel codegen: each thread gets a worker ctx, produces IR independently,
+    /// then string tables are merged back into the parent.
+    pub fn create_worker_ctx(self: &CodegenCtx) -> CodegenCtx {
+        // Clone def_names (read-only during codegen)
+        let mut worker_def_names: Vec<DefNameEntry> = Vec::new();
+        let mut worker_def_hash = hashmap::HashMapU64U32::with_capacity(self.def_names.len());
+        let mut i: usize = 0;
+        while i < self.def_names.len() {
+            let entry = &self.def_names[i];
+            worker_def_names.push(DefNameEntry::new(entry.def_id, clone_string(&entry.name)));
+            worker_def_hash.insert(entry.def_id as u64, i as u32);
+            i = i + 1;
+        }
+
+        // Clone adt_registry (read-only during codegen)
+        // Note: ADT registry entries contain Strings and Vecs that we must deep-clone.
+        // For now we share via the same registry reference pattern.
+        // TODO: deep-clone when actual parallelism is enabled.
+
+        let mut worker = CodegenCtx {
+            output: String::new(),
+            indent_level: 0,
+            value_counter: 0,
+            label_counter: 0,
+            local_names: Vec::new(),
+            local_types: Vec::new(),
+            local_signedness: Vec::new(),
+            local_hir_types: Vec::new(),
+            region_locals: Vec::new(),
+            persistent_locals: Vec::new(),
+            current_fn: Option::None,
+            string_table: Vec::new(),
+            string_counter: 0,
+            def_names: worker_def_names,
+            adt_registry: Vec::new(), // Populated below or shared
+            def_names_hash: worker_def_hash,
+            local_names_hash: hashmap::HashMapU64U32::new(),
+            local_types_hash: hashmap::HashMapU64U32::new(),
+            local_signedness_hash: hashmap::HashMapU64U32::new(),
+            local_hir_types_hash: hashmap::HashMapU64U32::new(),
+            region_locals_hash: hashmap::HashMapU64U32::new(),
+            persistent_locals_hash: hashmap::HashMapU64U32::new(),
+            string_table_hash: hashmap::HashMapU64U32::new(),
+            static_defs_hash: hashmap::HashMapU64U32::new(),
+            write_buffer: String::new(),
+            output_path: String::new(),
+        };
+
+        // Copy static defs hash (read-only)
+        let mut si: usize = 0;
+        while si < self.def_names.len() {
+            let entry = &self.def_names[si];
+            if self.is_static(entry.def_id) {
+                worker.register_static(entry.def_id);
+            }
+            si = si + 1;
+        }
+
+        worker
+    }
+
+    /// Returns the number of string constants in the string table.
+    pub fn string_table_len(self: &CodegenCtx) -> usize {
+        self.string_table.len()
+    }
+
+    /// Returns the content of the string constant at the given index.
+    pub fn string_content_at(self: &CodegenCtx, index: usize) -> &String {
+        &self.string_table[index].content
+    }
+
+    /// Returns the label of the string constant at the given index.
+    pub fn string_label_at(self: &CodegenCtx, index: usize) -> &String {
+        &self.string_table[index].label
+    }
+}
+
+/// A string label remapping entry (from worker-local to final label).
+pub struct StringRemap {
+    /// The worker-local label (e.g., "@.str.0").
+    pub from: String,
+    /// The final label in the merged table (e.g., "@.str.42").
+    pub to: String,
+}
+
+/// Merges a worker's string table into the main context's string table.
+/// Returns a list of remappings (worker label -> final label) for any labels that changed.
+/// String constants that already exist in the main table are deduplicated.
+pub fn merge_string_tables(
+    main_ctx: &mut CodegenCtx,
+    worker_ctx: &CodegenCtx,
+) -> Vec<StringRemap> {
+    let mut remaps: Vec<StringRemap> = Vec::new();
+
+    let mut i: usize = 0;
+    while i < worker_ctx.string_table_len() {
+        let content = worker_ctx.string_content_at(i);
+        let worker_label = worker_ctx.string_label_at(i);
+
+        // Add to main (deduplicates internally)
+        let final_label = main_ctx.add_string_constant(content);
+
+        // If the label changed, record the remapping
+        if !string_equal(worker_label, &final_label) {
+            remaps.push(StringRemap {
+                from: clone_string(worker_label),
+                to: final_label,
+            });
+        }
+
+        i = i + 1;
+    }
+
+    remaps
+}
+
+/// Applies string label remappings to an IR string.
+/// Replaces each occurrence of remap.from with remap.to.
+/// Only needed when parallel codegen produces worker-local string labels.
+pub fn remap_string_labels(ir: &String, remaps: &Vec<StringRemap>) -> String {
+    if remaps.len() == 0 {
+        return clone_string(ir);
+    }
+
+    let mut result = clone_string(ir);
+
+    // Apply remappings. Since labels are unique (@.str.N), simple replacement is safe.
+    // Process in reverse order of label number to avoid @.str.1 replacing part of @.str.10.
+    let mut i: usize = remaps.len();
+    while i > 0 {
+        i = i - 1;
+        let remap = &remaps[i];
+        result = string_replace(&result, &remap.from, &remap.to);
+    }
+
+    result
+}
+
+/// Replaces all occurrences of `from` with `to` in `s`.
+fn string_replace(s: &String, from: &String, to: &String) -> String {
+    let s_bytes = s.as_bytes();
+    let from_bytes = from.as_bytes();
+    let to_bytes = to.as_bytes();
+    let s_len = s_bytes.len();
+    let from_len = from_bytes.len();
+
+    if from_len == 0 || from_len > s_len {
+        return clone_string(s);
+    }
+
+    let mut result = String::new();
+    let mut i: usize = 0;
+
+    while i < s_len {
+        // Check if `from` starts at position i
+        if i + from_len <= s_len {
+            let mut matches = true;
+            let mut j: usize = 0;
+            while j < from_len {
+                if s_bytes[i + j] != from_bytes[j] {
+                    matches = false;
+                    j = from_len; // break
+                }
+                j = j + 1;
+            }
+            if matches {
+                // Append replacement
+                let mut k: usize = 0;
+                while k < to_bytes.len() {
+                    result.push(to_bytes[k] as char);
+                    k = k + 1;
+                }
+                i = i + from_len;
+                continue;
+            }
+        }
+        result.push(s_bytes[i] as char);
+        i = i + 1;
+    }
+
+    result
 }
 
 // ============================================================

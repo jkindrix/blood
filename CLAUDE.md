@@ -349,6 +349,66 @@ fn example(arg: &Type) -> String {
 
 **Remaining issue:** The second-gen binary still segfaults at startup in `vec_push` called from `intern_keywords`. This is a separate issue from BUG-008 — likely another codegen or ABI mismatch in the self-hosted compiler's output that needs investigation.
 
+### BUG-009: Effect handler state limited to ≤ 8-byte types (ICE on String/Vec/aggregate state)
+
+**Severity:** Critical (blocks effect-abstracted codegen)
+
+**Pattern that triggers the bug:**
+```blood
+effect Emit {
+    op emit(chunk: &str) -> ();
+}
+
+deep handler BufferEmitter for Emit {
+    let mut buffer: String   // ANY String/Vec/aggregate field triggers the bug
+
+    return(x) {
+        print_str(buffer.as_str());
+        x
+    }
+
+    op emit(chunk) {
+        buffer.push_str(chunk);
+        resume(())
+    }
+}
+
+fn main() -> i32 {
+    let result: i32 = with BufferEmitter { buffer: String::new() } handle {
+        perform Emit.emit("hello ");
+        perform Emit.emit("world\n");
+        42
+    };
+    0
+}
+```
+
+**Symptom:** LLVM verification failure — codegen serializes handler state fields as `i64` regardless of actual type:
+```
+ICE: handler return clause received aggregate value that cannot be converted to i64
+Stored value type does not match pointer operand type!
+  store i64 %buffer_i64_val, { i8*, i64, i64 }* %buffer, align 8
+```
+
+**Root cause:** `blood-rust/bloodc/src/codegen/context/effects.rs` flattens all handler state to `i64` during evidence-passing. This works for types ≤ 8 bytes (i32, i64, bool, ptr) but silently generates invalid LLVM IR for aggregates (String = 24 bytes, Vec = 24 bytes, structs > 8 bytes).
+
+**What works:**
+- Effects with `&str` or `String` operation parameters (no handler state) ✅
+- Handler state with `let mut count: i32` (fits in i64) ✅
+- Stateless handlers `deep handler Foo for Bar { ... }` ✅
+
+**What fails:**
+- Handler state with `let path: String` (24 bytes, even immutable) ❌
+- Handler state with `let mut buffer: String` ❌
+- Generic handler `LocalState<String>` (State<S> with S=String) ❌
+- Any handler state field that is an aggregate type > 8 bytes ❌
+
+**Impact:** Blocks using Blood's algebraic effects for the self-hosted compiler's codegen backend abstraction. The correct design (`BufferedFileEmitter` handler with `String` buffer and output path state) cannot be compiled.
+
+**Reproduction:** Files in scratchpad: `test_effect_handler_state.blood`, `test_effect_immut_string.blood`, `test_effect_state_string.blood`
+
+**Status:** NOT FIXED. Needs blood-rust codegen fix in `effects.rs` to properly handle aggregate types in handler state (allocate full-size slots instead of i64).
+
 ### Known Blood-Rust Limitations (NOT Bugs)
 
 **Memory reuse requires active region:** The runtime now includes a Generation-Aware Slab Allocator that enables memory reuse within regions. For compiled Blood programs to benefit, they must create and activate a region at startup. The `blood_alloc_simple`, `blood_realloc`, and `blood_free_simple` functions are now region-aware: when a region is active, allocations come from the region and freed memory is added to per-size-class free lists for reuse. The codegen already calls `blood_unregister_allocation` for region-allocated locals in StorageDead statements.

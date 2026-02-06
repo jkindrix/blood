@@ -1010,6 +1010,120 @@ fn strip_ll_ext(path: &String) -> String {
 }
 
 // ============================================================
+// Codegen Work List
+// ============================================================
+
+/// A single unit of codegen work: one function body to lower and emit.
+struct CodegenWorkItem {
+    /// Index into lower_result.bodies.
+    body_idx: usize,
+    /// The mangled function name for LLVM IR.
+    fn_name: String,
+    /// The DefId of this function.
+    def_id: hir_def::DefId,
+    /// The function's return type.
+    return_ty: hir_ty::Type,
+    /// The function's source span.
+    span: common::Span,
+}
+
+/// Result of scanning bodies to build the work list.
+struct CodegenWorkList {
+    /// The work items to process.
+    items: Vec<CodegenWorkItem>,
+    /// Function names that were defined (for stub generation).
+    defined_names: Vec<String>,
+    /// DefIds that were defined (for duplicate detection — already embedded in items).
+    defined_def_ids: Vec<u32>,
+}
+
+/// Scans all HIR bodies and builds a work list of functions to codegen.
+/// Filters out static bodies and duplicates from generic instantiations.
+/// This separates work identification from work execution, enabling batching.
+fn build_codegen_worklist(
+    lower_result: &hir_lower_ctx::LowerResult,
+    static_def_ids: &Vec<u32>,
+) -> CodegenWorkList {
+    let mut items: Vec<CodegenWorkItem> = Vec::new();
+    let mut defined_names: Vec<String> = Vec::new();
+    let mut defined_def_ids: Vec<u32> = Vec::new();
+
+    let mut body_idx: usize = 0;
+    while body_idx < lower_result.bodies.len() {
+        let body_entry = &lower_result.bodies[body_idx];
+        let body_id = body_entry.body_id;
+
+        let fn_info = driver::find_fn_for_body(&lower_result.items, body_id);
+
+        let return_ty = match &fn_info {
+            &Option::Some(ref info) => hir_ty::copy_type(&info.return_ty),
+            &Option::None => hir_ty::Type::unit(),
+        };
+        let span = match &fn_info {
+            &Option::Some(ref info) => info.span,
+            &Option::None => common::Span::new(0, 0, 1, 1),
+        };
+        let fn_name = match &fn_info {
+            &Option::Some(ref info) => make_mangled_fn_name(&lower_result.interner, info),
+            &Option::None => driver::make_fn_name(body_idx),
+        };
+        let def_id = match &fn_info {
+            &Option::Some(ref info) => info.def_id,
+            &Option::None => hir_def::DefId::new(body_idx as u32),
+        };
+
+        // Check if this body belongs to a static variable - skip if so.
+        let mut is_static_body = false;
+        let mut sbi: usize = 0;
+        while sbi < static_def_ids.len() {
+            if static_def_ids[sbi] == def_id.index {
+                is_static_body = true;
+                sbi = static_def_ids.len(); // break
+            }
+            sbi = sbi + 1;
+        }
+        if is_static_body {
+            body_idx = body_idx + 1;
+            continue;
+        }
+
+        // Check if this DefId was already processed (skip duplicates)
+        let mut is_duplicate = false;
+        let mut di: usize = 0;
+        while di < defined_def_ids.len() {
+            if defined_def_ids[di] == def_id.index {
+                is_duplicate = true;
+                di = defined_def_ids.len(); // break
+            }
+            di = di + 1;
+        }
+        if is_duplicate {
+            body_idx = body_idx + 1;
+            continue;
+        }
+
+        defined_def_ids.push(def_id.index);
+        defined_names.push(clone_string(&fn_name));
+
+        items.push(CodegenWorkItem {
+            body_idx,
+            fn_name,
+            def_id,
+            return_ty,
+            span,
+        });
+
+        body_idx = body_idx + 1;
+    }
+
+    CodegenWorkList {
+        items,
+        defined_names,
+        defined_def_ids,
+    }
+}
+
+// ============================================================
 // Streaming Compilation
 // ============================================================
 
@@ -1246,106 +1360,92 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
         bi = bi + 1;
     }
 
-    // Track which function names were defined (for stub generation after pass 2)
-    // Also track DefIds to skip duplicate function definitions from generic instantiations
-    let mut defined_names: Vec<String> = Vec::new();
-    let mut defined_def_ids: Vec<u32> = Vec::new();
+    // Build work list: scan bodies once to identify which functions to codegen.
+    // Filters out static bodies and duplicates from generic instantiations.
+    let worklist = build_codegen_worklist(&lower_result, &static_def_ids);
 
-    // Pass 2: For each body, lower to MIR and stream IR to file.
-    // Per-function MIR regions nest inside the (now deactivated) front-end region.
-    let mut body_idx2: usize = 0;
-    while body_idx2 < lower_result.bodies.len() {
-        let body_entry = &lower_result.bodies[body_idx2];
-        let hir_body = &body_entry.body;
-        let body_id = body_entry.body_id;
+    // Pass 2: Batched MIR lowering + codegen.
+    // Process functions in batches of BATCH_SIZE. For each batch:
+    //   Stage A: Lower all functions to MIR (each in its own region)
+    //   Stage B: Codegen all functions (regions deactivated, data readable)
+    //   Stage C: Destroy all MIR regions (bulk-frees MIR data)
+    //
+    // This decouples MIR lowering from codegen, enabling future parallel dispatch.
+    // Memory bound: BATCH_SIZE × 4MB = 128MB for MIR regions (actual usage much less).
+    let batch_size: usize = 32;
+    let total_items: usize = worklist.items.len();
+    let mut batch_start: usize = 0;
 
-        let fn_info = driver::find_fn_for_body(&lower_result.items, body_id);
-
-        let return_ty = match &fn_info {
-            &Option::Some(ref info) => hir_ty::copy_type(&info.return_ty),
-            &Option::None => hir_ty::Type::unit(),
-        };
-        let span = match &fn_info {
-            &Option::Some(ref info) => info.span,
-            &Option::None => common::Span::new(0, 0, 1, 1),
-        };
-        let fn_name = match &fn_info {
-            &Option::Some(ref info) => make_mangled_fn_name(&lower_result.interner, info),
-            &Option::None => driver::make_fn_name(body_idx2),
-        };
-        let def_id = match &fn_info {
-            &Option::Some(ref info) => info.def_id,
-            &Option::None => hir_def::DefId::new(body_idx2 as u32),
-        };
-
-        // Check if this body belongs to a static variable - skip if so.
-        // Static initializers are handled separately as global variable declarations,
-        // not as regular functions.
-        let mut is_static_body = false;
-        let mut sbi2: usize = 0;
-        while sbi2 < static_def_ids.len() {
-            if static_def_ids[sbi2] == def_id.index {
-                is_static_body = true;
-                sbi2 = static_def_ids.len(); // break
-            }
-            sbi2 = sbi2 + 1;
+    while batch_start < total_items {
+        // Determine batch end (exclusive)
+        let mut batch_end = batch_start + batch_size;
+        if batch_end > total_items {
+            batch_end = total_items;
         }
-        if is_static_body {
-            body_idx2 = body_idx2 + 1;
-            continue;
+        let batch_len = batch_end - batch_start;
+
+        // Stage A: MIR lowering — create regions and lower all functions in this batch.
+        // Each function gets its own region; all regions stay alive until Stage C.
+        let mut mir_bodies: Vec<mir_body::MirBody> = Vec::new();
+        let mut mir_regions: Vec<u64> = Vec::new();
+
+        let mut bi: usize = 0;
+        while bi < batch_len {
+            let work = &worklist.items[batch_start + bi];
+            let body_entry = &lower_result.bodies[work.body_idx];
+            let hir_body = &body_entry.body;
+
+            // Create and activate per-function MIR region
+            let mir_region = region_create(4194304, 1073741824);  // 4 MB init, 1 GB max
+            region_activate(mir_region);
+
+            // Lower to MIR (allocations go to mir_region)
+            let body = mir_lower::lower_body(
+                work.def_id,
+                hir_body,
+                hir_ty::copy_type(&work.return_ty),
+                work.span,
+                &typeck_result.subst_table,
+                &typeck_result.method_resolutions,
+                &typeck_result.field_resolutions,
+            );
+
+            // Deactivate region — MIR data remains readable until destroy.
+            region_deactivate();
+
+            mir_bodies.push(body);
+            mir_regions.push(mir_region);
+
+            bi = bi + 1;
         }
 
-        // Check if this DefId was already processed (skip duplicates from generic instantiations)
-        let mut is_duplicate = false;
-        let mut di: usize = 0;
-        while di < defined_def_ids.len() {
-            if defined_def_ids[di] == def_id.index {
-                is_duplicate = true;
-                di = defined_def_ids.len(); // break
-            }
-            di = di + 1;
+        // Stage B: Codegen — generate LLVM IR for each function in the batch.
+        // All MIR regions are deactivated but data is readable.
+        // Codegen writes to global allocator (ctx persistent state).
+        let mut ci: usize = 0;
+        while ci < batch_len {
+            let work = &worklist.items[batch_start + ci];
+            let mir_body_ref = &mir_bodies[ci];
+
+            codegen_streaming::generate_function_to_file(&mut ctx, mir_body_ref, work.fn_name.as_str());
+
+            ci = ci + 1;
         }
-        if is_duplicate {
-            body_idx2 = body_idx2 + 1;
-            continue;
+
+        // Stage C: Destroy all MIR regions in this batch.
+        let mut ri: usize = 0;
+        while ri < mir_regions.len() {
+            region_destroy(mir_regions[ri]);
+            ri = ri + 1;
         }
-        defined_def_ids.push(def_id.index);
-        defined_names.push(clone_string(&fn_name));
 
-        // Per-function MIR region: isolates MIR lowering allocations.
-        // Deactivate before codegen so ctx's persistent state uses global allocator.
-        // Large functions (e.g., match expressions with many arms) may need significant memory.
-        let mir_region = region_create(4194304, 1073741824);  // 4 MB init, 1 GB max
-        region_activate(mir_region);
-
-        // Lower to MIR (allocations go to mir_region)
-        let mir_body = mir_lower::lower_body(
-            def_id,
-            hir_body,
-            return_ty,
-            span,
-            &typeck_result.subst_table,
-            &typeck_result.method_resolutions,
-            &typeck_result.field_resolutions,
-        );
-
-        // Deactivate mir_region — MIR body remains readable until destroy.
-        // Codegen modifies ctx state (string_table, output buffer) that must persist.
-        region_deactivate();
-
-        // Stream this function's IR to file (reads MIR, writes to global allocator)
-        codegen_streaming::generate_function_to_file(&mut ctx, &mir_body, fn_name.as_str());
-
-        // Destroy mir_region — frees MIR body and all lowering temporaries
-        region_destroy(mir_region);
-
-        body_idx2 = body_idx2 + 1;
+        batch_start = batch_end;
     }
 
     // Pass 3: Generate stub functions for registered names without bodies.
     // These are enum variant constructors and other synthetic functions that are
     // referenced as function pointers but don't have HIR bodies.
-    generate_missing_stubs(&mut ctx, &defined_names);
+    generate_missing_stubs(&mut ctx, &worklist.defined_names);
 
     // Finish: write string constants and intrinsic declarations
     codegen_streaming::finish_streaming_module(&mut ctx);
