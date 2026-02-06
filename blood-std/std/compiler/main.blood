@@ -1140,6 +1140,20 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
     // Phase 5: Streaming codegen (global allocator for ctx persistent state)
     let mut ctx = codegen_streaming::begin_streaming_module("main", output_path, &lower_result.items);
 
+    // Register builtin ADT types (Vec, String, HashMap, Box) in the ADT registry.
+    // These types are not in the HIR items list but user structs may contain them as fields.
+    // Without this, fields like `Vec<Token>` resolve to `ptr` (8 bytes) instead of
+    // `{ ptr, i64, i64 }` (24 bytes), causing stack buffer overflows.
+    codegen::register_builtin_adts(
+        &mut ctx,
+        &lower_result.builtin_vec_def,
+        &lower_result.builtin_string_def,
+        &lower_result.builtin_hashmap_def,
+        &lower_result.builtin_box_def,
+    );
+    // Rebuild all user struct/enum layouts now that builtins are registered.
+    codegen::rebuild_adt_layouts(&mut ctx, &lower_result.items);
+
     // Collect static DefIds first - needed for name registration filtering.
     let mut static_def_ids: Vec<u32> = Vec::new();
     let mut si: usize = 0;
