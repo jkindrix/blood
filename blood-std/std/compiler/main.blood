@@ -629,6 +629,13 @@ fn is_intrinsic_wrapper_builtin(name: &str) -> bool {
     if str_eq(name, "fabs") { return true; }
     if str_eq(name, "fabsf") { return true; }
     if str_eq(name, "sqrtf") { return true; }
+    // Builtins whose Blood types don't match runtime ABI:
+    // Blood registers these with Option<T>/String return types which codegen
+    // converts to ptr, but the runtime uses concrete types (double, i64, i32, {ptr,i64}).
+    if str_eq(name, "parse_f64") { return true; }
+    if str_eq(name, "parse_i64_radix") { return true; }
+    if str_eq(name, "char_from_u32") { return true; }
+    if str_eq(name, "read_line") { return true; }
     false
 }
 

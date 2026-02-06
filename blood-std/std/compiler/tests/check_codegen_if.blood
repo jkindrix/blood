@@ -1,0 +1,28 @@
+// FileCheck test: if-expression with function call condition
+// Verifies BUG-008 regression: both branches must be present in the IR.
+// The compiler must NOT eliminate the conditional branch.
+// Run with:
+//   ./first_gen build tests/check_codegen_if.blood -o /tmp/check_if.ll
+//   FileCheck-14 --input-file=/tmp/check_if.ll tests/check_codegen_if.blood
+//
+// The main function must contain a conditional branch (switch i1 or br i1),
+// not just an unconditional path. This catches the BUG-008 regression where
+// if-expressions with inline function call conditions were miscompiled.
+// The self-hosted compiler emits `switch i1` for if-expressions.
+//
+// CHECK-LABEL: define i32 @blood_main
+// CHECK: call i1 @
+// CHECK: switch i1
+fn is_positive(x: i32) -> bool {
+    x > 0
+}
+
+fn main() -> i32 {
+    let val: i32 = 42;
+    if is_positive(val) {
+        println("positive");
+    } else {
+        println("non-positive");
+    }
+    0
+}
