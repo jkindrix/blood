@@ -1930,9 +1930,16 @@ fn expr_to_place(
             let base_place = expr_to_place(ctx, base.as_ref(), span);
             let field_idx = match field {
                 &hir_expr::FieldAccess::Named { name: _, field_idx } => {
-                    match field_idx {
-                        Option::Some(idx) => idx,
-                        Option::None => 0,
+                    // First try the field resolution side table (populated during type checking)
+                    match ctx.lookup_field_idx(expr.span.start) {
+                        Option::Some(resolved_idx) => resolved_idx,
+                        Option::None => {
+                            // Fall back to HIR-stored field index
+                            match field_idx {
+                                Option::Some(idx) => idx,
+                                Option::None => 0,
+                            }
+                        }
                     }
                 }
                 &hir_expr::FieldAccess::Index(idx) => idx,
