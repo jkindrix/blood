@@ -2392,6 +2392,13 @@ fn propagate_struct_pattern_fields(
                 Some(raw_ty) => {
                     let concrete_ty = unify::substitute_type_params(&raw_ty, &subst);
                     propagate_pattern_types(checker, &fields[i].pattern, &concrete_ty);
+                    // Record the field index for MIR lowering (matches expression field access path)
+                    match checker.get_struct_field_idx(def_id, field_name) {
+                        Option::Some(idx) => {
+                            checker.record_field_resolution(fields[i].name.span.start, idx);
+                        }
+                        Option::None => {}
+                    }
                 }
                 Option::None => {
                     // Field not found — type checker will report the error elsewhere
@@ -2428,6 +2435,8 @@ fn propagate_struct_pattern_fields(
                             let concrete_ty = unify::substitute_type_params(raw_ty, &enum_subst);
                             propagate_pattern_types(checker, &fields[i].pattern, &concrete_ty);
                         }
+                        // Record the field index for MIR lowering
+                        checker.record_field_resolution(fields[i].name.span.start, k as u32);
                         found = true;
                     }
                     k = k + 1;

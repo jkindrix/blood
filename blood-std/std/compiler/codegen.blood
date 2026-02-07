@@ -282,7 +282,7 @@ pub fn populate_adt_registry(
                 ctx.register_struct(layout);
             }
             &hir_item::ItemKind::Enum(ref enum_def) => {
-                let layout = build_enum_layout(entry.def_id.index, enum_def);
+                let layout = build_enum_layout_with_ctx(ctx, entry.def_id.index, enum_def);
                 ctx.register_enum(layout);
             }
             &hir_item::ItemKind::Fn(_) => {}
@@ -525,109 +525,6 @@ fn build_struct_layout_with_ctx(
         def_id: def_id,
         fields: fields,
         llvm_type: llvm_type,
-    }
-}
-
-/// Builds an EnumLayout from an enum definition.
-fn build_enum_layout(def_id: u32, enum_def: &hir_item::EnumDef) -> codegen_ctx::EnumLayout {
-    let mut variants: Vec<codegen_ctx::VariantLayout> = Vec::new();
-    let mut max_payload_size: u64 = 0;
-
-    let mut vi: usize = 0;
-    while vi < enum_def.variants.len() {
-        let variant = &enum_def.variants[vi];
-        let mut fields: Vec<codegen_ctx::AdtFieldInfo> = Vec::new();
-        let mut payload_size: u64 = 0;
-        let mut payload_type = common::make_string("{}");
-
-        match &variant.kind {
-            &hir_item::VariantKind::Unit => {
-                // No payload
-            }
-            &hir_item::VariantKind::Tuple(ref tuple_fields) => {
-                let mut pt = common::make_string("{ ");
-                let mut fi: usize = 0;
-                while fi < tuple_fields.len() {
-                    if fi > 0 {
-                        pt.push_str(", ");
-                    }
-                    let field_ty = codegen_types::type_to_llvm(&tuple_fields[fi]);
-                    payload_size = payload_size + codegen_types::type_size_bytes(&tuple_fields[fi]);
-                    pt.push_str(field_ty.as_str());
-                    fields.push(codegen_ctx::AdtFieldInfo {
-                        llvm_type: field_ty,
-                        hir_type: Option::Some(hir_ty::copy_type(&tuple_fields[fi])),
-                    });
-                    fi = fi + 1;
-                }
-                pt.push_str(" }");
-                if tuple_fields.len() > 0 {
-                    payload_type = pt;
-                }
-            }
-            &hir_item::VariantKind::Record(ref record_fields) => {
-                let mut pt = common::make_string("{ ");
-                let mut fi: usize = 0;
-                while fi < record_fields.len() {
-                    if fi > 0 {
-                        pt.push_str(", ");
-                    }
-                    let field_ty = codegen_types::type_to_llvm(&record_fields[fi].ty);
-                    payload_size = payload_size + codegen_types::type_size_bytes(&record_fields[fi].ty);
-                    pt.push_str(field_ty.as_str());
-                    fields.push(codegen_ctx::AdtFieldInfo {
-                        llvm_type: field_ty,
-                        hir_type: Option::Some(hir_ty::copy_type(&record_fields[fi].ty)),
-                    });
-                    fi = fi + 1;
-                }
-                pt.push_str(" }");
-                if record_fields.len() > 0 {
-                    payload_type = pt;
-                }
-            }
-        }
-
-        if payload_size > max_payload_size {
-            max_payload_size = payload_size;
-        }
-
-        variants.push(codegen_ctx::VariantLayout {
-            variant_idx: variant.discriminant,
-            fields: fields,
-            payload_llvm_type: payload_type,
-        });
-
-        vi = vi + 1;
-    }
-
-    // Determine discriminant type based on number of variants
-    let num_variants = enum_def.variants.len();
-    let discriminant_type = if num_variants <= 256 {
-        common::make_string("i8")
-    } else if num_variants <= 65536 {
-        common::make_string("i16")
-    } else {
-        common::make_string("i32")
-    };
-
-    // Build the enum LLVM type: { discriminant_type, [max_payload_size x i8] }
-    let mut llvm_type = common::make_string("{ ");
-    llvm_type.push_str(discriminant_type.as_str());
-    if max_payload_size > 0 {
-        llvm_type.push_str(", [");
-        let size_str = codegen_types::format_u64(max_payload_size);
-        llvm_type.push_str(size_str.as_str());
-        llvm_type.push_str(" x i8]");
-    }
-    llvm_type.push_str(" }");
-
-    codegen_ctx::EnumLayout {
-        def_id: def_id,
-        discriminant_type: discriminant_type,
-        variants: variants,
-        llvm_type: llvm_type,
-        max_payload_size: max_payload_size,
     }
 }
 

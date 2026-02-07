@@ -155,10 +155,16 @@ fn lower_struct_pattern(
     let mut i: usize = 0;
     while i < fields.len() {
         let field = &fields[i];
-        // Use resolved field index if available, otherwise use position
-        let field_idx = match field.field_idx {
-            Option::Some(idx) => idx,
-            Option::None => i as u32,
+        // Primary: type checker's field resolution side table (keyed by field name span)
+        // Fallback: HIR-stored field index, then positional index
+        let field_idx = match ctx.lookup_field_idx(field.name.span.start) {
+            Option::Some(resolved_idx) => resolved_idx,
+            Option::None => {
+                match field.field_idx {
+                    Option::Some(idx) => idx,
+                    Option::None => i as u32,
+                }
+            }
         };
         let field_place = source.clone().project(mir_types::PlaceElem::Field(field_idx));
         lower_irrefutable_pattern(ctx, &field.pattern, field_place, span);
