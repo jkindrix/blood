@@ -1207,22 +1207,21 @@ effect EmitIR {
     op emit_section(ir: &str) -> ();
 }
 
-/// Writes an IR section to a file by appending.
-/// Helper function called from handler ops (avoids &mut and push_str in handler body).
-fn emit_ir_to_file(path: &str, ir: &str) {
-    file_append_string(path, ir);
-}
-
-/// Handler that writes emitted IR sections to a file.
-/// Uses immutable String state (output_path) — proven working pattern.
+/// Handler that buffers emitted IR sections in memory, flushing to disk on return.
+/// Uses mutable String buffer state (enabled by blood-rust BUG-009 fix: 10261fc + b25403e).
+/// Consolidates N file_append_string syscalls into a single write.
 /// Tail-resumptive: resume(()) in tail position enables optimized codegen path.
-deep handler FileEmitter for EmitIR {
+deep handler BufferedFileEmitter for EmitIR {
     let output_path: String
+    let mut buffer: String
 
-    return(x) { x }
+    return(x) {
+        file_append_string(output_path.as_str(), buffer.as_str());
+        x
+    }
 
     op emit_section(ir) {
-        emit_ir_to_file(output_path.as_str(), ir);
+        buffer.push_str(ir);
         resume(())
     }
 }
@@ -1566,14 +1565,15 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
 
     // Pass 2: Effect-abstracted batched MIR lowering + codegen.
     // The codegen_pass2 function performs EmitIR.emit_section per batch;
-    // the FileEmitter handler routes each section to disk via file_append_string.
+    // the BufferedFileEmitter handler accumulates all IR in a String buffer,
+    // then flushes to disk in a single write when codegen_pass2 returns.
     // Flush the write buffer first so pre-Pass-2 IR (header, statics) is on disk
     // before the handler starts appending.
     ctx.flush_write_buffer();
 
     let mut emit_path = String::new();
     emit_path.push_str(output_path);
-    let _pass2_ok: bool = with FileEmitter { output_path: emit_path } handle {
+    let _pass2_ok: bool = with BufferedFileEmitter { output_path: emit_path, buffer: String::new() } handle {
         codegen_pass2(&mut ctx, &worklist, &lower_result, &typeck_result)
     };
 
