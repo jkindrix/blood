@@ -349,65 +349,34 @@ fn example(arg: &Type) -> String {
 
 **Remaining issue:** The second-gen binary still segfaults at startup in `vec_push` called from `intern_keywords`. This is a separate issue from BUG-008 — likely another codegen or ABI mismatch in the self-hosted compiler's output that needs investigation.
 
-### BUG-009: Effect handler state limited to ≤ 8-byte types (ICE on String/Vec/aggregate state)
+### BUG-009: Effect handler state limited to ≤ 8-byte types (ICE on String/Vec/aggregate state) (FIXED)
 
-**Severity:** Critical (blocks effect-abstracted codegen)
+**Severity:** Was critical (blocked effect-abstracted codegen)
 
-**Pattern that triggers the bug:**
-```blood
-effect Emit {
-    op emit(chunk: &str) -> ();
-}
+**Status:** FIXED by blood-rust developers in commits `10261fc` + `b25403e`.
 
-deep handler BufferEmitter for Emit {
-    let mut buffer: String   // ANY String/Vec/aggregate field triggers the bug
+**Fix 1 (10261fc):** Typed layout for handler state structs — `handlers.rs` now computes correct LLVM type per state field instead of uniform `[i64 x N]`. Direct loads/stores when types match.
 
-    return(x) {
-        print_str(buffer.as_str());
-        x
-    }
+**Fix 2 (b25403e):** Out-pointer builtins + pointer casting in HIR expr path — `expr.rs` now supports `string_new`/`str_to_string` via out-pointer pattern, pointer type coercion for method calls, and `Ref`/`RefMut`/`Deref` in `compile_unary`.
 
-    op emit(chunk) {
-        buffer.push_str(chunk);
-        resume(())
-    }
-}
+**All patterns now work:**
+- Immutable String state (`let path: String`) ✅
+- Mutable String state (`let mut buffer: String`) ✅
+- `push_str` in handler op bodies ✅
+- `&mut` references in handler op bodies ✅
+- Delegation to regular functions from handler ops ✅
 
-fn main() -> i32 {
-    let result: i32 = with BufferEmitter { buffer: String::new() } handle {
-        perform Emit.emit("hello ");
-        perform Emit.emit("world\n");
-        42
-    };
-    0
-}
-```
+### BUG-011: `&&` and `||` operators do not implement short-circuit evaluation (FIXED)
 
-**Symptom:** LLVM verification failure — codegen serializes handler state fields as `i64` regardless of actual type:
-```
-ICE: handler return clause received aggregate value that cannot be converted to i64
-Stored value type does not match pointer operand type!
-  store i64 %buffer_i64_val, { i8*, i64, i64 }* %buffer, align 8
-```
+**Severity:** Was critical (blocked self-hosting pipeline)
 
-**Root cause:** `blood-rust/bloodc/src/codegen/context/effects.rs` flattens all handler state to `i64` during evidence-passing. This works for types ≤ 8 bytes (i32, i64, bool, ptr) but silently generates invalid LLVM IR for aggregates (String = 24 bytes, Vec = 24 bytes, structs > 8 bytes).
+**Status:** FIXED by blood-rust developers.
 
-**What works:**
-- Effects with `&str` or `String` operation parameters (no handler state) ✅
-- Handler state with `let mut count: i32` (fits in i64) ✅
-- Stateless handlers `deep handler Foo for Bar { ... }` ✅
+**Fix:** Implemented short-circuit evaluation in two codegen paths:
+1. MIR lowering (`util.rs`): `lower_short_circuit()` emits conditional control flow with separate basic blocks
+2. HIR expr codegen (`expr.rs`): `compile_short_circuit()` emits LLVM conditional branch + phi node
 
-**What fails:**
-- Handler state with `let path: String` (24 bytes, even immutable) ❌
-- Handler state with `let mut buffer: String` ❌
-- Generic handler `LocalState<String>` (State<S> with S=String) ❌
-- Any handler state field that is an aggregate type > 8 bytes ❌
-
-**Impact:** Blocks using Blood's algebraic effects for the self-hosted compiler's codegen backend abstraction. The correct design (`BufferedFileEmitter` handler with `String` buffer and output path state) cannot be compiled.
-
-**Reproduction:** Files in scratchpad: `test_effect_handler_state.blood`, `test_effect_immut_string.blood`, `test_effect_state_string.blood`
-
-**Status:** NOT FIXED. Needs blood-rust codegen fix in `effects.rs` to properly handle aggregate types in handler state (allocate full-size slots instead of i64).
+Tests: `t06_short_circuit_and`, `t06_short_circuit_or`, `t06_short_circuit_guard`, `t06_short_circuit_chain`, `t06_short_circuit_while`, `t06_short_circuit_or_mutate`.
 
 ### Known Blood-Rust Limitations (NOT Bugs)
 
@@ -423,6 +392,9 @@ Stored value type does not match pointer operand type!
 - BUG-005: Mutations through `&mut field_of_ref` lost when passed as function arguments (fixed)
 - BUG-006: Match on enum reference (`&Enum`) always falls to last arm (fixed — verified 2026-01-31, by-ref match now dispatches correctly)
 - BUG-007: Generic type params not registered in resolver scope at runtime (fixed — blood-rust devs fixed nested mutable struct field codegen)
+- BUG-009: Effect handler state limited to ≤ 8-byte types (fixed — blood-rust devs added typed handler state layout + out-pointer builtins + pointer casting in HIR expr path, commits `10261fc` + `b25403e`)
+- BUG-010: `push_str` with `&str` op arg in handler op body passed value instead of pointer (fixed — blood-rust devs added struct-to-pointer coercion in `compile_call`, test: `t05_handler_push_str.blood`)
+- BUG-011: `&&` and `||` operators did not short-circuit (fixed — blood-rust devs added `lower_short_circuit()` in MIR lowering + `compile_short_circuit()` in HIR expr codegen, 6 ground-truth tests)
 
 ---
 
