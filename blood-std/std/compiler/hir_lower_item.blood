@@ -915,7 +915,7 @@ fn lower_handler_decl(ctx: &mut hir_lower_ctx::LoweringCtx, h: &ast::HandlerDecl
     // Lower return clause
     let return_clause = match &h.return_clause {
         &Some(ref rc) => {
-            let hs = lower_handler_return(ctx, rc);
+            let hs = lower_handler_return(ctx, rc, &state);
             Option::Some(hs)
         }
         &None => Option::None,
@@ -925,7 +925,7 @@ fn lower_handler_decl(ctx: &mut hir_lower_ctx::LoweringCtx, h: &ast::HandlerDecl
     let mut op_impls: Vec<hir_item::OpImpl> = Vec::new();
     let mut i: usize = 0;
     while i < h.operations.len() {
-        let oper_impl = lower_op_impl(ctx, &h.operations[i]);
+        let oper_impl = lower_op_impl(ctx, &h.operations[i], &state);
         op_impls.push(oper_impl);
         i = i + 1;
     }
@@ -974,37 +974,155 @@ fn lower_handler_state(ctx: &mut hir_lower_ctx::LoweringCtx, hs: &ast::HandlerSt
 }
 
 /// Lower handler return clause.
-fn lower_handler_return(ctx: &mut hir_lower_ctx::LoweringCtx, rc: &ast::ReturnClause) -> hir_item::HandlerReturn {
-    // Lower the body
+/// The `state` parameter contains the already-lowered handler state fields,
+/// which must be registered as locals in the return clause body scope.
+fn lower_handler_return(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    rc: &ast::ReturnClause,
+    state: &Vec<hir_item::HandlerState>,
+) -> hir_item::HandlerReturn {
     let body_id = ctx.alloc_body_id();
+
+    // Push function scope for handler return body
+    ctx.resolver.push_scope(resolve::ScopeKind::Function);
+
+    let mut locals: Vec<hir_expr::Local> = Vec::new();
+    let mut next_idx: u32 = 0;
+
+    // Register handler state fields as locals
+    let mut i: usize = 0;
+    while i < state.len() {
+        let s = &state[i];
+        let local_id = hir_def::LocalId::new(next_idx);
+        let local = hir_expr::Local::new(
+            local_id, s.name, hir_ty::copy_type(&s.ty), s.mutable, s.name.span,
+        );
+        locals.push(local);
+        // Re-intern state name for consistent symbol
+        let name_str = ctx.span_to_string(s.name.span);
+        let sym = ctx.intern(name_str.as_str());
+        ctx.resolver.define_local(sym, local_id, s.mutable, s.name.span);
+        next_idx = next_idx + 1;
+        i = i + 1;
+    }
+
+    // Register return parameter as a local
+    let param_local_id = hir_def::LocalId::new(next_idx);
+    let param_name_str = ctx.span_to_string(rc.param.span);
+    let param_sym = ctx.intern(param_name_str.as_str());
+    let param_ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    let param_local = hir_expr::Local::new(
+        param_local_id, rc.param, hir_ty::copy_type(&param_ty), false, rc.param.span,
+    );
+    locals.push(param_local);
+    ctx.resolver.define_local(param_sym, param_local_id, false, rc.param.span);
+    next_idx = next_idx + 1;
+
+    let param_count = next_idx;
+    if ctx.next_local_id < param_count {
+        ctx.next_local_id = param_count;
+    }
+
+    // Clear body_locals, lower body, merge accumulated locals
+    ctx.body_locals = Vec::new();
     let body_expr = hir_lower_expr::lower_block_to_expr(ctx, &rc.body);
-    let locals: Vec<hir_expr::Local> = Vec::new();
-    let body = hir_expr::Body::new(body_id, locals, 0, body_expr);
+
+    let mut bl_idx: usize = 0;
+    while bl_idx < ctx.body_locals.len() {
+        let bl = &ctx.body_locals[bl_idx];
+        locals.push(hir_expr::Local::new(
+            bl.id, bl.name, hir_ty::copy_type(&bl.ty), bl.mutable, bl.span,
+        ));
+        bl_idx = bl_idx + 1;
+    }
+    ctx.body_locals = Vec::new();
+
+    ctx.resolver.pop_scope();
+
+    let body = hir_expr::Body::new(body_id, locals, param_count, body_expr);
     ctx.add_body(body_id, body);
 
     hir_item::HandlerReturn::new(rc.param, body_id)
 }
 
 /// Lower operation implementation.
-fn lower_op_impl(ctx: &mut hir_lower_ctx::LoweringCtx, oper: &ast::OperationImpl) -> hir_item::OpImpl {
+/// The `state` parameter contains the already-lowered handler state fields,
+/// which must be registered as locals in the op body scope.
+fn lower_op_impl(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    oper: &ast::OperationImpl,
+    state: &Vec<hir_item::HandlerState>,
+) -> hir_item::OpImpl {
     let def_id = ctx.alloc_def_id();
 
-    // Lower parameter patterns to extract names
+    // Push function scope for op body
+    ctx.resolver.push_scope(resolve::ScopeKind::Function);
+
+    let mut locals: Vec<hir_expr::Local> = Vec::new();
+    let mut next_idx: u32 = 0;
+
+    // Register handler state fields as locals
+    let mut i: usize = 0;
+    while i < state.len() {
+        let s = &state[i];
+        let local_id = hir_def::LocalId::new(next_idx);
+        let local = hir_expr::Local::new(
+            local_id, s.name, hir_ty::copy_type(&s.ty), s.mutable, s.name.span,
+        );
+        locals.push(local);
+        let name_str = ctx.span_to_string(s.name.span);
+        let sym = ctx.intern(name_str.as_str());
+        ctx.resolver.define_local(sym, local_id, s.mutable, s.name.span);
+        next_idx = next_idx + 1;
+        i = i + 1;
+    }
+
+    // Lower parameter patterns to extract names and register as locals
     let mut param_names: Vec<common::SpannedSymbol> = Vec::new();
     let mut i: usize = 0;
     while i < oper.params.len() {
         let name = extract_pattern_name(&oper.params[i]);
         if name.is_some() {
-            param_names.push(name.unwrap());
+            let pname = name.unwrap();
+            param_names.push(pname);
+
+            let local_id = hir_def::LocalId::new(next_idx);
+            let param_name_str = ctx.span_to_string(pname.span);
+            let param_sym = ctx.intern(param_name_str.as_str());
+            let param_ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+            let param_local = hir_expr::Local::new(
+                local_id, pname, hir_ty::copy_type(&param_ty), false, pname.span,
+            );
+            locals.push(param_local);
+            ctx.resolver.define_local(param_sym, local_id, false, pname.span);
+            next_idx = next_idx + 1;
         }
         i = i + 1;
     }
 
-    // Lower the body
+    let param_count = next_idx;
+    if ctx.next_local_id < param_count {
+        ctx.next_local_id = param_count;
+    }
+
+    // Clear body_locals, lower body, merge accumulated locals
+    ctx.body_locals = Vec::new();
     let body_id = ctx.alloc_body_id();
     let body_expr = hir_lower_expr::lower_block_to_expr(ctx, &oper.body);
-    let locals: Vec<hir_expr::Local> = Vec::new();
-    let body = hir_expr::Body::new(body_id, locals, 0, body_expr);
+
+    let mut bl_idx: usize = 0;
+    while bl_idx < ctx.body_locals.len() {
+        let bl = &ctx.body_locals[bl_idx];
+        locals.push(hir_expr::Local::new(
+            bl.id, bl.name, hir_ty::copy_type(&bl.ty), bl.mutable, bl.span,
+        ));
+        bl_idx = bl_idx + 1;
+    }
+    ctx.body_locals = Vec::new();
+
+    ctx.resolver.pop_scope();
+
+    let body = hir_expr::Body::new(body_id, locals, param_count, body_expr);
     ctx.add_body(body_id, body);
 
     // Re-intern operation name for cross-module consistency

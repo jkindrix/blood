@@ -542,7 +542,25 @@ fn find_return_type_for_body(
             }
             &hir_item::ItemKind::Trait(_) => {}
             &hir_item::ItemKind::Effect(_) => {}
-            &hir_item::ItemKind::Handler(_) => {}
+            &hir_item::ItemKind::Handler(ref handler_def) => {
+                // Check return clause body
+                match &handler_def.return_clause {
+                    &Option::Some(ref rc) => {
+                        if rc.body_id.index == target_body_id.index {
+                            return hir_ty::Type::unit();
+                        }
+                    }
+                    &Option::None => {}
+                }
+                // Check op implementation bodies
+                let mut j: usize = 0;
+                while j < handler_def.op_impls.len() {
+                    if handler_def.op_impls[j].body_id.index == target_body_id.index {
+                        return hir_ty::Type::unit();
+                    }
+                    j = j + 1;
+                }
+            }
             &hir_item::ItemKind::Module(_) => {}
             &hir_item::ItemKind::Macro(_) => {}
             &hir_item::ItemKind::Foreign(_) => {}
@@ -619,7 +637,25 @@ fn find_def_id_for_body(
             }
             &hir_item::ItemKind::Trait(_) => {}
             &hir_item::ItemKind::Effect(_) => {}
-            &hir_item::ItemKind::Handler(_) => {}
+            &hir_item::ItemKind::Handler(ref handler_def) => {
+                // Check return clause body
+                match &handler_def.return_clause {
+                    &Option::Some(ref rc) => {
+                        if rc.body_id.index == target_body_id.index {
+                            return entry.item.def_id.index;
+                        }
+                    }
+                    &Option::None => {}
+                }
+                // Check op implementation bodies
+                let mut j: usize = 0;
+                while j < handler_def.op_impls.len() {
+                    if handler_def.op_impls[j].body_id.index == target_body_id.index {
+                        return handler_def.op_impls[j].op_def_id.index;
+                    }
+                    j = j + 1;
+                }
+            }
             &hir_item::ItemKind::Module(_) => {}
             &hir_item::ItemKind::Macro(_) => {}
             &hir_item::ItemKind::Foreign(_) => {}
