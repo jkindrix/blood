@@ -2902,7 +2902,7 @@ mod tests {
 
                     // Verify by reading back
                     let mut buf = vec![0u8; data_len];
-                    let n = nix::unistd::read(read_fd.as_raw_fd(), &mut buf).unwrap();
+                    let n = nix::unistd::read(&read_fd, &mut buf).unwrap();
                     assert_eq!(n, data_len);
                     assert_eq!(&buf[..n], &test_data[..]);
                 }
