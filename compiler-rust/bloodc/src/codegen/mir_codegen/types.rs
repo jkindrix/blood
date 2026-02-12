@@ -34,6 +34,7 @@ impl<'ctx, 'a> MirTypesCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
             BasicTypeEnum::PointerType(t) => Some(t.size_of()),
             BasicTypeEnum::StructType(t) => t.size_of(),
             BasicTypeEnum::VectorType(t) => t.size_of(),
+            BasicTypeEnum::ScalableVectorType(t) => t.size_of(),
         };
         if let Some(size_val) = size_opt {
             // LLVM's size_of returns a constant IntValue - extract the constant
@@ -101,6 +102,12 @@ impl<'ctx, 'a> MirTypesCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 let elem_size = self.get_type_size_in_bytes(t.get_element_type());
                 elem_size * t.get_size() as u64
             }
+            BasicTypeEnum::ScalableVectorType(_) => {
+                // Scalable vectors have runtime-determined size; use a conservative
+                // estimate of 16 bytes (minimum vector register width on most targets).
+                // This type should not appear in Blood's type system under normal usage.
+                16
+            }
         }
     }
 
@@ -108,10 +115,10 @@ impl<'ctx, 'a> MirTypesCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
         match ty {
             BasicTypeEnum::IntType(int_ty) => {
                 let bits = int_ty.get_bit_width();
-                // LLVM 14's default x86_64 data layout does NOT include i128:128,
+                // The default x86_64 data layout does NOT include i128:128,
                 // so i128 has ABI alignment of 8 bytes (same as i64).
                 // We MUST match this because:
-                //   1. LLVM 14's C API resets the module data layout to the
+                //   1. The C API resets the module data layout to the
                 //      TargetMachine's default during LLVMTargetMachineEmitToFile
                 //   2. GEP offsets are computed using the TargetMachine's layout
                 //   3. If we annotate loads/stores with align 16 but GEP computes
@@ -148,6 +155,7 @@ impl<'ctx, 'a> MirTypesCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 max_align
             }
             BasicTypeEnum::VectorType(_) => 16,
+            BasicTypeEnum::ScalableVectorType(_) => 16,
         }
     }
 
@@ -160,6 +168,7 @@ impl<'ctx, 'a> MirTypesCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
             BasicValueEnum::StructValue(v) => BasicTypeEnum::StructType(v.get_type()),
             BasicValueEnum::ArrayValue(v) => BasicTypeEnum::ArrayType(v.get_type()),
             BasicValueEnum::VectorValue(v) => BasicTypeEnum::VectorType(v.get_type()),
+            BasicValueEnum::ScalableVectorValue(v) => BasicTypeEnum::ScalableVectorType(v.get_type()),
         };
         self.get_type_alignment_for_size(ty) as u32
     }

@@ -6,7 +6,7 @@
 //! - Fat pointer creation { fn_ptr, env_ptr }
 
 use inkwell::values::BasicValueEnum;
-use inkwell::types::BasicType;
+use inkwell::types::{BasicType, BasicTypeEnum};
 use inkwell::AddressSpace;
 
 use crate::hir::{self, Type};
@@ -31,7 +31,6 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         span: Span,
     ) -> Result<Option<BasicValueEnum<'ctx>>, Vec<Diagnostic>> {
         use crate::hir::TypeKind;
-        use inkwell::types::BasicTypeEnum;
 
         // Get the closure body
         let body = self.closure_bodies.get(&body_id).cloned()
@@ -60,24 +59,20 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         };
 
         // Create environment struct type from captures using actual types
-        let i8_ptr_type = self.context.i8_type().ptr_type(AddressSpace::default());
+        let i8_ptr_type = self.context.ptr_type(AddressSpace::default());
         let mut env_types: Vec<BasicTypeEnum<'ctx>> = Vec::with_capacity(captures.len());
         for cap in captures {
             if let Some(alloca) = self.locals.get(&cap.local_id) {
-                let elem_type = alloca.get_type().get_element_type();
-                match elem_type.try_into() {
-                    Ok(basic_type) => env_types.push(basic_type),
-                    Err(_) => {
-                        // If the captured variable has a non-basic type (function, void),
-                        // this is an internal compiler error - closures should only capture
-                        // values with basic types.
-                        return Err(vec![ice_err!(
-                            span,
-                            "closure capture has non-basic type";
-                            "type" => elem_type
-                        )]);
-                    }
-                }
+                // With opaque pointers, recover the allocated type from the alloca instruction
+                let alloca_type: BasicTypeEnum<'ctx> = alloca
+                    .as_instruction()
+                    .and_then(|inst| inst.get_allocated_type().ok())
+                    .ok_or_else(|| vec![ice_err!(
+                        span,
+                        "closure capture alloca has no recoverable type";
+                        "local_id" => cap.local_id
+                    )])?;
+                env_types.push(alloca_type);
             }
             // Note: If local_id not found, we skip it. This matches the previous
             // filter_map behavior but could potentially be an error condition too.
@@ -125,41 +120,37 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             .ok_or_else(|| vec![Diagnostic::error("Closure missing env parameter", span)])?
             .into_pointer_value();
         let typed_env_ptr = self.builder
-            .build_pointer_cast(env_ptr, env_struct_type.ptr_type(AddressSpace::default()), "env")
+            .build_pointer_cast(env_ptr, self.context.ptr_type(AddressSpace::default()), "env")
             .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
         // Map captured variables from environment struct
         for (i, cap) in captures.iter().enumerate() {
             if let Some(&outer_alloca) = saved_locals.get(&cap.local_id) {
-                // Get the type of the captured variable from the outer local
-                let cap_type = outer_alloca.get_type().get_element_type();
-                let cap_basic_type: BasicTypeEnum<'ctx> = match cap_type.try_into() {
-                    Ok(ty) => ty,
-                    Err(_) => {
-                        // Captured variable has a non-basic type (function, void, etc.)
-                        // This is an ICE - closures should only capture basic types
-                        return Err(vec![ice_err!(
-                            span,
-                            "captured variable has non-basic LLVM type";
-                            "local_id" => cap.local_id
-                        )]);
-                    }
-                };
+                // With opaque pointers, recover the allocated type from the alloca instruction
+                let cap_basic_type: BasicTypeEnum<'ctx> = outer_alloca
+                    .as_instruction()
+                    .and_then(|inst| inst.get_allocated_type().ok())
+                    .ok_or_else(|| vec![ice_err!(
+                        span,
+                        "captured variable alloca has no recoverable type";
+                        "local_id" => cap.local_id
+                    )])?;
 
                 let zero = self.context.i32_type().const_int(0, false);
                 let idx = self.context.i32_type().const_int(i as u64, false);
                 let cap_ptr = unsafe {
-                    self.builder.build_gep(typed_env_ptr, &[zero, idx], "cap.ptr")
+                    self.builder.build_gep(env_struct_type, typed_env_ptr, &[zero, idx], "cap.ptr")
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
                 };
                 let local_alloca = self.builder
                     .build_alloca(cap_basic_type, "cap.local")
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
-                let cap_val = self.builder.build_load(cap_ptr, "cap.val")
+                let cap_val = self.builder.build_load(cap_basic_type, cap_ptr, "cap.val")
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
                 self.builder.build_store(local_alloca, cap_val)
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
                 self.locals.insert(cap.local_id, local_alloca);
+                self.local_types.insert(cap.local_id, cap_basic_type);
             }
         }
 
@@ -168,12 +159,14 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         for (i, local) in param_locals.iter().enumerate() {
             let param_idx = (i + 1) as u32;
             if let Some(param_val) = fn_value.get_nth_param(param_idx) {
+                let param_llvm_type: BasicTypeEnum = param_val.get_type();
                 let alloca = self.builder
-                    .build_alloca(param_val.get_type(), &format!("param.{}", i))
+                    .build_alloca(param_llvm_type, &format!("param.{}", i))
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
                 self.builder.build_store(alloca, param_val)
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
                 self.locals.insert(local.id, alloca);
+                self.local_types.insert(local.id, param_llvm_type);
             }
         }
 
@@ -218,11 +211,20 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 let zero = self.context.i32_type().const_int(0, false);
                 let idx = self.context.i32_type().const_int(i as u64, false);
                 let field_ptr = unsafe {
-                    self.builder.build_gep(env_alloca, &[zero, idx], "env.field")
+                    self.builder.build_gep(env_struct_type, env_alloca, &[zero, idx], "env.field")
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
                 };
                 // Load the captured value and store directly with its actual type
-                let val = self.builder.build_load(cap_ptr, "cap.val")
+                // Recover the alloca's type for the load instruction (opaque pointers)
+                let alloca_ty = cap_ptr
+                    .as_instruction()
+                    .and_then(|inst| inst.get_allocated_type().ok())
+                    .ok_or_else(|| vec![ice_err!(
+                        span,
+                        "local alloca has no recoverable type for capture load";
+                        "local_id" => cap.local_id
+                    )])?;
+                let val = self.builder.build_load(alloca_ty, cap_ptr, "cap.val")
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
                 self.builder.build_store(field_ptr, val)
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;

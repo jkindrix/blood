@@ -259,10 +259,10 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 self.get_local_tier(local.id, escape_results)
             };
 
-            // For closure bodies, the __env parameter should use i8* type
+            // For closure bodies, the __env parameter should use an opaque pointer
             // regardless of its MIR type (which is the actual tuple of captures)
             let llvm_ty = if is_closure_body && local.name.as_deref() == Some("__env") {
-                self.context.i8_type().ptr_type(AddressSpace::default()).into()
+                self.context.ptr_type(AddressSpace::default()).into()
             } else if let crate::hir::TypeKind::Closure { def_id: closure_def_id, .. } = local.ty.kind() {
                 // Check if this closure local should use inline environment layout.
                 // Inline closures store captures directly: { fn_ptr, T0, T1, ... }
@@ -276,10 +276,10 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                             // to match rvalue path which skips inline for empty captures
                             self.lower_type(&local.ty)
                         } else {
-                            let i8_ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
+                            let ptr_ty = self.context.ptr_type(AddressSpace::default());
                             let mut field_types: Vec<inkwell::types::BasicTypeEnum> =
                                 Vec::with_capacity(info.capture_types.len() + 1);
-                            field_types.push(i8_ptr_ty.into());
+                            field_types.push(ptr_ty.into());
                             for cap_ty in &info.capture_types {
                                 field_types.push(self.lower_type(cap_ty));
                             }
@@ -338,6 +338,7 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
             };
 
             self.locals.insert(local.id, alloca);
+            self.local_types.insert(local.id, llvm_ty);
         }
 
         // Store function parameters

@@ -131,7 +131,8 @@ impl<'ctx, 'a> MirRvalueCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                         _ => unreachable!(),
                     };
                     // Load the pointer from the current location
-                    let loaded = self.builder.build_load(ptr, "deref_discr")
+                    let ptr_ty = self.context.ptr_type(AddressSpace::default());
+                    let loaded = self.builder.build_load(ptr_ty, ptr, "deref_discr")
                         .map_err(|e| vec![Diagnostic::error(
                             format!("LLVM load error: {}", e), self.current_span()
                         )])?;
@@ -148,19 +149,15 @@ impl<'ctx, 'a> MirRvalueCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 if llvm_ty.is_struct_type() {
                     // Enum with payload: { i32 tag, payload... }
                     // Load discriminant from first field (field 0 is the tag/discriminant)
-                    // First, cast the pointer to the struct type to ensure proper typing
+                    // With opaque pointers, no pointer cast is needed — use GEP directly
                     let struct_ty = llvm_ty.into_struct_type();
-                    let struct_ptr_ty = struct_ty.ptr_type(inkwell::AddressSpace::default());
-                    let typed_ptr = self.builder.build_pointer_cast(ptr, struct_ptr_ty, "enum_ptr")
-                        .map_err(|e| vec![Diagnostic::error(
-                            format!("LLVM pointer cast error: {}", e), self.current_span()
-                        )])?;
 
-                    let discr_ptr = self.builder.build_struct_gep(typed_ptr, 0, "discr_ptr")
+                    let discr_ptr = self.builder.build_struct_gep(struct_ty, ptr, 0, "discr_ptr")
                         .map_err(|e| vec![Diagnostic::error(
                             format!("LLVM struct gep error: {}", e), self.current_span()
                         )])?;
-                    let discr = self.builder.build_load(discr_ptr, "discr")
+                    let i32_type = self.context.i32_type();
+                    let discr = self.builder.build_load(i32_type, discr_ptr, "discr")
                         .map_err(|e| vec![Diagnostic::error(
                             format!("LLVM load error: {}", e), self.current_span()
                         )])?;
@@ -171,14 +168,9 @@ impl<'ctx, 'a> MirRvalueCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     Ok(discr)
                 } else {
                     // Tag-only enum: represented as bare i32
-                    // Cast pointer to i32* to ensure proper load
+                    // With opaque pointers, load directly with the i32 type
                     let i32_type = self.context.i32_type();
-                    let i32_ptr_type = i32_type.ptr_type(inkwell::AddressSpace::default());
-                    let typed_ptr = self.builder.build_pointer_cast(ptr, i32_ptr_type, "discr_ptr")
-                        .map_err(|e| vec![Diagnostic::error(
-                            format!("LLVM pointer cast error: {}", e), self.current_span()
-                        )])?;
-                    let discr = self.builder.build_load(typed_ptr, "discr")
+                    let discr = self.builder.build_load(i32_type, ptr, "discr")
                         .map_err(|e| vec![Diagnostic::error(
                             format!("LLVM load error: {}", e), self.current_span()
                         )])?;
@@ -281,7 +273,7 @@ impl<'ctx, 'a> MirRvalueCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     .build_call(func, &[str_ptr.into(), idx_i64.into()], "char_at_result")
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), body.span)])?
                     .try_as_basic_value()
-                    .left()
+                    .basic()
                     .ok_or_else(|| vec![Diagnostic::error("str_char_at_index should return value", body.span)])?;
 
                 // Result is {i32 tag, i32 value} - extract tag and value
@@ -319,9 +311,8 @@ impl<'ctx, 'a> MirRvalueCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 let panic_fn = self.module.get_function("blood_panic")
                     .unwrap_or_else(|| {
                         let void_type = self.context.void_type();
-                        let i8_type = self.context.i8_type();
-                        let i8_ptr_type = i8_type.ptr_type(AddressSpace::default());
-                        let panic_type = void_type.fn_type(&[i8_ptr_type.into()], false);
+                        let ptr_type = self.context.ptr_type(AddressSpace::default());
+                        let panic_type = void_type.fn_type(&[ptr_type.into()], false);
                         self.module.add_function("blood_panic", panic_type, None)
                     });
 
@@ -362,10 +353,23 @@ impl<'ctx, 'a> MirRvalueCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 // Create the length constant
                 let len_val = self.context.i64_type().const_int(*array_len, false);
 
-                // Build the fat pointer struct { T*, i64 }
-                // First, get the element pointer type
+                // Build the fat pointer struct { ptr, i64 }
+                // Determine the array element type for the GEP
+                let array_ref_ty = self.get_operand_type(array_ref, body);
+                let array_elem_llvm_ty = match array_ref_ty.kind() {
+                    TypeKind::Ref { inner, .. } | TypeKind::Ptr { inner, .. } => {
+                        match inner.kind() {
+                            TypeKind::Array { element, .. } => self.lower_type(element),
+                            _ => self.context.i8_type().into(),
+                        }
+                    }
+                    TypeKind::Array { element, .. } => self.lower_type(element),
+                    _ => self.context.i8_type().into(),
+                };
+                let array_ty = array_elem_llvm_ty.array_type(*array_len as u32);
                 let elem_ptr = unsafe {
                     self.builder.build_in_bounds_gep(
+                        array_ty,
                         array_ptr,
                         &[self.context.i64_type().const_zero(), self.context.i64_type().const_zero()],
                         "slice_data_ptr"
@@ -375,9 +379,10 @@ impl<'ctx, 'a> MirRvalueCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     )])?
                 };
 
-                // Create the slice struct type { T*, i64 }
+                // Create the slice struct type { ptr, i64 }
+                let ptr_type = self.context.ptr_type(AddressSpace::default());
                 let slice_struct_type = self.context.struct_type(
-                    &[elem_ptr.get_type().into(), self.context.i64_type().into()],
+                    &[ptr_type.into(), self.context.i64_type().into()],
                     false,
                 );
 
@@ -447,8 +452,15 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // We need to load the slice value and extract field 1 (len)
                 let slice_ptr = self.compile_mir_place(place, body, escape_results)?;
 
+                // Slice struct type: { ptr, i64 }
+                let ptr_ty = self.context.ptr_type(AddressSpace::default());
+                let slice_struct_ty = self.context.struct_type(
+                    &[ptr_ty.into(), self.context.i64_type().into()], false
+                );
+
                 // Get pointer to the length field (index 1)
                 let len_ptr = self.builder.build_struct_gep(
+                    slice_struct_ty,
                     slice_ptr,
                     1,
                     "slice_len_ptr"
@@ -457,7 +469,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 )])?;
 
                 // Load the length value
-                let len_val = self.builder.build_load(len_ptr, "slice_len")
+                let i64_ty = self.context.i64_type();
+                let len_val = self.builder.build_load(i64_ty, len_ptr, "slice_len")
                     .map_err(|e| vec![Diagnostic::error(
                         format!("LLVM load error: {}", e), self.current_span()
                     )])?;
@@ -477,8 +490,15 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         // We need to GEP to field 1 (length) and load it.
                         let slice_storage_ptr = self.compile_mir_place(place, body, escape_results)?;
 
+                        // Slice struct type: { ptr, i64 }
+                        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+                        let slice_struct_ty = self.context.struct_type(
+                            &[ptr_ty.into(), self.context.i64_type().into()], false
+                        );
+
                         // Get pointer to the length field (index 1) in the fat pointer struct
                         let len_ptr = self.builder.build_struct_gep(
+                            slice_struct_ty,
                             slice_storage_ptr,
                             1,
                             "slice_len_ptr"
@@ -487,7 +507,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         )])?;
 
                         // Load the length value
-                        let len_val = self.builder.build_load(len_ptr, "slice_len")
+                        let i64_ty = self.context.i64_type();
+                        let len_val = self.builder.build_load(i64_ty, len_ptr, "slice_len")
                             .map_err(|e| vec![Diagnostic::error(
                                 format!("LLVM load error: {}", e), self.current_span()
                             )])?;
@@ -528,8 +549,15 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // We need to load through the reference to get the Vec struct pointer,
         // then GEP to field 1 (len) and load it.
 
+        // Vec struct type: { ptr, i64, i64 } (data_ptr, len, capacity)
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        let vec_struct_ty = self.context.struct_type(
+            &[ptr_ty.into(), i64_ty.into(), i64_ty.into()], false
+        );
+
         // Load the Vec struct pointer from the reference
-        let vec_struct_ptr = self.builder.build_load(vec_ptr, "vec_ptr")
+        let vec_struct_ptr = self.builder.build_load(ptr_ty, vec_ptr, "vec_ptr")
             .map_err(|e| vec![Diagnostic::error(
                 format!("LLVM load error: {}", e), self.current_span()
             )])?;
@@ -538,6 +566,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         if let BasicValueEnum::PointerValue(struct_ptr) = vec_struct_ptr {
             // GEP to field 1 (len) of the Vec struct
             let len_ptr = self.builder.build_struct_gep(
+                vec_struct_ty,
                 struct_ptr,
                 1,
                 "vec_len_ptr"
@@ -546,7 +575,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             )])?;
 
             // Load the length value
-            let len_val = self.builder.build_load(len_ptr, "vec_len")
+            let len_val = self.builder.build_load(i64_ty, len_ptr, "vec_len")
                 .map_err(|e| vec![Diagnostic::error(
                     format!("LLVM load error: {}", e), self.current_span()
                 )])?;
@@ -562,6 +591,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         } else {
             // The place directly holds a Vec struct, try GEP on it
             let len_ptr = self.builder.build_struct_gep(
+                vec_struct_ty,
                 vec_ptr,
                 1,
                 "vec_len_ptr"
@@ -569,7 +599,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 format!("LLVM struct gep error for Vec: {}", e), self.current_span()
             )])?;
 
-            let len_val = self.builder.build_load(len_ptr, "vec_len")
+            let len_val = self.builder.build_load(i64_ty, len_ptr, "vec_len")
                 .map_err(|e| vec![Diagnostic::error(
                     format!("LLVM load error: {}", e), self.current_span()
                 )])?;
@@ -590,7 +620,12 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let ptr = self.compile_mir_place(place, body, escape_results)?;
 
         // Load the BloodPtr struct
-        let blood_ptr_val = self.builder.build_load(ptr, "blood_ptr")
+        // BloodPtr type: { i64, i32, i32 }
+        let blood_ptr_ty = self.context.struct_type(
+            &[self.context.i64_type().into(), self.context.i32_type().into(), self.context.i32_type().into()],
+            false
+        );
+        let blood_ptr_val = self.builder.build_load(blood_ptr_ty, ptr, "blood_ptr")
             .map_err(|e| vec![Diagnostic::error(
                 format!("LLVM load error: {}", e),
                 self.current_span()
@@ -1014,7 +1049,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             )])?;
 
         // The intrinsic returns {iN, i1} - extract as a struct value
-        let result_struct = call_result.try_as_basic_value().left().ok_or_else(|| {
+        let result_struct = call_result.try_as_basic_value().basic().ok_or_else(|| {
             vec![Diagnostic::error(
                 "Overflow intrinsic did not return a value".to_string(),
                 self.current_span(),
@@ -1433,7 +1468,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                             };
 
                             // Store tag at field 0
-                            let tag_ptr = self.builder.build_struct_gep(alloca, 0, "tag_ptr")
+                            let tag_ptr = self.builder.build_struct_gep(struct_ty, alloca, 0, "tag_ptr")
                                 .map_err(|e| vec![Diagnostic::error(
                                     format!("LLVM GEP error: {}", e), self.current_span()
                                 )])?;
@@ -1444,7 +1479,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                             let _ = tag_store.set_alignment(4); // i32 tag alignment
 
                             // Get pointer to payload area (field 1)
-                            let payload_ptr = self.builder.build_struct_gep(alloca, 1, "payload_ptr")
+                            let payload_ptr = self.builder.build_struct_gep(struct_ty, alloca, 1, "payload_ptr")
                                 .map_err(|e| vec![Diagnostic::error(
                                     format!("LLVM GEP error: {}", e), self.current_span()
                                 )])?;
@@ -1453,18 +1488,12 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                             let variant_field_types: Vec<BasicTypeEnum> = vals.iter().map(|v| v.get_type()).collect();
                             let variant_struct_ty = self.context.struct_type(&variant_field_types, false);
 
-                            // Cast payload pointer to variant struct pointer
-                            let variant_ptr = self.builder.build_pointer_cast(
-                                payload_ptr,
-                                variant_struct_ty.ptr_type(AddressSpace::default()),
-                                "variant_payload_ptr"
-                            ).map_err(|e| vec![Diagnostic::error(
-                                format!("LLVM pointer cast error: {}", e), self.current_span()
-                            )])?;
+                            // With opaque pointers, pointer cast is a no-op but keeps the code clear
+                            let variant_ptr = payload_ptr;
 
                             // Store each field
                             for (i, val) in vals.iter().enumerate() {
-                                let field_ptr = self.builder.build_struct_gep(variant_ptr, i as u32, &format!("field_{}_ptr", i))
+                                let field_ptr = self.builder.build_struct_gep(variant_struct_ty, variant_ptr, i as u32, &format!("field_{}_ptr", i))
                                     .map_err(|e| vec![Diagnostic::error(
                                         format!("LLVM GEP error: {}", e), self.current_span()
                                     )])?;
@@ -1479,7 +1508,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                             }
 
                             // Load and return the full enum struct
-                            let result = self.builder.build_load(alloca, "enum_val")
+                            let result = self.builder.build_load(struct_ty, alloca, "enum_val")
                                 .map_err(|e| vec![Diagnostic::error(
                                     format!("LLVM load error: {}", e), self.current_span()
                                 )])?;
@@ -1503,7 +1532,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             }
 
             AggregateKind::Closure { def_id } => {
-                let i8_ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
+                let i8_ptr_ty = self.context.ptr_type(AddressSpace::default());
 
                 // Get the closure function pointer
                 let fn_ptr = if let Some(&fn_value) = self.functions.get(def_id) {
@@ -1614,7 +1643,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                                 format!("LLVM call error: {}", e), self.current_span()
                             )])?
                             .try_as_basic_value()
-                            .left()
+                            .basic()
                             .ok_or_else(|| vec![Diagnostic::error(
                                 "blood_alloc_or_abort did not return a value", self.current_span()
                             )])?
@@ -1622,7 +1651,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
                             let heap_ptr = self.builder.build_int_to_ptr(
                                 heap_addr,
-                                captures_struct_ty.ptr_type(AddressSpace::default()),
+                                self.context.ptr_type(AddressSpace::default()),
                                 "closure_env_ptr"
                             ).map_err(|e| vec![Diagnostic::error(
                                 format!("LLVM int_to_ptr error: {}", e), self.current_span()
@@ -1810,7 +1839,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
                 // Create str slice struct {ptr, len}
                 let str_type = self.context.struct_type(
-                    &[self.context.i8_type().ptr_type(inkwell::AddressSpace::default()).into(),
+                    &[self.context.ptr_type(inkwell::AddressSpace::default()).into(),
                       self.context.i64_type().into()],
                     false
                 );
@@ -1825,19 +1854,13 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 global.set_initializer(&self.context.const_string(bytes, false));
                 global.set_constant(true);
 
-                // Cast array pointer to i8*
-                let ptr = self.builder.build_pointer_cast(
-                    global.as_pointer_value(),
-                    self.context.i8_type().ptr_type(inkwell::AddressSpace::default()),
-                    "bytes_ptr"
-                ).map_err(|e| vec![Diagnostic::error(
-                    format!("LLVM pointer cast error: {}", e), self.current_span()
-                )])?;
+                // With opaque pointers, global pointer value is already the right type
+                let ptr = global.as_pointer_value();
                 let len = self.context.i64_type().const_int(bytes.len() as u64, false);
 
                 // Create byte slice struct {ptr, len}
                 let slice_type = self.context.struct_type(
-                    &[self.context.i8_type().ptr_type(inkwell::AddressSpace::default()).into(),
+                    &[self.context.ptr_type(inkwell::AddressSpace::default()).into(),
                       self.context.i64_type().into()],
                     false
                 );
@@ -1859,7 +1882,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // We need a wrapper function that accepts env_ptr and forwards to the original.
                 if let Some(wrapper_fn) = self.get_or_create_fn_ptr_wrapper(*def_id) {
                     let fn_ptr = wrapper_fn.as_global_value().as_pointer_value();
-                    let ptr_type = self.context.i8_type().ptr_type(inkwell::AddressSpace::default());
+                    let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
                     let null_env = ptr_type.const_null();
 
                     // Create fat pointer struct { wrapper_fn_ptr, null_env }
@@ -1881,7 +1904,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             ConstantKind::ConstDef(def_id) => {
                 // Const item reference - load from global constant
                 if let Some(global) = self.const_globals.get(def_id) {
-                    let val = self.builder.build_load(global.as_pointer_value(), "const_load")
+                    let global_any_ty = global.get_value_type();
+                    let global_ty: BasicTypeEnum = global_any_ty.try_into().map_err(|_| vec![Diagnostic::error(
+                        format!("Const global {:?} has non-basic type", def_id), self.current_span()
+                    )])?;
+                    let val = self.builder.build_load(global_ty, global.as_pointer_value(), "const_load")
                         .map_err(|e| vec![Diagnostic::error(
                             format!("LLVM load error: {}", e), self.current_span()
                         )])?;
@@ -1896,7 +1923,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             ConstantKind::StaticDef(def_id) => {
                 // Static item reference - load from global variable
                 if let Some(global) = self.static_globals.get(def_id) {
-                    let val = self.builder.build_load(global.as_pointer_value(), "static_load")
+                    let global_any_ty = global.get_value_type();
+                    let global_ty: BasicTypeEnum = global_any_ty.try_into().map_err(|_| vec![Diagnostic::error(
+                        format!("Static global {:?} has non-basic type", def_id), self.current_span()
+                    )])?;
+                    let val = self.builder.build_load(global_ty, global.as_pointer_value(), "static_load")
                         .map_err(|e| vec![Diagnostic::error(
                             format!("LLVM load error: {}", e), self.current_span()
                         )])?;

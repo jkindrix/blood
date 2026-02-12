@@ -31,8 +31,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         result_ty: &Type,
     ) -> Result<Option<BasicValueEnum<'ctx>>, Vec<Diagnostic>> {
         let i64_type = self.context.i64_type();
-        let i8_type = self.context.i8_type();
-        let i8_ptr_type = i8_type.ptr_type(AddressSpace::default());
+        let ptr_type = self.context.ptr_type(AddressSpace::default());
 
         // Get the blood_get_type_tag runtime function
         let get_type_tag_fn = self.module.get_function("blood_get_type_tag")
@@ -65,7 +64,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         };
 
         let receiver_void_ptr = self.builder
-            .build_pointer_cast(receiver_ptr, i8_ptr_type, "receiver_void")
+            .build_pointer_cast(receiver_ptr, ptr_type, "receiver_void")
             .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), receiver.span)])?;
 
         // Get the type tag: blood_get_type_tag(receiver)
@@ -73,7 +72,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             .build_call(get_type_tag_fn, &[receiver_void_ptr.into()], "type_tag")
             .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), receiver.span)])?
             .try_as_basic_value()
-            .left()
+            .basic()
             .ok_or_else(|| vec![Diagnostic::error("Expected type tag result", receiver.span)])?;
 
         // Look up the implementation: blood_dispatch_lookup(method_slot, type_tag)
@@ -86,7 +85,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             )
             .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), receiver.span)])?
             .try_as_basic_value()
-            .left()
+            .basic()
             .ok_or_else(|| vec![Diagnostic::error("Expected implementation pointer", receiver.span)])?;
 
         // Build the function type for the indirect call
@@ -102,6 +101,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     inkwell::values::BasicMetadataValueEnum::PointerValue(v) => Some(v.get_type().into()),
                     inkwell::values::BasicMetadataValueEnum::StructValue(v) => Some(v.get_type().into()),
                     inkwell::values::BasicMetadataValueEnum::VectorValue(v) => Some(v.get_type().into()),
+                    inkwell::values::BasicMetadataValueEnum::ScalableVectorValue(v) => Some(v.get_type().into()),
                     inkwell::values::BasicMetadataValueEnum::MetadataValue(_) => None,
                 }
             })
@@ -117,25 +117,20 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             ret_ty.fn_type(&param_types, false)
         };
 
-        // Cast impl_ptr to the correct function pointer type
-        let fn_ptr_type = fn_type.ptr_type(AddressSpace::default());
+        // Build the indirect call through the function pointer
+        // In inkwell 0.8 with opaque pointers, no pointer cast is needed —
+        // use build_indirect_call with the function type directly
         let impl_ptr_val = impl_ptr.into_pointer_value();
-        let fn_ptr = self.builder
-            .build_pointer_cast(impl_ptr_val, fn_ptr_type, "fn_ptr")
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), receiver.span)])?;
-
-        // Build the call through the function pointer
-        // inkwell's build_call accepts CallableValue which includes function pointers
         let call_site = self.builder
-            .build_call(
-                inkwell::values::CallableValue::try_from(fn_ptr)
-                    .map_err(|_| vec![Diagnostic::error("Invalid function pointer for dispatch", receiver.span)])?,
+            .build_indirect_call(
+                fn_type,
+                impl_ptr_val,
                 compiled_args,
                 "dispatch_call",
             )
             .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), receiver.span)])?;
 
-        Ok(call_site.try_as_basic_value().left())
+        Ok(call_site.try_as_basic_value().basic())
     }
 
     /// Compile a method call on a dyn Trait using vtable dispatch.
@@ -152,7 +147,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         args: &[hir::Expr],
         result_ty: &Type,
     ) -> Result<Option<BasicValueEnum<'ctx>>, Vec<Diagnostic>> {
-        let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
 
         // Compile the receiver - this should be a fat pointer { data_ptr, vtable_ptr }
         let fat_ptr = self.compile_expr(receiver)?
@@ -184,26 +179,23 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             )])?;
 
         // Calculate pointer to the method slot in the vtable
+        // With opaque pointers, vtable is just a pointer to an array of pointers
         let i32_ty = self.context.i32_type();
-        let fn_ptr_ptr_ty = ptr_ty.ptr_type(AddressSpace::default());
 
-        // Cast vtable to pointer-to-pointer
-        let vtable_typed = self.builder
-            .build_pointer_cast(vtable_ptr, fn_ptr_ptr_ty, "vtable_typed")
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), receiver.span)])?;
-
-        // Get pointer to slot
+        // GEP into the vtable to get the slot pointer
+        // The vtable is an array of pointers; pointee_ty for GEP is ptr
         let slot_ptr = unsafe {
             self.builder.build_gep(
-                vtable_typed,
+                ptr_ty,
+                vtable_ptr,
                 &[i32_ty.const_int(method_slot as u64, false)],
                 "slot_ptr",
             )
         }.map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), receiver.span)])?;
 
-        // Load the function pointer
+        // Load the function pointer from the slot
         let fn_ptr = self.builder
-            .build_load(slot_ptr, "fn_ptr")
+            .build_load(ptr_ty, slot_ptr, "fn_ptr")
             .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), receiver.span)])?
             .into_pointer_value();
 
@@ -225,6 +217,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 inkwell::values::BasicMetadataValueEnum::PointerValue(v) => Some(v.get_type().into()),
                 inkwell::values::BasicMetadataValueEnum::StructValue(v) => Some(v.get_type().into()),
                 inkwell::values::BasicMetadataValueEnum::VectorValue(v) => Some(v.get_type().into()),
+                inkwell::values::BasicMetadataValueEnum::ScalableVectorValue(v) => Some(v.get_type().into()),
                 inkwell::values::BasicMetadataValueEnum::MetadataValue(_) => None,
             })
             .collect();
@@ -236,22 +229,18 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             ret_ty.fn_type(&param_types, false)
         };
 
-        // Cast to correct function pointer type
-        let fn_ptr_typed = self.builder
-            .build_pointer_cast(fn_ptr, fn_type.ptr_type(AddressSpace::default()), "fn_ptr_typed")
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), receiver.span)])?;
-
-        // Call through function pointer
+        // Call through function pointer using indirect call
+        // With opaque pointers, no pointer cast is needed — pass fn_type directly
         let call_site = self.builder
-            .build_call(
-                inkwell::values::CallableValue::try_from(fn_ptr_typed)
-                    .map_err(|_| vec![Diagnostic::error("Invalid function pointer for vtable dispatch", receiver.span)])?,
+            .build_indirect_call(
+                fn_type,
+                fn_ptr,
                 &compiled_args,
                 "vtable_call",
             )
             .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), receiver.span)])?;
 
-        Ok(call_site.try_as_basic_value().left())
+        Ok(call_site.try_as_basic_value().basic())
     }
 
     /// Get the vtable slot for a specific method.
@@ -299,8 +288,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         span: Span,
     ) -> Result<(), Vec<Diagnostic>> {
         let i64_type = self.context.i64_type();
-        let i8_type = self.context.i8_type();
-        let i8_ptr_type = i8_type.ptr_type(AddressSpace::default());
+        let i8_ptr_type = self.context.ptr_type(AddressSpace::default());
 
         let dispatch_register_fn = self.module.get_function("blood_dispatch_register")
             .ok_or_else(|| vec![Diagnostic::error(
@@ -394,7 +382,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         }
 
         // Build array of function pointers
-        let ptr_type = self.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_type = self.context.ptr_type(AddressSpace::default());
         let vtable_type = ptr_type.array_type(layout.len() as u32);
 
         // Create a unique name for this vtable
@@ -558,7 +546,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         trait_id: DefId,
         _target_ty: &Type,
     ) -> Result<Option<BasicValueEnum<'ctx>>, Vec<Diagnostic>> {
-        let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let source_ty = &expr.ty;
 
         // Compile the source expression

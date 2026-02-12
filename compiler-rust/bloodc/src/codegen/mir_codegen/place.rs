@@ -4,7 +4,7 @@
 //! Places represent lvalues - locations that can be read from or written to.
 
 use inkwell::values::{BasicValue, BasicValueEnum, PointerValue};
-use inkwell::types::BasicType;
+use inkwell::AddressSpace;
 
 use crate::diagnostics::Diagnostic;
 use crate::hir::{Type, TypeKind};
@@ -90,20 +90,14 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
 
         if is_closure_env && has_field_projections {
             // Load the i8* from the alloca
-            let env_i8_ptr = self.builder.build_load(current_ptr, "env_ptr")
+            let ptr_ty = self.context.ptr_type(AddressSpace::default());
+            let env_i8_ptr = self.builder.build_load(ptr_ty, current_ptr, "env_ptr")
                 .map_err(|e| vec![Diagnostic::error(
                     format!("LLVM load error: {}", e), body.span
                 )])?.into_pointer_value();
 
-            // Get the captures struct type from the MIR type (which is a Tuple)
-            let captures_llvm_ty = self.lower_type(&base_ty);
-            let captures_ptr_ty = captures_llvm_ty.ptr_type(inkwell::AddressSpace::default());
-
-            // Cast i8* to captures struct pointer
-            current_ptr = self.builder.build_pointer_cast(env_i8_ptr, captures_ptr_ty, "env_captures_ptr")
-                .map_err(|e| vec![Diagnostic::error(
-                    format!("LLVM pointer cast error: {}", e), body.span
-                )])?;
+            // With opaque pointers, no cast needed — all pointers are the same type
+            current_ptr = env_i8_ptr;
         }
 
         // Debug: trace full place access
@@ -136,10 +130,6 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     };
 
                     // Update current_ty to the inner type (dereference the reference/pointer/Box)
-                    let is_box_deref = matches!(
-                        original_ty.kind(),
-                        TypeKind::Adt { def_id, .. } if Some(*def_id) == self.box_def_id
-                    );
                     current_ty = match original_ty.kind() {
                         TypeKind::Ref { inner, .. } => inner.clone(),
                         TypeKind::Ptr { inner, .. } => inner.clone(),
@@ -151,7 +141,9 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     };
 
                     // Load the pointer value
-                    let loaded = self.builder.build_load(current_ptr, "deref")
+                    // Use the original (pre-deref) type to determine what's stored in the alloca
+                    let load_ty = self.lower_type(&original_ty);
+                    let loaded = self.builder.build_load(load_ty, current_ptr, "deref")
                         .map_err(|e| vec![Diagnostic::error(
                             format!("LLVM load error: {}", e), body.span
                         )])?;
@@ -195,8 +187,7 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                         }
                         BasicValueEnum::IntValue(int_val) => {
                             // Opaque pointer as integer - convert to pointer type
-                            let inner_ty = self.lower_type(&current_ty);
-                            let ptr_ty = inner_ty.ptr_type(inkwell::AddressSpace::default());
+                            let ptr_ty = self.context.ptr_type(AddressSpace::default());
                             self.builder.build_int_to_ptr(int_val, ptr_ty, "deref_int_to_ptr")
                                 .map_err(|e| vec![Diagnostic::error(
                                     format!("LLVM int_to_ptr error: {}", e), body.span
@@ -210,19 +201,9 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                         }
                     };
 
-                    // For Box<T> deref, the loaded pointer is an opaque i8* (Box's
-                    // LLVM representation). Cast it to T* so subsequent loads produce
-                    // the correct LLVM type for the inner value.
-                    let ptr_val = if is_box_deref {
-                        let inner_llvm_ty = self.lower_type(&current_ty);
-                        let typed_ptr_ty = inner_llvm_ty.ptr_type(inkwell::AddressSpace::default());
-                        self.builder.build_pointer_cast(ptr_val, typed_ptr_ty, "box_deref_cast")
-                            .map_err(|e| vec![Diagnostic::error(
-                                format!("LLVM pointer_cast error: {}", e), body.span
-                            )])?
-                    } else {
-                        ptr_val
-                    };
+                    // With opaque pointers, Box<T> deref needs no cast — all pointers
+                    // are the same opaque `ptr` type. The loaded pointer is already usable.
+                    let ptr_val = ptr_val;
 
                     // Check if we should skip generation checks for this local.
                     // NoEscape locals are stack-allocated and safe by lexical scoping.
@@ -240,7 +221,7 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                         let i64_ty = self.context.i64_type();
 
                         // Load the expected generation
-                        let expected_gen = self.builder.build_load(gen_alloca, "expected_gen")
+                        let expected_gen = self.builder.build_load(i32_ty, gen_alloca, "expected_gen")
                             .map_err(|e| vec![Diagnostic::error(
                                 format!("LLVM load error: {}", e), body.span
                             )])?.into_int_value();
@@ -264,7 +245,7 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                         ).map_err(|e| vec![Diagnostic::error(
                             format!("LLVM call error: {}", e), body.span
                         )])?.try_as_basic_value()
-                            .left()
+                            .basic()
                             .ok_or_else(|| vec![Diagnostic::error(
                                 "blood_validate_generation returned void", body.span
                             )])?.into_int_value();
@@ -336,8 +317,12 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                                     };
                                     let actual_field_ty = self.substitute_type_params(variant_field_ty, &args);
 
+                                    // Get the enum's LLVM struct type for GEP
+                                    let enum_llvm_ty = self.lower_type(&current_ty);
+                                    let enum_struct_ty = enum_llvm_ty.into_struct_type();
+
                                     // Get pointer to payload area (field 1 of enum struct)
-                                    let payload_ptr = self.builder.build_struct_gep(current_ptr, 1, "payload_ptr")
+                                    let payload_ptr = self.builder.build_struct_gep(enum_struct_ty, current_ptr, 1, "payload_ptr")
                                         .map_err(|e| vec![Diagnostic::error(
                                             format!("LLVM GEP error: {}", e), body.span
                                         )])?;
@@ -358,17 +343,12 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                                         .collect();
                                     let variant_struct_ty = self.context.struct_type(&variant_field_types, false);
 
-                                    // Cast payload pointer to variant struct pointer
-                                    let variant_ptr = self.builder.build_pointer_cast(
-                                        payload_ptr,
-                                        variant_struct_ty.ptr_type(inkwell::AddressSpace::default()),
-                                        "variant_ptr"
-                                    ).map_err(|e| vec![Diagnostic::error(
-                                        format!("LLVM pointer cast error: {}", e), body.span
-                                    )])?;
+                                    // With opaque pointers, no cast needed — payload_ptr is already
+                                    // a generic `ptr` that can be used with any struct GEP
+                                    let variant_ptr = payload_ptr;
 
                                     // GEP to the specific field within the variant
-                                    let field_ptr = self.builder.build_struct_gep(variant_ptr, *idx, &format!("variant_field_{}", idx))
+                                    let field_ptr = self.builder.build_struct_gep(variant_struct_ty, variant_ptr, *idx, &format!("variant_field_{}", idx))
                                         .map_err(|e| vec![Diagnostic::error(
                                             format!("LLVM GEP error: {}", e), body.span
                                         )])?;
@@ -484,7 +464,9 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     // Get struct element pointer
                     if is_ref_to_struct {
                         // Reference to struct: load pointer then struct_gep
-                        let loaded_val = self.builder.build_load(current_ptr, "struct_ptr")
+                        // The alloca stores a pointer (reference), so load with ptr type
+                        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+                        let loaded_val = self.builder.build_load(ptr_ty, current_ptr, "struct_ptr")
                             .map_err(|e| vec![Diagnostic::error(
                                 format!("LLVM load error: {}", e), body.span
                             )])?;
@@ -496,16 +478,15 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
 
                         // Handle different loaded value types:
                         // - PointerValue: thin reference, use directly for struct_gep
-                        // - StructValue: fat reference (like &[T]), GEP into the struct for the data pointer
                         // - IntValue: opaque pointer representation, convert to pointer
+                        // - StructValue: fat reference (like &[T]), use current_ptr directly
                         use inkwell::values::BasicValueEnum;
                         let struct_ptr = match loaded_val {
                             BasicValueEnum::PointerValue(ptr) => ptr,
                             BasicValueEnum::IntValue(int_val) => {
                                 // Opaque pointer as integer - convert to pointer type
-                                let struct_llvm_ty = self.lower_type(&effective_ty);
-                                let ptr_ty = struct_llvm_ty.ptr_type(inkwell::AddressSpace::default());
-                                self.builder.build_int_to_ptr(int_val, ptr_ty, "struct_ptr_cast")
+                                let opaque_ptr_ty = self.context.ptr_type(AddressSpace::default());
+                                self.builder.build_int_to_ptr(int_val, opaque_ptr_ty, "struct_ptr_cast")
                                     .map_err(|e| vec![Diagnostic::error(
                                         format!("LLVM int_to_ptr error: {}", e), body.span
                                     )])?
@@ -528,7 +509,10 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                             eprintln!("[Field] GEP (ref path): struct_ptr type = {:?}, actual_idx = {}",
                                 struct_ptr.get_type().print_to_string(), actual_idx);
                         }
+                        // Use the effective (struct) type for the struct GEP
+                        let effective_struct_ty = self.lower_type(&effective_ty).into_struct_type();
                         let gep_result = self.builder.build_struct_gep(
+                            effective_struct_ty,
                             struct_ptr,
                             actual_idx,
                             &format!("field_{}", idx)
@@ -545,7 +529,11 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                             eprintln!("[Field] GEP (direct path): current_ptr type = {:?}, actual_idx = {}",
                                 current_ptr.get_type().print_to_string(), actual_idx);
                         }
+                        // For direct struct access, we need the struct type that current_ptr points to.
+                        // effective_ty is the struct type (unwrapped from Ref if applicable)
+                        let direct_struct_ty = self.lower_type(&effective_ty).into_struct_type();
                         let gep_result = self.builder.build_struct_gep(
+                            direct_struct_ty,
                             current_ptr,
                             actual_idx,
                             &format!("field_{}", idx)
@@ -566,7 +554,9 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                             body.span,
                         )]
                     })?;
-                    let idx_val = self.builder.build_load(*idx_ptr, "idx")
+                    // Index locals are integer types (typically i64 for usize)
+                    let idx_load_ty = self.context.i64_type();
+                    let idx_val = self.builder.build_load(idx_load_ty, *idx_ptr, "idx")
                         .map_err(|e| vec![Diagnostic::error(
                             format!("LLVM load error: {}", e), body.span
                         )])?;
@@ -622,6 +612,9 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                         eprintln!("[compile_mir_place] vec_def_id: {:?}", self.vec_def_id);
                     }
 
+                    // Save the pre-index type for GEP pointee type computation
+                    let pre_index_ty = current_ty.clone();
+
                     // Update current_ty to element type
                     // Debug: trace type extraction for Vec indexing
                     let debug_vec = std::env::var("BLOOD_DEBUG_VEC_SIZE").is_ok();
@@ -668,8 +661,10 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                         match index_kind {
                             IndexKind::DirectArray => {
                                 // Direct array: current_ptr is [N x T]*, use two-index GEP
+                                let array_llvm_ty = self.lower_type(&pre_index_ty);
                                 let zero = self.context.i64_type().const_zero();
                                 self.builder.build_in_bounds_gep(
+                                    array_llvm_ty,
                                     current_ptr,
                                     &[zero, idx_val.into_int_value()],
                                     "idx_gep"
@@ -678,30 +673,29 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                                 )])?
                             }
                             IndexKind::DirectSlice => {
-                                // Direct slice (fat pointer): current_ptr is {T*, i64}*
-                                // Extract the data pointer (field 0), cast to element type, then single-index GEP
+                                // Direct slice (fat pointer): current_ptr is {ptr, i64}*
+                                // Extract the data pointer (field 0), then single-index GEP
+                                let slice_llvm_ty = self.lower_type(&pre_index_ty).into_struct_type();
                                 let data_ptr_ptr = self.builder.build_struct_gep(
+                                    slice_llvm_ty,
                                     current_ptr,
                                     0,
                                     "slice_data_ptr_ptr"
                                 ).map_err(|e| vec![Diagnostic::error(
                                     format!("LLVM GEP error: {}", e), body.span
                                 )])?;
-                                let data_ptr = self.builder.build_load(data_ptr_ptr, "slice_data_ptr")
+                                let ptr_ty = self.context.ptr_type(AddressSpace::default());
+                                let data_ptr = self.builder.build_load(ptr_ty, data_ptr_ptr, "slice_data_ptr")
                                     .map_err(|e| vec![Diagnostic::error(
                                         format!("LLVM load error: {}", e), body.span
                                     )])?.into_pointer_value();
 
-                                // Cast to typed pointer for correct GEP calculation
+                                // With opaque pointers, no cast needed — use element type for GEP
                                 let elem_llvm_ty = self.lower_type(&current_ty);
-                                let elem_ptr_ty = elem_llvm_ty.ptr_type(inkwell::AddressSpace::default());
-                                let typed_data_ptr = self.builder.build_pointer_cast(data_ptr, elem_ptr_ty, "slice_typed_data_ptr")
-                                    .map_err(|e| vec![Diagnostic::error(
-                                        format!("LLVM pointer cast error: {}", e), body.span
-                                    )])?;
 
                                 self.builder.build_in_bounds_gep(
-                                    typed_data_ptr,
+                                    elem_llvm_ty,
+                                    data_ptr,
                                     &[idx_val.into_int_value()],
                                     "idx_gep"
                                 ).map_err(|e| vec![Diagnostic::error(
@@ -709,13 +703,22 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                                 )])?
                             }
                             IndexKind::RefToArray => {
-                                // Reference to array: current_ptr is [N x T]**, load to get [N x T]*
-                                let array_ptr = self.builder.build_load(current_ptr, "array_ptr")
+                                // Reference to array: current_ptr is ptr*, load to get ptr (array pointer)
+                                let ptr_ty = self.context.ptr_type(AddressSpace::default());
+                                let array_ptr = self.builder.build_load(ptr_ty, current_ptr, "array_ptr")
                                     .map_err(|e| vec![Diagnostic::error(
                                         format!("LLVM load error: {}", e), body.span
                                     )])?.into_pointer_value();
+                                // Get the inner array type for GEP
+                                let inner_array_ty = match pre_index_ty.kind() {
+                                    TypeKind::Ref { inner, .. } | TypeKind::Ptr { inner, .. } => {
+                                        self.lower_type(inner)
+                                    }
+                                    _ => self.lower_type(&pre_index_ty),
+                                };
                                 let zero = self.context.i64_type().const_zero();
                                 self.builder.build_in_bounds_gep(
+                                    inner_array_ty,
                                     array_ptr,
                                     &[zero, idx_val.into_int_value()],
                                     "idx_gep"
@@ -724,30 +727,35 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                                 )])?
                             }
                             IndexKind::SliceRef => {
-                                // Slice reference (fat pointer): current_ptr is {T*, i64}*
-                                // Load the fat pointer struct, extract data pointer (field 0), cast to element type, single-index GEP
+                                // Slice reference (fat pointer): current_ptr is {ptr, i64}*
+                                // Extract data pointer (field 0), then single-index GEP
+                                // Get the slice struct type (same as for the inner slice type)
+                                let inner_slice_ty = match pre_index_ty.kind() {
+                                    TypeKind::Ref { inner, .. } | TypeKind::Ptr { inner, .. } => {
+                                        self.lower_type(inner).into_struct_type()
+                                    }
+                                    _ => self.lower_type(&pre_index_ty).into_struct_type(),
+                                };
                                 let data_ptr_ptr = self.builder.build_struct_gep(
+                                    inner_slice_ty,
                                     current_ptr,
                                     0,
                                     "slice_data_ptr_ptr"
                                 ).map_err(|e| vec![Diagnostic::error(
                                     format!("LLVM GEP error: {}", e), body.span
                                 )])?;
-                                let data_ptr = self.builder.build_load(data_ptr_ptr, "slice_data_ptr")
+                                let ptr_ty = self.context.ptr_type(AddressSpace::default());
+                                let data_ptr = self.builder.build_load(ptr_ty, data_ptr_ptr, "slice_data_ptr")
                                     .map_err(|e| vec![Diagnostic::error(
                                         format!("LLVM load error: {}", e), body.span
                                     )])?.into_pointer_value();
 
-                                // Cast to typed pointer for correct GEP calculation
+                                // With opaque pointers, no cast needed — use element type for GEP
                                 let elem_llvm_ty = self.lower_type(&current_ty);
-                                let elem_ptr_ty = elem_llvm_ty.ptr_type(inkwell::AddressSpace::default());
-                                let typed_data_ptr = self.builder.build_pointer_cast(data_ptr, elem_ptr_ty, "sliceref_typed_data_ptr")
-                                    .map_err(|e| vec![Diagnostic::error(
-                                        format!("LLVM pointer cast error: {}", e), body.span
-                                    )])?;
 
                                 self.builder.build_in_bounds_gep(
-                                    typed_data_ptr,
+                                    elem_llvm_ty,
+                                    data_ptr,
                                     &[idx_val.into_int_value()],
                                     "idx_gep"
                                 ).map_err(|e| vec![Diagnostic::error(
@@ -756,13 +764,14 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                             }
                             IndexKind::PtrToElements => {
                                 // Pointer to elements (e.g., Vec<T>.data which is *T)
-                                // current_ptr is **T (pointer to the pointer field)
+                                // current_ptr is ptr* (pointer to the pointer field)
                                 // Need to load the pointer value, then index into it
                                 //
                                 // FIX: Use explicit byte offset calculation instead of relying on
                                 // typed pointer GEP. This fixes offset miscalculation for structs
                                 // accessed through Vec fields of `self` (e.g., self.vec[i].field).
-                                let data_ptr = self.builder.build_load(current_ptr, "data_ptr")
+                                let ptr_ty = self.context.ptr_type(AddressSpace::default());
+                                let data_ptr = self.builder.build_load(ptr_ty, current_ptr, "data_ptr")
                                     .map_err(|e| vec![Diagnostic::error(
                                         format!("LLVM load error: {}", e), body.span
                                     )])?.into_pointer_value();
@@ -805,28 +814,21 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                                     format!("LLVM mul error: {}", e), body.span
                                 )])?;
 
-                                // Cast data_ptr to i8* for byte-level addressing
-                                let i8_ptr_ty = self.context.i8_type().ptr_type(inkwell::AddressSpace::default());
-                                let data_ptr_i8 = self.builder.build_pointer_cast(data_ptr, i8_ptr_ty, "data_ptr_i8")
-                                    .map_err(|e| vec![Diagnostic::error(
-                                        format!("LLVM pointer cast error: {}", e), body.span
-                                    )])?;
+                                // With opaque pointers, no cast needed — use i8 type for byte GEP
+                                let i8_ty = self.context.i8_type();
 
-                                // GEP with byte offset (i8* + byte_offset gives exact address)
-                                let elem_ptr_i8 = self.builder.build_in_bounds_gep(
-                                    data_ptr_i8,
+                                // GEP with byte offset (ptr + byte_offset gives exact address)
+                                let elem_ptr = self.builder.build_in_bounds_gep(
+                                    i8_ty,
+                                    data_ptr,
                                     &[byte_offset],
-                                    "elem_ptr_i8"
+                                    "elem_ptr"
                                 ).map_err(|e| vec![Diagnostic::error(
                                     format!("LLVM GEP error: {}", e), body.span
                                 )])?;
 
-                                // Cast back to element type pointer
-                                let elem_ptr_ty = elem_llvm_ty.ptr_type(inkwell::AddressSpace::default());
-                                self.builder.build_pointer_cast(elem_ptr_i8, elem_ptr_ty, "ptr_elem_ptr")
-                                    .map_err(|e| vec![Diagnostic::error(
-                                        format!("LLVM pointer cast error: {}", e), body.span
-                                    )])?
+                                // With opaque pointers, no cast needed — all pointers are `ptr`
+                                elem_ptr
                             }
                             IndexKind::VecIndex => {
                                 // Vec<T> direct indexing: current_ptr is Vec*, need to:
@@ -835,11 +837,14 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                                 // 3. Calculate byte offset manually (index * elem_size)
                                 // 4. Use i8* GEP for exact byte addressing
                                 // 5. Cast result to element type pointer
-                                let data_ptr_ptr = self.builder.build_struct_gep(current_ptr, 0, "vec_data_ptr_ptr")
+                                // Get Vec struct type for GEP
+                                let vec_llvm_ty = self.lower_type(&pre_index_ty).into_struct_type();
+                                let data_ptr_ptr = self.builder.build_struct_gep(vec_llvm_ty, current_ptr, 0, "vec_data_ptr_ptr")
                                     .map_err(|e| vec![Diagnostic::error(
                                         format!("LLVM GEP error for Vec data pointer: {}", e), body.span
                                     )])?;
-                                let data_ptr = self.builder.build_load(data_ptr_ptr, "vec_data_ptr")
+                                let ptr_ty = self.context.ptr_type(AddressSpace::default());
+                                let data_ptr = self.builder.build_load(ptr_ty, data_ptr_ptr, "vec_data_ptr")
                                     .map_err(|e| vec![Diagnostic::error(
                                         format!("LLVM load error: {}", e), body.span
                                     )])?.into_pointer_value();
@@ -897,18 +902,15 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                                     }
                                 }
 
-                                // Cast data_ptr to i8* for byte-level addressing
-                                let i8_ptr_ty = self.context.i8_type().ptr_type(inkwell::AddressSpace::default());
-                                let data_ptr_i8 = self.builder.build_pointer_cast(data_ptr, i8_ptr_ty, "data_ptr_i8")
-                                    .map_err(|e| vec![Diagnostic::error(
-                                        format!("LLVM pointer cast error: {}", e), body.span
-                                    )])?;
+                                // With opaque pointers, use i8 type for byte-level GEP (no casts needed)
+                                let i8_ty = self.context.i8_type();
 
-                                // GEP with byte offset (i8* + byte_offset gives exact address)
-                                let elem_ptr_i8 = self.builder.build_in_bounds_gep(
-                                    data_ptr_i8,
+                                // GEP with byte offset (ptr + byte_offset gives exact address)
+                                let elem_ptr = self.builder.build_in_bounds_gep(
+                                    i8_ty,
+                                    data_ptr,
                                     &[byte_offset],
-                                    "elem_ptr_i8"
+                                    "elem_ptr"
                                 ).map_err(|e| vec![Diagnostic::error(
                                     format!("LLVM GEP error: {}", e), body.span
                                 )])?;
@@ -918,7 +920,7 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                                     if let Some(debug_fn) = self.module.get_function("debug_vec_ptrs") {
                                         let _ = self.builder.build_call(
                                             debug_fn,
-                                            &[data_ptr_i8.into(), elem_ptr_i8.into()],
+                                            &[data_ptr.into(), elem_ptr.into()],
                                             ""
                                         );
                                     }
@@ -926,25 +928,19 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                                     if let Some(read_fn) = self.module.get_function("debug_read_enum_at") {
                                         let _ = self.builder.build_call(
                                             read_fn,
-                                            &[elem_ptr_i8.into()],
+                                            &[elem_ptr.into()],
                                             ""
                                         );
                                     }
                                 }
 
-                                // Cast back to element type pointer
-                                let elem_ptr_ty = elem_llvm_ty.ptr_type(inkwell::AddressSpace::default());
-
                                 // Debug: print the types involved
                                 if std::env::var("BLOOD_DEBUG_GEP_ADDR").is_ok() {
                                     eprintln!("[VecIndex cast] elem_llvm_ty: {:?}", elem_llvm_ty.print_to_string());
-                                    eprintln!("[VecIndex cast] elem_ptr_ty: {:?}", elem_ptr_ty.print_to_string());
                                 }
 
-                                self.builder.build_pointer_cast(elem_ptr_i8, elem_ptr_ty, "vec_elem_ptr")
-                                    .map_err(|e| vec![Diagnostic::error(
-                                        format!("LLVM pointer cast error: {}", e), body.span
-                                    )])?
+                                // With opaque pointers, no cast needed — all pointers are `ptr`
+                                elem_ptr
                             }
                             IndexKind::RefToVec => {
                                 // Reference to Vec<T>: current_ptr is Vec** (pointer to the ref)
@@ -954,15 +950,24 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                                 // 4. Calculate byte offset manually (index * elem_size)
                                 // 5. Use i8* GEP for exact byte addressing
                                 // 6. Cast result to element type pointer
-                                let vec_ptr = self.builder.build_load(current_ptr, "vec_ref")
+                                // Load the reference to get the Vec pointer
+                                let ptr_ty = self.context.ptr_type(AddressSpace::default());
+                                let vec_ptr = self.builder.build_load(ptr_ty, current_ptr, "vec_ref")
                                     .map_err(|e| vec![Diagnostic::error(
                                         format!("LLVM load error: {}", e), body.span
                                     )])?.into_pointer_value();
-                                let data_ptr_ptr = self.builder.build_struct_gep(vec_ptr, 0, "vec_data_ptr_ptr")
+                                // Get the inner Vec type for struct GEP
+                                let inner_vec_ty = match pre_index_ty.kind() {
+                                    TypeKind::Ref { inner, .. } | TypeKind::Ptr { inner, .. } => {
+                                        self.lower_type(inner).into_struct_type()
+                                    }
+                                    _ => self.lower_type(&pre_index_ty).into_struct_type(),
+                                };
+                                let data_ptr_ptr = self.builder.build_struct_gep(inner_vec_ty, vec_ptr, 0, "vec_data_ptr_ptr")
                                     .map_err(|e| vec![Diagnostic::error(
                                         format!("LLVM GEP error for Vec data pointer: {}", e), body.span
                                     )])?;
-                                let data_ptr = self.builder.build_load(data_ptr_ptr, "vec_data_ptr")
+                                let data_ptr = self.builder.build_load(ptr_ty, data_ptr_ptr, "vec_data_ptr")
                                     .map_err(|e| vec![Diagnostic::error(
                                         format!("LLVM load error: {}", e), body.span
                                     )])?.into_pointer_value();
@@ -1008,13 +1013,6 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                                     format!("LLVM mul error: {}", e), body.span
                                 )])?;
 
-                                // Cast data_ptr to i8* for byte-level addressing
-                                let i8_ptr_ty = self.context.i8_type().ptr_type(inkwell::AddressSpace::default());
-                                let data_ptr_i8 = self.builder.build_pointer_cast(data_ptr, i8_ptr_ty, "data_ptr_i8")
-                                    .map_err(|e| vec![Diagnostic::error(
-                                        format!("LLVM pointer cast error: {}", e), body.span
-                                    )])?;
-
                                 // Debug: print idx and byte_offset at runtime
                                 if std::env::var("BLOOD_DEBUG_GEP_ADDR").is_ok() {
                                     if let Some(debug_fn) = self.module.get_function("debug_vec_index") {
@@ -1026,11 +1024,15 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                                     }
                                 }
 
-                                // GEP with byte offset (i8* + byte_offset gives exact address)
-                                let elem_ptr_i8 = self.builder.build_in_bounds_gep(
-                                    data_ptr_i8,
+                                // With opaque pointers, use i8 type for byte-level GEP (no casts needed)
+                                let i8_ty = self.context.i8_type();
+
+                                // GEP with byte offset (ptr + byte_offset gives exact address)
+                                let elem_ptr = self.builder.build_in_bounds_gep(
+                                    i8_ty,
+                                    data_ptr,
                                     &[byte_offset],
-                                    "elem_ptr_i8"
+                                    "elem_ptr"
                                 ).map_err(|e| vec![Diagnostic::error(
                                     format!("LLVM GEP error: {}", e), body.span
                                 )])?;
@@ -1040,7 +1042,7 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                                     if let Some(debug_fn) = self.module.get_function("debug_vec_ptrs") {
                                         let _ = self.builder.build_call(
                                             debug_fn,
-                                            &[data_ptr_i8.into(), elem_ptr_i8.into()],
+                                            &[data_ptr.into(), elem_ptr.into()],
                                             ""
                                         );
                                     }
@@ -1048,22 +1050,20 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                                     if let Some(read_fn) = self.module.get_function("debug_read_enum_at") {
                                         let _ = self.builder.build_call(
                                             read_fn,
-                                            &[elem_ptr_i8.into()],
+                                            &[elem_ptr.into()],
                                             ""
                                         );
                                     }
                                 }
 
-                                // Cast back to element type pointer
-                                let elem_ptr_ty = elem_llvm_ty.ptr_type(inkwell::AddressSpace::default());
-                                self.builder.build_pointer_cast(elem_ptr_i8, elem_ptr_ty, "ref_vec_elem_ptr")
-                                    .map_err(|e| vec![Diagnostic::error(
-                                        format!("LLVM pointer cast error: {}", e), body.span
-                                    )])?
+                                // With opaque pointers, no cast needed — all pointers are `ptr`
+                                elem_ptr
                             }
                             IndexKind::Other => {
-                                // Other pointer type: single-index GEP
+                                // Other pointer type: single-index GEP using element type
+                                let elem_llvm_ty = self.lower_type(&current_ty);
                                 self.builder.build_in_bounds_gep(
+                                    elem_llvm_ty,
                                     current_ptr,
                                     &[idx_val.into_int_value()],
                                     "idx_gep"
@@ -1113,6 +1113,9 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                         self.context.i64_type().const_int(*offset, false)
                     };
 
+                    // Save pre-update type for GEP pointee type
+                    let pre_const_idx_ty = current_ty.clone();
+
                     // Update current_ty to element type (handle both direct and through-reference)
                     current_ty = match current_ty.kind() {
                         TypeKind::Array { element, .. } => element.clone(),
@@ -1130,25 +1133,35 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     unsafe {
                         if is_direct_array {
                             // Direct array: current_ptr is [N x T]*, use two-index GEP
+                            let array_llvm_ty = self.lower_type(&pre_const_idx_ty);
                             let zero = self.context.i64_type().const_zero();
-                            self.builder.build_in_bounds_gep(current_ptr, &[zero, idx], "const_idx")
+                            self.builder.build_in_bounds_gep(array_llvm_ty, current_ptr, &[zero, idx], "const_idx")
                                 .map_err(|e| vec![Diagnostic::error(
                                     format!("LLVM GEP error: {}", e), body.span
                                 )])?
                         } else if is_ref_to_array {
                             // Reference to array: load pointer then two-index GEP
-                            let array_ptr = self.builder.build_load(current_ptr, "array_ptr")
+                            let ptr_ty = self.context.ptr_type(AddressSpace::default());
+                            let array_ptr = self.builder.build_load(ptr_ty, current_ptr, "array_ptr")
                                 .map_err(|e| vec![Diagnostic::error(
                                     format!("LLVM load error: {}", e), body.span
                                 )])?.into_pointer_value();
+                            // Get the inner array type for GEP
+                            let inner_array_ty = match pre_const_idx_ty.kind() {
+                                TypeKind::Ref { inner, .. } | TypeKind::Ptr { inner, .. } => {
+                                    self.lower_type(inner)
+                                }
+                                _ => self.lower_type(&pre_const_idx_ty),
+                            };
                             let zero = self.context.i64_type().const_zero();
-                            self.builder.build_in_bounds_gep(array_ptr, &[zero, idx], "const_idx")
+                            self.builder.build_in_bounds_gep(inner_array_ty, array_ptr, &[zero, idx], "const_idx")
                                 .map_err(|e| vec![Diagnostic::error(
                                     format!("LLVM GEP error: {}", e), body.span
                                 )])?
                         } else {
-                            // Other type: single-index GEP
-                            self.builder.build_in_bounds_gep(current_ptr, &[idx], "const_idx")
+                            // Other type: single-index GEP using element type
+                            let elem_llvm_ty = self.lower_type(&current_ty);
+                            self.builder.build_in_bounds_gep(elem_llvm_ty, current_ptr, &[idx], "const_idx")
                                 .map_err(|e| vec![Diagnostic::error(
                                     format!("LLVM GEP error: {}", e), body.span
                                 )])?
@@ -1174,24 +1187,39 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
 
                     unsafe {
                         if is_direct_array {
+                            let array_llvm_ty = self.lower_type(&current_ty);
                             let zero = self.context.i64_type().const_zero();
-                            self.builder.build_in_bounds_gep(current_ptr, &[zero, idx], "subslice")
+                            self.builder.build_in_bounds_gep(array_llvm_ty, current_ptr, &[zero, idx], "subslice")
                                 .map_err(|e| vec![Diagnostic::error(
                                     format!("LLVM GEP error: {}", e), body.span
                                 )])?
                         } else if is_ref_to_array {
                             // Reference to array: load pointer then two-index GEP
-                            let array_ptr = self.builder.build_load(current_ptr, "array_ptr")
+                            let ptr_ty = self.context.ptr_type(AddressSpace::default());
+                            let array_ptr = self.builder.build_load(ptr_ty, current_ptr, "array_ptr")
                                 .map_err(|e| vec![Diagnostic::error(
                                     format!("LLVM load error: {}", e), body.span
                                 )])?.into_pointer_value();
+                            // Get the inner array type for GEP
+                            let inner_array_ty = match current_ty.kind() {
+                                TypeKind::Ref { inner, .. } | TypeKind::Ptr { inner, .. } => {
+                                    self.lower_type(inner)
+                                }
+                                _ => self.lower_type(&current_ty),
+                            };
                             let zero = self.context.i64_type().const_zero();
-                            self.builder.build_in_bounds_gep(array_ptr, &[zero, idx], "subslice")
+                            self.builder.build_in_bounds_gep(inner_array_ty, array_ptr, &[zero, idx], "subslice")
                                 .map_err(|e| vec![Diagnostic::error(
                                     format!("LLVM GEP error: {}", e), body.span
                                 )])?
                         } else {
-                            self.builder.build_in_bounds_gep(current_ptr, &[idx], "subslice")
+                            // Other type: use element type for single-index GEP
+                            let elem_llvm_ty = match current_ty.kind() {
+                                TypeKind::Array { element, .. } => self.lower_type(element),
+                                TypeKind::Slice { element } => self.lower_type(element),
+                                _ => self.lower_type(&current_ty),
+                            };
+                            self.builder.build_in_bounds_gep(elem_llvm_ty, current_ptr, &[idx], "subslice")
                                 .map_err(|e| vec![Diagnostic::error(
                                     format!("LLVM GEP error: {}", e), body.span
                                 )])?
@@ -1215,7 +1243,8 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                             if let TypeKind::Adt { def_id, .. } = inner.kind() {
                                 variant_ctx = Some((*def_id, *variant_idx_val));
                                 // Load the reference to get the enum pointer
-                                let enum_ptr = self.builder.build_load(current_ptr, "enum_ref")
+                                let ptr_ty = self.context.ptr_type(AddressSpace::default());
+                                let enum_ptr = self.builder.build_load(ptr_ty, current_ptr, "enum_ref")
                                     .map_err(|e| vec![Diagnostic::error(
                                         format!("LLVM load error: {}", e), body.span
                                     )])?.into_pointer_value();
@@ -1254,17 +1283,30 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
         // are guaranteed safe by lexical scoping - escape_results is passed to
         // compile_mir_place which checks escape state before emitting gen checks.
 
+        // Determine the type of the value to load by computing the place's effective type
+        let base_ty = match &place.base {
+            crate::mir::types::PlaceBase::Local(local_id) => {
+                let local_info = body.locals.get(local_id.index as usize)
+                    .expect("ICE: MIR local not found in body during load codegen");
+                local_info.ty.clone()
+            }
+            crate::mir::types::PlaceBase::Static(def_id) => {
+                self.get_static_type(*def_id).unwrap_or_else(|| Type::unit())
+            }
+        };
+        let place_ty = self.compute_place_type(&base_ty, &place.projection);
+        let load_llvm_ty = self.lower_type(&place_ty);
+
         // Load value from pointer
-        let load_inst = self.builder.build_load(ptr, "load")
+        let load_inst = self.builder.build_load(load_llvm_ty, ptr, "load")
             .map_err(|e| vec![Diagnostic::error(
                 format!("LLVM load error: {}", e), body.span
             )])?;
 
-        // Debug: print pointer element type
+        // Debug: print loaded type
         if std::env::var("BLOOD_DEBUG_LOAD").is_ok() {
-            let elem_ty = ptr.get_type().get_element_type();
-            eprintln!("[compile_mir_place_load] ptr_elem_type: {:?}, loaded_type: {:?}",
-                elem_ty.print_to_string(), load_inst.get_type().print_to_string());
+            eprintln!("[compile_mir_place_load] place_ty: {:?}, loaded_type: {:?}",
+                place_ty, load_inst.get_type().print_to_string());
         }
 
         // Set proper alignment based on the loaded type.
@@ -1282,6 +1324,7 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
 
     fn compute_place_type(&self, base_ty: &Type, projections: &[PlaceElem]) -> Type {
         let mut current_ty = base_ty.clone();
+        let mut variant_ctx: Option<(crate::hir::DefId, u32)> = None;
 
         for proj in projections {
             current_ty = match proj {
@@ -1340,10 +1383,25 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                                 } else {
                                     current_ty
                                 }
-                            } else if let Some(_variants) = self.enum_defs.get(def_id) {
+                            } else if let Some(variants) = self.enum_defs.get(def_id) {
                                 // Enum - field access on enum value (after Downcast)
-                                // For now, return current type since Downcast should handle this
-                                current_ty
+                                // Use variant_ctx to determine which variant's field types to use
+                                if let Some((_, v_idx)) = variant_ctx {
+                                    if let Some(variant_fields) = variants.get(v_idx as usize) {
+                                        if let Some(field_ty) = variant_fields.get(*idx as usize) {
+                                            variant_ctx = None;
+                                            self.substitute_type_params(field_ty, args)
+                                        } else {
+                                            variant_ctx = None;
+                                            current_ty
+                                        }
+                                    } else {
+                                        variant_ctx = None;
+                                        current_ty
+                                    }
+                                } else {
+                                    current_ty
+                                }
                             } else {
                                 // Unknown ADT, keep type
                                 current_ty
@@ -1384,12 +1442,15 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 }
                 PlaceElem::Downcast(variant_idx) => {
                     // Downcast to a specific enum variant
-                    // For direct enum, keep the type
-                    // For Ref/Ptr to enum, unwrap to the inner enum type
-                    let _ = variant_idx;
+                    // Track the variant for subsequent Field projections
                     match current_ty.kind() {
+                        TypeKind::Adt { def_id, .. } => {
+                            variant_ctx = Some((*def_id, *variant_idx));
+                            current_ty
+                        }
                         TypeKind::Ref { inner, .. } | TypeKind::Ptr { inner, .. } => {
-                            if matches!(inner.kind(), TypeKind::Adt { .. }) {
+                            if let TypeKind::Adt { def_id, .. } = inner.kind() {
+                                variant_ctx = Some((*def_id, *variant_idx));
                                 inner.clone()
                             } else {
                                 current_ty

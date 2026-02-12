@@ -45,6 +45,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     }
 
                     self.locals.insert(*local_id, alloca);
+                    self.local_types.insert(*local_id, llvm_type);
                 }
                 hir::Stmt::Expr(expr) => {
                     self.compile_expr(expr)?;
@@ -215,18 +216,22 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             hir::ExprKind::Field { base, field_idx } => {
                 // Get address of the base (must be addressable)
                 let base_ptr = self.compile_lvalue(base)?;
+                // Use the HIR type to determine the pointee type for GEP (opaque pointers)
+                let base_pointee_ty = self.lower_type(&base.ty);
 
                 // Compute GEP for the field
                 let zero = self.context.i32_type().const_int(0, false);
                 let field_index = self.context.i32_type().const_int(*field_idx as u64, false);
                 unsafe {
-                    self.builder.build_gep(base_ptr, &[zero, field_index], "field.ptr")
+                    self.builder.build_gep(base_pointee_ty, base_ptr, &[zero, field_index], "field.ptr")
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), expr.span)])
                 }
             }
             hir::ExprKind::Index { base, index } => {
                 // Get address of the base (must be addressable)
                 let base_ptr = self.compile_lvalue(base)?;
+                // Use the HIR type to determine the pointee type for GEP (opaque pointers)
+                let base_pointee_ty = self.lower_type(&base.ty);
 
                 // Compile the index expression to get the index value
                 let index_val = self.compile_expr(index)?
@@ -236,7 +241,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // Compute GEP for the array element
                 let zero = self.context.i32_type().const_int(0, false);
                 unsafe {
-                    self.builder.build_gep(base_ptr, &[zero, index_val], "elem.ptr")
+                    self.builder.build_gep(base_pointee_ty, base_ptr, &[zero, index_val], "elem.ptr")
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), expr.span)])
                 }
             }
@@ -315,7 +320,12 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // Load break value if present
         if let Some(store) = break_value_store {
-            let val = self.builder.build_load(store, "loop.result.load")
+            // Recover the alloca's type for the load instruction (opaque pointers)
+            let store_ty = store
+                .as_instruction()
+                .and_then(|inst| inst.get_allocated_type().ok())
+                .unwrap_or_else(|| self.lower_type(result_ty));
+            let val = self.builder.build_load(store_ty, store, "loop.result.load")
                 .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
             Ok(Some(val))
         } else {

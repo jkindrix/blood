@@ -667,6 +667,9 @@ pub struct CodegenContext<'ctx, 'a> {
     pub functions: HashMap<DefId, FunctionValue<'ctx>>,
     /// Map from LocalId to stack allocation (in current function).
     pub locals: HashMap<LocalId, PointerValue<'ctx>>,
+    /// Map from LocalId to the LLVM pointee type of the local's allocation.
+    /// Used with opaque pointers where the type can't be inferred from the pointer.
+    pub local_types: HashMap<LocalId, BasicTypeEnum<'ctx>>,
     /// The current function being compiled.
     pub current_fn: Option<FunctionValue<'ctx>>,
     /// Errors encountered during codegen.
@@ -819,6 +822,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             builder,
             functions: HashMap::new(),
             locals: HashMap::new(),
+            local_types: HashMap::new(),
             current_fn: None,
             errors: Vec::new(),
             struct_defs: HashMap::new(),
@@ -1377,12 +1381,13 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // Lower return type
         let return_type = self.lower_type(&ffi_callback.return_type);
 
-        // Create the function type
-        let fn_type = return_type.fn_type(&param_types, false);
+        // Create the function type (kept for validation, even though opaque pointers
+        // don't require typed function pointers)
+        let _fn_type = return_type.fn_type(&param_types, false);
 
         // Create a type alias (via a named struct that wraps a function pointer)
         // This is primarily for documentation; function pointers in Blood work directly
-        let _ptr_type = fn_type.ptr_type(AddressSpace::default());
+        let _ptr_type = self.context.ptr_type(AddressSpace::default());
 
         // For callback resolution during type checking, we don't need to store anything
         // The callback is resolved through the type system
@@ -1427,6 +1432,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 self.get_type_alignment(arr_ty.get_element_type())
             }
             BasicTypeEnum::VectorType(_) => 16,
+            BasicTypeEnum::ScalableVectorType(_) => 16,
         }
     }
 
@@ -1783,7 +1789,13 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                                 let from_bits = iv.get_type().get_bit_width();
                                 let to_bits = target_int.get_bit_width();
                                 if from_bits < to_bits {
-                                    field_values.push(iv.const_z_ext(target_int).into());
+                                    // Zero-extend: extract value and create wider constant
+                                    // (const_z_ext removed in LLVM 18)
+                                    if let Some(val) = iv.get_zero_extended_constant() {
+                                        field_values.push(target_int.const_int(val, false).into());
+                                    } else {
+                                        field_values.push(field_val);
+                                    }
                                 } else if from_bits > to_bits {
                                     field_values.push(iv.const_truncate(target_int).into());
                                 } else {
@@ -1834,32 +1846,46 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     ) -> Result<inkwell::values::BasicValueEnum<'ctx>, Vec<Diagnostic>> {
         let target_llvm_ty = self.lower_type(to_ty);
 
+        // LLVM 18 removed most const cast APIs. Extract values, convert in Rust,
+        // and create new LLVM constants.
         match (value, target_llvm_ty) {
             (inkwell::values::BasicValueEnum::IntValue(int_val), inkwell::types::BasicTypeEnum::IntType(target_int)) => {
                 // Integer to integer cast
                 let from_bits = int_val.get_type().get_bit_width();
                 let to_bits = target_int.get_bit_width();
                 if from_bits < to_bits {
-                    // Zero-extend (const_z_ext)
-                    Ok(int_val.const_z_ext(target_int).into())
+                    // Zero-extend: extract value and create wider constant
+                    let val = int_val.get_zero_extended_constant().ok_or_else(|| vec![Diagnostic::error(
+                        "Integer cast requires a constant value in const context", span,
+                    )])?;
+                    Ok(target_int.const_int(val, false).into())
                 } else if from_bits > to_bits {
-                    // Truncate (const_truncate)
+                    // Truncate (still available in LLVM 18)
                     Ok(int_val.const_truncate(target_int).into())
                 } else {
                     Ok(int_val.into())
                 }
             }
             (inkwell::values::BasicValueEnum::IntValue(int_val), inkwell::types::BasicTypeEnum::FloatType(target_float)) => {
-                // Integer to float cast
-                Ok(int_val.const_signed_to_float(target_float).into())
+                // Integer to float cast: extract int, convert in Rust, create float constant
+                let val = int_val.get_sign_extended_constant().ok_or_else(|| vec![Diagnostic::error(
+                    "Integer-to-float cast requires a constant value in const context", span,
+                )])?;
+                Ok(target_float.const_float(val as f64).into())
             }
             (inkwell::values::BasicValueEnum::FloatValue(float_val), inkwell::types::BasicTypeEnum::IntType(target_int)) => {
-                // Float to integer cast
-                Ok(float_val.const_to_signed_int(target_int).into())
+                // Float to integer cast: extract float, convert in Rust, create int constant
+                let (val, _lossy) = float_val.get_constant().ok_or_else(|| vec![Diagnostic::error(
+                    "Float-to-integer cast requires a constant value in const context", span,
+                )])?;
+                Ok(target_int.const_int(val as i64 as u64, true).into())
             }
             (inkwell::values::BasicValueEnum::FloatValue(float_val), inkwell::types::BasicTypeEnum::FloatType(target_float)) => {
-                // Float to float cast
-                Ok(float_val.const_cast(target_float).into())
+                // Float to float cast: extract, create constant with target type
+                let (val, _lossy) = float_val.get_constant().ok_or_else(|| vec![Diagnostic::error(
+                    "Float cast requires a constant value in const context", span,
+                )])?;
+                Ok(target_float.const_float(val).into())
             }
             _ => Err(vec![Diagnostic::error(
                 "Unsupported cast in const context",
@@ -1925,17 +1951,13 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 global.set_initializer(&self.context.const_string(bytes, true));
                 global.set_constant(true);
 
-                // Get pointer to string data
-                let ptr = self.builder.build_pointer_cast(
-                    global.as_pointer_value(),
-                    self.context.i8_type().ptr_type(AddressSpace::default()),
-                    "str_ptr"
-                ).map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+                // Get pointer to string data (opaque pointer, no cast needed)
+                let ptr = global.as_pointer_value();
                 let len = self.context.i64_type().const_int(bytes.len() as u64, false);
 
                 // Create str slice struct {ptr, len}
                 let str_type = self.context.struct_type(
-                    &[self.context.i8_type().ptr_type(AddressSpace::default()).into(),
+                    &[self.context.ptr_type(AddressSpace::default()).into(),
                       self.context.i64_type().into()],
                     false
                 );
@@ -1949,15 +1971,13 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 global.set_initializer(&self.context.const_string(bytes, false));
                 global.set_constant(true);
 
-                // Cast array pointer to i8*
-                let ptr = global.as_pointer_value().const_cast(
-                    self.context.i8_type().ptr_type(AddressSpace::default())
-                );
+                // Get pointer (opaque pointer, no cast needed)
+                let ptr = global.as_pointer_value();
                 let len = self.context.i64_type().const_int(bytes.len() as u64, false);
 
                 // Create byte slice struct {ptr, len}
                 let slice_type = self.context.struct_type(
-                    &[self.context.i8_type().ptr_type(AddressSpace::default()).into(),
+                    &[self.context.ptr_type(AddressSpace::default()).into(),
                       self.context.i64_type().into()],
                     false
                 );
@@ -1984,7 +2004,17 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     Ok(zero.const_sub(int_val).into())
                 } else if operand.is_float_value() {
                     let float_val = operand.into_float_value();
-                    Ok(float_val.const_neg().into())
+                    // LLVM 18 removed const_neg for floats; compute in Rust and create constant
+                    if let Some(val) = float_val.get_constant() {
+                        let (neg_val, _) = val;
+                        let neg_val = -neg_val;
+                        Ok(float_val.get_type().const_float(neg_val).into())
+                    } else {
+                        Err(vec![Diagnostic::error(
+                            "Float negation requires a constant value in const context".to_string(),
+                            self.current_span(),
+                        )])
+                    }
                 } else {
                     Err(vec![Diagnostic::error(
                         "Negation on unsupported type in const context".to_string(),
@@ -2021,26 +2051,47 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         use crate::ast::BinOp;
 
         // Try integer operations
+        // LLVM 18 removed many const expr APIs, so we extract values, compute in Rust,
+        // and create new constants for operations no longer supported by LLVM.
         if left.is_int_value() && right.is_int_value() {
             let left_int = left.into_int_value();
             let right_int = right.into_int_value();
+            let int_type = left_int.get_type();
             let result = match op {
+                // These const operations are still available in LLVM 18
                 BinOp::Add => left_int.const_add(right_int),
                 BinOp::Sub => left_int.const_sub(right_int),
                 BinOp::Mul => left_int.const_mul(right_int),
-                BinOp::Div => left_int.const_signed_div(right_int),
-                BinOp::Rem => left_int.const_signed_remainder(right_int),
-                BinOp::BitAnd => left_int.const_and(right_int),
-                BinOp::BitOr => left_int.const_or(right_int),
                 BinOp::BitXor => left_int.const_xor(right_int),
                 BinOp::Shl => left_int.const_shl(right_int),
-                BinOp::Shr => left_int.const_ashr(right_int),
                 BinOp::Eq => left_int.const_int_compare(inkwell::IntPredicate::EQ, right_int),
                 BinOp::Ne => left_int.const_int_compare(inkwell::IntPredicate::NE, right_int),
                 BinOp::Lt => left_int.const_int_compare(inkwell::IntPredicate::SLT, right_int),
                 BinOp::Le => left_int.const_int_compare(inkwell::IntPredicate::SLE, right_int),
                 BinOp::Gt => left_int.const_int_compare(inkwell::IntPredicate::SGT, right_int),
                 BinOp::Ge => left_int.const_int_compare(inkwell::IntPredicate::SGE, right_int),
+                // These const operations were removed in LLVM 15+; compute in Rust
+                BinOp::Div | BinOp::Rem | BinOp::BitAnd | BinOp::BitOr | BinOp::Shr => {
+                    let lv = left_int.get_sign_extended_constant().ok_or_else(|| vec![Diagnostic::error(
+                        "Left operand must be a constant in const context".to_string(), self.current_span(),
+                    )])?;
+                    let rv = right_int.get_sign_extended_constant().ok_or_else(|| vec![Diagnostic::error(
+                        "Right operand must be a constant in const context".to_string(), self.current_span(),
+                    )])?;
+                    let result_val: i64 = match op {
+                        BinOp::Div => if rv != 0 { lv.wrapping_div(rv) } else {
+                            return Err(vec![Diagnostic::error("Division by zero in const context", self.current_span())]);
+                        },
+                        BinOp::Rem => if rv != 0 { lv.wrapping_rem(rv) } else {
+                            return Err(vec![Diagnostic::error("Remainder by zero in const context", self.current_span())]);
+                        },
+                        BinOp::BitAnd => lv & rv,
+                        BinOp::BitOr => lv | rv,
+                        BinOp::Shr => lv.wrapping_shr(rv as u32),
+                        _ => unreachable!(),
+                    };
+                    int_type.const_int(result_val as u64, true)
+                }
                 _ => {
                     return Err(vec![Diagnostic::error(
                         format!("Binary operator {:?} not supported in const context", op),
@@ -2052,14 +2103,24 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         }
 
         // Try float operations
+        // LLVM 18 removed all const float expr APIs; compute in Rust and create constants
         if left.is_float_value() && right.is_float_value() {
             let left_float = left.into_float_value();
             let right_float = right.into_float_value();
-            let result = match op {
-                BinOp::Add => left_float.const_add(right_float),
-                BinOp::Sub => left_float.const_sub(right_float),
-                BinOp::Mul => left_float.const_mul(right_float),
-                BinOp::Div => left_float.const_div(right_float),
+            let float_type = left_float.get_type();
+
+            let lv = left_float.get_constant().ok_or_else(|| vec![Diagnostic::error(
+                "Left float operand must be a constant in const context".to_string(), self.current_span(),
+            )])?.0;
+            let rv = right_float.get_constant().ok_or_else(|| vec![Diagnostic::error(
+                "Right float operand must be a constant in const context".to_string(), self.current_span(),
+            )])?.0;
+
+            let result_val: f64 = match op {
+                BinOp::Add => lv + rv,
+                BinOp::Sub => lv - rv,
+                BinOp::Mul => lv * rv,
+                BinOp::Div => lv / rv,
                 _ => {
                     return Err(vec![Diagnostic::error(
                         format!("Float binary operator {:?} not supported in const context", op),
@@ -2067,7 +2128,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     )]);
                 }
             };
-            return Ok(result.into());
+            return Ok(float_type.const_float(result_val).into());
         }
 
         Err(vec![Diagnostic::error(
@@ -2369,6 +2430,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         self.current_fn = Some(fn_value);
         self.locals.clear();
+        self.local_types.clear();
         self.local_generations.clear();
         self.persistent_slot_ids.clear();
         self.loop_stack.clear();
@@ -2390,6 +2452,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
 
             self.locals.insert(param.id, alloca);
+            self.local_types.insert(param.id, llvm_type);
         }
 
         // Compile body expression
@@ -2655,7 +2718,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     /// The first parameter is always `i8*` (environment pointer), followed by
     /// the actual closure parameters.
     pub fn declare_closure_from_mir(&mut self, def_id: DefId, mir_body: &MirBody) {
-        let i8_ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
+        let i8_ptr_ty = self.context.ptr_type(AddressSpace::default());
 
         // Build parameter types: first is always i8* (env), then the actual params
         let params: Vec<_> = mir_body.params().collect::<Vec<_>>();
@@ -3150,12 +3213,12 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let original_param_count = original_fn_type.count_param_types();
 
         // Build wrapper function type: (i8* env_ptr, params...) -> ret
-        let i8_ptr_type = self.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_type = self.context.ptr_type(AddressSpace::default());
         let mut wrapper_param_types: Vec<inkwell::types::BasicMetadataTypeEnum> =
             Vec::with_capacity(original_param_count as usize + 1);
 
-        // First param is env_ptr (i8*)
-        wrapper_param_types.push(i8_ptr_type.into());
+        // First param is env_ptr (opaque ptr)
+        wrapper_param_types.push(ptr_type.into());
 
         // Add original function's params
         for i in 0..original_param_count {
@@ -3201,7 +3264,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // Return the result
         if original_fn_type.get_return_type().is_some() {
-            let ret_val = call_result.try_as_basic_value().left()?;
+            let ret_val = call_result.try_as_basic_value().basic()?;
             self.builder.build_return(Some(&ret_val)).ok()?;
         } else {
             self.builder.build_return(None).ok()?;
@@ -3219,12 +3282,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
     /// Declare runtime support functions.
     pub(super) fn declare_runtime_functions(&mut self) {
-        let i8_type = self.context.i8_type();
         let i32_type = self.context.i32_type();
         let i64_type = self.context.i64_type();
         let void_type = self.context.void_type();
-        let i8_ptr_type = i8_type.ptr_type(AddressSpace::default());
-        let i64_ptr_type = i64_type.ptr_type(AddressSpace::default());
+        let i8_ptr_type = self.context.ptr_type(AddressSpace::default());
+        let i64_ptr_type = self.context.ptr_type(AddressSpace::default());
 
         // === I/O Functions ===
 
@@ -3278,7 +3340,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         self.module.add_function("str_len", str_len_type, None);
 
         // str_len_usize({*i8, i64}*) -> i64 - get string length as usize (takes pointer for method call semantics)
-        let str_ptr_type = str_slice_type.ptr_type(inkwell::AddressSpace::default());
+        let str_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
         let str_len_usize_type = i64_type.fn_type(&[str_ptr_type.into()], false);
         self.module.add_function("str_len_usize", str_len_usize_type, None);
 
@@ -3580,7 +3642,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // blood_alloc_or_abort(size: i64, out_generation: *i32) -> i64
         // Simpler allocation that aborts on failure - no conditional branches needed
-        let i32_ptr_type = i32_type.ptr_type(AddressSpace::default());
+        let i32_ptr_type = self.context.ptr_type(AddressSpace::default());
         let alloc_or_abort_type = i64_type.fn_type(&[
             size_type.into(),
             i32_ptr_type.into(),
@@ -3715,7 +3777,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         self.module.add_function("blood_evidence_get", ev_get_type, None);
 
         // blood_evidence_register(ev: *void, effect_id: i64, ops: **void, op_count: i64) -> void
-        let void_ptr_ptr_type = void_ptr_type.ptr_type(AddressSpace::default());
+        let void_ptr_ptr_type = self.context.ptr_type(AddressSpace::default());
         let ev_register_type = void_type.fn_type(&[
             void_ptr_type.into(),
             i64_type.into(),

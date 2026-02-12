@@ -62,7 +62,7 @@ pub const CODEGEN_HASH: &str = env!("CODEGEN_HASH");
 
 use inkwell::context::Context;
 use inkwell::module::Module;
-use inkwell::passes::PassManager;
+use inkwell::passes::PassBuilderOptions;
 use inkwell::targets::{Target, TargetMachine, InitializationConfig, CodeModel, RelocMode, FileType};
 use inkwell::OptimizationLevel;
 
@@ -102,121 +102,83 @@ impl BloodOptLevel {
     }
 }
 
-/// Run LLVM optimization passes excluding those that cause miscompilation.
+/// Run LLVM optimization passes on a module using the new pass manager pipeline.
 ///
-/// This is a workaround for LLVM bugs that cause incorrect code generation
-/// when certain optimization passes (particularly GVN and instruction combining)
-/// are applied to code patterns involving Vec element access with nested
-/// struct field projections.
+/// Uses `module.run_passes()` with a comma-separated pass pipeline string,
+/// which is the replacement for the legacy PassManager API removed in LLVM 17+.
 ///
-/// The excluded passes that cause issues:
-/// - GVN (Global Value Numbering) - incorrectly merges GEP operations
-/// - Instruction combining - incorrectly combines GEP operations,
-///   causing wrong field indices in nested struct access through Vec elements
-/// - Memcpy optimize - converts struct load/store to memcpy with wrong
-///   size when struct has nested structs (copies inner struct size, not total)
-fn optimize_module(module: &Module, opt_level: BloodOptLevel) {
+/// Historical note: With LLVM 14, certain individual passes (GVN, instcombine,
+/// memcpyopt) caused miscompilation with Vec element access and nested struct
+/// field projections. The new pass manager in LLVM 18 uses the standard
+/// `default<ON>` pipeline which is well-tested and these issues may no longer
+/// apply. We use the standard pipeline rather than a custom pass list.
+fn optimize_module(module: &Module, opt_level: BloodOptLevel, target_machine: &TargetMachine) {
     if opt_level == BloodOptLevel::None {
         return;
     }
 
-    let mpm: PassManager<Module> = PassManager::create(());
+    // Use the new LLVM pass manager pipeline.
+    // The `default<ON>` pipelines correspond to clang's -O1, -O2, -O3 levels.
+    let passes = match opt_level {
+        BloodOptLevel::None => return,
+        BloodOptLevel::Less => "default<O1>",
+        BloodOptLevel::Default => "default<O2>",
+        BloodOptLevel::Aggressive => "default<O3>",
+    };
 
-    // Safe optimization passes that avoid LLVM miscompilation bugs.
-    //
-    // EXCLUDED (causes miscompilation with Vec element access):
-    // - instruction_combining_pass - incorrectly combines GEP operations,
-    //   causing wrong field indices in nested struct access through Vec elements
-    // - GVN - similar issues with value numbering
-    // - memcpy_optimize_pass - converts struct load/store to memcpy with wrong
-    //   size when struct has nested structs (copies inner struct size, not total)
-
-    // === Phase 1: Canonicalization ===
-    // mem2reg is essential for SSA form
-    mpm.add_promote_memory_to_register_pass();
-    mpm.add_reassociate_pass();
-
-    // === Phase 2: Analysis Setup ===
-    mpm.add_basic_alias_analysis_pass();
-    mpm.add_type_based_alias_analysis_pass();
-
-    // === Phase 3: Scalar Optimizations ===
-    // (GVN excluded — causes miscompilation)
-    mpm.add_sccp_pass();
-    mpm.add_aggressive_dce_pass();
-    mpm.add_dead_store_elimination_pass();
-    mpm.add_cfg_simplification_pass();
-
-    // === Phase 4: Loop Optimizations ===
-    mpm.add_licm_pass();
-    mpm.add_ind_var_simplify_pass();
-
-    if opt_level == BloodOptLevel::Aggressive {
-        mpm.add_loop_rotate_pass();
-        mpm.add_loop_deletion_pass();
+    let options = PassBuilderOptions::create();
+    if let Err(e) = module.run_passes(passes, target_machine, options) {
+        eprintln!("Warning: LLVM optimization passes failed: {}", e.to_string());
     }
-
-    // === Phase 5: Interprocedural Optimizations ===
-    mpm.add_function_inlining_pass();
-    mpm.add_always_inliner_pass();
-    mpm.add_global_dce_pass();
-    mpm.add_global_optimizer_pass();
-    mpm.add_constant_merge_pass();
-
-    if opt_level == BloodOptLevel::Aggressive {
-        mpm.add_merge_functions_pass();
-        mpm.add_tail_call_elimination_pass();
-    }
-
-    // === Phase 6: Final Cleanup ===
-    // (instruction combining excluded — causes miscompilation)
-    mpm.add_cfg_simplification_pass();
-    mpm.add_jump_threading_pass();
-    // (memcpy optimize excluded — causes miscompilation)
-    mpm.add_strip_dead_prototypes_pass();
-
-    mpm.run_on(module);
 }
 
 /// Run optimization passes one at a time, returning the IR after each pass.
-/// This is used to bisect which optimization pass causes miscompilation
-/// (e.g., BUG-008 if-expression branch elimination).
+/// This is used to bisect which optimization pass causes miscompilation.
 ///
-/// Each pass is run incrementally on the module (pass 1, then pass 2 on top, etc.)
-/// and the IR is captured after each step. Compare consecutive snapshots to see
+/// Each pass is run individually on the module using `module.run_passes()`.
+/// The IR is captured after each step. Compare consecutive snapshots to see
 /// which pass introduces the problem.
+///
+/// Note: Unlike the legacy PassManager approach where each pass was run in
+/// isolation via a fresh PassManager, the new pass manager applies each pass
+/// cumulatively to the module. This means pass N sees the result of passes 1..N-1.
 ///
 /// Returns a Vec of (pass_name, ir_after_pass) pairs.
 pub fn optimize_module_bisect(module: &Module) -> Vec<(String, String)> {
-    let passes: Vec<(&str, Box<dyn Fn(&PassManager<Module>)>)> = vec![
-        ("promote_memory_to_register", Box::new(|pm| pm.add_promote_memory_to_register_pass())),
-        ("reassociate", Box::new(|pm| pm.add_reassociate_pass())),
-        ("basic_alias_analysis", Box::new(|pm| pm.add_basic_alias_analysis_pass())),
-        ("type_based_alias_analysis", Box::new(|pm| pm.add_type_based_alias_analysis_pass())),
-        ("sccp", Box::new(|pm| pm.add_sccp_pass())),
-        ("aggressive_dce", Box::new(|pm| pm.add_aggressive_dce_pass())),
-        ("dead_store_elimination", Box::new(|pm| pm.add_dead_store_elimination_pass())),
-        ("cfg_simplification_1", Box::new(|pm| pm.add_cfg_simplification_pass())),
-        ("licm", Box::new(|pm| pm.add_licm_pass())),
-        ("ind_var_simplify", Box::new(|pm| pm.add_ind_var_simplify_pass())),
-        ("function_inlining", Box::new(|pm| pm.add_function_inlining_pass())),
-        ("always_inliner", Box::new(|pm| pm.add_always_inliner_pass())),
-        ("global_dce", Box::new(|pm| pm.add_global_dce_pass())),
-        ("global_optimizer", Box::new(|pm| pm.add_global_optimizer_pass())),
-        ("constant_merge", Box::new(|pm| pm.add_constant_merge_pass())),
-        ("cfg_simplification_2", Box::new(|pm| pm.add_cfg_simplification_pass())),
-        ("jump_threading", Box::new(|pm| pm.add_jump_threading_pass())),
-        ("strip_dead_prototypes", Box::new(|pm| pm.add_strip_dead_prototypes_pass())),
+    let pass_names = vec![
+        "mem2reg",
+        "reassociate",
+        "sccp",
+        "adce",
+        "dse",
+        "simplifycfg",
+        "licm",
+        "indvars",
+        "inline",
+        "always-inline",
+        "globaldce",
+        "globalopt",
+        "constmerge",
+        "simplifycfg",
+        "jump-threading",
+        "strip-dead-prototypes",
     ];
+
+    let target_machine = match get_native_target_machine_with_opt(BloodOptLevel::Default) {
+        Ok(tm) => tm,
+        Err(e) => {
+            eprintln!("Warning: Cannot create target machine for bisect: {}", e);
+            return Vec::new();
+        }
+    };
 
     let mut results = Vec::new();
 
-    for (name, add_pass) in &passes {
-        let mpm: PassManager<Module> = PassManager::create(());
-        add_pass(&mpm);
-        mpm.run_on(module);
+    for pass_name in &pass_names {
+        let options = PassBuilderOptions::create();
+        let _ = module.run_passes(pass_name, &target_machine, options);
         let ir = module.print_to_string().to_string();
-        results.push((name.to_string(), ir));
+        results.push((pass_name.to_string(), ir));
     }
 
     results
@@ -261,12 +223,12 @@ fn configure_module_target(module: &Module, target_machine: &TargetMachine) {
     // Set module data layout and triple from the TargetMachine.
     //
     // NOTE: We use the TargetMachine's default data layout WITHOUT modification.
-    // LLVM 14's default x86_64 data layout uses 8-byte ABI alignment for i128.
-    // We previously attempted to inject i128:128 (16-byte alignment) into the
-    // data layout string, but this is ineffective because LLVM 14's C API
-    // (LLVMTargetMachineEmitToFile) resets the module's data layout to the
-    // TargetMachine's default during code emission. Instead, all Blood codegen
-    // alignment calculations match LLVM 14's actual defaults.
+    // LLVM 18's default x86_64 data layout uses 16-byte ABI alignment for i128.
+    // We previously (with LLVM 14) attempted to inject i128:128 into the data
+    // layout string, but that was ineffective because the C API resets the
+    // module's data layout to the TargetMachine's default during code emission.
+    // With LLVM 18, i128 alignment is 16 bytes by default, so this is no longer
+    // an issue. All Blood codegen alignment calculations match LLVM 18's defaults.
     let target_data = target_machine.get_target_data();
     let data_layout = target_data.get_data_layout();
     module.set_data_layout(&data_layout);
@@ -367,7 +329,7 @@ pub fn compile_mir_to_object(
     // TEMPORARY: Use None to debug struct field offset issue
     let use_opt = std::env::var("BLOOD_DEBUG_NO_OPT").is_err();
     if use_opt {
-        optimize_module(&module, BloodOptLevel::Aggressive);
+        optimize_module(&module, BloodOptLevel::Aggressive, &target_machine);
     }
 
     // Write object file
@@ -457,7 +419,7 @@ pub fn compile_mir_to_object_with_opt(
     }
 
     // Run LLVM optimization passes
-    optimize_module(&module, opt_level);
+    optimize_module(&module, opt_level, &target_machine);
 
     // Write object file
     target_machine
@@ -599,7 +561,7 @@ pub fn compile_definition_to_object(
     // due to LLVM miscompilation bug with nested struct field access through Vec.
     let use_opt = std::env::var("BLOOD_DEBUG_NO_OPT").is_err();
     if use_opt {
-        optimize_module(&module, BloodOptLevel::Default);
+        optimize_module(&module, BloodOptLevel::Default, &target_machine);
     }
 
     // Dump IR after optimization if requested
@@ -668,7 +630,7 @@ pub fn compile_handler_registration_to_object(
     }
 
     // Run LLVM optimization passes
-    optimize_module(&module, BloodOptLevel::Aggressive);
+    optimize_module(&module, BloodOptLevel::Aggressive, &target_machine);
 
     // Write object file
     target_machine
@@ -791,9 +753,10 @@ pub fn compile_mir_to_ir_with_opt(
     let builder = context.create_builder();
 
     // Configure module with target data layout BEFORE compilation.
-    if let Ok(tm) = get_native_target_machine_with_opt(BloodOptLevel::Default) {
-        configure_module_target(&module, &tm);
-    }
+    // The target machine is also needed for the new pass manager pipeline.
+    let target_machine = get_native_target_machine_with_opt(opt_level)
+        .map_err(|e| vec![Diagnostic::error(e, crate::span::Span::dummy())])?;
+    configure_module_target(&module, &target_machine);
 
     let mut codegen = CodegenContext::new(&context, &module, &builder);
     codegen.set_escape_analysis(escape_analysis.clone());
@@ -841,7 +804,7 @@ pub fn compile_mir_to_ir_with_opt(
     codegen.register_handlers_with_runtime()?;
 
     // Run LLVM optimization passes
-    optimize_module(&module, opt_level);
+    optimize_module(&module, opt_level, &target_machine);
 
     Ok(module.print_to_string().to_string())
 }

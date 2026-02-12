@@ -248,7 +248,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     /// an identity continuation that just returns its argument.
     pub(crate) fn create_perform_continuation(&mut self) -> Result<inkwell::values::IntValue<'ctx>, Vec<Diagnostic>> {
         let i64_type = self.context.i64_type();
-        let i8_ptr_type = self.context.i8_type().ptr_type(inkwell::AddressSpace::default());
+        let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
 
         // Get or create the identity continuation function
         // Signature: extern "C" fn(value: i64, context: *mut void) -> i64
@@ -259,13 +259,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let cont_create_fn = self.module.get_function("blood_continuation_create_multishot")
             .unwrap_or_else(|| {
                 // Declare: fn(callback: fn(i64, *void) -> i64, context: *void) -> i64
-                let callback_type = i64_type.fn_type(
-                    &[i64_type.into(), i8_ptr_type.into()],
-                    false,
-                );
-                let callback_ptr_type = callback_type.ptr_type(inkwell::AddressSpace::default());
+                // With opaque pointers, callback and context are both just ptr
                 let fn_type = i64_type.fn_type(
-                    &[callback_ptr_type.into(), i8_ptr_type.into()],
+                    &[ptr_type.into(), ptr_type.into()],
                     false,
                 );
                 self.module.add_function("blood_continuation_create_multishot", fn_type, None)
@@ -273,7 +269,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // Call blood_continuation_create(identity_cont_fn, null)
         let callback_ptr = identity_cont_fn.as_global_value().as_pointer_value();
-        let null_context = i8_ptr_type.const_null();
+        let null_context = ptr_type.const_null();
 
         let call_result = self.builder
             .build_call(
@@ -283,7 +279,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             )
             .map_err(|e| vec![Diagnostic::error(format!("LLVM error creating continuation: {}", e), self.current_span())])?;
 
-        let cont_handle = call_result.try_as_basic_value().left()
+        let cont_handle = call_result.try_as_basic_value().basic()
             .ok_or_else(|| vec![Diagnostic::error(
                 "blood_continuation_create returned void".to_string(),
                 self.current_span(),
@@ -307,10 +303,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         }
 
         let i64_type = self.context.i64_type();
-        let i8_ptr_type = self.context.i8_type().ptr_type(inkwell::AddressSpace::default());
+        let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
 
         // Create the function: extern "C" fn(value: i64, context: *mut void) -> i64
-        let fn_type = i64_type.fn_type(&[i64_type.into(), i8_ptr_type.into()], false);
+        let fn_type = i64_type.fn_type(&[i64_type.into(), ptr_type.into()], false);
         let fn_val = self.module.add_function(fn_name, fn_type, None);
 
         // Mark as internal linkage (not exported)
@@ -418,7 +414,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                             .build_ptr_to_int(array_alloca, i64_type, "array_ptr_as_i64")
                             .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?
                     }
-                    BasicValueEnum::VectorValue(_) => {
+                    BasicValueEnum::VectorValue(_) | BasicValueEnum::ScalableVectorValue(_) => {
                         return Err(vec![ice_err!(
                             arg.span,
                             "unsupported argument type in perform expression";
@@ -445,6 +441,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 let idx = i32_type.const_int(i as u64, false);
                 let gep = unsafe {
                     self.builder.build_gep(
+                        array_type,
                         args_alloca,
                         &[zero, idx],
                         &format!("arg_ptr_{}", i),
@@ -459,6 +456,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             // Get pointer to first element
             unsafe {
                 self.builder.build_gep(
+                    array_type,
                     args_alloca,
                     &[zero, zero],
                     "args_ptr",
@@ -466,7 +464,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             }.map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?
         } else {
             // No arguments - pass null pointer
-            i64_type.ptr_type(inkwell::AddressSpace::default()).const_null()
+            self.context.ptr_type(inkwell::AddressSpace::default()).const_null()
         };
 
         // Call blood_perform(effect_id, op_index, args, arg_count, continuation)
@@ -497,7 +495,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         if result_ty.is_unit() {
             Ok(None)
         } else {
-            let result_i64 = call_result.try_as_basic_value().left()
+            let result_i64 = call_result.try_as_basic_value().basic()
                 .ok_or_else(|| vec![Diagnostic::error(
                     "blood_perform returned void unexpectedly".to_string(),
                     self.current_span(),
@@ -539,15 +537,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 self.builder.build_store(temp_alloca, result_i64_val)
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
 
-                // Bitcast i64* to struct*
-                let struct_ptr = self.builder.build_pointer_cast(
-                    temp_alloca,
-                    dest_struct_ty.ptr_type(inkwell::AddressSpace::default()),
-                    "perform_struct_ptr"
-                ).map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
-
-                // Load the struct value
-                self.builder.build_load(struct_ptr, "perform_struct")
+                // With opaque pointers, no pointer cast is needed — load struct directly
+                // from the same alloca (reinterpret the i64 bits as struct)
+                self.builder.build_load(dest_struct_ty, temp_alloca, "perform_struct")
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?
             } else {
                 result_i64
@@ -619,13 +611,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         self.builder.build_store(alloca, sv)
                             .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
 
-                        // Bitcast the struct pointer to i64 pointer and load as i64
-                        let i64_ptr_type = i64_type.ptr_type(inkwell::AddressSpace::default());
-                        let i64_ptr = self.builder
-                            .build_pointer_cast(alloca, i64_ptr_type, "resume_i64_ptr")
-                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+                        // With opaque pointers, load as i64 directly from the same alloca
                         self.builder
-                            .build_load(i64_ptr, "resume_struct_bits")
+                            .build_load(i64_type, alloca, "resume_struct_bits")
                             .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?
                             .into_int_value()
                     }
@@ -635,7 +623,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                             .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?
                             .into_int_value()
                     }
-                    BasicValueEnum::ArrayValue(_) | BasicValueEnum::VectorValue(_) => {
+                    BasicValueEnum::ArrayValue(_)
+                    | BasicValueEnum::VectorValue(_)
+                    | BasicValueEnum::ScalableVectorValue(_) => {
                         // Arrays and vectors cannot be directly converted to i64 for resume
                         return Err(vec![Diagnostic::error(
                             "cannot resume with array or vector value".to_string(),
@@ -654,7 +644,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         if let Some(cont_ptr) = self.current_continuation {
             // Load the continuation handle
             let cont_handle = self.builder
-                .build_load(cont_ptr, "cont_handle")
+                .build_load(i64_type, cont_ptr, "cont_handle")
                 .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?
                 .into_int_value();
 
@@ -699,7 +689,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     .build_call(cont_clone_fn, &[cont_handle.into()], "cont_clone")
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error cloning continuation: {}", e), self.current_span())])?;
 
-                clone_result.try_as_basic_value().left()
+                clone_result.try_as_basic_value().basic()
                     .ok_or_else(|| vec![Diagnostic::error(
                         "blood_continuation_clone returned void".to_string(),
                         self.current_span(),
@@ -721,7 +711,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 .build_call(cont_resume_fn, &[resume_cont_handle.into(), resume_value.into()], "cont_result")
                 .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
 
-            let cont_result = call_result.try_as_basic_value().left()
+            let cont_result = call_result.try_as_basic_value().basic()
                 .ok_or_else(|| vec![Diagnostic::error(
                     "blood_continuation_resume returned void".to_string(),
                     self.current_span(),
@@ -775,15 +765,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 self.builder.build_store(temp_alloca, phi_value)
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
 
-                // Bitcast i64* to struct*
-                let struct_ptr = self.builder.build_pointer_cast(
-                    temp_alloca,
-                    dest_struct_ty.ptr_type(inkwell::AddressSpace::default()),
-                    "resume_struct_ptr"
-                ).map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
-
-                // Load the struct value
-                self.builder.build_load(struct_ptr, "resume_struct")
+                // With opaque pointers, load struct directly from the same alloca
+                self.builder.build_load(dest_struct_ty, temp_alloca, "resume_struct")
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?
             } else {
                 // Default: return as-is (may need more cases)
@@ -847,7 +830,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // 9. Return result
 
         let i64_type = self.context.i64_type();
-        let i8_ptr_type = self.context.i8_type().ptr_type(inkwell::AddressSpace::default());
+        let i8_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
 
         // Get runtime functions
         let ev_create = self.module.get_function("blood_evidence_create")
@@ -888,7 +871,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let saved_ev = self.builder.build_call(ev_current, &[], "saved_evidence")
             .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?
             .try_as_basic_value()
-            .left()
+            .basic()
             .ok_or_else(|| vec![Diagnostic::error(
                 "blood_evidence_current returned void".to_string(),
                 self.current_span(),
@@ -898,7 +881,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let ev = self.builder.build_call(ev_create, &[], "evidence")
             .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?
             .try_as_basic_value()
-            .left()
+            .basic()
             .ok_or_else(|| vec![Diagnostic::error(
                 "blood_evidence_create returned void".to_string(),
                 self.current_span(),
@@ -917,6 +900,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 | BasicValueEnum::FloatValue(_)
                 | BasicValueEnum::ArrayValue(_)
                 | BasicValueEnum::VectorValue(_)
+                | BasicValueEnum::ScalableVectorValue(_)
                 | BasicValueEnum::StructValue(_) => {
                     // Non-pointer values use null state (e.g., stateless handlers)
                     // This is a valid pattern for handlers without captured state
@@ -996,7 +980,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         // Unit type (empty struct) returns 0
                         i64_type.const_zero()
                     }
-                    BasicValueEnum::ArrayValue(_) | BasicValueEnum::VectorValue(_) => {
+                    BasicValueEnum::ArrayValue(_)
+                    | BasicValueEnum::VectorValue(_)
+                    | BasicValueEnum::ScalableVectorValue(_) => {
                         // Arrays and vectors cannot be directly converted to i64
                         return Err(vec![Diagnostic::error(
                             "effect handler body returned array or vector value which cannot be converted to result".to_string(),
@@ -1013,7 +999,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 .build_call(return_fn, &[result_i64.into(), state_ptr], "return_clause_result")
                 .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?
                 .try_as_basic_value()
-                .left();
+                .basic();
 
             // Convert return clause result to expected type
             if let Some(ret_val) = return_result {

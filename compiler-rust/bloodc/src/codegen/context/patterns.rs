@@ -451,6 +451,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
 
                 self.locals.insert(*local_id, alloca);
+                self.local_types.insert(*local_id, llvm_type);
 
                 // Bind subpattern if present
                 if let Some(subpat) = subpattern {
@@ -593,6 +594,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                                         let idx = self.context.i32_type().const_int(i, false);
                                         let dest_ptr = unsafe {
                                             self.builder.build_gep(
+                                                rest_array_ty,
                                                 rest_alloca,
                                                 &[zero, idx],
                                                 "rest.dest",
@@ -606,6 +608,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                                     // Bind the alloca to the local variable
                                     // (locals store pointers to values, not values directly)
                                     self.locals.insert(*local_id, rest_alloca);
+                                    self.local_types.insert(*local_id, rest_array_ty.into());
                                 } else {
                                     // Empty rest - create an empty array
                                     let elem_llvm_ty = match slice_pat.ty.kind() {
@@ -627,6 +630,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                                         .build_alloca(empty_array_ty, "rest.empty")
                                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), slice_pat.span)])?;
                                     self.locals.insert(*local_id, empty_alloca);
+                                    self.local_types.insert(*local_id, empty_array_ty.into());
                                 }
                             }
                             _ => {

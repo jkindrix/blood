@@ -4,7 +4,7 @@
 //! return clauses, and runtime registration.
 
 use inkwell::values::{FunctionValue, BasicValueEnum};
-use inkwell::types::{BasicType, BasicTypeEnum};
+use inkwell::types::BasicTypeEnum;
 use inkwell::AddressSpace;
 
 use crate::hir::{self, DefId, LocalId, TypeKind};
@@ -43,13 +43,12 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     /// For tail-resumptive handlers (shallow), the continuation is 0 (unused).
     pub fn declare_handler_operations(&mut self, hir_crate: &hir::Crate) -> Result<(), Vec<Diagnostic>> {
         let i64_type = self.context.i64_type();
-        let i8_ptr_type = self.context.i8_type().ptr_type(AddressSpace::default());
-        let i64_ptr_type = i64_type.ptr_type(AddressSpace::default());
+        let ptr_type = self.context.ptr_type(AddressSpace::default());
 
         // Handler operation function signature:
         // fn(state: *mut void, args: *const i64, arg_count: i64, continuation: i64) -> i64
         let handler_op_type = i64_type.fn_type(
-            &[i8_ptr_type.into(), i64_ptr_type.into(), i64_type.into(), i64_type.into()],
+            &[ptr_type.into(), ptr_type.into(), i64_type.into(), i64_type.into()],
             false,
         );
 
@@ -139,10 +138,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     ) -> Result<(), Vec<Diagnostic>> {
         let span = body.span;
         let i64_type = self.context.i64_type();
-        let i8_ptr_type = self.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_type = self.context.ptr_type(AddressSpace::default());
 
         // Return clause function signature: fn(result: i64, state_ptr: *void) -> i64
-        let ret_clause_type = i64_type.fn_type(&[i64_type.into(), i8_ptr_type.into()], false);
+        let ret_clause_type = i64_type.fn_type(&[i64_type.into(), ptr_type.into()], false);
         // Use handler name for content-based naming (enables cache sharing across files)
         let fn_name = format!("{}_return", _handler_name);
 
@@ -174,16 +173,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // type; unresolved generic type parameters fall back to i64.
         let state_field_types: Vec<BasicTypeEnum> = self.handler_state_field_types(state_fields);
         let state_struct_type = self.context.struct_type(&state_field_types, false);
-        let state_struct_ptr_type = state_struct_type.ptr_type(inkwell::AddressSpace::default());
 
-        // Cast the void* state_ptr to the proper struct pointer type
-        let typed_state_ptr = self.builder
-            .build_pointer_cast(
-                state_ptr.into_pointer_value(),
-                state_struct_ptr_type,
-                "typed_state_ptr"
-            )
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+        // With opaque pointers, all pointer types are `ptr` — no cast needed,
+        // but we keep the variable for clarity in GEP operations.
+        let typed_state_ptr = state_ptr.into_pointer_value();
 
         // Build a map of state field names to their index in the struct
         let state_field_indices: std::collections::HashMap<&str, u32> = state_fields.iter()
@@ -216,7 +209,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             if let Some(&field_idx) = state_field_indices.get(local_name) {
                 // This is a state field - load its value from the typed state struct.
                 let field_ptr = self.builder
-                    .build_struct_gep(typed_state_ptr, field_idx, &format!("{}_ptr", local_name))
+                    .build_struct_gep(state_struct_type, typed_state_ptr, field_idx, &format!("{}_ptr", local_name))
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
                 let alloca = self.builder
@@ -230,14 +223,14 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // like String ({i8*, i64, i64}) correctly.
                 if state_field_ty == effective_type {
                     let loaded = self.builder
-                        .build_load(field_ptr, &format!("{}_val", local_name))
+                        .build_load(effective_type, field_ptr, &format!("{}_val", local_name))
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
                     self.builder.build_store(alloca, loaded)
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
                 } else {
                     // Generic fallback: state field is i64, convert to effective type.
                     let i64_value = self.builder
-                        .build_load(field_ptr, &format!("{}_i64_val", local_name))
+                        .build_load(i64_type, field_ptr, &format!("{}_i64_val", local_name))
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
                     let converted = if effective_type.is_int_type() {
@@ -276,6 +269,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 }
 
                 self.locals.insert(local.id, alloca);
+                self.local_types.insert(local.id, effective_type);
                 continue;
             }
 
@@ -314,6 +308,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             }
 
             self.locals.insert(local.id, alloca);
+            self.local_types.insert(local.id, effective_type);
         }
 
         // Compile the return clause body
@@ -353,13 +348,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     self.builder.build_store(alloca, sv)
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
-                    // Bitcast to i64* and load as i64
-                    let i64_ptr_type = i64_type.ptr_type(inkwell::AddressSpace::default());
-                    let i64_ptr = self.builder
-                        .build_pointer_cast(alloca, i64_ptr_type, "ret_i64_ptr")
-                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+                    // With opaque pointers, load as i64 directly from the alloca
                     self.builder
-                        .build_load(i64_ptr, "ret_struct_bits")
+                        .build_load(i64_type, alloca, "ret_struct_bits")
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
                         .into_int_value()
                 }
@@ -375,7 +366,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         .build_ptr_to_int(alloca, i64_type, "ret_array_ptr")
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
                 }
-                BasicValueEnum::VectorValue(_) => {
+                BasicValueEnum::VectorValue(_) | BasicValueEnum::ScalableVectorValue(_) => {
                     // SIMD vectors are not expected in normal handler returns
                     return Err(vec![Diagnostic::error(
                         "Vector return types not supported in handler return clauses".to_string(),
@@ -470,16 +461,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // while preserving backward compatibility for generic handlers.
         let state_field_types: Vec<BasicTypeEnum> = self.handler_state_field_types(state_fields);
         let state_struct_type = self.context.struct_type(&state_field_types, false);
-        let state_struct_ptr_type = state_struct_type.ptr_type(inkwell::AddressSpace::default());
 
-        // Cast the void* state_ptr to the proper struct pointer type
-        let typed_state_ptr = self.builder
-            .build_pointer_cast(
-                state_ptr.into_pointer_value(),
-                state_struct_ptr_type,
-                "typed_state_ptr"
-            )
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+        // With opaque pointers, all pointer types are `ptr` — no cast needed,
+        // but we keep the variable for clarity in GEP operations.
+        let typed_state_ptr = state_ptr.into_pointer_value();
 
         // Build a map of state field names to their index in the struct
         let state_field_indices: std::collections::HashMap<&str, u32> = state_fields.iter()
@@ -517,6 +502,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     .build_alloca(i64_type, "resume_placeholder")
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
                 self.locals.insert(local.id, alloca);
+                self.local_types.insert(local.id, i64_type.into());
                 continue;
             }
 
@@ -524,7 +510,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             if let Some(&field_idx) = state_field_indices.get(local_name) {
                 // This is a state field - load its value from the typed state struct.
                 let field_ptr = self.builder
-                    .build_struct_gep(typed_state_ptr, field_idx, &format!("{}_ptr", local_name))
+                    .build_struct_gep(state_struct_type, typed_state_ptr, field_idx, &format!("{}_ptr", local_name))
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
                 let alloca = self.builder
@@ -538,14 +524,14 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // like String ({i8*, i64, i64}) correctly.
                 if state_field_ty == effective_type {
                     let loaded = self.builder
-                        .build_load(field_ptr, &format!("{}_val", local_name))
+                        .build_load(effective_type, field_ptr, &format!("{}_val", local_name))
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
                     self.builder.build_store(alloca, loaded)
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
                 } else {
                     // Generic fallback: state field is i64, convert to effective type.
                     let i64_value = self.builder
-                        .build_load(field_ptr, &format!("{}_i64_val", local_name))
+                        .build_load(i64_type, field_ptr, &format!("{}_i64_val", local_name))
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
                     let converted = if effective_type.is_int_type() {
@@ -584,6 +570,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 }
 
                 self.locals.insert(local.id, alloca);
+                self.local_types.insert(local.id, effective_type);
                 continue;
             }
 
@@ -600,6 +587,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             }
 
             self.locals.insert(local.id, alloca);
+            self.local_types.insert(local.id, effective_type);
         }
 
         // Extract operation parameters from args_ptr
@@ -635,12 +623,12 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // args_ptr is a pointer to i64 values, so we only need one index
                 let idx = i64_type.const_int(arg_index as u64, false);
                 let arg_ptr = unsafe {
-                    self.builder.build_gep(args_ptr_val, &[idx], &format!("arg_{}_ptr", arg_index))
+                    self.builder.build_gep(i64_type, args_ptr_val, &[idx], &format!("arg_{}_ptr", arg_index))
                 }.map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
                 // Load the argument value (as i64)
                 let arg_val = self.builder
-                    .build_load(arg_ptr, &format!("arg_{}", arg_index))
+                    .build_load(i64_type, arg_ptr, &format!("arg_{}", arg_index))
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
                 // Convert to match the parameter type.
@@ -676,21 +664,21 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         .into()
                 } else if param_type.is_struct_type() {
                     // For struct types, the i64 is a pointer to the struct - convert and load
-                    let struct_ptr_type = param_type.into_struct_type().ptr_type(inkwell::AddressSpace::default());
+                    let opaque_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
                     let struct_ptr = self.builder
-                        .build_int_to_ptr(arg_int, struct_ptr_type, "struct_arg_ptr")
+                        .build_int_to_ptr(arg_int, opaque_ptr_type, "struct_arg_ptr")
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
                     self.builder
-                        .build_load(struct_ptr, "struct_arg_val")
+                        .build_load(param_type, struct_ptr, "struct_arg_val")
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
                 } else if param_type.is_array_type() {
                     // For array types, the i64 is a pointer to the array - convert and load
-                    let array_ptr_type = param_type.into_array_type().ptr_type(inkwell::AddressSpace::default());
+                    let opaque_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
                     let array_ptr = self.builder
-                        .build_int_to_ptr(arg_int, array_ptr_type, "array_arg_ptr")
+                        .build_int_to_ptr(arg_int, opaque_ptr_type, "array_arg_ptr")
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
                     self.builder
-                        .build_load(array_ptr, "array_arg_val")
+                        .build_load(param_type, array_ptr, "array_arg_val")
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
                 } else if param_type.is_float_type() {
                     // Float was bitcast to i64, convert back
@@ -725,12 +713,20 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         if let Some(&local_alloca) = self.locals.get(&local.id) {
                             // Get pointer to the state field
                             let field_ptr = self.builder
-                                .build_struct_gep(typed_state_ptr, field_idx, &format!("{}_writeback_ptr", field_name))
+                                .build_struct_gep(state_struct_type, typed_state_ptr, field_idx, &format!("{}_writeback_ptr", field_name))
                                 .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
                             // Load current value from local (typed, e.g. i32)
+                            // Compute the effective type matching what was stored in the alloca
+                            let is_local_unresolved = matches!(local.ty.kind(),
+                                TypeKind::Param(_) | TypeKind::Infer(_) | TypeKind::Error);
+                            let local_effective_type: BasicTypeEnum = if is_local_unresolved {
+                                i64_type.into()
+                            } else {
+                                self.lower_type(&local.ty)
+                            };
                             let current_val = self.builder
-                                .build_load(local_alloca, &format!("{}_writeback_val", field_name))
+                                .build_load(local_effective_type, local_alloca, &format!("{}_writeback_val", field_name))
                                 .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
                             let state_field_ty = state_field_types[field_idx as usize];
@@ -767,7 +763,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                                         self.builder.build_bit_cast(fv, i64_type, &format!("{}_wb_fcast", field_name))
                                             .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
                                     }
-                                    BasicValueEnum::StructValue(_) | BasicValueEnum::ArrayValue(_) | BasicValueEnum::VectorValue(_) => {
+                                    BasicValueEnum::StructValue(_) | BasicValueEnum::ArrayValue(_) | BasicValueEnum::VectorValue(_) | BasicValueEnum::ScalableVectorValue(_) => {
                                         return Err(vec![Diagnostic::error(
                                             format!(
                                                 "ICE: handler state field '{}' has i64 layout but write-back value is aggregate type {:?}; \
@@ -829,13 +825,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         self.builder.build_store(alloca, sv)
                             .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
-                        // Bitcast to i64* and load as i64
-                        let i64_ptr_type = i64_type.ptr_type(inkwell::AddressSpace::default());
-                        let i64_ptr = self.builder
-                            .build_pointer_cast(alloca, i64_ptr_type, "ret_i64_ptr")
-                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+                        // With opaque pointers, load as i64 directly from the alloca
                         self.builder
-                            .build_load(i64_ptr, "ret_struct_bits")
+                            .build_load(i64_type, alloca, "ret_struct_bits")
                             .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
                             .into_int_value()
                     }
@@ -851,7 +843,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                             .build_ptr_to_int(alloca, i64_type, "ret_array_ptr")
                             .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
                     }
-                    BasicValueEnum::VectorValue(_) => {
+                    BasicValueEnum::VectorValue(_) | BasicValueEnum::ScalableVectorValue(_) => {
                         return Err(vec![Diagnostic::error(
                             "Vector return types not supported in handler operations".to_string(),
                             span,
@@ -895,7 +887,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         }
 
         let i64_type = self.context.i64_type();
-        let i8_ptr_type = self.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_type = self.context.ptr_type(AddressSpace::default());
         let void_type = self.context.void_type();
 
         // Get or declare the registration function
@@ -903,10 +895,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             .unwrap_or_else(|| {
                 let fn_type = void_type.fn_type(
                     &[
-                        i8_ptr_type.into(), // evidence handle
-                        i64_type.into(),    // effect_id
-                        i8_ptr_type.ptr_type(AddressSpace::default()).into(), // ops array
-                        i64_type.into(),    // op_count
+                        ptr_type.into(), // evidence handle
+                        i64_type.into(), // effect_id
+                        ptr_type.into(), // ops array (pointer to pointer array)
+                        i64_type.into(), // op_count
                     ],
                     false,
                 );
@@ -932,7 +924,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             }
 
             // Create array of function pointers
-            let array_type = i8_ptr_type.array_type(op_count as u32);
+            let array_type = ptr_type.array_type(op_count as u32);
             let ops_alloca = self.builder
                 .build_alloca(array_type, "handler_ops")
                 .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
@@ -944,16 +936,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 if let Some(&fn_value) = self.handler_ops.get(&(*handler_id, op_idx)) {
                     let idx = i32_type.const_int(op_idx as u64, false);
                     let gep = unsafe {
-                        self.builder.build_gep(ops_alloca, &[zero, idx], "op_ptr")
+                        self.builder.build_gep(array_type, ops_alloca, &[zero, idx], "op_ptr")
                     }.map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
 
-                    let fn_ptr = self.builder
-                        .build_pointer_cast(
-                            fn_value.as_global_value().as_pointer_value(),
-                            i8_ptr_type,
-                            "fn_ptr",
-                        )
-                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+                    // With opaque pointers, all pointers are the same type — no cast needed.
+                    let fn_ptr = fn_value.as_global_value().as_pointer_value();
 
                     self.builder.build_store(gep, fn_ptr)
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
@@ -962,14 +949,14 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
             // Get pointer to first element
             let ops_ptr = unsafe {
-                self.builder.build_gep(ops_alloca, &[zero, zero], "ops_ptr")
+                self.builder.build_gep(array_type, ops_alloca, &[zero, zero], "ops_ptr")
             }.map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
 
             // Call blood_evidence_register(null, effect_id, ops, op_count)
             // Note: We pass null for evidence handle - registration is global
             let effect_id_val = i64_type.const_int(handler_info.effect_id.index as u64, false);
             let op_count_val = i64_type.const_int(op_count as u64, false);
-            let null_ev = i8_ptr_type.const_null();
+            let null_ev = ptr_type.const_null();
 
             self.builder.build_call(
                 register_fn,
@@ -1003,13 +990,12 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         let span = handler_body.body.span;
         let i64_type = self.context.i64_type();
-        let i8_ptr_type = self.context.i8_type().ptr_type(AddressSpace::default());
-        let i64_ptr_type = i64_type.ptr_type(AddressSpace::default());
+        let ptr_type = self.context.ptr_type(AddressSpace::default());
 
         // Handler operation function signature:
         // fn(state: *mut void, args: *const i64, arg_count: i64, continuation: i64) -> i64
         let handler_op_type = i64_type.fn_type(
-            &[i8_ptr_type.into(), i64_ptr_type.into(), i64_type.into(), i64_type.into()],
+            &[ptr_type.into(), ptr_type.into(), i64_type.into(), i64_type.into()],
             false,
         );
 
@@ -1083,30 +1069,29 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
             for (capture_idx, capture) in handler_body.captures.iter().enumerate() {
                 // Get the element from the captures struct (array of pointers)
+                // The state is laid out as raw bytes; use i8 as the pointee type for byte-offset GEP
+                let i8_type = self.context.i8_type();
                 let elem_ptr = unsafe {
                     self.builder.build_gep(
+                        i8_type,
                         state_ptr_val,
                         &[i64_type.const_int(capture_idx as u64 * 8, false)],  // 8 bytes per pointer
                         &format!("capture_{}_ptr_ptr", capture_idx)
                     )
                 }.map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
-                // Cast to pointer-to-pointer type
+                // With opaque pointers, no pointer cast needed — load the pointer directly.
+                // The elem_ptr points to a slot containing a pointer to the captured variable.
                 let capture_type = self.lower_type(&capture.ty);
-                let capture_ptr_ty = capture_type.ptr_type(AddressSpace::default());
-                let capture_ptr_ptr = self.builder
-                    .build_pointer_cast(elem_ptr, capture_ptr_ty.ptr_type(AddressSpace::default()), &format!("capture_{}_typed", capture_idx))
-                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
-
-                // Load the pointer to the captured variable
                 let capture_ptr = self.builder
-                    .build_load(capture_ptr_ptr, &format!("capture_{}_ptr", capture_idx))
+                    .build_load(ptr_type, elem_ptr, &format!("capture_{}_ptr", capture_idx))
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
                     .into_pointer_value();
 
                 // For mutable captures, we store the pointer directly so writes go through
                 // For immutable captures, we could load the value, but storing the pointer is fine
                 self.locals.insert(capture.local_id, capture_ptr);
+                self.local_types.insert(capture.local_id, capture_type);
             }
         }
 
@@ -1124,11 +1109,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             // Load the argument from args[idx]
             let arg_idx = i64_type.const_int(idx as u64, false);
             let arg_ptr = unsafe {
-                self.builder.build_gep(args_ptr_val, &[arg_idx], &format!("arg_{}_ptr", idx))
+                self.builder.build_gep(i64_type, args_ptr_val, &[arg_idx], &format!("arg_{}_ptr", idx))
             }.map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
             let arg_val = self.builder
-                .build_load(arg_ptr, &format!("arg_{}", idx))
+                .build_load(i64_type, arg_ptr, &format!("arg_{}", idx))
                 .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
             // Convert from i64 to the actual parameter type
@@ -1155,21 +1140,21 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     .into()
             } else if local_type.is_struct_type() {
                 // For struct types, the i64 is a pointer to the struct - convert and load
-                let struct_ptr_type = local_type.into_struct_type().ptr_type(inkwell::AddressSpace::default());
+                let opaque_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
                 let struct_ptr = self.builder
-                    .build_int_to_ptr(arg_int, struct_ptr_type, "struct_arg_ptr")
+                    .build_int_to_ptr(arg_int, opaque_ptr_type, "struct_arg_ptr")
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
                 self.builder
-                    .build_load(struct_ptr, "struct_arg_val")
+                    .build_load(local_type, struct_ptr, "struct_arg_val")
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
             } else if local_type.is_array_type() {
                 // For array types, the i64 is a pointer to the array - convert and load
-                let array_ptr_type = local_type.into_array_type().ptr_type(inkwell::AddressSpace::default());
+                let opaque_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
                 let array_ptr = self.builder
-                    .build_int_to_ptr(arg_int, array_ptr_type, "array_arg_ptr")
+                    .build_int_to_ptr(arg_int, opaque_ptr_type, "array_arg_ptr")
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
                 self.builder
-                    .build_load(array_ptr, "array_arg_val")
+                    .build_load(local_type, array_ptr, "array_arg_val")
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
             } else if local_type.is_float_type() {
                 // Float was bitcast to i64, convert back
@@ -1185,6 +1170,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
             self.locals.insert(*param_id, alloca);
+            self.local_types.insert(*param_id, local_type);
         }
 
         // Compile the handler body expression
@@ -1245,7 +1231,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                             span
                         )]);
                     }
-                    BasicValueEnum::VectorValue(_) => {
+                    BasicValueEnum::VectorValue(_) | BasicValueEnum::ScalableVectorValue(_) => {
                         return Err(vec![Diagnostic::error(
                             "Handler cannot return vector type directly - use a pointer or wrapper".to_string(),
                             span
@@ -1273,14 +1259,14 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     /// Add a function to llvm.global_ctors for automatic execution at startup.
     pub(super) fn add_global_constructor(&mut self, init_fn: FunctionValue<'ctx>) -> Result<(), Vec<Diagnostic>> {
         let i32_type = self.context.i32_type();
-        let i8_ptr_type = self.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_type = self.context.ptr_type(AddressSpace::default());
 
-        // Constructor entry: { i32 priority, void ()* fn, i8* data }
+        // Constructor entry: { i32 priority, ptr fn, ptr data }
         let ctor_struct_type = self.context.struct_type(
             &[
                 i32_type.into(),
-                init_fn.get_type().ptr_type(AddressSpace::default()).into(),
-                i8_ptr_type.into(),
+                ptr_type.into(),
+                ptr_type.into(),
             ],
             false,
         );
@@ -1288,7 +1274,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // Create the constructor entry
         let priority = i32_type.const_int(65535, false); // Low priority (runs early)
         let fn_ptr = init_fn.as_global_value().as_pointer_value();
-        let null_data = i8_ptr_type.const_null();
+        let null_data = ptr_type.const_null();
 
         let ctor_entry = ctor_struct_type.const_named_struct(&[
             priority.into(),

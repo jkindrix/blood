@@ -38,8 +38,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             }
             TypeKind::Slice { element } => {
                 // Slices are { ptr, len }
-                let elem_type = self.lower_type(element);
-                let ptr_type = elem_type.ptr_type(AddressSpace::default());
+                let _elem_type = self.lower_type(element);
+                let ptr_type = self.context.ptr_type(AddressSpace::default());
                 let len_type = self.context.i64_type();
                 self.context.struct_type(&[ptr_type.into(), len_type.into()], false).into()
             }
@@ -57,20 +57,21 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     }
                     _ => {
                         // Regular references are pointers to the inner type
-                        let inner_type = self.lower_type(inner);
-                        inner_type.ptr_type(AddressSpace::default()).into()
+                        // (opaque pointers: all pointer types are just `ptr`)
+                        let _inner_type = self.lower_type(inner);
+                        self.context.ptr_type(AddressSpace::default()).into()
                     }
                 }
             }
             TypeKind::Adt { def_id, args } => {
                 // Check for built-in types first (these have special representations)
                 if Some(*def_id) == self.box_def_id {
-                    // Box<T> is represented as a pointer to T (or just i8* as opaque pointer)
-                    self.context.i8_type().ptr_type(AddressSpace::default()).into()
+                    // Box<T> is represented as an opaque pointer
+                    self.context.ptr_type(AddressSpace::default()).into()
                 } else if Some(*def_id) == self.vec_def_id {
                     // Vec<T> is { ptr: *T, len: i64, capacity: i64 }
-                    // Use opaque pointer representation
-                    let ptr_type = self.context.i8_type().ptr_type(AddressSpace::default());
+                    // All pointers are opaque `ptr` in LLVM 18
+                    let ptr_type = self.context.ptr_type(AddressSpace::default());
                     let i64_type = self.context.i64_type();
                     self.context.struct_type(&[ptr_type.into(), i64_type.into(), i64_type.into()], false).into()
                 } else if Some(*def_id) == self.option_def_id {
@@ -126,7 +127,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                                 self.current_span(),
                             )
                         );
-                        return self.context.i8_type().ptr_type(AddressSpace::default()).into();
+                        return self.context.ptr_type(AddressSpace::default()).into();
                     }
 
                     let result = if let Some(fields) = self.struct_defs.get(def_id).cloned() {
@@ -236,12 +237,12 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // This allows closures with captures to be passed as fn() parameters.
                 // When a regular function (no captures) is passed, env_ptr is null.
                 // When calling through fn(), the env_ptr is passed as the first argument.
-                let ptr_type = self.context.i8_type().ptr_type(AddressSpace::default());
+                let ptr_type = self.context.ptr_type(AddressSpace::default());
                 self.context.struct_type(&[ptr_type.into(), ptr_type.into()], false).into()
             }
             TypeKind::DynTrait { .. } => {
                 // Trait object: fat pointer { data_ptr, vtable_ptr }
-                let ptr_type = self.context.i8_type().ptr_type(AddressSpace::default());
+                let ptr_type = self.context.ptr_type(AddressSpace::default());
                 self.context.struct_type(&[ptr_type.into(), ptr_type.into()], false).into()
             }
             TypeKind::Never => {
@@ -281,12 +282,12 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         self.current_span(),
                     )
                 );
-                // Return i8* as placeholder to allow continued error collection
-                self.context.i8_type().ptr_type(AddressSpace::default()).into()
+                // Return opaque ptr as placeholder to allow continued error collection
+                self.context.ptr_type(AddressSpace::default()).into()
             }
             TypeKind::Closure { .. } => {
                 // Closure: fat pointer { fn_ptr, env_ptr }
-                let ptr_type = self.context.i8_type().ptr_type(AddressSpace::default());
+                let ptr_type = self.context.ptr_type(AddressSpace::default());
                 self.context.struct_type(&[ptr_type.into(), ptr_type.into()], false).into()
             }
             TypeKind::Range { element, .. } => {
@@ -345,13 +346,13 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             PrimitiveTy::Float(crate::hir::def::FloatTy::F64) => self.context.f64_type().into(),
             PrimitiveTy::Str => {
                 // String slice: { ptr, len }
-                let ptr_type = self.context.i8_type().ptr_type(AddressSpace::default());
+                let ptr_type = self.context.ptr_type(AddressSpace::default());
                 let len_type = self.context.i64_type();
                 self.context.struct_type(&[ptr_type.into(), len_type.into()], false).into()
             }
             PrimitiveTy::String => {
                 // Heap-allocated string: { ptr, len, capacity }
-                let ptr_type = self.context.i8_type().ptr_type(AddressSpace::default());
+                let ptr_type = self.context.ptr_type(AddressSpace::default());
                 let len_type = self.context.i64_type();
                 self.context.struct_type(&[ptr_type.into(), len_type.into(), len_type.into()], false).into()
             }
@@ -398,6 +399,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             BasicTypeEnum::PointerType(t) => Some(t.size_of()),
             BasicTypeEnum::StructType(t) => t.size_of(),
             BasicTypeEnum::VectorType(t) => t.size_of(),
+            BasicTypeEnum::ScalableVectorType(t) => t.size_of(),
         };
         if let Some(size_val) = size_opt {
             // LLVM's size_of returns a constant IntValue - extract the constant
@@ -449,6 +451,12 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // SIMD vectors - compute based on element type and size
                 let elem_size = self.get_type_size_approx(vt.get_element_type());
                 elem_size * vt.get_size() as usize
+            }
+            BasicTypeEnum::ScalableVectorType(_) => {
+                // Scalable vectors have runtime-determined size; use a conservative
+                // estimate of 16 bytes (minimum vector register width on most targets).
+                // This type should not appear in Blood's type system under normal usage.
+                16
             }
         }
     }

@@ -4,7 +4,7 @@
 //! runtime interactions for the Blood memory safety system.
 
 use inkwell::values::{IntValue, PointerValue};
-use inkwell::types::{BasicType, BasicTypeEnum};
+use inkwell::types::BasicTypeEnum;
 use inkwell::{AddressSpace, IntPredicate};
 
 use crate::diagnostics::Diagnostic;
@@ -47,7 +47,7 @@ impl<'ctx, 'a> MirMemoryCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
             "gen_lookup"
         ).map_err(|e| vec![Diagnostic::error(format!("LLVM call error: {}", e), span)])?;
 
-        gen_call_result.try_as_basic_value().left()
+        gen_call_result.try_as_basic_value().basic()
             .map(|val| val.into_int_value())
             .ok_or_else(|| vec![ice_err!(
                 span,
@@ -97,7 +97,7 @@ pub(super) fn emit_generation_check_impl<'ctx, 'a>(
     ).map_err(|e| vec![Diagnostic::error(format!("LLVM call error: {}", e), span)])?;
 
     let is_stale = result.try_as_basic_value()
-        .left()
+        .basic()
         .ok_or_else(|| vec![Diagnostic::error("Generation check returned void", span)])?
         .into_int_value();
 
@@ -136,7 +136,7 @@ pub(super) fn emit_generation_check_impl<'ctx, 'a>(
             "actual_gen"
         ).map_err(|e| vec![Diagnostic::error(format!("LLVM call error: {}", e), span)])?;
 
-        let actual_gen = match gen_call_result.try_as_basic_value().left() {
+        let actual_gen = match gen_call_result.try_as_basic_value().basic() {
             Some(val) => val.into_int_value(),
             None => {
                 // blood_get_generation returned void unexpectedly - this is an ICE
@@ -206,16 +206,16 @@ pub(super) fn allocate_with_blood_alloc_impl<'ctx, 'a>(
         format!("LLVM call error: {}", e), span
     )])?
         .try_as_basic_value()
-        .left()
+        .basic()
         .ok_or_else(|| vec![Diagnostic::error(
             "blood_alloc_or_abort returned void", span
         )])?
         .into_int_value();
 
-    // Convert the address (i64) to a pointer of the appropriate type
+    // Convert the address (i64) to a pointer (opaque pointer in LLVM 18)
     let typed_ptr = ctx.builder.build_int_to_ptr(
         address,
-        llvm_ty.ptr_type(AddressSpace::default()),
+        ctx.context.ptr_type(AddressSpace::default()),
         &format!("_{}_ptr", local_id.index)
     ).map_err(|e| vec![Diagnostic::error(
         format!("LLVM int_to_ptr error: {}", e), span
@@ -243,16 +243,16 @@ pub(super) fn allocate_with_persistent_alloc_impl<'ctx, 'a>(
     local_id: LocalId,
     span: Span,
 ) -> Result<PointerValue<'ctx>, Vec<Diagnostic>> {
-    let i8_ptr_ty = ctx.context.i8_type().ptr_type(AddressSpace::default());
+    let ptr_ty = ctx.context.ptr_type(AddressSpace::default());
     let i32_ty = ctx.context.i32_type();
     let i64_ty = ctx.context.i64_type();
 
-    // Get or declare blood_persistent_alloc(size: i64, align: i64, type_fp: i32, out_id: *i64) -> *i8
+    // Get or declare blood_persistent_alloc(size: i64, align: i64, type_fp: i32, out_id: *i64) -> *u8
     // Note: Uses i64 for size/align since usize == u64 on 64-bit targets
     let alloc_fn = ctx.module.get_function("blood_persistent_alloc")
         .unwrap_or_else(|| {
-            let fn_type = i8_ptr_ty.fn_type(
-                &[i64_ty.into(), i64_ty.into(), i32_ty.into(), i64_ty.ptr_type(AddressSpace::default()).into()],
+            let fn_type = ptr_ty.fn_type(
+                &[i64_ty.into(), i64_ty.into(), i32_ty.into(), ptr_ty.into()],
                 false,
             );
             ctx.module.add_function("blood_persistent_alloc", fn_type, None)
@@ -286,23 +286,17 @@ pub(super) fn allocate_with_persistent_alloc_impl<'ctx, 'a>(
         format!("LLVM call error: {}", e), span
     )])?
         .try_as_basic_value()
-        .left()
+        .basic()
         .ok_or_else(|| vec![Diagnostic::error(
             "blood_persistent_alloc returned void", span
         )])?
         .into_pointer_value();
 
-    // Cast the i8* to the appropriate type pointer
-    let typed_ptr = ctx.builder.build_pointer_cast(
-        raw_ptr,
-        llvm_ty.ptr_type(AddressSpace::default()),
-        &format!("_{}_persistent_typed", local_id.index)
-    ).map_err(|e| vec![Diagnostic::error(
-        format!("LLVM pointer cast error: {}", e), span
-    )])?;
+    // With opaque pointers (LLVM 18), all pointers are the same type,
+    // so the raw_ptr from blood_persistent_alloc is already usable directly.
 
     // Store the slot ID alloca for later decrement on StorageDead
     ctx.persistent_slot_ids.insert(local_id, slot_id_alloca);
 
-    Ok(typed_ptr)
+    Ok(raw_ptr)
 }

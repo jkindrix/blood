@@ -81,11 +81,18 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 if std::env::var("BLOOD_DEBUG_ASSIGN").is_ok() {
                     eprintln!("[Assign] rvalue: {:?}", rvalue);
                     eprintln!("[Assign] value type: {:?}", value.get_type().print_to_string());
-                    eprintln!("[Assign] dest ptr elem type: {:?}", ptr.get_type().get_element_type().print_to_string());
+                    eprintln!("[Assign] dest ptr type: {:?}", ptr.get_type().print_to_string());
                 }
 
+                // Compute the destination's LLVM type for store conversion.
+                // With opaque pointers, we must compute this explicitly since PointerType
+                // no longer carries element type information.
+                let dest_base_ty = self.get_place_base_type(place, body)?;
+                let dest_effective_ty = self.compute_place_type(&dest_base_ty, &place.projection);
+                let dest_llvm_ty = self.lower_type(&dest_effective_ty);
+
                 // Convert value to match destination type if needed
-                let converted_value = self.convert_value_for_store(value, ptr, stmt.span)?;
+                let converted_value = self.convert_value_for_store(value, dest_llvm_ty, stmt.span)?;
                 let store_inst = self.builder.build_store(ptr, converted_value)
                     .map_err(|e| vec![Diagnostic::error(
                         format!("LLVM store error: {}", e), stmt.span
@@ -115,7 +122,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                         let i64_ty = self.context.i64_type();
 
                         // Load the address from the local's storage
-                        let loaded = self.builder.build_load(local_ptr, "local_addr")
+                        let loaded = self.builder.build_load(self.context.ptr_type(AddressSpace::default()), local_ptr, "local_addr")
                             .map_err(|e| vec![Diagnostic::error(
                                 format!("LLVM load error: {}", e), stmt.span
                             )])?;
@@ -170,7 +177,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     let i64_ty = self.context.i64_type();
 
                     // Load the slot ID from the alloca
-                    let slot_id = self.builder.build_load(slot_id_alloca, "persistent_slot_id")
+                    let slot_id = self.builder.build_load(i64_ty, slot_id_alloca, "persistent_slot_id")
                         .map_err(|e| vec![Diagnostic::error(
                             format!("LLVM load error: {}", e), stmt.span
                         )])?
@@ -232,14 +239,18 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 let place_ty = &body.locals[place.local_unchecked().index as usize].ty;
                 let llvm_ty = self.lower_type(place_ty);
                 let size = llvm_ty.size_of()
-                    .map(|s| s.const_cast(self.context.i64_type(), false))
+                    .map(|s| s.const_truncate_or_bit_cast(self.context.i64_type()))
                     .unwrap_or_else(|| self.context.i64_type().const_int(0, false));
 
                 // For reference types, call blood_free to deallocate
                 if place_ty.is_ref() {
                     if let Some(free_fn) = self.module.get_function("blood_free") {
                         // Load the pointer value
-                        let ptr_val = self.builder.build_load(ptr, "drop_val")
+                        // Load the pointer/value from the reference place.
+                        // Reference types typically store pointer values, but may store
+                        // BloodPtr (i128) fat pointers. We load as the lowered type.
+                        let drop_load_ty = self.lower_type(place_ty);
+                        let ptr_val = self.builder.build_load(drop_load_ty, ptr, "drop_val")
                             .map_err(|e| vec![Diagnostic::error(format!("LLVM load error: {}", e), stmt.span)])?;
 
                         // Convert to i64 address
@@ -381,7 +392,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 // optimization is implemented, single-handler cases can skip the evidence
                 // vector entirely and pass the handler entry directly in registers/stack.
                 let i64_ty = self.context.i64_type();
-                let i8_ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
+                let i8_ptr_ty = self.context.ptr_type(AddressSpace::default());
 
                 // Look up the handler's effect_id
                 let handler_info = self.handler_defs.get(handler_id).ok_or_else(|| {
@@ -435,7 +446,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                         format!("LLVM call error: {}", e), stmt.span
                     )])?
                     .try_as_basic_value()
-                    .left()
+                    .basic()
                     .ok_or_else(|| vec![Diagnostic::error(
                         "blood_evidence_current returned void",
                         stmt.span
@@ -477,7 +488,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                             format!("LLVM call error: {}", e), stmt.span
                         )])?
                         .try_as_basic_value()
-                        .left()
+                        .basic()
                         .ok_or_else(|| vec![Diagnostic::error(
                             "blood_evidence_create returned void",
                             stmt.span
@@ -539,7 +550,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                             format!("LLVM call error: {}", e), stmt.span
                         )])?
                         .try_as_basic_value()
-                        .left()
+                        .basic()
                         .ok_or_else(|| vec![Diagnostic::error(
                             "blood_evidence_create returned void",
                             stmt.span
@@ -561,7 +572,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                             format!("LLVM call error: {}", e), stmt.span
                         )])?
                         .try_as_basic_value()
-                        .left()
+                        .basic()
                         .ok_or_else(|| vec![Diagnostic::error(
                             "blood_evidence_create returned void",
                             stmt.span
@@ -654,9 +665,11 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                                 .map(|t| self.lower_type(t))
                                 .collect();
                             let typed_struct_type = self.context.struct_type(&typed_field_llvm_types, false);
-                            let typed_struct_ptr_type = typed_struct_type.ptr_type(AddressSpace::default());
+                            // With opaque pointers, all pointers are the same type.
+                            // The pointer cast is an identity operation but kept for clarity.
+                            let opaque_ptr_type = self.context.ptr_type(AddressSpace::default());
                             let typed_struct_ptr = self.builder
-                                .build_pointer_cast(state_ptr, typed_struct_ptr_type, "typed_state_for_shadow")
+                                .build_pointer_cast(state_ptr, opaque_ptr_type, "typed_state_for_shadow")
                                 .map_err(|e| vec![Diagnostic::error(
                                     format!("LLVM error: {}", e), stmt.span
                                 )])?;
@@ -665,19 +678,19 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                             for idx in 0..field_count {
                                 // GEP into typed struct to get field value
                                 let field_ptr = self.builder
-                                    .build_struct_gep(typed_struct_ptr, idx as u32, &format!("state_field_{}_ptr", idx))
+                                    .build_struct_gep(typed_struct_type, typed_struct_ptr, idx as u32, &format!("state_field_{}_ptr", idx))
                                     .map_err(|e| vec![Diagnostic::error(
                                         format!("LLVM error: {}", e), stmt.span
                                     )])?;
                                 let field_val = self.builder
-                                    .build_load(field_ptr, &format!("state_field_{}", idx))
+                                    .build_load(typed_field_llvm_types[idx], field_ptr, &format!("state_field_{}", idx))
                                     .map_err(|e| vec![Diagnostic::error(
                                         format!("LLVM error: {}", e), stmt.span
                                     )])?;
 
                                 // GEP into shadow struct
                                 let shadow_field_ptr = self.builder
-                                    .build_struct_gep(shadow_alloca, idx as u32, &format!("shadow_{}_ptr", idx))
+                                    .build_struct_gep(shadow_struct_type, shadow_alloca, idx as u32, &format!("shadow_{}_ptr", idx))
                                     .map_err(|e| vec![Diagnostic::error(
                                         format!("LLVM error: {}", e), stmt.span
                                     )])?;
@@ -724,7 +737,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                                                 )])?
                                                 .into_int_value()
                                         }
-                                        BasicValueEnum::StructValue(_) | BasicValueEnum::ArrayValue(_) | BasicValueEnum::VectorValue(_) => {
+                                        BasicValueEnum::StructValue(_) | BasicValueEnum::ArrayValue(_) | BasicValueEnum::VectorValue(_) | BasicValueEnum::ScalableVectorValue(_) => {
                                             return Err(vec![Diagnostic::error(
                                                 format!(
                                                     "ICE: handler state field {} has i64 shadow layout but source value is aggregate type {:?}; \
@@ -807,7 +820,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 // additionally calls blood_evidence_set_inline to enable fast-path dispatch.
 
                 let i64_ty = self.context.i64_type();
-                let i8_ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
+                let i8_ptr_ty = self.context.ptr_type(AddressSpace::default());
 
                 // Declare or get evidence functions
                 let ev_current = self.module.get_function("blood_evidence_current")
@@ -832,7 +845,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                         format!("LLVM call error: {}", e), stmt.span
                     )])?
                     .try_as_basic_value()
-                    .left()
+                    .basic()
                     .ok_or_else(|| vec![Diagnostic::error(
                         "blood_evidence_current returned void",
                         stmt.span
@@ -870,7 +883,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                             format!("LLVM call error: {}", e), stmt.span
                         )])?
                         .try_as_basic_value()
-                        .left()
+                        .basic()
                         .ok_or_else(|| vec![Diagnostic::error(
                             "blood_evidence_create returned void",
                             stmt.span
@@ -928,7 +941,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                             format!("LLVM call error: {}", e), stmt.span
                         )])?
                         .try_as_basic_value()
-                        .left()
+                        .basic()
                         .ok_or_else(|| vec![Diagnostic::error(
                             "blood_evidence_create returned void",
                             stmt.span
@@ -949,7 +962,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                             format!("LLVM call error: {}", e), stmt.span
                         )])?
                         .try_as_basic_value()
-                        .left()
+                        .basic()
                         .ok_or_else(|| vec![Diagnostic::error(
                             "blood_evidence_create returned void",
                             stmt.span
@@ -993,7 +1006,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 let ev_register = self.module.get_function("blood_evidence_register")
                     .unwrap_or_else(|| {
                         // ops is **void (pointer to array of function pointers)
-                        let ptr_ptr_ty = i8_ptr_ty.ptr_type(AddressSpace::default());
+                        let ptr_ptr_ty = self.context.ptr_type(AddressSpace::default());
                         let fn_type = self.context.void_type().fn_type(
                             &[i8_ptr_ty.into(), i64_ty.into(), ptr_ptr_ty.into(), i64_ty.into()],
                             false,
@@ -1032,7 +1045,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
 
                 // Build array of operation function pointers on the stack
                 let op_count = operations.len();
-                let ptr_ptr_ty = i8_ptr_ty.ptr_type(AddressSpace::default());
+                let ptr_ptr_ty = self.context.ptr_type(AddressSpace::default());
 
                 if op_count > 0 {
                     // Allocate array for operation function pointers
@@ -1047,6 +1060,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                         // Get pointer to array element
                         let elem_ptr = unsafe {
                             self.builder.build_gep(
+                                array_ty,
                                 ops_array,
                                 &[
                                     i64_ty.const_zero(),
@@ -1133,6 +1147,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                         // Get pointer to array element
                         let elem_ptr = unsafe {
                             self.builder.build_gep(
+                                captures_array_ty,
                                 captures_alloca,
                                 &[i64_ty.const_zero(), i64_ty.const_int(idx as u64, false)],
                                 &format!("capture_{}_slot", idx)
@@ -1215,7 +1230,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
 
             StatementKind::PopHandler => {
                 // Pop effect handler from the evidence vector
-                let i8_ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
+                let i8_ptr_ty = self.context.ptr_type(AddressSpace::default());
 
                 // Declare or get evidence functions
                 let ev_pop = self.module.get_function("blood_evidence_pop")
@@ -1235,7 +1250,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                         format!("LLVM call error: {}", e), stmt.span
                     )])?
                     .try_as_basic_value()
-                    .left()
+                    .basic()
                     .ok_or_else(|| vec![Diagnostic::error(
                         "blood_evidence_current returned void",
                         stmt.span
@@ -1264,7 +1279,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
             StatementKind::CallReturnClause { handler_id: _, handler_name, body_result, state_place, destination } => {
                 // Call the handler's return clause to transform the body result
                 let i64_ty = self.context.i64_type();
-                let i8_ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
+                let i8_ptr_ty = self.context.ptr_type(AddressSpace::default());
 
                 // Generate return clause function name (content-based naming for cache compatibility)
                 // The handler_name is embedded in MIR for proper content hashing
@@ -1306,7 +1321,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                             )])?
                             .into_int_value()
                     }
-                    BasicValueEnum::ArrayValue(_) | BasicValueEnum::StructValue(_) | BasicValueEnum::VectorValue(_) => {
+                    BasicValueEnum::ArrayValue(_) | BasicValueEnum::StructValue(_) | BasicValueEnum::VectorValue(_) | BasicValueEnum::ScalableVectorValue(_) => {
                         return Err(vec![Diagnostic::error(
                             "ICE: handler return clause received aggregate value that cannot be converted to i64".to_string(),
                             stmt.span
@@ -1348,7 +1363,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     format!("LLVM call error: {}", e), stmt.span
                 )])?
                     .try_as_basic_value()
-                    .left()
+                    .basic()
                     .ok_or_else(|| vec![Diagnostic::error(
                         "Return clause returned void", stmt.span
                     )])?;
