@@ -25,8 +25,8 @@
 | Generational Pointers | ✅ Integrated | blood_alloc/blood_free in codegen |
 | MIR Layer | ✅ Integrated | Lowering, escape analysis, generation validation in codegen |
 | Content Addressing | ✅ Integrated | Hashing and incremental build caching active |
-| Fiber Scheduler | ✅ Integrated | FFI exports (blood_scheduler_*) linked |
-| Multiple Dispatch | ✅ Integrated | Runtime dispatch table (blood_dispatch_*, blood_get_type_tag) |
+| Fiber Scheduler | 🔶 Runtime only | FFI exports exist but no language-level fiber spawning or channel effects |
+| Multiple Dispatch | 🔶 Compile-time only | Type checking complete; runtime dispatch table not built, `blood_dispatch_lookup` not in runtime |
 | Closures | ✅ Integrated | Environment capture and codegen |
 
 ---
@@ -123,9 +123,9 @@ Hello, World!
 | AST canonicalization | **Complete** | `content/canonical.rs` - de Bruijn indices, CanonicalAST |
 | Codebase storage | **Complete** | `content/storage.rs` - DefinitionRecord, Codebase |
 | Name-to-hash mappings | **Complete** | `content/namespace.rs` - Namespace, NameRegistry |
-| Virtual Function Table | **Complete** | `content/vft.rs` - VFT, VFTEntry, DispatchTable |
+| Virtual Function Table | **Data structures complete** | `content/vft.rs` - VFT, VFTEntry, DispatchTable (not connected to codegen or runtime dispatch) |
 
-**Progress**: 6/6 core deliverables complete (100%)
+**Progress**: 5/6 core deliverables code-complete, 1/6 data-structures-only (VFT not connected to codegen)
 
 **Technical Standards Verified**:
 - [BLAKE3 Specification](https://github.com/BLAKE3-team/BLAKE3-specs)
@@ -297,7 +297,7 @@ Hello, World!
 | WI-042 | Implement BLAKE3-256 hashing | P0 | **Complete** |
 | WI-043 | Implement codebase storage | P0 | **Complete** |
 | WI-044 | Implement name-to-hash mappings | P1 | **Complete** |
-| WI-045 | Implement VFT (Virtual Function Table) | P1 | **Complete** |
+| WI-045 | Implement VFT (Virtual Function Table) | P1 | **Data structures complete** (not connected to codegen) |
 
 **Completed Work Items (6/6)**: WI-040 through WI-045 - ALL COMPLETE
 
@@ -678,7 +678,7 @@ Blood contains unique feature interactions requiring validation before release. 
    - ✅ Generation Snapshots code with benchmarked performance (~6ns/ref)
    - ✅ Effect handlers with runtime dispatch FFI
    - ✅ MIR layer with escape analysis
-   - ✅ Linear/affine type checking in type system
+   - 🔶 Linear/affine type checking infrastructure (checker exists in `typeck/linearity.rs` and `typeck_linearity.blood`, but not integrated into main compilation pipeline)
    - ✅ Region suspension code in runtime
    - ✅ Rust runtime linked to compiled programs
 
@@ -714,11 +714,11 @@ This section provides a comprehensive overview of feature status across three di
 | **Generation Snapshots** | ✅ Complete | ✅ Benchmarked | ✅ 3+ tests | Stable |
 | **Content Hashing** | ✅ Complete | ✅ Active | ✅ 10+ tests | Beta |
 | **AST Canonicalization** | ✅ Complete | ✅ Active | ✅ 12+ tests | Beta |
-| **Fiber Scheduler** | ✅ Complete | ✅ Integrated | ✅ 15+ tests | Stable |
-| **MPMC Channels** | ✅ Complete | ✅ Integrated | ✅ 12+ tests | Stable |
-| **I/O Reactor** | ✅ Complete | ✅ Integrated | ✅ 8+ tests | Beta |
+| **Fiber Scheduler** | ✅ Complete | 🔶 Runtime only (no language integration) | ✅ 15+ tests | Stable |
+| **MPMC Channels** | ✅ Complete | 🔶 Runtime only (no language integration) | ✅ 12+ tests | Stable |
+| **I/O Reactor** | ✅ Complete | 🔶 Runtime only (no language integration) | ✅ 8+ tests | Beta |
 | **FFI Support** | ✅ Complete | ✅ Integrated | ✅ 15+ tests | Stable |
-| **Multiple Dispatch** | ✅ Complete | ✅ Integrated | ✅ Tests | Stable |
+| **Multiple Dispatch** | ✅ Type checking | 🔶 Compile-time only (no runtime dispatch) | ✅ Tests | Stable |
 | **Closures (codegen)** | ✅ Complete | ✅ Integrated | ✅ Tests | Stable |
 
 **Legend**:
@@ -773,9 +773,9 @@ This section documents the alignment between Blood's specifications and implemen
 | **Memory Model** | MEMORY_MODEL.md | 100% | ✅ Types byte-for-byte match spec; MIR integrated |
 | **Type System** | FORMAL_SEMANTICS.md | 100% | ✅ Fully integrated, production-ready |
 | **Content Addressing** | CONTENT_ADDRESSED.md | 100% | ✅ Hashing active; incremental build caching working |
-| **Concurrency** | CONCURRENCY.md | 100% | ✅ Fiber scheduler linked to compiled programs |
+| **Concurrency** | CONCURRENCY.md | 50% | 🔶 Runtime complete; no language-level fiber/channel integration |
 | **FFI** | FFI.md | 100% | ✅ Fully integrated |
-| **Multiple Dispatch** | DISPATCH.md | 100% | ✅ Fully integrated with runtime |
+| **Multiple Dispatch** | DISPATCH.md | 70% | 🔶 Compile-time dispatch complete; runtime dispatch table not built |
 
 ### 11.2 Key Finding: Full Integration Achieved
 
@@ -850,7 +850,7 @@ Production: Source → Lexer → Parser → HIR → TypeCheck → MIR → LLVM �
 |-----------|--------|----------|
 | MIR pipeline | ✅ Integrated | MIR lowering + escape analysis run |
 | Effect handlers | ✅ Integrated | `blood_perform` and full evidence API |
-| Multiple dispatch | ✅ Integrated | `blood_dispatch_*` and `blood_get_type_tag` |
+| Multiple dispatch | 🔶 Compile-time only | Type checking complete; `blood_dispatch_lookup` not in runtime |
 | Content hashing | ✅ Active | Hashes computed during build |
 | Runtime linking | ✅ Integrated | `libblood_runtime.a` linked to executables |
 
@@ -975,7 +975,7 @@ Minor spec clarifications identified during comparison:
 | Effect Handlers | `effects/`, `ffi_exports.rs` | Code + FFI exports exist; basic handlers work |
 | Generational Pointers | `mir/ptr.rs`, `codegen/` | Code exists; needs stress testing |
 | Fiber Scheduler | `blood-runtime` | Code + unit tests; not exercised by Blood programs yet |
-| Multiple Dispatch | `codegen/`, `ffi_exports.rs` | Code + FFI; ✅ validated (`dispatch_basic.blood`) |
+| Multiple Dispatch | `typeck/dispatch/`, `codegen/` | Compile-time dispatch validated (`dispatch_basic.blood`); runtime dispatch table not built |
 | Generation Snapshots | `mir/snapshot.rs` | Code + benchmarks; ✅ indirect validation via `snapshot_effect_resume.blood` |
 
 ### What's Optimization/Future Work

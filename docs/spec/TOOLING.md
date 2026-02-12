@@ -87,11 +87,15 @@ This document provides comprehensive documentation for Blood's developer tooling
 | **Inlay Hints** | ✅ Implemented | Type and effect annotations |
 | **Code Lens** | ✅ Implemented | Run/Test buttons, handler navigation |
 | **Folding Ranges** | ✅ Implemented | Code folding support |
-| **Signature Help** | ❌ Not yet | Function parameter help |
-| **Find References** | ❌ Not yet | Find all usages |
-| **Rename** | ❌ Not yet | Rename symbols |
-| **Code Actions** | ❌ Not yet | Quick fixes |
-| **Formatting** | ❌ Not yet | Via LSP (use blood-fmt directly) |
+| **Signature Help** | ✅ Implemented | Parameter info with `(` and `,` triggers |
+| **Find References** | ✅ Implemented | Find all usages via ReferencesProvider |
+| **Rename** | ✅ Implemented | Rename symbol with prepare_rename support |
+| **Code Actions** | ✅ Implemented | Effect annotation and type hint quick fixes |
+| **Formatting** | ✅ Implemented | Via blood-fmt integration |
+| **Go to Type Definition** | ✅ Implemented | Navigate to type of symbol |
+| **Go to Implementation** | ✅ Implemented | Find handler/impl declarations |
+| **Document Highlight** | ✅ Implemented | Highlight all occurrences with Read/Write kind |
+| **Workspace Symbols** | ✅ Implemented | Search symbols across open documents |
 
 ### 2.3 Installation
 

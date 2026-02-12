@@ -91,6 +91,8 @@ pub struct EffectInfo {
     /// Type parameters (e.g., T in State<T>).
     pub generics: Option<Generics>,
     /// Effects this effect extends (inheritance).
+    /// NOTE: Currently unused — always Vec::new(). Effect inheritance is not yet
+    /// implemented. This field is reserved for future use. See REVIEW.md REM-016.
     pub extends: Vec<DefId>,
     /// Operations defined by this effect.
     pub operations: Vec<OperationInfo>,

@@ -2,7 +2,7 @@
 
 **Version**: 0.3.0
 **Status**: Specified
-**Implementation**: ✅ Implemented (effect typing complete, proof mechanization planned)
+**Implementation**: ✅ In Progress (effect typing complete; 10 Coq proof files with 10/12 theorems proved, 2 Admitted)
 **Last Updated**: 2026-01-10
 
 **Revision 0.3.0 Changes**:
@@ -823,20 +823,41 @@ Effect subsumption maintained because handling removes effect from row. ∎
 
 ## 12. Mechanization Roadmap
 
-**Section Status**: Not Started
-**Last Updated**: 2026-01-14
+**Section Status**: In Progress
+**Last Updated**: 2026-02-12
 
 This section provides a concrete plan for mechanizing Blood's formal semantics in proof assistants, following best practices from recent research (2024-2025).
 
 ### 12.0 Current Mechanization Status
 
+10 Coq/Rocq proof files exist in `compiler-rust/proofs/theories/` (~2,635 lines):
+
+| File | Purpose | Status |
+|------|---------|--------|
+| `Syntax.v` | AST and de Bruijn syntax | ✅ Complete |
+| `Typing.v` | Type system and typing rules | ✅ Complete |
+| `Substitution.v` | Variable substitution proofs | ✅ Complete |
+| `Semantics.v` | Operational semantics | ✅ Complete |
+| `Progress.v` | Progress theorem | ✅ Complete |
+| `Preservation.v` | Preservation theorem | ✅ Complete |
+| `Soundness.v` | Type soundness composition | ✅ Complete |
+| `EffectSafety.v` | Effect handler safety | ✅ Complete |
+| `GenerationSnapshots.v` | Generation snapshot correctness (14 theorems) | ⚠️ 10/14 proved, 2 Admitted |
+| `LinearSafety.v` | Linear type safety invariants | ✅ Complete |
+
+Build infrastructure: `_CoqProject` + `Makefile` in `compiler-rust/proofs/`.
+
+**Admitted theorems** (require completion):
+- Detection completeness (GenerationSnapshots.v)
+- No use-after-free (GenerationSnapshots.v) — detailed proofs provided but not yet mechanized
+
 | Phase | Name | Status | Progress | Notes |
 |-------|------|--------|----------|-------|
-| M1 | Core Type System | 📋 Planned | 0% | Prerequisites complete (spec finalized) |
-| M2 | Effect Handlers | 📋 Planned | 0% | Depends on M1 |
-| M3 | Linearity | 📋 Planned | 0% | Depends on M2 |
-| M4 | Generational References | 📋 Planned | 0% | Depends on M2; novel contribution |
-| M5 | Composition Safety | 📋 Planned | 0% | Depends on M3, M4 |
+| M1 | Core Type System | ✅ Complete | 100% | Syntax, Typing, Substitution, Semantics |
+| M2 | Effect Handlers | ✅ Complete | 100% | EffectSafety.v |
+| M3 | Linearity | ✅ Complete | 100% | LinearSafety.v |
+| M4 | Generational References | ⚠️ In Progress | 85% | GenerationSnapshots.v — 2 theorems Admitted |
+| M5 | Composition Safety | ✅ Complete | 100% | Soundness.v (Progress + Preservation) |
 
 **Prerequisites Status**:
 - ✅ Formal semantics specification (this document)
@@ -844,10 +865,10 @@ This section provides a concrete plan for mechanizing Blood's formal semantics i
 - ✅ Generation snapshots proof (§13)
 - ✅ Composition safety analysis (§10)
 - ✅ Reference literature identified (§12.3)
-- 📋 Coq/Agda project setup (not started)
-- 📋 ITrees integration (not started)
+- ✅ Coq project setup (complete — `_CoqProject` + `Makefile`)
+- 📋 ITrees integration (not started — current proofs use direct Coq)
 
-**Blocking Items**: None (mechanization can begin when resources are allocated)
+**Remaining Work**: Complete 2 Admitted theorems in GenerationSnapshots.v
 
 ### 12.1 Choice of Proof Assistant
 

@@ -34,7 +34,7 @@ Blood synthesizes five cutting-edge programming language innovations into a unif
 |------------|--------|---------------------|
 | Content-Addressed Code | Unison | BLAKE3-256 AST hashing |
 | Generational Memory Safety | Vale | 128-bit generational pointers |
-| Mutable Value Semantics | Hylo | Default value semantics with escape analysis |
+| Hybrid Ownership Model | Hylo + Rust + Vale | Move semantics with escape-analyzed allocation and explicit borrowing |
 | Algebraic Effects | Koka | Row-polymorphic effect system |
 | Multiple Dispatch | Julia | Type-stable open dispatch |
 
@@ -122,7 +122,7 @@ Blood's safety model should feel like collaboration, not combat. When the compil
 
 #### Principle 4: Simplicity is Not Simplistic
 
-Blood should be simpler than Rust to learn, but not by hiding complexity — by **eliminating unnecessary complexity**. Mutable value semantics are genuinely simpler than borrow checking.
+Blood should be simpler than Rust to learn, but not by hiding complexity — by **eliminating unnecessary complexity**. Move semantics with escape-analyzed allocation are simpler to reason about than borrow checking while providing equivalent safety via generational references.
 
 #### Principle 5: Interop is First-Class
 
@@ -699,12 +699,12 @@ Blood uses the **Synthetic Safety Model (SSM)**, a hybrid ownership model that c
 
 | Aspect | Blood Approach | Source Inspiration |
 |--------|----------------|-------------------|
-| **Default** | Mutable value semantics (copies, not references) | Hylo (Val) |
+| **Default** | Move semantics (ownership transfer, not copies) | Rust |
 | **Explicit** | Borrowing via `&T` and `&mut T` when needed | Rust |
 | **Heap** | Generational references for `Box<T>`, collections | Vale |
 | **Resources** | Linear/affine types for must-use handles | Linear logic |
 
-> **Terminology Note**: Blood uses a **hybrid model**, not pure Hylo-style MVS. While Hylo deliberately avoids explicit borrowing, Blood includes `&T` and `&mut T` for cases where value semantics are insufficient. This provides the simplicity benefits of MVS while retaining reference capability when genuinely needed. See [MEMORY_MODEL.md §1.3](./MEMORY_MODEL.md#13-hybrid-model-clarification) for details.
+> **Terminology Note**: Blood uses a **hybrid ownership model** combining move semantics (Rust-inspired), escape-analyzed allocation (Vale-inspired), and generational references. Unlike Hylo's pure copy-by-default approach, Blood transfers ownership on assignment (move semantics). The escape analysis determines allocation tier (stack vs region vs persistent), not whether values are copied. Blood includes `&T` and `&mut T` for explicit borrowing when needed. See [MEMORY_MODEL.md §1.3](./MEMORY_MODEL.md#13-hybrid-model-clarification) for details.
 
 ### 5.2 Tiered Memory Model
 
@@ -736,9 +736,9 @@ Objects surviving 2³² generations are promoted to Tier 3 (Persistent), managed
 
 Mismatched generation check triggers deterministic trap, handled as `StaleReference` effect.
 
-### 5.4 Mutable Value Semantics
+### 5.4 Escape-Analyzed Allocation
 
-Blood defaults to value semantics. The compiler performs inter-procedural escape analysis:
+Blood uses move semantics by default. The compiler performs inter-procedural escape analysis to determine allocation tier:
 
 1. **Stack Promotion**: Objects that don't escape are stack-allocated
 2. **Check Elision**: Generation checks removed for locally-proven references

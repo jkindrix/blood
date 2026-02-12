@@ -8,7 +8,7 @@ Blood synthesizes five cutting-edge programming language innovations:
 
 - **Content-Addressed Code** (Unison) — Code identity via BLAKE3-256 hashes
 - **Generational Memory Safety** (Vale) — 128-bit fat pointers, no GC
-- **Mutable Value Semantics** (Hylo) — Simple ownership without borrow checker complexity
+- **Hybrid Ownership Model** (Hylo + Rust + Vale) — Move semantics with escape-analyzed allocation, no borrow checker
 - **Algebraic Effects** (Koka) — All side effects typed and composable
 - **Multiple Dispatch** (Julia) — Type-stable open extensibility
 
@@ -25,11 +25,11 @@ Core compiler is complete and tested. Programs compile and run with full type ch
 | Code Generation | ✅ Complete | LLVM backend |
 | Effects System | ✅ Integrated | Evidence passing with runtime FFI exports |
 | Memory Model | ✅ Integrated | Generational pointers in codegen (blood_alloc/blood_free) |
-| Runtime | ✅ Integrated | Scheduler FFI exports linked to programs |
-| Multiple Dispatch | ✅ Integrated | Runtime dispatch table with type tags |
+| Runtime | ✅ Integrated | Memory management, FFI exports linked to programs |
+| Multiple Dispatch | 🔶 Partial | Compile-time dispatch complete; runtime dispatch in progress |
 | Closures | ✅ Integrated | Environment capture and codegen |
 
-**Legend**: ✅ = Implemented and integrated
+**Legend**: ✅ = Implemented and integrated | 🔶 = Partially integrated
 
 **[Getting Started](docs/spec/GETTING_STARTED.md)** | [Specification](docs/spec/SPECIFICATION.md) | [Implementation Status](docs/spec/IMPLEMENTATION_STATUS.md)
 
