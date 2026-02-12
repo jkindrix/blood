@@ -573,4 +573,4 @@ We follow the [Contributor Covenant](https://www.contributor-covenant.org/). Be 
 
 ---
 
-*Last updated: 2026-01-13*
+*Last updated: 2026-02-12*
