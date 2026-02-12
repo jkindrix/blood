@@ -29,11 +29,57 @@ GROUND_TRUTH="${GROUND_TRUTH:-$HOME/blood/compiler-rust/tests/ground-truth}"
 export BLOOD_RUNTIME="${RUNTIME_O}"
 export BLOOD_RUST_RUNTIME="${RUNTIME_A}"
 
-step()  { printf "\n\033[1;34m==> %s\033[0m\n" "$1"; }
+step()  { printf "\n\033[1;34m==> [%s] %s\033[0m\n" "$(date +%H:%M:%S)" "$1"; }
 ok()    { printf "  \033[1;32m✓\033[0m %s\n" "$1"; }
 fail()  { printf "  \033[1;31m✗\033[0m %s\n" "$1"; }
 warn()  { printf "  \033[1;33m!\033[0m %s\n" "$1"; }
 die()   { printf "\033[1;31mERROR:\033[0m %s\n" "$1" >&2; exit 1; }
+
+# Wall-clock elapsed time helper: call elapsed_since $SECONDS_VAR
+elapsed_since() {
+    local start="$1"
+    local now
+    now=$(date +%s)
+    local diff=$((now - start))
+    local mins=$((diff / 60))
+    local secs=$((diff % 60))
+    if [ "$mins" -gt 0 ]; then
+        printf "%dm%02ds" "$mins" "$secs"
+    else
+        printf "%ds" "$secs"
+    fi
+}
+
+# Decode process exit code into human-readable signal name
+decode_exit() {
+    local code="$1"
+    if [ "$code" -eq 0 ]; then
+        echo "success"
+    elif [ "$code" -le 128 ]; then
+        echo "exit $code"
+    else
+        local sig=$((code - 128))
+        case "$sig" in
+            6)  echo "SIGABRT (abort/assert)" ;;
+            8)  echo "SIGFPE (arithmetic error, e.g. division by zero)" ;;
+            9)  echo "SIGKILL (killed)" ;;
+            11) echo "SIGSEGV (segmentation fault)" ;;
+            13) echo "SIGPIPE (broken pipe)" ;;
+            15) echo "SIGTERM (terminated)" ;;
+            *)  echo "signal $sig (exit $code)" ;;
+        esac
+    fi
+}
+
+# Log file setup — tee output to timestamped log
+LOG_DIR="$DIR/.logs"
+mkdir -p "$LOG_DIR"
+LOG_FILE="$LOG_DIR/build_$(date +%Y%m%d_%H%M%S).log"
+
+# Start logging (append to log file, also show on terminal)
+exec > >(tee -a "$LOG_FILE") 2>&1
+printf "=== Build started: %s ===\n" "$(date '+%Y-%m-%d %H:%M:%S')"
+printf "=== Log: %s ===\n" "$LOG_FILE"
 
 # Build first_gen from blood-rust
 build_first_gen() {
@@ -41,9 +87,16 @@ build_first_gen() {
     [ -f "$BLOOD_RUST" ] || die "blood-rust not found at $BLOOD_RUST"
 
     step "Building first_gen with blood-rust"
-    $BLOOD_RUST build main.blood $flags
-    mv main first_gen
-    ok "first_gen created ($(wc -c < first_gen) bytes)"
+    local start_ts
+    start_ts=$(date +%s)
+    if $BLOOD_RUST build main.blood $flags; then
+        mv main first_gen
+        ok "first_gen created ($(wc -c < first_gen) bytes) in $(elapsed_since "$start_ts")"
+    else
+        local rc=$?
+        fail "blood-rust build failed: $(decode_exit $rc)"
+        return 1
+    fi
 }
 
 # Self-compile: first_gen → second_gen
@@ -51,8 +104,39 @@ build_second_gen() {
     [ -f first_gen ] || die "first_gen not found. Run './build_selfhost.sh' first."
 
     step "Self-compiling (first_gen → second_gen)"
-    ./first_gen build main.blood -o second_gen.ll
-    ok "second_gen created ($(wc -c < second_gen) bytes)"
+    local start_ts
+    start_ts=$(date +%s)
+    local rc=0
+    ./first_gen build main.blood --timings -o second_gen.ll || rc=$?
+    local wall_time
+    wall_time=$(elapsed_since "$start_ts")
+
+    if [ "$rc" -ne 0 ]; then
+        fail "first_gen failed: $(decode_exit $rc) (wall time: $wall_time)"
+        if [ "$rc" -gt 128 ]; then
+            printf "  \033[1;31mCrash detected!\033[0m Signal: %s\n" "$(decode_exit $rc)"
+            printf "  Check log: %s\n" "$LOG_FILE"
+        fi
+        return 1
+    fi
+
+    # IR sanity checks (quick — catches obvious problems before expensive llc-18)
+    if [ -f second_gen.ll ]; then
+        local ll_lines ll_size ll_defines ll_declares
+        ll_lines=$(wc -l < second_gen.ll)
+        ll_size=$(wc -c < second_gen.ll)
+        ll_defines=$(grep -c '^define ' second_gen.ll || true)
+        ll_declares=$(grep -c '^declare ' second_gen.ll || true)
+        printf "  IR: %s lines, %s bytes, %d defines, %d declares\n" \
+            "$ll_lines" "$ll_size" "$ll_defines" "$ll_declares"
+
+        # Sanity: should have >1000 function definitions for self-hosting
+        if [ "$ll_defines" -lt 100 ]; then
+            warn "Suspiciously few function definitions ($ll_defines) — possible codegen issue"
+        fi
+    fi
+
+    ok "second_gen built ($(wc -c < second_gen) bytes) in $wall_time"
 }
 
 # Generate reference IR from blood-rust (used as baseline for comparisons)
@@ -371,45 +455,27 @@ smoke_test() {
 
     step "Smoke testing $bin"
 
-    # Test 1: version command
-    total=$((total + 1))
-    if "./$bin" version >/dev/null 2>&1; then
-        ok "version"; pass=$((pass + 1))
-    else
-        fail "version (exit $?)"
-    fi
+    run_smoke() {
+        local name="$1"
+        shift
+        total=$((total + 1))
+        local start_ts rc=0
+        start_ts=$(date +%s)
+        "./$bin" "$@" >/dev/null 2>&1 || rc=$?
+        local elapsed
+        elapsed=$(elapsed_since "$start_ts")
+        if [ "$rc" -eq 0 ]; then
+            ok "$name ($elapsed)"; pass=$((pass + 1))
+        else
+            fail "$name: $(decode_exit $rc) ($elapsed)"
+        fi
+    }
 
-    # Test 2: check common.blood
-    total=$((total + 1))
-    if "./$bin" check common.blood >/dev/null 2>&1; then
-        ok "check common.blood"; pass=$((pass + 1))
-    else
-        fail "check common.blood (exit $?)"
-    fi
-
-    # Test 3: check token.blood (cross-module import)
-    total=$((total + 1))
-    if "./$bin" check token.blood >/dev/null 2>&1; then
-        ok "check token.blood"; pass=$((pass + 1))
-    else
-        fail "check token.blood (exit $?)"
-    fi
-
-    # Test 4: check lexer.blood (chained imports)
-    total=$((total + 1))
-    if "./$bin" check lexer.blood >/dev/null 2>&1; then
-        ok "check lexer.blood"; pass=$((pass + 1))
-    else
-        fail "check lexer.blood (exit $?)"
-    fi
-
-    # Test 5: check main.blood (full compiler)
-    total=$((total + 1))
-    if "./$bin" check main.blood >/dev/null 2>&1; then
-        ok "check main.blood"; pass=$((pass + 1))
-    else
-        fail "check main.blood (exit $?)"
-    fi
+    run_smoke "version"             version
+    run_smoke "check common.blood"  check common.blood
+    run_smoke "check token.blood"   check token.blood
+    run_smoke "check lexer.blood"   check lexer.blood
+    run_smoke "check main.blood"    check main.blood
 
     printf "\n  %d/%d passed\n" "$pass" "$total"
     [ "$pass" -eq "$total" ] && return 0 || return 1
@@ -547,6 +613,8 @@ run_smoke_tests() {
 
 case "${1:-full}" in
     full)
+        PIPELINE_START=$(date +%s)
+
         build_first_gen "--timings"
 
         build_second_gen
@@ -560,14 +628,17 @@ case "${1:-full}" in
 
         step "Smoke test"
         if smoke_test second_gen; then
-            printf "\n\033[1;32mSelf-hosting pipeline complete.\033[0m\n"
+            printf "\n\033[1;32mSelf-hosting pipeline complete.\033[0m Total: %s\n" "$(elapsed_since "$PIPELINE_START")"
         else
-            printf "\n\033[1;33mSmoke test had failures.\033[0m\n"
+            printf "\n\033[1;33mSmoke test had failures.\033[0m Total: %s\n" "$(elapsed_since "$PIPELINE_START")"
             exit 1
         fi
+        printf "Log: %s\n" "$LOG_FILE"
         ;;
 
     rebuild)
+        PIPELINE_START=$(date +%s)
+
         build_second_gen
 
         step "Verification"
@@ -579,11 +650,12 @@ case "${1:-full}" in
 
         step "Smoke test"
         if smoke_test second_gen; then
-            printf "\n\033[1;32mRebuild complete.\033[0m\n"
+            printf "\n\033[1;32mRebuild complete.\033[0m Total: %s\n" "$(elapsed_since "$PIPELINE_START")"
         else
-            printf "\n\033[1;33mSmoke test had failures.\033[0m\n"
+            printf "\n\033[1;33mSmoke test had failures.\033[0m Total: %s\n" "$(elapsed_since "$PIPELINE_START")"
             exit 1
         fi
+        printf "Log: %s\n" "$LOG_FILE"
         ;;
 
     test)
@@ -678,7 +750,7 @@ case "${1:-full}" in
         step "Cleaning build artifacts"
         rm -f first_gen second_gen second_gen_asan
         rm -f *.ll *.o *.bc core
-        rm -rf .bisect_* .blood-cache
+        rm -rf .bisect_* .blood-cache .logs
         ok "Build artifacts removed"
         ;;
 

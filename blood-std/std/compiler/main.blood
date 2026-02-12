@@ -71,6 +71,8 @@ pub struct Args {
     pub verbose: bool,
     /// Whether to enable colored output.
     pub colors: bool,
+    /// Whether to print per-phase timing information.
+    pub timings: bool,
 }
 
 impl Args {
@@ -82,6 +84,7 @@ impl Args {
             output_file: Option::None,
             verbose: false,
             colors: true,
+            timings: false,
         }
     }
 
@@ -93,6 +96,7 @@ impl Args {
             output_file: Option::None,
             verbose: false,
             colors: true,
+            timings: false,
         }
     }
 
@@ -104,6 +108,7 @@ impl Args {
             output_file: Option::None,
             verbose: false,
             colors: true,
+            timings: false,
         }
     }
 }
@@ -162,6 +167,8 @@ fn parse_args_stub() -> Args {
 fn run_check(args: &Args) -> i32 {
     match &args.source_file {
         &Option::Some(ref path) => {
+            let check_start = blood_clock_millis();
+
             // Create region for all check allocations.
             // 16 MB initial, 50 GB max — virtual address reservation via mmap,
             // physical pages committed on demand.
@@ -170,11 +177,19 @@ fn run_check(args: &Args) -> i32 {
             region_activate(check_region);
 
             // Run check (all parse/HIR/typeck allocations go to check_region)
+            eprint_str("  Checking...");
             let result = driver::check_file(path.as_str());
+            let check_elapsed = blood_clock_millis() - check_start;
+            eprint_str(" done\n");
 
             // Print results while region is still alive (strings are in the region)
             let exit_code = if result.success {
                 print_success("Check passed");
+                if args.timings {
+                    print_str("\nTimings:\n");
+                    print_str("  Check total          ");
+                    print_timing_ms(check_elapsed);
+                }
                 0
             } else {
                 // Read the source content for error reporting
@@ -350,7 +365,7 @@ fn run_build(args: &Args) -> i32 {
             };
 
             // Phase 1: Generate LLVM IR via streaming codegen
-            let result = compile_file_streaming(path.as_str(), ll_path.as_str());
+            let result = compile_file_streaming(path.as_str(), ll_path.as_str(), args.timings);
             if !result {
                 return 1;
             }
@@ -368,7 +383,9 @@ fn run_build(args: &Args) -> i32 {
             llc_cmd.push_str(ll_path.as_str());
             llc_cmd.push_str(" -filetype=obj -o ");
             llc_cmd.push_str(obj_path.as_str());
+            let llc_start = blood_clock_millis();
             let llc_result = system(llc_cmd.as_str());
+            let llc_elapsed = blood_clock_millis() - llc_start;
             if llc_result != 0 {
                 print_error("llc-18 failed to compile IR to object file");
                 return 1;
@@ -388,7 +405,9 @@ fn run_build(args: &Args) -> i32 {
             clang_cmd.push_str(runtime.rust_runtime.as_str());
             clang_cmd.push_str(" -lm -ldl -lpthread -no-pie -o ");
             clang_cmd.push_str(bin_path.as_str());
+            let clang_start = blood_clock_millis();
             let clang_result = system(clang_cmd.as_str());
+            let clang_elapsed = blood_clock_millis() - clang_start;
             if clang_result != 0 {
                 print_error("clang-18 linking failed");
                 return 1;
@@ -396,6 +415,13 @@ fn run_build(args: &Args) -> i32 {
             print_success("Wrote executable to: ");
             print_str(bin_path.as_str());
             print_newline();
+
+            if args.timings {
+                print_str("  llc-18               ");
+                print_timing_ms(llc_elapsed);
+                print_str("  clang-18             ");
+                print_timing_ms(clang_elapsed);
+            }
 
             0
         }
@@ -419,7 +445,7 @@ fn run_run(args: &Args) -> i32 {
 
             // Phase 1: Generate LLVM IR
             let ll_path = default_ll_path(path);
-            let result = compile_file_streaming(path.as_str(), ll_path.as_str());
+            let result = compile_file_streaming(path.as_str(), ll_path.as_str(), args.timings);
             if !result {
                 return 1;
             }
@@ -608,6 +634,8 @@ pub fn parse_args(argc: i32, argv: &Vec<String>) -> Args {
                 args.verbose = true;
             } else if str_equals(arg, "--no-color") {
                 args.colors = false;
+            } else if str_equals(arg, "--timings") {
+                args.timings = true;
             }
         } else {
             // Positional argument (source file)
@@ -1404,7 +1432,9 @@ fn codegen_pass2(
 /// - Parse region: holds AST nodes (destroyed after HIR lowering)
 /// - HIR region: holds HIR/typeck data (destroyed after codegen)
 /// - Per-function MIR regions: hold MIR bodies (destroyed after each function's IR is written)
-fn compile_file_streaming(path: &str, output_path: &str) -> bool {
+fn compile_file_streaming(path: &str, output_path: &str, timings: bool) -> bool {
+    let compile_start = blood_clock_millis();
+
     // === Build cache check ===
     let base_dir = source::parent_dir(path);
     let cache_dir = build_cache::ensure_cache_dir(base_dir.as_str());
@@ -1441,11 +1471,16 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
     // === Parse Phase (parse_region) ===
     // 2 MB initial, 10 GB max — holds AST nodes, tokens, spans.
     // Destroyed after HIR lowering to free AST memory early.
+    eprint_str("  Parsing...");
+    let parse_start = blood_clock_millis();
+
     let parse_region = region_create(2097152, 10737418240);
     region_activate(parse_region);
 
     let parse_result = parser::parse_file(content.as_str());
+    let parse_elapsed = blood_clock_millis() - parse_start;
     if parse_result.errors.len() > 0 {
+        eprint_str(" FAILED\n");
         print_error("Parse errors:");
         let error_reporter = reporter::ErrorReporter::new(content.as_str(), path);
         let mut i: usize = 0;
@@ -1466,12 +1501,14 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
     let program = match &parse_result.program {
         &Option::Some(ref p) => p,
         &Option::None => {
+            eprint_str(" FAILED\n");
             print_error("No program produced by parser");
             region_deactivate();
             region_destroy(parse_region);
             return false;
         }
     };
+    eprint_str(" done\n");
 
     // Deactivate parse_region — AST remains readable for HIR lowering.
     region_deactivate();
@@ -1479,10 +1516,14 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
     // === HIR Lower Phase (hir_region) ===
     // 16 MB initial, 50 GB max — holds HIR items, bodies, types, typeck info.
     // Self-hosting requires ~21 GB for HIR + additional for typeck.
+    eprint_str("  HIR lowering...");
+    let hir_start = blood_clock_millis();
+
     let hir_region = region_create(16777216, 53687091200);
     region_activate(hir_region);
 
     let lower_result = hir_lower::lower_program_with_base_dir(program, base_dir, content.as_str());
+    let hir_elapsed = blood_clock_millis() - hir_start;
 
     // Check for HIR lowering errors
     let mut has_hir_errors = false;
@@ -1500,12 +1541,14 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
         di = di + 1;
     }
     if has_hir_errors {
+        eprint_str(" FAILED\n");
         print_error("HIR lowering errors");
         region_deactivate();
         region_destroy(hir_region);
         region_destroy(parse_region);
         return false;
     }
+    eprint_str(" done\n");
 
     // Deactivate hir_region temporarily to destroy parse_region
     region_deactivate();
@@ -1514,10 +1557,15 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
     region_destroy(parse_region);
 
     // === Type Check Phase (hir_region) ===
+    eprint_str("  Type checking...");
+    let typeck_start = blood_clock_millis();
+
     region_activate(hir_region);
 
     let typeck_result = typeck_driver::check_lower_result(&lower_result);
+    let typeck_elapsed = blood_clock_millis() - typeck_start;
     if !typeck_result.success {
+        eprint_str(" FAILED\n");
         let mut ti: usize = 0;
         while ti < typeck_result.errors.len() {
             let err = &typeck_result.errors[ti];
@@ -1532,12 +1580,16 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
         region_destroy(hir_region);
         return false;
     }
+    eprint_str(" done\n");
 
     // Deactivate hir_region — data remains readable for codegen.
     // New allocations (codegen ctx, def_names) go to global allocator.
     region_deactivate();
 
     // Phase 5: Streaming codegen (global allocator for ctx persistent state)
+    eprint_str("  Codegen...");
+    let codegen_start = blood_clock_millis();
+
     let mut ctx = codegen_streaming::begin_streaming_module("main", output_path, &lower_result.items);
 
     // Register builtin ADT types (Vec, String, HashMap, Box) in the ADT registry.
@@ -1652,6 +1704,8 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
 
     // Final flush: write any remaining buffered IR to disk
     ctx.flush_write_buffer();
+    let codegen_elapsed = blood_clock_millis() - codegen_start;
+    eprint_str(" done\n");
 
     // Destroy HIR region — bulk-frees all HIR and typeck data
     // (parse_region was already destroyed after HIR lowering)
@@ -1664,7 +1718,60 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
         file_write_string(cached_path.as_str(), compiled_ir);
     }
 
+    let compile_elapsed = blood_clock_millis() - compile_start;
+
+    // Print timing summary if requested
+    if timings {
+        print_str("\nTimings:\n");
+        print_str("  Parse                ");
+        print_timing_ms(parse_elapsed);
+        print_str("  HIR lowering         ");
+        print_timing_ms(hir_elapsed);
+        print_str("  Type checking        ");
+        print_timing_ms(typeck_elapsed);
+        print_str("  Codegen              ");
+        print_timing_ms(codegen_elapsed);
+        print_str("  ─────────────────────────\n");
+        print_str("  Compiler total       ");
+        print_timing_ms(compile_elapsed);
+    }
+
     true
+}
+
+/// Formats and prints a millisecond timing value with right-aligned ms suffix.
+fn print_timing_ms(ms: u64) {
+    let mut buf = String::new();
+    push_u64(&mut buf, ms);
+    buf.push_str("ms\n");
+    print_str(buf.as_str());
+}
+
+/// Pushes a u64 value with comma separators into a string.
+fn push_u64(s: &mut String, val: u64) {
+    if val == 0 {
+        s.push('0');
+        return;
+    }
+    // Build digits in reverse
+    let mut digits: Vec<u8> = Vec::new();
+    let mut n = val;
+    while n > 0 {
+        let digit = (n % 10) as u8;
+        digits.push(digit + 48);
+        n = n / 10;
+    }
+    // Push in reverse order with comma separators
+    let len = digits.len();
+    let mut i = len;
+    while i > 0 {
+        i = i - 1;
+        s.push(digits[i] as char);
+        let pos_from_right = i;
+        if pos_from_right > 0 && pos_from_right % 3 == 0 {
+            s.push(',');
+        }
+    }
 }
 
 /// Pushes a usize as decimal digits into a string.

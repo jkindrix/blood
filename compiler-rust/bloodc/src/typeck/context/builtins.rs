@@ -381,6 +381,14 @@ impl<'a> TypeContext<'a> {
         // env_get(&str) -> &str - get environment variable value (empty if unset)
         self.register_builtin_fn("env_get", vec![ref_str_ty.clone()], ref_str_ty.clone());
 
+        // === Timing ===
+
+        // blood_clock_millis() -> u64 - milliseconds since program start (monotonic)
+        self.register_builtin_fn("blood_clock_millis", vec![], u64_ty.clone());
+
+        // blood_clock_nanos() -> u64 - nanoseconds since program start (monotonic)
+        self.register_builtin_fn("blood_clock_nanos", vec![], u64_ty.clone());
+
         // === Command-Line Argument Functions ===
 
         // args_count() -> i32 - get number of command-line arguments

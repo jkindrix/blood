@@ -4375,6 +4375,16 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let env_get_type = str_slice_type.fn_type(&[str_slice_type.into()], false);
         self.module.add_function("env_get", env_get_type, None);
 
+        // === Timing ===
+
+        // blood_clock_millis() -> i64
+        let clock_millis_type = i64_type.fn_type(&[], false);
+        self.module.add_function("blood_clock_millis", clock_millis_type, None);
+
+        // blood_clock_nanos() -> i64
+        let clock_nanos_type = i64_type.fn_type(&[], false);
+        self.module.add_function("blood_clock_nanos", clock_nanos_type, None);
+
         // === Command-Line Arguments ===
 
         // args_count() -> i32
