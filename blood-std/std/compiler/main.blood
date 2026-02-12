@@ -205,7 +205,7 @@ fn run_check(args: &Args) -> i32 {
 
 /// Runs the build command.
 /// Uses streaming codegen to write IR directly to file, avoiding OOM.
-/// Then invokes llc-14 to produce an object file and clang-14 to link an executable.
+/// Then invokes llc-18 to produce an object file and clang-18 to link an executable.
 fn run_build(args: &Args) -> i32 {
     match &args.source_file {
         &Option::Some(ref path) => {
@@ -224,29 +224,29 @@ fn run_build(args: &Args) -> i32 {
             print_str(ll_path.as_str());
             print_newline();
 
-            // Phase 2: Compile IR to object file with llc-14
+            // Phase 2: Compile IR to object file with llc-18
             // Derive obj and bin paths from ll_path base (strip .ll extension)
             let base_path = strip_ll_ext(&ll_path);
             let mut obj_path = common::make_string(base_path.as_str());
             obj_path.push_str(".o");
             let mut llc_cmd = String::new();
-            llc_cmd.push_str("llc-14 --opaque-pointers ");
+            llc_cmd.push_str("llc-18 ");
             llc_cmd.push_str(ll_path.as_str());
             llc_cmd.push_str(" -filetype=obj -o ");
             llc_cmd.push_str(obj_path.as_str());
             let llc_result = system(llc_cmd.as_str());
             if llc_result != 0 {
-                print_error("llc-14 failed to compile IR to object file");
+                print_error("llc-18 failed to compile IR to object file");
                 return 1;
             }
             print_success("Wrote object file to: ");
             print_str(obj_path.as_str());
             print_newline();
 
-            // Phase 3: Link with clang-14, blood runtime, and C runtime stub
+            // Phase 3: Link with clang-18, blood runtime, and C runtime stub
             let bin_path = base_path;
             let mut clang_cmd = String::new();
-            clang_cmd.push_str("clang-14 ");
+            clang_cmd.push_str("clang-18 ");
             clang_cmd.push_str(obj_path.as_str());
             clang_cmd.push_str(" /home/jkindrix/blood-rust/runtime/runtime.o");
             clang_cmd.push_str(" /home/jkindrix/blood-rust/target/release/libblood_runtime.a");
@@ -254,7 +254,7 @@ fn run_build(args: &Args) -> i32 {
             clang_cmd.push_str(bin_path.as_str());
             let clang_result = system(clang_cmd.as_str());
             if clang_result != 0 {
-                print_error("clang-14 linking failed");
+                print_error("clang-18 linking failed");
                 return 1;
             }
             print_success("Wrote executable to: ");
@@ -271,7 +271,7 @@ fn run_build(args: &Args) -> i32 {
 }
 
 /// Runs the run command.
-/// Compiles source to LLVM IR, invokes llc-14 and clang-14, then executes the result.
+/// Compiles source to LLVM IR, invokes llc-18 and clang-18, then executes the result.
 fn run_run(args: &Args) -> i32 {
     match &args.source_file {
         &Option::Some(ref path) => {
@@ -282,23 +282,23 @@ fn run_run(args: &Args) -> i32 {
                 return 1;
             }
 
-            // Phase 2: Compile IR to object file with llc-14
+            // Phase 2: Compile IR to object file with llc-18
             let obj_path = replace_ext(path, ".o");
             let mut llc_cmd = String::new();
-            llc_cmd.push_str("llc-14 --opaque-pointers ");
+            llc_cmd.push_str("llc-18 ");
             llc_cmd.push_str(ll_path.as_str());
             llc_cmd.push_str(" -filetype=obj -o ");
             llc_cmd.push_str(obj_path.as_str());
             let llc_result = system(llc_cmd.as_str());
             if llc_result != 0 {
-                print_error("llc-14 failed to compile IR to object file");
+                print_error("llc-18 failed to compile IR to object file");
                 return 1;
             }
 
-            // Phase 3: Link with clang-14, blood runtime, and C runtime stub
+            // Phase 3: Link with clang-18, blood runtime, and C runtime stub
             let bin_path = strip_blood_ext(path);
             let mut clang_cmd = String::new();
-            clang_cmd.push_str("clang-14 ");
+            clang_cmd.push_str("clang-18 ");
             clang_cmd.push_str(obj_path.as_str());
             clang_cmd.push_str(" /home/jkindrix/blood-rust/runtime/runtime.o");
             clang_cmd.push_str(" /home/jkindrix/blood-rust/target/release/libblood_runtime.a");
@@ -306,7 +306,7 @@ fn run_run(args: &Args) -> i32 {
             clang_cmd.push_str(bin_path.as_str());
             let clang_result = system(clang_cmd.as_str());
             if clang_result != 0 {
-                print_error("clang-14 linking failed");
+                print_error("clang-18 linking failed");
                 return 1;
             }
 

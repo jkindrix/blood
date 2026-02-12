@@ -76,10 +76,10 @@ verify_ir() {
         generate_reference_ir
     fi
 
-    # Step A: Structural IR verification with opt-14
+    # Step A: Structural IR verification with opt-18
     step "Verifying IR structure ($ir_file)"
     local verify_output
-    if verify_output=$(opt-14 -opaque-pointers -passes=verify "$ir_file" -disable-output 2>&1); then
+    if verify_output=$(opt-18 -passes=verify "$ir_file" -disable-output 2>&1); then
         ok "IR structure valid (SSA, types, dominance)"
     else
         fail "IR structure verification failed"
@@ -118,7 +118,7 @@ verify_ir() {
         fi
 
         # Run FileCheck against the produced IR
-        if FileCheck-14 --input-file="$check_tmpdir/check_out.ll" "$check_src" 2>/dev/null; then
+        if FileCheck-18 --input-file="$check_tmpdir/check_out.ll" "$check_src" 2>/dev/null; then
             ok "$check_name"
             fc_pass=$((fc_pass + 1))
         else
@@ -177,23 +177,23 @@ build_asan() {
     step "Building ASan-instrumented binary from $ir_file"
 
     # Assemble IR to bitcode
-    llvm-as-14 -opaque-pointers "$ir_file" -o second_gen_asan.bc
+    llvm-as-18 "$ir_file" -o second_gen_asan.bc
     ok "Assembled to bitcode"
 
     # Run ASan instrumentation pass
-    opt-14 -opaque-pointers \
+    opt-18 \
         -passes='module(asan-module),function(asan)' \
         second_gen_asan.bc -o second_gen_asan_inst.bc
     ok "ASan instrumentation applied"
 
     # Compile to object
-    llc-14 -opaque-pointers second_gen_asan_inst.bc \
+    llc-18 second_gen_asan_inst.bc \
         -o second_gen_asan.o -filetype=obj -relocation-model=pic
     ok "Compiled to object"
 
     # Link with clang (handles ASan runtime linkage)
     # runtime.o already contains main() → blood_main(), no need for main_wrapper.c
-    clang-14 second_gen_asan.o "$RUNTIME_O" "$RUNTIME_A" \
+    clang-18 second_gen_asan.o "$RUNTIME_O" "$RUNTIME_A" \
         -fsanitize=address -lstdc++ -lm -lpthread -ldl -no-pie \
         -o second_gen_asan
     ok "Linked second_gen_asan ($(wc -c < second_gen_asan) bytes)"
@@ -220,8 +220,8 @@ bisect_functions() {
     trap "rm -rf '$bisect_dir'" EXIT
 
     # Convert both IR files to bitcode
-    llvm-as-14 -opaque-pointers reference_ir.ll -o "$bisect_dir/ref.bc"
-    llvm-as-14 -opaque-pointers "$self_ir" -o "$bisect_dir/self.bc"
+    llvm-as-18 reference_ir.ll -o "$bisect_dir/ref.bc"
+    llvm-as-18 "$self_ir" -o "$bisect_dir/self.bc"
     ok "Assembled both IR files to bitcode"
 
     # Extract function names from self-compiled IR (only user functions, not declarations)
@@ -256,7 +256,7 @@ bisect_functions() {
         fi
 
         # Extract specified functions from self-compiled bitcode
-        if ! llvm-extract-14 -opaque-pointers $extract_args \
+        if ! llvm-extract-18 $extract_args \
                 "$bisect_dir/self.bc" -o "$bisect_dir/extracted.bc" 2>/dev/null; then
             warn "Could not extract functions (some may be missing)"
             return 1
@@ -269,13 +269,13 @@ bisect_functions() {
             delete_args="$delete_args --delete=$fname"
         done < "$func_list"
 
-        if ! llvm-extract-14 -opaque-pointers $delete_args \
+        if ! llvm-extract-18 $delete_args \
                 "$bisect_dir/ref.bc" -o "$bisect_dir/ref_trimmed.bc" 2>/dev/null; then
             # If deletion fails, try linking directly
             cp "$bisect_dir/ref.bc" "$bisect_dir/ref_trimmed.bc"
         fi
 
-        if ! llvm-link-14 -opaque-pointers \
+        if ! llvm-link-18 \
                 "$bisect_dir/ref_trimmed.bc" "$bisect_dir/extracted.bc" \
                 -o "$hybrid_bc" 2>/dev/null; then
             warn "Link failed for this subset"
@@ -283,13 +283,13 @@ bisect_functions() {
         fi
 
         # Build hybrid binary
-        if ! llc-14 -opaque-pointers "$hybrid_bc" \
+        if ! llc-18 "$hybrid_bc" \
                 -o "$bisect_dir/hybrid.o" -filetype=obj -relocation-model=pic 2>/dev/null; then
             warn "LLC failed for hybrid"
             return 1
         fi
 
-        if ! clang-14 "$bisect_dir/hybrid.o" "$RUNTIME_O" "$RUNTIME_A" \
+        if ! clang-18 "$bisect_dir/hybrid.o" "$RUNTIME_O" "$RUNTIME_A" \
                 -lm -ldl -lpthread -no-pie -o "$bisect_dir/hybrid" 2>/dev/null; then
             warn "Link failed for hybrid binary"
             return 1
@@ -622,13 +622,13 @@ case "${1:-full}" in
                 continue
             fi
 
-            if FileCheck-14 --input-file="$local_tmpdir/check_out.ll" "$check_src" 2>/dev/null; then
+            if FileCheck-18 --input-file="$local_tmpdir/check_out.ll" "$check_src" 2>/dev/null; then
                 ok "$local_name"
                 local_pass=$((local_pass + 1))
             else
                 fail "$local_name"
                 # Show FileCheck output for debugging
-                FileCheck-14 --input-file="$local_tmpdir/check_out.ll" "$check_src" 2>&1 | head -10 || true
+                FileCheck-18 --input-file="$local_tmpdir/check_out.ll" "$check_src" 2>&1 | head -10 || true
                 local_fail=$((local_fail + 1))
             fi
 
