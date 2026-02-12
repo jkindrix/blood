@@ -1,3 +1,5 @@
+> **Note:** See the root `CLAUDE.md` for comprehensive development guidelines. This file contains compiler-specific rules only.
+
 # Blood Compiler Development Guidelines
 
 ## Prime Directive: Zero Shortcuts

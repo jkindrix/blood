@@ -14,9 +14,9 @@ Blood synthesizes five cutting-edge programming language innovations:
 
 ## Status
 
-> **Version: 0.5.2**
+> **Version: 0.5.3**
 
-Core compiler is complete and tested. Programs compile and run with full type checking, effect tracking, and generational memory safety. See [IMPLEMENTATION_STATUS.md](docs/spec/IMPLEMENTATION_STATUS.md) for detailed component status.
+Core compiler is complete and tested. Programs compile and run with full type checking, effect tracking, and generational memory safety. 1,779 tests passing, 0 clippy warnings. See [IMPLEMENTATION_STATUS.md](docs/spec/IMPLEMENTATION_STATUS.md) for detailed component status.
 
 | Component | Status | Details |
 |-----------|--------|---------|
@@ -47,6 +47,35 @@ Blood is for avionics, medical devices, financial infrastructure, autonomous veh
 4. **Effects are Universal** — IO, state, exceptions, async — one unified mechanism
 5. **Interop is First-Class** — C FFI designed from day one
 
+## Repository Structure
+
+This is a **monorepo** containing both the Blood language project and the Rust bootstrap compiler.
+
+```
+blood/
+├── blood-std/              # Standard library (Blood source)
+│   └── std/
+│       ├── compiler/       # Self-hosted compiler (written in Blood)
+│       ├── core/           # Core types (Option, String, Box, etc.)
+│       ├── collections/    # Vec, HashMap, LinkedList, etc.
+│       ├── effects/        # Effect system primitives
+│       ├── sync/           # Concurrency primitives
+│       └── ...
+├── compiler-rust/          # Rust bootstrap compiler (git subtree)
+│   ├── bloodc/src/         # Compiler source (Rust)
+│   ├── runtime/            # C runtime library
+│   ├── blood-std/          # Stdlib copy for compiler tests
+│   └── Cargo.toml          # Workspace manifest
+├── docs/                   # Language specification & documentation
+│   ├── spec/               # Core specs (SPECIFICATION, MEMORY_MODEL, etc.)
+│   ├── comparisons/        # Blood vs other languages
+│   └── postmortem/         # Bug investigation records
+├── examples/               # Blood language examples
+└── editors/                # Editor support (VS Code, etc.)
+```
+
+See [`compiler-rust/README.md`](compiler-rust/README.md) for Rust-compiler-specific details.
+
 ## Quick Example
 
 ```blood
@@ -74,11 +103,15 @@ fn main() / {IO, Error<AppError>} {
 ## Quick Start
 
 ```bash
-# Build the compiler
+# Build the bootstrap compiler
+cd compiler-rust
 cargo build --release
 
 # Compile and run a program
 cargo run -- run examples/fizzbuzz.blood
+
+# Run the test suite
+cargo test --workspace
 ```
 
 See **[GETTING_STARTED.md](docs/spec/GETTING_STARTED.md)** for the full tutorial.
