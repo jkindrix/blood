@@ -1,0 +1,30 @@
+// Test: mutually recursive functions
+// EXPECT: 1
+// EXPECT: 0
+fn is_even(n: i32) -> bool {
+    if n == 0 { true }
+    else { is_odd(n - 1) }
+}
+
+fn is_odd(n: i32) -> bool {
+    if n == 0 { false }
+    else { is_even(n - 1) }
+}
+
+fn main() -> i32 {
+    if is_even(10) {
+        println_int(1);
+    } else {
+        println_int(0);
+    }
+
+    if is_odd(10) {
+        println_int(1);
+    } else {
+        println_int(0);
+    }
+
+    if !is_even(10) { return 1; }
+    if is_odd(10) { return 2; }
+    0
+}

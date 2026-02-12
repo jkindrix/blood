@@ -1,0 +1,22 @@
+// Test: array to slice coercion
+// EXPECT: 6
+fn sum_slice(s: &[i32]) -> i32 {
+    let mut sum: i32 = 0;
+    let mut i: i32 = 0;
+    // Note: slice length access may vary
+    while i < 3 {
+        sum = sum + s[i];
+        i = i + 1;
+    }
+    sum
+}
+
+fn main() -> i32 {
+    let arr: [i32; 3] = [1, 2, 3];
+    // Array should coerce to slice when passed to slice parameter
+    let total: i32 = sum_slice(&arr);
+    println_int(total); // 6
+    if total != 6 { return 1; }
+
+    0
+}

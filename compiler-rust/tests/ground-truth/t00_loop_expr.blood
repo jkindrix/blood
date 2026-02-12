@@ -1,0 +1,51 @@
+// Test: loop expression with break
+// EXPECT: 5
+// EXPECT: 15
+// EXPECT: 10
+fn main() -> i32 {
+    // Basic loop with break
+    let mut i: i32 = 0;
+    loop {
+        i = i + 1;
+        if i >= 5 {
+            break;
+        }
+    }
+    println_int(i); // 5
+    if i != 5 { return 1; }
+
+    // Loop as expression (break with value)
+    let mut n: i32 = 0;
+    let mut sum: i32 = 0;
+    loop {
+        n = n + 1;
+        sum = sum + n;
+        if n >= 5 {
+            break;
+        }
+    }
+    println_int(sum); // 1+2+3+4+5 = 15
+    if sum != 15 { return 2; }
+
+    // Nested loop with break
+    let mut count: i32 = 0;
+    let mut outer: i32 = 0;
+    loop {
+        let mut inner: i32 = 0;
+        loop {
+            count = count + 1;
+            inner = inner + 1;
+            if inner >= 2 {
+                break;
+            }
+        }
+        outer = outer + 1;
+        if outer >= 5 {
+            break;
+        }
+    }
+    println_int(count); // 5 * 2 = 10
+    if count != 10 { return 3; }
+
+    0
+}

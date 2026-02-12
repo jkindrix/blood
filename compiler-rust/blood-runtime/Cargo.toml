@@ -1,0 +1,86 @@
+[package]
+name = "blood-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Runtime library for the Blood programming language"
+
+[lib]
+# Build as both Rust library and C-compatible static/dynamic library
+crate-type = ["rlib", "staticlib", "cdylib"]
+
+# Disable LTO for the runtime crate — LTO strips #[no_mangle] FFI symbols
+# from the static library (libblood_runtime.a), causing link failures when
+# test binaries try to resolve blood_assert_eq_int, blood_assert, etc.
+[profile.release]
+lto = false
+
+[profile.bench]
+lto = false
+
+[dependencies]
+# Concurrency primitives
+crossbeam-deque = "0.8"
+crossbeam-channel = "0.5"
+crossbeam-utils = "0.8"
+
+# Atomic operations
+parking_lot = "0.12"
+
+# FFI
+libloading = "0.8"
+
+# Utilities
+pin-project-lite = "0.2"
+
+# I/O (platform-specific)
+[target.'cfg(target_os = "linux")'.dependencies]
+io-uring = { version = "0.6", optional = true }
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.28", features = ["event", "fs", "mman", "net", "signal"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.54", features = [
+    "Win32_Foundation",
+    "Win32_System_IO",
+    "Win32_Networking_WinSock",
+    "Win32_Storage_FileSystem",
+] }
+
+[features]
+default = []
+# Enable io_uring for high-performance async I/O on Linux 5.6+.
+# This provides better performance than epoll for many workloads but requires:
+#   - Linux kernel 5.6 or later (5.11+ recommended for full feature support)
+#   - liburing development headers (install via: apt install liburing-dev)
+# Enable with: cargo build --features io_uring
+io_uring = ["io-uring"]
+
+[dev-dependencies]
+pretty_assertions.workspace = true
+criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1.4"
+rand = "0.8"
+
+[[test]]
+name = "ffi_integration"
+path = "tests/ffi_integration.rs"
+
+[[bench]]
+name = "scheduler_bench"
+harness = false
+
+[[bench]]
+name = "channel_bench"
+harness = false
+
+[[bench]]
+name = "memory_bench"
+harness = false
+
+[[bench]]
+name = "effects_bench"
+harness = false

@@ -1,0 +1,522 @@
+// Blood Standard Library Tests - Vec<T>
+//
+// Comprehensive tests for the Vec collection type.
+
+use std::collections::Vec;
+
+// =============================================================================
+// Construction Tests
+// =============================================================================
+
+/// Test Vec::new() creates an empty vector
+fn test_vec_new() {
+    let v: Vec<i32> = Vec::new();
+    assert(v.len() == 0, "new Vec should be empty");
+    assert(v.is_empty(), "new Vec is_empty should be true");
+    assert(v.capacity() == 0, "new Vec should have 0 capacity");
+}
+
+/// Test Vec::with_capacity() preallocates
+fn test_vec_with_capacity() {
+    let v: Vec<i32> = Vec::with_capacity(10);
+    assert(v.len() == 0, "with_capacity Vec should be empty");
+    assert(v.is_empty(), "with_capacity Vec is_empty should be true");
+    assert(v.capacity() >= 10, "with_capacity should allocate at least requested");
+}
+
+/// Test vec! macro creates populated vector
+fn test_vec_macro() {
+    let v = vec![1, 2, 3, 4, 5];
+    assert(v.len() == 5, "vec! should create Vec with 5 elements");
+    assert(!v.is_empty(), "vec! created Vec should not be empty");
+}
+
+// =============================================================================
+// Push/Pop Tests
+// =============================================================================
+
+/// Test push appends elements
+fn test_vec_push() {
+    let mut v: Vec<i32> = Vec::new();
+    v.push(1);
+    assert(v.len() == 1, "push should increase len");
+    v.push(2);
+    assert(v.len() == 2, "push should increase len");
+    v.push(3);
+    assert(v.len() == 3, "push should increase len");
+}
+
+/// Test pop removes and returns last element
+fn test_vec_pop() {
+    let mut v = vec![1, 2, 3];
+
+    let last = v.pop();
+    assert(last == Some(3), "pop should return last element");
+    assert(v.len() == 2, "pop should decrease len");
+
+    let next = v.pop();
+    assert(next == Some(2), "pop should return new last element");
+    assert(v.len() == 1, "pop should decrease len");
+
+    let first = v.pop();
+    assert(first == Some(1), "pop should return last remaining element");
+    assert(v.is_empty(), "pop should leave vec empty");
+
+    let empty = v.pop();
+    assert(empty == None, "pop on empty should return None");
+}
+
+/// Test push triggers growth when needed
+fn test_vec_growth() {
+    let mut v: Vec<i32> = Vec::with_capacity(2);
+    let initial_cap = v.capacity();
+
+    v.push(1);
+    v.push(2);
+    // At capacity now
+    v.push(3); // Should trigger reallocation
+
+    assert(v.capacity() > initial_cap, "capacity should grow after exceeding initial");
+    assert(v.len() == 3, "all elements should still be present");
+}
+
+// =============================================================================
+// Indexing Tests
+// =============================================================================
+
+/// Test index access with []
+fn test_vec_index() {
+    let v = vec![10, 20, 30, 40, 50];
+
+    assert(v[0] == 10, "index 0 should be 10");
+    assert(v[1] == 20, "index 1 should be 20");
+    assert(v[2] == 30, "index 2 should be 30");
+    assert(v[3] == 40, "index 3 should be 40");
+    assert(v[4] == 50, "index 4 should be 50");
+}
+
+/// Test get() returns Option
+fn test_vec_get() {
+    let v = vec![1, 2, 3];
+
+    assert(v.get(0) == Some(&1), "get(0) should return Some(&1)");
+    assert(v.get(1) == Some(&2), "get(1) should return Some(&2)");
+    assert(v.get(2) == Some(&3), "get(2) should return Some(&3)");
+    assert(v.get(3) == None, "get(3) should return None (out of bounds)");
+    assert(v.get(100) == None, "get(100) should return None");
+}
+
+/// Test first() and last()
+fn test_vec_first_last() {
+    let v = vec![1, 2, 3];
+
+    assert(v.first() == Some(&1), "first() should return first element");
+    assert(v.last() == Some(&3), "last() should return last element");
+
+    let empty: Vec<i32> = Vec::new();
+    assert(empty.first() == None, "first() on empty should be None");
+    assert(empty.last() == None, "last() on empty should be None");
+}
+
+// =============================================================================
+// Insert/Remove Tests
+// =============================================================================
+
+/// Test insert at index
+fn test_vec_insert() {
+    let mut v = vec![1, 3, 4];
+    v.insert(1, 2); // Insert 2 at index 1
+
+    assert(v.len() == 4, "insert should increase len");
+    assert(v[0] == 1, "element 0 should be unchanged");
+    assert(v[1] == 2, "element 1 should be the inserted value");
+    assert(v[2] == 3, "element 2 should be shifted");
+    assert(v[3] == 4, "element 3 should be shifted");
+}
+
+/// Test insert at beginning
+fn test_vec_insert_front() {
+    let mut v = vec![2, 3];
+    v.insert(0, 1);
+
+    assert(v[0] == 1, "inserted at front should be first");
+    assert(v[1] == 2, "other elements shifted");
+    assert(v[2] == 3, "other elements shifted");
+}
+
+/// Test insert at end (same as push)
+fn test_vec_insert_end() {
+    let mut v = vec![1, 2];
+    v.insert(2, 3);
+
+    assert(v[2] == 3, "insert at end should append");
+    assert(v.len() == 3, "len should increase");
+}
+
+/// Test remove at index
+fn test_vec_remove() {
+    let mut v = vec![1, 2, 3, 4];
+    let removed = v.remove(1);
+
+    assert(removed == 2, "remove should return removed element");
+    assert(v.len() == 3, "remove should decrease len");
+    assert(v[0] == 1, "elements before unchanged");
+    assert(v[1] == 3, "elements after shifted down");
+    assert(v[2] == 4, "elements after shifted down");
+}
+
+/// Test swap_remove (O(1) but doesn't preserve order)
+fn test_vec_swap_remove() {
+    let mut v = vec![1, 2, 3, 4];
+    let removed = v.swap_remove(1);
+
+    assert(removed == 2, "swap_remove should return removed element");
+    assert(v.len() == 3, "swap_remove should decrease len");
+    // Last element moved to removed position
+    assert(v[1] == 4, "swap_remove should move last element to gap");
+}
+
+// =============================================================================
+// Capacity Management Tests
+// =============================================================================
+
+/// Test reserve() preallocates space
+fn test_vec_reserve() {
+    let mut v: Vec<i32> = Vec::new();
+    v.reserve(100);
+
+    assert(v.capacity() >= 100, "reserve should allocate at least requested");
+    assert(v.len() == 0, "reserve should not change len");
+}
+
+/// Test reserve_exact() allocates exact amount
+fn test_vec_reserve_exact() {
+    let mut v: Vec<i32> = Vec::new();
+    v.push(1);
+    v.reserve_exact(99);
+
+    assert(v.capacity() >= 100, "reserve_exact should allocate for current + additional");
+}
+
+/// Test shrink_to_fit() reduces capacity
+fn test_vec_shrink_to_fit() {
+    let mut v: Vec<i32> = Vec::with_capacity(100);
+    v.push(1);
+    v.push(2);
+    v.push(3);
+
+    v.shrink_to_fit();
+
+    assert(v.capacity() <= 10, "shrink_to_fit should reduce excess capacity");
+    assert(v.len() == 3, "shrink_to_fit should preserve elements");
+}
+
+/// Test clear() removes all elements
+fn test_vec_clear() {
+    let mut v = vec![1, 2, 3, 4, 5];
+    let cap_before = v.capacity();
+
+    v.clear();
+
+    assert(v.is_empty(), "clear should make vec empty");
+    assert(v.len() == 0, "clear should set len to 0");
+    assert(v.capacity() == cap_before, "clear should preserve capacity");
+}
+
+// =============================================================================
+// Iteration Tests
+// =============================================================================
+
+/// Test iteration with for loop
+fn test_vec_iteration() {
+    let v = vec![1, 2, 3, 4, 5];
+    let mut sum = 0;
+
+    for x in &v {
+        sum = sum + *x;
+    }
+
+    assert(sum == 15, "iteration should visit all elements");
+}
+
+/// Test iter() creates iterator
+fn test_vec_iter() {
+    let v = vec![1, 2, 3];
+    let mut iter = v.iter();
+
+    assert(iter.next() == Some(&1), "iter should yield first");
+    assert(iter.next() == Some(&2), "iter should yield second");
+    assert(iter.next() == Some(&3), "iter should yield third");
+    assert(iter.next() == None, "iter should yield None when exhausted");
+}
+
+/// Test iter_mut() creates mutable iterator
+fn test_vec_iter_mut() {
+    let mut v = vec![1, 2, 3];
+
+    for x in v.iter_mut() {
+        *x = *x * 2;
+    }
+
+    assert(v[0] == 2, "iter_mut should allow mutation");
+    assert(v[1] == 4, "iter_mut should allow mutation");
+    assert(v[2] == 6, "iter_mut should allow mutation");
+}
+
+/// Test into_iter() consumes vector
+fn test_vec_into_iter() {
+    let v = vec![10, 20, 30];
+    let mut iter = v.into_iter();
+
+    assert(iter.next() == Some(10), "into_iter yields owned values");
+    assert(iter.next() == Some(20), "into_iter yields owned values");
+    assert(iter.next() == Some(30), "into_iter yields owned values");
+    assert(iter.next() == None, "into_iter exhausts");
+    // v is now consumed and cannot be used
+}
+
+// =============================================================================
+// Search Tests
+// =============================================================================
+
+/// Test contains() checks membership
+fn test_vec_contains() {
+    let v = vec![1, 2, 3, 4, 5];
+
+    assert(v.contains(&3), "contains should find existing element");
+    assert(v.contains(&1), "contains should find first element");
+    assert(v.contains(&5), "contains should find last element");
+    assert(!v.contains(&6), "contains should return false for missing");
+    assert(!v.contains(&0), "contains should return false for missing");
+}
+
+/// Test position() finds index
+fn test_vec_position() {
+    let v = vec![10, 20, 30, 40, 50];
+
+    assert(v.iter().position(|x| *x == 30) == Some(2), "position should find index");
+    assert(v.iter().position(|x| *x == 10) == Some(0), "position should find first");
+    assert(v.iter().position(|x| *x == 50) == Some(4), "position should find last");
+    assert(v.iter().position(|x| *x == 100) == None, "position should return None if not found");
+}
+
+/// Test binary_search() on sorted vec
+fn test_vec_binary_search() {
+    let v = vec![1, 3, 5, 7, 9, 11, 13];
+
+    assert(v.binary_search(&7) == Ok(3), "binary_search should find element");
+    assert(v.binary_search(&1) == Ok(0), "binary_search should find first");
+    assert(v.binary_search(&13) == Ok(6), "binary_search should find last");
+
+    // Not found - returns Err with insertion point
+    match v.binary_search(&6) {
+        Err(idx) => assert(idx == 3, "binary_search should return insertion point"),
+        Ok(_) => assert(false, "6 should not be found"),
+    }
+}
+
+// =============================================================================
+// Sorting Tests
+// =============================================================================
+
+/// Test sort() orders elements
+fn test_vec_sort() {
+    let mut v = vec![5, 2, 8, 1, 9, 3];
+    v.sort();
+
+    assert(v == vec![1, 2, 3, 5, 8, 9], "sort should order elements");
+}
+
+/// Test sort_by() with custom comparator
+fn test_vec_sort_by() {
+    let mut v = vec![5, 2, 8, 1, 9, 3];
+    v.sort_by(|a, b| b.cmp(a)); // Reverse order
+
+    assert(v == vec![9, 8, 5, 3, 2, 1], "sort_by should order by comparator");
+}
+
+/// Test reverse() reverses in place
+fn test_vec_reverse() {
+    let mut v = vec![1, 2, 3, 4, 5];
+    v.reverse();
+
+    assert(v == vec![5, 4, 3, 2, 1], "reverse should flip order");
+}
+
+// =============================================================================
+// Clone and Equality Tests
+// =============================================================================
+
+/// Test Clone trait
+fn test_vec_clone() {
+    let v1 = vec![1, 2, 3];
+    let v2 = v1.clone();
+
+    assert(v1 == v2, "clone should create equal vec");
+    assert(v1.len() == v2.len(), "clone should preserve len");
+}
+
+/// Test PartialEq trait
+fn test_vec_equality() {
+    let v1 = vec![1, 2, 3];
+    let v2 = vec![1, 2, 3];
+    let v3 = vec![1, 2, 4];
+    let v4 = vec![1, 2];
+
+    assert(v1 == v2, "equal vecs should be equal");
+    assert(v1 != v3, "different content should not be equal");
+    assert(v1 != v4, "different length should not be equal");
+}
+
+// =============================================================================
+// Slice Operations Tests
+// =============================================================================
+
+/// Test as_slice() returns slice reference
+fn test_vec_as_slice() {
+    let v = vec![1, 2, 3];
+    let slice = v.as_slice();
+
+    assert(slice.len() == 3, "as_slice should have same len");
+    assert(slice[0] == 1, "as_slice should access elements");
+}
+
+/// Test truncate() shortens vec
+fn test_vec_truncate() {
+    let mut v = vec![1, 2, 3, 4, 5];
+    v.truncate(3);
+
+    assert(v.len() == 3, "truncate should reduce len");
+    assert(v == vec![1, 2, 3], "truncate should keep prefix");
+}
+
+/// Test extend() appends from iterator
+fn test_vec_extend() {
+    let mut v = vec![1, 2, 3];
+    v.extend(vec![4, 5, 6]);
+
+    assert(v == vec![1, 2, 3, 4, 5, 6], "extend should append all");
+    assert(v.len() == 6, "extend should increase len");
+}
+
+/// Test append() moves elements from another vec
+fn test_vec_append() {
+    let mut v1 = vec![1, 2, 3];
+    let mut v2 = vec![4, 5, 6];
+
+    v1.append(&mut v2);
+
+    assert(v1 == vec![1, 2, 3, 4, 5, 6], "append should combine vecs");
+    assert(v2.is_empty(), "append should empty source");
+}
+
+/// Test split_off() splits vec at index
+fn test_vec_split_off() {
+    let mut v = vec![1, 2, 3, 4, 5];
+    let tail = v.split_off(2);
+
+    assert(v == vec![1, 2], "split_off should keep prefix");
+    assert(tail == vec![3, 4, 5], "split_off should return suffix");
+}
+
+// =============================================================================
+// Filter/Map Operations Tests
+// =============================================================================
+
+/// Test retain() keeps matching elements
+fn test_vec_retain() {
+    let mut v = vec![1, 2, 3, 4, 5, 6];
+    v.retain(|x| *x % 2 == 0);
+
+    assert(v == vec![2, 4, 6], "retain should keep even numbers");
+}
+
+/// Test dedup() removes consecutive duplicates
+fn test_vec_dedup() {
+    let mut v = vec![1, 1, 2, 2, 2, 3, 1, 1];
+    v.dedup();
+
+    assert(v == vec![1, 2, 3, 1], "dedup should remove consecutive duplicates");
+}
+
+// =============================================================================
+// Main Test Runner
+// =============================================================================
+
+fn main() {
+    println_str("Running Vec<T> tests...");
+    println_str("");
+
+    // Construction
+    test_vec_new();
+    test_vec_with_capacity();
+    test_vec_macro();
+    println_str("[PASS] Construction tests");
+
+    // Push/Pop
+    test_vec_push();
+    test_vec_pop();
+    test_vec_growth();
+    println_str("[PASS] Push/Pop tests");
+
+    // Indexing
+    test_vec_index();
+    test_vec_get();
+    test_vec_first_last();
+    println_str("[PASS] Indexing tests");
+
+    // Insert/Remove
+    test_vec_insert();
+    test_vec_insert_front();
+    test_vec_insert_end();
+    test_vec_remove();
+    test_vec_swap_remove();
+    println_str("[PASS] Insert/Remove tests");
+
+    // Capacity
+    test_vec_reserve();
+    test_vec_reserve_exact();
+    test_vec_shrink_to_fit();
+    test_vec_clear();
+    println_str("[PASS] Capacity tests");
+
+    // Iteration
+    test_vec_iteration();
+    test_vec_iter();
+    test_vec_iter_mut();
+    test_vec_into_iter();
+    println_str("[PASS] Iteration tests");
+
+    // Search
+    test_vec_contains();
+    test_vec_position();
+    test_vec_binary_search();
+    println_str("[PASS] Search tests");
+
+    // Sorting
+    test_vec_sort();
+    test_vec_sort_by();
+    test_vec_reverse();
+    println_str("[PASS] Sorting tests");
+
+    // Clone/Equality
+    test_vec_clone();
+    test_vec_equality();
+    println_str("[PASS] Clone/Equality tests");
+
+    // Slice operations
+    test_vec_as_slice();
+    test_vec_truncate();
+    test_vec_extend();
+    test_vec_append();
+    test_vec_split_off();
+    println_str("[PASS] Slice operations tests");
+
+    // Filter/Map
+    test_vec_retain();
+    test_vec_dedup();
+    println_str("[PASS] Filter/Map tests");
+
+    println_str("");
+    println_str("All Vec<T> tests passed!");
+}

@@ -1,0 +1,908 @@
+// Blood Standard Library - File System Operations
+// ================================================
+//
+// File I/O operations using Blood's effect system for safety.
+// All file operations require the {IO} effect, making side effects explicit.
+//
+// Design principles:
+// 1. All I/O operations are marked with the {IO} effect
+// 2. Errors are represented as Result types, not exceptions
+// 3. File handles are properly cleaned up via Drop
+// 4. Path handling is UTF-8 native
+
+use crate::io::{Read, Write, Seek, SeekFrom, Result, Error, ErrorKind, BufReader, BufWriter};
+use crate::path::{Path, PathBuf};
+
+// Re-export commonly used items
+pub use crate::io::{Read, Write, Seek, SeekFrom, Result};
+
+// ===========================================================================
+// File Type
+// ===========================================================================
+
+/// A reference to an open file on the filesystem.
+///
+/// Files are automatically closed when they are dropped.
+/// All operations require the {IO} effect.
+///
+/// # Examples
+///
+/// ```blood
+/// use std::fs::File;
+/// use std::io::Read;
+///
+/// fn read_file() / {IO} {
+///     let mut file = File::open("hello.txt")?;
+///     let mut contents = String::new();
+///     file.read_to_string(&mut contents)?;
+///     println!("{}", contents);
+/// }
+/// ```
+pub struct File {
+    // File descriptor (platform-specific)
+    fd: FileDescriptor,
+    // Path for error messages
+    path: Option<PathBuf>,
+}
+
+/// Platform-specific file descriptor
+struct FileDescriptor {
+    raw: i64,  // -1 indicates invalid/closed
+}
+
+impl File {
+    // -------------------------------------------------------------------------
+    // Opening Files
+    // -------------------------------------------------------------------------
+
+    /// Opens a file in read-only mode.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file does not exist or cannot be read.
+    ///
+    /// # Effects
+    ///
+    /// Requires {IO} effect.
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<File> / {IO} {
+        OpenOptions::new().read(true).open(path)
+    }
+
+    /// Opens a file in write-only mode.
+    ///
+    /// This function will create a file if it does not exist,
+    /// and will truncate it if it does.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be created or written.
+    pub fn create<P: AsRef<Path>>(path: P) -> Result<File> / {IO} {
+        OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)
+    }
+
+    /// Opens a file with custom options.
+    ///
+    /// See `OpenOptions` for available options.
+    pub fn options() -> OpenOptions / pure {
+        OpenOptions::new()
+    }
+
+    // -------------------------------------------------------------------------
+    // File Operations
+    // -------------------------------------------------------------------------
+
+    /// Attempts to sync all OS-internal metadata to disk.
+    ///
+    /// This function will attempt to ensure that all in-memory data
+    /// reaches the filesystem before returning.
+    pub fn sync_all(self: &Self) -> Result<()> / {IO} {
+        __builtin_file_sync_all(self.fd.raw)
+    }
+
+    /// This function is similar to `sync_all`, except that it may not
+    /// synchronize file metadata.
+    pub fn sync_data(self: &Self) -> Result<()> / {IO} {
+        __builtin_file_sync_data(self.fd.raw)
+    }
+
+    /// Truncates or extends the underlying file to the specified size.
+    pub fn set_len(self: &Self, size: u64) -> Result<()> / {IO} {
+        __builtin_file_set_len(self.fd.raw, size)
+    }
+
+    /// Queries metadata about the underlying file.
+    pub fn metadata(self: &Self) -> Result<Metadata> / {IO} {
+        __builtin_file_metadata(self.fd.raw)
+    }
+
+    /// Creates a new `File` instance that shares the same underlying
+    /// file handle as the existing `File` instance.
+    pub fn try_clone(self: &Self) -> Result<File> / {IO} {
+        let new_fd = __builtin_file_try_clone(self.fd.raw)?;
+        Ok(File {
+            fd: FileDescriptor { raw: new_fd },
+            path: self.path.clone(),
+        })
+    }
+
+    /// Changes the permissions on the underlying file.
+    pub fn set_permissions(self: &Self, perm: Permissions) -> Result<()> / {IO} {
+        __builtin_file_set_permissions(self.fd.raw, perm.mode)
+    }
+
+    // -------------------------------------------------------------------------
+    // Internal helpers
+    // -------------------------------------------------------------------------
+
+    /// Creates a file from a raw file descriptor.
+    ///
+    /// # Safety
+    ///
+    /// The fd must be a valid file descriptor.
+    fn from_raw_fd(fd: i64, path: Option<PathBuf>) -> Self / pure {
+        File {
+            fd: FileDescriptor { raw: fd },
+            path,
+        }
+    }
+}
+
+impl Read for File {
+    fn read(self: &mut Self, buf: &mut [u8]) -> Result<usize> / {IO} {
+        __builtin_file_read(self.fd.raw, buf)
+    }
+}
+
+impl Write for File {
+    fn write(self: &mut Self, buf: &[u8]) -> Result<usize> / {IO} {
+        __builtin_file_write(self.fd.raw, buf)
+    }
+
+    fn flush(self: &mut Self) -> Result<()> / {IO} {
+        __builtin_file_flush(self.fd.raw)
+    }
+}
+
+impl Seek for File {
+    fn seek(self: &mut Self, pos: SeekFrom) -> Result<u64> / {IO} {
+        let (whence, offset) = match pos {
+            SeekFrom::Start(n) => (0, n as i64),
+            SeekFrom::End(n) => (2, n),
+            SeekFrom::Current(n) => (1, n),
+        };
+        __builtin_file_seek(self.fd.raw, offset, whence)
+    }
+}
+
+impl Drop for File {
+    fn drop(self: &mut Self) / {IO} {
+        if self.fd.raw >= 0 {
+            let _ = __builtin_file_close(self.fd.raw);
+            self.fd.raw = -1;
+        }
+    }
+}
+
+impl Debug for File {
+    fn fmt(self: &Self, f: &mut Formatter) -> fmt::Result / {IO} {
+        let mut debug = f.debug_struct("File");
+        debug.field("fd", &self.fd.raw);
+        if let Some(ref path) = self.path {
+            debug.field("path", path);
+        }
+        debug.finish()
+    }
+}
+
+// ===========================================================================
+// OpenOptions
+// ===========================================================================
+
+/// Options for opening files.
+///
+/// # Examples
+///
+/// ```blood
+/// use std::fs::OpenOptions;
+///
+/// fn open_for_append() / {IO} {
+///     let file = OpenOptions::new()
+///         .write(true)
+///         .append(true)
+///         .open("log.txt")?;
+/// }
+/// ```
+pub struct OpenOptions {
+    read: bool,
+    write: bool,
+    append: bool,
+    truncate: bool,
+    create: bool,
+    create_new: bool,
+    mode: u32,
+}
+
+impl OpenOptions {
+    /// Creates a blank new set of options.
+    pub fn new() -> Self / pure {
+        OpenOptions {
+            read: false,
+            write: false,
+            append: false,
+            truncate: false,
+            create: false,
+            create_new: false,
+            mode: 0o666,
+        }
+    }
+
+    /// Sets the read option.
+    pub fn read(self: &mut Self, read: bool) -> &mut Self / pure {
+        self.read = read;
+        self
+    }
+
+    /// Sets the write option.
+    pub fn write(self: &mut Self, write: bool) -> &mut Self / pure {
+        self.write = write;
+        self
+    }
+
+    /// Sets the append option.
+    pub fn append(self: &mut Self, append: bool) -> &mut Self / pure {
+        self.append = append;
+        self
+    }
+
+    /// Sets the truncate option.
+    pub fn truncate(self: &mut Self, truncate: bool) -> &mut Self / pure {
+        self.truncate = truncate;
+        self
+    }
+
+    /// Sets the create option.
+    pub fn create(self: &mut Self, create: bool) -> &mut Self / pure {
+        self.create = create;
+        self
+    }
+
+    /// Sets the create_new option.
+    pub fn create_new(self: &mut Self, create_new: bool) -> &mut Self / pure {
+        self.create_new = create_new;
+        self
+    }
+
+    /// Sets the Unix mode bits.
+    pub fn mode(self: &mut Self, mode: u32) -> &mut Self / pure {
+        self.mode = mode;
+        self
+    }
+
+    /// Opens the file at the specified path.
+    pub fn open<P: AsRef<Path>>(self: &Self, path: P) -> Result<File> / {IO} {
+        let path_ref = path.as_ref();
+        let path_str = path_ref.to_str().ok_or_else(|| {
+            Error::new(ErrorKind::InvalidInput, "path contains invalid UTF-8")
+        })?;
+
+        let flags = self.compute_flags()?;
+        let fd = __builtin_file_open(path_str, flags, self.mode)?;
+
+        Ok(File::from_raw_fd(fd, Some(path_ref.to_path_buf())))
+    }
+
+    fn compute_flags(self: &Self) -> Result<i32> / pure {
+        // Build flags based on options
+        let mut flags = 0;
+
+        if self.read && self.write {
+            flags |= O_RDWR;
+        } else if self.read {
+            flags |= O_RDONLY;
+        } else if self.write {
+            flags |= O_WRONLY;
+        } else {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "one of read or write must be enabled",
+            ));
+        }
+
+        if self.append {
+            flags |= O_APPEND;
+        }
+        if self.truncate {
+            flags |= O_TRUNC;
+        }
+        if self.create {
+            flags |= O_CREAT;
+        }
+        if self.create_new {
+            flags |= O_CREAT | O_EXCL;
+        }
+
+        Ok(flags)
+    }
+}
+
+// File open flags (POSIX)
+const O_RDONLY: i32 = 0;
+const O_WRONLY: i32 = 1;
+const O_RDWR: i32 = 2;
+const O_APPEND: i32 = 0x0008;
+const O_CREAT: i32 = 0x0100;
+const O_TRUNC: i32 = 0x0200;
+const O_EXCL: i32 = 0x0400;
+
+impl Default for OpenOptions {
+    fn default() -> Self / pure {
+        OpenOptions::new()
+    }
+}
+
+impl Clone for OpenOptions {
+    fn clone(self: &Self) -> Self / pure {
+        OpenOptions {
+            read: self.read,
+            write: self.write,
+            append: self.append,
+            truncate: self.truncate,
+            create: self.create,
+            create_new: self.create_new,
+            mode: self.mode,
+        }
+    }
+}
+
+// ===========================================================================
+// Metadata
+// ===========================================================================
+
+/// Metadata information about a file.
+pub struct Metadata {
+    file_type: FileType,
+    len: u64,
+    permissions: Permissions,
+    modified: Option<SystemTime>,
+    accessed: Option<SystemTime>,
+    created: Option<SystemTime>,
+}
+
+impl Metadata {
+    /// Returns the file type.
+    pub fn file_type(self: &Self) -> FileType / pure {
+        self.file_type
+    }
+
+    /// Returns true if this metadata is for a directory.
+    pub fn is_dir(self: &Self) -> bool / pure {
+        self.file_type.is_dir()
+    }
+
+    /// Returns true if this metadata is for a regular file.
+    pub fn is_file(self: &Self) -> bool / pure {
+        self.file_type.is_file()
+    }
+
+    /// Returns true if this metadata is for a symbolic link.
+    pub fn is_symlink(self: &Self) -> bool / pure {
+        self.file_type.is_symlink()
+    }
+
+    /// Returns the size of the file in bytes.
+    pub fn len(self: &Self) -> u64 / pure {
+        self.len
+    }
+
+    /// Returns true if the file has zero size.
+    pub fn is_empty(self: &Self) -> bool / pure {
+        self.len == 0
+    }
+
+    /// Returns the permissions of the file.
+    pub fn permissions(self: &Self) -> Permissions / pure {
+        self.permissions
+    }
+
+    /// Returns the last modification time.
+    pub fn modified(self: &Self) -> Result<SystemTime> / pure {
+        self.modified.ok_or_else(|| {
+            Error::new(ErrorKind::Unsupported, "modification time not available")
+        })
+    }
+
+    /// Returns the last access time.
+    pub fn accessed(self: &Self) -> Result<SystemTime> / pure {
+        self.accessed.ok_or_else(|| {
+            Error::new(ErrorKind::Unsupported, "access time not available")
+        })
+    }
+
+    /// Returns the creation time.
+    pub fn created(self: &Self) -> Result<SystemTime> / pure {
+        self.created.ok_or_else(|| {
+            Error::new(ErrorKind::Unsupported, "creation time not available")
+        })
+    }
+}
+
+impl Debug for Metadata {
+    fn fmt(self: &Self, f: &mut Formatter) -> fmt::Result / {IO} {
+        f.debug_struct("Metadata")
+            .field("file_type", &self.file_type)
+            .field("len", &self.len)
+            .field("permissions", &self.permissions)
+            .finish()
+    }
+}
+
+// ===========================================================================
+// FileType
+// ===========================================================================
+
+/// The type of a file (regular, directory, symlink, etc.)
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FileType {
+    mode: u32,
+}
+
+impl FileType {
+    /// Returns true if this is a directory.
+    pub fn is_dir(self: &Self) -> bool / pure {
+        (self.mode & S_IFMT) == S_IFDIR
+    }
+
+    /// Returns true if this is a regular file.
+    pub fn is_file(self: &Self) -> bool / pure {
+        (self.mode & S_IFMT) == S_IFREG
+    }
+
+    /// Returns true if this is a symbolic link.
+    pub fn is_symlink(self: &Self) -> bool / pure {
+        (self.mode & S_IFMT) == S_IFLNK
+    }
+}
+
+impl Debug for FileType {
+    fn fmt(self: &Self, f: &mut Formatter) -> fmt::Result / {IO} {
+        let name = if self.is_dir() {
+            "Directory"
+        } else if self.is_file() {
+            "File"
+        } else if self.is_symlink() {
+            "Symlink"
+        } else {
+            "Unknown"
+        };
+        f.debug_tuple("FileType").field(&name).finish()
+    }
+}
+
+// File type constants (POSIX)
+const S_IFMT: u32 = 0o170000;
+const S_IFREG: u32 = 0o100000;
+const S_IFDIR: u32 = 0o040000;
+const S_IFLNK: u32 = 0o120000;
+
+// ===========================================================================
+// Permissions
+// ===========================================================================
+
+/// File permissions.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct Permissions {
+    mode: u32,
+}
+
+impl Permissions {
+    /// Returns true if the file is read-only.
+    pub fn readonly(self: &Self) -> bool / pure {
+        // Check if no write bits are set
+        (self.mode & 0o222) == 0
+    }
+
+    /// Sets the read-only flag.
+    pub fn set_readonly(self: &mut Self, readonly: bool) / pure {
+        if readonly {
+            self.mode &= !0o222;  // Clear write bits
+        } else {
+            self.mode |= 0o200;   // Set owner write bit
+        }
+    }
+
+    /// Returns the raw mode bits.
+    pub fn mode(self: &Self) -> u32 / pure {
+        self.mode
+    }
+
+    /// Sets the raw mode bits.
+    pub fn set_mode(self: &mut Self, mode: u32) / pure {
+        self.mode = mode;
+    }
+
+    /// Creates permissions from a mode.
+    pub fn from_mode(mode: u32) -> Self / pure {
+        Permissions { mode }
+    }
+}
+
+impl Debug for Permissions {
+    fn fmt(self: &Self, f: &mut Formatter) -> fmt::Result / {IO} {
+        f.debug_struct("Permissions")
+            .field("mode", &format!("{:o}", self.mode))
+            .field("readonly", &self.readonly())
+            .finish()
+    }
+}
+
+// ===========================================================================
+// Convenience Functions
+// ===========================================================================
+
+/// Reads the entire contents of a file into a byte vector.
+///
+/// # Examples
+///
+/// ```blood
+/// use std::fs;
+///
+/// fn main() / {IO} {
+///     let data = fs::read("file.bin")?;
+///     println!("Read {} bytes", data.len());
+/// }
+/// ```
+pub fn read<P: AsRef<Path>>(path: P) -> Result<Vec<u8>> / {IO} {
+    let mut file = File::open(path)?;
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf)?;
+    Ok(buf)
+}
+
+/// Reads the entire contents of a file into a string.
+///
+/// # Errors
+///
+/// Returns an error if the file contains invalid UTF-8.
+pub fn read_to_string<P: AsRef<Path>>(path: P) -> Result<String> / {IO} {
+    let mut file = File::open(path)?;
+    let mut buf = String::new();
+    file.read_to_string(&mut buf)?;
+    Ok(buf)
+}
+
+/// Writes a slice of bytes to a file.
+///
+/// Creates the file if it does not exist, and truncates it if it does.
+pub fn write<P: AsRef<Path>, C: AsRef<[u8]>>(path: P, contents: C) -> Result<()> / {IO} {
+    let mut file = File::create(path)?;
+    file.write_all(contents.as_ref())
+}
+
+/// Returns the metadata for a file.
+pub fn metadata<P: AsRef<Path>>(path: P) -> Result<Metadata> / {IO} {
+    let path_str = path.as_ref().to_str().ok_or_else(|| {
+        Error::new(ErrorKind::InvalidInput, "path contains invalid UTF-8")
+    })?;
+    __builtin_metadata(path_str)
+}
+
+/// Returns the metadata for a file, not following symlinks.
+pub fn symlink_metadata<P: AsRef<Path>>(path: P) -> Result<Metadata> / {IO} {
+    let path_str = path.as_ref().to_str().ok_or_else(|| {
+        Error::new(ErrorKind::InvalidInput, "path contains invalid UTF-8")
+    })?;
+    __builtin_symlink_metadata(path_str)
+}
+
+/// Returns true if the path exists.
+pub fn exists<P: AsRef<Path>>(path: P) -> bool / {IO} {
+    metadata(path).is_ok()
+}
+
+/// Copies the contents of one file to another.
+pub fn copy<P: AsRef<Path>, Q: AsRef<Path>>(from: P, to: Q) -> Result<u64> / {IO} {
+    let mut reader = File::open(from)?;
+    let mut writer = File::create(to)?;
+    crate::io::copy(&mut reader, &mut writer)
+}
+
+/// Renames a file or directory.
+pub fn rename<P: AsRef<Path>, Q: AsRef<Path>>(from: P, to: Q) -> Result<()> / {IO} {
+    let from_str = from.as_ref().to_str().ok_or_else(|| {
+        Error::new(ErrorKind::InvalidInput, "source path contains invalid UTF-8")
+    })?;
+    let to_str = to.as_ref().to_str().ok_or_else(|| {
+        Error::new(ErrorKind::InvalidInput, "destination path contains invalid UTF-8")
+    })?;
+    __builtin_rename(from_str, to_str)
+}
+
+/// Removes a file.
+pub fn remove_file<P: AsRef<Path>>(path: P) -> Result<()> / {IO} {
+    let path_str = path.as_ref().to_str().ok_or_else(|| {
+        Error::new(ErrorKind::InvalidInput, "path contains invalid UTF-8")
+    })?;
+    __builtin_remove_file(path_str)
+}
+
+/// Creates a new directory.
+pub fn create_dir<P: AsRef<Path>>(path: P) -> Result<()> / {IO} {
+    let path_str = path.as_ref().to_str().ok_or_else(|| {
+        Error::new(ErrorKind::InvalidInput, "path contains invalid UTF-8")
+    })?;
+    __builtin_create_dir(path_str, 0o755)
+}
+
+/// Creates a new directory and all parent directories.
+pub fn create_dir_all<P: AsRef<Path>>(path: P) -> Result<()> / {IO} {
+    let path_str = path.as_ref().to_str().ok_or_else(|| {
+        Error::new(ErrorKind::InvalidInput, "path contains invalid UTF-8")
+    })?;
+    __builtin_create_dir_all(path_str, 0o755)
+}
+
+/// Removes an empty directory.
+pub fn remove_dir<P: AsRef<Path>>(path: P) -> Result<()> / {IO} {
+    let path_str = path.as_ref().to_str().ok_or_else(|| {
+        Error::new(ErrorKind::InvalidInput, "path contains invalid UTF-8")
+    })?;
+    __builtin_remove_dir(path_str)
+}
+
+/// Removes a directory and all its contents.
+pub fn remove_dir_all<P: AsRef<Path>>(path: P) -> Result<()> / {IO} {
+    let path_str = path.as_ref().to_str().ok_or_else(|| {
+        Error::new(ErrorKind::InvalidInput, "path contains invalid UTF-8")
+    })?;
+    __builtin_remove_dir_all(path_str)
+}
+
+/// Returns an iterator over the entries in a directory.
+pub fn read_dir<P: AsRef<Path>>(path: P) -> Result<ReadDir> / {IO} {
+    let path_str = path.as_ref().to_str().ok_or_else(|| {
+        Error::new(ErrorKind::InvalidInput, "path contains invalid UTF-8")
+    })?;
+    let handle = __builtin_read_dir(path_str)?;
+    Ok(ReadDir {
+        handle,
+        path: path.as_ref().to_path_buf(),
+    })
+}
+
+/// Gets the current working directory.
+pub fn current_dir() -> Result<PathBuf> / {IO} {
+    __builtin_current_dir()
+}
+
+/// Sets the current working directory.
+pub fn set_current_dir<P: AsRef<Path>>(path: P) -> Result<()> / {IO} {
+    let path_str = path.as_ref().to_str().ok_or_else(|| {
+        Error::new(ErrorKind::InvalidInput, "path contains invalid UTF-8")
+    })?;
+    __builtin_set_current_dir(path_str)
+}
+
+// ===========================================================================
+// Directory Iteration
+// ===========================================================================
+
+/// Iterator over directory entries.
+pub struct ReadDir {
+    handle: DirHandle,
+    path: PathBuf,
+}
+
+/// Opaque handle to a directory iterator.
+struct DirHandle {
+    raw: i64,
+}
+
+impl Iterator for ReadDir {
+    type Item = Result<DirEntry>;
+
+    fn next(self: &mut Self) -> Option<Result<DirEntry>> / {IO} {
+        match __builtin_read_dir_next(self.handle.raw) {
+            Ok(Some((name, file_type))) => {
+                let entry = DirEntry {
+                    path: self.path.join(&name),
+                    name,
+                    file_type,
+                };
+                Some(Ok(entry))
+            }
+            Ok(None) => None,
+            Err(e) => Some(Err(e)),
+        }
+    }
+}
+
+impl Drop for ReadDir {
+    fn drop(self: &mut Self) / {IO} {
+        if self.handle.raw >= 0 {
+            let _ = __builtin_close_dir(self.handle.raw);
+            self.handle.raw = -1;
+        }
+    }
+}
+
+/// An entry in a directory.
+pub struct DirEntry {
+    path: PathBuf,
+    name: String,
+    file_type: FileType,
+}
+
+impl DirEntry {
+    /// Returns the full path to this entry.
+    pub fn path(self: &Self) -> PathBuf / pure {
+        self.path.clone()
+    }
+
+    /// Returns the file name of this entry.
+    pub fn file_name(self: &Self) -> &str / pure {
+        &self.name
+    }
+
+    /// Returns the file type.
+    pub fn file_type(self: &Self) -> Result<FileType> / {IO} {
+        Ok(self.file_type)
+    }
+
+    /// Returns metadata for this entry.
+    pub fn metadata(self: &Self) -> Result<Metadata> / {IO} {
+        crate::fs::metadata(&self.path)
+    }
+}
+
+impl Debug for DirEntry {
+    fn fmt(self: &Self, f: &mut Formatter) -> fmt::Result / {IO} {
+        f.debug_struct("DirEntry")
+            .field("path", &self.path)
+            .finish()
+    }
+}
+
+// ===========================================================================
+// Hard Links and Symlinks
+// ===========================================================================
+
+/// Creates a new hard link.
+pub fn hard_link<P: AsRef<Path>, Q: AsRef<Path>>(original: P, link: Q) -> Result<()> / {IO} {
+    let orig_str = original.as_ref().to_str().ok_or_else(|| {
+        Error::new(ErrorKind::InvalidInput, "original path contains invalid UTF-8")
+    })?;
+    let link_str = link.as_ref().to_str().ok_or_else(|| {
+        Error::new(ErrorKind::InvalidInput, "link path contains invalid UTF-8")
+    })?;
+    __builtin_hard_link(orig_str, link_str)
+}
+
+/// Creates a new symbolic link.
+#[cfg(unix)]
+pub fn symlink<P: AsRef<Path>, Q: AsRef<Path>>(original: P, link: Q) -> Result<()> / {IO} {
+    let orig_str = original.as_ref().to_str().ok_or_else(|| {
+        Error::new(ErrorKind::InvalidInput, "original path contains invalid UTF-8")
+    })?;
+    let link_str = link.as_ref().to_str().ok_or_else(|| {
+        Error::new(ErrorKind::InvalidInput, "link path contains invalid UTF-8")
+    })?;
+    __builtin_symlink(orig_str, link_str)
+}
+
+/// Reads the target of a symbolic link.
+pub fn read_link<P: AsRef<Path>>(path: P) -> Result<PathBuf> / {IO} {
+    let path_str = path.as_ref().to_str().ok_or_else(|| {
+        Error::new(ErrorKind::InvalidInput, "path contains invalid UTF-8")
+    })?;
+    __builtin_read_link(path_str)
+}
+
+/// Returns the canonical absolute path.
+pub fn canonicalize<P: AsRef<Path>>(path: P) -> Result<PathBuf> / {IO} {
+    let path_str = path.as_ref().to_str().ok_or_else(|| {
+        Error::new(ErrorKind::InvalidInput, "path contains invalid UTF-8")
+    })?;
+    __builtin_canonicalize(path_str)
+}
+
+// ===========================================================================
+// Permissions Operations
+// ===========================================================================
+
+/// Sets the permissions for a file.
+pub fn set_permissions<P: AsRef<Path>>(path: P, perm: Permissions) -> Result<()> / {IO} {
+    let path_str = path.as_ref().to_str().ok_or_else(|| {
+        Error::new(ErrorKind::InvalidInput, "path contains invalid UTF-8")
+    })?;
+    __builtin_set_permissions(path_str, perm.mode)
+}
+
+// ===========================================================================
+// System Time (placeholder)
+// ===========================================================================
+
+/// A measurement of system time for file metadata.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SystemTime {
+    secs: u64,
+    nanos: u32,
+}
+
+impl SystemTime {
+    /// Returns the system time corresponding to "now".
+    pub fn now() -> Self / {IO} {
+        __builtin_system_time_now()
+    }
+
+    /// Returns the amount of time elapsed since this system time.
+    pub fn elapsed(self: &Self) -> Result<Duration> / {IO} {
+        let now = SystemTime::now();
+        now.duration_since(*self)
+    }
+
+    /// Returns the amount of time elapsed from another system time to this one.
+    pub fn duration_since(self: &Self, earlier: SystemTime) -> Result<Duration> / pure {
+        if self.secs < earlier.secs ||
+           (self.secs == earlier.secs && self.nanos < earlier.nanos) {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                "second system time is later than self",
+            ));
+        }
+
+        let secs = self.secs - earlier.secs;
+        let nanos = if self.nanos >= earlier.nanos {
+            self.nanos - earlier.nanos
+        } else {
+            1_000_000_000 + self.nanos - earlier.nanos
+        };
+
+        Ok(Duration { secs, nanos })
+    }
+}
+
+impl Debug for SystemTime {
+    fn fmt(self: &Self, f: &mut Formatter) -> fmt::Result / {IO} {
+        f.debug_struct("SystemTime")
+            .field("secs", &self.secs)
+            .field("nanos", &self.nanos)
+            .finish()
+    }
+}
+
+/// A span of time.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Duration {
+    secs: u64,
+    nanos: u32,
+}
+
+impl Duration {
+    /// Creates a new duration from seconds and nanoseconds.
+    pub fn new(secs: u64, nanos: u32) -> Self / pure {
+        Duration { secs, nanos }
+    }
+
+    /// Returns the number of whole seconds.
+    pub fn as_secs(self: &Self) -> u64 / pure {
+        self.secs
+    }
+
+    /// Returns the fractional nanoseconds.
+    pub fn subsec_nanos(self: &Self) -> u32 / pure {
+        self.nanos
+    }
+}
+
+impl Debug for Duration {
+    fn fmt(self: &Self, f: &mut Formatter) -> fmt::Result / {IO} {
+        f.debug_struct("Duration")
+            .field("secs", &self.secs)
+            .field("nanos", &self.nanos)
+            .finish()
+    }
+}

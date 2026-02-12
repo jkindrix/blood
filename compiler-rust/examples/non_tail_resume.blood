@@ -1,0 +1,33 @@
+// Test non-tail-resumptive handler
+// The resume is NOT in tail position - there's code after it
+
+effect Counter {
+    op inc() -> i32;
+}
+
+// Deep handler where resume is NOT in tail position
+deep handler CountTwice for Counter {
+    let mut count: i32
+    return(x) { x }
+    op inc() {
+        count = count + 1;
+        let result = resume(count);  // NOT tail position!
+        // After resume returns, we do more work
+        result + 10
+    }
+}
+
+fn main() -> i32 {
+    with CountTwice { count: 0 } handle {
+        perform Counter.inc()
+    }
+}
+// Expected behavior (verified working):
+// 1. main calls perform Counter.inc()
+// 2. Handler's inc() runs: count becomes 1
+// 3. resume(1) is called - this suspends the handler and resumes the perform site
+// 4. perform Counter.inc() returns 1 (the continuation returns this value)
+// 5. The handle block returns 1
+// 6. blood_continuation_resume returns 1 to the handler
+// 7. Handler continues: result = 1, so handler returns 1 + 10 = 11
+// 8. The main function returns 11 (exit code 11)

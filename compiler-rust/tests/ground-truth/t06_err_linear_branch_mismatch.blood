@@ -1,0 +1,11 @@
+// COMPILE_FAIL: E0805
+// Test: if/else consuming linear value differently should fail
+fn main() -> i32 {
+    let x: linear i32 = 42;
+    let cond: bool = true;
+    if cond {
+        let y: linear i32 = x; // Consumes x in then branch only
+    }
+    // ERROR: x was consumed in some branches but not all (E0805)
+    0
+}

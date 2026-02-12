@@ -1,0 +1,47 @@
+// =============================================================================
+// Multiple Dispatch Compilation Test
+// =============================================================================
+//
+// Tests that trait-based dispatch compiles and executes correctly.
+// Defines a trait with multiple implementations and calls through dispatch.
+
+trait Shape {
+    fn area(self) -> i32;
+}
+
+struct Square {
+    side: i32,
+}
+
+struct Rectangle {
+    width: i32,
+    height: i32,
+}
+
+impl Shape for Square {
+    fn area(self) -> i32 {
+        self.side * self.side
+    }
+}
+
+impl Shape for Rectangle {
+    fn area(self) -> i32 {
+        self.width * self.height
+    }
+}
+
+fn assert_eq(actual: i32, expected: i32) {
+    if actual != expected {
+        let zero: i32 = 0;
+        let x: i32 = 1 / zero;
+    }
+}
+
+fn main() {
+    let sq: Square = Square { side: 5 };
+    let rect: Rectangle = Rectangle { width: 3, height: 4 };
+
+    // Direct dispatch through trait method
+    assert_eq(sq.area(), 25);
+    assert_eq(rect.area(), 12);
+}

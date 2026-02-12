@@ -1,0 +1,35 @@
+// Test: accumulator effect pattern (emit values into a running total)
+// EXPECT: 15
+effect Emit {
+    op emit(val: i32) -> ();
+}
+
+deep handler Accumulator for Emit {
+    let mut total: i32
+
+    return(x) { total }
+
+    op emit(val) {
+        total = total + val;
+        resume(())
+    }
+}
+
+fn emit_range(n: i32) -> () / {Emit} {
+    let mut i: i32 = 1;
+    while i <= n {
+        perform Emit.emit(i);
+        i = i + 1;
+    }
+}
+
+fn main() -> i32 {
+    let result: i32 = with Accumulator { total: 0 } handle {
+        emit_range(5);
+        0
+    };
+    println_int(result); // 1+2+3+4+5 = 15
+
+    if result != 15 { return 1; }
+    0
+}

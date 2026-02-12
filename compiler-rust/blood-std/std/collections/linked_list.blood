@@ -1,0 +1,625 @@
+// Blood Standard Library - Linked List
+//
+// A doubly-linked list with owned nodes.
+
+use crate::ptr::NonNull;
+
+/// A doubly-linked list
+pub struct LinkedList<T> {
+    head: Option<NonNull<Node<T>>>,
+    tail: Option<NonNull<Node<T>>>,
+    len: usize,
+}
+
+struct Node<T> {
+    element: T,
+    prev: Option<NonNull<Node<T>>>,
+    next: Option<NonNull<Node<T>>>,
+}
+
+impl<T> Node<T> {
+    fn new(element: T) -> Self / pure {
+        Node {
+            element,
+            prev: None,
+            next: None,
+        }
+    }
+
+    fn into_element(self: Box<Self>) -> T / pure {
+        self.element
+    }
+}
+
+impl<T> LinkedList<T> {
+    /// Creates an empty LinkedList
+    pub const fn new() -> Self / pure {
+        LinkedList {
+            head: None,
+            tail: None,
+            len: 0,
+        }
+    }
+
+    /// Returns the number of elements
+    pub fn len(self: &Self) -> usize / pure {
+        self.len
+    }
+
+    /// Returns true if the list is empty
+    pub fn is_empty(self: &Self) -> bool / pure {
+        self.head.is_none()
+    }
+
+    /// Clears the list
+    pub fn clear(self: &mut Self) / pure {
+        while self.pop_front().is_some() {}
+    }
+
+    /// Returns a reference to the front element
+    pub fn front(self: &Self) -> Option<&T> / pure {
+        self.head.map(|node| unsafe { &(*node.as_ptr()).element })
+    }
+
+    /// Returns a mutable reference to the front element
+    pub fn front_mut(self: &mut Self) -> Option<&mut T> / pure {
+        self.head.map(|node| unsafe { &mut (*node.as_ptr()).element })
+    }
+
+    /// Returns a reference to the back element
+    pub fn back(self: &Self) -> Option<&T> / pure {
+        self.tail.map(|node| unsafe { &(*node.as_ptr()).element })
+    }
+
+    /// Returns a mutable reference to the back element
+    pub fn back_mut(self: &mut Self) -> Option<&mut T> / pure {
+        self.tail.map(|node| unsafe { &mut (*node.as_ptr()).element })
+    }
+
+    /// Adds an element to the front
+    pub fn push_front(self: &mut Self, element: T) / pure {
+        let mut node = Box::new(Node::new(element));
+        node.next = self.head;
+        node.prev = None;
+
+        let node_ptr = NonNull::new(Box::into_raw(node)).unwrap();
+
+        match self.head {
+            Some(head) => unsafe { (*head.as_ptr()).prev = Some(node_ptr) },
+            None => self.tail = Some(node_ptr),
+        }
+
+        self.head = Some(node_ptr);
+        self.len += 1;
+    }
+
+    /// Adds an element to the back
+    pub fn push_back(self: &mut Self, element: T) / pure {
+        let mut node = Box::new(Node::new(element));
+        node.prev = self.tail;
+        node.next = None;
+
+        let node_ptr = NonNull::new(Box::into_raw(node)).unwrap();
+
+        match self.tail {
+            Some(tail) => unsafe { (*tail.as_ptr()).next = Some(node_ptr) },
+            None => self.head = Some(node_ptr),
+        }
+
+        self.tail = Some(node_ptr);
+        self.len += 1;
+    }
+
+    /// Removes and returns the front element
+    pub fn pop_front(self: &mut Self) -> Option<T> / pure {
+        self.head.map(|node| {
+            let node = unsafe { Box::from_raw(node.as_ptr()) };
+            self.head = node.next;
+
+            match self.head {
+                Some(head) => unsafe { (*head.as_ptr()).prev = None },
+                None => self.tail = None,
+            }
+
+            self.len -= 1;
+            node.into_element()
+        })
+    }
+
+    /// Removes and returns the back element
+    pub fn pop_back(self: &mut Self) -> Option<T> / pure {
+        self.tail.map(|node| {
+            let node = unsafe { Box::from_raw(node.as_ptr()) };
+            self.tail = node.prev;
+
+            match self.tail {
+                Some(tail) => unsafe { (*tail.as_ptr()).next = None },
+                None => self.head = None,
+            }
+
+            self.len -= 1;
+            node.into_element()
+        })
+    }
+
+    /// Returns true if the list contains the value
+    pub fn contains(self: &Self, value: &T) -> bool / pure
+    where
+        T: PartialEq,
+    {
+        self.iter().any(|x| x == value)
+    }
+
+    /// Appends all elements from another list
+    pub fn append(self: &mut Self, other: &mut LinkedList<T>) / pure {
+        match self.tail {
+            None => {
+                self.head = other.head.take();
+                self.tail = other.tail.take();
+            }
+            Some(tail) => {
+                if let Some(other_head) = other.head.take() {
+                    unsafe {
+                        (*tail.as_ptr()).next = Some(other_head);
+                        (*other_head.as_ptr()).prev = Some(tail);
+                    }
+                    self.tail = other.tail.take();
+                }
+            }
+        }
+        self.len += other.len;
+        other.len = 0;
+    }
+
+    /// Splits the list at the given index
+    pub fn split_off(self: &mut Self, at: usize) -> LinkedList<T> / pure {
+        assert!(at <= self.len, "split index out of bounds");
+
+        if at == 0 {
+            return mem::replace(self, LinkedList::new());
+        }
+
+        if at == self.len {
+            return LinkedList::new();
+        }
+
+        // Find the split point
+        let mut current = self.head;
+        for _ in 0..at {
+            current = unsafe { (*current.unwrap().as_ptr()).next };
+        }
+
+        let split_node = current.unwrap();
+
+        // Get the node before split point
+        let prev_node = unsafe { (*split_node.as_ptr()).prev };
+
+        // Disconnect at split point
+        if let Some(prev) = prev_node {
+            unsafe { (*prev.as_ptr()).next = None };
+        }
+        unsafe { (*split_node.as_ptr()).prev = None };
+
+        let second_half = LinkedList {
+            head: Some(split_node),
+            tail: self.tail.take(),
+            len: self.len - at,
+        };
+
+        self.tail = prev_node;
+        self.len = at;
+
+        second_half
+    }
+
+    /// Returns an iterator over references
+    pub fn iter(self: &Self) -> Iter<'_, T> / pure {
+        Iter {
+            head: self.head,
+            tail: self.tail,
+            len: self.len,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Returns an iterator over mutable references
+    pub fn iter_mut(self: &mut Self) -> IterMut<'_, T> / pure {
+        IterMut {
+            head: self.head,
+            tail: self.tail,
+            len: self.len,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Returns a cursor at the front
+    pub fn cursor_front(self: &Self) -> Cursor<'_, T> / pure {
+        Cursor {
+            current: self.head,
+            list: self,
+        }
+    }
+
+    /// Returns a mutable cursor at the front
+    pub fn cursor_front_mut(self: &mut Self) -> CursorMut<'_, T> / pure {
+        CursorMut {
+            current: self.head,
+            list: self,
+        }
+    }
+}
+
+impl<T> Drop for LinkedList<T> {
+    fn drop(self: &mut Self) / pure {
+        self.clear();
+    }
+}
+
+impl<T: Clone> Clone for LinkedList<T> {
+    fn clone(self: &Self) -> Self / pure {
+        let mut new_list = LinkedList::new();
+        for item in self.iter() {
+            new_list.push_back(item.clone());
+        }
+        new_list
+    }
+}
+
+impl<T: PartialEq> PartialEq for LinkedList<T> {
+    fn eq(self: &Self, other: &Self) -> bool / pure {
+        if self.len != other.len {
+            return false;
+        }
+        self.iter().zip(other.iter()).all(|(a, b)| a == b)
+    }
+}
+
+impl<T: Eq> Eq for LinkedList<T> {}
+
+impl<T: Debug> Debug for LinkedList<T> {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        f.debug_list().entries(self.iter()).finish()
+    }
+}
+
+impl<T> Default for LinkedList<T> {
+    fn default() -> Self / pure {
+        LinkedList::new()
+    }
+}
+
+impl<T> FromIterator<T> for LinkedList<T> {
+    fn from_iter<I: Iterator<Item = T>>(iter: I) -> Self / pure {
+        let mut list = LinkedList::new();
+        for item in iter {
+            list.push_back(item);
+        }
+        list
+    }
+}
+
+impl<T> Extend<T> for LinkedList<T> {
+    fn extend<I: Iterator<Item = T>>(self: &mut Self, iter: I) / pure {
+        for item in iter {
+            self.push_back(item);
+        }
+    }
+}
+
+impl<T> IntoIterator for LinkedList<T> {
+    type Item = T;
+    type IntoIter = IntoIter<T>;
+
+    fn into_iter(self: Self) -> IntoIter<T> / pure {
+        IntoIter { list: self }
+    }
+}
+
+impl<'a, T> IntoIterator for &'a LinkedList<T> {
+    type Item = &'a T;
+    type IntoIter = Iter<'a, T>;
+
+    fn into_iter(self: Self) -> Iter<'a, T> / pure {
+        self.iter()
+    }
+}
+
+impl<'a, T> IntoIterator for &'a mut LinkedList<T> {
+    type Item = &'a mut T;
+    type IntoIter = IterMut<'a, T>;
+
+    fn into_iter(self: Self) -> IterMut<'a, T> / pure {
+        self.iter_mut()
+    }
+}
+
+// Iterators
+
+/// Iterator over references
+pub struct Iter<'a, T> {
+    head: Option<NonNull<Node<T>>>,
+    tail: Option<NonNull<Node<T>>>,
+    len: usize,
+    _marker: PhantomData<&'a T>,
+}
+
+impl<'a, T> Iterator for Iter<'a, T> {
+    type Item = &'a T;
+
+    fn next(self: &mut Self) -> Option<&'a T> / pure {
+        if self.len == 0 {
+            return None;
+        }
+
+        self.head.map(|node| {
+            self.len -= 1;
+            unsafe {
+                let node = &*node.as_ptr();
+                self.head = node.next;
+                &node.element
+            }
+        })
+    }
+
+    fn size_hint(self: &Self) -> (usize, Option<usize>) / pure {
+        (self.len, Some(self.len))
+    }
+}
+
+impl<'a, T> DoubleEndedIterator for Iter<'a, T> {
+    fn next_back(self: &mut Self) -> Option<&'a T> / pure {
+        if self.len == 0 {
+            return None;
+        }
+
+        self.tail.map(|node| {
+            self.len -= 1;
+            unsafe {
+                let node = &*node.as_ptr();
+                self.tail = node.prev;
+                &node.element
+            }
+        })
+    }
+}
+
+impl<'a, T> ExactSizeIterator for Iter<'a, T> {}
+
+/// Iterator over mutable references
+pub struct IterMut<'a, T> {
+    head: Option<NonNull<Node<T>>>,
+    tail: Option<NonNull<Node<T>>>,
+    len: usize,
+    _marker: PhantomData<&'a mut T>,
+}
+
+impl<'a, T> Iterator for IterMut<'a, T> {
+    type Item = &'a mut T;
+
+    fn next(self: &mut Self) -> Option<&'a mut T> / pure {
+        if self.len == 0 {
+            return None;
+        }
+
+        self.head.map(|node| {
+            self.len -= 1;
+            unsafe {
+                let node = &mut *node.as_ptr();
+                self.head = node.next;
+                &mut node.element
+            }
+        })
+    }
+
+    fn size_hint(self: &Self) -> (usize, Option<usize>) / pure {
+        (self.len, Some(self.len))
+    }
+}
+
+impl<'a, T> DoubleEndedIterator for IterMut<'a, T> {
+    fn next_back(self: &mut Self) -> Option<&'a mut T> / pure {
+        if self.len == 0 {
+            return None;
+        }
+
+        self.tail.map(|node| {
+            self.len -= 1;
+            unsafe {
+                let node = &mut *node.as_ptr();
+                self.tail = node.prev;
+                &mut node.element
+            }
+        })
+    }
+}
+
+impl<'a, T> ExactSizeIterator for IterMut<'a, T> {}
+
+/// Owning iterator
+pub struct IntoIter<T> {
+    list: LinkedList<T>,
+}
+
+impl<T> Iterator for IntoIter<T> {
+    type Item = T;
+
+    fn next(self: &mut Self) -> Option<T> / pure {
+        self.list.pop_front()
+    }
+
+    fn size_hint(self: &Self) -> (usize, Option<usize>) / pure {
+        (self.list.len, Some(self.list.len))
+    }
+}
+
+impl<T> DoubleEndedIterator for IntoIter<T> {
+    fn next_back(self: &mut Self) -> Option<T> / pure {
+        self.list.pop_back()
+    }
+}
+
+impl<T> ExactSizeIterator for IntoIter<T> {}
+
+// Cursors for traversal and mutation
+
+/// A cursor over a LinkedList
+pub struct Cursor<'a, T> {
+    current: Option<NonNull<Node<T>>>,
+    list: &'a LinkedList<T>,
+}
+
+impl<'a, T> Cursor<'a, T> {
+    /// Returns a reference to the current element
+    pub fn current(self: &Self) -> Option<&'a T> / pure {
+        self.current.map(|node| unsafe { &(*node.as_ptr()).element })
+    }
+
+    /// Moves to the next element
+    pub fn move_next(self: &mut Self) / pure {
+        if let Some(current) = self.current {
+            self.current = unsafe { (*current.as_ptr()).next };
+        } else {
+            self.current = self.list.head;
+        }
+    }
+
+    /// Moves to the previous element
+    pub fn move_prev(self: &mut Self) / pure {
+        if let Some(current) = self.current {
+            self.current = unsafe { (*current.as_ptr()).prev };
+        } else {
+            self.current = self.list.tail;
+        }
+    }
+
+    /// Returns the index of the current element
+    pub fn index(self: &Self) -> Option<usize> / pure {
+        let current = self.current?;
+        let mut index = 0;
+        let mut node = self.list.head;
+        while let Some(n) = node {
+            if n == current {
+                return Some(index);
+            }
+            node = unsafe { (*n.as_ptr()).next };
+            index += 1;
+        }
+        None
+    }
+}
+
+/// A mutable cursor over a LinkedList
+pub struct CursorMut<'a, T> {
+    current: Option<NonNull<Node<T>>>,
+    list: &'a mut LinkedList<T>,
+}
+
+impl<'a, T> CursorMut<'a, T> {
+    /// Returns a reference to the current element
+    pub fn current(self: &Self) -> Option<&T> / pure {
+        self.current.map(|node| unsafe { &(*node.as_ptr()).element })
+    }
+
+    /// Returns a mutable reference to the current element
+    pub fn current_mut(self: &mut Self) -> Option<&mut T> / pure {
+        self.current.map(|node| unsafe { &mut (*node.as_ptr()).element })
+    }
+
+    /// Moves to the next element
+    pub fn move_next(self: &mut Self) / pure {
+        if let Some(current) = self.current {
+            self.current = unsafe { (*current.as_ptr()).next };
+        } else {
+            self.current = self.list.head;
+        }
+    }
+
+    /// Moves to the previous element
+    pub fn move_prev(self: &mut Self) / pure {
+        if let Some(current) = self.current {
+            self.current = unsafe { (*current.as_ptr()).prev };
+        } else {
+            self.current = self.list.tail;
+        }
+    }
+
+    /// Inserts an element after the cursor
+    pub fn insert_after(self: &mut Self, element: T) / pure {
+        match self.current {
+            None => {
+                self.list.push_front(element);
+            }
+            Some(current) => {
+                let mut node = Box::new(Node::new(element));
+                unsafe {
+                    node.prev = Some(current);
+                    node.next = (*current.as_ptr()).next;
+
+                    let node_ptr = NonNull::new(Box::into_raw(node)).unwrap();
+
+                    if let Some(next) = (*current.as_ptr()).next {
+                        (*next.as_ptr()).prev = Some(node_ptr);
+                    } else {
+                        self.list.tail = Some(node_ptr);
+                    }
+
+                    (*current.as_ptr()).next = Some(node_ptr);
+                }
+                self.list.len += 1;
+            }
+        }
+    }
+
+    /// Inserts an element before the cursor
+    pub fn insert_before(self: &mut Self, element: T) / pure {
+        match self.current {
+            None => {
+                self.list.push_back(element);
+            }
+            Some(current) => {
+                let mut node = Box::new(Node::new(element));
+                unsafe {
+                    node.next = Some(current);
+                    node.prev = (*current.as_ptr()).prev;
+
+                    let node_ptr = NonNull::new(Box::into_raw(node)).unwrap();
+
+                    if let Some(prev) = (*current.as_ptr()).prev {
+                        (*prev.as_ptr()).next = Some(node_ptr);
+                    } else {
+                        self.list.head = Some(node_ptr);
+                    }
+
+                    (*current.as_ptr()).prev = Some(node_ptr);
+                }
+                self.list.len += 1;
+            }
+        }
+    }
+
+    /// Removes the current element and returns it
+    pub fn remove_current(self: &mut Self) -> Option<T> / pure {
+        let current = self.current?;
+
+        unsafe {
+            let node = Box::from_raw(current.as_ptr());
+
+            // Update links
+            match node.prev {
+                Some(prev) => (*prev.as_ptr()).next = node.next,
+                None => self.list.head = node.next,
+            }
+
+            match node.next {
+                Some(next) => (*next.as_ptr()).prev = node.prev,
+                None => self.list.tail = node.prev,
+            }
+
+            // Move cursor to next
+            self.current = node.next;
+            self.list.len -= 1;
+
+            Some(node.into_element())
+        }
+    }
+}

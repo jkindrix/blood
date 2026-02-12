@@ -1,0 +1,21 @@
+// Test: region block used inside a loop (region created/destroyed repeatedly)
+// EXPECT: 45
+fn main() -> i32 {
+    let mut total: i32 = 0;
+    let mut i: i32 = 0;
+
+    while i < 10 {
+        let val: i32 = region {
+            let temp: i32 = i;
+            temp
+        };
+        total = total + val;
+        i = i + 1;
+    }
+
+    println_int(total);
+
+    // sum 0..9 = 45
+    if total != 45 { return 1; }
+    0
+}

@@ -1,0 +1,35 @@
+// Test: non-generic handler with immutable String state (BUG-009 Case 2)
+// Verifies that aggregate types (> 8 bytes) work as handler state fields.
+// String is {i8*, i64, i64} = 24 bytes, which previously caused LLVM
+// verification failures due to uniform i64 state layout.
+// EXPECT: hello world
+effect Emit {
+    op emit(chunk: &str) -> ();
+}
+
+deep handler FileEmitter for Emit {
+    let path: String
+
+    return(x) { x }
+
+    op emit(chunk) {
+        print_str(chunk);
+        resume(())
+    }
+}
+
+fn do_work() -> i32 / {Emit} {
+    perform Emit.emit("hello ");
+    perform Emit.emit("world\n");
+    42
+}
+
+fn main() -> i32 {
+    let mut p: String = String::new();
+    p.push_str("output.ll");
+    let result: i32 = with FileEmitter { path: p } handle {
+        do_work()
+    };
+    if result != 42 { return 1; }
+    0
+}

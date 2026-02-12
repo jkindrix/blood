@@ -1,0 +1,29 @@
+// Child module with different FnInfo definition.
+//
+// This FnInfo has different fields than the parent's FnInfo.
+// The name collision bug would cause the parent to incorrectly use this definition.
+
+pub struct FnInfo {
+    pub def_id: i32,
+    pub name: i64,
+    pub num_generics: u32,  // Different field from parent
+    pub num_params: u32,    // Different field from parent
+    pub is_const: bool,     // Different field from parent
+    pub is_unsafe: bool,    // Different field from parent
+    // Note: NO return_ty field here!
+}
+
+pub fn create_child_fn_info() -> FnInfo {
+    FnInfo {
+        def_id: 10,
+        name: 20,
+        num_generics: 2,
+        num_params: 3,
+        is_const: false,
+        is_unsafe: true,
+    }
+}
+
+pub fn get_num_params(info: FnInfo) -> u32 {
+    info.num_params  // Access child's unique field
+}

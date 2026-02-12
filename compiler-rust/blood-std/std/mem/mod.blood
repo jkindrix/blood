@@ -1,0 +1,303 @@
+// Blood Standard Library - Memory Operations
+//
+// Low-level memory manipulation utilities.
+
+/// Returns the size of a type in bytes
+pub const fn size_of<T>() -> usize / pure {
+    __builtin_size_of::<T>()
+}
+
+/// Returns the size of a value in bytes
+pub fn size_of_val<T: ?Sized>(val: &T) -> usize / pure {
+    __builtin_size_of_val(val)
+}
+
+/// Returns the alignment of a type in bytes
+pub const fn align_of<T>() -> usize / pure {
+    __builtin_align_of::<T>()
+}
+
+/// Returns the alignment of a value in bytes
+pub fn align_of_val<T: ?Sized>(val: &T) -> usize / pure {
+    __builtin_align_of_val(val)
+}
+
+/// Returns the minimum alignment for a type
+pub const fn min_align_of<T>() -> usize / pure {
+    align_of::<T>()
+}
+
+/// Returns true if the type requires drop
+pub const fn needs_drop<T>() -> bool / pure {
+    __builtin_needs_drop::<T>()
+}
+
+/// Swaps two values in memory
+pub fn swap<T>(x: &mut T, y: &mut T) / pure {
+    unsafe {
+        let temp = ptr::read(x);
+        ptr::copy_nonoverlapping(y, x, 1);
+        ptr::write(y, temp);
+    }
+}
+
+/// Replaces a value with a new one, returning the old value
+pub fn replace<T>(dest: &mut T, src: T) -> T / pure {
+    unsafe {
+        let result = ptr::read(dest);
+        ptr::write(dest, src);
+        result
+    }
+}
+
+/// Takes ownership of the value at a mutable reference, leaving Default in its place
+pub fn take<T: Default>(dest: &mut T) -> T / pure {
+    replace(dest, T::default())
+}
+
+/// Drops a value without running its destructor
+pub fn forget<T>(t: T) / pure {
+    unsafe {
+        __builtin_forget(t);
+    }
+}
+
+/// Drops a value, running its destructor if needed
+pub fn drop<T>(_x: T) / pure {
+    // Value is dropped when it goes out of scope
+}
+
+/// Returns uninitialized memory for a type
+///
+/// # Safety
+/// Reading from uninitialized memory is undefined behavior.
+pub unsafe fn uninitialized<T>() -> T / pure {
+    __builtin_uninitialized::<T>()
+}
+
+/// Returns zeroed memory for a type
+///
+/// # Safety
+/// Only safe for types where all bit patterns are valid.
+pub unsafe fn zeroed<T>() -> T / pure {
+    __builtin_zeroed::<T>()
+}
+
+/// Transmutes a value from one type to another
+///
+/// # Safety
+/// This is extremely unsafe. Both types must have the same size.
+pub unsafe fn transmute<T, U>(value: T) -> U / pure {
+    debug_assert!(size_of::<T>() == size_of::<U>(), "transmute types must have same size");
+    __builtin_transmute(value)
+}
+
+/// Transmutes a reference to a different type
+///
+/// # Safety
+/// The target type must be valid for the source bytes.
+pub unsafe fn transmute_ref<T, U>(value: &T) -> &U / pure {
+    &*(value as *const T as *const U)
+}
+
+/// Creates a new MaybeUninit<T>
+pub fn maybe_uninit<T>() -> MaybeUninit<T> / pure {
+    MaybeUninit::uninit()
+}
+
+/// A wrapper type for uninitialized memory
+#[repr(transparent)]
+pub union MaybeUninit<T> {
+    uninit: (),
+    value: ManuallyDrop<T>,
+}
+
+impl<T> MaybeUninit<T> {
+    /// Creates an uninitialized MaybeUninit
+    pub const fn uninit() -> Self / pure {
+        MaybeUninit { uninit: () }
+    }
+
+    /// Creates a MaybeUninit with an initial value
+    pub const fn new(value: T) -> Self / pure {
+        MaybeUninit { value: ManuallyDrop::new(value) }
+    }
+
+    /// Creates zeroed memory
+    pub fn zeroed() -> Self / pure {
+        unsafe {
+            let mut u = Self::uninit();
+            ptr::write_bytes(u.as_mut_ptr(), 0, 1);
+            u
+        }
+    }
+
+    /// Returns a raw pointer to the value
+    pub fn as_ptr(self: &Self) -> *const T / pure {
+        unsafe { &self.value as *const ManuallyDrop<T> as *const T }
+    }
+
+    /// Returns a raw mutable pointer to the value
+    pub fn as_mut_ptr(self: &mut Self) -> *mut T / pure {
+        unsafe { &mut self.value as *mut ManuallyDrop<T> as *mut T }
+    }
+
+    /// Extracts the value from the MaybeUninit
+    ///
+    /// # Safety
+    /// The value must be initialized.
+    pub unsafe fn assume_init(self: Self) -> T / pure {
+        ManuallyDrop::into_inner(self.value)
+    }
+
+    /// Gets a reference to the value
+    ///
+    /// # Safety
+    /// The value must be initialized.
+    pub unsafe fn assume_init_ref(self: &Self) -> &T / pure {
+        &*self.as_ptr()
+    }
+
+    /// Gets a mutable reference to the value
+    ///
+    /// # Safety
+    /// The value must be initialized.
+    pub unsafe fn assume_init_mut(self: &mut Self) -> &mut T / pure {
+        &mut *self.as_mut_ptr()
+    }
+
+    /// Writes a value to the MaybeUninit
+    pub fn write(self: &mut Self, value: T) -> &mut T / pure {
+        unsafe {
+            ptr::write(self.as_mut_ptr(), value);
+            self.assume_init_mut()
+        }
+    }
+
+    /// Drops the value in place
+    ///
+    /// # Safety
+    /// The value must be initialized.
+    pub unsafe fn assume_init_drop(self: &mut Self) / pure {
+        ptr::drop_in_place(self.as_mut_ptr());
+    }
+}
+
+/// A wrapper that prevents automatic Drop
+#[repr(transparent)]
+pub struct ManuallyDrop<T> {
+    value: T,
+}
+
+impl<T> ManuallyDrop<T> {
+    /// Creates a new ManuallyDrop
+    pub const fn new(value: T) -> Self / pure {
+        ManuallyDrop { value }
+    }
+
+    /// Extracts the value
+    pub fn into_inner(slot: Self) -> T / pure {
+        slot.value
+    }
+
+    /// Takes the value out, leaving unspecified data
+    ///
+    /// # Safety
+    /// The slot must not be read again after this.
+    pub unsafe fn take(slot: &mut Self) -> T / pure {
+        ptr::read(&slot.value)
+    }
+
+    /// Drops the contained value
+    ///
+    /// # Safety
+    /// The value must not be dropped again.
+    pub unsafe fn drop(slot: &mut Self) / pure {
+        ptr::drop_in_place(&mut slot.value);
+    }
+}
+
+impl<T> Deref for ManuallyDrop<T> {
+    type Target = T;
+
+    fn deref(self: &Self) -> &T / pure {
+        &self.value
+    }
+}
+
+impl<T> DerefMut for ManuallyDrop<T> {
+    fn deref_mut(self: &mut Self) -> &mut T / pure {
+        &mut self.value
+    }
+}
+
+impl<T: Clone> Clone for ManuallyDrop<T> {
+    fn clone(self: &Self) -> Self / pure {
+        ManuallyDrop::new(self.value.clone())
+    }
+}
+
+impl<T: Default> Default for ManuallyDrop<T> {
+    fn default() -> Self / pure {
+        ManuallyDrop::new(T::default())
+    }
+}
+
+/// Discriminant of an enum variant
+pub struct Discriminant<T> {
+    value: u64,
+    _marker: PhantomData<T>,
+}
+
+impl<T> Discriminant<T> {
+    /// Returns the discriminant of a value
+    pub fn of(value: &T) -> Self / pure {
+        Discriminant {
+            value: __builtin_discriminant(value),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<T> Clone for Discriminant<T> {
+    fn clone(self: &Self) -> Self / pure {
+        Discriminant {
+            value: self.value,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<T> Copy for Discriminant<T> {}
+
+impl<T> PartialEq for Discriminant<T> {
+    fn eq(self: &Self, other: &Self) -> bool / pure {
+        self.value == other.value
+    }
+}
+
+impl<T> Eq for Discriminant<T> {}
+
+impl<T> Hash for Discriminant<T> {
+    fn hash<H: Hasher>(self: &Self, state: &mut H) / pure {
+        self.value.hash(state);
+    }
+}
+
+impl<T> Debug for Discriminant<T> {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        f.write_str("Discriminant(")?;
+        Display::fmt(&self.value, f)?;
+        f.write_str(")")
+    }
+}
+
+/// Returns the discriminant of an enum variant
+pub fn discriminant<T>(value: &T) -> Discriminant<T> / pure {
+    Discriminant::of(value)
+}
+
+/// Returns the number of variants of an enum type
+pub const fn variant_count<T>() -> usize / pure {
+    __builtin_variant_count::<T>()
+}

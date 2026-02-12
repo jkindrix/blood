@@ -1,0 +1,26 @@
+// Test: file I/O builtins (write, read, delete)
+// EXPECT: hello from blood
+fn main() -> i32 {
+    let path: &str = "/tmp/blood_test_file_io.txt";
+
+    // Write to file
+    file_write_string(path, "hello from blood");
+
+    // Check file exists
+    let exists: bool = file_exists(path);
+    if !exists { return 1; }
+
+    // Read back
+    let content: &str = file_read_to_string(path);
+    println_str(content); // hello from blood
+    if !str_eq(content, "hello from blood") { return 2; }
+
+    // Clean up
+    file_delete(path);
+
+    // Verify deleted
+    let still_exists: bool = file_exists(path);
+    if still_exists { return 3; }
+
+    0
+}

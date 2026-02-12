@@ -1,0 +1,28 @@
+// Test: Choice effect for non-determinism
+// EXPECT: 20
+effect Choice {
+    op choose(a: i32, b: i32) -> i32;
+}
+
+deep handler PickFirst for Choice {
+    return(x) { x }
+
+    op choose(a, b) {
+        resume(a)
+    }
+}
+
+fn pick_and_double() -> i32 / {Choice} {
+    let x: i32 = perform Choice.choose(10, 20);
+    x * 2
+}
+
+fn main() -> i32 {
+    let result: i32 = with PickFirst {} handle {
+        pick_and_double()
+    };
+    println_int(result);
+
+    if result != 20 { return 1; }
+    0
+}

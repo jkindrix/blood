@@ -1,0 +1,39 @@
+// Test: combining effects and regions in the same program
+// EXPECT: 42
+effect State<S> {
+    op get() -> S;
+    op put(s: S) -> ();
+}
+
+deep handler LocalState<S> for State<S> {
+    let mut state: S
+
+    return(x) { x }
+
+    op get() {
+        resume(state)
+    }
+
+    op put(s) {
+        state = s;
+        resume(())
+    }
+}
+
+fn main() -> i32 {
+    // Use a region to compute a value, then use an effect handler
+    let base: i32 = region {
+        let a: i32 = 20;
+        let b: i32 = 22;
+        a + b
+    };
+
+    let result: i32 = with LocalState { state: base } handle {
+        perform State.get()
+    };
+
+    println_int(result);
+
+    if result != 42 { return 1; }
+    0
+}

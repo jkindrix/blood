@@ -1,0 +1,35 @@
+// Test: push_str on mutable handler state with &str op parameter (BUG-010)
+// Verifies that aggregate-type op parameters are correctly passed by pointer
+// when used as arguments to method calls on mutable handler state.
+// EXPECT: hello world
+effect Emit {
+    op emit(text: &str) -> ();
+}
+
+deep handler BufferedEmitter for Emit {
+    let mut buffer: String
+
+    return(x) {
+        print_str(buffer.as_str());
+        x
+    }
+
+    op emit(text) {
+        buffer.push_str(text);
+        resume(())
+    }
+}
+
+fn do_work() -> i32 / {Emit} {
+    perform Emit.emit("hello ");
+    perform Emit.emit("world\n");
+    42
+}
+
+fn main() -> i32 {
+    let result: i32 = with BufferedEmitter { buffer: String::new() } handle {
+        do_work()
+    };
+    if result != 42 { return 1; }
+    0
+}

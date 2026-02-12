@@ -1,0 +1,17 @@
+// Test: region block allocating a struct
+// EXPECT: 7
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn main() -> i32 {
+    let sum: i32 = region {
+        let p: Point = Point { x: 3, y: 4 };
+        p.x + p.y
+    };
+    println_int(sum);
+
+    if sum != 7 { return 1; }
+    0
+}

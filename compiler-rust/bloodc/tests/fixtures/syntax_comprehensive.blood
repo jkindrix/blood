@@ -1,0 +1,332 @@
+// Comprehensive syntax test for Blood language
+// Tests various combinations and edge cases
+
+// ============================================================
+// Pattern Combinations
+// ============================================================
+
+pub enum Nested {
+    Inner { val: i32, other: i32 },
+    Tuple(i32, i32),
+    Unit,
+}
+
+pub struct Point {
+    x: i32,
+    y: i32,
+}
+
+pub enum Container {
+    Boxed { nested: Nested },
+    Pair(Point, Point),
+}
+
+// Ref pattern in struct field
+pub fn test_ref_in_struct(c: &Container) -> i32 {
+    match c {
+        &Container::Boxed { ref nested } => match nested {
+            Nested::Inner { val, other } => val + other,
+            Nested::Tuple(a, b) => a + b,
+            Nested::Unit => 0,
+        },
+        &Container::Pair(ref p1, ref p2) => p1.x + p2.y,
+    }
+}
+
+// Ref mut pattern
+pub fn test_ref_mut_pattern(p: &mut Point) {
+    match p {
+        Point { ref mut x, ref mut y } => {
+            *x = *x + 1;
+            *y = *y + 1;
+        }
+    }
+}
+
+// Nested reference patterns
+pub fn test_nested_ref_patterns(opt: &Option<&Point>) -> i32 {
+    match opt {
+        &Option::Some(&Point { x, y }) => x + y,
+        &Option::None => 0,
+    }
+}
+
+// Multiple ref patterns in tuple
+pub fn test_tuple_ref_patterns(pair: &(Point, Point)) -> i32 {
+    match pair {
+        &(ref p1, ref p2) => p1.x + p2.y,
+    }
+}
+
+// Pattern with both ref and value binding
+pub fn test_mixed_ref_value(c: &Container) -> i32 {
+    match c {
+        &Container::Boxed { nested: Nested::Inner { val, ref other } } => val + *other,
+        _ => 0,
+    }
+}
+
+// ============================================================
+// Match Arm Body Variations
+// ============================================================
+
+// Block body followed by literal pattern
+pub fn test_block_then_literal(x: i32) -> i32 {
+    match x {
+        0 => {
+            let y = 10;
+            y
+        }
+        1 => 100,
+        _ => 0,
+    }
+}
+
+// Guard with block body
+pub fn test_guard_block_body(x: i32) -> i32 {
+    match x {
+        n if n > 0 => {
+            n * 2
+        }
+        n if n < 0 => {
+            n * -1
+        }
+        _ => 0,
+    }
+}
+
+// Or pattern with guard
+pub fn test_or_pattern_guard(x: i32) -> bool {
+    match x {
+        1 | 2 | 3 if x % 2 == 0 => true,
+        _ => false,
+    }
+}
+
+// Nested match expressions
+pub fn test_nested_match(x: i32, y: i32) -> i32 {
+    match x {
+        0 => match y {
+            0 => 0,
+            _ => 1,
+        },
+        _ => match y {
+            0 => 2,
+            _ => 3,
+        },
+    }
+}
+
+// ============================================================
+// If Let / While Let
+// ============================================================
+
+pub fn test_if_let(opt: Option<i32>) -> i32 {
+    if let Option::Some(x) = opt {
+        x
+    } else {
+        0
+    }
+}
+
+pub fn test_if_let_ref(opt: &Option<i32>) -> i32 {
+    if let &Option::Some(ref x) = opt {
+        *x
+    } else {
+        0
+    }
+}
+
+pub fn test_if_let_chain(a: Option<i32>, b: Option<i32>) -> i32 {
+    if let Option::Some(x) = a {
+        if let Option::Some(y) = b {
+            x + y
+        } else {
+            x
+        }
+    } else {
+        0
+    }
+}
+
+pub fn test_while_let(mut opt: Option<i32>) -> i32 {
+    let mut sum = 0;
+    while let Option::Some(x) = opt {
+        sum = sum + x;
+        opt = Option::None;
+    }
+    sum
+}
+
+// ============================================================
+// Expression Combinations
+// ============================================================
+
+// Closure inside match arm
+pub fn test_closure_in_match(x: i32) -> i32 {
+    match x {
+        0 => {
+            let f = |a: i32| a * 2;
+            f(10)
+        }
+        _ => x,
+    }
+}
+
+// Match inside closure
+pub fn test_match_in_closure() -> i32 {
+    let f = |x: i32| match x {
+        0 => 1,
+        _ => x,
+    };
+    f(5)
+}
+
+// Loop inside match inside closure
+pub fn test_nested_control_flow() -> i32 {
+    let f = |n: i32| {
+        match n {
+            0 => 0,
+            _ => {
+                let mut i = 0;
+                let mut sum = 0;
+                while i < n {
+                    sum = sum + i;
+                    i = i + 1;
+                }
+                sum
+            }
+        }
+    };
+    f(5)
+}
+
+// Pipe expression with method chain
+pub fn test_pipe_chain(x: i32) -> i32 {
+    x |> add_one |> double
+}
+
+pub fn add_one(x: i32) -> i32 { x + 1 }
+pub fn double(x: i32) -> i32 { x * 2 }
+
+// ============================================================
+// Operator Precedence Edge Cases
+// ============================================================
+
+// Comparison and logical operators
+pub fn test_precedence_1(a: bool, b: bool, c: bool) -> bool {
+    a && b || c && !b
+}
+
+// Bitwise and arithmetic
+pub fn test_precedence_2(x: i32) -> i32 {
+    x + 1 & 0xFF | x - 1 ^ 0x0F
+}
+
+// Comparison chain
+pub fn test_precedence_3(x: i32, y: i32) -> bool {
+    x < y && y < x + 10 || x == y
+}
+
+// ============================================================
+// Type Annotation Edge Cases
+// ============================================================
+
+pub fn test_complex_return_type() -> Option<Result<Vec<i32>, String>> {
+    Option::Some(Result::Ok(Vec::new()))
+}
+
+pub fn test_function_type_param(f: fn(i32, i32) -> i32) -> i32 {
+    f(1, 2)
+}
+
+pub fn test_ref_to_ref<'a, 'b>(x: &'a &'b i32) -> i32 {
+    **x
+}
+
+pub fn test_mutable_slice(slice: &mut [i32]) {
+    if slice.len() > 0 {
+        slice[0] = 0;
+    }
+}
+
+// ============================================================
+// Generic Combinations
+// ============================================================
+
+pub fn test_multiple_type_params<T, U>(t: T, u: U) -> (T, U) {
+    (t, u)
+}
+
+// Trait bounds syntax tested in separate trait_bound_test.blood file
+// since Clone/Default traits must be defined
+
+// ============================================================
+// Struct/Enum Construction Edge Cases
+// ============================================================
+
+// Field init shorthand with some explicit
+pub fn test_partial_shorthand(x: i32) -> Point {
+    let y = 20;
+    Point { x, y }
+}
+
+// Struct update syntax (if supported)
+pub fn test_struct_copy(p: Point) -> Point {
+    Point { x: 100, ..p }
+}
+
+// Tuple struct construction
+pub struct Wrapper(i32);
+
+pub fn test_tuple_struct_construct(x: i32) -> Wrapper {
+    Wrapper(x)
+}
+
+// ============================================================
+// Block Expression Edge Cases
+// ============================================================
+
+// Block as expression in various contexts
+pub fn test_block_in_binary_op() -> i32 {
+    { 1 + 2 } + { 3 + 4 }
+}
+
+pub fn test_block_in_array() -> [i32; 3] {
+    [{ 1 }, { 2 }, { 3 }]
+}
+
+pub fn test_block_in_call() -> i32 {
+    add_one({ 5 + 5 })
+}
+
+// ============================================================
+// Range Expression Edge Cases
+// ============================================================
+
+pub fn test_range_in_match(x: i32) -> i32 {
+    match x {
+        0..5 => 1,
+        5..10 => 2,
+        10..=20 => 3,
+        _ => 0,
+    }
+}
+
+pub fn test_range_in_for() -> i32 {
+    let mut sum = 0;
+    for i in 0..10 {
+        sum = sum + i;
+    }
+    sum
+}
+
+// ============================================================
+// Main
+// ============================================================
+
+pub fn main() {
+    // Test compilation
+    let c = Container::Boxed { nested: Nested::Inner { val: 1, other: 2 } };
+    let _ = test_ref_in_struct(&c);
+}

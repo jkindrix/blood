@@ -1,0 +1,42 @@
+// Test: Yield effect with accumulator handler
+// Tests that the return clause transforms the body result.
+// FINDING: Return clauses ARE executed at runtime! The handler's return(x) { total }
+// transforms the body's result (0) into `total` (the sum of yielded values).
+// However, the TYPE CHECKER does not track this transformation — it types the
+// with...handle expression as the body type, not the return clause type.
+// EXPECT: 15
+effect Yield<T> {
+    op yield_value(value: T) -> ();
+}
+
+deep handler Summer for Yield<i32> {
+    let mut total: i32
+
+    return(x) { total }
+
+    op yield_value(v) {
+        total = total + v;
+        resume(())
+    }
+}
+
+fn generate(n: i32) -> () / {Yield<i32>} {
+    let mut i: i32 = 1;
+    while i <= n {
+        perform Yield.yield_value(i);
+        i = i + 1;
+    }
+}
+
+fn main() -> i32 {
+    // Return clause transforms body result: return(0) { total } = total = 15
+    let result: i32 = with Summer { total: 0 } handle {
+        generate(5);
+        0
+    };
+    // sum 1+2+3+4+5 = 15, return clause replaces body value with total
+    println_int(result);
+
+    if result != 15 { return 1; }
+    0
+}

@@ -1,0 +1,506 @@
+// Blood Standard Library Tests - Result<T, E>
+//
+// Comprehensive tests for the Result type.
+
+use std::core::Result;
+use std::core::Result::{Ok, Err};
+
+// =============================================================================
+// Construction Tests
+// =============================================================================
+
+/// Test Ok() construction
+fn test_result_ok() {
+    let result: Result<i32, str> = Ok(42);
+    assert(result.is_ok(), "Ok should be ok");
+    assert(!result.is_err(), "Ok should not be err");
+}
+
+/// Test Err() construction
+fn test_result_err() {
+    let result: Result<i32, str> = Err("error");
+    assert(result.is_err(), "Err should be err");
+    assert(!result.is_ok(), "Err should not be ok");
+}
+
+// =============================================================================
+// Accessor Tests
+// =============================================================================
+
+/// Test unwrap() returns value
+fn test_result_unwrap() {
+    let ok: Result<i32, str> = Ok(42);
+    assert(ok.unwrap() == 42, "unwrap on Ok returns value");
+}
+
+/// Test unwrap_err() returns error
+fn test_result_unwrap_err() {
+    let err: Result<i32, str> = Err("error");
+    assert(err.unwrap_err() == "error", "unwrap_err on Err returns error");
+}
+
+/// Test unwrap_or() provides default
+fn test_result_unwrap_or() {
+    let ok: Result<i32, str> = Ok(42);
+    let err: Result<i32, str> = Err("error");
+
+    assert(ok.unwrap_or(0) == 42, "unwrap_or on Ok returns value");
+    assert(err.unwrap_or(0) == 0, "unwrap_or on Err returns default");
+}
+
+/// Test unwrap_or_else() with closure
+fn test_result_unwrap_or_else() {
+    let ok: Result<i32, str> = Ok(42);
+    let err: Result<i32, str> = Err("error");
+
+    assert(ok.unwrap_or_else(|_| 0) == 42, "unwrap_or_else on Ok returns value");
+    assert(err.unwrap_or_else(|e| e.len() as i32) == 5, "unwrap_or_else on Err uses error");
+}
+
+/// Test unwrap_or_default() uses Default
+fn test_result_unwrap_or_default() {
+    let ok: Result<i32, str> = Ok(42);
+    let err: Result<i32, str> = Err("error");
+
+    assert(ok.unwrap_or_default() == 42, "unwrap_or_default on Ok returns value");
+    assert(err.unwrap_or_default() == 0, "unwrap_or_default on Err returns default");
+}
+
+/// Test expect() with message
+fn test_result_expect() {
+    let ok: Result<i32, str> = Ok(42);
+    assert(ok.expect("should be ok") == 42, "expect on Ok returns value");
+}
+
+/// Test expect_err() with message
+fn test_result_expect_err() {
+    let err: Result<i32, str> = Err("error");
+    assert(err.expect_err("should be err") == "error", "expect_err on Err returns error");
+}
+
+// =============================================================================
+// Transformation Tests
+// =============================================================================
+
+/// Test map() transforms Ok value
+fn test_result_map() {
+    let ok: Result<i32, str> = Ok(5);
+    let err: Result<i32, str> = Err("error");
+
+    let mapped_ok = ok.map(|x| x * 2);
+    let mapped_err = err.map(|x| x * 2);
+
+    assert(mapped_ok == Ok(10), "map on Ok transforms value");
+    assert(mapped_err == Err("error"), "map on Err preserves error");
+}
+
+/// Test map_err() transforms Err value
+fn test_result_map_err() {
+    let ok: Result<i32, str> = Ok(42);
+    let err: Result<i32, str> = Err("error");
+
+    let mapped_ok = ok.map_err(|e| e.to_uppercase());
+    let mapped_err = err.map_err(|e| e.to_uppercase());
+
+    assert(mapped_ok == Ok(42), "map_err on Ok preserves value");
+    assert(mapped_err == Err("ERROR"), "map_err on Err transforms error");
+}
+
+/// Test map_or() with default
+fn test_result_map_or() {
+    let ok: Result<i32, str> = Ok(5);
+    let err: Result<i32, str> = Err("error");
+
+    assert(ok.map_or(0, |x| x * 2) == 10, "map_or on Ok transforms");
+    assert(err.map_or(0, |x| x * 2) == 0, "map_or on Err returns default");
+}
+
+/// Test map_or_else() with closures
+fn test_result_map_or_else() {
+    let ok: Result<i32, str> = Ok(5);
+    let err: Result<i32, str> = Err("error");
+
+    let result1 = ok.map_or_else(|_| 0, |x| x * 2);
+    let result2 = err.map_or_else(|e| e.len() as i32, |x| x * 2);
+
+    assert(result1 == 10, "map_or_else on Ok transforms value");
+    assert(result2 == 5, "map_or_else on Err uses error");
+}
+
+/// Test and_then() for chaining
+fn test_result_and_then() {
+    fn safe_divide(x: i32, y: i32) -> Result<i32, str> {
+        if y == 0 {
+            Err("division by zero")
+        } else {
+            Ok(x / y)
+        }
+    }
+
+    let ok: Result<i32, str> = Ok(10);
+    let err: Result<i32, str> = Err("error");
+
+    assert(ok.and_then(|x| safe_divide(x, 2)) == Ok(5), "and_then chains Ok");
+    assert(ok.and_then(|x| safe_divide(x, 0)) == Err("division by zero"), "and_then propagates error");
+    assert(err.and_then(|x| safe_divide(x, 2)) == Err("error"), "and_then on Err is Err");
+}
+
+/// Test or_else() for error recovery
+fn test_result_or_else() {
+    fn try_recover(e: str) -> Result<i32, str> {
+        if e == "recoverable" {
+            Ok(0)
+        } else {
+            Err(e)
+        }
+    }
+
+    let ok: Result<i32, str> = Ok(42);
+    let recoverable: Result<i32, str> = Err("recoverable");
+    let fatal: Result<i32, str> = Err("fatal");
+
+    assert(ok.or_else(try_recover) == Ok(42), "or_else on Ok returns Ok");
+    assert(recoverable.or_else(try_recover) == Ok(0), "or_else can recover");
+    assert(fatal.or_else(try_recover) == Err("fatal"), "or_else can fail");
+}
+
+// =============================================================================
+// Boolean Tests
+// =============================================================================
+
+/// Test and() combines results
+fn test_result_and() {
+    let ok1: Result<i32, str> = Ok(1);
+    let ok2: Result<i32, str> = Ok(2);
+    let err: Result<i32, str> = Err("error");
+
+    assert(ok1.and(ok2) == Ok(2), "Ok.and(Ok) returns second");
+    assert(ok1.and(err) == Err("error"), "Ok.and(Err) returns Err");
+    assert(err.and(ok2) == Err("error"), "Err.and(Ok) returns Err");
+}
+
+/// Test or() provides alternative
+fn test_result_or() {
+    let ok1: Result<i32, str> = Ok(1);
+    let ok2: Result<i32, str> = Ok(2);
+    let err1: Result<i32, str> = Err("error1");
+    let err2: Result<i32, str> = Err("error2");
+
+    assert(ok1.or(ok2) == Ok(1), "Ok.or(Ok) returns first");
+    assert(ok1.or(err1) == Ok(1), "Ok.or(Err) returns Ok");
+    assert(err1.or(ok2) == Ok(2), "Err.or(Ok) returns Ok");
+    assert(err1.or(err2) == Err("error2"), "Err.or(Err) returns second");
+}
+
+// =============================================================================
+// Reference Tests
+// =============================================================================
+
+/// Test as_ref() converts to reference
+fn test_result_as_ref() {
+    let ok: Result<i32, str> = Ok(42);
+    let err: Result<i32, str> = Err("error");
+
+    let ref_ok: Result<&i32, &str> = ok.as_ref();
+    let ref_err: Result<&i32, &str> = err.as_ref();
+
+    assert(ref_ok == Ok(&42), "as_ref on Ok returns Ok(&T)");
+    assert(ref_err == Err(&"error"), "as_ref on Err returns Err(&E)");
+}
+
+/// Test as_mut() converts to mutable reference
+fn test_result_as_mut() {
+    let mut ok: Result<i32, str> = Ok(42);
+
+    if let Ok(x) = ok.as_mut() {
+        *x = 100;
+    }
+
+    assert(ok == Ok(100), "as_mut allows mutation");
+}
+
+// =============================================================================
+// Conversion Tests
+// =============================================================================
+
+/// Test ok() converts to Option
+fn test_result_ok() {
+    let ok: Result<i32, str> = Ok(42);
+    let err: Result<i32, str> = Err("error");
+
+    assert(ok.ok() == Some(42), "Ok.ok() returns Some");
+    assert(err.ok() == None, "Err.ok() returns None");
+}
+
+/// Test err() converts to Option
+fn test_result_err_method() {
+    let ok: Result<i32, str> = Ok(42);
+    let err: Result<i32, str> = Err("error");
+
+    assert(ok.err() == None, "Ok.err() returns None");
+    assert(err.err() == Some("error"), "Err.err() returns Some");
+}
+
+/// Test transpose() swaps Result and Option
+fn test_result_transpose() {
+    let ok_some: Result<Option<i32>, str> = Ok(Some(42));
+    let ok_none: Result<Option<i32>, str> = Ok(None);
+    let err: Result<Option<i32>, str> = Err("error");
+
+    assert(ok_some.transpose() == Some(Ok(42)), "transpose Ok(Some) to Some(Ok)");
+    assert(ok_none.transpose() == None, "transpose Ok(None) to None");
+    assert(err.transpose() == Some(Err("error")), "transpose Err to Some(Err)");
+}
+
+/// Test flatten() removes nesting
+fn test_result_flatten() {
+    let nested_ok: Result<Result<i32, str>, str> = Ok(Ok(42));
+    let nested_inner_err: Result<Result<i32, str>, str> = Ok(Err("inner"));
+    let outer_err: Result<Result<i32, str>, str> = Err("outer");
+
+    assert(nested_ok.flatten() == Ok(42), "flatten Ok(Ok) to Ok");
+    assert(nested_inner_err.flatten() == Err("inner"), "flatten Ok(Err) to Err");
+    assert(outer_err.flatten() == Err("outer"), "flatten Err to Err");
+}
+
+// =============================================================================
+// Inspect Tests
+// =============================================================================
+
+/// Test inspect() runs closure on Ok
+fn test_result_inspect() {
+    let ok: Result<i32, str> = Ok(42);
+    let mut seen = 0;
+
+    ok.inspect(|x| seen = *x);
+    assert(seen == 42, "inspect runs on Ok");
+
+    let err: Result<i32, str> = Err("error");
+    seen = 0;
+    err.inspect(|x| seen = *x);
+    assert(seen == 0, "inspect does not run on Err");
+}
+
+/// Test inspect_err() runs closure on Err
+fn test_result_inspect_err() {
+    let err: Result<i32, str> = Err("error");
+    let mut seen = "";
+
+    err.inspect_err(|e| seen = *e);
+    assert(seen == "error", "inspect_err runs on Err");
+
+    let ok: Result<i32, str> = Ok(42);
+    seen = "";
+    ok.inspect_err(|e| seen = *e);
+    assert(seen == "", "inspect_err does not run on Ok");
+}
+
+// =============================================================================
+// Iterator Tests
+// =============================================================================
+
+/// Test iter() creates iterator
+fn test_result_iter() {
+    let ok: Result<i32, str> = Ok(42);
+    let err: Result<i32, str> = Err("error");
+
+    let ok_values: Vec<&i32> = ok.iter().collect();
+    let err_values: Vec<&i32> = err.iter().collect();
+
+    assert(ok_values == vec![&42], "Ok iter yields value");
+    assert(err_values.is_empty(), "Err iter yields nothing");
+}
+
+/// Test into_iter() consumes result
+fn test_result_into_iter() {
+    let ok: Result<i32, str> = Ok(42);
+    let values: Vec<i32> = ok.into_iter().collect();
+    assert(values == vec![42], "into_iter yields value");
+}
+
+// =============================================================================
+// Clone and Equality Tests
+// =============================================================================
+
+/// Test Clone trait
+fn test_result_clone() {
+    let ok: Result<i32, str> = Ok(42);
+    let cloned = ok.clone();
+    assert(ok == cloned, "clone should be equal");
+}
+
+/// Test PartialEq trait
+fn test_result_equality() {
+    let ok1: Result<i32, str> = Ok(42);
+    let ok2: Result<i32, str> = Ok(42);
+    let ok3: Result<i32, str> = Ok(100);
+    let err1: Result<i32, str> = Err("error");
+    let err2: Result<i32, str> = Err("error");
+
+    assert(ok1 == ok2, "equal Ok should be equal");
+    assert(ok1 != ok3, "different Ok should not be equal");
+    assert(ok1 != err1, "Ok should not equal Err");
+    assert(err1 == err2, "equal Err should be equal");
+}
+
+// =============================================================================
+// Pattern Matching Tests
+// =============================================================================
+
+/// Test pattern matching on Result
+fn test_result_pattern_match() {
+    let ok: Result<i32, str> = Ok(42);
+    let err: Result<i32, str> = Err("error");
+
+    let value1 = match ok {
+        Ok(x) => x,
+        Err(_) => 0,
+    };
+    assert(value1 == 42, "match Ok extracts value");
+
+    let value2 = match err {
+        Ok(x) => x,
+        Err(_) => 0,
+    };
+    assert(value2 == 0, "match Err uses default");
+}
+
+/// Test if let pattern
+fn test_result_if_let() {
+    let ok: Result<i32, str> = Ok(42);
+    let mut extracted = 0;
+
+    if let Ok(x) = ok {
+        extracted = x;
+    }
+
+    assert(extracted == 42, "if let Ok extracts value");
+}
+
+// =============================================================================
+// Error Propagation Tests
+// =============================================================================
+
+/// Test early return with ? operator equivalent
+fn test_result_question_mark() {
+    fn may_fail(succeed: bool) -> Result<i32, str> {
+        if succeed {
+            Ok(42)
+        } else {
+            Err("failed")
+        }
+    }
+
+    fn outer(succeed: bool) -> Result<i32, str> {
+        let value = may_fail(succeed)?;  // Early return on Err
+        Ok(value * 2)
+    }
+
+    assert(outer(true) == Ok(84), "? propagates Ok");
+    assert(outer(false) == Err("failed"), "? propagates Err");
+}
+
+/// Test chaining multiple fallible operations
+fn test_result_chain() {
+    fn parse_int(s: str) -> Result<i32, str> {
+        match s {
+            "1" => Ok(1),
+            "2" => Ok(2),
+            "3" => Ok(3),
+            _ => Err("parse error"),
+        }
+    }
+
+    fn double(x: i32) -> Result<i32, str> {
+        Ok(x * 2)
+    }
+
+    let result = parse_int("2")
+        .and_then(double)
+        .and_then(double);
+
+    assert(result == Ok(8), "chain of and_then works");
+
+    let fail_result = parse_int("invalid")
+        .and_then(double);
+
+    assert(fail_result == Err("parse error"), "chain propagates first error");
+}
+
+// =============================================================================
+// Main Test Runner
+// =============================================================================
+
+fn main() {
+    println_str("Running Result<T, E> tests...");
+    println_str("");
+
+    // Construction
+    test_result_ok();
+    test_result_err();
+    println_str("[PASS] Construction tests");
+
+    // Accessors
+    test_result_unwrap();
+    test_result_unwrap_err();
+    test_result_unwrap_or();
+    test_result_unwrap_or_else();
+    test_result_unwrap_or_default();
+    test_result_expect();
+    test_result_expect_err();
+    println_str("[PASS] Accessor tests");
+
+    // Transformations
+    test_result_map();
+    test_result_map_err();
+    test_result_map_or();
+    test_result_map_or_else();
+    test_result_and_then();
+    test_result_or_else();
+    println_str("[PASS] Transformation tests");
+
+    // Boolean ops
+    test_result_and();
+    test_result_or();
+    println_str("[PASS] Boolean tests");
+
+    // References
+    test_result_as_ref();
+    test_result_as_mut();
+    println_str("[PASS] Reference tests");
+
+    // Conversions
+    test_result_ok();
+    test_result_err_method();
+    test_result_transpose();
+    test_result_flatten();
+    println_str("[PASS] Conversion tests");
+
+    // Inspect
+    test_result_inspect();
+    test_result_inspect_err();
+    println_str("[PASS] Inspect tests");
+
+    // Iterators
+    test_result_iter();
+    test_result_into_iter();
+    println_str("[PASS] Iterator tests");
+
+    // Clone/Equality
+    test_result_clone();
+    test_result_equality();
+    println_str("[PASS] Clone/Equality tests");
+
+    // Pattern matching
+    test_result_pattern_match();
+    test_result_if_let();
+    println_str("[PASS] Pattern matching tests");
+
+    // Error propagation
+    test_result_question_mark();
+    test_result_chain();
+    println_str("[PASS] Error propagation tests");
+
+    println_str("");
+    println_str("All Result<T, E> tests passed!");
+}

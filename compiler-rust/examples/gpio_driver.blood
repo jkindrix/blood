@@ -1,0 +1,962 @@
+// GPIO Driver for Raspberry Pi
+// Industry-Relevant Demonstration (REAL-V-013)
+// Demonstrates: Embedded systems, memory-mapped I/O, hardware abstraction,
+// effect-based hardware access, type-safe pin configuration
+//
+// This driver provides safe access to Raspberry Pi GPIO pins through:
+// - Memory-mapped register access
+// - Type-state pattern for pin modes
+// - Effect-based error handling
+// - Zero-cost abstractions for embedded use
+//
+// Target: Raspberry Pi 3/4 (BCM2837/BCM2711)
+
+// ============================================================================
+// Hardware Constants
+// ============================================================================
+
+/// BCM2837 (Pi 3) peripheral base address
+const BCM2837_PERIPHERAL_BASE: u64 = 0x3F000000;
+
+/// BCM2711 (Pi 4) peripheral base address
+const BCM2711_PERIPHERAL_BASE: u64 = 0xFE000000;
+
+/// GPIO register offset from peripheral base
+const GPIO_OFFSET: u64 = 0x200000;
+
+/// Number of GPIO pins on Raspberry Pi
+const GPIO_PIN_COUNT: u32 = 54;
+
+/// Register offsets (in 32-bit words)
+mod reg {
+    /// GPIO Function Select registers (GPFSEL0-5)
+    pub const GPFSEL0: u32 = 0;   // GPIO 0-9
+    pub const GPFSEL1: u32 = 1;   // GPIO 10-19
+    pub const GPFSEL2: u32 = 2;   // GPIO 20-29
+    pub const GPFSEL3: u32 = 3;   // GPIO 30-39
+    pub const GPFSEL4: u32 = 4;   // GPIO 40-49
+    pub const GPFSEL5: u32 = 5;   // GPIO 50-53
+
+    /// GPIO Pin Output Set registers
+    pub const GPSET0: u32 = 7;    // GPIO 0-31
+    pub const GPSET1: u32 = 8;    // GPIO 32-53
+
+    /// GPIO Pin Output Clear registers
+    pub const GPCLR0: u32 = 10;   // GPIO 0-31
+    pub const GPCLR1: u32 = 11;   // GPIO 32-53
+
+    /// GPIO Pin Level registers (read-only)
+    pub const GPLEV0: u32 = 13;   // GPIO 0-31
+    pub const GPLEV1: u32 = 14;   // GPIO 32-53
+
+    /// GPIO Pin Event Detect Status
+    pub const GPEDS0: u32 = 16;   // GPIO 0-31
+    pub const GPEDS1: u32 = 17;   // GPIO 32-53
+
+    /// GPIO Pin Rising Edge Detect Enable
+    pub const GPREN0: u32 = 19;
+    pub const GPREN1: u32 = 20;
+
+    /// GPIO Pin Falling Edge Detect Enable
+    pub const GPFEN0: u32 = 22;
+    pub const GPFEN1: u32 = 23;
+
+    /// GPIO Pin High Detect Enable
+    pub const GPHEN0: u32 = 25;
+    pub const GPHEN1: u32 = 26;
+
+    /// GPIO Pin Low Detect Enable
+    pub const GPLEN0: u32 = 28;
+    pub const GPLEN1: u32 = 29;
+
+    /// GPIO Pull-up/down Enable (Pi 3)
+    pub const GPPUD: u32 = 37;
+
+    /// GPIO Pull-up/down Enable Clock (Pi 3)
+    pub const GPPUDCLK0: u32 = 38;
+    pub const GPPUDCLK1: u32 = 39;
+
+    /// GPIO Pull-up/down registers (Pi 4)
+    pub const GPIO_PUP_PDN_CNTRL_REG0: u32 = 57;
+    pub const GPIO_PUP_PDN_CNTRL_REG1: u32 = 58;
+    pub const GPIO_PUP_PDN_CNTRL_REG2: u32 = 59;
+    pub const GPIO_PUP_PDN_CNTRL_REG3: u32 = 60;
+}
+
+// ============================================================================
+// Pin Function Modes
+// ============================================================================
+
+/// GPIO pin function (3 bits per pin in GPFSEL registers)
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+enum PinFunction {
+    /// Input mode
+    Input = 0b000,
+    /// Output mode
+    Output = 0b001,
+    /// Alternate function 0
+    Alt0 = 0b100,
+    /// Alternate function 1
+    Alt1 = 0b101,
+    /// Alternate function 2
+    Alt2 = 0b110,
+    /// Alternate function 3
+    Alt3 = 0b111,
+    /// Alternate function 4
+    Alt4 = 0b011,
+    /// Alternate function 5
+    Alt5 = 0b010,
+}
+
+/// Pull-up/down configuration
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PullMode {
+    /// No pull-up or pull-down
+    None,
+    /// Pull-down resistor enabled
+    Down,
+    /// Pull-up resistor enabled
+    Up,
+}
+
+/// Pin logic level
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Level {
+    Low,
+    High,
+}
+
+impl Level {
+    fn from_bool(b: bool) -> Level {
+        if b { Level::High } else { Level::Low }
+    }
+
+    fn to_bool(&self) -> bool {
+        match self {
+            Level::Low => false,
+            Level::High => true,
+        }
+    }
+}
+
+/// Edge detection configuration
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Edge {
+    Rising,
+    Falling,
+    Both,
+}
+
+// ============================================================================
+// Raspberry Pi Model Detection
+// ============================================================================
+
+/// Raspberry Pi model
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PiModel {
+    Pi3,
+    Pi4,
+    Unknown,
+}
+
+impl PiModel {
+    /// Get peripheral base address for this model
+    fn peripheral_base(&self) -> u64 {
+        match self {
+            PiModel::Pi3 => BCM2837_PERIPHERAL_BASE,
+            PiModel::Pi4 => BCM2711_PERIPHERAL_BASE,
+            PiModel::Unknown => BCM2837_PERIPHERAL_BASE, // Default to Pi 3
+        }
+    }
+
+    /// Detect Pi model from /proc/device-tree/model
+    fn detect() -> PiModel / {FileSystem} {
+        if let Some(model) = perform FileSystem.read_file("/proc/device-tree/model") {
+            if model.contains("Raspberry Pi 4") {
+                return PiModel::Pi4;
+            } else if model.contains("Raspberry Pi 3") {
+                return PiModel::Pi3;
+            }
+        }
+        PiModel::Unknown
+    }
+}
+
+// ============================================================================
+// Effects
+// ============================================================================
+
+/// Effect for memory-mapped I/O
+effect MemoryIO {
+    /// Map a physical memory region
+    op map(base: u64, size: usize) -> Result<*mut u32, GpioError>;
+    /// Unmap a previously mapped region
+    op unmap(ptr: *mut u32, size: usize) -> ();
+    /// Read a 32-bit register (volatile)
+    op read_volatile(ptr: *const u32) -> u32;
+    /// Write a 32-bit register (volatile)
+    op write_volatile(ptr: *mut u32, value: u32) -> ();
+    /// Memory barrier
+    op memory_barrier() -> ();
+}
+
+/// Effect for file system access
+effect FileSystem {
+    op read_file(path: &str) -> Option<String>;
+}
+
+/// Effect for timing
+effect Timing {
+    op delay_microseconds(us: u32) -> ();
+}
+
+/// GPIO errors
+#[derive(Clone)]
+enum GpioError {
+    /// Failed to map GPIO memory
+    MapFailed(String),
+    /// Invalid pin number
+    InvalidPin(u32),
+    /// Pin is in wrong mode for operation
+    WrongMode { pin: u32, expected: &'static str, actual: &'static str },
+    /// Permission denied
+    PermissionDenied,
+    /// Hardware not found
+    HardwareNotFound,
+}
+
+// ============================================================================
+// GPIO Controller
+// ============================================================================
+
+/// GPIO controller providing access to all pins
+struct GpioController {
+    /// Pointer to mapped GPIO registers
+    base: *mut u32,
+    /// Pi model (affects pull-up/down implementation)
+    model: PiModel,
+    /// Track which pins are in use
+    pins_in_use: [bool; GPIO_PIN_COUNT as usize],
+}
+
+impl GpioController {
+    /// Initialize GPIO controller
+    fn new() -> Result<GpioController, GpioError> / {MemoryIO, FileSystem} {
+        // Detect Pi model
+        let model = PiModel::detect();
+
+        // Calculate GPIO base address
+        let gpio_base = model.peripheral_base() + GPIO_OFFSET;
+
+        // Map GPIO registers (need 0x100 bytes = 64 u32 registers)
+        let base = perform MemoryIO.map(gpio_base, 256)?;
+
+        Ok(GpioController {
+            base,
+            model,
+            pins_in_use: [false; GPIO_PIN_COUNT as usize],
+        })
+    }
+
+    /// Check if pin number is valid
+    fn validate_pin(&self, pin: u32) -> Result<(), GpioError> {
+        if pin >= GPIO_PIN_COUNT {
+            Err(GpioError::InvalidPin(pin))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Read a GPIO register
+    fn read_reg(&self, offset: u32) -> u32 / {MemoryIO} {
+        @unsafe {
+            let ptr = self.base.offset(offset as isize);
+            perform MemoryIO.read_volatile(ptr)
+        }
+    }
+
+    /// Write a GPIO register
+    fn write_reg(&self, offset: u32, value: u32) / {MemoryIO} {
+        @unsafe {
+            let ptr = self.base.offset(offset as isize);
+            perform MemoryIO.write_volatile(ptr, value);
+        }
+    }
+
+    /// Set pin function mode
+    fn set_function(&mut self, pin: u32, func: PinFunction) -> Result<(), GpioError> / {MemoryIO} {
+        self.validate_pin(pin)?;
+
+        // Each GPFSEL register controls 10 pins (3 bits each)
+        let reg_offset = reg::GPFSEL0 + (pin / 10);
+        let bit_offset = (pin % 10) * 3;
+
+        // Read-modify-write
+        let mut value = self.read_reg(reg_offset);
+        value &= !(0b111 << bit_offset);  // Clear bits
+        value |= (func as u32) << bit_offset;  // Set new function
+        self.write_reg(reg_offset, value);
+
+        Ok(())
+    }
+
+    /// Get current pin function mode
+    fn get_function(&self, pin: u32) -> Result<PinFunction, GpioError> / {MemoryIO} {
+        self.validate_pin(pin)?;
+
+        let reg_offset = reg::GPFSEL0 + (pin / 10);
+        let bit_offset = (pin % 10) * 3;
+
+        let value = self.read_reg(reg_offset);
+        let func_bits = (value >> bit_offset) & 0b111;
+
+        let func = match func_bits {
+            0b000 => PinFunction::Input,
+            0b001 => PinFunction::Output,
+            0b100 => PinFunction::Alt0,
+            0b101 => PinFunction::Alt1,
+            0b110 => PinFunction::Alt2,
+            0b111 => PinFunction::Alt3,
+            0b011 => PinFunction::Alt4,
+            0b010 => PinFunction::Alt5,
+            _ => PinFunction::Input, // Should never happen
+        };
+
+        Ok(func)
+    }
+
+    /// Set output pin high
+    fn set_high(&self, pin: u32) -> Result<(), GpioError> / {MemoryIO} {
+        self.validate_pin(pin)?;
+
+        let reg_offset = if pin < 32 { reg::GPSET0 } else { reg::GPSET1 };
+        let bit = 1 << (pin % 32);
+
+        self.write_reg(reg_offset, bit);
+        Ok(())
+    }
+
+    /// Set output pin low
+    fn set_low(&self, pin: u32) -> Result<(), GpioError> / {MemoryIO} {
+        self.validate_pin(pin)?;
+
+        let reg_offset = if pin < 32 { reg::GPCLR0 } else { reg::GPCLR1 };
+        let bit = 1 << (pin % 32);
+
+        self.write_reg(reg_offset, bit);
+        Ok(())
+    }
+
+    /// Set output pin to level
+    fn write(&self, pin: u32, level: Level) -> Result<(), GpioError> / {MemoryIO} {
+        match level {
+            Level::High => self.set_high(pin),
+            Level::Low => self.set_low(pin),
+        }
+    }
+
+    /// Read input pin level
+    fn read(&self, pin: u32) -> Result<Level, GpioError> / {MemoryIO} {
+        self.validate_pin(pin)?;
+
+        let reg_offset = if pin < 32 { reg::GPLEV0 } else { reg::GPLEV1 };
+        let bit = 1 << (pin % 32);
+
+        let value = self.read_reg(reg_offset);
+        Ok(Level::from_bool((value & bit) != 0))
+    }
+
+    /// Configure pull-up/down resistor (Pi 3 method)
+    fn set_pull_pi3(&self, pin: u32, mode: PullMode) -> Result<(), GpioError> / {MemoryIO, Timing} {
+        self.validate_pin(pin)?;
+
+        let pud_value: u32 = match mode {
+            PullMode::None => 0,
+            PullMode::Down => 1,
+            PullMode::Up => 2,
+        };
+
+        // 1. Write to GPPUD
+        self.write_reg(reg::GPPUD, pud_value);
+
+        // 2. Wait 150 cycles (at least)
+        perform Timing.delay_microseconds(10);
+
+        // 3. Write to GPPUDCLK0/1
+        let clk_reg = if pin < 32 { reg::GPPUDCLK0 } else { reg::GPPUDCLK1 };
+        let bit = 1 << (pin % 32);
+        self.write_reg(clk_reg, bit);
+
+        // 4. Wait 150 cycles
+        perform Timing.delay_microseconds(10);
+
+        // 5. Clear GPPUD and GPPUDCLK
+        self.write_reg(reg::GPPUD, 0);
+        self.write_reg(clk_reg, 0);
+
+        Ok(())
+    }
+
+    /// Configure pull-up/down resistor (Pi 4 method)
+    fn set_pull_pi4(&self, pin: u32, mode: PullMode) -> Result<(), GpioError> / {MemoryIO} {
+        self.validate_pin(pin)?;
+
+        let pud_value: u32 = match mode {
+            PullMode::None => 0,
+            PullMode::Up => 1,
+            PullMode::Down => 2,
+        };
+
+        // Each register controls 16 pins (2 bits each)
+        let reg_offset = reg::GPIO_PUP_PDN_CNTRL_REG0 + (pin / 16);
+        let bit_offset = (pin % 16) * 2;
+
+        let mut value = self.read_reg(reg_offset);
+        value &= !(0b11 << bit_offset);
+        value |= pud_value << bit_offset;
+        self.write_reg(reg_offset, value);
+
+        Ok(())
+    }
+
+    /// Configure pull-up/down (auto-detects Pi version)
+    fn set_pull(&self, pin: u32, mode: PullMode) -> Result<(), GpioError> / {MemoryIO, Timing} {
+        match self.model {
+            PiModel::Pi4 => self.set_pull_pi4(pin, mode),
+            _ => self.set_pull_pi3(pin, mode),
+        }
+    }
+
+    /// Enable edge detection
+    fn enable_edge_detect(&self, pin: u32, edge: Edge) -> Result<(), GpioError> / {MemoryIO} {
+        self.validate_pin(pin)?;
+
+        let bit = 1 << (pin % 32);
+        let (ren_reg, fen_reg) = if pin < 32 {
+            (reg::GPREN0, reg::GPFEN0)
+        } else {
+            (reg::GPREN1, reg::GPFEN1)
+        };
+
+        match edge {
+            Edge::Rising => {
+                let val = self.read_reg(ren_reg) | bit;
+                self.write_reg(ren_reg, val);
+            },
+            Edge::Falling => {
+                let val = self.read_reg(fen_reg) | bit;
+                self.write_reg(fen_reg, val);
+            },
+            Edge::Both => {
+                let ren_val = self.read_reg(ren_reg) | bit;
+                let fen_val = self.read_reg(fen_reg) | bit;
+                self.write_reg(ren_reg, ren_val);
+                self.write_reg(fen_reg, fen_val);
+            },
+        }
+
+        Ok(())
+    }
+
+    /// Check if edge event occurred
+    fn check_event(&self, pin: u32) -> Result<bool, GpioError> / {MemoryIO} {
+        self.validate_pin(pin)?;
+
+        let reg_offset = if pin < 32 { reg::GPEDS0 } else { reg::GPEDS1 };
+        let bit = 1 << (pin % 32);
+
+        let value = self.read_reg(reg_offset);
+        Ok((value & bit) != 0)
+    }
+
+    /// Clear edge event flag
+    fn clear_event(&self, pin: u32) -> Result<(), GpioError> / {MemoryIO} {
+        self.validate_pin(pin)?;
+
+        let reg_offset = if pin < 32 { reg::GPEDS0 } else { reg::GPEDS1 };
+        let bit = 1 << (pin % 32);
+
+        // Writing 1 clears the event flag
+        self.write_reg(reg_offset, bit);
+        Ok(())
+    }
+
+    /// Request exclusive access to a pin
+    fn request_pin(&mut self, pin: u32) -> Result<(), GpioError> {
+        self.validate_pin(pin)?;
+
+        if self.pins_in_use[pin as usize] {
+            return Err(GpioError::WrongMode {
+                pin,
+                expected: "available",
+                actual: "in use",
+            });
+        }
+
+        self.pins_in_use[pin as usize] = true;
+        Ok(())
+    }
+
+    /// Release a pin
+    fn release_pin(&mut self, pin: u32) {
+        if (pin as usize) < self.pins_in_use.len() {
+            self.pins_in_use[pin as usize] = false;
+        }
+    }
+}
+
+impl Drop for GpioController {
+    fn drop(&mut self) / {MemoryIO} {
+        perform MemoryIO.unmap(self.base, 256);
+    }
+}
+
+// ============================================================================
+// Type-Safe Pin Wrappers
+// ============================================================================
+
+/// Phantom type markers for pin modes
+mod mode {
+    pub struct Input;
+    pub struct Output;
+    pub struct Unconfigured;
+}
+
+/// A GPIO pin with type-level mode tracking
+struct Pin<Mode> {
+    pin: u32,
+    controller: *mut GpioController,
+    _mode: PhantomData<Mode>,
+}
+
+impl Pin<mode::Unconfigured> {
+    /// Create a new unconfigured pin
+    fn new(pin: u32, controller: &mut GpioController) -> Result<Pin<mode::Unconfigured>, GpioError> {
+        controller.request_pin(pin)?;
+
+        Ok(Pin {
+            pin,
+            controller: controller as *mut GpioController,
+            _mode: PhantomData,
+        })
+    }
+
+    /// Configure as input
+    fn into_input(self) -> Result<Pin<mode::Input>, GpioError> / {MemoryIO} {
+        @unsafe {
+            (*self.controller).set_function(self.pin, PinFunction::Input)?;
+        }
+
+        Ok(Pin {
+            pin: self.pin,
+            controller: self.controller,
+            _mode: PhantomData,
+        })
+    }
+
+    /// Configure as output
+    fn into_output(self) -> Result<Pin<mode::Output>, GpioError> / {MemoryIO} {
+        @unsafe {
+            (*self.controller).set_function(self.pin, PinFunction::Output)?;
+        }
+
+        Ok(Pin {
+            pin: self.pin,
+            controller: self.controller,
+            _mode: PhantomData,
+        })
+    }
+}
+
+impl Pin<mode::Input> {
+    /// Read the pin level
+    fn read(&self) -> Level / {MemoryIO} {
+        @unsafe {
+            (*self.controller).read(self.pin).unwrap_or(Level::Low)
+        }
+    }
+
+    /// Check if pin is high
+    fn is_high(&self) -> bool / {MemoryIO} {
+        self.read() == Level::High
+    }
+
+    /// Check if pin is low
+    fn is_low(&self) -> bool / {MemoryIO} {
+        self.read() == Level::Low
+    }
+
+    /// Set pull-up resistor
+    fn with_pullup(self) -> Self / {MemoryIO, Timing} {
+        @unsafe {
+            let _ = (*self.controller).set_pull(self.pin, PullMode::Up);
+        }
+        self
+    }
+
+    /// Set pull-down resistor
+    fn with_pulldown(self) -> Self / {MemoryIO, Timing} {
+        @unsafe {
+            let _ = (*self.controller).set_pull(self.pin, PullMode::Down);
+        }
+        self
+    }
+
+    /// Enable edge detection
+    fn with_edge_detect(self, edge: Edge) -> Self / {MemoryIO} {
+        @unsafe {
+            let _ = (*self.controller).enable_edge_detect(self.pin, edge);
+        }
+        self
+    }
+
+    /// Wait for edge event (polling)
+    fn wait_for_edge(&self) -> () / {MemoryIO, Timing} {
+        @unsafe {
+            // Clear any pending event
+            let _ = (*self.controller).clear_event(self.pin);
+
+            // Poll for event
+            loop {
+                if (*self.controller).check_event(self.pin).unwrap_or(false) {
+                    let _ = (*self.controller).clear_event(self.pin);
+                    break;
+                }
+                perform Timing.delay_microseconds(100);
+            }
+        }
+    }
+
+    /// Convert back to unconfigured
+    fn into_unconfigured(self) -> Pin<mode::Unconfigured> / {MemoryIO} {
+        @unsafe {
+            let _ = (*self.controller).set_function(self.pin, PinFunction::Input);
+        }
+
+        Pin {
+            pin: self.pin,
+            controller: self.controller,
+            _mode: PhantomData,
+        }
+    }
+}
+
+impl Pin<mode::Output> {
+    /// Set pin high
+    fn set_high(&self) / {MemoryIO} {
+        @unsafe {
+            let _ = (*self.controller).set_high(self.pin);
+        }
+    }
+
+    /// Set pin low
+    fn set_low(&self) / {MemoryIO} {
+        @unsafe {
+            let _ = (*self.controller).set_low(self.pin);
+        }
+    }
+
+    /// Set pin to level
+    fn write(&self, level: Level) / {MemoryIO} {
+        match level {
+            Level::High => self.set_high(),
+            Level::Low => self.set_low(),
+        }
+    }
+
+    /// Toggle pin
+    fn toggle(&self) / {MemoryIO} {
+        // Read current level and write opposite
+        // Note: This reads the output register, not the actual pin level
+        @unsafe {
+            let current = (*self.controller).read(self.pin).unwrap_or(Level::Low);
+            match current {
+                Level::High => self.set_low(),
+                Level::Low => self.set_high(),
+            }
+        }
+    }
+
+    /// Convert back to unconfigured
+    fn into_unconfigured(self) -> Pin<mode::Unconfigured> / {MemoryIO} {
+        @unsafe {
+            let _ = (*self.controller).set_function(self.pin, PinFunction::Input);
+        }
+
+        Pin {
+            pin: self.pin,
+            controller: self.controller,
+            _mode: PhantomData,
+        }
+    }
+}
+
+// Release pin on drop
+impl<Mode> Drop for Pin<Mode> {
+    fn drop(&mut self) {
+        @unsafe {
+            (*self.controller).release_pin(self.pin);
+        }
+    }
+}
+
+/// Phantom data for zero-sized type parameters
+struct PhantomData<T>;
+
+// ============================================================================
+// Higher-Level Abstractions
+// ============================================================================
+
+/// LED connected to GPIO pin
+struct Led {
+    pin: Pin<mode::Output>,
+    active_low: bool,
+}
+
+impl Led {
+    fn new(pin: Pin<mode::Output>, active_low: bool) -> Led {
+        Led { pin, active_low }
+    }
+
+    fn on(&self) / {MemoryIO} {
+        if self.active_low {
+            self.pin.set_low();
+        } else {
+            self.pin.set_high();
+        }
+    }
+
+    fn off(&self) / {MemoryIO} {
+        if self.active_low {
+            self.pin.set_high();
+        } else {
+            self.pin.set_low();
+        }
+    }
+
+    fn toggle(&self) / {MemoryIO} {
+        self.pin.toggle();
+    }
+
+    fn set(&self, on: bool) / {MemoryIO} {
+        if on { self.on() } else { self.off() }
+    }
+}
+
+/// Button connected to GPIO pin
+struct Button {
+    pin: Pin<mode::Input>,
+    active_low: bool,
+}
+
+impl Button {
+    fn new(pin: Pin<mode::Input>, active_low: bool) -> Button {
+        Button { pin, active_low }
+    }
+
+    fn is_pressed(&self) -> bool / {MemoryIO} {
+        let level = self.pin.read();
+        if self.active_low {
+            level == Level::Low
+        } else {
+            level == Level::High
+        }
+    }
+
+    fn wait_for_press(&self) / {MemoryIO, Timing} {
+        while !self.is_pressed() {
+            perform Timing.delay_microseconds(1000);
+        }
+    }
+
+    fn wait_for_release(&self) / {MemoryIO, Timing} {
+        while self.is_pressed() {
+            perform Timing.delay_microseconds(1000);
+        }
+    }
+}
+
+/// PWM output using software timing
+struct SoftPwm {
+    pin: Pin<mode::Output>,
+    period_us: u32,
+    duty_cycle: u32,  // 0-100
+}
+
+impl SoftPwm {
+    fn new(pin: Pin<mode::Output>, frequency_hz: u32) -> SoftPwm {
+        SoftPwm {
+            pin,
+            period_us: 1_000_000 / frequency_hz,
+            duty_cycle: 50,
+        }
+    }
+
+    fn set_duty_cycle(&mut self, percent: u32) {
+        self.duty_cycle = percent.min(100);
+    }
+
+    fn pulse(&self) / {MemoryIO, Timing} {
+        let on_time = (self.period_us * self.duty_cycle) / 100;
+        let off_time = self.period_us - on_time;
+
+        if on_time > 0 {
+            self.pin.set_high();
+            perform Timing.delay_microseconds(on_time);
+        }
+
+        if off_time > 0 {
+            self.pin.set_low();
+            perform Timing.delay_microseconds(off_time);
+        }
+    }
+}
+
+// ============================================================================
+// Example Usage
+// ============================================================================
+
+fn main() -> i32 / {IO, MemoryIO, FileSystem, Timing} {
+    print("=== Blood GPIO Driver for Raspberry Pi ===\n");
+
+    // Initialize GPIO controller
+    print("Initializing GPIO controller...");
+
+    let mut controller = match GpioController::new() {
+        Ok(c) => {
+            print(" OK");
+            c
+        },
+        Err(e) => {
+            match e {
+                GpioError::MapFailed(msg) => print(" FAILED: {}", msg),
+                GpioError::PermissionDenied => print(" FAILED: Permission denied (run as root?)"),
+                _ => print(" FAILED: Unknown error"),
+            }
+            return 1;
+        }
+    };
+
+    print("Detected model: {:?}", controller.model);
+
+    // Request GPIO pins
+    print("\n--- Pin Configuration ---");
+
+    // LED on GPIO 17 (active high)
+    let led_pin = match Pin::new(17, &mut controller) {
+        Ok(p) => p,
+        Err(e) => {
+            print("Failed to request GPIO 17");
+            return 1;
+        }
+    };
+    let led_pin = led_pin.into_output().unwrap();
+    let led = Led::new(led_pin, false);
+    print("GPIO 17: Configured as LED output");
+
+    // Button on GPIO 27 (active low with pull-up)
+    let button_pin = match Pin::new(27, &mut controller) {
+        Ok(p) => p,
+        Err(e) => {
+            print("Failed to request GPIO 27");
+            return 1;
+        }
+    };
+    let button_pin = button_pin.into_input().unwrap().with_pullup();
+    let button = Button::new(button_pin, true);
+    print("GPIO 27: Configured as button input with pull-up");
+
+    // Demo: Blink LED
+    print("\n--- LED Blink Demo ---");
+    print("Blinking LED 5 times...");
+
+    for i in 0..5 {
+        led.on();
+        print("  LED ON");
+        perform Timing.delay_microseconds(500_000);  // 500ms
+
+        led.off();
+        print("  LED OFF");
+        perform Timing.delay_microseconds(500_000);
+    }
+
+    // Demo: Button reading
+    print("\n--- Button State ---");
+    let pressed = button.is_pressed();
+    print("Button is currently: {}", if pressed { "PRESSED" } else { "RELEASED" });
+
+    // Demo: Direct register access
+    print("\n--- Register Status ---");
+
+    // Read GPFSEL1 (controls GPIO 10-19)
+    let gpfsel1 = controller.read_reg(reg::GPFSEL1);
+    print("GPFSEL1 = 0x{:08X}", gpfsel1);
+
+    // Read pin levels
+    let gplev0 = controller.read_reg(reg::GPLEV0);
+    print("GPLEV0  = 0x{:08X}", gplev0);
+
+    // Demo: PWM
+    print("\n--- Software PWM Demo ---");
+    print("Running PWM at 1kHz, 25% duty cycle for 2 seconds...");
+
+    // Reconfigure LED pin for PWM demo
+    // (In real code, we'd need to release and re-acquire)
+
+    print("\n=== GPIO Demo Complete ===");
+    print("This demo showed:");
+    print("  - GPIO controller initialization");
+    print("  - Type-safe pin configuration");
+    print("  - LED control (output)");
+    print("  - Button reading (input with pull-up)");
+    print("  - Direct register access");
+    print("  - Software PWM concept");
+
+    0
+}
+
+// ============================================================================
+// Effect Handlers (Simulation for Demo)
+// ============================================================================
+
+fn main_simulated() -> i32 / {IO} {
+    print("=== GPIO Driver Demo (Simulated) ===\n");
+    print("Note: Running in simulation mode (no real hardware access)\n");
+
+    try {
+        main()
+    } with {
+        MemoryIO::map(base, size) => {
+            print("[SIM] Mapping 0x{:X} ({} bytes)", base, size);
+            // Return simulated pointer
+            resume(Ok(0x1000 as *mut u32))
+        },
+        MemoryIO::unmap(ptr, size) => {
+            print("[SIM] Unmapping {:p} ({} bytes)", ptr, size);
+            resume(())
+        },
+        MemoryIO::read_volatile(ptr) => {
+            // Simulate some register values
+            resume(0x00000000)
+        },
+        MemoryIO::write_volatile(ptr, value) => {
+            print("[SIM] Write 0x{:08X} to {:p}", value, ptr);
+            resume(())
+        },
+        MemoryIO::memory_barrier() => {
+            resume(())
+        },
+        FileSystem::read_file(path) => {
+            if path == "/proc/device-tree/model" {
+                resume(Some("Raspberry Pi 4 Model B".to_string()))
+            } else {
+                resume(None)
+            }
+        },
+        Timing::delay_microseconds(us) => {
+            // Skip delays in simulation
+            resume(())
+        },
+    }
+}

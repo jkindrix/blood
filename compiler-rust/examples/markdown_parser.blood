@@ -1,0 +1,1888 @@
+// Markdown Parser Example
+// Demonstrates: Text processing, state machines, recursive descent parsing,
+// effect-based error handling, AST construction
+//
+// Supports: Headers, emphasis (bold/italic), links, images, code blocks,
+// inline code, blockquotes, lists, horizontal rules, paragraphs
+
+// ============================================================================
+// AST Types
+// ============================================================================
+
+/// A complete Markdown document
+struct Document {
+    blocks: Vec<Block>,
+}
+
+/// Block-level elements
+enum Block {
+    /// ATX-style header (# Header)
+    Header { level: i32, content: Vec<Inline> },
+
+    /// Paragraph of text
+    Paragraph { content: Vec<Inline> },
+
+    /// Fenced or indented code block
+    CodeBlock { language: Option<String>, code: String },
+
+    /// Block quote (> text)
+    BlockQuote { blocks: Vec<Block> },
+
+    /// Unordered list
+    UnorderedList { items: Vec<ListItem> },
+
+    /// Ordered list
+    OrderedList { start: i32, items: Vec<ListItem> },
+
+    /// Horizontal rule (---, ***, ___)
+    HorizontalRule,
+
+    /// Raw HTML block (passthrough)
+    HtmlBlock { html: String },
+}
+
+/// List item containing blocks
+struct ListItem {
+    blocks: Vec<Block>,
+}
+
+/// Inline elements within text
+enum Inline {
+    /// Plain text
+    Text { content: String },
+
+    /// **bold** or __bold__
+    Strong { content: Vec<Inline> },
+
+    /// *italic* or _italic_
+    Emphasis { content: Vec<Inline> },
+
+    /// ***bold italic***
+    StrongEmphasis { content: Vec<Inline> },
+
+    /// `inline code`
+    Code { content: String },
+
+    /// [text](url) or [text](url "title")
+    Link { text: Vec<Inline>, url: String, title: Option<String> },
+
+    /// ![alt](url) or ![alt](url "title")
+    Image { alt: String, url: String, title: Option<String> },
+
+    /// Line break (two spaces + newline or <br>)
+    LineBreak,
+
+    /// Raw HTML inline
+    HtmlInline { html: String },
+}
+
+// ============================================================================
+// Parser State
+// ============================================================================
+
+/// Parser state machine
+struct Parser {
+    input: String,
+    pos: i32,
+    line: i32,
+    column: i32,
+}
+
+impl Parser {
+    /// Create a new parser for the given input
+    fn new(input: String) -> Parser {
+        Parser {
+            input: input,
+            pos: 0,
+            line: 1,
+            column: 1,
+        }
+    }
+
+    /// Check if we've reached the end of input
+    fn is_eof(self) -> bool {
+        self.pos >= self.input.len() as i32
+    }
+
+    /// Peek at the current character without consuming
+    fn peek(self) -> Option<char> {
+        if self.is_eof() {
+            None
+        } else {
+            Some(self.input.char_at(self.pos as usize))
+        }
+    }
+
+    /// Peek at character at offset from current position
+    fn peek_at(self, offset: i32) -> Option<char> {
+        let idx = self.pos + offset;
+        if idx < 0 || idx >= self.input.len() as i32 {
+            None
+        } else {
+            Some(self.input.char_at(idx as usize))
+        }
+    }
+
+    /// Consume and return the current character
+    fn advance(mut self) -> Option<char> {
+        if self.is_eof() {
+            return None;
+        }
+
+        let ch = self.input.char_at(self.pos as usize);
+        self.pos = self.pos + 1;
+
+        if ch == '\n' {
+            self.line = self.line + 1;
+            self.column = 1;
+        } else {
+            self.column = self.column + 1;
+        }
+
+        Some(ch)
+    }
+
+    /// Skip whitespace (spaces and tabs, not newlines)
+    fn skip_horizontal_whitespace(mut self) {
+        while !self.is_eof() {
+            match self.peek() {
+                Some(' ') => { self.advance(); },
+                Some('\t') => { self.advance(); },
+                _ => break,
+            }
+        }
+    }
+
+    /// Skip a newline if present
+    fn skip_newline(mut self) -> bool {
+        match self.peek() {
+            Some('\n') => {
+                self.advance();
+                true
+            },
+            Some('\r') => {
+                self.advance();
+                // Handle \r\n
+                if self.peek() == Some('\n') {
+                    self.advance();
+                }
+                true
+            },
+            _ => false,
+        }
+    }
+
+    /// Check if current position starts a blank line
+    fn is_blank_line(self) -> bool {
+        let mut pos = self.pos;
+        while pos < self.input.len() as i32 {
+            let ch = self.input.char_at(pos as usize);
+            match ch {
+                ' ' => pos = pos + 1,
+                '\t' => pos = pos + 1,
+                '\n' => return true,
+                '\r' => return true,
+                _ => return false,
+            }
+        }
+        true  // EOF counts as blank
+    }
+
+    /// Skip blank lines, return count
+    fn skip_blank_lines(mut self) -> i32 {
+        let mut count = 0;
+        while !self.is_eof() && self.is_blank_line() {
+            // Skip to end of line
+            while !self.is_eof() {
+                let ch = self.peek();
+                if ch == Some('\n') || ch == Some('\r') {
+                    self.skip_newline();
+                    break;
+                }
+                self.advance();
+            }
+            count = count + 1;
+        }
+        count
+    }
+
+    /// Consume characters while predicate is true
+    fn take_while<F>(mut self, pred: F) -> String
+    where F: Fn(char) -> bool {
+        let mut result = String::new();
+        while !self.is_eof() {
+            match self.peek() {
+                Some(ch) if pred(ch) => {
+                    result.push(ch);
+                    self.advance();
+                },
+                _ => break,
+            }
+        }
+        result
+    }
+
+    /// Consume rest of line (not including newline)
+    fn take_line(mut self) -> String {
+        self.take_while(|ch| ch != '\n' && ch != '\r')
+    }
+
+    /// Check if string matches at current position
+    fn matches(self, s: &str) -> bool {
+        let bytes = s.as_bytes();
+        for i in 0..bytes.len() {
+            match self.peek_at(i as i32) {
+                Some(ch) if ch == bytes[i] as char => continue,
+                _ => return false,
+            }
+        }
+        true
+    }
+
+    /// Consume string if it matches
+    fn consume(mut self, s: &str) -> bool {
+        if self.matches(s) {
+            for _ in 0..s.len() {
+                self.advance();
+            }
+            true
+        } else {
+            false
+        }
+    }
+}
+
+// ============================================================================
+// Effects for Parser Errors
+// ============================================================================
+
+/// Effect for parse errors
+effect ParseError {
+    op error(msg: String, line: i32, column: i32) -> !;
+    op warning(msg: String, line: i32, column: i32) -> ();
+}
+
+// ============================================================================
+// Block Parsing
+// ============================================================================
+
+impl Parser {
+    /// Parse the entire document
+    fn parse_document(mut self) -> Document / {ParseError} {
+        let mut blocks = Vec::new();
+
+        self.skip_blank_lines();
+
+        while !self.is_eof() {
+            match self.parse_block() {
+                Some(block) => blocks.push(block),
+                None => {
+                    // Skip unrecognized content
+                    self.take_line();
+                    self.skip_newline();
+                },
+            }
+            self.skip_blank_lines();
+        }
+
+        Document { blocks: blocks }
+    }
+
+    /// Parse a single block element
+    fn parse_block(mut self) -> Option<Block> / {ParseError} {
+        // Try each block type in order of precedence
+
+        // ATX Header: # Header
+        if let Some(header) = self.try_parse_atx_header() {
+            return Some(header);
+        }
+
+        // Fenced code block: ```
+        if let Some(code) = self.try_parse_fenced_code() {
+            return Some(code);
+        }
+
+        // Horizontal rule: ---, ***, ___
+        if let Some(hr) = self.try_parse_horizontal_rule() {
+            return Some(hr);
+        }
+
+        // Block quote: > text
+        if let Some(quote) = self.try_parse_block_quote() {
+            return Some(quote);
+        }
+
+        // Unordered list: -, *, +
+        if let Some(list) = self.try_parse_unordered_list() {
+            return Some(list);
+        }
+
+        // Ordered list: 1. item
+        if let Some(list) = self.try_parse_ordered_list() {
+            return Some(list);
+        }
+
+        // Indented code block (4 spaces)
+        if let Some(code) = self.try_parse_indented_code() {
+            return Some(code);
+        }
+
+        // HTML block
+        if let Some(html) = self.try_parse_html_block() {
+            return Some(html);
+        }
+
+        // Default: paragraph
+        self.try_parse_paragraph()
+    }
+
+    /// Try to parse ATX-style header (# Header)
+    fn try_parse_atx_header(mut self) -> Option<Block> / {ParseError} {
+        if self.peek() != Some('#') {
+            return None;
+        }
+
+        // Count # characters
+        let start_pos = self.pos;
+        let mut level = 0;
+        while self.peek() == Some('#') && level < 6 {
+            self.advance();
+            level = level + 1;
+        }
+
+        // Must be followed by space or end of line
+        match self.peek() {
+            Some(' ') => { self.advance(); },
+            Some('\t') => { self.advance(); },
+            Some('\n') => {},
+            Some('\r') => {},
+            None => {},
+            _ => {
+                // Not a valid header, reset
+                self.pos = start_pos;
+                return None;
+            },
+        }
+
+        // Parse header content
+        let line = self.take_line();
+        self.skip_newline();
+
+        // Strip trailing # characters
+        let content_str = line.trim_end_matches('#').trim();
+        let content = self.parse_inline_string(content_str.to_string());
+
+        Some(Block::Header { level: level, content: content })
+    }
+
+    /// Try to parse fenced code block
+    fn try_parse_fenced_code(mut self) -> Option<Block> / {ParseError} {
+        // Check for ``` or ~~~
+        let fence_char = match self.peek() {
+            Some('`') => '`',
+            Some('~') => '~',
+            _ => return None,
+        };
+
+        // Count fence characters
+        let start_pos = self.pos;
+        let mut fence_len = 0;
+        while self.peek() == Some(fence_char) {
+            self.advance();
+            fence_len = fence_len + 1;
+        }
+
+        if fence_len < 3 {
+            self.pos = start_pos;
+            return None;
+        }
+
+        // Get optional language identifier
+        self.skip_horizontal_whitespace();
+        let language = {
+            let lang = self.take_while(|ch| ch != '\n' && ch != '\r' && ch != ' ');
+            if lang.is_empty() {
+                None
+            } else {
+                Some(lang)
+            }
+        };
+
+        self.take_line();  // Skip rest of opening line
+        self.skip_newline();
+
+        // Collect code until closing fence
+        let mut code = String::new();
+        while !self.is_eof() {
+            // Check for closing fence
+            let line_start = self.pos;
+            let mut close_len = 0;
+            while self.peek() == Some(fence_char) {
+                self.advance();
+                close_len = close_len + 1;
+            }
+
+            if close_len >= fence_len {
+                // Valid closing fence
+                self.take_line();
+                self.skip_newline();
+                break;
+            } else {
+                // Not a closing fence, add to code
+                self.pos = line_start;
+                let line = self.take_line();
+                code.push_str(&line);
+                code.push('\n');
+                self.skip_newline();
+            }
+        }
+
+        Some(Block::CodeBlock { language: language, code: code })
+    }
+
+    /// Try to parse horizontal rule
+    fn try_parse_horizontal_rule(mut self) -> Option<Block> / {ParseError} {
+        let rule_char = match self.peek() {
+            Some('-') => '-',
+            Some('*') => '*',
+            Some('_') => '_',
+            _ => return None,
+        };
+
+        let start_pos = self.pos;
+        let mut count = 0;
+
+        while !self.is_eof() {
+            match self.peek() {
+                Some(ch) if ch == rule_char => {
+                    self.advance();
+                    count = count + 1;
+                },
+                Some(' ') => { self.advance(); },
+                Some('\t') => { self.advance(); },
+                Some('\n') => break,
+                Some('\r') => break,
+                None => break,
+                _ => {
+                    // Invalid character, not a horizontal rule
+                    self.pos = start_pos;
+                    return None;
+                },
+            }
+        }
+
+        if count >= 3 {
+            self.skip_newline();
+            Some(Block::HorizontalRule)
+        } else {
+            self.pos = start_pos;
+            None
+        }
+    }
+
+    /// Try to parse block quote
+    fn try_parse_block_quote(mut self) -> Option<Block> / {ParseError} {
+        if self.peek() != Some('>') {
+            return None;
+        }
+
+        let mut lines = Vec::new();
+
+        while !self.is_eof() && self.peek() == Some('>') {
+            self.advance();  // Consume >
+
+            // Skip optional space after >
+            if self.peek() == Some(' ') {
+                self.advance();
+            }
+
+            let line = self.take_line();
+            lines.push(line);
+            self.skip_newline();
+
+            // Check for continuation or lazy continuation
+            self.skip_blank_lines();
+        }
+
+        // Parse collected lines as nested document
+        let content = lines.join("\n");
+        let mut inner_parser = Parser::new(content);
+        let inner_doc = inner_parser.parse_document();
+
+        Some(Block::BlockQuote { blocks: inner_doc.blocks })
+    }
+
+    /// Try to parse unordered list
+    fn try_parse_unordered_list(mut self) -> Option<Block> / {ParseError} {
+        let marker = match self.peek() {
+            Some('-') => '-',
+            Some('*') => '*',
+            Some('+') => '+',
+            _ => return None,
+        };
+
+        // Check for space after marker
+        match self.peek_at(1) {
+            Some(' ') => {},
+            Some('\t') => {},
+            _ => return None,
+        }
+
+        let mut items = Vec::new();
+
+        while !self.is_eof() {
+            // Check for list marker
+            if self.peek() != Some(marker) {
+                break;
+            }
+
+            self.advance();  // Consume marker
+            self.skip_horizontal_whitespace();
+
+            // Collect item lines
+            let mut item_lines = Vec::new();
+
+            // First line
+            item_lines.push(self.take_line());
+            self.skip_newline();
+
+            // Continuation lines (indented)
+            while !self.is_eof() {
+                // Check for blank line
+                if self.is_blank_line() {
+                    self.skip_blank_lines();
+                    // Check if next line is indented (continuation)
+                    if self.peek() == Some(' ') || self.peek() == Some('\t') {
+                        continue;
+                    } else {
+                        break;
+                    }
+                }
+
+                // Check for new list item
+                if self.peek() == Some(marker) {
+                    match self.peek_at(1) {
+                        Some(' ') => break,
+                        Some('\t') => break,
+                        _ => {},
+                    }
+                }
+
+                // Check for other block start
+                if self.peek() == Some('#') || self.peek() == Some('>') {
+                    break;
+                }
+
+                // Indented continuation
+                if self.peek() == Some(' ') || self.peek() == Some('\t') {
+                    self.skip_horizontal_whitespace();
+                    item_lines.push(self.take_line());
+                    self.skip_newline();
+                } else {
+                    break;
+                }
+            }
+
+            // Parse item content
+            let item_content = item_lines.join("\n");
+            let mut item_parser = Parser::new(item_content);
+            let item_doc = item_parser.parse_document();
+
+            items.push(ListItem { blocks: item_doc.blocks });
+        }
+
+        if items.is_empty() {
+            None
+        } else {
+            Some(Block::UnorderedList { items: items })
+        }
+    }
+
+    /// Try to parse ordered list
+    fn try_parse_ordered_list(mut self) -> Option<Block> / {ParseError} {
+        // Check for digit
+        let first_char = match self.peek() {
+            Some(ch) if ch.is_digit(10) => ch,
+            _ => return None,
+        };
+
+        let start_pos = self.pos;
+
+        // Parse number
+        let num_str = self.take_while(|ch| ch.is_digit(10));
+        let start_num = num_str.parse::<i32>().unwrap_or(1);
+
+        // Check for . or ) after number
+        match self.peek() {
+            Some('.') => { self.advance(); },
+            Some(')') => { self.advance(); },
+            _ => {
+                self.pos = start_pos;
+                return None;
+            },
+        }
+
+        // Must be followed by space
+        match self.peek() {
+            Some(' ') => { self.advance(); },
+            Some('\t') => { self.advance(); },
+            _ => {
+                self.pos = start_pos;
+                return None;
+            },
+        }
+
+        // Reset and parse items
+        self.pos = start_pos;
+        let mut items = Vec::new();
+
+        while !self.is_eof() {
+            // Check for number
+            if !self.peek().map(|ch| ch.is_digit(10)).unwrap_or(false) {
+                break;
+            }
+
+            // Skip number
+            self.take_while(|ch| ch.is_digit(10));
+
+            // Check for . or )
+            match self.peek() {
+                Some('.') => { self.advance(); },
+                Some(')') => { self.advance(); },
+                _ => break,
+            }
+
+            self.skip_horizontal_whitespace();
+
+            // Collect item lines
+            let mut item_lines = Vec::new();
+            item_lines.push(self.take_line());
+            self.skip_newline();
+
+            // Continuation lines (similar to unordered list)
+            while !self.is_eof() {
+                if self.is_blank_line() {
+                    break;
+                }
+
+                if self.peek().map(|ch| ch.is_digit(10)).unwrap_or(false) {
+                    break;
+                }
+
+                if self.peek() == Some(' ') || self.peek() == Some('\t') {
+                    self.skip_horizontal_whitespace();
+                    item_lines.push(self.take_line());
+                    self.skip_newline();
+                } else {
+                    break;
+                }
+            }
+
+            let item_content = item_lines.join("\n");
+            let mut item_parser = Parser::new(item_content);
+            let item_doc = item_parser.parse_document();
+
+            items.push(ListItem { blocks: item_doc.blocks });
+
+            self.skip_blank_lines();
+        }
+
+        if items.is_empty() {
+            None
+        } else {
+            Some(Block::OrderedList { start: start_num, items: items })
+        }
+    }
+
+    /// Try to parse indented code block
+    fn try_parse_indented_code(mut self) -> Option<Block> / {ParseError} {
+        // Must start with 4 spaces or tab
+        let has_indent = match (self.peek(), self.peek_at(1), self.peek_at(2), self.peek_at(3)) {
+            (Some(' '), Some(' '), Some(' '), Some(' ')) => true,
+            (Some('\t'), _, _, _) => true,
+            _ => false,
+        };
+
+        if !has_indent {
+            return None;
+        }
+
+        let mut code_lines = Vec::new();
+
+        while !self.is_eof() {
+            // Check for indent
+            let indent = if self.peek() == Some('\t') {
+                self.advance();
+                true
+            } else if self.matches("    ") {
+                self.consume("    ");
+                true
+            } else if self.is_blank_line() {
+                // Blank lines can be part of code block
+                self.skip_newline();
+                code_lines.push(String::new());
+                continue;
+            } else {
+                false
+            };
+
+            if !indent {
+                break;
+            }
+
+            code_lines.push(self.take_line());
+            self.skip_newline();
+        }
+
+        // Trim trailing blank lines
+        while !code_lines.is_empty() && code_lines.last().map(|s| s.is_empty()).unwrap_or(false) {
+            code_lines.pop();
+        }
+
+        if code_lines.is_empty() {
+            None
+        } else {
+            let code = code_lines.join("\n");
+            Some(Block::CodeBlock { language: None, code: code })
+        }
+    }
+
+    /// Try to parse HTML block
+    fn try_parse_html_block(mut self) -> Option<Block> / {ParseError} {
+        if self.peek() != Some('<') {
+            return None;
+        }
+
+        // Check for common block-level HTML tags
+        let block_tags = ["div", "p", "h1", "h2", "h3", "h4", "h5", "h6",
+                          "ul", "ol", "li", "table", "tr", "td", "th",
+                          "blockquote", "pre", "hr", "br", "section",
+                          "article", "nav", "aside", "header", "footer",
+                          "main", "figure", "figcaption", "form"];
+
+        // Simple check: if it starts with <tagname, treat as HTML
+        let start_pos = self.pos;
+        self.advance();  // Skip <
+
+        // Check for closing tag </
+        let is_closing = if self.peek() == Some('/') {
+            self.advance();
+            true
+        } else {
+            false
+        };
+
+        // Get tag name
+        let tag = self.take_while(|ch| ch.is_alphanumeric());
+
+        self.pos = start_pos;
+
+        // Check if it's a block tag
+        let is_block_tag = block_tags.iter().any(|t| tag.eq_ignore_ascii_case(t));
+
+        if !is_block_tag {
+            return None;
+        }
+
+        // Collect HTML until blank line
+        let mut html_lines = Vec::new();
+
+        while !self.is_eof() && !self.is_blank_line() {
+            html_lines.push(self.take_line());
+            self.skip_newline();
+        }
+
+        let html = html_lines.join("\n");
+        Some(Block::HtmlBlock { html: html })
+    }
+
+    /// Try to parse paragraph
+    fn try_parse_paragraph(mut self) -> Option<Block> / {ParseError} {
+        if self.is_eof() || self.is_blank_line() {
+            return None;
+        }
+
+        let mut lines = Vec::new();
+
+        while !self.is_eof() && !self.is_blank_line() {
+            // Check for block-level interrupt
+            match self.peek() {
+                Some('#') => break,
+                Some('>') => break,
+                Some('`') if self.matches("```") => break,
+                Some('~') if self.matches("~~~") => break,
+                _ => {},
+            }
+
+            // Check for horizontal rule
+            if let Some(ch) = self.peek() {
+                if ch == '-' || ch == '*' || ch == '_' {
+                    let temp_pos = self.pos;
+                    if self.try_parse_horizontal_rule().is_some() {
+                        self.pos = temp_pos;
+                        break;
+                    }
+                }
+            }
+
+            // Check for list
+            if let Some(ch) = self.peek() {
+                match ch {
+                    '-' | '*' | '+' => {
+                        if self.peek_at(1) == Some(' ') || self.peek_at(1) == Some('\t') {
+                            break;
+                        }
+                    },
+                    '0'..='9' => {
+                        let temp_pos = self.pos;
+                        self.take_while(|c| c.is_digit(10));
+                        if self.peek() == Some('.') || self.peek() == Some(')') {
+                            self.pos = temp_pos;
+                            if !lines.is_empty() {
+                                break;
+                            }
+                        }
+                        self.pos = temp_pos;
+                    },
+                    _ => {},
+                }
+            }
+
+            lines.push(self.take_line());
+            self.skip_newline();
+        }
+
+        if lines.is_empty() {
+            return None;
+        }
+
+        let text = lines.join(" ");
+        let content = self.parse_inline_string(text);
+
+        Some(Block::Paragraph { content: content })
+    }
+}
+
+// ============================================================================
+// Inline Parsing
+// ============================================================================
+
+impl Parser {
+    /// Parse inline elements from a string
+    fn parse_inline_string(self, input: String) -> Vec<Inline> / {ParseError} {
+        let mut inline_parser = InlineParser::new(input);
+        inline_parser.parse()
+    }
+}
+
+/// Inline parser state
+struct InlineParser {
+    input: String,
+    pos: i32,
+}
+
+impl InlineParser {
+    fn new(input: String) -> InlineParser {
+        InlineParser {
+            input: input,
+            pos: 0,
+        }
+    }
+
+    fn is_eof(self) -> bool {
+        self.pos >= self.input.len() as i32
+    }
+
+    fn peek(self) -> Option<char> {
+        if self.is_eof() {
+            None
+        } else {
+            Some(self.input.char_at(self.pos as usize))
+        }
+    }
+
+    fn peek_at(self, offset: i32) -> Option<char> {
+        let idx = self.pos + offset;
+        if idx < 0 || idx >= self.input.len() as i32 {
+            None
+        } else {
+            Some(self.input.char_at(idx as usize))
+        }
+    }
+
+    fn advance(mut self) -> Option<char> {
+        if self.is_eof() {
+            None
+        } else {
+            let ch = self.input.char_at(self.pos as usize);
+            self.pos = self.pos + 1;
+            Some(ch)
+        }
+    }
+
+    fn matches(self, s: &str) -> bool {
+        let bytes = s.as_bytes();
+        for i in 0..bytes.len() {
+            match self.peek_at(i as i32) {
+                Some(ch) if ch == bytes[i] as char => continue,
+                _ => return false,
+            }
+        }
+        true
+    }
+
+    fn consume(mut self, s: &str) -> bool {
+        if self.matches(s) {
+            self.pos = self.pos + s.len() as i32;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Parse all inline elements
+    fn parse(mut self) -> Vec<Inline> / {ParseError} {
+        let mut result = Vec::new();
+        let mut text_buffer = String::new();
+
+        while !self.is_eof() {
+            // Check for special characters
+            match self.peek() {
+                Some('*') | Some('_') => {
+                    // Flush text buffer
+                    if !text_buffer.is_empty() {
+                        result.push(Inline::Text { content: text_buffer.clone() });
+                        text_buffer.clear();
+                    }
+
+                    if let Some(emph) = self.try_parse_emphasis() {
+                        result.push(emph);
+                    } else {
+                        text_buffer.push(self.advance().unwrap());
+                    }
+                },
+
+                Some('`') => {
+                    if !text_buffer.is_empty() {
+                        result.push(Inline::Text { content: text_buffer.clone() });
+                        text_buffer.clear();
+                    }
+
+                    if let Some(code) = self.try_parse_inline_code() {
+                        result.push(code);
+                    } else {
+                        text_buffer.push(self.advance().unwrap());
+                    }
+                },
+
+                Some('[') => {
+                    if !text_buffer.is_empty() {
+                        result.push(Inline::Text { content: text_buffer.clone() });
+                        text_buffer.clear();
+                    }
+
+                    if let Some(link) = self.try_parse_link() {
+                        result.push(link);
+                    } else {
+                        text_buffer.push(self.advance().unwrap());
+                    }
+                },
+
+                Some('!') => {
+                    if !text_buffer.is_empty() {
+                        result.push(Inline::Text { content: text_buffer.clone() });
+                        text_buffer.clear();
+                    }
+
+                    if let Some(img) = self.try_parse_image() {
+                        result.push(img);
+                    } else {
+                        text_buffer.push(self.advance().unwrap());
+                    }
+                },
+
+                Some('<') => {
+                    if !text_buffer.is_empty() {
+                        result.push(Inline::Text { content: text_buffer.clone() });
+                        text_buffer.clear();
+                    }
+
+                    if let Some(auto) = self.try_parse_autolink() {
+                        result.push(auto);
+                    } else if let Some(html) = self.try_parse_inline_html() {
+                        result.push(html);
+                    } else {
+                        text_buffer.push(self.advance().unwrap());
+                    }
+                },
+
+                Some('\\') => {
+                    // Escape sequence
+                    self.advance();
+                    if let Some(ch) = self.advance() {
+                        text_buffer.push(ch);
+                    }
+                },
+
+                Some(' ') => {
+                    // Check for hard line break (two spaces + newline)
+                    if self.matches("  \n") || self.matches("  \r") {
+                        if !text_buffer.is_empty() {
+                            result.push(Inline::Text { content: text_buffer.clone() });
+                            text_buffer.clear();
+                        }
+                        self.advance();
+                        self.advance();
+                        // Skip newline
+                        if self.peek() == Some('\r') { self.advance(); }
+                        if self.peek() == Some('\n') { self.advance(); }
+                        result.push(Inline::LineBreak);
+                    } else {
+                        text_buffer.push(self.advance().unwrap());
+                    }
+                },
+
+                Some('\n') | Some('\r') => {
+                    // Soft break becomes space
+                    self.advance();
+                    if self.peek() == Some('\n') { self.advance(); }
+                    if !text_buffer.is_empty() && !text_buffer.ends_with(' ') {
+                        text_buffer.push(' ');
+                    }
+                },
+
+                Some(ch) => {
+                    text_buffer.push(ch);
+                    self.advance();
+                },
+
+                None => break,
+            }
+        }
+
+        // Flush remaining text
+        if !text_buffer.is_empty() {
+            result.push(Inline::Text { content: text_buffer });
+        }
+
+        result
+    }
+
+    /// Try to parse emphasis (*text* or _text_ or **text** or ***text***)
+    fn try_parse_emphasis(mut self) -> Option<Inline> / {ParseError} {
+        let marker = match self.peek() {
+            Some('*') => '*',
+            Some('_') => '_',
+            _ => return None,
+        };
+
+        let start_pos = self.pos;
+
+        // Count opening markers
+        let mut open_count = 0;
+        while self.peek() == Some(marker) && open_count < 3 {
+            self.advance();
+            open_count = open_count + 1;
+        }
+
+        if open_count == 0 {
+            return None;
+        }
+
+        // Collect content until closing markers
+        let mut content = String::new();
+        let mut found_close = false;
+
+        while !self.is_eof() {
+            if self.peek() == Some(marker) {
+                // Count closing markers
+                let close_start = self.pos;
+                let mut close_count = 0;
+                while self.peek() == Some(marker) && close_count < open_count {
+                    self.advance();
+                    close_count = close_count + 1;
+                }
+
+                if close_count == open_count {
+                    found_close = true;
+                    break;
+                } else {
+                    // Not enough closing markers, add to content
+                    self.pos = close_start;
+                    content.push(self.advance().unwrap());
+                }
+            } else if self.peek() == Some('\\') {
+                // Escape
+                self.advance();
+                if let Some(ch) = self.advance() {
+                    content.push(ch);
+                }
+            } else if let Some(ch) = self.advance() {
+                content.push(ch);
+            }
+        }
+
+        if !found_close {
+            self.pos = start_pos;
+            return None;
+        }
+
+        // Parse inner content
+        let mut inner_parser = InlineParser::new(content);
+        let inner = inner_parser.parse();
+
+        match open_count {
+            1 => Some(Inline::Emphasis { content: inner }),
+            2 => Some(Inline::Strong { content: inner }),
+            3 => Some(Inline::StrongEmphasis { content: inner }),
+            _ => None,
+        }
+    }
+
+    /// Try to parse inline code (`code`)
+    fn try_parse_inline_code(mut self) -> Option<Inline> / {ParseError} {
+        if self.peek() != Some('`') {
+            return None;
+        }
+
+        let start_pos = self.pos;
+
+        // Count opening backticks
+        let mut open_count = 0;
+        while self.peek() == Some('`') {
+            self.advance();
+            open_count = open_count + 1;
+        }
+
+        // Collect content
+        let mut content = String::new();
+        let mut found_close = false;
+
+        while !self.is_eof() {
+            if self.peek() == Some('`') {
+                // Check for matching closing backticks
+                let close_start = self.pos;
+                let mut close_count = 0;
+                while self.peek() == Some('`') {
+                    self.advance();
+                    close_count = close_count + 1;
+                }
+
+                if close_count == open_count {
+                    found_close = true;
+                    break;
+                } else {
+                    // Not a match, add backticks to content
+                    for _ in 0..close_count {
+                        content.push('`');
+                    }
+                }
+            } else if let Some(ch) = self.advance() {
+                content.push(ch);
+            }
+        }
+
+        if !found_close {
+            self.pos = start_pos;
+            return None;
+        }
+
+        // Trim single spaces at beginning and end if content starts/ends with backtick
+        let trimmed = content.trim();
+
+        Some(Inline::Code { content: trimmed.to_string() })
+    }
+
+    /// Try to parse link [text](url)
+    fn try_parse_link(mut self) -> Option<Inline> / {ParseError} {
+        if self.peek() != Some('[') {
+            return None;
+        }
+
+        let start_pos = self.pos;
+        self.advance();  // Skip [
+
+        // Collect link text
+        let mut text = String::new();
+        let mut bracket_depth = 1;
+
+        while !self.is_eof() && bracket_depth > 0 {
+            match self.peek() {
+                Some('[') => {
+                    text.push('[');
+                    bracket_depth = bracket_depth + 1;
+                    self.advance();
+                },
+                Some(']') => {
+                    bracket_depth = bracket_depth - 1;
+                    if bracket_depth > 0 {
+                        text.push(']');
+                    }
+                    self.advance();
+                },
+                Some('\\') => {
+                    self.advance();
+                    if let Some(ch) = self.advance() {
+                        text.push(ch);
+                    }
+                },
+                Some(ch) => {
+                    text.push(ch);
+                    self.advance();
+                },
+                None => break,
+            }
+        }
+
+        // Expect (
+        if self.peek() != Some('(') {
+            self.pos = start_pos;
+            return None;
+        }
+        self.advance();  // Skip (
+
+        // Skip whitespace
+        while self.peek() == Some(' ') || self.peek() == Some('\t') {
+            self.advance();
+        }
+
+        // Get URL
+        let mut url = String::new();
+        let mut in_angle = false;
+
+        if self.peek() == Some('<') {
+            in_angle = true;
+            self.advance();
+        }
+
+        while !self.is_eof() {
+            match self.peek() {
+                Some('>') if in_angle => {
+                    self.advance();
+                    break;
+                },
+                Some(' ') | Some('\t') if !in_angle => break,
+                Some(')') if !in_angle => break,
+                Some(ch) => {
+                    url.push(ch);
+                    self.advance();
+                },
+                None => break,
+            }
+        }
+
+        // Skip whitespace
+        while self.peek() == Some(' ') || self.peek() == Some('\t') {
+            self.advance();
+        }
+
+        // Optional title
+        let title = if self.peek() == Some('"') || self.peek() == Some('\'') {
+            let quote = self.advance().unwrap();
+            let mut t = String::new();
+            while !self.is_eof() && self.peek() != Some(quote) {
+                if self.peek() == Some('\\') {
+                    self.advance();
+                }
+                if let Some(ch) = self.advance() {
+                    t.push(ch);
+                }
+            }
+            if self.peek() == Some(quote) {
+                self.advance();
+            }
+            Some(t)
+        } else {
+            None
+        };
+
+        // Skip whitespace
+        while self.peek() == Some(' ') || self.peek() == Some('\t') {
+            self.advance();
+        }
+
+        // Expect )
+        if self.peek() != Some(')') {
+            self.pos = start_pos;
+            return None;
+        }
+        self.advance();  // Skip )
+
+        // Parse link text
+        let mut text_parser = InlineParser::new(text);
+        let text_inlines = text_parser.parse();
+
+        Some(Inline::Link { text: text_inlines, url: url, title: title })
+    }
+
+    /// Try to parse image ![alt](url)
+    fn try_parse_image(mut self) -> Option<Inline> / {ParseError} {
+        if !self.matches("![") {
+            return None;
+        }
+
+        let start_pos = self.pos;
+        self.advance();  // Skip !
+        self.advance();  // Skip [
+
+        // Collect alt text
+        let mut alt = String::new();
+        let mut bracket_depth = 1;
+
+        while !self.is_eof() && bracket_depth > 0 {
+            match self.peek() {
+                Some('[') => {
+                    alt.push('[');
+                    bracket_depth = bracket_depth + 1;
+                    self.advance();
+                },
+                Some(']') => {
+                    bracket_depth = bracket_depth - 1;
+                    if bracket_depth > 0 {
+                        alt.push(']');
+                    }
+                    self.advance();
+                },
+                Some('\\') => {
+                    self.advance();
+                    if let Some(ch) = self.advance() {
+                        alt.push(ch);
+                    }
+                },
+                Some(ch) => {
+                    alt.push(ch);
+                    self.advance();
+                },
+                None => break,
+            }
+        }
+
+        // Expect (
+        if self.peek() != Some('(') {
+            self.pos = start_pos;
+            return None;
+        }
+        self.advance();
+
+        // Skip whitespace
+        while self.peek() == Some(' ') || self.peek() == Some('\t') {
+            self.advance();
+        }
+
+        // Get URL
+        let mut url = String::new();
+        while !self.is_eof() {
+            match self.peek() {
+                Some(' ') | Some('\t') | Some(')') => break,
+                Some(ch) => {
+                    url.push(ch);
+                    self.advance();
+                },
+                None => break,
+            }
+        }
+
+        // Skip whitespace
+        while self.peek() == Some(' ') || self.peek() == Some('\t') {
+            self.advance();
+        }
+
+        // Optional title
+        let title = if self.peek() == Some('"') || self.peek() == Some('\'') {
+            let quote = self.advance().unwrap();
+            let mut t = String::new();
+            while !self.is_eof() && self.peek() != Some(quote) {
+                if let Some(ch) = self.advance() {
+                    t.push(ch);
+                }
+            }
+            if self.peek() == Some(quote) {
+                self.advance();
+            }
+            Some(t)
+        } else {
+            None
+        };
+
+        // Skip whitespace
+        while self.peek() == Some(' ') || self.peek() == Some('\t') {
+            self.advance();
+        }
+
+        // Expect )
+        if self.peek() != Some(')') {
+            self.pos = start_pos;
+            return None;
+        }
+        self.advance();
+
+        Some(Inline::Image { alt: alt, url: url, title: title })
+    }
+
+    /// Try to parse autolink <url> or <email>
+    fn try_parse_autolink(mut self) -> Option<Inline> / {ParseError} {
+        if self.peek() != Some('<') {
+            return None;
+        }
+
+        let start_pos = self.pos;
+        self.advance();  // Skip <
+
+        let mut content = String::new();
+
+        while !self.is_eof() && self.peek() != Some('>') {
+            if let Some(ch) = self.advance() {
+                content.push(ch);
+            }
+        }
+
+        if self.peek() != Some('>') {
+            self.pos = start_pos;
+            return None;
+        }
+        self.advance();  // Skip >
+
+        // Check if it looks like a URL or email
+        if content.contains("://") || content.contains('@') {
+            let text = vec![Inline::Text { content: content.clone() }];
+            Some(Inline::Link { text: text, url: content, title: None })
+        } else {
+            self.pos = start_pos;
+            None
+        }
+    }
+
+    /// Try to parse inline HTML
+    fn try_parse_inline_html(mut self) -> Option<Inline> / {ParseError} {
+        if self.peek() != Some('<') {
+            return None;
+        }
+
+        let start_pos = self.pos;
+        let mut html = String::new();
+
+        html.push(self.advance().unwrap());  // <
+
+        // Simple heuristic: if it looks like a tag, collect until >
+        match self.peek() {
+            Some('/') | Some('!') => {},
+            Some(ch) if ch.is_alphabetic() => {},
+            _ => {
+                self.pos = start_pos;
+                return None;
+            },
+        }
+
+        while !self.is_eof() && self.peek() != Some('>') {
+            if let Some(ch) = self.advance() {
+                html.push(ch);
+            }
+        }
+
+        if self.peek() == Some('>') {
+            html.push(self.advance().unwrap());
+            Some(Inline::HtmlInline { html: html })
+        } else {
+            self.pos = start_pos;
+            None
+        }
+    }
+}
+
+// ============================================================================
+// HTML Rendering
+// ============================================================================
+
+/// Render document to HTML
+fn render_html(doc: &Document) -> String {
+    let mut output = String::new();
+
+    for block in &doc.blocks {
+        render_block_html(&mut output, block);
+    }
+
+    output
+}
+
+fn render_block_html(output: &mut String, block: &Block) {
+    match block {
+        Block::Header { level, content } => {
+            output.push_str(&format!("<h{}>", level));
+            render_inlines_html(output, content);
+            output.push_str(&format!("</h{}>\n", level));
+        },
+
+        Block::Paragraph { content } => {
+            output.push_str("<p>");
+            render_inlines_html(output, content);
+            output.push_str("</p>\n");
+        },
+
+        Block::CodeBlock { language, code } => {
+            match language {
+                Some(lang) => {
+                    output.push_str(&format!("<pre><code class=\"language-{}\">",
+                                            escape_html(lang)));
+                },
+                None => {
+                    output.push_str("<pre><code>");
+                },
+            }
+            output.push_str(&escape_html(code));
+            output.push_str("</code></pre>\n");
+        },
+
+        Block::BlockQuote { blocks } => {
+            output.push_str("<blockquote>\n");
+            for b in blocks {
+                render_block_html(output, b);
+            }
+            output.push_str("</blockquote>\n");
+        },
+
+        Block::UnorderedList { items } => {
+            output.push_str("<ul>\n");
+            for item in items {
+                output.push_str("<li>");
+                for b in &item.blocks {
+                    render_block_html(output, b);
+                }
+                output.push_str("</li>\n");
+            }
+            output.push_str("</ul>\n");
+        },
+
+        Block::OrderedList { start, items } => {
+            if *start != 1 {
+                output.push_str(&format!("<ol start=\"{}\">\n", start));
+            } else {
+                output.push_str("<ol>\n");
+            }
+            for item in items {
+                output.push_str("<li>");
+                for b in &item.blocks {
+                    render_block_html(output, b);
+                }
+                output.push_str("</li>\n");
+            }
+            output.push_str("</ol>\n");
+        },
+
+        Block::HorizontalRule => {
+            output.push_str("<hr />\n");
+        },
+
+        Block::HtmlBlock { html } => {
+            output.push_str(html);
+            output.push('\n');
+        },
+    }
+}
+
+fn render_inlines_html(output: &mut String, inlines: &[Inline]) {
+    for inline in inlines {
+        render_inline_html(output, inline);
+    }
+}
+
+fn render_inline_html(output: &mut String, inline: &Inline) {
+    match inline {
+        Inline::Text { content } => {
+            output.push_str(&escape_html(content));
+        },
+
+        Inline::Strong { content } => {
+            output.push_str("<strong>");
+            render_inlines_html(output, content);
+            output.push_str("</strong>");
+        },
+
+        Inline::Emphasis { content } => {
+            output.push_str("<em>");
+            render_inlines_html(output, content);
+            output.push_str("</em>");
+        },
+
+        Inline::StrongEmphasis { content } => {
+            output.push_str("<strong><em>");
+            render_inlines_html(output, content);
+            output.push_str("</em></strong>");
+        },
+
+        Inline::Code { content } => {
+            output.push_str("<code>");
+            output.push_str(&escape_html(content));
+            output.push_str("</code>");
+        },
+
+        Inline::Link { text, url, title } => {
+            output.push_str("<a href=\"");
+            output.push_str(&escape_html(url));
+            output.push('"');
+            if let Some(t) = title {
+                output.push_str(" title=\"");
+                output.push_str(&escape_html(t));
+                output.push('"');
+            }
+            output.push('>');
+            render_inlines_html(output, text);
+            output.push_str("</a>");
+        },
+
+        Inline::Image { alt, url, title } => {
+            output.push_str("<img src=\"");
+            output.push_str(&escape_html(url));
+            output.push_str("\" alt=\"");
+            output.push_str(&escape_html(alt));
+            output.push('"');
+            if let Some(t) = title {
+                output.push_str(" title=\"");
+                output.push_str(&escape_html(t));
+                output.push('"');
+            }
+            output.push_str(" />");
+        },
+
+        Inline::LineBreak => {
+            output.push_str("<br />\n");
+        },
+
+        Inline::HtmlInline { html } => {
+            output.push_str(html);
+        },
+    }
+}
+
+/// Escape HTML special characters
+fn escape_html(s: &str) -> String {
+    let mut result = String::new();
+    for ch in s.chars() {
+        match ch {
+            '&' => result.push_str("&amp;"),
+            '<' => result.push_str("&lt;"),
+            '>' => result.push_str("&gt;"),
+            '"' => result.push_str("&quot;"),
+            '\'' => result.push_str("&#39;"),
+            _ => result.push(ch),
+        }
+    }
+    result
+}
+
+// ============================================================================
+// Example Usage
+// ============================================================================
+
+fn main() -> i32 / {IO, ParseError} {
+    // Example markdown document
+    let markdown = "# Welcome to Blood
+
+This is a **markdown parser** written in Blood, demonstrating:
+
+- Text processing capabilities
+- *Effect-based* error handling
+- Recursive descent parsing
+- AST construction and rendering
+
+## Features
+
+### Headers
+
+Supports ATX-style headers from `# H1` to `###### H6`.
+
+### Emphasis
+
+You can use *single asterisks* for _emphasis_ or **double** for __strong__.
+Even ***triple*** for both!
+
+### Code
+
+Inline code uses `backticks`.
+
+```blood
+fn main() {
+    print(\"Hello, World!\");
+}
+```
+
+### Links and Images
+
+Here's a [link to Blood](https://example.com/blood \"Blood Language\").
+
+![Logo](logo.png \"Blood Logo\")
+
+### Lists
+
+Unordered:
+- Item 1
+- Item 2
+  - Nested item
+- Item 3
+
+Ordered:
+1. First
+2. Second
+3. Third
+
+### Block Quotes
+
+> This is a block quote.
+> It can span multiple lines.
+>
+> And have multiple paragraphs.
+
+---
+
+*That's all folks!*
+";
+
+    // Parse the document
+    let mut parser = Parser::new(markdown.to_string());
+
+    let doc = try {
+        parser.parse_document()
+    } with {
+        ParseError::error(msg, line, col) => {
+            print("Parse error at {}:{}: {}", line, col, msg);
+            return 1;
+        },
+        ParseError::warning(msg, line, col) => {
+            print("Warning at {}:{}: {}", line, col, msg);
+            resume(())
+        },
+    };
+
+    // Render to HTML
+    let html = render_html(&doc);
+
+    // Print results
+    print("=== Parsed Document Structure ===\n");
+    print_document(&doc);
+
+    print("\n=== Rendered HTML ===\n");
+    print("{}", html);
+
+    0
+}
+
+/// Pretty print the document structure
+fn print_document(doc: &Document) / {IO} {
+    for block in &doc.blocks {
+        print_block(block, 0);
+    }
+}
+
+fn print_block(block: &Block, indent: i32) / {IO} {
+    let prefix = "  ".repeat(indent as usize);
+
+    match block {
+        Block::Header { level, content } => {
+            print("{}Header(level={})", prefix, level);
+            print_inlines(content, indent + 1);
+        },
+
+        Block::Paragraph { content } => {
+            print("{}Paragraph", prefix);
+            print_inlines(content, indent + 1);
+        },
+
+        Block::CodeBlock { language, code } => {
+            match language {
+                Some(lang) => print("{}CodeBlock(lang={})", prefix, lang),
+                None => print("{}CodeBlock", prefix),
+            }
+            print("{}  code: {} bytes", prefix, code.len());
+        },
+
+        Block::BlockQuote { blocks } => {
+            print("{}BlockQuote", prefix);
+            for b in blocks {
+                print_block(b, indent + 1);
+            }
+        },
+
+        Block::UnorderedList { items } => {
+            print("{}UnorderedList({} items)", prefix, items.len());
+            for (i, item) in items.iter().enumerate() {
+                print("{}  Item {}:", prefix, i + 1);
+                for b in &item.blocks {
+                    print_block(b, indent + 2);
+                }
+            }
+        },
+
+        Block::OrderedList { start, items } => {
+            print("{}OrderedList(start={}, {} items)", prefix, start, items.len());
+            for (i, item) in items.iter().enumerate() {
+                print("{}  Item {}:", prefix, *start + i as i32);
+                for b in &item.blocks {
+                    print_block(b, indent + 2);
+                }
+            }
+        },
+
+        Block::HorizontalRule => {
+            print("{}HorizontalRule", prefix);
+        },
+
+        Block::HtmlBlock { html } => {
+            print("{}HtmlBlock({} bytes)", prefix, html.len());
+        },
+    }
+}
+
+fn print_inlines(inlines: &[Inline], indent: i32) / {IO} {
+    let prefix = "  ".repeat(indent as usize);
+
+    for inline in inlines {
+        match inline {
+            Inline::Text { content } => {
+                print("{}Text(\"{}\")", prefix, truncate(content, 40));
+            },
+            Inline::Strong { content } => {
+                print("{}Strong", prefix);
+                print_inlines(content, indent + 1);
+            },
+            Inline::Emphasis { content } => {
+                print("{}Emphasis", prefix);
+                print_inlines(content, indent + 1);
+            },
+            Inline::StrongEmphasis { content } => {
+                print("{}StrongEmphasis", prefix);
+                print_inlines(content, indent + 1);
+            },
+            Inline::Code { content } => {
+                print("{}Code(\"{}\")", prefix, content);
+            },
+            Inline::Link { text, url, title } => {
+                match title {
+                    Some(t) => print("{}Link(url=\"{}\", title=\"{}\")", prefix, url, t),
+                    None => print("{}Link(url=\"{}\")", prefix, url),
+                }
+                print_inlines(text, indent + 1);
+            },
+            Inline::Image { alt, url, title } => {
+                match title {
+                    Some(t) => print("{}Image(alt=\"{}\", url=\"{}\", title=\"{}\")", prefix, alt, url, t),
+                    None => print("{}Image(alt=\"{}\", url=\"{}\")", prefix, alt, url),
+                }
+            },
+            Inline::LineBreak => {
+                print("{}LineBreak", prefix);
+            },
+            Inline::HtmlInline { html } => {
+                print("{}HtmlInline(\"{}\")", prefix, html);
+            },
+        }
+    }
+}
+
+fn truncate(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        let mut result = s[..max_len - 3].to_string();
+        result.push_str("...");
+        result
+    }
+}

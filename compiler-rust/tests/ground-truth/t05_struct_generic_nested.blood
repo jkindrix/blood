@@ -1,0 +1,44 @@
+// Test: generic struct used with different type instantiations
+// EXPECT: 10
+// EXPECT: 20
+// EXPECT: 30
+struct Wrapper<T> {
+    inner: T,
+}
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn wrap<T>(val: T) -> Wrapper<T> {
+    Wrapper { inner: val }
+}
+
+fn unwrap<T>(w: Wrapper<T>) -> T {
+    w.inner
+}
+
+fn main() -> i32 {
+    // Wrapper<i32>
+    let w1: Wrapper<i32> = wrap(10);
+    let v1: i32 = unwrap(w1);
+    println_int(v1); // 10
+
+    // Wrapper<Point>
+    let p: Point = Point { x: 20, y: 30 };
+    let w2: Wrapper<Point> = wrap(p);
+    let v2: Point = unwrap(w2);
+    println_int(v2.x); // 20
+    println_int(v2.y); // 30
+
+    // Wrapper<bool>
+    let w3: Wrapper<bool> = wrap(true);
+    let v3: bool = unwrap(w3);
+    if !v3 { return 1; }
+
+    if v1 != 10 { return 2; }
+    if v2.x != 20 { return 3; }
+    if v2.y != 30 { return 4; }
+    0
+}

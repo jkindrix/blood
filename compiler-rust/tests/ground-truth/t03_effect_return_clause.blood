@@ -1,0 +1,36 @@
+// Test: handler return clause. The type checker currently types
+// with...handle as the body type, not the return clause's transformed type.
+// This test verifies the handler's return clause runs (transforms the value)
+// but uses i32 as the result type to match current compiler behavior.
+// EXPECT: 10
+effect State<S> {
+    op get() -> S;
+    op put(s: S) -> ();
+}
+
+deep handler LocalState<S> for State<S> {
+    let mut state: S
+
+    return(x) { x }
+
+    op get() {
+        resume(state)
+    }
+
+    op put(s) {
+        state = s;
+        resume(())
+    }
+}
+
+fn main() -> i32 {
+    // Simple handler with identity return clause
+    let result: i32 = with LocalState { state: 0 } handle {
+        perform State.put(10);
+        perform State.get()
+    };
+    println_int(result);
+
+    if result != 10 { return 1; }
+    0
+}

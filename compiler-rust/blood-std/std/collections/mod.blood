@@ -1,0 +1,201 @@
+// Blood Standard Library - Collections
+//
+// Common collection types.
+
+pub mod vec;
+pub mod hashmap;
+pub mod hashset;
+pub mod btree;
+pub mod linked_list;
+pub mod deque;
+
+// Re-exports
+pub use vec::Vec;
+pub use hashmap::HashMap;
+pub use hashset::HashSet;
+pub use btree::{BTreeMap, BTreeSet};
+pub use linked_list::LinkedList;
+pub use deque::VecDeque;
+
+/// Extension trait for converting iterators into collections
+pub trait FromIterator<A> {
+    /// Creates a collection from an iterator
+    fn from_iter<I: Iterator<Item = A>>(iter: I) -> Self / pure;
+}
+
+/// Extension trait for extending collections with iterators
+pub trait Extend<A> {
+    /// Extends the collection with the contents of an iterator
+    fn extend<I: Iterator<Item = A>>(self: &mut Self, iter: I) / pure;
+}
+
+/// A draining iterator that removes elements from a collection
+pub struct Drain<'a, T> {
+    iter: &'a mut dyn Iterator<Item = T>,
+}
+
+impl<'a, T> Iterator for Drain<'a, T> {
+    type Item = T;
+
+    fn next(self: &mut Self) -> Option<T> / pure {
+        self.iter.next()
+    }
+}
+
+/// A trait for collections that can be cleared
+pub trait Clear {
+    /// Removes all elements from the collection
+    fn clear(self: &mut Self) / pure;
+}
+
+/// A trait for collections with a capacity
+pub trait WithCapacity: Sized {
+    /// Creates a collection with the specified capacity
+    fn with_capacity(capacity: usize) -> Self / pure;
+
+    /// Returns the current capacity
+    fn capacity(self: &Self) -> usize / pure;
+
+    /// Reserves space for at least `additional` more elements
+    fn reserve(self: &mut Self, additional: usize) / pure;
+
+    /// Shrinks the capacity to match the length
+    fn shrink_to_fit(self: &mut Self) / pure;
+}
+
+/// Entry API for maps
+pub enum Entry<'a, K, V> {
+    Occupied(OccupiedEntry<'a, K, V>),
+    Vacant(VacantEntry<'a, K, V>),
+}
+
+impl<'a, K, V> Entry<'a, K, V> {
+    /// Returns a mutable reference to the value, inserting default if empty
+    pub fn or_insert(self: Self, default: V) -> &'a mut V / pure {
+        match self {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => entry.insert(default),
+        }
+    }
+
+    /// Returns a mutable reference to the value, inserting computed value if empty
+    pub fn or_insert_with<F: FnOnce() -> V>(self: Self, f: F) -> &'a mut V / pure {
+        match self {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => entry.insert(f()),
+        }
+    }
+
+    /// Returns a mutable reference to the value, inserting computed value with key if empty
+    pub fn or_insert_with_key<F: FnOnce(&K) -> V>(self: Self, f: F) -> &'a mut V / pure {
+        match self {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => {
+                let value = f(entry.key());
+                entry.insert(value)
+            }
+        }
+    }
+
+    /// Returns a mutable reference to the value, inserting default if empty
+    pub fn or_default(self: Self) -> &'a mut V / pure
+    where
+        V: Default,
+    {
+        match self {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => entry.insert(V::default()),
+        }
+    }
+
+    /// Returns a reference to the entry's key
+    pub fn key(self: &Self) -> &K / pure {
+        match self {
+            Entry::Occupied(entry) => entry.key(),
+            Entry::Vacant(entry) => entry.key(),
+        }
+    }
+
+    /// Modifies the entry if occupied
+    pub fn and_modify<F: FnOnce(&mut V)>(self: Self, f: F) -> Self / pure {
+        match self {
+            Entry::Occupied(mut entry) => {
+                f(entry.get_mut());
+                Entry::Occupied(entry)
+            }
+            Entry::Vacant(entry) => Entry::Vacant(entry),
+        }
+    }
+}
+
+/// An occupied entry in a map
+pub struct OccupiedEntry<'a, K, V> {
+    key: K,
+    value: &'a mut V,
+}
+
+impl<'a, K, V> OccupiedEntry<'a, K, V> {
+    /// Returns a reference to the key
+    pub fn key(self: &Self) -> &K / pure {
+        &self.key
+    }
+
+    /// Removes the key-value pair and returns the key
+    pub fn remove_entry(self: Self) -> (K, V) / pure {
+        // Implementation would interact with the underlying map
+        __builtin_occupied_entry_remove(self)
+    }
+
+    /// Returns a reference to the value
+    pub fn get(self: &Self) -> &V / pure {
+        self.value
+    }
+
+    /// Returns a mutable reference to the value
+    pub fn get_mut(self: &mut Self) -> &mut V / pure {
+        self.value
+    }
+
+    /// Converts to a mutable reference
+    pub fn into_mut(self: Self) -> &'a mut V / pure {
+        self.value
+    }
+
+    /// Inserts a new value, returning the old one
+    pub fn insert(self: &mut Self, value: V) -> V / pure {
+        mem::replace(self.value, value)
+    }
+
+    /// Removes and returns the value
+    pub fn remove(self: Self) -> V / pure {
+        self.remove_entry().1
+    }
+}
+
+/// A vacant entry in a map
+pub struct VacantEntry<'a, K, V> {
+    key: K,
+    map: &'a mut dyn VacantEntryMap<K, V>,
+}
+
+/// Internal trait for vacant entry operations
+trait VacantEntryMap<K, V> {
+    fn insert_vacant(self: &mut Self, key: K, value: V) -> &mut V / pure;
+}
+
+impl<'a, K, V> VacantEntry<'a, K, V> {
+    /// Returns a reference to the key
+    pub fn key(self: &Self) -> &K / pure {
+        &self.key
+    }
+
+    /// Converts to the owned key
+    pub fn into_key(self: Self) -> K / pure {
+        self.key
+    }
+
+    /// Inserts the value and returns a mutable reference
+    pub fn insert(self: Self, value: V) -> &'a mut V / pure {
+        self.map.insert_vacant(self.key, value)
+    }
+}

@@ -1,0 +1,67 @@
+// Test: ref patterns in struct pattern fields (BUG-003 fix)
+// Tests that ref, ref mut, and mut keywords work in struct pattern fields.
+
+pub enum Kind {
+    Simple,
+    WithValue { inner: i32 },
+    WithBox { boxed: Box<i32> },
+}
+
+// Test ref pattern on owned enum
+pub fn test_ref_owned(k: Kind) -> i32 {
+    match k {
+        Kind::Simple => 0,
+        Kind::WithValue { ref inner } => *inner,
+        Kind::WithBox { ref boxed } => **boxed,
+    }
+}
+
+// Test ref mut pattern on owned enum
+pub fn test_ref_mut(mut k: Kind) -> i32 {
+    match k {
+        Kind::Simple => 0,
+        Kind::WithValue { ref mut inner } => {
+            *inner = *inner + 1;
+            *inner
+        }
+        Kind::WithBox { ref mut boxed } => {
+            **boxed = **boxed + 1;
+            **boxed
+        }
+    }
+}
+
+// Test explicit reference pattern &Enum::Variant
+pub fn test_ref_scrutinee(k: &Kind) -> i32 {
+    match k {
+        &Kind::Simple => 0,
+        &Kind::WithValue { ref inner } => *inner,
+        &Kind::WithBox { ref boxed } => **boxed,
+    }
+}
+
+// Test mut pattern (mutable binding, not reference)
+pub fn test_mut_binding(k: Kind) -> i32 {
+    match k {
+        Kind::Simple => 0,
+        Kind::WithValue { mut inner } => {
+            inner = inner + 1;
+            inner
+        }
+        Kind::WithBox { boxed } => *boxed,
+    }
+}
+
+pub fn main() {
+    let k1 = Kind::WithValue { inner: 10 };
+    let r1 = test_ref_owned(k1);
+
+    let mut k2 = Kind::WithValue { inner: 20 };
+    let r2 = test_ref_mut(k2);
+
+    let k3 = Kind::WithValue { inner: 30 };
+    let r3 = test_ref_scrutinee(&k3);
+
+    let k4 = Kind::WithValue { inner: 40 };
+    let r4 = test_mut_binding(k4);
+}

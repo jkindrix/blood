@@ -1,0 +1,39 @@
+// Module resolution test: @unsafe blocks with module-imported types
+mod unsafe_types;
+
+// Test @unsafe block with module-qualified struct field access
+impl unsafe_types::PtrHolder {
+    fn get_ptr(self) -> *const u8 {
+        @unsafe { self.ptr }
+    }
+
+    fn cast_len_to_ptr(self) -> *const u8 {
+        @unsafe { self.len as *const u8 }
+    }
+}
+
+impl unsafe_types::MutPtrHolder {
+    fn get_mut_ptr(self) -> *mut u8 {
+        @unsafe { self.ptr }
+    }
+}
+
+// Test @unsafe in free function with module type
+fn get_holder_ptr(holder: unsafe_types::PtrHolder) -> *const u8 {
+    @unsafe { holder.ptr }
+}
+
+// Test creating module type with pointer literal
+fn create_holder() -> unsafe_types::PtrHolder {
+    unsafe_types::PtrHolder { ptr: 0 as *const u8, len: 0 }
+}
+
+fn main() {
+    let holder = create_holder();
+    let _ = holder.get_ptr();
+    let _ = holder.cast_len_to_ptr();
+    let _ = get_holder_ptr(holder);
+
+    let mut_holder = unsafe_types::MutPtrHolder { ptr: 0 as *mut u8, cap: 0 };
+    let _ = mut_holder.get_mut_ptr();
+}

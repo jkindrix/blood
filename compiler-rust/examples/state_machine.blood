@@ -1,0 +1,939 @@
+// State Machine with Formal Invariants Example
+// Demonstrates: Type-safe state machines, compile-time invariant checking,
+// effect-based transitions, phantom types for state tracking
+//
+// This example implements several patterns:
+// 1. Typestate pattern: States encoded in types, invalid transitions are compile errors
+// 2. Linear types: Resources that must be consumed exactly once
+// 3. Effect-tracked transitions: All state changes visible in type signatures
+// 4. Formal invariants: Machine states with proven properties
+
+// ============================================================================
+// Part 1: Basic Typestate Pattern
+// ============================================================================
+
+/// A door that can be opened or closed
+/// The state is encoded in the type parameter
+mod door {
+    /// Phantom type markers for states
+    struct Open;
+    struct Closed;
+    struct Locked;
+
+    /// A door with its state encoded in the type
+    struct Door<State> {
+        name: String,
+        _state: PhantomData<State>,
+    }
+
+    impl Door<Closed> {
+        /// Create a new closed door
+        fn new(name: &str) -> Door<Closed> {
+            Door {
+                name: name.to_string(),
+                _state: PhantomData,
+            }
+        }
+
+        /// Open a closed door - returns an open door
+        fn open(self) -> Door<Open> {
+            print("Opening door: {}", self.name);
+            Door {
+                name: self.name,
+                _state: PhantomData,
+            }
+        }
+
+        /// Lock a closed door - returns a locked door
+        fn lock(self) -> Door<Locked> {
+            print("Locking door: {}", self.name);
+            Door {
+                name: self.name,
+                _state: PhantomData,
+            }
+        }
+    }
+
+    impl Door<Open> {
+        /// Close an open door - returns a closed door
+        fn close(self) -> Door<Closed> {
+            print("Closing door: {}", self.name);
+            Door {
+                name: self.name,
+                _state: PhantomData,
+            }
+        }
+
+        // Note: Can't lock an open door - no `lock` method here!
+        // This would be a compile error:
+        // fn lock(self) -> Door<Locked> { ... }
+    }
+
+    impl Door<Locked> {
+        /// Unlock a locked door - returns a closed door
+        fn unlock(self) -> Door<Closed> {
+            print("Unlocking door: {}", self.name);
+            Door {
+                name: self.name,
+                _state: PhantomData,
+            }
+        }
+
+        // Note: Can't open a locked door directly!
+    }
+
+    /// Demonstrate the door typestate
+    fn demo() / {IO} {
+        print("=== Door Typestate Demo ===\n");
+
+        // Create a closed door
+        let door = Door::new("Front Door");
+
+        // Open it
+        let door = door.open();
+
+        // Close it
+        let door = door.close();
+
+        // Lock it
+        let door = door.lock();
+
+        // Unlock it
+        let door = door.unlock();
+
+        // Open again
+        let door = door.open();
+
+        print("\nDoor operations completed successfully.");
+
+        // The following would be compile errors:
+        // let door = Door::new("Test").open().lock();  // Can't lock open door
+        // let door = Door::new("Test").lock().open();  // Can't open locked door
+    }
+}
+
+// ============================================================================
+// Part 2: Connection Protocol with Linear Types
+// ============================================================================
+
+/// A TCP-like connection with strict state machine
+mod connection {
+    /// Connection states
+    struct Disconnected;
+    struct Connecting;
+    struct Connected;
+    struct Authenticated;
+    struct Closing;
+
+    /// A connection that must follow the correct protocol
+    /// The type ensures proper sequencing of operations
+    #[must_use = "Connection must be properly closed"]
+    struct Connection<State> {
+        id: u64,
+        address: String,
+        _state: PhantomData<State>,
+    }
+
+    impl Connection<Disconnected> {
+        /// Create a new disconnected connection
+        fn new(id: u64, address: &str) -> Connection<Disconnected> {
+            Connection {
+                id: id,
+                address: address.to_string(),
+                _state: PhantomData,
+            }
+        }
+
+        /// Start connecting - transitions to Connecting state
+        fn connect(self) -> Connection<Connecting> / {Net} {
+            print("[{}] Initiating connection to {}", self.id, self.address);
+            perform Net.connect(&self.address);
+            Connection {
+                id: self.id,
+                address: self.address,
+                _state: PhantomData,
+            }
+        }
+    }
+
+    impl Connection<Connecting> {
+        /// Wait for connection to be established
+        fn wait_connected(self) -> Result<Connection<Connected>, ConnectionError> / {Net} {
+            print("[{}] Waiting for connection...", self.id);
+
+            match perform Net.wait_connected() {
+                Ok(()) => {
+                    print("[{}] Connected!", self.id);
+                    Ok(Connection {
+                        id: self.id,
+                        address: self.address,
+                        _state: PhantomData,
+                    })
+                },
+                Err(e) => Err(ConnectionError::ConnectFailed(e)),
+            }
+        }
+
+        /// Cancel connection attempt
+        fn cancel(self) -> Connection<Disconnected> / {Net} {
+            print("[{}] Cancelling connection attempt", self.id);
+            perform Net.cancel();
+            Connection {
+                id: self.id,
+                address: self.address,
+                _state: PhantomData,
+            }
+        }
+    }
+
+    impl Connection<Connected> {
+        /// Authenticate the connection
+        fn authenticate(self, credentials: &str) -> Result<Connection<Authenticated>, ConnectionError> / {Net} {
+            print("[{}] Authenticating...", self.id);
+
+            match perform Net.authenticate(credentials) {
+                Ok(()) => {
+                    print("[{}] Authenticated!", self.id);
+                    Ok(Connection {
+                        id: self.id,
+                        address: self.address,
+                        _state: PhantomData,
+                    })
+                },
+                Err(e) => Err(ConnectionError::AuthFailed(e)),
+            }
+        }
+
+        /// Disconnect without authenticating
+        fn disconnect(self) -> Connection<Closing> / {Net} {
+            print("[{}] Disconnecting...", self.id);
+            perform Net.close();
+            Connection {
+                id: self.id,
+                address: self.address,
+                _state: PhantomData,
+            }
+        }
+    }
+
+    impl Connection<Authenticated> {
+        /// Send data on authenticated connection
+        fn send(&self, data: &[u8]) -> Result<usize, ConnectionError> / {Net} {
+            print("[{}] Sending {} bytes", self.id, data.len());
+            perform Net.send(data)
+        }
+
+        /// Receive data on authenticated connection
+        fn recv(&self, buffer: &mut [u8]) -> Result<usize, ConnectionError> / {Net} {
+            print("[{}] Receiving data...", self.id);
+            perform Net.recv(buffer)
+        }
+
+        /// Disconnect
+        fn disconnect(self) -> Connection<Closing> / {Net} {
+            print("[{}] Disconnecting...", self.id);
+            perform Net.close();
+            Connection {
+                id: self.id,
+                address: self.address,
+                _state: PhantomData,
+            }
+        }
+    }
+
+    impl Connection<Closing> {
+        /// Wait for graceful close
+        fn wait_closed(self) -> () / {Net} {
+            print("[{}] Waiting for close...", self.id);
+            perform Net.wait_closed();
+            print("[{}] Connection closed.", self.id);
+            // Connection is consumed, can't be used again
+        }
+    }
+
+    /// Connection errors
+    enum ConnectionError {
+        ConnectFailed(String),
+        AuthFailed(String),
+        SendFailed(String),
+        RecvFailed(String),
+    }
+
+    /// Network effect for connection operations
+    effect Net {
+        op connect(address: &str) -> ();
+        op wait_connected() -> Result<(), String>;
+        op cancel() -> ();
+        op authenticate(credentials: &str) -> Result<(), String>;
+        op send(data: &[u8]) -> Result<usize, ConnectionError>;
+        op recv(buffer: &mut [u8]) -> Result<usize, ConnectionError>;
+        op close() -> ();
+        op wait_closed() -> ();
+    }
+
+    /// Demonstrate the connection protocol
+    fn demo() / {IO, Net} {
+        print("=== Connection Protocol Demo ===\n");
+
+        // Create disconnected connection
+        let conn = Connection::new(1, "server.example.com:443");
+
+        // Connect
+        let conn = conn.connect();
+
+        // Wait for connection
+        let conn = match conn.wait_connected() {
+            Ok(c) => c,
+            Err(e) => {
+                print("Connection failed!");
+                return;
+            }
+        };
+
+        // Authenticate
+        let conn = match conn.authenticate("user:password") {
+            Ok(c) => c,
+            Err(e) => {
+                print("Authentication failed!");
+                // Must still close the connection
+                let closing = conn.disconnect();
+                closing.wait_closed();
+                return;
+            }
+        };
+
+        // Use the connection
+        conn.send(b"Hello, server!");
+        let mut buffer = [0u8; 1024];
+        conn.recv(&mut buffer);
+
+        // Properly close
+        let closing = conn.disconnect();
+        closing.wait_closed();
+
+        print("\nConnection protocol completed successfully.");
+    }
+}
+
+// ============================================================================
+// Part 3: Traffic Light with Invariants
+// ============================================================================
+
+/// Traffic light that maintains safety invariants
+mod traffic_light {
+    /// Traffic light colors
+    enum Color {
+        Red,
+        Yellow,
+        Green,
+    }
+
+    /// Invariant: Only valid transitions are allowed
+    /// Red -> Green (after timeout)
+    /// Green -> Yellow
+    /// Yellow -> Red
+
+    struct RedLight {
+        duration: Duration,
+    }
+
+    struct YellowLight {
+        duration: Duration,
+    }
+
+    struct GreenLight {
+        duration: Duration,
+    }
+
+    impl RedLight {
+        fn new(duration: Duration) -> RedLight {
+            RedLight { duration: duration }
+        }
+
+        /// Red can only transition to Green
+        fn to_green(self) -> GreenLight / {Timer} {
+            perform Timer.wait(self.duration);
+            print("Light: RED -> GREEN");
+            GreenLight { duration: Duration::from_secs(30) }
+        }
+    }
+
+    impl GreenLight {
+        fn new(duration: Duration) -> GreenLight {
+            GreenLight { duration: duration }
+        }
+
+        /// Green can only transition to Yellow
+        fn to_yellow(self) -> YellowLight / {Timer} {
+            perform Timer.wait(self.duration);
+            print("Light: GREEN -> YELLOW");
+            YellowLight { duration: Duration::from_secs(5) }
+        }
+    }
+
+    impl YellowLight {
+        fn new(duration: Duration) -> YellowLight {
+            YellowLight { duration: duration }
+        }
+
+        /// Yellow can only transition to Red
+        fn to_red(self) -> RedLight / {Timer} {
+            perform Timer.wait(self.duration);
+            print("Light: YELLOW -> RED");
+            RedLight { duration: Duration::from_secs(30) }
+        }
+    }
+
+    /// Timer effect
+    effect Timer {
+        op wait(duration: Duration) -> ();
+    }
+
+    /// Run traffic light cycle
+    fn run_cycle(initial: RedLight) / {Timer, IO} {
+        print("=== Traffic Light Demo ===\n");
+
+        let mut red = initial;
+
+        for cycle in 0..3 {
+            print("\n--- Cycle {} ---", cycle + 1);
+
+            let green = red.to_green();
+            let yellow = green.to_yellow();
+            red = yellow.to_red();
+        }
+
+        print("\n3 cycles completed.");
+    }
+}
+
+// ============================================================================
+// Part 4: File Handle with Resource Safety
+// ============================================================================
+
+/// File handle that must be properly closed
+mod file {
+    /// File states
+    struct Unopened;
+    struct OpenRead;
+    struct OpenWrite;
+    struct OpenReadWrite;
+
+    /// A file handle with state tracking
+    #[must_use = "File must be closed"]
+    struct File<State> {
+        path: String,
+        fd: i32,
+        _state: PhantomData<State>,
+    }
+
+    /// File permissions for opening
+    enum OpenMode {
+        Read,
+        Write,
+        ReadWrite,
+    }
+
+    impl File<Unopened> {
+        /// Create a file reference (not yet opened)
+        fn new(path: &str) -> File<Unopened> {
+            File {
+                path: path.to_string(),
+                fd: -1,
+                _state: PhantomData,
+            }
+        }
+
+        /// Open for reading
+        fn open_read(self) -> Result<File<OpenRead>, FileError> / {FileIO} {
+            match perform FileIO.open(&self.path, OpenMode::Read) {
+                Ok(handle) => Ok(File {
+                    path: self.path,
+                    fd: handle,
+                    _state: PhantomData,
+                }),
+                Err(e) => Err(e),
+            }
+        }
+
+        /// Open for writing
+        fn open_write(self) -> Result<File<OpenWrite>, FileError> / {FileIO} {
+            match perform FileIO.open(&self.path, OpenMode::Write) {
+                Ok(handle) => Ok(File {
+                    path: self.path,
+                    fd: handle,
+                    _state: PhantomData,
+                }),
+                Err(e) => Err(e),
+            }
+        }
+
+        /// Open for read-write
+        fn open_read_write(self) -> Result<File<OpenReadWrite>, FileError> / {FileIO} {
+            match perform FileIO.open(&self.path, OpenMode::ReadWrite) {
+                Ok(handle) => Ok(File {
+                    path: self.path,
+                    fd: handle,
+                    _state: PhantomData,
+                }),
+                Err(e) => Err(e),
+            }
+        }
+    }
+
+    impl File<OpenRead> {
+        /// Read from file
+        fn read(&self, buffer: &mut [u8]) -> Result<usize, FileError> / {FileIO} {
+            perform FileIO.read(self.fd, buffer)
+        }
+
+        /// Close the file
+        fn close(self) / {FileIO} {
+            perform FileIO.close(self.fd);
+            // File is consumed
+        }
+
+        // Note: No write method - would be compile error
+    }
+
+    impl File<OpenWrite> {
+        /// Write to file
+        fn write(&self, data: &[u8]) -> Result<usize, FileError> / {FileIO} {
+            perform FileIO.write(self.fd, data)
+        }
+
+        /// Close the file
+        fn close(self) / {FileIO} {
+            perform FileIO.close(self.fd);
+        }
+
+        // Note: No read method - would be compile error
+    }
+
+    impl File<OpenReadWrite> {
+        /// Read from file
+        fn read(&self, buffer: &mut [u8]) -> Result<usize, FileError> / {FileIO} {
+            perform FileIO.read(self.fd, buffer)
+        }
+
+        /// Write to file
+        fn write(&self, data: &[u8]) -> Result<usize, FileError> / {FileIO} {
+            perform FileIO.write(self.fd, data)
+        }
+
+        /// Close the file
+        fn close(self) / {FileIO} {
+            perform FileIO.close(self.fd);
+        }
+    }
+
+    /// File errors
+    enum FileError {
+        NotFound,
+        PermissionDenied,
+        IoError(String),
+    }
+
+    /// File I/O effect
+    effect FileIO {
+        op open(path: &str, mode: OpenMode) -> Result<i32, FileError>;
+        op read(handle: i32, buffer: &mut [u8]) -> Result<usize, FileError>;
+        op write(handle: i32, data: &[u8]) -> Result<usize, FileError>;
+        op close(handle: i32) -> ();
+    }
+}
+
+// ============================================================================
+// Part 5: Builder Pattern with Completeness Checking
+// ============================================================================
+
+/// Builder that ensures all required fields are set
+mod builder {
+    /// Phantom markers for field presence
+    struct Missing;
+    struct Present;
+
+    /// HTTP request builder with type-level required field tracking
+    struct RequestBuilder<HasMethod, HasUrl, HasBody> {
+        method: Option<String>,
+        url: Option<String>,
+        body: Option<Vec<u8>>,
+        headers: Vec<(String, String)>,
+        _method: PhantomData<HasMethod>,
+        _url: PhantomData<HasUrl>,
+        _body: PhantomData<HasBody>,
+    }
+
+    impl RequestBuilder<Missing, Missing, Missing> {
+        /// Create new builder with no fields set
+        fn new() -> RequestBuilder<Missing, Missing, Missing> {
+            RequestBuilder {
+                method: None,
+                url: None,
+                body: None,
+                headers: Vec::new(),
+                _method: PhantomData,
+                _url: PhantomData,
+                _body: PhantomData,
+            }
+        }
+    }
+
+    impl<HasUrl, HasBody> RequestBuilder<Missing, HasUrl, HasBody> {
+        /// Set the HTTP method (required)
+        fn method(self, method: &str) -> RequestBuilder<Present, HasUrl, HasBody> {
+            RequestBuilder {
+                method: Some(method.to_string()),
+                url: self.url,
+                body: self.body,
+                headers: self.headers,
+                _method: PhantomData,
+                _url: PhantomData,
+                _body: PhantomData,
+            }
+        }
+    }
+
+    impl<HasMethod, HasBody> RequestBuilder<HasMethod, Missing, HasBody> {
+        /// Set the URL (required)
+        fn url(self, url: &str) -> RequestBuilder<HasMethod, Present, HasBody> {
+            RequestBuilder {
+                method: self.method,
+                url: Some(url.to_string()),
+                body: self.body,
+                headers: self.headers,
+                _method: PhantomData,
+                _url: PhantomData,
+                _body: PhantomData,
+            }
+        }
+    }
+
+    impl<HasMethod, HasUrl> RequestBuilder<HasMethod, HasUrl, Missing> {
+        /// Set the body (optional for GET, required for POST)
+        fn body(self, body: Vec<u8>) -> RequestBuilder<HasMethod, HasUrl, Present> {
+            RequestBuilder {
+                method: self.method,
+                url: self.url,
+                body: Some(body),
+                headers: self.headers,
+                _method: PhantomData,
+                _url: PhantomData,
+                _body: PhantomData,
+            }
+        }
+    }
+
+    impl<HasMethod, HasUrl, HasBody> RequestBuilder<HasMethod, HasUrl, HasBody> {
+        /// Add a header (optional, can be called multiple times)
+        fn header(mut self, name: &str, value: &str) -> Self {
+            self.headers.push((name.to_string(), value.to_string()));
+            self
+        }
+    }
+
+    /// The final request type
+    struct Request {
+        method: String,
+        url: String,
+        body: Option<Vec<u8>>,
+        headers: Vec<(String, String)>,
+    }
+
+    // build() is only available when method AND url are Present
+    impl<HasBody> RequestBuilder<Present, Present, HasBody> {
+        /// Build the request - only possible when required fields are set
+        fn build(self) -> Request {
+            Request {
+                method: self.method.unwrap(),
+                url: self.url.unwrap(),
+                body: self.body,
+                headers: self.headers,
+            }
+        }
+    }
+
+    /// Demonstrate builder pattern
+    fn demo() / {IO} {
+        print("=== Builder Pattern Demo ===\n");
+
+        // This works - all required fields set
+        let request = RequestBuilder::new()
+            .method("POST")
+            .url("https://api.example.com/data")
+            .header("Content-Type", "application/json")
+            .body(b"{'key': 'value'}".to_vec())
+            .build();
+
+        print("Built request: {} {}", request.method, request.url);
+        print("Headers: {:?}", request.headers);
+
+        // GET request without body
+        let get_request = RequestBuilder::new()
+            .method("GET")
+            .url("https://api.example.com/data")
+            .header("Accept", "application/json")
+            .build();
+
+        print("Built request: {} {}", get_request.method, get_request.url);
+
+        // The following would be compile errors:
+        // let bad = RequestBuilder::new().method("GET").build();  // Missing URL
+        // let bad = RequestBuilder::new().url("...").build();     // Missing method
+        // let bad = RequestBuilder::new().build();                // Missing both
+    }
+}
+
+// ============================================================================
+// Part 6: State Machine with Transitions Table
+// ============================================================================
+
+/// Generic state machine framework
+mod fsm {
+    /// A state machine with explicit state and transition types
+    struct StateMachine<State, Context> {
+        state: State,
+        context: Context,
+        transitions: u64,
+    }
+
+    /// Effect for state transitions
+    effect Transition<From, To> {
+        op transition(from: From) -> To;
+    }
+
+    /// Order processing state machine
+    mod order {
+        enum OrderState {
+            Created,
+            Validated,
+            PaymentPending,
+            PaymentReceived,
+            Shipped,
+            Delivered,
+            Cancelled,
+        }
+
+        struct OrderContext {
+            order_id: String,
+            customer_id: String,
+            total: f64,
+            items: Vec<String>,
+        }
+
+        /// Transition events
+        enum OrderEvent {
+            Validate,
+            RequestPayment,
+            ReceivePayment { transaction_id: String },
+            Ship { tracking_number: String },
+            Deliver,
+            Cancel { reason: String },
+        }
+
+        /// Transition result
+        enum TransitionResult {
+            Ok(OrderState),
+            Invalid { from: OrderState, event: OrderEvent },
+        }
+
+        impl OrderState {
+            /// Check if transition is valid
+            fn can_transition(&self, event: &OrderEvent) -> bool {
+                match (self, event) {
+                    (OrderState::Created, OrderEvent::Validate) => true,
+                    (OrderState::Created, OrderEvent::Cancel { .. }) => true,
+                    (OrderState::Validated, OrderEvent::RequestPayment) => true,
+                    (OrderState::Validated, OrderEvent::Cancel { .. }) => true,
+                    (OrderState::PaymentPending, OrderEvent::ReceivePayment { .. }) => true,
+                    (OrderState::PaymentPending, OrderEvent::Cancel { .. }) => true,
+                    (OrderState::PaymentReceived, OrderEvent::Ship { .. }) => true,
+                    (OrderState::Shipped, OrderEvent::Deliver) => true,
+                    _ => false,
+                }
+            }
+
+            /// Execute transition
+            fn transition(self, event: OrderEvent) -> TransitionResult {
+                if !self.can_transition(&event) {
+                    return TransitionResult::Invalid {
+                        from: self,
+                        event: event,
+                    };
+                }
+
+                let next = match event {
+                    OrderEvent::Validate => OrderState::Validated,
+                    OrderEvent::RequestPayment => OrderState::PaymentPending,
+                    OrderEvent::ReceivePayment { .. } => OrderState::PaymentReceived,
+                    OrderEvent::Ship { .. } => OrderState::Shipped,
+                    OrderEvent::Deliver => OrderState::Delivered,
+                    OrderEvent::Cancel { .. } => OrderState::Cancelled,
+                };
+
+                TransitionResult::Ok(next)
+            }
+
+            fn name(&self) -> &'static str {
+                match self {
+                    OrderState::Created => "Created",
+                    OrderState::Validated => "Validated",
+                    OrderState::PaymentPending => "PaymentPending",
+                    OrderState::PaymentReceived => "PaymentReceived",
+                    OrderState::Shipped => "Shipped",
+                    OrderState::Delivered => "Delivered",
+                    OrderState::Cancelled => "Cancelled",
+                }
+            }
+        }
+
+        /// Order state machine
+        struct OrderMachine {
+            state: OrderState,
+            context: OrderContext,
+            history: Vec<(OrderState, OrderEvent, OrderState)>,
+        }
+
+        impl OrderMachine {
+            fn new(order_id: &str, customer_id: &str, total: f64) -> OrderMachine {
+                OrderMachine {
+                    state: OrderState::Created,
+                    context: OrderContext {
+                        order_id: order_id.to_string(),
+                        customer_id: customer_id.to_string(),
+                        total: total,
+                        items: Vec::new(),
+                    },
+                    history: Vec::new(),
+                }
+            }
+
+            fn add_item(&mut self, item: &str) {
+                self.context.items.push(item.to_string());
+            }
+
+            fn dispatch(&mut self, event: OrderEvent) -> bool / {IO} {
+                let from_state = self.state.clone();
+                let event_name = format!("{:?}", event);
+
+                match self.state.transition(event) {
+                    TransitionResult::Ok(next) => {
+                        print("  {} --[{}]--> {}",
+                              from_state.name(), event_name, next.name());
+                        self.history.push((from_state, event, next.clone()));
+                        self.state = next;
+                        true
+                    },
+                    TransitionResult::Invalid { from, event } => {
+                        print("  INVALID: {} cannot handle {:?}",
+                              from.name(), event);
+                        false
+                    }
+                }
+            }
+
+            fn current_state(&self) -> &OrderState {
+                &self.state
+            }
+        }
+
+        fn demo() / {IO} {
+            print("=== Order State Machine Demo ===\n");
+
+            let mut order = OrderMachine::new("ORD-001", "CUST-123", 99.99);
+            order.add_item("Widget");
+            order.add_item("Gadget");
+
+            print("Order {} - ${:.2}", order.context.order_id, order.context.total);
+            print("Items: {:?}", order.context.items);
+            print("\nState transitions:");
+
+            // Valid sequence
+            order.dispatch(OrderEvent::Validate);
+            order.dispatch(OrderEvent::RequestPayment);
+            order.dispatch(OrderEvent::ReceivePayment {
+                transaction_id: "TXN-456".to_string()
+            });
+            order.dispatch(OrderEvent::Ship {
+                tracking_number: "1Z999AA10123456784".to_string()
+            });
+            order.dispatch(OrderEvent::Deliver);
+
+            print("\nFinal state: {}", order.current_state().name());
+
+            // Demonstrate invalid transition
+            print("\n--- Invalid Transition Demo ---");
+            let mut order2 = OrderMachine::new("ORD-002", "CUST-456", 49.99);
+            order2.dispatch(OrderEvent::Ship {
+                tracking_number: "test".to_string()
+            });  // Invalid: can't ship created order
+        }
+    }
+}
+
+// ============================================================================
+// Main Example
+// ============================================================================
+
+fn main() -> i32 / {IO} {
+    print("=== Blood State Machine Examples ===\n");
+    print("Demonstrating type-safe state machines with formal invariants.\n");
+
+    // Part 1: Door typestate
+    door::demo();
+
+    print("\n" + "=".repeat(60) + "\n");
+
+    // Part 5: Builder pattern
+    builder::demo();
+
+    print("\n" + "=".repeat(60) + "\n");
+
+    // Part 6: Order state machine
+    fsm::order::demo();
+
+    print("\n" + "=".repeat(60) + "\n");
+
+    print("\n=== Key Concepts Demonstrated ===\n");
+    print("1. Typestate Pattern: Invalid state transitions are compile errors");
+    print("2. Linear Types: Resources must be consumed exactly once");
+    print("3. Builder Pattern: Required fields enforced at compile time");
+    print("4. State Machines: Explicit state graphs with transition validation");
+    print("5. Effect Tracking: All side effects visible in type signatures");
+
+    print("\n=== Benefits ===\n");
+    print("- Bugs caught at compile time, not runtime");
+    print("- Self-documenting code through types");
+    print("- Impossible to forget cleanup (linear types)");
+    print("- Protocol compliance enforced by compiler");
+    print("- No runtime overhead for state checking");
+
+    print("\n=== All demonstrations completed! ===");
+    0
+}
+
+// ============================================================================
+// Helper Types
+// ============================================================================
+
+/// Phantom data for zero-sized type parameters
+struct PhantomData<T>;
+
+/// Duration type
+struct Duration {
+    secs: u64,
+    nanos: u32,
+}
+
+impl Duration {
+    fn from_secs(secs: u64) -> Duration {
+        Duration { secs: secs, nanos: 0 }
+    }
+
+    fn from_millis(millis: u64) -> Duration {
+        Duration {
+            secs: millis / 1000,
+            nanos: ((millis % 1000) * 1_000_000) as u32,
+        }
+    }
+}

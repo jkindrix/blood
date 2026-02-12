@@ -1,0 +1,24 @@
+// Test: closures as higher-order function arguments
+// EXPECT: 14
+// EXPECT: 30
+fn map_value(f: fn(i32) -> i32, x: i32) -> i32 {
+    f(x)
+}
+
+fn compose(f: fn(i32) -> i32, g: fn(i32) -> i32, x: i32) -> i32 {
+    f(g(x))
+}
+
+fn main() -> i32 {
+    // Pass closures to higher-order functions
+    let a: i32 = map_value(|x| x * 2, 7);
+    println_int(a); // 14
+    if a != 14 { return 1; }
+
+    // Compose two closures
+    let b: i32 = compose(|x| x + 10, |x| x * 2, 10);
+    println_int(b); // (10*2) + 10 = 30
+    if b != 30 { return 2; }
+
+    0
+}

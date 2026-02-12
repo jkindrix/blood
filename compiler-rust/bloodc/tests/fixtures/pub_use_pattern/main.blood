@@ -1,0 +1,17 @@
+// Consumer module - pattern matches on re-exported enum
+mod typeck;
+
+pub fn test_pattern_match() -> i32 {
+    let c = typeck::Coercion { value: 42 };
+    let result: typeck::CoercionResult = typeck::CoercionResult::Ok(c);
+
+    // This is the bug case: pattern matching via re-exported path
+    match result {
+        typeck::CoercionResult::Ok(coercion) => coercion.value,
+        typeck::CoercionResult::Err => -1,
+    }
+}
+
+pub fn main() -> i32 {
+    test_pattern_match()
+}

@@ -1,0 +1,1030 @@
+// HTTP Client in Blood
+// A complete HTTP/1.1 client demonstrating Blood's effect system,
+// networking primitives, and string processing.
+//
+// This example shows:
+// - TCP connections via the Net effect
+// - HTTP/1.1 protocol implementation
+// - URL parsing
+// - Request/Response types
+// - Headers handling
+// - Effect-based error handling
+// - Builder pattern for requests
+
+// ===========================================================================
+// 1. URL Parsing
+// ===========================================================================
+
+/// Represents a parsed URL
+struct Url {
+    scheme: String,
+    host: String,
+    port: u16,
+    path: String,
+    query: Option<String>,
+    fragment: Option<String>,
+}
+
+impl Url {
+    /// Parse a URL string
+    fn parse(url: &str) -> Result<Url, HttpError> / pure {
+        // Extract scheme
+        let scheme_end = url.find("://").ok_or(HttpError::InvalidUrl("missing scheme"))?;
+        let scheme = url[..scheme_end].to_string();
+        let rest = &url[scheme_end + 3..];
+
+        // Determine default port based on scheme
+        let default_port = match scheme.as_str() {
+            "http" => 80,
+            "https" => 443,
+            _ => return Err(HttpError::InvalidUrl("unknown scheme")),
+        };
+
+        // Extract host and optional port
+        let (host_port, path_query) = match rest.find('/') {
+            Some(idx) => (rest[..idx].to_string(), &rest[idx..]),
+            None => (rest.to_string(), "/"),
+        };
+
+        let (host, port) = match host_port.find(':') {
+            Some(idx) => {
+                let host = host_port[..idx].to_string();
+                let port_str = &host_port[idx + 1..];
+                let port = port_str.parse::<u16>()
+                    .ok_or(HttpError::InvalidUrl("invalid port"))?;
+                (host, port)
+            }
+            None => (host_port, default_port),
+        };
+
+        // Extract path, query, and fragment
+        let (path_query_str, fragment) = match path_query.find('#') {
+            Some(idx) => (&path_query[..idx], Some(path_query[idx + 1..].to_string())),
+            None => (path_query, None),
+        };
+
+        let (path, query) = match path_query_str.find('?') {
+            Some(idx) => (
+                path_query_str[..idx].to_string(),
+                Some(path_query_str[idx + 1..].to_string())
+            ),
+            None => (path_query_str.to_string(), None),
+        };
+
+        Ok(Url {
+            scheme,
+            host,
+            port,
+            path,
+            query,
+            fragment,
+        })
+    }
+
+    /// Get the full path including query string
+    fn request_path(&self) -> String / pure {
+        match &self.query {
+            Some(q) => format!("{}?{}", self.path, q),
+            None => self.path.clone(),
+        }
+    }
+
+    /// Get the host header value (includes port if non-standard)
+    fn host_header(&self) -> String / pure {
+        let default_port = match self.scheme.as_str() {
+            "http" => 80,
+            "https" => 443,
+            _ => 0,
+        };
+
+        if self.port == default_port {
+            self.host.clone()
+        } else {
+            format!("{}:{}", self.host, self.port)
+        }
+    }
+}
+
+// ===========================================================================
+// 2. HTTP Types
+// ===========================================================================
+
+/// HTTP request method
+enum HttpMethod {
+    Get,
+    Post,
+    Put,
+    Delete,
+    Patch,
+    Head,
+    Options,
+}
+
+impl HttpMethod {
+    /// Convert method to string
+    fn as_str(&self) -> &str / pure {
+        match self {
+            HttpMethod::Get => "GET",
+            HttpMethod::Post => "POST",
+            HttpMethod::Put => "PUT",
+            HttpMethod::Delete => "DELETE",
+            HttpMethod::Patch => "PATCH",
+            HttpMethod::Head => "HEAD",
+            HttpMethod::Options => "OPTIONS",
+        }
+    }
+}
+
+/// HTTP header
+struct Header {
+    name: String,
+    value: String,
+}
+
+impl Header {
+    fn new(name: &str, value: &str) -> Header / pure {
+        Header {
+            name: name.to_string(),
+            value: value.to_string(),
+        }
+    }
+
+    /// Serialize header to HTTP format
+    fn to_line(&self) -> String / pure {
+        format!("{}: {}\r\n", self.name, self.value)
+    }
+}
+
+/// HTTP request
+struct HttpRequest {
+    method: HttpMethod,
+    url: Url,
+    headers: Vec<Header>,
+    body: Option<Vec<u8>>,
+}
+
+/// HTTP response
+struct HttpResponse {
+    status_code: u16,
+    status_text: String,
+    headers: Vec<Header>,
+    body: Vec<u8>,
+}
+
+impl HttpResponse {
+    /// Get a header value by name (case-insensitive)
+    fn get_header(&self, name: &str) -> Option<&str> / pure {
+        let name_lower = name.to_lowercase();
+        for header in &self.headers {
+            if header.name.to_lowercase() == name_lower {
+                return Some(&header.value);
+            }
+        }
+        None
+    }
+
+    /// Get body as string (assumes UTF-8)
+    fn body_text(&self) -> Result<String, HttpError> / pure {
+        String::from_utf8(self.body.clone())
+            .map_err(|_| HttpError::InvalidResponse("body is not valid UTF-8"))
+    }
+
+    /// Check if response is successful (2xx status code)
+    fn is_success(&self) -> bool / pure {
+        self.status_code >= 200 && self.status_code < 300
+    }
+
+    /// Check if response is a redirect (3xx status code)
+    fn is_redirect(&self) -> bool / pure {
+        self.status_code >= 300 && self.status_code < 400
+    }
+
+    /// Check if response is a client error (4xx status code)
+    fn is_client_error(&self) -> bool / pure {
+        self.status_code >= 400 && self.status_code < 500
+    }
+
+    /// Check if response is a server error (5xx status code)
+    fn is_server_error(&self) -> bool / pure {
+        self.status_code >= 500 && self.status_code < 600
+    }
+
+    /// Get content length from headers
+    fn content_length(&self) -> Option<usize> / pure {
+        self.get_header("Content-Length")
+            .and_then(|v| v.parse::<usize>().ok())
+    }
+
+    /// Get content type from headers
+    fn content_type(&self) -> Option<&str> / pure {
+        self.get_header("Content-Type")
+    }
+}
+
+/// HTTP errors
+enum HttpError {
+    InvalidUrl(&str),
+    ConnectionFailed(String),
+    Timeout,
+    InvalidResponse(&str),
+    TooManyRedirects,
+    IoError(IoError),
+}
+
+impl HttpError {
+    fn to_string(&self) -> String / pure {
+        match self {
+            HttpError::InvalidUrl(msg) => format!("Invalid URL: {}", msg),
+            HttpError::ConnectionFailed(msg) => format!("Connection failed: {}", msg),
+            HttpError::Timeout => "Request timed out".to_string(),
+            HttpError::InvalidResponse(msg) => format!("Invalid response: {}", msg),
+            HttpError::TooManyRedirects => "Too many redirects".to_string(),
+            HttpError::IoError(e) => format!("IO error: {:?}", e),
+        }
+    }
+}
+
+// ===========================================================================
+// 3. HTTP Client
+// ===========================================================================
+
+/// HTTP client configuration
+struct HttpClientConfig {
+    timeout_ms: u32,
+    max_redirects: u32,
+    follow_redirects: bool,
+    user_agent: String,
+}
+
+impl HttpClientConfig {
+    fn default() -> HttpClientConfig / pure {
+        HttpClientConfig {
+            timeout_ms: 30000,
+            max_redirects: 10,
+            follow_redirects: true,
+            user_agent: "Blood-HTTP/1.0".to_string(),
+        }
+    }
+}
+
+/// HTTP client for making requests
+struct HttpClient {
+    config: HttpClientConfig,
+}
+
+impl HttpClient {
+    /// Create a new HTTP client with default configuration
+    fn new() -> HttpClient / pure {
+        HttpClient {
+            config: HttpClientConfig::default(),
+        }
+    }
+
+    /// Create a new HTTP client with custom configuration
+    fn with_config(config: HttpClientConfig) -> HttpClient / pure {
+        HttpClient { config }
+    }
+
+    /// Execute an HTTP request
+    fn execute(&self, request: HttpRequest) -> Result<HttpResponse, HttpError> / {Net} {
+        self.execute_with_redirects(request, 0)
+    }
+
+    /// Execute request, handling redirects
+    fn execute_with_redirects(
+        &self,
+        request: HttpRequest,
+        redirect_count: u32
+    ) -> Result<HttpResponse, HttpError> / {Net} {
+        // Send the request
+        let response = self.send_request(&request)?;
+
+        // Handle redirects
+        if self.config.follow_redirects && response.is_redirect() {
+            if redirect_count >= self.config.max_redirects {
+                return Err(HttpError::TooManyRedirects);
+            }
+
+            if let Some(location) = response.get_header("Location") {
+                let new_url = if location.starts_with("http") {
+                    Url::parse(location)?
+                } else {
+                    // Relative URL - combine with original
+                    Url {
+                        scheme: request.url.scheme.clone(),
+                        host: request.url.host.clone(),
+                        port: request.url.port,
+                        path: location.to_string(),
+                        query: None,
+                        fragment: None,
+                    }
+                };
+
+                let new_request = HttpRequest {
+                    method: HttpMethod::Get,  // Redirects use GET
+                    url: new_url,
+                    headers: request.headers.clone(),
+                    body: None,
+                };
+
+                return self.execute_with_redirects(new_request, redirect_count + 1);
+            }
+        }
+
+        Ok(response)
+    }
+
+    /// Send HTTP request over TCP
+    fn send_request(&self, request: &HttpRequest) -> Result<HttpResponse, HttpError> / {Net} {
+        // Resolve host to IP address
+        let addr = perform Net.dns_lookup(&request.url.host)
+            .map_err(|e| HttpError::ConnectionFailed(format!("DNS lookup failed: {:?}", e)))?;
+
+        let socket_addr = SocketAddr::new(addr, request.url.port);
+
+        // Connect to server
+        let mut stream = TcpStream::connect(&socket_addr)
+            .map_err(|e| HttpError::ConnectionFailed(format!("TCP connect failed: {:?}", e)))?;
+
+        // Set timeout
+        stream.set_read_timeout(Some(Duration::from_millis(self.config.timeout_ms as u64)))
+            .map_err(|e| HttpError::IoError(e))?;
+        stream.set_write_timeout(Some(Duration::from_millis(self.config.timeout_ms as u64)))
+            .map_err(|e| HttpError::IoError(e))?;
+
+        // Build and send request
+        let request_bytes = self.build_request(request);
+        stream.write_all(&request_bytes)
+            .map_err(|e| HttpError::IoError(e))?;
+
+        // Read response
+        self.read_response(&mut stream)
+    }
+
+    /// Build HTTP request bytes
+    fn build_request(&self, request: &HttpRequest) -> Vec<u8> / pure {
+        let mut buf = String::new();
+
+        // Request line
+        buf.push_str(&format!("{} {} HTTP/1.1\r\n",
+            request.method.as_str(),
+            request.url.request_path()
+        ));
+
+        // Host header (required in HTTP/1.1)
+        buf.push_str(&format!("Host: {}\r\n", request.url.host_header()));
+
+        // User-Agent header
+        buf.push_str(&format!("User-Agent: {}\r\n", self.config.user_agent));
+
+        // Custom headers
+        for header in &request.headers {
+            buf.push_str(&header.to_line());
+        }
+
+        // Content-Length if body present
+        if let Some(ref body) = request.body {
+            buf.push_str(&format!("Content-Length: {}\r\n", body.len()));
+        }
+
+        // Connection header
+        buf.push_str("Connection: close\r\n");
+
+        // End of headers
+        buf.push_str("\r\n");
+
+        let mut bytes = buf.into_bytes();
+
+        // Append body if present
+        if let Some(ref body) = request.body {
+            bytes.extend_from_slice(body);
+        }
+
+        bytes
+    }
+
+    /// Read and parse HTTP response
+    fn read_response(&self, stream: &mut TcpStream) -> Result<HttpResponse, HttpError> / {Net} {
+        let mut buf = Vec::new();
+        let mut temp = [0u8; 4096];
+
+        // Read all data until connection closes
+        loop {
+            match stream.read(&mut temp) {
+                Ok(0) => break,  // EOF
+                Ok(n) => buf.extend_from_slice(&temp[..n]),
+                Err(e) if e.kind() == IoErrorKind::WouldBlock => {
+                    return Err(HttpError::Timeout);
+                }
+                Err(e) => return Err(HttpError::IoError(e)),
+            }
+        }
+
+        // Parse response
+        self.parse_response(&buf)
+    }
+
+    /// Parse HTTP response bytes
+    fn parse_response(&self, data: &[u8]) -> Result<HttpResponse, HttpError> / pure {
+        let response_str = String::from_utf8_lossy(data);
+
+        // Find header/body separator
+        let header_end = response_str.find("\r\n\r\n")
+            .ok_or(HttpError::InvalidResponse("missing header terminator"))?;
+
+        let header_section = &response_str[..header_end];
+        let body_start = header_end + 4;
+
+        // Parse status line
+        let first_line_end = header_section.find("\r\n")
+            .ok_or(HttpError::InvalidResponse("missing status line"))?;
+        let status_line = &header_section[..first_line_end];
+
+        // Parse "HTTP/1.1 200 OK"
+        let parts: Vec<&str> = status_line.splitn(3, ' ').collect();
+        if parts.len() < 2 {
+            return Err(HttpError::InvalidResponse("invalid status line"));
+        }
+
+        let status_code = parts[1].parse::<u16>()
+            .map_err(|_| HttpError::InvalidResponse("invalid status code"))?;
+        let status_text = if parts.len() >= 3 { parts[2] } else { "" };
+
+        // Parse headers
+        let headers_section = &header_section[first_line_end + 2..];
+        let mut headers = Vec::new();
+
+        for line in headers_section.split("\r\n") {
+            if line.is_empty() {
+                continue;
+            }
+
+            if let Some(colon_idx) = line.find(':') {
+                let name = line[..colon_idx].trim();
+                let value = line[colon_idx + 1..].trim();
+                headers.push(Header::new(name, value));
+            }
+        }
+
+        // Extract body
+        let body = data[body_start..].to_vec();
+
+        Ok(HttpResponse {
+            status_code,
+            status_text: status_text.to_string(),
+            headers,
+            body,
+        })
+    }
+
+    // =========================================================================
+    // Convenience Methods
+    // =========================================================================
+
+    /// Perform a GET request
+    fn get(&self, url: &str) -> Result<HttpResponse, HttpError> / {Net} {
+        let parsed_url = Url::parse(url)?;
+        let request = HttpRequest {
+            method: HttpMethod::Get,
+            url: parsed_url,
+            headers: Vec::new(),
+            body: None,
+        };
+        self.execute(request)
+    }
+
+    /// Perform a POST request with body
+    fn post(&self, url: &str, body: &[u8], content_type: &str) -> Result<HttpResponse, HttpError> / {Net} {
+        let parsed_url = Url::parse(url)?;
+        let mut headers = Vec::new();
+        headers.push(Header::new("Content-Type", content_type));
+
+        let request = HttpRequest {
+            method: HttpMethod::Post,
+            url: parsed_url,
+            headers,
+            body: Some(body.to_vec()),
+        };
+        self.execute(request)
+    }
+
+    /// POST JSON data
+    fn post_json(&self, url: &str, json: &str) -> Result<HttpResponse, HttpError> / {Net} {
+        self.post(url, json.as_bytes(), "application/json")
+    }
+
+    /// POST form data (application/x-www-form-urlencoded)
+    fn post_form(&self, url: &str, form: &[(str, str)]) -> Result<HttpResponse, HttpError> / {Net} {
+        let mut body = String::new();
+        for (i, (key, value)) in form.iter().enumerate() {
+            if i > 0 {
+                body.push('&');
+            }
+            body.push_str(&url_encode(key));
+            body.push('=');
+            body.push_str(&url_encode(value));
+        }
+        self.post(url, body.as_bytes(), "application/x-www-form-urlencoded")
+    }
+
+    /// Perform a PUT request
+    fn put(&self, url: &str, body: &[u8], content_type: &str) -> Result<HttpResponse, HttpError> / {Net} {
+        let parsed_url = Url::parse(url)?;
+        let mut headers = Vec::new();
+        headers.push(Header::new("Content-Type", content_type));
+
+        let request = HttpRequest {
+            method: HttpMethod::Put,
+            url: parsed_url,
+            headers,
+            body: Some(body.to_vec()),
+        };
+        self.execute(request)
+    }
+
+    /// Perform a DELETE request
+    fn delete(&self, url: &str) -> Result<HttpResponse, HttpError> / {Net} {
+        let parsed_url = Url::parse(url)?;
+        let request = HttpRequest {
+            method: HttpMethod::Delete,
+            url: parsed_url,
+            headers: Vec::new(),
+            body: None,
+        };
+        self.execute(request)
+    }
+
+    /// Perform a HEAD request (like GET but no body returned)
+    fn head(&self, url: &str) -> Result<HttpResponse, HttpError> / {Net} {
+        let parsed_url = Url::parse(url)?;
+        let request = HttpRequest {
+            method: HttpMethod::Head,
+            url: parsed_url,
+            headers: Vec::new(),
+            body: None,
+        };
+        self.execute(request)
+    }
+}
+
+// ===========================================================================
+// 4. Request Builder
+// ===========================================================================
+
+/// Builder for constructing HTTP requests fluently
+struct RequestBuilder {
+    method: HttpMethod,
+    url: Option<Url>,
+    headers: Vec<Header>,
+    body: Option<Vec<u8>>,
+}
+
+impl RequestBuilder {
+    /// Create a new GET request builder
+    fn get(url: &str) -> Result<RequestBuilder, HttpError> / pure {
+        Ok(RequestBuilder {
+            method: HttpMethod::Get,
+            url: Some(Url::parse(url)?),
+            headers: Vec::new(),
+            body: None,
+        })
+    }
+
+    /// Create a new POST request builder
+    fn post(url: &str) -> Result<RequestBuilder, HttpError> / pure {
+        Ok(RequestBuilder {
+            method: HttpMethod::Post,
+            url: Some(Url::parse(url)?),
+            headers: Vec::new(),
+            body: None,
+        })
+    }
+
+    /// Create a new PUT request builder
+    fn put(url: &str) -> Result<RequestBuilder, HttpError> / pure {
+        Ok(RequestBuilder {
+            method: HttpMethod::Put,
+            url: Some(Url::parse(url)?),
+            headers: Vec::new(),
+            body: None,
+        })
+    }
+
+    /// Create a new DELETE request builder
+    fn delete(url: &str) -> Result<RequestBuilder, HttpError> / pure {
+        Ok(RequestBuilder {
+            method: HttpMethod::Delete,
+            url: Some(Url::parse(url)?),
+            headers: Vec::new(),
+            body: None,
+        })
+    }
+
+    /// Add a header
+    fn header(mut self, name: &str, value: &str) -> RequestBuilder / pure {
+        self.headers.push(Header::new(name, value));
+        self
+    }
+
+    /// Set authorization header with Bearer token
+    fn bearer_auth(self, token: &str) -> RequestBuilder / pure {
+        self.header("Authorization", &format!("Bearer {}", token))
+    }
+
+    /// Set authorization header with Basic auth
+    fn basic_auth(self, username: &str, password: &str) -> RequestBuilder / pure {
+        let credentials = format!("{}:{}", username, password);
+        let encoded = base64_encode(credentials.as_bytes());
+        self.header("Authorization", &format!("Basic {}", encoded))
+    }
+
+    /// Set body bytes
+    fn body(mut self, data: Vec<u8>) -> RequestBuilder / pure {
+        self.body = Some(data);
+        self
+    }
+
+    /// Set JSON body
+    fn json(mut self, json: &str) -> RequestBuilder / pure {
+        self.body = Some(json.as_bytes().to_vec());
+        self.headers.push(Header::new("Content-Type", "application/json"));
+        self
+    }
+
+    /// Set form body
+    fn form(mut self, form: &[(str, str)]) -> RequestBuilder / pure {
+        let mut body = String::new();
+        for (i, (key, value)) in form.iter().enumerate() {
+            if i > 0 {
+                body.push('&');
+            }
+            body.push_str(&url_encode(key));
+            body.push('=');
+            body.push_str(&url_encode(value));
+        }
+        self.body = Some(body.into_bytes());
+        self.headers.push(Header::new("Content-Type", "application/x-www-form-urlencoded"));
+        self
+    }
+
+    /// Build the request
+    fn build(self) -> Result<HttpRequest, HttpError> / pure {
+        let url = self.url.ok_or(HttpError::InvalidUrl("no URL specified"))?;
+        Ok(HttpRequest {
+            method: self.method,
+            url,
+            headers: self.headers,
+            body: self.body,
+        })
+    }
+
+    /// Build and send the request
+    fn send(self, client: &HttpClient) -> Result<HttpResponse, HttpError> / {Net} {
+        let request = self.build()?;
+        client.execute(request)
+    }
+}
+
+// ===========================================================================
+// 5. Utility Functions
+// ===========================================================================
+
+/// URL-encode a string
+fn url_encode(s: &str) -> String / pure {
+    let mut result = String::new();
+    for c in s.chars() {
+        match c {
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => {
+                result.push(c);
+            }
+            ' ' => {
+                result.push('+');
+            }
+            _ => {
+                // Percent-encode
+                let bytes = c.to_string().as_bytes();
+                for b in bytes {
+                    result.push('%');
+                    result.push_str(&format!("{:02X}", b));
+                }
+            }
+        }
+    }
+    result
+}
+
+/// URL-decode a string
+fn url_decode(s: &str) -> String / pure {
+    let mut result = String::new();
+    let mut chars = s.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match c {
+            '%' => {
+                // Read two hex digits
+                let mut hex = String::new();
+                if let Some(h1) = chars.next() {
+                    hex.push(h1);
+                }
+                if let Some(h2) = chars.next() {
+                    hex.push(h2);
+                }
+                if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                    result.push(byte as char);
+                }
+            }
+            '+' => {
+                result.push(' ');
+            }
+            _ => {
+                result.push(c);
+            }
+        }
+    }
+    result
+}
+
+/// Simple base64 encoding (for Basic auth)
+fn base64_encode(data: &[u8]) -> String / pure {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    let mut result = String::new();
+    let mut i = 0;
+
+    while i < data.len() {
+        let b0 = data[i] as u32;
+        let b1 = if i + 1 < data.len() { data[i + 1] as u32 } else { 0 };
+        let b2 = if i + 2 < data.len() { data[i + 2] as u32 } else { 0 };
+
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+
+        result.push(ALPHABET[((triple >> 18) & 0x3F) as usize] as char);
+        result.push(ALPHABET[((triple >> 12) & 0x3F) as usize] as char);
+
+        if i + 1 < data.len() {
+            result.push(ALPHABET[((triple >> 6) & 0x3F) as usize] as char);
+        } else {
+            result.push('=');
+        }
+
+        if i + 2 < data.len() {
+            result.push(ALPHABET[(triple & 0x3F) as usize] as char);
+        } else {
+            result.push('=');
+        }
+
+        i += 3;
+    }
+
+    result
+}
+
+// ===========================================================================
+// 6. Example Usage
+// ===========================================================================
+
+/// Effect for HTTP operations
+effect Http {
+    /// Perform an HTTP request
+    op request(req: HttpRequest) -> Result<HttpResponse, HttpError>;
+}
+
+/// Main function demonstrating HTTP client usage
+fn main() -> i32 / {Net, IO} {
+    println!("Blood HTTP Client Example");
+    println!("=========================\n");
+
+    let client = HttpClient::new();
+
+    // Example 1: Simple GET request
+    println!("Example 1: GET request");
+    match client.get("http://example.com/") {
+        Ok(response) => {
+            println!("Status: {} {}", response.status_code, response.status_text);
+            println!("Headers:");
+            for header in &response.headers {
+                println!("  {}: {}", header.name, header.value);
+            }
+            if let Ok(body) = response.body_text() {
+                println!("Body length: {} bytes", body.len());
+            }
+        }
+        Err(e) => {
+            println!("Error: {}", e.to_string());
+        }
+    }
+    println!();
+
+    // Example 2: POST with JSON
+    println!("Example 2: POST JSON");
+    let json_body = r#"{"name": "Blood", "version": "0.5.2"}"#;
+    match client.post_json("http://httpbin.org/post", json_body) {
+        Ok(response) => {
+            println!("Status: {} {}", response.status_code, response.status_text);
+            if let Ok(body) = response.body_text() {
+                println!("Response: {}", body);
+            }
+        }
+        Err(e) => {
+            println!("Error: {}", e.to_string());
+        }
+    }
+    println!();
+
+    // Example 3: Request builder pattern
+    println!("Example 3: Request Builder");
+    let request_result = RequestBuilder::get("http://httpbin.org/headers")
+        .and_then(|r| Ok(r.header("X-Custom-Header", "Blood-Test")))
+        .and_then(|r| Ok(r.header("Accept", "application/json")))
+        .and_then(|r| r.build());
+
+    match request_result {
+        Ok(request) => {
+            match client.execute(request) {
+                Ok(response) => {
+                    println!("Status: {} {}", response.status_code, response.status_text);
+                }
+                Err(e) => {
+                    println!("Error: {}", e.to_string());
+                }
+            }
+        }
+        Err(e) => {
+            println!("Error building request: {}", e.to_string());
+        }
+    }
+    println!();
+
+    // Example 4: POST with form data
+    println!("Example 4: POST Form Data");
+    let form_data = [
+        ("username", "testuser"),
+        ("password", "testpass"),
+    ];
+    match client.post_form("http://httpbin.org/post", &form_data) {
+        Ok(response) => {
+            println!("Status: {} {}", response.status_code, response.status_text);
+        }
+        Err(e) => {
+            println!("Error: {}", e.to_string());
+        }
+    }
+    println!();
+
+    // Example 5: URL parsing
+    println!("Example 5: URL Parsing");
+    let urls = [
+        "http://example.com/path/to/resource",
+        "https://api.example.com:8443/v1/users?page=1&limit=10",
+        "http://localhost:3000/debug#section",
+    ];
+
+    for url_str in urls {
+        match Url::parse(url_str) {
+            Ok(url) => {
+                println!("URL: {}", url_str);
+                println!("  Scheme: {}", url.scheme);
+                println!("  Host: {}", url.host);
+                println!("  Port: {}", url.port);
+                println!("  Path: {}", url.path);
+                if let Some(ref q) = url.query {
+                    println!("  Query: {}", q);
+                }
+                if let Some(ref f) = url.fragment {
+                    println!("  Fragment: {}", f);
+                }
+            }
+            Err(e) => {
+                println!("Failed to parse '{}': {}", url_str, e.to_string());
+            }
+        }
+        println!();
+    }
+
+    // Example 6: Custom configuration
+    println!("Example 6: Custom Client Configuration");
+    let custom_config = HttpClientConfig {
+        timeout_ms: 5000,        // 5 second timeout
+        max_redirects: 5,        // Max 5 redirects
+        follow_redirects: true,
+        user_agent: "Blood-CustomClient/1.0".to_string(),
+    };
+    let custom_client = HttpClient::with_config(custom_config);
+
+    match custom_client.head("http://example.com/") {
+        Ok(response) => {
+            println!("HEAD request succeeded: {} {}", response.status_code, response.status_text);
+        }
+        Err(e) => {
+            println!("HEAD request failed: {}", e.to_string());
+        }
+    }
+
+    println!("\nHTTP Client example complete!");
+    0
+}
+
+// ===========================================================================
+// 7. Tests
+// ===========================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_url_parse_simple() {
+        let url = Url::parse("http://example.com/path").unwrap();
+        assert_eq!(url.scheme, "http");
+        assert_eq!(url.host, "example.com");
+        assert_eq!(url.port, 80);
+        assert_eq!(url.path, "/path");
+    }
+
+    #[test]
+    fn test_url_parse_with_port() {
+        let url = Url::parse("https://api.example.com:8443/v1").unwrap();
+        assert_eq!(url.scheme, "https");
+        assert_eq!(url.host, "api.example.com");
+        assert_eq!(url.port, 8443);
+    }
+
+    #[test]
+    fn test_url_parse_with_query() {
+        let url = Url::parse("http://example.com/search?q=test&page=1").unwrap();
+        assert_eq!(url.path, "/search");
+        assert_eq!(url.query, Some("q=test&page=1".to_string()));
+    }
+
+    #[test]
+    fn test_url_parse_with_fragment() {
+        let url = Url::parse("http://example.com/docs#section").unwrap();
+        assert_eq!(url.fragment, Some("section".to_string()));
+    }
+
+    #[test]
+    fn test_url_encode() {
+        assert_eq!(url_encode("hello world"), "hello+world");
+        assert_eq!(url_encode("a=b&c=d"), "a%3Db%26c%3Dd");
+        assert_eq!(url_encode("test-_value"), "test-_value");
+    }
+
+    #[test]
+    fn test_url_decode() {
+        assert_eq!(url_decode("hello+world"), "hello world");
+        assert_eq!(url_decode("a%3Db"), "a=b");
+    }
+
+    #[test]
+    fn test_base64_encode() {
+        assert_eq!(base64_encode(b"Hello"), "SGVsbG8=");
+        assert_eq!(base64_encode(b"Hi"), "SGk=");
+        assert_eq!(base64_encode(b"A"), "QQ==");
+    }
+
+    #[test]
+    fn test_http_method_as_str() {
+        assert_eq!(HttpMethod::Get.as_str(), "GET");
+        assert_eq!(HttpMethod::Post.as_str(), "POST");
+        assert_eq!(HttpMethod::Put.as_str(), "PUT");
+        assert_eq!(HttpMethod::Delete.as_str(), "DELETE");
+    }
+
+    #[test]
+    fn test_response_status_checks() {
+        let ok_response = HttpResponse {
+            status_code: 200,
+            status_text: "OK".to_string(),
+            headers: Vec::new(),
+            body: Vec::new(),
+        };
+        assert!(ok_response.is_success());
+        assert!(!ok_response.is_redirect());
+        assert!(!ok_response.is_client_error());
+        assert!(!ok_response.is_server_error());
+
+        let redirect_response = HttpResponse {
+            status_code: 302,
+            status_text: "Found".to_string(),
+            headers: Vec::new(),
+            body: Vec::new(),
+        };
+        assert!(redirect_response.is_redirect());
+
+        let error_response = HttpResponse {
+            status_code: 404,
+            status_text: "Not Found".to_string(),
+            headers: Vec::new(),
+            body: Vec::new(),
+        };
+        assert!(error_response.is_client_error());
+    }
+
+    #[test]
+    fn test_header_creation() {
+        let header = Header::new("Content-Type", "application/json");
+        assert_eq!(header.name, "Content-Type");
+        assert_eq!(header.value, "application/json");
+        assert_eq!(header.to_line(), "Content-Type: application/json\r\n");
+    }
+}

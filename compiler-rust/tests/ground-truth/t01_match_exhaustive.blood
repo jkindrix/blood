@@ -1,0 +1,43 @@
+// Test: exhaustive pattern matching on enums (all variants covered)
+// EXPECT: 314
+// EXPECT: 100
+// EXPECT: 150
+// EXPECT: 0
+enum Shape {
+    Circle(i32),
+    Rectangle(i32, i32),
+    Triangle(i32, i32),
+    Empty,
+}
+
+fn area_approx(s: Shape) -> i32 {
+    match s {
+        Shape::Circle(r) => 3 * r * r + r * r / 7,
+        Shape::Rectangle(w, h) => w * h,
+        Shape::Triangle(b, h) => b * h / 2,
+        Shape::Empty => 0,
+    }
+}
+
+fn main() -> i32 {
+    let c: Shape = Shape::Circle(10);
+    let r: Shape = Shape::Rectangle(10, 10);
+    let t: Shape = Shape::Triangle(15, 20);
+    let e: Shape = Shape::Empty;
+
+    let ac: i32 = area_approx(c);
+    let ar: i32 = area_approx(r);
+    let at: i32 = area_approx(t);
+    let ae: i32 = area_approx(e);
+
+    println_int(ac); // 3*100 + 100/7 = 300 + 14 = 314
+    println_int(ar); // 100
+    println_int(at); // 300/2 = 150
+    println_int(ae); // 0
+
+    if ac != 314 { return 1; }
+    if ar != 100 { return 2; }
+    if at != 150 { return 3; }
+    if ae != 0 { return 4; }
+    0
+}

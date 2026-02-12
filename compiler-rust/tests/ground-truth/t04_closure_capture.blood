@@ -1,0 +1,25 @@
+// Test: closures that capture variables from enclosing scope
+// EXPECT: 15
+// EXPECT: 20
+fn apply(f: fn(i32) -> i32, x: i32) -> i32 {
+    f(x)
+}
+
+fn main() -> i32 {
+    // Closure capturing an immutable variable
+    let offset: i32 = 10;
+    let add_offset: fn(i32) -> i32 = |x| x + offset;
+    let a: i32 = add_offset(5);
+    println_int(a); // 15
+    if a != 15 { return 1; }
+
+    // Closure capturing multiple variables
+    let base: i32 = 2;
+    let multiplier: i32 = 10;
+    let compute: fn(i32) -> i32 = |x| x * base + multiplier;
+    let b: i32 = compute(5);
+    println_int(b); // 5*2 + 10 = 20
+    if b != 20 { return 2; }
+
+    0
+}

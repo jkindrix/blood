@@ -1,0 +1,997 @@
+// Blood Standard Library - Fiber Effect
+//
+// The Fiber effect provides lightweight concurrent execution through stackful fibers.
+// Fibers are cooperatively scheduled and can communicate via channels.
+
+use core::Duration;
+
+/// Fiber effect for concurrent execution
+///
+/// Fibers are lightweight, cooperatively-scheduled units of execution.
+/// They support structured concurrency where child fibers must complete
+/// before their parent.
+pub effect Fiber {
+    /// Spawns a new fiber
+    op spawn<T>(f: fn() -> T / {Fiber}) -> FiberHandle<T>;
+
+    /// Spawns a fiber with configuration
+    op spawn_with<T>(config: FiberConfig, f: fn() -> T / {Fiber}) -> FiberHandle<T>;
+
+    /// Gets the current fiber's handle
+    op current() -> FiberHandle<unit>;
+
+    /// Yields execution to the scheduler
+    op yield_() -> unit;
+
+    /// Sleeps for a duration
+    op sleep(duration: Duration) -> unit;
+
+    /// Parks the current fiber until unparked
+    op park() -> unit;
+}
+
+/// Spawns a new fiber running the given function
+pub fn spawn<T>(f: fn() -> T / {Fiber}) -> FiberHandle<T> / {Fiber} {
+    perform spawn(f)
+}
+
+/// Spawns a fiber with custom configuration
+pub fn spawn_with<T>(config: FiberConfig, f: fn() -> T / {Fiber}) -> FiberHandle<T> / {Fiber} {
+    perform spawn_with(config, f)
+}
+
+/// Gets the current fiber's handle
+pub fn current() -> FiberHandle<unit> / {Fiber} {
+    perform current()
+}
+
+/// Yields execution to the scheduler
+pub fn yield_() / {Fiber} {
+    perform yield_()
+}
+
+/// Sleeps for a duration
+pub fn sleep(duration: Duration) / {Fiber} {
+    perform sleep(duration)
+}
+
+/// Parks the current fiber until unparked
+pub fn park() / {Fiber} {
+    perform park()
+}
+
+/// Handle to a spawned fiber
+pub struct FiberHandle<T> {
+    id: FiberId,
+    _marker: PhantomData<T>,
+}
+
+impl<T> FiberHandle<T> {
+    /// Waits for the fiber to complete and returns its result
+    pub fn join(self: Self) -> T / {Fiber} {
+        __builtin_fiber_join(self.id)
+    }
+
+    /// Returns the fiber ID
+    pub fn id(self: &Self) -> FiberId {
+        self.id
+    }
+
+    /// Checks if the fiber has completed
+    pub fn is_finished(self: &Self) -> bool {
+        __builtin_fiber_is_finished(self.id)
+    }
+
+    /// Unparks this fiber
+    pub fn unpark(self: &Self) {
+        __builtin_fiber_unpark(self.id);
+    }
+
+    /// Requests cancellation of this fiber
+    pub fn cancel(self: Self) {
+        __builtin_fiber_cancel(self.id);
+    }
+}
+
+/// Unique identifier for a fiber
+pub struct FiberId {
+    value: u64,
+}
+
+impl FiberId {
+    /// Creates a new FiberId
+    pub const fn new(value: u64) -> Self {
+        FiberId { value }
+    }
+
+    /// Returns the raw value
+    pub const fn as_u64(self: &Self) -> u64 {
+        self.value
+    }
+}
+
+impl Eq for FiberId {
+    fn eq(self: &Self, other: &Self) -> bool {
+        self.value == other.value
+    }
+}
+
+impl Hash for FiberId {
+    fn hash<H: Hasher>(self: &Self, state: &mut H) {
+        self.value.hash(state);
+    }
+}
+
+/// Configuration for spawning fibers
+pub struct FiberConfig {
+    /// Initial stack size in bytes (default: 8KB)
+    stack_size: usize,
+    /// Maximum stack size in bytes (default: 1MB)
+    max_stack_size: usize,
+    /// Fiber priority (higher = more CPU time)
+    priority: Priority,
+    /// Optional name for debugging
+    name: Option<String>,
+}
+
+impl FiberConfig {
+    /// Creates a new configuration with default settings
+    pub const fn new() -> Self {
+        FiberConfig {
+            stack_size: 8 * 1024,         // 8 KB
+            max_stack_size: 1024 * 1024,  // 1 MB
+            priority: Priority::Normal,
+            name: None,
+        }
+    }
+
+    /// Sets the initial stack size
+    pub fn with_stack_size(mut self: Self, size: usize) -> Self {
+        self.stack_size = size;
+        self
+    }
+
+    /// Sets the maximum stack size
+    pub fn with_max_stack_size(mut self: Self, size: usize) -> Self {
+        self.max_stack_size = size;
+        self
+    }
+
+    /// Sets the priority
+    pub fn with_priority(mut self: Self, priority: Priority) -> Self {
+        self.priority = priority;
+        self
+    }
+
+    /// Sets the name
+    pub fn with_name(mut self: Self, name: String) -> Self {
+        self.name = Some(name);
+        self
+    }
+}
+
+impl Default for FiberConfig {
+    fn default() -> Self {
+        FiberConfig::new()
+    }
+}
+
+/// Fiber priority levels
+pub enum Priority {
+    /// Low priority (background tasks)
+    Low,
+    /// Normal priority (default)
+    Normal,
+    /// High priority (latency-sensitive tasks)
+    High,
+    /// Realtime priority (use sparingly)
+    Realtime,
+}
+
+impl Default for Priority {
+    fn default() -> Self {
+        Priority::Normal
+    }
+}
+
+/// State of a fiber
+pub enum FiberState {
+    /// Ready to run
+    Runnable,
+    /// Currently executing
+    Running,
+    /// Suspended waiting for a condition
+    Suspended,
+    /// Waiting for child fibers
+    Joining,
+    /// Completed successfully
+    Completed,
+    /// Failed with error
+    Failed,
+    /// Cancelled
+    Cancelled,
+}
+
+// ============================================================================
+// Structured Concurrency: Nursery Pattern
+// ============================================================================
+
+/// A Nursery is a scope for structured concurrency.
+///
+/// All fibers spawned in a nursery must complete before the nursery exits.
+/// If any fiber panics, the nursery cancels all remaining fibers and
+/// propagates the panic.
+///
+/// # Example
+///
+/// ```blood
+/// nursery(|n| {
+///     n.spawn(|| task1());
+///     n.spawn(|| task2());
+///     n.spawn(|| task3());
+///     // All tasks complete before nursery exits
+/// })
+/// ```
+pub struct Nursery<'n> {
+    /// Handles to all spawned fibers
+    children: Vec<FiberHandle<()>>,
+    /// Whether any child has failed
+    has_failure: bool,
+    /// Error from first failed child
+    first_error: Option<Box<dyn Error>>,
+    /// Phantom for lifetime
+    _marker: PhantomData<&'n ()>,
+}
+
+impl<'n> Nursery<'n> {
+    /// Creates a new nursery
+    fn new() -> Self {
+        Nursery {
+            children: Vec::new(),
+            has_failure: false,
+            first_error: None,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Spawns a fiber in this nursery
+    ///
+    /// The fiber will be automatically joined when the nursery exits.
+    pub fn spawn<F>(self: &mut Self, f: F) / {Fiber}
+    where
+        F: FnOnce() / {Fiber} + Send + 'n,
+    {
+        let handle = perform spawn(f);
+        self.children.push(handle);
+    }
+
+    /// Spawns a fiber with configuration
+    pub fn spawn_with<F>(self: &mut Self, config: FiberConfig, f: F) / {Fiber}
+    where
+        F: FnOnce() / {Fiber} + Send + 'n,
+    {
+        let handle = perform spawn_with(config, f);
+        self.children.push(handle);
+    }
+
+    /// Returns the number of active children
+    pub fn child_count(self: &Self) -> usize {
+        self.children.len()
+    }
+
+    /// Cancels all children
+    fn cancel_all(self: &mut Self) {
+        for child in self.children.drain(..) {
+            child.cancel();
+        }
+    }
+
+    /// Waits for all children to complete
+    fn wait_all(self: &mut Self) / {Fiber} {
+        for child in self.children.drain(..) {
+            child.join();
+        }
+    }
+}
+
+impl<'n> Drop for Nursery<'n> {
+    fn drop(self: &mut Self) {
+        // Cancel any remaining children on drop
+        // (in case of panic before normal exit)
+        self.cancel_all();
+    }
+}
+
+/// Runs a function with a nursery for structured concurrency.
+///
+/// All fibers spawned in the nursery will be automatically joined
+/// before this function returns. If any fiber panics, all other
+/// fibers are cancelled and the panic is propagated.
+///
+/// # Example
+///
+/// ```blood
+/// fn parallel_work() / {Fiber} {
+///     nursery(|n| {
+///         n.spawn(|| println("Task 1"));
+///         n.spawn(|| println("Task 2"));
+///         n.spawn(|| println("Task 3"));
+///     });
+///     // All tasks guaranteed complete here
+/// }
+/// ```
+pub fn nursery<F>(f: F) / {Fiber}
+where
+    F: FnOnce(&mut Nursery<'_>) / {Fiber},
+{
+    let mut n = Nursery::new();
+    f(&mut n);
+    n.wait_all();
+}
+
+/// Runs a function with a nursery that returns a value.
+///
+/// The nursery waits for all spawned fibers before returning.
+pub fn nursery_value<T, F>(f: F) -> T / {Fiber}
+where
+    F: FnOnce(&mut Nursery<'_>) -> T / {Fiber},
+{
+    let mut n = Nursery::new();
+    let result = f(&mut n);
+    n.wait_all();
+    result
+}
+
+/// Scope for structured concurrency with more control than nursery.
+///
+/// A scope allows spawning fibers that can return values. The spawned
+/// fibers are tracked and must be explicitly joined.
+pub struct FiberScope<'scope> {
+    _marker: PhantomData<&'scope ()>,
+}
+
+impl<'scope> FiberScope<'scope> {
+    /// Spawns a scoped fiber
+    ///
+    /// The spawned fiber must complete before 'scope ends.
+    pub fn spawn<T, F>(self: &Self, f: F) -> ScopedFiber<'scope, T> / {Fiber}
+    where
+        F: FnOnce() -> T / {Fiber} + Send + 'scope,
+        T: Send + 'scope,
+    {
+        let handle = perform spawn(|| f());
+        ScopedFiber { handle, _marker: PhantomData }
+    }
+
+    /// Spawns a scoped fiber with configuration
+    pub fn spawn_with<T, F>(self: &Self, config: FiberConfig, f: F) -> ScopedFiber<'scope, T> / {Fiber}
+    where
+        F: FnOnce() -> T / {Fiber} + Send + 'scope,
+        T: Send + 'scope,
+    {
+        let handle = perform spawn_with(config, || f());
+        ScopedFiber { handle, _marker: PhantomData }
+    }
+}
+
+/// A fiber that is bound to a scope's lifetime
+pub struct ScopedFiber<'scope, T> {
+    handle: FiberHandle<T>,
+    _marker: PhantomData<&'scope T>,
+}
+
+impl<'scope, T> ScopedFiber<'scope, T> {
+    /// Joins the fiber, blocking until it completes
+    pub fn join(self: Self) -> T / {Fiber} {
+        self.handle.join()
+    }
+
+    /// Checks if the fiber has completed
+    pub fn is_finished(self: &Self) -> bool {
+        self.handle.is_finished()
+    }
+}
+
+/// Runs a function with a fiber scope for structured concurrency.
+///
+/// Unlike nursery, scope allows spawning fibers that return values.
+/// The caller is responsible for joining all spawned fibers.
+///
+/// # Example
+///
+/// ```blood
+/// fn parallel_compute() -> (i32, i32) / {Fiber} {
+///     scope(|s| {
+///         let a = s.spawn(|| compute_a());
+///         let b = s.spawn(|| compute_b());
+///         (a.join(), b.join())
+///     })
+/// }
+/// ```
+pub fn scope<T, F>(f: F) -> T / {Fiber}
+where
+    F: FnOnce(&FiberScope<'_>) -> T / {Fiber},
+{
+    let scope = FiberScope { _marker: PhantomData };
+    f(&scope)
+}
+
+/// Parallel map over a collection using structured concurrency.
+///
+/// Spawns a fiber for each element and collects results in order.
+pub fn par_map<T, U, F>(items: Vec<T>, f: F) -> Vec<U> / {Fiber}
+where
+    T: Send,
+    U: Send,
+    F: Fn(T) -> U / {Fiber} + Send + Clone,
+{
+    nursery_value(|n| {
+        let handles: Vec<FiberHandle<U>> = items
+            .into_iter()
+            .map(|item| {
+                let f = f.clone();
+                perform spawn(move || f(item))
+            })
+            .collect();
+
+        handles.into_iter().map(|h| h.join()).collect()
+    })
+}
+
+/// Parallel for-each over a collection using structured concurrency.
+///
+/// Spawns a fiber for each element; returns when all complete.
+pub fn par_for_each<T, F>(items: Vec<T>, f: F) / {Fiber}
+where
+    T: Send,
+    F: Fn(T) / {Fiber} + Send + Clone,
+{
+    nursery(|n| {
+        for item in items {
+            let f = f.clone();
+            n.spawn(move || f(item));
+        }
+    });
+}
+
+/// Runs two computations in parallel and returns both results.
+pub fn parallel<A, B, F, G>(f: F, g: G) -> (A, B) / {Fiber}
+where
+    A: Send,
+    B: Send,
+    F: FnOnce() -> A / {Fiber} + Send,
+    G: FnOnce() -> B / {Fiber} + Send,
+{
+    scope(|s| {
+        let a = s.spawn(f);
+        let b = s.spawn(g);
+        (a.join(), b.join())
+    })
+}
+
+/// Runs three computations in parallel and returns all results.
+pub fn parallel3<A, B, C, F, G, H>(f: F, g: G, h: H) -> (A, B, C) / {Fiber}
+where
+    A: Send,
+    B: Send,
+    C: Send,
+    F: FnOnce() -> A / {Fiber} + Send,
+    G: FnOnce() -> B / {Fiber} + Send,
+    H: FnOnce() -> C / {Fiber} + Send,
+{
+    scope(|s| {
+        let a = s.spawn(f);
+        let b = s.spawn(g);
+        let c = s.spawn(h);
+        (a.join(), b.join(), c.join())
+    })
+}
+
+/// Standard fiber handler using the runtime scheduler
+pub deep handler RuntimeFiber for Fiber {
+    return(x) { x }
+
+    op spawn(f) {
+        let handle = __builtin_fiber_spawn(f);
+        resume(handle)
+    }
+
+    op spawn_with(config, f) {
+        let handle = __builtin_fiber_spawn_with(config, f);
+        resume(handle)
+    }
+
+    op current() {
+        let handle = __builtin_fiber_current();
+        resume(handle)
+    }
+
+    op yield_() {
+        __builtin_fiber_yield();
+        resume(())
+    }
+
+    op sleep(duration) {
+        __builtin_fiber_sleep(duration);
+        resume(())
+    }
+
+    op park() {
+        __builtin_fiber_park();
+        resume(())
+    }
+}
+
+/// Blocking handler for running fiber operations synchronously
+pub deep handler BlockingFiber for Fiber {
+    return(x) { x }
+
+    op spawn(f) {
+        // Run synchronously
+        let result = f();
+        let handle = FiberHandle { id: FiberId::new(0), _marker: PhantomData };
+        resume(handle)
+    }
+
+    op spawn_with(config, f) {
+        // Ignore config, run synchronously
+        let result = f();
+        let handle = FiberHandle { id: FiberId::new(0), _marker: PhantomData };
+        resume(handle)
+    }
+
+    op current() {
+        let handle = FiberHandle { id: FiberId::new(0), _marker: PhantomData };
+        resume(handle)
+    }
+
+    op yield_() {
+        // No-op for blocking
+        resume(())
+    }
+
+    op sleep(duration) {
+        __builtin_blocking_sleep(duration);
+        resume(())
+    }
+
+    op park() {
+        // No-op for blocking (would deadlock otherwise)
+        resume(())
+    }
+}
+
+/// Runs a fiber computation, blocking until complete
+pub fn block_on<T, F>(f: F) -> T / pure
+where
+    F: FnOnce() -> T / {Fiber},
+{
+    handle f() with BlockingFiber {
+        return(v) { v }
+    }
+}
+
+/// Spawns multiple fibers and waits for all to complete
+pub fn spawn_all<T, F>(tasks: Vec<F>) -> Vec<T> / {Fiber}
+where
+    F: FnOnce() -> T / {Fiber} + Send,
+    T: Send,
+{
+    let handles: Vec<FiberHandle<T>> = tasks
+        .into_iter()
+        .map(|task| perform spawn(task))
+        .collect();
+
+    handles.into_iter().map(|h| h.join()).collect()
+}
+
+/// Spawns multiple fibers and returns the first to complete
+pub fn race<T, F>(tasks: Vec<F>) -> T / {Fiber}
+where
+    F: FnOnce() -> T / {Fiber} + Send,
+    T: Send,
+{
+    let handles: Vec<FiberHandle<T>> = tasks
+        .into_iter()
+        .map(|task| perform spawn(task))
+        .collect();
+
+    // Wait for first completion
+    let winner = __builtin_fiber_race(handles.iter().map(|h| h.id).collect());
+
+    // Cancel remaining
+    for handle in handles {
+        if handle.id != winner.id {
+            handle.cancel();
+        }
+    }
+
+    winner.join()
+}
+
+// ============================================================================
+// Select/Await: Multiplexed Waiting
+// ============================================================================
+
+/// Result of a select operation indicating which branch was taken
+pub enum SelectResult<T> {
+    /// A branch was ready and returned a value
+    Ready(usize, T),
+    /// The timeout elapsed
+    Timeout,
+    /// No branch was ready (only returned if default is enabled)
+    Default,
+}
+
+/// A selectable operation that can be awaited
+pub enum Selectable<T> {
+    /// Receive from a channel
+    ChannelRecv(ChannelId),
+    /// Send to a channel (value captured in closure)
+    ChannelSend(ChannelId),
+    /// Wait for a fiber to complete
+    FiberJoin(FiberId),
+    /// Timer expiration
+    Timer(Duration),
+    /// Phantom marker for result type
+    _Marker(PhantomData<T>),
+}
+
+/// Builder for constructing select expressions
+pub struct SelectBuilder<'a, T> {
+    branches: Vec<SelectBranch<'a, T>>,
+    timeout: Option<Duration>,
+    has_default: bool,
+}
+
+/// A single branch in a select expression
+struct SelectBranch<'a, T> {
+    /// The operation to wait on
+    selectable: Selectable<()>,
+    /// Closure to execute when this branch is ready
+    handler: Box<dyn FnOnce() -> T + 'a>,
+}
+
+impl<'a, T> SelectBuilder<'a, T> {
+    /// Creates a new select builder
+    pub fn new() -> Self {
+        SelectBuilder {
+            branches: Vec::new(),
+            timeout: None,
+            has_default: false,
+        }
+    }
+
+    /// Adds a channel receive branch
+    pub fn recv<U, F>(mut self: Self, channel_id: ChannelId, handler: F) -> Self
+    where
+        F: FnOnce(U) -> T + 'a,
+        U: 'static,
+    {
+        self.branches.push(SelectBranch {
+            selectable: Selectable::ChannelRecv(channel_id),
+            handler: Box::new(move || {
+                let value: U = __builtin_channel_recv(channel_id);
+                handler(value)
+            }),
+        });
+        self
+    }
+
+    /// Adds a channel send branch
+    pub fn send<U, F>(mut self: Self, channel_id: ChannelId, value: U, handler: F) -> Self
+    where
+        F: FnOnce() -> T + 'a,
+        U: 'static,
+    {
+        self.branches.push(SelectBranch {
+            selectable: Selectable::ChannelSend(channel_id),
+            handler: Box::new(move || {
+                __builtin_channel_send(channel_id, value);
+                handler()
+            }),
+        });
+        self
+    }
+
+    /// Adds a fiber join branch
+    pub fn join<U, F>(mut self: Self, handle: FiberHandle<U>, handler: F) -> Self
+    where
+        F: FnOnce(U) -> T + 'a,
+        U: 'static,
+    {
+        let fiber_id = handle.id;
+        self.branches.push(SelectBranch {
+            selectable: Selectable::FiberJoin(fiber_id),
+            handler: Box::new(move || {
+                let value: U = __builtin_fiber_join(fiber_id);
+                handler(value)
+            }),
+        });
+        self
+    }
+
+    /// Adds a timeout
+    pub fn timeout(mut self: Self, duration: Duration) -> Self {
+        self.timeout = Some(duration);
+        self
+    }
+
+    /// Enables the default branch (non-blocking)
+    pub fn default(mut self: Self) -> Self {
+        self.has_default = true;
+        self
+    }
+
+    /// Executes the select expression
+    pub fn run(self: Self) -> SelectResult<T> / {Fiber} {
+        // Build array of selectables for the runtime
+        let selectables: Vec<_> = self.branches.iter()
+            .map(|b| &b.selectable)
+            .collect();
+
+        // Perform the select operation
+        let result = __builtin_select(
+            selectables,
+            self.timeout,
+            self.has_default
+        );
+
+        match result {
+            __SelectResult::Ready(idx) => {
+                // Get the handler for the ready branch
+                let branch = self.branches.into_iter().nth(idx).unwrap();
+                let value = (branch.handler)();
+                SelectResult::Ready(idx, value)
+            }
+            __SelectResult::Timeout => SelectResult::Timeout,
+            __SelectResult::Default => SelectResult::Default,
+        }
+    }
+}
+
+impl<'a, T> Default for SelectBuilder<'a, T> {
+    fn default() -> Self {
+        SelectBuilder::new()
+    }
+}
+
+/// Awaits a fiber handle, blocking until the fiber completes
+pub fn await_fiber<T>(handle: FiberHandle<T>) -> T / {Fiber} {
+    handle.join()
+}
+
+/// Awaits multiple fiber handles, returning results in order
+pub fn await_all<T>(handles: Vec<FiberHandle<T>>) -> Vec<T> / {Fiber}
+where
+    T: Send,
+{
+    handles.into_iter().map(|h| h.join()).collect()
+}
+
+/// Awaits the first of multiple handles to complete
+pub fn await_first<T>(handles: Vec<FiberHandle<T>>) -> (usize, T) / {Fiber}
+where
+    T: Send,
+{
+    // Build select with all handles
+    let ids: Vec<FiberId> = handles.iter().map(|h| h.id).collect();
+    let (idx, winner_id) = __builtin_select_fibers(ids);
+
+    // Cancel other fibers
+    for (i, handle) in handles.iter().enumerate() {
+        if i != idx {
+            handle.cancel();
+        }
+    }
+
+    // Join the winner
+    let result = handles.into_iter().nth(idx).unwrap().join();
+    (idx, result)
+}
+
+/// Waits for any channel to be ready for the specified operation
+pub fn select_channels<T>(operations: Vec<ChannelOp<T>>) -> (usize, T) / {Fiber}
+where
+    T: Send,
+{
+    let selectables: Vec<_> = operations.iter()
+        .map(|op| match op {
+            ChannelOp::Recv(id) => Selectable::ChannelRecv(*id),
+            ChannelOp::Send(id, _) => Selectable::ChannelSend(*id),
+        })
+        .collect();
+
+    let result = __builtin_select(selectables, None, false);
+
+    match result {
+        __SelectResult::Ready(idx) => {
+            let value = match &operations[idx] {
+                ChannelOp::Recv(id) => __builtin_channel_recv(*id),
+                ChannelOp::Send(id, v) => {
+                    __builtin_channel_send(*id, v.take().unwrap());
+                    // Return unit for send (caller knows it's a send)
+                    unsafe { std::mem::zeroed() }
+                }
+            };
+            (idx, value)
+        }
+        _ => unreachable!("select_channels without timeout/default should always return Ready"),
+    }
+}
+
+/// Channel operation for select
+pub enum ChannelOp<T> {
+    /// Receive operation
+    Recv(ChannelId),
+    /// Send operation with value
+    Send(ChannelId, Option<T>),
+}
+
+/// Unique identifier for a channel
+pub struct ChannelId {
+    value: u64,
+}
+
+impl ChannelId {
+    /// Creates a new ChannelId
+    pub const fn new(value: u64) -> Self {
+        ChannelId { value }
+    }
+
+    /// Returns the raw value
+    pub const fn as_u64(self: &Self) -> u64 {
+        self.value
+    }
+}
+
+impl Eq for ChannelId {
+    fn eq(self: &Self, other: &Self) -> bool {
+        self.value == other.value
+    }
+}
+
+impl Hash for ChannelId {
+    fn hash<H: Hasher>(self: &Self, state: &mut H) {
+        self.value.hash(state);
+    }
+}
+
+impl Copy for ChannelId {}
+impl Clone for ChannelId {
+    fn clone(self: &Self) -> Self {
+        *self
+    }
+}
+
+/// Select with timeout, returning None if timeout elapsed
+pub fn select_timeout<T, F>(duration: Duration, f: F) -> Option<T> / {Fiber}
+where
+    F: FnOnce() -> T / {Fiber},
+{
+    let handle = perform spawn(f);
+    let result = __builtin_select_with_timeout(handle.id, duration);
+
+    match result {
+        Some(_) => Some(handle.join()),
+        None => {
+            handle.cancel();
+            None
+        }
+    }
+}
+
+/// Runs an operation with a deadline, cancelling if deadline passes
+pub fn with_deadline<T, F>(deadline: Instant, f: F) -> Result<T, TimeoutError> / {Fiber}
+where
+    F: FnOnce() -> T / {Fiber},
+{
+    let now = __builtin_instant_now();
+    if now >= deadline {
+        return Err(TimeoutError::new("deadline already passed"));
+    }
+
+    let duration = deadline - now;
+    match select_timeout(duration, f) {
+        Some(value) => Ok(value),
+        None => Err(TimeoutError::new("deadline exceeded")),
+    }
+}
+
+/// Error returned when a timeout or deadline is exceeded
+pub struct TimeoutError {
+    message: String,
+}
+
+impl TimeoutError {
+    /// Creates a new TimeoutError with the given message
+    pub fn new(message: &str) -> Self {
+        TimeoutError {
+            message: String::from(message),
+        }
+    }
+
+    /// Returns the error message
+    pub fn message(self: &Self) -> &str {
+        &self.message
+    }
+}
+
+impl Display for TimeoutError {
+    fn fmt(self: &Self, f: &mut Formatter) -> FmtResult {
+        write!(f, "TimeoutError: {}", self.message)
+    }
+}
+
+impl Debug for TimeoutError {
+    fn fmt(self: &Self, f: &mut Formatter) -> FmtResult {
+        write!(f, "TimeoutError {{ message: {:?} }}", self.message)
+    }
+}
+
+impl Error for TimeoutError {}
+
+/// Instant in time for deadlines
+pub struct Instant {
+    nanos: u64,
+}
+
+impl Instant {
+    /// Returns the current instant
+    pub fn now() -> Self / pure {
+        __builtin_instant_now()
+    }
+
+    /// Returns an instant in the future
+    pub fn after(duration: Duration) -> Self / pure {
+        let now = __builtin_instant_now();
+        Instant { nanos: now.nanos + duration.as_nanos() as u64 }
+    }
+
+    /// Returns the duration since another instant
+    pub fn duration_since(self: &Self, earlier: &Instant) -> Duration {
+        if self.nanos >= earlier.nanos {
+            Duration::from_nanos((self.nanos - earlier.nanos) as u64)
+        } else {
+            Duration::from_nanos(0)
+        }
+    }
+
+    /// Returns the elapsed time since this instant
+    pub fn elapsed(self: &Self) -> Duration / pure {
+        let now = __builtin_instant_now();
+        now.duration_since(self)
+    }
+}
+
+impl Eq for Instant {
+    fn eq(self: &Self, other: &Self) -> bool {
+        self.nanos == other.nanos
+    }
+}
+
+impl Ord for Instant {
+    fn cmp(self: &Self, other: &Self) -> Ordering {
+        self.nanos.cmp(&other.nanos)
+    }
+}
+
+impl PartialOrd for Instant {
+    fn partial_cmp(self: &Self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for Instant {
+    fn eq(self: &Self, other: &Self) -> bool {
+        self.nanos == other.nanos
+    }
+}
+
+impl Sub for Instant {
+    type Output = Duration;
+
+    fn sub(self: Self, other: Self) -> Duration {
+        self.duration_since(&other)
+    }
+}

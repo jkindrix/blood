@@ -1,0 +1,52 @@
+// Test: generic enum (Option-like pattern)
+// EXPECT: 42
+// EXPECT: -1
+// EXPECT: 10
+enum Maybe<T> {
+    Some(T),
+    None,
+}
+
+fn unwrap_or<T>(m: Maybe<T>, fallback: T) -> T {
+    match m {
+        Maybe::Some(v) => v,
+        Maybe::None => fallback,
+    }
+}
+
+fn map_maybe(m: Maybe<i32>, f: fn(i32) -> i32) -> Maybe<i32> {
+    match m {
+        Maybe::Some(v) => Maybe::Some(f(v)),
+        Maybe::None => Maybe::None,
+    }
+}
+
+fn double(x: i32) -> i32 { x * 2 }
+
+fn main() -> i32 {
+    let a: Maybe<i32> = Maybe::Some(42);
+    let b: Maybe<i32> = Maybe::None;
+
+    let va: i32 = unwrap_or(a, 0);
+    println_int(va); // 42
+
+    let vb: i32 = unwrap_or(b, -1);
+    println_int(vb); // -1
+
+    // Map over Some
+    let c: Maybe<i32> = Maybe::Some(5);
+    let d: Maybe<i32> = map_maybe(c, double);
+    let vd: i32 = unwrap_or(d, 0);
+    println_int(vd); // 10
+
+    // Map over None
+    let e: Maybe<i32> = Maybe::None;
+    let f: Maybe<i32> = map_maybe(e, double);
+    let vf: i32 = unwrap_or(f, -1);
+    if vf != -1 { return 1; }
+
+    if va != 42 { return 2; }
+    if vb != -1 { return 3; }
+    if vd != 10 { return 4; }
+    0
+}

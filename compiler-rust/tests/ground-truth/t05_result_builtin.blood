@@ -1,0 +1,32 @@
+// Test: Result<T, E> builtin type (Ok/Err)
+// EXPECT: 42
+// EXPECT: -1
+fn safe_divide(a: i32, b: i32) -> Result<i32, i32> {
+    if b == 0 {
+        Err(-1)
+    } else {
+        Ok(a / b)
+    }
+}
+
+fn main() -> i32 {
+    // Ok case
+    let r1: Result<i32, i32> = safe_divide(84, 2);
+    let val: i32 = match r1 {
+        Ok(v) => v,
+        Err(e) => e,
+    };
+    println_int(val); // 42
+    if val != 42 { return 1; }
+
+    // Err case
+    let r2: Result<i32, i32> = safe_divide(10, 0);
+    let err_val: i32 = match r2 {
+        Ok(v) => v,
+        Err(e) => e,
+    };
+    println_int(err_val); // -1
+    if err_val != -1 { return 2; }
+
+    0
+}

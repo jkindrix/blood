@@ -1,0 +1,733 @@
+// Blood Standard Library - Networking Module
+//
+// Provides TCP and UDP networking primitives with effect-based I/O.
+//
+// All networking operations require the {IO} effect, making side effects explicit.
+
+use std::core::Option::{Some, None};
+use std::core::Result::{Ok, Err};
+use std::io::{Read, Write, IoError};
+
+// =============================================================================
+// Socket Addresses
+// =============================================================================
+
+/// IPv4 address (4 bytes)
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct Ipv4Addr {
+    octets: [u8; 4],
+}
+
+impl Ipv4Addr {
+    /// Create an IPv4 address from octets
+    fn new(a: u8, b: u8, c: u8, d: u8) -> Ipv4Addr / pure {
+        Ipv4Addr { octets: [a, b, c, d] }
+    }
+
+    /// Parse an IPv4 address from string (e.g., "192.168.1.1")
+    fn parse(s: &str) -> Option<Ipv4Addr> / pure {
+        let parts: Vec<&str> = s.split('.').collect();
+        if parts.len() != 4 {
+            return None;
+        }
+
+        let mut octets = [0u8; 4];
+        for i in 0..4 {
+            match parts[i].parse::<u8>() {
+                Some(n) => octets[i] = n,
+                None => return None,
+            }
+        }
+        Some(Ipv4Addr { octets })
+    }
+
+    /// Localhost (127.0.0.1)
+    fn localhost() -> Ipv4Addr / pure {
+        Ipv4Addr::new(127, 0, 0, 1)
+    }
+
+    /// Unspecified address (0.0.0.0)
+    fn unspecified() -> Ipv4Addr / pure {
+        Ipv4Addr::new(0, 0, 0, 0)
+    }
+
+    /// Broadcast address (255.255.255.255)
+    fn broadcast() -> Ipv4Addr / pure {
+        Ipv4Addr::new(255, 255, 255, 255)
+    }
+
+    /// Check if address is loopback
+    fn is_loopback(&self) -> bool / pure {
+        self.octets[0] == 127
+    }
+
+    /// Check if address is private (10.x.x.x, 172.16-31.x.x, 192.168.x.x)
+    fn is_private(&self) -> bool / pure {
+        match self.octets[0] {
+            10 => true,
+            172 => self.octets[1] >= 16 && self.octets[1] <= 31,
+            192 => self.octets[1] == 168,
+            _ => false,
+        }
+    }
+
+    /// Check if address is unspecified (0.0.0.0)
+    fn is_unspecified(&self) -> bool / pure {
+        self.octets == [0, 0, 0, 0]
+    }
+
+    /// Get the octets
+    fn octets(&self) -> [u8; 4] / pure {
+        self.octets
+    }
+
+    /// Convert to string representation
+    fn to_string(&self) -> String / pure {
+        format!("{}.{}.{}.{}",
+            self.octets[0], self.octets[1],
+            self.octets[2], self.octets[3])
+    }
+}
+
+/// IPv6 address (16 bytes)
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct Ipv6Addr {
+    segments: [u16; 8],
+}
+
+impl Ipv6Addr {
+    /// Create an IPv6 address from segments
+    fn new(a: u16, b: u16, c: u16, d: u16, e: u16, f: u16, g: u16, h: u16) -> Ipv6Addr / pure {
+        Ipv6Addr { segments: [a, b, c, d, e, f, g, h] }
+    }
+
+    /// Localhost (::1)
+    fn localhost() -> Ipv6Addr / pure {
+        Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)
+    }
+
+    /// Unspecified address (::)
+    fn unspecified() -> Ipv6Addr / pure {
+        Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0)
+    }
+
+    /// Check if address is loopback (::1)
+    fn is_loopback(&self) -> bool / pure {
+        self.segments == [0, 0, 0, 0, 0, 0, 0, 1]
+    }
+
+    /// Check if address is unspecified (::)
+    fn is_unspecified(&self) -> bool / pure {
+        self.segments == [0, 0, 0, 0, 0, 0, 0, 0]
+    }
+
+    /// Get the segments
+    fn segments(&self) -> [u16; 8] / pure {
+        self.segments
+    }
+}
+
+/// Generic IP address (either v4 or v6)
+enum IpAddr {
+    V4(Ipv4Addr),
+    V6(Ipv6Addr),
+}
+
+impl IpAddr {
+    /// Check if address is loopback
+    fn is_loopback(&self) -> bool / pure {
+        match self {
+            IpAddr::V4(v4) => v4.is_loopback(),
+            IpAddr::V6(v6) => v6.is_loopback(),
+        }
+    }
+
+    /// Check if address is unspecified
+    fn is_unspecified(&self) -> bool / pure {
+        match self {
+            IpAddr::V4(v4) => v4.is_unspecified(),
+            IpAddr::V6(v6) => v6.is_unspecified(),
+        }
+    }
+}
+
+/// Socket address (IP address + port)
+struct SocketAddr {
+    ip: IpAddr,
+    port: u16,
+}
+
+impl SocketAddr {
+    /// Create a new socket address
+    fn new(ip: IpAddr, port: u16) -> SocketAddr / pure {
+        SocketAddr { ip, port }
+    }
+
+    /// Create a new IPv4 socket address
+    fn v4(a: u8, b: u8, c: u8, d: u8, port: u16) -> SocketAddr / pure {
+        SocketAddr {
+            ip: IpAddr::V4(Ipv4Addr::new(a, b, c, d)),
+            port,
+        }
+    }
+
+    /// Create a new IPv6 socket address
+    fn v6(a: u16, b: u16, c: u16, d: u16, e: u16, f: u16, g: u16, h: u16, port: u16) -> SocketAddr / pure {
+        SocketAddr {
+            ip: IpAddr::V6(Ipv6Addr::new(a, b, c, d, e, f, g, h)),
+            port,
+        }
+    }
+
+    /// Get the IP address
+    fn ip(&self) -> &IpAddr / pure {
+        &self.ip
+    }
+
+    /// Get the port
+    fn port(&self) -> u16 / pure {
+        self.port
+    }
+
+    /// Set the port
+    fn set_port(&mut self, port: u16) / pure {
+        self.port = port;
+    }
+
+    /// Parse from string (e.g., "192.168.1.1:8080")
+    fn parse(s: &str) -> Option<SocketAddr> / pure {
+        // Find the last colon (to handle IPv6)
+        let colon_idx = s.rfind(':')?;
+        let addr_str = &s[..colon_idx];
+        let port_str = &s[colon_idx + 1..];
+
+        let port: u16 = port_str.parse().ok()?;
+
+        // Try IPv4 first
+        if let Some(v4) = Ipv4Addr::parse(addr_str) {
+            return Some(SocketAddr::new(IpAddr::V4(v4), port));
+        }
+
+        // TODO: Parse IPv6 addresses
+        None
+    }
+}
+
+impl Clone for SocketAddr {
+    fn clone(&self) -> SocketAddr / pure {
+        SocketAddr {
+            ip: self.ip.clone(),
+            port: self.port,
+        }
+    }
+}
+
+// =============================================================================
+// Network Effects
+// =============================================================================
+
+/// Network effect for socket operations
+effect Net {
+    /// Create a TCP socket
+    fn tcp_socket() -> RawSocket;
+
+    /// Create a UDP socket
+    fn udp_socket() -> RawSocket;
+
+    /// Bind socket to address
+    fn bind(socket: RawSocket, addr: &SocketAddr) -> Result<(), IoError>;
+
+    /// Listen for connections (TCP only)
+    fn listen(socket: RawSocket, backlog: i32) -> Result<(), IoError>;
+
+    /// Accept a connection (TCP only)
+    fn accept(socket: RawSocket) -> Result<(RawSocket, SocketAddr), IoError>;
+
+    /// Connect to remote address
+    fn connect(socket: RawSocket, addr: &SocketAddr) -> Result<(), IoError>;
+
+    /// Send data on connected socket
+    fn send(socket: RawSocket, data: &[u8]) -> Result<usize, IoError>;
+
+    /// Receive data on connected socket
+    fn recv(socket: RawSocket, buf: &mut [u8]) -> Result<usize, IoError>;
+
+    /// Send data to specific address (UDP)
+    fn sendto(socket: RawSocket, data: &[u8], addr: &SocketAddr) -> Result<usize, IoError>;
+
+    /// Receive data with source address (UDP)
+    fn recvfrom(socket: RawSocket, buf: &mut [u8]) -> Result<(usize, SocketAddr), IoError>;
+
+    /// Close socket
+    fn close(socket: RawSocket);
+
+    /// Set socket option
+    fn set_option(socket: RawSocket, option: SocketOption) -> Result<(), IoError>;
+
+    /// Get socket option
+    fn get_option(socket: RawSocket, option: SocketOptionKind) -> Result<SocketOption, IoError>;
+}
+
+/// Raw socket handle (platform-specific)
+struct RawSocket {
+    fd: i64,  // File descriptor (Unix) or SOCKET handle (Windows)
+}
+
+impl RawSocket {
+    /// Check if socket is valid
+    fn is_valid(&self) -> bool / pure {
+        self.fd >= 0
+    }
+
+    /// Get raw file descriptor
+    fn as_raw_fd(&self) -> i64 / pure {
+        self.fd
+    }
+}
+
+/// Socket options
+enum SocketOption {
+    /// Enable/disable SO_REUSEADDR
+    ReuseAddr(bool),
+    /// Enable/disable SO_REUSEPORT
+    ReusePort(bool),
+    /// Enable/disable TCP_NODELAY (disable Nagle's algorithm)
+    NoDelay(bool),
+    /// Set SO_RCVBUF (receive buffer size)
+    RecvBufSize(usize),
+    /// Set SO_SNDBUF (send buffer size)
+    SendBufSize(usize),
+    /// Set SO_RCVTIMEO (receive timeout in milliseconds)
+    RecvTimeout(u64),
+    /// Set SO_SNDTIMEO (send timeout in milliseconds)
+    SendTimeout(u64),
+    /// Enable/disable SO_KEEPALIVE
+    KeepAlive(bool),
+    /// Enable/disable SO_BROADCAST (UDP only)
+    Broadcast(bool),
+    /// Set IP_TTL (time to live)
+    Ttl(u32),
+}
+
+/// Socket option kinds for querying
+enum SocketOptionKind {
+    ReuseAddr,
+    ReusePort,
+    NoDelay,
+    RecvBufSize,
+    SendBufSize,
+    RecvTimeout,
+    SendTimeout,
+    KeepAlive,
+    Broadcast,
+    Ttl,
+}
+
+// =============================================================================
+// TCP Types
+// =============================================================================
+
+/// TCP listener for accepting connections
+struct TcpListener {
+    socket: RawSocket,
+    local_addr: SocketAddr,
+}
+
+impl TcpListener {
+    /// Bind to an address and start listening
+    fn bind(addr: &SocketAddr) -> Result<TcpListener, IoError> / {Net} {
+        let socket = perform Net.tcp_socket();
+
+        // Set SO_REUSEADDR
+        perform Net.set_option(socket, SocketOption::ReuseAddr(true))?;
+
+        // Bind to address
+        perform Net.bind(socket, addr)?;
+
+        // Start listening
+        perform Net.listen(socket, 128)?;
+
+        Ok(TcpListener {
+            socket,
+            local_addr: addr.clone(),
+        })
+    }
+
+    /// Accept a new connection
+    fn accept(&self) -> Result<(TcpStream, SocketAddr), IoError> / {Net} {
+        let (client_socket, client_addr) = perform Net.accept(self.socket)?;
+
+        Ok((TcpStream {
+            socket: client_socket,
+            peer_addr: client_addr.clone(),
+        }, client_addr))
+    }
+
+    /// Get the local address this listener is bound to
+    fn local_addr(&self) -> &SocketAddr / pure {
+        &self.local_addr
+    }
+
+    /// Set TCP_NODELAY option
+    fn set_nodelay(&self, nodelay: bool) -> Result<(), IoError> / {Net} {
+        perform Net.set_option(self.socket, SocketOption::NoDelay(nodelay))
+    }
+
+    /// Returns an iterator over incoming connections
+    fn incoming(&self) -> Incoming / pure {
+        Incoming { listener: self }
+    }
+}
+
+impl Drop for TcpListener {
+    fn drop(&mut self) / {Net} {
+        perform Net.close(self.socket);
+    }
+}
+
+/// Iterator over incoming TCP connections
+struct Incoming<'a> {
+    listener: &'a TcpListener,
+}
+
+impl<'a> Iterator for Incoming<'a> {
+    type Item = Result<TcpStream, IoError>;
+
+    fn next(&mut self) -> Option<Self::Item> / {Net} {
+        Some(self.listener.accept().map(|(stream, _)| stream))
+    }
+}
+
+/// TCP stream for bidirectional communication
+struct TcpStream {
+    socket: RawSocket,
+    peer_addr: SocketAddr,
+}
+
+impl TcpStream {
+    /// Connect to a remote address
+    fn connect(addr: &SocketAddr) -> Result<TcpStream, IoError> / {Net} {
+        let socket = perform Net.tcp_socket();
+
+        perform Net.connect(socket, addr)?;
+
+        Ok(TcpStream {
+            socket,
+            peer_addr: addr.clone(),
+        })
+    }
+
+    /// Get the remote address this stream is connected to
+    fn peer_addr(&self) -> &SocketAddr / pure {
+        &self.peer_addr
+    }
+
+    /// Set TCP_NODELAY option (disable Nagle's algorithm)
+    fn set_nodelay(&self, nodelay: bool) -> Result<(), IoError> / {Net} {
+        perform Net.set_option(self.socket, SocketOption::NoDelay(nodelay))
+    }
+
+    /// Set read timeout
+    fn set_read_timeout(&self, timeout_ms: Option<u64>) -> Result<(), IoError> / {Net} {
+        let ms = timeout_ms.unwrap_or(0);
+        perform Net.set_option(self.socket, SocketOption::RecvTimeout(ms))
+    }
+
+    /// Set write timeout
+    fn set_write_timeout(&self, timeout_ms: Option<u64>) -> Result<(), IoError> / {Net} {
+        let ms = timeout_ms.unwrap_or(0);
+        perform Net.set_option(self.socket, SocketOption::SendTimeout(ms))
+    }
+
+    /// Shutdown the stream (read, write, or both)
+    fn shutdown(&self, how: Shutdown) -> Result<(), IoError> / {Net} {
+        // Platform-specific shutdown
+        // TODO: Add shutdown effect operation
+        Ok(())
+    }
+
+    /// Clone the TcpStream (creates a new reference to the same socket)
+    fn try_clone(&self) -> Result<TcpStream, IoError> / pure {
+        // Note: In a real implementation, this would dup() the file descriptor
+        Ok(TcpStream {
+            socket: RawSocket { fd: self.socket.fd },
+            peer_addr: self.peer_addr.clone(),
+        })
+    }
+}
+
+impl Read for TcpStream {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, IoError> / {Net} {
+        perform Net.recv(self.socket, buf)
+    }
+}
+
+impl Write for TcpStream {
+    fn write(&mut self, buf: &[u8]) -> Result<usize, IoError> / {Net} {
+        perform Net.send(self.socket, buf)
+    }
+
+    fn flush(&mut self) -> Result<(), IoError> / {Net} {
+        // TCP is unbuffered at this level
+        Ok(())
+    }
+}
+
+impl Drop for TcpStream {
+    fn drop(&mut self) / {Net} {
+        perform Net.close(self.socket);
+    }
+}
+
+/// Shutdown type for TcpStream
+enum Shutdown {
+    /// Shutdown read side
+    Read,
+    /// Shutdown write side
+    Write,
+    /// Shutdown both sides
+    Both,
+}
+
+// =============================================================================
+// UDP Types
+// =============================================================================
+
+/// UDP socket for connectionless communication
+struct UdpSocket {
+    socket: RawSocket,
+    local_addr: Option<SocketAddr>,
+}
+
+impl UdpSocket {
+    /// Bind to an address
+    fn bind(addr: &SocketAddr) -> Result<UdpSocket, IoError> / {Net} {
+        let socket = perform Net.udp_socket();
+
+        perform Net.bind(socket, addr)?;
+
+        Ok(UdpSocket {
+            socket,
+            local_addr: Some(addr.clone()),
+        })
+    }
+
+    /// Create an unbound UDP socket
+    fn unbound() -> Result<UdpSocket, IoError> / {Net} {
+        let socket = perform Net.udp_socket();
+
+        Ok(UdpSocket {
+            socket,
+            local_addr: None,
+        })
+    }
+
+    /// Get the local address this socket is bound to
+    fn local_addr(&self) -> Option<&SocketAddr> / pure {
+        self.local_addr.as_ref()
+    }
+
+    /// Send data to a specific address
+    fn send_to(&self, buf: &[u8], addr: &SocketAddr) -> Result<usize, IoError> / {Net} {
+        perform Net.sendto(self.socket, buf, addr)
+    }
+
+    /// Receive data and the source address
+    fn recv_from(&self, buf: &mut [u8]) -> Result<(usize, SocketAddr), IoError> / {Net} {
+        perform Net.recvfrom(self.socket, buf)
+    }
+
+    /// Connect to a remote address (filter incoming packets)
+    fn connect(&self, addr: &SocketAddr) -> Result<(), IoError> / {Net} {
+        perform Net.connect(self.socket, addr)
+    }
+
+    /// Send data on a connected UDP socket
+    fn send(&self, buf: &[u8]) -> Result<usize, IoError> / {Net} {
+        perform Net.send(self.socket, buf)
+    }
+
+    /// Receive data on a connected UDP socket
+    fn recv(&self, buf: &mut [u8]) -> Result<usize, IoError> / {Net} {
+        perform Net.recv(self.socket, buf)
+    }
+
+    /// Enable/disable broadcast
+    fn set_broadcast(&self, broadcast: bool) -> Result<(), IoError> / {Net} {
+        perform Net.set_option(self.socket, SocketOption::Broadcast(broadcast))
+    }
+
+    /// Set TTL (time to live)
+    fn set_ttl(&self, ttl: u32) -> Result<(), IoError> / {Net} {
+        perform Net.set_option(self.socket, SocketOption::Ttl(ttl))
+    }
+
+    /// Set read timeout
+    fn set_read_timeout(&self, timeout_ms: Option<u64>) -> Result<(), IoError> / {Net} {
+        let ms = timeout_ms.unwrap_or(0);
+        perform Net.set_option(self.socket, SocketOption::RecvTimeout(ms))
+    }
+
+    /// Set write timeout
+    fn set_write_timeout(&self, timeout_ms: Option<u64>) -> Result<(), IoError> / {Net} {
+        let ms = timeout_ms.unwrap_or(0);
+        perform Net.set_option(self.socket, SocketOption::SendTimeout(ms))
+    }
+}
+
+impl Drop for UdpSocket {
+    fn drop(&mut self) / {Net} {
+        perform Net.close(self.socket);
+    }
+}
+
+// =============================================================================
+// DNS Resolution
+// =============================================================================
+
+/// DNS resolution result
+struct DnsResult {
+    /// Resolved addresses
+    addrs: Vec<IpAddr>,
+}
+
+impl DnsResult {
+    /// Get the first resolved address
+    fn first(&self) -> Option<&IpAddr> / pure {
+        self.addrs.first()
+    }
+
+    /// Get all resolved addresses
+    fn iter(&self) -> impl Iterator<Item = &IpAddr> / pure {
+        self.addrs.iter()
+    }
+
+    /// Check if resolution found any addresses
+    fn is_empty(&self) -> bool / pure {
+        self.addrs.is_empty()
+    }
+}
+
+/// DNS resolution effect
+effect Dns {
+    /// Resolve hostname to IP addresses
+    fn resolve(hostname: &str) -> Result<DnsResult, IoError>;
+
+    /// Resolve hostname to socket addresses (with port)
+    fn resolve_socket(hostname: &str, port: u16) -> Result<Vec<SocketAddr>, IoError>;
+
+    /// Reverse lookup: IP to hostname
+    fn reverse_lookup(addr: &IpAddr) -> Result<String, IoError>;
+}
+
+/// Resolve a hostname to IP addresses
+fn lookup_host(hostname: &str) -> Result<DnsResult, IoError> / {Dns} {
+    perform Dns.resolve(hostname)
+}
+
+/// Resolve a hostname to socket addresses
+fn lookup_socket(hostname: &str, port: u16) -> Result<Vec<SocketAddr>, IoError> / {Dns} {
+    perform Dns.resolve_socket(hostname, port)
+}
+
+// =============================================================================
+// Convenience Functions
+// =============================================================================
+
+/// Connect to a host:port string
+fn connect_tcp(host: &str, port: u16) -> Result<TcpStream, IoError> / {Net, Dns} {
+    let addrs = perform Dns.resolve_socket(host, port)?;
+
+    if addrs.is_empty() {
+        return Err(IoError::new(IoErrorKind::NotFound, "DNS resolution failed"));
+    }
+
+    // Try each address until one works
+    let mut last_err = None;
+    for addr in addrs {
+        match TcpStream::connect(&addr) {
+            Ok(stream) => return Ok(stream),
+            Err(e) => last_err = Some(e),
+        }
+    }
+
+    Err(last_err.unwrap_or(IoError::new(IoErrorKind::Other, "Connection failed")))
+}
+
+// =============================================================================
+// Error Types
+// =============================================================================
+
+/// Network-specific error kinds
+enum NetErrorKind {
+    /// Connection refused
+    ConnectionRefused,
+    /// Connection reset
+    ConnectionReset,
+    /// Connection aborted
+    ConnectionAborted,
+    /// Not connected
+    NotConnected,
+    /// Address already in use
+    AddrInUse,
+    /// Address not available
+    AddrNotAvailable,
+    /// Network unreachable
+    NetworkUnreachable,
+    /// Host unreachable
+    HostUnreachable,
+    /// Operation timed out
+    TimedOut,
+    /// Operation would block (non-blocking socket)
+    WouldBlock,
+    /// Permission denied
+    PermissionDenied,
+    /// Other error
+    Other,
+}
+
+impl From<NetErrorKind> for IoErrorKind {
+    fn from(kind: NetErrorKind) -> IoErrorKind / pure {
+        match kind {
+            NetErrorKind::ConnectionRefused => IoErrorKind::ConnectionRefused,
+            NetErrorKind::ConnectionReset => IoErrorKind::ConnectionReset,
+            NetErrorKind::ConnectionAborted => IoErrorKind::ConnectionAborted,
+            NetErrorKind::NotConnected => IoErrorKind::NotConnected,
+            NetErrorKind::AddrInUse => IoErrorKind::AddrInUse,
+            NetErrorKind::AddrNotAvailable => IoErrorKind::AddrNotAvailable,
+            NetErrorKind::NetworkUnreachable => IoErrorKind::NetworkUnreachable,
+            NetErrorKind::TimedOut => IoErrorKind::TimedOut,
+            NetErrorKind::WouldBlock => IoErrorKind::WouldBlock,
+            NetErrorKind::PermissionDenied => IoErrorKind::PermissionDenied,
+            NetErrorKind::HostUnreachable => IoErrorKind::Other,
+            NetErrorKind::Other => IoErrorKind::Other,
+        }
+    }
+}
+
+// =============================================================================
+// Module Exports
+// =============================================================================
+
+pub use Ipv4Addr;
+pub use Ipv6Addr;
+pub use IpAddr;
+pub use SocketAddr;
+pub use TcpListener;
+pub use TcpStream;
+pub use UdpSocket;
+pub use Shutdown;
+pub use RawSocket;
+pub use SocketOption;
+pub use SocketOptionKind;
+pub use NetErrorKind;
+pub use DnsResult;
+
+// Effects
+pub use Net;
+pub use Dns;
+
+// Convenience functions
+pub use lookup_host;
+pub use lookup_socket;
+pub use connect_tcp;

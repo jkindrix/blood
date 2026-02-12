@@ -1,0 +1,30 @@
+// Child module with forward references
+// This tests that forward refs work in imported modules too
+
+pub struct Node {
+    pub data: i32,
+    pub child: Option<NodeRef>,  // References NodeRef defined below
+}
+
+pub struct NodeRef {
+    pub id: i32,
+}
+
+pub struct Tree {
+    pub root: Node,
+    pub metadata: TreeMeta,  // References TreeMeta defined below
+}
+
+pub struct TreeMeta {
+    pub size: i32,
+}
+
+pub fn create_node(data: i32) -> Node {
+    Node { data, child: Option::None }
+}
+
+pub fn create_tree(data: i32) -> Tree {
+    let root = create_node(data);
+    let metadata = TreeMeta { size: 1 };
+    Tree { root, metadata }
+}

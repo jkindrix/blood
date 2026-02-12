@@ -1,0 +1,338 @@
+// Blood Standard Library - I/O Operations
+//
+// Input/output traits and implementations.
+
+pub mod read;
+pub mod write;
+pub mod buf;
+pub mod cursor;
+pub mod error;
+
+pub use read::{Read, BufRead};
+pub use write::Write;
+pub use buf::{BufReader, BufWriter};
+pub use cursor::Cursor;
+pub use error::{Error, ErrorKind, Result};
+
+/// Standard input stream
+pub fn stdin() -> Stdin / {IO} {
+    Stdin { _private: () }
+}
+
+/// Standard output stream
+pub fn stdout() -> Stdout / {IO} {
+    Stdout { _private: () }
+}
+
+/// Standard error stream
+pub fn stderr() -> Stderr / {IO} {
+    Stderr { _private: () }
+}
+
+/// Standard input handle
+pub struct Stdin {
+    _private: (),
+}
+
+impl Stdin {
+    /// Locks the stdin for exclusive access
+    pub fn lock(self: &Self) -> StdinLock<'_> / {IO} {
+        StdinLock { stdin: self }
+    }
+
+    /// Reads a line from stdin
+    pub fn read_line(self: &Self, buf: &mut String) -> Result<usize> / {IO} {
+        self.lock().read_line(buf)
+    }
+
+    /// Returns an iterator over lines
+    pub fn lines(self: Self) -> Lines<StdinLock<'static>> / {IO} {
+        Lines { reader: self.lock() }
+    }
+}
+
+impl Read for Stdin {
+    fn read(self: &mut Self, buf: &mut [u8]) -> Result<usize> / {IO} {
+        __builtin_stdin_read(buf)
+    }
+}
+
+/// Locked stdin handle
+pub struct StdinLock<'a> {
+    stdin: &'a Stdin,
+}
+
+impl<'a> Read for StdinLock<'a> {
+    fn read(self: &mut Self, buf: &mut [u8]) -> Result<usize> / {IO} {
+        __builtin_stdin_read(buf)
+    }
+}
+
+impl<'a> BufRead for StdinLock<'a> {
+    fn fill_buf(self: &mut Self) -> Result<&[u8]> / {IO} {
+        __builtin_stdin_fill_buf()
+    }
+
+    fn consume(self: &mut Self, amt: usize) / {IO} {
+        __builtin_stdin_consume(amt)
+    }
+}
+
+/// Standard output handle
+pub struct Stdout {
+    _private: (),
+}
+
+impl Stdout {
+    /// Locks the stdout for exclusive access
+    pub fn lock(self: &Self) -> StdoutLock<'_> / {IO} {
+        StdoutLock { stdout: self }
+    }
+}
+
+impl Write for Stdout {
+    fn write(self: &mut Self, buf: &[u8]) -> Result<usize> / {IO} {
+        __builtin_stdout_write(buf)
+    }
+
+    fn flush(self: &mut Self) -> Result<()> / {IO} {
+        __builtin_stdout_flush()
+    }
+}
+
+/// Locked stdout handle
+pub struct StdoutLock<'a> {
+    stdout: &'a Stdout,
+}
+
+impl<'a> Write for StdoutLock<'a> {
+    fn write(self: &mut Self, buf: &[u8]) -> Result<usize> / {IO} {
+        __builtin_stdout_write(buf)
+    }
+
+    fn flush(self: &mut Self) -> Result<()> / {IO} {
+        __builtin_stdout_flush()
+    }
+}
+
+/// Standard error handle
+pub struct Stderr {
+    _private: (),
+}
+
+impl Stderr {
+    /// Locks the stderr for exclusive access
+    pub fn lock(self: &Self) -> StderrLock<'_> / {IO} {
+        StderrLock { stderr: self }
+    }
+}
+
+impl Write for Stderr {
+    fn write(self: &mut Self, buf: &[u8]) -> Result<usize> / {IO} {
+        __builtin_stderr_write(buf)
+    }
+
+    fn flush(self: &mut Self) -> Result<()> / {IO} {
+        __builtin_stderr_flush()
+    }
+}
+
+/// Locked stderr handle
+pub struct StderrLock<'a> {
+    stderr: &'a Stderr,
+}
+
+impl<'a> Write for StderrLock<'a> {
+    fn write(self: &mut Self, buf: &[u8]) -> Result<usize> / {IO} {
+        __builtin_stderr_write(buf)
+    }
+
+    fn flush(self: &mut Self) -> Result<()> / {IO} {
+        __builtin_stderr_flush()
+    }
+}
+
+/// Iterator over lines
+pub struct Lines<B> {
+    reader: B,
+}
+
+impl<B: BufRead> Iterator for Lines<B> {
+    type Item = Result<String>;
+
+    fn next(self: &mut Self) -> Option<Result<String>> / {IO} {
+        let mut line = String::new();
+        match self.reader.read_line(&mut line) {
+            Ok(0) => None,
+            Ok(_) => {
+                // Remove trailing newline
+                if line.ends_with('\n') {
+                    line.pop();
+                    if line.ends_with('\r') {
+                        line.pop();
+                    }
+                }
+                Some(Ok(line))
+            }
+            Err(e) => Some(Err(e)),
+        }
+    }
+}
+
+/// Copies bytes from reader to writer
+pub fn copy<R: Read + ?Sized, W: Write + ?Sized>(reader: &mut R, writer: &mut W) -> Result<u64> / {IO} {
+    let mut buf = [0u8; 8192];
+    let mut total = 0u64;
+
+    loop {
+        let n = match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(ref e) if e.kind() == ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        };
+
+        writer.write_all(&buf[..n])?;
+        total += n as u64;
+    }
+
+    Ok(total)
+}
+
+/// Creates a reader that reads nothing
+pub fn empty() -> Empty / pure {
+    Empty { _private: () }
+}
+
+/// A reader that reads nothing
+pub struct Empty {
+    _private: (),
+}
+
+impl Read for Empty {
+    fn read(self: &mut Self, _buf: &mut [u8]) -> Result<usize> / {IO} {
+        Ok(0)
+    }
+}
+
+impl BufRead for Empty {
+    fn fill_buf(self: &mut Self) -> Result<&[u8]> / {IO} {
+        Ok(&[])
+    }
+
+    fn consume(self: &mut Self, _amt: usize) / {IO} {}
+}
+
+/// Creates a reader that repeats a byte
+pub fn repeat(byte: u8) -> Repeat / pure {
+    Repeat { byte }
+}
+
+/// A reader that repeats a byte indefinitely
+pub struct Repeat {
+    byte: u8,
+}
+
+impl Read for Repeat {
+    fn read(self: &mut Self, buf: &mut [u8]) -> Result<usize> / {IO} {
+        for b in buf.iter_mut() {
+            *b = self.byte;
+        }
+        Ok(buf.len())
+    }
+}
+
+/// Creates a writer that discards all data
+pub fn sink() -> Sink / pure {
+    Sink { _private: () }
+}
+
+/// A writer that discards all data
+pub struct Sink {
+    _private: (),
+}
+
+impl Write for Sink {
+    fn write(self: &mut Self, buf: &[u8]) -> Result<usize> / {IO} {
+        Ok(buf.len())
+    }
+
+    fn flush(self: &mut Self) -> Result<()> / {IO} {
+        Ok(())
+    }
+}
+
+/// Seek positions
+pub enum SeekFrom {
+    /// Seek from the beginning
+    Start(u64),
+    /// Seek from the end
+    End(i64),
+    /// Seek from current position
+    Current(i64),
+}
+
+/// Trait for seekable streams
+pub trait Seek {
+    /// Seeks to a position
+    fn seek(self: &mut Self, pos: SeekFrom) -> Result<u64> / {IO};
+
+    /// Seeks to the beginning
+    fn rewind(self: &mut Self) -> Result<()> / {IO} {
+        self.seek(SeekFrom::Start(0))?;
+        Ok(())
+    }
+
+    /// Returns the current position
+    fn stream_position(self: &mut Self) -> Result<u64> / {IO} {
+        self.seek(SeekFrom::Current(0))
+    }
+
+    /// Returns the length of the stream
+    fn stream_len(self: &mut Self) -> Result<u64> / {IO} {
+        let old_pos = self.stream_position()?;
+        let len = self.seek(SeekFrom::End(0))?;
+        self.seek(SeekFrom::Start(old_pos))?;
+        Ok(len)
+    }
+}
+
+// Utility macros
+
+/// Prints to stdout
+#[macro]
+pub macro print {
+    ($($arg:tt)*) => {
+        use crate::io::Write;
+        let _ = write!(crate::io::stdout(), $($arg)*);
+    };
+}
+
+/// Prints to stdout with a newline
+#[macro]
+pub macro println {
+    () => { print!("\n") };
+    ($($arg:tt)*) => {
+        use crate::io::Write;
+        let _ = writeln!(crate::io::stdout(), $($arg)*);
+    };
+}
+
+/// Prints to stderr
+#[macro]
+pub macro eprint {
+    ($($arg:tt)*) => {
+        use crate::io::Write;
+        let _ = write!(crate::io::stderr(), $($arg)*);
+    };
+}
+
+/// Prints to stderr with a newline
+#[macro]
+pub macro eprintln {
+    () => { eprint!("\n") };
+    ($($arg:tt)*) => {
+        use crate::io::Write;
+        let _ = writeln!(crate::io::stderr(), $($arg)*);
+    };
+}

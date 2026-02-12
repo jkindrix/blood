@@ -1,0 +1,23 @@
+// Test that where clause bounds are enforced
+
+trait Display {
+    fn display(&self) -> String;
+}
+
+impl Display for i32 {
+    fn display(&self) -> String {
+        String::new()  // simplified
+    }
+}
+
+// Function with where clause instead of inline bound
+fn print_value<T>(val: &T) where T: Display {
+    let s = val.display();
+    println!("{}", s);
+}
+
+fn main() {
+    // This should work - i32 implements Display
+    let x: i32 = 42;
+    print_value(&x);  // OK
+}

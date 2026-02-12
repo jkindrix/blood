@@ -1,0 +1,28 @@
+// Test: basic closure expressions
+// EXPECT: 6
+// EXPECT: 10
+// EXPECT: 25
+fn apply(f: fn(i32) -> i32, x: i32) -> i32 {
+    f(x)
+}
+
+fn main() -> i32 {
+    // Simple closure: double
+    let dbl: fn(i32) -> i32 = |x| x * 2;
+    let a: i32 = dbl(3);
+    println_int(a); // 6
+    if a != 6 { return 1; }
+
+    // Closure: add five
+    let add5: fn(i32) -> i32 = |x| x + 5;
+    let b: i32 = add5(5);
+    println_int(b); // 10
+    if b != 10 { return 2; }
+
+    // Closure passed to higher-order function
+    let c: i32 = apply(|x| x * x, 5);
+    println_int(c); // 25
+    if c != 25 { return 3; }
+
+    0
+}

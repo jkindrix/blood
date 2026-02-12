@@ -1,0 +1,39 @@
+// Test: State effect used across function calls
+// EXPECT: 3
+effect State<S> {
+    op get() -> S;
+    op put(s: S) -> ();
+}
+
+deep handler LocalState<S> for State<S> {
+    let mut state: S
+
+    return(x) { x }
+
+    op get() {
+        resume(state)
+    }
+
+    op put(s) {
+        state = s;
+        resume(())
+    }
+}
+
+fn increment() -> () / {State<i32>} {
+    let current: i32 = perform State.get();
+    perform State.put(current + 1);
+}
+
+fn main() -> i32 {
+    let result: i32 = with LocalState { state: 0 } handle {
+        increment();
+        increment();
+        increment();
+        perform State.get()
+    };
+    println_int(result);
+
+    if result != 3 { return 1; }
+    0
+}

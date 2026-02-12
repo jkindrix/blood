@@ -1,0 +1,30 @@
+// Test: Effectful function types as parameters
+// This tests the parser fix for `fn() / {Effect}` syntax
+
+effect Emit<T> {
+    op emit(value: T) -> ();
+}
+
+// Source: performs Emit effects
+fn range(start: i32, end: i32) / {Emit<i32>} {
+    let mut i = start;
+    while i < end {
+        perform Emit.emit(i);
+        i = i + 1;
+    }
+}
+
+// Operator: takes an effectful computation as a parameter
+// This syntax `fn() / {Emit<T>}` should now parse correctly
+fn map_double(stream: fn() / {Emit<i32>}) / {Emit<i32>} {
+    // Note: We can't call stream() here yet because inline handlers
+    // aren't implemented. This just tests that the syntax parses.
+}
+
+// Test with explicit return type too
+fn transform(stream: fn() -> () / {Emit<i32>}, f: fn(i32) -> i32) / {Emit<i32>} {
+    // This should also parse correctly
+}
+
+fn main() {
+}

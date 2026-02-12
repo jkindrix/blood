@@ -1,0 +1,17 @@
+enum Inner { Int(i128), ZeroSized }
+struct Container { pub kind: Inner }
+enum Outer { Wrap(Container), None }
+fn main() -> i32 {
+    let inner = Inner::Int(42);
+    let c = Container { kind: inner };
+    let outer = Outer::Wrap(c);
+    match outer {
+        Outer::Wrap(container) => {
+            match container.kind {
+                Inner::Int(v) => v as i32,
+                Inner::ZeroSized => 99,
+            }
+        }
+        Outer::None => 99,
+    }
+}

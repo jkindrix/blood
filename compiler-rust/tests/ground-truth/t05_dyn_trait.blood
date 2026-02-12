@@ -1,0 +1,41 @@
+// Test: trait method dispatch (static dispatch via impl blocks)
+// EXPECT: 24
+// EXPECT: 10
+struct Square {
+    side: i32,
+}
+
+struct RectShape {
+    w: i32,
+    h: i32,
+}
+
+trait Perimeter {
+    fn perimeter(self) -> i32;
+}
+
+impl Perimeter for Square {
+    fn perimeter(self) -> i32 {
+        self.side * 4
+    }
+}
+
+impl Perimeter for RectShape {
+    fn perimeter(self) -> i32 {
+        2 * (self.w + self.h)
+    }
+}
+
+fn main() -> i32 {
+    let sq: Square = Square { side: 6 };
+    let p1: i32 = sq.perimeter();
+    println_int(p1); // 24
+    if p1 != 24 { return 1; }
+
+    let r: RectShape = RectShape { w: 2, h: 3 };
+    let p2: i32 = r.perimeter();
+    println_int(p2); // 10
+    if p2 != 10 { return 2; }
+
+    0
+}

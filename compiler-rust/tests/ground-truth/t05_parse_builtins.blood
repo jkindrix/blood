@@ -1,0 +1,25 @@
+// Test: parse_f64 and parse_i64_radix builtins
+// EXPECT: 3
+// EXPECT: 255
+fn main() -> i32 {
+    // Parse a float from string
+    let f: f64 = parse_f64("3.14");
+    let f_i: i64 = f as i64;
+    println_i64(f_i); // 3 (truncated)
+    if f_i != 3 { return 1; }
+
+    // Parse integer in base 16
+    let hex: i64 = parse_i64_radix("FF", 16);
+    println_i64(hex); // 255
+    if hex != 255 { return 2; }
+
+    // Parse integer in base 10
+    let dec: i64 = parse_i64_radix("42", 10);
+    if dec != 42 { return 3; }
+
+    // Parse integer in base 2
+    let bin: i64 = parse_i64_radix("1010", 2);
+    if bin != 10 { return 4; }
+
+    0
+}

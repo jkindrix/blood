@@ -1,0 +1,41 @@
+// Test: Module-qualified enum variant struct initialization (BUG-002 fix)
+// Tests that enum variants with struct fields can be constructed through module paths.
+
+mod enum_types;
+
+pub fn test_basic() -> enum_types::TestResult {
+    // Basic usage: module::Enum::Variant { field: value }
+    enum_types::TestResult::Success { value: 42 }
+}
+
+pub fn test_in_call() -> enum_types::Container {
+    // Struct literal inside function call arguments
+    enum_types::Container::new(enum_types::TestResult::Success { value: 100 })
+}
+
+pub fn test_nested() -> enum_types::TestResult {
+    // Nested struct literals
+    enum_types::TestResult::Error {
+        code: 404,
+        nested: enum_types::Nested { x: 1, y: 2 },
+    }
+}
+
+pub fn test_mixed() -> i32 {
+    // Mix of simple variants and struct variants
+    let r1 = enum_types::TestResult::None;
+    let r2 = enum_types::TestResult::Success { value: 10 };
+
+    match r1 {
+        enum_types::TestResult::None => 0,
+        enum_types::TestResult::Success { value } => value,
+        enum_types::TestResult::Error { code, nested: _ } => code,
+    }
+}
+
+pub fn main() {
+    let _ = test_basic();
+    let _ = test_in_call();
+    let _ = test_nested();
+    let _ = test_mixed();
+}

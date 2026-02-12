@@ -1,0 +1,20 @@
+// COMPILE_FAIL: resume type mismatch (E0303)
+// Test: resume with wrong type should fail
+effect Ask {
+    op ask() -> i32;
+}
+
+// Handler that incorrectly resumes with bool instead of i32
+deep handler BadAsk for Ask {
+    return(x) { x }
+
+    op ask() {
+        resume(true)  // ERROR: should be i32, not bool
+    }
+}
+
+fn main() -> i32 {
+    with BadAsk {} handle {
+        perform Ask.ask()
+    }
+}

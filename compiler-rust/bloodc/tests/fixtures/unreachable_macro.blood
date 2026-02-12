@@ -1,0 +1,63 @@
+// Test unreachable!, todo!, unimplemented!, and panic! macros
+// All of these should return the Never type.
+
+// unreachable! tests
+fn never_returns() -> i32 {
+    unreachable!()
+}
+
+fn never_returns_with_message() -> i32 {
+    unreachable!("this code should never be reached")
+}
+
+// Test that unreachable! works in match arms
+fn test_match_unreachable(x: i32) -> i32 {
+    match x {
+        0 => 0,
+        1 => 1,
+        _ => unreachable!(),
+    }
+}
+
+// todo! tests
+fn todo_impl() -> i32 {
+    todo!()
+}
+
+fn todo_with_message() -> i32 {
+    todo!("implement this later")
+}
+
+// unimplemented! tests
+fn unimplemented_fn() -> i32 {
+    unimplemented!()
+}
+
+fn unimplemented_with_message() -> i32 {
+    unimplemented!("this feature is not implemented yet")
+}
+
+// panic! tests
+fn panic_fn() -> i32 {
+    panic!()
+}
+
+fn panic_with_message() -> i32 {
+    panic!("something went wrong")
+}
+
+// Test that these can be used as the last expression in a branch
+fn test_match_all_macros(x: i32) -> i32 {
+    match x {
+        0 => 0,
+        1 => unreachable!(),
+        2 => todo!(),
+        3 => unimplemented!(),
+        _ => panic!("unexpected value"),
+    }
+}
+
+pub fn main() -> i32 {
+    // Don't actually call the panicking functions
+    0
+}

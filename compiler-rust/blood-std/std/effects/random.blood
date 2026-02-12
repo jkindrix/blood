@@ -1,0 +1,245 @@
+// Blood Standard Library - Random Effect
+//
+// The Random effect provides random number generation through effects.
+
+/// Random effect for random number generation
+///
+/// This effect allows functions that need randomness to declare it
+/// explicitly, making them testable with deterministic handlers.
+pub effect Random {
+    /// Generates a random u64
+    op random_u64() -> u64;
+
+    /// Generates a random f64 in [0.0, 1.0)
+    op random_f64() -> f64;
+}
+
+/// Generates a random u64
+pub fn random_u64() -> u64 / {Random} {
+    perform random_u64()
+}
+
+/// Generates a random f64 in [0.0, 1.0)
+pub fn random_f64() -> f64 / {Random} {
+    perform random_f64()
+}
+
+/// Generates a random u32
+pub fn random_u32() -> u32 / {Random} {
+    (perform random_u64()) as u32
+}
+
+/// Generates a random i32
+pub fn random_i32() -> i32 / {Random} {
+    (perform random_u64()) as i32
+}
+
+/// Generates a random i64
+pub fn random_i64() -> i64 / {Random} {
+    (perform random_u64()) as i64
+}
+
+/// Generates a random usize
+pub fn random_usize() -> usize / {Random} {
+    (perform random_u64()) as usize
+}
+
+/// Generates a random bool
+pub fn random_bool() -> bool / {Random} {
+    (perform random_u64()) & 1 == 1
+}
+
+/// Generates a random bool with given probability of true
+pub fn random_bool_weighted(probability: f64) -> bool / {Random} {
+    random_f64() < probability
+}
+
+/// Generates a random value in [0, max)
+pub fn random_range_u64(max: u64) -> u64 / {Random} {
+    // Avoid modulo bias
+    let threshold = u64::MAX - (u64::MAX % max);
+    loop {
+        let r = perform random_u64();
+        if r < threshold {
+            return r % max;
+        }
+    }
+}
+
+/// Generates a random value in [min, max)
+pub fn random_range_i32(min: i32, max: i32) -> i32 / {Random} {
+    let range = (max - min) as u64;
+    min + (random_range_u64(range) as i32)
+}
+
+/// Generates a random value in [min, max)
+pub fn random_range_f64(min: f64, max: f64) -> f64 / {Random} {
+    min + random_f64() * (max - min)
+}
+
+/// Shuffles a slice in place using Fisher-Yates algorithm
+pub fn shuffle<T>(slice: &mut [T]) / {Random} {
+    let len = slice.len();
+    for i in (1..len).rev() {
+        let j = random_range_u64((i + 1) as u64) as usize;
+        slice.swap(i, j);
+    }
+}
+
+/// Chooses a random element from a slice
+pub fn choose<T>(slice: &[T]) -> Option<&T> / {Random} {
+    if slice.is_empty() {
+        None
+    } else {
+        let idx = random_range_u64(slice.len() as u64) as usize;
+        Some(&slice[idx])
+    }
+}
+
+/// Chooses n random elements from a slice without replacement
+pub fn sample<T: Clone>(slice: &[T], n: usize) -> Vec<T> / {Random} {
+    let mut indices: Vec<usize> = (0..slice.len()).collect();
+    shuffle(&mut indices);
+    indices.truncate(n);
+    indices.iter().map(|&i| slice[i].clone()).collect()
+}
+
+/// Generates a random string of given length
+pub fn random_string(len: usize) -> String / {Random} {
+    const CHARS: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let mut s = String::with_capacity(len);
+    for _ in 0..len {
+        let idx = random_range_u64(CHARS.len() as u64) as usize;
+        s.push(CHARS[idx] as char);
+    }
+    s
+}
+
+/// Generates a random alphanumeric string
+pub fn random_alphanumeric(len: usize) -> String / {Random} {
+    random_string(len)
+}
+
+/// Standard handler using system RNG
+pub deep handler SystemRng for Random {
+    return(x) { x }
+
+    op random_u64() {
+        let value = __builtin_random_u64();
+        resume(value)
+    }
+
+    op random_f64() {
+        let value = __builtin_random_f64();
+        resume(value)
+    }
+}
+
+/// Deterministic handler for testing
+pub deep handler DeterministicRng for Random {
+    let mut state: u64;
+
+    fn new(seed: u64) -> Self {
+        DeterministicRng { state: seed }
+    }
+
+    // xorshift64 algorithm
+    fn next(self: &mut Self) -> u64 {
+        let mut x = self.state;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.state = x;
+        x
+    }
+
+    return(x) { x }
+
+    op random_u64() {
+        let value = self.next();
+        resume(value)
+    }
+
+    op random_f64() {
+        let value = (self.next() as f64) / (u64::MAX as f64);
+        resume(value)
+    }
+}
+
+/// Handler that logs all random values generated
+pub deep handler LoggingRng for Random {
+    let mut log: Vec<u64> = Vec::new();
+
+    fn get_log(self: &Self) -> &[u64] {
+        &self.log
+    }
+
+    return(x) { x }
+
+    op random_u64() {
+        let value = __builtin_random_u64();
+        self.log.push(value);
+        resume(value)
+    }
+
+    op random_f64() {
+        let value = __builtin_random_f64();
+        self.log.push(value.to_bits());
+        resume(value)
+    }
+}
+
+/// Handler that replays recorded random values
+pub deep handler ReplayRng for Random {
+    let mut values: Vec<u64>;
+    let mut index: usize;
+
+    fn new(values: Vec<u64>) -> Self {
+        ReplayRng { values, index: 0 }
+    }
+
+    return(x) { x }
+
+    op random_u64() {
+        let value = if self.index < self.values.len() {
+            let v = self.values[self.index];
+            self.index += 1;
+            v
+        } else {
+            perform panic("replay buffer exhausted")
+        };
+        resume(value)
+    }
+
+    op random_f64() {
+        let bits = if self.index < self.values.len() {
+            let v = self.values[self.index];
+            self.index += 1;
+            v
+        } else {
+            perform panic("replay buffer exhausted")
+        };
+        resume(f64::from_bits(bits))
+    }
+}
+
+/// Runs a computation with a deterministic seed
+pub fn with_seed<T, F>(seed: u64, f: F) -> T / pure
+where
+    F: FnOnce() -> T / {Random},
+{
+    let rng = DeterministicRng::new(seed);
+    handle f() with rng {
+        return(v) { v }
+    }
+}
+
+/// Runs a computation with system randomness
+pub fn with_random<T, F>(f: F) -> T / pure
+where
+    F: FnOnce() -> T / {Random},
+{
+    handle f() with SystemRng {
+        return(v) { v }
+    }
+}

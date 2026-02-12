@@ -1,0 +1,312 @@
+// N-Body Benchmark for Blood
+// ===========================
+//
+// This benchmark simulates the gravitational interactions of celestial bodies.
+// It is modeled after the Computer Language Benchmarks Game "n-body" benchmark.
+//
+// Key characteristics:
+// - Heavy floating-point arithmetic (addition, multiplication, division, sqrt)
+// - Array-based data structure (positions, velocities, masses)
+// - O(n²) pairwise interactions per timestep
+// - Demonstrates Blood's numeric and array handling
+//
+// The simulation models the outer planets of the solar system:
+// - Sun, Jupiter, Saturn, Uranus, Neptune
+
+// ===========================================================================
+// Constants
+// ===========================================================================
+
+const PI: f64 = 3.141592653589793;
+const SOLAR_MASS: f64 = 39.478417604357434;  // 4 * PI * PI
+const DAYS_PER_YEAR: f64 = 365.24;
+
+// ===========================================================================
+// Body Structure
+// ===========================================================================
+
+// A celestial body with position, velocity, and mass
+struct Body {
+    x: f64,
+    y: f64,
+    z: f64,
+    vx: f64,
+    vy: f64,
+    vz: f64,
+    mass: f64,
+}
+
+// ===========================================================================
+// Initial Conditions (Solar System)
+// ===========================================================================
+
+// Sun: at origin with zero velocity
+fn sun() -> Body {
+    Body {
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+        vx: 0.0,
+        vy: 0.0,
+        vz: 0.0,
+        mass: SOLAR_MASS,
+    }
+}
+
+// Jupiter
+fn jupiter() -> Body {
+    Body {
+        x: 4.84143144246472090,
+        y: -1.16032004402742839,
+        z: -0.103622044471123109,
+        vx: 0.00166007664274403694 * DAYS_PER_YEAR,
+        vy: 0.00769901118419740425 * DAYS_PER_YEAR,
+        vz: -0.0000690460016972063023 * DAYS_PER_YEAR,
+        mass: 0.000954791938424326609 * SOLAR_MASS,
+    }
+}
+
+// Saturn
+fn saturn() -> Body {
+    Body {
+        x: 8.34336671824457987,
+        y: 4.12479856412430479,
+        z: -0.403523417114321381,
+        vx: -0.00276742510726862411 * DAYS_PER_YEAR,
+        vy: 0.00499852801234917238 * DAYS_PER_YEAR,
+        vz: 0.0000230417297573763929 * DAYS_PER_YEAR,
+        mass: 0.000285885980666130812 * SOLAR_MASS,
+    }
+}
+
+// Uranus
+fn uranus() -> Body {
+    Body {
+        x: 12.8943695621391310,
+        y: -15.1111514016986312,
+        z: -0.223307578892655734,
+        vx: 0.00296460137564761618 * DAYS_PER_YEAR,
+        vy: 0.00237847173959480950 * DAYS_PER_YEAR,
+        vz: -0.0000296589568540237556 * DAYS_PER_YEAR,
+        mass: 0.0000436624404335156298 * SOLAR_MASS,
+    }
+}
+
+// Neptune
+fn neptune() -> Body {
+    Body {
+        x: 15.3796971148509165,
+        y: -25.9193146099879641,
+        z: 0.179258772950371181,
+        vx: 0.00268067772490389322 * DAYS_PER_YEAR,
+        vy: 0.00162824170038242295 * DAYS_PER_YEAR,
+        vz: -0.0000951592254519715870 * DAYS_PER_YEAR,
+        mass: 0.0000515138902046611451 * SOLAR_MASS,
+    }
+}
+
+// ===========================================================================
+// Physics Functions
+// ===========================================================================
+
+// Calculate the total energy of the system
+// E = sum(0.5 * m * v²) - sum(sum(G * m_i * m_j / r_ij))
+fn energy(
+    b0: &Body, b1: &Body, b2: &Body, b3: &Body, b4: &Body
+) -> f64 {
+    let mut e: f64 = 0.0;
+
+    // Kinetic energy: 0.5 * m * v²
+    e = e + 0.5 * b0.mass * (b0.vx * b0.vx + b0.vy * b0.vy + b0.vz * b0.vz);
+    e = e + 0.5 * b1.mass * (b1.vx * b1.vx + b1.vy * b1.vy + b1.vz * b1.vz);
+    e = e + 0.5 * b2.mass * (b2.vx * b2.vx + b2.vy * b2.vy + b2.vz * b2.vz);
+    e = e + 0.5 * b3.mass * (b3.vx * b3.vx + b3.vy * b3.vy + b3.vz * b3.vz);
+    e = e + 0.5 * b4.mass * (b4.vx * b4.vx + b4.vy * b4.vy + b4.vz * b4.vz);
+
+    // Potential energy: -G * m_i * m_j / r (G = 1 in our units)
+    // All pairwise combinations
+    e = e - potential_energy(b0, b1);
+    e = e - potential_energy(b0, b2);
+    e = e - potential_energy(b0, b3);
+    e = e - potential_energy(b0, b4);
+    e = e - potential_energy(b1, b2);
+    e = e - potential_energy(b1, b3);
+    e = e - potential_energy(b1, b4);
+    e = e - potential_energy(b2, b3);
+    e = e - potential_energy(b2, b4);
+    e = e - potential_energy(b3, b4);
+
+    e
+}
+
+// Potential energy between two bodies
+fn potential_energy(b1: &Body, b2: &Body) -> f64 {
+    let dx = b1.x - b2.x;
+    let dy = b1.y - b2.y;
+    let dz = b1.z - b2.z;
+    let dist = sqrt(dx * dx + dy * dy + dz * dz);
+    (b1.mass * b2.mass) / dist
+}
+
+// sqrt is now a builtin that maps to LLVM's hardware sqrt intrinsic
+// No need to define it - it's available as sqrt(f64) -> f64
+
+// Advance the simulation by one timestep
+fn advance(
+    b0: &mut Body, b1: &mut Body, b2: &mut Body, b3: &mut Body, b4: &mut Body,
+    dt: f64
+) {
+    // Update velocities based on gravitational interactions
+    // For each pair of bodies
+    update_velocities(b0, b1, dt);
+    update_velocities(b0, b2, dt);
+    update_velocities(b0, b3, dt);
+    update_velocities(b0, b4, dt);
+    update_velocities(b1, b2, dt);
+    update_velocities(b1, b3, dt);
+    update_velocities(b1, b4, dt);
+    update_velocities(b2, b3, dt);
+    update_velocities(b2, b4, dt);
+    update_velocities(b3, b4, dt);
+
+    // Update positions based on velocities
+    b0.x = b0.x + dt * b0.vx;
+    b0.y = b0.y + dt * b0.vy;
+    b0.z = b0.z + dt * b0.vz;
+
+    b1.x = b1.x + dt * b1.vx;
+    b1.y = b1.y + dt * b1.vy;
+    b1.z = b1.z + dt * b1.vz;
+
+    b2.x = b2.x + dt * b2.vx;
+    b2.y = b2.y + dt * b2.vy;
+    b2.z = b2.z + dt * b2.vz;
+
+    b3.x = b3.x + dt * b3.vx;
+    b3.y = b3.y + dt * b3.vy;
+    b3.z = b3.z + dt * b3.vz;
+
+    b4.x = b4.x + dt * b4.vx;
+    b4.y = b4.y + dt * b4.vy;
+    b4.z = b4.z + dt * b4.vz;
+}
+
+// Update velocities of two interacting bodies
+fn update_velocities(b1: &mut Body, b2: &mut Body, dt: f64) {
+    let dx = b1.x - b2.x;
+    let dy = b1.y - b2.y;
+    let dz = b1.z - b2.z;
+
+    let dist_sq = dx * dx + dy * dy + dz * dz;
+    let dist = sqrt(dist_sq);
+    let mag = dt / (dist_sq * dist);
+
+    b1.vx = b1.vx - dx * b2.mass * mag;
+    b1.vy = b1.vy - dy * b2.mass * mag;
+    b1.vz = b1.vz - dz * b2.mass * mag;
+
+    b2.vx = b2.vx + dx * b1.mass * mag;
+    b2.vy = b2.vy + dy * b1.mass * mag;
+    b2.vz = b2.vz + dz * b1.mass * mag;
+}
+
+// Offset momentum so center of mass velocity is zero
+fn offset_momentum(
+    b0: &mut Body, b1: &Body, b2: &Body, b3: &Body, b4: &Body
+) {
+    let px = b1.vx * b1.mass + b2.vx * b2.mass + b3.vx * b3.mass + b4.vx * b4.mass;
+    let py = b1.vy * b1.mass + b2.vy * b2.mass + b3.vy * b3.mass + b4.vy * b4.mass;
+    let pz = b1.vz * b1.mass + b2.vz * b2.mass + b3.vz * b3.mass + b4.vz * b4.mass;
+
+    b0.vx = -px / SOLAR_MASS;
+    b0.vy = -py / SOLAR_MASS;
+    b0.vz = -pz / SOLAR_MASS;
+}
+
+// ===========================================================================
+// Benchmark Runner
+// ===========================================================================
+
+fn run_nbody(n: i32) {
+    // Initialize bodies
+    let mut sun_body = sun();
+    let mut jupiter_body = jupiter();
+    let mut saturn_body = saturn();
+    let mut uranus_body = uranus();
+    let mut neptune_body = neptune();
+
+    // Offset momentum for conservation
+    offset_momentum(
+        &mut sun_body,
+        &jupiter_body,
+        &saturn_body,
+        &uranus_body,
+        &neptune_body
+    );
+
+    // Calculate initial energy
+    let initial_energy = energy(
+        &sun_body, &jupiter_body, &saturn_body, &uranus_body, &neptune_body
+    );
+
+    print_str("Initial energy: ");
+    println_f64(initial_energy);
+
+    // Run simulation for n timesteps
+    let dt = 0.01;
+    let mut i = 0;
+    while i < n {
+        advance(
+            &mut sun_body,
+            &mut jupiter_body,
+            &mut saturn_body,
+            &mut uranus_body,
+            &mut neptune_body,
+            dt
+        );
+        i = i + 1;
+    }
+
+    // Calculate final energy
+    let final_energy = energy(
+        &sun_body, &jupiter_body, &saturn_body, &uranus_body, &neptune_body
+    );
+
+    print_str("Final energy:   ");
+    println_f64(final_energy);
+
+    // Energy should be conserved (constant)
+    let energy_drift = final_energy - initial_energy;
+    print_str("Energy drift:   ");
+    println_f64(energy_drift);
+}
+
+// ===========================================================================
+// Main Entry Point
+// ===========================================================================
+
+fn main() {
+    println_str("================================================================");
+    println_str("     N-Body Benchmark for Blood");
+    println_str("     (Computer Language Benchmarks Game)");
+    println_str("================================================================");
+    println_str("");
+
+    println_str("Simulating outer solar system (Sun + 4 planets)");
+    println_str("Timestep: 0.01 days");
+    println_str("");
+
+    // Standard CLBG test: 1000 timesteps
+    println_str("=== 1000 timesteps ===");
+    run_nbody(1000);
+    println_str("");
+
+    // Larger test: 10000 timesteps
+    println_str("=== 10000 timesteps ===");
+    run_nbody(10000);
+    println_str("");
+
+    println_str("================================================================");
+    println_str("     Benchmark Complete");
+    println_str("================================================================");
+}

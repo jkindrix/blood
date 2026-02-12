@@ -1,0 +1,18 @@
+// COMPILE_FAIL: trait bound not satisfied
+// Test: calling generic function without required trait implementation
+trait Printable {
+    fn print_val(self) -> i32;
+}
+
+fn do_print<T: Printable>(x: T) -> i32 {
+    x.print_val()
+}
+
+struct Nope {
+    val: i32,
+}
+
+fn main() -> i32 {
+    let n: Nope = Nope { val: 1 };
+    do_print(n)
+}

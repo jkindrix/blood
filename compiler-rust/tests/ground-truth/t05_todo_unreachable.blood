@@ -1,0 +1,24 @@
+// Test: todo!() and unreachable!() macros as diverging expressions
+// EXPECT: 42
+fn checked_div(a: i32, b: i32) -> i32 {
+    if b == 0 {
+        panic!("division by zero");
+    } else {
+        a / b
+    }
+}
+
+fn main() -> i32 {
+    // todo!() and unreachable!() should type-check as ! (never type)
+    // Test that they can be used in branches
+    let x: i32 = 10;
+    let result: i32 = if x > 0 {
+        42
+    } else {
+        unreachable!()
+    };
+    println_int(result); // 42
+    if result != 42 { return 1; }
+
+    0
+}

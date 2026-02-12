@@ -1,0 +1,1011 @@
+// JSON Parser in Blood
+// A complete recursive descent parser demonstrating Blood's effect system,
+// pattern matching, and data structures.
+//
+// This example shows:
+// - Algebraic data types for JSON values
+// - Effect-based error handling
+// - Recursive parsing with backtracking
+// - String processing
+// - Builder pattern for construction
+
+// ===========================================================================
+// 1. JSON Value Type
+// ===========================================================================
+
+/// Represents a JSON value
+enum JsonValue {
+    Null,
+    Bool(bool),
+    Number(f64),
+    String(str),
+    Array(Vec<JsonValue>),
+    Object(Vec<(str, JsonValue)>),
+}
+
+impl JsonValue {
+    /// Returns true if this is a null value
+    fn is_null(self: &Self) -> bool / pure {
+        matches!(self, JsonValue::Null)
+    }
+
+    /// Returns true if this is a boolean
+    fn is_bool(self: &Self) -> bool / pure {
+        matches!(self, JsonValue::Bool(_))
+    }
+
+    /// Returns true if this is a number
+    fn is_number(self: &Self) -> bool / pure {
+        matches!(self, JsonValue::Number(_))
+    }
+
+    /// Returns true if this is a string
+    fn is_string(self: &Self) -> bool / pure {
+        matches!(self, JsonValue::String(_))
+    }
+
+    /// Returns true if this is an array
+    fn is_array(self: &Self) -> bool / pure {
+        matches!(self, JsonValue::Array(_))
+    }
+
+    /// Returns true if this is an object
+    fn is_object(self: &Self) -> bool / pure {
+        matches!(self, JsonValue::Object(_))
+    }
+
+    /// Get as boolean if this is a Bool
+    fn as_bool(self: &Self) -> Option<bool> / pure {
+        match self {
+            JsonValue::Bool(b) => Some(*b),
+            _ => None,
+        }
+    }
+
+    /// Get as number if this is a Number
+    fn as_number(self: &Self) -> Option<f64> / pure {
+        match self {
+            JsonValue::Number(n) => Some(*n),
+            _ => None,
+        }
+    }
+
+    /// Get as string reference if this is a String
+    fn as_str(self: &Self) -> Option<&str> / pure {
+        match self {
+            JsonValue::String(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// Get as array reference if this is an Array
+    fn as_array(self: &Self) -> Option<&Vec<JsonValue>> / pure {
+        match self {
+            JsonValue::Array(arr) => Some(arr),
+            _ => None,
+        }
+    }
+
+    /// Get as object reference if this is an Object
+    fn as_object(self: &Self) -> Option<&Vec<(str, JsonValue)>> / pure {
+        match self {
+            JsonValue::Object(obj) => Some(obj),
+            _ => None,
+        }
+    }
+
+    /// Get value by key for objects
+    fn get(self: &Self, key: &str) -> Option<&JsonValue> / pure {
+        match self {
+            JsonValue::Object(pairs) => {
+                for (k, v) in pairs {
+                    if k == key {
+                        return Some(v);
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// Get value by index for arrays
+    fn get_index(self: &Self, index: usize) -> Option<&JsonValue> / pure {
+        match self {
+            JsonValue::Array(arr) => arr.get(index),
+            _ => None,
+        }
+    }
+}
+
+// ===========================================================================
+// 2. Parse Error Effect
+// ===========================================================================
+
+/// Parse error with position and message
+struct ParseError {
+    position: usize,
+    message: str,
+    expected: str,
+}
+
+impl ParseError {
+    fn new(position: usize, message: str, expected: str) -> Self / pure {
+        ParseError { position, message, expected }
+    }
+}
+
+/// Effect for parse errors
+effect ParseErr {
+    op error(err: ParseError) -> !;
+}
+
+// ===========================================================================
+// 3. Parser State
+// ===========================================================================
+
+/// Parser state with input and position tracking
+struct Parser {
+    input: str,
+    pos: usize,
+}
+
+impl Parser {
+    /// Create a new parser for the given input
+    fn new(input: str) -> Self / pure {
+        Parser { input, pos: 0 }
+    }
+
+    /// Returns true if we've reached the end of input
+    fn is_eof(self: &Self) -> bool / pure {
+        self.pos >= self.input.len()
+    }
+
+    /// Peek at the current character without consuming
+    fn peek(self: &Self) -> Option<char> / pure {
+        if self.is_eof() {
+            None
+        } else {
+            Some(self.input.char_at(self.pos))
+        }
+    }
+
+    /// Peek at the character at offset from current position
+    fn peek_at(self: &Self, offset: usize) -> Option<char> / pure {
+        let pos = self.pos + offset;
+        if pos >= self.input.len() {
+            None
+        } else {
+            Some(self.input.char_at(pos))
+        }
+    }
+
+    /// Consume and return the current character
+    fn advance(self: &mut Self) -> Option<char> / pure {
+        if self.is_eof() {
+            None
+        } else {
+            let c = self.input.char_at(self.pos);
+            self.pos += c.len_utf8();
+            Some(c)
+        }
+    }
+
+    /// Skip whitespace characters
+    fn skip_whitespace(self: &mut Self) / pure {
+        while let Some(c) = self.peek() {
+            match c {
+                ' ' | '\t' | '\n' | '\r' => { self.advance(); }
+                _ => break,
+            }
+        }
+    }
+
+    /// Check if current position matches the given string
+    fn matches(self: &Self, s: &str) -> bool / pure {
+        if self.pos + s.len() > self.input.len() {
+            return false;
+        }
+        self.input.slice(self.pos, self.pos + s.len()) == s
+    }
+
+    /// Consume the given string if it matches, return success
+    fn consume(self: &mut Self, s: &str) -> bool / pure {
+        if self.matches(s) {
+            self.pos += s.len();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Expect and consume a specific character
+    fn expect_char(self: &mut Self, expected: char) -> () / {ParseErr} {
+        match self.peek() {
+            Some(c) if c == expected => {
+                self.advance();
+            }
+            Some(c) => {
+                perform ParseErr.error(ParseError::new(
+                    self.pos,
+                    "unexpected character",
+                    expected.to_string().as_str(),
+                ));
+            }
+            None => {
+                perform ParseErr.error(ParseError::new(
+                    self.pos,
+                    "unexpected end of input",
+                    expected.to_string().as_str(),
+                ));
+            }
+        }
+    }
+}
+
+// ===========================================================================
+// 4. JSON Parser Implementation
+// ===========================================================================
+
+/// Parse a complete JSON value
+fn parse_json(input: &str) -> Result<JsonValue, ParseError> {
+    with ParseErrHandler { error: None } handle {
+        let mut parser = Parser::new(input);
+        let value = parse_value(&mut parser);
+        parser.skip_whitespace();
+        if !parser.is_eof() {
+            perform ParseErr.error(ParseError::new(
+                parser.pos,
+                "unexpected trailing content",
+                "end of input",
+            ));
+        }
+        Ok(value)
+    }
+}
+
+/// Handler that converts parse errors to Result
+deep handler ParseErrHandler for ParseErr {
+    let mut error: Option<ParseError>
+
+    return(x) { x }
+
+    op error(err) {
+        error = Some(err);
+        // Return error result
+        Err(err)
+    }
+}
+
+/// Parse any JSON value
+fn parse_value(parser: &mut Parser) -> JsonValue / {ParseErr} {
+    parser.skip_whitespace();
+
+    match parser.peek() {
+        None => {
+            perform ParseErr.error(ParseError::new(
+                parser.pos,
+                "unexpected end of input",
+                "JSON value",
+            ));
+        }
+        Some('n') => parse_null(parser),
+        Some('t') | Some('f') => parse_bool(parser),
+        Some('"') => parse_string(parser),
+        Some('[') => parse_array(parser),
+        Some('{') => parse_object(parser),
+        Some(c) if c == '-' || c.is_digit() => parse_number(parser),
+        Some(c) => {
+            perform ParseErr.error(ParseError::new(
+                parser.pos,
+                "unexpected character",
+                "JSON value",
+            ));
+        }
+    }
+}
+
+/// Parse null literal
+fn parse_null(parser: &mut Parser) -> JsonValue / {ParseErr} {
+    if parser.consume("null") {
+        JsonValue::Null
+    } else {
+        perform ParseErr.error(ParseError::new(
+            parser.pos,
+            "expected 'null'",
+            "null",
+        ));
+    }
+}
+
+/// Parse boolean literal
+fn parse_bool(parser: &mut Parser) -> JsonValue / {ParseErr} {
+    if parser.consume("true") {
+        JsonValue::Bool(true)
+    } else if parser.consume("false") {
+        JsonValue::Bool(false)
+    } else {
+        perform ParseErr.error(ParseError::new(
+            parser.pos,
+            "expected 'true' or 'false'",
+            "boolean",
+        ));
+    }
+}
+
+/// Parse JSON number
+fn parse_number(parser: &mut Parser) -> JsonValue / {ParseErr} {
+    let start = parser.pos;
+
+    // Optional negative sign
+    if parser.peek() == Some('-') {
+        parser.advance();
+    }
+
+    // Integer part
+    match parser.peek() {
+        Some('0') => {
+            parser.advance();
+        }
+        Some(c) if c >= '1' && c <= '9' => {
+            parser.advance();
+            while let Some(c) = parser.peek() {
+                if c.is_digit() {
+                    parser.advance();
+                } else {
+                    break;
+                }
+            }
+        }
+        _ => {
+            perform ParseErr.error(ParseError::new(
+                parser.pos,
+                "expected digit",
+                "number",
+            ));
+        }
+    }
+
+    // Optional decimal part
+    if parser.peek() == Some('.') {
+        parser.advance();
+        let mut has_digit = false;
+        while let Some(c) = parser.peek() {
+            if c.is_digit() {
+                parser.advance();
+                has_digit = true;
+            } else {
+                break;
+            }
+        }
+        if !has_digit {
+            perform ParseErr.error(ParseError::new(
+                parser.pos,
+                "expected digit after decimal point",
+                "number",
+            ));
+        }
+    }
+
+    // Optional exponent part
+    if parser.peek() == Some('e') || parser.peek() == Some('E') {
+        parser.advance();
+        if parser.peek() == Some('+') || parser.peek() == Some('-') {
+            parser.advance();
+        }
+        let mut has_digit = false;
+        while let Some(c) = parser.peek() {
+            if c.is_digit() {
+                parser.advance();
+                has_digit = true;
+            } else {
+                break;
+            }
+        }
+        if !has_digit {
+            perform ParseErr.error(ParseError::new(
+                parser.pos,
+                "expected digit in exponent",
+                "number",
+            ));
+        }
+    }
+
+    // Parse the number string to f64
+    let num_str = parser.input.slice(start, parser.pos);
+    match num_str.parse_f64() {
+        Some(n) => JsonValue::Number(n),
+        None => {
+            perform ParseErr.error(ParseError::new(
+                start,
+                "invalid number format",
+                "number",
+            ));
+        }
+    }
+}
+
+/// Parse JSON string
+fn parse_string(parser: &mut Parser) -> JsonValue / {ParseErr} {
+    parser.expect_char('"');
+
+    let mut result = String::new();
+
+    loop {
+        match parser.advance() {
+            None => {
+                perform ParseErr.error(ParseError::new(
+                    parser.pos,
+                    "unterminated string",
+                    "closing quote",
+                ));
+            }
+            Some('"') => break,
+            Some('\\') => {
+                // Escape sequence
+                match parser.advance() {
+                    Some('"') => result.push('"'),
+                    Some('\\') => result.push('\\'),
+                    Some('/') => result.push('/'),
+                    Some('b') => result.push('\x08'),
+                    Some('f') => result.push('\x0C'),
+                    Some('n') => result.push('\n'),
+                    Some('r') => result.push('\r'),
+                    Some('t') => result.push('\t'),
+                    Some('u') => {
+                        // Unicode escape \uXXXX
+                        let mut code: u32 = 0;
+                        for _ in 0..4 {
+                            match parser.advance() {
+                                Some(c) if c.is_hex_digit() => {
+                                    code = code * 16 + c.hex_value() as u32;
+                                }
+                                _ => {
+                                    perform ParseErr.error(ParseError::new(
+                                        parser.pos,
+                                        "invalid unicode escape",
+                                        "hex digit",
+                                    ));
+                                }
+                            }
+                        }
+                        match char::from_u32(code) {
+                            Some(c) => result.push(c),
+                            None => {
+                                perform ParseErr.error(ParseError::new(
+                                    parser.pos,
+                                    "invalid unicode code point",
+                                    "valid unicode",
+                                ));
+                            }
+                        }
+                    }
+                    Some(c) => {
+                        perform ParseErr.error(ParseError::new(
+                            parser.pos,
+                            "invalid escape sequence",
+                            "valid escape",
+                        ));
+                    }
+                    None => {
+                        perform ParseErr.error(ParseError::new(
+                            parser.pos,
+                            "unterminated escape sequence",
+                            "escape character",
+                        ));
+                    }
+                }
+            }
+            Some(c) if c < ' ' => {
+                perform ParseErr.error(ParseError::new(
+                    parser.pos,
+                    "control character in string",
+                    "printable character",
+                ));
+            }
+            Some(c) => result.push(c),
+        }
+    }
+
+    JsonValue::String(result.into_str())
+}
+
+/// Parse JSON array
+fn parse_array(parser: &mut Parser) -> JsonValue / {ParseErr} {
+    parser.expect_char('[');
+    parser.skip_whitespace();
+
+    let mut elements = Vec::new();
+
+    // Check for empty array
+    if parser.peek() == Some(']') {
+        parser.advance();
+        return JsonValue::Array(elements);
+    }
+
+    loop {
+        // Parse value
+        let value = parse_value(parser);
+        elements.push(value);
+
+        parser.skip_whitespace();
+
+        match parser.peek() {
+            Some(',') => {
+                parser.advance();
+                parser.skip_whitespace();
+            }
+            Some(']') => {
+                parser.advance();
+                break;
+            }
+            _ => {
+                perform ParseErr.error(ParseError::new(
+                    parser.pos,
+                    "expected ',' or ']' in array",
+                    ", or ]",
+                ));
+            }
+        }
+    }
+
+    JsonValue::Array(elements)
+}
+
+/// Parse JSON object
+fn parse_object(parser: &mut Parser) -> JsonValue / {ParseErr} {
+    parser.expect_char('{');
+    parser.skip_whitespace();
+
+    let mut pairs = Vec::new();
+
+    // Check for empty object
+    if parser.peek() == Some('}') {
+        parser.advance();
+        return JsonValue::Object(pairs);
+    }
+
+    loop {
+        // Parse key (must be a string)
+        parser.skip_whitespace();
+        let key = match parse_value(parser) {
+            JsonValue::String(s) => s,
+            _ => {
+                perform ParseErr.error(ParseError::new(
+                    parser.pos,
+                    "object key must be a string",
+                    "string",
+                ));
+            }
+        };
+
+        // Expect colon
+        parser.skip_whitespace();
+        parser.expect_char(':');
+
+        // Parse value
+        let value = parse_value(parser);
+        pairs.push((key, value));
+
+        parser.skip_whitespace();
+
+        match parser.peek() {
+            Some(',') => {
+                parser.advance();
+            }
+            Some('}') => {
+                parser.advance();
+                break;
+            }
+            _ => {
+                perform ParseErr.error(ParseError::new(
+                    parser.pos,
+                    "expected ',' or '}' in object",
+                    ", or }",
+                ));
+            }
+        }
+    }
+
+    JsonValue::Object(pairs)
+}
+
+// ===========================================================================
+// 5. JSON Serialization (Stringify)
+// ===========================================================================
+
+/// Effect for writing output
+effect Writer {
+    op write(s: &str) -> ();
+}
+
+/// Serialize a JSON value to string
+fn stringify(value: &JsonValue) -> str {
+    with StringWriter { buffer: String::new() } handle {
+        write_value(value);
+        buffer.into_str()
+    }
+}
+
+/// Handler that accumulates output into a string
+deep handler StringWriter for Writer {
+    let mut buffer: String
+
+    return(x) { x }
+
+    op write(s) {
+        buffer.push_str(s);
+        resume(())
+    }
+}
+
+/// Write a JSON value using the Writer effect
+fn write_value(value: &JsonValue) -> () / {Writer} {
+    match value {
+        JsonValue::Null => {
+            perform Writer.write("null");
+        }
+        JsonValue::Bool(true) => {
+            perform Writer.write("true");
+        }
+        JsonValue::Bool(false) => {
+            perform Writer.write("false");
+        }
+        JsonValue::Number(n) => {
+            perform Writer.write(&n.to_string());
+        }
+        JsonValue::String(s) => {
+            write_string(s);
+        }
+        JsonValue::Array(elements) => {
+            perform Writer.write("[");
+            let mut first = true;
+            for elem in elements {
+                if !first {
+                    perform Writer.write(",");
+                }
+                first = false;
+                write_value(elem);
+            }
+            perform Writer.write("]");
+        }
+        JsonValue::Object(pairs) => {
+            perform Writer.write("{");
+            let mut first = true;
+            for (key, val) in pairs {
+                if !first {
+                    perform Writer.write(",");
+                }
+                first = false;
+                write_string(key);
+                perform Writer.write(":");
+                write_value(val);
+            }
+            perform Writer.write("}");
+        }
+    }
+}
+
+/// Write a JSON string with proper escaping
+fn write_string(s: &str) -> () / {Writer} {
+    perform Writer.write("\"");
+    for c in s.chars() {
+        match c {
+            '"' => perform Writer.write("\\\""),
+            '\\' => perform Writer.write("\\\\"),
+            '\n' => perform Writer.write("\\n"),
+            '\r' => perform Writer.write("\\r"),
+            '\t' => perform Writer.write("\\t"),
+            c if c < ' ' => {
+                // Unicode escape for control characters
+                perform Writer.write("\\u");
+                let code = c as u32;
+                for i in (0..4).rev() {
+                    let digit = (code >> (i * 4)) & 0xF;
+                    let hex_char = if digit < 10 {
+                        ('0' as u8 + digit as u8) as char
+                    } else {
+                        ('a' as u8 + digit as u8 - 10) as char
+                    };
+                    perform Writer.write(&hex_char.to_string());
+                }
+            }
+            c => perform Writer.write(&c.to_string()),
+        }
+    }
+    perform Writer.write("\"");
+}
+
+// ===========================================================================
+// 6. Pretty Printing with Indentation
+// ===========================================================================
+
+/// Pretty print a JSON value with indentation
+fn pretty_print(value: &JsonValue, indent: usize) -> str {
+    with StringWriter { buffer: String::new() } handle {
+        write_pretty(value, 0, indent);
+        buffer.into_str()
+    }
+}
+
+/// Write a pretty-printed JSON value
+fn write_pretty(value: &JsonValue, depth: usize, indent: usize) -> () / {Writer} {
+    match value {
+        JsonValue::Null => {
+            perform Writer.write("null");
+        }
+        JsonValue::Bool(true) => {
+            perform Writer.write("true");
+        }
+        JsonValue::Bool(false) => {
+            perform Writer.write("false");
+        }
+        JsonValue::Number(n) => {
+            perform Writer.write(&n.to_string());
+        }
+        JsonValue::String(s) => {
+            write_string(s);
+        }
+        JsonValue::Array(elements) => {
+            if elements.is_empty() {
+                perform Writer.write("[]");
+            } else {
+                perform Writer.write("[\n");
+                let mut first = true;
+                for elem in elements {
+                    if !first {
+                        perform Writer.write(",\n");
+                    }
+                    first = false;
+                    write_indent(depth + 1, indent);
+                    write_pretty(elem, depth + 1, indent);
+                }
+                perform Writer.write("\n");
+                write_indent(depth, indent);
+                perform Writer.write("]");
+            }
+        }
+        JsonValue::Object(pairs) => {
+            if pairs.is_empty() {
+                perform Writer.write("{}");
+            } else {
+                perform Writer.write("{\n");
+                let mut first = true;
+                for (key, val) in pairs {
+                    if !first {
+                        perform Writer.write(",\n");
+                    }
+                    first = false;
+                    write_indent(depth + 1, indent);
+                    write_string(key);
+                    perform Writer.write(": ");
+                    write_pretty(val, depth + 1, indent);
+                }
+                perform Writer.write("\n");
+                write_indent(depth, indent);
+                perform Writer.write("}");
+            }
+        }
+    }
+}
+
+/// Write indentation spaces
+fn write_indent(depth: usize, indent: usize) -> () / {Writer} {
+    let spaces = depth * indent;
+    for _ in 0..spaces {
+        perform Writer.write(" ");
+    }
+}
+
+// ===========================================================================
+// 7. JSON Builder (Fluent API)
+// ===========================================================================
+
+/// Builder for constructing JSON objects
+struct ObjectBuilder {
+    pairs: Vec<(str, JsonValue)>,
+}
+
+impl ObjectBuilder {
+    fn new() -> Self / pure {
+        ObjectBuilder { pairs: Vec::new() }
+    }
+
+    fn field(self: mut Self, key: &str, value: JsonValue) -> Self / pure {
+        self.pairs.push((key.to_string(), value));
+        self
+    }
+
+    fn field_str(self: mut Self, key: &str, value: &str) -> Self / pure {
+        self.field(key, JsonValue::String(value.to_string()))
+    }
+
+    fn field_num(self: mut Self, key: &str, value: f64) -> Self / pure {
+        self.field(key, JsonValue::Number(value))
+    }
+
+    fn field_bool(self: mut Self, key: &str, value: bool) -> Self / pure {
+        self.field(key, JsonValue::Bool(value))
+    }
+
+    fn field_null(self: mut Self, key: &str) -> Self / pure {
+        self.field(key, JsonValue::Null)
+    }
+
+    fn field_array(self: mut Self, key: &str, arr: Vec<JsonValue>) -> Self / pure {
+        self.field(key, JsonValue::Array(arr))
+    }
+
+    fn field_object(self: mut Self, key: &str, obj: ObjectBuilder) -> Self / pure {
+        self.field(key, obj.build())
+    }
+
+    fn build(self: Self) -> JsonValue / pure {
+        JsonValue::Object(self.pairs)
+    }
+}
+
+/// Builder for constructing JSON arrays
+struct ArrayBuilder {
+    elements: Vec<JsonValue>,
+}
+
+impl ArrayBuilder {
+    fn new() -> Self / pure {
+        ArrayBuilder { elements: Vec::new() }
+    }
+
+    fn push(self: mut Self, value: JsonValue) -> Self / pure {
+        self.elements.push(value);
+        self
+    }
+
+    fn push_str(self: mut Self, value: &str) -> Self / pure {
+        self.push(JsonValue::String(value.to_string()))
+    }
+
+    fn push_num(self: mut Self, value: f64) -> Self / pure {
+        self.push(JsonValue::Number(value))
+    }
+
+    fn push_bool(self: mut Self, value: bool) -> Self / pure {
+        self.push(JsonValue::Bool(value))
+    }
+
+    fn push_null(self: mut Self) -> Self / pure {
+        self.push(JsonValue::Null)
+    }
+
+    fn build(self: Self) -> JsonValue / pure {
+        JsonValue::Array(self.elements)
+    }
+}
+
+// ===========================================================================
+// 8. Helper Functions for Common Operations
+// ===========================================================================
+
+/// Create a JSON null value
+fn json_null() -> JsonValue / pure {
+    JsonValue::Null
+}
+
+/// Create a JSON boolean value
+fn json_bool(b: bool) -> JsonValue / pure {
+    JsonValue::Bool(b)
+}
+
+/// Create a JSON number value
+fn json_num(n: f64) -> JsonValue / pure {
+    JsonValue::Number(n)
+}
+
+/// Create a JSON string value
+fn json_str(s: &str) -> JsonValue / pure {
+    JsonValue::String(s.to_string())
+}
+
+/// Create an empty JSON array
+fn json_array() -> ArrayBuilder / pure {
+    ArrayBuilder::new()
+}
+
+/// Create an empty JSON object
+fn json_object() -> ObjectBuilder / pure {
+    ObjectBuilder::new()
+}
+
+// ===========================================================================
+// 9. Example Usage
+// ===========================================================================
+
+fn main() {
+    // Example 1: Parse a simple JSON object
+    let input = r#"{"name": "Blood", "version": 1.0, "features": ["effects", "linear types"]}"#;
+
+    match parse_json(input) {
+        Ok(value) => {
+            println("Parsed successfully!");
+
+            // Access values
+            if let Some(name) = value.get("name").and_then(|v| v.as_str()) {
+                println("Name: ");
+                println(name);
+            }
+
+            if let Some(version) = value.get("version").and_then(|v| v.as_number()) {
+                println("Version: ");
+                println_f64(version);
+            }
+
+            if let Some(features) = value.get("features").and_then(|v| v.as_array()) {
+                println("Features:");
+                for feature in features {
+                    if let Some(f) = feature.as_str() {
+                        println("  - ");
+                        println(f);
+                    }
+                }
+            }
+
+            // Stringify back to JSON
+            let json_str = stringify(&value);
+            println("\nStringified:");
+            println(&json_str);
+
+            // Pretty print
+            let pretty = pretty_print(&value, 2);
+            println("\nPretty printed:");
+            println(&pretty);
+        }
+        Err(err) => {
+            println("Parse error at position ");
+            println_int(err.position as i32);
+            println(": ");
+            println(&err.message);
+        }
+    }
+
+    // Example 2: Build JSON programmatically
+    let user = json_object()
+        .field_str("username", "alice")
+        .field_num("age", 30.0)
+        .field_bool("active", true)
+        .field_array("roles", json_array()
+            .push_str("admin")
+            .push_str("user")
+            .build()
+            .as_array()
+            .unwrap()
+            .clone())
+        .field_object("profile", json_object()
+            .field_str("bio", "Hello, World!")
+            .field_null("avatar"))
+        .build();
+
+    println("\nBuilt JSON:");
+    println(&pretty_print(&user, 2));
+
+    // Example 3: Complex nested structure
+    let config = json_object()
+        .field_str("name", "myapp")
+        .field_object("database", json_object()
+            .field_str("host", "localhost")
+            .field_num("port", 5432.0)
+            .field_str("username", "admin")
+            .field_null("password"))
+        .field_object("server", json_object()
+            .field_num("port", 8080.0)
+            .field_bool("debug", false)
+            .field_array("allowed_origins", json_array()
+                .push_str("http://localhost:3000")
+                .push_str("https://example.com")
+                .build()
+                .as_array()
+                .unwrap()
+                .clone()))
+        .build();
+
+    println("\nConfiguration:");
+    println(&pretty_print(&config, 2));
+}

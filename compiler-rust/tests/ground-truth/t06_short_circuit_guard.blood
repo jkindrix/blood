@@ -1,0 +1,13 @@
+// Test: && guard-before-access pattern (BUG-011)
+// Verifies that j >= 0 && v[j as usize] doesn't access v when j is negative.
+// EXPECT: SAFE
+fn main() -> i32 {
+    let mut v: Vec<i64> = Vec::new();
+    v.push(42);
+    let j: i64 = -1;
+    if j >= 0 && v[j as usize] > 0 {
+        print("FOUND");
+    }
+    print("SAFE\n");
+    0
+}

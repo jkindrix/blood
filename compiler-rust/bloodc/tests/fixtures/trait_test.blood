@@ -1,0 +1,64 @@
+// Test trait system
+
+// Define a simple trait
+trait Counter {
+    fn count(&self) -> i32;
+    fn increment(&mut self);
+}
+
+// Implement the trait for i32
+impl Counter for i32 {
+    fn count(&self) -> i32 {
+        *self
+    }
+
+    fn increment(&mut self) {
+        *self = *self + 1;
+    }
+}
+
+// Function using trait bound
+fn get_count<T: Counter>(val: &T) -> i32 {
+    val.count()
+}
+
+fn double_count<T: Counter>(val: &T) -> i32 {
+    val.count() * 2
+}
+
+// Test calling trait methods directly
+fn test_direct() -> i32 {
+    let x: i32 = 42;
+    x.count()
+}
+
+// Test mutable trait method
+fn test_mutate() -> i32 {
+    let mut x: i32 = 10;
+    x.increment();
+    x.count()
+}
+
+// Test generic function with trait bound
+fn test_generic() -> i32 {
+    let x: i32 = 42;
+    get_count(&x)
+}
+
+fn test_double() -> i32 {
+    let x: i32 = 21;
+    double_count(&x)
+}
+
+fn main() {
+    let a = test_direct();
+    let b = test_mutate();
+    let c = test_generic();
+    let d = test_double();
+
+    // Print results
+    println!("{}", a);
+    println!("{}", b);
+    println!("{}", c);
+    println!("{}", d);
+}

@@ -1,0 +1,15 @@
+// Test: || short-circuit prevents mutation (BUG-011)
+// Verifies that true || mutate(&mut val) doesn't call mutate.
+// EXPECT: 0
+fn mutate(x: &mut i32) -> bool {
+    *x = 99;
+    true
+}
+
+fn main() -> i32 {
+    let mut val: i32 = 0;
+    if true || mutate(&mut val) { }
+    print_i64(val as i64);
+    print("\n");
+    0
+}

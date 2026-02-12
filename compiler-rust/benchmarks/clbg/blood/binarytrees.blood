@@ -1,0 +1,160 @@
+// CLBG Binary Trees Benchmark for Blood
+// ======================================
+//
+// This is a faithful port of the Computer Language Benchmarks Game binary-trees
+// benchmark, designed for direct comparison with the C reference implementation.
+//
+// CLBG Standard: depth = 21 (passed as command-line arg in C, hardcoded here)
+//
+// Algorithm:
+// 1. Create a "stretch tree" at depth N+1, count nodes, delete
+// 2. Create a "long-lived tree" at depth N
+// 3. For depths 4, 6, 8, ..., N:
+//    - Create 2^(N-depth+4) trees, count nodes in each, sum and delete
+// 4. Print long-lived tree node count
+//
+// This benchmark tests memory allocation/deallocation performance.
+// Blood uses manual alloc/free (like C) via builtin functions.
+//
+// Structural difference from C:
+// - C uses malloc/free, Blood uses alloc/free builtins
+// - Both use recursive tree construction and traversal
+// - Output format matches C exactly
+//
+// Node layout in memory (12 bytes):
+//   offset 0: left pointer (u64, 8 bytes)
+//   offset 8: right pointer (u64, 4 bytes packed, but we use 8 for alignment)
+// Total: 16 bytes per node (using 8-byte aligned pointers)
+
+// Node size: left (8 bytes) + right (8 bytes) = 16 bytes
+fn node_size() -> u64 {
+    16
+}
+
+// Create a new tree node with given children
+// Returns pointer to allocated node (0 if children are null-like leaves)
+fn new_tree_node(left: u64, right: u64) -> u64 {
+    let ptr = alloc(node_size());
+    ptr_write_u64(ptr, left);                   // left at offset 0
+    ptr_write_u64(ptr + 8 as u64, right);       // right at offset 8
+    ptr
+}
+
+// Get left child pointer from node
+fn get_left(node: u64) -> u64 {
+    ptr_read_u64(node)
+}
+
+// Get right child pointer from node
+fn get_right(node: u64) -> u64 {
+    ptr_read_u64(node + 8 as u64)
+}
+
+// Count nodes in tree (returns 1 for leaf, 1 + left + right for internal)
+fn item_check(tree: u64) -> i64 {
+    let left = get_left(tree);
+    if left == 0 as u64 {
+        1 as i64
+    } else {
+        1 as i64 + item_check(left) + item_check(get_right(tree))
+    }
+}
+
+// Create a complete binary tree of given depth
+fn bottom_up_tree(depth: i32) -> u64 {
+    if depth > 0 {
+        new_tree_node(
+            bottom_up_tree(depth - 1),
+            bottom_up_tree(depth - 1)
+        )
+    } else {
+        new_tree_node(0 as u64, 0 as u64)  // Leaf node with null children
+    }
+}
+
+// Recursively delete a tree
+fn delete_tree(tree: u64) {
+    let left = get_left(tree);
+    if left != 0 as u64 {
+        delete_tree(left);
+        delete_tree(get_right(tree));
+    }
+    free(tree);
+}
+
+// Print: "stretch tree of depth %d\t check: %ld\n"
+fn print_stretch(depth: i32, check: i64) {
+    print_str("stretch tree of depth ");
+    print_int(depth);
+    print_str("\t check: ");
+    println_i64(check);
+}
+
+// Print: "%d\t trees of depth %d\t check: %ld\n"
+fn print_trees(iterations: i32, depth: i32, check: i64) {
+    print_int(iterations);
+    print_str("\t trees of depth ");
+    print_int(depth);
+    print_str("\t check: ");
+    println_i64(check);
+}
+
+// Print: "long lived tree of depth %d\t check: %ld\n"
+fn print_long_lived(depth: i32, check: i64) {
+    print_str("long lived tree of depth ");
+    print_int(depth);
+    print_str("\t check: ");
+    println_i64(check);
+}
+
+// Power of 2: 1 << n
+fn pow2(n: i32) -> i32 {
+    let mut result = 1;
+    let mut i = 0;
+    while i < n {
+        result = result * 2;
+        i = i + 1;
+    }
+    result
+}
+
+fn main() {
+    // CLBG standard: N = 21
+    let n = 21;
+    let min_depth = 4;
+    let mut max_depth = n;
+    if min_depth + 2 > n {
+        max_depth = min_depth + 2;
+    }
+
+    // Stretch tree
+    let stretch_depth = max_depth + 1;
+    let stretch_tree = bottom_up_tree(stretch_depth);
+    print_stretch(stretch_depth, item_check(stretch_tree));
+    delete_tree(stretch_tree);
+
+    // Long-lived tree (kept until the end)
+    let long_lived_tree = bottom_up_tree(max_depth);
+
+    // Create and destroy trees of varying depths
+    let mut depth = min_depth;
+    while depth <= max_depth {
+        let iterations = pow2(max_depth - depth + min_depth);
+        let mut check: i64 = 0;
+
+        let mut i = 1;
+        while i <= iterations {
+            let temp_tree = bottom_up_tree(depth);
+            check = check + item_check(temp_tree);
+            delete_tree(temp_tree);
+            i = i + 1;
+        }
+
+        print_trees(iterations, depth, check);
+        depth = depth + 2;
+    }
+
+    // Print long-lived tree check
+    print_long_lived(max_depth, item_check(long_lived_tree));
+    delete_tree(long_lived_tree);
+}

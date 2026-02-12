@@ -1,0 +1,16 @@
+// Test: ref pattern in match (binding by reference)
+// EXPECT: 42
+fn main() -> i32 {
+    let x: i32 = 42;
+
+    // Match with ref pattern to borrow (creates reference instead of copying)
+    let r: &i32 = match x {
+        ref val => val,
+    };
+
+    let result: i32 = *r;
+    println_int(result); // 42
+    if result != 42 { return 1; }
+
+    0
+}

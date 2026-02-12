@@ -1,0 +1,46 @@
+// Test: extended type conversion builtins
+// EXPECT: -128
+// EXPECT: 32767
+// EXPECT: 255
+// EXPECT: 65535
+fn main() -> i32 {
+    // i64_to_string (already tested in t05_type_conversions)
+    // Test additional conversion paths
+
+    // Negative number to string
+    let neg_str: &str = int_to_string(-128);
+    println_str(neg_str); // -128
+    if !str_eq(neg_str, "-128") { return 1; }
+
+    // Large positive i32 to string
+    let big_str: &str = int_to_string(32767);
+    println_str(big_str); // 32767
+    if !str_eq(big_str, "32767") { return 2; }
+
+    // Zero to string
+    let zero_str: &str = int_to_string(0);
+    if !str_eq(zero_str, "0") { return 3; }
+
+    // i64 negative to string
+    let neg64_str: &str = i64_to_string(-1);
+    if !str_eq(neg64_str, "-1") { return 4; }
+
+    // bool_to_string edge cases (already tested, verify consistency)
+    let t: &str = bool_to_string(true);
+    let f: &str = bool_to_string(false);
+    if !str_eq(t, "true") { return 5; }
+    if !str_eq(f, "false") { return 6; }
+
+    // Chained conversions: int -> string -> length
+    let s: &str = int_to_string(255);
+    println_str(s); // 255
+    let len: i64 = str_len(s);
+    if len != 3 { return 7; } // "255" is 3 chars
+
+    let s2: &str = int_to_string(65535);
+    println_str(s2); // 65535
+    let len2: i64 = str_len(s2);
+    if len2 != 5 { return 8; } // "65535" is 5 chars
+
+    0
+}

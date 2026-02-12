@@ -1,0 +1,58 @@
+// Test: effect with multiple operations
+// EXPECT: 5
+// EXPECT: 10
+effect Counter {
+    op increment() -> ();
+    op decrement() -> ();
+    op value() -> i32;
+}
+
+deep handler SimpleCounter for Counter {
+    let mut count: i32
+
+    return(x) { x }
+
+    op increment() {
+        count = count + 1;
+        resume(())
+    }
+
+    op decrement() {
+        count = count - 1;
+        resume(())
+    }
+
+    op value() {
+        resume(count)
+    }
+}
+
+fn main() -> i32 {
+    let r1: i32 = with SimpleCounter { count: 0 } handle {
+        let mut i: i32 = 0;
+        while i < 7 {
+            perform Counter.increment();
+            i = i + 1;
+        }
+        // Decrement twice
+        perform Counter.decrement();
+        perform Counter.decrement();
+        perform Counter.value()
+    };
+    println_int(r1); // 7 - 2 = 5
+
+    // Start from 20, decrement 10 times
+    let r2: i32 = with SimpleCounter { count: 20 } handle {
+        let mut j: i32 = 0;
+        while j < 10 {
+            perform Counter.decrement();
+            j = j + 1;
+        }
+        perform Counter.value()
+    };
+    println_int(r2); // 20 - 10 = 10
+
+    if r1 != 5 { return 1; }
+    if r2 != 10 { return 2; }
+    0
+}

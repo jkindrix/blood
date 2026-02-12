@@ -1,0 +1,334 @@
+// =============================================================================
+// Aether Struct/Enum Integration Test Suite
+// =============================================================================
+//
+// Tests for complex data types through Blood's algebraic effect system.
+// Validates patterns discovered during Aether library development:
+// - Struct values as effect operation arguments
+// - Enum values through effects
+// - Match on enum fields in handlers
+// - Struct field assignment in handlers
+// - Multi-stage processing pipelines
+
+effect Emit<T> {
+    op emit(value: T) -> ();
+}
+
+// ============================================================================
+// Structs for complex data
+// ============================================================================
+
+struct SensorReading {
+    sensor_id: i32,
+    value: i32,
+    timestamp: i64,
+}
+
+struct Stats {
+    count: i32,
+    sum: i64,
+    min: i32,
+    max: i32,
+}
+
+enum AlertLevel {
+    Normal,
+    Warning,
+    Critical,
+}
+
+struct Alert {
+    level: AlertLevel,
+    sensor_id: i32,
+    value: i32,
+}
+
+// ============================================================================
+// Test utilities
+// ============================================================================
+
+fn assert_eq(actual: i32, expected: i32, test_id: i32) {
+    if actual != expected {
+        let zero: i32 = actual - actual;
+        let x: i32 = test_id / zero;  // Crash with test_id info
+    }
+}
+
+fn assert_true(cond: bool, test_id: i32) {
+    if !cond {
+        let zero: i32 = 0;
+        let x: i32 = test_id / zero;
+    }
+}
+
+// ============================================================================
+// Stream sources
+// ============================================================================
+
+fn sensor_readings(n: i32) / {Emit<SensorReading>} {
+    let mut i: i32 = 0;
+    while i < n {
+        let sensor: i32 = i % 3;
+        let value: i32 = 50 + (i * 7) % 100;
+        perform Emit.emit(SensorReading {
+            sensor_id: sensor,
+            value: value,
+            timestamp: (i * 1000) as i64,
+        });
+        i = i + 1;
+    }
+}
+
+// ============================================================================
+// Stream transformers
+// ============================================================================
+
+fn filter_sensor(
+    stream: fn() / {Emit<SensorReading>},
+    target_id: i32
+) / {Emit<SensorReading>} {
+    try { stream(); }
+    with {
+        Emit.emit(reading) => {
+            if reading.sensor_id == target_id {
+                perform Emit.emit(reading);
+            }
+            resume(());
+        }
+    };
+}
+
+fn classify_alert(
+    stream: fn() / {Emit<SensorReading>}
+) / {Emit<Alert>} {
+    try { stream(); }
+    with {
+        Emit.emit(reading) => {
+            let level: AlertLevel = if reading.value > 120 {
+                AlertLevel::Critical
+            } else if reading.value > 100 {
+                AlertLevel::Warning
+            } else {
+                AlertLevel::Normal
+            };
+            perform Emit.emit(Alert {
+                level: level,
+                sensor_id: reading.sensor_id,
+                value: reading.value,
+            });
+            resume(());
+        }
+    };
+}
+
+fn filter_alerts_only(
+    stream: fn() / {Emit<Alert>}
+) / {Emit<Alert>} {
+    try { stream(); }
+    with {
+        Emit.emit(alert) => {
+            match alert.level {
+                AlertLevel::Warning => { perform Emit.emit(alert); },
+                AlertLevel::Critical => { perform Emit.emit(alert); },
+                AlertLevel::Normal => {},
+            }
+            resume(());
+        }
+    };
+}
+
+// ============================================================================
+// Collectors/Sinks
+// ============================================================================
+
+fn compute_stats(stream: fn() / {Emit<SensorReading>}) -> Stats {
+    let mut stats: Stats = Stats {
+        count: 0,
+        sum: 0,
+        min: 2147483647,
+        max: -2147483648,
+    };
+
+    try { stream(); }
+    with {
+        Emit.emit(reading) => {
+            stats.count = stats.count + 1;
+            stats.sum = stats.sum + (reading.value as i64);
+            if reading.value < stats.min {
+                stats.min = reading.value;
+            }
+            if reading.value > stats.max {
+                stats.max = reading.value;
+            }
+            resume(());
+        }
+    };
+
+    stats
+}
+
+fn count_alerts(stream: fn() / {Emit<Alert>}) -> i32 {
+    let mut count: i32 = 0;
+    try { stream(); }
+    with {
+        Emit.emit(alert) => {
+            count = count + 1;
+            resume(());
+        }
+    };
+    count
+}
+
+fn count_critical(stream: fn() / {Emit<Alert>}) -> i32 {
+    let mut count: i32 = 0;
+    try { stream(); }
+    with {
+        Emit.emit(alert) => {
+            match alert.level {
+                AlertLevel::Critical => { count = count + 1; },
+                _ => {},
+            }
+            resume(());
+        }
+    };
+    count
+}
+
+// ============================================================================
+// Stateful processing
+// ============================================================================
+
+fn running_average(
+    stream: fn() / {Emit<SensorReading>}
+) / {Emit<i32>} {
+    let mut sum: i64 = 0;
+    let mut count: i32 = 0;
+
+    try { stream(); }
+    with {
+        Emit.emit(reading) => {
+            sum = sum + (reading.value as i64);
+            count = count + 1;
+            let avg: i32 = (sum / (count as i64)) as i32;
+            perform Emit.emit(avg);
+            resume(());
+        }
+    };
+}
+
+fn collect_last_avg(stream: fn() / {Emit<i32>}) -> i32 {
+    let mut last: i32 = 0;
+    try { stream(); }
+    with {
+        Emit.emit(v) => {
+            last = v;
+            resume(());
+        }
+    };
+    last
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+fn test_basic_stats() {
+    // 20 readings, values vary based on formula: 50 + (i*7)%100
+    let stats: Stats = compute_stats(|| / {Emit<SensorReading>} {
+        sensor_readings(20);
+    });
+    assert_eq(stats.count, 20, 101);
+    assert_true(stats.min >= 50, 102);
+    assert_true(stats.max <= 149, 103);
+}
+
+fn test_filter_by_sensor() {
+    // Filter for sensor 0 only (every 3rd reading)
+    let stats: Stats = compute_stats(|| / {Emit<SensorReading>} {
+        filter_sensor(|| / {Emit<SensorReading>} {
+            sensor_readings(30);
+        }, 0);
+    });
+    // 30 readings, every 3rd is sensor 0 = 10 readings
+    assert_eq(stats.count, 10, 201);
+}
+
+fn test_alert_classification() {
+    // Count all alerts (includes Normal)
+    let total: i32 = count_alerts(|| / {Emit<Alert>} {
+        classify_alert(|| / {Emit<SensorReading>} {
+            sensor_readings(50);
+        });
+    });
+    assert_eq(total, 50, 301);
+}
+
+fn test_filter_warnings_and_critical() {
+    // Count only Warning and Critical alerts
+    let alerts: i32 = count_alerts(|| / {Emit<Alert>} {
+        filter_alerts_only(|| / {Emit<Alert>} {
+            classify_alert(|| / {Emit<SensorReading>} {
+                sensor_readings(100);
+            });
+        });
+    });
+    // Should have some alerts (values go up to 149, threshold is 100)
+    assert_true(alerts > 0, 401);
+    assert_true(alerts < 100, 402);  // Not all should be alerts
+}
+
+fn test_running_average() {
+    let final_avg: i32 = collect_last_avg(|| / {Emit<i32>} {
+        running_average(|| / {Emit<SensorReading>} {
+            sensor_readings(10);
+        });
+    });
+    // Average should be reasonable (between 50 and 150)
+    assert_true(final_avg >= 50, 501);
+    assert_true(final_avg <= 150, 502);
+}
+
+fn test_complex_pipeline() {
+    // Full pipeline: generate -> filter sensor -> classify -> filter alerts -> count critical
+    let critical_count: i32 = count_critical(|| / {Emit<Alert>} {
+        filter_alerts_only(|| / {Emit<Alert>} {
+            classify_alert(|| / {Emit<SensorReading>} {
+                filter_sensor(|| / {Emit<SensorReading>} {
+                    sensor_readings(200);
+                }, 1);  // Only sensor 1
+            });
+        });
+    });
+    // Some readings for sensor 1 should be critical (value > 120)
+    assert_true(critical_count >= 0, 601);
+}
+
+fn test_empty_stream() {
+    let stats: Stats = compute_stats(|| / {Emit<SensorReading>} {
+        sensor_readings(0);
+    });
+    assert_eq(stats.count, 0, 701);
+}
+
+fn test_single_reading() {
+    let stats: Stats = compute_stats(|| / {Emit<SensorReading>} {
+        sensor_readings(1);
+    });
+    assert_eq(stats.count, 1, 801);
+    assert_eq(stats.min, stats.max, 802);  // Only one value
+}
+
+// ============================================================================
+// Main
+// ============================================================================
+
+fn main() {
+    test_basic_stats();
+    test_filter_by_sensor();
+    test_alert_classification();
+    test_filter_warnings_and_critical();
+    test_running_average();
+    test_complex_pipeline();
+    test_empty_stream();
+    test_single_reading();
+}

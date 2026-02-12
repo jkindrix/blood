@@ -1,0 +1,39 @@
+// Test: generic functions instantiated with bool and i32
+// EXPECT: 42
+// EXPECT: 1
+fn identity<T>(x: T) -> T {
+    x
+}
+
+fn choose<T>(cond: bool, a: T, b: T) -> T {
+    if cond { a } else { b }
+}
+
+fn main() -> i32 {
+    // identity with i32
+    let a: i32 = identity(42);
+    println_int(a);
+    if a != 42 { return 1; }
+
+    // identity with bool
+    let b: bool = identity(true);
+    if !b { return 2; }
+
+    // choose with i32
+    let c: i32 = choose(true, 10, 20);
+    if c != 10 { return 3; }
+
+    let d: i32 = choose(false, 10, 20);
+    if d != 20 { return 4; }
+
+    // choose with bool
+    let e: bool = choose(true, true, false);
+    if !e { return 5; }
+
+    let f: bool = choose(false, true, false);
+    if f { return 6; }
+
+    if e { println_int(1); } else { println_int(0); }
+
+    0
+}

@@ -1,0 +1,24 @@
+// COMPILE_FAIL: method name defined multiple times (E0214)
+// Test: method call matching multiple impls should fail
+trait AsNum {
+    fn as_num(self) -> i32;
+}
+
+trait AsVal {
+    fn as_num(self) -> i32;
+}
+
+struct Both {}
+
+impl AsNum for Both {
+    fn as_num(self) -> i32 { 1 }
+}
+
+impl AsVal for Both {
+    fn as_num(self) -> i32 { 2 }
+}
+
+fn main() -> i32 {
+    let b: Both = Both {};
+    b.as_num()
+}

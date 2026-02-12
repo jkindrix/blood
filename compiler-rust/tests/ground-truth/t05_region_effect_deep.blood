@@ -1,0 +1,41 @@
+// Test: deep nesting of regions with effects (3 levels)
+// EXPECT: 111
+effect Counter {
+    op inc() -> ();
+    op get_count() -> i32;
+}
+
+deep handler CountHandler for Counter {
+    let mut count: i32
+    return(x) { x }
+    op inc() { count = count + 1; resume(()) }
+    op get_count() { resume(count) }
+}
+
+fn do_work() -> i32 / {Counter} {
+    // Level 1: outer region
+    let a: i32 = region {
+        perform Counter.inc();
+        // Level 2: middle region
+        let b: i32 = region {
+            perform Counter.inc();
+            // Level 3: inner region
+            let c: i32 = region {
+                perform Counter.inc();
+                perform Counter.get_count() // 3
+            };
+            c * 10 // 30
+        };
+        b + perform Counter.get_count() // 30 + 3 = 33
+    };
+    a + perform Counter.get_count() * 26 // 33 + 3*26 = 33 + 78 = 111
+}
+
+fn main() -> i32 {
+    let result: i32 = with CountHandler { count: 0 } handle {
+        do_work()
+    };
+    println_int(result); // 111
+    if result != 111 { return 1; }
+    0
+}

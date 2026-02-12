@@ -1,0 +1,46 @@
+// Diamond dependency test: diamond_common.blood is imported by both diamond_left and diamond_right
+// This tests that diamond_common::Span from left and right are the same type
+mod diamond_common;
+mod diamond_left;
+mod diamond_right;
+
+// Function that takes a Span from left module and uses it with right module
+// This would fail if left's diamond_common::Span != right's diamond_common::Span
+fn transfer_span_left_to_right(left_node: diamond_left::LeftNode) -> diamond_right::RightNode {
+    let span = diamond_left::get_span_from_left(left_node);
+    // Pass the same span to right module - this requires type identity
+    diamond_right::make_right_node(span, 42)
+}
+
+// Function that takes a Span from right module and uses it with left module
+fn transfer_span_right_to_left(right_node: diamond_right::RightNode) -> diamond_left::LeftNode {
+    let span = diamond_right::get_span_from_right(right_node);
+    // Pass the same span to left module - this requires type identity
+    diamond_left::make_left_node(span, 100)
+}
+
+// Direct test: create Span via common, use in both left and right
+fn test_shared_span() {
+    let span = diamond_common::make_span(0, 10);
+
+    // Use the same span in both left and right
+    let left_node = diamond_left::make_left_node(span, 1);
+    let right_node = diamond_right::make_right_node(span, 2);
+
+    // Extract spans back
+    let span_from_left = diamond_left::get_span_from_left(left_node);
+    let span_from_right = diamond_right::get_span_from_right(right_node);
+
+    // Use extracted spans interchangeably
+    let _ = diamond_left::make_left_node(span_from_right, 3);
+    let _ = diamond_right::make_right_node(span_from_left, 4);
+}
+
+fn main() {
+    test_shared_span();
+
+    let span = diamond_common::make_span(5, 15);
+    let left = diamond_left::make_left_node(span, 10);
+    let right = transfer_span_left_to_right(left);
+    let _ = transfer_span_right_to_left(right);
+}

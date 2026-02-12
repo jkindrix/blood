@@ -1,0 +1,52 @@
+// =============================================================================
+// Field Match in Handler Test
+// =============================================================================
+//
+// Minimal reproduction case for matching on enum field of handler-bound struct.
+// This was a compiler bug (Found IntValue but expected StructValue) that has
+// been fixed.
+//
+// The pattern: Capture a struct in handler, then match on its enum field.
+
+effect Emit<T> {
+    op emit(value: T) -> ();
+}
+
+enum Kind { A, B }
+
+struct Item {
+    kind: Kind,
+    value: i32,
+}
+
+fn source() / {Emit<Item>} {
+    perform Emit.emit(Item { kind: Kind::A, value: 1 });
+    perform Emit.emit(Item { kind: Kind::B, value: 2 });
+    perform Emit.emit(Item { kind: Kind::A, value: 3 });
+}
+
+fn count_kind_a(stream: fn() / {Emit<Item>}) -> i32 {
+    let mut count: i32 = 0;
+    try { stream(); }
+    with {
+        Emit.emit(item) => {
+            // This is the critical pattern: match on item.kind where
+            // item is bound in the handler pattern
+            match item.kind {
+                Kind::A => { count = count + 1; },
+                Kind::B => {},
+            }
+            resume(());
+        }
+    };
+    count
+}
+
+fn main() {
+    let r: i32 = count_kind_a(|| / {Emit<Item>} { source(); });
+    // Should be 2 (two Kind::A items)
+    if r != 2 {
+        let zero: i32 = 0;
+        let x: i32 = 1 / zero;
+    }
+}
