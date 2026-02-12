@@ -2163,7 +2163,7 @@ error[E0401]: cannot borrow as mutable: `items` is not declared as mutable
 
 **Fix:** Declare the binding as mutable with `let mut`.
 
-**Related:** E0402 (use of moved value - planned)
+**Related:** E0801 (unused linear value), E0802 (multiple linear use)
 
 ---
 
@@ -2644,12 +2644,11 @@ error[E0201]: type mismatch: expected `i32`, found `String`
 
 | Code | Description | Status |
 |------|-------------|--------|
-| E0401 | Cannot borrow as mutable | In Development |
-| E0402 | Use of moved value | Planned |
-| E0403 | Linear value not consumed | Planned |
-| E0404 | Double-free | Planned |
-| E0405 | Mutable borrow while immutable exists | Planned |
-| E0406 | Return of borrowed value | Planned |
+| E0401 | Cannot borrow as mutable | Implemented |
+
+Note: Blood uses Mutable Value Semantics (MVS) with copy-by-default, not Rust-style
+move semantics. Ownership errors for linear/affine types are in the E0800 range.
+Blood does NOT implement compile-time borrow checking (see ADR-001).
 
 ### Lifetime Errors (E0500-E0599) — Planned
 

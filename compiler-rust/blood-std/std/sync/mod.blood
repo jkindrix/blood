@@ -51,12 +51,12 @@ impl<T> Arc<T> {
 
     /// Returns the number of strong references
     pub fn strong_count(this: &Self) -> usize / pure {
-        unsafe { (*this.ptr.as_ptr()).strong.load(Ordering::SeqCst) }
+        @unsafe { (*this.ptr.as_ptr()).strong.load(Ordering::SeqCst) }
     }
 
     /// Returns the number of weak references
     pub fn weak_count(this: &Self) -> usize / pure {
-        let weak = unsafe { (*this.ptr.as_ptr()).weak.load(Ordering::SeqCst) };
+        let weak = @unsafe { (*this.ptr.as_ptr()).weak.load(Ordering::SeqCst) };
         if weak == usize::MAX {
             0
         } else {
@@ -67,7 +67,7 @@ impl<T> Arc<T> {
     /// Attempts to unwrap the Arc if it has exactly one strong reference
     pub fn try_unwrap(this: Self) -> Result<T, Self> / pure {
         if Arc::strong_count(&this) == 1 {
-            unsafe {
+            @unsafe {
                 let inner = Box::from_raw(this.ptr.as_ptr());
                 mem::forget(this);
                 Ok(inner.data)
@@ -80,7 +80,7 @@ impl<T> Arc<T> {
     /// Gets a mutable reference if there is exactly one strong reference
     pub fn get_mut(this: &mut Self) -> Option<&mut T> / pure {
         if Arc::strong_count(this) == 1 && Arc::weak_count(this) == 0 {
-            unsafe { Some(&mut (*this.ptr.as_ptr()).data) }
+            @unsafe { Some(&mut (*this.ptr.as_ptr()).data) }
         } else {
             None
         }
@@ -94,12 +94,12 @@ impl<T> Arc<T> {
         if Arc::strong_count(this) != 1 {
             *this = Arc::new((**this).clone());
         }
-        unsafe { &mut (*this.ptr.as_ptr()).data }
+        @unsafe { &mut (*this.ptr.as_ptr()).data }
     }
 
     /// Creates a Weak pointer to this value
     pub fn downgrade(this: &Self) -> Weak<T> / pure {
-        unsafe {
+        @unsafe {
             (*this.ptr.as_ptr()).weak.fetch_add(1, Ordering::Relaxed);
         }
         Weak { ptr: this.ptr }
@@ -107,7 +107,7 @@ impl<T> Arc<T> {
 
     /// Returns a raw pointer to the inner value
     pub fn as_ptr(this: &Self) -> *const T / pure {
-        unsafe { &(*this.ptr.as_ptr()).data as *const T }
+        @unsafe { &(*this.ptr.as_ptr()).data as *const T }
     }
 }
 
@@ -115,13 +115,13 @@ impl<T: ?Sized> Deref for Arc<T> {
     type Target = T;
 
     fn deref(self: &Self) -> &T / pure {
-        unsafe { &(*self.ptr.as_ptr()).data }
+        @unsafe { &(*self.ptr.as_ptr()).data }
     }
 }
 
 impl<T: ?Sized> Clone for Arc<T> {
     fn clone(self: &Self) -> Self / pure {
-        unsafe {
+        @unsafe {
             (*self.ptr.as_ptr()).strong.fetch_add(1, Ordering::Relaxed);
         }
         Arc { ptr: self.ptr }
@@ -130,7 +130,7 @@ impl<T: ?Sized> Clone for Arc<T> {
 
 impl<T: ?Sized> Drop for Arc<T> {
     fn drop(self: &mut Self) / pure {
-        unsafe {
+        @unsafe {
             if (*self.ptr.as_ptr()).strong.fetch_sub(1, Ordering::Release) == 1 {
                 // Synchronize with other threads
                 atomic::fence(Ordering::Acquire);
@@ -212,7 +212,7 @@ impl<T> Weak<T> {
 
     /// Attempts to upgrade to an Arc
     pub fn upgrade(self: &Self) -> Option<Arc<T>> / pure {
-        unsafe {
+        @unsafe {
             let mut strong = (*self.ptr.as_ptr()).strong.load(Ordering::Relaxed);
             loop {
                 if strong == 0 {
@@ -233,12 +233,12 @@ impl<T> Weak<T> {
 
     /// Returns the number of strong references
     pub fn strong_count(self: &Self) -> usize / pure {
-        unsafe { (*self.ptr.as_ptr()).strong.load(Ordering::SeqCst) }
+        @unsafe { (*self.ptr.as_ptr()).strong.load(Ordering::SeqCst) }
     }
 
     /// Returns the number of weak references
     pub fn weak_count(self: &Self) -> usize / pure {
-        let weak = unsafe { (*self.ptr.as_ptr()).weak.load(Ordering::SeqCst) };
+        let weak = @unsafe { (*self.ptr.as_ptr()).weak.load(Ordering::SeqCst) };
         if weak == 0 {
             0
         } else {
@@ -254,7 +254,7 @@ impl<T> Weak<T> {
 
 impl<T: ?Sized> Clone for Weak<T> {
     fn clone(self: &Self) -> Self / pure {
-        unsafe {
+        @unsafe {
             (*self.ptr.as_ptr()).weak.fetch_add(1, Ordering::Relaxed);
         }
         Weak { ptr: self.ptr }
@@ -263,7 +263,7 @@ impl<T: ?Sized> Clone for Weak<T> {
 
 impl<T: ?Sized> Drop for Weak<T> {
     fn drop(self: &mut Self) / pure {
-        unsafe {
+        @unsafe {
             if (*self.ptr.as_ptr()).weak.fetch_sub(1, Ordering::Release) == 1 {
                 atomic::fence(Ordering::Acquire);
                 drop(Box::from_raw(self.ptr.as_ptr()));

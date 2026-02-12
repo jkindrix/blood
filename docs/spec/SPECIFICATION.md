@@ -213,7 +213,7 @@ Blood distinguishes four ownership modalities:
 | Modality | Symbol | Use Count | Drop | Clone | Use Case |
 |----------|--------|-----------|------|-------|----------|
 | **Owned** | (default) | Any | Auto | Explicit | General values |
-| **Affine** | `affine T` | 0..1 | Auto | Forbidden | Move-only resources |
+| **Affine** | `affine T` | 0..1 | Auto | Forbidden | At-most-once resources |
 | **Linear** | `linear T` | Exactly 1 | Forbidden | Forbidden | Must-use handles |
 | **Borrowed** | `&T` / `&mut T` | Any | N/A | N/A | Temporary access |
 
@@ -1587,7 +1587,7 @@ fn safe_file_operation(path: &Path) / {IO, Error<IoError>} {
     file.close()  // MUST call close - compiler enforces
 
     // file.read(...) here would be compile error:
-    // "use of moved linear value"
+    // "linear value already consumed"
 }
 ```
 

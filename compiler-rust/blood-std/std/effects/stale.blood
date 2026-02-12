@@ -13,7 +13,7 @@
 /// ```blood
 /// fn safe_deref<T>(ptr: BloodPtr<T>) -> &T / {StaleReference} {
 ///     perform validate_ptr(ptr);
-///     unsafe { &*ptr }
+///     @unsafe { &*ptr }
 /// }
 /// ```
 pub effect StaleReference {
@@ -39,13 +39,13 @@ pub fn stale_error(message: &str) -> ! / {StaleReference} {
 /// Safely dereferences a generational pointer
 pub fn safe_deref<T>(ptr: BloodPtr<T>) -> &T / {StaleReference} {
     perform validate_ptr(ptr);
-    unsafe { &*ptr.as_ptr() }
+    @unsafe { &*ptr.as_ptr() }
 }
 
 /// Safely dereferences a mutable generational pointer
 pub fn safe_deref_mut<T>(ptr: BloodPtr<T>) -> &mut T / {StaleReference} {
     perform validate_ptr(ptr);
-    unsafe { &mut *ptr.as_mut_ptr() }
+    @unsafe { &mut *ptr.as_mut_ptr() }
 }
 
 /// Converts StaleReference to Option

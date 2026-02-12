@@ -138,7 +138,7 @@ Blood uses escape analysis instead of explicit regions:
 fn process_in_scope(data: &Data) -> String {
     // Compiler analyzes escape behavior
     let result = format!("processed: {}", data.value);
-    result  // Ownership transferred out
+    result  // Value returned (copied under MVS)
 }
 
 fn batch_process(items: Vec<Item>) -> Vec<Result> {
@@ -196,25 +196,31 @@ func peek(conn &UniqueConnection) int {
 }
 ```
 
-### Blood: Affine Types with Move Semantics
+### Blood: Mutable Value Semantics with Opt-in Linear Types
 
 ```blood
-// Move semantics like Rust
-struct UniqueConnection {
+// Blood uses MVS (copy by default) - NOT move semantics
+struct Connection {
     handle: i32,
 }
 
-fn connect() -> UniqueConnection {
-    UniqueConnection { handle: open_connection() }
+fn connect() -> Connection {
+    Connection { handle: open_connection() }
 }
 
-fn use_connection(conn: UniqueConnection) {
-    // conn is moved (consumed) here
+fn use_connection(conn: Connection) {
+    // Under MVS, conn is COPIED here (not moved)
     do_work(conn.handle);
-}  // conn dropped here
+}
 
-// Borrow for non-consuming use
-fn peek(conn: &UniqueConnection) -> i32 {
+// For true linear semantics, use explicit qualifier:
+fn use_linear_connection(conn: linear Connection) {
+    // conn must be used exactly once (linear type)
+    do_work(conn.handle);
+}
+
+// Borrow for efficiency (avoids copy)
+fn peek(conn: &Connection) -> i32 {
     conn.handle
 }
 ```
@@ -223,11 +229,11 @@ fn peek(conn: &UniqueConnection) -> i32 {
 
 | Aspect | Vale | Blood |
 |--------|------|-------|
-| Default | Linear | Affine (move) |
-| Copy semantics | Explicit clone | `Copy` trait |
+| Default | Linear | Copy (MVS) |
+| Linear types | Always | Opt-in (`linear T`) |
+| Copy semantics | Explicit clone | Implicit (MVS) |
 | Borrow syntax | `&` | `&` / `&mut` |
-| Drop behavior | Automatic | Automatic |
-| Multiple borrows | Allowed | Rust-like rules |
+| Memory safety | Generational refs | Generational refs |
 
 ---
 

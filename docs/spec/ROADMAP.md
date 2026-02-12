@@ -1,8 +1,8 @@
 # Blood Implementation Roadmap
 
 **Version**: 0.2.0
-**Status**: Implementation In Progress
-**Last Updated**: 2026-01-09
+**Status**: Phases 0-5 Complete, Phase 6 Planned
+**Last Updated**: 2026-01-29
 
 This document outlines the implementation strategy for the Blood programming language, including compiler architecture, phases, milestones, and the bootstrap plan.
 
@@ -166,15 +166,15 @@ Phase 0 (Foundation)
 
 Each phase has explicit exit criteria:
 
-| Phase | Exit Criteria |
-|-------|---------------|
-| **Phase 0** | Can parse and type-check simple programs |
-| **Phase 1** | Can compile and run FizzBuzz |
-| **Phase 2** | Effect handlers work correctly |
-| **Phase 3** | Generational references pass all safety tests |
-| **Phase 4** | Content-addressed codebase is functional |
-| **Phase 5** | Fibers and concurrency work |
-| **Phase 6** | Compiler compiles itself |
+| Phase | Exit Criteria | Status |
+|-------|---------------|--------|
+| **Phase 0** | Can parse and type-check simple programs | ✅ Complete |
+| **Phase 1** | Can compile and run FizzBuzz | ✅ Complete |
+| **Phase 2** | Effect handlers work correctly | ✅ Complete |
+| **Phase 3** | Generational references pass all safety tests | ✅ Complete |
+| **Phase 4** | Content-addressed codebase is functional | ✅ Complete |
+| **Phase 5** | Fibers and concurrency work | ✅ Complete |
+| **Phase 6** | Compiler compiles itself | Planned |
 
 ---
 
@@ -780,17 +780,17 @@ $ diff bloodc_stage1 bloodc_stage2
 
 ### 11.1 Milestone Summary
 
-| Milestone | Description | Completion Criteria |
-|-----------|-------------|---------------------|
-| **M0** | Parser works | Can parse full grammar |
-| **M1** | Type checker works | Can type-check standard library |
-| **M2** | Hello World | Can compile and run simple programs |
-| **M3** | Effects work | Effect handlers compile and run |
-| **M4** | Memory safe | Generational references work |
-| **M5** | Content addressed | Codebase manager functional |
-| **M6** | Concurrent | Fibers and scheduler work |
-| **M7** | Self-hosting | Compiler compiles itself |
-| **M8** | Production ready | Stable API, documentation complete |
+| Milestone | Description | Completion Criteria | Status |
+|-----------|-------------|---------------------|--------|
+| **M0** | Parser works | Can parse full grammar | ✅ Complete |
+| **M1** | Type checker works | Can type-check standard library | ✅ Complete |
+| **M2** | Hello World | Can compile and run simple programs | ✅ Complete |
+| **M3** | Effects work | Effect handlers compile and run | ✅ Complete |
+| **M4** | Memory safe | Generational references work | ✅ Complete |
+| **M5** | Content addressed | Codebase manager functional | ✅ Complete |
+| **M6** | Concurrent | Fibers and scheduler work | ✅ Complete |
+| **M7** | Self-hosting | Compiler compiles itself | Planned |
+| **M8** | Production ready | Stable API, documentation complete | Planned |
 
 ### 11.2 Quality Gates
 

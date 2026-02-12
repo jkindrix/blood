@@ -847,32 +847,33 @@ impl<I: Iterator, F: FnMut(&I::Item)> Iterator for Inspect<I, F> {
     }
 }
 
-/// Iterator that flattens nested iterators
-pub struct Flatten<I: Iterator>
-where
-    I::Item: IntoIterator,
-{
-    outer: I,
-    inner: Option<<I::Item as IntoIterator>::IntoIter>,
-}
-
-impl<I: Iterator> Iterator for Flatten<I>
-where
-    I::Item: IntoIterator,
-{
-    type Item = <I::Item as IntoIterator>::Item;
-
-    fn next(self: &mut Self) -> Option<Self::Item> / pure {
-        loop {
-            if let Some(ref mut inner) = self.inner {
-                if let Some(item) = inner.next() {
-                    return Some(item);
-                }
-            }
-            self.inner = Some(self.outer.next()?.into_iter());
-        }
-    }
-}
+// TODO: Flatten requires fully qualified associated type syntax not yet supported
+// /// Iterator that flattens nested iterators
+// pub struct Flatten<I: Iterator>
+// where
+//     I::Item: IntoIterator,
+// {
+//     outer: I,
+//     inner: Option<<I::Item as IntoIterator>::IntoIter>,
+// }
+//
+// impl<I: Iterator> Iterator for Flatten<I>
+// where
+//     I::Item: IntoIterator,
+// {
+//     type Item = <I::Item as IntoIterator>::Item;
+//
+//     fn next(self: &mut Self) -> Option<Self::Item> / pure {
+//         loop {
+//             if let Some(ref mut inner) = self.inner {
+//                 if let Some(item) = inner.next() {
+//                     return Some(item);
+//                 }
+//             }
+//             self.inner = Some(self.outer.next()?.into_iter());
+//         }
+//     }
+// }
 
 /// Iterator that maps then flattens
 pub struct FlatMap<I, U: IntoIterator, F> {

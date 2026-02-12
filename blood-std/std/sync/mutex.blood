@@ -7,8 +7,8 @@ use crate::cell::UnsafeCell;
 
 /// A mutual exclusion lock
 ///
-/// Mutex provides interior mutability with runtime borrow checking
-/// and thread safety.
+/// Mutex provides interior mutability with runtime exclusive access
+/// enforcement and thread safety.
 pub struct Mutex<T: ?Sized> {
     locked: AtomicBool,
     data: UnsafeCell<T>,
@@ -121,13 +121,13 @@ impl<'a, T: ?Sized> Deref for MutexGuard<'a, T> {
     type Target = T;
 
     fn deref(self: &Self) -> &T / pure {
-        @unsafe { &*self.mutex.data.get() }
+        unsafe { &*self.mutex.data.get() }
     }
 }
 
 impl<'a, T: ?Sized> DerefMut for MutexGuard<'a, T> {
     fn deref_mut(self: &mut Self) -> &mut T / pure {
-        @unsafe { &mut *self.mutex.data.get() }
+        unsafe { &mut *self.mutex.data.get() }
     }
 }
 

@@ -247,40 +247,55 @@ impl Parser {
 }
 ```
 
-### 3.3 Move Semantics
+### 3.3 Move vs Copy Semantics
+
+**Key difference:** Blood uses Mutable Value Semantics (MVS) - values are copied by default.
 
 ```rust
-// Rust
+// Rust - move by default
 let s1 = String::from("hello");
 let s2 = s1;  // s1 is moved, cannot use
 // println!("{}", s1);  // ERROR: value moved
 ```
 
 ```blood
-// Blood - similar move semantics for linear types
-let s1 = String::from("hello");
-let s2 = s1;  // s1 is moved
-// println_str(s1);  // ERROR: value moved
+// Blood - COPY by default (MVS)
+let s1: String = String::from("hello");
+let s2: String = s1;  // s1 is COPIED (still usable!)
+println_str(s1);  // OK: s1 was copied, not moved
+
+// For single-use semantics, use explicit `linear` qualifier:
+let s3: linear String = String::from("world");
+let s4: linear String = s3;  // s3 consumed (linear type)
+// println_str(s3);  // ERROR: linear value already used
 ```
+
+**Migration tip:** In Blood, you don't need to think about "fighting the borrow checker"
+or worrying about moves. Values copy by default. Use `&T` for efficiency when needed,
+and `linear T` only when you specifically need single-use semantics.
 
 ### 3.4 Clone vs Copy
 
+**Key difference:** In Blood, all types copy by default (MVS). The `Copy` and `Clone`
+traits exist for compatibility but have different significance.
+
 ```rust
-// Rust
+// Rust - Copy trait enables implicit copy (otherwise move)
 #[derive(Clone, Copy)]
-struct Point { x: i32, y: i32 }
+struct Point { x: i32, y: i32 }  // Copies implicitly
 
 #[derive(Clone)]
-struct Buffer { data: Vec<u8> }
+struct Buffer { data: Vec<u8> }  // Must call .clone() explicitly
 ```
 
 ```blood
-// Blood - similar
-#[derive(Clone, Copy)]
-struct Point { x: i32, y: i32 }
+// Blood - all types copy implicitly (MVS)
+struct Point { x: i32, y: i32 }  // Copies by default (no trait needed!)
 
-#[derive(Clone)]
-struct Buffer { data: Vec<u8> }
+struct Buffer { data: Vec<u8> }  // Also copies by default
+
+// Copy/Clone traits exist for API compatibility but Blood's MVS
+// means you rarely need to think about them.
 ```
 
 ### 3.5 Mutable References

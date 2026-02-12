@@ -470,7 +470,7 @@ fn stack_example() -> i32 {
 ```blood
 fn region_example() -> Box<i32> {
     let x = Box::new(42)  // Region allocated
-    x                      // Ownership transferred out
+    x                      // Box returned to caller
 }
 
 fn use_region(b: Box<i32>) {

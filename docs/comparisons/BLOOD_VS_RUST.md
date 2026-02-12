@@ -65,16 +65,17 @@ Blood prevents memory errors through **runtime generation checks**:
 
 ```blood
 fn main() {
-    let s1 = String::from("hello");
-    let s2 = s1.clone();  // explicit clone, s1 still valid
+    let s1: String = String::from("hello");
+    let s2: String = s1;  // s1 is COPIED (MVS - copy by default)
 
-    // Or transfer ownership explicitly
-    let s3 = move s1;  // s1 is now invalid
+    // Both s1 and s2 are valid and independent
+    println_str(s1);  // OK: s1 still valid
+    println_str(s2);  // OK: s2 is a copy
 
-    // References work naturally
-    let s4 = String::from("world");
-    let len = calculate_length(&s4);
-    println!("{} has length {}", s4, len);
+    // References work naturally (for efficiency, to avoid copying)
+    let s3: String = String::from("world");
+    let len: usize = calculate_length(&s3);
+    println_str(s3);  // OK: only borrowed, not copied
 }
 
 fn calculate_length(s: &String) -> usize {
@@ -82,7 +83,12 @@ fn calculate_length(s: &String) -> usize {
 }
 ```
 
-**Blood's Key Concepts:**
+**Blood's Key Concepts (Mutable Value Semantics):**
+1. Values are **copied by default** (no implicit moves like Rust)
+2. Use `&T` references when you want to avoid copying (efficiency)
+3. For single-use resources, use explicit `linear T` qualifier
+
+**Blood's Key Concepts (Memory Safety):**
 1. Each heap allocation has a generation counter
 2. References store a snapshot of the generation
 3. Access checks compare stored vs current generation
