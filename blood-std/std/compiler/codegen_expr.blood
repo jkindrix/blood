@@ -464,6 +464,8 @@ pub fn emit_place_addr(
                 // Load the pointer value
                 let result = ctx.fresh_temp();
                 ctx.emit_load(result.as_str(), "ptr", current.as_str());
+                // Emit generation check if the local has a tracked generation
+                emit_generation_check(ctx, place.local, &result);
                 current = result;
                 // After deref, try to get the inner type's ADT info
                 current_adt_def_id = resolve_deref_adt_def_id(ctx, place.local, i);
@@ -686,6 +688,62 @@ pub fn emit_place_addr(
     }
 
     current
+}
+
+/// Emits a generation validation check for a dereferenced pointer.
+/// If the local has a tracked generation (i.e., it was region-allocated),
+/// validates that the pointer's generation matches the expected generation.
+/// No-ops for stack-allocated locals or locals without generation tracking.
+fn emit_generation_check(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    local: mir_def::MirLocalId,
+    ptr_name: &String,
+) {
+    // Only emit check for locals with tracked generations
+    let gen_alloca = match ctx.get_local_generation(local) {
+        Option::Some(name) => name,
+        Option::None => { return; }
+    };
+
+    // Load expected generation from stack alloca
+    let expected_gen = ctx.fresh_temp();
+    ctx.emit_load(expected_gen.as_str(), "i32", gen_alloca.as_str());
+
+    // Convert pointer to i64 address for runtime call
+    let ptr_addr = ctx.fresh_temp();
+    ctx.emit_cast(ptr_addr.as_str(), "ptrtoint", "ptr", ptr_name.as_str(), "i64");
+
+    // Call blood_validate_generation(address, expected_generation) -> i32
+    // Returns 0 if valid, 1 if stale
+    let gen_result = ctx.fresh_temp();
+    let mut args: Vec<(String, String)> = Vec::new();
+    args.push((common::make_string("i64"), clone_string(&ptr_addr)));
+    args.push((common::make_string("i32"), clone_string(&expected_gen)));
+    ctx.emit_call(Option::Some(gen_result.as_str()), "i32", "@blood_validate_generation", &args);
+
+    // Check if stale (result != 0)
+    let is_stale = ctx.fresh_temp();
+    ctx.emit_icmp(is_stale.as_str(), "ne", "i32", gen_result.as_str(), "0");
+
+    // Branch: stale -> panic, valid -> continue
+    let stale_label = ctx.fresh_label();
+    let valid_label = ctx.fresh_label();
+    ctx.emit_cond_br(is_stale.as_str(), stale_label.as_str(), valid_label.as_str());
+
+    // Stale path: get actual generation for diagnostic, then panic
+    ctx.emit_label(stale_label.as_str());
+    let actual_gen = ctx.fresh_temp();
+    let mut get_args: Vec<(String, String)> = Vec::new();
+    get_args.push((common::make_string("i64"), clone_string(&ptr_addr)));
+    ctx.emit_call(Option::Some(actual_gen.as_str()), "i32", "@blood_get_generation", &get_args);
+    let mut panic_args: Vec<(String, String)> = Vec::new();
+    panic_args.push((common::make_string("i32"), clone_string(&expected_gen)));
+    panic_args.push((common::make_string("i32"), clone_string(&actual_gen)));
+    ctx.emit_call(Option::None, "void", "@blood_stale_reference_panic", &panic_args);
+    ctx.emit_unreachable();
+
+    // Valid path: continue with dereferenced pointer
+    ctx.emit_label(valid_label.as_str());
 }
 
 /// Resolves the LLVM base type for a MIR local.

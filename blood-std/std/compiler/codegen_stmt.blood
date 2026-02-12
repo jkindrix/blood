@@ -40,11 +40,18 @@ pub fn emit_statement(
         &mir_stmt::StatementKind::StorageDead(ref local) => {
             let name = ctx.local_alloca_name(*local);
             if ctx.is_region_allocated(*local) {
-                // Region-allocated local: using blood_alloc_simple, no region tracking.
-                // Skip unregister (blood_alloc_simple doesn't use region tracker).
-                ctx.write("    ; storage dead (region) ");
+                // Region-allocated local: free the heap allocation and unregister
+                // from the generation tracking system.
+                ctx.write("    ; storage dead (region free) ");
                 ctx.write_string(&name);
                 ctx.newline();
+                let loaded_ptr = ctx.fresh_temp();
+                ctx.emit_load(loaded_ptr.as_str(), "ptr", name.as_str());
+                let addr_val = ctx.fresh_temp();
+                ctx.emit_cast(addr_val.as_str(), "ptrtoint", "ptr", loaded_ptr.as_str(), "i64");
+                let mut unreg_args: Vec<(String, String)> = Vec::new();
+                unreg_args.push((common::make_string("i64"), clone_string(&addr_val)));
+                ctx.emit_call(Option::None, "void", "@blood_unregister_allocation", &unreg_args);
             } else if ctx.is_persistent_allocated(*local) {
                 // Persistent-allocated local: decrement reference count
                 ctx.write("    ; storage dead (persistent) ");
@@ -661,8 +668,8 @@ pub fn emit_allocas_with_escapes(
                 emit_stack_local(ctx, &name, &ty_str);
             }
             &mir_escape::MemoryTier::Region => {
-                // Region allocation
-                emit_region_local(ctx, &local.ty, &name);
+                // Region allocation with generation tracking
+                emit_region_local(ctx, &local.ty, &name, local_id);
                 ctx.mark_region_allocated(local_id);
             }
             &mir_escape::MemoryTier::Persistent => {
@@ -695,30 +702,38 @@ fn emit_stack_local(
     }
 }
 
-/// Emits a region-allocated local.
+/// Emits a region-allocated local with generation tracking.
 fn emit_region_local(
     ctx: &mut codegen_ctx::CodegenCtx,
     ty: &hir_ty::Type,
     name: &String,
+    local_id: mir_def::MirLocalId,
 ) {
     // Allocate pointer slot on stack
     ctx.emit_alloca(name.as_str(), "ptr");
 
-    // Use blood_alloc_simple(size) for heap allocation.
-    // blood_region_alloc requires an active region (create + activate), which
-    // the self-hosted codegen doesn't emit yet. blood_alloc_simple works without
-    // region setup and provides the same heap allocation semantics.
+    // Allocate generation slot on stack (i32)
+    let mut gen_name = clone_string(name);
+    gen_name.push_str("_gen");
+    ctx.emit_alloca(gen_name.as_str(), "i32");
+
+    // Use blood_alloc_or_abort(size, gen_ptr) for heap allocation with
+    // generation tracking. The generation value is written to the out-pointer.
     let size = type_size_with_ctx(ctx, ty);
     let size_str = codegen_types::format_u64(size);
     let result_tmp = ctx.fresh_temp();
     let mut args: Vec<(String, String)> = Vec::new();
     args.push((common::make_string("i64"), size_str));
-    ctx.emit_call(Option::Some(result_tmp.as_str()), "i64", "@blood_alloc_simple", &args);
+    args.push((common::make_string("ptr"), clone_string(&gen_name)));
+    ctx.emit_call(Option::Some(result_tmp.as_str()), "i64", "@blood_alloc_or_abort", &args);
 
     // Convert i64 to ptr and store
     let ptr_tmp = ctx.fresh_temp();
     ctx.emit_cast(ptr_tmp.as_str(), "inttoptr", "i64", result_tmp.as_str(), "ptr");
     ctx.emit_store("ptr", ptr_tmp.as_str(), name.as_str());
+
+    // Record the generation alloca name for this local
+    ctx.set_local_generation(local_id, gen_name);
 }
 
 /// Emits a persistent-allocated local.

@@ -117,6 +117,10 @@ pub struct CodegenCtx {
     region_locals_hash: hashmap::HashMapU64U32,
     /// Hash set for persistent_locals: local_id -> 1 if present
     persistent_locals_hash: hashmap::HashMapU64U32,
+    /// Hash index for generation allocas: local_id -> index in local_generations vec
+    local_generations_hash: hashmap::HashMapU64U32,
+    /// Generation alloca SSA names for region-allocated locals.
+    local_generations: Vec<LocalGeneration>,
     /// Hash index for string_table: string content hash -> index in string_table vec
     string_table_hash: hashmap::HashMapU64U32,
     /// Hash set for static def_ids: def_id -> 1 if static
@@ -171,6 +175,12 @@ struct PersistentLocalEntry {
     local_id: u32,
 }
 
+/// Mapping from a MIR local to its generation alloca SSA name.
+struct LocalGeneration {
+    local_id: u32,
+    gen_name: String,
+}
+
 /// Mapping from a DefId to its global name (for functions, consts, statics).
 pub struct DefNameEntry {
     pub def_id: u32,
@@ -210,6 +220,8 @@ impl CodegenCtx {
             local_hir_types_hash: hashmap::HashMapU64U32::new(),
             region_locals_hash: hashmap::HashMapU64U32::new(),
             persistent_locals_hash: hashmap::HashMapU64U32::new(),
+            local_generations_hash: hashmap::HashMapU64U32::new(),
+            local_generations: Vec::new(),
             string_table_hash: hashmap::HashMapU64U32::new(),
             static_defs_hash: hashmap::HashMapU64U32::new(),
             write_buffer: String::new(),
@@ -250,6 +262,8 @@ impl CodegenCtx {
             local_hir_types_hash: hashmap::HashMapU64U32::new(),
             region_locals_hash: hashmap::HashMapU64U32::new(),
             persistent_locals_hash: hashmap::HashMapU64U32::new(),
+            local_generations_hash: hashmap::HashMapU64U32::new(),
+            local_generations: Vec::new(),
             string_table_hash: hashmap::HashMapU64U32::new(),
             static_defs_hash: hashmap::HashMapU64U32::new(),
             write_buffer: String::new(),
@@ -533,6 +547,26 @@ impl CodegenCtx {
         self.persistent_locals_hash.contains_key(local.index as u64)
     }
 
+    /// Records the generation alloca SSA name for a region-allocated local.
+    pub fn set_local_generation(self: &mut CodegenCtx, local: mir_def::MirLocalId, gen_name: String) {
+        let idx = self.local_generations.len() as u32;
+        self.local_generations.push(LocalGeneration {
+            local_id: local.index,
+            gen_name: gen_name,
+        });
+        self.local_generations_hash.insert(local.index as u64, idx);
+    }
+
+    /// Gets the generation alloca SSA name for a local, if it has one.
+    pub fn get_local_generation(self: &CodegenCtx, local: mir_def::MirLocalId) -> Option<String> {
+        match self.local_generations_hash.get(local.index as u64) {
+            Option::Some(idx) => {
+                Option::Some(clone_string(&self.local_generations[idx as usize].gen_name))
+            }
+            Option::None => Option::None,
+        }
+    }
+
     /// Clears all local names, types, and signedness (for reuse between functions).
     pub fn clear_locals(self: &mut CodegenCtx) {
         self.local_names.clear();
@@ -548,6 +582,8 @@ impl CodegenCtx {
         self.local_hir_types_hash = hashmap::HashMapU64U32::new();
         self.region_locals_hash = hashmap::HashMapU64U32::new();
         self.persistent_locals_hash = hashmap::HashMapU64U32::new();
+        self.local_generations.clear();
+        self.local_generations_hash = hashmap::HashMapU64U32::new();
     }
 
     // ======== ADT Registry ========
@@ -1257,6 +1293,8 @@ impl CodegenCtx {
             local_hir_types_hash: hashmap::HashMapU64U32::new(),
             region_locals_hash: hashmap::HashMapU64U32::new(),
             persistent_locals_hash: hashmap::HashMapU64U32::new(),
+            local_generations_hash: hashmap::HashMapU64U32::new(),
+            local_generations: Vec::new(),
             string_table_hash: hashmap::HashMapU64U32::new(),
             static_defs_hash: hashmap::HashMapU64U32::new(),
             write_buffer: String::new(),
