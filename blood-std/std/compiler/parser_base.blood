@@ -929,8 +929,46 @@ pub fn parse_string_from_span(parser: &mut Parser, span: common::Span) -> String
                 result.push(92 as char);
                 result.push(esc as char);
             }
-        } else {
+        } else if b < 128 {
+            // ASCII byte — safe to push directly
             result.push(b as char);
+        } else {
+            // Multi-byte UTF-8 sequence — decode to code point then push
+            // UTF-8 encoding:
+            //   110xxxxx 10xxxxxx                     → 2 bytes
+            //   1110xxxx 10xxxxxx 10xxxxxx            → 3 bytes
+            //   11110xxx 10xxxxxx 10xxxxxx 10xxxxxx   → 4 bytes
+            if b >= 240 && pos + 3 < end {
+                // 4-byte sequence: 11110xxx
+                let b1 = parser.source_byte_at(pos + 1);
+                let b2 = parser.source_byte_at(pos + 2);
+                let b3 = parser.source_byte_at(pos + 3);
+                let cp = ((b as u32 & 7) << 18)
+                       | ((b1 as u32 & 63) << 12)
+                       | ((b2 as u32 & 63) << 6)
+                       | (b3 as u32 & 63);
+                result.push(cp as char);
+                pos = pos + 3; // +1 at end of loop
+            } else if b >= 224 && pos + 2 < end {
+                // 3-byte sequence: 1110xxxx
+                let b1 = parser.source_byte_at(pos + 1);
+                let b2 = parser.source_byte_at(pos + 2);
+                let cp = ((b as u32 & 15) << 12)
+                       | ((b1 as u32 & 63) << 6)
+                       | (b2 as u32 & 63);
+                result.push(cp as char);
+                pos = pos + 2; // +1 at end of loop
+            } else if b >= 192 && pos + 1 < end {
+                // 2-byte sequence: 110xxxxx
+                let b1 = parser.source_byte_at(pos + 1);
+                let cp = ((b as u32 & 31) << 6)
+                       | (b1 as u32 & 63);
+                result.push(cp as char);
+                pos = pos + 1; // +1 at end of loop
+            } else {
+                // Invalid UTF-8 continuation byte or truncated — emit as-is
+                result.push(b as char);
+            }
         }
         pos = pos + 1;
     }
@@ -988,7 +1026,36 @@ pub fn parse_char_from_span(parser: &mut Parser, span: common::Span) -> char {
         return esc as char;
     }
 
-    b as char
+    // Decode UTF-8 multi-byte sequences for non-ASCII characters
+    if b < 128 {
+        b as char
+    } else if b >= 240 && pos + 3 < end {
+        // 4-byte UTF-8 sequence
+        let b1 = parser.source_byte_at(pos + 1);
+        let b2 = parser.source_byte_at(pos + 2);
+        let b3 = parser.source_byte_at(pos + 3);
+        let cp = ((b as u32 & 7) << 18)
+               | ((b1 as u32 & 63) << 12)
+               | ((b2 as u32 & 63) << 6)
+               | (b3 as u32 & 63);
+        cp as char
+    } else if b >= 224 && pos + 2 < end {
+        // 3-byte UTF-8 sequence
+        let b1 = parser.source_byte_at(pos + 1);
+        let b2 = parser.source_byte_at(pos + 2);
+        let cp = ((b as u32 & 15) << 12)
+               | ((b1 as u32 & 63) << 6)
+               | (b2 as u32 & 63);
+        cp as char
+    } else if b >= 192 && pos + 1 < end {
+        // 2-byte UTF-8 sequence
+        let b1 = parser.source_byte_at(pos + 1);
+        let cp = ((b as u32 & 31) << 6)
+               | (b1 as u32 & 63);
+        cp as char
+    } else {
+        b as char
+    }
 }
 
 /// Convert a hex digit byte to its numeric value (0-15).

@@ -2670,10 +2670,40 @@ fn parse_format_segments(fmt: &str) -> Vec<FormatSegment> {
                 current_text.push('}');
                 pos = pos + 1;
             }
-        } else {
-            // Regular character - use byte directly since Blood strings are UTF-8
+        } else if b < 128 {
+            // ASCII byte — safe to push directly
             current_text.push(b as char);
             pos = pos + 1;
+        } else {
+            // Multi-byte UTF-8 sequence — decode to code point then push
+            if b >= 240 && pos + 3 < len {
+                let b1 = bytes[pos + 1];
+                let b2 = bytes[pos + 2];
+                let b3 = bytes[pos + 3];
+                let cp = ((b as u32 & 7) << 18)
+                       | ((b1 as u32 & 63) << 12)
+                       | ((b2 as u32 & 63) << 6)
+                       | (b3 as u32 & 63);
+                current_text.push(cp as char);
+                pos = pos + 4;
+            } else if b >= 224 && pos + 2 < len {
+                let b1 = bytes[pos + 1];
+                let b2 = bytes[pos + 2];
+                let cp = ((b as u32 & 15) << 12)
+                       | ((b1 as u32 & 63) << 6)
+                       | (b2 as u32 & 63);
+                current_text.push(cp as char);
+                pos = pos + 3;
+            } else if b >= 192 && pos + 1 < len {
+                let b1 = bytes[pos + 1];
+                let cp = ((b as u32 & 31) << 6)
+                       | (b1 as u32 & 63);
+                current_text.push(cp as char);
+                pos = pos + 2;
+            } else {
+                current_text.push(b as char);
+                pos = pos + 1;
+            }
         }
     }
 
