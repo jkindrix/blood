@@ -113,10 +113,6 @@ impl BloodOptLevel {
 /// `default<ON>` pipeline which is well-tested and these issues may no longer
 /// apply. We use the standard pipeline rather than a custom pass list.
 fn optimize_module(module: &Module, opt_level: BloodOptLevel, target_machine: &TargetMachine) {
-    if opt_level == BloodOptLevel::None {
-        return;
-    }
-
     // Use the new LLVM pass manager pipeline.
     // The `default<ON>` pipelines correspond to clang's -O1, -O2, -O3 levels.
     let passes = match opt_level {
@@ -143,8 +139,9 @@ fn optimize_module(module: &Module, opt_level: BloodOptLevel, target_machine: &T
 /// isolation via a fresh PassManager, the new pass manager applies each pass
 /// cumulatively to the module. This means pass N sees the result of passes 1..N-1.
 ///
-/// Returns a Vec of (pass_name, ir_after_pass) pairs.
-pub fn optimize_module_bisect(module: &Module) -> Vec<(String, String)> {
+/// Returns a Vec of (pass_name, ir_after_pass, success) tuples.
+/// If a pass fails, subsequent passes are skipped since the module state may be corrupt.
+pub fn optimize_module_bisect(module: &Module) -> Vec<(String, String, bool)> {
     let pass_names = vec![
         "mem2reg",
         "reassociate",
@@ -176,9 +173,17 @@ pub fn optimize_module_bisect(module: &Module) -> Vec<(String, String)> {
 
     for pass_name in &pass_names {
         let options = PassBuilderOptions::create();
-        let _ = module.run_passes(pass_name, &target_machine, options);
+        let success = match module.run_passes(pass_name, &target_machine, options) {
+            Ok(()) => true,
+            Err(e) => {
+                eprintln!("Warning: LLVM pass '{}' failed: {}; skipping remaining passes", pass_name, e.to_string());
+                let ir = module.print_to_string().to_string();
+                results.push((pass_name.to_string(), ir, false));
+                break;
+            }
+        };
         let ir = module.print_to_string().to_string();
-        results.push((pass_name.to_string(), ir));
+        results.push((pass_name.to_string(), ir, success));
     }
 
     results

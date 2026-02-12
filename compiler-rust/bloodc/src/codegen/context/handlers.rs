@@ -367,9 +367,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
                 }
                 BasicValueEnum::VectorValue(_) | BasicValueEnum::ScalableVectorValue(_) => {
-                    // SIMD vectors are not expected in normal handler returns
+                    // SIMD and scalable vectors are not expected in normal handler returns
                     return Err(vec![Diagnostic::error(
-                        "Vector return types not supported in handler return clauses".to_string(),
+                        "Vector and scalable vector return types not supported in handler return clauses".to_string(),
                         span,
                     )]);
                 }
@@ -766,8 +766,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                                     BasicValueEnum::StructValue(_) | BasicValueEnum::ArrayValue(_) | BasicValueEnum::VectorValue(_) | BasicValueEnum::ScalableVectorValue(_) => {
                                         return Err(vec![Diagnostic::error(
                                             format!(
-                                                "ICE: handler state field '{}' has i64 layout but write-back value is aggregate type {:?}; \
-                                                 cannot convert to i64. This indicates a mismatch between handler state layout and body local types.",
+                                                "ICE: handler state field '{}' has i64 layout but write-back value is aggregate type {:?} \
+                                                 (struct, array, vector, or scalable vector); cannot convert to i64. This indicates a \
+                                                 mismatch between handler state layout and body local types.",
                                                 field_name, current_val.get_type()
                                             ),
                                             span,
@@ -845,7 +846,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     }
                     BasicValueEnum::VectorValue(_) | BasicValueEnum::ScalableVectorValue(_) => {
                         return Err(vec![Diagnostic::error(
-                            "Vector return types not supported in handler operations".to_string(),
+                            "Vector and scalable vector return types not supported in handler operations".to_string(),
                             span,
                         )]);
                     }
@@ -1233,7 +1234,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     }
                     BasicValueEnum::VectorValue(_) | BasicValueEnum::ScalableVectorValue(_) => {
                         return Err(vec![Diagnostic::error(
-                            "Handler cannot return vector type directly - use a pointer or wrapper".to_string(),
+                            "Handler cannot return vector or scalable vector type directly - use a pointer or wrapper".to_string(),
                             span
                         )]);
                     }

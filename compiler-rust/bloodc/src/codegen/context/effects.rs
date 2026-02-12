@@ -418,7 +418,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         return Err(vec![ice_err!(
                             arg.span,
                             "unsupported argument type in perform expression";
-                            "type" => "VectorValue",
+                            "type" => "VectorValue or ScalableVectorValue",
                             "expected" => "IntValue, FloatValue, PointerValue, StructValue, or ArrayValue"
                         )]);
                     }
@@ -626,9 +626,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     BasicValueEnum::ArrayValue(_)
                     | BasicValueEnum::VectorValue(_)
                     | BasicValueEnum::ScalableVectorValue(_) => {
-                        // Arrays and vectors cannot be directly converted to i64 for resume
+                        // Arrays, vectors, and scalable vectors cannot be directly converted to i64 for resume
                         return Err(vec![Diagnostic::error(
-                            "cannot resume with array or vector value".to_string(),
+                            "cannot resume with array, vector, or scalable vector value".to_string(),
                             self.current_span(),
                         )]);
                     }
@@ -983,9 +983,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     BasicValueEnum::ArrayValue(_)
                     | BasicValueEnum::VectorValue(_)
                     | BasicValueEnum::ScalableVectorValue(_) => {
-                        // Arrays and vectors cannot be directly converted to i64
+                        // Arrays, vectors, and scalable vectors cannot be directly converted to i64
                         return Err(vec![Diagnostic::error(
-                            "effect handler body returned array or vector value which cannot be converted to result".to_string(),
+                            "effect handler body returned array, vector, or scalable vector value which cannot be converted to result".to_string(),
                             self.current_span(),
                         )]);
                     }

@@ -2923,6 +2923,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // Save current function state before compiling monomorphized function
         // This is necessary because compile_mir_body modifies these fields
         let saved_locals = std::mem::take(&mut self.locals);
+        let saved_local_types = std::mem::take(&mut self.local_types);
         let saved_local_generations = std::mem::take(&mut self.local_generations);
         let saved_persistent_slot_ids = std::mem::take(&mut self.persistent_slot_ids);
         let saved_current_fn = self.current_fn.take();
@@ -2948,8 +2949,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             for (closure_def_id, closure_mir) in pending_closures {
                 // Clear state for each closure compilation
                 self.locals.clear();
+                self.local_types.clear();
                 self.local_generations.clear();
-        self.persistent_slot_ids.clear();
+                self.persistent_slot_ids.clear();
 
                 // Run escape analysis on the closure
                 let mut analyzer = EscapeAnalyzer::new();
@@ -2965,6 +2967,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // Restore previous function state
         self.locals = saved_locals;
+        self.local_types = saved_local_types;
         self.local_generations = saved_local_generations;
         self.persistent_slot_ids = saved_persistent_slot_ids;
         self.current_fn = saved_current_fn;
@@ -3073,6 +3076,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // Save current function state
         let saved_locals = std::mem::take(&mut self.locals);
+        let saved_local_types = std::mem::take(&mut self.local_types);
         let saved_local_generations = std::mem::take(&mut self.local_generations);
         let saved_persistent_slot_ids = std::mem::take(&mut self.persistent_slot_ids);
         let saved_current_fn = self.current_fn.take();
@@ -3094,6 +3098,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
             for (closure_def_id, closure_mir) in pending_closures {
                 self.locals.clear();
+                self.local_types.clear();
                 self.local_generations.clear();
                 self.persistent_slot_ids.clear();
 
@@ -3109,6 +3114,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // Restore previous function state
         self.locals = saved_locals;
+        self.local_types = saved_local_types;
         self.local_generations = saved_local_generations;
         self.persistent_slot_ids = saved_persistent_slot_ids;
         self.current_fn = saved_current_fn;

@@ -116,12 +116,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         self.builder.position_at_end(entry);
 
         // Set up environment access - first parameter is the environment pointer
+        // With LLVM 18 opaque pointers, env_ptr is already an opaque ptr - no cast needed
         let env_ptr = fn_value.get_first_param()
             .ok_or_else(|| vec![Diagnostic::error("Closure missing env parameter", span)])?
             .into_pointer_value();
-        let typed_env_ptr = self.builder
-            .build_pointer_cast(env_ptr, self.context.ptr_type(AddressSpace::default()), "env")
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
         // Map captured variables from environment struct
         for (i, cap) in captures.iter().enumerate() {
@@ -139,7 +137,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 let zero = self.context.i32_type().const_int(0, false);
                 let idx = self.context.i32_type().const_int(i as u64, false);
                 let cap_ptr = unsafe {
-                    self.builder.build_gep(env_struct_type, typed_env_ptr, &[zero, idx], "cap.ptr")
+                    self.builder.build_gep(env_struct_type, env_ptr, &[zero, idx], "cap.ptr")
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
                 };
                 let local_alloca = self.builder
