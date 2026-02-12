@@ -1,0 +1,217 @@
+// Blood Standard Library - Marker Traits
+//
+// Marker traits provide compile-time guarantees about types.
+
+/// Trait for types that can be copied bit-by-bit
+///
+/// Copy types have a trivial clone that just copies bits.
+/// Implementing Copy requires Clone.
+pub trait Copy: Clone {}
+
+/// Trait for types that need cleanup when they go out of scope
+///
+/// Drop is called automatically when a value goes out of scope.
+pub trait Drop {
+    /// Runs the destructor for this type
+    fn drop(self: &mut Self) / pure;
+}
+
+/// Trait for types with a known size at compile time
+///
+/// Most types are Sized. Notable exceptions are trait objects and slices.
+pub trait Sized {}
+
+/// Trait for types that can be safely sent between threads
+///
+/// Send types can be transferred to another thread.
+pub trait Send {}
+
+/// Trait for types that can be safely shared between threads
+///
+/// Sync types can be referenced from multiple threads simultaneously.
+/// A type T is Sync if &T is Send.
+pub trait Sync {}
+
+/// Trait for types that have no interior mutability
+///
+/// Freeze types guarantee that if you have &T, no mutation can occur.
+pub trait Freeze {}
+
+/// Trait for types that can be safely uninitialized
+///
+/// # Safety
+/// Only implement for types where all bit patterns are valid.
+pub unsafe trait Zeroable {
+    /// Creates a zeroed value
+    fn zeroed() -> Self / pure;
+}
+
+/// Marker indicating a type has no interior mutability through &self
+pub struct PhantomData<T>;
+
+impl<T> PhantomData<T> {
+    pub const fn new() -> Self {
+        PhantomData
+    }
+}
+
+impl<T> Clone for PhantomData<T> {
+    fn clone(self: &Self) -> Self / pure {
+        PhantomData
+    }
+}
+
+impl<T> Copy for PhantomData<T> {}
+
+impl<T> Default for PhantomData<T> {
+    fn default() -> Self / pure {
+        PhantomData
+    }
+}
+
+impl<T> PartialEq for PhantomData<T> {
+    fn eq(self: &Self, _other: &Self) -> bool / pure {
+        true
+    }
+}
+
+impl<T> Eq for PhantomData<T> {}
+
+impl<T> Hash for PhantomData<T> {
+    fn hash<H: Hasher>(self: &Self, _state: &mut H) / pure {}
+}
+
+impl<T> Debug for PhantomData<T> {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        f.write_str("PhantomData")
+    }
+}
+
+// Copy implementations for primitives
+
+impl Copy for bool {}
+impl Copy for char {}
+impl Copy for i8 {}
+impl Copy for i16 {}
+impl Copy for i32 {}
+impl Copy for i64 {}
+impl Copy for i128 {}
+impl Copy for u8 {}
+impl Copy for u16 {}
+impl Copy for u32 {}
+impl Copy for u64 {}
+impl Copy for u128 {}
+impl Copy for usize {}
+impl Copy for isize {}
+impl Copy for f32 {}
+impl Copy for f64 {}
+impl Copy for unit {}
+
+// Copy for references
+impl<'a, T: ?Sized> Copy for &'a T {}
+
+// Copy for arrays of Copy types
+impl<T: Copy, const N: usize> Copy for [T; N] {}
+
+// Copy for tuples of Copy types
+impl<A: Copy> Copy for (A,) {}
+impl<A: Copy, B: Copy> Copy for (A, B) {}
+impl<A: Copy, B: Copy, C: Copy> Copy for (A, B, C) {}
+impl<A: Copy, B: Copy, C: Copy, D: Copy> Copy for (A, B, C, D) {}
+
+// Send implementations for primitives and basic types
+
+impl Send for bool {}
+impl Send for char {}
+impl Send for i8 {}
+impl Send for i16 {}
+impl Send for i32 {}
+impl Send for i64 {}
+impl Send for i128 {}
+impl Send for u8 {}
+impl Send for u16 {}
+impl Send for u32 {}
+impl Send for u64 {}
+impl Send for u128 {}
+impl Send for usize {}
+impl Send for isize {}
+impl Send for f32 {}
+impl Send for f64 {}
+impl Send for unit {}
+impl Send for String {}
+
+impl<T: Send> Send for Option<T> {}
+impl<T: Send, E: Send> Send for Result<T, E> {}
+impl<T: Send> Send for Vec<T> {}
+impl<T: Send> Send for Box<T> {}
+
+// Sync implementations
+
+impl Sync for bool {}
+impl Sync for char {}
+impl Sync for i8 {}
+impl Sync for i16 {}
+impl Sync for i32 {}
+impl Sync for i64 {}
+impl Sync for i128 {}
+impl Sync for u8 {}
+impl Sync for u16 {}
+impl Sync for u32 {}
+impl Sync for u64 {}
+impl Sync for u128 {}
+impl Sync for usize {}
+impl Sync for isize {}
+impl Sync for f32 {}
+impl Sync for f64 {}
+impl Sync for unit {}
+impl Sync for String {}
+
+impl<T: Sync> Sync for Option<T> {}
+impl<T: Sync, E: Sync> Sync for Result<T, E> {}
+impl<T: Sync> Sync for Vec<T> {}
+
+// Zeroable implementations
+
+unsafe impl Zeroable for bool {
+    fn zeroed() -> Self / pure { false }
+}
+
+unsafe impl Zeroable for u8 {
+    fn zeroed() -> Self / pure { 0 }
+}
+
+unsafe impl Zeroable for u16 {
+    fn zeroed() -> Self / pure { 0 }
+}
+
+unsafe impl Zeroable for u32 {
+    fn zeroed() -> Self / pure { 0 }
+}
+
+unsafe impl Zeroable for u64 {
+    fn zeroed() -> Self / pure { 0 }
+}
+
+unsafe impl Zeroable for usize {
+    fn zeroed() -> Self / pure { 0 }
+}
+
+unsafe impl Zeroable for i8 {
+    fn zeroed() -> Self / pure { 0 }
+}
+
+unsafe impl Zeroable for i16 {
+    fn zeroed() -> Self / pure { 0 }
+}
+
+unsafe impl Zeroable for i32 {
+    fn zeroed() -> Self / pure { 0 }
+}
+
+unsafe impl Zeroable for i64 {
+    fn zeroed() -> Self / pure { 0 }
+}
+
+unsafe impl Zeroable for isize {
+    fn zeroed() -> Self / pure { 0 }
+}

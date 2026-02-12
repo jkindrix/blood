@@ -1,0 +1,31 @@
+fn main() -> i32 {
+    // Region block with scalar return
+    let x: i32 = region {
+        let a: i32 = 21;
+        a * 2
+    };
+
+    // Region block with unit return (side effects)
+    region {
+        let b: i32 = 10;
+        let c: i32 = b + 1;
+    };
+
+    // Nested expression using region result
+    let y: i32 = region {
+        let d: i32 = x + 8;
+        d
+    };
+
+    // x should be 42, y should be 50
+    // Return 0 on success
+    if x == 42 {
+        if y == 50 {
+            0
+        } else {
+            2
+        }
+    } else {
+        1
+    }
+}

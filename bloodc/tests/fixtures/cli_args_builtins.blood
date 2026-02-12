@@ -1,0 +1,38 @@
+// Test command-line argument builtins
+
+pub fn test_args_count() -> i32 {
+    // Get number of arguments
+    args_count()
+}
+
+pub fn test_args_get_program_name() -> &str {
+    // Get first argument (program name)
+    args_get(0)
+}
+
+pub fn test_args_get_out_of_bounds() -> bool {
+    // Getting an out-of-bounds argument should return empty string
+    let arg: &str = args_get(9999);
+    arg.len() == 0
+}
+
+pub fn test_args_join() -> &str {
+    // Join all arguments
+    args_join()
+}
+
+pub fn main() -> i32 {
+    // These tests just verify the builtins are callable with correct types
+    let count = test_args_count();
+    let _program = test_args_get_program_name();
+    let oob_test = test_args_get_out_of_bounds();
+    let _joined = test_args_join();
+
+    // If args haven't been initialized, count will be 0
+    // which is valid behavior
+    if oob_test {
+        0  // Success
+    } else {
+        1  // Failure
+    }
+}

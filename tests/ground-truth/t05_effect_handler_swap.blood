@@ -1,0 +1,57 @@
+// Test: handler state with multiple fields
+// EXPECT: 3
+// EXPECT: 7
+effect MinMax {
+    op observe(val: i32) -> ();
+    op get_min() -> i32;
+    op get_max() -> i32;
+}
+
+deep handler Tracker for MinMax {
+    let mut min_val: i32
+    let mut max_val: i32
+
+    return(x) { x }
+
+    op observe(val) {
+        if val < min_val {
+            min_val = val;
+        }
+        if val > max_val {
+            max_val = val;
+        }
+        resume(())
+    }
+
+    op get_min() {
+        resume(min_val)
+    }
+
+    op get_max() {
+        resume(max_val)
+    }
+}
+
+fn main() -> i32 {
+    let min: i32 = with Tracker { min_val: 999, max_val: -999 } handle {
+        perform MinMax.observe(5);
+        perform MinMax.observe(3);
+        perform MinMax.observe(7);
+        perform MinMax.observe(4);
+        perform MinMax.get_min()
+    };
+    println_int(min); // 3
+
+    let max: i32 = with Tracker { min_val: 999, max_val: -999 } handle {
+        perform MinMax.observe(5);
+        perform MinMax.observe(3);
+        perform MinMax.observe(7);
+        perform MinMax.observe(4);
+        perform MinMax.get_max()
+    };
+    println_int(max); // 7
+
+    if min != 3 { return 1; }
+    if max != 7 { return 2; }
+    0
+}

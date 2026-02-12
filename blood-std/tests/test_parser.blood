@@ -1,0 +1,956 @@
+// Blood Standard Library Tests - Parser
+//
+// Comprehensive tests for the self-hosted parser (std.compiler.parser).
+// These tests exercise all major parsing paths by constructing source
+// strings and verifying the parser produces correct AST structures.
+//
+// NOTE: These tests cannot run until Blood can execute Blood code
+// (self-hosting bootstrap). They serve as a specification and
+// regression suite for when that milestone is reached.
+
+use std.compiler.parser::{parse, parse_expr, parse_type};
+use std.compiler.lexer::{TokenKind};
+
+// =============================================================================
+// Literal Expression Tests
+// =============================================================================
+
+fn test_parse_int_literal() {
+    let result = parse_expr("42".to_string());
+    assert(result.is_some(), "should parse int literal");
+    let expr = result.unwrap();
+    match expr.kind {
+        ExprKind::Literal(lit) => {
+            match lit.kind {
+                LiteralKind::Int(v) => assert(v == 42, "int value should be 42"),
+                _ => assert(false, "should be Int literal"),
+            }
+        }
+        _ => assert(false, "should be Literal expression"),
+    }
+}
+
+fn test_parse_float_literal() {
+    let result = parse_expr("3.14".to_string());
+    assert(result.is_some(), "should parse float literal");
+}
+
+fn test_parse_string_literal() {
+    let result = parse_expr("\"hello\"".to_string());
+    assert(result.is_some(), "should parse string literal");
+}
+
+fn test_parse_char_literal() {
+    let result = parse_expr("'x'".to_string());
+    assert(result.is_some(), "should parse char literal");
+}
+
+fn test_parse_bool_literals() {
+    let t = parse_expr("true".to_string());
+    let f = parse_expr("false".to_string());
+    assert(t.is_some(), "should parse true");
+    assert(f.is_some(), "should parse false");
+}
+
+// =============================================================================
+// Binary Expression Tests
+// =============================================================================
+
+fn test_parse_binary_add() {
+    let result = parse_expr("1 + 2".to_string());
+    assert(result.is_some(), "should parse addition");
+    let expr = result.unwrap();
+    match expr.kind {
+        ExprKind::Binary { op, left, right } => {
+            match op {
+                BinOp::Add => {}
+                _ => assert(false, "should be Add operator"),
+            }
+        }
+        _ => assert(false, "should be Binary expression"),
+    }
+}
+
+fn test_parse_precedence_mul_over_add() {
+    // 1 + 2 * 3 should parse as 1 + (2 * 3)
+    let result = parse_expr("1 + 2 * 3".to_string());
+    assert(result.is_some(), "should parse expression");
+    let expr = result.unwrap();
+    match expr.kind {
+        ExprKind::Binary { op, left, right } => {
+            match op {
+                BinOp::Add => {
+                    // right should be 2 * 3
+                    match right.kind {
+                        ExprKind::Binary { op: inner_op, .. } => {
+                            match inner_op {
+                                BinOp::Mul => {}
+                                _ => assert(false, "inner op should be Mul"),
+                            }
+                        }
+                        _ => assert(false, "right should be Binary"),
+                    }
+                }
+                _ => assert(false, "outer op should be Add"),
+            }
+        }
+        _ => assert(false, "should be Binary expression"),
+    }
+}
+
+fn test_parse_comparison() {
+    let result = parse_expr("x == 5".to_string());
+    assert(result.is_some(), "should parse comparison");
+}
+
+fn test_parse_logical_operators() {
+    let result = parse_expr("a && b || c".to_string());
+    assert(result.is_some(), "should parse logical operators");
+}
+
+fn test_parse_bitwise_operators() {
+    let result = parse_expr("a & b | c ^ d".to_string());
+    assert(result.is_some(), "should parse bitwise operators");
+}
+
+fn test_parse_shift_operators() {
+    let result = parse_expr("x << 2".to_string());
+    assert(result.is_some(), "should parse shift");
+    let result2 = parse_expr("x >> 3".to_string());
+    assert(result2.is_some(), "should parse right shift");
+}
+
+// =============================================================================
+// Assignment Expression Tests
+// =============================================================================
+
+fn test_parse_assignment() {
+    let result = parse_expr("x = 5".to_string());
+    assert(result.is_some(), "should parse assignment");
+    let expr = result.unwrap();
+    match expr.kind {
+        ExprKind::Assign { target, value } => {}
+        _ => assert(false, "should be Assign expression"),
+    }
+}
+
+fn test_parse_compound_assignment() {
+    let result = parse_expr("x += 5".to_string());
+    assert(result.is_some(), "should parse compound assignment");
+    let expr = result.unwrap();
+    match expr.kind {
+        ExprKind::AssignOp { op, target, value } => {
+            match op {
+                BinOp::Add => {}
+                _ => assert(false, "should be Add compound assignment"),
+            }
+        }
+        _ => assert(false, "should be AssignOp expression"),
+    }
+}
+
+// =============================================================================
+// Range Expression Tests
+// =============================================================================
+
+fn test_parse_range() {
+    let result = parse_expr("1..10".to_string());
+    assert(result.is_some(), "should parse range");
+    let expr = result.unwrap();
+    match expr.kind {
+        ExprKind::Range { start, end, inclusive } => {
+            assert(start.is_some(), "range should have start");
+            assert(end.is_some(), "range should have end");
+            assert(!inclusive, "should not be inclusive");
+        }
+        _ => assert(false, "should be Range expression"),
+    }
+}
+
+fn test_parse_inclusive_range() {
+    let result = parse_expr("1..=10".to_string());
+    assert(result.is_some(), "should parse inclusive range");
+    let expr = result.unwrap();
+    match expr.kind {
+        ExprKind::Range { inclusive, .. } => {
+            assert(inclusive, "should be inclusive");
+        }
+        _ => assert(false, "should be Range expression"),
+    }
+}
+
+// =============================================================================
+// Unary Expression Tests
+// =============================================================================
+
+fn test_parse_negation() {
+    let result = parse_expr("-42".to_string());
+    assert(result.is_some(), "should parse negation");
+}
+
+fn test_parse_not() {
+    let result = parse_expr("!flag".to_string());
+    assert(result.is_some(), "should parse logical not");
+}
+
+fn test_parse_dereference() {
+    let result = parse_expr("*ptr".to_string());
+    assert(result.is_some(), "should parse dereference");
+}
+
+fn test_parse_reference() {
+    let result = parse_expr("&x".to_string());
+    assert(result.is_some(), "should parse reference");
+}
+
+fn test_parse_mut_reference() {
+    let result = parse_expr("&mut x".to_string());
+    assert(result.is_some(), "should parse mutable reference");
+}
+
+// =============================================================================
+// Postfix Expression Tests
+// =============================================================================
+
+fn test_parse_function_call() {
+    let result = parse_expr("foo(1, 2, 3)".to_string());
+    assert(result.is_some(), "should parse function call");
+}
+
+fn test_parse_method_call() {
+    let result = parse_expr("x.foo(1)".to_string());
+    assert(result.is_some(), "should parse method call");
+}
+
+fn test_parse_field_access() {
+    let result = parse_expr("x.field".to_string());
+    assert(result.is_some(), "should parse field access");
+}
+
+fn test_parse_tuple_field() {
+    let result = parse_expr("x.0".to_string());
+    assert(result.is_some(), "should parse tuple field access");
+}
+
+fn test_parse_index() {
+    let result = parse_expr("arr[0]".to_string());
+    assert(result.is_some(), "should parse index expression");
+}
+
+fn test_parse_cast() {
+    let result = parse_expr("x as i32".to_string());
+    assert(result.is_some(), "should parse cast expression");
+}
+
+// =============================================================================
+// Collection Expression Tests
+// =============================================================================
+
+fn test_parse_tuple() {
+    let result = parse_expr("(1, 2, 3)".to_string());
+    assert(result.is_some(), "should parse tuple");
+}
+
+fn test_parse_unit_tuple() {
+    let result = parse_expr("()".to_string());
+    assert(result.is_some(), "should parse unit tuple");
+}
+
+fn test_parse_parenthesized() {
+    let result = parse_expr("(x)".to_string());
+    assert(result.is_some(), "should parse parenthesized expression");
+}
+
+fn test_parse_array() {
+    let result = parse_expr("[1, 2, 3]".to_string());
+    assert(result.is_some(), "should parse array");
+}
+
+fn test_parse_array_repeat() {
+    let result = parse_expr("[0; 10]".to_string());
+    assert(result.is_some(), "should parse array repeat");
+}
+
+fn test_parse_empty_array() {
+    let result = parse_expr("[]".to_string());
+    assert(result.is_some(), "should parse empty array");
+}
+
+fn test_parse_record() {
+    let result = parse_expr("Point { x: 1, y: 2 }".to_string());
+    assert(result.is_some(), "should parse record expression");
+}
+
+fn test_parse_record_shorthand() {
+    // Field shorthand: `Point { x, y }` (field name = value name)
+    let result = parse_expr("Point { x, y }".to_string());
+    assert(result.is_some(), "should parse record with shorthand fields");
+}
+
+fn test_parse_struct_update() {
+    let result = parse_expr("Point { x: 1, ..other }".to_string());
+    assert(result.is_some(), "should parse struct update syntax");
+    let expr = result.unwrap();
+    match expr.kind {
+        ExprKind::Record { base, .. } => {
+            assert(base.is_some(), "should have base expression");
+        }
+        _ => assert(false, "should be Record expression"),
+    }
+}
+
+// =============================================================================
+// Control Flow Expression Tests
+// =============================================================================
+
+fn test_parse_if() {
+    let result = parse_expr("if x { 1 } else { 2 }".to_string());
+    assert(result.is_some(), "should parse if expression");
+}
+
+fn test_parse_if_let() {
+    let result = parse_expr("if let Some(x) = opt { x }".to_string());
+    assert(result.is_some(), "should parse if-let expression");
+}
+
+fn test_parse_match() {
+    let src = "match x { 1 => true, 2 => false, _ => true }".to_string();
+    let result = parse_expr(src);
+    assert(result.is_some(), "should parse match expression");
+}
+
+fn test_parse_match_with_guard() {
+    let src = "match x { n if n > 0 => true, _ => false }".to_string();
+    let result = parse_expr(src);
+    assert(result.is_some(), "should parse match with guard");
+}
+
+fn test_parse_loop() {
+    let result = parse_expr("loop { break; }".to_string());
+    assert(result.is_some(), "should parse loop");
+}
+
+fn test_parse_while() {
+    let result = parse_expr("while x > 0 { x = x - 1; }".to_string());
+    assert(result.is_some(), "should parse while");
+}
+
+fn test_parse_while_let() {
+    let result = parse_expr("while let Some(x) = iter.next() { }".to_string());
+    assert(result.is_some(), "should parse while-let");
+}
+
+fn test_parse_for() {
+    let result = parse_expr("for x in items { }".to_string());
+    assert(result.is_some(), "should parse for loop");
+}
+
+fn test_parse_return() {
+    let result = parse_expr("return 42".to_string());
+    assert(result.is_some(), "should parse return");
+}
+
+fn test_parse_break_with_value() {
+    let result = parse_expr("break 42".to_string());
+    assert(result.is_some(), "should parse break with value");
+}
+
+fn test_parse_continue() {
+    let result = parse_expr("continue".to_string());
+    assert(result.is_some(), "should parse continue");
+}
+
+// =============================================================================
+// Closure Expression Tests
+// =============================================================================
+
+fn test_parse_closure() {
+    let result = parse_expr("|x| x + 1".to_string());
+    assert(result.is_some(), "should parse closure");
+}
+
+fn test_parse_closure_typed() {
+    let result = parse_expr("|x: i32| -> i32 { x + 1 }".to_string());
+    assert(result.is_some(), "should parse typed closure");
+}
+
+fn test_parse_closure_no_params() {
+    let result = parse_expr("|| 42".to_string());
+    assert(result.is_some(), "should parse no-param closure");
+}
+
+// =============================================================================
+// Effect System Expression Tests
+// =============================================================================
+
+fn test_parse_perform() {
+    let result = parse_expr("perform IO::print(\"hello\")".to_string());
+    assert(result.is_some(), "should parse perform with effect path");
+}
+
+fn test_parse_perform_no_effect() {
+    let result = parse_expr("perform read()".to_string());
+    assert(result.is_some(), "should parse perform without effect path");
+}
+
+fn test_parse_resume() {
+    let result = parse_expr("resume(42)".to_string());
+    assert(result.is_some(), "should parse resume");
+}
+
+fn test_parse_with_handle() {
+    let src = "with my_handler handle { perform read() }".to_string();
+    let result = parse_expr(src);
+    assert(result.is_some(), "should parse with-handle");
+}
+
+// =============================================================================
+// Block Expression Tests
+// =============================================================================
+
+fn test_parse_block() {
+    let result = parse_expr("{ let x = 1; x + 2 }".to_string());
+    assert(result.is_some(), "should parse block");
+}
+
+fn test_parse_block_trailing_expr() {
+    let result = parse_expr("{ 42 }".to_string());
+    assert(result.is_some(), "should parse block with trailing expression");
+}
+
+// =============================================================================
+// Type Parsing Tests
+// =============================================================================
+
+fn test_parse_type_path() {
+    let result = parse_type("i32".to_string());
+    assert(result.is_some(), "should parse simple type");
+}
+
+fn test_parse_type_generic() {
+    let result = parse_type("Vec<i32>".to_string());
+    assert(result.is_some(), "should parse generic type");
+}
+
+fn test_parse_type_reference() {
+    let result = parse_type("&i32".to_string());
+    assert(result.is_some(), "should parse reference type");
+}
+
+fn test_parse_type_mut_reference() {
+    let result = parse_type("&mut String".to_string());
+    assert(result.is_some(), "should parse mutable reference type");
+}
+
+fn test_parse_type_pointer() {
+    let result = parse_type("*const i32".to_string());
+    assert(result.is_some(), "should parse const pointer type");
+    let result2 = parse_type("*mut i32".to_string());
+    assert(result2.is_some(), "should parse mut pointer type");
+}
+
+fn test_parse_type_array() {
+    let result = parse_type("[i32; 10]".to_string());
+    assert(result.is_some(), "should parse array type");
+}
+
+fn test_parse_type_slice() {
+    let result = parse_type("[i32]".to_string());
+    assert(result.is_some(), "should parse slice type");
+}
+
+fn test_parse_type_tuple() {
+    let result = parse_type("(i32, String)".to_string());
+    assert(result.is_some(), "should parse tuple type");
+}
+
+fn test_parse_type_unit() {
+    let result = parse_type("()".to_string());
+    assert(result.is_some(), "should parse unit type");
+}
+
+fn test_parse_type_never() {
+    let result = parse_type("!".to_string());
+    assert(result.is_some(), "should parse never type");
+}
+
+fn test_parse_type_infer() {
+    let result = parse_type("_".to_string());
+    assert(result.is_some(), "should parse infer type");
+}
+
+fn test_parse_type_function() {
+    let result = parse_type("fn(i32) -> bool".to_string());
+    assert(result.is_some(), "should parse function type");
+}
+
+fn test_parse_type_function_with_effects() {
+    let result = parse_type("fn(i32) -> bool / {IO}".to_string());
+    assert(result.is_some(), "should parse function type with effects");
+}
+
+fn test_parse_type_qualified_path() {
+    let result = parse_type("std::collections::Vec<i32>".to_string());
+    assert(result.is_some(), "should parse qualified type path");
+}
+
+// =============================================================================
+// Pattern Parsing Tests
+// =============================================================================
+
+fn test_parse_pattern_wildcard() {
+    // Wildcard pattern used in match arm
+    let src = "match x { _ => 0 }".to_string();
+    let result = parse_expr(src);
+    assert(result.is_some(), "should parse wildcard pattern in match");
+}
+
+fn test_parse_pattern_binding() {
+    let src = "match x { value => value }".to_string();
+    let result = parse_expr(src);
+    assert(result.is_some(), "should parse binding pattern");
+}
+
+fn test_parse_pattern_mut_binding() {
+    let src = "match x { mut value => value }".to_string();
+    let result = parse_expr(src);
+    assert(result.is_some(), "should parse mutable binding pattern");
+}
+
+fn test_parse_pattern_literal() {
+    let src = "match x { 42 => true, _ => false }".to_string();
+    let result = parse_expr(src);
+    assert(result.is_some(), "should parse literal pattern");
+}
+
+fn test_parse_pattern_negative_literal() {
+    let src = "match x { -1 => true, _ => false }".to_string();
+    let result = parse_expr(src);
+    assert(result.is_some(), "should parse negative literal pattern");
+}
+
+fn test_parse_pattern_string_literal() {
+    let src = "match s { \"hello\" => true, _ => false }".to_string();
+    let result = parse_expr(src);
+    assert(result.is_some(), "should parse string literal pattern");
+}
+
+fn test_parse_pattern_tuple() {
+    let src = "match pair { (a, b) => a + b }".to_string();
+    let result = parse_expr(src);
+    assert(result.is_some(), "should parse tuple pattern");
+}
+
+fn test_parse_pattern_tuple_struct() {
+    let src = "match opt { Some(x) => x, None => 0 }".to_string();
+    let result = parse_expr(src);
+    assert(result.is_some(), "should parse tuple struct pattern");
+}
+
+fn test_parse_pattern_struct() {
+    let src = "match pt { Point { x, y } => x + y }".to_string();
+    let result = parse_expr(src);
+    assert(result.is_some(), "should parse struct pattern");
+}
+
+fn test_parse_pattern_struct_with_rest() {
+    let src = "match pt { Point { x, .. } => x }".to_string();
+    let result = parse_expr(src);
+    assert(result.is_some(), "should parse struct pattern with rest");
+}
+
+fn test_parse_pattern_or() {
+    let src = "match x { 1 | 2 | 3 => true, _ => false }".to_string();
+    let result = parse_expr(src);
+    assert(result.is_some(), "should parse or pattern");
+    // Verify the or pattern is a flat list, not nested
+    let expr = result.unwrap();
+    match expr.kind {
+        ExprKind::Match { arms, .. } => {
+            match arms[0].pattern.kind {
+                PatternKind::Or(alternatives) => {
+                    assert(alternatives.len() == 3, "or pattern should have 3 alternatives");
+                }
+                _ => assert(false, "first arm should be Or pattern"),
+            }
+        }
+        _ => assert(false, "should be Match expression"),
+    }
+}
+
+fn test_parse_pattern_slice() {
+    let src = "match arr { [first, second, ..] => first }".to_string();
+    let result = parse_expr(src);
+    assert(result.is_some(), "should parse slice pattern");
+}
+
+fn test_parse_pattern_reference() {
+    let src = "match r { &x => x }".to_string();
+    let result = parse_expr(src);
+    assert(result.is_some(), "should parse reference pattern");
+}
+
+fn test_parse_pattern_at_binding() {
+    let src = "match x { n @ 1 => n, _ => 0 }".to_string();
+    let result = parse_expr(src);
+    assert(result.is_some(), "should parse @ binding pattern");
+}
+
+fn test_parse_pattern_qualified_path() {
+    let src = "match x { Option::Some(v) => v, Option::None => 0 }".to_string();
+    let result = parse_expr(src);
+    assert(result.is_some(), "should parse qualified path pattern");
+}
+
+// =============================================================================
+// Declaration Parsing Tests (via full program parse)
+// =============================================================================
+
+fn test_parse_function_decl() {
+    let src = "fn foo(x: i32) -> i32 { x + 1 }".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse function declaration");
+}
+
+fn test_parse_function_no_body() {
+    let src = "fn foo(x: i32) -> i32;".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse function declaration without body");
+}
+
+fn test_parse_function_with_effects() {
+    let src = "fn read_line() -> String / {IO} { }".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse function with effect row");
+}
+
+fn test_parse_function_with_where_clause() {
+    let src = "fn foo<T>(x: T) -> T where T: Clone { x }".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse function with where clause");
+}
+
+fn test_parse_struct_decl() {
+    let src = "struct Point { pub x: i32, pub y: i32 }".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse struct declaration");
+}
+
+fn test_parse_tuple_struct() {
+    let src = "struct Pair(i32, i32);".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse tuple struct");
+}
+
+fn test_parse_unit_struct() {
+    let src = "struct Unit;".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse unit struct");
+}
+
+fn test_parse_generic_struct() {
+    let src = "struct Wrapper<T> { value: T }".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse generic struct");
+}
+
+fn test_parse_enum_decl() {
+    let src = "enum Option<T> { Some(T), None }".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse enum declaration");
+}
+
+fn test_parse_enum_with_record_variant() {
+    let src = "enum Shape { Circle { radius: f64 }, Rect { w: f64, h: f64 } }".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse enum with record variants");
+}
+
+fn test_parse_trait_decl() {
+    let src = "trait Display { fn fmt(&self) -> String; }".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse trait declaration");
+}
+
+fn test_parse_trait_with_supertraits() {
+    let src = "trait Ordered: Eq + PartialOrd { fn compare(&self, other: &Self) -> i32; }".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse trait with supertraits");
+}
+
+fn test_parse_impl_block() {
+    let src = "impl Point { fn new(x: i32, y: i32) -> Point { Point { x, y } } }".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse impl block");
+}
+
+fn test_parse_trait_impl() {
+    let src = "impl Display for Point { fn fmt(&self) -> String { } }".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse trait implementation");
+}
+
+fn test_parse_type_alias() {
+    let src = "type Result<T> = Option<T>;".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse type alias");
+}
+
+fn test_parse_const_decl() {
+    let src = "const MAX: i32 = 100;".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse const declaration");
+}
+
+fn test_parse_static_decl() {
+    let src = "static mut COUNTER: i32 = 0;".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse static declaration");
+}
+
+fn test_parse_mod_decl() {
+    let src = "mod utils;".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse module declaration");
+}
+
+fn test_parse_mod_with_body() {
+    let src = "mod inner { fn helper() { } }".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse inline module");
+}
+
+fn test_parse_pub_decl() {
+    let src = "pub fn public_fn() { }".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse public declaration");
+}
+
+// =============================================================================
+// Effect Declaration Tests
+// =============================================================================
+
+fn test_parse_effect_decl() {
+    let src = "effect IO { fn read() -> String; fn write(s: String) -> (); }".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse effect declaration");
+}
+
+fn test_parse_handler_decl() {
+    let src = "handler ConsoleIO for IO { fn read() { resume(\"hello\") } fn write(s: String) { resume(()) } }".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse handler declaration");
+}
+
+fn test_parse_deep_handler() {
+    let src = "deep handler Logger for Log { let mut count: i32 = 0; fn log(msg: String) { count = count + 1; resume(()) } }".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse deep handler with state");
+}
+
+fn test_parse_shallow_handler() {
+    let src = "shallow handler OnceReader for Read { fn read() { resume(\"data\") } }".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse shallow handler");
+}
+
+// =============================================================================
+// Import Tests
+// =============================================================================
+
+fn test_parse_simple_import() {
+    let src = "use std.io; fn main() { }".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse simple import");
+}
+
+fn test_parse_group_import() {
+    let src = "use std.collections::{Vec, HashMap}; fn main() { }".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse group import");
+}
+
+fn test_parse_glob_import() {
+    let src = "use std.io::*; fn main() { }".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse glob import");
+}
+
+fn test_parse_aliased_import() {
+    let src = "use std.collections.HashMap as Map; fn main() { }".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse aliased import");
+}
+
+// =============================================================================
+// Effect Row Parsing Tests
+// =============================================================================
+
+fn test_parse_pure_effect_row() {
+    let src = "fn foo() -> i32 / pure { 42 }".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse pure effect row");
+}
+
+fn test_parse_effect_set() {
+    let src = "fn foo() -> i32 / {IO, Error} { 42 }".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse effect set");
+}
+
+fn test_parse_effect_row_with_rest() {
+    let src = "fn foo() -> i32 / {IO | e} { 42 }".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse effect row with rest variable");
+}
+
+// =============================================================================
+// Let Statement Tests
+// =============================================================================
+
+fn test_parse_let_statement() {
+    let src = "fn f() { let x = 42; }".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse let statement");
+}
+
+fn test_parse_let_with_type() {
+    let src = "fn f() { let x: i32 = 42; }".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse let with type annotation");
+}
+
+fn test_parse_let_destructuring() {
+    let src = "fn f() { let (a, b) = pair; }".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse let with destructuring");
+}
+
+// =============================================================================
+// Generic Type Parameter Tests
+// =============================================================================
+
+fn test_parse_type_params() {
+    let src = "fn id<T>(x: T) -> T { x }".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse type parameters");
+}
+
+fn test_parse_type_params_with_bounds() {
+    let src = "fn print<T: Display>(x: T) { }".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse type parameters with bounds");
+}
+
+fn test_parse_const_generic() {
+    let src = "fn array<const N: usize>() -> [i32; N] { }".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse const generic parameter");
+}
+
+fn test_parse_multiple_type_params() {
+    let src = "fn map<T, U>(f: fn(T) -> U, x: T) -> U { f(x) }".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse multiple type parameters");
+}
+
+// =============================================================================
+// Complete Program Tests
+// =============================================================================
+
+fn test_parse_complete_program() {
+    let src = "
+use std.io;
+
+struct Point {
+    pub x: i32,
+    pub y: i32,
+}
+
+impl Point {
+    fn new(x: i32, y: i32) -> Point {
+        Point { x, y }
+    }
+
+    fn distance(&self, other: &Point) -> f64 {
+        let dx = self.x - other.x;
+        let dy = self.y - other.y;
+        0.0
+    }
+}
+
+fn main() -> i32 {
+    let p = Point::new(3, 4);
+    0
+}
+".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse complete program");
+}
+
+fn test_parse_program_with_effects() {
+    let src = "
+effect Logger {
+    fn log(msg: String) -> ();
+}
+
+handler ConsoleLogger for Logger {
+    fn log(msg: String) {
+        resume(())
+    }
+}
+
+fn main() / {Logger} {
+    perform Logger::log(\"hello\");
+}
+".to_string();
+    let result = parse(src);
+    assert(result.is_ok(), "should parse program with effects");
+}
+
+// =============================================================================
+// Error Recovery Tests
+// =============================================================================
+
+fn test_parse_missing_semicolon_recovers() {
+    // Parser should recover from missing semicolon
+    let src = "fn foo() { let x = 1 } fn bar() { }".to_string();
+    let result = parse(src);
+    // May have errors but should still produce partial results
+}
+
+fn test_parse_unexpected_token_recovers() {
+    let src = "fn foo() { } ??? fn bar() { }".to_string();
+    let result = parse(src);
+    // Should recover and find bar()
+}
+
+// =============================================================================
+// Edge Cases
+// =============================================================================
+
+fn test_parse_empty_program() {
+    let result = parse("".to_string());
+    assert(result.is_ok(), "should parse empty program");
+}
+
+fn test_parse_chained_method_calls() {
+    let result = parse_expr("a.b().c().d()".to_string());
+    assert(result.is_some(), "should parse chained method calls");
+}
+
+fn test_parse_nested_generics() {
+    let result = parse_type("Vec<Option<i32>>".to_string());
+    assert(result.is_some(), "should parse nested generics");
+}
+
+fn test_parse_deeply_nested_expr() {
+    let result = parse_expr("((((42))))".to_string());
+    assert(result.is_some(), "should parse deeply nested parentheses");
+}
+
+fn test_parse_if_else_chain() {
+    let src = "if a { 1 } else if b { 2 } else if c { 3 } else { 4 }".to_string();
+    let result = parse_expr(src);
+    assert(result.is_some(), "should parse if-else chain");
+}

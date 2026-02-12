@@ -1,0 +1,30 @@
+// Test: shallow handler (handles only first operation, then unwinds)
+// EXPECT: 99
+effect State<S> {
+    op get() -> S;
+    op put(s: S) -> ();
+}
+
+shallow handler OnceReader<S> for State<S> {
+    let value: S
+
+    return(x) { x }
+
+    op get() {
+        resume(value)
+    }
+
+    op put(s) {
+        resume(())
+    }
+}
+
+fn main() -> i32 {
+    let result: i32 = with OnceReader { value: 99 } handle {
+        perform State.get()
+    };
+    println_int(result);
+
+    if result != 99 { return 1; }
+    0
+}

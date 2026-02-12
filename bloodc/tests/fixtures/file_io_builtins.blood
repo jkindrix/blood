@@ -1,0 +1,31 @@
+// Test file I/O builtins
+
+pub fn test_file_exists() -> bool {
+    // Test that file_exists returns false for non-existent file
+    let exists = file_exists("nonexistent_file_12345.txt");
+    !exists  // Should return true (file should NOT exist)
+}
+
+pub fn test_file_read_to_string_missing() -> bool {
+    // Reading a non-existent file should return empty string
+    let content: &str = file_read_to_string("nonexistent_file_12345.txt");
+    content.len() == 0
+}
+
+pub fn test_file_size_missing() -> i64 {
+    // Getting size of non-existent file should return -1
+    file_size("nonexistent_file_12345.txt")
+}
+
+pub fn main() -> i32 {
+    // These tests just verify the builtins are callable with correct types
+    let exists_test = test_file_exists();
+    let read_test = test_file_read_to_string_missing();
+    let size_test = test_file_size_missing();
+
+    if exists_test && read_test && size_test == -1 {
+        0  // Success
+    } else {
+        1  // Failure
+    }
+}

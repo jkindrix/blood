@@ -1,0 +1,29 @@
+// Test: stress test - many effect operations in a loop
+// EXPECT: 1000
+effect State<S> {
+    op get() -> S;
+    op put(s: S) -> ();
+}
+
+deep handler LocalState<S> for State<S> {
+    let mut state: S
+    return(x) { x }
+    op get() { resume(state) }
+    op put(s) { state = s; resume(()) }
+}
+
+fn main() -> i32 {
+    let result: i32 = with LocalState { state: 0 } handle {
+        let mut i: i32 = 0;
+        while i < 1000 {
+            let current: i32 = perform State.get();
+            perform State.put(current + 1);
+            i = i + 1;
+        }
+        perform State.get()
+    };
+    println_int(result);
+
+    if result != 1000 { return 1; }
+    0
+}

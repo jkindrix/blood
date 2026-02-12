@@ -1,0 +1,29 @@
+// Test: Higher-rank polymorphic types (forall)
+//
+// Forall types enable higher-rank polymorphism, where functions
+// can accept polymorphic values that work with any type.
+
+// A simple identity function (rank-1 polymorphism)
+fn identity<T>(x: T) -> T {
+    x
+}
+
+// A function that takes a function pointer and applies it twice
+fn apply_twice(f: fn(i32) -> i32, x: i32) -> i32 {
+    f(f(x))
+}
+
+// Test forall type parsing in a type annotation
+// The type `forall<T>. fn(T) -> T` means "a function that works for any type T"
+fn test_forall_in_type() -> i32 {
+    // Declare with forall type annotation - the type checks should unify correctly
+    let poly_fn: forall<A>. fn(A) -> A = identity;
+
+    // Call the polymorphic function with concrete types
+    let result = poly_fn(42);
+    result
+}
+
+fn main() -> i32 {
+    test_forall_in_type()
+}

@@ -1,0 +1,50 @@
+// Test: break statement in while loops
+// EXPECT: 5
+// EXPECT: 3
+// EXPECT: 15
+fn find_first_ge(threshold: i32) -> i32 {
+    let mut i: i32 = 0;
+    while i < 100 {
+        if i >= threshold {
+            break;
+        }
+        i = i + 1;
+    }
+    i
+}
+
+fn main() -> i32 {
+    // Basic break: find first value >= 5
+    let a: i32 = find_first_ge(5);
+    println_int(a);
+    if a != 5 { return 1; }
+
+    // Break from inner condition
+    let mut sum: i32 = 0;
+    let mut n: i32 = 1;
+    while n <= 100 {
+        sum = sum + n;
+        if sum > 3 {
+            break;
+        }
+        n = n + 1;
+    }
+    // n=1: sum=1, n=2: sum=3, n=3: sum=6 > 3 → break at n=3
+    println_int(n);
+    if n != 3 { return 2; }
+
+    // Break with accumulation
+    let mut total: i32 = 0;
+    let mut j: i32 = 1;
+    while true {
+        total = total + j;
+        j = j + 1;
+        if j > 5 {
+            break;
+        }
+    }
+    println_int(total); // 1+2+3+4+5 = 15
+    if total != 15 { return 3; }
+
+    0
+}

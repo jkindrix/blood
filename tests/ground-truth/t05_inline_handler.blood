@@ -1,0 +1,27 @@
+// Test: inline effect handler with try/with syntax
+// EXPECT: 42
+effect Emit<T> {
+    op emit(value: T) -> ();
+}
+
+fn emit_values() -> i32 / {Emit<i32>} {
+    perform Emit.emit(10);
+    perform Emit.emit(20);
+    perform Emit.emit(12);
+    0
+}
+
+fn main() -> i32 {
+    // Inline handler: try/with syntax handles effects without named handler
+    let result: i32 = try {
+        emit_values();
+        42
+    } with {
+        Emit.emit(value) => {
+            resume(());
+        }
+    };
+    println_int(result); // 42
+    if result != 42 { return 1; }
+    0
+}

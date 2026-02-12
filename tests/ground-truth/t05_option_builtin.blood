@@ -1,0 +1,34 @@
+// Test: Option<T> builtin type (Some/None)
+// EXPECT: 42
+// EXPECT: 0
+// EXPECT: 1
+fn main() -> i32 {
+    // Some value
+    let x: Option<i32> = Some(42);
+    let val: i32 = match x {
+        Some(v) => v,
+        None => -1,
+    };
+    println_int(val); // 42
+    if val != 42 { return 1; }
+
+    // None
+    let y: Option<i32> = None;
+    let is_none: bool = match y {
+        Some(_) => false,
+        None => true,
+    };
+    println_int(if is_none { 0 } else { 1 }); // 0
+    if !is_none { return 2; }
+
+    // Nested Option usage
+    let z: Option<i32> = Some(10);
+    let has_value: bool = match z {
+        Some(_) => true,
+        None => false,
+    };
+    println_int(if has_value { 1 } else { 0 }); // 1
+    if !has_value { return 3; }
+
+    0
+}

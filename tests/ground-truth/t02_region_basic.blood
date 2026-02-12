@@ -1,0 +1,22 @@
+// Test: basic region blocks - scalar allocation and return
+// EXPECT: 42
+// EXPECT: 50
+fn main() -> i32 {
+    // Region block that returns a scalar value
+    let x: i32 = region {
+        let a: i32 = 21;
+        a * 2
+    };
+    println_int(x);
+
+    // Region block with multiple locals
+    let y: i32 = region {
+        let b: i32 = x + 8;
+        b
+    };
+    println_int(y);
+
+    if x != 42 { return 1; }
+    if y != 50 { return 2; }
+    0
+}

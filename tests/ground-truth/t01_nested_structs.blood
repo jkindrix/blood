@@ -1,0 +1,45 @@
+// Test: nested structs (struct containing struct fields)
+// EXPECT: 1
+// EXPECT: 2
+// EXPECT: 3
+// EXPECT: 4
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+struct Rect {
+    top_left: Point,
+    bottom_right: Point,
+}
+
+fn rect_width(r: Rect) -> i32 {
+    r.bottom_right.x - r.top_left.x
+}
+
+fn rect_height(r: Rect) -> i32 {
+    r.bottom_right.y - r.top_left.y
+}
+
+fn main() -> i32 {
+    let r: Rect = Rect {
+        top_left: Point { x: 1, y: 2 },
+        bottom_right: Point { x: 3, y: 4 },
+    };
+
+    println_int(r.top_left.x);
+    println_int(r.top_left.y);
+    println_int(r.bottom_right.x);
+    println_int(r.bottom_right.y);
+
+    let w: i32 = rect_width(r);
+    let r2: Rect = Rect {
+        top_left: Point { x: 1, y: 2 },
+        bottom_right: Point { x: 3, y: 4 },
+    };
+    let h: i32 = rect_height(r2);
+
+    if w != 2 { return 1; }
+    if h != 2 { return 2; }
+    0
+}

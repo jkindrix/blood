@@ -1,0 +1,18 @@
+// COMPILE_FAIL: effect not handled at call site
+// Test: main must not have unhandled effects in its type
+effect State {
+    op get() -> i32;
+    op set(val: i32) -> ();
+}
+
+fn use_state() -> i32 / {State} {
+    let x: i32 = perform State.get();
+    perform State.set(x + 1);
+    x
+}
+
+// main has no effect row, but calls an effectful function without handler
+fn main() -> i32 {
+    let val: i32 = use_state();
+    0
+}

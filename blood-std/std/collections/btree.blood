@@ -1,0 +1,775 @@
+// Blood Standard Library - BTree Collections
+//
+// Ordered map and set implementations using B-trees.
+
+/// A sorted map based on a B-Tree
+///
+/// BTreeMap maintains keys in sorted order and provides O(log n)
+/// lookup, insertion, and removal.
+pub struct BTreeMap<K, V> {
+    root: Option<Box<Node<K, V>>>,
+    len: usize,
+}
+
+/// B-Tree branching factor
+const B: usize = 6;
+const MIN_KEYS: usize = B - 1;
+const MAX_KEYS: usize = 2 * B - 1;
+
+/// Internal node structure
+struct Node<K, V> {
+    keys: Vec<K>,
+    values: Vec<V>,
+    children: Vec<Box<Node<K, V>>>,
+    is_leaf: bool,
+}
+
+impl<K, V> Node<K, V> {
+    fn new_leaf() -> Self / pure {
+        Node {
+            keys: Vec::new(),
+            values: Vec::new(),
+            children: Vec::new(),
+            is_leaf: true,
+        }
+    }
+
+    fn new_internal() -> Self / pure {
+        Node {
+            keys: Vec::new(),
+            values: Vec::new(),
+            children: Vec::new(),
+            is_leaf: false,
+        }
+    }
+
+    fn is_full(self: &Self) -> bool / pure {
+        self.keys.len() >= MAX_KEYS
+    }
+}
+
+impl<K: Ord, V> BTreeMap<K, V> {
+    /// Creates an empty BTreeMap
+    pub fn new() -> Self / pure {
+        BTreeMap {
+            root: None,
+            len: 0,
+        }
+    }
+
+    /// Returns the number of elements
+    pub fn len(self: &Self) -> usize / pure {
+        self.len
+    }
+
+    /// Returns true if the map is empty
+    pub fn is_empty(self: &Self) -> bool / pure {
+        self.len == 0
+    }
+
+    /// Clears the map
+    pub fn clear(self: &mut Self) / pure {
+        self.root = None;
+        self.len = 0;
+    }
+
+    /// Returns a reference to the value for the given key
+    pub fn get(self: &Self, key: &K) -> Option<&V> / pure {
+        let node = self.root.as_ref()?;
+        Self::search(node, key)
+    }
+
+    /// Returns a mutable reference to the value for the given key
+    pub fn get_mut(self: &mut Self, key: &K) -> Option<&mut V> / pure {
+        let node = self.root.as_mut()?;
+        Self::search_mut(node, key)
+    }
+
+    /// Returns the key-value pair for the given key
+    pub fn get_key_value(self: &Self, key: &K) -> Option<(&K, &V)> / pure {
+        let node = self.root.as_ref()?;
+        Self::search_key_value(node, key)
+    }
+
+    /// Returns true if the map contains the given key
+    pub fn contains_key(self: &Self, key: &K) -> bool / pure {
+        self.get(key).is_some()
+    }
+
+    /// Inserts a key-value pair
+    pub fn insert(self: &mut Self, key: K, value: V) -> Option<V> / pure {
+        if self.root.is_none() {
+            let mut node = Node::new_leaf();
+            node.keys.push(key);
+            node.values.push(value);
+            self.root = Some(Box::new(node));
+            self.len = 1;
+            return None;
+        }
+
+        let root = self.root.as_mut().unwrap();
+
+        // If root is full, split it
+        if root.is_full() {
+            let mut new_root = Node::new_internal();
+            let old_root = mem::replace(root, Node::new_leaf());
+            new_root.children.push(Box::new(old_root));
+            Self::split_child(&mut new_root, 0);
+            *root = new_root;
+        }
+
+        let result = Self::insert_non_full(root, key, value);
+        if result.is_none() {
+            self.len += 1;
+        }
+        result
+    }
+
+    /// Removes a key from the map
+    pub fn remove(self: &mut Self, key: &K) -> Option<V> / pure {
+        if self.root.is_none() {
+            return None;
+        }
+
+        let result = Self::remove_from_node(self.root.as_mut().unwrap(), key);
+
+        if result.is_some() {
+            self.len -= 1;
+
+            // If root is empty and has children, make first child the new root
+            if let Some(ref root) = self.root {
+                if root.keys.is_empty() && !root.children.is_empty() {
+                    self.root = Some(root.children.into_iter().next().unwrap());
+                } else if root.keys.is_empty() {
+                    self.root = None;
+                }
+            }
+        }
+
+        result
+    }
+
+    /// Returns the first key-value pair
+    pub fn first_key_value(self: &Self) -> Option<(&K, &V)> / pure {
+        let mut node = self.root.as_ref()?;
+        while !node.children.is_empty() {
+            node = &node.children[0];
+        }
+        if node.keys.is_empty() {
+            None
+        } else {
+            Some((&node.keys[0], &node.values[0]))
+        }
+    }
+
+    /// Returns the last key-value pair
+    pub fn last_key_value(self: &Self) -> Option<(&K, &V)> / pure {
+        let mut node = self.root.as_ref()?;
+        while !node.children.is_empty() {
+            node = node.children.last().unwrap();
+        }
+        if node.keys.is_empty() {
+            None
+        } else {
+            let idx = node.keys.len() - 1;
+            Some((&node.keys[idx], &node.values[idx]))
+        }
+    }
+
+    /// Returns an iterator over key-value pairs in sorted order
+    pub fn iter(self: &Self) -> Iter<'_, K, V> / pure {
+        let mut stack = Vec::new();
+        if let Some(ref root) = self.root {
+            Self::push_left_path(&mut stack, root, 0);
+        }
+        Iter { stack }
+    }
+
+    /// Returns an iterator over keys in sorted order
+    pub fn keys(self: &Self) -> Keys<'_, K, V> / pure {
+        Keys { inner: self.iter() }
+    }
+
+    /// Returns an iterator over values in sorted order
+    pub fn values(self: &Self) -> Values<'_, K, V> / pure {
+        Values { inner: self.iter() }
+    }
+
+    /// Returns an iterator over a range of keys
+    pub fn range<R: RangeBounds<K>>(self: &Self, range: R) -> Range<'_, K, V> / pure {
+        Range {
+            inner: self.iter(),
+            range,
+        }
+    }
+
+    // Private helper methods
+
+    fn search<'a>(node: &'a Node<K, V>, key: &K) -> Option<&'a V> / pure {
+        let mut idx = 0;
+        while idx < node.keys.len() && key > &node.keys[idx] {
+            idx += 1;
+        }
+
+        if idx < node.keys.len() && key == &node.keys[idx] {
+            return Some(&node.values[idx]);
+        }
+
+        if node.is_leaf {
+            None
+        } else {
+            Self::search(&node.children[idx], key)
+        }
+    }
+
+    fn search_mut<'a>(node: &'a mut Node<K, V>, key: &K) -> Option<&'a mut V> / pure {
+        let mut idx = 0;
+        while idx < node.keys.len() && key > &node.keys[idx] {
+            idx += 1;
+        }
+
+        if idx < node.keys.len() && key == &node.keys[idx] {
+            return Some(&mut node.values[idx]);
+        }
+
+        if node.is_leaf {
+            None
+        } else {
+            Self::search_mut(&mut node.children[idx], key)
+        }
+    }
+
+    fn search_key_value<'a>(node: &'a Node<K, V>, key: &K) -> Option<(&'a K, &'a V)> / pure {
+        let mut idx = 0;
+        while idx < node.keys.len() && key > &node.keys[idx] {
+            idx += 1;
+        }
+
+        if idx < node.keys.len() && key == &node.keys[idx] {
+            return Some((&node.keys[idx], &node.values[idx]));
+        }
+
+        if node.is_leaf {
+            None
+        } else {
+            Self::search_key_value(&node.children[idx], key)
+        }
+    }
+
+    fn split_child(parent: &mut Node<K, V>, idx: usize) / pure {
+        let child = &mut parent.children[idx];
+        let mid = child.keys.len() / 2;
+
+        let mut sibling = if child.is_leaf {
+            Node::new_leaf()
+        } else {
+            Node::new_internal()
+        };
+
+        // Move keys and values to sibling
+        sibling.keys = child.keys.split_off(mid + 1);
+        sibling.values = child.values.split_off(mid + 1);
+
+        // Move median key/value to parent
+        let median_key = child.keys.pop().unwrap();
+        let median_value = child.values.pop().unwrap();
+
+        // Move children if not leaf
+        if !child.is_leaf {
+            sibling.children = child.children.split_off(mid + 1);
+        }
+
+        // Insert median into parent
+        parent.keys.insert(idx, median_key);
+        parent.values.insert(idx, median_value);
+        parent.children.insert(idx + 1, Box::new(sibling));
+    }
+
+    fn insert_non_full(node: &mut Node<K, V>, key: K, value: V) -> Option<V> / pure {
+        let mut idx = node.keys.len();
+        while idx > 0 && key < node.keys[idx - 1] {
+            idx -= 1;
+        }
+
+        // Check for existing key
+        if idx < node.keys.len() && key == node.keys[idx] {
+            return Some(mem::replace(&mut node.values[idx], value));
+        }
+
+        if node.is_leaf {
+            node.keys.insert(idx, key);
+            node.values.insert(idx, value);
+            None
+        } else {
+            // Split child if full
+            if node.children[idx].is_full() {
+                Self::split_child(node, idx);
+                // Adjust index after split
+                if key > node.keys[idx] {
+                    idx += 1;
+                } else if key == node.keys[idx] {
+                    return Some(mem::replace(&mut node.values[idx], value));
+                }
+            }
+            Self::insert_non_full(&mut node.children[idx], key, value)
+        }
+    }
+
+    fn remove_from_node(node: &mut Node<K, V>, key: &K) -> Option<V> / pure {
+        let mut idx = 0;
+        while idx < node.keys.len() && key > &node.keys[idx] {
+            idx += 1;
+        }
+
+        if idx < node.keys.len() && key == &node.keys[idx] {
+            // Key found
+            if node.is_leaf {
+                node.keys.remove(idx);
+                return Some(node.values.remove(idx));
+            } else {
+                // Internal node - replace with predecessor or successor
+                // (Simplified implementation)
+                let pred = Self::get_predecessor(&node.children[idx]);
+                let pred_key = pred.0.clone();
+                let pred_value = mem::replace(&mut node.values[idx], pred.1);
+                node.keys[idx] = pred_key.clone();
+                Self::remove_from_node(&mut node.children[idx], &pred_key);
+                return Some(pred_value);
+            }
+        }
+
+        if node.is_leaf {
+            None
+        } else {
+            Self::remove_from_node(&mut node.children[idx], key)
+        }
+    }
+
+    fn get_predecessor<'a>(node: &'a Node<K, V>) -> (&'a K, V)
+    where
+        V: Clone,
+    {
+        if node.is_leaf {
+            let idx = node.keys.len() - 1;
+            (&node.keys[idx], node.values[idx].clone())
+        } else {
+            Self::get_predecessor(node.children.last().unwrap())
+        }
+    }
+
+    fn push_left_path<'a>(
+        stack: &mut Vec<(&'a Node<K, V>, usize)>,
+        node: &'a Node<K, V>,
+        start_idx: usize,
+    ) / pure {
+        stack.push((node, start_idx));
+        if !node.is_leaf && !node.children.is_empty() {
+            Self::push_left_path(stack, &node.children[start_idx], 0);
+        }
+    }
+}
+
+impl<K: Ord, V> Default for BTreeMap<K, V> {
+    fn default() -> Self / pure {
+        BTreeMap::new()
+    }
+}
+
+impl<K: Ord + Clone, V: Clone> Clone for BTreeMap<K, V> {
+    fn clone(self: &Self) -> Self / pure {
+        let mut new_map = BTreeMap::new();
+        for (k, v) in self.iter() {
+            new_map.insert(k.clone(), v.clone());
+        }
+        new_map
+    }
+}
+
+impl<K: Debug, V: Debug> Debug for BTreeMap<K, V> {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        f.debug_map().entries(self.iter()).finish()
+    }
+}
+
+impl<K: Ord, V> FromIterator<(K, V)> for BTreeMap<K, V> {
+    fn from_iter<I: Iterator<Item = (K, V)>>(iter: I) -> Self / pure {
+        let mut map = BTreeMap::new();
+        for (k, v) in iter {
+            map.insert(k, v);
+        }
+        map
+    }
+}
+
+/// Iterator over BTreeMap entries
+pub struct Iter<'a, K, V> {
+    stack: Vec<(&'a Node<K, V>, usize)>,
+}
+
+impl<'a, K, V> Iterator for Iter<'a, K, V> {
+    type Item = (&'a K, &'a V);
+
+    fn next(self: &mut Self) -> Option<(&'a K, &'a V)> / pure {
+        while let Some((node, idx)) = self.stack.pop() {
+            if idx < node.keys.len() {
+                // Push next index for this node
+                self.stack.push((node, idx + 1));
+
+                // If not leaf, descend to left child of next key
+                if !node.is_leaf && idx + 1 < node.children.len() {
+                    BTreeMap::push_left_path(&mut self.stack, &node.children[idx + 1], 0);
+                }
+
+                return Some((&node.keys[idx], &node.values[idx]));
+            }
+        }
+        None
+    }
+}
+
+/// Iterator over BTreeMap keys
+pub struct Keys<'a, K, V> {
+    inner: Iter<'a, K, V>,
+}
+
+impl<'a, K, V> Iterator for Keys<'a, K, V> {
+    type Item = &'a K;
+
+    fn next(self: &mut Self) -> Option<&'a K> / pure {
+        self.inner.next().map(|(k, _)| k)
+    }
+}
+
+/// Iterator over BTreeMap values
+pub struct Values<'a, K, V> {
+    inner: Iter<'a, K, V>,
+}
+
+impl<'a, K, V> Iterator for Values<'a, K, V> {
+    type Item = &'a V;
+
+    fn next(self: &mut Self) -> Option<&'a V> / pure {
+        self.inner.next().map(|(_, v)| v)
+    }
+}
+
+/// Range iterator over BTreeMap
+pub struct Range<'a, K, V, R> {
+    inner: Iter<'a, K, V>,
+    range: R,
+}
+
+impl<'a, K: Ord, V, R: RangeBounds<K>> Iterator for Range<'a, K, V, R> {
+    type Item = (&'a K, &'a V);
+
+    fn next(self: &mut Self) -> Option<(&'a K, &'a V)> / pure {
+        loop {
+            let (k, v) = self.inner.next()?;
+
+            // Check start bound
+            match self.range.start_bound() {
+                Bound::Included(start) if k < start => continue,
+                Bound::Excluded(start) if k <= start => continue,
+                _ => {}
+            }
+
+            // Check end bound
+            match self.range.end_bound() {
+                Bound::Included(end) if k > end => return None,
+                Bound::Excluded(end) if k >= end => return None,
+                _ => {}
+            }
+
+            return Some((k, v));
+        }
+    }
+}
+
+// =============================================================================
+// BTreeSet
+// =============================================================================
+
+/// A sorted set based on a B-Tree
+///
+/// BTreeSet is implemented as a thin wrapper around BTreeMap<T, ()>.
+pub struct BTreeSet<T> {
+    map: BTreeMap<T, ()>,
+}
+
+impl<T: Ord> BTreeSet<T> {
+    /// Creates an empty BTreeSet
+    pub fn new() -> Self / pure {
+        BTreeSet {
+            map: BTreeMap::new(),
+        }
+    }
+
+    /// Returns the number of elements
+    pub fn len(self: &Self) -> usize / pure {
+        self.map.len()
+    }
+
+    /// Returns true if the set is empty
+    pub fn is_empty(self: &Self) -> bool / pure {
+        self.map.is_empty()
+    }
+
+    /// Clears the set
+    pub fn clear(self: &mut Self) / pure {
+        self.map.clear()
+    }
+
+    /// Returns true if the set contains the given value
+    pub fn contains(self: &Self, value: &T) -> bool / pure {
+        self.map.contains_key(value)
+    }
+
+    /// Returns a reference to the value if it exists
+    pub fn get(self: &Self, value: &T) -> Option<&T> / pure {
+        self.map.get_key_value(value).map(|(k, _)| k)
+    }
+
+    /// Inserts a value into the set
+    pub fn insert(self: &mut Self, value: T) -> bool / pure {
+        self.map.insert(value, ()).is_none()
+    }
+
+    /// Removes a value from the set
+    pub fn remove(self: &mut Self, value: &T) -> bool / pure {
+        self.map.remove(value).is_some()
+    }
+
+    /// Returns an iterator over values in sorted order
+    pub fn iter(self: &Self) -> SetIter<'_, T> / pure {
+        SetIter {
+            inner: self.map.keys(),
+        }
+    }
+
+    /// Returns the first value
+    pub fn first(self: &Self) -> Option<&T> / pure {
+        self.map.first_key_value().map(|(k, _)| k)
+    }
+
+    /// Returns the last value
+    pub fn last(self: &Self) -> Option<&T> / pure {
+        self.map.last_key_value().map(|(k, _)| k)
+    }
+
+    /// Returns an iterator over a range of values
+    pub fn range<R: RangeBounds<T>>(self: &Self, range: R) -> SetRange<'_, T, R> / pure {
+        SetRange {
+            inner: self.map.range(range),
+        }
+    }
+
+    /// Returns true if self is a subset of other
+    pub fn is_subset(self: &Self, other: &BTreeSet<T>) -> bool / pure {
+        self.iter().all(|v| other.contains(v))
+    }
+
+    /// Returns true if self is a superset of other
+    pub fn is_superset(self: &Self, other: &BTreeSet<T>) -> bool / pure {
+        other.is_subset(self)
+    }
+
+    /// Returns true if self has no elements in common with other
+    pub fn is_disjoint(self: &Self, other: &BTreeSet<T>) -> bool / pure {
+        if self.len() <= other.len() {
+            self.iter().all(|v| !other.contains(v))
+        } else {
+            other.iter().all(|v| !self.contains(v))
+        }
+    }
+}
+
+impl<T: Ord> Default for BTreeSet<T> {
+    fn default() -> Self / pure {
+        BTreeSet::new()
+    }
+}
+
+impl<T: Ord + Clone> Clone for BTreeSet<T> {
+    fn clone(self: &Self) -> Self / pure {
+        BTreeSet {
+            map: self.map.clone(),
+        }
+    }
+}
+
+impl<T: Debug> Debug for BTreeSet<T> {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        f.debug_set().entries(self.iter()).finish()
+    }
+}
+
+impl<T: Ord> FromIterator<T> for BTreeSet<T> {
+    fn from_iter<I: Iterator<Item = T>>(iter: I) -> Self / pure {
+        let mut set = BTreeSet::new();
+        for item in iter {
+            set.insert(item);
+        }
+        set
+    }
+}
+
+impl<'a, T> IntoIterator for &'a BTreeSet<T> {
+    type Item = &'a T;
+    type IntoIter = SetIter<'a, T>;
+
+    fn into_iter(self: Self) -> SetIter<'a, T> / pure {
+        self.iter()
+    }
+}
+
+/// Iterator over BTreeSet values
+pub struct SetIter<'a, T> {
+    inner: Keys<'a, T, ()>,
+}
+
+impl<'a, T> Iterator for SetIter<'a, T> {
+    type Item = &'a T;
+
+    fn next(self: &mut Self) -> Option<&'a T> / pure {
+        self.inner.next()
+    }
+}
+
+/// Range iterator over BTreeSet
+pub struct SetRange<'a, T, R> {
+    inner: Range<'a, T, (), R>,
+}
+
+impl<'a, T: Ord, R: RangeBounds<T>> Iterator for SetRange<'a, T, R> {
+    type Item = &'a T;
+
+    fn next(self: &mut Self) -> Option<&'a T> / pure {
+        self.inner.next().map(|(k, _)| k)
+    }
+}
+
+// =============================================================================
+// Range Bounds
+// =============================================================================
+
+/// A bound on one end of a range
+pub enum Bound<T> {
+    Included(T),
+    Excluded(T),
+    Unbounded,
+}
+
+/// A trait for types that represent ranges
+pub trait RangeBounds<T> {
+    fn start_bound(self: &Self) -> Bound<&T>;
+    fn end_bound(self: &Self) -> Bound<&T>;
+
+    fn contains(self: &Self, item: &T) -> bool / pure
+    where
+        T: PartialOrd,
+    {
+        let start_ok = match self.start_bound() {
+            Bound::Included(start) => item >= start,
+            Bound::Excluded(start) => item > start,
+            Bound::Unbounded => true,
+        };
+
+        let end_ok = match self.end_bound() {
+            Bound::Included(end) => item <= end,
+            Bound::Excluded(end) => item < end,
+            Bound::Unbounded => true,
+        };
+
+        start_ok && end_ok
+    }
+}
+
+/// Range from start to end (exclusive): start..end
+pub struct Range<T> {
+    pub start: T,
+    pub end: T,
+}
+
+impl<T> RangeBounds<T> for Range<T> {
+    fn start_bound(self: &Self) -> Bound<&T> {
+        Bound::Included(&self.start)
+    }
+
+    fn end_bound(self: &Self) -> Bound<&T> {
+        Bound::Excluded(&self.end)
+    }
+}
+
+/// Range from start to end (inclusive): start..=end
+pub struct RangeInclusive<T> {
+    pub start: T,
+    pub end: T,
+}
+
+impl<T> RangeBounds<T> for RangeInclusive<T> {
+    fn start_bound(self: &Self) -> Bound<&T> {
+        Bound::Included(&self.start)
+    }
+
+    fn end_bound(self: &Self) -> Bound<&T> {
+        Bound::Included(&self.end)
+    }
+}
+
+/// Range from start: start..
+pub struct RangeFrom<T> {
+    pub start: T,
+}
+
+impl<T> RangeBounds<T> for RangeFrom<T> {
+    fn start_bound(self: &Self) -> Bound<&T> {
+        Bound::Included(&self.start)
+    }
+
+    fn end_bound(self: &Self) -> Bound<&T> {
+        Bound::Unbounded
+    }
+}
+
+/// Range up to end (exclusive): ..end
+pub struct RangeTo<T> {
+    pub end: T,
+}
+
+impl<T> RangeBounds<T> for RangeTo<T> {
+    fn start_bound(self: &Self) -> Bound<&T> {
+        Bound::Unbounded
+    }
+
+    fn end_bound(self: &Self) -> Bound<&T> {
+        Bound::Excluded(&self.end)
+    }
+}
+
+/// Range up to end (inclusive): ..=end
+pub struct RangeToInclusive<T> {
+    pub end: T,
+}
+
+impl<T> RangeBounds<T> for RangeToInclusive<T> {
+    fn start_bound(self: &Self) -> Bound<&T> {
+        Bound::Unbounded
+    }
+
+    fn end_bound(self: &Self) -> Bound<&T> {
+        Bound::Included(&self.end)
+    }
+}
+
+/// Full range: ..
+pub struct RangeFull;
+
+impl<T> RangeBounds<T> for RangeFull {
+    fn start_bound(self: &Self) -> Bound<&T> {
+        Bound::Unbounded
+    }
+
+    fn end_bound(self: &Self) -> Bound<&T> {
+        Bound::Unbounded
+    }
+}

@@ -1,0 +1,35 @@
+// Test: mutable struct field assignment
+// EXPECT: 10
+// EXPECT: 99
+// EXPECT: 4
+struct Counter {
+    value: i32,
+    step: i32,
+}
+
+fn main() -> i32 {
+    // Increment value field in a loop
+    let mut c: Counter = Counter { value: 0, step: 1 };
+    let mut i: i32 = 0;
+    while i < 10 {
+        c.value = c.value + c.step;
+        i = i + 1;
+    }
+    println_int(c.value); // 10
+    if c.value != 10 { return 1; }
+
+    // Direct field assignment
+    c.value = 99;
+    println_int(c.value); // 99
+    if c.value != 99 { return 2; }
+
+    // Multiple field mutations
+    let mut p: Counter = Counter { value: 1, step: 1 };
+    p.value = p.value + p.step; // 2
+    p.value = p.value + p.step; // 3
+    p.value = p.value + p.step; // 4
+    println_int(p.value); // 4
+    if p.value != 4 { return 3; }
+
+    0
+}

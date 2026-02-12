@@ -1,0 +1,33 @@
+// Test: non-generic handler with mutable String state (BUG-009 Case 1)
+// Verifies that mutable aggregate state fields (> 8 bytes) work in
+// handler definitions. Assignment inside handler op bodies uses the
+// HIR-based compile_expr path with out-pointer builtin support.
+// EXPECT: 42
+effect Swap {
+    op swap() -> ();
+}
+
+deep handler StringSwapper for Swap {
+    let mut stored: String
+
+    return(x) { x }
+
+    op swap() {
+        stored = String::new();
+        resume(())
+    }
+}
+
+fn do_work() -> i32 / {Swap} {
+    perform Swap.swap();
+    42
+}
+
+fn main() -> i32 {
+    let result: i32 = with StringSwapper { stored: String::new() } handle {
+        do_work()
+    };
+    println_int(result);
+    if result != 42 { return 1; }
+    0
+}

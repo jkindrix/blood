@@ -1,0 +1,78 @@
+// =============================================================================
+// Record Types Through Effect Handlers
+// =============================================================================
+//
+// Tests that record types (structs with named fields) can be created,
+// passed through effect operations, and have their fields accessed in
+// handlers. This exercises the interaction between the type system's
+// record support and the effect handler infrastructure.
+
+effect Emit<T> {
+    op emit(value: T) -> ();
+}
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn emit_points() / {Emit<Point>} {
+    perform Emit.emit(Point { x: 1, y: 2 });
+    perform Emit.emit(Point { x: 3, y: 4 });
+    perform Emit.emit(Point { x: 5, y: 6 });
+}
+
+fn collect_x_sum(stream: fn() / {Emit<Point>}) -> i32 {
+    let mut sum: i32 = 0;
+    try { stream(); }
+    with {
+        Emit.emit(p) => {
+            sum = sum + p.x;
+            resume(());
+        }
+    };
+    sum
+}
+
+fn collect_y_sum(stream: fn() / {Emit<Point>}) -> i32 {
+    let mut sum: i32 = 0;
+    try { stream(); }
+    with {
+        Emit.emit(p) => {
+            sum = sum + p.y;
+            resume(());
+        }
+    };
+    sum
+}
+
+fn assert_eq(actual: i32, expected: i32) {
+    if actual != expected {
+        let zero: i32 = 0;
+        let x: i32 = 1 / zero;
+    }
+}
+
+fn main() {
+    // Test 1: Sum of x coordinates through effect handler
+    let x_sum: i32 = collect_x_sum(|| / {Emit<Point>} { emit_points(); });
+    assert_eq(x_sum, 9);  // 1 + 3 + 5
+
+    // Test 2: Sum of y coordinates through effect handler
+    let y_sum: i32 = collect_y_sum(|| / {Emit<Point>} { emit_points(); });
+    assert_eq(y_sum, 12);  // 2 + 4 + 6
+
+    // Test 3: Create record in handler and access fields
+    let mut result_x: i32 = 0;
+    let mut result_y: i32 = 0;
+    try { perform Emit.emit(Point { x: 42, y: 99 }); }
+    with {
+        Emit.emit(p) => {
+            result_x = p.x;
+            result_y = p.y;
+            resume(());
+        }
+    };
+    assert_eq(result_x, 42);
+    assert_eq(result_y, 99);
+}

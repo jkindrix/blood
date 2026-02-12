@@ -1,0 +1,303 @@
+// Blood Standard Library - Synchronization Primitives
+//
+// Thread-safe synchronization types.
+
+pub mod atomic;
+pub mod mutex;
+pub mod rwlock;
+pub mod channel;
+pub mod once;
+pub mod barrier;
+
+pub use atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, AtomicU64, AtomicUsize, AtomicPtr, Ordering};
+pub use mutex::{Mutex, MutexGuard};
+pub use rwlock::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+pub use channel::{channel, Sender, Receiver};
+pub use once::{Once, OnceCell, OnceLock};
+pub use barrier::Barrier;
+
+/// A type that can be safely shared between threads
+///
+/// Arc is an atomically reference-counted smart pointer.
+pub struct Arc<T: ?Sized> {
+    ptr: NonNull<ArcInner<T>>,
+}
+
+struct ArcInner<T: ?Sized> {
+    strong: AtomicUsize,
+    weak: AtomicUsize,
+    data: T,
+}
+
+impl<T> Arc<T> {
+    /// Creates a new Arc
+    pub fn new(value: T) -> Self / pure {
+        let inner = Box::new(ArcInner {
+            strong: AtomicUsize::new(1),
+            weak: AtomicUsize::new(1),  // One weak reference for all strong refs
+            data: value,
+        });
+
+        Arc {
+            ptr: NonNull::new(Box::into_raw(inner)).unwrap(),
+        }
+    }
+
+    /// Attempts to create a new Arc without allocation
+    pub fn try_new(value: T) -> Result<Self, AllocError> / pure {
+        // In a real implementation, this would try to allocate
+        Ok(Arc::new(value))
+    }
+
+    /// Returns the number of strong references
+    pub fn strong_count(this: &Self) -> usize / pure {
+        unsafe { (*this.ptr.as_ptr()).strong.load(Ordering::SeqCst) }
+    }
+
+    /// Returns the number of weak references
+    pub fn weak_count(this: &Self) -> usize / pure {
+        let weak = unsafe { (*this.ptr.as_ptr()).weak.load(Ordering::SeqCst) };
+        if weak == usize::MAX {
+            0
+        } else {
+            weak - 1  // Subtract the implicit weak ref from strong refs
+        }
+    }
+
+    /// Attempts to unwrap the Arc if it has exactly one strong reference
+    pub fn try_unwrap(this: Self) -> Result<T, Self> / pure {
+        if Arc::strong_count(&this) == 1 {
+            unsafe {
+                let inner = Box::from_raw(this.ptr.as_ptr());
+                mem::forget(this);
+                Ok(inner.data)
+            }
+        } else {
+            Err(this)
+        }
+    }
+
+    /// Gets a mutable reference if there is exactly one strong reference
+    pub fn get_mut(this: &mut Self) -> Option<&mut T> / pure {
+        if Arc::strong_count(this) == 1 && Arc::weak_count(this) == 0 {
+            unsafe { Some(&mut (*this.ptr.as_ptr()).data) }
+        } else {
+            None
+        }
+    }
+
+    /// Makes a mutable reference by cloning if necessary
+    pub fn make_mut(this: &mut Self) -> &mut T / pure
+    where
+        T: Clone,
+    {
+        if Arc::strong_count(this) != 1 {
+            *this = Arc::new((**this).clone());
+        }
+        unsafe { &mut (*this.ptr.as_ptr()).data }
+    }
+
+    /// Creates a Weak pointer to this value
+    pub fn downgrade(this: &Self) -> Weak<T> / pure {
+        unsafe {
+            (*this.ptr.as_ptr()).weak.fetch_add(1, Ordering::Relaxed);
+        }
+        Weak { ptr: this.ptr }
+    }
+
+    /// Returns a raw pointer to the inner value
+    pub fn as_ptr(this: &Self) -> *const T / pure {
+        unsafe { &(*this.ptr.as_ptr()).data as *const T }
+    }
+}
+
+impl<T: ?Sized> Deref for Arc<T> {
+    type Target = T;
+
+    fn deref(self: &Self) -> &T / pure {
+        unsafe { &(*self.ptr.as_ptr()).data }
+    }
+}
+
+impl<T: ?Sized> Clone for Arc<T> {
+    fn clone(self: &Self) -> Self / pure {
+        unsafe {
+            (*self.ptr.as_ptr()).strong.fetch_add(1, Ordering::Relaxed);
+        }
+        Arc { ptr: self.ptr }
+    }
+}
+
+impl<T: ?Sized> Drop for Arc<T> {
+    fn drop(self: &mut Self) / pure {
+        unsafe {
+            if (*self.ptr.as_ptr()).strong.fetch_sub(1, Ordering::Release) == 1 {
+                // Synchronize with other threads
+                atomic::fence(Ordering::Acquire);
+
+                // Drop the data
+                ptr::drop_in_place(&mut (*self.ptr.as_ptr()).data);
+
+                // Decrement weak count (our implicit weak ref)
+                if (*self.ptr.as_ptr()).weak.fetch_sub(1, Ordering::Release) == 1 {
+                    atomic::fence(Ordering::Acquire);
+                    drop(Box::from_raw(self.ptr.as_ptr()));
+                }
+            }
+        }
+    }
+}
+
+impl<T: ?Sized + PartialEq> PartialEq for Arc<T> {
+    fn eq(self: &Self, other: &Self) -> bool / pure {
+        **self == **other
+    }
+}
+
+impl<T: ?Sized + Eq> Eq for Arc<T> {}
+
+impl<T: ?Sized + Hash> Hash for Arc<T> {
+    fn hash<H: Hasher>(self: &Self, state: &mut H) / pure {
+        (**self).hash(state);
+    }
+}
+
+impl<T: ?Sized + Debug> Debug for Arc<T> {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        Debug::fmt(&**self, f)
+    }
+}
+
+impl<T: ?Sized + Display> Display for Arc<T> {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        Display::fmt(&**self, f)
+    }
+}
+
+impl<T: Default> Default for Arc<T> {
+    fn default() -> Self / pure {
+        Arc::new(T::default())
+    }
+}
+
+impl<T> From<T> for Arc<T> {
+    fn from(value: T) -> Self / pure {
+        Arc::new(value)
+    }
+}
+
+impl<T> From<Box<T>> for Arc<T> {
+    fn from(b: Box<T>) -> Self / pure {
+        Arc::new(*b)
+    }
+}
+
+unsafe impl<T: ?Sized + Send + Sync> Send for Arc<T> {}
+unsafe impl<T: ?Sized + Send + Sync> Sync for Arc<T> {}
+
+/// A weak reference to an Arc
+///
+/// Weak references don't keep the value alive.
+pub struct Weak<T: ?Sized> {
+    ptr: NonNull<ArcInner<T>>,
+}
+
+impl<T> Weak<T> {
+    /// Creates a new Weak that points to nothing
+    pub fn new() -> Self / pure {
+        Weak {
+            ptr: NonNull::dangling(),
+        }
+    }
+
+    /// Attempts to upgrade to an Arc
+    pub fn upgrade(self: &Self) -> Option<Arc<T>> / pure {
+        unsafe {
+            let mut strong = (*self.ptr.as_ptr()).strong.load(Ordering::Relaxed);
+            loop {
+                if strong == 0 {
+                    return None;
+                }
+                match (*self.ptr.as_ptr()).strong.compare_exchange_weak(
+                    strong,
+                    strong + 1,
+                    Ordering::Acquire,
+                    Ordering::Relaxed,
+                ) {
+                    Ok(_) => return Some(Arc { ptr: self.ptr }),
+                    Err(old) => strong = old,
+                }
+            }
+        }
+    }
+
+    /// Returns the number of strong references
+    pub fn strong_count(self: &Self) -> usize / pure {
+        unsafe { (*self.ptr.as_ptr()).strong.load(Ordering::SeqCst) }
+    }
+
+    /// Returns the number of weak references
+    pub fn weak_count(self: &Self) -> usize / pure {
+        let weak = unsafe { (*self.ptr.as_ptr()).weak.load(Ordering::SeqCst) };
+        if weak == 0 {
+            0
+        } else {
+            weak - 1
+        }
+    }
+
+    /// Returns true if the two Weak pointers point to the same allocation
+    pub fn ptr_eq(self: &Self, other: &Weak<T>) -> bool / pure {
+        self.ptr == other.ptr
+    }
+}
+
+impl<T: ?Sized> Clone for Weak<T> {
+    fn clone(self: &Self) -> Self / pure {
+        unsafe {
+            (*self.ptr.as_ptr()).weak.fetch_add(1, Ordering::Relaxed);
+        }
+        Weak { ptr: self.ptr }
+    }
+}
+
+impl<T: ?Sized> Drop for Weak<T> {
+    fn drop(self: &mut Self) / pure {
+        unsafe {
+            if (*self.ptr.as_ptr()).weak.fetch_sub(1, Ordering::Release) == 1 {
+                atomic::fence(Ordering::Acquire);
+                drop(Box::from_raw(self.ptr.as_ptr()));
+            }
+        }
+    }
+}
+
+impl<T: ?Sized> Default for Weak<T> {
+    fn default() -> Self / pure {
+        Weak::new()
+    }
+}
+
+impl<T: ?Sized + Debug> Debug for Weak<T> {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        f.write_str("(Weak)")
+    }
+}
+
+unsafe impl<T: ?Sized + Send + Sync> Send for Weak<T> {}
+unsafe impl<T: ?Sized + Send + Sync> Sync for Weak<T> {}
+
+/// An allocation error
+pub struct AllocError;
+
+impl Debug for AllocError {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        f.write_str("memory allocation failed")
+    }
+}
+
+impl Display for AllocError {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        f.write_str("memory allocation failed")
+    }
+}

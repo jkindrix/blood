@@ -1,0 +1,127 @@
+// Test: match arm block bodies followed by patterns starting with &
+// Regression test for GitHub issue #4 - parser was incorrectly treating & after
+// a block body as a binary AND operator instead of the start of a new pattern.
+
+pub enum Kind {
+    First { val: i32 },
+    Second { inner: i32 },
+}
+
+// Core regression test: block body followed by &pattern (no comma)
+pub fn test_block_then_ref_pattern(k: &Kind) -> i32 {
+    match k {
+        &Kind::First { val } => {
+            val
+        }
+        &Kind::Second { inner } => {
+            inner
+        }
+    }
+}
+
+// Block body followed by &_ wildcard
+pub fn test_block_then_ref_wildcard(k: &Kind) -> i32 {
+    match k {
+        &Kind::First { val } => {
+            val
+        }
+        &_ => 0,
+    }
+}
+
+// Block body followed by &binding
+pub fn test_block_then_ref_binding(k: &Kind) -> i32 {
+    match k {
+        &Kind::First { val } => {
+            val
+        }
+        &v => 0,
+    }
+}
+
+// Multiple block bodies in sequence
+pub fn test_multiple_blocks(k: &Kind) -> i32 {
+    match k {
+        &Kind::First { val } => {
+            val
+        }
+        &Kind::Second { inner } => {
+            inner
+        }
+    }
+}
+
+// Block body with ref pattern inside, followed by another ref pattern
+pub fn test_ref_inside_and_outside(k: &Kind) -> i32 {
+    match k {
+        &Kind::First { ref val } => {
+            *val
+        }
+        &Kind::Second { ref inner } => {
+            *inner
+        }
+    }
+}
+
+// Tuple variants with block bodies
+pub enum TupleKind {
+    First(i32),
+    Second(i32),
+}
+
+pub fn test_tuple_block_then_ref(k: &TupleKind) -> i32 {
+    match k {
+        &TupleKind::First(v) => {
+            v
+        }
+        &TupleKind::Second(v) => {
+            v
+        }
+    }
+}
+
+// Unit variants with block bodies
+pub enum UnitKind {
+    First,
+    Second,
+}
+
+pub fn test_unit_block_then_ref(k: &UnitKind) -> i32 {
+    match k {
+        &UnitKind::First => {
+            1
+        }
+        &UnitKind::Second => {
+            2
+        }
+    }
+}
+
+// Mixed: block body, then simple expression with comma
+pub fn test_mixed_block_and_expr(k: &Kind) -> i32 {
+    match k {
+        &Kind::First { val } => {
+            val
+        }
+        &Kind::Second { inner } => inner,
+    }
+}
+
+// Ensure bitwise AND still works in non-block match arm bodies
+pub fn test_bitand_still_works(x: i32) -> i32 {
+    match x {
+        1 => x & 0xFF,
+        2 => x & 0xF0,
+        _ => 0,
+    }
+}
+
+pub fn main() {
+    let k1 = Kind::First { val: 10 };
+    let r1 = test_block_then_ref_pattern(&k1);
+
+    let k2 = Kind::Second { inner: 20 };
+    let r2 = test_block_then_ref_wildcard(&k2);
+
+    let r3 = test_bitand_still_works(255);
+}

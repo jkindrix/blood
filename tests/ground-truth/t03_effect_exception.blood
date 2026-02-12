@@ -1,0 +1,39 @@
+// Test: exception-style effect (abort without resume)
+// EXPECT: -1
+effect Fail {
+    op fail(code: i32) -> i32;
+}
+
+deep handler CatchFail for Fail {
+    return(x) { x }
+
+    op fail(code) {
+        // Do NOT resume - this is an abort/exception
+        0 - code
+    }
+}
+
+fn safe_divide(a: i32, b: i32) -> i32 / {Fail} {
+    if b == 0 {
+        perform Fail.fail(1)
+    } else {
+        a / b
+    }
+}
+
+fn main() -> i32 {
+    let result: i32 = with CatchFail {} handle {
+        safe_divide(10, 0)
+    };
+    println_int(result); // fail(1) => 0-1 = -1
+
+    if result != -1 { return 1; }
+
+    // Normal case
+    let ok: i32 = with CatchFail {} handle {
+        safe_divide(10, 2)
+    };
+    if ok != 5 { return 2; }
+
+    0
+}

@@ -1,0 +1,43 @@
+// =============================================================================
+// Regression Test: Generic Enum Pattern + Effect Type Unification
+// =============================================================================
+//
+// Verifies that pattern matching a generic enum works correctly in a function
+// that also uses effects with the same type parameter. This was previously a
+// known limitation where type variables from different contexts failed to
+// unify, but has since been resolved.
+
+effect Emit<T> {
+    op emit(value: T) -> ();
+}
+
+enum Maybe<T> {
+    Just(T),
+    Nothing,
+}
+
+fn try_emit_maybe(opt: Maybe<i32>) / {Emit<i32>} {
+    match opt {
+        Maybe::Just(value) => {
+            perform Emit.emit(value);
+        },
+        Maybe::Nothing => {},
+    }
+}
+
+fn main() {
+    let mut sum: i32 = 0;
+    try {
+        try_emit_maybe(Maybe::Just(42));
+    }
+    with {
+        Emit.emit(n) => {
+            sum = sum + n;
+            resume(());
+        }
+    };
+    if sum != 42 {
+        let zero: i32 = 0;
+        let x: i32 = 1 / zero;
+    }
+}

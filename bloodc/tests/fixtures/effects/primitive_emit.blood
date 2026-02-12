@@ -1,0 +1,36 @@
+// =============================================================================
+// Regression Test: Primitive Type Effect Parameters
+// =============================================================================
+//
+// Verifies that primitive types (i32, i64) work correctly as effect type
+// parameters. This was previously a known limitation where the codegen would
+// produce LLVM type mismatches, but has since been resolved.
+
+effect Emit<T> {
+    op emit(value: T) -> ();
+}
+
+fn emit_ints() / {Emit<i32>} {
+    perform Emit.emit(10);
+    perform Emit.emit(20);
+}
+
+fn sum_emitted(stream: fn() / {Emit<i32>}) -> i32 {
+    let mut sum: i32 = 0;
+    try { stream(); }
+    with {
+        Emit.emit(n) => {
+            sum = sum + n;
+            resume(());
+        }
+    };
+    sum
+}
+
+fn main() {
+    let result: i32 = sum_emitted(|| / {Emit<i32>} { emit_ints(); });
+    if result != 30 {
+        let zero: i32 = 0;
+        let x: i32 = 1 / zero;
+    }
+}

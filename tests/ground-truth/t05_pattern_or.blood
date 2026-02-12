@@ -1,0 +1,48 @@
+// Test: or-pattern (A | B) in match
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 0
+// EXPECT: 1
+enum Color {
+    Red,
+    Green,
+    Blue,
+    Yellow,
+}
+
+fn is_warm(c: Color) -> bool {
+    match c {
+        Color::Red | Color::Yellow => true,
+        Color::Green | Color::Blue => false,
+    }
+}
+
+fn main() -> i32 {
+    // Red is warm
+    let r: bool = is_warm(Color::Red);
+    println_int(if r { 1 } else { 0 }); // 1
+    if !r { return 1; }
+
+    // Yellow is warm
+    let y: bool = is_warm(Color::Yellow);
+    println_int(if y { 1 } else { 0 }); // 1
+    if !y { return 2; }
+
+    // Blue is not warm
+    let b: bool = is_warm(Color::Blue);
+    println_int(if b { 1 } else { 0 }); // 0
+    if b { return 3; }
+
+    // Green is not warm
+    let g: bool = is_warm(Color::Green);
+    // Or-pattern on integers
+    let x: i32 = 3;
+    let is_small: bool = match x {
+        1 | 2 | 3 => true,
+        _ => false,
+    };
+    println_int(if is_small { 1 } else { 0 }); // 1
+    if !is_small { return 4; }
+
+    0
+}

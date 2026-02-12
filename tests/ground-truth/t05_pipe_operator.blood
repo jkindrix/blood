@@ -1,0 +1,32 @@
+// Test: pipe operator (|>) for function chaining
+// EXPECT: 12
+// EXPECT: 7
+fn double(x: i32) -> i32 {
+    x * 2
+}
+
+fn add_two(x: i32) -> i32 {
+    x + 2
+}
+
+fn square(x: i32) -> i32 {
+    x * x
+}
+
+fn main() -> i32 {
+    // Basic pipe: 5 |> double = double(5) = 10
+    let a: i32 = 5 |> double;
+    if a != 10 { return 1; }
+
+    // Chained pipe: 5 |> double |> add_two = add_two(double(5)) = 12
+    let b: i32 = 5 |> double |> add_two;
+    println_int(b); // 12
+    if b != 12 { return 2; }
+
+    // Pipe with different function: 5 |> add_two = 7
+    let c: i32 = 5 |> add_two;
+    println_int(c); // 7
+    if c != 7 { return 3; }
+
+    0
+}

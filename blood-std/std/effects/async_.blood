@@ -1,0 +1,285 @@
+// Blood Standard Library - Async Effect
+//
+// The Async effect provides asynchronous operations through algebraic effects.
+
+/// Async effect for asynchronous operations
+///
+/// Unlike traditional async/await, Blood's Async is an algebraic effect
+/// that can be handled by different schedulers.
+pub effect Async {
+    /// Awaits a future value
+    op await_<T>(future: Future<T>) -> T;
+
+    /// Spawns a new async task
+    op spawn<T>(task: fn() -> T / {Async}) -> TaskHandle<T>;
+
+    /// Yields control to the scheduler
+    op yield_() -> unit;
+
+    /// Sleeps for a duration
+    op sleep(duration: Duration) -> unit;
+}
+
+/// Awaits a future value
+pub fn await_<T>(future: Future<T>) -> T / {Async} {
+    perform await_(future)
+}
+
+/// Spawns a new async task
+pub fn spawn<T>(task: fn() -> T / {Async}) -> TaskHandle<T> / {Async} {
+    perform spawn(task)
+}
+
+/// Yields control to the scheduler
+pub fn yield_() / {Async} {
+    perform yield_()
+}
+
+/// Sleeps for a duration
+pub fn sleep(duration: Duration) / {Async} {
+    perform sleep(duration)
+}
+
+/// Handle to a spawned task
+pub struct TaskHandle<T> {
+    id: u64,
+    _marker: PhantomData<T>,
+}
+
+impl<T> TaskHandle<T> {
+    /// Waits for the task to complete and returns its result
+    pub fn join(self: Self) -> T / {Async} {
+        perform await_(Future::from_handle(self))
+    }
+
+    /// Returns the task ID
+    pub fn id(self: &Self) -> u64 {
+        self.id
+    }
+
+    /// Cancels the task
+    pub fn cancel(self: Self) / {Async} {
+        __builtin_cancel_task(self.id);
+    }
+}
+
+/// Future value that will be available asynchronously
+pub struct Future<T> {
+    state: FutureState<T>,
+}
+
+enum FutureState<T> {
+    Pending(u64),  // Task ID
+    Ready(T),
+    Cancelled,
+}
+
+impl<T> Future<T> {
+    /// Creates a future that is immediately ready
+    pub fn ready(value: T) -> Future<T> {
+        Future { state: FutureState::Ready(value) }
+    }
+
+    /// Creates a future from a task handle
+    fn from_handle(handle: TaskHandle<T>) -> Future<T> {
+        Future { state: FutureState::Pending(handle.id) }
+    }
+
+    /// Returns true if the future is ready
+    pub fn is_ready(self: &Self) -> bool {
+        matches!(self.state, FutureState::Ready(_))
+    }
+
+    /// Returns true if the future is pending
+    pub fn is_pending(self: &Self) -> bool {
+        matches!(self.state, FutureState::Pending(_))
+    }
+
+    /// Polls the future for completion
+    pub fn poll(self: &mut Self) -> Poll<T> {
+        match &self.state {
+            FutureState::Ready(_) => {
+                if let FutureState::Ready(val) = mem::replace(&mut self.state, FutureState::Cancelled) {
+                    Poll::Ready(val)
+                } else {
+                    unreachable!()
+                }
+            }
+            FutureState::Pending(id) => {
+                if let Some(val) = __builtin_poll_task(*id) {
+                    self.state = FutureState::Ready(val);
+                    Poll::Ready(val)
+                } else {
+                    Poll::Pending
+                }
+            }
+            FutureState::Cancelled => Poll::Cancelled,
+        }
+    }
+
+    /// Maps a ready value
+    pub fn map<U, F>(self: Self, f: F) -> Future<U>
+    where
+        F: FnOnce(T) -> U,
+    {
+        match self.state {
+            FutureState::Ready(val) => Future::ready(f(val)),
+            FutureState::Pending(id) => Future { state: FutureState::Pending(id) },
+            FutureState::Cancelled => Future { state: FutureState::Cancelled },
+        }
+    }
+}
+
+/// Poll result
+pub enum Poll<T> {
+    Ready(T),
+    Pending,
+    Cancelled,
+}
+
+/// Duration type for timeouts and sleeps
+pub struct Duration {
+    secs: u64,
+    nanos: u32,
+}
+
+impl Duration {
+    pub const fn new(secs: u64, nanos: u32) -> Self {
+        Duration { secs, nanos: nanos % 1_000_000_000 }
+    }
+
+    pub const fn from_secs(secs: u64) -> Self {
+        Duration { secs, nanos: 0 }
+    }
+
+    pub const fn from_millis(millis: u64) -> Self {
+        Duration {
+            secs: millis / 1000,
+            nanos: ((millis % 1000) * 1_000_000) as u32,
+        }
+    }
+
+    pub const fn from_micros(micros: u64) -> Self {
+        Duration {
+            secs: micros / 1_000_000,
+            nanos: ((micros % 1_000_000) * 1000) as u32,
+        }
+    }
+
+    pub const fn from_nanos(nanos: u64) -> Self {
+        Duration {
+            secs: nanos / 1_000_000_000,
+            nanos: (nanos % 1_000_000_000) as u32,
+        }
+    }
+
+    pub const fn as_secs(self: &Self) -> u64 {
+        self.secs
+    }
+
+    pub const fn subsec_nanos(self: &Self) -> u32 {
+        self.nanos
+    }
+
+    pub const fn as_millis(self: &Self) -> u128 {
+        (self.secs as u128) * 1000 + (self.nanos as u128) / 1_000_000
+    }
+
+    pub const fn as_nanos(self: &Self) -> u128 {
+        (self.secs as u128) * 1_000_000_000 + (self.nanos as u128)
+    }
+}
+
+/// Standard async handler using the runtime scheduler
+pub deep handler RuntimeAsync for Async {
+    return(x) { x }
+
+    op await_(future) {
+        let value = __builtin_await(future);
+        resume(value)
+    }
+
+    op spawn(task) {
+        let handle = __builtin_spawn(task);
+        resume(handle)
+    }
+
+    op yield_() {
+        __builtin_yield();
+        resume(())
+    }
+
+    op sleep(duration) {
+        __builtin_sleep(duration);
+        resume(())
+    }
+}
+
+/// Blocking handler that runs async operations synchronously
+pub deep handler BlockingAsync for Async {
+    return(x) { x }
+
+    op await_(future) {
+        let mut f = future;
+        loop {
+            match f.poll() {
+                Poll::Ready(val) => return resume(val),
+                Poll::Pending => __builtin_yield(),
+                Poll::Cancelled => perform panic("task cancelled"),
+            }
+        }
+    }
+
+    op spawn(task) {
+        // Run synchronously and wrap in ready future
+        let result = task();
+        let handle = TaskHandle { id: 0, _marker: PhantomData };
+        resume(handle)
+    }
+
+    op yield_() {
+        // No-op for blocking
+        resume(())
+    }
+
+    op sleep(duration) {
+        __builtin_blocking_sleep(duration);
+        resume(())
+    }
+}
+
+/// Runs an async computation, blocking until complete
+pub fn block_on<T, F>(f: F) -> T / pure
+where
+    F: FnOnce() -> T / {Async},
+{
+    handle f() with BlockingAsync {
+        return(v) { v }
+    }
+}
+
+/// Joins multiple futures, returning all results
+pub fn join_all<T>(futures: Vec<Future<T>>) -> Vec<T> / {Async} {
+    let mut results = Vec::with_capacity(futures.len());
+    for future in futures {
+        results.push(perform await_(future));
+    }
+    results
+}
+
+/// Selects the first completed future
+pub fn select<T>(futures: Vec<Future<T>>) -> (T, Vec<Future<T>>) / {Async} {
+    loop {
+        for (i, future) in futures.iter_mut().enumerate() {
+            if let Poll::Ready(val) = future.poll() {
+                let remaining = futures.into_iter()
+                    .enumerate()
+                    .filter(|(j, _)| *j != i)
+                    .map(|(_, f)| f)
+                    .collect();
+                return (val, remaining);
+            }
+        }
+        perform yield_();
+    }
+}

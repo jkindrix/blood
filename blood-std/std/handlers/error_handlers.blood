@@ -1,0 +1,268 @@
+// Blood Standard Library - Error Effect Handlers
+//
+// Handlers for the Error<E> effect.
+
+use crate::effects::error::Error;
+
+/// Converts Error effect to Result
+///
+/// This is the most common way to handle errors.
+pub deep handler ErrorToResult<T, E> for Error<E> {
+    type Output = Result<T, E>;
+
+    return(x: T) { Ok(x) }
+
+    op raise(e: E) {
+        Err(e)
+    }
+}
+
+/// Converts Error effect to Option (discarding error info)
+pub deep handler ErrorToOption<T, E> for Error<E> {
+    type Output = Option<T>;
+
+    return(x: T) { Some(x) }
+
+    op raise(_e: E) {
+        None
+    }
+}
+
+/// Handles errors with a default value
+pub deep handler ErrorWithDefault<T, E> for Error<E>
+where
+    T: Default,
+{
+    return(x: T) { x }
+
+    op raise(_e: E) {
+        resume(T::default())
+    }
+}
+
+/// Handles errors with a provided fallback value
+pub deep handler ErrorWithFallback<T, E> for Error<E> {
+    let fallback: T;
+
+    fn new(fallback: T) -> Self {
+        ErrorWithFallback { fallback }
+    }
+
+    return(x: T) { x }
+
+    op raise(_e: E) {
+        resume(self.fallback.clone())
+    }
+}
+
+/// Handles errors by mapping them to a different type
+pub deep handler MapError<T, E, F, NewE> for Error<E>
+where
+    F: Fn(E) -> NewE,
+{
+    let mapper: F;
+
+    fn new(mapper: F) -> Self {
+        MapError { mapper }
+    }
+
+    return(x: T) { x }
+
+    op raise(e: E) {
+        perform raise((self.mapper)(e))
+    }
+}
+
+/// Collects all errors instead of short-circuiting
+pub deep handler CollectErrors<T, E> for Error<E>
+where
+    T: Default,
+{
+    let mut errors: Vec<E>;
+
+    fn new() -> Self {
+        CollectErrors { errors: Vec::new() }
+    }
+
+    fn into_errors(self: Self) -> Vec<E> {
+        self.errors
+    }
+
+    return(x: T) { (x, self.errors) }
+
+    op raise(e: E) {
+        self.errors.push(e);
+        resume(T::default())
+    }
+}
+
+/// Retries on error with exponential backoff
+pub deep handler RetryOnError<T, E> for Error<E> {
+    let max_retries: u32;
+    let mut retries: u32;
+
+    fn new(max_retries: u32) -> Self {
+        RetryOnError { max_retries, retries: 0 }
+    }
+
+    return(x: T) { Ok(x) }
+
+    op raise(e: E) {
+        if self.retries < self.max_retries {
+            self.retries += 1;
+            // Re-run the computation from the beginning
+            // This requires cooperation from the calling code
+            Err(RetryNeeded { error: e, attempt: self.retries })
+        } else {
+            Err(MaxRetriesExceeded { error: e, attempts: self.retries })
+        }
+    }
+}
+
+/// Indicates a retry is needed
+pub struct RetryNeeded<E> {
+    pub error: E,
+    pub attempt: u32,
+}
+
+/// Indicates max retries were exceeded
+pub struct MaxRetriesExceeded<E> {
+    pub error: E,
+    pub attempts: u32,
+}
+
+/// Logs errors before propagating them
+pub deep handler LogErrors<T, E: Debug> for Error<E> {
+    return(x: T) { x }
+
+    op raise(e: E) {
+        eprintln!("Error occurred: {:?}", e);
+        perform raise(e)
+    }
+}
+
+/// Wraps errors with additional context
+pub deep handler ContextualError<T, E> for Error<E> {
+    let context: String;
+
+    fn new(context: impl Into<String>) -> Self {
+        ContextualError { context: context.into() }
+    }
+
+    return(x: T) { x }
+
+    op raise(e: E) {
+        perform raise(ContextError {
+            context: self.context.clone(),
+            source: e,
+        })
+    }
+}
+
+/// An error with additional context
+pub struct ContextError<E> {
+    pub context: String,
+    pub source: E,
+}
+
+impl<E: Debug> Debug for ContextError<E> {
+    fn fmt(self: &Self, f: &mut Formatter) -> fmt::Result / {IO} {
+        write!(f, "{}: {:?}", self.context, self.source)
+    }
+}
+
+impl<E: Display> Display for ContextError<E> {
+    fn fmt(self: &Self, f: &mut Formatter) -> fmt::Result / {IO} {
+        write!(f, "{}: {}", self.context, self.source)
+    }
+}
+
+/// Handler that converts panics to errors
+pub deep handler PanicToError<T, E> for Error<E>
+where
+    E: From<String>,
+{
+    return(x: T) { x }
+
+    // Intercepts panic and converts to error
+    // This would need runtime support
+}
+
+/// Combines multiple errors into one
+pub deep handler AccumulateErrors<T, E> for Error<E> {
+    let mut errors: Vec<E>;
+
+    fn new() -> Self {
+        AccumulateErrors { errors: Vec::new() }
+    }
+
+    return(x: T) {
+        if self.errors.is_empty() {
+            Ok(x)
+        } else {
+            Err(AccumulatedErrors(self.errors))
+        }
+    }
+
+    op raise(e: E) {
+        self.errors.push(e);
+        // Continue execution with a dummy value
+        // This is useful for validation scenarios
+        resume(unsafe { mem::zeroed() })
+    }
+}
+
+/// Multiple accumulated errors
+pub struct AccumulatedErrors<E>(pub Vec<E>);
+
+impl<E: Debug> Debug for AccumulatedErrors<E> {
+    fn fmt(self: &Self, f: &mut Formatter) -> fmt::Result / {IO} {
+        write!(f, "AccumulatedErrors({:?})", self.0)
+    }
+}
+
+impl<E: Display> Display for AccumulatedErrors<E> {
+    fn fmt(self: &Self, f: &mut Formatter) -> fmt::Result / {IO} {
+        write!(f, "multiple errors occurred:\n")?;
+        for (i, e) in self.0.iter().enumerate() {
+            writeln!(f, "  {}: {}", i + 1, e)?;
+        }
+        Ok(())
+    }
+}
+
+/// Runs a computation, handling errors with a recovery function
+pub fn recover<T, E, F, R>(f: F, recovery: R) -> T / pure
+where
+    F: FnOnce() -> T / {Error<E>},
+    R: FnOnce(E) -> T,
+{
+    handle f() with ErrorToResult {
+        return(v) {
+            match v {
+                Ok(x) => x,
+                Err(e) => recovery(e),
+            }
+        }
+    }
+}
+
+/// Runs a computation, mapping successful results
+pub fn map_ok<T, U, E, F, M>(f: F, mapper: M) -> U / {Error<E>}
+where
+    F: FnOnce() -> T / {Error<E>},
+    M: FnOnce(T) -> U,
+{
+    mapper(f())
+}
+
+/// Runs a computation, mapping errors
+pub fn map_err<T, E, NewE, F, M>(f: F, mapper: M) -> T / {Error<NewE>}
+where
+    F: FnOnce() -> T / {Error<E>},
+    M: Fn(E) -> NewE,
+{
+    handle f() with MapError::new(mapper) {
+        return(v) { v }
+    }
+}

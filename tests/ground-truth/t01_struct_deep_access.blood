@@ -1,0 +1,49 @@
+// Test: deeply nested struct field access chains
+// EXPECT: 42
+// EXPECT: 100
+struct Inner {
+    value: i32,
+}
+
+struct Middle {
+    inner: Inner,
+    tag: i32,
+}
+
+struct Outer {
+    middle: Middle,
+    name: i32,
+}
+
+fn get_deep_value(o: Outer) -> i32 {
+    o.middle.inner.value
+}
+
+fn main() -> i32 {
+    let o: Outer = Outer {
+        middle: Middle {
+            inner: Inner { value: 42 },
+            tag: 7,
+        },
+        name: 1,
+    };
+
+    let v: i32 = get_deep_value(o);
+    println_int(v); // 42
+    if v != 42 { return 1; }
+
+    // Access at each depth level
+    let o2: Outer = Outer {
+        middle: Middle {
+            inner: Inner { value: 100 },
+            tag: 50,
+        },
+        name: 25,
+    };
+    println_int(o2.middle.inner.value); // 100
+    if o2.name != 25 { return 2; }
+    if o2.middle.tag != 50 { return 3; }
+    if o2.middle.inner.value != 100 { return 4; }
+
+    0
+}

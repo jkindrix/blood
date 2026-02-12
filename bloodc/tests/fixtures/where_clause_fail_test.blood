@@ -1,0 +1,23 @@
+// Test that where clause bounds FAIL when not satisfied
+
+trait Display {
+    fn display(&self) -> String;
+}
+
+impl Display for i32 {
+    fn display(&self) -> String {
+        String::new()  // simplified
+    }
+}
+
+// Function with where clause
+fn print_value<T>(val: &T) where T: Display {
+    let s = val.display();
+    println!("{}", s);
+}
+
+fn main() {
+    // This should FAIL - bool does NOT implement Display
+    let x: bool = true;
+    print_value(&x);  // ERROR: bool doesn't implement Display
+}

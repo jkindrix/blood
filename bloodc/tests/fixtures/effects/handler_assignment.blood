@@ -1,0 +1,50 @@
+// =============================================================================
+// Handler Assignment Test
+// =============================================================================
+//
+// Tests for struct field assignment inside handlers.
+// Uses the same pattern as aether_structs.blood which is known to work.
+
+effect Emit<T> {
+    op emit(value: T) -> ();
+}
+
+struct Stats {
+    count: i32,
+    sum: i64,
+}
+
+struct Value {
+    n: i32,
+}
+
+fn emit_values() / {Emit<Value>} {
+    perform Emit.emit(Value { n: 10 });
+    perform Emit.emit(Value { n: 20 });
+    perform Emit.emit(Value { n: 30 });
+}
+
+fn collect_stats(stream: fn() / {Emit<Value>}) -> Stats {
+    let mut stats: Stats = Stats { count: 0, sum: 0 };
+    try { stream(); }
+    with {
+        Emit.emit(v) => {
+            stats.count = stats.count + 1;
+            stats.sum = stats.sum + (v.n as i64);
+            resume(());
+        }
+    };
+    stats
+}
+
+fn main() {
+    let stats: Stats = collect_stats(|| / {Emit<Value>} { emit_values(); });
+    if stats.count != 3 {
+        let zero: i32 = 0;
+        let x: i32 = 1 / zero;
+    }
+    if stats.sum != 60 {
+        let zero: i32 = 0;
+        let x: i32 = 2 / zero;
+    }
+}

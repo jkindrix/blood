@@ -1,0 +1,35 @@
+// Test: basic State effect with deep handler
+// EXPECT: 0
+// EXPECT: 42
+effect State<S> {
+    op get() -> S;
+    op put(s: S) -> ();
+}
+
+deep handler LocalState<S> for State<S> {
+    let mut state: S
+
+    return(x) { x }
+
+    op get() {
+        resume(state)
+    }
+
+    op put(s) {
+        state = s;
+        resume(())
+    }
+}
+
+fn main() -> i32 {
+    let result: i32 = with LocalState { state: 0 } handle {
+        let x: i32 = perform State.get();
+        println_int(x);
+        perform State.put(42);
+        perform State.get()
+    };
+    println_int(result);
+
+    if result != 42 { return 1; }
+    0
+}

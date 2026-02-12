@@ -1,0 +1,479 @@
+// Blood Standard Library Tests - Option<T>
+//
+// Comprehensive tests for the Option type.
+
+use std::core::Option;
+use std::core::Option::{Some, None};
+
+// =============================================================================
+// Construction Tests
+// =============================================================================
+
+/// Test Some() construction
+fn test_option_some() {
+    let opt = Some(42);
+    assert(opt.is_some(), "Some should be some");
+    assert(!opt.is_none(), "Some should not be none");
+}
+
+/// Test None construction
+fn test_option_none() {
+    let opt: Option<i32> = None;
+    assert(opt.is_none(), "None should be none");
+    assert(!opt.is_some(), "None should not be some");
+}
+
+// =============================================================================
+// Accessor Tests
+// =============================================================================
+
+/// Test unwrap() returns value
+fn test_option_unwrap() {
+    let opt = Some(42);
+    assert(opt.unwrap() == 42, "unwrap should return value");
+}
+
+/// Test unwrap_or() provides default
+fn test_option_unwrap_or() {
+    let some = Some(42);
+    let none: Option<i32> = None;
+
+    assert(some.unwrap_or(0) == 42, "unwrap_or on Some returns value");
+    assert(none.unwrap_or(0) == 0, "unwrap_or on None returns default");
+}
+
+/// Test unwrap_or_else() with closure
+fn test_option_unwrap_or_else() {
+    let some = Some(42);
+    let none: Option<i32> = None;
+
+    assert(some.unwrap_or_else(|| 0) == 42, "unwrap_or_else on Some returns value");
+    assert(none.unwrap_or_else(|| 100) == 100, "unwrap_or_else on None calls closure");
+}
+
+/// Test unwrap_or_default() uses Default trait
+fn test_option_unwrap_or_default() {
+    let some = Some(42);
+    let none: Option<i32> = None;
+
+    assert(some.unwrap_or_default() == 42, "unwrap_or_default on Some returns value");
+    assert(none.unwrap_or_default() == 0, "unwrap_or_default on None returns default");
+}
+
+/// Test expect() with message
+fn test_option_expect() {
+    let opt = Some(42);
+    assert(opt.expect("should have value") == 42, "expect should return value");
+}
+
+// =============================================================================
+// Transformation Tests
+// =============================================================================
+
+/// Test map() transforms value
+fn test_option_map() {
+    let some = Some(5);
+    let none: Option<i32> = None;
+
+    let doubled = some.map(|x| x * 2);
+    let doubled_none = none.map(|x| x * 2);
+
+    assert(doubled == Some(10), "map on Some transforms value");
+    assert(doubled_none == None, "map on None returns None");
+}
+
+/// Test map_or() with default
+fn test_option_map_or() {
+    let some = Some(5);
+    let none: Option<i32> = None;
+
+    assert(some.map_or(0, |x| x * 2) == 10, "map_or on Some transforms");
+    assert(none.map_or(0, |x| x * 2) == 0, "map_or on None returns default");
+}
+
+/// Test map_or_else() with closures
+fn test_option_map_or_else() {
+    let some = Some(5);
+    let none: Option<i32> = None;
+
+    let result1 = some.map_or_else(|| 0, |x| x * 2);
+    let result2 = none.map_or_else(|| 100, |x| x * 2);
+
+    assert(result1 == 10, "map_or_else on Some transforms");
+    assert(result2 == 100, "map_or_else on None calls default closure");
+}
+
+/// Test and_then() for chaining
+fn test_option_and_then() {
+    let some = Some(5);
+    let none: Option<i32> = None;
+
+    // Function that might fail
+    fn checked_double(x: i32) -> Option<i32> {
+        if x < 100 {
+            Some(x * 2)
+        } else {
+            None
+        }
+    }
+
+    assert(some.and_then(checked_double) == Some(10), "and_then chains on Some");
+    assert(none.and_then(checked_double) == None, "and_then on None is None");
+
+    let big = Some(200);
+    assert(big.and_then(checked_double) == None, "and_then can return None");
+}
+
+/// Test filter() conditionally keeps value
+fn test_option_filter() {
+    let some = Some(10);
+
+    let kept = some.filter(|x| *x > 5);
+    let filtered = some.filter(|x| *x > 20);
+
+    assert(kept == Some(10), "filter keeps matching value");
+    assert(filtered == None, "filter removes non-matching value");
+}
+
+/// Test flatten() removes nesting
+fn test_option_flatten() {
+    let nested = Some(Some(42));
+    let nested_none: Option<Option<i32>> = Some(None);
+    let outer_none: Option<Option<i32>> = None;
+
+    assert(nested.flatten() == Some(42), "flatten unwraps nested Some");
+    assert(nested_none.flatten() == None, "flatten propagates inner None");
+    assert(outer_none.flatten() == None, "flatten propagates outer None");
+}
+
+// =============================================================================
+// Boolean Tests
+// =============================================================================
+
+/// Test and() combines options
+fn test_option_and() {
+    let some1 = Some(1);
+    let some2 = Some(2);
+    let none: Option<i32> = None;
+
+    assert(some1.and(some2) == Some(2), "Some.and(Some) returns second");
+    assert(some1.and(none) == None, "Some.and(None) returns None");
+    assert(none.and(some2) == None, "None.and(Some) returns None");
+}
+
+/// Test or() provides alternative
+fn test_option_or() {
+    let some1 = Some(1);
+    let some2 = Some(2);
+    let none: Option<i32> = None;
+
+    assert(some1.or(some2) == Some(1), "Some.or(Some) returns first");
+    assert(some1.or(none) == Some(1), "Some.or(None) returns first");
+    assert(none.or(some2) == Some(2), "None.or(Some) returns second");
+    assert(none.or(none) == None, "None.or(None) returns None");
+}
+
+/// Test or_else() with closure
+fn test_option_or_else() {
+    let some = Some(1);
+    let none: Option<i32> = None;
+
+    assert(some.or_else(|| Some(100)) == Some(1), "Some.or_else returns original");
+    assert(none.or_else(|| Some(100)) == Some(100), "None.or_else calls closure");
+}
+
+/// Test xor() exclusive or
+fn test_option_xor() {
+    let some1 = Some(1);
+    let some2 = Some(2);
+    let none: Option<i32> = None;
+
+    assert(some1.xor(none) == Some(1), "Some.xor(None) returns Some");
+    assert(none.xor(some2) == Some(2), "None.xor(Some) returns Some");
+    assert(some1.xor(some2) == None, "Some.xor(Some) returns None");
+    assert(none.xor(none) == None, "None.xor(None) returns None");
+}
+
+// =============================================================================
+// Reference Tests
+// =============================================================================
+
+/// Test as_ref() converts to reference
+fn test_option_as_ref() {
+    let some = Some(42);
+    let none: Option<i32> = None;
+
+    let ref_some: Option<&i32> = some.as_ref();
+    let ref_none: Option<&i32> = none.as_ref();
+
+    assert(ref_some == Some(&42), "as_ref on Some returns Some(&T)");
+    assert(ref_none == None, "as_ref on None returns None");
+}
+
+/// Test as_mut() converts to mutable reference
+fn test_option_as_mut() {
+    let mut some = Some(42);
+
+    if let Some(x) = some.as_mut() {
+        *x = 100;
+    }
+
+    assert(some == Some(100), "as_mut allows mutation");
+}
+
+// =============================================================================
+// Take/Replace Tests
+// =============================================================================
+
+/// Test take() removes and returns value
+fn test_option_take() {
+    let mut some = Some(42);
+
+    let taken = some.take();
+    assert(taken == Some(42), "take returns value");
+    assert(some == None, "take leaves None");
+}
+
+/// Test replace() swaps value
+fn test_option_replace() {
+    let mut some = Some(42);
+
+    let old = some.replace(100);
+    assert(old == Some(42), "replace returns old value");
+    assert(some == Some(100), "replace sets new value");
+}
+
+/// Test get_or_insert() ensures value exists
+fn test_option_get_or_insert() {
+    let mut some = Some(42);
+    let mut none: Option<i32> = None;
+
+    let ref1 = some.get_or_insert(0);
+    assert(*ref1 == 42, "get_or_insert on Some returns existing");
+
+    let ref2 = none.get_or_insert(100);
+    assert(*ref2 == 100, "get_or_insert on None inserts value");
+    assert(none == Some(100), "get_or_insert modifies option");
+}
+
+/// Test get_or_insert_with() lazy initialization
+fn test_option_get_or_insert_with() {
+    let mut none: Option<i32> = None;
+
+    let value = none.get_or_insert_with(|| 42);
+    assert(*value == 42, "get_or_insert_with computes value");
+}
+
+// =============================================================================
+// Iterator Tests
+// =============================================================================
+
+/// Test iter() creates iterator
+fn test_option_iter() {
+    let some = Some(42);
+    let none: Option<i32> = None;
+
+    let mut count = 0;
+    for _ in some.iter() {
+        count = count + 1;
+    }
+    assert(count == 1, "Some iterates once");
+
+    count = 0;
+    for _ in none.iter() {
+        count = count + 1;
+    }
+    assert(count == 0, "None iterates zero times");
+}
+
+/// Test into_iter() consumes option
+fn test_option_into_iter() {
+    let some = Some(42);
+    let values: Vec<i32> = some.into_iter().collect();
+    assert(values == vec![42], "into_iter yields value");
+
+    let none: Option<i32> = None;
+    let empty: Vec<i32> = none.into_iter().collect();
+    assert(empty.is_empty(), "None into_iter yields nothing");
+}
+
+// =============================================================================
+// Conversion Tests
+// =============================================================================
+
+/// Test ok_or() converts to Result
+fn test_option_ok_or() {
+    let some = Some(42);
+    let none: Option<i32> = None;
+
+    let ok: Result<i32, str> = some.ok_or("error");
+    let err: Result<i32, str> = none.ok_or("error");
+
+    assert(ok == Ok(42), "Some.ok_or returns Ok");
+    assert(err == Err("error"), "None.ok_or returns Err");
+}
+
+/// Test ok_or_else() with error closure
+fn test_option_ok_or_else() {
+    let none: Option<i32> = None;
+
+    let err: Result<i32, str> = none.ok_or_else(|| "computed error");
+    assert(err == Err("computed error"), "ok_or_else computes error");
+}
+
+/// Test transpose() swaps Option and Result
+fn test_option_transpose() {
+    let some_ok: Option<Result<i32, str>> = Some(Ok(42));
+    let some_err: Option<Result<i32, str>> = Some(Err("error"));
+    let none: Option<Result<i32, str>> = None;
+
+    assert(some_ok.transpose() == Ok(Some(42)), "transpose Some(Ok) to Ok(Some)");
+    assert(some_err.transpose() == Err("error"), "transpose Some(Err) to Err");
+    assert(none.transpose() == Ok(None), "transpose None to Ok(None)");
+}
+
+// =============================================================================
+// Clone and Equality Tests
+// =============================================================================
+
+/// Test Clone trait
+fn test_option_clone() {
+    let some = Some(42);
+    let cloned = some.clone();
+
+    assert(some == cloned, "clone should be equal");
+}
+
+/// Test PartialEq trait
+fn test_option_equality() {
+    let some1 = Some(42);
+    let some2 = Some(42);
+    let some3 = Some(100);
+    let none: Option<i32> = None;
+
+    assert(some1 == some2, "equal Some should be equal");
+    assert(some1 != some3, "different Some should not be equal");
+    assert(some1 != none, "Some should not equal None");
+    assert(none == none, "None should equal None");
+}
+
+// =============================================================================
+// Pattern Matching Tests
+// =============================================================================
+
+/// Test pattern matching on Option
+fn test_option_pattern_match() {
+    let some = Some(42);
+    let none: Option<i32> = None;
+
+    let value1 = match some {
+        Some(x) => x,
+        None => 0,
+    };
+    assert(value1 == 42, "match Some extracts value");
+
+    let value2 = match none {
+        Some(x) => x,
+        None => 0,
+    };
+    assert(value2 == 0, "match None uses default");
+}
+
+/// Test if let pattern
+fn test_option_if_let() {
+    let some = Some(42);
+    let mut extracted = 0;
+
+    if let Some(x) = some {
+        extracted = x;
+    }
+
+    assert(extracted == 42, "if let extracts value");
+}
+
+/// Test while let pattern
+fn test_option_while_let() {
+    let mut stack = vec![1, 2, 3];
+    let mut sum = 0;
+
+    while let Some(x) = stack.pop() {
+        sum = sum + x;
+    }
+
+    assert(sum == 6, "while let processes all values");
+}
+
+// =============================================================================
+// Main Test Runner
+// =============================================================================
+
+fn main() {
+    println_str("Running Option<T> tests...");
+    println_str("");
+
+    // Construction
+    test_option_some();
+    test_option_none();
+    println_str("[PASS] Construction tests");
+
+    // Accessors
+    test_option_unwrap();
+    test_option_unwrap_or();
+    test_option_unwrap_or_else();
+    test_option_unwrap_or_default();
+    test_option_expect();
+    println_str("[PASS] Accessor tests");
+
+    // Transformations
+    test_option_map();
+    test_option_map_or();
+    test_option_map_or_else();
+    test_option_and_then();
+    test_option_filter();
+    test_option_flatten();
+    println_str("[PASS] Transformation tests");
+
+    // Boolean ops
+    test_option_and();
+    test_option_or();
+    test_option_or_else();
+    test_option_xor();
+    println_str("[PASS] Boolean tests");
+
+    // References
+    test_option_as_ref();
+    test_option_as_mut();
+    println_str("[PASS] Reference tests");
+
+    // Take/Replace
+    test_option_take();
+    test_option_replace();
+    test_option_get_or_insert();
+    test_option_get_or_insert_with();
+    println_str("[PASS] Take/Replace tests");
+
+    // Iterators
+    test_option_iter();
+    test_option_into_iter();
+    println_str("[PASS] Iterator tests");
+
+    // Conversions
+    test_option_ok_or();
+    test_option_ok_or_else();
+    test_option_transpose();
+    println_str("[PASS] Conversion tests");
+
+    // Clone/Equality
+    test_option_clone();
+    test_option_equality();
+    println_str("[PASS] Clone/Equality tests");
+
+    // Pattern matching
+    test_option_pattern_match();
+    test_option_if_let();
+    test_option_while_let();
+    println_str("[PASS] Pattern matching tests");
+
+    println_str("");
+    println_str("All Option<T> tests passed!");
+}

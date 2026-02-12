@@ -1,0 +1,28 @@
+// Test: deeply nested function calls to stress stack/calling convention
+// EXPECT: 89
+fn fib(n: i32) -> i32 {
+    if n <= 1 {
+        n
+    } else {
+        fib(n - 1) + fib(n - 2)
+    }
+}
+
+fn apply_twice(f_input: i32) -> i32 {
+    let a: i32 = fib(f_input);
+    a
+}
+
+fn compute(n: i32) -> i32 {
+    let result: i32 = apply_twice(n);
+    result
+}
+
+fn main() -> i32 {
+    // fib(11) = 89
+    let result: i32 = compute(11);
+    println_int(result);
+
+    if result != 89 { return 1; }
+    0
+}

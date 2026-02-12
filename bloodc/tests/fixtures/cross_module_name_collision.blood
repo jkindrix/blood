@@ -1,0 +1,38 @@
+// Test cross-module name collision resolution
+//
+// This test verifies that enum variants in a submodule don't incorrectly
+// shadow struct definitions in the parent module. This was a bug where
+// module bindings polluted the root scope permanently.
+
+mod inner;
+
+// Struct named 'Variant' in the parent module
+pub struct Variant {
+    pub id: i32,
+    pub name: String,
+}
+
+impl Variant {
+    pub fn new(id: i32, name: String) -> Variant {
+        // This struct literal must resolve to the Variant struct above,
+        // not to any enum variant named 'Variant' in the inner module
+        Variant { id: id, name: name }
+    }
+}
+
+// Another struct that might collide with enum variant names
+pub struct AssocType {
+    pub def_id: i32,
+}
+
+impl AssocType {
+    pub fn new(def_id: i32) -> AssocType {
+        AssocType { def_id: def_id }
+    }
+}
+
+fn main() {
+    let v = Variant::new(1, String::new());
+    let a = AssocType::new(42);
+    println!("Created structs");
+}

@@ -1,0 +1,55 @@
+// Test: enum variants with different payload types and sizes
+// EXPECT: 42
+// EXPECT: 1
+// EXPECT: 0
+enum Value {
+    Int(i32),
+    Bool(bool),
+    Pair(i32, i32),
+    Nothing,
+}
+
+fn to_int(v: Value) -> i32 {
+    match v {
+        Value::Int(n) => n,
+        Value::Bool(b) => if b { 1 } else { 0 },
+        Value::Pair(a, b) => a + b,
+        Value::Nothing => -1,
+    }
+}
+
+fn is_truthy(v: Value) -> bool {
+    match v {
+        Value::Int(n) => n != 0,
+        Value::Bool(b) => b,
+        Value::Pair(a, b) => a != 0 || b != 0,
+        Value::Nothing => false,
+    }
+}
+
+fn main() -> i32 {
+    let v1: Value = Value::Int(42);
+    let v2: Value = Value::Bool(true);
+    let v3: Value = Value::Pair(15, 27);
+    let v4: Value = Value::Nothing;
+
+    println_int(to_int(v1)); // 42
+    if to_int(v2) != 1 { return 1; }
+    println_int(to_int(v2)); // 1
+    if to_int(v3) != 42 { return 2; }
+    if to_int(v4) != -1 { return 3; }
+
+    // Truthy checks
+    let t1: bool = is_truthy(Value::Int(5));
+    let t2: bool = is_truthy(Value::Int(0));
+    let t3: bool = is_truthy(Value::Nothing);
+    if !t1 { return 4; }
+    if t2 { return 5; }
+    if t3 { return 6; }
+
+    // Print Nothing as 0 (false)
+    let nt: bool = is_truthy(Value::Nothing);
+    if nt { println_int(1); } else { println_int(0); }
+
+    0
+}

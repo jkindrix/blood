@@ -1,0 +1,19 @@
+// BUG-008 regression: if-expression with function call condition returning bool
+// and string branches. LLVM optimization was observed to eliminate the conditional
+// branch, always taking the else path in the 61K-line self-hosted compiler.
+
+fn is_positive(x: i32) -> bool {
+    x > 0
+}
+
+fn classify(x: i32) -> i32 {
+    if is_positive(x) {
+        1
+    } else {
+        0
+    }
+}
+
+fn main() -> i32 {
+    classify(42)
+}

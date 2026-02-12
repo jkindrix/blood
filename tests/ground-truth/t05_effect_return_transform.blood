@@ -1,0 +1,54 @@
+// Test: handler return clause that transforms the result
+// EXPECT: 20
+// EXPECT: 3
+effect Reader {
+    op ask() -> i32;
+}
+
+deep handler WithValue for Reader {
+    let mut val: i32
+
+    return(x) { x * 2 }
+
+    op ask() {
+        resume(val)
+    }
+}
+
+// Handler that counts operations instead of returning body result
+effect Op {
+    op tick() -> ();
+}
+
+deep handler CountOps for Op {
+    let mut count: i32
+
+    return(x) { count }
+
+    op tick() {
+        count = count + 1;
+        resume(())
+    }
+}
+
+fn main() -> i32 {
+    // Return clause doubles the result
+    let result: i32 = with WithValue { val: 5 } handle {
+        let x: i32 = perform Reader.ask();
+        x + 5 // 10, but return clause doubles it -> 20
+    };
+    println_int(result);
+    if result != 20 { return 1; }
+
+    // Return clause replaces result with count
+    let count: i32 = with CountOps { count: 0 } handle {
+        perform Op.tick();
+        perform Op.tick();
+        perform Op.tick();
+        999 // This value is discarded; return clause returns count=3
+    };
+    println_int(count);
+    if count != 3 { return 2; }
+
+    0
+}

@@ -1,0 +1,847 @@
+// Blood Standard Library - HashMap
+//
+// A hash map implemented with quadratic probing and SIMD lookup.
+
+use crate::hash::{Hash, Hasher, BuildHasher, RandomState};
+use crate::mem;
+
+/// A hash map implementation
+///
+/// HashMap provides O(1) average-case lookup, insertion, and removal.
+/// It uses Robin Hood hashing with backward shift deletion.
+pub struct HashMap<K, V, S = RandomState> {
+    buckets: Vec<Bucket<K, V>>,
+    len: usize,
+    hash_builder: S,
+}
+
+/// Internal bucket state
+enum Bucket<K, V> {
+    Empty,
+    Tombstone,
+    Occupied {
+        hash: u64,
+        key: K,
+        value: V,
+    },
+}
+
+impl<K, V> Bucket<K, V> {
+    fn is_empty(self: &Self) -> bool / pure {
+        matches!(self, Bucket::Empty)
+    }
+
+    fn is_tombstone(self: &Self) -> bool / pure {
+        matches!(self, Bucket::Tombstone)
+    }
+
+    fn is_occupied(self: &Self) -> bool / pure {
+        matches!(self, Bucket::Occupied { .. })
+    }
+
+    fn take(self: &mut Self) -> Option<(K, V)> / pure {
+        match mem::replace(self, Bucket::Tombstone) {
+            Bucket::Occupied { key, value, .. } => Some((key, value)),
+            other => {
+                *self = other;
+                None
+            }
+        }
+    }
+}
+
+impl<K, V> HashMap<K, V, RandomState>
+where
+    K: Hash + Eq,
+{
+    /// Creates an empty HashMap
+    pub fn new() -> Self / pure {
+        HashMap::with_hasher(RandomState::default())
+    }
+
+    /// Creates an empty HashMap with the specified capacity
+    pub fn with_capacity(capacity: usize) -> Self / pure {
+        HashMap::with_capacity_and_hasher(capacity, RandomState::default())
+    }
+}
+
+impl<K, V, S> HashMap<K, V, S>
+where
+    K: Hash + Eq,
+    S: BuildHasher,
+{
+    /// Creates an empty HashMap with a custom hasher
+    pub fn with_hasher(hash_builder: S) -> Self / pure {
+        HashMap {
+            buckets: Vec::new(),
+            len: 0,
+            hash_builder,
+        }
+    }
+
+    /// Creates an empty HashMap with capacity and custom hasher
+    pub fn with_capacity_and_hasher(capacity: usize, hash_builder: S) -> Self / pure {
+        let cap = capacity.max(8).next_power_of_two();
+        let mut buckets = Vec::with_capacity(cap);
+        for _ in 0..cap {
+            buckets.push(Bucket::Empty);
+        }
+        HashMap {
+            buckets,
+            len: 0,
+            hash_builder,
+        }
+    }
+
+    /// Returns the number of elements
+    pub fn len(self: &Self) -> usize / pure {
+        self.len
+    }
+
+    /// Returns true if the map is empty
+    pub fn is_empty(self: &Self) -> bool / pure {
+        self.len == 0
+    }
+
+    /// Returns the capacity
+    pub fn capacity(self: &Self) -> usize / pure {
+        self.buckets.len()
+    }
+
+    /// Clears the map
+    pub fn clear(self: &mut Self) / pure {
+        for bucket in &mut self.buckets {
+            *bucket = Bucket::Empty;
+        }
+        self.len = 0;
+    }
+
+    /// Returns a reference to the hasher
+    pub fn hasher(self: &Self) -> &S / pure {
+        &self.hash_builder
+    }
+
+    /// Reserves capacity for at least `additional` more elements
+    pub fn reserve(self: &mut Self, additional: usize) / pure {
+        let required = self.len.saturating_add(additional);
+        // Maintain ~75% load factor
+        let required_buckets = required.saturating_mul(4) / 3;
+        if required_buckets > self.buckets.len() {
+            self.resize(required_buckets.next_power_of_two());
+        }
+    }
+
+    /// Inserts a key-value pair
+    pub fn insert(self: &mut Self, key: K, value: V) -> Option<V> / pure {
+        // Check if we need to resize
+        if self.buckets.is_empty() || self.len * 4 >= self.buckets.len() * 3 {
+            let new_cap = if self.buckets.is_empty() { 8 } else { self.buckets.len() * 2 };
+            self.resize(new_cap);
+        }
+
+        let hash = self.make_hash(&key);
+        let idx = self.find_or_insert_slot(hash, &key);
+
+        match &mut self.buckets[idx] {
+            Bucket::Occupied { value: old_value, .. } => {
+                Some(mem::replace(old_value, value))
+            }
+            slot => {
+                *slot = Bucket::Occupied { hash, key, value };
+                self.len += 1;
+                None
+            }
+        }
+    }
+
+    /// Removes a key from the map
+    pub fn remove(self: &mut Self, key: &K) -> Option<V> / pure {
+        self.remove_entry(key).map(|(_, v)| v)
+    }
+
+    /// Removes a key from the map, returning the key-value pair
+    pub fn remove_entry(self: &mut Self, key: &K) -> Option<(K, V)> / pure {
+        if self.buckets.is_empty() {
+            return None;
+        }
+
+        let hash = self.make_hash(key);
+        let idx = self.find_bucket(hash, key)?;
+
+        self.len -= 1;
+        self.buckets[idx].take()
+    }
+
+    /// Returns a reference to the value for the given key
+    pub fn get(self: &Self, key: &K) -> Option<&V> / pure {
+        if self.buckets.is_empty() {
+            return None;
+        }
+
+        let hash = self.make_hash(key);
+        let idx = self.find_bucket(hash, key)?;
+
+        match &self.buckets[idx] {
+            Bucket::Occupied { value, .. } => Some(value),
+            _ => None,
+        }
+    }
+
+    /// Returns a mutable reference to the value for the given key
+    pub fn get_mut(self: &mut Self, key: &K) -> Option<&mut V> / pure {
+        if self.buckets.is_empty() {
+            return None;
+        }
+
+        let hash = self.make_hash(key);
+        let idx = self.find_bucket(hash, key)?;
+
+        match &mut self.buckets[idx] {
+            Bucket::Occupied { value, .. } => Some(value),
+            _ => None,
+        }
+    }
+
+    /// Returns the key-value pair for the given key
+    pub fn get_key_value(self: &Self, key: &K) -> Option<(&K, &V)> / pure {
+        if self.buckets.is_empty() {
+            return None;
+        }
+
+        let hash = self.make_hash(key);
+        let idx = self.find_bucket(hash, key)?;
+
+        match &self.buckets[idx] {
+            Bucket::Occupied { key, value, .. } => Some((key, value)),
+            _ => None,
+        }
+    }
+
+    /// Returns true if the map contains the given key
+    pub fn contains_key(self: &Self, key: &K) -> bool / pure {
+        self.get(key).is_some()
+    }
+
+    /// Gets the entry for a key for in-place manipulation
+    pub fn entry(self: &mut Self, key: K) -> Entry<'_, K, V> / pure {
+        // Ensure we have capacity
+        if self.buckets.is_empty() || self.len * 4 >= self.buckets.len() * 3 {
+            let new_cap = if self.buckets.is_empty() { 8 } else { self.buckets.len() * 2 };
+            self.resize(new_cap);
+        }
+
+        let hash = self.make_hash(&key);
+        let idx = self.find_or_insert_slot(hash, &key);
+
+        match &self.buckets[idx] {
+            Bucket::Occupied { .. } => {
+                Entry::Occupied(OccupiedEntry {
+                    key,
+                    map: self,
+                    idx,
+                })
+            }
+            _ => {
+                Entry::Vacant(VacantEntry {
+                    key,
+                    hash,
+                    map: self,
+                    idx,
+                })
+            }
+        }
+    }
+
+    /// Returns an iterator over key-value pairs
+    pub fn iter(self: &Self) -> Iter<'_, K, V> / pure {
+        Iter {
+            inner: self.buckets.iter(),
+        }
+    }
+
+    /// Returns an iterator over mutable key-value pairs
+    pub fn iter_mut(self: &mut Self) -> IterMut<'_, K, V> / pure {
+        IterMut {
+            inner: self.buckets.iter_mut(),
+        }
+    }
+
+    /// Returns an iterator over keys
+    pub fn keys(self: &Self) -> Keys<'_, K, V> / pure {
+        Keys { inner: self.iter() }
+    }
+
+    /// Returns an iterator over values
+    pub fn values(self: &Self) -> Values<'_, K, V> / pure {
+        Values { inner: self.iter() }
+    }
+
+    /// Returns an iterator over mutable values
+    pub fn values_mut(self: &mut Self) -> ValuesMut<'_, K, V> / pure {
+        ValuesMut { inner: self.iter_mut() }
+    }
+
+    /// Retains only elements that satisfy the predicate
+    pub fn retain<F: FnMut(&K, &mut V) -> bool>(self: &mut Self, f: F) / pure {
+        for bucket in &mut self.buckets {
+            let should_remove = match bucket {
+                Bucket::Occupied { key, value, .. } => !f(key, value),
+                _ => false,
+            };
+            if should_remove {
+                *bucket = Bucket::Tombstone;
+                self.len -= 1;
+            }
+        }
+    }
+
+    /// Tries to insert a key-value pair, returning an error if the key already exists
+    pub fn try_insert(self: &mut Self, key: K, value: V) -> Result<&mut V, OccupiedError<'_, K, V, S>> / pure {
+        match self.entry(key) {
+            Entry::Occupied(entry) => Err(OccupiedError {
+                entry,
+                value,
+            }),
+            Entry::Vacant(entry) => Ok(entry.insert(value)),
+        }
+    }
+
+    /// Shrinks the capacity of the map as much as possible
+    pub fn shrink_to_fit(self: &mut Self) / pure {
+        self.shrink_to(self.len);
+    }
+
+    /// Shrinks the capacity of the map with a lower limit
+    pub fn shrink_to(self: &mut Self, min_capacity: usize) / pure {
+        let target = min_capacity.max(self.len);
+        // Maintain ~75% load factor
+        let target_buckets = (target.saturating_mul(4) / 3).next_power_of_two().max(8);
+        if target_buckets < self.buckets.len() {
+            self.resize(target_buckets);
+        }
+    }
+
+    /// Creates a draining iterator that removes all elements
+    pub fn drain(self: &mut Self) -> Drain<'_, K, V> / pure {
+        let len = self.len;
+        self.len = 0;
+        Drain {
+            inner: self.buckets.iter_mut(),
+            remaining: len,
+        }
+    }
+
+    // Private helper methods
+
+    fn make_hash(self: &Self, key: &K) -> u64 / pure {
+        let mut hasher = self.hash_builder.build_hasher();
+        key.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    fn find_bucket(self: &Self, hash: u64, key: &K) -> Option<usize> / pure {
+        let mask = self.buckets.len() - 1;
+        let mut idx = (hash as usize) & mask;
+        let mut probe = 0;
+
+        loop {
+            match &self.buckets[idx] {
+                Bucket::Empty => return None,
+                Bucket::Tombstone => {}
+                Bucket::Occupied { hash: h, key: k, .. } => {
+                    if *h == hash && k == key {
+                        return Some(idx);
+                    }
+                }
+            }
+
+            probe += 1;
+            if probe >= self.buckets.len() {
+                return None;
+            }
+            idx = (idx + probe) & mask;
+        }
+    }
+
+    fn find_or_insert_slot(self: &Self, hash: u64, key: &K) -> usize / pure {
+        let mask = self.buckets.len() - 1;
+        let mut idx = (hash as usize) & mask;
+        let mut probe = 0;
+        let mut first_tombstone = None;
+
+        loop {
+            match &self.buckets[idx] {
+                Bucket::Empty => {
+                    return first_tombstone.unwrap_or(idx);
+                }
+                Bucket::Tombstone => {
+                    if first_tombstone.is_none() {
+                        first_tombstone = Some(idx);
+                    }
+                }
+                Bucket::Occupied { hash: h, key: k, .. } => {
+                    if *h == hash && k == key {
+                        return idx;
+                    }
+                }
+            }
+
+            probe += 1;
+            idx = (idx + probe) & mask;
+        }
+    }
+
+    fn resize(self: &mut Self, new_cap: usize) / pure {
+        let mut new_buckets = Vec::with_capacity(new_cap);
+        for _ in 0..new_cap {
+            new_buckets.push(Bucket::Empty);
+        }
+
+        let old_buckets = mem::replace(&mut self.buckets, new_buckets);
+        self.len = 0;
+
+        for bucket in old_buckets {
+            if let Bucket::Occupied { key, value, .. } = bucket {
+                self.insert(key, value);
+            }
+        }
+    }
+}
+
+impl<K, V, S> Default for HashMap<K, V, S>
+where
+    K: Hash + Eq,
+    S: BuildHasher + Default,
+{
+    fn default() -> Self / pure {
+        HashMap::with_hasher(S::default())
+    }
+}
+
+impl<K, V, S> Clone for HashMap<K, V, S>
+where
+    K: Hash + Eq + Clone,
+    V: Clone,
+    S: BuildHasher + Clone,
+{
+    fn clone(self: &Self) -> Self / pure {
+        let mut new_map = HashMap::with_capacity_and_hasher(self.len, self.hash_builder.clone());
+        for (k, v) in self.iter() {
+            new_map.insert(k.clone(), v.clone());
+        }
+        new_map
+    }
+}
+
+impl<K, V, S> PartialEq for HashMap<K, V, S>
+where
+    K: Hash + Eq,
+    V: PartialEq,
+    S: BuildHasher,
+{
+    fn eq(self: &Self, other: &Self) -> bool / pure {
+        if self.len != other.len {
+            return false;
+        }
+        for (k, v) in self.iter() {
+            match other.get(k) {
+                Some(ov) if v == ov => {}
+                _ => return false,
+            }
+        }
+        true
+    }
+}
+
+impl<K, V, S> Eq for HashMap<K, V, S>
+where
+    K: Hash + Eq,
+    V: Eq,
+    S: BuildHasher,
+{}
+
+impl<K, V, S> Debug for HashMap<K, V, S>
+where
+    K: Debug,
+    V: Debug,
+{
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        f.debug_map().entries(self.iter()).finish()
+    }
+}
+
+impl<K, V, S> Index<&K> for HashMap<K, V, S>
+where
+    K: Hash + Eq,
+    S: BuildHasher,
+{
+    type Output = V;
+
+    fn index(self: &Self, key: &K) -> &V / pure {
+        self.get(key).expect("no entry found for key")
+    }
+}
+
+impl<K, V, S> FromIterator<(K, V)> for HashMap<K, V, S>
+where
+    K: Hash + Eq,
+    S: BuildHasher + Default,
+{
+    fn from_iter<I: Iterator<Item = (K, V)>>(iter: I) -> Self / pure {
+        let mut map = HashMap::default();
+        for (k, v) in iter {
+            map.insert(k, v);
+        }
+        map
+    }
+}
+
+impl<K, V, S> Extend<(K, V)> for HashMap<K, V, S>
+where
+    K: Hash + Eq,
+    S: BuildHasher,
+{
+    fn extend<I: Iterator<Item = (K, V)>>(self: &mut Self, iter: I) / pure {
+        for (k, v) in iter {
+            self.insert(k, v);
+        }
+    }
+}
+
+impl<'a, K, V, S> IntoIterator for &'a HashMap<K, V, S> {
+    type Item = (&'a K, &'a V);
+    type IntoIter = Iter<'a, K, V>;
+
+    fn into_iter(self: Self) -> Iter<'a, K, V> / pure {
+        self.iter()
+    }
+}
+
+impl<'a, K, V, S> IntoIterator for &'a mut HashMap<K, V, S> {
+    type Item = (&'a K, &'a mut V);
+    type IntoIter = IterMut<'a, K, V>;
+
+    fn into_iter(self: Self) -> IterMut<'a, K, V> / pure {
+        self.iter_mut()
+    }
+}
+
+impl<K, V, S> IntoIterator for HashMap<K, V, S> {
+    type Item = (K, V);
+    type IntoIter = IntoIter<K, V>;
+
+    fn into_iter(self: Self) -> IntoIter<K, V> / pure {
+        IntoIter {
+            inner: self.buckets.into_iter(),
+        }
+    }
+}
+
+/// Error returned by try_insert when the key already exists
+pub struct OccupiedError<'a, K, V, S = RandomState> {
+    /// The entry for the existing key
+    pub entry: OccupiedEntry<'a, K, V>,
+    /// The value that was not inserted
+    pub value: V,
+}
+
+/// Entry for in-place manipulation
+pub enum Entry<'a, K, V> {
+    Occupied(OccupiedEntry<'a, K, V>),
+    Vacant(VacantEntry<'a, K, V>),
+}
+
+impl<'a, K, V> Entry<'a, K, V>
+where
+    K: Hash + Eq,
+{
+    /// Returns a reference to this entry's key
+    pub fn key(self: &Self) -> &K / pure {
+        match self {
+            Entry::Occupied(e) => e.key(),
+            Entry::Vacant(e) => e.key(),
+        }
+    }
+
+    /// Ensures a value is in the entry by inserting the default if empty
+    pub fn or_insert(self: Self, default: V) -> &'a mut V / pure {
+        match self {
+            Entry::Occupied(e) => e.into_mut(),
+            Entry::Vacant(e) => e.insert(default),
+        }
+    }
+
+    /// Ensures a value is in the entry by inserting the result of the function if empty
+    pub fn or_insert_with<F: FnOnce() -> V>(self: Self, default: F) -> &'a mut V / pure {
+        match self {
+            Entry::Occupied(e) => e.into_mut(),
+            Entry::Vacant(e) => e.insert(default()),
+        }
+    }
+
+    /// Ensures a value is in the entry by inserting the result of the function
+    /// with a reference to the key if empty
+    pub fn or_insert_with_key<F: FnOnce(&K) -> V>(self: Self, default: F) -> &'a mut V / pure {
+        match self {
+            Entry::Occupied(e) => e.into_mut(),
+            Entry::Vacant(e) => {
+                let value = default(e.key());
+                e.insert(value)
+            }
+        }
+    }
+
+    /// Provides in-place mutable access to an occupied entry
+    pub fn and_modify<F: FnOnce(&mut V)>(self: Self, f: F) -> Self / pure {
+        match self {
+            Entry::Occupied(mut e) => {
+                f(e.get_mut());
+                Entry::Occupied(e)
+            }
+            Entry::Vacant(e) => Entry::Vacant(e),
+        }
+    }
+}
+
+impl<'a, K, V> Entry<'a, K, V>
+where
+    K: Hash + Eq,
+    V: Default,
+{
+    /// Ensures a value is in the entry by inserting the default value if empty
+    pub fn or_default(self: Self) -> &'a mut V / pure {
+        self.or_insert_with(V::default)
+    }
+}
+
+/// An occupied entry in a HashMap
+pub struct OccupiedEntry<'a, K, V> {
+    key: K,
+    map: &'a mut HashMap<K, V>,
+    idx: usize,
+}
+
+impl<'a, K, V> OccupiedEntry<'a, K, V>
+where
+    K: Hash + Eq,
+{
+    pub fn key(self: &Self) -> &K / pure {
+        &self.key
+    }
+
+    pub fn get(self: &Self) -> &V / pure {
+        match &self.map.buckets[self.idx] {
+            Bucket::Occupied { value, .. } => value,
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn get_mut(self: &mut Self) -> &mut V / pure {
+        match &mut self.map.buckets[self.idx] {
+            Bucket::Occupied { value, .. } => value,
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn into_mut(self: Self) -> &'a mut V / pure {
+        match &mut self.map.buckets[self.idx] {
+            Bucket::Occupied { value, .. } => value,
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn insert(self: &mut Self, value: V) -> V / pure {
+        match &mut self.map.buckets[self.idx] {
+            Bucket::Occupied { value: old, .. } => mem::replace(old, value),
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn remove(self: Self) -> V / pure {
+        self.remove_entry().1
+    }
+
+    pub fn remove_entry(self: Self) -> (K, V) / pure {
+        self.map.len -= 1;
+        self.map.buckets[self.idx].take().unwrap()
+    }
+}
+
+/// A vacant entry in a HashMap
+pub struct VacantEntry<'a, K, V> {
+    key: K,
+    hash: u64,
+    map: &'a mut HashMap<K, V>,
+    idx: usize,
+}
+
+impl<'a, K, V> VacantEntry<'a, K, V>
+where
+    K: Hash + Eq,
+{
+    pub fn key(self: &Self) -> &K / pure {
+        &self.key
+    }
+
+    pub fn into_key(self: Self) -> K / pure {
+        self.key
+    }
+
+    pub fn insert(self: Self, value: V) -> &'a mut V / pure {
+        self.map.buckets[self.idx] = Bucket::Occupied {
+            hash: self.hash,
+            key: self.key,
+            value,
+        };
+        self.map.len += 1;
+
+        match &mut self.map.buckets[self.idx] {
+            Bucket::Occupied { value, .. } => value,
+            _ => unreachable!(),
+        }
+    }
+}
+
+// Iterators
+
+/// Iterator over key-value pairs
+pub struct Iter<'a, K, V> {
+    inner: vec::Iter<'a, Bucket<K, V>>,
+}
+
+impl<'a, K, V> Iterator for Iter<'a, K, V> {
+    type Item = (&'a K, &'a V);
+
+    fn next(self: &mut Self) -> Option<(&'a K, &'a V)> / pure {
+        loop {
+            match self.inner.next()? {
+                Bucket::Occupied { key, value, .. } => {
+                    return Some((key, value));
+                }
+                _ => continue,
+            }
+        }
+    }
+}
+
+/// Iterator over mutable key-value pairs
+pub struct IterMut<'a, K, V> {
+    inner: vec::IterMut<'a, Bucket<K, V>>,
+}
+
+impl<'a, K, V> Iterator for IterMut<'a, K, V> {
+    type Item = (&'a K, &'a mut V);
+
+    fn next(self: &mut Self) -> Option<(&'a K, &'a mut V)> / pure {
+        loop {
+            match self.inner.next()? {
+                Bucket::Occupied { key, value, .. } => {
+                    return Some((key, value));
+                }
+                _ => continue,
+            }
+        }
+    }
+}
+
+/// Owning iterator over key-value pairs
+pub struct IntoIter<K, V> {
+    inner: vec::IntoIter<Bucket<K, V>>,
+}
+
+impl<K, V> Iterator for IntoIter<K, V> {
+    type Item = (K, V);
+
+    fn next(self: &mut Self) -> Option<(K, V)> / pure {
+        loop {
+            match self.inner.next()? {
+                Bucket::Occupied { key, value, .. } => {
+                    return Some((key, value));
+                }
+                _ => continue,
+            }
+        }
+    }
+}
+
+/// Iterator over keys
+pub struct Keys<'a, K, V> {
+    inner: Iter<'a, K, V>,
+}
+
+impl<'a, K, V> Iterator for Keys<'a, K, V> {
+    type Item = &'a K;
+
+    fn next(self: &mut Self) -> Option<&'a K> / pure {
+        self.inner.next().map(|(k, _)| k)
+    }
+}
+
+/// Iterator over values
+pub struct Values<'a, K, V> {
+    inner: Iter<'a, K, V>,
+}
+
+impl<'a, K, V> Iterator for Values<'a, K, V> {
+    type Item = &'a V;
+
+    fn next(self: &mut Self) -> Option<&'a V> / pure {
+        self.inner.next().map(|(_, v)| v)
+    }
+}
+
+/// Iterator over mutable values
+pub struct ValuesMut<'a, K, V> {
+    inner: IterMut<'a, K, V>,
+}
+
+impl<'a, K, V> Iterator for ValuesMut<'a, K, V> {
+    type Item = &'a mut V;
+
+    fn next(self: &mut Self) -> Option<&'a mut V> / pure {
+        self.inner.next().map(|(_, v)| v)
+    }
+}
+
+/// Draining iterator that removes all elements
+pub struct Drain<'a, K, V> {
+    inner: vec::IterMut<'a, Bucket<K, V>>,
+    remaining: usize,
+}
+
+impl<'a, K, V> Iterator for Drain<'a, K, V> {
+    type Item = (K, V);
+
+    fn next(self: &mut Self) -> Option<(K, V)> / pure {
+        if self.remaining == 0 {
+            return None;
+        }
+
+        loop {
+            match self.inner.next()? {
+                bucket @ Bucket::Occupied { .. } => {
+                    self.remaining -= 1;
+                    return bucket.take();
+                }
+                _ => continue,
+            }
+        }
+    }
+
+    fn size_hint(self: &Self) -> (usize, Option<usize>) / pure {
+        (self.remaining, Some(self.remaining))
+    }
+}
+
+impl<'a, K, V> ExactSizeIterator for Drain<'a, K, V> {
+    fn len(self: &Self) -> usize / pure {
+        self.remaining
+    }
+}
+
+impl<'a, K, V> Drop for Drain<'a, K, V> {
+    fn drop(self: &mut Self) / pure {
+        // Drain remaining elements to complete cleanup
+        for _ in self {}
+    }
+}

@@ -1,0 +1,269 @@
+// Blood Standard Library - Yield Effect
+//
+// The Yield<T> effect enables generator/iterator patterns through effects.
+
+/// Yield effect for generator patterns
+///
+/// This effect allows functions to produce multiple values lazily,
+/// similar to Python generators or JavaScript generators.
+///
+/// # Example
+/// ```blood
+/// fn range(start: i32, end: i32) / {Yield<i32>} {
+///     let mut i = start;
+///     while i < end {
+///         perform yield_(i);
+///         i += 1;
+///     }
+/// }
+///
+/// fn main() {
+///     for x in to_iter(|| range(0, 5)) {
+///         println(x);
+///     }
+/// }
+/// ```
+pub effect Yield<T> {
+    /// Yields a value to the consumer
+    op yield_(value: T) -> unit;
+}
+
+/// Yields a value
+pub fn yield_<T>(value: T) / {Yield<T>} {
+    perform yield_(value)
+}
+
+/// Converts a generator function to an iterator
+pub fn to_iter<T, F>(gen: F) -> GeneratorIter<T, F>
+where
+    F: FnOnce() / {Yield<T>},
+{
+    GeneratorIter {
+        gen: Some(gen),
+        state: GeneratorState::NotStarted,
+    }
+}
+
+/// Collects all yielded values into a vector
+pub fn collect_yields<T, F>(gen: F) -> Vec<T> / pure
+where
+    F: FnOnce() / {Yield<T>},
+{
+    let mut results = Vec::new();
+    handle gen() {
+        return(()) { results }
+        yield_(value) {
+            results.push(value);
+            resume(())
+        }
+    }
+}
+
+/// Takes the first n yielded values
+pub fn take_yields<T, F>(n: usize, gen: F) -> Vec<T> / pure
+where
+    F: FnOnce() / {Yield<T>},
+{
+    let mut results = Vec::with_capacity(n);
+    let mut count = 0;
+
+    handle gen() {
+        return(()) { results }
+        yield_(value) {
+            if count < n {
+                results.push(value);
+                count += 1;
+                resume(())
+            }
+            // Stop early by not resuming
+        }
+    }
+}
+
+/// Filters yielded values
+pub fn filter_yields<T, F, P>(gen: F, predicate: P) -> impl FnOnce() / {Yield<T>}
+where
+    F: FnOnce() / {Yield<T>},
+    P: Fn(&T) -> bool,
+{
+    || {
+        handle gen() {
+            return(()) { () }
+            yield_(value) {
+                if predicate(&value) {
+                    perform yield_(value);
+                }
+                resume(())
+            }
+        }
+    }
+}
+
+/// Maps yielded values
+pub fn map_yields<T, U, F, M>(gen: F, mapper: M) -> impl FnOnce() / {Yield<U>}
+where
+    F: FnOnce() / {Yield<T>},
+    M: Fn(T) -> U,
+{
+    || {
+        handle gen() {
+            return(()) { () }
+            yield_(value) {
+                perform yield_(mapper(value));
+                resume(())
+            }
+        }
+    }
+}
+
+/// Chains two generators
+pub fn chain_yields<T, F, G>(first: F, second: G) -> impl FnOnce() / {Yield<T>}
+where
+    F: FnOnce() / {Yield<T>},
+    G: FnOnce() / {Yield<T>},
+{
+    || {
+        handle first() {
+            return(()) {
+                handle second() {
+                    return(()) { () }
+                    yield_(value) {
+                        perform yield_(value);
+                        resume(())
+                    }
+                }
+            }
+            yield_(value) {
+                perform yield_(value);
+                resume(())
+            }
+        }
+    }
+}
+
+/// Flattens nested yields
+pub fn flatten_yields<T, F>(gen: F) -> impl FnOnce() / {Yield<T>}
+where
+    F: FnOnce() / {Yield<impl IntoIterator<Item = T>>},
+{
+    || {
+        handle gen() {
+            return(()) { () }
+            yield_(values) {
+                for value in values {
+                    perform yield_(value);
+                }
+                resume(())
+            }
+        }
+    }
+}
+
+/// Generator state
+enum GeneratorState<T> {
+    NotStarted,
+    Yielded(T),
+    Completed,
+}
+
+/// Iterator adapter for generators
+pub struct GeneratorIter<T, F> {
+    gen: Option<F>,
+    state: GeneratorState<T>,
+}
+
+impl<T, F> Iterator for GeneratorIter<T, F>
+where
+    F: FnOnce() / {Yield<T>},
+{
+    type Item = T;
+
+    fn next(self: &mut Self) -> Option<T> / pure {
+        if let Some(gen) = self.gen.take() {
+            // Run the generator with our handler
+            handle gen() {
+                return(()) {
+                    self.state = GeneratorState::Completed;
+                    None
+                }
+                yield_(value) {
+                    self.state = GeneratorState::Yielded(value);
+                    // Don't resume - pause the generator
+                    Some(value)
+                }
+            }
+        } else {
+            match &self.state {
+                GeneratorState::Completed => None,
+                _ => {
+                    // Continue the generator
+                    // This requires continuation support
+                    None
+                }
+            }
+        }
+    }
+}
+
+/// Standard handler that collects all yields
+pub deep handler CollectYields<T> for Yield<T> {
+    let mut values: Vec<T> = Vec::new();
+
+    type Output = Vec<T>;
+
+    return(()) { values }
+
+    op yield_(value) {
+        values.push(value);
+        resume(())
+    }
+}
+
+/// Handler that forwards yields to another effect
+pub deep handler ForwardYields<T, U> for Yield<T>
+where
+    U: From<T>,
+{
+    return(x) { x }
+
+    op yield_(value) {
+        perform yield_(U::from(value));
+        resume(())
+    }
+}
+
+/// Handler that counts yields
+pub deep handler CountYields<T> for Yield<T> {
+    let mut count: usize = 0;
+
+    type Output = usize;
+
+    return(()) { count }
+
+    op yield_(_) {
+        count += 1;
+        resume(())
+    }
+}
+
+/// Handler that takes first n and ignores rest
+pub deep handler TakeYields<T> for Yield<T> {
+    let n: usize;
+    let mut taken: Vec<T> = Vec::new();
+
+    fn new(n: usize) -> Self {
+        TakeYields { n, taken: Vec::with_capacity(n) }
+    }
+
+    type Output = Vec<T>;
+
+    return(()) { taken }
+
+    op yield_(value) {
+        if taken.len() < n {
+            taken.push(value);
+            resume(())
+        }
+        // Stop early by not resuming
+    }
+}

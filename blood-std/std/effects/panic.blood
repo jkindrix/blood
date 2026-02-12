@@ -1,0 +1,210 @@
+// Blood Standard Library - Panic Effect
+//
+// The Panic effect handles unrecoverable errors and program termination.
+
+/// Panic effect for unrecoverable errors
+///
+/// Unlike Error<E>, Panic is intended for bugs and invariant violations,
+/// not expected failure cases.
+///
+/// # Example
+/// ```blood
+/// fn checked_divide(a: i32, b: i32) -> i32 / {Panic} {
+///     if b == 0 {
+///         perform panic("division by zero")
+///     } else {
+///         a / b
+///     }
+/// }
+/// ```
+pub effect Panic {
+    /// Terminates the program with an error message
+    op panic(message: &str) -> !;
+
+    /// Terminates with a formatted message
+    op panic_fmt(message: String) -> !;
+}
+
+/// Panics with a message
+pub fn panic(message: &str) -> ! / {Panic} {
+    perform panic(message)
+}
+
+/// Panics with a formatted message
+pub fn panic_fmt(message: String) -> ! / {Panic} {
+    perform panic_fmt(message)
+}
+
+/// Panics if the condition is false
+pub fn assert(condition: bool, message: &str) / {Panic} {
+    if !condition {
+        perform panic(message)
+    }
+}
+
+/// Panics if two values are not equal
+pub fn assert_eq<T: PartialEq + Debug>(left: &T, right: &T) / {Panic} {
+    if left != right {
+        perform panic_fmt(format!(
+            "assertion failed: `(left == right)`\n  left: `{:?}`\n right: `{:?}`",
+            left, right
+        ))
+    }
+}
+
+/// Panics if two values are equal
+pub fn assert_ne<T: PartialEq + Debug>(left: &T, right: &T) / {Panic} {
+    if left == right {
+        perform panic_fmt(format!(
+            "assertion failed: `(left != right)`\n  left: `{:?}`\n right: `{:?}`",
+            left, right
+        ))
+    }
+}
+
+/// Marks code that should be unreachable
+pub fn unreachable(message: &str) -> ! / {Panic} {
+    perform panic_fmt(format!("internal error: entered unreachable code: {}", message))
+}
+
+/// Marks code that is not yet implemented
+pub fn todo(message: &str) -> ! / {Panic} {
+    perform panic_fmt(format!("not yet implemented: {}", message))
+}
+
+/// Marks code that is intentionally unimplemented
+pub fn unimplemented(message: &str) -> ! / {Panic} {
+    perform panic_fmt(format!("not implemented: {}", message))
+}
+
+/// Debug-only assertion (no-op in release builds)
+#[cfg(debug_assertions)]
+pub fn debug_assert(condition: bool, message: &str) / {Panic} {
+    assert(condition, message)
+}
+
+#[cfg(not(debug_assertions))]
+pub fn debug_assert(_condition: bool, _message: &str) / pure {
+    // No-op in release
+}
+
+/// Debug-only equality assertion
+#[cfg(debug_assertions)]
+pub fn debug_assert_eq<T: PartialEq + Debug>(left: &T, right: &T) / {Panic} {
+    assert_eq(left, right)
+}
+
+#[cfg(not(debug_assertions))]
+pub fn debug_assert_eq<T>(_left: &T, _right: &T) / pure {
+    // No-op in release
+}
+
+/// Debug-only inequality assertion
+#[cfg(debug_assertions)]
+pub fn debug_assert_ne<T: PartialEq + Debug>(left: &T, right: &T) / {Panic} {
+    assert_ne(left, right)
+}
+
+#[cfg(not(debug_assertions))]
+pub fn debug_assert_ne<T>(_left: &T, _right: &T) / pure {
+    // No-op in release
+}
+
+/// Standard panic handler that terminates the program
+pub deep handler TerminatePanic for Panic {
+    return(x) { x }
+
+    op panic(msg) {
+        __builtin_panic(msg);
+        // Never resumes
+    }
+
+    op panic_fmt(msg) {
+        __builtin_panic(&msg);
+        // Never resumes
+    }
+}
+
+/// Panic handler that converts to Result
+pub deep handler CatchPanic<T> for Panic {
+    type Output = Result<T, String>;
+
+    return(x: T) { Ok(x) }
+
+    op panic(msg) { Err(String::from(msg)) }
+    op panic_fmt(msg) { Err(msg) }
+}
+
+/// Panic handler that logs and continues with default
+pub deep handler RecoverPanic<T> for Panic
+where
+    T: Default,
+{
+    return(x: T) { x }
+
+    op panic(msg) {
+        eprintln!("PANIC (recovered): {}", msg);
+        resume(T::default())
+    }
+
+    op panic_fmt(msg) {
+        eprintln!("PANIC (recovered): {}", msg);
+        resume(T::default())
+    }
+}
+
+/// Catches panics and returns Result
+pub fn catch_unwind<T, F>(f: F) -> Result<T, String> / pure
+where
+    F: FnOnce() -> T / {Panic},
+{
+    handle f() {
+        return(v) { Ok(v) }
+        panic(msg) { Err(String::from(msg)) }
+        panic_fmt(msg) { Err(msg) }
+    }
+}
+
+/// Panic location information
+pub struct Location {
+    pub file: &'static str,
+    pub line: u32,
+    pub column: u32,
+}
+
+impl Location {
+    pub const fn new(file: &'static str, line: u32, column: u32) -> Self {
+        Location { file, line, column }
+    }
+}
+
+impl Display for Location {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        write!(f, "{}:{}:{}", self.file, self.line, self.column)
+    }
+}
+
+/// Panic hook type
+pub type PanicHook = fn(&PanicInfo);
+
+/// Information about a panic
+pub struct PanicInfo {
+    pub message: String,
+    pub location: Option<Location>,
+}
+
+impl PanicInfo {
+    pub fn new(message: String, location: Option<Location>) -> Self {
+        PanicInfo { message, location }
+    }
+}
+
+impl Display for PanicInfo {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        if let Some(ref loc) = self.location {
+            write!(f, "panic at {}: {}", loc, self.message)
+        } else {
+            write!(f, "panic: {}", self.message)
+        }
+    }
+}

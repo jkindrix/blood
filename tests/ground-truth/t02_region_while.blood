@@ -1,0 +1,21 @@
+// Test: region blocks interacting with while loops
+// EXPECT: 55
+fn main() -> i32 {
+    // Allocate and accumulate inside a region within a while loop
+    let mut total: i32 = 0;
+    let mut i: i32 = 1;
+    while i <= 10 {
+        let val: i32 = region {
+            // Each iteration creates a fresh region scope
+            let x: i32 = i * i;
+            // Only the scalar escapes the region
+            i
+        };
+        total = total + val;
+        i = i + 1;
+    }
+    println_int(total); // 1+2+3+...+10 = 55
+
+    if total != 55 { return 1; }
+    0
+}

@@ -1,0 +1,1043 @@
+// Command-Line Argument Parser in Blood
+// ======================================
+//
+// A full-featured argument parser demonstrating Blood's effect system,
+// generics, and API design capabilities.
+//
+// This example shows:
+// - Builder pattern with method chaining
+// - Generic argument types with conversion
+// - Effect-based error handling
+// - Subcommand support
+// - Help generation
+// - Positional and named arguments
+// - Short and long option forms
+
+// ===========================================================================
+// 1. Core Types
+// ===========================================================================
+
+/// Argument parse errors
+enum ArgError {
+    MissingRequired(String),
+    InvalidValue(String, String),
+    UnknownArgument(String),
+    MissingValue(String),
+    InvalidSubcommand(String),
+    HelpRequested,
+    VersionRequested,
+}
+
+impl ArgError {
+    fn to_string(&self) -> String / pure {
+        match self {
+            ArgError::MissingRequired(name) => format!("Missing required argument: {}", name),
+            ArgError::InvalidValue(name, msg) => format!("Invalid value for '{}': {}", name, msg),
+            ArgError::UnknownArgument(name) => format!("Unknown argument: {}", name),
+            ArgError::MissingValue(name) => format!("Missing value for argument: {}", name),
+            ArgError::InvalidSubcommand(name) => format!("Unknown subcommand: {}", name),
+            ArgError::HelpRequested => "Help requested".to_string(),
+            ArgError::VersionRequested => "Version requested".to_string(),
+        }
+    }
+}
+
+/// Effect for argument parsing errors
+effect ArgParseError {
+    op error(err: ArgError) -> !;
+}
+
+/// Parsed argument value
+enum ArgValue {
+    String(String),
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    List(Vec<String>),
+    None,
+}
+
+impl ArgValue {
+    fn as_string(&self) -> Option<&String> / pure {
+        match self {
+            ArgValue::String(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    fn as_int(&self) -> Option<i64> / pure {
+        match self {
+            ArgValue::Int(n) => Some(*n),
+            _ => None,
+        }
+    }
+
+    fn as_float(&self) -> Option<f64> / pure {
+        match self {
+            ArgValue::Float(f) => Some(*f),
+            _ => None,
+        }
+    }
+
+    fn as_bool(&self) -> Option<bool> / pure {
+        match self {
+            ArgValue::Bool(b) => Some(*b),
+            _ => None,
+        }
+    }
+
+    fn as_list(&self) -> Option<&Vec<String>> / pure {
+        match self {
+            ArgValue::List(l) => Some(l),
+            _ => None,
+        }
+    }
+
+    fn is_present(&self) -> bool / pure {
+        !matches!(self, ArgValue::None)
+    }
+}
+
+/// Type of argument
+enum ArgType {
+    Flag,           // -v, --verbose (boolean, no value)
+    Option_,        // -n NAME, --name NAME (requires value)
+    Positional,     // FILE (by position)
+    MultiOption,    // -I path (can appear multiple times)
+}
+
+/// Argument definition
+struct ArgDef {
+    name: String,
+    short: Option<char>,
+    long: Option<String>,
+    help: String,
+    arg_type: ArgType,
+    required: bool,
+    default: Option<String>,
+    value_name: String,
+    choices: Option<Vec<String>>,
+}
+
+impl ArgDef {
+    fn new(name: &str) -> ArgDef / pure {
+        ArgDef {
+            name: name.to_string(),
+            short: None,
+            long: None,
+            help: String::new(),
+            arg_type: ArgType::Option_,
+            required: false,
+            default: None,
+            value_name: "VALUE".to_string(),
+            choices: None,
+        }
+    }
+
+    fn short(mut self, c: char) -> ArgDef / pure {
+        self.short = Some(c);
+        self
+    }
+
+    fn long(mut self, s: &str) -> ArgDef / pure {
+        self.long = Some(s.to_string());
+        self
+    }
+
+    fn help(mut self, s: &str) -> ArgDef / pure {
+        self.help = s.to_string();
+        self
+    }
+
+    fn flag(mut self) -> ArgDef / pure {
+        self.arg_type = ArgType::Flag;
+        self
+    }
+
+    fn required(mut self) -> ArgDef / pure {
+        self.required = true;
+        self
+    }
+
+    fn default_value(mut self, val: &str) -> ArgDef / pure {
+        self.default = Some(val.to_string());
+        self
+    }
+
+    fn value_name(mut self, name: &str) -> ArgDef / pure {
+        self.value_name = name.to_string();
+        self
+    }
+
+    fn positional(mut self) -> ArgDef / pure {
+        self.arg_type = ArgType::Positional;
+        self
+    }
+
+    fn multiple(mut self) -> ArgDef / pure {
+        self.arg_type = ArgType::MultiOption;
+        self
+    }
+
+    fn choices(mut self, opts: Vec<&str>) -> ArgDef / pure {
+        self.choices = Some(opts.iter().map(|s| s.to_string()).collect());
+        self
+    }
+
+    /// Check if this definition matches the given argument string
+    fn matches(&self, arg: &str) -> bool / pure {
+        if arg.starts_with("--") {
+            if let Some(ref long) = self.long {
+                return &arg[2..] == long || arg[2..].starts_with(&format!("{}=", long));
+            }
+        } else if arg.starts_with('-') && arg.len() == 2 {
+            if let Some(short) = self.short {
+                return arg.chars().nth(1) == Some(short);
+            }
+        }
+        false
+    }
+
+    /// Get the display name for help
+    fn display_name(&self) -> String / pure {
+        let mut parts = Vec::new();
+        if let Some(c) = self.short {
+            parts.push(format!("-{}", c));
+        }
+        if let Some(ref l) = self.long {
+            parts.push(format!("--{}", l));
+        }
+        if parts.is_empty() {
+            self.name.clone()
+        } else {
+            parts.join(", ")
+        }
+    }
+}
+
+// ===========================================================================
+// 2. Subcommand
+// ===========================================================================
+
+/// Subcommand definition
+struct Subcommand {
+    name: String,
+    help: String,
+    args: Vec<ArgDef>,
+}
+
+impl Subcommand {
+    fn new(name: &str) -> Subcommand / pure {
+        Subcommand {
+            name: name.to_string(),
+            help: String::new(),
+            args: Vec::new(),
+        }
+    }
+
+    fn help(mut self, s: &str) -> Subcommand / pure {
+        self.help = s.to_string();
+        self
+    }
+
+    fn arg(mut self, arg: ArgDef) -> Subcommand / pure {
+        self.args.push(arg);
+        self
+    }
+}
+
+// ===========================================================================
+// 3. Argument Parser
+// ===========================================================================
+
+/// Parsed arguments result
+struct ArgMatches {
+    values: Vec<(String, ArgValue)>,
+    subcommand: Option<(String, Box<ArgMatches>)>,
+}
+
+impl ArgMatches {
+    fn new() -> ArgMatches / pure {
+        ArgMatches {
+            values: Vec::new(),
+            subcommand: None,
+        }
+    }
+
+    /// Get a string argument value
+    fn get_string(&self, name: &str) -> Option<&String> / pure {
+        for (n, v) in &self.values {
+            if n == name {
+                return v.as_string();
+            }
+        }
+        None
+    }
+
+    /// Get an integer argument value
+    fn get_int(&self, name: &str) -> Option<i64> / pure {
+        for (n, v) in &self.values {
+            if n == name {
+                return v.as_int();
+            }
+        }
+        None
+    }
+
+    /// Get a float argument value
+    fn get_float(&self, name: &str) -> Option<f64> / pure {
+        for (n, v) in &self.values {
+            if n == name {
+                return v.as_float();
+            }
+        }
+        None
+    }
+
+    /// Check if a flag is present
+    fn is_present(&self, name: &str) -> bool / pure {
+        for (n, v) in &self.values {
+            if n == name {
+                return v.is_present();
+            }
+        }
+        false
+    }
+
+    /// Get count of flag occurrences (for -vvv style)
+    fn occurrences(&self, name: &str) -> u32 / pure {
+        let mut count = 0;
+        for (n, v) in &self.values {
+            if n == name && v.is_present() {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    /// Get multiple values (for -I path1 -I path2)
+    fn get_many(&self, name: &str) -> Option<&Vec<String>> / pure {
+        for (n, v) in &self.values {
+            if n == name {
+                return v.as_list();
+            }
+        }
+        None
+    }
+
+    /// Get subcommand name and matches
+    fn subcommand(&self) -> Option<(&str, &ArgMatches)> / pure {
+        match &self.subcommand {
+            Some((name, matches)) => Some((name, matches)),
+            None => None,
+        }
+    }
+
+    fn set(&mut self, name: &str, value: ArgValue) / pure {
+        // Update existing or add new
+        for (n, v) in &mut self.values {
+            if n == name {
+                *v = value;
+                return;
+            }
+        }
+        self.values.push((name.to_string(), value));
+    }
+
+    fn append(&mut self, name: &str, value: &str) / pure {
+        for (n, v) in &mut self.values {
+            if n == name {
+                if let ArgValue::List(ref mut list) = v {
+                    list.push(value.to_string());
+                    return;
+                }
+            }
+        }
+        self.values.push((name.to_string(), ArgValue::List(vec![value.to_string()])));
+    }
+}
+
+/// Argument parser builder
+struct ArgParser {
+    name: String,
+    version: String,
+    author: String,
+    about: String,
+    args: Vec<ArgDef>,
+    subcommands: Vec<Subcommand>,
+}
+
+impl ArgParser {
+    /// Create a new argument parser
+    fn new(name: &str) -> ArgParser / pure {
+        ArgParser {
+            name: name.to_string(),
+            version: "0.1.0".to_string(),
+            author: String::new(),
+            about: String::new(),
+            args: Vec::new(),
+            subcommands: Vec::new(),
+        }
+    }
+
+    /// Set version string
+    fn version(mut self, v: &str) -> ArgParser / pure {
+        self.version = v.to_string();
+        self
+    }
+
+    /// Set author string
+    fn author(mut self, a: &str) -> ArgParser / pure {
+        self.author = a.to_string();
+        self
+    }
+
+    /// Set about/description string
+    fn about(mut self, a: &str) -> ArgParser / pure {
+        self.about = a.to_string();
+        self
+    }
+
+    /// Add an argument definition
+    fn arg(mut self, arg: ArgDef) -> ArgParser / pure {
+        self.args.push(arg);
+        self
+    }
+
+    /// Add a subcommand
+    fn subcommand(mut self, sub: Subcommand) -> ArgParser / pure {
+        self.subcommands.push(sub);
+        self
+    }
+
+    /// Parse command-line arguments
+    fn parse(&self, args: &[String]) -> Result<ArgMatches, ArgError> {
+        with ArgParseErrorHandler handle {
+            Ok(self.parse_args(args))
+        }
+    }
+
+    /// Parse arguments with effects
+    fn parse_args(&self, args: &[String]) -> ArgMatches / {ArgParseError} {
+        let mut matches = ArgMatches::new();
+        let mut positional_idx = 0;
+        let mut i = 0;
+
+        // Initialize defaults
+        for arg_def in &self.args {
+            if let Some(ref default) = arg_def.default {
+                matches.set(&arg_def.name, self.parse_value(default, &arg_def.name));
+            }
+        }
+
+        while i < args.len() {
+            let arg = &args[i];
+
+            // Check for help
+            if arg == "-h" || arg == "--help" {
+                self.print_help();
+                perform ArgParseError.error(ArgError::HelpRequested);
+            }
+
+            // Check for version
+            if arg == "-V" || arg == "--version" {
+                self.print_version();
+                perform ArgParseError.error(ArgError::VersionRequested);
+            }
+
+            // Check for subcommand
+            if !arg.starts_with('-') {
+                if let Some(sub) = self.subcommands.iter().find(|s| s.name == *arg) {
+                    let sub_args = &args[i + 1..];
+                    let sub_matches = self.parse_subcommand(sub, sub_args);
+                    matches.subcommand = Some((sub.name.clone(), Box::new(sub_matches)));
+                    break;
+                }
+            }
+
+            // Try to match argument definition
+            if arg.starts_with('-') {
+                let mut found = false;
+                for arg_def in &self.args {
+                    if arg_def.matches(arg) {
+                        found = true;
+                        match arg_def.arg_type {
+                            ArgType::Flag => {
+                                matches.set(&arg_def.name, ArgValue::Bool(true));
+                            }
+                            ArgType::Option_ => {
+                                // Check for --arg=value form
+                                if let Some(eq_idx) = arg.find('=') {
+                                    let value = &arg[eq_idx + 1..];
+                                    self.validate_choices(&arg_def, value);
+                                    matches.set(&arg_def.name, self.parse_value(value, &arg_def.name));
+                                } else {
+                                    // Next argument is the value
+                                    i += 1;
+                                    if i >= args.len() {
+                                        perform ArgParseError.error(ArgError::MissingValue(arg_def.name.clone()));
+                                    }
+                                    let value = &args[i];
+                                    self.validate_choices(&arg_def, value);
+                                    matches.set(&arg_def.name, self.parse_value(value, &arg_def.name));
+                                }
+                            }
+                            ArgType::MultiOption => {
+                                i += 1;
+                                if i >= args.len() {
+                                    perform ArgParseError.error(ArgError::MissingValue(arg_def.name.clone()));
+                                }
+                                let value = &args[i];
+                                matches.append(&arg_def.name, value);
+                            }
+                            ArgType::Positional => {
+                                // Handled below
+                            }
+                        }
+                        break;
+                    }
+                }
+
+                if !found {
+                    perform ArgParseError.error(ArgError::UnknownArgument(arg.clone()));
+                }
+            } else {
+                // Positional argument
+                let positionals: Vec<&ArgDef> = self.args.iter()
+                    .filter(|a| matches!(a.arg_type, ArgType::Positional))
+                    .collect();
+
+                if positional_idx < positionals.len() {
+                    let arg_def = positionals[positional_idx];
+                    self.validate_choices(arg_def, arg);
+                    matches.set(&arg_def.name, self.parse_value(arg, &arg_def.name));
+                    positional_idx += 1;
+                } else {
+                    perform ArgParseError.error(ArgError::UnknownArgument(arg.clone()));
+                }
+            }
+
+            i += 1;
+        }
+
+        // Check required arguments
+        for arg_def in &self.args {
+            if arg_def.required && !matches.is_present(&arg_def.name) {
+                perform ArgParseError.error(ArgError::MissingRequired(arg_def.name.clone()));
+            }
+        }
+
+        matches
+    }
+
+    fn parse_subcommand(&self, sub: &Subcommand, args: &[String]) -> ArgMatches / {ArgParseError} {
+        // Create a temporary parser for the subcommand
+        let mut matches = ArgMatches::new();
+        let mut positional_idx = 0;
+        let mut i = 0;
+
+        // Initialize defaults
+        for arg_def in &sub.args {
+            if let Some(ref default) = arg_def.default {
+                matches.set(&arg_def.name, self.parse_value(default, &arg_def.name));
+            }
+        }
+
+        while i < args.len() {
+            let arg = &args[i];
+
+            if arg == "-h" || arg == "--help" {
+                self.print_subcommand_help(sub);
+                perform ArgParseError.error(ArgError::HelpRequested);
+            }
+
+            if arg.starts_with('-') {
+                let mut found = false;
+                for arg_def in &sub.args {
+                    if arg_def.matches(arg) {
+                        found = true;
+                        match arg_def.arg_type {
+                            ArgType::Flag => {
+                                matches.set(&arg_def.name, ArgValue::Bool(true));
+                            }
+                            ArgType::Option_ => {
+                                if let Some(eq_idx) = arg.find('=') {
+                                    let value = &arg[eq_idx + 1..];
+                                    matches.set(&arg_def.name, self.parse_value(value, &arg_def.name));
+                                } else {
+                                    i += 1;
+                                    if i >= args.len() {
+                                        perform ArgParseError.error(ArgError::MissingValue(arg_def.name.clone()));
+                                    }
+                                    let value = &args[i];
+                                    matches.set(&arg_def.name, self.parse_value(value, &arg_def.name));
+                                }
+                            }
+                            ArgType::MultiOption => {
+                                i += 1;
+                                if i >= args.len() {
+                                    perform ArgParseError.error(ArgError::MissingValue(arg_def.name.clone()));
+                                }
+                                let value = &args[i];
+                                matches.append(&arg_def.name, value);
+                            }
+                            ArgType::Positional => {}
+                        }
+                        break;
+                    }
+                }
+                if !found {
+                    perform ArgParseError.error(ArgError::UnknownArgument(arg.clone()));
+                }
+            } else {
+                let positionals: Vec<&ArgDef> = sub.args.iter()
+                    .filter(|a| matches!(a.arg_type, ArgType::Positional))
+                    .collect();
+
+                if positional_idx < positionals.len() {
+                    let arg_def = positionals[positional_idx];
+                    matches.set(&arg_def.name, self.parse_value(arg, &arg_def.name));
+                    positional_idx += 1;
+                }
+            }
+
+            i += 1;
+        }
+
+        // Check required
+        for arg_def in &sub.args {
+            if arg_def.required && !matches.is_present(&arg_def.name) {
+                perform ArgParseError.error(ArgError::MissingRequired(arg_def.name.clone()));
+            }
+        }
+
+        matches
+    }
+
+    fn parse_value(&self, s: &str, name: &str) -> ArgValue / pure {
+        // Try to parse as int
+        if let Ok(n) = s.parse::<i64>() {
+            return ArgValue::Int(n);
+        }
+
+        // Try to parse as float
+        if let Ok(f) = s.parse::<f64>() {
+            return ArgValue::Float(f);
+        }
+
+        // Try to parse as bool
+        match s.to_lowercase().as_str() {
+            "true" | "yes" | "on" | "1" => return ArgValue::Bool(true),
+            "false" | "no" | "off" | "0" => return ArgValue::Bool(false),
+            _ => {}
+        }
+
+        // Default to string
+        ArgValue::String(s.to_string())
+    }
+
+    fn validate_choices(&self, arg_def: &ArgDef, value: &str) / {ArgParseError} {
+        if let Some(ref choices) = arg_def.choices {
+            if !choices.iter().any(|c| c == value) {
+                perform ArgParseError.error(ArgError::InvalidValue(
+                    arg_def.name.clone(),
+                    format!("must be one of: {}", choices.join(", "))
+                ));
+            }
+        }
+    }
+
+    fn print_help(&self) / pure {
+        println!("{} {}", self.name, self.version);
+        if !self.author.is_empty() {
+            println!("{}", self.author);
+        }
+        if !self.about.is_empty() {
+            println!("{}", self.about);
+        }
+        println!();
+        println!("USAGE:");
+        println!("    {} [OPTIONS] [ARGS]", self.name);
+        if !self.subcommands.is_empty() {
+            println!("    {} <SUBCOMMAND>", self.name);
+        }
+        println!();
+
+        // Print options
+        println!("OPTIONS:");
+        println!("    -h, --help       Print help information");
+        println!("    -V, --version    Print version information");
+        for arg in &self.args {
+            if !matches!(arg.arg_type, ArgType::Positional) {
+                let flags = arg.display_name();
+                let value_hint = if matches!(arg.arg_type, ArgType::Flag) {
+                    String::new()
+                } else {
+                    format!(" <{}>", arg.value_name)
+                };
+                let required = if arg.required { " (required)" } else { "" };
+                println!("    {}{}{}", flags, value_hint, required);
+                if !arg.help.is_empty() {
+                    println!("        {}", arg.help);
+                }
+            }
+        }
+        println!();
+
+        // Print positional args
+        let positionals: Vec<&ArgDef> = self.args.iter()
+            .filter(|a| matches!(a.arg_type, ArgType::Positional))
+            .collect();
+        if !positionals.is_empty() {
+            println!("ARGS:");
+            for arg in positionals {
+                let required = if arg.required { " (required)" } else { "" };
+                println!("    <{}>{}", arg.name.to_uppercase(), required);
+                if !arg.help.is_empty() {
+                    println!("        {}", arg.help);
+                }
+            }
+            println!();
+        }
+
+        // Print subcommands
+        if !self.subcommands.is_empty() {
+            println!("SUBCOMMANDS:");
+            for sub in &self.subcommands {
+                println!("    {}", sub.name);
+                if !sub.help.is_empty() {
+                    println!("        {}", sub.help);
+                }
+            }
+            println!();
+        }
+    }
+
+    fn print_subcommand_help(&self, sub: &Subcommand) / pure {
+        println!("{} {} {}", self.name, sub.name, self.version);
+        if !sub.help.is_empty() {
+            println!("{}", sub.help);
+        }
+        println!();
+        println!("USAGE:");
+        println!("    {} {} [OPTIONS] [ARGS]", self.name, sub.name);
+        println!();
+
+        println!("OPTIONS:");
+        println!("    -h, --help    Print help information");
+        for arg in &sub.args {
+            if !matches!(arg.arg_type, ArgType::Positional) {
+                let flags = arg.display_name();
+                let value_hint = if matches!(arg.arg_type, ArgType::Flag) {
+                    String::new()
+                } else {
+                    format!(" <{}>", arg.value_name)
+                };
+                println!("    {}{}", flags, value_hint);
+                if !arg.help.is_empty() {
+                    println!("        {}", arg.help);
+                }
+            }
+        }
+        println!();
+    }
+
+    fn print_version(&self) / pure {
+        println!("{} {}", self.name, self.version);
+    }
+}
+
+/// Handler that converts parse errors to Result
+deep handler ArgParseErrorHandler for ArgParseError {
+    return(x) { Ok(x) }
+
+    op error(err) {
+        Err(err)
+    }
+}
+
+// ===========================================================================
+// 4. Example Application
+// ===========================================================================
+
+/// Example: A simple file processor CLI
+fn main() -> i32 / {IO} {
+    // Build the argument parser
+    let parser = ArgParser::new("bloodc")
+        .version("0.5.2")
+        .author("Blood Language Team")
+        .about("The Blood programming language compiler")
+        .arg(ArgDef::new("input")
+            .help("Input source file")
+            .positional()
+            .required())
+        .arg(ArgDef::new("output")
+            .short('o')
+            .long("output")
+            .help("Output file path")
+            .value_name("FILE"))
+        .arg(ArgDef::new("verbose")
+            .short('v')
+            .long("verbose")
+            .help("Enable verbose output")
+            .flag())
+        .arg(ArgDef::new("debug")
+            .short('g')
+            .long("debug")
+            .help("Enable debug symbols")
+            .flag())
+        .arg(ArgDef::new("opt_level")
+            .short('O')
+            .long("opt-level")
+            .help("Optimization level (0-3)")
+            .value_name("LEVEL")
+            .default_value("0")
+            .choices(vec!["0", "1", "2", "3"]))
+        .arg(ArgDef::new("include")
+            .short('I')
+            .long("include")
+            .help("Add include directory")
+            .value_name("DIR")
+            .multiple())
+        .arg(ArgDef::new("emit")
+            .long("emit")
+            .help("Output format")
+            .value_name("FORMAT")
+            .choices(vec!["mir", "llvm", "asm", "obj"]))
+        .subcommand(Subcommand::new("build")
+            .help("Build a Blood project")
+            .arg(ArgDef::new("release")
+                .long("release")
+                .help("Build in release mode")
+                .flag())
+            .arg(ArgDef::new("target")
+                .long("target")
+                .help("Target triple")
+                .value_name("TRIPLE")))
+        .subcommand(Subcommand::new("run")
+            .help("Build and run a Blood program")
+            .arg(ArgDef::new("args")
+                .help("Arguments to pass to the program")
+                .positional()));
+
+    // Parse arguments
+    let args: Vec<String> = std::env::args().skip(1).collect();
+
+    match parser.parse(&args) {
+        Ok(matches) => {
+            println!("Parsed arguments successfully!\n");
+
+            // Check for subcommand
+            if let Some((name, sub_matches)) = matches.subcommand() {
+                println!("Subcommand: {}", name);
+                match name {
+                    "build" => {
+                        let release = sub_matches.is_present("release");
+                        let target = sub_matches.get_string("target");
+                        println!("  Release mode: {}", release);
+                        if let Some(t) = target {
+                            println!("  Target: {}", t);
+                        }
+                    }
+                    "run" => {
+                        if let Some(args) = sub_matches.get_string("args") {
+                            println!("  Program args: {}", args);
+                        }
+                    }
+                    _ => {}
+                }
+            } else {
+                // Main command
+                if let Some(input) = matches.get_string("input") {
+                    println!("Input file: {}", input);
+                }
+
+                if let Some(output) = matches.get_string("output") {
+                    println!("Output file: {}", output);
+                }
+
+                if matches.is_present("verbose") {
+                    println!("Verbose mode: enabled");
+                }
+
+                if matches.is_present("debug") {
+                    println!("Debug symbols: enabled");
+                }
+
+                if let Some(level) = matches.get_string("opt_level") {
+                    println!("Optimization level: {}", level);
+                }
+
+                if let Some(includes) = matches.get_many("include") {
+                    println!("Include directories:");
+                    for inc in includes {
+                        println!("  - {}", inc);
+                    }
+                }
+
+                if let Some(emit) = matches.get_string("emit") {
+                    println!("Emit format: {}", emit);
+                }
+            }
+
+            0
+        }
+        Err(ArgError::HelpRequested) | Err(ArgError::VersionRequested) => {
+            // Help/version already printed
+            0
+        }
+        Err(e) => {
+            eprintln!("Error: {}", e.to_string());
+            eprintln!("Use --help for usage information.");
+            1
+        }
+    }
+}
+
+// ===========================================================================
+// 5. Tests
+// ===========================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_simple_parse() {
+        let parser = ArgParser::new("test")
+            .arg(ArgDef::new("verbose")
+                .short('v')
+                .long("verbose")
+                .flag());
+
+        let args = vec!["--verbose".to_string()];
+        let matches = parser.parse(&args).unwrap();
+        assert!(matches.is_present("verbose"));
+    }
+
+    #[test]
+    fn test_option_parse() {
+        let parser = ArgParser::new("test")
+            .arg(ArgDef::new("output")
+                .short('o')
+                .long("output"));
+
+        let args = vec!["-o".to_string(), "file.out".to_string()];
+        let matches = parser.parse(&args).unwrap();
+        assert_eq!(matches.get_string("output"), Some(&"file.out".to_string()));
+    }
+
+    #[test]
+    fn test_equals_form() {
+        let parser = ArgParser::new("test")
+            .arg(ArgDef::new("output")
+                .long("output"));
+
+        let args = vec!["--output=file.out".to_string()];
+        let matches = parser.parse(&args).unwrap();
+        assert_eq!(matches.get_string("output"), Some(&"file.out".to_string()));
+    }
+
+    #[test]
+    fn test_positional() {
+        let parser = ArgParser::new("test")
+            .arg(ArgDef::new("input")
+                .positional());
+
+        let args = vec!["input.txt".to_string()];
+        let matches = parser.parse(&args).unwrap();
+        assert_eq!(matches.get_string("input"), Some(&"input.txt".to_string()));
+    }
+
+    #[test]
+    fn test_required_missing() {
+        let parser = ArgParser::new("test")
+            .arg(ArgDef::new("input")
+                .required()
+                .positional());
+
+        let args: Vec<String> = vec![];
+        let result = parser.parse(&args);
+        assert!(matches!(result, Err(ArgError::MissingRequired(_))));
+    }
+
+    #[test]
+    fn test_choices_valid() {
+        let parser = ArgParser::new("test")
+            .arg(ArgDef::new("level")
+                .short('l')
+                .choices(vec!["low", "medium", "high"]));
+
+        let args = vec!["-l".to_string(), "medium".to_string()];
+        let matches = parser.parse(&args).unwrap();
+        assert_eq!(matches.get_string("level"), Some(&"medium".to_string()));
+    }
+
+    #[test]
+    fn test_choices_invalid() {
+        let parser = ArgParser::new("test")
+            .arg(ArgDef::new("level")
+                .short('l')
+                .choices(vec!["low", "medium", "high"]));
+
+        let args = vec!["-l".to_string(), "extreme".to_string()];
+        let result = parser.parse(&args);
+        assert!(matches!(result, Err(ArgError::InvalidValue(_, _))));
+    }
+
+    #[test]
+    fn test_default_value() {
+        let parser = ArgParser::new("test")
+            .arg(ArgDef::new("level")
+                .short('l')
+                .default_value("medium"));
+
+        let args: Vec<String> = vec![];
+        let matches = parser.parse(&args).unwrap();
+        assert_eq!(matches.get_string("level"), Some(&"medium".to_string()));
+    }
+
+    #[test]
+    fn test_multi_option() {
+        let parser = ArgParser::new("test")
+            .arg(ArgDef::new("include")
+                .short('I')
+                .multiple());
+
+        let args = vec![
+            "-I".to_string(), "path1".to_string(),
+            "-I".to_string(), "path2".to_string()
+        ];
+        let matches = parser.parse(&args).unwrap();
+        let includes = matches.get_many("include").unwrap();
+        assert_eq!(includes.len(), 2);
+        assert_eq!(includes[0], "path1");
+        assert_eq!(includes[1], "path2");
+    }
+
+    #[test]
+    fn test_subcommand() {
+        let parser = ArgParser::new("test")
+            .subcommand(Subcommand::new("build")
+                .arg(ArgDef::new("release")
+                    .long("release")
+                    .flag()));
+
+        let args = vec!["build".to_string(), "--release".to_string()];
+        let matches = parser.parse(&args).unwrap();
+        let (name, sub) = matches.subcommand().unwrap();
+        assert_eq!(name, "build");
+        assert!(sub.is_present("release"));
+    }
+
+    #[test]
+    fn test_int_parse() {
+        let parser = ArgParser::new("test")
+            .arg(ArgDef::new("count")
+                .short('c'));
+
+        let args = vec!["-c".to_string(), "42".to_string()];
+        let matches = parser.parse(&args).unwrap();
+        assert_eq!(matches.get_int("count"), Some(42));
+    }
+}

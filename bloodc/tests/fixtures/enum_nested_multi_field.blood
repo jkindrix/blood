@@ -1,0 +1,16 @@
+enum Kind { Int(i32), Empty }
+struct Pair { pub ty: i32, pub kind: Kind }
+enum Wrapper { Item(Pair), None }
+fn main() -> i32 {
+    let p = Pair { ty: 7, kind: Kind::Int(42) };
+    let w = Wrapper::Item(p);
+    match w {
+        Wrapper::Item(pair) => {
+            match pair.kind {
+                Kind::Int(v) => pair.ty + v,
+                Kind::Empty => 99,
+            }
+        }
+        Wrapper::None => 99,
+    }
+}

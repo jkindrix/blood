@@ -1,0 +1,51 @@
+// Test: generic function with multiple type parameters
+// EXPECT: 10
+// EXPECT: 1
+struct Pair<A, B> {
+    first: A,
+    second: B,
+}
+
+fn make_pair<A, B>(a: A, b: B) -> Pair<A, B> {
+    Pair { first: a, second: b }
+}
+
+fn first<A, B>(p: Pair<A, B>) -> A {
+    p.first
+}
+
+fn second<A, B>(p: Pair<A, B>) -> B {
+    p.second
+}
+
+fn main() -> i32 {
+    // Pair of (i32, bool)
+    let p1: Pair<i32, bool> = make_pair(10, true);
+    let a: i32 = first(p1);
+    println_int(a);
+    if a != 10 { return 1; }
+
+    // Pair of (bool, i32) - reversed types
+    let p2: Pair<bool, i32> = make_pair(true, 42);
+    let b: i32 = second(p2);
+    if b != 42 { return 2; }
+
+    // Pair of (i32, i32) - same types
+    let p3: Pair<i32, i32> = make_pair(100, 200);
+    let c: i32 = first(p3);
+    let p4: Pair<i32, i32> = make_pair(100, 200);
+    let d: i32 = second(p4);
+    if c != 100 { return 3; }
+    if d != 200 { return 4; }
+
+    // Bool result
+    let p5: Pair<i32, bool> = make_pair(5, false);
+    let e: bool = second(p5);
+    if e {
+        println_int(0);
+    } else {
+        println_int(1);
+    }
+
+    0
+}

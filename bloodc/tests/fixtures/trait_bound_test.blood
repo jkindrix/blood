@@ -1,0 +1,28 @@
+// Test that trait bounds are enforced
+
+trait Counter {
+    fn count(&self) -> i32;
+}
+
+impl Counter for i32 {
+    fn count(&self) -> i32 {
+        *self
+    }
+}
+
+// This function requires T: Counter
+fn get_count<T: Counter>(val: &T) -> i32 {
+    val.count()
+}
+
+fn main() {
+    // This should work - i32 implements Counter
+    let x: i32 = 42;
+    let a = get_count(&x);
+
+    // This should FAIL - String does NOT implement Counter
+    let s: String = String::new();
+    let b = get_count(&s);  // ERROR: String doesn't implement Counter
+
+    println!("{}", a);
+}

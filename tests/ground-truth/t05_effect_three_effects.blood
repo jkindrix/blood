@@ -1,0 +1,53 @@
+// Test: function using three different effects simultaneously
+// EXPECT: 42
+effect Reader {
+    op read() -> i32;
+}
+
+effect Writer {
+    op write(val: i32) -> ();
+}
+
+effect State<S> {
+    op get() -> S;
+    op put(s: S) -> ();
+}
+
+deep handler FixedReader for Reader {
+    let mut val: i32
+    return(x) { x }
+    op read() { resume(val) }
+}
+
+deep handler DiscardWriter for Writer {
+    return(x) { x }
+    op write(val) { resume(()) }
+}
+
+deep handler LocalState<S> for State<S> {
+    let mut state: S
+    return(x) { x }
+    op get() { resume(state) }
+    op put(s) { state = s; resume(()) }
+}
+
+fn compute() -> i32 / {Reader, Writer, State<i32>} {
+    let base: i32 = perform Reader.read();
+    perform Writer.write(base);
+    perform State.put(base);
+    let current: i32 = perform State.get();
+    current + 2
+}
+
+fn main() -> i32 {
+    let result: i32 = with FixedReader { val: 40 } handle {
+        with DiscardWriter {} handle {
+            with LocalState { state: 0 } handle {
+                compute()
+            }
+        }
+    };
+    println_int(result); // 40 + 2 = 42
+    if result != 42 { return 1; }
+    0
+}

@@ -1,0 +1,429 @@
+// Blood Standard Library - Read Trait
+//
+// Trait for reading bytes from a source.
+
+use super::{Result, Error, ErrorKind};
+
+/// Trait for reading bytes from a source
+pub trait Read {
+    /// Reads bytes into the buffer
+    ///
+    /// Returns the number of bytes read.
+    fn read(self: &mut Self, buf: &mut [u8]) -> Result<usize> / {IO};
+
+    /// Reads the exact number of bytes to fill the buffer
+    fn read_exact(self: &mut Self, buf: &mut [u8]) -> Result<()> / {IO} {
+        let mut total = 0;
+        while total < buf.len() {
+            match self.read(&mut buf[total..]) {
+                Ok(0) => {
+                    return Err(Error::new(
+                        ErrorKind::UnexpectedEof,
+                        "failed to fill whole buffer",
+                    ));
+                }
+                Ok(n) => total += n,
+                Err(ref e) if e.kind() == ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(())
+    }
+
+    /// Reads all bytes until EOF
+    fn read_to_end(self: &mut Self, buf: &mut Vec<u8>) -> Result<usize> / {IO} {
+        let mut temp = [0u8; 1024];
+        let mut total = 0;
+
+        loop {
+            match self.read(&mut temp) {
+                Ok(0) => break,
+                Ok(n) => {
+                    buf.extend_from_slice(&temp[..n]);
+                    total += n;
+                }
+                Err(ref e) if e.kind() == ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e),
+            }
+        }
+
+        Ok(total)
+    }
+
+    /// Reads all bytes until EOF into a string
+    fn read_to_string(self: &mut Self, buf: &mut String) -> Result<usize> / {IO} {
+        let mut bytes = Vec::new();
+        let len = self.read_to_end(&mut bytes)?;
+
+        match String::from_utf8(bytes) {
+            Ok(s) => {
+                buf.push_str(&s);
+                Ok(len)
+            }
+            Err(_) => Err(Error::new(
+                ErrorKind::InvalidData,
+                "stream did not contain valid UTF-8",
+            )),
+        }
+    }
+
+    /// Creates a reader that reads at most `limit` bytes
+    fn take(self: Self, limit: u64) -> Take<Self> / pure
+    where
+        Self: Sized,
+    {
+        Take { inner: self, limit }
+    }
+
+    /// Creates a reader that chains another reader
+    fn chain<R: Read>(self: Self, next: R) -> Chain<Self, R> / pure
+    where
+        Self: Sized,
+    {
+        Chain {
+            first: self,
+            second: next,
+            done_first: false,
+        }
+    }
+
+    /// Creates a reader by reference
+    fn by_ref(self: &mut Self) -> &mut Self / pure {
+        self
+    }
+
+    /// Returns an iterator over bytes
+    fn bytes(self: Self) -> Bytes<Self> / pure
+    where
+        Self: Sized,
+    {
+        Bytes { inner: self }
+    }
+}
+
+/// Extension trait for buffered reading
+pub trait BufRead: Read {
+    /// Fills the internal buffer
+    fn fill_buf(self: &mut Self) -> Result<&[u8]> / {IO};
+
+    /// Marks bytes as consumed
+    fn consume(self: &mut Self, amt: usize) / {IO};
+
+    /// Reads until a delimiter byte is reached
+    fn read_until(self: &mut Self, delim: u8, buf: &mut Vec<u8>) -> Result<usize> / {IO} {
+        let mut total = 0;
+
+        loop {
+            let (done, used) = {
+                let available = match self.fill_buf() {
+                    Ok(n) => n,
+                    Err(ref e) if e.kind() == ErrorKind::Interrupted => continue,
+                    Err(e) => return Err(e),
+                };
+
+                if available.is_empty() {
+                    break;
+                }
+
+                match available.iter().position(|&b| b == delim) {
+                    Some(i) => {
+                        buf.extend_from_slice(&available[..=i]);
+                        (true, i + 1)
+                    }
+                    None => {
+                        buf.extend_from_slice(available);
+                        (false, available.len())
+                    }
+                }
+            };
+
+            self.consume(used);
+            total += used;
+
+            if done {
+                break;
+            }
+        }
+
+        Ok(total)
+    }
+
+    /// Reads a line into the buffer
+    fn read_line(self: &mut Self, buf: &mut String) -> Result<usize> / {IO} {
+        let mut bytes = Vec::new();
+        let len = self.read_until(b'\n', &mut bytes)?;
+
+        match String::from_utf8(bytes) {
+            Ok(s) => {
+                buf.push_str(&s);
+                Ok(len)
+            }
+            Err(_) => Err(Error::new(
+                ErrorKind::InvalidData,
+                "stream did not contain valid UTF-8",
+            )),
+        }
+    }
+
+    /// Returns an iterator over lines
+    fn lines(self: Self) -> Lines<Self> / pure
+    where
+        Self: Sized,
+    {
+        Lines { reader: self }
+    }
+
+    /// Returns an iterator over split segments
+    fn split(self: Self, delim: u8) -> Split<Self> / pure
+    where
+        Self: Sized,
+    {
+        Split {
+            reader: self,
+            delim,
+        }
+    }
+}
+
+/// A reader that limits bytes read
+pub struct Take<R> {
+    inner: R,
+    limit: u64,
+}
+
+impl<R> Take<R> {
+    /// Returns the number of bytes remaining
+    pub fn limit(self: &Self) -> u64 / pure {
+        self.limit
+    }
+
+    /// Sets the byte limit
+    pub fn set_limit(self: &mut Self, limit: u64) / pure {
+        self.limit = limit;
+    }
+
+    /// Returns a reference to the inner reader
+    pub fn get_ref(self: &Self) -> &R / pure {
+        &self.inner
+    }
+
+    /// Returns a mutable reference to the inner reader
+    pub fn get_mut(self: &mut Self) -> &mut R / pure {
+        &mut self.inner
+    }
+
+    /// Consumes and returns the inner reader
+    pub fn into_inner(self: Self) -> R / pure {
+        self.inner
+    }
+}
+
+impl<R: Read> Read for Take<R> {
+    fn read(self: &mut Self, buf: &mut [u8]) -> Result<usize> / {IO} {
+        if self.limit == 0 {
+            return Ok(0);
+        }
+
+        let max = buf.len().min(self.limit as usize);
+        let n = self.inner.read(&mut buf[..max])?;
+        self.limit -= n as u64;
+        Ok(n)
+    }
+}
+
+impl<R: BufRead> BufRead for Take<R> {
+    fn fill_buf(self: &mut Self) -> Result<&[u8]> / {IO} {
+        if self.limit == 0 {
+            return Ok(&[]);
+        }
+
+        let buf = self.inner.fill_buf()?;
+        let max = buf.len().min(self.limit as usize);
+        Ok(&buf[..max])
+    }
+
+    fn consume(self: &mut Self, amt: usize) / {IO} {
+        let amt = amt.min(self.limit as usize);
+        self.limit -= amt as u64;
+        self.inner.consume(amt);
+    }
+}
+
+/// A reader that chains two readers
+pub struct Chain<A, B> {
+    first: A,
+    second: B,
+    done_first: bool,
+}
+
+impl<A, B> Chain<A, B> {
+    /// Returns references to the inner readers
+    pub fn get_ref(self: &Self) -> (&A, &B) / pure {
+        (&self.first, &self.second)
+    }
+
+    /// Returns mutable references to the inner readers
+    pub fn get_mut(self: &mut Self) -> (&mut A, &mut B) / pure {
+        (&mut self.first, &mut self.second)
+    }
+
+    /// Consumes and returns the inner readers
+    pub fn into_inner(self: Self) -> (A, B) / pure {
+        (self.first, self.second)
+    }
+}
+
+impl<A: Read, B: Read> Read for Chain<A, B> {
+    fn read(self: &mut Self, buf: &mut [u8]) -> Result<usize> / {IO} {
+        if !self.done_first {
+            match self.first.read(buf)? {
+                0 => self.done_first = true,
+                n => return Ok(n),
+            }
+        }
+        self.second.read(buf)
+    }
+}
+
+impl<A: BufRead, B: BufRead> BufRead for Chain<A, B> {
+    fn fill_buf(self: &mut Self) -> Result<&[u8]> / {IO} {
+        if !self.done_first {
+            let buf = self.first.fill_buf()?;
+            if !buf.is_empty() {
+                return Ok(buf);
+            }
+            self.done_first = true;
+        }
+        self.second.fill_buf()
+    }
+
+    fn consume(self: &mut Self, amt: usize) / {IO} {
+        if !self.done_first {
+            self.first.consume(amt);
+        } else {
+            self.second.consume(amt);
+        }
+    }
+}
+
+/// Iterator over bytes
+pub struct Bytes<R> {
+    inner: R,
+}
+
+impl<R: Read> Iterator for Bytes<R> {
+    type Item = Result<u8>;
+
+    fn next(self: &mut Self) -> Option<Result<u8>> / {IO} {
+        let mut byte = [0u8; 1];
+        loop {
+            match self.inner.read(&mut byte) {
+                Ok(0) => return None,
+                Ok(_) => return Some(Ok(byte[0])),
+                Err(ref e) if e.kind() == ErrorKind::Interrupted => continue,
+                Err(e) => return Some(Err(e)),
+            }
+        }
+    }
+}
+
+/// Iterator over lines
+pub struct Lines<B> {
+    reader: B,
+}
+
+impl<B: BufRead> Iterator for Lines<B> {
+    type Item = Result<String>;
+
+    fn next(self: &mut Self) -> Option<Result<String>> / {IO} {
+        let mut line = String::new();
+        match self.reader.read_line(&mut line) {
+            Ok(0) => None,
+            Ok(_) => {
+                // Remove trailing newline
+                if line.ends_with('\n') {
+                    line.pop();
+                    if line.ends_with('\r') {
+                        line.pop();
+                    }
+                }
+                Some(Ok(line))
+            }
+            Err(e) => Some(Err(e)),
+        }
+    }
+}
+
+/// Iterator over split segments
+pub struct Split<B> {
+    reader: B,
+    delim: u8,
+}
+
+impl<B: BufRead> Iterator for Split<B> {
+    type Item = Result<Vec<u8>>;
+
+    fn next(self: &mut Self) -> Option<Result<Vec<u8>>> / {IO} {
+        let mut buf = Vec::new();
+        match self.reader.read_until(self.delim, &mut buf) {
+            Ok(0) => None,
+            Ok(_) => {
+                // Remove delimiter
+                if buf.last() == Some(&self.delim) {
+                    buf.pop();
+                }
+                Some(Ok(buf))
+            }
+            Err(e) => Some(Err(e)),
+        }
+    }
+}
+
+// Implement Read for references
+impl<R: Read + ?Sized> Read for &mut R {
+    fn read(self: &mut Self, buf: &mut [u8]) -> Result<usize> / {IO} {
+        (*self).read(buf)
+    }
+}
+
+// Implement BufRead for references
+impl<R: BufRead + ?Sized> BufRead for &mut R {
+    fn fill_buf(self: &mut Self) -> Result<&[u8]> / {IO} {
+        (*self).fill_buf()
+    }
+
+    fn consume(self: &mut Self, amt: usize) / {IO} {
+        (*self).consume(amt)
+    }
+}
+
+// Implement Read for slices
+impl Read for &[u8] {
+    fn read(self: &mut Self, buf: &mut [u8]) -> Result<usize> / {IO} {
+        let n = buf.len().min(self.len());
+        buf[..n].copy_from_slice(&self[..n]);
+        *self = &self[n..];
+        Ok(n)
+    }
+}
+
+impl BufRead for &[u8] {
+    fn fill_buf(self: &mut Self) -> Result<&[u8]> / {IO} {
+        Ok(*self)
+    }
+
+    fn consume(self: &mut Self, amt: usize) / {IO} {
+        *self = &self[amt..];
+    }
+}
+
+// Implement Read for Vec<u8>
+impl Read for Vec<u8> {
+    fn read(self: &mut Self, buf: &mut [u8]) -> Result<usize> / {IO} {
+        let mut slice: &[u8] = self.as_slice();
+        let n = slice.read(buf)?;
+        let remaining = slice.len();
+        self.drain(..self.len() - remaining);
+        Ok(n)
+    }
+}

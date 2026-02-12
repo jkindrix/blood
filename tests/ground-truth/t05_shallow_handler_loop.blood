@@ -1,0 +1,35 @@
+// Test: shallow handler used repeatedly in a loop
+// EXPECT: 55
+effect Ask {
+    op ask() -> i32;
+}
+
+shallow handler Provide for Ask {
+    let answer: i32
+
+    return(x) { x }
+
+    op ask() {
+        resume(answer)
+    }
+}
+
+fn use_ask() -> i32 / {Ask} {
+    perform Ask.ask()
+}
+
+fn main() -> i32 {
+    // Use a shallow handler in each loop iteration with a different value
+    let mut total: i32 = 0;
+    let mut i: i32 = 1;
+    while i <= 10 {
+        let val: i32 = with Provide { answer: i } handle {
+            use_ask()
+        };
+        total = total + val;
+        i = i + 1;
+    }
+    println_int(total); // 1+2+3+...+10 = 55
+    if total != 55 { return 1; }
+    0
+}

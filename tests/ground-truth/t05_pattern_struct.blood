@@ -1,0 +1,54 @@
+// Test: struct pattern destructuring in match
+// EXPECT: 3
+// EXPECT: 7
+// EXPECT: 15
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn sum_point(p: Point) -> i32 {
+    match p {
+        Point { x, y } => x + y,
+    }
+}
+
+fn classify_point(p: Point) -> i32 {
+    match p {
+        Point { x, y } => {
+            if x == 0 && y == 0 {
+                0  // origin
+            } else if x > 0 && y > 0 {
+                1  // quadrant I
+            } else {
+                2  // other
+            }
+        }
+    }
+}
+
+fn main() -> i32 {
+    let p1: Point = Point { x: 1, y: 2 };
+    let s1: i32 = sum_point(p1);
+    println_int(s1); // 3
+    if s1 != 3 { return 1; }
+
+    let p2: Point = Point { x: 3, y: 4 };
+    let s2: i32 = sum_point(p2);
+    println_int(s2); // 7
+    if s2 != 7 { return 2; }
+
+    let p3: Point = Point { x: 5, y: 10 };
+    let s3: i32 = sum_point(p3);
+    println_int(s3); // 15
+    if s3 != 15 { return 3; }
+
+    // Classify
+    let origin: Point = Point { x: 0, y: 0 };
+    if classify_point(origin) != 0 { return 4; }
+
+    let q1: Point = Point { x: 1, y: 1 };
+    if classify_point(q1) != 1 { return 5; }
+
+    0
+}

@@ -1,0 +1,31 @@
+// =============================================================================
+// Linear Type Multi-Shot Rejection Test
+// =============================================================================
+//
+// This test verifies that the compiler rejects linear state fields in
+// deep handlers with multiple resumes (E0304). Linear types must be
+// used exactly once, but multi-shot handlers can resume multiple times.
+//
+// EXPECTED: Compilation failure with error E0304
+
+effect Choose {
+    op choose(a: i32, b: i32) -> i32;
+}
+
+handler BadChoose for Choose {
+    let ticket: linear i32 = 0;
+
+    return(x) { x }
+
+    op choose(a, b) {
+        // Multi-shot: resume twice — violates linearity of 'ticket' state
+        resume(a);
+        resume(b);
+    }
+}
+
+fn main() {
+    with BadChoose { ticket: 42 } handle {
+        perform Choose.choose(1, 2);
+    };
+}

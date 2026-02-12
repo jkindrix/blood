@@ -1,0 +1,31 @@
+// Test: handler return clause that transforms the final result
+// EXPECT: 25
+effect Logger {
+    op log(msg: i32) -> ();
+}
+
+// Handler whose return clause transforms the result by adding the count of logs
+deep handler CountingLogger for Logger {
+    let mut log_count: i32
+    return(x) { x + log_count }
+    op log(msg) { log_count = log_count + 1; resume(()) }
+}
+
+fn compute_with_logging() -> i32 / {Logger} {
+    perform Logger.log(1);
+    perform Logger.log(2);
+    perform Logger.log(3);
+    perform Logger.log(4);
+    perform Logger.log(5);
+    20 // base result
+}
+
+fn main() -> i32 {
+    // Return clause adds log_count (5) to the base result (20)
+    let result: i32 = with CountingLogger { log_count: 0 } handle {
+        compute_with_logging()
+    };
+    println_int(result); // 20 + 5 = 25
+    if result != 25 { return 1; }
+    0
+}

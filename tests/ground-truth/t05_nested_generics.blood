@@ -1,0 +1,42 @@
+// Test: generic struct containing another generic struct
+// EXPECT: 1
+// EXPECT: 2
+// EXPECT: 3
+struct Container<T> {
+    value: T,
+}
+
+fn unpack<T>(c: Container<T>) -> T {
+    c.value
+}
+
+fn container_map(c: Container<i32>, f: fn(i32) -> i32) -> Container<i32> {
+    Container { value: f(c.value) }
+}
+
+fn increment(x: i32) -> i32 { x + 1 }
+
+fn main() -> i32 {
+    // Simple container
+    let c1: Container<i32> = Container { value: 1 };
+    let v1: i32 = unpack(c1);
+    println_int(v1); // 1
+
+    // Nested container: Container<Container<i32>>
+    let inner: Container<i32> = Container { value: 2 };
+    let outer: Container<Container<i32>> = Container { value: inner };
+    let unwrapped: Container<i32> = unpack(outer);
+    let v2: i32 = unpack(unwrapped);
+    println_int(v2); // 2
+
+    // Container map
+    let c3: Container<i32> = Container { value: 2 };
+    let c4: Container<i32> = container_map(c3, increment);
+    let v3: i32 = unpack(c4);
+    println_int(v3); // 3
+
+    if v1 != 1 { return 1; }
+    if v2 != 2 { return 2; }
+    if v3 != 3 { return 3; }
+    0
+}

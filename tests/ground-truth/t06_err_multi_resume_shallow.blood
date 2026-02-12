@@ -1,0 +1,21 @@
+// COMPILE_FAIL: multiple resumes in shallow handler (E0309)
+// Test: resuming twice in a shallow handler should fail
+effect Eff {
+    op do_it() -> i32;
+}
+
+// Shallow handler that incorrectly resumes twice
+shallow handler MultiResume for Eff {
+    return(x) { x }
+
+    op do_it() {
+        resume(1);
+        resume(2)  // ERROR: second resume in shallow handler
+    }
+}
+
+fn main() -> i32 {
+    with MultiResume {} handle {
+        perform Eff.do_it()
+    }
+}

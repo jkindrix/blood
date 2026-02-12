@@ -1,0 +1,15 @@
+// COMPILE_FAIL: unhandled effect
+// Test: calling an effectful function without a handler should fail
+effect Logger {
+    op log(msg: i32) -> ();
+}
+
+fn do_logging() -> () / {Logger} {
+    perform Logger.log(42);
+}
+
+fn main() -> i32 {
+    // Calling effectful function without handler
+    do_logging();
+    0
+}

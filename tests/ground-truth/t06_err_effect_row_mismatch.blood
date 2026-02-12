@@ -1,0 +1,22 @@
+// COMPILE_FAIL: undeclared effects
+// Test: mismatched effect rows in function call should fail
+effect Log {
+    op log(msg: i32) -> ();
+}
+
+effect State {
+    op get() -> i32;
+}
+
+fn needs_log() -> i32 / Log {
+    perform Log.log(42);
+    0
+}
+
+fn needs_state() -> i32 / State {
+    needs_log()
+}
+
+fn main() -> i32 {
+    0
+}

@@ -1,0 +1,44 @@
+// =============================================================================
+// Struct Emit Test
+// =============================================================================
+//
+// Minimal reproduction case for passing struct values through effect operations.
+// This was a compiler bug (unsupported argument type in perform expression /
+// ICE in effects.rs) that has been fixed.
+//
+// The pattern: perform Emit.emit(StructValue { ... })
+
+effect Emit<T> {
+    op emit(value: T) -> ();
+}
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn emit_points() / {Emit<Point>} {
+    perform Emit.emit(Point { x: 10, y: 20 });
+    perform Emit.emit(Point { x: 30, y: 40 });
+}
+
+fn sum_x_coords(stream: fn() / {Emit<Point>}) -> i32 {
+    let mut sum: i32 = 0;
+    try { stream(); }
+    with {
+        Emit.emit(p) => {
+            sum = sum + p.x;
+            resume(());
+        }
+    };
+    sum
+}
+
+fn main() {
+    let result: i32 = sum_x_coords(|| / {Emit<Point>} { emit_points(); });
+    // Should be 10 + 30 = 40
+    if result != 40 {
+        let zero: i32 = 0;
+        let x: i32 = 1 / zero;
+    }
+}

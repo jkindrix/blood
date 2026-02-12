@@ -1,0 +1,33 @@
+// Test: stateless effect handler (no handler state fields)
+// EXPECT: 42
+effect Log {
+    op log(val: i32) -> ();
+}
+
+deep handler SilentLog for Log {
+    return(x) { x }
+
+    op log(val) {
+        // Silently discard the log, just resume
+        resume(())
+    }
+}
+
+fn compute_with_logging() -> i32 / {Log} {
+    perform Log.log(1);
+    let a: i32 = 20;
+    perform Log.log(a);
+    let b: i32 = 22;
+    perform Log.log(b);
+    a + b
+}
+
+fn main() -> i32 {
+    let result: i32 = with SilentLog {} handle {
+        compute_with_logging()
+    };
+    println_int(result);
+
+    if result != 42 { return 1; }
+    0
+}

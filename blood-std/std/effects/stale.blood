@@ -1,0 +1,249 @@
+// Blood Standard Library - StaleReference Effect
+//
+// The StaleReference effect handles validation of generational pointers.
+// This is core to Blood's memory safety model.
+
+/// StaleReference effect for generational pointer validation
+///
+/// Blood uses 128-bit generational pointers that include a generation
+/// counter. This effect is raised when a pointer's generation doesn't
+/// match the current generation of its target.
+///
+/// # Example
+/// ```blood
+/// fn safe_deref<T>(ptr: BloodPtr<T>) -> &T / {StaleReference} {
+///     perform validate_ptr(ptr);
+///     unsafe { &*ptr }
+/// }
+/// ```
+pub effect StaleReference {
+    /// Validates a pointer's generation
+    ///
+    /// Raises StaleReference if the pointer is stale (generation mismatch)
+    op validate_ptr<T>(ptr: BloodPtr<T>) -> unit;
+
+    /// Reports a stale reference error
+    op stale_error(message: &str) -> !;
+}
+
+/// Validates a pointer, raising StaleReference if stale
+pub fn validate_ptr<T>(ptr: BloodPtr<T>) / {StaleReference} {
+    perform validate_ptr(ptr)
+}
+
+/// Reports a stale reference error
+pub fn stale_error(message: &str) -> ! / {StaleReference} {
+    perform stale_error(message)
+}
+
+/// Safely dereferences a generational pointer
+pub fn safe_deref<T>(ptr: BloodPtr<T>) -> &T / {StaleReference} {
+    perform validate_ptr(ptr);
+    unsafe { &*ptr.as_ptr() }
+}
+
+/// Safely dereferences a mutable generational pointer
+pub fn safe_deref_mut<T>(ptr: BloodPtr<T>) -> &mut T / {StaleReference} {
+    perform validate_ptr(ptr);
+    unsafe { &mut *ptr.as_mut_ptr() }
+}
+
+/// Converts StaleReference to Option
+pub fn validate_or_none<T, F>(f: F) -> Option<T> / pure
+where
+    F: FnOnce() -> T / {StaleReference},
+{
+    handle f() {
+        return(v) { Some(v) }
+        validate_ptr(_) { None }
+        stale_error(_) { None }
+    }
+}
+
+/// Converts StaleReference to Result
+pub fn validate_or_err<T, F>(f: F) -> Result<T, StaleReferenceError> / pure
+where
+    F: FnOnce() -> T / {StaleReference},
+{
+    handle f() {
+        return(v) { Ok(v) }
+        validate_ptr(ptr) {
+            Err(StaleReferenceError::new(
+                format!("stale pointer: generation mismatch at {:?}", ptr)
+            ))
+        }
+        stale_error(msg) {
+            Err(StaleReferenceError::new(String::from(msg)))
+        }
+    }
+}
+
+/// Error type for stale reference errors
+pub struct StaleReferenceError {
+    message: String,
+}
+
+impl StaleReferenceError {
+    pub fn new(message: String) -> Self {
+        StaleReferenceError { message }
+    }
+
+    pub fn message(self: &Self) -> &str {
+        &self.message
+    }
+}
+
+impl Display for StaleReferenceError {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        write!(f, "StaleReferenceError: {}", self.message)
+    }
+}
+
+impl Debug for StaleReferenceError {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        write!(f, "StaleReferenceError {{ message: {:?} }}", self.message)
+    }
+}
+
+/// Standard handler that validates pointers using the runtime
+pub deep handler RuntimeValidation for StaleReference {
+    return(x) { x }
+
+    op validate_ptr(ptr) {
+        if __builtin_validate_generation(ptr) {
+            resume(())
+        } else {
+            perform stale_error("generation mismatch")
+        }
+    }
+
+    op stale_error(msg) {
+        // Convert to panic for unhandled stale references
+        perform panic(msg)
+    }
+}
+
+/// Handler that skips validation (for trusted contexts)
+///
+/// # Safety
+/// Only use when you're certain all pointers are valid
+pub deep handler UnsafeSkipValidation for StaleReference {
+    return(x) { x }
+
+    op validate_ptr(_) {
+        // Skip validation - trust the caller
+        resume(())
+    }
+
+    op stale_error(msg) {
+        perform panic(msg)
+    }
+}
+
+/// Handler that logs validation failures but continues
+pub deep handler LogValidationFailures<T> for StaleReference
+where
+    T: Default,
+{
+    return(x: T) { x }
+
+    op validate_ptr(ptr) {
+        if __builtin_validate_generation(ptr) {
+            resume(())
+        } else {
+            eprintln!("WARNING: stale reference detected, using default");
+            // Return default instead of failing
+            resume(T::default())
+        }
+    }
+
+    op stale_error(msg) {
+        eprintln!("ERROR: stale reference: {}", msg);
+        resume(T::default())
+    }
+}
+
+/// Blood's 128-bit generational pointer type
+///
+/// Layout:
+/// - Bits 0-63: Raw pointer address
+/// - Bits 64-95: Generation counter
+/// - Bits 96-127: Metadata (arena ID, flags)
+#[repr(C)]
+pub struct BloodPtr<T> {
+    /// Raw pointer address
+    addr: u64,
+    /// Generation counter
+    generation: u32,
+    /// Arena ID and flags
+    metadata: u32,
+    /// Phantom type marker
+    _marker: PhantomData<T>,
+}
+
+impl<T> BloodPtr<T> {
+    /// Creates a new BloodPtr with generation 0
+    pub const fn null() -> Self {
+        BloodPtr {
+            addr: 0,
+            generation: 0,
+            metadata: 0,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Returns the raw pointer address
+    pub fn as_ptr(self: &Self) -> *const T {
+        self.addr as *const T
+    }
+
+    /// Returns the mutable raw pointer address
+    pub fn as_mut_ptr(self: &Self) -> *mut T {
+        self.addr as *mut T
+    }
+
+    /// Returns the generation counter
+    pub fn generation(self: &Self) -> u32 {
+        self.generation
+    }
+
+    /// Returns the arena ID
+    pub fn arena_id(self: &Self) -> u16 {
+        (self.metadata >> 16) as u16
+    }
+
+    /// Returns true if the pointer is null
+    pub fn is_null(self: &Self) -> bool {
+        self.addr == 0
+    }
+
+    /// Casts to a different type
+    pub fn cast<U>(self: Self) -> BloodPtr<U> {
+        BloodPtr {
+            addr: self.addr,
+            generation: self.generation,
+            metadata: self.metadata,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<T> Clone for BloodPtr<T> {
+    fn clone(self: &Self) -> Self {
+        BloodPtr {
+            addr: self.addr,
+            generation: self.generation,
+            metadata: self.metadata,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<T> Copy for BloodPtr<T> {}
+
+impl<T> Debug for BloodPtr<T> {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        write!(f, "BloodPtr {{ addr: 0x{:x}, gen: {}, arena: {} }}",
+               self.addr, self.generation, self.arena_id())
+    }
+}

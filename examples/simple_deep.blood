@@ -1,0 +1,20 @@
+// Simplest deep handler test
+effect Counter {
+    op inc() -> i32;
+}
+
+// Deep handler where resume IS in tail position (should work)
+deep handler SimpleCounter for Counter {
+    let mut count: i32
+    return(x) { x }
+    op inc() {
+        count = count + 1;
+        resume(count)  // Tail position - should work
+    }
+}
+
+fn main() -> i32 {
+    with SimpleCounter { count: 0 } handle {
+        perform Counter.inc()
+    }
+}

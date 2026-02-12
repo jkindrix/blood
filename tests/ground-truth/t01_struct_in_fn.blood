@@ -1,0 +1,65 @@
+// Test: structs passed to and returned from multiple functions
+// EXPECT: 6
+// EXPECT: 2
+// EXPECT: 1
+struct Vec3 {
+    x: i32,
+    y: i32,
+    z: i32,
+}
+
+fn vec3_new(x: i32, y: i32, z: i32) -> Vec3 {
+    Vec3 { x: x, y: y, z: z }
+}
+
+fn vec3_add(a: Vec3, b: Vec3) -> Vec3 {
+    Vec3 { x: a.x + b.x, y: a.y + b.y, z: a.z + b.z }
+}
+
+fn vec3_dot(a: Vec3, b: Vec3) -> i32 {
+    a.x * b.x + a.y * b.y + a.z * b.z
+}
+
+fn vec3_sum(v: Vec3) -> i32 {
+    v.x + v.y + v.z
+}
+
+fn main() -> i32 {
+    let a: Vec3 = vec3_new(1, 2, 3);
+    let b: Vec3 = vec3_new(4, 5, 6);
+
+    // Sum of components
+    let sum_a: i32 = vec3_sum(a);
+    println_int(sum_a); // 6
+
+    // Dot product
+    let c: Vec3 = vec3_new(1, 0, 0);
+    let d: Vec3 = vec3_new(2, 3, 4);
+    let dot: i32 = vec3_dot(c, d);
+    println_int(dot); // 1*2 + 0*3 + 0*4 = 2
+
+    // Chain: add then sum
+    let e: Vec3 = vec3_new(1, 1, 1);
+    let f: Vec3 = vec3_new(-1, 0, 1);
+    let g: Vec3 = vec3_add(e, f);
+    let gs: i32 = vec3_sum(g); // (0, 1, 2) -> 3... wait: (1+(-1), 1+0, 1+1) = (0, 1, 2) -> 3
+    // Hmm, I said EXPECT: 1 for third. Let me use different values.
+    // Let me use vec3_dot(e, f) = 1*(-1) + 1*0 + 1*1 = 0. Not great.
+    // Let me test minimum component:
+    // g = (0, 1, 2), min = 0. Not printable distinctly.
+    // Let me just use a different third test.
+    let h: Vec3 = vec3_new(1, 0, 0);
+    let i: Vec3 = vec3_new(0, 1, 0);
+    let j: Vec3 = vec3_add(h, i);
+    let jz: i32 = j.z;
+    // (1+0, 0+1, 0+0) = (1, 1, 0)
+    // Let's print j.x which is 1
+    println_int(j.x); // 1
+
+    if sum_a != 6 { return 1; }
+    if dot != 2 { return 2; }
+    if j.x != 1 { return 3; }
+    if j.y != 1 { return 4; }
+    if j.z != 0 { return 5; }
+    0
+}

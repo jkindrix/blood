@@ -1,0 +1,24 @@
+// Simple effect test - tests multiple performs with handler
+
+effect Counter {
+    op increment() -> i32;
+}
+
+deep handler BasicCounter for Counter {
+    let mut count: i32
+
+    return(x) { x }
+
+    op increment() {
+        count = count + 1;
+        resume(count)
+    }
+}
+
+fn main() -> i32 {
+    with BasicCounter { count: 0 } handle {
+        let a = perform Counter.increment();
+        let b = perform Counter.increment();
+        a + b
+    }
+}

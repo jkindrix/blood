@@ -1,0 +1,700 @@
+// Blood Standard Library - Operator Traits
+//
+// Traits for overloading operators.
+
+// =============================================================================
+// Arithmetic Operators
+// =============================================================================
+
+/// Addition operator
+pub trait Add<Rhs = Self> {
+    type Output;
+
+    /// Performs the + operation
+    fn add(self: Self, rhs: Rhs) -> Self::Output / pure;
+}
+
+/// Subtraction operator
+pub trait Sub<Rhs = Self> {
+    type Output;
+
+    /// Performs the - operation
+    fn sub(self: Self, rhs: Rhs) -> Self::Output / pure;
+}
+
+/// Multiplication operator
+pub trait Mul<Rhs = Self> {
+    type Output;
+
+    /// Performs the * operation
+    fn mul(self: Self, rhs: Rhs) -> Self::Output / pure;
+}
+
+/// Division operator
+pub trait Div<Rhs = Self> {
+    type Output;
+
+    /// Performs the / operation
+    fn div(self: Self, rhs: Rhs) -> Self::Output / pure;
+}
+
+/// Remainder operator
+pub trait Rem<Rhs = Self> {
+    type Output;
+
+    /// Performs the % operation
+    fn rem(self: Self, rhs: Rhs) -> Self::Output / pure;
+}
+
+/// Negation operator
+pub trait Neg {
+    type Output;
+
+    /// Performs the unary - operation
+    fn neg(self: Self) -> Self::Output / pure;
+}
+
+// =============================================================================
+// Bitwise Operators
+// =============================================================================
+
+/// Bitwise AND operator
+pub trait BitAnd<Rhs = Self> {
+    type Output;
+
+    /// Performs the & operation
+    fn bitand(self: Self, rhs: Rhs) -> Self::Output / pure;
+}
+
+/// Bitwise OR operator
+pub trait BitOr<Rhs = Self> {
+    type Output;
+
+    /// Performs the | operation
+    fn bitor(self: Self, rhs: Rhs) -> Self::Output / pure;
+}
+
+/// Bitwise XOR operator
+pub trait BitXor<Rhs = Self> {
+    type Output;
+
+    /// Performs the ^ operation
+    fn bitxor(self: Self, rhs: Rhs) -> Self::Output / pure;
+}
+
+/// Bitwise NOT operator
+pub trait Not {
+    type Output;
+
+    /// Performs the ! operation
+    fn not(self: Self) -> Self::Output / pure;
+}
+
+/// Left shift operator
+pub trait Shl<Rhs = Self> {
+    type Output;
+
+    /// Performs the << operation
+    fn shl(self: Self, rhs: Rhs) -> Self::Output / pure;
+}
+
+/// Right shift operator
+pub trait Shr<Rhs = Self> {
+    type Output;
+
+    /// Performs the >> operation
+    fn shr(self: Self, rhs: Rhs) -> Self::Output / pure;
+}
+
+// =============================================================================
+// Assignment Operators
+// =============================================================================
+
+/// Addition assignment operator
+pub trait AddAssign<Rhs = Self> {
+    /// Performs the += operation
+    fn add_assign(self: &mut Self, rhs: Rhs) / pure;
+}
+
+/// Subtraction assignment operator
+pub trait SubAssign<Rhs = Self> {
+    /// Performs the -= operation
+    fn sub_assign(self: &mut Self, rhs: Rhs) / pure;
+}
+
+/// Multiplication assignment operator
+pub trait MulAssign<Rhs = Self> {
+    /// Performs the *= operation
+    fn mul_assign(self: &mut Self, rhs: Rhs) / pure;
+}
+
+/// Division assignment operator
+pub trait DivAssign<Rhs = Self> {
+    /// Performs the /= operation
+    fn div_assign(self: &mut Self, rhs: Rhs) / pure;
+}
+
+/// Remainder assignment operator
+pub trait RemAssign<Rhs = Self> {
+    /// Performs the %= operation
+    fn rem_assign(self: &mut Self, rhs: Rhs) / pure;
+}
+
+/// Bitwise AND assignment operator
+pub trait BitAndAssign<Rhs = Self> {
+    /// Performs the &= operation
+    fn bitand_assign(self: &mut Self, rhs: Rhs) / pure;
+}
+
+/// Bitwise OR assignment operator
+pub trait BitOrAssign<Rhs = Self> {
+    /// Performs the |= operation
+    fn bitor_assign(self: &mut Self, rhs: Rhs) / pure;
+}
+
+/// Bitwise XOR assignment operator
+pub trait BitXorAssign<Rhs = Self> {
+    /// Performs the ^= operation
+    fn bitxor_assign(self: &mut Self, rhs: Rhs) / pure;
+}
+
+/// Left shift assignment operator
+pub trait ShlAssign<Rhs = Self> {
+    /// Performs the <<= operation
+    fn shl_assign(self: &mut Self, rhs: Rhs) / pure;
+}
+
+/// Right shift assignment operator
+pub trait ShrAssign<Rhs = Self> {
+    /// Performs the >>= operation
+    fn shr_assign(self: &mut Self, rhs: Rhs) / pure;
+}
+
+// =============================================================================
+// Indexing Operators
+// =============================================================================
+
+/// Index operator for immutable access
+pub trait Index<Idx> {
+    type Output: ?Sized;
+
+    /// Returns a reference to the element at the given index
+    fn index(self: &Self, index: Idx) -> &Self::Output / pure;
+}
+
+/// Index operator for mutable access
+pub trait IndexMut<Idx>: Index<Idx> {
+    /// Returns a mutable reference to the element at the given index
+    fn index_mut(self: &mut Self, index: Idx) -> &mut Self::Output / pure;
+}
+
+// =============================================================================
+// Range Operators
+// =============================================================================
+
+/// Used for `..` syntax
+pub struct RangeFull;
+
+/// Used for `start..` syntax
+pub struct RangeFrom<Idx> {
+    pub start: Idx,
+}
+
+/// Used for `..end` syntax
+pub struct RangeTo<Idx> {
+    pub end: Idx,
+}
+
+/// Used for `start..end` syntax
+pub struct Range<Idx> {
+    pub start: Idx,
+    pub end: Idx,
+}
+
+/// Used for `..=end` syntax
+pub struct RangeToInclusive<Idx> {
+    pub end: Idx,
+}
+
+/// Used for `start..=end` syntax
+pub struct RangeInclusive<Idx> {
+    pub start: Idx,
+    pub end: Idx,
+    exhausted: bool,
+}
+
+impl<Idx> RangeInclusive<Idx> {
+    pub fn new(start: Idx, end: Idx) -> Self / pure {
+        RangeInclusive { start, end, exhausted: false }
+    }
+
+    pub fn start(self: &Self) -> &Idx / pure {
+        &self.start
+    }
+
+    pub fn end(self: &Self) -> &Idx / pure {
+        &self.end
+    }
+
+    pub fn is_empty(self: &Self) -> bool / pure
+    where
+        Idx: PartialOrd,
+    {
+        self.exhausted || self.start > self.end
+    }
+}
+
+/// A trait for ranges
+pub trait RangeBounds<T: ?Sized> {
+    fn start_bound(self: &Self) -> Bound<&T>;
+    fn end_bound(self: &Self) -> Bound<&T>;
+
+    fn contains(self: &Self, item: &T) -> bool / pure
+    where
+        T: PartialOrd<T>,
+    {
+        (match self.start_bound() {
+            Bound::Included(start) => start <= item,
+            Bound::Excluded(start) => start < item,
+            Bound::Unbounded => true,
+        }) && (match self.end_bound() {
+            Bound::Included(end) => item <= end,
+            Bound::Excluded(end) => item < end,
+            Bound::Unbounded => true,
+        })
+    }
+}
+
+/// An endpoint of a range
+pub enum Bound<T> {
+    Included(T),
+    Excluded(T),
+    Unbounded,
+}
+
+impl<T> RangeBounds<T> for RangeFull {
+    fn start_bound(self: &Self) -> Bound<&T> {
+        Bound::Unbounded
+    }
+
+    fn end_bound(self: &Self) -> Bound<&T> {
+        Bound::Unbounded
+    }
+}
+
+impl<T> RangeBounds<T> for RangeFrom<T> {
+    fn start_bound(self: &Self) -> Bound<&T> {
+        Bound::Included(&self.start)
+    }
+
+    fn end_bound(self: &Self) -> Bound<&T> {
+        Bound::Unbounded
+    }
+}
+
+impl<T> RangeBounds<T> for RangeTo<T> {
+    fn start_bound(self: &Self) -> Bound<&T> {
+        Bound::Unbounded
+    }
+
+    fn end_bound(self: &Self) -> Bound<&T> {
+        Bound::Excluded(&self.end)
+    }
+}
+
+impl<T> RangeBounds<T> for Range<T> {
+    fn start_bound(self: &Self) -> Bound<&T> {
+        Bound::Included(&self.start)
+    }
+
+    fn end_bound(self: &Self) -> Bound<&T> {
+        Bound::Excluded(&self.end)
+    }
+}
+
+impl<T> RangeBounds<T> for RangeToInclusive<T> {
+    fn start_bound(self: &Self) -> Bound<&T> {
+        Bound::Unbounded
+    }
+
+    fn end_bound(self: &Self) -> Bound<&T> {
+        Bound::Included(&self.end)
+    }
+}
+
+impl<T> RangeBounds<T> for RangeInclusive<T> {
+    fn start_bound(self: &Self) -> Bound<&T> {
+        Bound::Included(&self.start)
+    }
+
+    fn end_bound(self: &Self) -> Bound<&T> {
+        Bound::Included(&self.end)
+    }
+}
+
+// Range iterator implementations
+impl<Idx: Step> Iterator for Range<Idx> {
+    type Item = Idx;
+
+    fn next(self: &mut Self) -> Option<Idx> / pure {
+        if self.start < self.end {
+            let current = self.start;
+            self.start = self.start.forward_one();
+            Some(current)
+        } else {
+            None
+        }
+    }
+
+    fn size_hint(self: &Self) -> (usize, Option<usize>) / pure {
+        let len = Idx::steps_between(&self.start, &self.end).unwrap_or(usize::MAX);
+        (len, Some(len))
+    }
+}
+
+impl<Idx: Step> DoubleEndedIterator for Range<Idx> {
+    fn next_back(self: &mut Self) -> Option<Idx> / pure {
+        if self.start < self.end {
+            self.end = self.end.backward_one();
+            Some(self.end)
+        } else {
+            None
+        }
+    }
+}
+
+impl<Idx: Step> ExactSizeIterator for Range<Idx> {}
+
+impl<Idx: Step> Iterator for RangeInclusive<Idx> {
+    type Item = Idx;
+
+    fn next(self: &mut Self) -> Option<Idx> / pure {
+        if self.exhausted {
+            return None;
+        }
+
+        if self.start == self.end {
+            self.exhausted = true;
+            return Some(self.start);
+        }
+
+        let current = self.start;
+        self.start = self.start.forward_one();
+        Some(current)
+    }
+}
+
+// =============================================================================
+// Dereference Operators
+// =============================================================================
+
+/// Dereference operator for immutable access
+pub trait Deref {
+    type Target: ?Sized;
+
+    /// Returns a reference to the dereferenced value
+    fn deref(self: &Self) -> &Self::Target / pure;
+}
+
+/// Dereference operator for mutable access
+pub trait DerefMut: Deref {
+    /// Returns a mutable reference to the dereferenced value
+    fn deref_mut(self: &mut Self) -> &mut Self::Target / pure;
+}
+
+// =============================================================================
+// Function Call Operators
+// =============================================================================
+
+/// The call operator for functions taking ownership of self
+pub trait FnOnce<Args> {
+    type Output;
+
+    /// Calls the closure, consuming it
+    fn call_once(self: Self, args: Args) -> Self::Output;
+}
+
+/// The call operator for functions taking &mut self
+pub trait FnMut<Args>: FnOnce<Args> {
+    /// Calls the closure mutably
+    fn call_mut(self: &mut Self, args: Args) -> Self::Output;
+}
+
+/// The call operator for functions taking &self
+pub trait Fn<Args>: FnMut<Args> {
+    /// Calls the closure immutably
+    fn call(self: &Self, args: Args) -> Self::Output;
+}
+
+// =============================================================================
+// Try Operator
+// =============================================================================
+
+/// The `?` operator for error propagation
+pub trait Try {
+    /// The type of the successful result
+    type Output;
+
+    /// The type when wrapped in an error
+    type Residual;
+
+    /// Constructs the type from its successful value
+    fn from_output(output: Self::Output) -> Self / pure;
+
+    /// Deconstructs the type for branching on success/failure
+    fn branch(self: Self) -> ControlFlow<Self::Residual, Self::Output> / pure;
+}
+
+/// Result of a control flow operation
+pub enum ControlFlow<B, C = ()> {
+    Continue(C),
+    Break(B),
+}
+
+impl<T, E> Try for Result<T, E> {
+    type Output = T;
+    type Residual = Result<!, E>;
+
+    fn from_output(output: T) -> Self / pure {
+        Ok(output)
+    }
+
+    fn branch(self: Self) -> ControlFlow<Self::Residual, T> / pure {
+        match self {
+            Ok(v) => ControlFlow::Continue(v),
+            Err(e) => ControlFlow::Break(Err(e)),
+        }
+    }
+}
+
+impl<T> Try for Option<T> {
+    type Output = T;
+    type Residual = Option<!>;
+
+    fn from_output(output: T) -> Self / pure {
+        Some(output)
+    }
+
+    fn branch(self: Self) -> ControlFlow<Self::Residual, T> / pure {
+        match self {
+            Some(v) => ControlFlow::Continue(v),
+            None => ControlFlow::Break(None),
+        }
+    }
+}
+
+// =============================================================================
+// Step Trait for Ranges
+// =============================================================================
+
+/// A trait for types that can be stepped through
+pub trait Step: Clone + PartialOrd {
+    /// Returns the number of steps between two values
+    fn steps_between(start: &Self, end: &Self) -> Option<usize> / pure;
+
+    /// Returns the value one step forward
+    fn forward_one(self: Self) -> Self / pure;
+
+    /// Returns the value one step backward
+    fn backward_one(self: Self) -> Self / pure;
+
+    /// Returns the value n steps forward
+    fn forward(self: Self, count: usize) -> Self / pure {
+        let mut result = self;
+        for _ in 0..count {
+            result = result.forward_one();
+        }
+        result
+    }
+
+    /// Returns the value n steps backward
+    fn backward(self: Self, count: usize) -> Self / pure {
+        let mut result = self;
+        for _ in 0..count {
+            result = result.backward_one();
+        }
+        result
+    }
+}
+
+// Step implementations for integer types
+macro_rules! impl_step_int {
+    ($($t:ty)*) => {
+        $(impl Step for $t {
+            fn steps_between(start: &Self, end: &Self) -> Option<usize> / pure {
+                if start <= end {
+                    Some((*end - *start) as usize)
+                } else {
+                    None
+                }
+            }
+
+            fn forward_one(self: Self) -> Self / pure {
+                self + 1
+            }
+
+            fn backward_one(self: Self) -> Self / pure {
+                self - 1
+            }
+        })*
+    };
+}
+
+impl_step_int! { i8 i16 i32 i64 i128 isize u8 u16 u32 u64 u128 usize }
+
+impl Step for char {
+    fn steps_between(start: &Self, end: &Self) -> Option<usize> / pure {
+        let start = *start as u32;
+        let end = *end as u32;
+        if start <= end {
+            Some((end - start) as usize)
+        } else {
+            None
+        }
+    }
+
+    fn forward_one(self: Self) -> Self / pure {
+        let n = self as u32 + 1;
+        char::from_u32(n).unwrap_or(self)
+    }
+
+    fn backward_one(self: Self) -> Self / pure {
+        let n = self as u32 - 1;
+        char::from_u32(n).unwrap_or(self)
+    }
+}
+
+// =============================================================================
+// Primitive Operator Implementations
+// =============================================================================
+
+// Generate arithmetic operator implementations for numeric types
+macro_rules! impl_arith_ops {
+    ($($t:ty)*) => {
+        $(
+            impl Add for $t {
+                type Output = $t;
+                fn add(self: Self, rhs: Self) -> Self / pure { self + rhs }
+            }
+
+            impl Sub for $t {
+                type Output = $t;
+                fn sub(self: Self, rhs: Self) -> Self / pure { self - rhs }
+            }
+
+            impl Mul for $t {
+                type Output = $t;
+                fn mul(self: Self, rhs: Self) -> Self / pure { self * rhs }
+            }
+
+            impl Div for $t {
+                type Output = $t;
+                fn div(self: Self, rhs: Self) -> Self / pure { self / rhs }
+            }
+
+            impl Rem for $t {
+                type Output = $t;
+                fn rem(self: Self, rhs: Self) -> Self / pure { self % rhs }
+            }
+
+            impl AddAssign for $t {
+                fn add_assign(self: &mut Self, rhs: Self) / pure { *self = *self + rhs; }
+            }
+
+            impl SubAssign for $t {
+                fn sub_assign(self: &mut Self, rhs: Self) / pure { *self = *self - rhs; }
+            }
+
+            impl MulAssign for $t {
+                fn mul_assign(self: &mut Self, rhs: Self) / pure { *self = *self * rhs; }
+            }
+
+            impl DivAssign for $t {
+                fn div_assign(self: &mut Self, rhs: Self) / pure { *self = *self / rhs; }
+            }
+
+            impl RemAssign for $t {
+                fn rem_assign(self: &mut Self, rhs: Self) / pure { *self = *self % rhs; }
+            }
+        )*
+    };
+}
+
+impl_arith_ops! { i8 i16 i32 i64 i128 isize u8 u16 u32 u64 u128 usize f32 f64 }
+
+// Negation for signed types
+macro_rules! impl_neg {
+    ($($t:ty)*) => {
+        $(impl Neg for $t {
+            type Output = $t;
+            fn neg(self: Self) -> Self / pure { -self }
+        })*
+    };
+}
+
+impl_neg! { i8 i16 i32 i64 i128 isize f32 f64 }
+
+// Bitwise operators for integer types
+macro_rules! impl_bit_ops {
+    ($($t:ty)*) => {
+        $(
+            impl BitAnd for $t {
+                type Output = $t;
+                fn bitand(self: Self, rhs: Self) -> Self / pure { self & rhs }
+            }
+
+            impl BitOr for $t {
+                type Output = $t;
+                fn bitor(self: Self, rhs: Self) -> Self / pure { self | rhs }
+            }
+
+            impl BitXor for $t {
+                type Output = $t;
+                fn bitxor(self: Self, rhs: Self) -> Self / pure { self ^ rhs }
+            }
+
+            impl Not for $t {
+                type Output = $t;
+                fn not(self: Self) -> Self / pure { !self }
+            }
+
+            impl Shl<u32> for $t {
+                type Output = $t;
+                fn shl(self: Self, rhs: u32) -> Self / pure { self << rhs }
+            }
+
+            impl Shr<u32> for $t {
+                type Output = $t;
+                fn shr(self: Self, rhs: u32) -> Self / pure { self >> rhs }
+            }
+
+            impl BitAndAssign for $t {
+                fn bitand_assign(self: &mut Self, rhs: Self) / pure { *self = *self & rhs; }
+            }
+
+            impl BitOrAssign for $t {
+                fn bitor_assign(self: &mut Self, rhs: Self) / pure { *self = *self | rhs; }
+            }
+
+            impl BitXorAssign for $t {
+                fn bitxor_assign(self: &mut Self, rhs: Self) / pure { *self = *self ^ rhs; }
+            }
+
+            impl ShlAssign<u32> for $t {
+                fn shl_assign(self: &mut Self, rhs: u32) / pure { *self = *self << rhs; }
+            }
+
+            impl ShrAssign<u32> for $t {
+                fn shr_assign(self: &mut Self, rhs: u32) / pure { *self = *self >> rhs; }
+            }
+        )*
+    };
+}
+
+impl_bit_ops! { i8 i16 i32 i64 i128 isize u8 u16 u32 u64 u128 usize }
+
+// Not for bool
+impl Not for bool {
+    type Output = bool;
+    fn not(self: Self) -> bool / pure { !self }
+}

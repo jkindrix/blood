@@ -1,0 +1,790 @@
+// Blood Standard Library - Formatting Traits
+//
+// Traits for converting values to text representations.
+
+/// Error type for formatting operations
+pub struct Error;
+
+impl Error {
+    pub fn new() -> Self / pure {
+        Error
+    }
+}
+
+impl Debug for Error {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        f.write_str("formatting error")
+    }
+}
+
+impl Display for Error {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        f.write_str("an error occurred when formatting an argument")
+    }
+}
+
+/// A trait for writing output
+pub trait Write {
+    /// Writes a string slice
+    fn write_str(self: &mut Self, s: &str) -> Result<(), Error> / {IO};
+
+    /// Writes a character
+    fn write_char(self: &mut Self, c: char) -> Result<(), Error> / {IO} {
+        let mut buf = [0u8; 4];
+        let s = c.encode_utf8(&mut buf);
+        self.write_str(s)
+    }
+
+    /// Writes a formatted value
+    fn write_fmt(self: &mut Self, args: Arguments) -> Result<(), Error> / {IO};
+}
+
+/// Formatter for producing formatted output
+pub struct Formatter {
+    buf: &mut dyn Write,
+    flags: FormatFlags,
+    width: Option<usize>,
+    precision: Option<usize>,
+    fill: char,
+    align: Alignment,
+}
+
+/// Format flags
+pub struct FormatFlags {
+    alternate: bool,
+    sign_plus: bool,
+    sign_minus: bool,
+    zero_pad: bool,
+}
+
+impl FormatFlags {
+    pub fn new() -> Self / pure {
+        FormatFlags {
+            alternate: false,
+            sign_plus: false,
+            sign_minus: false,
+            zero_pad: false,
+        }
+    }
+}
+
+/// Text alignment
+pub enum Alignment {
+    Left,
+    Right,
+    Center,
+}
+
+impl Formatter {
+    /// Creates a new formatter
+    pub fn new(buf: &mut dyn Write) -> Self / pure {
+        Formatter {
+            buf,
+            flags: FormatFlags::new(),
+            width: None,
+            precision: None,
+            fill: ' ',
+            align: Alignment::Left,
+        }
+    }
+
+    /// Writes a string slice
+    pub fn write_str(self: &mut Self, s: &str) -> Result<(), Error> / {IO} {
+        self.buf.write_str(s)
+    }
+
+    /// Writes a character
+    pub fn write_char(self: &mut Self, c: char) -> Result<(), Error> / {IO} {
+        self.buf.write_char(c)
+    }
+
+    /// Writes formatted arguments
+    pub fn write_fmt(self: &mut Self, args: Arguments) -> Result<(), Error> / {IO} {
+        self.buf.write_fmt(args)
+    }
+
+    /// Returns whether the alternate flag is set
+    pub fn alternate(self: &Self) -> bool / pure {
+        self.flags.alternate
+    }
+
+    /// Returns the optional width
+    pub fn width(self: &Self) -> Option<usize> / pure {
+        self.width
+    }
+
+    /// Returns the optional precision
+    pub fn precision(self: &Self) -> Option<usize> / pure {
+        self.precision
+    }
+
+    /// Returns the fill character
+    pub fn fill(self: &Self) -> char / pure {
+        self.fill
+    }
+
+    /// Returns the alignment
+    pub fn align(self: &Self) -> Alignment / pure {
+        self.align
+    }
+
+    /// Pads output to the specified width
+    pub fn pad(self: &mut Self, s: &str) -> Result<(), Error> / {IO} {
+        match self.width {
+            None => self.write_str(s),
+            Some(width) => {
+                let len = s.chars().count();
+                if len >= width {
+                    self.write_str(s)
+                } else {
+                    let padding = width - len;
+                    match self.align {
+                        Alignment::Left => {
+                            self.write_str(s)?;
+                            for _ in 0..padding {
+                                self.write_char(self.fill)?;
+                            }
+                            Ok(())
+                        }
+                        Alignment::Right => {
+                            for _ in 0..padding {
+                                self.write_char(self.fill)?;
+                            }
+                            self.write_str(s)
+                        }
+                        Alignment::Center => {
+                            let left = padding / 2;
+                            let right = padding - left;
+                            for _ in 0..left {
+                                self.write_char(self.fill)?;
+                            }
+                            self.write_str(s)?;
+                            for _ in 0..right {
+                                self.write_char(self.fill)?;
+                            }
+                            Ok(())
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Pads an integer
+    pub fn pad_integral(
+        self: &mut Self,
+        is_positive: bool,
+        prefix: &str,
+        buf: &str,
+    ) -> Result<(), Error> / {IO} {
+        let sign = if !is_positive {
+            "-"
+        } else if self.flags.sign_plus {
+            "+"
+        } else {
+            ""
+        };
+
+        let prefix = if self.flags.alternate { prefix } else { "" };
+
+        let content_len = sign.len() + prefix.len() + buf.len();
+
+        match self.width {
+            None => {
+                self.write_str(sign)?;
+                self.write_str(prefix)?;
+                self.write_str(buf)
+            }
+            Some(width) if content_len >= width => {
+                self.write_str(sign)?;
+                self.write_str(prefix)?;
+                self.write_str(buf)
+            }
+            Some(width) => {
+                let padding = width - content_len;
+                if self.flags.zero_pad {
+                    self.write_str(sign)?;
+                    self.write_str(prefix)?;
+                    for _ in 0..padding {
+                        self.write_char('0')?;
+                    }
+                    self.write_str(buf)
+                } else {
+                    match self.align {
+                        Alignment::Left => {
+                            self.write_str(sign)?;
+                            self.write_str(prefix)?;
+                            self.write_str(buf)?;
+                            for _ in 0..padding {
+                                self.write_char(self.fill)?;
+                            }
+                            Ok(())
+                        }
+                        Alignment::Right | Alignment::Center => {
+                            for _ in 0..padding {
+                                self.write_char(self.fill)?;
+                            }
+                            self.write_str(sign)?;
+                            self.write_str(prefix)?;
+                            self.write_str(buf)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Writes a debug representation of a struct
+    pub fn debug_struct(self: &mut Self, name: &str) -> DebugStruct / pure {
+        DebugStruct::new(self, name)
+    }
+
+    /// Writes a debug representation of a tuple
+    pub fn debug_tuple(self: &mut Self, name: &str) -> DebugTuple / pure {
+        DebugTuple::new(self, name)
+    }
+
+    /// Writes a debug representation of a list
+    pub fn debug_list(self: &mut Self) -> DebugList / pure {
+        DebugList::new(self)
+    }
+
+    /// Writes a debug representation of a set
+    pub fn debug_set(self: &mut Self) -> DebugSet / pure {
+        DebugSet::new(self)
+    }
+
+    /// Writes a debug representation of a map
+    pub fn debug_map(self: &mut Self) -> DebugMap / pure {
+        DebugMap::new(self)
+    }
+}
+
+/// Helper for formatting structs in debug output
+pub struct DebugStruct<'a> {
+    formatter: &'a mut Formatter,
+    name: &'a str,
+    has_fields: bool,
+}
+
+impl<'a> DebugStruct<'a> {
+    fn new(formatter: &'a mut Formatter, name: &'a str) -> Self / pure {
+        DebugStruct { formatter, name, has_fields: false }
+    }
+
+    pub fn field(self: &mut Self, name: &str, value: &dyn Debug) -> &mut Self / {IO} {
+        if !self.has_fields {
+            self.formatter.write_str(self.name);
+            self.formatter.write_str(" { ");
+            self.has_fields = true;
+        } else {
+            self.formatter.write_str(", ");
+        }
+        self.formatter.write_str(name);
+        self.formatter.write_str(": ");
+        value.fmt(self.formatter);
+        self
+    }
+
+    pub fn finish(self: &mut Self) -> Result<(), Error> / {IO} {
+        if self.has_fields {
+            self.formatter.write_str(" }")
+        } else {
+            self.formatter.write_str(self.name)
+        }
+    }
+}
+
+/// Helper for formatting tuples in debug output
+pub struct DebugTuple<'a> {
+    formatter: &'a mut Formatter,
+    name: &'a str,
+    has_fields: bool,
+}
+
+impl<'a> DebugTuple<'a> {
+    fn new(formatter: &'a mut Formatter, name: &'a str) -> Self / pure {
+        DebugTuple { formatter, name, has_fields: false }
+    }
+
+    pub fn field(self: &mut Self, value: &dyn Debug) -> &mut Self / {IO} {
+        if !self.has_fields {
+            self.formatter.write_str(self.name);
+            self.formatter.write_str("(");
+            self.has_fields = true;
+        } else {
+            self.formatter.write_str(", ");
+        }
+        value.fmt(self.formatter);
+        self
+    }
+
+    pub fn finish(self: &mut Self) -> Result<(), Error> / {IO} {
+        if self.has_fields {
+            self.formatter.write_str(")")
+        } else {
+            self.formatter.write_str(self.name)
+        }
+    }
+}
+
+/// Helper for formatting lists in debug output
+pub struct DebugList<'a> {
+    formatter: &'a mut Formatter,
+    has_entries: bool,
+}
+
+impl<'a> DebugList<'a> {
+    fn new(formatter: &'a mut Formatter) -> Self / pure {
+        DebugList { formatter, has_entries: false }
+    }
+
+    pub fn entry(self: &mut Self, value: &dyn Debug) -> &mut Self / {IO} {
+        if !self.has_entries {
+            self.formatter.write_str("[");
+            self.has_entries = true;
+        } else {
+            self.formatter.write_str(", ");
+        }
+        value.fmt(self.formatter);
+        self
+    }
+
+    pub fn entries<I, D>(self: &mut Self, entries: I) -> &mut Self / {IO}
+    where
+        I: Iterator<Item = D>,
+        D: Debug,
+    {
+        for entry in entries {
+            self.entry(&entry);
+        }
+        self
+    }
+
+    pub fn finish(self: &mut Self) -> Result<(), Error> / {IO} {
+        if self.has_entries {
+            self.formatter.write_str("]")
+        } else {
+            self.formatter.write_str("[]")
+        }
+    }
+}
+
+/// Helper for formatting sets in debug output
+pub struct DebugSet<'a> {
+    formatter: &'a mut Formatter,
+    has_entries: bool,
+}
+
+impl<'a> DebugSet<'a> {
+    fn new(formatter: &'a mut Formatter) -> Self / pure {
+        DebugSet { formatter, has_entries: false }
+    }
+
+    pub fn entry(self: &mut Self, value: &dyn Debug) -> &mut Self / {IO} {
+        if !self.has_entries {
+            self.formatter.write_str("{");
+            self.has_entries = true;
+        } else {
+            self.formatter.write_str(", ");
+        }
+        value.fmt(self.formatter);
+        self
+    }
+
+    pub fn finish(self: &mut Self) -> Result<(), Error> / {IO} {
+        if self.has_entries {
+            self.formatter.write_str("}")
+        } else {
+            self.formatter.write_str("{}")
+        }
+    }
+}
+
+/// Helper for formatting maps in debug output
+pub struct DebugMap<'a> {
+    formatter: &'a mut Formatter,
+    has_entries: bool,
+}
+
+impl<'a> DebugMap<'a> {
+    fn new(formatter: &'a mut Formatter) -> Self / pure {
+        DebugMap { formatter, has_entries: false }
+    }
+
+    pub fn entry(self: &mut Self, key: &dyn Debug, value: &dyn Debug) -> &mut Self / {IO} {
+        if !self.has_entries {
+            self.formatter.write_str("{");
+            self.has_entries = true;
+        } else {
+            self.formatter.write_str(", ");
+        }
+        key.fmt(self.formatter);
+        self.formatter.write_str(": ");
+        value.fmt(self.formatter);
+        self
+    }
+
+    pub fn finish(self: &mut Self) -> Result<(), Error> / {IO} {
+        if self.has_entries {
+            self.formatter.write_str("}")
+        } else {
+            self.formatter.write_str("{}")
+        }
+    }
+}
+
+/// Arguments for format strings (placeholder for variadic args)
+pub struct Arguments<'a> {
+    pieces: &'a [&'a str],
+    args: &'a [&'a dyn Display],
+}
+
+/// Trait for debug formatting (programmer-facing)
+pub trait Debug {
+    /// Formats the value for debugging
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO};
+}
+
+/// Trait for display formatting (user-facing)
+pub trait Display {
+    /// Formats the value for display
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO};
+}
+
+/// Trait for binary formatting
+pub trait Binary {
+    /// Formats the value as binary
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO};
+}
+
+/// Trait for octal formatting
+pub trait Octal {
+    /// Formats the value as octal
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO};
+}
+
+/// Trait for lowercase hex formatting
+pub trait LowerHex {
+    /// Formats the value as lowercase hex
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO};
+}
+
+/// Trait for uppercase hex formatting
+pub trait UpperHex {
+    /// Formats the value as uppercase hex
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO};
+}
+
+/// Trait for pointer formatting
+pub trait Pointer {
+    /// Formats the value as a pointer
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO};
+}
+
+/// Trait for exponential formatting (lowercase)
+pub trait LowerExp {
+    /// Formats the value as lowercase exponential
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO};
+}
+
+/// Trait for exponential formatting (uppercase)
+pub trait UpperExp {
+    /// Formats the value as uppercase exponential
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO};
+}
+
+// Debug implementations for primitives
+
+impl Debug for bool {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        if *self { f.write_str("true") } else { f.write_str("false") }
+    }
+}
+
+impl Debug for char {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        f.write_char('\'')?;
+        match *self {
+            '\n' => f.write_str("\\n")?,
+            '\r' => f.write_str("\\r")?,
+            '\t' => f.write_str("\\t")?,
+            '\\' => f.write_str("\\\\")?,
+            '\'' => f.write_str("\\'")?,
+            c => f.write_char(c)?,
+        }
+        f.write_char('\'')
+    }
+}
+
+impl Debug for str {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        f.write_char('"')?;
+        for c in self.chars() {
+            match c {
+                '\n' => f.write_str("\\n")?,
+                '\r' => f.write_str("\\r")?,
+                '\t' => f.write_str("\\t")?,
+                '\\' => f.write_str("\\\\")?,
+                '"' => f.write_str("\\\"")?,
+                c => f.write_char(c)?,
+            }
+        }
+        f.write_char('"')
+    }
+}
+
+impl Debug for String {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        Debug::fmt(self.as_str(), f)
+    }
+}
+
+// Integer Debug implementations
+macro_rules! impl_debug_int {
+    ($($t:ty)*) => {
+        $(impl Debug for $t {
+            fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+                Display::fmt(self, f)
+            }
+        })*
+    };
+}
+
+impl_debug_int! { i8 i16 i32 i64 i128 isize u8 u16 u32 u64 u128 usize }
+
+// Float Debug implementations
+impl Debug for f32 {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        Display::fmt(self, f)
+    }
+}
+
+impl Debug for f64 {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        Display::fmt(self, f)
+    }
+}
+
+impl Debug for unit {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        f.write_str("()")
+    }
+}
+
+// Display implementations for primitives
+
+impl Display for bool {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        if *self { f.write_str("true") } else { f.write_str("false") }
+    }
+}
+
+impl Display for char {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        f.write_char(*self)
+    }
+}
+
+impl Display for str {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        f.write_str(self)
+    }
+}
+
+impl Display for String {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        f.write_str(self.as_str())
+    }
+}
+
+// Integer Display implementations with proper formatting
+impl Display for i32 {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        let mut buf = [0u8; 11];  // Max i32 is -2147483648 (11 chars)
+        let s = format_int(*self as i64, &mut buf);
+        f.pad_integral(*self >= 0, "", s)
+    }
+}
+
+impl Display for i64 {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        let mut buf = [0u8; 20];  // Max i64 is 20 digits
+        let s = format_int(*self, &mut buf);
+        f.pad_integral(*self >= 0, "", s)
+    }
+}
+
+impl Display for u32 {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        let mut buf = [0u8; 10];  // Max u32 is 10 digits
+        let s = format_uint(*self as u64, &mut buf);
+        f.pad_integral(true, "", s)
+    }
+}
+
+impl Display for u64 {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        let mut buf = [0u8; 20];  // Max u64 is 20 digits
+        let s = format_uint(*self, &mut buf);
+        f.pad_integral(true, "", s)
+    }
+}
+
+impl Display for usize {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        Display::fmt(&(*self as u64), f)
+    }
+}
+
+impl Display for f32 {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        // Simplified float formatting
+        let mut buf = [0u8; 32];
+        let s = format_float(*self as f64, &mut buf, f.precision());
+        f.write_str(s)
+    }
+}
+
+impl Display for f64 {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        let mut buf = [0u8; 64];
+        let s = format_float(*self, &mut buf, f.precision());
+        f.write_str(s)
+    }
+}
+
+// Helper functions for integer formatting
+fn format_int(mut value: i64, buf: &mut [u8]) -> &str / pure {
+    let negative = value < 0;
+    if negative {
+        value = -value;
+    }
+    let s = format_uint(value as u64, buf);
+    if negative {
+        // Prepend minus sign
+        let len = s.len();
+        buf[buf.len() - len - 1] = b'-';
+        unsafe { str::from_utf8_unchecked(&buf[buf.len() - len - 1..]) }
+    } else {
+        s
+    }
+}
+
+fn format_uint(mut value: u64, buf: &mut [u8]) -> &str / pure {
+    let mut i = buf.len();
+    if value == 0 {
+        i -= 1;
+        buf[i] = b'0';
+    } else {
+        while value > 0 {
+            i -= 1;
+            buf[i] = b'0' + (value % 10) as u8;
+            value /= 10;
+        }
+    }
+    unsafe { str::from_utf8_unchecked(&buf[i..]) }
+}
+
+fn format_float(value: f64, buf: &mut [u8], precision: Option<usize>) -> &str / pure {
+    // Simplified float formatting implementation
+    // Real implementation would use Grisu3 or Dragon4 algorithm
+    __builtin_format_float(value, buf, precision.unwrap_or(6))
+}
+
+// Debug implementations for Option and Result
+
+impl<T: Debug> Debug for Option<T> {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        match self {
+            Some(x) => {
+                f.write_str("Some(")?;
+                x.fmt(f)?;
+                f.write_str(")")
+            }
+            None => f.write_str("None"),
+        }
+    }
+}
+
+impl<T: Debug, E: Debug> Debug for Result<T, E> {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        match self {
+            Ok(x) => {
+                f.write_str("Ok(")?;
+                x.fmt(f)?;
+                f.write_str(")")
+            }
+            Err(e) => {
+                f.write_str("Err(")?;
+                e.fmt(f)?;
+                f.write_str(")")
+            }
+        }
+    }
+}
+
+// Debug for tuples
+
+impl Debug for () {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        f.write_str("()")
+    }
+}
+
+impl<A: Debug> Debug for (A,) {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        f.write_str("(")?;
+        self.0.fmt(f)?;
+        f.write_str(",)")
+    }
+}
+
+impl<A: Debug, B: Debug> Debug for (A, B) {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        f.write_str("(")?;
+        self.0.fmt(f)?;
+        f.write_str(", ")?;
+        self.1.fmt(f)?;
+        f.write_str(")")
+    }
+}
+
+impl<A: Debug, B: Debug, C: Debug> Debug for (A, B, C) {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        f.write_str("(")?;
+        self.0.fmt(f)?;
+        f.write_str(", ")?;
+        self.1.fmt(f)?;
+        f.write_str(", ")?;
+        self.2.fmt(f)?;
+        f.write_str(")")
+    }
+}
+
+// Debug for slices and arrays
+
+impl<T: Debug> Debug for [T] {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        f.debug_list().entries(self.iter()).finish()
+    }
+}
+
+impl<T: Debug, const N: usize> Debug for [T; N] {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        Debug::fmt(&self[..], f)
+    }
+}
+
+// Debug for references
+impl<T: Debug + ?Sized> Debug for &T {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        Debug::fmt(*self, f)
+    }
+}
+
+impl<T: Debug + ?Sized> Debug for &mut T {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        Debug::fmt(*self, f)
+    }
+}

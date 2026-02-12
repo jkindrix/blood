@@ -1,0 +1,33 @@
+// Test multiple trait bounds
+
+trait Counter {
+    fn count(&self) -> i32;
+}
+
+trait Doubler {
+    fn double(&self) -> i32;
+}
+
+impl Counter for i32 {
+    fn count(&self) -> i32 {
+        *self
+    }
+}
+
+impl Doubler for i32 {
+    fn double(&self) -> i32 {
+        *self * 2
+    }
+}
+
+// Function with multiple bounds - T must implement both Counter and Doubler
+fn count_and_double<T: Counter + Doubler>(val: &T) -> i32 {
+    val.count() + val.double()
+}
+
+fn main() {
+    // This should work - i32 implements both traits
+    let x: i32 = 10;
+    let result = count_and_double(&x);
+    println!("{}", result); // Should print 30 (10 + 20)
+}

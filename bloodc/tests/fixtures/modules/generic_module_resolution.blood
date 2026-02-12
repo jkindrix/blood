@@ -1,0 +1,53 @@
+// Module resolution test: generic types from modules.
+mod generics_helper;
+
+// Test generic struct from module
+fn test_generic_struct() -> generics_helper::Container<i32> {
+    generics_helper::Container { value: 42 }
+}
+
+// Test generic enum from module - Left variant
+fn test_generic_enum_left() -> generics_helper::Either<i32, bool> {
+    generics_helper::Either::Left(100)
+}
+
+// Test generic enum from module - Right variant
+fn test_generic_enum_right() -> generics_helper::Either<i32, bool> {
+    generics_helper::Either::Right(true)
+}
+
+// Test generic type alias from module
+fn test_generic_type_alias() -> generics_helper::Pair<i32> {
+    (1, 2)
+}
+
+// Test generic type alias that references another generic type
+fn test_generic_alias_with_generic() -> generics_helper::EitherInt<bool> {
+    generics_helper::Either::Left(false)
+}
+
+// Test generic function from module
+fn test_generic_fn() -> generics_helper::Container<bool> {
+    generics_helper::wrap(true)
+}
+
+// Test generic function that returns generic type alias
+fn test_generic_fn_pair() -> generics_helper::Pair<i32> {
+    generics_helper::make_pair(10, 20)
+}
+
+// Test generic associated function from module
+fn test_generic_associated_fn() -> generics_helper::Container<i32> {
+    generics_helper::Container::new(99)
+}
+
+fn main() {
+    let _ = test_generic_struct();
+    let _ = test_generic_enum_left();
+    let _ = test_generic_enum_right();
+    let _ = test_generic_type_alias();
+    let _ = test_generic_alias_with_generic();
+    let _ = test_generic_fn();
+    let _ = test_generic_fn_pair();
+    let _ = test_generic_associated_fn();
+}

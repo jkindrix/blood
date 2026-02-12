@@ -1,0 +1,18 @@
+// Test: returning a scalar computed from a struct allocated in a region
+// The struct itself shouldn't escape, but its scalar value can.
+// EXPECT: 25
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn main() -> i32 {
+    let mag: i32 = region {
+        let p: Point = Point { x: 3, y: 4 };
+        p.x * p.x + p.y * p.y
+    };
+    println_int(mag);
+
+    if mag != 25 { return 1; }
+    0
+}

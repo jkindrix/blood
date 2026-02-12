@@ -1,0 +1,49 @@
+// Test: practical fibonacci using State effect
+// EXPECT: 55
+effect State<S> {
+    op get() -> S;
+    op put(s: S) -> ();
+}
+
+deep handler LocalState<S> for State<S> {
+    let mut state: S
+
+    return(x) { x }
+
+    op get() {
+        resume(state)
+    }
+
+    op put(s) {
+        state = s;
+        resume(())
+    }
+}
+
+fn fib_stateful() -> i32 / {State<i32>} {
+    let n: i32 = perform State.get();
+    if n <= 1 {
+        n
+    } else {
+        let mut a: i32 = 0;
+        let mut b: i32 = 1;
+        let mut i: i32 = 2;
+        while i <= n {
+            let temp: i32 = a + b;
+            a = b;
+            b = temp;
+            i = i + 1;
+        }
+        b
+    }
+}
+
+fn main() -> i32 {
+    let result: i32 = with LocalState { state: 10 } handle {
+        fib_stateful()
+    };
+    println_int(result);
+
+    if result != 55 { return 1; }
+    0
+}

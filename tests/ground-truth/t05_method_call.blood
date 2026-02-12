@@ -1,0 +1,46 @@
+// Test: method call syntax (dot notation)
+// EXPECT: 15
+// EXPECT: 5
+struct Vec2 {
+    x: i32,
+    y: i32,
+}
+
+impl Vec2 {
+    fn length_squared(self) -> i32 {
+        self.x * self.x + self.y * self.y
+    }
+
+    fn dot(self, other: Vec2) -> i32 {
+        self.x * other.x + self.y * other.y
+    }
+
+    fn scale(self, factor: i32) -> Vec2 {
+        Vec2 { x: self.x * factor, y: self.y * factor }
+    }
+}
+
+fn main() -> i32 {
+    let v: Vec2 = Vec2 { x: 3, y: 4 };
+
+    // Method with no extra args
+    let len_sq: i32 = v.length_squared();
+    // 3*3 + 4*4 = 9 + 16 = 25... wait, let me use a simpler example
+    // Actually let's use x=1, y=2: 1+4=5... no, let me just pick values
+
+    // Dot product
+    let a: Vec2 = Vec2 { x: 1, y: 2 };
+    let b: Vec2 = Vec2 { x: 3, y: 6 };
+    let d: i32 = a.dot(b);
+    println_int(d); // 1*3 + 2*6 = 3 + 12 = 15
+    if d != 15 { return 1; }
+
+    // Scale and access fields
+    let c: Vec2 = Vec2 { x: 1, y: 2 };
+    let scaled: Vec2 = c.scale(5);
+    println_int(scaled.x); // 5
+    if scaled.x != 5 { return 2; }
+    if scaled.y != 10 { return 3; }
+
+    0
+}

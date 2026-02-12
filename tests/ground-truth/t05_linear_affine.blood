@@ -1,0 +1,20 @@
+// Test: passing structs to functions (demonstrates MVS copy semantics)
+// EXPECT: 42
+// Note: For true linear semantics, use explicit `linear` qualifier (see t06_err_* tests)
+struct LinearToken {
+    value: i32,
+}
+
+fn consume_token(t: LinearToken) -> i32 {
+    t.value
+}
+
+fn main() -> i32 {
+    let tok: LinearToken = LinearToken { value: 42 };
+    let result: i32 = consume_token(tok);
+    println_int(result); // 42
+    if result != 42 { return 1; }
+
+    // Under Blood's MVS, tok was copied into consume_token (not moved)
+    0
+}

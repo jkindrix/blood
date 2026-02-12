@@ -1,0 +1,46 @@
+// Regression test for cross-module name collision bug.
+//
+// This test verifies that when two modules define types with the same name,
+// each module correctly uses its own type definition, not one from an imported module.
+//
+// Bug description: When module A imports module B, and both define a type `FnInfo`,
+// the type checker was incorrectly resolving references to `FnInfo` in A to B's
+// definition instead of A's own definition.
+
+mod name_collision_child;
+
+// This module defines its own FnInfo with return_ty field
+pub struct FnInfo {
+    pub def_id: i32,
+    pub name: i64,
+    pub return_ty: i64,  // This field exists here but NOT in child's FnInfo
+    pub span: i32,
+}
+
+// Function that uses our FnInfo with return_ty field
+fn create_fn_info() -> FnInfo {
+    FnInfo {
+        def_id: 1,
+        name: 2,
+        return_ty: 3,  // If name collision bug exists, this would fail because
+                       // child's FnInfo doesn't have return_ty
+        span: 4,
+    }
+}
+
+// Function that accesses return_ty field
+fn get_return_ty(info: FnInfo) -> i64 {
+    info.return_ty  // If wrong FnInfo is used, this field access would fail
+}
+
+// Call functions from child module that use child's FnInfo
+fn test_child_fn_info() {
+    let child_info = name_collision_child::create_child_fn_info();
+    let _ops = name_collision_child::get_num_params(child_info);
+}
+
+fn main() {
+    let info = create_fn_info();
+    let _ret = get_return_ty(info);
+    test_child_fn_info();
+}

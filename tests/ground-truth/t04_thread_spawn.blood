@@ -1,0 +1,24 @@
+// Test: thread_spawn and thread_join builtins
+// Verifies that OS threads can be spawned and joined, and that
+// data exchange via shared memory works correctly.
+// EXPECT: 42
+fn worker(arg: u64) -> u64 {
+    ptr_write_i32(arg, 42);
+    0
+}
+
+fn main() -> i32 {
+    let buf: u64 = alloc(4);
+    if buf == 0 { return 99; }
+    ptr_write_i32(buf, 0);
+    let worker_ptr: u64 = worker as u64;
+    let handle: u64 = thread_spawn(worker_ptr, buf);
+    if handle == 0 { free(buf); return 98; }
+    let join_result: u64 = thread_join(handle);
+    let result: i32 = ptr_read_i32(buf);
+    println_int(result);
+    free(buf);
+    if result != 42 { return 1; }
+    if join_result != 0 { return 2; }
+    0
+}

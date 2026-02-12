@@ -1,0 +1,541 @@
+// Blood Standard Library Tests - String
+//
+// Comprehensive tests for the String type.
+
+use std::core::String;
+
+// =============================================================================
+// Construction Tests
+// =============================================================================
+
+/// Test String::new() creates empty string
+fn test_string_new() {
+    let s = String::new();
+    assert(s.len() == 0, "new String should be empty");
+    assert(s.is_empty(), "new String is_empty should be true");
+}
+
+/// Test String::with_capacity() preallocates
+fn test_string_with_capacity() {
+    let s = String::with_capacity(100);
+    assert(s.len() == 0, "with_capacity String should be empty");
+    assert(s.capacity() >= 100, "with_capacity should allocate");
+}
+
+/// Test String::from() creates from str
+fn test_string_from() {
+    let s = String::from("hello");
+    assert(s.len() == 5, "String from 'hello' should have len 5");
+    assert(s == "hello", "String should equal original");
+}
+
+/// Test String::from_utf8() from bytes
+fn test_string_from_utf8() {
+    let bytes = vec![104, 101, 108, 108, 111]; // "hello" in ASCII
+    let result = String::from_utf8(bytes);
+    assert(result.is_ok(), "valid UTF-8 should succeed");
+    assert(result.unwrap() == "hello", "should equal 'hello'");
+}
+
+/// Test String::from_utf8() with invalid bytes
+fn test_string_from_utf8_invalid() {
+    let bytes = vec![0xFF, 0xFE]; // Invalid UTF-8
+    let result = String::from_utf8(bytes);
+    assert(result.is_err(), "invalid UTF-8 should fail");
+}
+
+// =============================================================================
+// Push/Append Tests
+// =============================================================================
+
+/// Test push() appends character
+fn test_string_push() {
+    let mut s = String::from("hel");
+    s.push('l');
+    s.push('o');
+    assert(s == "hello", "push should append characters");
+}
+
+/// Test push_str() appends string slice
+fn test_string_push_str() {
+    let mut s = String::from("hello");
+    s.push_str(" world");
+    assert(s == "hello world", "push_str should append string");
+}
+
+/// Test + operator concatenation
+fn test_string_concatenation() {
+    let s1 = String::from("hello");
+    let s2 = " world";
+    let result = s1 + s2;
+    assert(result == "hello world", "+ should concatenate");
+}
+
+// =============================================================================
+// Character Access Tests
+// =============================================================================
+
+/// Test chars() iterator
+fn test_string_chars() {
+    let s = String::from("hello");
+    let chars: Vec<char> = s.chars().collect();
+    assert(chars == vec!['h', 'e', 'l', 'l', 'o'], "chars should iterate characters");
+}
+
+/// Test bytes() iterator
+fn test_string_bytes() {
+    let s = String::from("hello");
+    let bytes: Vec<u8> = s.bytes().collect();
+    assert(bytes == vec![104, 101, 108, 108, 111], "bytes should iterate bytes");
+}
+
+/// Test char_indices() iterator
+fn test_string_char_indices() {
+    let s = String::from("abc");
+    let indices: Vec<(usize, char)> = s.char_indices().collect();
+    assert(indices == vec![(0, 'a'), (1, 'b'), (2, 'c')], "char_indices should yield pairs");
+}
+
+// =============================================================================
+// Slicing Tests
+// =============================================================================
+
+/// Test as_str() returns string slice
+fn test_string_as_str() {
+    let s = String::from("hello");
+    let slice: &str = s.as_str();
+    assert(slice == "hello", "as_str should return slice");
+}
+
+/// Test as_bytes() returns byte slice
+fn test_string_as_bytes() {
+    let s = String::from("hello");
+    let bytes: &[u8] = s.as_bytes();
+    assert(bytes.len() == 5, "as_bytes should have correct length");
+}
+
+/// Test slicing with range
+fn test_string_slice_range() {
+    let s = String::from("hello world");
+    let hello = &s[0..5];
+    let world = &s[6..11];
+    assert(hello == "hello", "slice should extract 'hello'");
+    assert(world == "world", "slice should extract 'world'");
+}
+
+// =============================================================================
+// Insert/Remove Tests
+// =============================================================================
+
+/// Test insert() inserts character
+fn test_string_insert() {
+    let mut s = String::from("hllo");
+    s.insert(1, 'e');
+    assert(s == "hello", "insert should insert character");
+}
+
+/// Test insert_str() inserts string slice
+fn test_string_insert_str() {
+    let mut s = String::from("hd");
+    s.insert_str(1, "ello worl");
+    assert(s == "hello world", "insert_str should insert string");
+}
+
+/// Test remove() removes character
+fn test_string_remove() {
+    let mut s = String::from("hello");
+    let removed = s.remove(1);
+    assert(removed == 'e', "remove should return removed char");
+    assert(s == "hllo", "remove should remove character");
+}
+
+/// Test pop() removes last character
+fn test_string_pop() {
+    let mut s = String::from("hello");
+    let last = s.pop();
+    assert(last == Some('o'), "pop should return last char");
+    assert(s == "hell", "pop should remove last char");
+}
+
+/// Test truncate() shortens string
+fn test_string_truncate() {
+    let mut s = String::from("hello world");
+    s.truncate(5);
+    assert(s == "hello", "truncate should shorten string");
+}
+
+/// Test clear() empties string
+fn test_string_clear() {
+    let mut s = String::from("hello");
+    s.clear();
+    assert(s.is_empty(), "clear should empty string");
+}
+
+// =============================================================================
+// Search Tests
+// =============================================================================
+
+/// Test contains() checks substring
+fn test_string_contains() {
+    let s = String::from("hello world");
+    assert(s.contains("world"), "contains should find substring");
+    assert(s.contains("ello"), "contains should find middle substring");
+    assert(!s.contains("xyz"), "contains should not find missing substring");
+}
+
+/// Test starts_with() checks prefix
+fn test_string_starts_with() {
+    let s = String::from("hello world");
+    assert(s.starts_with("hello"), "starts_with should match prefix");
+    assert(s.starts_with("h"), "starts_with should match single char");
+    assert(!s.starts_with("world"), "starts_with should not match non-prefix");
+}
+
+/// Test ends_with() checks suffix
+fn test_string_ends_with() {
+    let s = String::from("hello world");
+    assert(s.ends_with("world"), "ends_with should match suffix");
+    assert(s.ends_with("d"), "ends_with should match single char");
+    assert(!s.ends_with("hello"), "ends_with should not match non-suffix");
+}
+
+/// Test find() returns index of substring
+fn test_string_find() {
+    let s = String::from("hello world");
+    assert(s.find("world") == Some(6), "find should return index");
+    assert(s.find("o") == Some(4), "find should return first occurrence");
+    assert(s.find("xyz") == None, "find should return None for missing");
+}
+
+/// Test rfind() returns last index
+fn test_string_rfind() {
+    let s = String::from("hello world");
+    assert(s.rfind("o") == Some(7), "rfind should return last occurrence");
+    assert(s.rfind("l") == Some(9), "rfind should return last occurrence");
+}
+
+// =============================================================================
+// Transformation Tests
+// =============================================================================
+
+/// Test to_uppercase() converts to upper
+fn test_string_to_uppercase() {
+    let s = String::from("hello");
+    let upper = s.to_uppercase();
+    assert(upper == "HELLO", "to_uppercase should convert");
+}
+
+/// Test to_lowercase() converts to lower
+fn test_string_to_lowercase() {
+    let s = String::from("HELLO");
+    let lower = s.to_lowercase();
+    assert(lower == "hello", "to_lowercase should convert");
+}
+
+/// Test trim() removes whitespace
+fn test_string_trim() {
+    let s = String::from("  hello  ");
+    let trimmed = s.trim();
+    assert(trimmed == "hello", "trim should remove whitespace");
+}
+
+/// Test trim_start() removes leading whitespace
+fn test_string_trim_start() {
+    let s = String::from("  hello  ");
+    let trimmed = s.trim_start();
+    assert(trimmed == "hello  ", "trim_start should remove leading whitespace");
+}
+
+/// Test trim_end() removes trailing whitespace
+fn test_string_trim_end() {
+    let s = String::from("  hello  ");
+    let trimmed = s.trim_end();
+    assert(trimmed == "  hello", "trim_end should remove trailing whitespace");
+}
+
+/// Test replace() substitutes substring
+fn test_string_replace() {
+    let s = String::from("hello world");
+    let replaced = s.replace("world", "rust");
+    assert(replaced == "hello rust", "replace should substitute");
+}
+
+/// Test replacen() substitutes limited occurrences
+fn test_string_replacen() {
+    let s = String::from("a a a a");
+    let replaced = s.replacen("a", "b", 2);
+    assert(replaced == "b b a a", "replacen should substitute limited times");
+}
+
+// =============================================================================
+// Split Tests
+// =============================================================================
+
+/// Test split() on character
+fn test_string_split_char() {
+    let s = String::from("a,b,c,d");
+    let parts: Vec<&str> = s.split(',').collect();
+    assert(parts == vec!["a", "b", "c", "d"], "split should split on char");
+}
+
+/// Test split() on string
+fn test_string_split_str() {
+    let s = String::from("hello::world::test");
+    let parts: Vec<&str> = s.split("::").collect();
+    assert(parts == vec!["hello", "world", "test"], "split should split on string");
+}
+
+/// Test split_whitespace()
+fn test_string_split_whitespace() {
+    let s = String::from("hello   world\ttest");
+    let words: Vec<&str> = s.split_whitespace().collect();
+    assert(words == vec!["hello", "world", "test"], "split_whitespace should split on any whitespace");
+}
+
+/// Test lines() iterator
+fn test_string_lines() {
+    let s = String::from("line1\nline2\nline3");
+    let lines: Vec<&str> = s.lines().collect();
+    assert(lines == vec!["line1", "line2", "line3"], "lines should iterate lines");
+}
+
+/// Test splitn() limited splits
+fn test_string_splitn() {
+    let s = String::from("a,b,c,d,e");
+    let parts: Vec<&str> = s.splitn(3, ',').collect();
+    assert(parts == vec!["a", "b", "c,d,e"], "splitn should limit splits");
+}
+
+// =============================================================================
+// Repeat/Pad Tests
+// =============================================================================
+
+/// Test repeat() duplicates string
+fn test_string_repeat() {
+    let s = String::from("ab");
+    let repeated = s.repeat(3);
+    assert(repeated == "ababab", "repeat should duplicate string");
+}
+
+// =============================================================================
+// ASCII Tests
+// =============================================================================
+
+/// Test is_ascii() checks ASCII
+fn test_string_is_ascii() {
+    let ascii = String::from("hello");
+    let non_ascii = String::from("héllo");
+
+    assert(ascii.is_ascii(), "ASCII string should be ASCII");
+    assert(!non_ascii.is_ascii(), "non-ASCII string should not be ASCII");
+}
+
+/// Test make_ascii_lowercase() mutates in place
+fn test_string_make_ascii_lowercase() {
+    let mut s = String::from("HELLO");
+    s.make_ascii_lowercase();
+    assert(s == "hello", "make_ascii_lowercase should convert");
+}
+
+/// Test make_ascii_uppercase() mutates in place
+fn test_string_make_ascii_uppercase() {
+    let mut s = String::from("hello");
+    s.make_ascii_uppercase();
+    assert(s == "HELLO", "make_ascii_uppercase should convert");
+}
+
+// =============================================================================
+// Capacity Tests
+// =============================================================================
+
+/// Test reserve() preallocates
+fn test_string_reserve() {
+    let mut s = String::from("hello");
+    s.reserve(100);
+    assert(s.capacity() >= 105, "reserve should allocate");
+}
+
+/// Test shrink_to_fit() reduces capacity
+fn test_string_shrink_to_fit() {
+    let mut s = String::with_capacity(100);
+    s.push_str("hello");
+    s.shrink_to_fit();
+    assert(s.capacity() < 100, "shrink_to_fit should reduce capacity");
+}
+
+// =============================================================================
+// Retain/Drain Tests
+// =============================================================================
+
+/// Test retain() keeps matching characters
+fn test_string_retain() {
+    let mut s = String::from("hello123world456");
+    s.retain(|c| c.is_alphabetic());
+    assert(s == "helloworld", "retain should keep letters");
+}
+
+/// Test drain() removes range
+fn test_string_drain() {
+    let mut s = String::from("hello world");
+    let drained: String = s.drain(0..6).collect();
+    assert(drained == "hello ", "drain should return removed");
+    assert(s == "world", "drain should leave rest");
+}
+
+// =============================================================================
+// Clone and Equality Tests
+// =============================================================================
+
+/// Test Clone trait
+fn test_string_clone() {
+    let s1 = String::from("hello");
+    let s2 = s1.clone();
+    assert(s1 == s2, "clone should be equal");
+}
+
+/// Test PartialEq with String
+fn test_string_equality_string() {
+    let s1 = String::from("hello");
+    let s2 = String::from("hello");
+    let s3 = String::from("world");
+
+    assert(s1 == s2, "equal Strings should be equal");
+    assert(s1 != s3, "different Strings should not be equal");
+}
+
+/// Test PartialEq with &str
+fn test_string_equality_str() {
+    let s = String::from("hello");
+    assert(s == "hello", "String should equal equivalent str");
+    assert(s != "world", "String should not equal different str");
+}
+
+// =============================================================================
+// Unicode Tests
+// =============================================================================
+
+/// Test with multi-byte characters
+fn test_string_unicode() {
+    let s = String::from("héllo");
+    assert(s.len() == 6, "UTF-8 length in bytes");
+    assert(s.chars().count() == 5, "char count should be 5");
+}
+
+/// Test with emoji
+fn test_string_emoji() {
+    let s = String::from("hello 🌍");
+    assert(s.contains("🌍"), "should contain emoji");
+}
+
+/// Test split_at() with valid boundary
+fn test_string_split_at() {
+    let s = String::from("hello");
+    let (a, b) = s.split_at(2);
+    assert(a == "he", "split_at first part");
+    assert(b == "llo", "split_at second part");
+}
+
+// =============================================================================
+// Main Test Runner
+// =============================================================================
+
+fn main() {
+    println_str("Running String tests...");
+    println_str("");
+
+    // Construction
+    test_string_new();
+    test_string_with_capacity();
+    test_string_from();
+    test_string_from_utf8();
+    test_string_from_utf8_invalid();
+    println_str("[PASS] Construction tests");
+
+    // Push/Append
+    test_string_push();
+    test_string_push_str();
+    test_string_concatenation();
+    println_str("[PASS] Push/Append tests");
+
+    // Character access
+    test_string_chars();
+    test_string_bytes();
+    test_string_char_indices();
+    println_str("[PASS] Character access tests");
+
+    // Slicing
+    test_string_as_str();
+    test_string_as_bytes();
+    test_string_slice_range();
+    println_str("[PASS] Slicing tests");
+
+    // Insert/Remove
+    test_string_insert();
+    test_string_insert_str();
+    test_string_remove();
+    test_string_pop();
+    test_string_truncate();
+    test_string_clear();
+    println_str("[PASS] Insert/Remove tests");
+
+    // Search
+    test_string_contains();
+    test_string_starts_with();
+    test_string_ends_with();
+    test_string_find();
+    test_string_rfind();
+    println_str("[PASS] Search tests");
+
+    // Transformation
+    test_string_to_uppercase();
+    test_string_to_lowercase();
+    test_string_trim();
+    test_string_trim_start();
+    test_string_trim_end();
+    test_string_replace();
+    test_string_replacen();
+    println_str("[PASS] Transformation tests");
+
+    // Split
+    test_string_split_char();
+    test_string_split_str();
+    test_string_split_whitespace();
+    test_string_lines();
+    test_string_splitn();
+    println_str("[PASS] Split tests");
+
+    // Repeat
+    test_string_repeat();
+    println_str("[PASS] Repeat tests");
+
+    // ASCII
+    test_string_is_ascii();
+    test_string_make_ascii_lowercase();
+    test_string_make_ascii_uppercase();
+    println_str("[PASS] ASCII tests");
+
+    // Capacity
+    test_string_reserve();
+    test_string_shrink_to_fit();
+    println_str("[PASS] Capacity tests");
+
+    // Retain/Drain
+    test_string_retain();
+    test_string_drain();
+    println_str("[PASS] Retain/Drain tests");
+
+    // Clone/Equality
+    test_string_clone();
+    test_string_equality_string();
+    test_string_equality_str();
+    println_str("[PASS] Clone/Equality tests");
+
+    // Unicode
+    test_string_unicode();
+    test_string_emoji();
+    test_string_split_at();
+    println_str("[PASS] Unicode tests");
+
+    println_str("");
+    println_str("All String tests passed!");
+}

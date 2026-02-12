@@ -1,0 +1,33 @@
+// Test: returning structs from functions, chained calls
+// EXPECT: 6
+// EXPECT: 8
+struct Vec2 {
+    x: i32,
+    y: i32,
+}
+
+fn make_vec(x: i32, y: i32) -> Vec2 {
+    Vec2 { x: x, y: y }
+}
+
+fn add_vecs(a: Vec2, b: Vec2) -> Vec2 {
+    Vec2 { x: a.x + b.x, y: a.y + b.y }
+}
+
+fn scale_vec(v: Vec2, s: i32) -> Vec2 {
+    Vec2 { x: v.x * s, y: v.y * s }
+}
+
+fn main() -> i32 {
+    let v1: Vec2 = make_vec(1, 2);
+    let v2: Vec2 = make_vec(2, 2);
+    let sum: Vec2 = add_vecs(v1, v2);
+    let scaled: Vec2 = scale_vec(sum, 2);
+
+    println_int(scaled.x);
+    println_int(scaled.y);
+
+    if scaled.x != 6 { return 1; }
+    if scaled.y != 8 { return 2; }
+    0
+}

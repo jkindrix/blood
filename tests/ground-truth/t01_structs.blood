@@ -1,0 +1,42 @@
+// Test: struct declaration, construction, field access
+// EXPECT: 3
+// EXPECT: 4
+// EXPECT: 4
+// EXPECT: 6
+// EXPECT: 25
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn point_new(x: i32, y: i32) -> Point {
+    Point { x: x, y: y }
+}
+
+fn point_add(a: Point, b: Point) -> Point {
+    Point { x: a.x + b.x, y: a.y + b.y }
+}
+
+fn magnitude_squared(p: Point) -> i32 {
+    p.x * p.x + p.y * p.y
+}
+
+fn main() -> i32 {
+    let p1: Point = point_new(3, 4);
+    println_int(p1.x);
+    println_int(p1.y);
+
+    let p2: Point = point_new(1, 2);
+    let sum: Point = point_add(p1, p2);
+    println_int(sum.x);
+    println_int(sum.y);
+
+    let p3: Point = point_new(3, 4);
+    let mag: i32 = magnitude_squared(p3);
+    println_int(mag);
+
+    if sum.x != 4 { return 1; }
+    if sum.y != 6 { return 2; }
+    if mag != 25 { return 3; }
+    0
+}

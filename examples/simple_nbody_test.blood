@@ -1,0 +1,58 @@
+// Simplified N-Body test
+
+struct Body {
+    x: f64,
+    y: f64,
+    z: f64,
+    vx: f64,
+    vy: f64,
+    vz: f64,
+    mass: f64,
+}
+
+fn update_velocity(b1: &mut Body, b2: &mut Body, dt: f64) {
+    let dx = b1.x - b2.x;
+    let dy = b1.y - b2.y;
+    let dz = b1.z - b2.z;
+
+    let dist_sq = dx * dx + dy * dy + dz * dz;
+
+    // Simplified - just use dist_sq for now
+    let mag = dt / dist_sq;
+
+    b1.vx = b1.vx - dx * b2.mass * mag;
+    b1.vy = b1.vy - dy * b2.mass * mag;
+    b1.vz = b1.vz - dz * b2.mass * mag;
+
+    b2.vx = b2.vx + dx * b1.mass * mag;
+    b2.vy = b2.vy + dy * b1.mass * mag;
+    b2.vz = b2.vz + dz * b1.mass * mag;
+}
+
+fn advance_pos(b: &mut Body, dt: f64) {
+    b.x = b.x + dt * b.vx;
+    b.y = b.y + dt * b.vy;
+    b.z = b.z + dt * b.vz;
+}
+
+fn main() {
+    let mut b1 = Body { x: 0.0, y: 0.0, z: 0.0, vx: 0.0, vy: 0.0, vz: 0.0, mass: 1.0 };
+    let mut b2 = Body { x: 1.0, y: 0.0, z: 0.0, vx: 0.0, vy: 0.0, vz: 0.0, mass: 1.0 };
+
+    println_str("Initial positions:");
+    println_f64(b1.x);
+    println_f64(b2.x);
+
+    // Run 10 steps
+    let mut i = 0;
+    while i < 10 {
+        update_velocity(&mut b1, &mut b2, 0.01);
+        advance_pos(&mut b1, 0.01);
+        advance_pos(&mut b2, 0.01);
+        i = i + 1;
+    }
+
+    println_str("After 10 steps:");
+    println_f64(b1.x);
+    println_f64(b2.x);
+}

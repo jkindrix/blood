@@ -1,0 +1,56 @@
+// Test: nested effect handlers (State + Console)
+// EXPECT: 42
+effect State<S> {
+    op get() -> S;
+    op put(s: S) -> ();
+}
+
+effect Console {
+    op print(msg: i32) -> ();
+    op read() -> i32;
+}
+
+deep handler LocalState<S> for State<S> {
+    let mut state: S
+
+    return(x) { x }
+
+    op get() {
+        resume(state)
+    }
+
+    op put(s) {
+        state = s;
+        resume(())
+    }
+}
+
+deep handler MockConsole for Console {
+    let mut last_printed: i32
+    let mut read_value: i32
+
+    return(x) { x }
+
+    op print(msg) {
+        last_printed = msg;
+        resume(())
+    }
+
+    op read() {
+        resume(read_value)
+    }
+}
+
+fn main() -> i32 {
+    let result: i32 = with LocalState { state: 0 } handle {
+        with MockConsole { last_printed: 0, read_value: 42 } handle {
+            let x: i32 = perform Console.read();
+            perform State.put(x);
+            perform State.get()
+        }
+    };
+    println_int(result);
+
+    if result != 42 { return 1; }
+    0
+}

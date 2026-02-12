@@ -1,0 +1,560 @@
+// Blood Standard Library - Async Effect Handlers
+//
+// Handlers for the Async effect.
+
+use crate::effects::async_effect::Async;
+use core::time::Duration;
+
+/// Standard async handler that executes operations sequentially
+pub deep handler SequentialAsync for Async {
+    return(x) { x }
+
+    op yield_() {
+        // Yield control briefly
+        __builtin_yield();
+        resume(())
+    }
+
+    op sleep(duration: Duration) {
+        __builtin_sleep(duration);
+        resume(())
+    }
+
+    op spawn<T, F: FnOnce() -> T + Send + 'static>(f: F) {
+        // In sequential mode, just execute immediately
+        let result = f();
+        resume(TaskHandle::completed(result))
+    }
+
+    op await_task<T>(handle: TaskHandle<T>) {
+        resume(handle.join())
+    }
+}
+
+/// Task handle for async operations
+pub struct TaskHandle<T> {
+    inner: TaskHandleInner<T>,
+}
+
+enum TaskHandleInner<T> {
+    Completed(Option<T>),
+    Pending(ThreadHandle<T>),
+}
+
+impl<T> TaskHandle<T> {
+    /// Creates a completed task handle
+    pub fn completed(value: T) -> Self / pure {
+        TaskHandle {
+            inner: TaskHandleInner::Completed(Some(value)),
+        }
+    }
+
+    /// Creates a pending task handle
+    pub fn pending(handle: ThreadHandle<T>) -> Self / pure {
+        TaskHandle {
+            inner: TaskHandleInner::Pending(handle),
+        }
+    }
+
+    /// Waits for the task to complete and returns the result
+    pub fn join(self: Self) -> T / pure {
+        match self.inner {
+            TaskHandleInner::Completed(mut opt) => opt.take().unwrap(),
+            TaskHandleInner::Pending(handle) => handle.join(),
+        }
+    }
+
+    /// Checks if the task is complete without blocking
+    pub fn is_complete(self: &Self) -> bool / pure {
+        match &self.inner {
+            TaskHandleInner::Completed(_) => true,
+            TaskHandleInner::Pending(handle) => handle.is_finished(),
+        }
+    }
+}
+
+/// Placeholder for thread handle
+pub struct ThreadHandle<T> {
+    _marker: core::marker::PhantomData<T>,
+}
+
+impl<T> ThreadHandle<T> {
+    pub fn join(self: Self) -> T / pure {
+        __builtin_thread_join(self)
+    }
+
+    pub fn is_finished(self: &Self) -> bool / pure {
+        __builtin_thread_is_finished(self)
+    }
+}
+
+/// Async handler that spawns actual threads
+pub deep handler ThreadedAsync for Async {
+    return(x) { x }
+
+    op yield_() {
+        __builtin_thread_yield();
+        resume(())
+    }
+
+    op sleep(duration: Duration) {
+        __builtin_sleep(duration);
+        resume(())
+    }
+
+    op spawn<T, F: FnOnce() -> T + Send + 'static>(f: F) {
+        let handle = __builtin_thread_spawn(f);
+        resume(TaskHandle::pending(handle))
+    }
+
+    op await_task<T>(handle: TaskHandle<T>) {
+        resume(handle.join())
+    }
+}
+
+/// Async handler with a thread pool
+pub deep handler PooledAsync for Async {
+    let pool_size: usize;
+
+    fn new(pool_size: usize) -> Self {
+        PooledAsync { pool_size }
+    }
+
+    return(x) { x }
+
+    op yield_() {
+        __builtin_yield();
+        resume(())
+    }
+
+    op sleep(duration: Duration) {
+        __builtin_sleep(duration);
+        resume(())
+    }
+
+    op spawn<T, F: FnOnce() -> T + Send + 'static>(f: F) {
+        let handle = __builtin_pool_spawn(self.pool_size, f);
+        resume(TaskHandle::pending(handle))
+    }
+
+    op await_task<T>(handle: TaskHandle<T>) {
+        resume(handle.join())
+    }
+}
+
+/// Async handler that limits concurrency
+pub deep handler BoundedAsync for Async {
+    let max_concurrent: usize;
+    let mut active: usize;
+
+    fn new(max_concurrent: usize) -> Self {
+        BoundedAsync {
+            max_concurrent,
+            active: 0,
+        }
+    }
+
+    return(x) { x }
+
+    op yield_() {
+        __builtin_yield();
+        resume(())
+    }
+
+    op sleep(duration: Duration) {
+        __builtin_sleep(duration);
+        resume(())
+    }
+
+    op spawn<T, F: FnOnce() -> T + Send + 'static>(f: F) {
+        // Wait until we have capacity
+        while self.active >= self.max_concurrent {
+            __builtin_yield();
+        }
+        self.active += 1;
+
+        let handle = __builtin_thread_spawn(move || {
+            let result = f();
+            // Note: decrement happens after join
+            result
+        });
+        resume(TaskHandle::pending(handle))
+    }
+
+    op await_task<T>(handle: TaskHandle<T>) {
+        let result = handle.join();
+        self.active = self.active.saturating_sub(1);
+        resume(result)
+    }
+}
+
+/// Async handler that records timing information
+pub deep handler TimedAsync for Async {
+    let mut timings: Vec<TaskTiming>;
+    let mut next_id: u64;
+
+    fn new() -> Self {
+        TimedAsync {
+            timings: Vec::new(),
+            next_id: 0,
+        }
+    }
+
+    fn into_timings(self: Self) -> Vec<TaskTiming> {
+        self.timings
+    }
+
+    return(x) { (x, self.timings) }
+
+    op yield_() {
+        __builtin_yield();
+        resume(())
+    }
+
+    op sleep(duration: Duration) {
+        let start = Instant::now();
+        __builtin_sleep(duration);
+        let elapsed = start.elapsed();
+        self.timings.push(TaskTiming {
+            id: self.next_id,
+            kind: TaskKind::Sleep,
+            duration: elapsed,
+        });
+        self.next_id += 1;
+        resume(())
+    }
+
+    op spawn<T, F: FnOnce() -> T + Send + 'static>(f: F) {
+        let id = self.next_id;
+        self.next_id += 1;
+        let start = Instant::now();
+
+        let handle = __builtin_thread_spawn(move || {
+            let result = f();
+            result
+        });
+
+        // We'll record timing when joined
+        self.timings.push(TaskTiming {
+            id,
+            kind: TaskKind::Spawn,
+            duration: Duration::ZERO, // Updated on join
+        });
+
+        resume(TaskHandle::pending(handle))
+    }
+
+    op await_task<T>(handle: TaskHandle<T>) {
+        let start = Instant::now();
+        let result = handle.join();
+        let elapsed = start.elapsed();
+
+        self.timings.push(TaskTiming {
+            id: self.next_id,
+            kind: TaskKind::Await,
+            duration: elapsed,
+        });
+        self.next_id += 1;
+
+        resume(result)
+    }
+}
+
+/// Timing information for a task
+#[derive(Clone, Debug)]
+pub struct TaskTiming {
+    pub id: u64,
+    pub kind: TaskKind,
+    pub duration: Duration,
+}
+
+/// Kind of async task
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TaskKind {
+    Sleep,
+    Spawn,
+    Await,
+    Yield,
+}
+
+/// Time instant for measurements
+#[derive(Clone, Copy)]
+pub struct Instant {
+    nanos: u128,
+}
+
+impl Instant {
+    pub fn now() -> Self / pure {
+        Instant {
+            nanos: __builtin_instant_now(),
+        }
+    }
+
+    pub fn elapsed(self: &Self) -> Duration / pure {
+        let now = Self::now();
+        Duration::from_nanos((now.nanos - self.nanos) as u64)
+    }
+
+    pub fn duration_since(self: &Self, earlier: Instant) -> Duration / pure {
+        Duration::from_nanos((self.nanos - earlier.nanos) as u64)
+    }
+}
+
+/// Cooperative async handler (no OS threads)
+pub deep handler CooperativeAsync for Async {
+    let mut queue: Vec<Box<dyn FnOnce() + Send>>;
+
+    fn new() -> Self {
+        CooperativeAsync { queue: Vec::new() }
+    }
+
+    fn run_all(self: &mut Self) / pure {
+        while let Some(task) = self.queue.pop() {
+            task();
+        }
+    }
+
+    return(x) {
+        self.run_all();
+        x
+    }
+
+    op yield_() {
+        // In cooperative mode, yield just continues
+        resume(())
+    }
+
+    op sleep(duration: Duration) {
+        // In cooperative mode, sleep is a no-op
+        // (could implement with a timer wheel for proper simulation)
+        resume(())
+    }
+
+    op spawn<T, F: FnOnce() -> T + Send + 'static>(f: F) {
+        // Execute immediately in cooperative mode
+        let result = f();
+        resume(TaskHandle::completed(result))
+    }
+
+    op await_task<T>(handle: TaskHandle<T>) {
+        resume(handle.join())
+    }
+}
+
+/// Async handler that cancels on timeout
+pub deep handler TimeoutAsync for Async {
+    let deadline: Instant;
+    let mut cancelled: bool;
+
+    fn new(timeout: Duration) -> Self {
+        TimeoutAsync {
+            deadline: Instant::now() + timeout,
+            cancelled: false,
+        }
+    }
+
+    fn is_cancelled(self: &Self) -> bool {
+        self.cancelled
+    }
+
+    return(x) {
+        if self.cancelled {
+            Err(TimeoutError)
+        } else {
+            Ok(x)
+        }
+    }
+
+    op yield_() {
+        if Instant::now() >= self.deadline {
+            self.cancelled = true;
+            Err(TimeoutError)
+        } else {
+            __builtin_yield();
+            resume(())
+        }
+    }
+
+    op sleep(duration: Duration) {
+        if Instant::now() + duration >= self.deadline {
+            self.cancelled = true;
+            Err(TimeoutError)
+        } else {
+            __builtin_sleep(duration);
+            resume(())
+        }
+    }
+
+    op spawn<T, F: FnOnce() -> T + Send + 'static>(f: F) {
+        if Instant::now() >= self.deadline {
+            self.cancelled = true;
+            Err(TimeoutError)
+        } else {
+            let handle = __builtin_thread_spawn(f);
+            resume(TaskHandle::pending(handle))
+        }
+    }
+
+    op await_task<T>(handle: TaskHandle<T>) {
+        // This is tricky - we'd need interruptible waits
+        let result = handle.join();
+        if Instant::now() >= self.deadline {
+            self.cancelled = true;
+        }
+        resume(result)
+    }
+}
+
+/// Timeout error
+#[derive(Clone, Copy, Debug)]
+pub struct TimeoutError;
+
+impl core::fmt::Display for TimeoutError {
+    fn fmt(self: &Self, f: &mut core::fmt::Formatter) -> core::fmt::Result / {IO} {
+        f.write_str("operation timed out")
+    }
+}
+
+impl core::ops::Add<Duration> for Instant {
+    type Output = Instant;
+
+    fn add(self: Self, rhs: Duration) -> Self::Output / pure {
+        Instant {
+            nanos: self.nanos + rhs.as_nanos(),
+        }
+    }
+}
+
+impl PartialEq for Instant {
+    fn eq(self: &Self, other: &Self) -> bool / pure {
+        self.nanos == other.nanos
+    }
+}
+
+impl PartialOrd for Instant {
+    fn partial_cmp(self: &Self, other: &Self) -> Option<core::cmp::Ordering> / pure {
+        Some(self.nanos.cmp(&other.nanos))
+    }
+}
+
+impl Ord for Instant {
+    fn cmp(self: &Self, other: &Self) -> core::cmp::Ordering / pure {
+        self.nanos.cmp(&other.nanos)
+    }
+}
+
+impl Eq for Instant {}
+
+/// Runs a computation with sequential async execution
+pub fn run_sequential<T, F>(f: F) -> T / pure
+where
+    F: FnOnce() -> T / {Async},
+{
+    handle f() with SequentialAsync {
+        return(v) { v }
+    }
+}
+
+/// Runs a computation with threaded async execution
+pub fn run_threaded<T, F>(f: F) -> T / pure
+where
+    F: FnOnce() -> T / {Async},
+{
+    handle f() with ThreadedAsync {
+        return(v) { v }
+    }
+}
+
+/// Runs a computation with a thread pool
+pub fn run_pooled<T, F>(pool_size: usize, f: F) -> T / pure
+where
+    F: FnOnce() -> T / {Async},
+{
+    let handler = PooledAsync::new(pool_size);
+    handle f() with handler {
+        return(v) { v }
+    }
+}
+
+/// Runs a computation with bounded concurrency
+pub fn run_bounded<T, F>(max_concurrent: usize, f: F) -> T / pure
+where
+    F: FnOnce() -> T / {Async},
+{
+    let handler = BoundedAsync::new(max_concurrent);
+    handle f() with handler {
+        return(v) { v }
+    }
+}
+
+/// Runs a computation with timing information
+pub fn run_timed<T, F>(f: F) -> (T, Vec<TaskTiming>) / pure
+where
+    F: FnOnce() -> T / {Async},
+{
+    let handler = TimedAsync::new();
+    handle f() with handler {
+        return(v) { handler.into_timings(); (v, handler.timings) }
+    }
+}
+
+/// Runs a computation with a timeout
+pub fn run_with_timeout<T, F>(timeout: Duration, f: F) -> Result<T, TimeoutError> / pure
+where
+    F: FnOnce() -> T / {Async},
+{
+    let handler = TimeoutAsync::new(timeout);
+    handle f() with handler {
+        return(v) {
+            if handler.is_cancelled() {
+                Err(TimeoutError)
+            } else {
+                Ok(v)
+            }
+        }
+    }
+}
+
+/// Sleeps for the specified duration
+pub fn sleep(duration: Duration) / {Async} {
+    perform sleep(duration);
+}
+
+/// Yields control to the scheduler
+pub fn yield_now() / {Async} {
+    perform yield_();
+}
+
+/// Spawns a new task
+pub fn spawn<T, F>(f: F) -> TaskHandle<T> / {Async}
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    perform spawn(f)
+}
+
+/// Awaits a task handle
+pub fn await_task<T>(handle: TaskHandle<T>) -> T / {Async} {
+    perform await_task(handle)
+}
+
+/// Joins multiple task handles
+pub fn join_all<T>(handles: Vec<TaskHandle<T>>) -> Vec<T> / {Async} {
+    handles.into_iter().map(|h| await_task(h)).collect()
+}
+
+/// Races multiple tasks, returning the first to complete
+pub fn race<T>(handles: Vec<TaskHandle<T>>) -> T / {Async} {
+    // Simplified implementation - just check in order
+    loop {
+        for handle in &handles {
+            if handle.is_complete() {
+                // Find and extract this handle
+                // (In practice, this needs better implementation)
+                return handle.join();
+            }
+        }
+        yield_now();
+    }
+}

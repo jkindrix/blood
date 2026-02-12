@@ -1,0 +1,40 @@
+// Test: pipeline of function calls transforming data
+// EXPECT: 14
+// EXPECT: 30
+fn square(x: i32) -> i32 { x * x }
+fn add_one(x: i32) -> i32 { x + 1 }
+fn halve(x: i32) -> i32 { x / 2 }
+fn clamp(x: i32, lo: i32, hi: i32) -> i32 {
+    if x < lo { lo }
+    else if x > hi { hi }
+    else { x }
+}
+
+fn pipeline(x: i32) -> i32 {
+    // square -> add_one -> halve
+    halve(add_one(square(x)))
+}
+
+fn main() -> i32 {
+    // pipeline(5) = halve(add_one(25)) = halve(26) = 13
+    // pipeline(3) = halve(add_one(9)) = halve(10) = 5
+    // pipeline(7) = halve(add_one(49)) = halve(50) = 25
+
+    // Deep pipeline chaining
+    let a: i32 = pipeline(5);
+    let b: i32 = add_one(a); // 14
+    println_int(b);
+
+    // Clamp with pipeline
+    let c: i32 = pipeline(7); // 25
+    let d: i32 = clamp(c, 0, 30); // 25 (within range)
+    let e: i32 = add_one(d); // 26
+    let f: i32 = clamp(e, 0, 30); // 26
+    let g: i32 = square(2); // 4
+    let h: i32 = f + g; // 30
+    println_int(h);
+
+    if b != 14 { return 1; }
+    if h != 30 { return 2; }
+    0
+}

@@ -1,0 +1,841 @@
+// Blood Standard Library - Vec
+//
+// A growable array type.
+
+use crate::mem::{size_of, align_of};
+use crate::ptr::{self, NonNull};
+use crate::alloc::{alloc, dealloc, realloc, Layout};
+
+/// A contiguous growable array type
+///
+/// Vec<T> is the most commonly used collection in Blood. It stores
+/// elements contiguously and grows automatically when needed.
+pub struct Vec<T> {
+    ptr: NonNull<T>,
+    len: usize,
+    cap: usize,
+}
+
+impl<T> Vec<T> {
+    /// Creates a new, empty Vec
+    pub const fn new() -> Self / pure {
+        Vec {
+            ptr: NonNull::dangling(),
+            len: 0,
+            cap: 0,
+        }
+    }
+
+    /// Creates a Vec with the specified capacity
+    pub fn with_capacity(capacity: usize) -> Self / pure {
+        if capacity == 0 {
+            return Vec::new();
+        }
+
+        let layout = Layout::array::<T>(capacity).expect("capacity overflow");
+        let ptr = unsafe { alloc(layout) as *mut T };
+        let ptr = NonNull::new(ptr).expect("allocation failed");
+
+        Vec {
+            ptr,
+            len: 0,
+            cap: capacity,
+        }
+    }
+
+    /// Returns the number of elements
+    pub fn len(self: &Self) -> usize / pure {
+        self.len
+    }
+
+    /// Returns true if the Vec is empty
+    pub fn is_empty(self: &Self) -> bool / pure {
+        self.len == 0
+    }
+
+    /// Returns the capacity
+    pub fn capacity(self: &Self) -> usize / pure {
+        self.cap
+    }
+
+    /// Returns a raw pointer to the buffer
+    pub fn as_ptr(self: &Self) -> *const T / pure {
+        self.ptr.as_ptr()
+    }
+
+    /// Returns a mutable raw pointer to the buffer
+    pub fn as_mut_ptr(self: &mut Self) -> *mut T / pure {
+        self.ptr.as_ptr()
+    }
+
+    /// Returns a slice of the entire Vec
+    pub fn as_slice(self: &Self) -> &[T] / pure {
+        unsafe { slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+    }
+
+    /// Returns a mutable slice of the entire Vec
+    pub fn as_mut_slice(self: &mut Self) -> &mut [T] / pure {
+        unsafe { slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
+    }
+
+    /// Reserves capacity for at least `additional` more elements
+    pub fn reserve(self: &mut Self, additional: usize) / pure {
+        let required = self.len.checked_add(additional).expect("capacity overflow");
+        if required <= self.cap {
+            return;
+        }
+
+        let new_cap = self.cap.max(1).checked_mul(2).expect("capacity overflow");
+        let new_cap = new_cap.max(required);
+
+        self.grow_to(new_cap);
+    }
+
+    /// Reserves exact capacity for `additional` more elements
+    pub fn reserve_exact(self: &mut Self, additional: usize) / pure {
+        let required = self.len.checked_add(additional).expect("capacity overflow");
+        if required <= self.cap {
+            return;
+        }
+
+        self.grow_to(required);
+    }
+
+    /// Shrinks capacity to match length
+    pub fn shrink_to_fit(self: &mut Self) / pure {
+        if self.len == self.cap {
+            return;
+        }
+
+        if self.len == 0 {
+            self.deallocate();
+            self.ptr = NonNull::dangling();
+            self.cap = 0;
+            return;
+        }
+
+        let new_layout = Layout::array::<T>(self.len).expect("layout error");
+        let old_layout = Layout::array::<T>(self.cap).expect("layout error");
+
+        let new_ptr = unsafe {
+            realloc(self.ptr.as_ptr() as *mut u8, old_layout, new_layout.size()) as *mut T
+        };
+
+        self.ptr = NonNull::new(new_ptr).expect("reallocation failed");
+        self.cap = self.len;
+    }
+
+    /// Shrinks capacity to the given minimum
+    pub fn shrink_to(self: &mut Self, min_capacity: usize) / pure {
+        let new_cap = self.len.max(min_capacity);
+        if new_cap >= self.cap {
+            return;
+        }
+
+        if new_cap == 0 {
+            self.deallocate();
+            self.ptr = NonNull::dangling();
+            self.cap = 0;
+            return;
+        }
+
+        let new_layout = Layout::array::<T>(new_cap).expect("layout error");
+        let old_layout = Layout::array::<T>(self.cap).expect("layout error");
+
+        let new_ptr = unsafe {
+            realloc(self.ptr.as_ptr() as *mut u8, old_layout, new_layout.size()) as *mut T
+        };
+
+        self.ptr = NonNull::new(new_ptr).expect("reallocation failed");
+        self.cap = new_cap;
+    }
+
+    /// Appends an element to the back
+    pub fn push(self: &mut Self, value: T) / pure {
+        if self.len == self.cap {
+            self.grow();
+        }
+
+        unsafe {
+            ptr::write(self.ptr.as_ptr().add(self.len), value);
+        }
+        self.len += 1;
+    }
+
+    /// Removes and returns the last element
+    pub fn pop(self: &mut Self) -> Option<T> / pure {
+        if self.len == 0 {
+            None
+        } else {
+            self.len -= 1;
+            unsafe { Some(ptr::read(self.ptr.as_ptr().add(self.len))) }
+        }
+    }
+
+    /// Inserts an element at position index
+    pub fn insert(self: &mut Self, index: usize, element: T) / pure {
+        assert!(index <= self.len, "insertion index out of bounds");
+
+        if self.len == self.cap {
+            self.grow();
+        }
+
+        unsafe {
+            let p = self.ptr.as_ptr().add(index);
+            // Shift elements to the right
+            ptr::copy(p, p.add(1), self.len - index);
+            ptr::write(p, element);
+        }
+        self.len += 1;
+    }
+
+    /// Removes and returns the element at position index
+    pub fn remove(self: &mut Self, index: usize) -> T / pure {
+        assert!(index < self.len, "removal index out of bounds");
+
+        unsafe {
+            let p = self.ptr.as_ptr().add(index);
+            let value = ptr::read(p);
+            // Shift elements to the left
+            ptr::copy(p.add(1), p, self.len - index - 1);
+            self.len -= 1;
+            value
+        }
+    }
+
+    /// Removes an element, replacing it with the last element
+    ///
+    /// This is O(1) but does not preserve order.
+    pub fn swap_remove(self: &mut Self, index: usize) -> T / pure {
+        assert!(index < self.len, "swap_remove index out of bounds");
+
+        unsafe {
+            let last = self.len - 1;
+            let p = self.ptr.as_ptr();
+            ptr::swap(p.add(index), p.add(last));
+            self.len -= 1;
+            ptr::read(p.add(self.len))
+        }
+    }
+
+    /// Clears the vector, removing all elements
+    pub fn clear(self: &mut Self) / pure {
+        // Drop all elements
+        for i in 0..self.len {
+            unsafe {
+                ptr::drop_in_place(self.ptr.as_ptr().add(i));
+            }
+        }
+        self.len = 0;
+    }
+
+    /// Truncates the vector to the given length
+    pub fn truncate(self: &mut Self, len: usize) / pure {
+        if len >= self.len {
+            return;
+        }
+
+        // Drop truncated elements
+        for i in len..self.len {
+            unsafe {
+                ptr::drop_in_place(self.ptr.as_ptr().add(i));
+            }
+        }
+        self.len = len;
+    }
+
+    /// Appends all elements from a slice
+    pub fn extend_from_slice(self: &mut Self, other: &[T]) / pure
+    where
+        T: Clone,
+    {
+        self.reserve(other.len());
+        for item in other {
+            self.push(item.clone());
+        }
+    }
+
+    /// Appends all elements from another Vec
+    pub fn append(self: &mut Self, other: &mut Vec<T>) / pure {
+        self.reserve(other.len());
+        unsafe {
+            ptr::copy_nonoverlapping(
+                other.ptr.as_ptr(),
+                self.ptr.as_ptr().add(self.len),
+                other.len,
+            );
+        }
+        self.len += other.len;
+        other.len = 0;
+    }
+
+    /// Resizes the Vec to the given length
+    pub fn resize(self: &mut Self, new_len: usize, value: T) / pure
+    where
+        T: Clone,
+    {
+        if new_len > self.len {
+            self.reserve(new_len - self.len);
+            for _ in self.len..new_len {
+                self.push(value.clone());
+            }
+        } else {
+            self.truncate(new_len);
+        }
+    }
+
+    /// Resizes the Vec using a closure to generate values
+    pub fn resize_with<F: FnMut() -> T>(self: &mut Self, new_len: usize, f: F) / pure {
+        if new_len > self.len {
+            self.reserve(new_len - self.len);
+            for _ in self.len..new_len {
+                self.push(f());
+            }
+        } else {
+            self.truncate(new_len);
+        }
+    }
+
+    /// Returns a reference to an element, or None if out of bounds
+    pub fn get(self: &Self, index: usize) -> Option<&T> / pure {
+        if index < self.len {
+            unsafe { Some(&*self.ptr.as_ptr().add(index)) }
+        } else {
+            None
+        }
+    }
+
+    /// Returns a mutable reference to an element, or None if out of bounds
+    pub fn get_mut(self: &mut Self, index: usize) -> Option<&mut T> / pure {
+        if index < self.len {
+            unsafe { Some(&mut *self.ptr.as_ptr().add(index)) }
+        } else {
+            None
+        }
+    }
+
+    /// Returns a reference to the first element
+    pub fn first(self: &Self) -> Option<&T> / pure {
+        self.get(0)
+    }
+
+    /// Returns a mutable reference to the first element
+    pub fn first_mut(self: &mut Self) -> Option<&mut T> / pure {
+        self.get_mut(0)
+    }
+
+    /// Returns a reference to the last element
+    pub fn last(self: &Self) -> Option<&T> / pure {
+        if self.len == 0 {
+            None
+        } else {
+            self.get(self.len - 1)
+        }
+    }
+
+    /// Returns a mutable reference to the last element
+    pub fn last_mut(self: &mut Self) -> Option<&mut T> / pure {
+        if self.len == 0 {
+            None
+        } else {
+            let idx = self.len - 1;
+            self.get_mut(idx)
+        }
+    }
+
+    /// Returns true if the Vec contains the given value
+    pub fn contains(self: &Self, value: &T) -> bool / pure
+    where
+        T: PartialEq,
+    {
+        for item in self.iter() {
+            if item == value {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Reverses the order of elements in place
+    pub fn reverse(self: &mut Self) / pure {
+        let mut i = 0;
+        let mut j = self.len.saturating_sub(1);
+        while i < j {
+            unsafe {
+                let p = self.ptr.as_ptr();
+                ptr::swap(p.add(i), p.add(j));
+            }
+            i += 1;
+            j -= 1;
+        }
+    }
+
+    /// Sorts the Vec
+    pub fn sort(self: &mut Self) / pure
+    where
+        T: Ord,
+    {
+        self.sort_by(|a, b| a.cmp(b));
+    }
+
+    /// Sorts the Vec with a comparison function
+    pub fn sort_by<F: FnMut(&T, &T) -> Ordering>(self: &mut Self, compare: F) / pure {
+        // Use quicksort for now
+        quicksort(self.as_mut_slice(), compare);
+    }
+
+    /// Sorts the Vec by a key function
+    pub fn sort_by_key<K: Ord, F: FnMut(&T) -> K>(self: &mut Self, f: F) / pure {
+        self.sort_by(|a, b| f(a).cmp(&f(b)));
+    }
+
+    /// Binary search for a value
+    pub fn binary_search(self: &Self, value: &T) -> Result<usize, usize> / pure
+    where
+        T: Ord,
+    {
+        self.binary_search_by(|probe| probe.cmp(value))
+    }
+
+    /// Binary search with a comparison function
+    pub fn binary_search_by<F: FnMut(&T) -> Ordering>(self: &Self, f: F) -> Result<usize, usize> / pure {
+        let mut left = 0;
+        let mut right = self.len;
+
+        while left < right {
+            let mid = left + (right - left) / 2;
+            match f(unsafe { &*self.ptr.as_ptr().add(mid) }) {
+                Ordering::Less => left = mid + 1,
+                Ordering::Greater => right = mid,
+                Ordering::Equal => return Ok(mid),
+            }
+        }
+
+        Err(left)
+    }
+
+    /// Deduplicates consecutive equal elements
+    pub fn dedup(self: &mut Self) / pure
+    where
+        T: PartialEq,
+    {
+        self.dedup_by(|a, b| a == b);
+    }
+
+    /// Deduplicates consecutive elements by a predicate
+    pub fn dedup_by<F: FnMut(&T, &T) -> bool>(self: &mut Self, same_bucket: F) / pure {
+        if self.len <= 1 {
+            return;
+        }
+
+        let mut write = 1;
+        for read in 1..self.len {
+            unsafe {
+                let p = self.ptr.as_ptr();
+                if !same_bucket(&*p.add(write - 1), &*p.add(read)) {
+                    if write != read {
+                        ptr::copy_nonoverlapping(p.add(read), p.add(write), 1);
+                    }
+                    write += 1;
+                } else {
+                    ptr::drop_in_place(p.add(read));
+                }
+            }
+        }
+        self.len = write;
+    }
+
+    /// Retains only elements that satisfy the predicate
+    pub fn retain<F: FnMut(&T) -> bool>(self: &mut Self, f: F) / pure {
+        let mut write = 0;
+        for read in 0..self.len {
+            unsafe {
+                let p = self.ptr.as_ptr();
+                if f(&*p.add(read)) {
+                    if write != read {
+                        ptr::copy_nonoverlapping(p.add(read), p.add(write), 1);
+                    }
+                    write += 1;
+                } else {
+                    ptr::drop_in_place(p.add(read));
+                }
+            }
+        }
+        self.len = write;
+    }
+
+    /// Splits the Vec at the given index
+    pub fn split_off(self: &mut Self, at: usize) -> Vec<T> / pure {
+        assert!(at <= self.len, "split index out of bounds");
+
+        let other_len = self.len - at;
+        let mut other = Vec::with_capacity(other_len);
+
+        unsafe {
+            ptr::copy_nonoverlapping(
+                self.ptr.as_ptr().add(at),
+                other.ptr.as_ptr(),
+                other_len,
+            );
+        }
+
+        self.len = at;
+        other.len = other_len;
+        other
+    }
+
+    /// Creates an iterator over references
+    pub fn iter(self: &Self) -> Iter<T> / pure {
+        Iter {
+            ptr: self.ptr.as_ptr(),
+            end: unsafe { self.ptr.as_ptr().add(self.len) },
+            _marker: PhantomData,
+        }
+    }
+
+    /// Creates an iterator over mutable references
+    pub fn iter_mut(self: &mut Self) -> IterMut<T> / pure {
+        IterMut {
+            ptr: self.ptr.as_ptr(),
+            end: unsafe { self.ptr.as_ptr().add(self.len) },
+            _marker: PhantomData,
+        }
+    }
+
+    // Private helper methods
+
+    fn grow(self: &mut Self) / pure {
+        let new_cap = if self.cap == 0 { 4 } else { self.cap * 2 };
+        self.grow_to(new_cap);
+    }
+
+    fn grow_to(self: &mut Self, new_cap: usize) / pure {
+        assert!(new_cap > self.cap, "grow_to requires larger capacity");
+
+        let new_layout = Layout::array::<T>(new_cap).expect("layout error");
+
+        let new_ptr = if self.cap == 0 {
+            unsafe { alloc(new_layout) as *mut T }
+        } else {
+            let old_layout = Layout::array::<T>(self.cap).expect("layout error");
+            unsafe {
+                realloc(self.ptr.as_ptr() as *mut u8, old_layout, new_layout.size()) as *mut T
+            }
+        };
+
+        self.ptr = NonNull::new(new_ptr).expect("allocation failed");
+        self.cap = new_cap;
+    }
+
+    fn deallocate(self: &mut Self) / pure {
+        if self.cap > 0 {
+            let layout = Layout::array::<T>(self.cap).expect("layout error");
+            unsafe {
+                dealloc(self.ptr.as_ptr() as *mut u8, layout);
+            }
+        }
+    }
+}
+
+impl<T> Drop for Vec<T> {
+    fn drop(self: &mut Self) / pure {
+        self.clear();
+        self.deallocate();
+    }
+}
+
+impl<T: Clone> Clone for Vec<T> {
+    fn clone(self: &Self) -> Self / pure {
+        let mut new_vec = Vec::with_capacity(self.len);
+        for item in self.iter() {
+            new_vec.push(item.clone());
+        }
+        new_vec
+    }
+}
+
+impl<T: PartialEq> PartialEq for Vec<T> {
+    fn eq(self: &Self, other: &Self) -> bool / pure {
+        if self.len != other.len {
+            return false;
+        }
+        for i in 0..self.len {
+            if self[i] != other[i] {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+impl<T: Eq> Eq for Vec<T> {}
+
+impl<T: Hash> Hash for Vec<T> {
+    fn hash<H: Hasher>(self: &Self, state: &mut H) / pure {
+        state.write_length_prefix(self.len);
+        for item in self.iter() {
+            item.hash(state);
+        }
+    }
+}
+
+impl<T: Debug> Debug for Vec<T> {
+    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
+        f.debug_list().entries(self.iter()).finish()
+    }
+}
+
+impl<T> Default for Vec<T> {
+    fn default() -> Self / pure {
+        Vec::new()
+    }
+}
+
+impl<T> Index<usize> for Vec<T> {
+    type Output = T;
+
+    fn index(self: &Self, index: usize) -> &T / pure {
+        assert!(index < self.len, "index out of bounds");
+        unsafe { &*self.ptr.as_ptr().add(index) }
+    }
+}
+
+impl<T> IndexMut<usize> for Vec<T> {
+    fn index_mut(self: &mut Self, index: usize) -> &mut T / pure {
+        assert!(index < self.len, "index out of bounds");
+        unsafe { &mut *self.ptr.as_ptr().add(index) }
+    }
+}
+
+impl<T> FromIterator<T> for Vec<T> {
+    fn from_iter<I: Iterator<Item = T>>(iter: I) -> Self / pure {
+        let mut vec = Vec::new();
+        for item in iter {
+            vec.push(item);
+        }
+        vec
+    }
+}
+
+impl<T> Extend<T> for Vec<T> {
+    fn extend<I: Iterator<Item = T>>(self: &mut Self, iter: I) / pure {
+        for item in iter {
+            self.push(item);
+        }
+    }
+}
+
+impl<T> IntoIterator for Vec<T> {
+    type Item = T;
+    type IntoIter = IntoIter<T>;
+
+    fn into_iter(self: Self) -> IntoIter<T> / pure {
+        let iter = IntoIter {
+            ptr: self.ptr.as_ptr(),
+            end: unsafe { self.ptr.as_ptr().add(self.len) },
+            cap: self.cap,
+            _marker: PhantomData,
+        };
+        // Don't run Vec's destructor
+        mem::forget(self);
+        iter
+    }
+}
+
+impl<'a, T> IntoIterator for &'a Vec<T> {
+    type Item = &'a T;
+    type IntoIter = Iter<'a, T>;
+
+    fn into_iter(self: Self) -> Iter<'a, T> / pure {
+        self.iter()
+    }
+}
+
+impl<'a, T> IntoIterator for &'a mut Vec<T> {
+    type Item = &'a mut T;
+    type IntoIter = IterMut<'a, T>;
+
+    fn into_iter(self: Self) -> IterMut<'a, T> / pure {
+        self.iter_mut()
+    }
+}
+
+/// Iterator over references to Vec elements
+pub struct Iter<'a, T> {
+    ptr: *const T,
+    end: *const T,
+    _marker: PhantomData<&'a T>,
+}
+
+impl<'a, T> Iterator for Iter<'a, T> {
+    type Item = &'a T;
+
+    fn next(self: &mut Self) -> Option<&'a T> / pure {
+        if self.ptr == self.end {
+            None
+        } else {
+            let item = unsafe { &*self.ptr };
+            self.ptr = unsafe { self.ptr.add(1) };
+            Some(item)
+        }
+    }
+
+    fn size_hint(self: &Self) -> (usize, Option<usize>) / pure {
+        let len = unsafe { self.end.offset_from(self.ptr) as usize };
+        (len, Some(len))
+    }
+}
+
+impl<'a, T> DoubleEndedIterator for Iter<'a, T> {
+    fn next_back(self: &mut Self) -> Option<&'a T> / pure {
+        if self.ptr == self.end {
+            None
+        } else {
+            self.end = unsafe { self.end.sub(1) };
+            Some(unsafe { &*self.end })
+        }
+    }
+}
+
+impl<'a, T> ExactSizeIterator for Iter<'a, T> {}
+
+/// Iterator over mutable references to Vec elements
+pub struct IterMut<'a, T> {
+    ptr: *mut T,
+    end: *mut T,
+    _marker: PhantomData<&'a mut T>,
+}
+
+impl<'a, T> Iterator for IterMut<'a, T> {
+    type Item = &'a mut T;
+
+    fn next(self: &mut Self) -> Option<&'a mut T> / pure {
+        if self.ptr == self.end {
+            None
+        } else {
+            let item = unsafe { &mut *self.ptr };
+            self.ptr = unsafe { self.ptr.add(1) };
+            Some(item)
+        }
+    }
+
+    fn size_hint(self: &Self) -> (usize, Option<usize>) / pure {
+        let len = unsafe { self.end.offset_from(self.ptr) as usize };
+        (len, Some(len))
+    }
+}
+
+impl<'a, T> DoubleEndedIterator for IterMut<'a, T> {
+    fn next_back(self: &mut Self) -> Option<&'a mut T> / pure {
+        if self.ptr == self.end {
+            None
+        } else {
+            self.end = unsafe { self.end.sub(1) };
+            Some(unsafe { &mut *self.end })
+        }
+    }
+}
+
+impl<'a, T> ExactSizeIterator for IterMut<'a, T> {}
+
+/// Owning iterator over Vec elements
+pub struct IntoIter<T> {
+    ptr: *mut T,
+    end: *mut T,
+    cap: usize,
+    _marker: PhantomData<T>,
+}
+
+impl<T> Iterator for IntoIter<T> {
+    type Item = T;
+
+    fn next(self: &mut Self) -> Option<T> / pure {
+        if self.ptr == self.end {
+            None
+        } else {
+            let item = unsafe { ptr::read(self.ptr) };
+            self.ptr = unsafe { self.ptr.add(1) };
+            Some(item)
+        }
+    }
+
+    fn size_hint(self: &Self) -> (usize, Option<usize>) / pure {
+        let len = unsafe { self.end.offset_from(self.ptr) as usize };
+        (len, Some(len))
+    }
+}
+
+impl<T> DoubleEndedIterator for IntoIter<T> {
+    fn next_back(self: &mut Self) -> Option<T> / pure {
+        if self.ptr == self.end {
+            None
+        } else {
+            self.end = unsafe { self.end.sub(1) };
+            Some(unsafe { ptr::read(self.end) })
+        }
+    }
+}
+
+impl<T> ExactSizeIterator for IntoIter<T> {}
+
+impl<T> Drop for IntoIter<T> {
+    fn drop(self: &mut Self) / pure {
+        // Drop remaining elements
+        while let Some(_) = self.next() {}
+
+        // Deallocate buffer
+        if self.cap > 0 {
+            let layout = Layout::array::<T>(self.cap).expect("layout error");
+            unsafe {
+                // Calculate original pointer (may have been advanced)
+                let orig_ptr = self.ptr;
+                dealloc(orig_ptr as *mut u8, layout);
+            }
+        }
+    }
+}
+
+// Quicksort implementation
+fn quicksort<T, F: FnMut(&T, &T) -> Ordering>(slice: &mut [T], compare: &mut F) / pure {
+    if slice.len() <= 1 {
+        return;
+    }
+
+    let pivot = partition(slice, compare);
+    let (left, right) = slice.split_at_mut(pivot);
+    quicksort(left, compare);
+    quicksort(&mut right[1..], compare);
+}
+
+fn partition<T, F: FnMut(&T, &T) -> Ordering>(slice: &mut [T], compare: &mut F) -> usize / pure {
+    let len = slice.len();
+    let pivot_idx = len / 2;
+    slice.swap(pivot_idx, len - 1);
+
+    let mut i = 0;
+    for j in 0..len - 1 {
+        if compare(&slice[j], &slice[len - 1]) != Ordering::Greater {
+            slice.swap(i, j);
+            i += 1;
+        }
+    }
+
+    slice.swap(i, len - 1);
+    i
+}
+
+/// Creates a Vec from an array literal
+#[macro]
+pub macro vec {
+    () => { Vec::new() };
+    ($elem:expr; $n:expr) => {{
+        let mut v = Vec::with_capacity($n);
+        v.resize($n, $elem);
+        v
+    }};
+    ($($x:expr),+ $(,)?) => {{
+        let mut v = Vec::new();
+        $(v.push($x);)+
+        v
+    }};
+}

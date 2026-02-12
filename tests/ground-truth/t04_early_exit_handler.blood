@@ -1,0 +1,37 @@
+// Test: handler that does NOT resume (early exit / abort pattern)
+// EXPECT: 0
+effect Error<E> {
+    op raise(err: E) -> ();
+}
+
+deep handler TryError<E> for Error<E> {
+    let mut error_value: E
+
+    return(x) { x }
+
+    op raise(err) {
+        error_value = err;
+        ()
+    }
+}
+
+fn safe_divide(a: i32, b: i32) -> i32 / {Error<i32>} {
+    if b == 0 {
+        perform Error.raise(1);
+        0
+    } else {
+        a / b
+    }
+}
+
+fn main() -> i32 {
+    // Division by zero triggers the error handler which does not resume
+    let result: i32 = with TryError { error_value: 0 } handle {
+        safe_divide(10, 0)
+    };
+    println_int(result);
+
+    // The handler should return () which gets mapped; depending on type behavior
+    // the result may be 0 since raise doesn't resume
+    0
+}

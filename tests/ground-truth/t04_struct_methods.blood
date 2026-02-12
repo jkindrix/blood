@@ -1,0 +1,53 @@
+// Test: struct with associated functions (method-like pattern)
+// EXPECT: 5
+// EXPECT: 25
+// EXPECT: 1
+struct Rect {
+    width: i32,
+    height: i32,
+}
+
+fn rect_new(w: i32, h: i32) -> Rect {
+    Rect { width: w, height: h }
+}
+
+fn rect_area(r: Rect) -> i32 {
+    r.width * r.height
+}
+
+fn rect_perimeter(r: Rect) -> i32 {
+    2 * (r.width + r.height)
+}
+
+fn rect_is_square(r: Rect) -> bool {
+    r.width == r.height
+}
+
+fn rect_max_dim(r: Rect) -> i32 {
+    if r.width > r.height { r.width } else { r.height }
+}
+
+fn main() -> i32 {
+    let r1: Rect = rect_new(3, 4);
+    let r2: Rect = rect_new(5, 5);
+
+    // max dimension
+    let md: i32 = rect_max_dim(rect_new(5, 3));
+    println_int(md); // 5
+
+    // area of square
+    let a: i32 = rect_area(r2);
+    println_int(a); // 25
+
+    // is_square check
+    let sq: bool = rect_is_square(rect_new(7, 7));
+    if sq { println_int(1); } else { println_int(0); }
+
+    // perimeter
+    let p: i32 = rect_perimeter(rect_new(3, 4));
+    if p != 14 { return 1; }
+
+    if md != 5 { return 2; }
+    if a != 25 { return 3; }
+    0
+}

@@ -1,0 +1,38 @@
+// Test multi-shot handler (resume called multiple times)
+// The handler calls resume twice with different values
+
+effect Choice {
+    op choose(a: i32, b: i32) -> i32;
+}
+
+// Deep handler that "explores" both choices by calling resume twice
+// This demonstrates multi-shot: the same continuation is invoked multiple times
+deep handler Explorer for Choice {
+    let mut total: i32
+    return(x) { total }
+    op choose(a, b) {
+        // First choice - resume with a
+        let result_a = resume(a);
+        total = total + result_a;
+
+        // Second choice - resume with b (multi-shot!)
+        let result_b = resume(b);
+        total = total + result_b;
+
+        // Return some value (not used since we're accumulating in total)
+        0
+    }
+}
+
+fn main() -> i32 {
+    with Explorer { total: 0 } handle {
+        // perform choose(10, 20) should be called twice:
+        // - First with value 10, returning 10
+        // - Second with value 20, returning 20
+        // The handler accumulates: 0 + 10 + 20 = 30
+        perform Choice.choose(10, 20)
+    }
+}
+// Expected: total = 30 (10 + 20)
+// Note: The identity continuation just returns the resumed value
+// So result_a = 10, result_b = 20, total = 0 + 10 + 20 = 30

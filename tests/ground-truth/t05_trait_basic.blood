@@ -1,0 +1,42 @@
+// Test: basic trait definition and implementation
+// EXPECT: 50
+// EXPECT: 27
+struct Rect {
+    width: i32,
+    height: i32,
+}
+
+struct Circle {
+    radius: i32,
+}
+
+trait Area {
+    fn area(self) -> i32;
+}
+
+impl Area for Rect {
+    fn area(self) -> i32 {
+        self.width * self.height
+    }
+}
+
+impl Area for Circle {
+    fn area(self) -> i32 {
+        // Approximate: 3 * r * r (integer approximation of pi*r^2)
+        3 * self.radius * self.radius
+    }
+}
+
+fn main() -> i32 {
+    let r: Rect = Rect { width: 5, height: 10 };
+    let a: i32 = r.area();
+    println_int(a); // 50
+    if a != 50 { return 1; }
+
+    let c: Circle = Circle { radius: 3 };
+    let b: i32 = c.area();
+    println_int(b); // 27 (3*9)
+    if b != 27 { return 2; }
+
+    0
+}

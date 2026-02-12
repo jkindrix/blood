@@ -1,0 +1,63 @@
+// Test that Option::unwrap() works correctly for struct payloads
+// whose size > 4 bytes but alignment == 4.
+//
+// BUG-006: The runtime used `if payload_size > 4 { 8 } else { 4 }`
+// to compute the payload offset within Option<T>. This is wrong for
+// structs like { i32, bool } which have size 8 (padded) but alignment 4,
+// placing the payload at offset 4 in the LLVM struct { i32, { i32, i1 } }.
+// The old heuristic reads from offset 8 → garbage values.
+
+pub struct DefId {
+    pub index: u32,
+}
+
+pub struct LookupResult {
+    pub def_id: DefId,
+    pub is_module: bool,
+}
+
+fn make_lookup(val: u32) -> Option<LookupResult> {
+    if val == 0 {
+        None
+    } else {
+        Some(LookupResult {
+            def_id: DefId { index: val },
+            is_module: true,
+        })
+    }
+}
+
+fn check_value(v: i32, expected: i32) -> i32 {
+    if v == expected {
+        0
+    } else {
+        1
+    }
+}
+
+pub fn main() -> i32 {
+    // Test 1: match extraction (uses Downcast+Field codegen path - always worked)
+    let opt1: Option<LookupResult> = make_lookup(5);
+    let match_val: i32 = match opt1 {
+        Some(result) => result.def_id.index as i32,
+        None => -1,
+    };
+    let r1: i32 = check_value(match_val, 5);
+
+    // Test 2: .unwrap() extraction (uses runtime option_unwrap - was broken)
+    let opt2: Option<LookupResult> = make_lookup(7);
+    let unwrapped: LookupResult = opt2.unwrap();
+    let r2: i32 = check_value(unwrapped.def_id.index as i32, 7);
+
+    // Test 3: .unwrap() with different value to confirm not reading stale data
+    let opt3: Option<LookupResult> = make_lookup(42);
+    let unwrapped3: LookupResult = opt3.unwrap();
+    let r3: i32 = check_value(unwrapped3.def_id.index as i32, 42);
+
+    // Test 4: None case still works
+    let opt4: Option<LookupResult> = make_lookup(0);
+    let r4: i32 = if opt4.is_none() { 0 } else { 1 };
+
+    // Return 0 if all tests pass
+    r1 + r2 + r3 + r4
+}

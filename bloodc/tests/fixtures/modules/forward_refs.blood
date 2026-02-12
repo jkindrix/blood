@@ -1,0 +1,38 @@
+// Test forward references within the same file
+// Struct Foo references Bar which is defined later
+
+pub struct Foo {
+    pub bar: Bar,
+    pub count: i32,
+}
+
+pub struct Bar {
+    pub value: i32,
+}
+
+// Function uses types defined below
+pub fn make_baz(x: i32) -> Baz {
+    Baz { foo: Foo { bar: Bar { value: x }, count: 1 } }
+}
+
+pub struct Baz {
+    pub foo: Foo,
+}
+
+// Enum referencing struct defined above and below
+pub enum Container {
+    Empty,
+    WithFoo(Foo),
+    WithQux(Qux),
+}
+
+pub struct Qux {
+    pub name: i32,
+}
+
+fn main() {
+    let bar = Bar { value: 42 };
+    let foo = Foo { bar, count: 1 };
+    let baz = make_baz(100);
+    let container = Container::WithFoo(foo);
+}

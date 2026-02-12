@@ -1,0 +1,67 @@
+// BUG-006 regression: match on enum references
+// Verifies discriminant is read through the reference pointer,
+// not from the pointer value itself.
+
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+fn check_ref(c: &Color) -> i32 {
+    match c {
+        Color::Red => 10,
+        Color::Green => 20,
+        Color::Blue => 30,
+    }
+}
+
+enum Shape {
+    Circle(f64),
+    Rect(f64, f64),
+    Point,
+}
+
+fn shape_id(s: &Shape) -> i32 {
+    match s {
+        Shape::Circle(_) => 1,
+        Shape::Rect(_, _) => 2,
+        Shape::Point => 3,
+    }
+}
+
+impl Color {
+    pub fn code(self: &Color) -> i32 {
+        match self {
+            Color::Red => 100,
+            Color::Green => 200,
+            Color::Blue => 300,
+        }
+    }
+}
+
+fn main() -> i32 {
+    let r = Color::Red;
+    let g = Color::Green;
+    let b = Color::Blue;
+
+    // Tag-only enum by reference
+    if check_ref(&r) != 10 { return 1; }
+    if check_ref(&g) != 20 { return 2; }
+    if check_ref(&b) != 30 { return 3; }
+
+    // Payload enum by reference
+    let circ = Shape::Circle(3.14);
+    let rect = Shape::Rect(2.0, 3.0);
+    let pt = Shape::Point;
+    if shape_id(&circ) != 1 { return 4; }
+    if shape_id(&rect) != 2 { return 5; }
+    if shape_id(&pt) != 3 { return 6; }
+
+    // &self method dispatch
+    if r.code() != 100 { return 7; }
+    if g.code() != 200 { return 8; }
+    if b.code() != 300 { return 9; }
+
+    0
+}

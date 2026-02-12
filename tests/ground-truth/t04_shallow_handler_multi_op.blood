@@ -1,0 +1,45 @@
+// Test: shallow handler with multiple operations exercised
+// EXPECT: 10
+// EXPECT: 99
+effect Console {
+    op read_val() -> i32;
+    op write_val(v: i32) -> ();
+}
+
+shallow handler MockConsole for Console {
+    let read_result: i32
+
+    return(x) { x }
+
+    op read_val() {
+        resume(read_result)
+    }
+
+    op write_val(v) {
+        resume(())
+    }
+}
+
+fn use_console() -> i32 / {Console} {
+    let v: i32 = perform Console.read_val();
+    perform Console.write_val(v);
+    v
+}
+
+fn main() -> i32 {
+    // Shallow handler with read_result = 10
+    let r1: i32 = with MockConsole { read_result: 10 } handle {
+        use_console()
+    };
+    println_int(r1); // 10
+    if r1 != 10 { return 1; }
+
+    // Shallow handler with different value
+    let r2: i32 = with MockConsole { read_result: 99 } handle {
+        use_console()
+    };
+    println_int(r2); // 99
+    if r2 != 99 { return 2; }
+
+    0
+}

@@ -1,0 +1,19 @@
+// Test: never type (!) used in diverging functions
+// EXPECT: 42
+fn diverge() -> ! {
+    panic!("this function never returns");
+}
+
+fn main() -> i32 {
+    // The never type can be used in if/else where one branch diverges
+    let x: i32 = 42;
+    let result: i32 = if x > 0 {
+        x
+    } else {
+        diverge()
+    };
+    println_int(result); // 42
+    if result != 42 { return 1; }
+
+    0
+}

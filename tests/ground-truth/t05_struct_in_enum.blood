@@ -1,0 +1,33 @@
+// Test: struct inside enum variant
+// EXPECT: 7
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+enum Shape {
+    Circle(i32),
+    Rect(Point, Point),
+}
+
+fn area(s: Shape) -> i32 {
+    match s {
+        Shape::Circle(r) => r * r * 3,
+        Shape::Rect(tl, br) => {
+            let w: i32 = br.x - tl.x;
+            let h: i32 = br.y - tl.y;
+            w * h
+        },
+    }
+}
+
+fn main() -> i32 {
+    let tl: Point = Point { x: 1, y: 1 };
+    let br: Point = Point { x: 8, y: 2 };
+    let rect: Shape = Shape::Rect(tl, br);
+    let a: i32 = area(rect);
+    println_int(a);
+
+    if a != 7 { return 1; }
+    0
+}

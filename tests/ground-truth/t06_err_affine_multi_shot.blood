@@ -1,0 +1,14 @@
+// COMPILE_FAIL: E0310
+// Test: affine value captured in deep (multi-shot) handler should fail
+effect Choice {
+    op choose() -> bool;
+}
+
+fn main() -> i32 {
+    let x: @affine i32 = 42;
+    with Choice {
+        op choose() -> bool { resume(true) }
+    } do {
+        if perform Choice.choose() { x } else { x }
+    }
+}
