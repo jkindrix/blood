@@ -1380,8 +1380,52 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                             tys.get(*idx as usize).cloned().unwrap_or(current_ty)
                         }
                         TypeKind::Adt { def_id, args } => {
-                            // Handle built-in types first
-                            if Some(*def_id) == self.vec_def_id {
+                            // When in a variant context (after Downcast), Option/Result
+                            // field indices refer to the variant's fields, not the ADT
+                            // struct layout. E.g., after Downcast(1) for Option<&T>,
+                            // Field(0) is the Some payload (&T), not the discriminant.
+                            if variant_ctx.is_some() && (Some(*def_id) == self.option_def_id || Some(*def_id) == self.result_def_id) {
+                                let field_ty = if Some(*def_id) == self.option_def_id {
+                                    let (_, v_idx) = variant_ctx.unwrap();
+                                    match v_idx {
+                                        // None variant has no fields
+                                        0 => None,
+                                        // Some variant: field 0 is T
+                                        1 => {
+                                            if *idx == 0 {
+                                                Some(args.first().cloned().unwrap_or(Type::unit()))
+                                            } else {
+                                                None
+                                            }
+                                        }
+                                        _ => None,
+                                    }
+                                } else {
+                                    // Result<T, E>
+                                    let (_, v_idx) = variant_ctx.unwrap();
+                                    match v_idx {
+                                        // Ok variant: field 0 is T
+                                        0 => {
+                                            if *idx == 0 {
+                                                Some(args.first().cloned().unwrap_or(Type::unit()))
+                                            } else {
+                                                None
+                                            }
+                                        }
+                                        // Err variant: field 0 is E
+                                        1 => {
+                                            if *idx == 0 {
+                                                Some(args.get(1).cloned().unwrap_or(Type::unit()))
+                                            } else {
+                                                None
+                                            }
+                                        }
+                                        _ => None,
+                                    }
+                                };
+                                variant_ctx = None;
+                                field_ty.unwrap_or(current_ty)
+                            } else if Some(*def_id) == self.vec_def_id {
                                 // Vec<T> layout: { ptr: *T, len: i64, capacity: i64 }
                                 match idx {
                                     0 => {
@@ -1393,14 +1437,16 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                                     _ => current_ty,
                                 }
                             } else if Some(*def_id) == self.option_def_id {
-                                // Option<T> layout: { tag: i32, payload: T }
+                                // Option<T> ADT-level layout: { tag: i32, payload: T }
+                                // (only reached when NOT in variant context)
                                 match idx {
                                     0 => Type::i32(), // discriminant tag
                                     1 => args.first().cloned().unwrap_or(Type::unit()), // payload
                                     _ => current_ty,
                                 }
                             } else if Some(*def_id) == self.result_def_id {
-                                // Result<T, E> layout: { tag: i32, payload: T or E }
+                                // Result<T, E> ADT-level layout: { tag: i32, payload: T or E }
+                                // (only reached when NOT in variant context)
                                 match idx {
                                     0 => Type::i32(), // discriminant tag
                                     1 => args.first().cloned().unwrap_or(Type::unit()), // ok payload

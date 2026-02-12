@@ -432,6 +432,24 @@ Diagnostic output confirmed: `addr=0x7ffdd62ce558` (stack range), `expected_gen=
 
 **Key files:** `compiler-rust/bloodc/src/codegen/mir_codegen/place.rs` (lines 229-306)
 
+### BUG-013: Option<&T> variant field type resolved as i32 instead of ptr (FIXED)
+
+**Severity:** Critical (caused segfault in ALL first_gen operations — check, build)
+
+**Status:** FIXED.
+
+**Root cause:** `compute_place_type()` in `place.rs` had hardcoded Option/Result field handling that ignored `variant_ctx` (set by `Downcast`). After `Downcast(1)` (entering `Some` variant), MIR `Field(0)` means "field 0 of the variant" (the `T` payload). But the hardcoded code treated it as "field 0 of the ADT struct" (the `i32` discriminant tag).
+
+For `Option<&ItemEntry>`, this meant:
+- `Downcast(1)` → `Field(0)` should resolve to `&ItemEntry` (a pointer, `ptr` in LLVM)
+- Instead resolved to `i32` (the discriminant type)
+- Generated: `load i32` + `inttoptr i32 %val to ptr` — truncating 64-bit pointers to 32 bits
+- Result: segfault on first dereference of the truncated pointer
+
+**Fix:** Added a check for `variant_ctx.is_some()` before the Option/Result hardcoded paths. When in a variant context, resolve variant-specific field types (Some field 0 = T, Ok field 0 = T, Err field 0 = E) instead of ADT-level struct fields.
+
+**Key file:** `compiler-rust/bloodc/src/codegen/mir_codegen/place.rs` (`compute_place_type`)
+
 ### Known Blood-Rust Limitations (NOT Bugs)
 
 **Memory reuse requires active region:** The runtime now includes a Generation-Aware Slab Allocator that enables memory reuse within regions. For compiled Blood programs to benefit, they must create and activate a region at startup. The `blood_alloc_simple`, `blood_realloc`, and `blood_free_simple` functions are now region-aware: when a region is active, allocations come from the region and freed memory is added to per-size-class free lists for reuse. The codegen already calls `blood_unregister_allocation` for region-allocated locals in StorageDead statements.
