@@ -1767,15 +1767,20 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
 
     let mut link_cmd = std::process::Command::new("cc");
 
-    // Strip debug symbols and enable dead code elimination for smaller binaries
+    // Enable dead code elimination, and strip symbols in release mode
     #[cfg(target_os = "linux")]
     {
-        link_cmd.arg("-s"); // Strip symbols
+        if args.release {
+            link_cmd.arg("-s"); // Strip symbols in release mode only
+        }
         link_cmd.arg("-Wl,--gc-sections"); // Remove unused sections
     }
 
     #[cfg(target_os = "macos")]
     {
+        if args.release {
+            link_cmd.arg("-Wl,-x"); // Strip local symbols in release mode
+        }
         link_cmd.arg("-Wl,-dead_strip"); // macOS equivalent of gc-sections
     }
 
