@@ -8,7 +8,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  LLVM_VERSION: "17"
+  LLVM_VERSION: "18"
 
 jobs:
   # Fast checks that don't need LLVM
@@ -51,13 +51,13 @@ jobs:
           wget https://apt.llvm.org/llvm.sh
           chmod +x llvm.sh
           sudo ./llvm.sh ${{ env.LLVM_VERSION }}
-          echo "LLVM_SYS_170_PREFIX=/usr/lib/llvm-${{ env.LLVM_VERSION }}" >> $GITHUB_ENV
+          echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-${{ env.LLVM_VERSION }}" >> $GITHUB_ENV
 
       - name: Install LLVM (macOS)
         if: runner.os == 'macOS'
         run: |
           brew install llvm@${{ env.LLVM_VERSION }}
-          echo "LLVM_SYS_170_PREFIX=$(brew --prefix llvm@${{ env.LLVM_VERSION }})" >> $GITHUB_ENV
+          echo "LLVM_SYS_181_PREFIX=$(brew --prefix llvm@${{ env.LLVM_VERSION }})" >> $GITHUB_ENV
 
       - name: Build workspace
         run: cargo build --workspace
@@ -85,8 +85,8 @@ jobs:
 
       - name: Install LLVM
         run: |
-          choco install llvm --version=${{ env.LLVM_VERSION }}.0.6 -y
-          echo "LLVM_SYS_170_PREFIX=C:\Program Files\LLVM" >> $env:GITHUB_ENV
+          choco install llvm --version=${{ env.LLVM_VERSION }}.1.8 -y
+          echo "LLVM_SYS_181_PREFIX=C:\Program Files\LLVM" >> $env:GITHUB_ENV
 
       - name: Build workspace
         run: cargo build --workspace
@@ -131,7 +131,7 @@ jobs:
           wget https://apt.llvm.org/llvm.sh
           chmod +x llvm.sh
           sudo ./llvm.sh ${{ env.LLVM_VERSION }}
-          echo "LLVM_SYS_170_PREFIX=/usr/lib/llvm-${{ env.LLVM_VERSION }}" >> $GITHUB_ENV
+          echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-${{ env.LLVM_VERSION }}" >> $GITHUB_ENV
 
       - name: Generate coverage report
         run: cargo llvm-cov --workspace --lcov --output-path lcov.info
