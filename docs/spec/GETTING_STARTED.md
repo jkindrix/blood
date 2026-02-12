@@ -716,7 +716,7 @@ fn main() {
 ## Next Steps
 
 - Read the [Language Specification](SPECIFICATION.md)
-- Explore [Example Programs](examples/)
+- Explore [Example Programs](../../examples/)
 - Learn about [Effects](SPECIFICATION.md#4-effect-system)
 - Understand the [Memory Model](MEMORY_MODEL.md)
 - See the [Effects Tutorial](EFFECTS_TUTORIAL.md) for in-depth effect usage

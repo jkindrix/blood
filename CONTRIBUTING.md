@@ -19,35 +19,36 @@ Thank you for your interest in contributing to the Blood programming language! T
 
 ### Prerequisites
 
-- **Rust** 1.75+ (install via [rustup](https://rustup.rs/))
-- **LLVM 15-17** (for code generation)
+- **Rust** 1.77+ (install via [rustup](https://rustup.rs/))
+- **LLVM 14** (for code generation via inkwell)
 - **Git**
 
 ### Building from Source
 
 ```bash
 # Clone the repository
-git clone https://github.com/username/blood.git
-cd blood
+git clone https://github.com/jkindrix/blood.git
+cd blood/compiler-rust
 
 # Build everything
 cargo build --release
 
 # Run tests
-cargo test --all
+cargo test --workspace
 
 # Run the compiler
-cargo run --release -- check examples/hello.blood
+cargo run --release -- check ../examples/hello.blood
 ```
 
 ### Quick Verification
 
 ```bash
+# From compiler-rust/
 # Type check an example
-cargo run --release -- check examples/binary_tree_benchmark.blood
+cargo run --release -- check ../examples/binary_tree_benchmark.blood
 
 # Run all tests
-cargo test --all
+cargo test --workspace
 
 # Run benchmarks
 cargo bench --bench runtime_bench
@@ -58,42 +59,51 @@ cargo bench --bench runtime_bench
 ## Project Structure
 
 ```
-blood/
-├── bloodc/                 # The main compiler
-│   ├── src/
-│   │   ├── main.rs         # CLI entry point
-│   │   ├── lexer.rs        # Tokenization
-│   │   ├── parser/         # AST parsing
-│   │   ├── hir/            # High-level IR
-│   │   ├── mir/            # Mid-level IR
-│   │   │   └── lowering/   # HIR → MIR transformation
-│   │   ├── typeck/         # Type checking
-│   │   │   ├── context/    # Type checking context
-│   │   │   ├── dispatch.rs # Multiple dispatch resolution
-│   │   │   └── exhaustiveness.rs # Pattern exhaustiveness
-│   │   ├── codegen/        # LLVM code generation
-│   │   │   ├── context/    # Codegen context
-│   │   │   └── mir_codegen/ # MIR → LLVM
-│   │   ├── effects/        # Effect system
-│   │   ├── diagnostics.rs  # Error reporting
-│   │   └── span.rs         # Source locations
-│   ├── tests/              # Integration tests
-│   └── benches/            # Performance benchmarks
-├── blood-runtime/          # Runtime library
-│   └── src/
-│       ├── memory.rs       # Memory management
-│       ├── continuation.rs # Effect continuations
-│       ├── fiber.rs        # Fiber scheduling
-│       └── ffi_exports.rs  # C FFI exports
-├── blood-std/              # Standard library (in Blood)
+blood/                          # Repository root (monorepo)
+├── blood-std/                  # Standard library (Blood source)
 │   └── std/
-│       ├── collections/    # Vec, HashMap, etc.
-│       └── io/             # I/O primitives
-├── docs/
-│   └── spec/               # Language specification
-├── examples/               # Example Blood programs
-└── runtime/                # C runtime stubs
+│       ├── compiler/           # Self-hosted compiler (written in Blood)
+│       ├── core/               # Core types (Option, String, Box, etc.)
+│       ├── collections/        # Vec, HashMap, LinkedList, etc.
+│       └── effects/            # Effect system primitives
+├── compiler-rust/              # Rust bootstrap compiler (git subtree)
+│   ├── bloodc/                 # The main compiler
+│   │   ├── src/
+│   │   │   ├── main.rs         # CLI entry point
+│   │   │   ├── lexer.rs        # Tokenization
+│   │   │   ├── parser/         # AST parsing
+│   │   │   ├── hir/            # High-level IR
+│   │   │   ├── mir/            # Mid-level IR
+│   │   │   │   └── lowering/   # HIR → MIR transformation
+│   │   │   ├── typeck/         # Type checking
+│   │   │   │   ├── context/    # Type checking context
+│   │   │   │   ├── dispatch/   # Multiple dispatch resolution
+│   │   │   │   └── exhaustiveness.rs
+│   │   │   ├── codegen/        # LLVM code generation
+│   │   │   │   ├── context/    # Codegen context
+│   │   │   │   └── mir_codegen/ # MIR → LLVM
+│   │   │   ├── effects/        # Effect system
+│   │   │   ├── diagnostics.rs  # Error reporting
+│   │   │   └── span.rs         # Source locations
+│   │   ├── tests/              # Integration tests
+│   │   └── benches/            # Performance benchmarks
+│   ├── blood-runtime/          # Runtime library
+│   │   └── src/
+│   │       ├── memory.rs       # Memory management
+│   │       ├── continuation.rs # Effect continuations
+│   │       ├── fiber.rs        # Fiber scheduling
+│   │       └── ffi_exports.rs  # C FFI exports
+│   ├── blood-std/              # Standard library copy for tests
+│   ├── runtime/                # C runtime stubs
+│   └── Cargo.toml              # Workspace manifest
+├── docs/                       # Language specification & documentation
+│   ├── spec/                   # Core specs
+│   └── postmortem/             # Bug investigation records
+├── examples/                   # Blood language examples
+└── editors/                    # Editor support (VS Code, etc.)
 ```
+
+> **Note:** The Cargo workspace is at `compiler-rust/Cargo.toml`. All `cargo` commands must be run from the `compiler-rust/` directory.
 
 ### Key Crates
 
@@ -119,9 +129,9 @@ blood/
    - Add tests
    - Update documentation
 
-3. **Run tests locally**
+3. **Run tests locally** (from `compiler-rust/`)
    ```bash
-   cargo test --all
+   cargo test --workspace
    cargo clippy --all-targets
    ```
 
@@ -253,7 +263,7 @@ pub enum ExprKind {
 | Module | Purpose | Key Types |
 |--------|---------|-----------|
 | `typeck/context/` | Type checking state | `TypeckContext` |
-| `typeck/dispatch.rs` | Multiple dispatch | `DispatchTable` |
+| `typeck/dispatch/` | Multiple dispatch | `DispatchTable` |
 | `mir/lowering/` | HIR → MIR | `MirBuilder` |
 | `codegen/context/` | LLVM codegen state | `CodegenContext` |
 | `effects/` | Effect inference | `EffectSet` |
@@ -263,6 +273,8 @@ pub enum ExprKind {
 ## Testing
 
 ### Test Categories
+
+All test commands run from `compiler-rust/`:
 
 1. **Unit Tests** - In `src/` alongside code
    ```bash
@@ -335,10 +347,8 @@ Examples:
 - Write documentation for public APIs
 
 ```bash
-# Format code
+# From compiler-rust/
 cargo fmt
-
-# Run linter
 cargo clippy --all-targets
 ```
 
@@ -401,7 +411,7 @@ pub fn lower_pattern(
 
 ### Before Submitting
 
-- [ ] All tests pass (`cargo test --all`)
+- [ ] All tests pass (`cd compiler-rust && cargo test --workspace`)
 - [ ] No clippy warnings (`cargo clippy --all-targets`)
 - [ ] Code is formatted (`cargo fmt --check`)
 - [ ] Documentation is updated

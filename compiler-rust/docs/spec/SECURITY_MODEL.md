@@ -527,7 +527,7 @@ fn send_email(to: Email) with Net {
 
 ## Reporting Security Issues
 
-See [SECURITY.md](/SECURITY.md) for responsible disclosure policy.
+See [SECURITY.md](../../SECURITY.md) for responsible disclosure policy.
 
 ## Version History
 

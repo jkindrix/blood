@@ -2064,7 +2064,7 @@ Results from bloodbank.blood-lang.org:
 - [naming.md](./naming.md) — Toolchain naming conventions, including marrow
 - [naming.md §2](./naming.md#2-content-addressed-architecture) — Content-addressing philosophy
 - [naming.md §5](./naming.md#5-hybrid-cli-design) — Hybrid CLI design
-- [blood-tools/ucm/](./blood-tools/ucm/) — Marrow implementation
+- [blood-tools/ucm/](../../compiler-rust/blood-tools/ucm/) — Marrow implementation
 
 ---
 

@@ -42,7 +42,7 @@ Anyone who contributes to the project:
 - Feature suggestions
 - Community support
 
-All contributors must follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+All contributors must follow the [Contributor Covenant Code of Conduct](https://www.contributor-covenant.org/).
 
 ## Decision Making
 
@@ -143,7 +143,7 @@ If the Project Lead becomes unavailable:
 
 ## License
 
-Blood is released under the [MIT License](LICENSE).
+Blood is dual-licensed under [MIT](LICENSE-MIT) and [Apache 2.0](LICENSE-APACHE).
 
 All contributions are assumed to be under the same license unless explicitly stated otherwise.
 

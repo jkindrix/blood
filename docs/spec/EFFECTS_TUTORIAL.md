@@ -1054,7 +1054,7 @@ fn test_my_service() {
 - [SPECIFICATION.md §4](./SPECIFICATION.md#4-effect-system) — Formal effect system rules
 - [FORMAL_SEMANTICS.md](./FORMAL_SEMANTICS.md) — Operational semantics of effects
 - [MEMORY_MODEL.md §5.3](./MEMORY_MODEL.md) — Generation snapshots for effect safety
-- [examples/algebraic_effects.blood](../examples/algebraic_effects.blood) — Comprehensive example code
+- [examples/algebraic_effects.blood](../../examples/algebraic_effects.blood) — Comprehensive example code
 
 ---
 
