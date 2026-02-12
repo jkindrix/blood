@@ -44,7 +44,7 @@ pub fn emit_terminator(
             // Effect perform - call runtime to look up and dispatch to handler
             let effect_id_val = codegen_types::format_u64(effect_id.index as u64);
             let op_index_val = codegen_types::format_u64(op_index as u64);
-            let dest = codegen_expr::emit_place_addr(ctx, destination);
+            let dest = codegen_expr::emit_place_data_ptr(ctx, destination);
 
             // Pack arguments into array for runtime
             let args_vals: Vec<String> = emit_operand_list(ctx, args);
@@ -261,6 +261,22 @@ fn emit_call(
         return;
     }
 
+    // Check for &str builtin functions which have special calling conventions.
+    // The generic path passes &str by pointer (&&str), but the runtime expects
+    // { ptr, i64 } by value. These handlers load the fat pointer before calling.
+    if is_str_len(&func_val) {
+        emit_str_len_call(ctx, args, destination, target);
+        return;
+    }
+    if is_str_eq(&func_val) {
+        emit_str_eq_call(ctx, args, destination, target);
+        return;
+    }
+    if is_str_concat(&func_val) {
+        emit_str_concat_call(ctx, args, destination, target);
+        return;
+    }
+
     // Check for Option builtin functions which have special calling conventions
     if is_option_is_some(&func_val) {
         emit_option_is_some_call(ctx, args, destination, target);
@@ -279,6 +295,12 @@ fn emit_call(
         return;
     }
 
+    // Check for Box builtin function which has special calling convention
+    if is_box_new(&func_val) {
+        emit_box_new_call(ctx, args, destination, target);
+        return;
+    }
+
     // Emit arguments with their types
     let mut llvm_args: Vec<(String, String)> = Vec::new();
     let mut i: usize = 0;
@@ -289,7 +311,7 @@ fn emit_call(
     }
 
     // Get return type from destination
-    let dest_ptr = codegen_expr::emit_place_addr(ctx, destination);
+    let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
     let return_ty = ctx.get_local_type(destination.local);
 
     // Check if return type is void (unit type)
@@ -614,49 +636,32 @@ fn clone_primitive(p: &hir_ty::PrimitiveTy) -> hir_ty::PrimitiveTy {
 /// Emits a vec_new call with correct calling convention.
 /// Runtime signature: void @vec_new(i64 elem_size, ptr out_ptr)
 ///
-/// The runtime expects out_ptr to point to 24 bytes of space where the Vec
-/// struct { ptr data, i64 len, i64 capacity } will be written. However, the
-/// self-hosted compiler represents ADTs as pointers, so the destination local
-/// only has 8 bytes. We allocate a separate 24-byte space for the Vec struct
-/// and store a pointer to it in the destination.
+/// Uses emit_place_data_ptr to handle region/persistent indirection.
 fn emit_vec_new_call(
     ctx: &mut codegen_ctx::CodegenCtx,
     destination: &mir_types::Place,
     target: &Option<mir_def::BasicBlockId>,
 ) {
-    // Get destination pointer (where the Vec ptr will be stored)
-    let dest_ptr = codegen_expr::emit_place_addr(ctx, destination);
+    // Get data pointer (handles region/persistent heap indirection)
+    let out_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
 
     // Get element size from the destination's HIR type (Vec<T>)
     let elem_size: u64 = match ctx.get_local_hir_type(destination.local) {
         Option::Some(hir_ty) => {
             match extract_vec_element_type(hir_ty) {
                 Option::Some(elem_ty) => codegen_stmt::type_size_with_ctx(ctx, &elem_ty),
-                Option::None => 8, // Fallback to pointer size
+                Option::None => 8,
             }
         }
-        Option::None => 8, // Fallback to pointer size
+        Option::None => 8,
     };
 
-    // Allocate space for the Vec struct (24 bytes: ptr + len + capacity)
-    let vec_struct = ctx.fresh_temp();
-    ctx.write_indent();
-    ctx.write_string(&vec_struct);
-    ctx.write(" = alloca { ptr, i64, i64 }, align 8\n");
-
-    // Emit: call void @vec_new(i64 elem_size, ptr vec_struct)
+    // Emit: call void @vec_new(i64 elem_size, ptr out_ptr)
     let mut args: Vec<(String, String)> = Vec::new();
     args.push((common::make_string("i64"), codegen_types::format_u64(elem_size)));
-    // Copy vec_struct string for use in args (Blood has no .clone())
-    let mut vec_struct_copy = common::make_string("");
-    vec_struct_copy.push_str(vec_struct.as_str());
-    args.push((common::make_string("ptr"), vec_struct_copy));
+    args.push((common::make_string("ptr"), out_ptr));
 
     ctx.emit_call(Option::None, "void", "@vec_new", &args);
-
-    // Store pointer to Vec struct in destination
-    let vec_struct_str = vec_struct.as_str();
-    ctx.emit_store("ptr", vec_struct_str, dest_ptr.as_str());
 
     // Jump to continuation
     match target {
@@ -684,13 +689,9 @@ fn emit_vec_push_call(
         return;
     }
 
-    // Get vec pointer - this is a pointer to the Vec struct pointer (double indirection)
-    // because the self-hosted compiler represents ADTs as pointers and passes &mut Vec
-    let vec_ref = codegen_expr::emit_operand(ctx, &args[0]);
-
-    // Dereference to get the actual Vec struct pointer
-    let vec_ptr = ctx.fresh_temp();
-    ctx.emit_load(vec_ptr.as_str(), "ptr", vec_ref.as_str());
+    // Get vec pointer - emit_operand loads the &mut Vec reference value,
+    // which is already a pointer to the Vec struct (no extra deref needed).
+    let vec_ptr = codegen_expr::emit_operand(ctx, &args[0]);
 
     // Get element value and type
     let (elem_val, elem_ty) = codegen_expr::emit_operand_typed(ctx, &args[1]);
@@ -759,12 +760,9 @@ fn emit_vec_len_call(
         return;
     }
 
-    // Get vec reference - this is a pointer to the Vec struct pointer (double indirection)
-    let vec_ref = codegen_expr::emit_operand(ctx, &args[0]);
-
-    // Dereference to get the actual Vec struct pointer
-    let vec_ptr = ctx.fresh_temp();
-    ctx.emit_load(vec_ptr.as_str(), "ptr", vec_ref.as_str());
+    // Get vec pointer - emit_operand loads the reference value,
+    // which is already a pointer to the Vec struct.
+    let vec_ptr = codegen_expr::emit_operand(ctx, &args[0]);
 
     // Emit: %result = call i64 @vec_len(ptr vec)
     let result = ctx.fresh_temp();
@@ -776,7 +774,7 @@ fn emit_vec_len_call(
     ctx.emit_call(Option::Some(result.as_str()), "i64", "@vec_len", &call_args);
 
     // Store result to destination
-    let dest_ptr = codegen_expr::emit_place_addr(ctx, destination);
+    let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
     ctx.emit_store("i64", result.as_str(), dest_ptr.as_str());
 
     // Jump to continuation
@@ -806,12 +804,9 @@ fn emit_vec_pop_call(
         return;
     }
 
-    // Get vec reference - this is a pointer to the Vec struct pointer (double indirection)
-    let vec_ref = codegen_expr::emit_operand(ctx, &args[0]);
-
-    // Dereference to get the actual Vec struct pointer
-    let vec_ptr = ctx.fresh_temp();
-    ctx.emit_load(vec_ptr.as_str(), "ptr", vec_ref.as_str());
+    // Get vec pointer - emit_operand loads the reference value,
+    // which is already a pointer to the Vec struct.
+    let vec_ptr = codegen_expr::emit_operand(ctx, &args[0]);
 
     // Get element size from destination's HIR type (Option<T>)
     // pop returns Option<T>, so we need to extract T's size
@@ -850,7 +845,7 @@ fn emit_vec_pop_call(
     // Build Option<T> in destination
     // Option is typically { i8 tag, T value }
     // tag = 0 for None, tag = 1 for Some
-    let dest_ptr = codegen_expr::emit_place_addr(ctx, destination);
+    let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
 
     // Store the tag (result from vec_pop: 0=empty/None, 1=success/Some)
     let tag_i8 = ctx.fresh_temp();
@@ -905,12 +900,9 @@ fn emit_vec_clear_call(
         return;
     }
 
-    // Get vec reference - this is a pointer to the Vec struct pointer (double indirection)
-    let vec_ref = codegen_expr::emit_operand(ctx, &args[0]);
-
-    // Dereference to get the actual Vec struct pointer
-    let vec_ptr = ctx.fresh_temp();
-    ctx.emit_load(vec_ptr.as_str(), "ptr", vec_ref.as_str());
+    // Get vec pointer - emit_operand loads the reference value,
+    // which is already a pointer to the Vec struct.
+    let vec_ptr = codegen_expr::emit_operand(ctx, &args[0]);
 
     // Emit: call void @vec_clear(ptr vec)
     let mut call_args: Vec<(String, String)> = Vec::new();
@@ -973,30 +965,21 @@ fn is_string_as_bytes(func_val: &String) -> bool {
 
 /// Emits a string_new call with correct calling convention.
 /// Runtime signature: void @string_new(ptr out_ptr)
+///
+/// Emits a string_new call. Uses emit_place_data_ptr for region/persistent indirection.
 fn emit_string_new_call(
     ctx: &mut codegen_ctx::CodegenCtx,
     destination: &mir_types::Place,
     target: &Option<mir_def::BasicBlockId>,
 ) {
-    // Get destination pointer
-    let dest_ptr = codegen_expr::emit_place_addr(ctx, destination);
+    // Get data pointer (handles region/persistent heap indirection)
+    let out_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
 
-    // Allocate space for String struct (similar to Vec: ptr + len + capacity = 24 bytes)
-    let str_struct = ctx.fresh_temp();
-    ctx.write_indent();
-    ctx.write_string(&str_struct);
-    ctx.write(" = alloca { ptr, i64, i64 }, align 8\n");
-
-    // Emit: call void @string_new(ptr str_struct)
+    // Emit: call void @string_new(ptr out_ptr)
     let mut args: Vec<(String, String)> = Vec::new();
-    let mut str_struct_copy = common::make_string("");
-    str_struct_copy.push_str(str_struct.as_str());
-    args.push((common::make_string("ptr"), str_struct_copy));
+    args.push((common::make_string("ptr"), out_ptr));
 
     ctx.emit_call(Option::None, "void", "@string_new", &args);
-
-    // Store pointer to String struct in destination
-    ctx.emit_store("ptr", str_struct.as_str(), dest_ptr.as_str());
 
     // Jump to continuation
     match target {
@@ -1022,12 +1005,9 @@ fn emit_string_push_str_call(
         return;
     }
 
-    // Get string reference (double indirect)
-    let str_ref = codegen_expr::emit_operand(ctx, &args[0]);
-
-    // Dereference to get actual String struct pointer
-    let str_ptr = ctx.fresh_temp();
-    ctx.emit_load(str_ptr.as_str(), "ptr", str_ref.as_str());
+    // Get string pointer - emit_operand loads the reference value,
+    // which is already a pointer to the String struct.
+    let str_ptr = codegen_expr::emit_operand(ctx, &args[0]);
 
     // Get the &str argument (fat pointer)
     let (arg_val, arg_ty) = codegen_expr::emit_operand_typed(ctx, &args[1]);
@@ -1073,12 +1053,9 @@ fn emit_string_len_call(
         return;
     }
 
-    // Get string reference (double indirect)
-    let str_ref = codegen_expr::emit_operand(ctx, &args[0]);
-
-    // Dereference to get actual String struct pointer
-    let str_ptr = ctx.fresh_temp();
-    ctx.emit_load(str_ptr.as_str(), "ptr", str_ref.as_str());
+    // Get string pointer - emit_operand loads the reference value,
+    // which is already a pointer to the String struct.
+    let str_ptr = codegen_expr::emit_operand(ctx, &args[0]);
 
     // Emit: %result = call i64 @string_len(ptr self)
     let result = ctx.fresh_temp();
@@ -1090,7 +1067,7 @@ fn emit_string_len_call(
     ctx.emit_call(Option::Some(result.as_str()), "i64", "@string_len", &call_args);
 
     // Store result to destination
-    let dest_ptr = codegen_expr::emit_place_addr(ctx, destination);
+    let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
     ctx.emit_store("i64", result.as_str(), dest_ptr.as_str());
 
     // Jump to continuation
@@ -1117,12 +1094,9 @@ fn emit_string_push_call(
         return;
     }
 
-    // Get string reference (double indirect)
-    let str_ref = codegen_expr::emit_operand(ctx, &args[0]);
-
-    // Dereference to get actual String struct pointer
-    let str_ptr = ctx.fresh_temp();
-    ctx.emit_load(str_ptr.as_str(), "ptr", str_ref.as_str());
+    // Get string pointer - emit_operand loads the reference value,
+    // which is already a pointer to the String struct.
+    let str_ptr = codegen_expr::emit_operand(ctx, &args[0]);
 
     // Get char argument - it may be { i32 } struct, need to extract i32
     let (char_val, char_ty) = codegen_expr::emit_operand_typed(ctx, &args[1]);
@@ -1172,12 +1146,9 @@ fn emit_string_as_str_call(
         return;
     }
 
-    // Get string reference (double indirect)
-    let str_ref = codegen_expr::emit_operand(ctx, &args[0]);
-
-    // Dereference to get actual String struct pointer
-    let str_ptr = ctx.fresh_temp();
-    ctx.emit_load(str_ptr.as_str(), "ptr", str_ref.as_str());
+    // Get string pointer - emit_operand loads the reference value,
+    // which is already a pointer to the String struct.
+    let str_ptr = codegen_expr::emit_operand(ctx, &args[0]);
 
     // Emit: %result = call { ptr, i64 } @string_as_str(ptr self)
     let result = ctx.fresh_temp();
@@ -1189,7 +1160,7 @@ fn emit_string_as_str_call(
     ctx.emit_call(Option::Some(result.as_str()), "{ ptr, i64 }", "@string_as_str", &call_args);
 
     // Store result to destination
-    let dest_ptr = codegen_expr::emit_place_addr(ctx, destination);
+    let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
     ctx.emit_store("{ ptr, i64 }", result.as_str(), dest_ptr.as_str());
 
     // Jump to continuation
@@ -1217,12 +1188,9 @@ fn emit_string_as_bytes_call(
         return;
     }
 
-    // Get string reference (double indirect)
-    let str_ref = codegen_expr::emit_operand(ctx, &args[0]);
-
-    // Dereference to get actual String struct pointer
-    let str_ptr = ctx.fresh_temp();
-    ctx.emit_load(str_ptr.as_str(), "ptr", str_ref.as_str());
+    // Get string pointer - emit_operand loads the reference value,
+    // which is already a pointer to the String struct.
+    let str_ptr = codegen_expr::emit_operand(ctx, &args[0]);
 
     // Emit: %result = call { ptr, i64 } @string_as_bytes(ptr self)
     let result = ctx.fresh_temp();
@@ -1234,7 +1202,7 @@ fn emit_string_as_bytes_call(
     ctx.emit_call(Option::Some(result.as_str()), "{ ptr, i64 }", "@string_as_bytes", &call_args);
 
     // Store result to destination
-    let dest_ptr = codegen_expr::emit_place_addr(ctx, destination);
+    let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
     ctx.emit_store("{ ptr, i64 }", result.as_str(), dest_ptr.as_str());
 
     // Jump to continuation
@@ -1258,6 +1226,165 @@ fn emit_string_as_bytes_call(
 //   option_unwrap(ptr self, i64 elem_size, ptr out_ptr) -> void
 //   option_as_ref(ptr self, i64 elem_size, ptr out_ptr) -> void
 
+// ============================================================
+// &str runtime functions have special calling conventions:
+//   str_len({ ptr, i64 }) -> i64
+//   str_eq({ ptr, i64 }, { ptr, i64 }) -> i1
+//   str_concat({ ptr, i64 }, { ptr, i64 }) -> { ptr, i64 }
+//
+// The generic call path passes &str by pointer (creating &&str),
+// but the runtime expects { ptr, i64 } by value. These handlers
+// load the fat pointer from the pointer before calling.
+
+fn is_str_len(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@str_len")
+}
+
+fn is_str_eq(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@str_eq")
+}
+
+fn is_str_concat(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@str_concat")
+}
+
+/// Helper: load a { ptr, i64 } fat pointer from a pointer operand.
+/// The generic call path for &str methods produces a pointer to the
+/// fat pointer alloca. This loads the actual { ptr, i64 } value.
+fn load_str_fat_ptr(ctx: &mut codegen_ctx::CodegenCtx, operand: &mir_types::Operand) -> String {
+    let (arg_val, arg_ty) = codegen_expr::emit_operand_typed(ctx, operand);
+    // If it's already a { ptr, i64 }, return as-is
+    if string_eq_str(arg_ty.as_str(), "{ ptr, i64 }") {
+        return arg_val;
+    }
+    // Otherwise it's a ptr — load the { ptr, i64 } from it
+    let loaded = ctx.fresh_temp();
+    ctx.write_indent();
+    ctx.write_string(&loaded);
+    ctx.write(" = load { ptr, i64 }, ptr ");
+    ctx.write_string(&arg_val);
+    ctx.write("\n");
+    loaded
+}
+
+/// Emits a str_len call with correct calling convention.
+/// Runtime signature: i64 @str_len({ ptr, i64 })
+fn emit_str_len_call(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    args: &Vec<mir_types::Operand>,
+    destination: &mir_types::Place,
+    target: &Option<mir_def::BasicBlockId>,
+) {
+    if args.len() < 1 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    // Load the &str fat pointer from the operand
+    let str_val = load_str_fat_ptr(ctx, &args[0]);
+
+    // Emit: %result = call i64 @str_len({ ptr, i64 } %str_val)
+    let result = ctx.fresh_temp();
+    let mut call_args: Vec<(String, String)> = Vec::new();
+    call_args.push((common::make_string("{ ptr, i64 }"), str_val));
+    ctx.emit_call(Option::Some(result.as_str()), "i64", "@str_len", &call_args);
+
+    // Store result to destination
+    let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
+    ctx.emit_store("i64", result.as_str(), dest_ptr.as_str());
+
+    // Jump to continuation
+    match target {
+        &Option::Some(t) => {
+            let label = ctx.block_label(t);
+            ctx.emit_br(label.as_str());
+        }
+        &Option::None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Emits a str_eq call with correct calling convention.
+/// Runtime signature: i1 @str_eq({ ptr, i64 }, { ptr, i64 })
+fn emit_str_eq_call(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    args: &Vec<mir_types::Operand>,
+    destination: &mir_types::Place,
+    target: &Option<mir_def::BasicBlockId>,
+) {
+    if args.len() < 2 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    // Load both &str fat pointers
+    let str_a = load_str_fat_ptr(ctx, &args[0]);
+    let str_b = load_str_fat_ptr(ctx, &args[1]);
+
+    // Emit: %result = call i1 @str_eq({ ptr, i64 } %a, { ptr, i64 } %b)
+    let result = ctx.fresh_temp();
+    let mut call_args: Vec<(String, String)> = Vec::new();
+    call_args.push((common::make_string("{ ptr, i64 }"), str_a));
+    call_args.push((common::make_string("{ ptr, i64 }"), str_b));
+    ctx.emit_call(Option::Some(result.as_str()), "i1", "@str_eq", &call_args);
+
+    // Store result to destination
+    let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
+    ctx.emit_store("i1", result.as_str(), dest_ptr.as_str());
+
+    // Jump to continuation
+    match target {
+        &Option::Some(t) => {
+            let label = ctx.block_label(t);
+            ctx.emit_br(label.as_str());
+        }
+        &Option::None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Emits a str_concat call with correct calling convention.
+/// Runtime signature: { ptr, i64 } @str_concat({ ptr, i64 }, { ptr, i64 })
+fn emit_str_concat_call(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    args: &Vec<mir_types::Operand>,
+    destination: &mir_types::Place,
+    target: &Option<mir_def::BasicBlockId>,
+) {
+    if args.len() < 2 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    // Load both &str fat pointers
+    let str_a = load_str_fat_ptr(ctx, &args[0]);
+    let str_b = load_str_fat_ptr(ctx, &args[1]);
+
+    // Emit: %result = call { ptr, i64 } @str_concat({ ptr, i64 } %a, { ptr, i64 } %b)
+    let result = ctx.fresh_temp();
+    let mut call_args: Vec<(String, String)> = Vec::new();
+    call_args.push((common::make_string("{ ptr, i64 }"), str_a));
+    call_args.push((common::make_string("{ ptr, i64 }"), str_b));
+    ctx.emit_call(Option::Some(result.as_str()), "{ ptr, i64 }", "@str_concat", &call_args);
+
+    // Store result to destination
+    let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
+    ctx.emit_store("{ ptr, i64 }", result.as_str(), dest_ptr.as_str());
+
+    // Jump to continuation
+    match target {
+        &Option::Some(t) => {
+            let label = ctx.block_label(t);
+            ctx.emit_br(label.as_str());
+        }
+        &Option::None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
 /// Checks if the function name is @option_is_some.
 fn is_option_is_some(func_val: &String) -> bool {
     string_eq_str(func_val.as_str(), "@option_is_some")
@@ -1278,45 +1405,78 @@ fn is_option_as_ref(func_val: &String) -> bool {
     string_eq_str(func_val.as_str(), "@option_as_ref")
 }
 
-/// Emits an option_is_some call with correct calling convention.
-/// Runtime signature: i32 @option_is_some(ptr self)
-fn emit_option_is_some_call(
+// ============================================================
+// Box runtime functions have special calling conventions:
+//   box_new(ptr value_ptr, i64 value_size) -> ptr
+
+/// Checks if the function name is @box_new.
+fn is_box_new(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@box_new")
+}
+
+/// Emits a box_new call with correct calling convention.
+/// Runtime signature: ptr @box_new(ptr value_ptr, i64 value_size)
+///
+/// The generic call path passes the value by-value (as an LLVM aggregate),
+/// which LLVM decomposes into register-sized chunks per ABI. box_new expects
+/// a pointer to the value and its size. This handler stores the value to a
+/// temp alloca and passes (ptr, i64) correctly.
+fn emit_box_new_call(
     ctx: &mut codegen_ctx::CodegenCtx,
     args: &Vec<mir_types::Operand>,
     destination: &mir_types::Place,
     target: &Option<mir_def::BasicBlockId>,
 ) {
+    // args[0] is the value to box (type T)
     if args.len() < 1 {
         ctx.emit_unreachable();
         return;
     }
 
-    // Get option reference (double indirect)
-    let opt_ref = codegen_expr::emit_operand(ctx, &args[0]);
+    // Get value and its LLVM type
+    let (val, val_ty) = codegen_expr::emit_operand_typed(ctx, &args[0]);
 
-    // Dereference to get actual Option struct pointer
-    let opt_ptr = ctx.fresh_temp();
-    ctx.emit_load(opt_ptr.as_str(), "ptr", opt_ref.as_str());
+    // Allocate temporary storage for the value
+    let val_alloca = ctx.fresh_temp();
+    ctx.write_indent();
+    ctx.write_string(&val_alloca);
+    ctx.write(" = alloca ");
+    ctx.write_string(&val_ty);
+    ctx.write(", align 8\n");
 
-    // Emit: %result = call i32 @option_is_some(ptr self)
+    // Store value to alloca
+    ctx.emit_store(val_ty.as_str(), val.as_str(), val_alloca.as_str());
+
+    // Get value size from HIR type
+    let val_size: u64 = match &args[0] {
+        &mir_types::Operand::Copy(ref place) => {
+            match ctx.get_local_hir_type(place.local) {
+                Option::Some(hir_ty) => codegen_stmt::type_size_with_ctx(ctx, hir_ty),
+                Option::None => 8,
+            }
+        }
+        &mir_types::Operand::Move(ref place) => {
+            match ctx.get_local_hir_type(place.local) {
+                Option::Some(hir_ty) => codegen_stmt::type_size_with_ctx(ctx, hir_ty),
+                Option::None => 8,
+            }
+        }
+        &mir_types::Operand::Constant(ref c) => {
+            codegen_stmt::type_size_with_ctx(ctx, &c.ty)
+        }
+    };
+
+    // Emit: %result = call ptr @box_new(ptr val_alloca, i64 val_size)
     let result = ctx.fresh_temp();
     let mut call_args: Vec<(String, String)> = Vec::new();
-    let mut opt_ptr_copy = common::make_string("");
-    opt_ptr_copy.push_str(opt_ptr.as_str());
-    call_args.push((common::make_string("ptr"), opt_ptr_copy));
+    call_args.push((common::make_string("ptr"), val_alloca));
+    call_args.push((common::make_string("i64"), codegen_types::format_u64(val_size)));
 
-    ctx.emit_call(Option::Some(result.as_str()), "i32", "@option_is_some", &call_args);
+    ctx.emit_call(Option::Some(result.as_str()), "ptr", "@box_new", &call_args);
 
-    // Convert i32 result to i1 for bool and store
-    let bool_result = ctx.fresh_temp();
-    ctx.write_indent();
-    ctx.write_string(&bool_result);
-    ctx.write(" = trunc i32 ");
-    ctx.write_string(&result);
-    ctx.write(" to i1\n");
-
-    let dest_ptr = codegen_expr::emit_place_addr(ctx, destination);
-    ctx.emit_store("i1", bool_result.as_str(), dest_ptr.as_str());
+    // Store result pointer to destination
+    let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
+    ctx.emit_store("ptr", result.as_str(), dest_ptr.as_str());
 
     // Jump to continuation
     match target {
@@ -1330,8 +1490,54 @@ fn emit_option_is_some_call(
     }
 }
 
-/// Emits an option_is_none call with correct calling convention.
-/// Runtime signature: i32 @option_is_none(ptr self)
+/// Emits an inline is_some check using i8 discriminant.
+/// Self-hosted convention: Some = discriminant 0, None = discriminant 1.
+/// Inlined to avoid ABI mismatch with runtime (which uses i32 discriminant).
+fn emit_option_is_some_call(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    args: &Vec<mir_types::Operand>,
+    destination: &mir_types::Place,
+    target: &Option<mir_def::BasicBlockId>,
+) {
+    if args.len() < 1 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    // Get option pointer - emit_operand loads the reference value,
+    // which is already a pointer to the Option struct.
+    let opt_ptr = codegen_expr::emit_operand(ctx, &args[0]);
+
+    // Load i8 discriminant from byte 0
+    let disc = ctx.fresh_temp();
+    ctx.emit_load(disc.as_str(), "i8", opt_ptr.as_str());
+
+    // is_some = (discriminant == 0)
+    let cmp_result = ctx.fresh_temp();
+    ctx.write_indent();
+    ctx.write_string(&cmp_result);
+    ctx.write(" = icmp eq i8 ");
+    ctx.write_string(&disc);
+    ctx.write(", 0\n");
+
+    let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
+    ctx.emit_store("i1", cmp_result.as_str(), dest_ptr.as_str());
+
+    // Jump to continuation
+    match target {
+        &Option::Some(t) => {
+            let label = ctx.block_label(t);
+            ctx.emit_br(label.as_str());
+        }
+        &Option::None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Emits an inline is_none check using i8 discriminant.
+/// Self-hosted convention: Some = discriminant 0, None = discriminant 1.
+/// Inlined to avoid ABI mismatch with runtime (which uses i32 discriminant).
 fn emit_option_is_none_call(
     ctx: &mut codegen_ctx::CodegenCtx,
     args: &Vec<mir_types::Operand>,
@@ -1343,32 +1549,24 @@ fn emit_option_is_none_call(
         return;
     }
 
-    // Get option reference (double indirect)
-    let opt_ref = codegen_expr::emit_operand(ctx, &args[0]);
+    // Get option pointer - emit_operand loads the reference value,
+    // which is already a pointer to the Option struct.
+    let opt_ptr = codegen_expr::emit_operand(ctx, &args[0]);
 
-    // Dereference to get actual Option struct pointer
-    let opt_ptr = ctx.fresh_temp();
-    ctx.emit_load(opt_ptr.as_str(), "ptr", opt_ref.as_str());
+    // Load i8 discriminant from byte 0
+    let disc = ctx.fresh_temp();
+    ctx.emit_load(disc.as_str(), "i8", opt_ptr.as_str());
 
-    // Emit: %result = call i32 @option_is_none(ptr self)
-    let result = ctx.fresh_temp();
-    let mut call_args: Vec<(String, String)> = Vec::new();
-    let mut opt_ptr_copy = common::make_string("");
-    opt_ptr_copy.push_str(opt_ptr.as_str());
-    call_args.push((common::make_string("ptr"), opt_ptr_copy));
-
-    ctx.emit_call(Option::Some(result.as_str()), "i32", "@option_is_none", &call_args);
-
-    // Convert i32 result to i1 for bool and store
-    let bool_result = ctx.fresh_temp();
+    // is_none = (discriminant == 1)
+    let cmp_result = ctx.fresh_temp();
     ctx.write_indent();
-    ctx.write_string(&bool_result);
-    ctx.write(" = trunc i32 ");
-    ctx.write_string(&result);
-    ctx.write(" to i1\n");
+    ctx.write_string(&cmp_result);
+    ctx.write(" = icmp eq i8 ");
+    ctx.write_string(&disc);
+    ctx.write(", 1\n");
 
-    let dest_ptr = codegen_expr::emit_place_addr(ctx, destination);
-    ctx.emit_store("i1", bool_result.as_str(), dest_ptr.as_str());
+    let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
+    ctx.emit_store("i1", cmp_result.as_str(), dest_ptr.as_str());
 
     // Jump to continuation
     match target {
@@ -1395,15 +1593,12 @@ fn emit_option_unwrap_call(
         return;
     }
 
-    // Get option reference (double indirect)
-    let opt_ref = codegen_expr::emit_operand(ctx, &args[0]);
-
-    // Dereference to get actual Option struct pointer
-    let opt_ptr = ctx.fresh_temp();
-    ctx.emit_load(opt_ptr.as_str(), "ptr", opt_ref.as_str());
+    // Get option pointer - emit_operand loads the reference value,
+    // which is already a pointer to the Option struct.
+    let opt_ptr = codegen_expr::emit_operand(ctx, &args[0]);
 
     // Get destination pointer and its size
-    let dest_ptr = codegen_expr::emit_place_addr(ctx, destination);
+    let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
     let dest_ty = ctx.get_local_type(destination.local);
 
     // Get element size from destination type
@@ -1447,15 +1642,12 @@ fn emit_option_as_ref_call(
         return;
     }
 
-    // Get option reference (double indirect)
-    let opt_ref = codegen_expr::emit_operand(ctx, &args[0]);
-
-    // Dereference to get actual Option struct pointer
-    let opt_ptr = ctx.fresh_temp();
-    ctx.emit_load(opt_ptr.as_str(), "ptr", opt_ref.as_str());
+    // Get option pointer - emit_operand loads the reference value,
+    // which is already a pointer to the Option struct.
+    let opt_ptr = codegen_expr::emit_operand(ctx, &args[0]);
 
     // Get destination pointer
-    let dest_ptr = codegen_expr::emit_place_addr(ctx, destination);
+    let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
 
     // Get element size from destination type (Option<&T>)
     let elem_size: u64 = match ctx.get_local_hir_type(destination.local) {

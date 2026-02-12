@@ -26,7 +26,7 @@ pub fn emit_statement(
 ) {
     match &stmt.kind {
         &mir_stmt::StatementKind::Assign { ref place, ref rvalue } => {
-            let dest = codegen_expr::emit_place_addr(ctx, place);
+            let dest = codegen_expr::emit_place_data_ptr(ctx, place);
             codegen_expr::emit_rvalue(ctx, dest.as_str(), rvalue);
         }
         &mir_stmt::StatementKind::StorageLive(ref local) => {
@@ -40,17 +40,11 @@ pub fn emit_statement(
         &mir_stmt::StatementKind::StorageDead(ref local) => {
             let name = ctx.local_alloca_name(*local);
             if ctx.is_region_allocated(*local) {
-                // Region-allocated local: unregister from allocation tracker
+                // Region-allocated local: using blood_alloc_simple, no region tracking.
+                // Skip unregister (blood_alloc_simple doesn't use region tracker).
                 ctx.write("    ; storage dead (region) ");
                 ctx.write_string(&name);
                 ctx.newline();
-                let ptr_val = ctx.fresh_temp();
-                ctx.emit_load(ptr_val.as_str(), "ptr", name.as_str());
-                let int_val = ctx.fresh_temp();
-                ctx.emit_cast(int_val.as_str(), "ptrtoint", "ptr", ptr_val.as_str(), "i64");
-                let mut args: Vec<(String, String)> = Vec::new();
-                args.push((common::make_string("i64"), clone_string(&int_val)));
-                ctx.emit_call(Option::None, "void", "@blood_unregister_allocation", &args);
             } else if ctx.is_persistent_allocated(*local) {
                 // Persistent-allocated local: decrement reference count
                 ctx.write("    ; storage dead (persistent) ");
@@ -120,7 +114,7 @@ pub fn emit_statement(
         }
         &mir_stmt::StatementKind::SetDiscriminant { ref place, variant_idx } => {
             // Set the discriminant field of an enum
-            let ptr = codegen_expr::emit_place_addr(ctx, place);
+            let ptr = codegen_expr::emit_place_data_ptr(ctx, place);
             let discr_val = codegen_types::format_u64(variant_idx as u64);
 
             // Try to look up enum layout for correct discriminant type
@@ -156,8 +150,10 @@ pub fn emit_statement(
                 ctx.emit_gep(discr_ptr.as_str(), enum_llvm_ty.as_str(), ptr.as_str(), &indices);
                 ctx.emit_store(discr_ty.as_str(), discr_val.as_str(), discr_ptr.as_str());
             } else {
-                // Fallback: store i64 directly
-                ctx.emit_store("i64", discr_val.as_str(), ptr.as_str());
+                // Fallback for builtin generic enums (Option<T>, Result<T,E>)
+                // not in the ADT registry: store i8 discriminant at byte 0.
+                // All Blood enums have ≤256 variants → i8 discriminant.
+                ctx.emit_store("i8", discr_val.as_str(), ptr.as_str());
             }
         }
         &mir_stmt::StatementKind::CopyNonOverlapping { ref src, ref dst, ref count } => {
@@ -277,8 +273,34 @@ pub fn type_to_llvm_with_ctx(
     ty: &hir_ty::Type,
 ) -> String {
     match &ty.kind {
-        &hir_ty::TypeKind::Adt { def_id, args: _ } => {
-            ctx.adt_llvm_type(def_id.index)
+        &hir_ty::TypeKind::Adt { def_id, ref args } => {
+            let result = ctx.adt_llvm_type(def_id.index);
+            // Generic builtin enum not in registry (Option<T>, Result<T,E>)?
+            // adt_llvm_type returns "ptr" (3 bytes) as fallback for unknown ADTs.
+            // Only expand when the ADT is truly unregistered. Registered ADTs
+            // like Box<T> that return "ptr" should NOT be expanded.
+            if result.as_bytes().len() == 3
+                && result.as_bytes()[0] == 112
+                && result.as_bytes()[1] == 116
+                && result.as_bytes()[2] == 114
+                && args.len() > 0
+                && !is_adt_registered(ctx, def_id.index)
+            {
+                let mut payload_size: u64 = 0;
+                let mut ai: usize = 0;
+                while ai < args.len() {
+                    payload_size = payload_size + type_size_with_ctx(ctx, &args[ai]);
+                    ai = ai + 1;
+                }
+                if payload_size > 0 {
+                    let mut s = common::make_string("{ i8, [");
+                    let size_str = codegen_types::format_u64(payload_size);
+                    s.push_str(size_str.as_str());
+                    s.push_str(" x i8] }");
+                    return s;
+                }
+            }
+            result
         }
         _ => codegen_types::type_to_llvm(ty),
     }
@@ -288,8 +310,25 @@ pub fn type_to_llvm_with_ctx(
 /// This is context-aware and returns correct sizes for user-defined ADTs.
 pub fn type_size_with_ctx(ctx: &mut codegen_ctx::CodegenCtx, ty: &hir_ty::Type) -> u64 {
     match &ty.kind {
-        &hir_ty::TypeKind::Adt { def_id, args: _ } => {
-            adt_size_bytes(ctx, def_id.index)
+        &hir_ty::TypeKind::Adt { def_id, ref args } => {
+            let base = adt_size_bytes(ctx, def_id.index);
+            // Generic builtin enum not in registry (Option<T>, Result<T,E>)?
+            // Only expand when the ADT is truly unregistered (not found in struct,
+            // enum, or builtin ADT registries). Registered ADTs like Box<T> that
+            // happen to be 8 bytes should NOT be expanded.
+            if base == 8 && args.len() > 0 && !is_adt_registered(ctx, def_id.index) {
+                let mut payload_size: u64 = 0;
+                let mut ai: usize = 0;
+                while ai < args.len() {
+                    payload_size = payload_size + type_size_with_ctx(ctx, &args[ai]);
+                    ai = ai + 1;
+                }
+                if payload_size > 8 {
+                    let tag_size: u64 = 1;
+                    return tag_size + payload_size;
+                }
+            }
+            base
         }
         _ => codegen_types::type_size_bytes(ty),
     }
@@ -297,6 +336,46 @@ pub fn type_size_with_ctx(ctx: &mut codegen_ctx::CodegenCtx, ty: &hir_ty::Type) 
 
 /// Gets the size of an ADT type from the registry.
 /// Computes size from the LLVM type structure.
+/// Checks whether an ADT is registered in the struct/enum registry or is a known
+/// builtin ADT (Vec, String, HashMap, Box). Returns true if the ADT has an explicit
+/// layout, false if it would fall through to the generic "ptr"/8-byte default.
+fn is_adt_registered(ctx: &mut codegen_ctx::CodegenCtx, def_id: u32) -> bool {
+    // Check struct registry
+    match ctx.lookup_struct(def_id) {
+        Option::Some(_) => { return true; }
+        Option::None => {}
+    }
+    // Check enum registry
+    match ctx.lookup_enum(def_id) {
+        Option::Some(_) => { return true; }
+        Option::None => {}
+    }
+    // Check builtin names (Vec, String, HashMap, Box)
+    match ctx.lookup_def_name(def_id) {
+        Option::Some(name) => {
+            let nb = name.as_bytes();
+            // Vec
+            if nb.len() == 3 && nb[0] == 86 && nb[1] == 101 && nb[2] == 99 {
+                return true;
+            }
+            // String
+            if nb.len() == 6 && nb[0] == 83 && nb[1] == 116 && nb[2] == 114 {
+                return true;
+            }
+            // HashMap
+            if nb.len() == 7 && nb[0] == 72 && nb[1] == 97 && nb[2] == 115 && nb[3] == 104 {
+                return true;
+            }
+            // Box
+            if nb.len() == 3 && nb[0] == 66 && nb[1] == 111 && nb[2] == 120 {
+                return true;
+            }
+            false
+        }
+        Option::None => false,
+    }
+}
+
 fn adt_size_bytes(ctx: &mut codegen_ctx::CodegenCtx, def_id: u32) -> u64 {
     // Try to look up struct layout first
     match ctx.lookup_struct(def_id) {
@@ -330,8 +409,13 @@ fn compute_struct_size(layout: &codegen_ctx::StructLayout) -> u64 {
         size = size + padding + field_size;
         i = i + 1;
     }
-    // Minimum size of 8 bytes, and round up to 8-byte alignment
+    // If no fields enumerated, use the llvm_type string to compute size.
+    // This handles builtin types (Vec, String, HashMap) registered with empty fields.
     if size == 0 {
+        let from_type = llvm_type_size(layout.llvm_type.as_str());
+        if from_type > 0 {
+            return from_type;
+        }
         return 8;
     }
     let final_padding = (8u64 - (size % 8u64)) % 8u64;
@@ -395,6 +479,11 @@ fn llvm_type_size(ty: &str) -> u64 {
     if bytes[0] == 123 {
         return parse_struct_size(ty);
     }
+    // Array [N x T] - parse count and element type, return N * sizeof(T)
+    if bytes[0] == 91 {
+        // '[' - parse array type
+        return parse_array_size(ty);
+    }
     // Default: 8 bytes
     8
 }
@@ -444,6 +533,43 @@ fn parse_struct_size(ty: &str) -> u64 {
     }
     let padding = (8u64 - (size % 8u64)) % 8u64;
     size + padding
+}
+
+/// Parses an array type string `[N x T]` and returns N * sizeof(T).
+fn parse_array_size(ty: &str) -> u64 {
+    let bytes = ty.as_bytes();
+    // Skip leading '['
+    let mut i: usize = 1;
+    // Skip whitespace
+    while i < bytes.len() && bytes[i] == 32 {
+        i = i + 1;
+    }
+    // Parse the count N
+    let mut count: u64 = 0;
+    while i < bytes.len() && bytes[i] >= 48 && bytes[i] <= 57 {
+        count = count * 10 + ((bytes[i] - 48) as u64);
+        i = i + 1;
+    }
+    // Skip " x "
+    while i < bytes.len() && (bytes[i] == 32 || bytes[i] == 120) {
+        i = i + 1;
+    }
+    // The rest up to ']' is the element type
+    let elem_start = i;
+    let mut elem_end = bytes.len();
+    // Find the closing ']'
+    let mut j: usize = bytes.len();
+    while j > elem_start {
+        j = j - 1;
+        if bytes[j] == 93 {
+            elem_end = j;
+            break;
+        }
+    }
+    let elem_ty = substring(ty, elem_start, elem_end);
+    let trimmed = trim_whitespace(elem_ty.as_str());
+    let elem_size = llvm_type_size(trimmed.as_str());
+    count * elem_size
 }
 
 /// Extracts a substring.
@@ -578,16 +704,16 @@ fn emit_region_local(
     // Allocate pointer slot on stack
     ctx.emit_alloca(name.as_str(), "ptr");
 
-    // Call @blood_region_alloc(region_id=0, size, align)
-    // Use context-aware size for ADT types
+    // Use blood_alloc_simple(size) for heap allocation.
+    // blood_region_alloc requires an active region (create + activate), which
+    // the self-hosted codegen doesn't emit yet. blood_alloc_simple works without
+    // region setup and provides the same heap allocation semantics.
     let size = type_size_with_ctx(ctx, ty);
     let size_str = codegen_types::format_u64(size);
     let result_tmp = ctx.fresh_temp();
     let mut args: Vec<(String, String)> = Vec::new();
-    args.push((common::make_string("i64"), common::make_string("0")));
     args.push((common::make_string("i64"), size_str));
-    args.push((common::make_string("i64"), common::make_string("8")));
-    ctx.emit_call(Option::Some(result_tmp.as_str()), "i64", "@blood_region_alloc", &args);
+    ctx.emit_call(Option::Some(result_tmp.as_str()), "i64", "@blood_alloc_simple", &args);
 
     // Convert i64 to ptr and store
     let ptr_tmp = ctx.fresh_temp();

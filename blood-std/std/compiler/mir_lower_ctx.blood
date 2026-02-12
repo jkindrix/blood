@@ -84,7 +84,10 @@ impl MirLowerCtx {
         let mut field_hash = hashmap::HashMapU64U32::with_capacity(field_resolutions.len());
         i = 0;
         while i < field_resolutions.len() {
-            let key = field_resolutions[i].span_start as u64;
+            let key = hashmap::combine_u32_usize(
+                field_resolutions[i].body_def_id,
+                field_resolutions[i].span_start
+            );
             field_hash.insert(key, field_resolutions[i].field_idx);
             i = i + 1;
         }
@@ -192,8 +195,8 @@ impl MirLowerCtx {
     ///
     /// Uses hash-based lookup for O(1) average case.
     pub fn lookup_field_idx(self: &MirLowerCtx, span_start: usize) -> Option<u32> {
-        // Fast path: hash-based lookup
-        let key = span_start as u64;
+        // Fast path: hash-based lookup using composite key (body_def_id, span_start)
+        let key = hashmap::combine_u32_usize(self.body_def_id, span_start);
         match self.field_hash.get(key) {
             Option::Some(field_idx) => {
                 return Option::Some(field_idx);
@@ -204,7 +207,8 @@ impl MirLowerCtx {
         // Fallback to linear scan (should not happen with correct hash population)
         let mut i: usize = 0;
         while i < self.field_resolutions.len() {
-            if self.field_resolutions[i].span_start == span_start {
+            if self.field_resolutions[i].body_def_id == self.body_def_id &&
+               self.field_resolutions[i].span_start == span_start {
                 return Option::Some(self.field_resolutions[i].field_idx);
             }
             i = i + 1;

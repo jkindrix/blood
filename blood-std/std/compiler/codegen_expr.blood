@@ -187,7 +187,7 @@ fn emit_place_load(
     ctx: &mut codegen_ctx::CodegenCtx,
     place: &mir_types::Place,
 ) -> String {
-    let ptr = emit_place_addr(ctx, place);
+    let ptr = emit_place_data_ptr(ctx, place);
     let result = ctx.fresh_temp();
     // Use the projected type (accounts for field access, deref, etc.)
     let llvm_ty = resolve_place_elem_type(ctx, place);
@@ -195,12 +195,31 @@ fn emit_place_load(
     result
 }
 
+/// Returns the data pointer for a place, handling region/persistent indirection.
+/// For region/persistent locals with no projections, the stack alloca holds a ptr
+/// to heap memory. This function dereferences to return the heap pointer where
+/// the actual data lives. For stack locals, returns the alloca directly.
+pub fn emit_place_data_ptr(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    place: &mir_types::Place,
+) -> String {
+    let ptr = emit_place_addr(ctx, place);
+    if place.projection.len() == 0
+        && (ctx.is_region_allocated(place.local) || ctx.is_persistent_allocated(place.local))
+    {
+        let heap_ptr = ctx.fresh_temp();
+        ctx.emit_load(heap_ptr.as_str(), "ptr", ptr.as_str());
+        return heap_ptr;
+    }
+    ptr
+}
+
 /// Loads a value from a place, returning (value, llvm_type).
 fn emit_place_load_with_type(
     ctx: &mut codegen_ctx::CodegenCtx,
     place: &mir_types::Place,
 ) -> (String, String) {
-    let ptr = emit_place_addr(ctx, place);
+    let ptr = emit_place_data_ptr(ctx, place);
     let result = ctx.fresh_temp();
     // Use the projected type (accounts for field access, deref, etc.)
     let llvm_ty = resolve_place_elem_type(ctx, place);
@@ -293,8 +312,62 @@ fn resolve_place_elem_type(
             // Fallback: use the local's type
             ctx.get_local_type(place.local)
         }
+        &mir_types::PlaceElem::Index(_) => {
+            // After indexing, the type is the container's element type, not the container type
+            match ctx.get_local_hir_type(place.local) {
+                Option::Some(hir_type) => resolve_index_element_type(ctx, hir_type),
+                Option::None => ctx.get_local_type(place.local),
+            }
+        }
+        &mir_types::PlaceElem::ConstantIndex { offset: _, min_length: _, from_end: _ } => {
+            // After constant indexing, the type is the container's element type
+            match ctx.get_local_hir_type(place.local) {
+                Option::Some(hir_type) => resolve_index_element_type(ctx, hir_type),
+                Option::None => ctx.get_local_type(place.local),
+            }
+        }
+        &mir_types::PlaceElem::Deref => {
+            // Deref projection: unwrap Ref/Ptr layers from the local's HIR type
+            // to find the pointed-to type. E.g., *const u8 → i8, &String → { ptr, i64, i64 }.
+            match ctx.get_local_hir_type(place.local) {
+                Option::Some(hir_type) => {
+                    // Count Deref projections in the chain
+                    let mut deref_count: usize = 0;
+                    let mut di: usize = 0;
+                    while di < place.projection.len() {
+                        match &place.projection[di] {
+                            &mir_types::PlaceElem::Deref => {
+                                deref_count = deref_count + 1;
+                            }
+                            _ => {}
+                        }
+                        di = di + 1;
+                    }
+                    // Unwrap one layer
+                    match apply_deref_to_type(hir_type) {
+                        Option::Some(inner_ty) => {
+                            // Apply remaining Derefs
+                            let mut final_ty = inner_ty;
+                            let mut applied: usize = 1;
+                            while applied < deref_count {
+                                match apply_deref_to_type(&final_ty) {
+                                    Option::Some(next) => {
+                                        final_ty = next;
+                                        applied = applied + 1;
+                                    }
+                                    Option::None => { break; }
+                                }
+                            }
+                            hir_to_llvm_with_ctx(ctx, &final_ty)
+                        }
+                        Option::None => ctx.get_local_type(place.local),
+                    }
+                }
+                Option::None => ctx.get_local_type(place.local),
+            }
+        }
         _ => {
-            // For Deref, Index, and other projections, use the local's type
+            // For Downcast and other projections, use the local's type
             ctx.get_local_type(place.local)
         }
     }
@@ -351,6 +424,17 @@ pub fn emit_place_addr(
         Option::Some(ty) => Option::Some(hir_ty::copy_type(ty)),
         Option::None => Option::None,
     };
+
+    // Region/persistent auto-deref: if the local is heap-allocated via region/persistent
+    // and there are projections, load the heap pointer first. The alloca only holds a ptr
+    // to the heap; projections must start from the heap data.
+    if place.projection.len() > 0
+        && (ctx.is_region_allocated(place.local) || ctx.is_persistent_allocated(place.local))
+    {
+        let loaded = ctx.fresh_temp();
+        ctx.emit_load(loaded.as_str(), "ptr", current.as_str());
+        current = loaded;
+    }
 
     // Auto-deref: if the local is a reference type and the first projection is Field,
     // insert an implicit load of the pointer. The MIR should have a Deref projection
@@ -442,9 +526,47 @@ pub fn emit_place_addr(
                 current_hir_type = new_hir_type;
                 current_adt_def_id = Option::None;
                 current_base = common::make_string("{ i64 }");
+                // If the field type is an ADT, update current_base and current_adt_def_id
+                // to reflect the field's actual LLVM layout. This is critical for
+                // subsequent Index projections (e.g., self.buckets[idx]) so that
+                // is_vec_like_type correctly detects Vec-like types and loads the
+                // data pointer before indexing.
+                match &current_hir_type {
+                    &Option::Some(ref field_ty) => {
+                        match &field_ty.kind {
+                            &hir_ty::TypeKind::Adt { def_id, args: _ } => {
+                                current_base = ctx.adt_llvm_type(def_id.index);
+                                current_adt_def_id = Option::Some(def_id.index);
+                            }
+                            _ => {}
+                        }
+                    }
+                    &Option::None => {}
+                }
                 downcast_variant = Option::None;
             }
             &mir_types::PlaceElem::Index(ref local) => {
+                // For Vec/container indexing, the current address points to the Vec struct
+                // { ptr, i64, i64 } where the first field is the data pointer. We need to
+                // load the data pointer before indexing into the heap-allocated array.
+                // Detect Vec-like types by checking if current_base starts with "{ ptr"
+                if is_vec_like_type(&current_base) {
+                    // When the local is a reference to a Vec (LLVM type "ptr") and there's
+                    // no preceding Deref projection, current points to the alloca containing
+                    // the reference. Load through the reference first to get the Vec struct address.
+                    if i == 0 {
+                        let local_llvm_ty = ctx.get_local_type(place.local);
+                        if string_eq_str(local_llvm_ty.as_str(), "ptr") {
+                            let vec_ptr = ctx.fresh_temp();
+                            ctx.emit_load(vec_ptr.as_str(), "ptr", current.as_str());
+                            current = vec_ptr;
+                        }
+                    }
+                    let data_ptr = ctx.fresh_temp();
+                    ctx.emit_load(data_ptr.as_str(), "ptr", current.as_str());
+                    current = data_ptr;
+                }
+
                 // Get the element size using tracked HIR type for proper byte-offset calculation
                 let elem_size = match &current_hir_type {
                     &Option::Some(ref ty) => get_element_size_from_hir(ctx, ty),
@@ -476,6 +598,22 @@ pub fn emit_place_addr(
                 downcast_variant = Option::None;
             }
             &mir_types::PlaceElem::ConstantIndex { offset, min_length: _, from_end } => {
+                // For Vec/container indexing, load the data pointer first
+                if is_vec_like_type(&current_base) {
+                    // Handle reference-to-Vec (same as Index case above)
+                    if i == 0 {
+                        let local_llvm_ty = ctx.get_local_type(place.local);
+                        if string_eq_str(local_llvm_ty.as_str(), "ptr") {
+                            let vec_ptr = ctx.fresh_temp();
+                            ctx.emit_load(vec_ptr.as_str(), "ptr", current.as_str());
+                            current = vec_ptr;
+                        }
+                    }
+                    let data_ptr = ctx.fresh_temp();
+                    ctx.emit_load(data_ptr.as_str(), "ptr", current.as_str());
+                    current = data_ptr;
+                }
+
                 // Get the element size using tracked HIR type for proper byte-offset calculation
                 let elem_size = match &current_hir_type {
                     &Option::Some(ref ty) => get_element_size_from_hir(ctx, ty),
@@ -523,17 +661,20 @@ pub fn emit_place_addr(
 
                 let result = ctx.fresh_temp();
 
-                if is_struct_or_array_type(&current_base) {
+                // Only use struct GEP when the type has 2+ fields (discriminant + data).
+                // Fallback types like { i64 } from Deref need byte-offset GEP.
+                let fc = count_struct_fields(&current_base);
+                if is_struct_or_array_type(&current_base) && fc >= 2 {
                     let mut indices: Vec<String> = Vec::new();
                     indices.push(common::make_string("0"));
                     // Skip discriminant at index 0, variant data at index 1
                     indices.push(common::make_string("1"));
                     ctx.emit_gep(result.as_str(), current_base.as_str(), current.as_str(), &indices);
                 } else {
-                    // Scalar base type (ptr, i64): use byte-offset GEP
-                    // Discriminant is 8 bytes, so variant data starts at offset 8
+                    // Scalar or fallback base type: use byte-offset GEP
+                    // Discriminant is i8 (1 byte), so variant data starts at offset 1
                     let mut indices: Vec<String> = Vec::new();
-                    indices.push(common::make_string("8"));
+                    indices.push(common::make_string("1"));
                     ctx.emit_gep(result.as_str(), "i8", current.as_str(), &indices);
                 }
                 current = result;
@@ -555,7 +696,18 @@ fn resolve_local_base_type(
 ) -> String {
     match ctx.get_local_hir_type(local) {
         Option::Some(hir_type) => {
-            resolve_base_type_from_hir(ctx, hir_type)
+            let result = resolve_base_type_from_hir(ctx, hir_type);
+            // If resolve returned "ptr" (fallback for unknown ADT), the local might
+            // be a builtin generic (Option<T>, Result<T,E>) not in the ADT registry.
+            // Fall back to the alloca type which was computed correctly.
+            let rb = result.as_bytes();
+            if rb.len() == 3 && rb[0] == 112 && rb[1] == 116 && rb[2] == 114 {
+                let alloca_type = ctx.get_local_type(local);
+                if is_struct_or_array_type(&alloca_type) {
+                    return alloca_type;
+                }
+            }
+            result
         }
         Option::None => common::make_string("{ i64 }"),
     }
@@ -767,6 +919,68 @@ fn get_element_size_from_hir(ctx: &mut codegen_ctx::CodegenCtx, hir_type: &hir_t
     }
 }
 
+/// Resolves the LLVM element type for an indexing operation on a container HIR type.
+/// For Vec<T>, returns the LLVM type of T. For Array/Slice, returns element type.
+fn resolve_index_element_type(ctx: &mut codegen_ctx::CodegenCtx, container_ty: &hir_ty::Type) -> String {
+    match &container_ty.kind {
+        &hir_ty::TypeKind::Array { ref element, size: _ } => {
+            hir_to_llvm_with_ctx(ctx, element.as_ref())
+        }
+        &hir_ty::TypeKind::Slice { ref element } => {
+            hir_to_llvm_with_ctx(ctx, element.as_ref())
+        }
+        &hir_ty::TypeKind::Adt { def_id: _, ref args } => {
+            // Vec<T> has T as first type argument
+            if args.len() > 0 {
+                hir_to_llvm_with_ctx(ctx, &args[0])
+            } else {
+                common::make_string("i64")
+            }
+        }
+        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
+            resolve_index_element_type(ctx, inner.as_ref())
+        }
+        &hir_ty::TypeKind::Ptr { ref inner, mutable: _ } => {
+            resolve_index_element_type(ctx, inner.as_ref())
+        }
+        _ => common::make_string("i64"),
+    }
+}
+
+/// Converts an HIR type to LLVM type string, using the ADT registry for struct layouts.
+/// This is needed because codegen_types::type_to_llvm returns "ptr" for all ADTs,
+/// but we need the actual struct layout (e.g., "{ ptr, i64, i64 }" for String).
+fn hir_to_llvm_with_ctx(ctx: &mut codegen_ctx::CodegenCtx, ty: &hir_ty::Type) -> String {
+    match &ty.kind {
+        &hir_ty::TypeKind::Adt { def_id, ref args } => {
+            let result = ctx.adt_llvm_type(def_id.index);
+            // Unregistered generic (Option<T>, Result<T,E>) returns "ptr" - compute actual layout
+            if result.as_bytes().len() == 3
+                && result.as_bytes()[0] == 112  // 'p'
+                && result.as_bytes()[1] == 116  // 't'
+                && result.as_bytes()[2] == 114  // 'r'
+                && args.len() > 0
+            {
+                let mut payload_size: u64 = 0;
+                let mut ai: usize = 0;
+                while ai < args.len() {
+                    payload_size = payload_size + type_size_with_ctx(ctx, &args[ai]);
+                    ai = ai + 1;
+                }
+                if payload_size > 0 {
+                    let mut s = common::make_string("{ i8, [");
+                    let size_str = codegen_types::format_u64(payload_size);
+                    s.push_str(size_str.as_str());
+                    s.push_str(" x i8] }");
+                    return s;
+                }
+            }
+            result
+        }
+        _ => codegen_types::type_to_llvm(ty),
+    }
+}
+
 // ============================================================
 // Rvalue Codegen
 // ============================================================
@@ -783,7 +997,7 @@ pub fn emit_rvalue(
             ctx.emit_store(ty.as_str(), val.as_str(), dest);
         }
         &mir_types::Rvalue::Ref { ref place, mutable: _ } => {
-            let addr = emit_place_addr(ctx, place);
+            let addr = emit_place_data_ptr(ctx, place);
             ctx.emit_store("ptr", addr.as_str(), dest);
         }
         &mir_types::Rvalue::BinaryOp { op: ref bin_op, ref left, ref right } => {
@@ -830,7 +1044,7 @@ pub fn emit_rvalue(
             ctx.emit_store(ty.as_str(), result.as_str(), dest);
         }
         &mir_types::Rvalue::AddressOf { ref place, mutable: _ } => {
-            let addr = emit_place_addr(ctx, place);
+            let addr = emit_place_data_ptr(ctx, place);
             ctx.emit_store("ptr", addr.as_str(), dest);
         }
         &mir_types::Rvalue::ArrayToSlice { ref array_ref, array_len } => {
@@ -881,7 +1095,24 @@ pub fn emit_rvalue(
         }
         &mir_types::Rvalue::Len(ref place) => {
             // For slices - load the length field
-            let ptr = emit_place_addr(ctx, place);
+            let mut ptr = emit_place_data_ptr(ctx, place);
+            // Auto-deref for Ref-typed locals: the alloca (or heap slot) holds a pointer
+            // to the actual data, not the data itself. Load through the pointer first.
+            if place.projection.len() == 0 {
+                match ctx.get_local_hir_type(place.local) {
+                    Option::Some(hir_type) => {
+                        match &hir_type.kind {
+                            &hir_ty::TypeKind::Ref { inner: _, mutable: _ } => {
+                                let deref = ctx.fresh_temp();
+                                ctx.emit_load(deref.as_str(), "ptr", ptr.as_str());
+                                ptr = deref;
+                            }
+                            _ => {}
+                        }
+                    }
+                    Option::None => {}
+                }
+            }
             let len_ptr = ctx.fresh_temp();
             let mut indices: Vec<String> = Vec::new();
             indices.push(common::make_string("0"));
@@ -893,7 +1124,24 @@ pub fn emit_rvalue(
         }
         &mir_types::Rvalue::Discriminant(ref place) => {
             // Load discriminant field of enum
-            let ptr = emit_place_addr(ctx, place);
+            let mut ptr = emit_place_data_ptr(ctx, place);
+            // Auto-deref for Ref-typed locals: the alloca (or heap slot) holds a pointer
+            // to the actual enum data, not the enum itself. Load through the pointer first.
+            if place.projection.len() == 0 {
+                match ctx.get_local_hir_type(place.local) {
+                    Option::Some(hir_type) => {
+                        match &hir_type.kind {
+                            &hir_ty::TypeKind::Ref { inner: _, mutable: _ } => {
+                                let deref = ctx.fresh_temp();
+                                ctx.emit_load(deref.as_str(), "ptr", ptr.as_str());
+                                ptr = deref;
+                            }
+                            _ => {}
+                        }
+                    }
+                    Option::None => {}
+                }
+            }
 
             // Try to look up enum layout for correct discriminant type
             let mut discr_ty = common::make_string("i64");
@@ -942,10 +1190,14 @@ pub fn emit_rvalue(
                     ctx.emit_store("i64", extended.as_str(), dest);
                 }
             } else {
-                // Fallback: load i64 directly
+                // Fallback for builtin generic enums (Option<T>, Result<T,E>)
+                // not in the ADT registry: load i8 discriminant and zero-extend.
+                // All Blood enums have ≤256 variants → i8 discriminant.
                 let discr_val = ctx.fresh_temp();
-                ctx.emit_load(discr_val.as_str(), "i64", ptr.as_str());
-                ctx.emit_store("i64", discr_val.as_str(), dest);
+                ctx.emit_load(discr_val.as_str(), "i8", ptr.as_str());
+                let extended = ctx.fresh_temp();
+                ctx.emit_cast(extended.as_str(), "zext", "i8", discr_val.as_str(), "i64");
+                ctx.emit_store("i64", extended.as_str(), dest);
             }
         }
     }
@@ -1096,6 +1348,21 @@ fn is_struct_or_array_type(ty: &String) -> bool {
     let bytes = ty.as_bytes();
     if bytes.len() > 0 {
         bytes[0] == 123 || bytes[0] == 91 // '{' or '['
+    } else {
+        false
+    }
+}
+
+/// Returns true if the LLVM type looks like a Vec/container type whose first
+/// field is a data pointer. These types have layout { ptr, ... } and require
+/// loading the data pointer before indexing into the heap-allocated array.
+fn is_vec_like_type(ty: &String) -> bool {
+    // Check for "{ ptr" at the start — this matches Vec<T> = { ptr, i64, i64 }
+    // and similar container types where field 0 is the heap data pointer.
+    let bytes = ty.as_bytes();
+    if bytes.len() >= 5 {
+        bytes[0] == 123 && bytes[1] == 32 && bytes[2] == 112 && bytes[3] == 116 && bytes[4] == 114
+        // '{' ' ' 'p' 't' 'r'
     } else {
         false
     }
@@ -1900,8 +2167,8 @@ fn emit_aggregate_adt(
         }
         Option::None => {}
     }
-    // Fallback: ADT not in registry. Emit all operands first to collect
-    // their types, build a struct type from them, then GEP + store each.
+    // Fallback: ADT not in registry (builtin generic enum like Option<T>, Result<T,E>).
+    // Emit as enum: store i8 discriminant at byte 0, payload fields starting at byte 1.
     let mut vals: Vec<String> = Vec::new();
     let mut tys: Vec<String> = Vec::new();
     let mut k: usize = 0;
@@ -1912,31 +2179,39 @@ fn emit_aggregate_adt(
         k = k + 1;
     }
 
-    // Build struct type string from collected types: "{ ty0, ty1, ... }"
-    let mut fallback_ty = common::make_string("{ ");
-    let mut t: usize = 0;
-    while t < tys.len() {
-        if t > 0 {
-            fallback_ty.push_str(", ");
-        }
-        fallback_ty.push_str(tys[t].as_str());
-        t = t + 1;
-    }
-    fallback_ty.push_str(" }");
-    if tys.len() == 0 {
-        fallback_ty = common::make_string("{}");
-    }
+    // Store i8 discriminant at byte 0
+    ctx.emit_store("i8", codegen_types::format_u64(variant_idx as u64).as_str(), dest);
 
-    // Store each field
-    let mut i: usize = 0;
-    while i < vals.len() {
-        let field_ptr = ctx.fresh_temp();
-        let mut indices: Vec<String> = Vec::new();
-        indices.push(common::make_string("0"));
-        indices.push(codegen_types::format_u64(i as u64));
-        ctx.emit_gep(field_ptr.as_str(), fallback_ty.as_str(), dest, &indices);
-        ctx.emit_store(tys[i].as_str(), vals[i].as_str(), field_ptr.as_str());
-        i = i + 1;
+    // Store payload fields at byte offset 1 (after i8 discriminant)
+    if vals.len() > 0 {
+        let payload_ptr = ctx.fresh_temp();
+        let mut off_indices: Vec<String> = Vec::new();
+        off_indices.push(common::make_string("1"));
+        ctx.emit_gep(payload_ptr.as_str(), "i8", dest, &off_indices);
+
+        // Build payload struct type from operand types
+        let mut payload_ty = common::make_string("{ ");
+        let mut pi: usize = 0;
+        while pi < tys.len() {
+            if pi > 0 {
+                payload_ty.push_str(", ");
+            }
+            payload_ty.push_str(tys[pi].as_str());
+            pi = pi + 1;
+        }
+        payload_ty.push_str(" }");
+
+        // Store each field in the payload
+        let mut i: usize = 0;
+        while i < vals.len() {
+            let field_ptr = ctx.fresh_temp();
+            let mut field_indices: Vec<String> = Vec::new();
+            field_indices.push(common::make_string("0"));
+            field_indices.push(codegen_types::format_u64(i as u64));
+            ctx.emit_gep(field_ptr.as_str(), payload_ty.as_str(), payload_ptr.as_str(), &field_indices);
+            ctx.emit_store(tys[i].as_str(), vals[i].as_str(), field_ptr.as_str());
+            i = i + 1;
+        }
     }
 }
 
@@ -2054,8 +2329,22 @@ fn emit_aggregate(
 /// This is context-aware and returns correct sizes for user-defined ADTs.
 fn type_size_with_ctx(ctx: &mut codegen_ctx::CodegenCtx, ty: &hir_ty::Type) -> u64 {
     match &ty.kind {
-        &hir_ty::TypeKind::Adt { def_id, args: _ } => {
-            adt_size_bytes(ctx, def_id.index)
+        &hir_ty::TypeKind::Adt { def_id, ref args } => {
+            let base = adt_size_bytes(ctx, def_id.index);
+            // For generic builtins not in registry (Option<T>, Result<T,E>),
+            // base returns 8 (pointer size fallback). Compute actual size from args.
+            if base == 8 && args.len() > 0 {
+                let mut payload_size: u64 = 0;
+                let mut ai: usize = 0;
+                while ai < args.len() {
+                    payload_size = payload_size + type_size_with_ctx(ctx, &args[ai]);
+                    ai = ai + 1;
+                }
+                if payload_size > 8 {
+                    return 1u64 + payload_size;
+                }
+            }
+            base
         }
         _ => codegen_types::type_size_bytes(ty),
     }
@@ -2092,7 +2381,9 @@ fn compute_struct_size_local(layout: &codegen_ctx::StructLayout) -> u64 {
         i = i + 1;
     }
     if size == 0 {
-        return 8;
+        // Builtin ADTs (Vec, String, HashMap) have no field entries but
+        // have a valid llvm_type string. Compute size from that.
+        return llvm_type_size_local(layout.llvm_type.as_str());
     }
     let final_padding = (8u64 - (size % 8u64)) % 8u64;
     size + final_padding

@@ -533,7 +533,9 @@ fn lower_unary_expr(
             }
         }
         common::UnaryOp::Ref => {
-            // Take a reference
+            // Take an immutable reference — copy to temp first.
+            // For immutable borrows, copying is safe because the caller
+            // cannot modify through the reference.
             let temp = ctx.new_temp(operand.ty.clone(), span);
             lower_expr(ctx, operand, mir_lower_ctx::destination_local(temp));
 
@@ -552,16 +554,16 @@ fn lower_unary_expr(
             }
         }
         common::UnaryOp::RefMut => {
-            // Take a mutable reference
-            let temp = ctx.new_temp(operand.ty.clone(), span);
-            lower_expr(ctx, operand, mir_lower_ctx::destination_local(temp));
-
+            // Take a mutable reference — borrow the original place directly.
+            // Critical: the old pattern (copy to temp, then &mut temp) meant
+            // mutations through the &mut only affected the copy, not the original.
+            let src_place = expr_to_place(ctx, operand, span);
             match dest.as_place() {
                 Option::Some(place) => {
                     ctx.emit_assign(
                         place,
                         mir_types::Rvalue::Ref {
-                            place: mir_types::Place::local(temp),
+                            place: src_place,
                             mutable: true,
                         },
                         span,
@@ -721,14 +723,43 @@ fn lower_method_call_expr(
     dest: mir_lower_ctx::Destination,
     span: common::Span,
 ) {
-    // Evaluate receiver
-    let recv_temp = ctx.new_temp(receiver.ty.clone(), span);
-    lower_expr(ctx, receiver, mir_lower_ctx::destination_local(recv_temp));
+    // Get receiver as a Place directly (no copy!) so Ref points to the
+    // original variable. This is critical for mutation: push_str etc. must
+    // modify the actual variable, not a temporary copy.
+    let recv_place = expr_to_place(ctx, receiver, span);
 
     // Build argument list (receiver first).
     // Methods take self by reference (&Self or &mut Self), so we need to
     // auto-borrow the receiver: create a Ref rvalue to get &receiver.
+    //
+    // Special case: if the receiver local's DECLARED type is already a reference
+    // (e.g. parameter `s: &String`), the type checker auto-derefs receiver.ty
+    // to the inner type (String). We must add a Deref projection so that
+    // Rvalue::Ref produces &(*s) = &String, not &s = &&String.
     let mut arg_operands = Vec::new();
+
+    // Check if the receiver local holds a THIN reference (e.g. &String, &Vec<T>).
+    // Thin refs store just a ptr in the alloca — we must Deref to avoid &&T.
+    // Fat refs (&str, &[T]) store { ptr, i64 } in the alloca — no Deref needed,
+    // because &alloca already points to the full fat pointer struct.
+    let local_is_thin_ref = match &ctx.builder.body_ref().get_local(recv_place.local).ty.kind {
+        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
+            let inner_type = inner.as_ref();
+            match &inner_type.kind {
+                &hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Str) => false,
+                &hir_ty::TypeKind::Slice { element: _ } => false,
+                _ => true,
+            }
+        }
+        _ => false,
+    };
+
+    let borrow_place = if local_is_thin_ref && recv_place.projection.len() == 0 {
+        recv_place.project(mir_types::PlaceElem::Deref)
+    } else {
+        recv_place
+    };
+
     let recv_ref_ty = hir_ty::Type::new(hir_ty::TypeKind::Ref {
         inner: Box::new(hir_ty::copy_type(&receiver.ty)),
         mutable: false,
@@ -737,7 +768,7 @@ fn lower_method_call_expr(
     ctx.emit_assign(
         mir_types::Place::local(recv_ref_temp),
         mir_types::Rvalue::Ref {
-            place: mir_types::Place::local(recv_temp),
+            place: borrow_place,
             mutable: false,
         },
         span,
@@ -817,10 +848,13 @@ fn lower_field_expr(
 
     // Get field index — for named fields, look up from the type checker's
     // field resolution side table; fall back to HIR-stored index if present.
+    // Use the field NAME's span for lookup, not the expression span,
+    // because chained accesses like `a.b.c` share the same expr.span.start
+    // but each field name has a unique position in the source.
     let field_idx = match field {
-        &hir_expr::FieldAccess::Named { name: _, field_idx } => {
+        &hir_expr::FieldAccess::Named { ref name, field_idx } => {
             // First try the field resolution side table (populated during type checking)
-            match ctx.lookup_field_idx(span.start) {
+            match ctx.lookup_field_idx(name.span.start) {
                 Option::Some(resolved_idx) => resolved_idx,
                 Option::None => {
                     // Fall back to HIR-stored field index
@@ -853,8 +887,11 @@ fn lower_index_expr(
     dest: mir_lower_ctx::Destination,
     span: common::Span,
 ) {
+    // Resolve the base type — HIR types may be Infer(TyVarId), not concrete.
+    let resolved_base_ty = ctx.resolve_type(&base.ty);
+
     // Evaluate base
-    let base_temp = ctx.new_temp(base.ty.clone(), span);
+    let base_temp = ctx.new_temp(resolved_base_ty.clone(), span);
     lower_expr(ctx, base, mir_lower_ctx::destination_local(base_temp));
 
     // Evaluate index
@@ -863,7 +900,16 @@ fn lower_index_expr(
 
     match dest.as_place() {
         Option::Some(place) => {
-            let indexed_place = mir_types::Place::local(base_temp)
+            // Auto-deref if the base evaluates to a reference type.
+            // e.g. argv[1] where argv: &Vec<String> needs Deref before Index.
+            let mut base_place = mir_types::Place::local(base_temp);
+            match &resolved_base_ty.kind {
+                &hir_ty::TypeKind::Ref { inner: _, mutable: _ } => {
+                    base_place = base_place.project(mir_types::PlaceElem::Deref);
+                }
+                _ => {}
+            }
+            let indexed_place = base_place
                 .project(mir_types::PlaceElem::Index(idx_temp));
             let operand = mir_lower_util::operand_from_place(indexed_place, ty);
             ctx.emit_assign(place, mir_types::Rvalue::Use(operand), span);
@@ -1921,17 +1967,23 @@ fn expr_to_place(
             match mir_local {
                 Option::Some(local) => mir_types::Place::local(local),
                 Option::None => {
+                    // Local not found in MIR context — create temp and initialize
+                    // by evaluating the expression. Must NOT leave uninitialized,
+                    // because RefMut borrows this place and reads through it.
                     let temp = ctx.new_temp(expr.ty.clone(), span);
+                    lower_expr(ctx, expr, mir_lower_ctx::destination_local(temp));
                     mir_types::Place::local(temp)
                 }
             }
         }
         &hir_expr::ExprKind::Field { ref base, ref field } => {
             let base_place = expr_to_place(ctx, base.as_ref(), span);
+            // Use the field NAME's span for lookup, not the expression span,
+            // because chained accesses like `a.b.c` share the same expr.span.start
             let field_idx = match field {
-                &hir_expr::FieldAccess::Named { name: _, field_idx } => {
+                &hir_expr::FieldAccess::Named { ref name, field_idx } => {
                     // First try the field resolution side table (populated during type checking)
-                    match ctx.lookup_field_idx(expr.span.start) {
+                    match ctx.lookup_field_idx(name.span.start) {
                         Option::Some(resolved_idx) => resolved_idx,
                         Option::None => {
                             // Fall back to HIR-stored field index
@@ -1947,10 +1999,24 @@ fn expr_to_place(
             base_place.project(mir_types::PlaceElem::Field(field_idx))
         }
         &hir_expr::ExprKind::Index { ref base, ref idx } => {
-            let base_place = expr_to_place(ctx, base.as_ref(), span);
+            let mut base_place = expr_to_place(ctx, base.as_ref(), span);
+            // Auto-deref if the base evaluates to a reference type.
+            // Must resolve type since HIR types may be Infer(TyVarId).
+            let resolved_base_ty = ctx.resolve_type(&base.as_ref().ty);
+            match &resolved_base_ty.kind {
+                &hir_ty::TypeKind::Ref { inner: _, mutable: _ } => {
+                    base_place = base_place.project(mir_types::PlaceElem::Deref);
+                }
+                _ => {}
+            }
             let idx_temp = ctx.new_temp(idx.as_ref().ty.clone(), span);
             lower_expr(ctx, idx.as_ref(), mir_lower_ctx::destination_local(idx_temp));
             base_place.project(mir_types::PlaceElem::Index(idx_temp))
+        }
+        &hir_expr::ExprKind::Path(ref path) => {
+            // A Path used as an assignment target must be a static variable.
+            // Functions and constants cannot be assigned to (caught by type checker).
+            mir_types::Place::static_place(path.def_id)
         }
         &hir_expr::ExprKind::Unary { op: the_op, ref operand } => {
             match the_op {

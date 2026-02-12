@@ -1197,126 +1197,53 @@ fn codegen_thread_worker(arg: u64) -> u64 {
 }
 
 // ============================================================
-// Effect-Abstracted Codegen
+// Pass 2: MIR Lowering + Codegen
 // ============================================================
 
-/// Effect for emitting IR sections.
-/// Codegen performs this at batch granularity (~32 functions per emit).
-/// The handler decides how to route the IR (file, LLVM-C, parallel, etc.).
-effect EmitIR {
-    op emit_section(ir: &str) -> ();
-}
-
-/// Handler that buffers emitted IR sections in memory, flushing to disk on return.
-/// Uses mutable String buffer state (enabled by blood-rust BUG-009 fix: 10261fc + b25403e).
-/// Consolidates N file_append_string syscalls into a single write.
-/// Tail-resumptive: resume(()) in tail position enables optimized codegen path.
-deep handler BufferedFileEmitter for EmitIR {
-    let output_path: String
-    let mut buffer: String
-
-    return(x) {
-        file_append_string(output_path.as_str(), buffer.as_str());
-        x
-    }
-
-    op emit_section(ir) {
-        buffer.push_str(ir);
-        resume(())
-    }
-}
-
-/// Number of codegen threads to use for parallel dispatch.
-/// Each thread processes a contiguous chunk of the worklist independently.
-fn codegen_thread_count() -> usize {
-    4
-}
-
-/// Runs parallel Pass 2 codegen under the EmitIR effect.
-/// Splits the worklist across N threads, each with its own CodegenCtx and output String.
-/// After all threads join, merges string tables and emits IR in order via EmitIR effect.
+/// Runs Pass 2 codegen, writing each function's IR directly to output_path.
+/// Processes functions sequentially with per-function MIR regions for memory efficiency.
 fn codegen_pass2(
     ctx: &mut codegen_ctx::CodegenCtx,
     worklist: &CodegenWorkList,
     lower_result: &hir_lower_ctx::LowerResult,
     typeck_result: &typeck_driver::TypeCheckResult,
-) -> bool / {EmitIR} {
+    output_path: &str,
+) -> bool {
     let total_items: usize = worklist.items.len();
     if total_items == 0 {
         return true;
     }
 
-    // Determine thread count (cap at CODEGEN_THREAD_COUNT or total items)
-    let max_threads: usize = codegen_thread_count();
-    let num_threads: usize = if total_items < max_threads { total_items } else { max_threads };
-    let chunk_size: usize = total_items / num_threads;
-    let remainder: usize = total_items % num_threads;
+    let mut i: usize = 0;
+    while i < total_items {
+        let work = &worklist.items[i];
+        let body_entry = &lower_result.bodies[work.body_idx];
+        let hir_body = &body_entry.body;
 
-    // Create worker contexts and output buffers
-    let mut worker_ctxs: Vec<codegen_ctx::CodegenCtx> = Vec::new();
-    let mut worker_outputs: Vec<String> = Vec::new();
-    let mut thread_args: Vec<ThreadCodegenArg> = Vec::new();
+        // MIR lowering (per-function region)
+        let mir_region = region_create(4194304, 1073741824);
+        region_activate(mir_region);
 
-    let mut ti: usize = 0;
-    while ti < num_threads {
-        worker_ctxs.push(ctx.create_worker_ctx());
-        worker_outputs.push(String::new());
-        ti = ti + 1;
-    }
+        let body = mir_lower::lower_body(
+            work.def_id,
+            hir_body,
+            hir_ty::copy_type(&work.return_ty),
+            work.span,
+            &typeck_result.subst_table,
+            &typeck_result.method_resolutions,
+            &typeck_result.field_resolutions,
+        );
 
-    // Build thread arguments with chunk boundaries
-    // First `remainder` threads get chunk_size+1 items, the rest get chunk_size
-    let mut arg_start: usize = 0;
-    let mut ai: usize = 0;
-    while ai < num_threads {
-        let this_chunk = if ai < remainder { chunk_size + 1 } else { chunk_size };
-        let arg_end = arg_start + this_chunk;
+        region_deactivate();
 
-        thread_args.push(ThreadCodegenArg {
-            worker_ctx_addr: &mut worker_ctxs[ai] as u64,
-            lower_result_addr: lower_result as u64,
-            typeck_result_addr: typeck_result as u64,
-            worklist_addr: worklist as u64,
-            chunk_start: arg_start,
-            chunk_end: arg_end,
-            output_ir_addr: &mut worker_outputs[ai] as u64,
-        });
+        // Codegen + write directly to file
+        let fn_ir = codegen::generate_function_with_ctx(ctx, &body, work.fn_name.as_str());
+        file_append_string(output_path, fn_ir.as_str());
 
-        arg_start = arg_end;
-        ai = ai + 1;
-    }
+        // Destroy MIR region
+        region_destroy(mir_region);
 
-    // Spawn worker threads
-    let worker_fn_ptr: u64 = codegen_thread_worker as u64;
-    let mut handles: Vec<u64> = Vec::new();
-    let mut si: usize = 0;
-    while si < num_threads {
-        let arg_addr: u64 = &thread_args[si] as u64;
-        let handle = thread_spawn(worker_fn_ptr, arg_addr);
-        handles.push(handle);
-        si = si + 1;
-    }
-
-    // Join all threads
-    let mut ji: usize = 0;
-    while ji < num_threads {
-        let _join_result = thread_join(handles[ji]);
-        ji = ji + 1;
-    }
-
-    // Collect results in order: merge string tables, remap labels, emit via effect
-    let mut mi: usize = 0;
-    while mi < num_threads {
-        // Merge worker's string table into main ctx
-        let remaps = codegen_ctx::merge_string_tables(ctx, &worker_ctxs[mi]);
-
-        // Remap string labels in worker IR if needed
-        let final_ir = codegen_ctx::remap_string_labels(&worker_outputs[mi], &remaps);
-
-        // Emit the thread's IR via the EmitIR effect
-        perform EmitIR.emit_section(final_ir.as_str());
-
-        mi = mi + 1;
+        i = i + 1;
     }
 
     true
@@ -1563,19 +1490,9 @@ fn compile_file_streaming(path: &str, output_path: &str) -> bool {
     // Filters out static bodies and duplicates from generic instantiations.
     let worklist = build_codegen_worklist(&lower_result, &static_def_ids);
 
-    // Pass 2: Effect-abstracted batched MIR lowering + codegen.
-    // The codegen_pass2 function performs EmitIR.emit_section per batch;
-    // the BufferedFileEmitter handler accumulates all IR in a String buffer,
-    // then flushes to disk in a single write when codegen_pass2 returns.
-    // Flush the write buffer first so pre-Pass-2 IR (header, statics) is on disk
-    // before the handler starts appending.
+    // Pass 2: MIR lowering + codegen, writing each function's IR directly to file.
     ctx.flush_write_buffer();
-
-    let mut emit_path = String::new();
-    emit_path.push_str(output_path);
-    let _pass2_ok: bool = with BufferedFileEmitter { output_path: emit_path, buffer: String::new() } handle {
-        codegen_pass2(&mut ctx, &worklist, &lower_result, &typeck_result)
-    };
+    let _pass2_ok = codegen_pass2(&mut ctx, &worklist, &lower_result, &typeck_result, output_path);
 
     // Pass 3: Generate stub functions for registered names without bodies.
     // These are enum variant constructors and other synthetic functions that are

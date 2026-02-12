@@ -85,20 +85,26 @@ pub struct Parser<'src> {
 impl<'src> Parser<'src> {
     /// Create a new parser for the given source.
     pub fn new(source: &'src str) -> Parser<'src> {
+        print("[PARSER_NEW] creating lexer...\n");
         let mut lexer = lexer::Lexer::new(source);
+        print("[PARSER_NEW] lexer created, getting first token...\n");
         let mut pending_doc_comments: Vec<token::Token> = Vec::new();
         let mut current = lexer.next_token();
+        print("[PARSER_NEW] first token obtained\n");
         // Accumulate any leading doc comments
         while current.kind == token::TokenKind::DocComment {
             pending_doc_comments.push(current);
             current = lexer.next_token();
         }
+        print("[PARSER_NEW] getting second token...\n");
         let mut next = lexer.next_token();
+        print("[PARSER_NEW] second token obtained\n");
         // Accumulate doc comments in lookahead
         while next.kind == token::TokenKind::DocComment {
             pending_doc_comments.push(next);
             next = lexer.next_token();
         }
+        print("[PARSER_NEW] building parser struct...\n");
 
         Parser {
             lexer,

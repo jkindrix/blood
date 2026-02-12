@@ -986,9 +986,12 @@ fn infer_field(
                     match checker.get_struct_field_ty(def_id, name.symbol) {
                         Some(field_ty) => {
                             // Record the resolved field index for MIR lowering
+                            // Use the field NAME's span, not the expression span, because
+                            // chained accesses like `self.next.kind` share the same expr.span.start
+                            // but have unique field name positions.
                             match checker.get_struct_field_idx(def_id, name.symbol) {
                                 Option::Some(idx) => {
-                                    checker.record_field_resolution(span.start, idx);
+                                    checker.record_field_resolution(name.span.start, idx);
                                 }
                                 Option::None => {}
                             }
@@ -1416,6 +1419,18 @@ fn is_valid_cast(src_ty: &hir_ty::Type, dst_ty: &hir_ty::Type) -> bool {
             // Can cast &T to *const T or &mut T to *mut T
             // Also &mut T can be cast to *const T
             !dst_mut || src_mut
+        }
+        // Reference to integer (for pointer packing: &T as u64)
+        (&hir_ty::TypeKind::Ref { inner: _, mutable: _ }, &hir_ty::TypeKind::Primitive(dst_prim)) => {
+            is_numeric_primitive(dst_prim)
+        }
+        // Integer to reference (for pointer unpacking: u64 as &T)
+        (&hir_ty::TypeKind::Primitive(src_prim), &hir_ty::TypeKind::Ref { inner: _, mutable: _ }) => {
+            is_numeric_primitive(src_prim)
+        }
+        // Function type to integer (for function pointer packing: fn as u64)
+        (&hir_ty::TypeKind::Fn { params: _, ret: _, effects: _ }, &hir_ty::TypeKind::Primitive(dst_prim)) => {
+            is_numeric_primitive(dst_prim)
         }
         // Pointer to pointer (with same or less mutability)
         (&hir_ty::TypeKind::Ptr { inner: _, mutable: src_mut }, &hir_ty::TypeKind::Ptr { inner: _, mutable: dst_mut }) => {

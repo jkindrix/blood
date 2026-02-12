@@ -48,11 +48,29 @@ pub fn lower_irrefutable_pattern(
         &hir_expr::PatternKind::Tuple(ref patterns) => {
             lower_tuple_pattern(ctx, patterns, source, span);
         }
-        &hir_expr::PatternKind::Struct { path: _, ref fields, has_rest: _ } => {
-            lower_struct_pattern(ctx, fields, source, span);
+        &hir_expr::PatternKind::Struct { ref path, ref fields, has_rest: _ } => {
+            // For enum record variants, downcast first to skip discriminant
+            match path.variant_index {
+                Option::Some(idx) => {
+                    let downcast_source = source.project(mir_types::PlaceElem::Downcast(idx));
+                    lower_struct_pattern(ctx, fields, downcast_source, span);
+                }
+                Option::None => {
+                    lower_struct_pattern(ctx, fields, source, span);
+                }
+            }
         }
-        &hir_expr::PatternKind::TupleStruct { path: _, ref fields } => {
-            lower_tuple_struct_pattern(ctx, fields, source, span);
+        &hir_expr::PatternKind::TupleStruct { ref path, ref fields } => {
+            // For enum tuple variants, downcast first to skip discriminant
+            match path.variant_index {
+                Option::Some(idx) => {
+                    let downcast_source = source.project(mir_types::PlaceElem::Downcast(idx));
+                    lower_tuple_struct_pattern(ctx, fields, downcast_source, span);
+                }
+                Option::None => {
+                    lower_tuple_struct_pattern(ctx, fields, source, span);
+                }
+            }
         }
         &hir_expr::PatternKind::Ref { mutable: _, ref inner } => {
             // Dereference and continue with inner pattern
@@ -90,9 +108,27 @@ fn lower_binding_pattern(
     ty: &hir_ty::Type,
     span: common::Span,
 ) {
-    // Create MIR local for this binding
+    // For ref bindings, the local holds a reference (&T), not the value (T).
+    // This ensures the alloca is ptr-sized (8 bytes) instead of value-sized,
+    // matching what Rvalue::Ref stores (a pointer).
+    let local_ty = match mode {
+        hir_expr::BindingMode::ByRef => {
+            hir_ty::Type::new(hir_ty::TypeKind::Ref {
+                inner: Box::new(ty.clone()),
+                mutable: false,
+            })
+        }
+        hir_expr::BindingMode::ByMutRef => {
+            hir_ty::Type::new(hir_ty::TypeKind::Ref {
+                inner: Box::new(ty.clone()),
+                mutable: true,
+            })
+        }
+        hir_expr::BindingMode::ByValue => ty.clone(),
+    };
+
     let mir_local = ctx.new_var(
-        ty.clone(),
+        local_ty,
         common::make_string("_var"),
         true,
         span,
@@ -252,7 +288,12 @@ pub fn pattern_test(
         &hir_expr::PatternKind::Binding { local_id: _, name: _, mode: _, subpattern: _ } => Option::None,
         &hir_expr::PatternKind::Tuple(_) => Option::None,
         &hir_expr::PatternKind::Struct { path: _, fields: _, has_rest: _ } => Option::None,
-        &hir_expr::PatternKind::Ref { mutable: _, inner: _ } => Option::None,
+        &hir_expr::PatternKind::Ref { mutable: _, ref inner } => {
+            // Dereference through the reference and test the inner pattern.
+            // e.g. match c { &Color::Red => ... } where c: &Color
+            let deref_source = source.clone().project(mir_types::PlaceElem::Deref);
+            pattern_test(ctx, inner.as_ref(), &deref_source, span)
+        }
         &hir_expr::PatternKind::Error => Option::None,
 
         &hir_expr::PatternKind::Literal(ref lit) => {
@@ -398,14 +439,7 @@ pub fn bind_arm_pattern(
     scrutinee: mir_types::Place,
     span: common::Span,
 ) {
-    // For enum variants, downcast first
-    let source = match &pattern.kind {
-        &hir_expr::PatternKind::TupleStruct { ref path, fields: _ } => {
-            let variant_idx = get_variant_index_from_path(path);
-            scrutinee.project(mir_types::PlaceElem::Downcast(variant_idx))
-        }
-        _ => scrutinee,
-    };
-
-    lower_irrefutable_pattern(ctx, pattern, source, span);
+    // Downcast is now handled inside lower_irrefutable_pattern
+    // for both top-level and nested enum variant patterns
+    lower_irrefutable_pattern(ctx, pattern, scrutinee, span);
 }

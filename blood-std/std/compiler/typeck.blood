@@ -471,9 +471,11 @@ impl TypeChecker {
     }
 
     /// Records a resolved field index for a named field access expression.
-    /// The span_start is the byte offset of the field access expression.
+    /// The span_start is the byte offset of the FIELD NAME (not the whole expression).
+    /// This is critical: chained accesses like `a.b.c` share the same expr.span.start
+    /// but each field name has a unique position.
     pub fn record_field_resolution(self: &mut Self, span_start: usize, field_idx: u32) {
-        self.field_resolutions.push(common::FieldResEntry::new(span_start, field_idx));
+        self.field_resolutions.push(common::FieldResEntry::new(self.current_body_def_id, span_start, field_idx));
     }
 
     /// Gets the field index for a struct field by name.

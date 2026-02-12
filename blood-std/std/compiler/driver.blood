@@ -328,6 +328,8 @@ impl Compiler {
 
     /// Checks source code with a specified base directory for module resolution.
     pub fn check_with_base_dir(self: &mut Compiler, source: &str, base_dir: String) -> CheckResult {
+        print("[CHECK_WITH_BD] source.len=");
+        println_int(source.len() as i32);
         // Parse
         let parse_result = parser::parse_file(source);
         if parse_result.errors.len() > 0 {
@@ -871,12 +873,18 @@ pub fn check_file(path: &str) -> CheckResult {
         }
     };
 
+    print("[CHECK_FILE] content.len=");
+    println_int(content.len() as i32);
+    let source_str = content.as_str();
+    print("[CHECK_FILE] source_str.len=");
+    println_int(source_str.len() as i32);
+
     // Get the base directory for module resolution
     let base_dir = source::parent_dir(path);
 
     // Create compiler and check with base_dir
     let mut compiler = Compiler::new();
-    compiler.check_with_base_dir(content.as_str(), base_dir)
+    compiler.check_with_base_dir(source_str, base_dir)
 }
 
 /// Instrumented version of check_file that traces region memory usage.
