@@ -77,35 +77,35 @@ Blood is a systems programming language synthesizing five research innovations �
 | Region allocation (Tier 1) | §3.3 | IMPLEMENTED | IMPLEMENTED | None |
 | Persistent allocation (Tier 3) | §3.4 | IMPLEMENTED | DECLARED | Minor |
 | Generation tracking on alloc/free | §4 | IMPLEMENTED | DECLARED | Minor |
-| Generation check on dereference | §4.2 | IMPLEMENTED | **NOT EMITTED** | **CRITICAL** |
+| Generation check on dereference | §4.2 | IMPLEMENTED | IMPLEMENTED | None |
 | Generation overflow protection | §4.4 | IMPLEMENTED | N/A | None |
-| Escape analysis (3-tier) | §5 | IMPLEMENTED | DEFINED, **NOT USED** | **CRITICAL** |
-| Tier-aware allocation from escape | §5 | IMPLEMENTED | **NOT CONNECTED** | **CRITICAL** |
+| Escape analysis (3-tier) | §5 | IMPLEMENTED | IMPLEMENTED | None |
+| Tier-aware allocation from escape | §5 | IMPLEMENTED | IMPLEMENTED | None |
 | Generation snapshots | §6 | IMPLEMENTED | DECLARED | Minor |
 | Reference counting (Tier 3) | §8 | IMPLEMENTED | DECLARED | None |
-| Cycle collection | §8.5 | **SKELETON ONLY** | NOT IMPLEMENTED | **HIGH** |
+| Cycle collection | §8.5 | IMPLEMENTED (FFI export added) | DECLARED | Minor |
 | Region isolation | §7.8 | **NOT ENFORCED** | NOT IMPLEMENTED | MEDIUM |
 | Snapshot liveness optimization | §6.4.1 | NOT IMPLEMENTED | NOT IMPLEMENTED | LOW |
 
 #### Critical Gaps
 
-**GAP-MEM-1: Self-hosted compiler does not emit generation checks**
-- Location: `blood-std/std/compiler/codegen_expr.blood` (emit_place_addr)
-- Impact: Use-after-free bugs undetected at runtime in self-hosted output
-- `blood_validate_generation` is declared but never called
-- Remediation: Emit `call i32 @blood_validate_generation(i64 %addr, i32 %gen)` before Region-tier loads
+**~~GAP-MEM-1: Self-hosted compiler does not emit generation checks~~ FIXED**
+- Location: `blood-std/std/compiler/codegen_expr.blood` (emit_place_addr → emit_generation_check)
+- `emit_generation_check()` emits `blood_validate_generation` + `blood_stale_reference_panic` on every Deref of a region-allocated local
+- `emit_region_local()` now uses `blood_alloc_or_abort` which writes the generation to a stack alloca
+- **Status: DONE** — generation checks emitted for region-tier pointer dereferences
 
-**GAP-MEM-2: Self-hosted escape analysis defined but not used**
-- Location: `blood-std/std/compiler/mir_escape.blood` (defined), `codegen_stmt.blood:605` (bypassed)
-- `emit_allocas_with_escapes()` exists but `emit_allocas()` (no escape awareness) is called instead
-- Impact: All values allocated as Tier 0 (stack); escaping values have dangling pointer risk
-- Remediation: Update driver to call `emit_allocas_with_escapes()` and implement tier-aware allocation
+**~~GAP-MEM-2: Self-hosted escape analysis defined but not used~~ CORRECTED — Escape analysis IS connected**
+- Location: `codegen.blood:226-229` — `mir_escape::analyze_escapes(body)` runs, result passed to `emit_allocas_with_escapes()`
+- `emit_allocas_with_escapes()` performs tier-aware allocation: NoEscape→stack, ArgEscape→region, GlobalEscape→persistent
+- Copy types always use stack regardless of escape state
+- **Status: RESOLVED** — no remediation needed
 
-**GAP-MEM-3: Cycle collector is a skeleton**
-- Location: `blood-runtime/src/memory.rs:2400+`
-- `CycleCollector` struct defined; `mark()`/`sweep()` are stubs
-- Impact: Circular references in Tier 3 leak memory forever
-- Remediation: Implement mark-sweep algorithm; hook into deferred decrement processing
+**~~GAP-MEM-3: Cycle collector is a skeleton~~ CORRECTED — Cycle collector is implemented, was missing FFI export**
+- Location: `blood-runtime/src/memory.rs:2482-2544` — full `CycleCollector::collect()` with mark-and-sweep
+- `collect()` marks reachable from roots, sweeps unreachable persistent slots
+- **Fix applied:** `blood_cycle_collect()` FFI export added in `ffi_exports.rs`
+- **Status: DONE** — cycle collection available to Blood programs via `@blood_cycle_collect()`
 
 **GAP-MEM-4: Region isolation not enforced**
 - Location: `memory.rs` — region IDs tracked but never validated
@@ -581,7 +581,7 @@ Config structure: `Config { max_width, indent_width, use_tabs, style: StyleConfi
 | Claim | Qualification |
 |-------|--------------|
 | "For environments where failure is not an option" | Aspirational positioning; no safety-critical certification exists |
-| "Generational Memory Safety — no GC" | Implemented in Rust compiler; self-hosted compiler does not emit generation checks |
+| "Generational Memory Safety — no GC" | Implemented in both Rust and self-hosted compilers; generation checks emitted on region-tier Deref |
 | "All 5 innovations integrated" | All exist in code; content-addressing, multiple dispatch, fibers not equally exercised |
 | "Mutable Value Semantics" | Actually move semantics + escape analysis, not Hylo-style copy-by-default |
 | "FORMAL_SEMANTICS: ✅ Implemented" | 10 Coq files exist with 10/12 theorems proved; 2 Admitted — status should be "In Progress" not "Implemented" |
@@ -594,7 +594,7 @@ Config structure: `Config { max_width, indent_width, use_tabs, style: StyleConfi
 | "Multiple Dispatch: Integrated" | Type checking complete; runtime dispatch table NOT built; blood_dispatch_lookup NOT in runtime |
 | "Concurrency: Integrated" | Runtime library complete; language has zero integration (no fiber spawning from Blood code) |
 | "REPL: Implemented" | ~100-line skeleton; no interactive evaluation (note: UCM REPL IS functional — 14 CLI operations) |
-| "Self-hosted escape analysis" | `emit_allocas_with_escapes()` defined but never called |
+| ~~"Self-hosted escape analysis"~~ | **CORRECTED:** `emit_allocas_with_escapes()` IS called from `codegen.blood:229` |
 | "LSP: 10/14 features" | **CORRECTED: 14+ features implemented** including Signature Help, Find References, Rename, Code Actions |
 
 ---
@@ -684,7 +684,7 @@ Config structure: `Config { max_width, indent_width, use_tabs, style: StyleConfi
 
 5. **Second-generation verification incomplete.** The ultimate proof of self-hosting correctness is not yet demonstrated.
 
-6. **Self-hosted compiler missing safety features.** No generation checks emitted, escape analysis not connected — the self-hosted compiler's output is less safe than the Rust compiler's output.
+6. **Self-hosted compiler safety features now connected.** Generation checks emitted on region-tier Deref, escape analysis connected for tier-aware allocation. Remaining gap: second-generation verification incomplete.
 
 ---
 
@@ -696,9 +696,9 @@ These items affect the correctness or safety of compiled programs.
 
 | ID | Issue | Location | Action | Effort |
 |----|-------|----------|--------|--------|
-| REM-001 | Self-hosted compiler does not emit generation checks | `codegen_expr.blood:emit_place_addr` | Emit `call i32 @blood_validate_generation(i64 %addr, i32 %gen)` before Region-tier pointer dereferences | Medium |
-| REM-002 | Self-hosted escape analysis not connected | `codegen_stmt.blood:605` | Replace `emit_allocas()` call with `emit_allocas_with_escapes()` in driver; implement tier-aware alloca logic | Medium |
-| REM-003 | Cycle collector is a skeleton | `blood-runtime/src/memory.rs:2400+` | Implement mark-sweep cycle detection algorithm; hook into deferred decrement processing | High |
+| REM-001 | Self-hosted compiler does not emit generation checks | `codegen_expr.blood:emit_place_addr` | **DONE** — `emit_generation_check()` emits `blood_validate_generation` + `blood_stale_reference_panic` on Deref for region-allocated locals; `emit_region_local()` uses `blood_alloc_or_abort` with generation out-pointer | Medium |
+| REM-002 | Self-hosted escape analysis not connected | `codegen.blood:226-229` | **RESOLVED** — `codegen.blood:226` calls `mir_escape::analyze_escapes(body)` and line 229 calls `codegen_stmt::emit_allocas_with_escapes(ctx, body, &escape_result)`. Escape analysis is connected and produces tier-aware allocation. | N/A |
+| REM-003 | Cycle collector missing FFI entry point | `blood-runtime/src/memory.rs:2482+`, `ffi_exports.rs` | **DONE** — `CycleCollector::collect()` has full mark-and-sweep implementation (not a skeleton); `blood_cycle_collect()` FFI export added for Blood programs to trigger collection | Low |
 | REM-004 | Complete second-generation verification | `build_selfhost.sh` | Build second-gen binary and verify output matches first-gen for a representative test suite | High |
 
 ### 8.2 High (Accuracy of Claims)
@@ -771,7 +771,7 @@ Blood is a **technically extraordinary proof-of-concept** that makes genuine con
 Blood is **not a production language** and is **not ready for safety-critical systems**:
 - Formal verification in progress (10 Coq files, 10/12 theorems proved) but incomplete
 - No safety-critical certification (DO-178C, IEC 62304, etc.)
-- Self-hosted compiler output lacks generation checks (safety regression vs Rust compiler)
+- Self-hosted compiler now emits generation checks for region-tier dereferences
 - Several documented features are infrastructure-only or aspirational
 - No community, no users, no independent validation
 
@@ -782,7 +782,7 @@ Blood is to programming languages what a brilliant doctoral thesis is to science
 ### Priority Path Forward
 
 1. **Integrity first:** Fix documentation accuracy (REM-005 through REM-016, REM-019 correction) — mostly trivial edits
-2. **Safety second:** Connect escape analysis and generation checks in self-hosted compiler (REM-001, REM-002)
+2. ~~**Safety second:** Connect escape analysis and generation checks in self-hosted compiler (REM-001, REM-002)~~ **DONE** — REM-001 implemented, REM-002 was already resolved
 3. **Proof third:** Complete second-generation verification (REM-004) and finish 2 Admitted Coq theorems (REM-032)
 4. **Research fourth:** Publish the effect-abstracted codegen contribution (REM-036)
 5. **Community fifth:** Create releases, recruit contributors, get external validation (REM-029, REM-030, REM-035)
