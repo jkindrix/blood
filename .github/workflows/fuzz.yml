@@ -27,7 +27,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  LLVM_VERSION: "17"
+  LLVM_VERSION: "14"
 
 jobs:
   fuzz:
@@ -47,7 +47,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: "bloodc/fuzz -> target"
+          workspaces: "compiler-rust/bloodc/fuzz -> target"
 
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz
@@ -57,10 +57,10 @@ jobs:
           wget https://apt.llvm.org/llvm.sh
           chmod +x llvm.sh
           sudo ./llvm.sh ${{ env.LLVM_VERSION }}
-          echo "LLVM_SYS_170_PREFIX=/usr/lib/llvm-${{ env.LLVM_VERSION }}" >> $GITHUB_ENV
+          echo "LLVM_SYS_140_PREFIX=/usr/lib/llvm-${{ env.LLVM_VERSION }}" >> $GITHUB_ENV
 
       - name: Run fuzzer
-        working-directory: bloodc
+        working-directory: compiler-rust/bloodc
         run: |
           DURATION="${{ github.event.inputs.duration || '600' }}"
           echo "Running ${{ matrix.target }} for ${DURATION} seconds"
@@ -77,7 +77,7 @@ jobs:
         with:
           name: crash-${{ matrix.target }}-${{ github.run_id }}
           path: |
-            bloodc/fuzz/artifacts/${{ matrix.target }}/**
+            compiler-rust/bloodc/fuzz/artifacts/${{ matrix.target }}/**
           retention-days: 30
 
       - name: Upload corpus
@@ -85,7 +85,7 @@ jobs:
         with:
           name: corpus-${{ matrix.target }}-${{ github.run_id }}
           path: |
-            bloodc/fuzz/corpus/${{ matrix.target }}/**
+            compiler-rust/bloodc/fuzz/corpus/${{ matrix.target }}/**
           retention-days: 7
 
   # Quick smoke test on PRs
@@ -103,7 +103,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: "bloodc/fuzz -> target"
+          workspaces: "compiler-rust/bloodc/fuzz -> target"
 
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz
@@ -113,16 +113,16 @@ jobs:
           wget https://apt.llvm.org/llvm.sh
           chmod +x llvm.sh
           sudo ./llvm.sh ${{ env.LLVM_VERSION }}
-          echo "LLVM_SYS_170_PREFIX=/usr/lib/llvm-${{ env.LLVM_VERSION }}" >> $GITHUB_ENV
+          echo "LLVM_SYS_140_PREFIX=/usr/lib/llvm-${{ env.LLVM_VERSION }}" >> $GITHUB_ENV
 
       - name: Quick fuzz test (parser)
-        working-directory: bloodc
+        working-directory: compiler-rust/bloodc
         run: |
           cargo +nightly fuzz run fuzz_parser -- -max_total_time=30
         continue-on-error: true
 
       - name: Quick fuzz test (grammar)
-        working-directory: bloodc
+        working-directory: compiler-rust/bloodc
         run: |
           cargo +nightly fuzz run fuzz_grammar -- -max_total_time=30
         continue-on-error: true

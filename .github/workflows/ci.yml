@@ -8,7 +8,11 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  LLVM_VERSION: "17"
+  LLVM_VERSION: "14"
+
+defaults:
+  run:
+    working-directory: compiler-rust
 
 jobs:
   # Fast checks that don't need LLVM
@@ -25,11 +29,8 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Clippy (blood-runtime)
-        run: cargo clippy -p blood-runtime -- -D warnings
-
-      - name: Clippy (blood-std)
-        run: cargo clippy -p blood-std -- -D warnings
+      - name: Clippy (non-LLVM crates)
+        run: cargo clippy -p blood-runtime -p blood-std -- -D warnings
 
   # Tests that need LLVM - Linux and macOS
   test:
@@ -51,16 +52,19 @@ jobs:
           wget https://apt.llvm.org/llvm.sh
           chmod +x llvm.sh
           sudo ./llvm.sh ${{ env.LLVM_VERSION }}
-          echo "LLVM_SYS_170_PREFIX=/usr/lib/llvm-${{ env.LLVM_VERSION }}" >> $GITHUB_ENV
+          echo "LLVM_SYS_140_PREFIX=/usr/lib/llvm-${{ env.LLVM_VERSION }}" >> $GITHUB_ENV
 
       - name: Install LLVM (macOS)
         if: runner.os == 'macOS'
         run: |
           brew install llvm@${{ env.LLVM_VERSION }}
-          echo "LLVM_SYS_170_PREFIX=$(brew --prefix llvm@${{ env.LLVM_VERSION }})" >> $GITHUB_ENV
+          echo "LLVM_SYS_140_PREFIX=$(brew --prefix llvm@${{ env.LLVM_VERSION }})" >> $GITHUB_ENV
 
       - name: Build workspace
         run: cargo build --workspace
+
+      - name: Clippy (bloodc — requires LLVM)
+        run: cargo clippy -p bloodc --all-targets -- -D warnings
 
       - name: Run tests (blood-runtime)
         run: cargo test -p blood-runtime
@@ -85,8 +89,8 @@ jobs:
 
       - name: Install LLVM
         run: |
-          choco install llvm --version=${{ env.LLVM_VERSION }}.0.6 -y
-          echo "LLVM_SYS_170_PREFIX=C:\Program Files\LLVM" >> $env:GITHUB_ENV
+          choco install llvm --version=14.0.6 -y
+          echo "LLVM_SYS_140_PREFIX=C:\Program Files\LLVM" >> $env:GITHUB_ENV
 
       - name: Build workspace
         run: cargo build --workspace

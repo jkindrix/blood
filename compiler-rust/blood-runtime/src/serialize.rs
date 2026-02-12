@@ -1086,6 +1086,7 @@ fn base64_encode(data: &[u8]) -> String {
 }
 
 /// Decode base64 to bytes.
+#[cfg(test)]
 fn base64_decode(s: &str) -> std::result::Result<Vec<u8>, &'static str> {
     let mut result = Vec::new();
     let chars: Vec<char> = s.chars().filter(|c| !c.is_whitespace()).collect();
@@ -1125,6 +1126,7 @@ fn base64_decode(s: &str) -> std::result::Result<Vec<u8>, &'static str> {
     Ok(result)
 }
 
+#[cfg(test)]
 fn base64_char_value(c: char) -> std::result::Result<u32, &'static str> {
     match c {
         'A'..='Z' => Ok((c as u32) - ('A' as u32)),

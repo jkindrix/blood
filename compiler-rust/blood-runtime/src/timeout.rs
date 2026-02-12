@@ -174,8 +174,8 @@ pub struct TimeoutGuard {
     duration: Duration,
     /// Whether the operation completed successfully.
     completed: AtomicBool,
-    /// Handle to the timer thread (if any).
-    timer_handle: Option<std::thread::JoinHandle<()>>,
+    /// Handle to the timer thread — stored to prevent thread detach on drop.
+    _timer_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl TimeoutGuard {
@@ -219,7 +219,7 @@ impl TimeoutGuard {
             started_at,
             duration,
             completed: AtomicBool::new(false),
-            timer_handle: Some(timer_handle),
+            _timer_handle: Some(timer_handle),
         }
     }
 

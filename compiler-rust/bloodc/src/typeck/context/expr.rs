@@ -1077,7 +1077,7 @@ impl<'a> TypeContext<'a> {
         body: &hir::Expr,
         outer_local_boundary: u32,
         effect_name: &str,
-        span: Span,
+        _span: Span,
     ) -> Result<(), Box<TypeError>> {
         // Collect all local variable references in the body
         let mut captured_locals = Vec::new();
