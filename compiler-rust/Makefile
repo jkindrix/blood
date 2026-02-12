@@ -12,7 +12,7 @@
 #   BLOOD_REPO  - Path to the blood language repo (default: ~/blood)
 #   JOBS        - Parallel jobs for cargo (default: auto)
 
-BLOOD_REPO  ?= $(HOME)/blood
+BLOOD_REPO  ?= $(dir $(abspath $(lastword $(MAKEFILE_LIST))))/..
 BOOTSTRAP   := ./target/release/blood
 SELF_HOSTED := $(BLOOD_REPO)/blood-std/std/compiler/main.blood
 STDLIB_PATH := $(BLOOD_REPO)/blood-std/std

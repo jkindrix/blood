@@ -1,12 +1,46 @@
 # Blood Compiler Development Guidelines
 
+## Repository Structure (Monorepo)
+
+This is a unified monorepo containing both the Blood language project and the Rust bootstrap compiler:
+
+```
+blood/                          # Repository root
+├── blood-std/std/compiler/     # Self-hosted Blood compiler (written in Blood)
+├── compiler-rust/              # Rust bootstrap compiler (imported via git subtree)
+│   ├── bloodc/src/             # Rust compiler source
+│   ├── runtime/                # C runtime
+│   ├── blood-std/              # Standard library (Rust compiler's copy)
+│   ├── Cargo.toml              # Workspace manifest
+│   └── Makefile                # Build & bootstrap pipeline
+├── docs/                       # Language specification & documentation
+├── examples/                   # Blood language examples
+└── editors/                    # Editor support (VS Code, etc.)
+```
+
+### Subtree Management
+
+The `compiler-rust/` directory is managed via `git subtree`. To sync:
+
+```bash
+# Pull updates FROM blood-rust
+git subtree pull --prefix=compiler-rust blood-rust main --squash
+
+# Push changes back TO blood-rust
+git subtree push --prefix=compiler-rust blood-rust main
+```
+
+The standalone `blood-rust` repo remains at `~/blood-rust/` for independent development.
+
+---
+
 ## Dual Compiler Architecture
 
 This repository contains two parallel compiler implementations:
 
 | Compiler | Location | Language | Purpose |
 |----------|----------|----------|---------|
-| **Reference** | `bloodc/src/` | Rust | Bootstrap compiler, leverages Rust ecosystem (inkwell, ariadne) |
+| **Reference** | `compiler-rust/bloodc/src/` | Rust | Bootstrap compiler, leverages Rust ecosystem (inkwell, ariadne) |
 | **Self-Hosted** | `blood-std/std/compiler/` | Blood | Self-hosting target, implements everything in Blood |
 
 Both compilers share identical architecture:
@@ -219,7 +253,7 @@ The self-hosted compiler now uses proper module imports:
 **Every file must compile with blood-rust before committing.**
 
 ```bash
-/home/jkindrix/blood-rust/target/release/blood check <file.blood>
+compiler-rust/target/release/blood check <file.blood>
 ```
 
 If blood-rust rejects the code, the code is wrong. Do NOT modify blood-rust to accept bad syntax.
@@ -260,7 +294,7 @@ Blood's `::` is ONLY for:
 2. **Glob imports**: `use std.ops::*;`
 3. **Qualified paths in expressions**: `module::Type { ... }`
 
-**Before assuming ANY syntax, check:** `/home/jkindrix/blood/docs/spec/GRAMMAR.md`
+**Before assuming ANY syntax, check:** `docs/spec/GRAMMAR.md`
 
 ### Rule 4: Blood-Rust Compiler Bugs Must Be Reported, NOT Worked Around
 
@@ -444,19 +478,25 @@ All phases are complete and type-check successfully.
 
 ```bash
 # Check syntax/types
-/home/jkindrix/blood-rust/target/release/blood check file.blood
+compiler-rust/target/release/blood check file.blood
 
 # Build executable
-/home/jkindrix/blood-rust/target/release/blood build file.blood
+compiler-rust/target/release/blood build file.blood
 
 # Run
-/home/jkindrix/blood-rust/target/release/blood run file.blood
+compiler-rust/target/release/blood run file.blood
+
+# Build the Rust bootstrap compiler
+cd compiler-rust && cargo build --release
+
+# Run Rust compiler tests
+cd compiler-rust && cargo test --workspace
 ```
 
 ---
 
 ## Reference
 
-- **Blood-rust compiler**: `~/blood-rust/` (commit 61c8d43)
-- **Grammar spec**: `/home/jkindrix/blood/docs/spec/GRAMMAR.md`
+- **Blood-rust compiler**: `compiler-rust/` (imported via git subtree from `~/blood-rust/`)
+- **Grammar spec**: `docs/spec/GRAMMAR.md`
 - **Aether examples**: `~/blood-test/aether/` (demonstrates correct syntax)
