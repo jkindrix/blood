@@ -156,7 +156,7 @@ pub fn optimize_module_bisect(module: &Module) -> Vec<(String, String, bool)> {
         "globaldce",
         "globalopt",
         "constmerge",
-        "simplifycfg",
+        "simplifycfg", // Second pass: inlining/globalopt may expose new CFG simplification
         "jump-threading",
         "strip-dead-prototypes",
     ];

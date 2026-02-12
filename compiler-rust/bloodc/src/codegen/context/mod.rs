@@ -2434,6 +2434,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         self.local_generations.clear();
         self.persistent_slot_ids.clear();
         self.loop_stack.clear();
+        self.handler_state_shadows.clear();
 
         // Create entry block
         let entry = self.context.append_basic_block(fn_value, "entry");
@@ -2926,6 +2927,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let saved_local_types = std::mem::take(&mut self.local_types);
         let saved_local_generations = std::mem::take(&mut self.local_generations);
         let saved_persistent_slot_ids = std::mem::take(&mut self.persistent_slot_ids);
+        let saved_handler_state_shadows = std::mem::take(&mut self.handler_state_shadows);
         let saved_current_fn = self.current_fn.take();
         let saved_current_fn_def_id = self.current_fn_def_id.take();
         let saved_insert_block = self.builder.get_insert_block();
@@ -2952,6 +2954,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 self.local_types.clear();
                 self.local_generations.clear();
                 self.persistent_slot_ids.clear();
+                self.handler_state_shadows.clear();
 
                 // Run escape analysis on the closure
                 let mut analyzer = EscapeAnalyzer::new();
@@ -2970,6 +2973,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         self.local_types = saved_local_types;
         self.local_generations = saved_local_generations;
         self.persistent_slot_ids = saved_persistent_slot_ids;
+        self.handler_state_shadows = saved_handler_state_shadows;
         self.current_fn = saved_current_fn;
         self.current_fn_def_id = saved_current_fn_def_id;
 
@@ -3079,6 +3083,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let saved_local_types = std::mem::take(&mut self.local_types);
         let saved_local_generations = std::mem::take(&mut self.local_generations);
         let saved_persistent_slot_ids = std::mem::take(&mut self.persistent_slot_ids);
+        let saved_handler_state_shadows = std::mem::take(&mut self.handler_state_shadows);
         let saved_current_fn = self.current_fn.take();
         let saved_current_fn_def_id = self.current_fn_def_id.take();
         let saved_insert_block = self.builder.get_insert_block();
@@ -3101,6 +3106,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 self.local_types.clear();
                 self.local_generations.clear();
                 self.persistent_slot_ids.clear();
+                self.handler_state_shadows.clear();
 
                 let mut analyzer = EscapeAnalyzer::new();
                 let closure_escape = analyzer.analyze(&closure_mir);
@@ -3117,6 +3123,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         self.local_types = saved_local_types;
         self.local_generations = saved_local_generations;
         self.persistent_slot_ids = saved_persistent_slot_ids;
+        self.handler_state_shadows = saved_handler_state_shadows;
         self.current_fn = saved_current_fn;
         self.current_fn_def_id = saved_current_fn_def_id;
 

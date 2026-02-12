@@ -225,6 +225,7 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
         self.locals.clear();
         self.local_generations.clear();
         self.persistent_slot_ids.clear();
+        self.handler_state_shadows.clear();
 
         // Create LLVM basic blocks for all MIR blocks
         let mut llvm_blocks: HashMap<BasicBlockId, BasicBlock<'ctx>> = HashMap::new();
