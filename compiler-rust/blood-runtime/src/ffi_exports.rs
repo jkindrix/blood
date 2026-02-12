@@ -30,7 +30,7 @@ use crate::memory::{
     BloodPtr, PointerMetadata, generation, get_slot_generation, Region,
     size_class_for, slot_size_for_class, unregister_allocation, register_allocation,
     register_allocation_with_region, get_slot_info, record_system_alloc, record_system_free,
-    system_alloc_stats, system_alloc_live_bytes,
+    system_alloc_stats, system_alloc_live_bytes, collect_cycles,
 };
 use crate::continuation::{
     ContinuationRef, Continuation, EffectContext,
@@ -4081,6 +4081,20 @@ pub extern "C" fn blood_persistent_decrement(id: u64) {
 #[no_mangle]
 pub extern "C" fn blood_persistent_is_alive(id: u64) -> c_int {
     if persistent_is_alive(id) { 1 } else { 0 }
+}
+
+/// Trigger a cycle collection pass to detect and collect circular references
+/// in Tier 3 (persistent) memory.
+///
+/// Returns the number of slots collected.
+///
+/// This function performs a full mark-and-sweep cycle collection using the
+/// global `CycleCollector`. It is safe to call at any time — concurrent
+/// collection requests are serialized (subsequent calls return 0 while
+/// a collection is already in progress).
+#[no_mangle]
+pub extern "C" fn blood_cycle_collect() -> u64 {
+    collect_cycles(&[]) as u64
 }
 
 // ============================================================================
