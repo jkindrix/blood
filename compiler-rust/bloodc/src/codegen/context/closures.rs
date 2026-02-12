@@ -110,6 +110,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let saved_fn = self.current_fn;
         let saved_locals = std::mem::take(&mut self.locals);
         let saved_local_types = std::mem::take(&mut self.local_types);
+        let saved_loop_stack = std::mem::take(&mut self.loop_stack);
 
         // Compile the closure body
         self.current_fn = Some(fn_value);
@@ -193,6 +194,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         self.current_fn = saved_fn;
         self.locals = saved_locals;
         self.local_types = saved_local_types;
+        self.loop_stack = saved_loop_stack;
 
         // Position builder back at saved location
         if let Some(fn_val) = saved_fn {
