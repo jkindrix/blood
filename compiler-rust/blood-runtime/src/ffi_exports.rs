@@ -2311,6 +2311,38 @@ pub unsafe extern "C" fn system(cmd: BloodStr) -> i32 {
 }
 
 // ============================================================================
+// Environment Variable Functions
+// ============================================================================
+
+/// Get the value of an environment variable.
+///
+/// # Arguments
+/// * `name` - The environment variable name as a BloodStr
+///
+/// # Returns
+/// * BloodStr containing the variable's value, or empty BloodStr if unset
+///
+/// Named `env_get` (not `getenv`) to avoid colliding with libc's `getenv` symbol.
+/// Follows the `args_get` naming pattern.
+#[no_mangle]
+pub unsafe extern "C" fn env_get(name: BloodStr) -> BloodStr {
+    if name.ptr.is_null() || name.len == 0 {
+        return BloodStr { ptr: std::ptr::null(), len: 0 };
+    }
+
+    let name_slice = std::slice::from_raw_parts(name.ptr, name.len as usize);
+    let name_str = match std::str::from_utf8(name_slice) {
+        Ok(s) => s,
+        Err(_) => return BloodStr { ptr: std::ptr::null(), len: 0 },
+    };
+
+    match std::env::var(name_str) {
+        Ok(value) => string_to_blood_str(value),
+        Err(_) => BloodStr { ptr: std::ptr::null(), len: 0 },
+    }
+}
+
+// ============================================================================
 // Command-Line Argument Functions
 // ============================================================================
 

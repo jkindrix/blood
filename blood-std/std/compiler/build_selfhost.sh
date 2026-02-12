@@ -20,10 +20,14 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
 
 # Paths (configurable via environment)
-BLOOD_RUST="${BLOOD_RUST:-$HOME/blood-rust/target/release/blood}"
-RUNTIME_O="${RUNTIME_O:-$HOME/blood-rust/runtime/runtime.o}"
-RUNTIME_A="${RUNTIME_A:-$HOME/blood-rust/target/release/libblood_runtime.a}"
-GROUND_TRUTH="${GROUND_TRUTH:-$HOME/blood-rust/tests/ground-truth}"
+BLOOD_RUST="${BLOOD_RUST:-$HOME/blood/compiler-rust/target/release/blood}"
+RUNTIME_O="${RUNTIME_O:-$HOME/blood/compiler-rust/runtime/runtime.o}"
+RUNTIME_A="${RUNTIME_A:-$HOME/blood/compiler-rust/target/release/libblood_runtime.a}"
+GROUND_TRUTH="${GROUND_TRUTH:-$HOME/blood/compiler-rust/tests/ground-truth}"
+
+# Export for first_gen/second_gen runtime discovery
+export BLOOD_RUNTIME="${RUNTIME_O}"
+export BLOOD_RUST_RUNTIME="${RUNTIME_A}"
 
 step()  { printf "\n\033[1;34m==> %s\033[0m\n" "$1"; }
 ok()    { printf "  \033[1;32m✓\033[0m %s\n" "$1"; }
@@ -704,8 +708,10 @@ Verification commands:
   bisect            Identifies: which function causes second_gen to crash
 
 Environment:
-  BLOOD_RUST        Path to blood-rust compiler (default: ~/blood-rust/target/release/blood)
-  GROUND_TRUTH      Path to ground-truth test dir (default: ~/blood-rust/tests/ground-truth)
+  BLOOD_RUST        Path to blood-rust compiler (default: ~/blood/compiler-rust/target/release/blood)
+  RUNTIME_O         Path to runtime.o (default: ~/blood/compiler-rust/runtime/runtime.o)
+  RUNTIME_A         Path to libblood_runtime.a (default: ~/blood/compiler-rust/target/release/libblood_runtime.a)
+  GROUND_TRUTH      Path to ground-truth test dir (default: ~/blood/compiler-rust/tests/ground-truth)
 USAGE
         exit 1
         ;;

@@ -378,6 +378,9 @@ impl<'a> TypeContext<'a> {
         // system(&str) -> i32 - execute a shell command and return exit code
         self.register_builtin_fn("system", vec![ref_str_ty.clone()], i32_ty.clone());
 
+        // env_get(&str) -> &str - get environment variable value (empty if unset)
+        self.register_builtin_fn("env_get", vec![ref_str_ty.clone()], ref_str_ty.clone());
+
         // === Command-Line Argument Functions ===
 
         // args_count() -> i32 - get number of command-line arguments

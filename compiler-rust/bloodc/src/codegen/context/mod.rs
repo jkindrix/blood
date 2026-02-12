@@ -4370,6 +4370,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let system_type = i32_type.fn_type(&[str_slice_type.into()], false);
         self.module.add_function("system", system_type, None);
 
+        // env_get(name: {*i8, i64}) -> {*i8, i64} (str slice)
+        // Get environment variable value (empty string if unset)
+        let env_get_type = str_slice_type.fn_type(&[str_slice_type.into()], false);
+        self.module.add_function("env_get", env_get_type, None);
+
         // === Command-Line Arguments ===
 
         // args_count() -> i32

@@ -203,12 +203,146 @@ fn run_check(args: &Args) -> i32 {
     }
 }
 
+// ============================================================
+// Runtime Discovery
+// ============================================================
+
+/// Paths to the Blood runtime libraries needed for linking.
+pub struct RuntimePaths {
+    /// Path to the C runtime object (runtime.o).
+    pub c_runtime: String,
+    /// Path to the Rust runtime static library (libblood_runtime.a).
+    pub rust_runtime: String,
+}
+
+/// Finds the C runtime object (runtime.o).
+///
+/// Search order:
+/// 1. BLOOD_RUNTIME environment variable
+/// 2. Relative to executable directory: <exe_dir>/runtime.o
+/// 3. Relative to executable directory: <exe_dir>/runtime/runtime.o
+fn find_c_runtime() -> Option<String> {
+    // 1. Check BLOOD_RUNTIME environment variable
+    let env_val: &str = env_get("BLOOD_RUNTIME");
+    if env_val.len() > 0 {
+        if file_exists(env_val) {
+            return Option::Some(common::make_string(env_val));
+        }
+    }
+
+    // 2. Search relative to executable
+    let exe_path: &str = args_get(0);
+    let exe_dir = source::parent_dir(exe_path);
+
+    // <exe_dir>/runtime.o
+    let sibling = source::join_path(exe_dir.as_str(), "runtime.o");
+    if file_exists(sibling.as_str()) {
+        return Option::Some(sibling);
+    }
+
+    // <exe_dir>/runtime/runtime.o
+    let runtime_subdir = source::join_path(exe_dir.as_str(), "runtime");
+    let in_subdir = source::join_path(runtime_subdir.as_str(), "runtime.o");
+    if file_exists(in_subdir.as_str()) {
+        return Option::Some(in_subdir);
+    }
+
+    Option::None
+}
+
+/// Finds the Rust runtime static library (libblood_runtime.a).
+///
+/// Search order:
+/// 1. BLOOD_RUST_RUNTIME environment variable
+/// 2. Relative to executable directory: <exe_dir>/libblood_runtime.a
+fn find_rust_runtime() -> Option<String> {
+    // 1. Check BLOOD_RUST_RUNTIME environment variable
+    let env_val: &str = env_get("BLOOD_RUST_RUNTIME");
+    if env_val.len() > 0 {
+        if file_exists(env_val) {
+            return Option::Some(common::make_string(env_val));
+        }
+    }
+
+    // 2. Search relative to executable
+    let exe_path: &str = args_get(0);
+    let exe_dir = source::parent_dir(exe_path);
+
+    // <exe_dir>/libblood_runtime.a
+    let sibling = source::join_path(exe_dir.as_str(), "libblood_runtime.a");
+    if file_exists(sibling.as_str()) {
+        return Option::Some(sibling);
+    }
+
+    Option::None
+}
+
+/// Finds both runtime libraries, printing a helpful error if either is missing.
+fn find_runtime_paths() -> Option<RuntimePaths> {
+    let c_rt = find_c_runtime();
+    let rust_rt = find_rust_runtime();
+
+    let c_ok = match &c_rt {
+        &Option::Some(ref _p) => true,
+        &Option::None => false,
+    };
+    let rust_ok = match &rust_rt {
+        &Option::Some(ref _p) => true,
+        &Option::None => false,
+    };
+
+    if c_ok && rust_ok {
+        let c_path = match c_rt {
+            Option::Some(p) => p,
+            Option::None => { return Option::None; }
+        };
+        let r_path = match rust_rt {
+            Option::Some(p) => p,
+            Option::None => { return Option::None; }
+        };
+        return Option::Some(RuntimePaths {
+            c_runtime: c_path,
+            rust_runtime: r_path,
+        });
+    }
+
+    // Print helpful error
+    print_error("Could not find Blood runtime libraries for linking.");
+    if !c_ok {
+        print_str("  missing: runtime.o (C runtime stub)\n");
+    }
+    if !rust_ok {
+        print_str("  missing: libblood_runtime.a (Rust runtime library)\n");
+    }
+    print_str("  Searched:\n");
+    print_str("    1. BLOOD_RUNTIME / BLOOD_RUST_RUNTIME environment variables\n");
+    let exe_path: &str = args_get(0);
+    let exe_dir = source::parent_dir(exe_path);
+    print_str("    2. Next to executable: ");
+    print_str(exe_dir.as_str());
+    print_str("/\n");
+    print_str("  Fix: set BLOOD_RUNTIME and BLOOD_RUST_RUNTIME, or copy runtime\n");
+    print_str("       files next to the compiler binary.\n");
+
+    Option::None
+}
+
+// ============================================================
+// Build & Run Commands
+// ============================================================
+
 /// Runs the build command.
 /// Uses streaming codegen to write IR directly to file, avoiding OOM.
 /// Then invokes llc-18 to produce an object file and clang-18 to link an executable.
 fn run_build(args: &Args) -> i32 {
     match &args.source_file {
         &Option::Some(ref path) => {
+            // Discover runtime libraries early (fail before expensive IR generation)
+            let runtime = match find_runtime_paths() {
+                Option::Some(rt) => rt,
+                Option::None => { return 1; }
+            };
+
             // Determine output path for LLVM IR
             let ll_path = match &args.output_file {
                 &Option::Some(ref out) => clone_string(out),
@@ -248,8 +382,10 @@ fn run_build(args: &Args) -> i32 {
             let mut clang_cmd = String::new();
             clang_cmd.push_str("clang-18 ");
             clang_cmd.push_str(obj_path.as_str());
-            clang_cmd.push_str(" /home/jkindrix/blood-rust/runtime/runtime.o");
-            clang_cmd.push_str(" /home/jkindrix/blood-rust/target/release/libblood_runtime.a");
+            clang_cmd.push_str(" ");
+            clang_cmd.push_str(runtime.c_runtime.as_str());
+            clang_cmd.push_str(" ");
+            clang_cmd.push_str(runtime.rust_runtime.as_str());
             clang_cmd.push_str(" -lm -ldl -lpthread -no-pie -o ");
             clang_cmd.push_str(bin_path.as_str());
             let clang_result = system(clang_cmd.as_str());
@@ -275,6 +411,12 @@ fn run_build(args: &Args) -> i32 {
 fn run_run(args: &Args) -> i32 {
     match &args.source_file {
         &Option::Some(ref path) => {
+            // Discover runtime libraries early (fail before expensive IR generation)
+            let runtime = match find_runtime_paths() {
+                Option::Some(rt) => rt,
+                Option::None => { return 1; }
+            };
+
             // Phase 1: Generate LLVM IR
             let ll_path = default_ll_path(path);
             let result = compile_file_streaming(path.as_str(), ll_path.as_str());
@@ -300,8 +442,10 @@ fn run_run(args: &Args) -> i32 {
             let mut clang_cmd = String::new();
             clang_cmd.push_str("clang-18 ");
             clang_cmd.push_str(obj_path.as_str());
-            clang_cmd.push_str(" /home/jkindrix/blood-rust/runtime/runtime.o");
-            clang_cmd.push_str(" /home/jkindrix/blood-rust/target/release/libblood_runtime.a");
+            clang_cmd.push_str(" ");
+            clang_cmd.push_str(runtime.c_runtime.as_str());
+            clang_cmd.push_str(" ");
+            clang_cmd.push_str(runtime.rust_runtime.as_str());
             clang_cmd.push_str(" -lm -ldl -lpthread -no-pie -o ");
             clang_cmd.push_str(bin_path.as_str());
             let clang_result = system(clang_cmd.as_str());
