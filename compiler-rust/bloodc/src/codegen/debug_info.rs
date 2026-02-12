@@ -395,11 +395,16 @@ impl<'ctx> DebugInfoGenerator<'ctx> {
                 None
             }
             _ => {
-                // Unknown types - use i8 as placeholder
-                self.builder
-                    .create_basic_type("unknown", 8, 0x07, DIFlags::ZERO)
-                    .ok()
-                    .map(|t| t.as_type())
+                // Unknown types - use i8 as placeholder.
+                // If DWARF type creation fails, skip debug info for this type
+                // rather than halting compilation — debug info is best-effort.
+                match self.builder.create_basic_type("unknown", 8, 0x07, DIFlags::ZERO) {
+                    Ok(t) => Some(t.as_type()),
+                    Err(e) => {
+                        eprintln!("warning: failed to create debug type for unknown type: {}", e);
+                        None
+                    }
+                }
             }
         }
     }
@@ -440,35 +445,42 @@ impl<'ctx> DebugInfoGenerator<'ctx> {
             PrimitiveTy::Char => ("char", 32, 0x08), // DW_ATE_unsigned_char (UTF-32)
             PrimitiveTy::Str => {
                 // String slice - pointer + length
-                return self
-                    .builder
-                    .create_basic_type("str", 128, 0x07, DIFlags::ZERO)
-                    .ok()
-                    .map(|t| t.as_type());
+                return match self.builder.create_basic_type("str", 128, 0x07, DIFlags::ZERO) {
+                    Ok(t) => Some(t.as_type()),
+                    Err(e) => {
+                        eprintln!("warning: failed to create debug type for str: {}", e);
+                        None
+                    }
+                };
             }
             PrimitiveTy::String => {
                 // Owned string - pointer + length + capacity
-                return self
-                    .builder
-                    .create_basic_type("String", 192, 0x07, DIFlags::ZERO)
-                    .ok()
-                    .map(|t| t.as_type());
+                return match self.builder.create_basic_type("String", 192, 0x07, DIFlags::ZERO) {
+                    Ok(t) => Some(t.as_type()),
+                    Err(e) => {
+                        eprintln!("warning: failed to create debug type for String: {}", e);
+                        None
+                    }
+                };
             }
             PrimitiveTy::Unit => return None,
             PrimitiveTy::Never => return None,
         };
 
-        self.builder
-            .create_basic_type(name, size_bits, encoding, DIFlags::ZERO)
-            .ok()
-            .map(|t| t.as_type())
+        match self.builder.create_basic_type(name, size_bits, encoding, DIFlags::ZERO) {
+            Ok(t) => Some(t.as_type()),
+            Err(e) => {
+                eprintln!("warning: failed to create debug type for {}: {}", name, e);
+                None
+            }
+        }
     }
 
     /// Create a void type for pointers to unknown types.
     fn create_void_type(&mut self) -> DIType<'ctx> {
         self.builder
             .create_basic_type("void", 0, 0x00, DIFlags::ZERO)
-            .unwrap()
+            .expect("ICE: failed to create DWARF void type with constant parameters")
             .as_type()
     }
 

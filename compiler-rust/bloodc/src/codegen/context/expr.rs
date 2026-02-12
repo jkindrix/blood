@@ -52,9 +52,12 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     return Ok(None);
                 }
                 // For non-empty tuples, compile all expressions and build a struct
-                let values: Vec<_> = exprs.iter()
-                    .filter_map(|e| self.compile_expr(e).ok().flatten())
-                    .collect();
+                let mut values: Vec<BasicValueEnum<'ctx>> = Vec::with_capacity(exprs.len());
+                for e in exprs {
+                    if let Some(val) = self.compile_expr(e)? {
+                        values.push(val);
+                    }
+                }
                 if values.is_empty() {
                     Ok(None)
                 } else if values.len() == 1 {
