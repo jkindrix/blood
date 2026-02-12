@@ -1390,4 +1390,54 @@ No unjustified dead code remains. Legacy dead code (LSP handler functions, test 
 
 ---
 
-*Document updated 2026-01-29 with persistent tier RC, effect optimizations (EFF-OPT-001, EFF-OPT-003, GC-SNAPSHOT-001), 6 new LSP capabilities, record type codegen confirmation, build cache clarification, and shallow handler validation.*
+## 22. Deferred Features
+
+Features investigated during the self-hosted compiler parity audit (101/101 items resolved) and explicitly deferred because they are not required for self-compilation. All are tracked for future implementation.
+
+| ID | Feature | Reason Deferred | Prerequisite |
+|----|---------|-----------------|--------------|
+| HR-12 | Const generic array sizes (`[T; N]`) | Compiler uses literal sizes only | Const generics language feature |
+| TC-3 | Trait bound verification at call sites | Compiler uses concrete types | User-facing trait bound enforcement |
+| TC-4 | Builtin trait impls (`Copy`/`Clone`/`Sized`) | Handled at MIR level instead | Formal trait system |
+| TC-5 | Coherence checking (overlapping impls) | No overlapping impls in compiler | User-facing diagnostics |
+| TC-8 | Where clause bound enforcement | Compiler doesn't use trait-bounded where clauses | Trait bound verification (TC-3) |
+| TC-9 | Type parameter bounds at call sites | Generic builtins handled by blood-rust | Trait bound verification (TC-3) |
+| TC-10 | Const generic parameters | Not used by compiler code | Const generics language feature |
+| TC-12 | Type alias expansion in type checker | Aliases resolved by blood-rust | Self-hosted becomes primary compiler |
+| TC-16 | Const item path lookup in array sizes | Compiler uses literal sizes | Const evaluation expansion |
+| TC-17 | If/else in const evaluation context | Compiler uses simple arithmetic only | Const evaluation expansion |
+| TC-19 | FFI type validation | Compiler uses builtins, not FFI | FFI bridge usage in user code |
+| MR-1 | Generational pointer MIR statements | Stack-only allocation | Region-tier allocation |
+| MR-2 | Generational pointer MIR rvalues | Stack-only allocation | Region-tier allocation |
+| MR-4 | StaleReference terminator | No generation checks active | Generation checking (MR-1) |
+| MR-6 | StringIndex rvalue | Compiler uses method-based string ops | String indexing language feature |
+| MR-7 | BinOp::Offset (pointer arithmetic) | Compiler uses safe abstractions | Raw pointer support |
+| MR-8 | PlaceBase::Static | No static variables in compiler | Static item compilation (CG-9) |
+| MR-9 | MIR Visitor trait | No separate analysis passes | Optimization passes |
+| MR-10 | Escape analysis | Stack allocation is correct/safe | Memory tier optimization |
+| MR-11 | Closure environment analysis | No closures in compiler code | Closure codegen (CG-4) |
+| MR-12 | Generation snapshots | No region allocations | Generation checking (MR-1) |
+| MR-13 | 128-bit generational pointer types | Stack-only allocation | Region-tier allocation |
+| MR-14 | Handler deduplication | No effects in compiler code | Effect system usage |
+| MR-15 | Match guard evaluation | No guards in compiler code | User code with match guards |
+| MR-TRY | `?` operator desugaring | Compiler uses explicit match | User code with `?` operator |
+| CG-1 | In-process LLVM optimization passes | External `llc -O2` is sufficient | Build speed optimization |
+| CG-2 | Escape analysis + memory tier assignment | Stack-only is correct | Escape analysis (MR-10) |
+| CG-3 | Generation check emission on deref | No region-tier pointers | Region-tier allocation |
+| CG-4 | Closure function generation | No closures in compiler code | Closure language feature |
+| CG-5 | Full evidence-passing effects | No effects in compiler code | Effect system usage |
+| CG-6 | Dynamic dispatch / VTables | No trait objects in compiler | Trait object language feature |
+| CG-7 | Generic monomorphization | ptr-based generics work correctly | Performance optimization |
+| CG-8 | Incremental compilation | Full recompilation is correct | Build speed optimization |
+| CG-9 | Const/static as LLVM globals | Constants inlined at compile time | Static item language feature |
+| CG-10 | Fiber/continuation support | No fibers in compiler code | Fiber runtime feature |
+| CG-11 | Runtime lifecycle init/shutdown | Not needed for independent codegen | Runtime initialization |
+| CG-DROP | Full drop glue (field-by-field) | Runtime handles Vec/String/HashMap | User-defined destructors |
+| CG-ASSERT | Assert with source location/values | Basic panic calls sufficient | Diagnostic quality improvement |
+| CG-DEINIT | Deinit statement (zero memory) | Memory always written before read | Safety hardening |
+| CG-SNAP | Snapshot function wiring | No generation checks | Generation checking (MR-1) |
+| CG-DISP | Dispatch function wiring | No dynamic dispatch | Dynamic dispatch (CG-6) |
+
+---
+
+*Document updated 2026-02-12 with deferred features table extracted from self-hosted compiler parity checklist.*
