@@ -197,6 +197,13 @@ pub(super) fn allocate_with_blood_alloc_impl<'ctx, 'a>(
             format!("LLVM alloca error: {}", e), span
         )])?;
 
+    // Zero-initialize gen_alloca before the runtime call to distinguish between
+    // "runtime didn't write" (stays 0) and "stack corruption" (becomes garbage)
+    ctx.builder.build_store(gen_alloca, i32_ty.const_int(0, false))
+        .map_err(|e| vec![Diagnostic::error(
+            format!("LLVM store error: {}", e), span
+        )])?;
+
     // Call blood_alloc_or_abort(size, &out_generation) -> address
     let address = ctx.builder.build_call(
         alloc_fn,

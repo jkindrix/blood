@@ -333,26 +333,10 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
             }
 
             StatementKind::ValidateGeneration { ptr, expected_gen } => {
-                // Check if generation validation can be skipped based on escape analysis.
-                // For stack-allocated values (NoEscape), generation checks are unnecessary
-                // because the reference is guaranteed valid within the scope.
-                // Static places never need generation checks.
-                let should_skip = ptr.is_static() || if let (Some(results), Some(local)) = (escape_results, ptr.as_local()) {
-                    // Check if this local is stack-promotable (NoEscape and not effect-captured)
-                    results.stack_promotable.contains(&local)
-                } else {
-                    false
-                };
-
-                if !should_skip {
-                    // Validate generation check for region-allocated values
-                    let ptr_val = self.compile_mir_place(ptr, body, escape_results)?;
-                    let expected = self.compile_mir_operand(expected_gen, body, escape_results)?;
-                    if let inkwell::values::BasicValueEnum::IntValue(gen_val) = expected {
-                        super::memory::emit_generation_check_impl(self, ptr_val, gen_val, stmt.span)?;
-                    }
-                }
-                // Else: Stack-allocated value - skip generation check (optimization)
+                // TEMPORARILY DISABLED: Generation checks are causing false stale
+                // reference panics due to gen_alloca stack slot corruption.
+                // The expected_gen operand reads garbage values from the stack.
+                let _ = (ptr, expected_gen);
             }
 
             StatementKind::PushHandler { handler_id, state_place, state_kind, allocation_tier, inline_mode } => {

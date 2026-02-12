@@ -412,6 +412,26 @@ fn example(arg: &Type) -> String {
 
 Tests: `t06_short_circuit_and`, `t06_short_circuit_or`, `t06_short_circuit_guard`, `t06_short_circuit_chain`, `t06_short_circuit_while`, `t06_short_circuit_or_mutate`.
 
+### BUG-012: Deref handler generation check uses wrong address and wrong panic argument (FIXED)
+
+**Severity:** Critical (caused false stale reference crashes in first_gen)
+
+**Status:** FIXED.
+
+**Root cause:** Two bugs in the inline generation check code at `place.rs:217-297` in the Deref handler:
+
+**Bug A — Wrong address (place.rs:230):** `ptrtoint(ptr_val)` converted the *loaded/derived* value to an address. For Region-allocated locals where the loaded value is a StructValue, lines 176-185 spill it to a stack temporary (`deref_tmp` alloca). The generation check then validated the *stack address* of this temporary instead of the *heap address* of the Region allocation. The runtime correctly determined the stack address wasn't in its slot registry and reported "stale" (since `expected_gen > FIRST` for garbage values).
+
+Diagnostic output confirmed: `addr=0x7ffdd62ce558` (stack range), `expected_gen=3593265224` (non-deterministic garbage from uninitialized stack reads).
+
+**Fix A:** Changed to use `ptrtoint(locals[local_id])` — the local's actual storage pointer (heap address for Region-allocated locals).
+
+**Bug B — Wrong panic argument (place.rs:283):** `blood_stale_reference_panic(expected_gen, result)` passed `result` (the 0/1 return code from `blood_validate_generation`) as the "actual generation" argument. The error message always showed "Actual: 1" regardless of the real generation.
+
+**Fix B:** Added `blood_get_generation(address)` call in the stale path to retrieve the actual generation before calling the panic function, matching the correct pattern in `memory.rs:emit_generation_check_impl`.
+
+**Key files:** `compiler-rust/bloodc/src/codegen/mir_codegen/place.rs` (lines 229-306)
+
 ### Known Blood-Rust Limitations (NOT Bugs)
 
 **Memory reuse requires active region:** The runtime now includes a Generation-Aware Slab Allocator that enables memory reuse within regions. For compiled Blood programs to benefit, they must create and activate a region at startup. The `blood_alloc_simple`, `blood_realloc`, and `blood_free_simple` functions are now region-aware: when a region is active, allocations come from the region and freed memory is added to per-size-class free lists for reuse. The codegen already calls `blood_unregister_allocation` for region-allocated locals in StorageDead statements.

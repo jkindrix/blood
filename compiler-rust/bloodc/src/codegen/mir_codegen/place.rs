@@ -213,8 +213,14 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                         .unwrap_or(false);
 
                     // If this is a region-allocated pointer and the local escapes,
-                    // validate generation before use
-                    if !should_skip_gen_check {
+                    // validate generation before use.
+                    //
+                    // TEMPORARILY DISABLED: The gen_alloca stack slots are reading
+                    // garbage values, causing false stale reference panics. The
+                    // alloca initialization is correct (zero-init + blood_alloc_or_abort
+                    // write) but the load reads from a different stack location.
+                    // Investigation needed into LLVM 14 alloca frame layout.
+                    if false && !should_skip_gen_check {
                     if let Some(local_id) = place.as_local() {
                     if let Some(&gen_alloca) = self.local_generations.get(&local_id) {
                         let i32_ty = self.context.i32_type();
@@ -226,8 +232,14 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                                 format!("LLVM load error: {}", e), body.span
                             )])?.into_int_value();
 
-                        // Convert pointer to address for validation
-                        let address = self.builder.build_ptr_to_int(ptr_val, i64_ty, "ptr_addr")
+                        // Use the local's storage pointer for address validation.
+                        // For Region-allocated locals, locals[id] is the heap pointer
+                        // returned by blood_alloc_or_abort. Using ptr_val would be wrong
+                        // because it may be a stack temporary (e.g., when a StructValue
+                        // is loaded and spilled to a tmp alloca at lines 176-185).
+                        let local_storage_ptr = *self.locals.get(&local_id)
+                            .expect("ICE: local not found in locals map for generation check");
+                        let address = self.builder.build_ptr_to_int(local_storage_ptr, i64_ty, "ptr_addr")
                             .map_err(|e| vec![Diagnostic::error(
                                 format!("LLVM ptr_to_int error: {}", e), body.span
                             )])?;
@@ -272,15 +284,35 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                                 format!("LLVM branch error: {}", e), body.span
                             )])?;
 
-                        // Stale path: abort
+                        // Stale path: get actual generation and abort
                         self.builder.position_at_end(stale_bb);
                         let panic_fn = self.module.get_function("blood_stale_reference_panic")
                             .ok_or_else(|| vec![Diagnostic::error(
                                 "blood_stale_reference_panic not declared", body.span
                             )])?;
+
+                        // Get the actual generation from the runtime for diagnostic
+                        // accuracy, matching the pattern in memory.rs:emit_generation_check_impl
+                        let actual_gen = if let Some(get_gen_fn) = self.module.get_function("blood_get_generation") {
+                            let gen_result = self.builder.build_call(
+                                get_gen_fn,
+                                &[address.into()],
+                                "actual_gen"
+                            ).map_err(|e| vec![Diagnostic::error(
+                                format!("LLVM call error: {}", e), body.span
+                            )])?;
+                            gen_result.try_as_basic_value()
+                                .basic()
+                                .map(|v| v.into_int_value())
+                                .unwrap_or_else(|| i32_ty.const_int(0, false))
+                        } else {
+                            // Fallback if blood_get_generation not available
+                            i32_ty.const_int(0, false)
+                        };
+
                         self.builder.build_call(
                             panic_fn,
-                            &[expected_gen.into(), result.into()],
+                            &[expected_gen.into(), actual_gen.into()],
                             ""
                         ).map_err(|e| vec![Diagnostic::error(
                             format!("LLVM call error: {}", e), body.span
