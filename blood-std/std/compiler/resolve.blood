@@ -399,6 +399,9 @@ impl Resolver {
     }
 
     /// Defines a local variable in the current scope.
+    /// Allows shadowing: always appends a new binding entry.
+    /// lookup() searches bindings in reverse order, so the most recent
+    /// definition of a name is found first (matching blood-rust behavior).
     pub fn define_local(
         self: &mut Self,
         name: common::Symbol,
@@ -407,7 +410,10 @@ impl Resolver {
         span: common::Span,
     ) -> bool {
         let binding = Binding::local(local_id, mutable, span);
-        self.define(name, binding)
+        let scope_idx = self.current_scope();
+        let entry = BindingEntry::new(name, binding);
+        self.scopes[scope_idx].bindings.push(entry);
+        true
     }
 
     /// Defines a global item (function, struct, enum, etc.).
@@ -608,8 +614,11 @@ impl Resolver {
             let scope_idx = self.scope_stack[stack_idx];
             let scope = &self.scopes[scope_idx];
 
-            let mut binding_idx: usize = 0;
-            while binding_idx < scope.bindings.len() {
+            // Search bindings in reverse order so that shadowed variables
+            // (appended later by define_local) are found before earlier ones.
+            let mut binding_idx: usize = scope.bindings.len();
+            while binding_idx > 0 {
+                binding_idx = binding_idx - 1;
                 if scope.bindings[binding_idx].name.index == name.index {
                     return Some(LookupResult {
                         scope_index: scope_idx,
@@ -617,7 +626,6 @@ impl Resolver {
                         is_global: scope_idx == 0,
                     });
                 }
-                binding_idx = binding_idx + 1;
             }
         }
 
