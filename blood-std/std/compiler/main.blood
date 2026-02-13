@@ -41,6 +41,8 @@ mod reporter;
 mod source;
 mod build_cache;
 mod dump_mir;
+mod validate_mir;
+mod codegen_size;
 
 // ============================================================
 // Command Line Arguments
@@ -84,6 +86,10 @@ pub struct Args {
     pub trace_codegen: bool,
     /// Whether to dump type/field resolution tables after type checking.
     pub dump_types: bool,
+    /// Whether to dump ADT layouts (sizes, fields, variants).
+    pub dump_layouts: bool,
+    /// Whether to validate MIR before codegen.
+    pub validate_mir: bool,
 }
 
 impl Args {
@@ -101,6 +107,8 @@ impl Args {
             dump_mir_filter: Option::None,
             trace_codegen: false,
             dump_types: false,
+            dump_layouts: false,
+            validate_mir: false,
         }
     }
 
@@ -118,6 +126,8 @@ impl Args {
             dump_mir_filter: Option::None,
             trace_codegen: false,
             dump_types: false,
+            dump_layouts: false,
+            validate_mir: false,
         }
     }
 
@@ -135,6 +145,8 @@ impl Args {
             dump_mir_filter: Option::None,
             trace_codegen: false,
             dump_types: false,
+            dump_layouts: false,
+            validate_mir: false,
         }
     }
 }
@@ -547,6 +559,8 @@ fn run_help(_args: &Args) -> i32 {
     help.push_str("    --dump-mir=<filter> Dump MIR for functions matching filter\n");
     help.push_str("    --trace-codegen     Emit MIR as comments in LLVM IR output\n");
     help.push_str("    --dump-types        Dump type/field resolutions to stderr\n");
+    help.push_str("    --dump-layouts      Dump ADT sizes, fields, variant layouts\n");
+    help.push_str("    --validate-mir      Validate MIR before codegen\n");
     print_string(&help);
     0
 }
@@ -681,6 +695,10 @@ pub fn parse_args(argc: i32, argv: &Vec<String>) -> Args {
                 args.trace_codegen = true;
             } else if str_equals(arg, "--dump-types") {
                 args.dump_types = true;
+            } else if str_equals(arg, "--dump-layouts") {
+                args.dump_layouts = true;
+            } else if str_equals(arg, "--validate-mir") {
+                args.validate_mir = true;
             }
         } else {
             // Positional argument (source file)
@@ -1530,6 +1548,24 @@ fn codegen_pass2(
             }
         }
 
+        // Validate MIR if requested
+        if args.validate_mir {
+            let fn_name_str = work.fn_name.as_str();
+            let errors = validate_mir::validate_body(&body, fn_name_str);
+            if errors.len() > 0 {
+                eprint_str("=== MIR VALIDATION ERRORS: ");
+                eprint_str(fn_name_str);
+                eprint_str(" ===\n");
+                let mut ei: usize = 0;
+                while ei < errors.len() {
+                    eprint_str("  ");
+                    eprint_str(errors[ei].as_str());
+                    eprint_str("\n");
+                    ei = ei + 1;
+                }
+            }
+        }
+
         // Codegen + write directly to file
         let fn_ir = codegen::generate_function_with_ctx(ctx, &body, work.fn_name.as_str());
         file_append_string(output_path, fn_ir.as_str());
@@ -1737,6 +1773,11 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     // Rebuild all user struct/enum layouts now that builtins are registered.
     codegen::rebuild_adt_layouts(&mut ctx, &lower_result.items);
 
+    // Dump ADT layouts if requested (after registry is fully populated)
+    if args.dump_layouts {
+        dump_adt_layouts(&ctx);
+    }
+
     // Collect static DefIds first - needed for name registration filtering.
     let mut static_def_ids: Vec<u32> = Vec::new();
     let mut si: usize = 0;
@@ -1918,6 +1959,26 @@ fn dump_type_resolutions(typeck_result: &typeck_driver::TypeCheckResult) {
         mi = mi + 1;
     }
 
+    // Type variable substitutions
+    eprint_str("=== Type Variable Substitutions (");
+    let mut tv_count_str = String::new();
+    push_usize(&mut tv_count_str, typeck_result.subst_table.ty_substs.len());
+    eprint_str(tv_count_str.as_str());
+    eprint_str(" entries) ===\n");
+    let mut ti: usize = 0;
+    while ti < typeck_result.subst_table.ty_substs.len() {
+        let subst = &typeck_result.subst_table.ty_substs[ti];
+        let mut line = String::new();
+        line.push_str("  ?");
+        push_usize(&mut line, subst.var_id.index as usize);
+        line.push_str(" -> ");
+        let type_str = dump_mir::format_type(&subst.ty);
+        line.push_str(type_str.as_str());
+        line.push('\n');
+        eprint_str(line.as_str());
+        ti = ti + 1;
+    }
+
     // Builtin def names
     eprint_str("=== Builtin Def Names (");
     let mut bdn_count_str = String::new();
@@ -1935,6 +1996,151 @@ fn dump_type_resolutions(typeck_result: &typeck_driver::TypeCheckResult) {
         line.push('\n');
         eprint_str(line.as_str());
         bi = bi + 1;
+    }
+}
+
+/// Dumps ADT layouts (struct/enum sizes, fields, variant layouts) to stderr.
+fn dump_adt_layouts(ctx: &codegen_ctx::CodegenCtx) {
+    eprint_str("=== ADT Layouts (");
+    let mut count_str = String::new();
+    push_usize(&mut count_str, ctx.adt_registry.len());
+    eprint_str(count_str.as_str());
+    eprint_str(" entries) ===\n");
+
+    let mut i: usize = 0;
+    while i < ctx.adt_registry.len() {
+        match &ctx.adt_registry[i] {
+            &codegen_ctx::AdtEntry::Struct(ref layout) => {
+                let total_size = codegen_size::llvm_type_size(layout.llvm_type.as_str());
+                // Header: struct defN: SIZE bytes
+                let mut line = String::new();
+                line.push_str("  struct def");
+                push_usize(&mut line, layout.def_id as usize);
+                // Try to resolve the name
+                match ctx.lookup_def_name(layout.def_id) {
+                    Option::Some(ref name) => {
+                        line.push_str(" (");
+                        line.push_str(name.as_str());
+                        line.push(')');
+                    }
+                    Option::None => {}
+                }
+                line.push_str(": ");
+                push_u64(&mut line, total_size);
+                line.push_str(" bytes, llvm ");
+                line.push_str(layout.llvm_type.as_str());
+                line.push('\n');
+                eprint_str(line.as_str());
+
+                // Fields
+                let mut fi: usize = 0;
+                while fi < layout.fields.len() {
+                    let field = &layout.fields[fi];
+                    let field_size = codegen_size::llvm_type_size(field.llvm_type.as_str());
+                    let mut fline = String::new();
+                    fline.push_str("      field ");
+                    push_usize(&mut fline, fi);
+                    fline.push_str(": ");
+                    fline.push_str(field.llvm_type.as_str());
+                    fline.push_str(" (");
+                    push_u64(&mut fline, field_size);
+                    fline.push_str(" bytes)");
+                    match &field.hir_type {
+                        &Option::Some(ref ty) => {
+                            fline.push_str("  // ");
+                            let type_str = dump_mir::format_type(ty);
+                            fline.push_str(type_str.as_str());
+                        }
+                        &Option::None => {}
+                    }
+                    fline.push('\n');
+                    eprint_str(fline.as_str());
+                    fi = fi + 1;
+                }
+            }
+            &codegen_ctx::AdtEntry::Enum(ref layout) => {
+                let total_size = codegen_size::llvm_type_size(layout.llvm_type.as_str());
+                let disc_size = codegen_size::llvm_type_size(layout.discriminant_type.as_str());
+                // Header: enum defN: SIZE bytes
+                let mut line = String::new();
+                line.push_str("  enum def");
+                push_usize(&mut line, layout.def_id as usize);
+                match ctx.lookup_def_name(layout.def_id) {
+                    Option::Some(ref name) => {
+                        line.push_str(" (");
+                        line.push_str(name.as_str());
+                        line.push(')');
+                    }
+                    Option::None => {}
+                }
+                line.push_str(": ");
+                push_u64(&mut line, total_size);
+                line.push_str(" bytes, llvm ");
+                line.push_str(layout.llvm_type.as_str());
+                line.push('\n');
+                eprint_str(line.as_str());
+
+                // Discriminant
+                let mut dline = String::new();
+                dline.push_str("      discriminant: ");
+                dline.push_str(layout.discriminant_type.as_str());
+                dline.push_str(" (");
+                push_u64(&mut dline, disc_size);
+                dline.push_str(" bytes)\n");
+                eprint_str(dline.as_str());
+
+                // Max payload
+                let mut pline = String::new();
+                pline.push_str("      max_payload: ");
+                push_u64(&mut pline, layout.max_payload_size);
+                pline.push_str(" bytes\n");
+                eprint_str(pline.as_str());
+
+                // Variants
+                let mut vi: usize = 0;
+                while vi < layout.variants.len() {
+                    let variant = &layout.variants[vi];
+                    let mut vline = String::new();
+                    vline.push_str("      variant ");
+                    push_usize(&mut vline, variant.variant_idx as usize);
+                    vline.push_str(": payload ");
+                    vline.push_str(variant.payload_llvm_type.as_str());
+                    let vsize = codegen_size::llvm_type_size(variant.payload_llvm_type.as_str());
+                    vline.push_str(" (");
+                    push_u64(&mut vline, vsize);
+                    vline.push_str(" bytes)\n");
+                    eprint_str(vline.as_str());
+
+                    // Variant fields
+                    let mut vfi: usize = 0;
+                    while vfi < variant.fields.len() {
+                        let field = &variant.fields[vfi];
+                        let field_size = codegen_size::llvm_type_size(field.llvm_type.as_str());
+                        let mut fline = String::new();
+                        fline.push_str("          field ");
+                        push_usize(&mut fline, vfi);
+                        fline.push_str(": ");
+                        fline.push_str(field.llvm_type.as_str());
+                        fline.push_str(" (");
+                        push_u64(&mut fline, field_size);
+                        fline.push_str(" bytes)");
+                        match &field.hir_type {
+                            &Option::Some(ref ty) => {
+                                fline.push_str("  // ");
+                                let type_str = dump_mir::format_type(ty);
+                                fline.push_str(type_str.as_str());
+                            }
+                            &Option::None => {}
+                        }
+                        fline.push('\n');
+                        eprint_str(fline.as_str());
+                        vfi = vfi + 1;
+                    }
+                    vi = vi + 1;
+                }
+            }
+        }
+        i = i + 1;
     }
 }
 
