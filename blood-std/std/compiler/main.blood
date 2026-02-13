@@ -40,6 +40,7 @@ mod driver;
 mod reporter;
 mod source;
 mod build_cache;
+mod dump_mir;
 
 // ============================================================
 // Command Line Arguments
@@ -75,6 +76,14 @@ pub struct Args {
     pub timings: bool,
     /// Whether to skip the build cache.
     pub no_cache: bool,
+    /// Whether to dump MIR for each function.
+    pub dump_mir: bool,
+    /// Optional filter for --dump-mir (only dump functions containing this substring).
+    pub dump_mir_filter: Option<String>,
+    /// Whether to emit MIR annotations as comments in LLVM IR.
+    pub trace_codegen: bool,
+    /// Whether to dump type/field resolution tables after type checking.
+    pub dump_types: bool,
 }
 
 impl Args {
@@ -88,6 +97,10 @@ impl Args {
             colors: true,
             timings: false,
             no_cache: false,
+            dump_mir: false,
+            dump_mir_filter: Option::None,
+            trace_codegen: false,
+            dump_types: false,
         }
     }
 
@@ -101,6 +114,10 @@ impl Args {
             colors: true,
             timings: false,
             no_cache: false,
+            dump_mir: false,
+            dump_mir_filter: Option::None,
+            trace_codegen: false,
+            dump_types: false,
         }
     }
 
@@ -114,6 +131,10 @@ impl Args {
             colors: true,
             timings: false,
             no_cache: false,
+            dump_mir: false,
+            dump_mir_filter: Option::None,
+            trace_codegen: false,
+            dump_types: false,
         }
     }
 }
@@ -370,7 +391,7 @@ fn run_build(args: &Args) -> i32 {
             };
 
             // Phase 1: Generate LLVM IR via streaming codegen
-            let result = compile_file_streaming(path.as_str(), ll_path.as_str(), args.timings, args.no_cache);
+            let result = compile_file_streaming(path.as_str(), ll_path.as_str(), args);
             if !result {
                 return 1;
             }
@@ -450,7 +471,7 @@ fn run_run(args: &Args) -> i32 {
 
             // Phase 1: Generate LLVM IR
             let ll_path = default_ll_path(path);
-            let result = compile_file_streaming(path.as_str(), ll_path.as_str(), args.timings, args.no_cache);
+            let result = compile_file_streaming(path.as_str(), ll_path.as_str(), args);
             if !result {
                 return 1;
             }
@@ -520,6 +541,12 @@ fn run_help(_args: &Args) -> i32 {
     help.push_str("    --no-color   Disable colored output\n");
     help.push_str("    --timings    Print per-phase timing\n");
     help.push_str("    --no-cache   Skip the build cache\n");
+    help.push_str("\n");
+    help.push_str("DEBUG OPTIONS:\n");
+    help.push_str("    --dump-mir          Dump MIR for all functions to stderr\n");
+    help.push_str("    --dump-mir=<filter> Dump MIR for functions matching filter\n");
+    help.push_str("    --trace-codegen     Emit MIR as comments in LLVM IR output\n");
+    help.push_str("    --dump-types        Dump type/field resolutions to stderr\n");
     print_string(&help);
     0
 }
@@ -645,6 +672,15 @@ pub fn parse_args(argc: i32, argv: &Vec<String>) -> Args {
                 args.timings = true;
             } else if str_equals(arg, "--no-cache") {
                 args.no_cache = true;
+            } else if str_equals(arg, "--dump-mir") {
+                args.dump_mir = true;
+            } else if str_starts_with(arg, "--dump-mir=") {
+                args.dump_mir = true;
+                args.dump_mir_filter = Option::Some(substr_after(arg, 11));
+            } else if str_equals(arg, "--trace-codegen") {
+                args.trace_codegen = true;
+            } else if str_equals(arg, "--dump-types") {
+                args.dump_types = true;
             }
         } else {
             // Positional argument (source file)
@@ -702,6 +738,65 @@ fn str_equals(s: &String, other: &str) -> bool {
 /// Clones a String.
 fn clone_string(s: &String) -> String {
     common::make_string(s.as_str())
+}
+
+/// Checks if a String starts with a given &str prefix.
+fn str_starts_with(s: &String, prefix: &str) -> bool {
+    let bytes = s.as_bytes();
+    let prefix_bytes = prefix.as_bytes();
+    if bytes.len() < prefix_bytes.len() {
+        return false;
+    }
+    let mut i: usize = 0;
+    while i < prefix_bytes.len() {
+        if bytes[i] != prefix_bytes[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    true
+}
+
+/// Returns the substring of a String starting at the given byte offset.
+fn substr_after(s: &String, offset: usize) -> String {
+    let bytes = s.as_bytes();
+    let mut result = String::new();
+    let mut i: usize = offset;
+    while i < bytes.len() {
+        result.push(bytes[i] as char);
+        i = i + 1;
+    }
+    result
+}
+
+/// Checks if &str `haystack` contains &str `needle` as a substring.
+fn str_contains_ref(haystack: &str, needle: &str) -> bool {
+    let h_bytes = haystack.as_bytes();
+    let n_bytes = needle.as_bytes();
+    if n_bytes.len() == 0 {
+        return true;
+    }
+    if h_bytes.len() < n_bytes.len() {
+        return false;
+    }
+    let limit = h_bytes.len() - n_bytes.len() + 1;
+    let mut i: usize = 0;
+    while i < limit {
+        let mut matched = true;
+        let mut j: usize = 0;
+        while j < n_bytes.len() {
+            if h_bytes[i + j] != n_bytes[j] {
+                matched = false;
+                j = n_bytes.len(); // break
+            }
+            j = j + 1;
+        }
+        if matched {
+            return true;
+        }
+        i = i + 1;
+    }
+    false
 }
 
 /// Constructs a unique, mangled function name for LLVM IR.
@@ -1389,6 +1484,7 @@ fn codegen_pass2(
     lower_result: &hir_lower_ctx::LowerResult,
     typeck_result: &typeck_driver::TypeCheckResult,
     output_path: &str,
+    args: &Args,
 ) -> bool {
     let total_items: usize = worklist.items.len();
     if total_items == 0 {
@@ -1417,6 +1513,23 @@ fn codegen_pass2(
 
         region_deactivate();
 
+        // Dump MIR if requested
+        if args.dump_mir {
+            let fn_name_str = work.fn_name.as_str();
+            let should_dump = match &args.dump_mir_filter {
+                &Option::Some(ref filter) => str_contains_ref(fn_name_str, filter.as_str()),
+                &Option::None => true,
+            };
+            if should_dump {
+                let mir_text = dump_mir::format_mir_body(&body, fn_name_str);
+                eprint_str("=== MIR: ");
+                eprint_str(fn_name_str);
+                eprint_str(" ===\n");
+                eprint_str(mir_text.as_str());
+                eprint_str("\n");
+            }
+        }
+
         // Codegen + write directly to file
         let fn_ir = codegen::generate_function_with_ctx(ctx, &body, work.fn_name.as_str());
         file_append_string(output_path, fn_ir.as_str());
@@ -1441,14 +1554,14 @@ fn codegen_pass2(
 /// - Parse region: holds AST nodes (destroyed after HIR lowering)
 /// - HIR region: holds HIR/typeck data (destroyed after codegen)
 /// - Per-function MIR regions: hold MIR bodies (destroyed after each function's IR is written)
-fn compile_file_streaming(path: &str, output_path: &str, timings: bool, no_cache: bool) -> bool {
+fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     let compile_start = blood_clock_millis();
 
     // === Build cache check ===
     let base_dir = source::parent_dir(path);
     let cache_dir = build_cache::ensure_cache_dir(base_dir.as_str());
     let exe_path: &str = args_get(0);
-    let source_hash: u64 = if no_cache { 0 as u64 } else {
+    let source_hash: u64 = if args.no_cache { 0 as u64 } else {
         build_cache::try_cache(base_dir.as_str(), path, exe_path)
     };
 
@@ -1594,6 +1707,11 @@ fn compile_file_streaming(path: &str, output_path: &str, timings: bool, no_cache
     }
     eprint_str(" done\n");
 
+    // Dump type resolutions if requested
+    if args.dump_types {
+        dump_type_resolutions(&typeck_result);
+    }
+
     // Deactivate hir_region — data remains readable for codegen.
     // New allocations (codegen ctx, def_names) go to global allocator.
     region_deactivate();
@@ -1603,6 +1721,7 @@ fn compile_file_streaming(path: &str, output_path: &str, timings: bool, no_cache
     let codegen_start = blood_clock_millis();
 
     let mut ctx = codegen_streaming::begin_streaming_module("main", output_path, &lower_result.items);
+    ctx.trace_codegen = args.trace_codegen;
 
     // Register builtin ADT types (Vec, String, HashMap, Box) in the ADT registry.
     // These types are not in the HIR items list but user structs may contain them as fields.
@@ -1700,7 +1819,7 @@ fn compile_file_streaming(path: &str, output_path: &str, timings: bool, no_cache
 
     // Pass 2: MIR lowering + codegen, writing each function's IR directly to file.
     ctx.flush_write_buffer();
-    let _pass2_ok = codegen_pass2(&mut ctx, &worklist, &lower_result, &typeck_result, output_path);
+    let _pass2_ok = codegen_pass2(&mut ctx, &worklist, &lower_result, &typeck_result, output_path, args);
 
     // Pass 3: Generate stub functions for registered names without bodies.
     // These are enum variant constructors and other synthetic functions that are
@@ -1733,7 +1852,7 @@ fn compile_file_streaming(path: &str, output_path: &str, timings: bool, no_cache
     let compile_elapsed = blood_clock_millis() - compile_start;
 
     // Print timing summary if requested
-    if timings {
+    if args.timings {
         print_str("\nTimings:\n");
         print_str("  Parse                ");
         print_timing_ms(parse_elapsed);
@@ -1749,6 +1868,74 @@ fn compile_file_streaming(path: &str, output_path: &str, timings: bool, no_cache
     }
 
     true
+}
+
+// ============================================================
+// Debug Dump: Type Resolutions
+// ============================================================
+
+/// Dumps type/field/method resolution tables to stderr.
+fn dump_type_resolutions(typeck_result: &typeck_driver::TypeCheckResult) {
+    // Field resolutions
+    eprint_str("=== Field Resolutions (");
+    let mut field_count_str = String::new();
+    push_usize(&mut field_count_str, typeck_result.field_resolutions.len());
+    eprint_str(field_count_str.as_str());
+    eprint_str(" entries) ===\n");
+    let mut fi: usize = 0;
+    while fi < typeck_result.field_resolutions.len() {
+        let entry = &typeck_result.field_resolutions[fi];
+        let mut line = String::new();
+        line.push_str("  field[body=d");
+        push_usize(&mut line, entry.body_def_id as usize);
+        line.push_str(", span=");
+        push_usize(&mut line, entry.span_start);
+        line.push_str("] -> idx ");
+        push_usize(&mut line, entry.field_idx as usize);
+        line.push('\n');
+        eprint_str(line.as_str());
+        fi = fi + 1;
+    }
+
+    // Method resolutions
+    eprint_str("=== Method Resolutions (");
+    let mut meth_count_str = String::new();
+    push_usize(&mut meth_count_str, typeck_result.method_resolutions.len());
+    eprint_str(meth_count_str.as_str());
+    eprint_str(" entries) ===\n");
+    let mut mi: usize = 0;
+    while mi < typeck_result.method_resolutions.len() {
+        let entry = &typeck_result.method_resolutions[mi];
+        let mut line = String::new();
+        line.push_str("  method[body=d");
+        push_usize(&mut line, entry.body_def_id as usize);
+        line.push_str(", span=");
+        push_usize(&mut line, entry.span_start);
+        line.push_str("] -> def");
+        push_usize(&mut line, entry.def_id_index as usize);
+        line.push('\n');
+        eprint_str(line.as_str());
+        mi = mi + 1;
+    }
+
+    // Builtin def names
+    eprint_str("=== Builtin Def Names (");
+    let mut bdn_count_str = String::new();
+    push_usize(&mut bdn_count_str, typeck_result.builtin_def_names.len());
+    eprint_str(bdn_count_str.as_str());
+    eprint_str(" entries) ===\n");
+    let mut bi: usize = 0;
+    while bi < typeck_result.builtin_def_names.len() {
+        let entry = &typeck_result.builtin_def_names[bi];
+        let mut line = String::new();
+        line.push_str("  def");
+        push_usize(&mut line, entry.def_id_index as usize);
+        line.push_str(" -> ");
+        line.push_str(entry.runtime_name.as_str());
+        line.push('\n');
+        eprint_str(line.as_str());
+        bi = bi + 1;
+    }
 }
 
 /// Formats and prints a millisecond timing value with right-aligned ms suffix.

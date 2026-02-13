@@ -13,6 +13,7 @@ mod mir_body;
 mod codegen_types;
 mod codegen_ctx;
 mod codegen_expr;
+mod dump_mir;
 
 // ============================================================
 // Terminator Codegen
@@ -23,6 +24,12 @@ pub fn emit_terminator(
     ctx: &mut codegen_ctx::CodegenCtx,
     term: &mir_term::Terminator,
 ) {
+    if ctx.trace_codegen {
+        let trace = dump_mir::format_terminator(term);
+        ctx.write("    ; MIR: ");
+        ctx.write_string(&trace);
+        ctx.newline();
+    }
     match &term.kind {
         &mir_term::TerminatorKind::Goto { target } => {
             let label = ctx.block_label(target);

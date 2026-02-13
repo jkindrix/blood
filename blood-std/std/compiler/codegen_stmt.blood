@@ -14,6 +14,7 @@ mod codegen_types;
 mod codegen_ctx;
 mod codegen_expr;
 mod mir_escape;
+mod dump_mir;
 
 // ============================================================
 // Statement Codegen
@@ -24,6 +25,12 @@ pub fn emit_statement(
     ctx: &mut codegen_ctx::CodegenCtx,
     stmt: &mir_stmt::Statement,
 ) {
+    if ctx.trace_codegen {
+        let trace = dump_mir::format_statement(stmt);
+        ctx.write("    ; MIR: ");
+        ctx.write_string(&trace);
+        ctx.newline();
+    }
     match &stmt.kind {
         &mir_stmt::StatementKind::Assign { ref place, ref rvalue } => {
             let dest = codegen_expr::emit_place_data_ptr(ctx, place);

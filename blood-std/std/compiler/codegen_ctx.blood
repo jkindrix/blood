@@ -129,6 +129,8 @@ pub struct CodegenCtx {
     write_buffer: String,
     /// Output file path for streaming codegen.
     output_path: String,
+    /// Whether to emit MIR annotations as comments in LLVM IR.
+    pub trace_codegen: bool,
 }
 
 /// Mapping from a MIR local to its LLVM type.
@@ -226,6 +228,7 @@ impl CodegenCtx {
             static_defs_hash: hashmap::HashMapU64U32::new(),
             write_buffer: String::new(),
             output_path: String::new(),
+            trace_codegen: false,
         }
     }
 
@@ -268,6 +271,7 @@ impl CodegenCtx {
             static_defs_hash: hashmap::HashMapU64U32::new(),
             write_buffer: String::new(),
             output_path: String::new(),
+            trace_codegen: false,
         }
     }
 
@@ -1294,6 +1298,7 @@ impl CodegenCtx {
             static_defs_hash: hashmap::HashMapU64U32::new(),
             write_buffer: String::new(),
             output_path: String::new(),
+            trace_codegen: self.trace_codegen,
         };
 
         // Copy static defs hash (read-only)
