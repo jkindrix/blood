@@ -12,6 +12,7 @@ mod mir_term;
 mod mir_body;
 mod codegen_types;
 mod codegen_ctx;
+mod codegen_size;
 
 // ============================================================
 // Operand Codegen
@@ -358,7 +359,7 @@ fn resolve_place_elem_type(
                                     Option::None => { break; }
                                 }
                             }
-                            hir_to_llvm_with_ctx(ctx, &final_ty)
+                            codegen_size::type_to_llvm_with_ctx(ctx, &final_ty)
                         }
                         Option::None => ctx.get_local_type(place.local),
                     }
@@ -581,14 +582,9 @@ pub fn emit_place_addr(
                 ctx.emit_load(idx_loaded.as_str(), "i64", idx_val.as_str());
 
                 // Calculate byte offset = index * element_size
+                let elem_size_str = codegen_types::format_u64(elem_size);
                 let byte_offset = ctx.fresh_temp();
-                ctx.write("    ");
-                ctx.write_string(&byte_offset);
-                ctx.write(" = mul i64 ");
-                ctx.write_string(&idx_loaded);
-                ctx.write(", ");
-                ctx.write_string(&codegen_types::format_u64(elem_size));
-                ctx.write("\n");
+                ctx.emit_binop(byte_offset.as_str(), "mul", "i64", idx_loaded.as_str(), elem_size_str.as_str());
 
                 // Use byte-offset GEP with i8 element type
                 let result = ctx.fresh_temp();
@@ -934,7 +930,6 @@ fn resolve_variant_payload_type(
     }
 }
 
-/// Gets the element size in bytes for array/vec indexing.
 /// Returns the size of the element type if known, or 8 (pointer size) as default.
 fn get_indexing_element_size(
     ctx: &mut codegen_ctx::CodegenCtx,
@@ -952,15 +947,15 @@ fn get_indexing_element_size(
 fn get_element_size_from_hir(ctx: &mut codegen_ctx::CodegenCtx, hir_type: &hir_ty::Type) -> u64 {
     match &hir_type.kind {
         &hir_ty::TypeKind::Array { ref element, size: _ } => {
-            type_size_with_ctx(ctx, element.as_ref())
+            codegen_size::type_size_with_ctx(ctx, element.as_ref())
         }
         &hir_ty::TypeKind::Slice { ref element } => {
-            type_size_with_ctx(ctx, element.as_ref())
+            codegen_size::type_size_with_ctx(ctx, element.as_ref())
         }
         &hir_ty::TypeKind::Adt { def_id: _, ref args } => {
             // Vec<T> has T as first type argument
             if args.len() > 0 {
-                type_size_with_ctx(ctx, &args[0])
+                codegen_size::type_size_with_ctx(ctx, &args[0])
             } else {
                 8 // Default to pointer size
             }
@@ -982,15 +977,15 @@ fn get_element_size_from_hir(ctx: &mut codegen_ctx::CodegenCtx, hir_type: &hir_t
 fn resolve_index_element_type(ctx: &mut codegen_ctx::CodegenCtx, container_ty: &hir_ty::Type) -> String {
     match &container_ty.kind {
         &hir_ty::TypeKind::Array { ref element, size: _ } => {
-            hir_to_llvm_with_ctx(ctx, element.as_ref())
+            codegen_size::type_to_llvm_with_ctx(ctx, element.as_ref())
         }
         &hir_ty::TypeKind::Slice { ref element } => {
-            hir_to_llvm_with_ctx(ctx, element.as_ref())
+            codegen_size::type_to_llvm_with_ctx(ctx, element.as_ref())
         }
         &hir_ty::TypeKind::Adt { def_id: _, ref args } => {
             // Vec<T> has T as first type argument
             if args.len() > 0 {
-                hir_to_llvm_with_ctx(ctx, &args[0])
+                codegen_size::type_to_llvm_with_ctx(ctx, &args[0])
             } else {
                 common::make_string("i64")
             }
@@ -1002,40 +997,6 @@ fn resolve_index_element_type(ctx: &mut codegen_ctx::CodegenCtx, container_ty: &
             resolve_index_element_type(ctx, inner.as_ref())
         }
         _ => common::make_string("i64"),
-    }
-}
-
-/// Converts an HIR type to LLVM type string, using the ADT registry for struct layouts.
-/// This is needed because codegen_types::type_to_llvm returns "ptr" for all ADTs,
-/// but we need the actual struct layout (e.g., "{ ptr, i64, i64 }" for String).
-fn hir_to_llvm_with_ctx(ctx: &mut codegen_ctx::CodegenCtx, ty: &hir_ty::Type) -> String {
-    match &ty.kind {
-        &hir_ty::TypeKind::Adt { def_id, ref args } => {
-            let result = ctx.adt_llvm_type(def_id.index);
-            // Unregistered generic (Option<T>, Result<T,E>) returns "ptr" - compute actual layout
-            if result.as_bytes().len() == 3
-                && result.as_bytes()[0] == 112  // 'p'
-                && result.as_bytes()[1] == 116  // 't'
-                && result.as_bytes()[2] == 114  // 'r'
-                && args.len() > 0
-            {
-                let mut payload_size: u64 = 0;
-                let mut ai: usize = 0;
-                while ai < args.len() {
-                    payload_size = payload_size + type_size_with_ctx(ctx, &args[ai]);
-                    ai = ai + 1;
-                }
-                if payload_size > 0 {
-                    let mut s = common::make_string("{ i8, [");
-                    let size_str = codegen_types::format_u64(payload_size);
-                    s.push_str(size_str.as_str());
-                    s.push_str(" x i8] }");
-                    return s;
-                }
-            }
-            result
-        }
-        _ => codegen_types::type_to_llvm(ty),
     }
 }
 
@@ -1919,8 +1880,8 @@ fn emit_cast_with_types(
     let src_is_ptr = codegen_types::is_pointer_like(source_ty);
     let tgt_is_ptr = codegen_types::is_pointer_like(target_ty);
 
-    let src_size = type_size_with_ctx(ctx, source_ty);
-    let tgt_size = type_size_with_ctx(ctx, target_ty);
+    let src_size = codegen_size::type_size_with_ctx(ctx, source_ty);
+    let tgt_size = codegen_size::type_size_with_ctx(ctx, target_ty);
 
     if src_is_int && tgt_is_int {
         // Integer to integer cast
@@ -2377,192 +2338,6 @@ fn emit_aggregate(
             }
         }
     }
-}
-
-// ============================================================
-// Context-Aware Type Size Helpers
-// ============================================================
-
-/// Gets the size of a type in bytes, using the ADT registry for struct/enum types.
-/// This is context-aware and returns correct sizes for user-defined ADTs.
-fn type_size_with_ctx(ctx: &mut codegen_ctx::CodegenCtx, ty: &hir_ty::Type) -> u64 {
-    match &ty.kind {
-        &hir_ty::TypeKind::Adt { def_id, ref args } => {
-            let base = adt_size_bytes(ctx, def_id.index);
-            // For generic builtins not in registry (Option<T>, Result<T,E>),
-            // base returns 8 (pointer size fallback). Compute actual size from args.
-            if base == 8 && args.len() > 0 {
-                let mut payload_size: u64 = 0;
-                let mut ai: usize = 0;
-                while ai < args.len() {
-                    payload_size = payload_size + type_size_with_ctx(ctx, &args[ai]);
-                    ai = ai + 1;
-                }
-                if payload_size > 8 {
-                    return 1u64 + payload_size;
-                }
-            }
-            base
-        }
-        _ => codegen_types::type_size_bytes(ty),
-    }
-}
-
-/// Gets the size of an ADT type from the registry.
-fn adt_size_bytes(ctx: &mut codegen_ctx::CodegenCtx, def_id: u32) -> u64 {
-    match ctx.lookup_struct(def_id) {
-        Option::Some(layout) => {
-            return compute_struct_size_local(layout);
-        }
-        Option::None => {}
-    }
-    match ctx.lookup_enum(def_id) {
-        Option::Some(layout) => {
-            return compute_enum_size_local(layout);
-        }
-        Option::None => {}
-    }
-    // Fallback: compute size from the LLVM type string (handles builtins)
-    let llvm_ty = ctx.adt_llvm_type(def_id);
-    llvm_type_size_local(llvm_ty.as_str())
-}
-
-/// Computes size of a struct from its layout.
-fn compute_struct_size_local(layout: &codegen_ctx::StructLayout) -> u64 {
-    let mut size: u64 = 0;
-    let mut i: usize = 0;
-    while i < layout.fields.len() {
-        let field = &layout.fields[i];
-        let field_size = llvm_type_size_local(field.llvm_type.as_str());
-        let padding = (8u64 - (size % 8u64)) % 8u64;
-        size = size + padding + field_size;
-        i = i + 1;
-    }
-    if size == 0 {
-        // Builtin ADTs (Vec, String, HashMap) have no field entries but
-        // have a valid llvm_type string. Compute size from that.
-        return llvm_type_size_local(layout.llvm_type.as_str());
-    }
-    let final_padding = (8u64 - (size % 8u64)) % 8u64;
-    size + final_padding
-}
-
-/// Computes size of an enum from its layout.
-fn compute_enum_size_local(layout: &codegen_ctx::EnumLayout) -> u64 {
-    let discrim_size = llvm_type_size_local(layout.discriminant_type.as_str());
-    let payload_size = layout.max_payload_size;
-    let total = discrim_size + payload_size;
-    let padding = (8u64 - (total % 8u64)) % 8u64;
-    total + padding
-}
-
-/// Estimates the size of an LLVM type from its string representation.
-fn llvm_type_size_local(ty: &str) -> u64 {
-    let bytes = ty.as_bytes();
-    if bytes.len() == 0 {
-        return 8;
-    }
-    if bytes.len() == 2 && bytes[0] == 105 && bytes[1] == 49 {
-        return 1;
-    }
-    if bytes.len() == 2 && bytes[0] == 105 && bytes[1] == 56 {
-        return 1;
-    }
-    if bytes.len() == 3 && bytes[0] == 105 && bytes[1] == 49 && bytes[2] == 54 {
-        return 2;
-    }
-    if bytes.len() == 3 && bytes[0] == 105 && bytes[1] == 51 && bytes[2] == 50 {
-        return 4;
-    }
-    if bytes.len() == 3 && bytes[0] == 105 && bytes[1] == 54 && bytes[2] == 52 {
-        return 8;
-    }
-    if bytes.len() == 4 && bytes[0] == 105 && bytes[1] == 49 && bytes[2] == 50 && bytes[3] == 56 {
-        return 16;
-    }
-    if bytes.len() == 3 && bytes[0] == 112 && bytes[1] == 116 && bytes[2] == 114 {
-        return 8;
-    }
-    if bytes.len() == 5 && bytes[0] == 102 && bytes[1] == 108 {
-        return 4;
-    }
-    if bytes.len() == 6 && bytes[0] == 100 && bytes[1] == 111 {
-        return 8;
-    }
-    if bytes[0] == 123 {
-        return parse_struct_size_local(ty);
-    }
-    8
-}
-
-/// Parses a struct type string and computes its size.
-fn parse_struct_size_local(ty: &str) -> u64 {
-    let bytes = ty.as_bytes();
-    let mut size: u64 = 0;
-    let mut i: usize = 0;
-    let mut depth: i32 = 0;
-    let mut field_start: usize = 0;
-
-    while i < bytes.len() {
-        let c = bytes[i];
-        if c == 123 {
-            depth = depth + 1;
-            if depth == 1 {
-                field_start = i + 1;
-            }
-        } else if c == 125 {
-            if depth == 1 && field_start < i {
-                let field_ty = substring_local(ty, field_start, i);
-                let trimmed = trim_whitespace_local(field_ty.as_str());
-                if trimmed.len() > 0 {
-                    size = size + llvm_type_size_local(trimmed.as_str());
-                }
-            }
-            depth = depth - 1;
-        } else if c == 44 && depth == 1 {
-            let field_ty = substring_local(ty, field_start, i);
-            let trimmed = trim_whitespace_local(field_ty.as_str());
-            if trimmed.len() > 0 {
-                size = size + llvm_type_size_local(trimmed.as_str());
-            }
-            field_start = i + 1;
-        }
-        i = i + 1;
-    }
-
-    if size == 0 {
-        return 8;
-    }
-    let padding = (8u64 - (size % 8u64)) % 8u64;
-    size + padding
-}
-
-/// Extracts a substring.
-fn substring_local(s: &str, start: usize, end: usize) -> String {
-    let bytes = s.as_bytes();
-    let mut result = String::new();
-    let mut i = start;
-    while i < end && i < bytes.len() {
-        result.push(bytes[i] as char);
-        i = i + 1;
-    }
-    result
-}
-
-/// Trims leading and trailing whitespace.
-fn trim_whitespace_local(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut start: usize = 0;
-    let mut end: usize = bytes.len();
-
-    while start < bytes.len() && (bytes[start] == 32 || bytes[start] == 9) {
-        start = start + 1;
-    }
-    while end > start && (bytes[end - 1] == 32 || bytes[end - 1] == 9) {
-        end = end - 1;
-    }
-
-    substring_local(s, start, end)
 }
 
 // ============================================================

@@ -1,0 +1,324 @@
+// Blood Self-Hosted Compiler - Context-Aware Type Size Functions
+//
+// Canonical implementations of type size and LLVM type conversion
+// functions that use the ADT registry. This module exists to avoid
+// circular dependencies between codegen_expr and codegen_stmt.
+
+mod common;
+mod hir_def;
+mod hir_ty;
+mod codegen_types;
+mod codegen_ctx;
+
+// ============================================================
+// Public API
+// ============================================================
+
+/// Converts a type to LLVM IR, using the ADT registry for struct/enum types.
+/// Falls back to `codegen_types::type_to_llvm` for non-ADT types.
+pub fn type_to_llvm_with_ctx(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    ty: &hir_ty::Type,
+) -> String {
+    match &ty.kind {
+        &hir_ty::TypeKind::Adt { def_id, ref args } => {
+            let result = ctx.adt_llvm_type(def_id.index);
+            // Generic builtin enum not in registry (Option<T>, Result<T,E>)?
+            // adt_llvm_type returns "ptr" (3 bytes) as fallback for unknown ADTs.
+            // Only expand when the ADT is truly unregistered. Registered ADTs
+            // like Box<T> that return "ptr" should NOT be expanded.
+            if result.as_bytes().len() == 3
+                && result.as_bytes()[0] == 112
+                && result.as_bytes()[1] == 116
+                && result.as_bytes()[2] == 114
+                && args.len() > 0
+                && !is_adt_registered(ctx, def_id.index)
+            {
+                let mut payload_size: u64 = 0;
+                let mut ai: usize = 0;
+                while ai < args.len() {
+                    payload_size = payload_size + type_size_with_ctx(ctx, &args[ai]);
+                    ai = ai + 1;
+                }
+                if payload_size > 0 {
+                    let mut s = common::make_string("{ i8, [");
+                    let size_str = codegen_types::format_u64(payload_size);
+                    s.push_str(size_str.as_str());
+                    s.push_str(" x i8] }");
+                    return s;
+                }
+            }
+            result
+        }
+        _ => codegen_types::type_to_llvm(ty),
+    }
+}
+
+/// Gets the size of a type in bytes, using the ADT registry for struct/enum types.
+/// This is context-aware and returns correct sizes for user-defined ADTs.
+pub fn type_size_with_ctx(ctx: &mut codegen_ctx::CodegenCtx, ty: &hir_ty::Type) -> u64 {
+    match &ty.kind {
+        &hir_ty::TypeKind::Adt { def_id, ref args } => {
+            let base = adt_size_bytes(ctx, def_id.index);
+            if base == 8 && args.len() > 0 && !is_adt_registered(ctx, def_id.index) {
+                let mut payload_size: u64 = 0;
+                let mut ai: usize = 0;
+                while ai < args.len() {
+                    payload_size = payload_size + type_size_with_ctx(ctx, &args[ai]);
+                    ai = ai + 1;
+                }
+                if payload_size > 8 {
+                    let tag_size: u64 = 1;
+                    return tag_size + payload_size;
+                }
+            }
+            base
+        }
+        _ => codegen_types::type_size_bytes(ty),
+    }
+}
+
+// ============================================================
+// Internal Helpers
+// ============================================================
+
+/// Checks whether an ADT is registered in the struct/enum registry or is a known
+/// builtin ADT (Vec, String, HashMap, Box).
+fn is_adt_registered(ctx: &mut codegen_ctx::CodegenCtx, def_id: u32) -> bool {
+    match ctx.lookup_struct(def_id) {
+        Option::Some(_) => { return true; }
+        Option::None => {}
+    }
+    match ctx.lookup_enum(def_id) {
+        Option::Some(_) => { return true; }
+        Option::None => {}
+    }
+    match ctx.lookup_def_name(def_id) {
+        Option::Some(name) => {
+            let nb = name.as_bytes();
+            // Vec
+            if nb.len() == 3 && nb[0] == 86 && nb[1] == 101 && nb[2] == 99 {
+                return true;
+            }
+            // String
+            if nb.len() == 6 && nb[0] == 83 && nb[1] == 116 && nb[2] == 114 {
+                return true;
+            }
+            // HashMap
+            if nb.len() == 7 && nb[0] == 72 && nb[1] == 97 && nb[2] == 115 && nb[3] == 104 {
+                return true;
+            }
+            // Box
+            if nb.len() == 3 && nb[0] == 66 && nb[1] == 111 && nb[2] == 120 {
+                return true;
+            }
+            false
+        }
+        Option::None => false,
+    }
+}
+
+/// Gets the size of an ADT type from the registry.
+fn adt_size_bytes(ctx: &mut codegen_ctx::CodegenCtx, def_id: u32) -> u64 {
+    match ctx.lookup_struct(def_id) {
+        Option::Some(layout) => {
+            return compute_struct_size(layout);
+        }
+        Option::None => {}
+    }
+    match ctx.lookup_enum(def_id) {
+        Option::Some(layout) => {
+            return compute_enum_size(layout);
+        }
+        Option::None => {}
+    }
+    let llvm_ty = ctx.adt_llvm_type(def_id);
+    llvm_type_size(llvm_ty.as_str())
+}
+
+/// Computes size of a struct from its layout.
+fn compute_struct_size(layout: &codegen_ctx::StructLayout) -> u64 {
+    let mut size: u64 = 0;
+    let mut i: usize = 0;
+    while i < layout.fields.len() {
+        let field = &layout.fields[i];
+        let field_size = llvm_type_size(field.llvm_type.as_str());
+        let padding = (8u64 - (size % 8u64)) % 8u64;
+        size = size + padding + field_size;
+        i = i + 1;
+    }
+    if size == 0 {
+        let from_type = llvm_type_size(layout.llvm_type.as_str());
+        if from_type > 0 {
+            return from_type;
+        }
+        return 8;
+    }
+    let final_padding = (8u64 - (size % 8u64)) % 8u64;
+    size + final_padding
+}
+
+/// Computes size of an enum from its layout.
+fn compute_enum_size(layout: &codegen_ctx::EnumLayout) -> u64 {
+    let discrim_size = llvm_type_size(layout.discriminant_type.as_str());
+    let payload_size = layout.max_payload_size;
+    let total = discrim_size + payload_size;
+    let padding = (8u64 - (total % 8u64)) % 8u64;
+    total + padding
+}
+
+/// Estimates the size of an LLVM type from its string representation.
+fn llvm_type_size(ty: &str) -> u64 {
+    let bytes = ty.as_bytes();
+    if bytes.len() == 0 {
+        return 8;
+    }
+    // i1 -> 1 byte
+    if bytes.len() == 2 && bytes[0] == 105 && bytes[1] == 49 {
+        return 1;
+    }
+    // i8 -> 1 byte
+    if bytes.len() == 2 && bytes[0] == 105 && bytes[1] == 56 {
+        return 1;
+    }
+    // i16 -> 2 bytes
+    if bytes.len() == 3 && bytes[0] == 105 && bytes[1] == 49 && bytes[2] == 54 {
+        return 2;
+    }
+    // i32 -> 4 bytes
+    if bytes.len() == 3 && bytes[0] == 105 && bytes[1] == 51 && bytes[2] == 50 {
+        return 4;
+    }
+    // i64 -> 8 bytes
+    if bytes.len() == 3 && bytes[0] == 105 && bytes[1] == 54 && bytes[2] == 52 {
+        return 8;
+    }
+    // i128 -> 16 bytes
+    if bytes.len() == 4 && bytes[0] == 105 && bytes[1] == 49 && bytes[2] == 50 && bytes[3] == 56 {
+        return 16;
+    }
+    // ptr -> 8 bytes
+    if bytes.len() == 3 && bytes[0] == 112 && bytes[1] == 116 && bytes[2] == 114 {
+        return 8;
+    }
+    // float -> 4 bytes
+    if bytes.len() == 5 && bytes[0] == 102 && bytes[1] == 108 {
+        return 4;
+    }
+    // double -> 8 bytes
+    if bytes.len() == 6 && bytes[0] == 100 && bytes[1] == 111 {
+        return 8;
+    }
+    // Struct { ... }
+    if bytes[0] == 123 {
+        return parse_struct_size(ty);
+    }
+    // Array [N x T]
+    if bytes[0] == 91 {
+        return parse_array_size(ty);
+    }
+    8
+}
+
+/// Parses a struct type string and computes its size.
+fn parse_struct_size(ty: &str) -> u64 {
+    let bytes = ty.as_bytes();
+    let mut size: u64 = 0;
+    let mut i: usize = 0;
+    let mut depth: i32 = 0;
+    let mut field_start: usize = 0;
+
+    while i < bytes.len() {
+        let c = bytes[i];
+        if c == 123 {
+            depth = depth + 1;
+            if depth == 1 {
+                field_start = i + 1;
+            }
+        } else if c == 125 {
+            if depth == 1 && field_start < i {
+                let field_ty = substring(ty, field_start, i);
+                let trimmed = trim_whitespace(field_ty.as_str());
+                if trimmed.len() > 0 {
+                    size = size + llvm_type_size(trimmed.as_str());
+                }
+            }
+            depth = depth - 1;
+        } else if c == 44 && depth == 1 {
+            let field_ty = substring(ty, field_start, i);
+            let trimmed = trim_whitespace(field_ty.as_str());
+            if trimmed.len() > 0 {
+                size = size + llvm_type_size(trimmed.as_str());
+            }
+            field_start = i + 1;
+        }
+        i = i + 1;
+    }
+
+    if size == 0 {
+        return 8;
+    }
+    let padding = (8u64 - (size % 8u64)) % 8u64;
+    size + padding
+}
+
+/// Parses an array type string `[N x T]` and returns N * sizeof(T).
+fn parse_array_size(ty: &str) -> u64 {
+    let bytes = ty.as_bytes();
+    let mut i: usize = 1;
+    while i < bytes.len() && bytes[i] == 32 {
+        i = i + 1;
+    }
+    let mut count: u64 = 0;
+    while i < bytes.len() && bytes[i] >= 48 && bytes[i] <= 57 {
+        count = count * 10 + ((bytes[i] - 48) as u64);
+        i = i + 1;
+    }
+    while i < bytes.len() && (bytes[i] == 32 || bytes[i] == 120) {
+        i = i + 1;
+    }
+    let elem_start = i;
+    let mut elem_end = bytes.len();
+    let mut j: usize = bytes.len();
+    while j > elem_start {
+        j = j - 1;
+        if bytes[j] == 93 {
+            elem_end = j;
+            break;
+        }
+    }
+    let elem_ty = substring(ty, elem_start, elem_end);
+    let trimmed = trim_whitespace(elem_ty.as_str());
+    let elem_size = llvm_type_size(trimmed.as_str());
+    count * elem_size
+}
+
+// ============================================================
+// String Helpers
+// ============================================================
+
+fn substring(s: &str, start: usize, end: usize) -> String {
+    let bytes = s.as_bytes();
+    let mut result = String::new();
+    let mut i = start;
+    while i < end && i < bytes.len() {
+        result.push(bytes[i] as char);
+        i = i + 1;
+    }
+    result
+}
+
+fn trim_whitespace(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut start: usize = 0;
+    let mut end: usize = bytes.len();
+
+    while start < bytes.len() && (bytes[start] == 32 || bytes[start] == 9) {
+        start = start + 1;
+    }
+    while end > start && (bytes[end - 1] == 32 || bytes[end - 1] == 9) {
+        end = end - 1;
+    }
+
+    substring(s, start, end)
+}
