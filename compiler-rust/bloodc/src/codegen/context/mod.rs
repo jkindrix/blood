@@ -4345,6 +4345,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let file_exists_type = bool_type.fn_type(&[str_slice_type.into()], false);
         self.module.add_function("file_exists", file_exists_type, None);
 
+        // file_size(path: {*i8, i64}) -> i64
+        // Get the size of a file in bytes (-1 on error)
+        let file_size_type = self.context.i64_type().fn_type(&[str_slice_type.into()], false);
+        self.module.add_function("file_size", file_size_type, None);
+
         // file_write_string(path: {*i8, i64}, content: {*i8, i64}) -> i1 (bool: true = success)
         // Write string content to a file
         let file_write_string_type = bool_type.fn_type(&[str_slice_type.into(), str_slice_type.into()], false);

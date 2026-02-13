@@ -86,10 +86,15 @@ build_first_gen() {
     local flags="${1:-}"
     [ -f "$BLOOD_RUST" ] || die "blood-rust not found at $BLOOD_RUST"
 
+    step "Clearing all build caches"
+    rm -rf "${DIR}"/*.blood_objs "${DIR}"/tests/*.blood_objs
+    rm -rf "${HOME}"/.blood*/cache/
+    ok "Caches cleared"
+
     step "Building first_gen with blood-rust"
     local start_ts
     start_ts=$(date +%s)
-    if $BLOOD_RUST build main.blood $flags; then
+    if $BLOOD_RUST build main.blood --no-cache $flags; then
         mv main first_gen
         ok "first_gen created ($(wc -c < first_gen) bytes) in $(elapsed_since "$start_ts")"
     else
@@ -748,10 +753,17 @@ case "${1:-full}" in
 
     clean)
         step "Cleaning build artifacts"
+        # Binaries and intermediate files
         rm -f first_gen second_gen second_gen_asan
         rm -f *.ll *.o *.bc core
         rm -rf .bisect_* .blood-cache .logs
-        ok "Build artifacts removed"
+        find "${DIR}" -name ".blood-cache" -type d -exec rm -rf {} + 2>/dev/null || true
+        # Per-file incremental compilation caches (next to source files)
+        rm -rf "${DIR}"/*.blood_objs
+        rm -rf "${DIR}"/tests/*.blood_objs
+        # Global per-definition object cache
+        rm -rf "${HOME}"/.blood*/cache/
+        ok "Build artifacts and all caches removed"
         ;;
 
     *)

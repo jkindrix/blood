@@ -73,6 +73,8 @@ pub struct Args {
     pub colors: bool,
     /// Whether to print per-phase timing information.
     pub timings: bool,
+    /// Whether to skip the build cache.
+    pub no_cache: bool,
 }
 
 impl Args {
@@ -85,6 +87,7 @@ impl Args {
             verbose: false,
             colors: true,
             timings: false,
+            no_cache: false,
         }
     }
 
@@ -97,6 +100,7 @@ impl Args {
             verbose: false,
             colors: true,
             timings: false,
+            no_cache: false,
         }
     }
 
@@ -109,6 +113,7 @@ impl Args {
             verbose: false,
             colors: true,
             timings: false,
+            no_cache: false,
         }
     }
 }
@@ -365,7 +370,7 @@ fn run_build(args: &Args) -> i32 {
             };
 
             // Phase 1: Generate LLVM IR via streaming codegen
-            let result = compile_file_streaming(path.as_str(), ll_path.as_str(), args.timings);
+            let result = compile_file_streaming(path.as_str(), ll_path.as_str(), args.timings, args.no_cache);
             if !result {
                 return 1;
             }
@@ -445,7 +450,7 @@ fn run_run(args: &Args) -> i32 {
 
             // Phase 1: Generate LLVM IR
             let ll_path = default_ll_path(path);
-            let result = compile_file_streaming(path.as_str(), ll_path.as_str(), args.timings);
+            let result = compile_file_streaming(path.as_str(), ll_path.as_str(), args.timings, args.no_cache);
             if !result {
                 return 1;
             }
@@ -513,6 +518,8 @@ fn run_help(_args: &Args) -> i32 {
     help.push_str("    -o <file>    Output file path\n");
     help.push_str("    -v           Verbose output\n");
     help.push_str("    --no-color   Disable colored output\n");
+    help.push_str("    --timings    Print per-phase timing\n");
+    help.push_str("    --no-cache   Skip the build cache\n");
     print_string(&help);
     0
 }
@@ -636,6 +643,8 @@ pub fn parse_args(argc: i32, argv: &Vec<String>) -> Args {
                 args.colors = false;
             } else if str_equals(arg, "--timings") {
                 args.timings = true;
+            } else if str_equals(arg, "--no-cache") {
+                args.no_cache = true;
             }
         } else {
             // Positional argument (source file)
@@ -1432,13 +1441,16 @@ fn codegen_pass2(
 /// - Parse region: holds AST nodes (destroyed after HIR lowering)
 /// - HIR region: holds HIR/typeck data (destroyed after codegen)
 /// - Per-function MIR regions: hold MIR bodies (destroyed after each function's IR is written)
-fn compile_file_streaming(path: &str, output_path: &str, timings: bool) -> bool {
+fn compile_file_streaming(path: &str, output_path: &str, timings: bool, no_cache: bool) -> bool {
     let compile_start = blood_clock_millis();
 
     // === Build cache check ===
     let base_dir = source::parent_dir(path);
     let cache_dir = build_cache::ensure_cache_dir(base_dir.as_str());
-    let source_hash = build_cache::try_cache(base_dir.as_str(), path);
+    let exe_path: &str = args_get(0);
+    let source_hash: u64 = if no_cache { 0 as u64 } else {
+        build_cache::try_cache(base_dir.as_str(), path, exe_path)
+    };
 
     if source_hash != 0 {
         let cached_path = build_cache::cache_ll_path(cache_dir.as_str(), source_hash);
@@ -1446,9 +1458,9 @@ fn compile_file_streaming(path: &str, output_path: &str, timings: bool) -> bool 
             // Cache hit — copy cached IR to output
             let cached_content: &str = file_read_to_string(cached_path.as_str());
             file_write_string(output_path, cached_content);
-            print_str("[CACHE HIT] Using cached IR: ");
-            print_str(output_path);
-            print_newline();
+            eprint_str("[CACHE HIT] ");
+            eprint_str(output_path);
+            eprint_str("\n");
             return true;
         }
     }

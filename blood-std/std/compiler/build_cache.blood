@@ -290,14 +290,43 @@ pub fn ensure_cache_dir(base_dir: &str) -> String {
 // Main Cache API
 // ============================================================
 
-/// Computes the source hash for the given entry file.
+/// Computes the source hash for the given entry file and compiler binary.
+/// Includes the compiler binary's mtime+size in the hash so that recompiling
+/// the compiler invalidates the cache. Uses `stat` via shell because
+/// file_read_to_string fails on binaries (non-UTF-8 bytes).
 /// Returns 0 if hashing fails (which disables caching).
-pub fn try_cache(base_dir: &str, entry_path: &str) -> u64 {
+pub fn try_cache(base_dir: &str, entry_path: &str, compiler_path: &str) -> u64 {
     let files = collect_source_files(base_dir, entry_path);
     if files.len() == 0 {
         return 0;
     }
-    compute_combined_hash(&files)
+    let mut combined = compute_combined_hash(&files);
+    if combined == 0 {
+        return 0;
+    }
+    // Fold the compiler binary's mtime and size into the hash.
+    // mtime changes on every rebuild; size catches recompilations that
+    // also change binary layout. Together they reliably detect compiler changes.
+    let compiler_fingerprint = binary_fingerprint(compiler_path);
+    combined = (combined ^ compiler_fingerprint) * fnv_prime();
+    combined
+}
+
+/// Computes a fingerprint for a binary file by reading its stat output.
+/// Uses `stat -c '%Y %s'` to get mtime (epoch seconds) + size.
+fn binary_fingerprint(path: &str) -> u64 {
+    let stat_file = "/tmp/.blood_cache_stat";
+    let mut cmd = String::new();
+    cmd.push_str("stat -c '%Y %s' '");
+    cmd.push_str(path);
+    cmd.push_str("' > ");
+    cmd.push_str(stat_file);
+    system(cmd.as_str());
+    let stat_str: &str = file_read_to_string(stat_file);
+    if stat_str.len() == 0 {
+        return 0;
+    }
+    hashmap::hash_str(stat_str)
 }
 
 // ============================================================
