@@ -1375,6 +1375,18 @@ fn infer_index(
                 }
             }
         }
+        &hir_ty::TypeKind::Primitive(prim) => {
+            match prim {
+                hir_ty::PrimitiveTy::Str => {
+                    // str[usize] -> char
+                    hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Char))
+                }
+                _ => {
+                    checker.error(typeck::TypeErrorKind::NotIndexable, span);
+                    hir_ty::Type::error()
+                }
+            }
+        }
         &hir_ty::TypeKind::Infer(_) => {
             checker.fresh_infer()
         }

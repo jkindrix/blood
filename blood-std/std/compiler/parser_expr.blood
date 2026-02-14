@@ -434,9 +434,13 @@ fn parse_primary_expr(parser: &mut parser_base::Parser) -> ast::Expr {
         token::TokenKind::ColonColon => {
             return parse_path_expr(parser);
         }
-        // Keywords that can be used as identifiers in expression position
+        // Default expression - produces type's default value
         token::TokenKind::Default => {
-            return parse_path_expr(parser);
+            parser.advance();
+            return ast::Expr {
+                kind: ast::ExprKind::Default,
+                span: start,
+            };
         }
         token::TokenKind::Handle => {
             return parse_path_expr(parser);

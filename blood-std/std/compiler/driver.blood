@@ -719,7 +719,48 @@ pub fn find_fn_for_body(
                     });
                 }
             }
-            &hir_item::ItemKind::Trait(_) => {}
+            &hir_item::ItemKind::Trait(ref trait_def) => {
+                // Check associated functions in trait definitions (default method bodies)
+                let mut j: usize = 0;
+                while j < trait_def.items.len() {
+                    match &trait_def.items[j] {
+                        &hir_item::AssocItem::Fn(ref assoc_fn) => {
+                            match &assoc_fn.body_id {
+                                &Option::Some(ref bid) => {
+                                    if bid.index == target_body_id.index {
+                                        return Option::Some(FnInfo {
+                                            def_id: assoc_fn.def_id,
+                                            name: assoc_fn.name.symbol,
+                                            name_span: assoc_fn.name.span,
+                                            return_ty: hir_ty::copy_type(&assoc_fn.sig.return_ty),
+                                            span: assoc_fn.name.span,
+                                        });
+                                    }
+                                }
+                                &Option::None => {}
+                            }
+                        }
+                        &hir_item::AssocItem::Type(_) => {}
+                        &hir_item::AssocItem::Const(ref assoc_const) => {
+                            match &assoc_const.body_id {
+                                &Option::Some(ref bid) => {
+                                    if bid.index == target_body_id.index {
+                                        return Option::Some(FnInfo {
+                                            def_id: assoc_const.def_id,
+                                            name: assoc_const.name.symbol,
+                                            name_span: assoc_const.name.span,
+                                            return_ty: hir_ty::copy_type(&assoc_const.ty),
+                                            span: assoc_const.name.span,
+                                        });
+                                    }
+                                }
+                                &Option::None => {}
+                            }
+                        }
+                    }
+                    j = j + 1;
+                }
+            }
             &hir_item::ItemKind::Effect(_) => {}
             &hir_item::ItemKind::Handler(_) => {}
             &hir_item::ItemKind::Module(_) => {}
