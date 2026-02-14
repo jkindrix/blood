@@ -729,17 +729,12 @@ fn register_builtin_functions(ctx: &mut hir_lower_ctx::LoweringCtx) {
     register_builtin_fn(ctx, &mut items, "region_exit_scope", bi_params_1(bi_u64()), hir_ty::Type::i32_ty());
     register_builtin_fn(ctx, &mut items, "region_used", bi_params_1(bi_u64()), bi_u64());
 
-    // === Builtins requiring Option type ===
-    match ctx.builtin_option_def {
-        Option::Some(option_def) => {
-            register_builtin_fn(ctx, &mut items, "parse_f64", bi_params_1(bi_ref_str()), bi_option_of(option_def, bi_f64()));
-            register_builtin_fn(ctx, &mut items, "parse_i64_radix", bi_params_2(bi_ref_str(), bi_u32()), bi_option_of(option_def, bi_i64()));
-            register_builtin_fn(ctx, &mut items, "parse_u8_radix", bi_params_2(bi_ref_str(), bi_u32()), bi_option_of(option_def, hir_ty::Type::u8_ty()));
-            register_builtin_fn(ctx, &mut items, "parse_u32_radix", bi_params_2(bi_ref_str(), bi_u32()), bi_option_of(option_def, bi_u32()));
-            register_builtin_fn(ctx, &mut items, "char_from_u32", bi_params_1(bi_u32()), bi_option_of(option_def, bi_char()));
-        }
-        Option::None => {}
-    }
+    // === Parse/char builtins (return unwrapped values, matching blood-rust ABI) ===
+    register_builtin_fn(ctx, &mut items, "parse_f64", bi_params_1(bi_ref_str()), bi_f64());
+    register_builtin_fn(ctx, &mut items, "parse_i64_radix", bi_params_2(bi_ref_str(), bi_u32()), bi_i64());
+    register_builtin_fn(ctx, &mut items, "parse_u8_radix", bi_params_2(bi_ref_str(), bi_u32()), hir_ty::Type::u8_ty());
+    register_builtin_fn(ctx, &mut items, "parse_u32_radix", bi_params_2(bi_ref_str(), bi_u32()), bi_u32());
+    register_builtin_fn(ctx, &mut items, "char_from_u32", bi_params_1(bi_u32()), bi_char());
 
     // === Threading ===
     register_builtin_fn(ctx, &mut items, "thread_spawn", bi_params_2(bi_u64(), bi_u64()), bi_u64());

@@ -17,6 +17,7 @@ mod resolve;
 mod hir_lower_ctx;
 mod interner;
 mod const_eval;
+mod hir_item;
 
 // ============================================================
 // Type Lowering
@@ -242,6 +243,31 @@ fn lower_type_path(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath) -
             let result = lookup.unwrap();
             let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
             let def_id = binding.def_id;
+
+            // Check if this is a type alias — resolve to the underlying type
+            let def_info_opt = ctx.resolver.get_def_info(def_id);
+            match &def_info_opt {
+                &Option::Some(ref info) => {
+                    match info.kind {
+                        hir_def::DefKind::TypeAlias => {
+                            let item_entry = ctx.get_item(def_id);
+                            match &item_entry {
+                                &Option::Some(ref entry) => {
+                                    match &entry.item.kind {
+                                        &hir_item::ItemKind::TypeAlias(ref alias_def) => {
+                                            return hir_ty::copy_type(&alias_def.ty);
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                &Option::None => {}
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                &Option::None => {}
+            }
 
             // Lower type arguments if present
             let type_args = match &seg.args {
