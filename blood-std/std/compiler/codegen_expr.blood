@@ -251,9 +251,13 @@ fn emit_place_load(
     place: &mir_types::Place,
 ) -> String {
     let ptr = emit_place_data_ptr(ctx, place);
-    let result = ctx.fresh_temp();
     // Use the projected type (accounts for field access, deref, etc.)
     let llvm_ty = resolve_place_elem_type(ctx, place);
+    // Skip load for unit type {} — it has zero size in LLVM
+    if str_eq(llvm_ty.as_str(), "{}") {
+        return common::make_string("undef");
+    }
+    let result = ctx.fresh_temp();
     ctx.emit_load(result.as_str(), llvm_ty.as_str(), ptr.as_str());
     result
 }
@@ -283,9 +287,13 @@ fn emit_place_load_with_type(
     place: &mir_types::Place,
 ) -> (String, String) {
     let ptr = emit_place_data_ptr(ctx, place);
-    let result = ctx.fresh_temp();
     // Use the projected type (accounts for field access, deref, etc.)
     let llvm_ty = resolve_place_elem_type(ctx, place);
+    // Skip load for unit type {} — it has zero size in LLVM
+    if str_eq(llvm_ty.as_str(), "{}") {
+        return (common::make_string("undef"), llvm_ty);
+    }
+    let result = ctx.fresh_temp();
     ctx.emit_load(result.as_str(), llvm_ty.as_str(), ptr.as_str());
     (result, llvm_ty)
 }
@@ -1187,7 +1195,10 @@ pub fn emit_rvalue(
     match rvalue {
         &mir_types::Rvalue::Use(ref operand) => {
             let (val, ty) = emit_operand_typed(ctx, operand);
-            ctx.emit_store(ty.as_str(), val.as_str(), dest);
+            // Skip store for unit type {} — it has zero size in LLVM
+            if !str_eq(ty.as_str(), "{}") {
+                ctx.emit_store(ty.as_str(), val.as_str(), dest);
+            }
         }
         &mir_types::Rvalue::Ref { ref place, mutable: _ } => {
             let addr = emit_place_data_ptr(ctx, place);
@@ -1265,8 +1276,11 @@ pub fn emit_rvalue(
         &mir_types::Rvalue::ZeroInit(ref ty) => {
             // Zero-initialize the destination
             let llvm_ty = ctx.type_to_llvm_with_ctx(ty);
-            let zero = get_zero_value(llvm_ty.as_str());
-            ctx.emit_store(llvm_ty.as_str(), zero.as_str(), dest);
+            // Skip store for unit type {} — it has zero size in LLVM
+            if !str_eq(llvm_ty.as_str(), "{}") {
+                let zero = get_zero_value(llvm_ty.as_str());
+                ctx.emit_store(llvm_ty.as_str(), zero.as_str(), dest);
+            }
         }
         &mir_types::Rvalue::Cast { ref operand, ref target_ty } => {
             // Get source type from operand

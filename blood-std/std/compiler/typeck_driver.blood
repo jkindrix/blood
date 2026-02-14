@@ -958,6 +958,37 @@ fn check_body(checker: &mut typeck::TypeChecker, body: &hir_expr::Body, return_t
         &None => {}
     }
 
+    // Check for unresolved inference variables in non-generic function let-bindings.
+    // Only runs for bodies that belong to a known non-generic function.
+    // Only checks explicit let-bindings (not pattern bindings from match/handler
+    // which may have lazily-resolved inference vars).
+    // A local is a let-binding if its name is non-empty and not a temporary.
+    let fn_generic_status = get_fn_generic_status(checker);
+    // fn_generic_status: 0 = not a function (handler/unknown), 1 = non-generic fn, 2 = generic fn
+    if fn_generic_status == 1 {
+        let mut li: usize = 0;
+        while li < body.locals.len() {
+            let local = &body.locals[li];
+            let target_idx = local.id.index as usize;
+            if target_idx < checker.locals.len() {
+                let resolved = checker.resolve(&checker.locals[target_idx].ty);
+                if type_contains_infer(&resolved) {
+                    // Only flag let-bindings, not pattern/handler op params.
+                    // Let-bindings have a name in their span and are assigned
+                    // from the result of a call expression — check if the
+                    // resolved type is a function type (fn pointer that couldn't
+                    // be monomorphized).
+                    if type_is_unresolved_fn(&resolved) {
+                        checker.error(typeck_types::TypeErrorKind::CannotInfer, local.span);
+                        // Only report once per body
+                        li = body.locals.len();
+                    }
+                }
+            }
+            li = li + 1;
+        }
+    }
+
     // Run linearity checking: scan locals for ownership qualifiers,
     // count usages in body expression, report violations.
     // Inline implementation to avoid potential codegen issues with the module.
@@ -965,6 +996,85 @@ fn check_body(checker: &mut typeck::TypeChecker, body: &hir_expr::Body, return_t
 
     // Clear return type
     checker.clear_return_ty();
+}
+
+/// Returns the generic status of the current function being type-checked.
+/// 0 = not a known function (handler body, unknown body — skip check)
+/// 1 = non-generic function (check for unresolved infer vars)
+/// 2 = generic function (skip check — infer vars expected)
+fn get_fn_generic_status(checker: &mut typeck::TypeChecker) -> i32 {
+    let def_idx = checker.current_body_def_id as usize;
+    if def_idx < checker.fn_sigs.len() {
+        match &checker.fn_sigs[def_idx] {
+            &Option::Some(ref sig) => {
+                if sig.num_generics > 0 {
+                    return 2;
+                } else {
+                    return 1;
+                }
+            }
+            &Option::None => {}
+        }
+    }
+    // No fn_sig found — this is a handler body, const body, or other non-function body
+    0
+}
+
+/// Checks if a resolved type still contains Infer variables.
+fn type_contains_infer(ty: &hir_ty::Type) -> bool {
+    match &ty.kind {
+        &hir_ty::TypeKind::Infer(_) => true,
+        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => type_contains_infer(inner.as_ref()),
+        &hir_ty::TypeKind::Adt { def_id: _, ref args } => {
+            let mut i: usize = 0;
+            while i < args.len() {
+                if type_contains_infer(&args[i]) {
+                    return true;
+                }
+                i = i + 1;
+            }
+            false
+        }
+        &hir_ty::TypeKind::Tuple(ref types) => {
+            let mut i: usize = 0;
+            while i < types.len() {
+                if type_contains_infer(&types[i]) {
+                    return true;
+                }
+                i = i + 1;
+            }
+            false
+        }
+        &hir_ty::TypeKind::Fn { ref params, ref ret, effects: _ } => {
+            let mut i: usize = 0;
+            while i < params.len() {
+                if type_contains_infer(&params[i]) {
+                    return true;
+                }
+                i = i + 1;
+            }
+            type_contains_infer(ret.as_ref())
+        }
+        _ => false,
+    }
+}
+
+/// Checks if a type is an unresolved function type (fn with Infer params/return).
+/// This is the specific pattern from `id(id)` where T in fn(T)->T can't be inferred.
+fn type_is_unresolved_fn(ty: &hir_ty::Type) -> bool {
+    match &ty.kind {
+        &hir_ty::TypeKind::Fn { ref params, ref ret, effects: _ } => {
+            let mut i: usize = 0;
+            while i < params.len() {
+                if type_contains_infer(&params[i]) {
+                    return true;
+                }
+                i = i + 1;
+            }
+            type_contains_infer(ret.as_ref())
+        }
+        _ => false,
+    }
 }
 
 // ============================================================

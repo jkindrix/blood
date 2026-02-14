@@ -1087,6 +1087,41 @@ fn lower_handler_decl(ctx: &mut hir_lower_ctx::LoweringCtx, h: &ast::HandlerDecl
         i = i + 1;
     }
 
+    // Validate handler operation names match effect definition
+    let effect_ref = handled_effect.as_ref().unwrap();
+    match ctx.get_item(effect_ref.def_id) {
+        Option::Some(ref effect_entry) => {
+            match &effect_entry.item.kind {
+                &hir_item::ItemKind::Effect(ref effect_def) => {
+                    let mut oi: usize = 0;
+                    while oi < op_impls.len() {
+                        let impl_op_name = ctx.intern(ctx.span_to_string(op_impls[oi].name.span).as_str());
+                        let mut found: bool = false;
+                        let mut ei: usize = 0;
+                        while ei < effect_def.operations.len() {
+                            let effect_op_name = ctx.intern(ctx.span_to_string(effect_def.operations[ei].name.span).as_str());
+                            if impl_op_name.index == effect_op_name.index {
+                                found = true;
+                            }
+                            ei = ei + 1;
+                        }
+                        if !found {
+                            let op_name_str = ctx.span_to_string(op_impls[oi].name.span);
+                            let mut msg = String::new();
+                            msg.push_str("unknown operation `");
+                            msg.push_str(op_name_str.as_str());
+                            msg.push_str("` in handler");
+                            ctx.error(hir::DiagnosticCode::E0305, msg, op_impls[oi].span);
+                        }
+                        oi = oi + 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Option::None => {}
+    }
+
     // Pop type param scope after lowering all types that reference generics
     ctx.resolver.pop_scope();
 

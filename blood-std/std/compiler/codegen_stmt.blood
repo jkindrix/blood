@@ -969,7 +969,10 @@ pub fn emit_arg_stores(
         let idx_str = codegen_types::format_u64((i - 1) as u64);
         arg_name.push_str(idx_str.as_str());
 
-        ctx.emit_store(ty.as_str(), arg_name.as_str(), alloca_name.as_str());
+        // Skip store for unit type {} — it has zero size in LLVM
+        if !str_eq(ty.as_str(), "{}") {
+            ctx.emit_store(ty.as_str(), arg_name.as_str(), alloca_name.as_str());
+        }
         i = i + 1;
     }
     ctx.dedent();
