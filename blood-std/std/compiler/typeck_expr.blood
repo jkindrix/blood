@@ -1205,10 +1205,18 @@ fn infer_struct(
     base: &Option<Box<hir_expr::Expr>>,
     span: common::Span,
 ) -> hir_ty::Type {
-    // Check all field expressions
+    // Check all field expressions and record field resolutions
     let mut i: usize = 0;
     while i < fields.len() {
         infer_expr(checker, &fields[i].val);
+        // Record field resolution for struct expression fields (used by MIR lowering
+        // for struct update syntax to get correct field indices)
+        match checker.get_struct_field_idx(path.def_id, fields[i].name.symbol) {
+            Option::Some(idx) => {
+                checker.record_field_resolution(fields[i].name.span.start, idx);
+            }
+            Option::None => {}
+        }
         i = i + 1;
     }
 

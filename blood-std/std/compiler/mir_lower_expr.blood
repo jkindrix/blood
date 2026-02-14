@@ -306,13 +306,15 @@ fn lower_path_expr(
                 };
                 // Unit enum variant — emit Aggregate with the enum's DefId from the type.
                 let enum_def_id = extract_adt_def_id(ty);
+                let resolved_ty = ctx.resolve_type(ty);
+                let unit_type_args = extract_type_args(&resolved_ty);
                 ctx.emit_assign(
                     place,
                     mir_types::Rvalue::Aggregate {
                         kind: mir_types::AggregateKind::Adt {
                             def_id: enum_def_id,
                             variant_idx: vi,
-                            type_args: Vec::new(),
+                            type_args: unit_type_args,
                         },
                         operands: Vec::new(),
                     },
@@ -348,6 +350,22 @@ fn is_adt_type(ty: &hir_ty::Type) -> bool {
     match &ty.kind {
         &hir_ty::TypeKind::Adt { def_id: _, args: _ } => true,
         _ => false,
+    }
+}
+
+/// Extracts type args from an ADT type, returning an empty Vec for non-ADTs.
+fn extract_type_args(ty: &hir_ty::Type) -> Vec<hir_ty::Type> {
+    match &ty.kind {
+        &hir_ty::TypeKind::Adt { def_id: _, ref args } => {
+            let mut result: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < args.len() {
+                result.push(hir_ty::copy_type(&args[i]));
+                i = i + 1;
+            }
+            result
+        }
+        _ => Vec::new(),
     }
 }
 
@@ -638,6 +656,8 @@ fn lower_call_expr(
 
                     // The return type `ty` is the enum Adt type — extract its DefId.
                     let enum_def_id = extract_adt_def_id(ty);
+                    let resolved_ty = ctx.resolve_type(ty);
+                    let variant_type_args = extract_type_args(&resolved_ty);
                     let dest_place = match dest.as_place() {
                         Option::Some(p) => p,
                         Option::None => {
@@ -651,7 +671,7 @@ fn lower_call_expr(
                             kind: mir_types::AggregateKind::Adt {
                                 def_id: enum_def_id,
                                 variant_idx: vi,
-                                type_args: Vec::new(),
+                                type_args: variant_type_args,
                             },
                             operands,
                         },
@@ -1033,51 +1053,95 @@ fn lower_struct_expr(
     ctx: &mut mir_lower_ctx::MirLowerCtx,
     path: &hir_def::ResolvedPath,
     fields: &Vec<hir_expr::FieldExpr>,
-    _base: &Option<Box<hir_expr::Expr>>,
+    base: &Option<Box<hir_expr::Expr>>,
     ty: &hir_ty::Type,
     dest: mir_lower_ctx::Destination,
     span: common::Span,
 ) {
-    // Evaluate all field values
-    let mut operands = Vec::new();
-    let mut i: usize = 0;
-    while i < fields.len() {
-        let field = &fields[i];
-        let temp = ctx.new_temp(field.val.ty.clone(), span);
-        lower_expr(ctx, &field.val, mir_lower_ctx::destination_local(temp));
-        operands.push(mir_lower_util::operand_from_place(
-            mir_types::Place::local(temp),
-            &field.val.ty,
-        ));
-        i = i + 1;
-    }
-
     match dest.as_place() {
         Option::Some(place) => {
-            // Use actual variant index from path (0 for plain structs)
-            let variant_idx = match path.variant_index {
-                Option::Some(vi) => vi,
-                Option::None => 0,
-            };
-            // For enum variants, use the enum's DefId from the expression type
-            // (the resolved type is the parent enum's ADT type).
-            // For plain structs, path.def_id equals the struct's DefId.
-            let adt_def_id = match path.variant_index {
-                Option::Some(_) => extract_adt_def_id(ty),
-                Option::None => path.def_id,
-            };
-            ctx.emit_assign(
-                place,
-                mir_types::Rvalue::Aggregate {
-                    kind: mir_types::AggregateKind::Adt {
-                        def_id: adt_def_id,
-                        variant_idx: variant_idx,
-                        type_args: Vec::new(),
-                    },
-                    operands: operands,
-                },
-                span,
-            );
+            // If there's a base expression (struct update syntax: ..base),
+            // evaluate it and copy to dest first, then overwrite explicit fields.
+            match base {
+                &Option::Some(ref base_expr) => {
+                    // Evaluate base into dest — fills all fields
+                    lower_expr(ctx, base_expr.as_ref(), mir_lower_ctx::Destination::Place(place.clone()));
+
+                    // Overwrite explicit fields
+                    let mut i: usize = 0;
+                    while i < fields.len() {
+                        let field = &fields[i];
+                        // Determine field index
+                        let field_idx = match &field.field_idx {
+                            &Option::Some(idx) => idx,
+                            &Option::None => {
+                                // Fall back to lookup from type checker
+                                match ctx.lookup_field_idx(field.name.span.start) {
+                                    Option::Some(idx) => idx as u32,
+                                    Option::None => i as u32,
+                                }
+                            }
+                        };
+                        // Write field value to the appropriate projection
+                        let field_place = place.clone().project(
+                            mir_types::PlaceElem::Field(field_idx),
+                        );
+                        lower_expr(ctx, &field.val, mir_lower_ctx::Destination::Place(field_place));
+                        i = i + 1;
+                    }
+                }
+                &Option::None => {
+                    // Normal struct construction: evaluate all fields and build aggregate
+                    let mut operands = Vec::new();
+                    let mut i: usize = 0;
+                    while i < fields.len() {
+                        let field = &fields[i];
+                        let temp = ctx.new_temp(field.val.ty.clone(), span);
+                        lower_expr(ctx, &field.val, mir_lower_ctx::destination_local(temp));
+                        operands.push(mir_lower_util::operand_from_place(
+                            mir_types::Place::local(temp),
+                            &field.val.ty,
+                        ));
+                        i = i + 1;
+                    }
+
+                    // Use actual variant index from path (0 for plain structs)
+                    let variant_idx = match path.variant_index {
+                        Option::Some(vi) => vi,
+                        Option::None => 0,
+                    };
+                    let adt_def_id = match path.variant_index {
+                        Option::Some(_) => extract_adt_def_id(ty),
+                        Option::None => path.def_id,
+                    };
+                    // Extract type args from HIR type for generic structs
+                    let resolved_ty = ctx.resolve_type(ty);
+                    let type_args = match &resolved_ty.kind {
+                        &hir_ty::TypeKind::Adt { def_id: _, ref args } => {
+                            let mut cloned: Vec<hir_ty::Type> = Vec::new();
+                            let mut ai: usize = 0;
+                            while ai < args.len() {
+                                cloned.push(hir_ty::copy_type(&args[ai]));
+                                ai = ai + 1;
+                            }
+                            cloned
+                        }
+                        _ => Vec::new(),
+                    };
+                    ctx.emit_assign(
+                        place,
+                        mir_types::Rvalue::Aggregate {
+                            kind: mir_types::AggregateKind::Adt {
+                                def_id: adt_def_id,
+                                variant_idx: variant_idx,
+                                type_args: type_args,
+                            },
+                            operands: operands,
+                        },
+                        span,
+                    );
+                }
+            }
         }
         Option::None => {}
     }
@@ -1461,19 +1525,53 @@ fn lower_match_expr(
             join_block
         };
 
-        // Test pattern
-        let test = mir_lower_pattern::pattern_test(ctx, &arm.pattern, &scrut_place, span);
-        match test {
-            Option::Some(t) => {
-                // Create switch for this arm
-                let mut targets = Vec::new();
-                targets.push(mir_types::SwitchTarget::new(t.expected, arm_block));
-                let switch_targets = mir_types::SwitchTargets::new(targets, next_arm_block);
-                ctx.terminate_switch(t.discriminant, switch_targets, span);
+        // Test pattern — handle Or patterns specially
+        match &arm.pattern.kind {
+            &hir_expr::PatternKind::Or(ref alternatives) => {
+                // For Or patterns, chain tests: each alternative branches to arm_block
+                // on success, or falls through to the next alternative's test.
+                let mut alt_i: usize = 0;
+                while alt_i < alternatives.len() {
+                    let alt = &alternatives[alt_i];
+                    let test = mir_lower_pattern::pattern_test(ctx, alt, &scrut_place, span);
+                    let fallthrough = if alt_i + 1 < alternatives.len() {
+                        ctx.new_block()
+                    } else {
+                        next_arm_block
+                    };
+                    match test {
+                        Option::Some(t) => {
+                            let mut targets = Vec::new();
+                            targets.push(mir_types::SwitchTarget::new(t.expected, arm_block));
+                            let switch_targets = mir_types::SwitchTargets::new(targets, fallthrough);
+                            ctx.terminate_switch(t.discriminant, switch_targets, span);
+                        }
+                        Option::None => {
+                            // Irrefutable alternative - go directly to arm
+                            ctx.terminate_goto(arm_block, span);
+                        }
+                    }
+                    if alt_i + 1 < alternatives.len() {
+                        ctx.set_current_block(fallthrough);
+                    }
+                    alt_i = alt_i + 1;
+                }
             }
-            Option::None => {
-                // Irrefutable pattern - go directly to arm
-                ctx.terminate_goto(arm_block, span);
+            _ => {
+                let test = mir_lower_pattern::pattern_test(ctx, &arm.pattern, &scrut_place, span);
+                match test {
+                    Option::Some(t) => {
+                        // Create switch for this arm
+                        let mut targets = Vec::new();
+                        targets.push(mir_types::SwitchTarget::new(t.expected, arm_block));
+                        let switch_targets = mir_types::SwitchTargets::new(targets, next_arm_block);
+                        ctx.terminate_switch(t.discriminant, switch_targets, span);
+                    }
+                    Option::None => {
+                        // Irrefutable pattern - go directly to arm
+                        ctx.terminate_goto(arm_block, span);
+                    }
+                }
             }
         }
 

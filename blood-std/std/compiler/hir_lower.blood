@@ -1668,10 +1668,23 @@ fn lower_fn_body_if_present(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::De
         &ast::Declaration::Module(ref m) => {
             match &m.body {
                 &Option::Some(ref declarations) => {
-                    // Recursively lower function bodies inside the module
-                    lower_fn_bodies(ctx, declarations);
+                    // Look up the module's DefId so we can push its scope
+                    let name_str = ctx.span_to_string(m.name.span);
+                    let lookup_symbol = ctx.intern(name_str.as_str());
+                    let lookup = ctx.resolver.lookup(lookup_symbol);
+                    if lookup.is_some() {
+                        let result = lookup.unwrap();
+                        let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+                        let mod_def_id = hir_def::DefId::new(binding.def_id.index);
+                        // Push a Module scope and add items so lower_single_fn_body
+                        // can resolve function names within the module
+                        ctx.resolver.push_scope(resolve::ScopeKind::Module);
+                        hir_lower_item::add_module_items_to_scope(ctx, mod_def_id, declarations);
+                        lower_fn_bodies(ctx, declarations);
+                        ctx.resolver.pop_scope();
+                    }
                 }
-                &Option::None => {} // External module - already errored
+                &Option::None => {} // External module - already handled
             }
         }
         &ast::Declaration::Macro(_) => {}

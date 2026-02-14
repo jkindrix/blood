@@ -80,9 +80,11 @@ pub fn lower_irrefutable_pattern(
         &hir_expr::PatternKind::Slice { ref prefix, ref rest, ref suffix } => {
             lower_slice_pattern(ctx, prefix, rest, suffix, source, span);
         }
-        &hir_expr::PatternKind::Or(_) => {
-            // Or patterns in irrefutable position: use first alternative
-            // This should have been caught by type checking
+        &hir_expr::PatternKind::Or(ref alternatives) => {
+            // Or patterns: bind using the first alternative
+            if alternatives.len() > 0 {
+                lower_irrefutable_pattern(ctx, &alternatives[0], source, span);
+            }
         }
         &hir_expr::PatternKind::Literal(_) => {
             // Literal in irrefutable position: should have been caught
@@ -353,9 +355,81 @@ pub fn pattern_test(
             Option::None
         }
 
-        &hir_expr::PatternKind::Range { start: _, end_val: _, inclusive: _ } => {
-            // Range patterns need bounds checking
-            Option::None
+        &hir_expr::PatternKind::Range { ref start, ref end_val, inclusive } => {
+            // Range pattern: scrutinee >= start && scrutinee <= end (or < end if not inclusive)
+            // Copy scrutinee value
+            let scrut_temp = ctx.new_temp(pattern.ty.clone(), span);
+            ctx.emit_assign(
+                mir_types::Place::local(scrut_temp),
+                mir_types::Rvalue::Use(mir_types::Operand::Copy(source.clone())),
+                span,
+            );
+            // Get start value
+            let start_const = match start {
+                &Option::Some(ref start_pat) => {
+                    let inner = start_pat.as_ref();
+                    match &inner.kind {
+                        &hir_expr::PatternKind::Literal(ref lit) => {
+                            mir_lower_util::lower_literal(lit, &pattern.ty)
+                        }
+                        _ => mir_types::Constant::new(hir_ty::copy_type(&pattern.ty), mir_types::ConstantKind::Int(0)),
+                    }
+                }
+                &Option::None => mir_types::Constant::new(hir_ty::copy_type(&pattern.ty), mir_types::ConstantKind::Int(0)),
+            };
+            let start_operand = mir_types::Operand::Constant(start_const);
+
+            // Get end value
+            let end_const = match end_val {
+                &Option::Some(ref end_pat) => {
+                    let inner = end_pat.as_ref();
+                    match &inner.kind {
+                        &hir_expr::PatternKind::Literal(ref lit) => {
+                            mir_lower_util::lower_literal(lit, &pattern.ty)
+                        }
+                        _ => mir_types::Constant::new(hir_ty::copy_type(&pattern.ty), mir_types::ConstantKind::Int(0)),
+                    }
+                }
+                &Option::None => mir_types::Constant::new(hir_ty::copy_type(&pattern.ty), mir_types::ConstantKind::Int(0)),
+            };
+            let end_operand = mir_types::Operand::Constant(end_const);
+
+            // Compute: scrutinee >= start
+            let ge_result = ctx.new_temp(hir_ty::Type::bool_ty(), span);
+            let scrut_op1 = mir_types::Operand::Copy(mir_types::Place::local(scrut_temp));
+            ctx.emit_assign(
+                mir_types::Place::local(ge_result),
+                mir_types::Rvalue::BinaryOp(mir_types::MirBinOp::Ge, scrut_op1, start_operand),
+                span,
+            );
+
+            // Compute: scrutinee <= end (or < end if not inclusive)
+            let upper_op = if inclusive { mir_types::MirBinOp::Le } else { mir_types::MirBinOp::Lt };
+            let le_result = ctx.new_temp(hir_ty::Type::bool_ty(), span);
+            let scrut_op2 = mir_types::Operand::Copy(mir_types::Place::local(scrut_temp));
+            ctx.emit_assign(
+                mir_types::Place::local(le_result),
+                mir_types::Rvalue::BinaryOp(upper_op, scrut_op2, end_operand),
+                span,
+            );
+
+            // AND them together
+            let and_result = ctx.new_temp(hir_ty::Type::bool_ty(), span);
+            ctx.emit_assign(
+                mir_types::Place::local(and_result),
+                mir_types::Rvalue::BinaryOp(
+                    mir_types::MirBinOp::BitAnd,
+                    mir_types::Operand::Copy(mir_types::Place::local(ge_result)),
+                    mir_types::Operand::Copy(mir_types::Place::local(le_result)),
+                ),
+                span,
+            );
+
+            // Switch on the AND result: 1 = in range, 0 = not
+            Option::Some(PatternTest {
+                discriminant: mir_types::Operand::Copy(mir_types::Place::local(and_result)),
+                expected: 1,
+            })
         }
     }
 }

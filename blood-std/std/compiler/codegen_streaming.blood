@@ -141,6 +141,11 @@ pub fn emit_static_globals_with_names(
                 ctx.register_def_name(item.def_id.index, name);
                 ctx.register_static(item.def_id.index);
             }
+            &hir_item::ItemKind::Const(ref _const_def) => {
+                // Mark this DefId as a const item so codegen can call its body function
+                // (instead of treating it as a function pointer reference)
+                ctx.register_const(item.def_id.index);
+            }
             _ => {}
         }
         i = i + 1;

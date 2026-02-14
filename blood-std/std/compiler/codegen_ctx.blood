@@ -125,6 +125,8 @@ pub struct CodegenCtx {
     string_table_hash: hashmap::HashMapU64U32,
     /// Hash set for static def_ids: def_id -> 1 if static
     static_defs_hash: hashmap::HashMapU64U32,
+    /// Hash set for const def_ids: def_id -> 1 if const
+    const_defs_hash: hashmap::HashMapU64U32,
     /// Write buffer for batching file I/O during streaming codegen.
     write_buffer: String,
     /// Output file path for streaming codegen.
@@ -226,6 +228,7 @@ impl CodegenCtx {
             local_generations: Vec::new(),
             string_table_hash: hashmap::HashMapU64U32::new(),
             static_defs_hash: hashmap::HashMapU64U32::new(),
+            const_defs_hash: hashmap::HashMapU64U32::new(),
             write_buffer: String::new(),
             output_path: String::new(),
             trace_codegen: false,
@@ -269,6 +272,7 @@ impl CodegenCtx {
             local_generations: Vec::new(),
             string_table_hash: hashmap::HashMapU64U32::new(),
             static_defs_hash: hashmap::HashMapU64U32::new(),
+            const_defs_hash: hashmap::HashMapU64U32::new(),
             write_buffer: String::new(),
             output_path: String::new(),
             trace_codegen: false,
@@ -321,6 +325,19 @@ impl CodegenCtx {
     /// Returns true if the given DefId is a static variable.
     pub fn is_static(self: &CodegenCtx, def_id: u32) -> bool {
         match self.static_defs_hash.get(def_id as u64) {
+            Option::Some(_) => true,
+            Option::None => false,
+        }
+    }
+
+    /// Registers a DefId as a const item.
+    pub fn register_const(self: &mut CodegenCtx, def_id: u32) {
+        self.const_defs_hash.insert(def_id as u64, 1);
+    }
+
+    /// Returns true if the given DefId is a const item.
+    pub fn is_const(self: &CodegenCtx, def_id: u32) -> bool {
+        match self.const_defs_hash.get(def_id as u64) {
             Option::Some(_) => true,
             Option::None => false,
         }
@@ -1296,17 +1313,21 @@ impl CodegenCtx {
             local_generations: Vec::new(),
             string_table_hash: hashmap::HashMapU64U32::new(),
             static_defs_hash: hashmap::HashMapU64U32::new(),
+            const_defs_hash: hashmap::HashMapU64U32::new(),
             write_buffer: String::new(),
             output_path: String::new(),
             trace_codegen: self.trace_codegen,
         };
 
-        // Copy static defs hash (read-only)
+        // Copy static and const defs hashes (read-only)
         let mut si: usize = 0;
         while si < self.def_names.len() {
             let entry = &self.def_names[si];
             if self.is_static(entry.def_id) {
                 worker.register_static(entry.def_id);
+            }
+            if self.is_const(entry.def_id) {
+                worker.register_const(entry.def_id);
             }
             si = si + 1;
         }

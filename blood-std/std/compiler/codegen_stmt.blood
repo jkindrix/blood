@@ -314,9 +314,143 @@ pub fn type_to_llvm_with_ctx(
                     return s;
                 }
             }
+            // For registered structs with type args, rebuild with concrete types.
+            // This handles user-defined generic structs like Wrapper<i32>.
+            if args.len() > 0 {
+                // First check if struct has param fields (borrowing ctx briefly)
+                let needs_rebuild = match ctx.lookup_struct(def_id.index) {
+                    Option::Some(layout) => struct_has_param_fields(layout),
+                    Option::None => false,
+                };
+                if needs_rebuild {
+                    // Collect field info to avoid holding reference into ctx
+                    let field_info = collect_struct_field_info(ctx, def_id.index);
+                    return rebuild_struct_from_info(ctx, &field_info, args);
+                }
+            }
             result
         }
         _ => codegen_types::type_to_llvm(ty),
+    }
+}
+
+/// Checks if any field in a struct layout has a Param HIR type.
+fn struct_has_param_fields(layout: &codegen_ctx::StructLayout) -> bool {
+    let mut i: usize = 0;
+    while i < layout.fields.len() {
+        match &layout.fields[i].hir_type {
+            &Option::Some(ref hir_ty) => {
+                if hir_type_contains_param(hir_ty) {
+                    return true;
+                }
+            }
+            &Option::None => {}
+        }
+        i = i + 1;
+    }
+    false
+}
+
+/// Checks if a HIR type is or contains a Param or Infer type.
+/// Both Param and Infer indicate unresolved type parameters in struct definitions
+/// that need substitution with concrete type args.
+fn hir_type_contains_param(ty: &hir_ty::Type) -> bool {
+    match &ty.kind {
+        &hir_ty::TypeKind::Param(_) => true,
+        &hir_ty::TypeKind::Infer(_) => true,
+        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => hir_type_contains_param(inner.as_ref()),
+        _ => false,
+    }
+}
+
+/// Info about a struct field for rebuild. Collected to avoid holding ctx reference.
+struct FieldBuildInfo {
+    /// The HIR type of the field, if known.
+    hir_type: Option<hir_ty::Type>,
+    /// The LLVM type string from the registry.
+    llvm_type: String,
+}
+
+/// Collects field info from a struct layout to avoid borrow conflicts.
+fn collect_struct_field_info(ctx: &mut codegen_ctx::CodegenCtx, def_id: u32) -> Vec<FieldBuildInfo> {
+    let mut info: Vec<FieldBuildInfo> = Vec::new();
+    match ctx.lookup_struct(def_id) {
+        Option::Some(layout) => {
+            let mut i: usize = 0;
+            while i < layout.fields.len() {
+                let hir_type_copy = match &layout.fields[i].hir_type {
+                    &Option::Some(ref ty) => Option::Some(hir_ty::copy_type(ty)),
+                    &Option::None => Option::None,
+                };
+                info.push(FieldBuildInfo {
+                    hir_type: hir_type_copy,
+                    llvm_type: clone_string(&layout.fields[i].llvm_type),
+                });
+                i = i + 1;
+            }
+        }
+        Option::None => {}
+    }
+    info
+}
+
+/// Rebuilds a struct's LLVM type with concrete type args substituted for Param fields.
+fn rebuild_struct_from_info(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    fields: &Vec<FieldBuildInfo>,
+    args: &Vec<hir_ty::Type>,
+) -> String {
+    let mut result = common::make_string("{ ");
+    let mut param_idx: usize = 0;
+    let mut fi: usize = 0;
+    while fi < fields.len() {
+        if fi > 0 {
+            result.push_str(", ");
+        }
+        let field_ty = match &fields[fi].hir_type {
+            &Option::Some(ref hir_ty) => {
+                substitute_param_type(ctx, hir_ty, args, &mut param_idx)
+            }
+            &Option::None => {
+                clone_string(&fields[fi].llvm_type)
+            }
+        };
+        result.push_str(field_ty.as_str());
+        fi = fi + 1;
+    }
+    result.push_str(" }");
+    result
+}
+
+/// Substitutes Param/Infer types with concrete args, tracking the param index.
+fn substitute_param_type(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    ty: &hir_ty::Type,
+    args: &Vec<hir_ty::Type>,
+    param_idx: &mut usize,
+) -> String {
+    match &ty.kind {
+        &hir_ty::TypeKind::Param(_) => {
+            // Use the next available arg for this param
+            let idx = *param_idx;
+            if idx < args.len() {
+                *param_idx = idx + 1;
+                type_to_llvm_with_ctx(ctx, &args[idx])
+            } else {
+                common::make_string("ptr")
+            }
+        }
+        &hir_ty::TypeKind::Infer(_) => {
+            // Infer types in struct definitions are unresolved type parameters
+            let idx = *param_idx;
+            if idx < args.len() {
+                *param_idx = idx + 1;
+                type_to_llvm_with_ctx(ctx, &args[idx])
+            } else {
+                common::make_string("ptr")
+            }
+        }
+        _ => type_to_llvm_with_ctx(ctx, ty),
     }
 }
 
@@ -340,6 +474,18 @@ pub fn type_size_with_ctx(ctx: &mut codegen_ctx::CodegenCtx, ty: &hir_ty::Type) 
                 if payload_size > 8 {
                     let tag_size: u64 = 1;
                     return tag_size + payload_size;
+                }
+            }
+            // For registered structs with type args, compute size from rebuilt type
+            if args.len() > 0 {
+                let needs_rebuild = match ctx.lookup_struct(def_id.index) {
+                    Option::Some(layout) => struct_has_param_fields(layout),
+                    Option::None => false,
+                };
+                if needs_rebuild {
+                    let field_info = collect_struct_field_info(ctx, def_id.index);
+                    let rebuilt = rebuild_struct_from_info(ctx, &field_info, args);
+                    return llvm_type_size(rebuilt.as_str());
                 }
             }
             base

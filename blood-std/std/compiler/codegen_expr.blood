@@ -50,22 +50,49 @@ pub fn emit_operand_typed(
         }
         &mir_types::Operand::Constant(ref constant) => {
             let val = emit_constant(ctx, constant);
-            // Global references (functions, consts, statics) are ptr-typed in LLVM.
-            let is_global_ref = match &constant.kind {
-                &mir_types::ConstantKind::FnDef(_) => true,
-                &mir_types::ConstantKind::ConstDef(_) => true,
-                &mir_types::ConstantKind::StaticDef(_) => true,
-                _ => false,
+            // Check if this FnDef is actually a const or static item
+            // (MIR lowering produces FnDef for all path expressions)
+            let fn_def_id = match &constant.kind {
+                &mir_types::ConstantKind::FnDef(ref did) => Option::Some(did.index),
+                _ => Option::None,
             };
-            let is_float = match &constant.kind {
-                &mir_types::ConstantKind::Float(_) => true,
-                _ => false,
+            let is_const_item = match fn_def_id {
+                Option::Some(did) => ctx.is_const(did),
+                Option::None => false,
             };
-            if is_global_ref {
+            let is_static_item = match fn_def_id {
+                Option::Some(did) => ctx.is_static(did),
+                Option::None => false,
+            };
+            if is_const_item {
+                // Const item: call the const body function to get the value
+                let ret_ty = ctx.type_to_llvm_with_ctx(&constant.ty);
+                let call_result = ctx.fresh_temp();
+                ctx.write_indent();
+                ctx.write_string(&call_result);
+                ctx.write(" = call ");
+                ctx.write_string(&ret_ty);
+                ctx.write(" ");
+                ctx.write_string(&val);
+                ctx.write("()\n");
+                (call_result, ret_ty)
+            } else if is_static_item {
+                // Static item: load from the global address
+                // val already has @ prefix from emit_constant's FnDef handler
+                let load_ty = ctx.type_to_llvm_with_ctx(&constant.ty);
+                let load_result = ctx.fresh_temp();
+                ctx.emit_load(load_result.as_str(), load_ty.as_str(), val.as_str());
+                (load_result, load_ty)
+            } else if match fn_def_id { Option::Some(_) => true, Option::None => false } {
+                // Regular function reference — pointer-typed
                 (val, common::make_string("ptr"))
-            } else if is_float {
-                // Float hex constants are only valid for double type in LLVM
-                (val, common::make_string("double"))
+            } else if match &constant.kind { &mir_types::ConstantKind::Float(_) => true, _ => false } {
+                // Check if f32 or f64 based on the constant's HIR type
+                let float_ty = match &constant.ty.kind {
+                    &hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::F32) => common::make_string("float"),
+                    _ => common::make_string("double"),
+                };
+                (val, float_ty)
             } else {
                 let ty = ctx.type_to_llvm_with_ctx(&constant.ty);
                 (val, ty)
@@ -98,6 +125,9 @@ fn emit_constant(
             codegen_types::format_u64(c as u64)
         }
         &mir_types::ConstantKind::Float(bits) => {
+            // MIR always stores float bits as f64 representation (u64).
+            // LLVM accepts double-precision hex for both float and double types,
+            // converting to the target precision automatically.
             codegen_types::f64_bits_to_llvm_hex(bits)
         }
         &mir_types::ConstantKind::String(ref s) => {
@@ -299,6 +329,26 @@ fn resolve_place_elem_type(
                             match ctx.lookup_struct(def_id) {
                                 Option::Some(layout) => {
                                     if (field_idx as usize) < layout.fields.len() {
+                                        // Check if this field has an unsubstituted param/infer type.
+                                        // If so, resolve the concrete type from the local's type args.
+                                        let field_is_param = match &layout.fields[field_idx as usize].hir_type {
+                                            &Option::Some(ref ht) => {
+                                                match &ht.kind {
+                                                    &hir_ty::TypeKind::Param(_) => true,
+                                                    &hir_ty::TypeKind::Infer(_) => true,
+                                                    _ => false,
+                                                }
+                                            }
+                                            &Option::None => false,
+                                        };
+                                        if field_is_param {
+                                            // Try to get concrete type arg from local's HIR type
+                                            let resolved = resolve_generic_field_type(ctx, place.local, layout, field_idx as usize);
+                                            match resolved {
+                                                Option::Some(ty) => { return ty; }
+                                                Option::None => {}
+                                            }
+                                        }
                                         return clone_string(&layout.fields[field_idx as usize].llvm_type);
                                     }
                                 }
@@ -742,6 +792,56 @@ fn emit_generation_check(
     ctx.emit_label(valid_label.as_str());
 }
 
+/// For a generic struct field, resolves the concrete LLVM type by matching
+/// param/infer fields with the local's type args.
+fn resolve_generic_field_type(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    local: mir_def::MirLocalId,
+    layout: &codegen_ctx::StructLayout,
+    field_idx: usize,
+) -> Option<String> {
+    // Get the local's HIR type to find type args
+    let hir_type_ref = match ctx.get_local_hir_type(local) {
+        Option::Some(ty) => ty,
+        Option::None => { return Option::None; }
+    };
+    // Walk through Ref/Ptr to find the ADT
+    let adt_type = unwrap_ref_type(hir_type_ref);
+    let type_args = match &adt_type.kind {
+        &hir_ty::TypeKind::Adt { def_id: _, ref args } => args,
+        _ => { return Option::None; }
+    };
+    if type_args.len() == 0 {
+        return Option::None;
+    }
+    // Count which param index this field corresponds to
+    let mut param_idx: usize = 0;
+    let mut fi: usize = 0;
+    while fi < layout.fields.len() {
+        let is_param = match &layout.fields[fi].hir_type {
+            &Option::Some(ref ht) => {
+                match &ht.kind {
+                    &hir_ty::TypeKind::Param(_) => true,
+                    &hir_ty::TypeKind::Infer(_) => true,
+                    _ => false,
+                }
+            }
+            &Option::None => false,
+        };
+        if fi == field_idx {
+            if is_param && param_idx < type_args.len() {
+                return Option::Some(codegen_types::type_to_llvm(&type_args[param_idx]));
+            }
+            return Option::None;
+        }
+        if is_param {
+            param_idx = param_idx + 1;
+        }
+        fi = fi + 1;
+    }
+    Option::None
+}
+
 /// Resolves the LLVM base type for a MIR local.
 /// Returns the ADT's LLVM type if the local is a struct/enum, or a fallback type.
 fn resolve_local_base_type(
@@ -756,6 +856,26 @@ fn resolve_local_base_type(
             // Fall back to the alloca type which was computed correctly.
             let rb = result.as_bytes();
             if rb.len() == 3 && rb[0] == 112 && rb[1] == 116 && rb[2] == 114 {
+                let alloca_type = ctx.get_local_type(local);
+                if is_struct_or_array_type(&alloca_type) {
+                    return alloca_type;
+                }
+            }
+            // For generic ADTs (e.g., Wrapper<i32>), the registry returns the
+            // unsubstituted layout (e.g., { i64 }), but the alloca was correctly
+            // computed with concrete types (e.g., { i32 }). Prefer the alloca type
+            // when they differ and the alloca is a struct type.
+            let is_generic_adt = match &hir_type.kind {
+                &hir_ty::TypeKind::Adt { def_id: _, ref args } => args.len() > 0,
+                &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
+                    match &inner.as_ref().kind {
+                        &hir_ty::TypeKind::Adt { def_id: _, ref args } => args.len() > 0,
+                        _ => false,
+                    }
+                }
+                _ => false,
+            };
+            if is_generic_adt {
                 let alloca_type = ctx.get_local_type(local);
                 if is_struct_or_array_type(&alloca_type) {
                     return alloca_type;
@@ -1098,8 +1218,24 @@ pub fn emit_rvalue(
             // Get source type from operand
             let (val, src_ty) = emit_operand_typed(ctx, operand);
             let tgt_llvm = ctx.type_to_llvm_with_ctx(target_ty);
-            // Use the type-aware cast if we have source type info
-            let src_ty_opt = operand_type(operand);
+            // Use the type-aware cast if we have source type info.
+            // For Copy/Move operands, look up the local's HIR type so we get
+            // correct sign-awareness (zext for unsigned, sext for signed).
+            let src_ty_opt = match operand {
+                &mir_types::Operand::Constant(ref constant) => Option::Some(hir_ty::copy_type(&constant.ty)),
+                &mir_types::Operand::Copy(ref place) => {
+                    match ctx.get_local_hir_type(place.local) {
+                        Option::Some(hir_type) => Option::Some(hir_ty::copy_type(hir_type)),
+                        Option::None => Option::None,
+                    }
+                }
+                &mir_types::Operand::Move(ref place) => {
+                    match ctx.get_local_hir_type(place.local) {
+                        Option::Some(hir_type) => Option::Some(hir_ty::copy_type(hir_type)),
+                        Option::None => Option::None,
+                    }
+                }
+            };
             let result = match src_ty_opt {
                 Option::Some(ref src_type) => emit_cast_with_types(ctx, &val, src_type, target_ty),
                 Option::None => {
@@ -2022,18 +2158,60 @@ fn emit_aggregate_adt(
     def_id: u32,
     variant_idx: u32,
     operands: &Vec<mir_types::Operand>,
+    type_args: &Vec<hir_ty::Type>,
 ) {
     // Try struct first
     match ctx.lookup_struct(def_id) {
         Option::Some(layout) => {
-            let struct_ty = clone_string(&layout.llvm_type);
-            // Collect field types before the mutable borrow loop
+            // Check if any field has an unresolved Param/Infer HIR type
+            let has_params = layout_has_param_fields(layout);
+            // Collect base field types from registry
             let mut field_types: Vec<String> = Vec::new();
             let mut fi: usize = 0;
             while fi < layout.fields.len() {
                 field_types.push(clone_string(&layout.fields[fi].llvm_type));
                 fi = fi + 1;
             }
+            let struct_ty = clone_string(&layout.llvm_type);
+            // If the struct has param/infer fields and concrete type args are available,
+            // compute concrete field types by substituting type args for param fields.
+            if has_params && type_args.len() > 0 {
+                let mut param_idx: usize = 0;
+                let mut fj: usize = 0;
+                while fj < layout.fields.len() {
+                    let is_param = match &layout.fields[fj].hir_type {
+                        &Option::Some(ref hir_ty) => {
+                            match &hir_ty.kind {
+                                &hir_ty::TypeKind::Param(_) => true,
+                                &hir_ty::TypeKind::Infer(_) => true,
+                                _ => false,
+                            }
+                        }
+                        &Option::None => false,
+                    };
+                    if is_param && param_idx < type_args.len() {
+                        field_types[fj] = codegen_types::type_to_llvm(&type_args[param_idx]);
+                        param_idx = param_idx + 1;
+                    }
+                    fj = fj + 1;
+                }
+            }
+            // Rebuild struct_ty from field_types if params were substituted
+            let struct_ty = if has_params && type_args.len() > 0 {
+                let mut s = common::make_string("{ ");
+                let mut si: usize = 0;
+                while si < field_types.len() {
+                    if si > 0 {
+                        s.push_str(", ");
+                    }
+                    s.push_str(field_types[si].as_str());
+                    si = si + 1;
+                }
+                s.push_str(" }");
+                s
+            } else {
+                struct_ty
+            };
             // Store each field using actual types from the struct layout.
             // If the operand type differs from the field type (e.g., i64 vs i32),
             // emit a trunc or zext to match the target field width.
@@ -2234,6 +2412,25 @@ fn emit_aggregate_adt(
     }
 }
 
+/// Checks if any field in a struct layout has a Param or Infer HIR type.
+fn layout_has_param_fields(layout: &codegen_ctx::StructLayout) -> bool {
+    let mut i: usize = 0;
+    while i < layout.fields.len() {
+        match &layout.fields[i].hir_type {
+            &Option::Some(ref hir_ty) => {
+                match &hir_ty.kind {
+                    &hir_ty::TypeKind::Param(_) => { return true; }
+                    &hir_ty::TypeKind::Infer(_) => { return true; }
+                    _ => {}
+                }
+            }
+            &Option::None => {}
+        }
+        i = i + 1;
+    }
+    false
+}
+
 /// Emits an aggregate construction.
 fn emit_aggregate(
     ctx: &mut codegen_ctx::CodegenCtx,
@@ -2272,9 +2469,9 @@ fn emit_aggregate(
                 i = i + 1;
             }
         }
-        &mir_types::AggregateKind::Adt { ref def_id, variant_idx, type_args: _ } => {
+        &mir_types::AggregateKind::Adt { ref def_id, variant_idx, ref type_args } => {
             // Look up the ADT in the registry to determine if it's a struct or enum
-            emit_aggregate_adt(ctx, dest, def_id.index, variant_idx, operands);
+            emit_aggregate_adt(ctx, dest, def_id.index, variant_idx, operands, type_args);
         }
         &mir_types::AggregateKind::Record => {
             // Extensible records - store fields with actual types
