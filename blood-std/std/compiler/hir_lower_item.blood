@@ -383,6 +383,12 @@ fn lower_function_decl(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl) {
     // Lower parameters
     let params = lower_fn_params(ctx, &f.params);
 
+    // Check main function signature: must have no parameters
+    let main_sym = ctx.intern("main");
+    if lookup_symbol.index == main_sym.index && f.params.len() > 0 {
+        ctx.error(hir::DiagnosticCode::E0300, common::make_string("main function must have no parameters"), f.span);
+    }
+
     // Lower return type
     let return_ty = lower_return_type(ctx, &f.return_type);
 
@@ -1244,6 +1250,39 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::ImplBlock) {
             }
         }
         _ => {}
+    }
+
+    // Check for duplicate method names in impl block
+    let mut mi: usize = 0;
+    while mi < imp.items.len() {
+        match &imp.items[mi] {
+            &ast::ImplItem::Function(ref f) => {
+                let name_i = ctx.intern(ctx.span_to_string(f.name.span).as_str());
+                let mut mj: usize = 0;
+                while mj < mi {
+                    match &imp.items[mj] {
+                        &ast::ImplItem::Function(ref g) => {
+                            let name_j = ctx.intern(ctx.span_to_string(g.name.span).as_str());
+                            if name_i.index == name_j.index {
+                                let method_name = ctx.span_to_string(f.name.span);
+                                let mut msg = String::new();
+                                msg.push_str("duplicate method `");
+                                msg.push_str(method_name.as_str());
+                                msg.push_str("` in impl block");
+                                ctx.error(hir::DiagnosticCode::E0101, msg, f.name.span);
+                                break;
+                            }
+                        }
+                        &ast::ImplItem::TypeAlias(_) => {}
+                        &ast::ImplItem::Const(_) => {}
+                    }
+                    mj = mj + 1;
+                }
+            }
+            &ast::ImplItem::TypeAlias(_) => {}
+            &ast::ImplItem::Const(_) => {}
+        }
+        mi = mi + 1;
     }
 
     // Lower associated items

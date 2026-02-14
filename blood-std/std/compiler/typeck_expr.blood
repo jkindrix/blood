@@ -405,6 +405,19 @@ fn is_deref_op(uop: common::UnaryOp) -> bool {
     }
 }
 
+/// Checks if a type is bool.
+fn is_bool_type(ty: &hir_ty::Type) -> bool {
+    match &ty.kind {
+        &hir_ty::TypeKind::Primitive(ref prim) => {
+            match prim {
+                &hir_ty::PrimitiveTy::Bool => true,
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+}
+
 /// Checks if an expression is a valid lvalue (can be assigned to).
 ///
 /// Valid lvalues are:
@@ -796,12 +809,42 @@ fn infer_binary(
             checker.unify(&left_ty, &bool_ty, span);
             hir_ty::Type::bool_ty()
         }
-        // Arithmetic operators return the operand type
-        common::BinOp::Add => checker.resolve(&left_ty),
-        common::BinOp::Sub => checker.resolve(&left_ty),
-        common::BinOp::Mul => checker.resolve(&left_ty),
-        common::BinOp::Div => checker.resolve(&left_ty),
-        common::BinOp::Rem => checker.resolve(&left_ty),
+        // Arithmetic operators return the operand type (must be numeric)
+        common::BinOp::Add => {
+            let resolved = checker.resolve(&left_ty);
+            if is_bool_type(&resolved) {
+                checker.error(typeck::TypeErrorKind::TypeMismatch, span);
+            }
+            resolved
+        }
+        common::BinOp::Sub => {
+            let resolved = checker.resolve(&left_ty);
+            if is_bool_type(&resolved) {
+                checker.error(typeck::TypeErrorKind::TypeMismatch, span);
+            }
+            resolved
+        }
+        common::BinOp::Mul => {
+            let resolved = checker.resolve(&left_ty);
+            if is_bool_type(&resolved) {
+                checker.error(typeck::TypeErrorKind::TypeMismatch, span);
+            }
+            resolved
+        }
+        common::BinOp::Div => {
+            let resolved = checker.resolve(&left_ty);
+            if is_bool_type(&resolved) {
+                checker.error(typeck::TypeErrorKind::TypeMismatch, span);
+            }
+            resolved
+        }
+        common::BinOp::Rem => {
+            let resolved = checker.resolve(&left_ty);
+            if is_bool_type(&resolved) {
+                checker.error(typeck::TypeErrorKind::TypeMismatch, span);
+            }
+            resolved
+        }
         // Bitwise operators return the operand type
         common::BinOp::BitAnd => checker.resolve(&left_ty),
         common::BinOp::BitOr => checker.resolve(&left_ty),
