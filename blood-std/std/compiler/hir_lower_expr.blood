@@ -2295,6 +2295,7 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprP
                 symbol: common::Symbol { index: 0 },
                 span: span,
             };
+            let fmt_ty = hir_ty::Type::infer(ctx.alloc_ty_var());
             let fmt_pat = hir_expr::Pattern::new(
                 hir_expr::PatternKind::Binding {
                     local_id: fmt_local_id,
@@ -2302,9 +2303,22 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprP
                     mode: hir_expr::BindingMode::ByValue,
                     subpattern: Option::None,
                 },
-                hir_ty::Type::infer(ctx.alloc_ty_var()),
+                hir_ty::copy_type(&fmt_ty),
                 span,
             );
+
+            // Register synthetic local in body_locals so the type checker can find it
+            let fmt_local = hir_expr::Local::new(
+                fmt_local_id,
+                common::SpannedSymbol {
+                    symbol: common::Symbol { index: 0 },
+                    span: span,
+                },
+                fmt_ty,
+                false,
+                span,
+            );
+            ctx.body_locals.push(fmt_local);
 
             // String::new() as a default/empty string literal
             let empty_str = hir_expr::Literal::new(
@@ -2479,6 +2493,16 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprP
                 symbol: common::Symbol { index: 0 },
                 span: span,
             };
+
+            // Register synthetic local in body_locals so the type checker can find it
+            let dbg_local = hir_expr::Local::new(
+                local_id,
+                local_sym,
+                hir_ty::copy_type(&inner_ty),
+                false,
+                span,
+            );
+            ctx.body_locals.push(dbg_local);
 
             // Let statement: let __dbg_val = expr;
             let let_pat = hir_expr::Pattern::new(

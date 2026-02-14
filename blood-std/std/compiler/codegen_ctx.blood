@@ -125,6 +125,10 @@ pub struct CodegenCtx {
     string_table_hash: hashmap::HashMapU64U32,
     /// Hash set for static def_ids: def_id -> 1 if static
     static_defs_hash: hashmap::HashMapU64U32,
+    /// LLVM types for static variables: def_id -> index in static_types vec
+    static_types_hash: hashmap::HashMapU64U32,
+    /// LLVM type strings for static variables.
+    static_types: Vec<String>,
     /// Hash set for const def_ids: def_id -> 1 if const
     const_defs_hash: hashmap::HashMapU64U32,
     /// Write buffer for batching file I/O during streaming codegen.
@@ -228,6 +232,8 @@ impl CodegenCtx {
             local_generations: Vec::new(),
             string_table_hash: hashmap::HashMapU64U32::new(),
             static_defs_hash: hashmap::HashMapU64U32::new(),
+            static_types_hash: hashmap::HashMapU64U32::new(),
+            static_types: Vec::new(),
             const_defs_hash: hashmap::HashMapU64U32::new(),
             write_buffer: String::new(),
             output_path: String::new(),
@@ -272,6 +278,8 @@ impl CodegenCtx {
             local_generations: Vec::new(),
             string_table_hash: hashmap::HashMapU64U32::new(),
             static_defs_hash: hashmap::HashMapU64U32::new(),
+            static_types_hash: hashmap::HashMapU64U32::new(),
+            static_types: Vec::new(),
             const_defs_hash: hashmap::HashMapU64U32::new(),
             write_buffer: String::new(),
             output_path: String::new(),
@@ -320,6 +328,23 @@ impl CodegenCtx {
     /// Registers a DefId as a static variable.
     pub fn register_static(self: &mut CodegenCtx, def_id: u32) {
         self.static_defs_hash.insert(def_id as u64, 1);
+    }
+
+    /// Registers the LLVM type for a static variable.
+    pub fn register_static_type(self: &mut CodegenCtx, def_id: u32, llvm_type: String) {
+        let idx = self.static_types.len() as u32;
+        self.static_types.push(llvm_type);
+        self.static_types_hash.insert(def_id as u64, idx);
+    }
+
+    /// Returns the LLVM type for a static variable, if registered.
+    pub fn get_static_type(self: &CodegenCtx, def_id: u32) -> Option<String> {
+        match self.static_types_hash.get(def_id as u64) {
+            Option::Some(idx) => {
+                Option::Some(clone_string(&self.static_types[idx as usize]))
+            }
+            Option::None => Option::None,
+        }
     }
 
     /// Returns true if the given DefId is a static variable.
@@ -1313,6 +1338,8 @@ impl CodegenCtx {
             local_generations: Vec::new(),
             string_table_hash: hashmap::HashMapU64U32::new(),
             static_defs_hash: hashmap::HashMapU64U32::new(),
+            static_types_hash: hashmap::HashMapU64U32::new(),
+            static_types: Vec::new(),
             const_defs_hash: hashmap::HashMapU64U32::new(),
             write_buffer: String::new(),
             output_path: String::new(),
@@ -1325,6 +1352,12 @@ impl CodegenCtx {
             let entry = &self.def_names[si];
             if self.is_static(entry.def_id) {
                 worker.register_static(entry.def_id);
+                match self.get_static_type(entry.def_id) {
+                    Option::Some(ty) => {
+                        worker.register_static_type(entry.def_id, ty);
+                    }
+                    Option::None => {}
+                }
             }
             if self.is_const(entry.def_id) {
                 worker.register_const(entry.def_id);

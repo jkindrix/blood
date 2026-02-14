@@ -404,12 +404,12 @@ fn register_builtin_children(ctx: &mut hir_lower_ctx::LoweringCtx) {
     // === Option ===
     match ctx.builtin_option_def {
         Option::Some(parent) => {
-            let some_def = register_builtin_variant(ctx, parent, "Some", dummy_span, 0);
-            ctx.builtin_fn_defs.push(hir_lower_ctx::BuiltinFnDef::new(some_def.index, common::make_string("option_some_ctor")));
-            ctx.builtin_option_some_def = Option::Some(some_def);
-            let none_def = register_builtin_variant(ctx, parent, "None", dummy_span, 1);
+            let none_def = register_builtin_variant(ctx, parent, "None", dummy_span, 0);
             ctx.builtin_fn_defs.push(hir_lower_ctx::BuiltinFnDef::new(none_def.index, common::make_string("option_none_ctor")));
             ctx.builtin_option_none_def = Option::Some(none_def);
+            let some_def = register_builtin_variant(ctx, parent, "Some", dummy_span, 1);
+            ctx.builtin_fn_defs.push(hir_lower_ctx::BuiltinFnDef::new(some_def.index, common::make_string("option_some_ctor")));
+            ctx.builtin_option_some_def = Option::Some(some_def);
             // Also register as top-level names for bare Some/None usage
             let some_sym = ctx.intern("Some");
             ctx.resolver.define_global(some_sym, some_def);

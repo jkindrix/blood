@@ -66,7 +66,7 @@ pub fn emit_operand_typed(
             };
             if is_const_item {
                 // Const item: call the const body function to get the value
-                let ret_ty = ctx.type_to_llvm_with_ctx(&constant.ty);
+                let ret_ty = codegen_size::type_to_llvm_with_ctx(ctx, &constant.ty);
                 let call_result = ctx.fresh_temp();
                 ctx.write_indent();
                 ctx.write_string(&call_result);
@@ -79,7 +79,7 @@ pub fn emit_operand_typed(
             } else if is_static_item {
                 // Static item: load from the global address
                 // val already has @ prefix from emit_constant's FnDef handler
-                let load_ty = ctx.type_to_llvm_with_ctx(&constant.ty);
+                let load_ty = codegen_size::type_to_llvm_with_ctx(ctx, &constant.ty);
                 let load_result = ctx.fresh_temp();
                 ctx.emit_load(load_result.as_str(), load_ty.as_str(), val.as_str());
                 (load_result, load_ty)
@@ -266,6 +266,19 @@ fn resolve_place_elem_type(
     ctx: &mut codegen_ctx::CodegenCtx,
     place: &mir_types::Place,
 ) -> String {
+    // For static places, use the registered static LLVM type
+    if place.is_static() {
+        match place.get_static_def_id() {
+            Option::Some(def_id) => {
+                match ctx.get_static_type(def_id.index) {
+                    Option::Some(ty) => { return ty; }
+                    Option::None => {}
+                }
+            }
+            Option::None => {}
+        }
+    }
+
     // If no projections, use the local's registered LLVM type
     if place.projection.len() == 0 {
         return ctx.get_local_type(place.local);

@@ -137,9 +137,10 @@ pub fn emit_static_globals_with_names(
                 output.push_str(llvm_type.as_str());
                 output.push_str(" zeroinitializer\n");
 
-                // Register the static's name (without @) and mark it as static
+                // Register the static's name (without @), mark it as static, and store its LLVM type
                 ctx.register_def_name(item.def_id.index, name);
                 ctx.register_static(item.def_id.index);
+                ctx.register_static_type(item.def_id.index, llvm_type);
             }
             &hir_item::ItemKind::Const(ref _const_def) => {
                 // Mark this DefId as a const item so codegen can call its body function
