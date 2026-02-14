@@ -1025,6 +1025,15 @@ fn apply_deref_to_type(hir_type: &hir_ty::Type) -> Option<hir_ty::Type> {
         &hir_ty::TypeKind::Ptr { ref inner, mutable: _ } => {
             Option::Some(hir_ty::copy_type(inner.as_ref()))
         }
+        &hir_ty::TypeKind::Adt { def_id: _, ref args } => {
+            // Box<T> deref: *Box<T> -> T
+            // Box-like ADTs have exactly 1 type argument and are pointer-sized.
+            if args.len() == 1 {
+                Option::Some(hir_ty::copy_type(&args[0]))
+            } else {
+                Option::None
+            }
+        }
         _ => Option::None,
     }
 }
