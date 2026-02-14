@@ -979,6 +979,55 @@ pub fn parse_string_from_span(parser: &mut Parser, span: common::Span) -> String
     result
 }
 
+/// Parse a raw string literal from the source text (no escape processing).
+/// Raw string tokens have the form r"..." — skip the r" prefix and " suffix.
+pub fn parse_raw_string_from_span(parser: &mut Parser, span: common::Span) -> String {
+    let start = span.start;
+    let end = span.end;
+    let mut result = String::new();
+
+    // Skip 'r"' prefix (2 bytes)
+    let mut pos = start + 2;
+
+    // Copy bytes literally until closing quote
+    while pos < end {
+        let b = parser.source_byte_at(pos);
+        if b == 34 {
+            // '"' — closing quote
+            break;
+        }
+        if b < 128 {
+            result.push(b as char);
+        } else {
+            // Multi-byte UTF-8 — decode same as regular strings
+            if b >= 240 && pos + 3 < end {
+                let b2 = parser.source_byte_at(pos + 1);
+                let b3 = parser.source_byte_at(pos + 2);
+                let b4 = parser.source_byte_at(pos + 3);
+                let cp: u32 = ((b as u32) & 7) * 262144 + ((b2 as u32) & 63) * 4096 + ((b3 as u32) & 63) * 64 + ((b4 as u32) & 63);
+                result.push(cp as char);
+                pos = pos + 3;
+            } else if b >= 224 && pos + 2 < end {
+                let b2 = parser.source_byte_at(pos + 1);
+                let b3 = parser.source_byte_at(pos + 2);
+                let cp: u32 = ((b as u32) & 15) * 4096 + ((b2 as u32) & 63) * 64 + ((b3 as u32) & 63);
+                result.push(cp as char);
+                pos = pos + 2;
+            } else if b >= 192 && pos + 1 < end {
+                let b2 = parser.source_byte_at(pos + 1);
+                let cp: u32 = ((b as u32) & 31) * 64 + ((b2 as u32) & 63);
+                result.push(cp as char);
+                pos = pos + 1;
+            } else {
+                result.push(b as char);
+            }
+        }
+        pos = pos + 1;
+    }
+
+    result
+}
+
 /// Parse a character literal from the source text (strips quotes, handles escapes).
 pub fn parse_char_from_span(parser: &mut Parser, span: common::Span) -> char {
     let start = span.start;

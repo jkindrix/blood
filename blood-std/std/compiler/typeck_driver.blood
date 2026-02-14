@@ -115,7 +115,10 @@ pub fn check_types(ctx: &hir_lower_ctx::LoweringCtx) -> TypeCheckResult {
     let mut i: usize = 0;
     while i < ctx.bodies.len() {
         let body_entry = &ctx.bodies[i];
-        let return_ty = find_return_type_for_body(&ctx.items, body_entry.body_id);
+        let mut return_ty = find_return_type_for_body(&ctx.items, body_entry.body_id);
+        if is_handler_return_body(&ctx.items, body_entry.body_id) {
+            return_ty = checker.fresh_infer();
+        }
         checker.current_body_def_id = find_def_id_for_body(&ctx.items, body_entry.body_id);
         checker.current_effect_row = find_effect_row_for_body(&ctx.items, body_entry.body_id);
         check_body(&mut checker, &body_entry.body, &return_ty);
@@ -177,7 +180,10 @@ pub fn check_lower_result(result: &hir_lower_ctx::LowerResult) -> TypeCheckResul
     let mut i: usize = 0;
     while i < body_limit {
         let body_entry = &result.bodies[i];
-        let return_ty = find_return_type_for_body(&result.items, body_entry.body_id);
+        let mut return_ty = find_return_type_for_body(&result.items, body_entry.body_id);
+        if is_handler_return_body(&result.items, body_entry.body_id) {
+            return_ty = checker.fresh_infer();
+        }
         let found_def_id = find_def_id_for_body(&result.items, body_entry.body_id);
         checker.current_body_def_id = found_def_id;
         checker.current_effect_row = find_effect_row_for_body(&result.items, body_entry.body_id);
@@ -195,7 +201,10 @@ pub fn check_lower_result(result: &hir_lower_ctx::LowerResult) -> TypeCheckResul
     let mut j: usize = body_limit;
     while j < result.bodies.len() {
         let body_entry = &result.bodies[j];
-        let return_ty = find_return_type_for_body(&result.items, body_entry.body_id);
+        let mut return_ty = find_return_type_for_body(&result.items, body_entry.body_id);
+        if is_handler_return_body(&result.items, body_entry.body_id) {
+            return_ty = checker.fresh_infer();
+        }
         let found_def_id = find_def_id_for_body(&result.items, body_entry.body_id);
         checker.current_body_def_id = found_def_id;
         checker.current_effect_row = find_effect_row_for_body(&result.items, body_entry.body_id);
@@ -253,11 +262,13 @@ fn collect_item_signatures(
             }
             &hir_item::ItemKind::Impl(ref impl_def) => {
                 // Register impl block for method resolution
-                register_impl(checker, entry.def_id, impl_def);
+                register_impl(checker, entry.def_id, impl_def, items);
             }
             // Other items don't need registration for basic type checking
             &hir_item::ItemKind::TypeAlias(_) => {}
-            &hir_item::ItemKind::Trait(_) => {}
+            &hir_item::ItemKind::Trait(ref trait_def) => {
+                register_trait(checker, entry.def_id, entry.item.name.symbol, trait_def);
+            }
             &hir_item::ItemKind::Effect(ref effect_def) => {
                 register_effect(checker, entry.def_id, entry.item.name.symbol, effect_def);
             }
@@ -311,11 +322,119 @@ fn register_foreign_fns(
     }
 }
 
+/// Registers a trait definition for type checking.
+fn register_trait(
+    checker: &mut typeck::TypeChecker,
+    def_id: hir_def::DefId,
+    name: common::Symbol,
+    trait_def: &hir_item::TraitDef,
+) {
+    let num_generics = count_type_params(&trait_def.generics.params);
+    let mut methods: Vec<typeck::TraitMethodInfo> = Vec::new();
+    let mut assoc_types: Vec<common::Symbol> = Vec::new();
+
+    let mut i: usize = 0;
+    while i < trait_def.items.len() {
+        match &trait_def.items[i] {
+            &hir_item::AssocItem::Fn(ref assoc_fn) => {
+                let mut param_tys: Vec<hir_ty::Type> = Vec::new();
+                let mut takes_self_ref = false;
+                let mut takes_self_mut = false;
+
+                let mut j: usize = 0;
+                while j < assoc_fn.sig.params.len() {
+                    if j == 0 && assoc_fn.sig.params[j].is_self {
+                        takes_self_ref = true;
+                        takes_self_mut = assoc_fn.sig.params[j].mutable;
+                    } else {
+                        param_tys.push(hir_ty::copy_type(&assoc_fn.sig.params[j].ty));
+                    }
+                    j = j + 1;
+                }
+
+                let method_info = typeck::TraitMethodInfo::new(
+                    assoc_fn.def_id,
+                    assoc_fn.name.symbol,
+                    param_tys,
+                    hir_ty::copy_type(&assoc_fn.sig.return_ty),
+                    takes_self_ref,
+                    takes_self_mut,
+                    assoc_fn.has_default,
+                );
+                methods.push(method_info);
+
+                // Register fn signature for default methods so type checker
+                // can resolve calls inside the default body.
+                if assoc_fn.has_default {
+                    checker.register_fn_sig(assoc_fn.def_id, &assoc_fn.sig);
+                }
+            }
+            &hir_item::AssocItem::Type(ref assoc_type) => {
+                assoc_types.push(assoc_type.name.symbol);
+            }
+            &hir_item::AssocItem::Const(_) => {}
+        }
+        i = i + 1;
+    }
+
+    let trait_info = typeck::TraitInfo::new(def_id, name, num_generics, methods, assoc_types);
+    checker.register_trait(def_id, trait_info);
+
+    // Register a synthetic ImplInfo for the trait's Self type so that
+    // default method bodies can resolve calls to other trait methods.
+    // Within a trait, Self = Adt { def_id: trait_def_id, args: [] }.
+    let trait_self_ty = hir_ty::Type::new(hir_ty::TypeKind::Adt {
+        def_id: hir_def::DefId::new(def_id.index),
+        args: Vec::new(),
+    });
+    let mut impl_methods: Vec<typeck::MethodInfo> = Vec::new();
+    let mut k: usize = 0;
+    while k < trait_def.items.len() {
+        match &trait_def.items[k] {
+            &hir_item::AssocItem::Fn(ref assoc_fn) => {
+                let mut pm_tys: Vec<hir_ty::Type> = Vec::new();
+                let mut takes_sr = false;
+                let mut takes_sm = false;
+                let mut pj: usize = 0;
+                while pj < assoc_fn.sig.params.len() {
+                    if pj == 0 && assoc_fn.sig.params[pj].is_self {
+                        takes_sr = true;
+                        takes_sm = assoc_fn.sig.params[pj].mutable;
+                    } else {
+                        pm_tys.push(hir_ty::copy_type(&assoc_fn.sig.params[pj].ty));
+                    }
+                    pj = pj + 1;
+                }
+                let mi = typeck::MethodInfo::new(
+                    assoc_fn.def_id,
+                    assoc_fn.name.symbol,
+                    pm_tys,
+                    hir_ty::copy_type(&assoc_fn.sig.return_ty),
+                    takes_sr,
+                    takes_sm,
+                );
+                impl_methods.push(mi);
+            }
+            &hir_item::AssocItem::Type(_) => {}
+            &hir_item::AssocItem::Const(_) => {}
+        }
+        k = k + 1;
+    }
+    let trait_impl = typeck::ImplInfo::new(
+        def_id,
+        trait_self_ty,
+        num_generics,
+        impl_methods,
+    );
+    checker.register_impl(trait_impl);
+}
+
 /// Registers an impl block for method resolution.
 fn register_impl(
     checker: &mut typeck::TypeChecker,
     def_id: hir_def::DefId,
     impl_def: &hir_item::ImplDef,
+    items: &Vec<hir_lower_ctx::ItemEntry>,
 ) {
     // Extract method info from associated items
     let mut methods: Vec<typeck::MethodInfo> = Vec::new();
@@ -372,6 +491,14 @@ fn register_impl(
         i = i + 1;
     }
 
+    // If this impl is for a trait, inject default methods not overridden in the impl
+    match &impl_def.trait_ref {
+        &Option::Some(ref trait_ref) => {
+            inject_default_methods(checker, &mut methods, trait_ref, items);
+        }
+        &Option::None => {}
+    }
+
     // Create and register impl info
     let num_generics = count_type_params(&impl_def.generics.params);
     let impl_info = typeck::ImplInfo::new(
@@ -381,6 +508,63 @@ fn register_impl(
         methods,
     );
     checker.register_impl(impl_info);
+}
+
+/// Injects default methods from a trait into an impl's method list.
+/// For each default method in the trait that is not overridden in the impl,
+/// a MethodInfo entry is created so lookup_method() can find it.
+fn inject_default_methods(
+    checker: &mut typeck::TypeChecker,
+    methods: &mut Vec<typeck::MethodInfo>,
+    trait_ref: &hir_ty::TraitRef,
+    items: &Vec<hir_lower_ctx::ItemEntry>,
+) {
+    // Look up the trait definition
+    match checker.get_trait(trait_ref.def_id) {
+        Option::Some(trait_info) => {
+            // For each trait method with a default implementation
+            let mut ti: usize = 0;
+            while ti < trait_info.methods.len() {
+                let trait_method = &trait_info.methods[ti];
+                if trait_method.has_default {
+                    // Check if this method is already overridden in the impl
+                    let mut already_overridden = false;
+                    let mut mi: usize = 0;
+                    while mi < methods.len() {
+                        if methods[mi].name.index == trait_method.name.index {
+                            already_overridden = true;
+                        }
+                        mi = mi + 1;
+                    }
+
+                    if !already_overridden {
+                        // Copy parameter types
+                        let mut param_tys: Vec<hir_ty::Type> = Vec::new();
+                        let mut pi: usize = 0;
+                        while pi < trait_method.param_tys.len() {
+                            param_tys.push(hir_ty::copy_type(&trait_method.param_tys[pi]));
+                            pi = pi + 1;
+                        }
+
+                        // Create a MethodInfo for the default method
+                        let method_info = typeck::MethodInfo::new(
+                            trait_method.def_id,
+                            trait_method.name,
+                            param_tys,
+                            hir_ty::copy_type(&trait_method.return_ty),
+                            trait_method.takes_self_ref,
+                            trait_method.takes_self_mut,
+                        );
+                        methods.push(method_info);
+                    }
+                }
+                ti = ti + 1;
+            }
+        }
+        Option::None => {
+            // Trait not found — can happen if trait is in external module
+        }
+    }
 }
 
 /// Registers an effect definition for type checking.
@@ -523,7 +707,27 @@ fn find_return_type_for_body(
                     return hir_ty::copy_type(&static_def.ty);
                 }
             }
-            &hir_item::ItemKind::Trait(_) => {}
+            &hir_item::ItemKind::Trait(ref trait_def) => {
+                // Check default method bodies in trait definitions
+                let mut j: usize = 0;
+                while j < trait_def.items.len() {
+                    match &trait_def.items[j] {
+                        &hir_item::AssocItem::Fn(ref assoc_fn) => {
+                            match &assoc_fn.body_id {
+                                &Option::Some(ref bid) => {
+                                    if bid.index == target_body_id.index {
+                                        return hir_ty::copy_type(&assoc_fn.sig.return_ty);
+                                    }
+                                }
+                                &Option::None => {}
+                            }
+                        }
+                        &hir_item::AssocItem::Type(_) => {}
+                        &hir_item::AssocItem::Const(_) => {}
+                    }
+                    j = j + 1;
+                }
+            }
             &hir_item::ItemKind::Effect(_) => {}
             &hir_item::ItemKind::Handler(ref handler_def) => {
                 // Check return clause body
@@ -552,6 +756,34 @@ fn find_return_type_for_body(
     }
     // Default to unit type if no matching function found
     hir_ty::Type::unit()
+}
+
+/// Returns true if the given body belongs to a handler return clause.
+/// Handler return clause bodies should not be constrained to return unit —
+/// they determine the overall type of the `with ... handle` expression.
+fn is_handler_return_body(
+    items: &Vec<hir_lower_ctx::ItemEntry>,
+    target_body_id: hir_def::BodyId,
+) -> bool {
+    let mut i: usize = 0;
+    while i < items.len() {
+        let entry = &items[i];
+        match &entry.item.kind {
+            &hir_item::ItemKind::Handler(ref handler_def) => {
+                match &handler_def.return_clause {
+                    &Option::Some(ref rc) => {
+                        if rc.body_id.index == target_body_id.index {
+                            return true;
+                        }
+                    }
+                    &Option::None => {}
+                }
+            }
+            _ => {}
+        }
+        i = i + 1;
+    }
+    false
 }
 
 /// Finds the effect row DefIds for the function containing a given body.
@@ -676,7 +908,27 @@ fn find_def_id_for_body(
                     return entry.item.def_id.index;
                 }
             }
-            &hir_item::ItemKind::Trait(_) => {}
+            &hir_item::ItemKind::Trait(ref trait_def) => {
+                // Check default method bodies in trait definitions
+                let mut j: usize = 0;
+                while j < trait_def.items.len() {
+                    match &trait_def.items[j] {
+                        &hir_item::AssocItem::Fn(ref assoc_fn) => {
+                            match &assoc_fn.body_id {
+                                &Option::Some(ref bid) => {
+                                    if bid.index == target_body_id.index {
+                                        return assoc_fn.def_id.index;
+                                    }
+                                }
+                                &Option::None => {}
+                            }
+                        }
+                        &hir_item::AssocItem::Type(_) => {}
+                        &hir_item::AssocItem::Const(_) => {}
+                    }
+                    j = j + 1;
+                }
+            }
             &hir_item::ItemKind::Effect(_) => {}
             &hir_item::ItemKind::Handler(ref handler_def) => {
                 // Check return clause body

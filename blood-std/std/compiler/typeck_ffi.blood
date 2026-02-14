@@ -69,11 +69,11 @@ pub fn validate_ffi_type(ty: &hir_ty::Type) -> FfiSafety {
                 FfiSafety::Unsafe
             }
         }
-        &hir_ty::TypeKind::Fn { .. } => {
+        &hir_ty::TypeKind::Fn { params: _, ret: _, effects: _ } => {
             // Function pointers have portability considerations
             FfiSafety::Warning
         }
-        &hir_ty::TypeKind::Adt { .. } => {
+        &hir_ty::TypeKind::Adt { def_id: _, args: _ } => {
             // ADTs need #[repr(C)] to be FFI-safe — warn by default
             FfiSafety::Warning
         }

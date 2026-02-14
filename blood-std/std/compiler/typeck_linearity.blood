@@ -212,7 +212,7 @@ pub fn collect_usages(checker: &mut LinearityChecker, expr: &hir_expr::Expr) {
                 i = i + 1;
             }
         }
-        &hir_expr::ExprKind::MethodCall { ref receiver, ref args, .. } => {
+        &hir_expr::ExprKind::MethodCall { ref receiver, method: _, method_def: _, type_args: _, ref args } => {
             collect_usages(checker, receiver.as_ref());
             let mut i: usize = 0;
             while i < args.len() {
@@ -253,20 +253,20 @@ pub fn collect_usages(checker: &mut LinearityChecker, expr: &hir_expr::Expr) {
                 &Option::None => {}
             }
         }
-        &hir_expr::ExprKind::Field { ref base, .. } => {
+        &hir_expr::ExprKind::Field { ref base, field: _ } => {
             collect_usages(checker, base.as_ref());
         }
         &hir_expr::ExprKind::Index { ref base, ref idx } => {
             collect_usages(checker, base.as_ref());
             collect_usages(checker, idx.as_ref());
         }
-        &hir_expr::ExprKind::AddrOf { ref expr, .. } => {
+        &hir_expr::ExprKind::AddrOf { mutable: _, ref expr } => {
             collect_usages(checker, expr.as_ref());
         }
-        &hir_expr::ExprKind::Cast { ref expr, .. } => {
+        &hir_expr::ExprKind::Cast { ref expr, ty: _ } => {
             collect_usages(checker, expr.as_ref());
         }
-        &hir_expr::ExprKind::Loop { ref body, .. } => {
+        &hir_expr::ExprKind::Loop { label: _, ref body } => {
             collect_usages(checker, body.as_ref());
         }
         _ => {
@@ -280,10 +280,10 @@ fn collect_usages_block(checker: &mut LinearityChecker, block: &hir_expr::Block)
     let mut i: usize = 0;
     while i < block.stmts.len() {
         match &block.stmts[i] {
-            &hir_expr::Stmt::Expr { ref expr, .. } => {
+            &hir_expr::Stmt::Expr { ref expr, has_semi: _ } => {
                 collect_usages(checker, expr);
             }
-            &hir_expr::Stmt::Let { ref init, .. } => {
+            &hir_expr::Stmt::Let { pattern: _, ty: _, ref init, span: _ } => {
                 match init {
                     &Option::Some(ref init_expr) => {
                         collect_usages(checker, init_expr);
@@ -310,7 +310,7 @@ fn collect_usages_block(checker: &mut LinearityChecker, block: &hir_expr::Block)
 /// Extracts the ownership qualifier from a type, if present.
 fn extract_qualifier(ty: &hir_ty::Type) -> Option<hir_ty::OwnershipQualifier> {
     match &ty.kind {
-        &hir_ty::TypeKind::Ownership { ref qualifier, .. } => {
+        &hir_ty::TypeKind::Ownership { ref qualifier, inner: _ } => {
             Option::Some(qualifier.clone())
         }
         _ => Option::None,

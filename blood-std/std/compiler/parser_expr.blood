@@ -307,6 +307,19 @@ fn parse_primary_expr(parser: &mut parser_base::Parser) -> ast::Expr {
                 span: start,
             };
         }
+        // Raw string literal (no escape processing)
+        token::TokenKind::RawStringLit => {
+            let str_val = parser_base::parse_raw_string_from_span(parser, start);
+            parser.advance();
+            let lit = ast::Literal {
+                kind: ast::LiteralKind::Str(str_val),
+                span: start,
+            };
+            return ast::Expr {
+                kind: ast::ExprKind::Literal(lit),
+                span: start,
+            };
+        }
         // Char literal
         token::TokenKind::CharLit => {
             let char_val = parser_base::parse_char_from_span(parser, start);
@@ -1759,6 +1772,7 @@ fn can_start_expr(kind: token::TokenKind) -> bool {
         token::TokenKind::IntLit => true,
         token::TokenKind::FloatLit => true,
         token::TokenKind::StringLit => true,
+        token::TokenKind::RawStringLit => true,
         token::TokenKind::CharLit => true,
         token::TokenKind::True => true,
         token::TokenKind::False => true,

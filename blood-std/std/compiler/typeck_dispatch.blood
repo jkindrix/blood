@@ -161,12 +161,12 @@ impl DispatchResolver {
 pub fn compute_specificity(ty: &hir_ty::Type) -> u32 {
     match &ty.kind {
         &hir_ty::TypeKind::Primitive(_) => 10,
-        &hir_ty::TypeKind::Adt { .. } => 8,
+        &hir_ty::TypeKind::Adt { def_id: _, ref args } => 8,
         &hir_ty::TypeKind::Tuple(_) => 7,
-        &hir_ty::TypeKind::Ref { ref inner, .. } => {
+        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
             compute_specificity(inner.as_ref())
         }
-        &hir_ty::TypeKind::TypeParam { .. } => 1, // Generic — least specific
+        &hir_ty::TypeKind::Param(_) => 1, // Generic — least specific
         &hir_ty::TypeKind::Infer(_) => 0, // Unknown
         _ => 5, // Default
     }
