@@ -583,6 +583,8 @@ fn parse_fn_param(parser: &mut parser_base::Parser) -> ast::Param {
     }
 
     // Case 3: self — current is self
+    // Bare `self` (without type annotation) is treated as `&self` (immutable reference)
+    // to avoid by-value struct passing ABI complexity. This matches common usage patterns.
     if parser.check(token::TokenKind::SelfLower) {
         parser.advance(); // consume self
         let self_span = parser.previous.span;
@@ -590,7 +592,7 @@ fn parse_fn_param(parser: &mut parser_base::Parser) -> ast::Param {
         let ty = if parser.try_consume(token::TokenKind::Colon) {
             parser_type::parse_type(parser)
         } else {
-            make_self_type(self_span)
+            make_ref_self_type(self_span, false)
         };
 
         let end_span = parser.previous.span;
@@ -603,6 +605,8 @@ fn parse_fn_param(parser: &mut parser_base::Parser) -> ast::Param {
     }
 
     // Case 4: mut self — current is mut, next is self
+    // Bare `mut self` (without type annotation) is treated as `&mut self`
+    // to avoid by-value struct passing ABI complexity.
     if parser.check(token::TokenKind::Mut) && parser.check_next(token::TokenKind::SelfLower) {
         parser.advance(); // consume mut
         parser.advance(); // consume self
@@ -611,7 +615,7 @@ fn parse_fn_param(parser: &mut parser_base::Parser) -> ast::Param {
         let ty = if parser.try_consume(token::TokenKind::Colon) {
             parser_type::parse_type(parser)
         } else {
-            make_self_type(self_span)
+            make_ref_self_type(self_span, true)
         };
 
         let end_span = parser.previous.span;

@@ -262,9 +262,40 @@ fn parse_pattern_kind(parser: &mut parser_base::Parser) -> ast::PatternKind {
 
 fn parse_tuple_pattern(parser: &mut parser_base::Parser) -> ast::PatternKind {
     parser.advance(); // consume '('
+
+    // Empty tuple: ()
+    if parser.check(token::TokenKind::RParen) {
+        parser.advance();
+        return ast::PatternKind::Tuple {
+            fields: Vec::new(),
+            rest_pos: Option::None,
+        };
+    }
+
+    // Check for (..) rest pattern
+    if parser.check(token::TokenKind::DotDot) {
+        parser.advance();
+        parser.expect(token::TokenKind::RParen);
+        return ast::PatternKind::Tuple {
+            fields: Vec::new(),
+            rest_pos: Option::Some(0 as usize),
+        };
+    }
+
+    // Parse the first pattern
+    let first = parse_pattern(parser);
+
+    // If no comma follows, this is a parenthesized pattern, not a tuple
+    if !parser.try_consume(token::TokenKind::Comma) {
+        parser.expect(token::TokenKind::RParen);
+        return ast::PatternKind::Paren(Box::new(first));
+    }
+
+    // Comma was consumed — this is a tuple pattern
     let mut fields: Vec<ast::Pattern> = Vec::new();
+    fields.push(first);
     let mut rest_pos: Option<usize> = Option::None;
-    let mut idx: usize = 0;
+    let mut idx: usize = 1;
 
     while !parser.check(token::TokenKind::RParen) && !parser.is_at_end() {
         if parser.check(token::TokenKind::DotDot) {
