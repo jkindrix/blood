@@ -416,6 +416,23 @@ impl Resolver {
         true
     }
 
+    /// Marks an existing local variable as mutable.
+    /// Used by for-loop desugaring to make the loop variable mutable.
+    pub fn mark_local_mutable(self: &mut Self, local_id: hir_def::LocalId) {
+        let mut si: usize = self.scopes.len();
+        while si > 0 {
+            si = si - 1;
+            let mut bi: usize = 0;
+            while bi < self.scopes[si].bindings.len() {
+                if self.scopes[si].bindings[bi].binding.local_id.index == local_id.index {
+                    self.scopes[si].bindings[bi].binding.mutable = true;
+                    return;
+                }
+                bi = bi + 1;
+            }
+        }
+    }
+
     /// Defines a global item (function, struct, enum, etc.).
     pub fn define_global(
         self: &mut Self,

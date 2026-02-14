@@ -242,17 +242,24 @@ pub struct FnSigInfo {
     /// Actual TyVarId indices for each type parameter.
     /// Used by instantiate_fn_sig to create correct substitutions.
     pub type_param_ids: Vec<u32>,
+    /// Effect DefIds this function may perform (from its effect row).
+    pub effect_def_ids: Vec<u32>,
 }
 
 impl FnSigInfo {
     /// Creates a new function signature info.
     pub fn new(param_tys: Vec<hir_ty::Type>, return_ty: hir_ty::Type, num_generics: u32) -> FnSigInfo {
-        FnSigInfo { param_tys, return_ty, num_generics, type_param_ids: Vec::new() }
+        FnSigInfo { param_tys, return_ty, num_generics, type_param_ids: Vec::new(), effect_def_ids: Vec::new() }
     }
 
     /// Creates a new function signature info with explicit type parameter IDs.
     pub fn with_param_ids(param_tys: Vec<hir_ty::Type>, return_ty: hir_ty::Type, num_generics: u32, type_param_ids: Vec<u32>) -> FnSigInfo {
-        FnSigInfo { param_tys, return_ty, num_generics, type_param_ids }
+        FnSigInfo { param_tys, return_ty, num_generics, type_param_ids, effect_def_ids: Vec::new() }
+    }
+
+    /// Creates a new function signature info with effect row.
+    pub fn with_effects(param_tys: Vec<hir_ty::Type>, return_ty: hir_ty::Type, num_generics: u32, type_param_ids: Vec<u32>, effect_def_ids: Vec<u32>) -> FnSigInfo {
+        FnSigInfo { param_tys, return_ty, num_generics, type_param_ids, effect_def_ids }
     }
 }
 

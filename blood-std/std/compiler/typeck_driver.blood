@@ -23,6 +23,7 @@ mod unify;
 mod typeck;
 mod typeck_expr;
 mod typeck_info;
+mod typeck_linearity;
 mod interner;
 
 // ============================================================
@@ -116,6 +117,7 @@ pub fn check_types(ctx: &hir_lower_ctx::LoweringCtx) -> TypeCheckResult {
         let body_entry = &ctx.bodies[i];
         let return_ty = find_return_type_for_body(&ctx.items, body_entry.body_id);
         checker.current_body_def_id = find_def_id_for_body(&ctx.items, body_entry.body_id);
+        checker.current_effect_row = find_effect_row_for_body(&ctx.items, body_entry.body_id);
         check_body(&mut checker, &body_entry.body, &return_ty);
         i = i + 1;
     }
@@ -178,6 +180,7 @@ pub fn check_lower_result(result: &hir_lower_ctx::LowerResult) -> TypeCheckResul
         let return_ty = find_return_type_for_body(&result.items, body_entry.body_id);
         let found_def_id = find_def_id_for_body(&result.items, body_entry.body_id);
         checker.current_body_def_id = found_def_id;
+        checker.current_effect_row = find_effect_row_for_body(&result.items, body_entry.body_id);
         check_body(&mut checker, &body_entry.body, &return_ty);
         i = i + 1;
     }
@@ -195,6 +198,7 @@ pub fn check_lower_result(result: &hir_lower_ctx::LowerResult) -> TypeCheckResul
         let return_ty = find_return_type_for_body(&result.items, body_entry.body_id);
         let found_def_id = find_def_id_for_body(&result.items, body_entry.body_id);
         checker.current_body_def_id = found_def_id;
+        checker.current_effect_row = find_effect_row_for_body(&result.items, body_entry.body_id);
         check_body(&mut checker, &body_entry.body, &return_ty);
         j = j + 1;
     }
@@ -550,6 +554,64 @@ fn find_return_type_for_body(
     hir_ty::Type::unit()
 }
 
+/// Finds the effect row DefIds for the function containing a given body.
+/// Returns a Vec<u32> of effect DefIds declared in the function's effect row.
+fn find_effect_row_for_body(
+    items: &Vec<hir_lower_ctx::ItemEntry>,
+    target_body_id: hir_def::BodyId,
+) -> Vec<u32> {
+    let mut i: usize = 0;
+    while i < items.len() {
+        let entry = &items[i];
+        match &entry.item.kind {
+            &hir_item::ItemKind::Fn(ref fn_def) => {
+                match &fn_def.body_id {
+                    &Option::Some(ref bid) => {
+                        if bid.index == target_body_id.index {
+                            return collect_effect_def_ids(&fn_def.sig.effects);
+                        }
+                    }
+                    &Option::None => {}
+                }
+            }
+            &hir_item::ItemKind::Impl(ref impl_def) => {
+                let mut j: usize = 0;
+                while j < impl_def.items.len() {
+                    match &impl_def.items[j] {
+                        &hir_item::AssocItem::Fn(ref assoc_fn) => {
+                            match &assoc_fn.body_id {
+                                &Option::Some(ref bid) => {
+                                    if bid.index == target_body_id.index {
+                                        return collect_effect_def_ids(&assoc_fn.sig.effects);
+                                    }
+                                }
+                                &Option::None => {}
+                            }
+                        }
+                        &hir_item::AssocItem::Type(_) => {}
+                        &hir_item::AssocItem::Const(_) => {}
+                    }
+                    j = j + 1;
+                }
+            }
+            _ => {}
+        }
+        i = i + 1;
+    }
+    Vec::new()
+}
+
+/// Helper to extract effect DefIds from an EffectRow.
+fn collect_effect_def_ids(row: &hir_ty::EffectRow) -> Vec<u32> {
+    let mut result: Vec<u32> = Vec::new();
+    let mut i: usize = 0;
+    while i < row.effects.len() {
+        result.push(row.effects[i].def_id.index);
+        i = i + 1;
+    }
+    result
+}
+
 /// Finds the DefId for the function containing a given body.
 /// Returns 0 if no matching function found.
 fn find_def_id_for_body(
@@ -648,6 +710,202 @@ fn find_def_id_for_body(
 }
 
 // ============================================================
+// Linearity Checking
+// ============================================================
+
+/// Tracks ownership qualifier and usage count for a local variable.
+struct LinearEntry {
+    local_idx: u32,
+    is_linear: bool,
+    is_affine: bool,
+    use_count: u32,
+    def_span: common::Span,
+}
+
+/// Checks linearity constraints on a function body after type checking.
+fn check_linearity(checker: &mut typeck::TypeChecker, body: &hir_expr::Body) {
+    // Collect locals with ownership qualifiers
+    let mut entries: Vec<LinearEntry> = Vec::new();
+    let mut li: usize = 0;
+    while li < body.locals.len() {
+        let local = &body.locals[li];
+        let resolved_ty = checker.resolve(&local.ty);
+        match &resolved_ty.kind {
+            &hir_ty::TypeKind::Ownership { ref qualifier, inner: _ } => {
+                let is_lin = match qualifier {
+                    &hir_ty::OwnershipQualifier::Linear => true,
+                    &hir_ty::OwnershipQualifier::Affine => false,
+                };
+                let is_aff = match qualifier {
+                    &hir_ty::OwnershipQualifier::Linear => false,
+                    &hir_ty::OwnershipQualifier::Affine => true,
+                };
+                let entry = LinearEntry {
+                    local_idx: local.id.index,
+                    is_linear: is_lin,
+                    is_affine: is_aff,
+                    use_count: 0,
+                    def_span: local.span,
+                };
+                entries.push(entry);
+            }
+            _ => {}
+        }
+        li = li + 1;
+    }
+
+    // If no ownership-qualified locals, skip usage scanning
+    if entries.len() == 0 {
+        return;
+    }
+
+    // Count usages by scanning the body expression
+    count_usages_expr(&mut entries, &body.expr);
+
+    // Report violations
+    let mut ei: usize = 0;
+    while ei < entries.len() {
+        let entry = &entries[ei];
+        if entry.is_linear {
+            if entry.use_count == 0 {
+                checker.error(typeck::TypeErrorKind::LinearNotUsed, entry.def_span);
+            } else if entry.use_count > 1 {
+                checker.error(typeck::TypeErrorKind::LinearUsedMultipleTimes, entry.def_span);
+            }
+        } else if entry.is_affine {
+            if entry.use_count > 1 {
+                checker.error(typeck::TypeErrorKind::AffineUsedMultipleTimes, entry.def_span);
+            }
+        }
+        ei = ei + 1;
+    }
+}
+
+/// Increments use_count for a local if it's tracked.
+fn record_linear_use(entries: &mut Vec<LinearEntry>, local_idx: u32) {
+    let mut i: usize = 0;
+    while i < entries.len() {
+        if entries[i].local_idx == local_idx {
+            entries[i].use_count = entries[i].use_count + 1;
+            return;
+        }
+        i = i + 1;
+    }
+}
+
+/// Counts usages of tracked locals in an expression.
+fn count_usages_expr(entries: &mut Vec<LinearEntry>, expr: &hir_expr::Expr) {
+    match &expr.kind {
+        &hir_expr::ExprKind::Local(ref local_id) => {
+            record_linear_use(entries, local_id.index);
+        }
+        &hir_expr::ExprKind::Binary { ref left, ref right, op: _ } => {
+            count_usages_expr(entries, left.as_ref());
+            count_usages_expr(entries, right.as_ref());
+        }
+        &hir_expr::ExprKind::Unary { ref operand, op: _ } => {
+            count_usages_expr(entries, operand.as_ref());
+        }
+        &hir_expr::ExprKind::Call { ref callee, ref args } => {
+            count_usages_expr(entries, callee.as_ref());
+            let mut i: usize = 0;
+            while i < args.len() {
+                count_usages_expr(entries, &args[i]);
+                i = i + 1;
+            }
+        }
+        &hir_expr::ExprKind::MethodCall { ref receiver, method: _, method_def: _, type_args: _, ref args } => {
+            count_usages_expr(entries, receiver.as_ref());
+            let mut i: usize = 0;
+            while i < args.len() {
+                count_usages_expr(entries, &args[i]);
+                i = i + 1;
+            }
+        }
+        &hir_expr::ExprKind::If { ref condition, ref then_branch, ref else_branch } => {
+            count_usages_expr(entries, condition.as_ref());
+            count_usages_expr(entries, then_branch.as_ref());
+            match else_branch {
+                &Option::Some(ref eb) => {
+                    count_usages_expr(entries, eb.as_ref());
+                }
+                &Option::None => {}
+            }
+        }
+        &hir_expr::ExprKind::Block(ref block) => {
+            count_usages_block(entries, block);
+        }
+        &hir_expr::ExprKind::Match { ref scrutinee, ref arms } => {
+            count_usages_expr(entries, scrutinee.as_ref());
+            let mut i: usize = 0;
+            while i < arms.len() {
+                count_usages_expr(entries, &arms[i].body);
+                i = i + 1;
+            }
+        }
+        &hir_expr::ExprKind::Assign { ref target, ref val } => {
+            count_usages_expr(entries, target.as_ref());
+            count_usages_expr(entries, val.as_ref());
+        }
+        &hir_expr::ExprKind::Return(ref opt_val) => {
+            match opt_val {
+                &Option::Some(ref v) => {
+                    count_usages_expr(entries, v.as_ref());
+                }
+                &Option::None => {}
+            }
+        }
+        &hir_expr::ExprKind::Field { ref base, field: _ } => {
+            count_usages_expr(entries, base.as_ref());
+        }
+        &hir_expr::ExprKind::Index { ref base, ref idx } => {
+            count_usages_expr(entries, base.as_ref());
+            count_usages_expr(entries, idx.as_ref());
+        }
+        &hir_expr::ExprKind::AddrOf { mutable: _, ref expr } => {
+            count_usages_expr(entries, expr.as_ref());
+        }
+        &hir_expr::ExprKind::Cast { ref expr, ty: _ } => {
+            count_usages_expr(entries, expr.as_ref());
+        }
+        &hir_expr::ExprKind::Loop { label: _, ref body } => {
+            count_usages_expr(entries, body.as_ref());
+        }
+        _ => {
+            // Literal, Path, Error, etc. — no local usage to track
+        }
+    }
+}
+
+/// Counts usages of tracked locals in a block.
+fn count_usages_block(entries: &mut Vec<LinearEntry>, block: &hir_expr::Block) {
+    let mut i: usize = 0;
+    while i < block.stmts.len() {
+        match &block.stmts[i] {
+            &hir_expr::Stmt::Expr { ref expr, has_semi: _ } => {
+                count_usages_expr(entries, expr);
+            }
+            &hir_expr::Stmt::Let { pattern: _, ty: _, ref init, span: _ } => {
+                match init {
+                    &Option::Some(ref init_expr) => {
+                        count_usages_expr(entries, init_expr);
+                    }
+                    &Option::None => {}
+                }
+            }
+            &hir_expr::Stmt::Item(_) => {}
+        }
+        i = i + 1;
+    }
+    match &block.expr {
+        &Option::Some(ref e) => {
+            count_usages_expr(entries, e.as_ref());
+        }
+        &Option::None => {}
+    }
+}
+
+// ============================================================
 // Body Type Checking
 // ============================================================
 
@@ -699,6 +957,11 @@ fn check_body(checker: &mut typeck::TypeChecker, body: &hir_expr::Body, return_t
         }
         &None => {}
     }
+
+    // Run linearity checking: scan locals for ownership qualifiers,
+    // count usages in body expression, report violations.
+    // Inline implementation to avoid potential codegen issues with the module.
+    check_linearity(checker, body);
 
     // Clear return type
     checker.clear_return_ty();

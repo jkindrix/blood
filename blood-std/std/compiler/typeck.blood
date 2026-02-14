@@ -326,6 +326,11 @@ pub struct TypeChecker {
     /// Current body's DefId for scoping method/field resolutions.
     /// Set before type-checking each function body.
     pub current_body_def_id: u32,
+    /// Current function's effect row, for checking undeclared perform operations.
+    pub current_effect_row: Vec<u32>,
+    /// Whether we are inside a handler block (try/with or with-handle).
+    /// When true, call-site effect checking is suppressed since the handler handles effects.
+    pub in_handler: bool,
     /// Hash index for O(1) variant lookup: variant_def_id.index → (enum_idx << 32) | variant_idx
     pub variant_hash: hashmap::HashMapU64U64,
     /// Hash index for O(1) trait impl existence check: trait_def_id.index → 1
@@ -364,6 +369,8 @@ impl TypeChecker {
             field_resolutions: Vec::new(),
             pending_method_calls: Vec::new(),
             current_body_def_id: 0,
+            current_effect_row: Vec::new(),
+            in_handler: false,
             variant_hash: hashmap::HashMapU64U64::new(),
             trait_impl_hash: hashmap::HashMapU64U32::new(),
         }
@@ -401,6 +408,8 @@ impl TypeChecker {
             field_resolutions: Vec::new(),
             pending_method_calls: Vec::new(),
             current_body_def_id: 0,
+            current_effect_row: Vec::new(),
+            in_handler: false,
             variant_hash: hashmap::HashMapU64U64::new(),
             trait_impl_hash: hashmap::HashMapU64U32::new(),
         }
@@ -590,12 +599,21 @@ impl TypeChecker {
         let num_generics = count_type_params(&sig.generics.params);
         let type_param_ids = extract_type_param_ids(&sig.generics.params);
 
-        // Create the info with actual param IDs
-        let info = typeck_info::FnSigInfo::with_param_ids(
+        // Extract effect row DefIds
+        let mut effect_def_ids: Vec<u32> = Vec::new();
+        let mut ei: usize = 0;
+        while ei < sig.effects.effects.len() {
+            effect_def_ids.push(sig.effects.effects[ei].def_id.index);
+            ei = ei + 1;
+        }
+
+        // Create the info with actual param IDs and effect row
+        let info = typeck_info::FnSigInfo::with_effects(
             param_tys,
             hir_ty::copy_type(&sig.return_ty),
             num_generics,
             type_param_ids,
+            effect_def_ids,
         );
 
         // Store at def_id.index

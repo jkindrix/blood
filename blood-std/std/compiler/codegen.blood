@@ -700,10 +700,14 @@ pub fn intrinsic_declarations() -> String {
     output.push_str("declare ptr @box_as_ref(ptr)\n");
 
     // Effect runtime declarations
+    // These are provided by libblood_runtime.a (evidence-passing model).
+    // blood_push_handler/blood_pop_handler/blood_push_inline_handler are NOT
+    // in the runtime — they are generated inline by blood-rust's codegen.
+    // For now, declare the runtime functions and stub out the inline ones.
     output.push_str("\n; Effect runtime declarations\n");
     output.push_str("declare void @blood_push_handler(i64, ptr)\n");
-    output.push_str("declare void @blood_pop_handler()\n");
     output.push_str("declare void @blood_push_inline_handler(i64)\n");
+    output.push_str("declare void @blood_pop_handler()\n");
     output.push_str("declare i64 @blood_perform(i64, i64, i64)\n");
     output.push_str("declare void @blood_resume(i64)\n");
 

@@ -90,10 +90,17 @@ pub fn infer_expr(checker: &mut typeck::TypeChecker, expr: &hir_expr::Expr) -> h
             infer_closure(checker, captures, params, return_ty, effects, body.as_ref(), body_id, expr.span)
         }
         &hir_expr::ExprKind::WithHandle { handler: ref handler_expr, body: ref body_expr } => {
-            infer_with_handle(checker, handler_expr.as_ref(), body_expr.as_ref(), expr.span)
+            // Inside a with-handle block, the body's effects are handled by the handler
+            let prev_in_handler = checker.in_handler;
+            checker.in_handler = true;
+            let result = infer_with_handle(checker, handler_expr.as_ref(), body_expr.as_ref(), expr.span);
+            checker.in_handler = prev_in_handler;
+            result
         }
         &hir_expr::ExprKind::InlineHandle { ref body, ref handlers } => {
-            // Type check the body
+            // Inside inline handle, the body's effects are handled by the handlers
+            let prev_in_handler = checker.in_handler;
+            checker.in_handler = true;
             let body_ty = infer_expr(checker, body.as_ref());
             // Type check each handler body
             let mut i: usize = 0;
@@ -101,6 +108,7 @@ pub fn infer_expr(checker: &mut typeck::TypeChecker, expr: &hir_expr::Expr) -> h
                 let _hdlr_ty = infer_expr(checker, &handlers[i].body);
                 i = i + 1;
             }
+            checker.in_handler = prev_in_handler;
             body_ty
         }
         &hir_expr::ExprKind::Perform { effect_def, op_def, op_name, ref args } => {
@@ -907,6 +915,19 @@ fn infer_unary(
                 &hir_ty::TypeKind::Ptr { ref inner, mutable: _ } => {
                     hir_ty::copy_type(inner.as_ref())
                 }
+                &hir_ty::TypeKind::Adt { def_id, ref args } => {
+                    // Box<T> deref: *Box<T> -> T
+                    let is_box = match &checker.builtin_box_def {
+                        &Some(ref box_def) => box_def.index == def_id.index,
+                        &None => false,
+                    };
+                    if is_box && args.len() == 1 {
+                        hir_ty::copy_type(&args[0])
+                    } else {
+                        checker.error(typeck::TypeErrorKind::TypeMismatch, span);
+                        hir_ty::Type::error()
+                    }
+                }
                 _ => {
                     checker.error(typeck::TypeErrorKind::TypeMismatch, span);
                     hir_ty::Type::error()
@@ -941,11 +962,17 @@ fn infer_call(
     args: &Vec<hir_expr::Expr>,
     span: common::Span,
 ) -> hir_ty::Type {
+    // Extract callee DefId for effect row checking (if callee is a path)
+    let callee_def_id: Option<u32> = match &callee.kind {
+        &hir_expr::ExprKind::Path(ref path) => Option::Some(path.def_id.index),
+        _ => Option::None,
+    };
+
     let callee_ty = infer_expr(checker, callee);
     let resolved_callee = checker.resolve(&callee_ty);
 
     match &resolved_callee.kind {
-        &hir_ty::TypeKind::Fn { ref params, ref ret, effects: _ } => {
+        &hir_ty::TypeKind::Fn { ref params, ref ret, ref effects } => {
             // Check arity
             if params.len() != args.len() {
                 checker.error(typeck::TypeErrorKind::ArityMismatch, span);
@@ -957,6 +984,37 @@ fn infer_call(
             while i < args.len() {
                 check_expr(checker, &args[i], &params[i]);
                 i = i + 1;
+            }
+
+            // Check that callee's effects are handled by caller (if not in handler)
+            match &callee_def_id {
+                &Option::Some(def_idx) => {
+                    let sig_def_id = hir_def::DefId::new(def_idx);
+                    match checker.get_fn_sig(sig_def_id) {
+                        Option::Some(ref fn_info) => {
+                            if fn_info.effect_def_ids.len() > 0 && !checker.in_handler {
+                                let mut efi: usize = 0;
+                                while efi < fn_info.effect_def_ids.len() {
+                                    let eff_id = fn_info.effect_def_ids[efi];
+                                    let mut found_in_caller = false;
+                                    let mut ej: usize = 0;
+                                    while ej < checker.current_effect_row.len() {
+                                        if checker.current_effect_row[ej] == eff_id {
+                                            found_in_caller = true;
+                                        }
+                                        ej = ej + 1;
+                                    }
+                                    if !found_in_caller {
+                                        checker.error(typeck::TypeErrorKind::UnhandledEffect, span);
+                                    }
+                                    efi = efi + 1;
+                                }
+                            }
+                        }
+                        Option::None => {}
+                    }
+                }
+                &Option::None => {}
             }
 
             // Return the return type
@@ -1957,6 +2015,15 @@ fn infer_match(
         checker.error(typeck::TypeErrorKind::NonExhaustive, span);
     }
 
+    // Check for unreachable arms (wildcard/catch-all before other arms)
+    let unreachable = typeck::check_unreachable_arms(checker, arms);
+    let mut ui: usize = 0;
+    while ui < unreachable.unreachable_indices.len() {
+        let idx = unreachable.unreachable_indices[ui] as usize;
+        checker.error(typeck::TypeErrorKind::UnreachablePattern, arms[idx].pattern.span);
+        ui = ui + 1;
+    }
+
     checker.resolve(&result_ty)
 }
 
@@ -2121,6 +2188,19 @@ fn infer_perform(
     args: &Vec<hir_expr::Expr>,
     span: common::Span,
 ) -> hir_ty::Type {
+    // Check that the effect is declared in the current function's effect row
+    let mut effect_declared = false;
+    let mut ei: usize = 0;
+    while ei < checker.current_effect_row.len() {
+        if checker.current_effect_row[ei] == effect_def.index {
+            effect_declared = true;
+        }
+        ei = ei + 1;
+    }
+    if !effect_declared {
+        checker.error(typeck::TypeErrorKind::UndeclaredEffect, span);
+    }
+
     // Infer argument types first
     let mut arg_tys: Vec<hir_ty::Type> = Vec::new();
     let mut i: usize = 0;

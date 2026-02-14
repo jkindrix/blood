@@ -1821,6 +1821,18 @@ fn lower_for_range(
     }
     let loop_var_id = loop_var_local_id.unwrap();
 
+    // Mark the loop variable as mutable since the desugared form increments it.
+    // Must update both the resolver (for name resolution) and the body_locals
+    // (which the type checker reads to determine mutability).
+    ctx.resolver.mark_local_mutable(loop_var_id);
+    let mut bli: usize = 0;
+    while bli < ctx.body_locals.len() {
+        if ctx.body_locals[bli].id.index == loop_var_id.index {
+            ctx.body_locals[bli].mutable = true;
+        }
+        bli = bli + 1;
+    }
+
     // Lower start value (default to 0 if not provided)
     let start_expr = match start {
         &Some(ref e) => lower_expr(ctx, e.as_ref()),
