@@ -94,8 +94,40 @@ pub fn emit_operand_typed(
                 };
                 (val, float_ty)
             } else {
-                let ty = ctx.type_to_llvm_with_ctx(&constant.ty);
-                (val, ty)
+                // Check if the constant has a reference type to a SIZED type
+                // (e.g., const 1: &i32). This happens when the type checker
+                // unifies an argument with a &T parameter type (e.g.,
+                // HashMap.get(key) where key: &K). We must materialize the
+                // inner value in a temp alloca and return a pointer to it.
+                //
+                // For unsized types (&str, &[T]), the constant is already a
+                // fat pointer { ptr, i64 } and should NOT be wrapped.
+                let is_sized_ref = match &constant.ty.kind {
+                    &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
+                        !codegen_types::is_unsized_type(inner.as_ref())
+                    }
+                    _ => false,
+                };
+                if is_sized_ref {
+                    let inner_ty = match &constant.ty.kind {
+                        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
+                            codegen_size::type_to_llvm_with_ctx(ctx, inner.as_ref())
+                        }
+                        _ => common::make_string("i64"),
+                    };
+                    // Alloca a temp, store the value, return pointer
+                    let ref_temp = ctx.fresh_temp();
+                    ctx.write_indent();
+                    ctx.write_string(&ref_temp);
+                    ctx.write(" = alloca ");
+                    ctx.write_string(&inner_ty);
+                    ctx.write("\n");
+                    ctx.emit_store(inner_ty.as_str(), val.as_str(), ref_temp.as_str());
+                    (ref_temp, common::make_string("ptr"))
+                } else {
+                    let ty = codegen_types::type_to_llvm(&constant.ty);
+                    (val, ty)
+                }
             }
         }
     }
@@ -1989,7 +2021,14 @@ fn emit_unop_typed(
     match un_op {
         &mir_types::MirUnOp::Neg => {
             if is_float {
-                ctx.emit_binop(res, "fneg", llvm_ty, v, "");
+                // fneg is a unary op: %res = fneg <ty> <val>
+                ctx.write_indent();
+                ctx.write(res);
+                ctx.write(" = fneg ");
+                ctx.write(llvm_ty);
+                ctx.write(" ");
+                ctx.write(v);
+                ctx.write("\n");
             } else {
                 ctx.emit_binop(res, "sub", llvm_ty, "0", v);
             }
