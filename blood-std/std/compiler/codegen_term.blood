@@ -367,6 +367,28 @@ fn emit_call(
                             ctx.write("\n");
                             final_val = widened;
                             final_ty = expected_ty;
+                        } else if !string_eq_str(expected_ty.as_str(), arg_ty.as_str()) && is_struct_type(arg_ty.as_str()) && is_struct_type(expected_ty.as_str()) {
+                            // Struct type mismatch (generic struct with different field sizes)
+                            // Widen field-by-field: { i1, i32 } -> { i64, i64 }
+                            let widened = emit_struct_widening(ctx, &arg_val, arg_ty.as_str(), expected_ty.as_str());
+                            final_val = widened;
+                            final_ty = expected_ty;
+                        } else if !string_eq_str(expected_ty.as_str(), arg_ty.as_str()) {
+                            // General type mismatch (e.g., struct { i32, i32 } vs scalar i64)
+                            // Use memory-based bitcast
+                            let cast_alloca = ctx.fresh_temp();
+                            ctx.emit_alloca(cast_alloca.as_str(), expected_ty.as_str());
+                            ctx.emit_store(arg_ty.as_str(), arg_val.as_str(), cast_alloca.as_str());
+                            let cast_result = ctx.fresh_temp();
+                            ctx.write_indent();
+                            ctx.write_string(&cast_result);
+                            ctx.write(" = load ");
+                            ctx.write_string(&expected_ty);
+                            ctx.write(", ptr ");
+                            ctx.write_string(&cast_alloca);
+                            ctx.write("\n");
+                            final_val = cast_result;
+                            final_ty = expected_ty;
                         } else {
                             final_val = arg_val;
                             final_ty = arg_ty;
@@ -424,7 +446,7 @@ fn emit_call(
             &llvm_args,
         );
 
-        // If the definition return type differs from the call site's expected type, truncate
+        // If the definition return type differs from the call site's expected type, narrow
         if !string_eq_str(def_ret_ty.as_str(), call_site_ret_ty.as_str()) && needs_int_cast(def_ret_ty.as_str(), call_site_ret_ty.as_str()) {
             let truncated = ctx.fresh_temp();
             ctx.write_indent();
@@ -437,6 +459,24 @@ fn emit_call(
             ctx.write_string(&call_site_ret_ty);
             ctx.write("\n");
             ctx.emit_store(call_site_ret_ty.as_str(), truncated.as_str(), dest_ptr.as_str());
+        } else if !string_eq_str(def_ret_ty.as_str(), call_site_ret_ty.as_str()) && is_struct_type(def_ret_ty.as_str()) && is_struct_type(call_site_ret_ty.as_str()) {
+            // Struct return type mismatch: narrow field-by-field
+            let narrowed = emit_struct_narrowing(ctx, &result, def_ret_ty.as_str(), call_site_ret_ty.as_str());
+            ctx.emit_store(call_site_ret_ty.as_str(), narrowed.as_str(), dest_ptr.as_str());
+        } else if !string_eq_str(def_ret_ty.as_str(), call_site_ret_ty.as_str()) {
+            // General type mismatch: use memory bitcast
+            let cast_alloca = ctx.fresh_temp();
+            ctx.emit_alloca(cast_alloca.as_str(), def_ret_ty.as_str());
+            ctx.emit_store(def_ret_ty.as_str(), result.as_str(), cast_alloca.as_str());
+            let cast_result = ctx.fresh_temp();
+            ctx.write_indent();
+            ctx.write_string(&cast_result);
+            ctx.write(" = load ");
+            ctx.write_string(&call_site_ret_ty);
+            ctx.write(", ptr ");
+            ctx.write_string(&cast_alloca);
+            ctx.write("\n");
+            ctx.emit_store(call_site_ret_ty.as_str(), cast_result.as_str(), dest_ptr.as_str());
         } else {
             // Store result
             ctx.emit_store(def_ret_ty.as_str(), result.as_str(), dest_ptr.as_str());
@@ -579,6 +619,268 @@ fn is_void_type(llvm_ty: &str) -> bool {
         }
     }
     false
+}
+
+/// Checks if an LLVM type is a struct type (starts with '{').
+fn is_struct_type(ty: &str) -> bool {
+    let bytes = ty.as_bytes();
+    if bytes.len() < 2 {
+        return false;
+    }
+    // Check for '{ ... }'
+    bytes[0] == 123 && bytes[bytes.len() - 1] == 125
+}
+
+/// Parses the field types from a struct type string like "{ i64, i32 }".
+/// Returns a Vec of field type strings.
+fn parse_struct_fields(ty: &str) -> Vec<String> {
+    let mut fields: Vec<String> = Vec::new();
+    let bytes = ty.as_bytes();
+    if bytes.len() < 4 {
+        return fields;
+    }
+    // Skip "{ " prefix
+    let mut pos: usize = 2;
+    let end = bytes.len() - 2; // skip " }"
+    while pos < end {
+        // Skip whitespace
+        while pos < end && bytes[pos] == 32 {
+            pos = pos + 1;
+        }
+        if pos >= end {
+            break;
+        }
+        // Read a field type (until ',' or end)
+        let start = pos;
+        let mut depth: i32 = 0;
+        while pos < end {
+            if bytes[pos] == 123 {
+                depth = depth + 1;
+            } else if bytes[pos] == 125 {
+                depth = depth - 1;
+            } else if bytes[pos] == 44 && depth == 0 {
+                // comma at top level
+                break;
+            }
+            pos = pos + 1;
+        }
+        // Trim trailing whitespace
+        let mut field_end = pos;
+        while field_end > start && bytes[field_end - 1] == 32 {
+            field_end = field_end - 1;
+        }
+        if field_end > start {
+            let mut field = String::new();
+            let mut fi: usize = start;
+            while fi < field_end {
+                field.push(bytes[fi] as char);
+                fi = fi + 1;
+            }
+            fields.push(field);
+        }
+        // Skip comma
+        if pos < end && bytes[pos] == 44 {
+            pos = pos + 1;
+        }
+    }
+    fields
+}
+
+/// Emits struct widening: converts a struct with smaller fields to one with larger fields.
+/// E.g., { i1, i32 } -> { i64, i64 } by extracting each field and sign-extending.
+fn emit_struct_widening(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    src_val: &String,
+    src_ty: &str,
+    dst_ty: &str,
+) -> String {
+    let src_fields = parse_struct_fields(src_ty);
+    let dst_fields = parse_struct_fields(dst_ty);
+
+    // Alloca for the destination struct
+    let dst_alloca = ctx.fresh_temp();
+    ctx.emit_alloca(dst_alloca.as_str(), dst_ty);
+
+    // For each field, extract from source, cast if needed, store into destination
+    let mut fi: usize = 0;
+    let field_count = if src_fields.len() < dst_fields.len() { src_fields.len() } else { dst_fields.len() };
+    while fi < field_count {
+        let extracted = ctx.fresh_temp();
+        ctx.write_indent();
+        ctx.write_string(&extracted);
+        ctx.write(" = extractvalue ");
+        ctx.write(src_ty);
+        ctx.write(" ");
+        ctx.write_string(src_val);
+        ctx.write(", ");
+        ctx.write(codegen_types::format_u64(fi as u64).as_str());
+        ctx.write("\n");
+
+        let mut field_val: String;
+        if string_eq_str(src_fields[fi].as_str(), dst_fields[fi].as_str()) {
+            // Same type, no conversion needed
+            field_val = extracted;
+        } else if needs_int_cast(src_fields[fi].as_str(), dst_fields[fi].as_str()) {
+            // Scalar to scalar: use sext/zext
+            let extended = ctx.fresh_temp();
+            ctx.write_indent();
+            ctx.write_string(&extended);
+            if is_smaller_int(src_fields[fi].as_str(), dst_fields[fi].as_str()) {
+                ctx.write(" = sext ");
+            } else {
+                ctx.write(" = zext ");
+            }
+            ctx.write(src_fields[fi].as_str());
+            ctx.write(" ");
+            ctx.write_string(&extracted);
+            ctx.write(" to ");
+            ctx.write(dst_fields[fi].as_str());
+            ctx.write("\n");
+            field_val = extended;
+        } else {
+            // Type mismatch (e.g., struct field { i32 } vs scalar i64):
+            // Use memory-based bitcast: alloca dst, zero it, store src, load as dst
+            let cast_alloca = ctx.fresh_temp();
+            ctx.emit_alloca(cast_alloca.as_str(), dst_fields[fi].as_str());
+            // Zero-initialize the destination alloca
+            let zero_val = ctx.fresh_temp();
+            ctx.write_indent();
+            ctx.write_string(&zero_val);
+            ctx.write(" = bitcast ");
+            ctx.write(dst_fields[fi].as_str());
+            ctx.write(" zeroinitializer to ");
+            ctx.write(dst_fields[fi].as_str());
+            ctx.write("\n");
+            ctx.emit_store(dst_fields[fi].as_str(), zero_val.as_str(), cast_alloca.as_str());
+            // Store source value (smaller) into the alloca
+            ctx.emit_store(src_fields[fi].as_str(), extracted.as_str(), cast_alloca.as_str());
+            // Load as destination type
+            let cast_result = ctx.fresh_temp();
+            ctx.write_indent();
+            ctx.write_string(&cast_result);
+            ctx.write(" = load ");
+            ctx.write(dst_fields[fi].as_str());
+            ctx.write(", ptr ");
+            ctx.write_string(&cast_alloca);
+            ctx.write("\n");
+            field_val = cast_result;
+        }
+
+        // Store into destination struct via GEP
+        let gep = ctx.fresh_temp();
+        ctx.write_indent();
+        ctx.write_string(&gep);
+        ctx.write(" = getelementptr ");
+        ctx.write(dst_ty);
+        ctx.write(", ptr ");
+        ctx.write_string(&dst_alloca);
+        ctx.write(", i64 0, i32 ");
+        ctx.write(codegen_types::format_u64(fi as u64).as_str());
+        ctx.write("\n");
+        ctx.emit_store(dst_fields[fi].as_str(), field_val.as_str(), gep.as_str());
+
+        fi = fi + 1;
+    }
+
+    // Load the complete destination struct
+    let result = ctx.fresh_temp();
+    ctx.write_indent();
+    ctx.write_string(&result);
+    ctx.write(" = load ");
+    ctx.write(dst_ty);
+    ctx.write(", ptr ");
+    ctx.write_string(&dst_alloca);
+    ctx.write("\n");
+    result
+}
+
+/// Emits struct narrowing: converts a struct with larger fields to one with smaller fields.
+/// E.g., { i64, i64 } -> { i32, i1 } by extracting each field and truncating.
+fn emit_struct_narrowing(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    src_val: &String,
+    src_ty: &str,
+    dst_ty: &str,
+) -> String {
+    let src_fields = parse_struct_fields(src_ty);
+    let dst_fields = parse_struct_fields(dst_ty);
+
+    // Alloca for the destination struct
+    let dst_alloca = ctx.fresh_temp();
+    ctx.emit_alloca(dst_alloca.as_str(), dst_ty);
+
+    let mut fi: usize = 0;
+    let field_count = if src_fields.len() < dst_fields.len() { src_fields.len() } else { dst_fields.len() };
+    while fi < field_count {
+        let extracted = ctx.fresh_temp();
+        ctx.write_indent();
+        ctx.write_string(&extracted);
+        ctx.write(" = extractvalue ");
+        ctx.write(src_ty);
+        ctx.write(" ");
+        ctx.write_string(src_val);
+        ctx.write(", ");
+        ctx.write(codegen_types::format_u64(fi as u64).as_str());
+        ctx.write("\n");
+
+        let mut field_val: String;
+        if string_eq_str(src_fields[fi].as_str(), dst_fields[fi].as_str()) {
+            // Same type, no conversion needed
+            field_val = extracted;
+        } else if needs_int_cast(src_fields[fi].as_str(), dst_fields[fi].as_str()) {
+            // Scalar to scalar: use trunc
+            let truncated = ctx.fresh_temp();
+            ctx.write_indent();
+            ctx.write_string(&truncated);
+            ctx.write(" = trunc ");
+            ctx.write(src_fields[fi].as_str());
+            ctx.write(" ");
+            ctx.write_string(&extracted);
+            ctx.write(" to ");
+            ctx.write(dst_fields[fi].as_str());
+            ctx.write("\n");
+            field_val = truncated;
+        } else {
+            // Type mismatch (e.g., scalar i64 vs struct { i32 }):
+            // Use memory-based bitcast: alloca src type, store src, load as dst
+            let cast_alloca = ctx.fresh_temp();
+            ctx.emit_alloca(cast_alloca.as_str(), src_fields[fi].as_str());
+            ctx.emit_store(src_fields[fi].as_str(), extracted.as_str(), cast_alloca.as_str());
+            let cast_result = ctx.fresh_temp();
+            ctx.write_indent();
+            ctx.write_string(&cast_result);
+            ctx.write(" = load ");
+            ctx.write(dst_fields[fi].as_str());
+            ctx.write(", ptr ");
+            ctx.write_string(&cast_alloca);
+            ctx.write("\n");
+            field_val = cast_result;
+        }
+
+        let gep = ctx.fresh_temp();
+        ctx.write_indent();
+        ctx.write_string(&gep);
+        ctx.write(" = getelementptr ");
+        ctx.write(dst_ty);
+        ctx.write(", ptr ");
+        ctx.write_string(&dst_alloca);
+        ctx.write(", i64 0, i32 ");
+        ctx.write(codegen_types::format_u64(fi as u64).as_str());
+        ctx.write("\n");
+        ctx.emit_store(dst_fields[fi].as_str(), field_val.as_str(), gep.as_str());
+
+        fi = fi + 1;
+    }
+
+    let result = ctx.fresh_temp();
+    ctx.write_indent();
+    ctx.write_string(&result);
+    ctx.write(" = load ");
+    ctx.write(dst_ty);
+    ctx.write(", ptr ");
+    ctx.write_string(&dst_alloca);
+    ctx.write("\n");
+    result
 }
 
 /// Emits an assertion.
