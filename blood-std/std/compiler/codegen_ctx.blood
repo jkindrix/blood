@@ -131,6 +131,9 @@ pub struct CodegenCtx {
     static_types: Vec<String>,
     /// Hash set for const def_ids: def_id -> 1 if const
     const_defs_hash: hashmap::HashMapU64U32,
+    /// Function signatures for generic call fixup: def_id -> index in fn_signatures vec
+    fn_signatures: Vec<FnSigEntry>,
+    fn_sigs_hash: hashmap::HashMapU64U32,
     /// Write buffer for batching file I/O during streaming codegen.
     write_buffer: String,
     /// Output file path for streaming codegen.
@@ -202,6 +205,13 @@ impl DefNameEntry {
     }
 }
 
+/// Stored LLVM function signature for generic call fixup.
+pub struct FnSigEntry {
+    pub def_id: u32,
+    pub param_types: Vec<String>,
+    pub return_type: String,
+}
+
 impl CodegenCtx {
     /// Creates a new codegen context.
     pub fn new() -> CodegenCtx {
@@ -235,6 +245,8 @@ impl CodegenCtx {
             static_types_hash: hashmap::HashMapU64U32::new(),
             static_types: Vec::new(),
             const_defs_hash: hashmap::HashMapU64U32::new(),
+            fn_signatures: Vec::new(),
+            fn_sigs_hash: hashmap::HashMapU64U32::new(),
             write_buffer: String::new(),
             output_path: String::new(),
             trace_codegen: false,
@@ -281,6 +293,8 @@ impl CodegenCtx {
             static_types_hash: hashmap::HashMapU64U32::new(),
             static_types: Vec::new(),
             const_defs_hash: hashmap::HashMapU64U32::new(),
+            fn_signatures: Vec::new(),
+            fn_sigs_hash: hashmap::HashMapU64U32::new(),
             write_buffer: String::new(),
             output_path: String::new(),
             trace_codegen: false,
@@ -312,6 +326,39 @@ impl CodegenCtx {
             i = i + 1;
         }
         Option::None
+    }
+
+    /// Registers LLVM function signature for a compiled function (keyed by def_id).
+    pub fn register_fn_signature(self: &mut CodegenCtx, def_id: u32, param_types: Vec<String>, return_type: String) {
+        let idx = self.fn_signatures.len() as u32;
+        self.fn_signatures.push(FnSigEntry { def_id, param_types, return_type });
+        self.fn_sigs_hash.insert(def_id as u64, idx);
+    }
+
+    /// Looks up the LLVM function signature for a given def_id.
+    /// Returns the parameter types and return type if found.
+    pub fn lookup_fn_param_type(self: &CodegenCtx, def_id: u32, param_idx: usize) -> Option<String> {
+        match self.fn_sigs_hash.get(def_id as u64) {
+            Option::Some(idx) => {
+                let entry = &self.fn_signatures[idx as usize];
+                if param_idx < entry.param_types.len() {
+                    return Option::Some(clone_string(&entry.param_types[param_idx]));
+                }
+                Option::None
+            }
+            Option::None => Option::None,
+        }
+    }
+
+    /// Looks up the LLVM return type for a given def_id.
+    pub fn lookup_fn_ret_type(self: &CodegenCtx, def_id: u32) -> Option<String> {
+        match self.fn_sigs_hash.get(def_id as u64) {
+            Option::Some(idx) => {
+                let entry = &self.fn_signatures[idx as usize];
+                Option::Some(clone_string(&entry.return_type))
+            }
+            Option::None => Option::None,
+        }
     }
 
     /// Returns the number of registered def_names.
@@ -1341,10 +1388,30 @@ impl CodegenCtx {
             static_types_hash: hashmap::HashMapU64U32::new(),
             static_types: Vec::new(),
             const_defs_hash: hashmap::HashMapU64U32::new(),
+            fn_signatures: Vec::new(),
+            fn_sigs_hash: hashmap::HashMapU64U32::new(),
             write_buffer: String::new(),
             output_path: String::new(),
             trace_codegen: self.trace_codegen,
         };
+
+        // Copy function signatures (read-only, needed at call sites)
+        let mut fi: usize = 0;
+        while fi < self.fn_signatures.len() {
+            let sig = &self.fn_signatures[fi];
+            let mut cloned_params: Vec<String> = Vec::new();
+            let mut pi: usize = 0;
+            while pi < sig.param_types.len() {
+                let mut p = String::new();
+                p.push_str(sig.param_types[pi].as_str());
+                cloned_params.push(p);
+                pi = pi + 1;
+            }
+            let mut cloned_ret = String::new();
+            cloned_ret.push_str(sig.return_type.as_str());
+            worker.register_fn_signature(sig.def_id, cloned_params, cloned_ret);
+            fi = fi + 1;
+        }
 
         // Copy static and const defs hashes (read-only)
         let mut si: usize = 0;

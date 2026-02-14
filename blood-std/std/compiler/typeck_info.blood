@@ -239,12 +239,20 @@ pub struct FnSigInfo {
     pub return_ty: hir_ty::Type,
     /// Number of generic type parameters.
     pub num_generics: u32,
+    /// Actual TyVarId indices for each type parameter.
+    /// Used by instantiate_fn_sig to create correct substitutions.
+    pub type_param_ids: Vec<u32>,
 }
 
 impl FnSigInfo {
     /// Creates a new function signature info.
     pub fn new(param_tys: Vec<hir_ty::Type>, return_ty: hir_ty::Type, num_generics: u32) -> FnSigInfo {
-        FnSigInfo { param_tys, return_ty, num_generics }
+        FnSigInfo { param_tys, return_ty, num_generics, type_param_ids: Vec::new() }
+    }
+
+    /// Creates a new function signature info with explicit type parameter IDs.
+    pub fn with_param_ids(param_tys: Vec<hir_ty::Type>, return_ty: hir_ty::Type, num_generics: u32, type_param_ids: Vec<u32>) -> FnSigInfo {
+        FnSigInfo { param_tys, return_ty, num_generics, type_param_ids }
     }
 }
 

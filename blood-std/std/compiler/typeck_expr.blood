@@ -631,34 +631,131 @@ fn infer_path(checker: &mut typeck::TypeChecker, path: &hir_def::ResolvedPath, s
 }
 
 /// Instantiates a generic function signature with fresh inference variables.
-/// Creates a TypeParamSubst mapping each type parameter to a fresh inference variable,
-/// then substitutes through the parameter types and return type.
+/// Type parameters in Blood HIR are represented as Infer(TyVarId) — not Param.
+/// When a generic function is called multiple times with different types, the
+/// Infer variables from the first call get unified with concrete types. We must
+/// replace those Infer variables with FRESH ones for each call site.
 fn instantiate_fn_sig(checker: &mut typeck::TypeChecker, fn_info: &typeck::FnSigInfo) -> hir_ty::Type {
-    // Create fresh inference variables for each type parameter
+    // Build a mapping from type-parameter Infer IDs to fresh Infer variables.
+    // type_param_ids contains the actual TyVarId indices assigned during HIR lowering.
     let mut subst = unify::TypeParamSubst::new();
     let mut i: u32 = 0;
     while i < fn_info.num_generics {
         let fresh_var = checker.fresh_infer();
-        subst.add(i, fresh_var);
+        if (i as usize) < fn_info.type_param_ids.len() {
+            subst.add(fn_info.type_param_ids[i as usize], fresh_var);
+        } else {
+            subst.add(i, fresh_var);
+        }
         i = i + 1;
     }
 
-    // Substitute in parameter types
+    // Substitute Infer(param_id) → fresh Infer in parameter types
     let mut param_tys: Vec<hir_ty::Type> = Vec::new();
     let mut j: usize = 0;
     while j < fn_info.param_tys.len() {
-        param_tys.push(unify::substitute_type_params(&fn_info.param_tys[j], &subst));
+        param_tys.push(substitute_infer_params(&fn_info.param_tys[j], &subst));
         j = j + 1;
     }
 
-    // Substitute in return type
-    let ret_ty = unify::substitute_type_params(&fn_info.return_ty, &subst);
+    // Substitute Infer(param_id) → fresh Infer in return type
+    let ret_ty = substitute_infer_params(&fn_info.return_ty, &subst);
 
     hir_ty::Type::new(hir_ty::TypeKind::Fn {
         params: param_tys,
         ret: Box::new(ret_ty),
         effects: hir_ty::EffectRow::empty(),
     })
+}
+
+/// Substitutes Infer(id) variables in a type when the id matches a type parameter.
+/// This is like substitute_type_params but works on Infer nodes instead of Param nodes,
+/// since Blood HIR uses Infer for type parameters (not Param).
+fn substitute_infer_params(ty: &hir_ty::Type, subst: &unify::TypeParamSubst) -> hir_ty::Type {
+    if subst.is_empty() {
+        return hir_ty::copy_type(ty);
+    }
+
+    match &ty.kind {
+        &hir_ty::TypeKind::Infer(var_id) => {
+            // Check if this Infer variable is a type parameter
+            match subst.lookup(var_id.index) {
+                Some(fresh_ty) => fresh_ty,
+                Option::None => hir_ty::copy_type(ty),
+            }
+        }
+        &hir_ty::TypeKind::Param(param_id) => {
+            // Also handle Param types for builtins that use them
+            match subst.lookup(param_id.index) {
+                Some(fresh_ty) => fresh_ty,
+                Option::None => hir_ty::copy_type(ty),
+            }
+        }
+        &hir_ty::TypeKind::Primitive(_) => hir_ty::copy_type(ty),
+        &hir_ty::TypeKind::Never => hir_ty::copy_type(ty),
+        &hir_ty::TypeKind::Error => hir_ty::copy_type(ty),
+        &hir_ty::TypeKind::Tuple(ref types) => {
+            let mut result: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < types.len() {
+                result.push(substitute_infer_params(&types[i], subst));
+                i = i + 1;
+            }
+            hir_ty::Type::new(hir_ty::TypeKind::Tuple(result))
+        }
+        &hir_ty::TypeKind::Array { ref element, size } => {
+            hir_ty::Type::new(hir_ty::TypeKind::Array {
+                element: Box::new(substitute_infer_params(element.as_ref(), subst)),
+                size: size,
+            })
+        }
+        &hir_ty::TypeKind::Slice { ref element } => {
+            hir_ty::Type::new(hir_ty::TypeKind::Slice {
+                element: Box::new(substitute_infer_params(element.as_ref(), subst)),
+            })
+        }
+        &hir_ty::TypeKind::Ref { ref inner, mutable } => {
+            hir_ty::Type::new(hir_ty::TypeKind::Ref {
+                inner: Box::new(substitute_infer_params(inner.as_ref(), subst)),
+                mutable: mutable,
+            })
+        }
+        &hir_ty::TypeKind::Ptr { ref inner, mutable } => {
+            hir_ty::Type::new(hir_ty::TypeKind::Ptr {
+                inner: Box::new(substitute_infer_params(inner.as_ref(), subst)),
+                mutable: mutable,
+            })
+        }
+        &hir_ty::TypeKind::Adt { def_id, ref args } => {
+            let mut result_args: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < args.len() {
+                result_args.push(substitute_infer_params(&args[i], subst));
+                i = i + 1;
+            }
+            hir_ty::Type::new(hir_ty::TypeKind::Adt {
+                def_id: def_id,
+                args: result_args,
+            })
+        }
+        &hir_ty::TypeKind::Fn { ref params, ref ret, ref effects } => {
+            let mut result_params: Vec<hir_ty::Type> = Vec::new();
+            let mut i: usize = 0;
+            while i < params.len() {
+                result_params.push(substitute_infer_params(&params[i], subst));
+                i = i + 1;
+            }
+            hir_ty::Type::new(hir_ty::TypeKind::Fn {
+                params: result_params,
+                ret: Box::new(substitute_infer_params(ret.as_ref(), subst)),
+                effects: hir_ty::copy_effect_row(effects),
+            })
+        }
+        _ => {
+            // For all other type kinds (Closure, Forall, etc.), just copy
+            hir_ty::copy_type(ty)
+        }
+    }
 }
 
 // ============================================================

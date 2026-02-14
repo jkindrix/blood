@@ -333,21 +333,78 @@ fn emit_call(
         return;
     }
 
-    // Emit arguments with their types
+    // Extract the target DefId (if this is a direct call to a known function)
+    let target_def_id: Option<u32> = extract_call_def_id(func);
+
+    // Emit arguments with their types, applying generic call fixup if needed
     let mut llvm_args: Vec<(String, String)> = Vec::new();
     let mut i: usize = 0;
     while i < args.len() {
         let (arg_val, arg_ty) = codegen_expr::emit_operand_typed(ctx, &args[i]);
-        llvm_args.push((arg_ty, arg_val));
+
+        // Check if this parameter needs widening for a generic function
+        let mut final_val: String;
+        let mut final_ty: String;
+        match target_def_id {
+            Option::Some(did) => {
+                match ctx.lookup_fn_param_type(did, i) {
+                    Option::Some(expected_ty) => {
+                        if !string_eq_str(expected_ty.as_str(), arg_ty.as_str()) && needs_int_cast(arg_ty.as_str(), expected_ty.as_str()) {
+                            // Type mismatch: widen the argument to match the definition
+                            let widened = ctx.fresh_temp();
+                            ctx.write_indent();
+                            ctx.write_string(&widened);
+                            if is_smaller_int(arg_ty.as_str(), expected_ty.as_str()) {
+                                ctx.write(" = sext ");
+                            } else {
+                                ctx.write(" = zext ");
+                            }
+                            ctx.write_string(&arg_ty);
+                            ctx.write(" ");
+                            ctx.write_string(&arg_val);
+                            ctx.write(" to ");
+                            ctx.write_string(&expected_ty);
+                            ctx.write("\n");
+                            final_val = widened;
+                            final_ty = expected_ty;
+                        } else {
+                            final_val = arg_val;
+                            final_ty = arg_ty;
+                        }
+                    }
+                    Option::None => {
+                        final_val = arg_val;
+                        final_ty = arg_ty;
+                    }
+                }
+            }
+            Option::None => {
+                final_val = arg_val;
+                final_ty = arg_ty;
+            }
+        }
+        llvm_args.push((final_ty, final_val));
         i = i + 1;
     }
 
     // Get return type from destination
     let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
-    let return_ty = ctx.get_local_type(destination.local);
+    let call_site_ret_ty = ctx.get_local_type(destination.local);
+
+    // Determine the actual return type to use for the call instruction
+    // If the function definition has a different return type (generic), use the definition's type
+    let def_ret_ty: String = match target_def_id {
+        Option::Some(did) => {
+            match ctx.lookup_fn_ret_type(did) {
+                Option::Some(drt) => drt,
+                Option::None => clone_string(&call_site_ret_ty),
+            }
+        }
+        Option::None => clone_string(&call_site_ret_ty),
+    };
 
     // Check if return type is void (unit type)
-    let is_void = is_void_type(return_ty.as_str());
+    let is_void = is_void_type(def_ret_ty.as_str());
 
     if is_void {
         // Void function - no return value
@@ -362,12 +419,28 @@ fn emit_call(
         let result = ctx.fresh_temp();
         ctx.emit_call(
             Option::Some(result.as_str()),
-            return_ty.as_str(),
+            def_ret_ty.as_str(),
             func_val.as_str(),
             &llvm_args,
         );
-        // Store result
-        ctx.emit_store(return_ty.as_str(), result.as_str(), dest_ptr.as_str());
+
+        // If the definition return type differs from the call site's expected type, truncate
+        if !string_eq_str(def_ret_ty.as_str(), call_site_ret_ty.as_str()) && needs_int_cast(def_ret_ty.as_str(), call_site_ret_ty.as_str()) {
+            let truncated = ctx.fresh_temp();
+            ctx.write_indent();
+            ctx.write_string(&truncated);
+            ctx.write(" = trunc ");
+            ctx.write_string(&def_ret_ty);
+            ctx.write(" ");
+            ctx.write_string(&result);
+            ctx.write(" to ");
+            ctx.write_string(&call_site_ret_ty);
+            ctx.write("\n");
+            ctx.emit_store(call_site_ret_ty.as_str(), truncated.as_str(), dest_ptr.as_str());
+        } else {
+            // Store result
+            ctx.emit_store(def_ret_ty.as_str(), result.as_str(), dest_ptr.as_str());
+        }
     }
 
     // Jump to continuation
@@ -411,6 +484,83 @@ fn extract_direct_fn_name(
         }
         _ => Option::None,
     }
+}
+
+/// Extracts the DefId from a MIR call operand (for signature lookup).
+fn extract_call_def_id(operand: &mir_types::Operand) -> Option<u32> {
+    match operand {
+        &mir_types::Operand::Constant(ref constant) => {
+            match &constant.kind {
+                &mir_types::ConstantKind::FnDef(ref def_id) => {
+                    Option::Some(def_id.index)
+                }
+                _ => Option::None,
+            }
+        }
+        _ => Option::None,
+    }
+}
+
+/// Checks if two LLVM integer types need a cast between them.
+/// Returns true if both are integer types (iN) and they differ.
+fn needs_int_cast(from_ty: &str, to_ty: &str) -> bool {
+    let from_bytes = from_ty.as_bytes();
+    let to_bytes = to_ty.as_bytes();
+    // Both must start with 'i' and be integer types
+    if from_bytes.len() < 2 || to_bytes.len() < 2 {
+        return false;
+    }
+    if from_bytes[0] != 105 || to_bytes[0] != 105 {
+        // 105 = 'i'
+        return false;
+    }
+    // Check that rest is digits (not "iN" vs "internal" or something)
+    let mut fi: usize = 1;
+    while fi < from_bytes.len() {
+        if from_bytes[fi] < 48 || from_bytes[fi] > 57 {
+            return false;
+        }
+        fi = fi + 1;
+    }
+    let mut ti: usize = 1;
+    while ti < to_bytes.len() {
+        if to_bytes[ti] < 48 || to_bytes[ti] > 57 {
+            return false;
+        }
+        ti = ti + 1;
+    }
+    true
+}
+
+/// Checks if from_ty is a smaller integer type than to_ty (for sext).
+fn is_smaller_int(from_ty: &str, to_ty: &str) -> bool {
+    let from_bits = parse_int_bits(from_ty);
+    let to_bits = parse_int_bits(to_ty);
+    from_bits < to_bits
+}
+
+/// Parses the bit width from an LLVM integer type string (e.g., "i32" -> 32).
+fn parse_int_bits(ty: &str) -> u32 {
+    let bytes = ty.as_bytes();
+    if bytes.len() < 2 || bytes[0] != 105 {
+        return 0;
+    }
+    let mut result: u32 = 0;
+    let mut i: usize = 1;
+    while i < bytes.len() {
+        if bytes[i] >= 48 && bytes[i] <= 57 {
+            result = result * 10 + ((bytes[i] - 48) as u32);
+        }
+        i = i + 1;
+    }
+    result
+}
+
+/// Clone a string.
+fn clone_string(s: &String) -> String {
+    let mut result = String::new();
+    result.push_str(s.as_str());
+    result
 }
 
 /// Checks if an LLVM type is void/unit.

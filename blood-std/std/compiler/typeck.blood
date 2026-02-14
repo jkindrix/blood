@@ -93,6 +93,24 @@ fn count_type_params(params: &Vec<hir_ty::GenericParam>) -> u32 {
     count
 }
 
+/// Extracts the actual TyVarId indices from generic parameters.
+/// These are the globally unique indices assigned during HIR lowering.
+fn extract_type_param_ids(params: &Vec<hir_ty::GenericParam>) -> Vec<u32> {
+    let mut ids: Vec<u32> = Vec::new();
+    let mut i: usize = 0;
+    while i < params.len() {
+        match &params[i] {
+            &hir_ty::GenericParam::TypeParam(ref def) => {
+                ids.push(def.var_id.index);
+            }
+            &hir_ty::GenericParam::LifetimeParam(_) => {}
+            &hir_ty::GenericParam::ConstParam(_) => {}
+        }
+        i = i + 1;
+    }
+    ids
+}
+
 // ============================================================
 // Exhaustiveness Checking
 // ============================================================
@@ -568,11 +586,17 @@ impl TypeChecker {
             i = i + 1;
         }
 
-        // Count only type parameters (not lifetime or const params)
+        // Count type parameters and extract their actual TyVarId indices
         let num_generics = count_type_params(&sig.generics.params);
+        let type_param_ids = extract_type_param_ids(&sig.generics.params);
 
-        // Create the info
-        let info = typeck_info::FnSigInfo::new(param_tys, hir_ty::copy_type(&sig.return_ty), num_generics);
+        // Create the info with actual param IDs
+        let info = typeck_info::FnSigInfo::with_param_ids(
+            param_tys,
+            hir_ty::copy_type(&sig.return_ty),
+            num_generics,
+            type_param_ids,
+        );
 
         // Store at def_id.index
         let def_idx = def_id.index as usize;

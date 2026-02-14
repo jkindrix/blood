@@ -2247,32 +2247,136 @@ fn lower_try_with_expr(
 }
 
 // ============================================================
+// Macro Call Lowering — Helpers
+// ============================================================
+
+/// Create a &str literal HIR expression.
+fn make_str_literal_expr(span: common::Span, s: &str) -> hir_expr::Expr {
+    let mut str_copy = String::new();
+    str_copy.push_str(s);
+    let lit = hir_expr::Literal::new(
+        hir_expr::LiteralKind::Str(str_copy),
+        span,
+    );
+    hir_expr::Expr::new(
+        hir_expr::ExprKind::Literal(lit),
+        hir_ty::Type::new(hir_ty::TypeKind::Ref { inner: Box::new(hir_ty::Type::str_ty()), mutable: false }),
+        span,
+    )
+}
+
+/// Generate a Call expression to a named builtin function.
+/// Resolves the name through the resolver to get its DefId.
+fn make_builtin_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, name: &str, args: Vec<hir_expr::Expr>, span: common::Span) -> hir_expr::Expr {
+    let sym = ctx.intern(name);
+    let lookup = ctx.resolver.lookup(sym);
+    if lookup.is_some() {
+        let result = lookup.unwrap();
+        let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+        let resolved = hir_def::ResolvedPath::new(binding.def_id, 0, span);
+        let callee = hir_expr::Expr::new(
+            hir_expr::ExprKind::Path(resolved),
+            hir_ty::Type::infer(ctx.alloc_ty_var()),
+            span,
+        );
+        let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+        hir_expr::Expr::new(
+            hir_expr::ExprKind::Call {
+                callee: Box::new(callee),
+                args: args,
+            },
+            ty,
+            span,
+        )
+    } else {
+        // Builtin not found — report error
+        let mut msg = common::make_string("format macro: builtin '");
+        msg.push_str(name);
+        msg.push_str("' not found");
+        ctx.error(
+            hir::DiagnosticCode::E0102,
+            msg,
+            span,
+        );
+        hir_expr::Expr::error(span)
+    }
+}
+
+/// Check if an AST expression is a string literal.
+fn ast_expr_is_str_literal(expr: &ast::Expr) -> bool {
+    match &expr.kind {
+        &ast::ExprKind::Literal(ref lit) => {
+            match &lit.kind {
+                &ast::LiteralKind::Str(_) => true,
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+}
+
+// ============================================================
 // Macro Call Lowering
 // ============================================================
 
 /// Lower a macro call expression.
 fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprPath, kind: &ast::MacroCallKind, span: common::Span) -> hir_expr::Expr {
-    let _ = path;
+    // Extract the macro name from the path
+    let macro_name: String = if path.segments.len() > 0 {
+        ctx.span_to_string(path.segments[path.segments.len() - 1].name.span)
+    } else {
+        String::new()
+    };
+
     match kind {
         &ast::MacroCallKind::Format { ref format_str, ref args, ref named_args } => {
+            let _ = named_args;
             // Parse format string into segments
             let segments = parse_format_segments(format_str.value.as_str());
 
-            // If no placeholders and no args, return the string literal directly
+            // === No-args case ===
             if args.len() == 0 {
-                let mut str_copy = String::new();
-                str_copy.push_str(format_str.value.as_str());
-                let lit = hir_expr::Literal::new(
-                    hir_expr::LiteralKind::Str(str_copy),
-                    format_str.span,
-                );
-                return hir_expr::Expr::new(
-                    hir_expr::ExprKind::Literal(lit),
-                    hir_ty::Type::new(hir_ty::TypeKind::Ref { inner: Box::new(hir_ty::Type::str_ty()), mutable: false }),
-                    span,
-                );
+                let mn = macro_name.as_str();
+                if str_eq(mn, "println") {
+                    let mut a: Vec<hir_expr::Expr> = Vec::new();
+                    a.push(make_str_literal_expr(span, format_str.value.as_str()));
+                    return make_builtin_call_expr(ctx, "println_str", a, span);
+                }
+                if str_eq(mn, "print") {
+                    let mut a: Vec<hir_expr::Expr> = Vec::new();
+                    a.push(make_str_literal_expr(span, format_str.value.as_str()));
+                    return make_builtin_call_expr(ctx, "print_str", a, span);
+                }
+                if str_eq(mn, "eprintln") {
+                    let mut a: Vec<hir_expr::Expr> = Vec::new();
+                    a.push(make_str_literal_expr(span, format_str.value.as_str()));
+                    return make_builtin_call_expr(ctx, "eprintln_str", a, span);
+                }
+                if str_eq(mn, "eprint") {
+                    let mut a: Vec<hir_expr::Expr> = Vec::new();
+                    a.push(make_str_literal_expr(span, format_str.value.as_str()));
+                    return make_builtin_call_expr(ctx, "eprint_str", a, span);
+                }
+                if str_eq(mn, "panic") {
+                    let mut a: Vec<hir_expr::Expr> = Vec::new();
+                    a.push(make_str_literal_expr(span, format_str.value.as_str()));
+                    return make_builtin_call_expr(ctx, "panic", a, span);
+                }
+                if str_eq(mn, "todo") {
+                    let mut a: Vec<hir_expr::Expr> = Vec::new();
+                    a.push(make_str_literal_expr(span, "not yet implemented"));
+                    return make_builtin_call_expr(ctx, "panic", a, span);
+                }
+                if str_eq(mn, "unreachable") {
+                    let mut a: Vec<hir_expr::Expr> = Vec::new();
+                    a.push(make_str_literal_expr(span, "internal error: entered unreachable code"));
+                    return make_builtin_call_expr(ctx, "panic", a, span);
+                }
+                // Default (format!): return string literal
+                return make_str_literal_expr(span, format_str.value.as_str());
             }
 
+            // === With-args case ===
             // Lower all format args to HIR
             let mut args_hir: Vec<hir_expr::Expr> = Vec::new();
             let mut ai: usize = 0;
@@ -2282,117 +2386,81 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprP
                 ai = ai + 1;
             }
 
-            // Build a block that constructs a String via concatenation:
-            //   let mut __fmt = String::new();
-            //   __fmt.push_str("literal segment");
-            //   __fmt.push_str(<formatted arg>);
-            //   __fmt
-            let mut stmts: Vec<hir_expr::Stmt> = Vec::new();
-
-            // Create the __fmt local
-            let fmt_local_id = ctx.alloc_local_id();
-            let fmt_sym = common::SpannedSymbol {
-                symbol: common::Symbol { index: 0 },
-                span: span,
-            };
-            let fmt_ty = hir_ty::Type::infer(ctx.alloc_ty_var());
-            let fmt_pat = hir_expr::Pattern::new(
-                hir_expr::PatternKind::Binding {
-                    local_id: fmt_local_id,
-                    name: fmt_sym,
-                    mode: hir_expr::BindingMode::ByValue,
-                    subpattern: Option::None,
-                },
-                hir_ty::copy_type(&fmt_ty),
-                span,
-            );
-
-            // Register synthetic local in body_locals so the type checker can find it
-            let fmt_local = hir_expr::Local::new(
-                fmt_local_id,
-                common::SpannedSymbol {
-                    symbol: common::Symbol { index: 0 },
-                    span: span,
-                },
-                fmt_ty,
-                false,
-                span,
-            );
-            ctx.body_locals.push(fmt_local);
-
-            // String::new() as a default/empty string literal
-            let empty_str = hir_expr::Literal::new(
-                hir_expr::LiteralKind::Str(String::new()),
-                span,
-            );
-            let string_new_expr = hir_expr::Expr::new(
-                hir_expr::ExprKind::Literal(empty_str),
-                hir_ty::Type::new(hir_ty::TypeKind::Ref { inner: Box::new(hir_ty::Type::str_ty()), mutable: false }),
-                span,
-            );
-
-            let let_stmt = hir_expr::Stmt::Let {
-                pattern: fmt_pat,
-                ty: Option::None,
-                init: Option::Some(string_new_expr),
-                span: span,
-            };
-            stmts.push(let_stmt);
-
-            // Process each segment, building concatenation expressions
+            // Build string parts: literal segments as &str, placeholder args converted to &str
+            let mut parts: Vec<hir_expr::Expr> = Vec::new();
             let mut placeholder_idx: usize = 0;
             let mut si: usize = 0;
             while si < segments.len() {
                 let seg = &segments[si];
                 if seg.is_placeholder {
-                    // Placeholder: push the corresponding argument
                     if placeholder_idx < args_hir.len() {
-                        // For now, we emit the argument directly as a push_str operand.
-                        // The type checker will handle coercion.
-                        let push_stmt = hir_expr::Stmt::Expr {
-                            expr: args_hir[placeholder_idx],
-                            has_semi: true,
-                        };
-                        stmts.push(push_stmt);
+                        if placeholder_idx < args.len() && ast_expr_is_str_literal(&args[placeholder_idx]) {
+                            // String literal arg: already a &str, use as-is
+                            parts.push(args_hir[placeholder_idx]);
+                        } else {
+                            // Non-string arg: convert via int_to_string (handles i32)
+                            let mut conv_args: Vec<hir_expr::Expr> = Vec::new();
+                            conv_args.push(args_hir[placeholder_idx]);
+                            let converted = make_builtin_call_expr(ctx, "int_to_string", conv_args, span);
+                            parts.push(converted);
+                        }
                         placeholder_idx = placeholder_idx + 1;
                     }
                 } else {
-                    // Literal segment: emit as string literal
                     if seg.text.len() > 0 {
-                        let mut seg_copy = String::new();
-                        seg_copy.push_str(seg.text.as_str());
-                        let seg_lit = hir_expr::Literal::new(
-                            hir_expr::LiteralKind::Str(seg_copy),
-                            span,
-                        );
-                        let seg_expr = hir_expr::Expr::new(
-                            hir_expr::ExprKind::Literal(seg_lit),
-                            hir_ty::Type::new(hir_ty::TypeKind::Ref { inner: Box::new(hir_ty::Type::str_ty()), mutable: false }),
-                            span,
-                        );
-                        let push_stmt = hir_expr::Stmt::Expr {
-                            expr: seg_expr,
-                            has_semi: true,
-                        };
-                        stmts.push(push_stmt);
+                        parts.push(make_str_literal_expr(span, seg.text.as_str()));
                     }
                 }
                 si = si + 1;
             }
 
-            // Return the fmt local
-            let fmt_ref = hir_expr::Expr::new(
-                hir_expr::ExprKind::Local(fmt_local_id),
-                hir_ty::Type::new(hir_ty::TypeKind::Ref { inner: Box::new(hir_ty::Type::str_ty()), mutable: false }),
-                span,
-            );
+            // Concatenate all parts using str_concat
+            let formatted: hir_expr::Expr = if parts.len() == 0 {
+                make_str_literal_expr(span, "")
+            } else if parts.len() == 1 {
+                parts[0]
+            } else {
+                let mut result: hir_expr::Expr = parts[0];
+                let mut pi: usize = 1;
+                while pi < parts.len() {
+                    let mut concat_args: Vec<hir_expr::Expr> = Vec::new();
+                    concat_args.push(result);
+                    concat_args.push(parts[pi]);
+                    result = make_builtin_call_expr(ctx, "str_concat", concat_args, span);
+                    pi = pi + 1;
+                }
+                result
+            };
 
-            let block = hir_expr::Block::new(stmts, Option::Some(Box::new(fmt_ref)), span);
-            hir_expr::Expr::new(
-                hir_expr::ExprKind::Block(block),
-                hir_ty::Type::new(hir_ty::TypeKind::Ref { inner: Box::new(hir_ty::Type::str_ty()), mutable: false }),
-                span,
-            )
+            // Dispatch based on macro name
+            let mn = macro_name.as_str();
+            if str_eq(mn, "println") {
+                let mut print_args: Vec<hir_expr::Expr> = Vec::new();
+                print_args.push(formatted);
+                return make_builtin_call_expr(ctx, "println_str", print_args, span);
+            }
+            if str_eq(mn, "print") {
+                let mut print_args: Vec<hir_expr::Expr> = Vec::new();
+                print_args.push(formatted);
+                return make_builtin_call_expr(ctx, "print_str", print_args, span);
+            }
+            if str_eq(mn, "eprintln") {
+                let mut print_args: Vec<hir_expr::Expr> = Vec::new();
+                print_args.push(formatted);
+                return make_builtin_call_expr(ctx, "eprintln_str", print_args, span);
+            }
+            if str_eq(mn, "eprint") {
+                let mut print_args: Vec<hir_expr::Expr> = Vec::new();
+                print_args.push(formatted);
+                return make_builtin_call_expr(ctx, "eprint_str", print_args, span);
+            }
+            if str_eq(mn, "panic") {
+                let mut panic_args: Vec<hir_expr::Expr> = Vec::new();
+                panic_args.push(formatted);
+                return make_builtin_call_expr(ctx, "panic", panic_args, span);
+            }
+            // Default (format!): return the formatted string
+            formatted
         }
         &ast::MacroCallKind::VecMacro(ref vec_args) => {
             match vec_args {

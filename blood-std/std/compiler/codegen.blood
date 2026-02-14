@@ -216,6 +216,15 @@ pub fn generate_function_with_ctx(
         ret_ty_raw
     };
 
+    // Store function signature for generic call fixup at call sites
+    let mut sig_param_types: Vec<String> = Vec::new();
+    let mut sp: usize = 0;
+    while sp < params.len() {
+        sig_param_types.push(clone_string(&params[sp].0));
+        sp = sp + 1;
+    }
+    ctx.register_fn_signature(body.def_id.index, sig_param_types, clone_string(&ret_ty));
+
     // Emit function header
     ctx.emit_fn_header(fn_name, &params, ret_ty.as_str());
 
