@@ -87,11 +87,36 @@ pub fn emit_terminator(
             // Resume from handler - call runtime to transfer control back
             match value {
                 &Option::Some(ref v) => {
-                    let val = codegen_expr::emit_operand(ctx, v);
-                    ctx.write_indent();
-                    ctx.write("call void @blood_resume(i64 ");
-                    ctx.write_string(&val);
-                    ctx.write(")\n");
+                    let (val, ty) = codegen_expr::emit_operand_typed(ctx, v);
+                    if str_eq(ty.as_str(), "{}") {
+                        // Unit-typed resume value — pass 0
+                        ctx.write_indent();
+                        ctx.write("call void @blood_resume(i64 0)\n");
+                    } else if str_eq(ty.as_str(), "i64") || str_eq(ty.as_str(), "ptr") {
+                        // Already i64-compatible
+                        ctx.write_indent();
+                        ctx.write("call void @blood_resume(i64 ");
+                        ctx.write_string(&val);
+                        ctx.write(")\n");
+                    } else {
+                        // Need to widen to i64 (e.g., i32 → zext to i64)
+                        let widened = ctx.fresh_temp();
+                        ctx.write_indent();
+                        ctx.write_string(&widened);
+                        if str_eq(ty.as_str(), "i1") || str_eq(ty.as_str(), "i8") || str_eq(ty.as_str(), "i16") || str_eq(ty.as_str(), "i32") {
+                            ctx.write(" = zext ");
+                        } else {
+                            ctx.write(" = bitcast ");
+                        }
+                        ctx.write_string(&ty);
+                        ctx.write(" ");
+                        ctx.write_string(&val);
+                        ctx.write(" to i64\n");
+                        ctx.write_indent();
+                        ctx.write("call void @blood_resume(i64 ");
+                        ctx.write_string(&widened);
+                        ctx.write(")\n");
+                    }
                 }
                 &Option::None => {
                     // Unit-resume: pass 0
