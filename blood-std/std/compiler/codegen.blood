@@ -699,17 +699,66 @@ pub fn intrinsic_declarations() -> String {
     output.push_str("declare ptr @box_new(ptr, i64)\n");
     output.push_str("declare ptr @box_as_ref(ptr)\n");
 
-    // Effect runtime declarations
-    // These are provided by libblood_runtime.a (evidence-passing model).
-    // blood_push_handler/blood_pop_handler/blood_push_inline_handler are NOT
-    // in the runtime — they are generated inline by blood-rust's codegen.
-    // For now, declare the runtime functions and stub out the inline ones.
-    output.push_str("\n; Effect runtime declarations\n");
-    output.push_str("declare void @blood_push_handler(i64, ptr)\n");
-    output.push_str("declare void @blood_push_inline_handler(i64)\n");
-    output.push_str("declare void @blood_pop_handler()\n");
-    output.push_str("declare i64 @blood_perform(i64, i64, i64)\n");
-    output.push_str("declare void @blood_resume(i64)\n");
+    // Effect runtime stubs
+    // blood_perform is in libblood_runtime.a — declare it
+    // blood_push_handler, blood_pop_handler, blood_push_inline_handler, blood_resume
+    // are NOT in the runtime (blood-rust generates them inline) — define stubs here
+    output.push_str("\n; Effect runtime globals\n");
+    output.push_str("@blood_handler_stack_ptr = private global i64 0\n");
+    output.push_str("@blood_handler_stack = private global [256 x i64] zeroinitializer\n");
+    output.push_str("@blood_continuation_result = private global i64 0\n");
+    // blood_perform: our stub returns arg (tail-resumptive pass-through).
+    // The runtime also defines blood_perform but requires evidence registration.
+    // We override it via -Wl,-z,muldefs in the linker command.
+    output.push_str("define i64 @blood_perform(i64 %effect_id, i64 %op_index, i64 %arg) {\n");
+    output.push_str("entry:\n");
+    output.push_str("  store i64 %arg, ptr @blood_continuation_result\n");
+    output.push_str("  ret i64 %arg\n");
+    output.push_str("}\n");
+    output.push_str("\n; Effect runtime inline stubs\n");
+
+    // blood_push_handler
+    output.push_str("define void @blood_push_handler(i64 %handler_id, ptr %state_ptr) {\n");
+    output.push_str("entry:\n");
+    output.push_str("  %sp = load i64, ptr @blood_handler_stack_ptr\n");
+    output.push_str("  %slot = getelementptr inbounds [256 x i64], ptr @blood_handler_stack, i64 0, i64 %sp\n");
+    output.push_str("  store i64 %handler_id, ptr %slot\n");
+    output.push_str("  %new_sp = add i64 %sp, 1\n");
+    output.push_str("  store i64 %new_sp, ptr @blood_handler_stack_ptr\n");
+    output.push_str("  ret void\n");
+    output.push_str("}\n");
+
+    // blood_push_inline_handler
+    output.push_str("define void @blood_push_inline_handler(i64 %effect_id) {\n");
+    output.push_str("entry:\n");
+    output.push_str("  %sp = load i64, ptr @blood_handler_stack_ptr\n");
+    output.push_str("  %slot = getelementptr inbounds [256 x i64], ptr @blood_handler_stack, i64 0, i64 %sp\n");
+    output.push_str("  store i64 %effect_id, ptr %slot\n");
+    output.push_str("  %new_sp = add i64 %sp, 1\n");
+    output.push_str("  store i64 %new_sp, ptr @blood_handler_stack_ptr\n");
+    output.push_str("  ret void\n");
+    output.push_str("}\n");
+
+    // blood_pop_handler
+    output.push_str("define void @blood_pop_handler() {\n");
+    output.push_str("entry:\n");
+    output.push_str("  %sp = load i64, ptr @blood_handler_stack_ptr\n");
+    output.push_str("  %is_empty = icmp eq i64 %sp, 0\n");
+    output.push_str("  br i1 %is_empty, label %done, label %pop\n");
+    output.push_str("pop:\n");
+    output.push_str("  %new_sp = sub i64 %sp, 1\n");
+    output.push_str("  store i64 %new_sp, ptr @blood_handler_stack_ptr\n");
+    output.push_str("  br label %done\n");
+    output.push_str("done:\n");
+    output.push_str("  ret void\n");
+    output.push_str("}\n");
+
+    // blood_resume (not in runtime — blood-rust generates inline)
+    output.push_str("define void @blood_resume(i64 %value) {\n");
+    output.push_str("entry:\n");
+    output.push_str("  store i64 %value, ptr @blood_continuation_result\n");
+    output.push_str("  ret void\n");
+    output.push_str("}\n");
 
     // Builtin constructor stubs (used as function pointers for match dispatch, not called directly)
     output.push_str("\n; Builtin constructor stubs\n");
