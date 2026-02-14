@@ -577,6 +577,29 @@ fn lower_effect_ref(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> Opt
                     let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
                     let def_id = binding.def_id;
 
+                    // Check if the resolved item is definitely NOT an effect
+                    match ctx.get_item(def_id) {
+                        Option::Some(ref entry) => {
+                            match &entry.item.kind {
+                                &hir_item::ItemKind::Effect(_) => {
+                                    // Good — this is an effect
+                                }
+                                _ => {
+                                    // Not an effect — report error
+                                    ctx.error(
+                                        hir::DiagnosticCode::E0102,
+                                        common::make_string("not an effect type"),
+                                        ty.span,
+                                    );
+                                    return Option::None;
+                                }
+                            }
+                        }
+                        Option::None => {
+                            // Item not yet lowered — assume it might be an effect
+                        }
+                    }
+
                     let type_args = match &seg.args {
                         &Some(ref args) => lower_type_args(ctx, args),
                         &None => Vec::new(),

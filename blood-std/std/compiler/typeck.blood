@@ -1046,6 +1046,27 @@ impl TypeChecker {
         Option::None
     }
 
+    /// Counts how many impls provide a method with the given name for the given type.
+    pub fn count_method_matches(self: &Self, ty: &hir_ty::Type, method_name: common::Symbol) -> u32 {
+        let mut count: u32 = 0;
+        let mut impl_idx: usize = 0;
+        while impl_idx < self.impls.len() {
+            let impl_info = &self.impls[impl_idx];
+            if types_match_for_impl(&impl_info.self_ty, ty) {
+                let mut method_idx: usize = 0;
+                while method_idx < impl_info.methods.len() {
+                    let method = &impl_info.methods[method_idx];
+                    if method.name.index == method_name.index {
+                        count = count + 1;
+                    }
+                    method_idx = method_idx + 1;
+                }
+            }
+            impl_idx = impl_idx + 1;
+        }
+        count
+    }
+
     /// Gets method info from a lookup result.
     pub fn get_method_from_lookup(self: &Self, result: &MethodLookupResult) -> &typeck_info::MethodInfo {
         &self.impls[result.impl_index].methods[result.method_index]

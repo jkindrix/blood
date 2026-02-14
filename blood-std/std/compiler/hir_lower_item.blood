@@ -443,6 +443,106 @@ fn lower_function_decl(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl) {
     ctx.add_item(def_id, item);
 }
 
+/// Checks if a type directly contains the given def_id (not behind Ref/Ptr/Box).
+fn type_directly_contains(ty: &hir_ty::Type, target_def_id: hir_def::DefId) -> bool {
+    match &ty.kind {
+        &hir_ty::TypeKind::Adt { def_id, args: _ } => {
+            def_id.index == target_def_id.index
+        }
+        _ => false,
+    }
+}
+
+/// Check struct fields for direct recursion (infinite size).
+fn check_recursive_struct_fields(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    struct_def_id: hir_def::DefId,
+    body: &hir_item::StructBody,
+    name: common::SpannedSymbol,
+    span: common::Span,
+) {
+    match body {
+        &hir_item::StructBody::Record(ref fields) => {
+            let mut i: usize = 0;
+            while i < fields.len() {
+                if type_directly_contains(&fields[i].ty, struct_def_id) {
+                    let struct_name = ctx.span_to_string(name.span);
+                    let mut msg = String::new();
+                    msg.push_str("recursive type `");
+                    msg.push_str(struct_name.as_str());
+                    msg.push_str("` has infinite size");
+                    ctx.error(hir::DiagnosticCode::E0100, msg, span);
+                    return;
+                }
+                i = i + 1;
+            }
+        }
+        &hir_item::StructBody::Tuple(ref types) => {
+            let mut i: usize = 0;
+            while i < types.len() {
+                if type_directly_contains(&types[i], struct_def_id) {
+                    let struct_name = ctx.span_to_string(name.span);
+                    let mut msg = String::new();
+                    msg.push_str("recursive type `");
+                    msg.push_str(struct_name.as_str());
+                    msg.push_str("` has infinite size");
+                    ctx.error(hir::DiagnosticCode::E0100, msg, span);
+                    return;
+                }
+                i = i + 1;
+            }
+        }
+        &hir_item::StructBody::Unit => {}
+    }
+}
+
+/// Check enum variants for direct recursion (infinite size).
+fn check_recursive_enum_variants(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    enum_def_id: hir_def::DefId,
+    variants: &Vec<hir_item::Variant>,
+    name: common::SpannedSymbol,
+    span: common::Span,
+) {
+    let mut i: usize = 0;
+    while i < variants.len() {
+        match &variants[i].kind {
+            &hir_item::VariantKind::Tuple(ref types) => {
+                let mut j: usize = 0;
+                while j < types.len() {
+                    if type_directly_contains(&types[j], enum_def_id) {
+                        let enum_name = ctx.span_to_string(name.span);
+                        let mut msg = String::new();
+                        msg.push_str("recursive type `");
+                        msg.push_str(enum_name.as_str());
+                        msg.push_str("` has infinite size");
+                        ctx.error(hir::DiagnosticCode::E0100, msg, span);
+                        return;
+                    }
+                    j = j + 1;
+                }
+            }
+            &hir_item::VariantKind::Record(ref fields) => {
+                let mut j: usize = 0;
+                while j < fields.len() {
+                    if type_directly_contains(&fields[j].ty, enum_def_id) {
+                        let enum_name = ctx.span_to_string(name.span);
+                        let mut msg = String::new();
+                        msg.push_str("recursive type `");
+                        msg.push_str(enum_name.as_str());
+                        msg.push_str("` has infinite size");
+                        ctx.error(hir::DiagnosticCode::E0100, msg, span);
+                        return;
+                    }
+                    j = j + 1;
+                }
+            }
+            &hir_item::VariantKind::Unit => {}
+        }
+        i = i + 1;
+    }
+}
+
 /// Lower a struct declaration.
 fn lower_struct_decl(ctx: &mut hir_lower_ctx::LoweringCtx, s: &ast::StructDecl) {
     // Re-intern from span for consistent symbol indices
@@ -460,6 +560,9 @@ fn lower_struct_decl(ctx: &mut hir_lower_ctx::LoweringCtx, s: &ast::StructDecl) 
 
     // Lower struct body (field types may reference generic params)
     let struct_body = lower_struct_body(ctx, &s.body);
+
+    // Check for directly recursive struct (infinite size)
+    check_recursive_struct_fields(ctx, def_id, &struct_body, s.name, s.span);
 
     // Pop type param scope after lowering all types that reference generics
     ctx.resolver.pop_scope();
@@ -493,6 +596,9 @@ fn lower_enum_decl(ctx: &mut hir_lower_ctx::LoweringCtx, e: &ast::EnumDecl) {
 
     // Lower variants, passing the enum's DefId as parent
     let variants = lower_enum_variants(ctx, def_id, &e.variants);
+
+    // Check for directly recursive enum variants (infinite size)
+    check_recursive_enum_variants(ctx, def_id, &variants, e.name, e.span);
 
     // Pop type param scope after lowering all types that reference generics
     ctx.resolver.pop_scope();
@@ -1250,6 +1356,86 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::ImplBlock) {
             }
         }
         _ => {}
+    }
+
+    // Check for overlapping trait impls (same trait for same type)
+    match &trait_ref {
+        &Option::Some(ref tref) => {
+            if has_impl_type {
+                let trait_idx = tref.def_id.index as u64;
+                let type_idx = impl_type_idx as u64;
+                let key = (trait_idx << 32) | type_idx;
+                let mut found_overlap: bool = false;
+                let mut k: usize = 0;
+                while k < ctx.seen_trait_impls.len() {
+                    if ctx.seen_trait_impls[k] == key {
+                        found_overlap = true;
+                    }
+                    k = k + 1;
+                }
+                if found_overlap {
+                    let mut msg = String::new();
+                    msg.push_str("conflicting implementations of trait for the same type");
+                    ctx.error(hir::DiagnosticCode::E0101, msg, imp.span);
+                } else {
+                    ctx.seen_trait_impls.push(key);
+                }
+            }
+        }
+        &Option::None => {}
+    }
+
+    // Check for missing trait methods
+    match &trait_ref {
+        &Option::Some(ref tref) => {
+            // Look up the trait definition to get required methods
+            match ctx.get_item(tref.def_id) {
+                Option::Some(ref trait_entry) => {
+                    match &trait_entry.item.kind {
+                        &hir_item::ItemKind::Trait(ref trait_def) => {
+                            // Check each trait method is present in the impl
+                            let mut ti: usize = 0;
+                            while ti < trait_def.items.len() {
+                                match &trait_def.items[ti] {
+                                    &hir_item::AssocItem::Fn(ref trait_fn) => {
+                                        let trait_method_name = trait_fn.name.symbol;
+                                        let mut found_in_impl: bool = false;
+                                        let mut ii: usize = 0;
+                                        while ii < imp.items.len() {
+                                            match &imp.items[ii] {
+                                                &ast::ImplItem::Function(ref impl_fn) => {
+                                                    let impl_name = ctx.intern(ctx.span_to_string(impl_fn.name.span).as_str());
+                                                    if impl_name.index == trait_method_name.index {
+                                                        found_in_impl = true;
+                                                    }
+                                                }
+                                                &ast::ImplItem::TypeAlias(_) => {}
+                                                &ast::ImplItem::Const(_) => {}
+                                            }
+                                            ii = ii + 1;
+                                        }
+                                        if !found_in_impl {
+                                            let method_name_str = ctx.span_to_string(trait_fn.name.span);
+                                            let mut msg = String::new();
+                                            msg.push_str("not all trait items implemented, missing: `");
+                                            msg.push_str(method_name_str.as_str());
+                                            msg.push_str("`");
+                                            ctx.error(hir::DiagnosticCode::E0300, msg, imp.span);
+                                        }
+                                    }
+                                    &hir_item::AssocItem::Type(_) => {}
+                                    &hir_item::AssocItem::Const(_) => {}
+                                }
+                                ti = ti + 1;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Option::None => {}
+            }
+        }
+        &Option::None => {}
     }
 
     // Check for duplicate method names in impl block

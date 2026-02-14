@@ -992,6 +992,13 @@ fn infer_method_call(
         _ => {}
     }
 
+    // Check for ambiguous method dispatch (multiple impls provide same method)
+    let match_count = checker.count_method_matches(&resolved_receiver, method.symbol);
+    if match_count > 1 {
+        checker.error(typeck::TypeErrorKind::NoSuchMethod, method.span);
+        return checker.fresh_infer();
+    }
+
     // Look up the method on the receiver type
     match checker.lookup_method(&resolved_receiver, method.symbol) {
         Some(lookup_result) => {
@@ -1789,6 +1796,17 @@ fn infer_block(
 fn infer_stmt(checker: &mut typeck::TypeChecker, stmt: &hir_expr::Stmt) -> hir_ty::Type {
     match stmt {
         &hir_expr::Stmt::Let { ref pattern, ref ty, ref init, span: _ } => {
+            // Check for refutable patterns in let binding (irrefutable position)
+            match &pattern.kind {
+                &hir_expr::PatternKind::Literal(_) => {
+                    checker.error(typeck::TypeErrorKind::TypeMismatch, pattern.span);
+                }
+                &hir_expr::PatternKind::Range { start: _, end_val: _, inclusive: _ } => {
+                    checker.error(typeck::TypeErrorKind::TypeMismatch, pattern.span);
+                }
+                _ => {}
+            }
+
             // Infer or check initializer type
             let init_ty = match init {
                 &Some(ref e) => infer_expr(checker, e),
@@ -2583,7 +2601,8 @@ fn propagate_struct_pattern_fields(
                     }
                 }
                 Option::None => {
-                    // Field not found — type checker will report the error elsewhere
+                    // Field not found in struct definition — report error
+                    checker.error(typeck::TypeErrorKind::NoSuchField, fields[i].name.span);
                 }
             }
             i = i + 1;
@@ -2623,7 +2642,9 @@ fn propagate_struct_pattern_fields(
                     }
                     k = k + 1;
                 }
-                let _ = found;
+                if !found {
+                    checker.error(typeck::TypeErrorKind::NoSuchField, fields[i].name.span);
+                }
                 i = i + 1;
             }
         }

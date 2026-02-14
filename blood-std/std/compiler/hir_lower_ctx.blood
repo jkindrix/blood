@@ -279,6 +279,9 @@ pub struct LoweringCtx {
     pub loading_paths: Vec<String>,
     /// Builtin function DefId-to-runtime-name mappings.
     pub builtin_fn_defs: Vec<BuiltinFnDef>,
+    /// Seen (trait_def_id, type_def_id) pairs for overlapping impl detection.
+    /// Each entry is (trait_idx << 32) | type_idx.
+    pub seen_trait_impls: Vec<u64>,
 }
 
 /// Tracks a loaded external module to prevent circular imports.
@@ -356,6 +359,7 @@ impl LoweringCtx {
             builtin_result_err_def: Option::None,
             loading_paths: Vec::new(),
             builtin_fn_defs: Vec::new(),
+            seen_trait_impls: Vec::new(),
         }
     }
 
@@ -392,6 +396,7 @@ impl LoweringCtx {
             builtin_result_err_def: Option::None,
             loading_paths: Vec::new(),
             builtin_fn_defs: Vec::new(),
+            seen_trait_impls: Vec::new(),
         }
     }
 
