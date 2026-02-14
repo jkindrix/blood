@@ -776,6 +776,19 @@ fn substitute_infer_params(ty: &hir_ty::Type, subst: &unify::TypeParamSubst) -> 
 // ============================================================
 
 /// Infers the type of a binary operation.
+/// Checks if an expression is a literal integer 0.
+fn is_literal_zero(expr: &hir_expr::Expr) -> bool {
+    match &expr.kind {
+        &hir_expr::ExprKind::Literal(ref lit) => {
+            match &lit.kind {
+                &hir_expr::LiteralKind::Int { val, ty: _ } => val == 0,
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+}
+
 fn infer_binary(
     checker: &mut typeck::TypeChecker,
     bin_op: common::BinOp,
@@ -836,11 +849,17 @@ fn infer_binary(
             if is_bool_type(&resolved) {
                 checker.error(typeck::TypeErrorKind::TypeMismatch, span);
             }
+            if is_literal_zero(right) {
+                checker.error(typeck::TypeErrorKind::TypeMismatch, span);
+            }
             resolved
         }
         common::BinOp::Rem => {
             let resolved = checker.resolve(&left_ty);
             if is_bool_type(&resolved) {
+                checker.error(typeck::TypeErrorKind::TypeMismatch, span);
+            }
+            if is_literal_zero(right) {
                 checker.error(typeck::TypeErrorKind::TypeMismatch, span);
             }
             resolved
@@ -2338,6 +2357,29 @@ fn propagate_match_sub_patterns(
             ref rest,
             ref suffix,
         } => {
+            // Check that slice pattern doesn't have more fixed elements than array size
+            let fixed_count = prefix.len() + suffix.len();
+            match &resolved.kind {
+                &hir_ty::TypeKind::Array { element: _, size } => {
+                    let arr_size = size as usize;
+                    match rest {
+                        &Some(_) => {
+                            // With rest pattern (..), fixed elements must be <= array size
+                            if fixed_count > arr_size {
+                                checker.error(typeck::TypeErrorKind::TypeMismatch, pattern.span);
+                            }
+                        }
+                        &None => {
+                            // Without rest, pattern count must equal array size
+                            if fixed_count != arr_size {
+                                checker.error(typeck::TypeErrorKind::TypeMismatch, pattern.span);
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+
             let elem_ty = get_element_type(&resolved);
             match elem_ty {
                 Option::Some(ref et) => {
@@ -2489,6 +2531,27 @@ fn propagate_pattern_types_inner(
             ref rest,
             ref suffix,
         } => {
+            // Check that slice pattern doesn't exceed array size
+            let fixed_count = prefix.len() + suffix.len();
+            match &resolved.kind {
+                &hir_ty::TypeKind::Array { element: _, size } => {
+                    let arr_size = size as usize;
+                    match rest {
+                        &Some(_) => {
+                            if fixed_count > arr_size {
+                                checker.error(typeck::TypeErrorKind::TypeMismatch, pattern.span);
+                            }
+                        }
+                        &None => {
+                            if fixed_count != arr_size {
+                                checker.error(typeck::TypeErrorKind::TypeMismatch, pattern.span);
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+
             let elem_ty = get_element_type(&resolved);
             match elem_ty {
                 Option::Some(ref et) => {
