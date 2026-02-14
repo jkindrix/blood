@@ -607,13 +607,17 @@ impl TypeChecker {
             ei = ei + 1;
         }
 
-        // Create the info with actual param IDs and effect row
-        let info = typeck_info::FnSigInfo::with_effects(
+        // Extract where clause predicates
+        let where_predicates = hir_ty::copy_where_predicates(&sig.generics.where_predicates);
+
+        // Create the info with actual param IDs, effect row, and where clauses
+        let info = typeck_info::FnSigInfo::with_where_clauses(
             param_tys,
             hir_ty::copy_type(&sig.return_ty),
             num_generics,
             type_param_ids,
             effect_def_ids,
+            where_predicates,
         );
 
         // Store at def_id.index
@@ -1237,25 +1241,90 @@ impl TypeChecker {
         }
     }
 
-    /// Collects obligations from a function call based on where clauses.
-    /// Returns obligations that must be satisfied.
-    pub fn collect_call_obligations(
-        self: &Self,
+    /// Checks trait bounds from where clauses for a generic function call.
+    /// `arg_types` are the resolved types of the actual arguments.
+    pub fn check_where_clause_bounds(
+        self: &mut Self,
         fn_sig: &typeck_info::FnSigInfo,
-        type_args: &Vec<hir_ty::Type>,
+        arg_types: &Vec<hir_ty::Type>,
         span: common::Span,
-    ) -> Vec<typeck_types::Obligation> {
-        let mut obligations: Vec<typeck_types::Obligation> = Vec::new();
+    ) {
+        if fn_sig.where_predicates.len() == 0 {
+            return;
+        }
 
-        // Check where predicates (would be stored in FnSigInfo if we extended it)
-        // For now, create obligations for each type argument implementing basic traits
-        // This is a simplified implementation
+        let mut pi: usize = 0;
+        while pi < fn_sig.where_predicates.len() {
+            match &fn_sig.where_predicates[pi] {
+                &hir_ty::WherePredicate::TypeBound { ref ty, ref bounds, span: pred_span } => {
+                    // Find what concrete type was substituted for this type param.
+                    // The constrained type is Infer(param_id) — find which parameter
+                    // position uses that Infer ID, then get the resolved arg type.
+                    let concrete_ty = self.resolve_where_param_type(ty, fn_sig, arg_types);
+                    match &concrete_ty {
+                        &Option::Some(ref resolved_ty) => {
+                            // Check each trait bound
+                            let mut bi: usize = 0;
+                            while bi < bounds.len() {
+                                if !self.type_implements_trait(resolved_ty, &bounds[bi]) {
+                                    self.error(typeck_types::TypeErrorKind::TraitNotImplemented, span);
+                                }
+                                bi = bi + 1;
+                            }
+                        }
+                        &Option::None => {
+                            // Could not resolve param type — skip check
+                        }
+                    }
+                }
+                &hir_ty::WherePredicate::LifetimeBound { lifetime: _, bound: _, span: _ } => {}
+                &hir_ty::WherePredicate::EffectBound { effect_var: _, ref bounds, span: _ } => {}
+            }
+            pi = pi + 1;
+        }
+    }
 
-        let _ = fn_sig;
-        let _ = type_args;
-        let _ = span;
+    /// Resolves the concrete type for a where clause type parameter.
+    /// Given a type (usually Infer(param_id) from the where clause), finds
+    /// which parameter position uses that ID and returns the corresponding arg type.
+    fn resolve_where_param_type(
+        self: &Self,
+        where_ty: &hir_ty::Type,
+        fn_sig: &typeck_info::FnSigInfo,
+        arg_types: &Vec<hir_ty::Type>,
+    ) -> Option<hir_ty::Type> {
+        // Get the param ID from the where clause type
+        let param_id: Option<u32> = match &where_ty.kind {
+            &hir_ty::TypeKind::Infer(ref var_id) => Option::Some(var_id.index),
+            &hir_ty::TypeKind::Param(ref var_id) => Option::Some(var_id.index),
+            _ => Option::None,
+        };
 
-        obligations
+        match &param_id {
+            &Option::Some(pid) => {
+                // Find which parameter position has this Infer(pid) in the original sig
+                let mut i: usize = 0;
+                while i < fn_sig.param_tys.len() && i < arg_types.len() {
+                    if self.param_type_uses_infer(&fn_sig.param_tys[i], pid) {
+                        return Option::Some(hir_ty::copy_type(&arg_types[i]));
+                    }
+                    i = i + 1;
+                }
+                Option::None
+            }
+            &Option::None => Option::None,
+        }
+    }
+
+    /// Checks if a parameter type uses a specific Infer ID at the top level.
+    fn param_type_uses_infer(self: &Self, ty: &hir_ty::Type, target_id: u32) -> bool {
+        match &ty.kind {
+            &hir_ty::TypeKind::Infer(ref var_id) => var_id.index == target_id,
+            &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
+                self.param_type_uses_infer(inner.as_ref(), target_id)
+            }
+            _ => false,
+        }
     }
 
     /// Checks all collected obligations and reports errors for unsatisfied ones.

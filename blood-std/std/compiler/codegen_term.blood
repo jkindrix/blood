@@ -513,8 +513,12 @@ fn extract_direct_fn_name(
                             Option::Some(result)
                         }
                         Option::None => {
-                            let mut result = common::make_string("@fn_");
-                            result.push_str(codegen_types::format_u64(def_id.index as u64).as_str());
+                            let mut fallback_name = common::make_string("fn_");
+                            fallback_name.push_str(codegen_types::format_u64(def_id.index as u64).as_str());
+                            // Register the fallback name so stub generation can create a declaration
+                            ctx.register_def_name(def_id.index, clone_string(&fallback_name));
+                            let mut result = common::make_string("@");
+                            result.push_str(fallback_name.as_str());
                             Option::Some(result)
                         }
                     }

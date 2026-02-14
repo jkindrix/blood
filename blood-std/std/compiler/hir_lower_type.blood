@@ -245,6 +245,7 @@ fn lower_type_path(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath) -
             let def_id = binding.def_id;
 
             // Check if this is a type alias — resolve to the underlying type
+            // Also validate that the DefKind is appropriate for type position
             let def_info_opt = ctx.resolver.get_def_info(def_id);
             match &def_info_opt {
                 &Option::Some(ref info) => {
@@ -263,7 +264,25 @@ fn lower_type_path(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath) -
                                 &Option::None => {}
                             }
                         }
-                        _ => {}
+                        hir_def::DefKind::Struct => {}
+                        hir_def::DefKind::Enum => {}
+                        hir_def::DefKind::Trait => {}
+                        hir_def::DefKind::Effect => {}
+                        hir_def::DefKind::TypeParam => {}
+                        hir_def::DefKind::AssocType => {}
+                        _ => {
+                            // Not a valid type — report error
+                            let mut tmsg = common::make_string("not a type: `");
+                            let tname_str = ctx.span_to_string(seg.name.span);
+                            tmsg.push_str(tname_str.as_str());
+                            tmsg.push_str("` is not a type");
+                            ctx.error(
+                                hir::DiagnosticCode::E0102,
+                                tmsg,
+                                seg.name.span,
+                            );
+                            return hir_ty::Type::error();
+                        }
                     }
                 }
                 &Option::None => {}

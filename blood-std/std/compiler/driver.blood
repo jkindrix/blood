@@ -362,6 +362,20 @@ impl Compiler {
             };
         }
 
+        // Post-typeck validation: check that a main function exists
+        let has_main = has_main_function(&lower_result);
+        if !has_main {
+            let mut errors: Vec<error::CompileError> = Vec::new();
+            errors.push(error::CompileError::new(
+                error::CompilePhase::TypeCheck,
+                common::make_string("main function not found"),
+            ));
+            return CheckResult {
+                success: false,
+                errors: errors,
+            };
+        }
+
         // Check succeeded
         CheckResult {
             success: true,
@@ -440,6 +454,20 @@ impl Compiler {
 
         if !typeck_result.success {
             let errors = convert_type_errors(&typeck_result.errors);
+            return CheckResult {
+                success: false,
+                errors: errors,
+            };
+        }
+
+        // Post-typeck validation: check that a main function exists
+        let has_main = has_main_function(&lower_result);
+        if !has_main {
+            let mut errors: Vec<error::CompileError> = Vec::new();
+            errors.push(error::CompileError::new(
+                error::CompilePhase::TypeCheck,
+                common::make_string("main function not found"),
+            ));
             return CheckResult {
                 success: false,
                 errors: errors,
@@ -736,6 +764,42 @@ pub fn resolve_fn_name(source: &str, info: &FnInfo) -> String {
 // ============================================================
 // Helper Functions
 // ============================================================
+
+/// Checks if the lowered program contains a main function.
+fn has_main_function(lower_result: &hir_lower_ctx::LowerResult) -> bool {
+    let mut i: usize = 0;
+    while i < lower_result.items.len() {
+        let entry = &lower_result.items[i];
+        match &entry.item.kind {
+            &hir_item::ItemKind::Fn(_) => {
+                let name = resolve_symbol(&lower_result.interner, entry.item.name.symbol);
+                if str_equals(&name, "main") {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        i = i + 1;
+    }
+    false
+}
+
+/// Compares a String to a string literal for equality.
+fn str_equals(s: &String, other: &str) -> bool {
+    let bytes = s.as_bytes();
+    let other_bytes = other.as_bytes();
+    if bytes.len() != other_bytes.len() {
+        return false;
+    }
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        if bytes[i] != other_bytes[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    true
+}
 
 /// Clones a String.
 fn clone_string(s: &String) -> String {

@@ -955,6 +955,33 @@ fn infer_unary(
 // Call Type Inference
 // ============================================================
 
+/// Checks trait bounds from where clauses after argument type inference.
+fn check_call_trait_bounds(
+    checker: &mut typeck::TypeChecker,
+    def_id: hir_def::DefId,
+    args: &Vec<hir_expr::Expr>,
+    span: common::Span,
+) {
+    match checker.get_fn_sig(def_id) {
+        Option::Some(fn_info) => {
+            if fn_info.where_predicates.len() == 0 {
+                return;
+            }
+            // Collect resolved argument types
+            let mut resolved_arg_types: Vec<hir_ty::Type> = Vec::new();
+            let mut ai: usize = 0;
+            while ai < args.len() {
+                let arg_ty = infer_expr(checker, &args[ai]);
+                let resolved = checker.resolve(&arg_ty);
+                resolved_arg_types.push(resolved);
+                ai = ai + 1;
+            }
+            checker.check_where_clause_bounds(fn_info, &resolved_arg_types, span);
+        }
+        Option::None => {}
+    }
+}
+
 /// Infers the type of a function call.
 fn infer_call(
     checker: &mut typeck::TypeChecker,
@@ -987,6 +1014,7 @@ fn infer_call(
             }
 
             // Check that callee's effects are handled by caller (if not in handler)
+            // Also check trait bounds from where clauses
             match &callee_def_id {
                 &Option::Some(def_idx) => {
                     let sig_def_id = hir_def::DefId::new(def_idx);
@@ -1010,6 +1038,9 @@ fn infer_call(
                                     efi = efi + 1;
                                 }
                             }
+
+                            // Check trait bounds from where clauses
+                            check_call_trait_bounds(checker, sig_def_id, args, span);
                         }
                         Option::None => {}
                     }
