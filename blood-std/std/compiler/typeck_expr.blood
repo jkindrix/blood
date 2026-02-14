@@ -1321,6 +1321,19 @@ fn infer_struct(
         &None => {}
     }
 
+    // Check for missing struct fields (only for non-update, non-enum-variant constructors)
+    let has_base = match base {
+        &Some(_) => true,
+        &None => false,
+    };
+    if !has_base && checker.has_struct(path.def_id) {
+        let num_declared = checker.get_struct_num_fields(path.def_id);
+        let num_provided = fields.len() as u32;
+        if num_provided < num_declared {
+            checker.error(typeck::TypeErrorKind::ArityMismatch, span);
+        }
+    }
+
     // Check if the path refers to an enum variant (record variant construction)
     match checker.find_enum_for_variant(path.def_id) {
         Option::Some(ref lookup) => {
@@ -1641,6 +1654,16 @@ fn infer_assign(
     // Check that target is a valid lvalue
     if !is_lvalue(target) {
         checker.error(typeck::TypeErrorKind::InvalidLValue, target.span);
+    }
+
+    // Check that target is mutable (for simple local variables)
+    match &target.kind {
+        &hir_expr::ExprKind::Local(ref local_id) => {
+            if !checker.is_local_mutable(*local_id) {
+                checker.error(typeck::TypeErrorKind::CannotMutate, target.span);
+            }
+        }
+        _ => {}
     }
 
     // Assignment returns unit

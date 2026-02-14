@@ -142,8 +142,30 @@ pub fn lower_struct_body(ctx: &mut hir_lower_ctx::LoweringCtx, body: &ast::Struc
         }
         &ast::StructBody::Record(ref fields) => {
             let mut lowered: Vec<hir_item::StructField> = Vec::new();
+            // Check for duplicate field names using span bytes
             let mut i: usize = 0;
             while i < fields.len() {
+                let mut j: usize = 0;
+                while j < i {
+                    if fields[j].name.span.start == fields[i].name.span.start {
+                        // Same span start means same source text (can't happen for different fields)
+                        j = j + 1;
+                    } else {
+                        // Compare field names by interning and checking symbol index
+                        let name_i = ctx.intern(ctx.span_to_string(fields[i].name.span).as_str());
+                        let name_j = ctx.intern(ctx.span_to_string(fields[j].name.span).as_str());
+                        if name_i.index == name_j.index {
+                            let field_name = ctx.span_to_string(fields[i].name.span);
+                            let mut msg = String::new();
+                            msg.push_str("duplicate field name `");
+                            msg.push_str(field_name.as_str());
+                            msg.push_str("` in struct");
+                            ctx.error(hir::DiagnosticCode::E0101, msg, fields[i].name.span);
+                            break;
+                        }
+                        j = j + 1;
+                    }
+                }
                 let field = lower_struct_field(ctx, &fields[i]);
                 lowered.push(field);
                 i = i + 1;
@@ -173,6 +195,22 @@ pub fn lower_enum_variants(ctx: &mut hir_lower_ctx::LoweringCtx, parent_def_id: 
     let mut result: Vec<hir_item::Variant> = Vec::new();
     let mut i: usize = 0;
     while i < variants.len() {
+        // Check for duplicate variant name using interned symbol index
+        let name_i = ctx.intern(ctx.span_to_string(variants[i].name.span).as_str());
+        let mut j: usize = 0;
+        while j < i {
+            let name_j = ctx.intern(ctx.span_to_string(variants[j].name.span).as_str());
+            if name_i.index == name_j.index {
+                let variant_name = ctx.span_to_string(variants[i].name.span);
+                let mut msg = String::new();
+                msg.push_str("duplicate variant name `");
+                msg.push_str(variant_name.as_str());
+                msg.push_str("` in enum");
+                ctx.error(hir::DiagnosticCode::E0101, msg, variants[i].name.span);
+                break;
+            }
+            j = j + 1;
+        }
         let variant = lower_enum_variant(ctx, parent_def_id, &variants[i], i as u32);
         result.push(variant);
         i = i + 1;
@@ -369,6 +407,13 @@ fn lower_function_decl(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl) {
         let bid = ctx.alloc_body_id();
         Option::Some(bid)
     } else {
+        // Standalone functions (not in trait) must have a body
+        let fn_name_str = ctx.span_to_string(f.name.span);
+        let mut msg = String::new();
+        msg.push_str("function `");
+        msg.push_str(fn_name_str.as_str());
+        msg.push_str("` declared without a body");
+        ctx.error(hir::DiagnosticCode::E0300, msg, f.span);
         Option::None
     };
 

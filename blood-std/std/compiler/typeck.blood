@@ -755,6 +755,19 @@ impl TypeChecker {
         }
     }
 
+    /// Gets the number of fields for a struct by DefId.
+    /// Returns 0 if the struct is not found.
+    pub fn get_struct_num_fields(self: &Self, def_id: hir_def::DefId) -> u32 {
+        let def_idx = def_id.index as usize;
+        if def_idx >= self.structs.len() {
+            return 0;
+        }
+        match &self.structs[def_idx] {
+            &Some(ref info) => info.field_names.len() as u32,
+            &None => 0,
+        }
+    }
+
     /// Returns true if a struct with the given DefId is registered.
     pub fn has_struct(self: &Self, def_id: hir_def::DefId) -> bool {
         let def_idx = def_id.index as usize;

@@ -435,6 +435,11 @@ pub fn parse_fn_decl(parser: &mut parser_base::Parser, attrs: Vec<ast::Attribute
 
     parser.advance(); // consume 'fn'
 
+    // Validate function name is an identifier
+    if parser.current.kind != token::TokenKind::Ident && parser.current.kind != token::TokenKind::SelfLower {
+        parser.error_at_current(common::make_string("expected identifier for function name"), parser_base::ErrorCode::ExpectedIdentifier);
+    }
+
     let name = parser.parse_spanned_symbol();
 
     // Parse type parameters if present

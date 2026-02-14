@@ -774,12 +774,17 @@ pub fn parse_float_bits_from_span(parser: &mut Parser, span: common::Span) -> u6
         } else if pos < num_end && parser.source_byte_at(pos) == 43 {
             pos = pos + 1;
         }
+        let exp_digit_start = pos;
         while pos < num_end {
             let b = parser.source_byte_at(pos);
             if b >= 48 && b <= 57 {
                 exp = exp * 10 + ((b - 48) as i32);
             }
             pos = pos + 1;
+        }
+        if pos == exp_digit_start {
+            // No digits after exponent marker — invalid float
+            parser.error_at(span, common::make_string("invalid floating-point literal: incomplete exponent"), ErrorCode::InvalidFloat);
         }
         if exp_neg {
             exp = 0 - exp;
@@ -919,7 +924,11 @@ pub fn parse_string_from_span(parser: &mut Parser, span: common::Span) -> String
                     pos = pos - 1; // adjust for outer pos = pos + 1
                 }
             } else {
-                // Unknown escape — include as-is
+                // Unknown escape — report error
+                let mut msg = String::new();
+                msg.push_str("invalid escape sequence: \\");
+                msg.push(esc as char);
+                parser.error_at(span, msg, ErrorCode::UnexpectedCharacter);
                 result.push(92 as char);
                 result.push(esc as char);
             }
@@ -979,10 +988,17 @@ pub fn parse_char_from_span(parser: &mut Parser, span: common::Span) -> char {
     let pos = start + 1;
 
     if pos >= end {
+        parser.error_at(span, common::make_string("empty character literal"), ErrorCode::UnexpectedCharacter);
         return '?';
     }
 
     let b = parser.source_byte_at(pos);
+
+    // Check for empty char literal ('')
+    if b == 39 {
+        parser.error_at(span, common::make_string("empty character literal"), ErrorCode::UnexpectedCharacter);
+        return '?';
+    }
     if b == 92 && pos + 1 < end {
         // Escape sequence
         let esc = parser.source_byte_at(pos + 1);
@@ -1017,6 +1033,11 @@ pub fn parse_char_from_span(parser: &mut Parser, span: common::Span) -> char {
                 return code_point as char;
             }
         }
+        // Unknown escape in char literal — report error
+        let mut msg = String::new();
+        msg.push_str("invalid escape sequence: \\");
+        msg.push(esc as char);
+        parser.error_at(span, msg, ErrorCode::UnexpectedCharacter);
         return esc as char;
     }
 
