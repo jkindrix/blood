@@ -1759,10 +1759,11 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     let mut ctx = codegen_streaming::begin_streaming_module("main", output_path, &lower_result.items);
     ctx.trace_codegen = args.trace_codegen;
 
-    // Register builtin ADT types (Vec, String, HashMap, Box) in the ADT registry.
-    // These types are not in the HIR items list but user structs may contain them as fields.
-    // Without this, fields like `Vec<Token>` resolve to `ptr` (8 bytes) instead of
-    // `{ ptr, i64, i64 }` (24 bytes), causing stack buffer overflows.
+    // Register builtin ADT types (Vec, String, HashMap, Box) in the ADT registry
+    // BEFORE populating user ADT layouts. This is critical: without builtins,
+    // Box<T> gets expanded as { i8, [sizeof(T) x i8] } instead of "ptr",
+    // causing inflationary size cascades for recursive type structures
+    // (e.g., TypeKind → Box<Type> → Type → TypeKind).
     codegen::register_builtin_adts(
         &mut ctx,
         &lower_result.builtin_vec_def,
@@ -1770,8 +1771,8 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
         &lower_result.builtin_hashmap_def,
         &lower_result.builtin_box_def,
     );
-    // Rebuild all user struct/enum layouts now that builtins are registered.
-    codegen::rebuild_adt_layouts(&mut ctx, &lower_result.items);
+    // Now populate user ADT layouts with builtins available.
+    codegen::populate_adt_registry(&mut ctx, &lower_result.items);
 
     // Dump ADT layouts if requested (after registry is fully populated)
     if args.dump_layouts {

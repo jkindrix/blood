@@ -1498,7 +1498,7 @@ fn emit_box_new_call(
 }
 
 /// Emits an inline is_some check using i8 discriminant.
-/// Self-hosted convention: Some = discriminant 0, None = discriminant 1.
+/// Standard enum convention: None = discriminant 0, Some = discriminant 1.
 /// Inlined to avoid ABI mismatch with runtime (which uses i32 discriminant).
 fn emit_option_is_some_call(
     ctx: &mut codegen_ctx::CodegenCtx,
@@ -1519,13 +1519,13 @@ fn emit_option_is_some_call(
     let disc = ctx.fresh_temp();
     ctx.emit_load(disc.as_str(), "i8", opt_ptr.as_str());
 
-    // is_some = (discriminant == 0)
+    // is_some = (discriminant == 1), since Some is variant index 1
     let cmp_result = ctx.fresh_temp();
     ctx.write_indent();
     ctx.write_string(&cmp_result);
     ctx.write(" = icmp eq i8 ");
     ctx.write_string(&disc);
-    ctx.write(", 0\n");
+    ctx.write(", 1\n");
 
     let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
     ctx.emit_store("i1", cmp_result.as_str(), dest_ptr.as_str());
@@ -1543,7 +1543,7 @@ fn emit_option_is_some_call(
 }
 
 /// Emits an inline is_none check using i8 discriminant.
-/// Self-hosted convention: Some = discriminant 0, None = discriminant 1.
+/// Standard enum convention: None = discriminant 0, Some = discriminant 1.
 /// Inlined to avoid ABI mismatch with runtime (which uses i32 discriminant).
 fn emit_option_is_none_call(
     ctx: &mut codegen_ctx::CodegenCtx,
@@ -1564,13 +1564,13 @@ fn emit_option_is_none_call(
     let disc = ctx.fresh_temp();
     ctx.emit_load(disc.as_str(), "i8", opt_ptr.as_str());
 
-    // is_none = (discriminant == 1)
+    // is_none = (discriminant == 0), since None is variant index 0
     let cmp_result = ctx.fresh_temp();
     ctx.write_indent();
     ctx.write_string(&cmp_result);
     ctx.write(" = icmp eq i8 ");
     ctx.write_string(&disc);
-    ctx.write(", 1\n");
+    ctx.write(", 0\n");
 
     let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
     ctx.emit_store("i1", cmp_result.as_str(), dest_ptr.as_str());

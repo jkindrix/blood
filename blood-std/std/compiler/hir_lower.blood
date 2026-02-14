@@ -47,17 +47,13 @@ pub fn lower_program(program: &ast::Program, source: &str) -> hir_lower_ctx::Low
 /// Lower an AST Program to an HIR Crate with a specified base directory.
 /// The base directory is used for resolving external module paths.
 pub fn lower_program_with_base_dir(program: &ast::Program, base_dir: String, source: &str) -> hir_lower_ctx::LowerResult {
-    print("[HIR_LOWER] entry, program.decls=");
-    println_int(program.declarations.len() as i32);
     let mut ctx = hir_lower_ctx::LoweringCtx::with_base_dir(base_dir, common::make_string(source));
 
     // Allocate root module DefId
     let root_def_id = ctx.alloc_def_id();
 
     // Phase 1: Register type names (structs, enums, traits, effects)
-    print("[HIR_LOWER] Phase 1: register_type_names\n");
     register_type_names(&mut ctx, &program.declarations);
-    print("[HIR_LOWER] Phase 2: register_declarations\n");
 
     // Phase 1b: Register builtin stdlib types (String, Vec, Option, Box, HashMap)
     // Only registers names not already defined by user code
@@ -90,16 +86,12 @@ pub fn lower_program_with_base_dir(program: &ast::Program, base_dir: String, sou
     }
 
     // Phase 4: Lower function bodies to HIR bodies
-    print("[PHASE4] decls.len=");
-    println_int(program.declarations.len() as i32);
     lower_fn_bodies(&mut ctx, &program.declarations);
 
     // Record how many bodies are from the main file before adding external module bodies.
     // The type checker should only check these bodies; external module bodies may have
     // unresolved cross-module paths that produce false errors.
     let main_body_count = ctx.bodies.len();
-    print("[PHASE4] bodies.len=");
-    println_int(main_body_count as i32);
 
     // Phase 4b: Lower external module function bodies
     lower_external_module_fn_bodies(&mut ctx);
@@ -1260,8 +1252,6 @@ fn register_module_type_name(
 
 /// Second pass: register functions, consts, statics.
 fn register_declarations(ctx: &mut hir_lower_ctx::LoweringCtx, decls: &Vec<ast::Declaration>) {
-    print("[PHASE2] register_declarations count=");
-    println_int(decls.len() as i32);
     let mut i: usize = 0;
     while i < decls.len() {
         register_declaration(ctx, &decls[i]);
@@ -1277,10 +1267,6 @@ fn register_declaration(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declar
             // Re-intern the name from span to ensure consistent symbol indices
             let name_str = ctx.span_to_string(f.name.span);
             let name_symbol = ctx.intern(name_str.as_str());
-            print("[REGISTER] fn name=");
-            print_str(name_str.as_str());
-            print(" symbol=");
-            println_int(name_symbol.index as i32);
             let success = ctx.resolver.define_global(name_symbol, def_id);
             if !success {
                 ctx.error(
@@ -1650,7 +1636,6 @@ fn lower_fn_body_if_present(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::De
         &ast::Declaration::Function(ref f) => {
             // Only lower if there's a body
             if f.body.is_some() {
-                print("[BODY] lowering fn body\n");
                 lower_single_fn_body(ctx, f);
             }
         }
@@ -1697,20 +1682,10 @@ fn lower_single_fn_body(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl) {
     // Look up the function's DefId using the same name resolution as Phase 3.
     // This lets us find the Item and its pre-allocated body_id.
     let name_str = ctx.span_to_string(f.name.span);
-    print("[BODY_LOWER] name=");
-    print_str(name_str.as_str());
-    print(" name.len=");
-    println_int(name_str.len() as i32);
     let lookup_symbol = ctx.intern(name_str.as_str());
-    print("[BODY_LOWER] symbol.index=");
-    println_int(lookup_symbol.index as i32);
-    print("[BODY_LOWER] resolver.scope_count=");
-    println_int(ctx.resolver.scopes.len() as i32);
     let lookup = ctx.resolver.lookup(lookup_symbol);
     if lookup.is_none() {
         // If lookup fails, skip this body (should not happen)
-        print("[BODY_LOWER] lookup FAILED for symbol ");
-        println_int(lookup_symbol.index as i32);
         return;
     }
     let result = lookup.unwrap();
@@ -1764,11 +1739,7 @@ fn lower_single_fn_body(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl) {
     ctx.resolver.pop_scope();
 
     // Store the body
-    print("[BODY_LOWER] adding body, bodies.len before=");
-    println_int(ctx.bodies.len() as i32);
     ctx.add_body(body_id, body);
-    print("[BODY_LOWER] bodies.len after=");
-    println_int(ctx.bodies.len() as i32);
 }
 
 // ============================================================

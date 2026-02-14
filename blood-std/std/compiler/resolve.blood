@@ -779,8 +779,24 @@ impl Resolver {
             });
         }
 
-        // For multi-segment paths, chain the lookups
+        // For multi-segment paths, if first segment resolved to a local/type_param
+        // (DefId::dummy = 0xFFFFFFFF), it can't have child definitions. This happens
+        // when a pattern binding like `ref hir_ty` shadows a module name `hir_ty`.
+        // Fall back to globals hash where the module binding lives.
         let mut current_def = first_binding.def_id;
+        if current_def.index == 4294967295 {
+            match self.globals_hash.get(first.symbol.index as u64) {
+                Option::Some(global_idx) => {
+                    let global_entry = &self.globals[global_idx as usize];
+                    current_def = global_entry.def_id;
+                }
+                Option::None => {
+                    return Option::None;
+                }
+            }
+        }
+
+        // For multi-segment paths, chain the lookups
         let mut i: usize = 1;
         while i < segments.len() {
             let seg = &segments[i];

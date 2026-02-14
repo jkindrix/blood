@@ -37,8 +37,10 @@ pub fn begin_streaming_module(
 ) -> codegen_ctx::CodegenCtx {
     let mut ctx = codegen_ctx::CodegenCtx::new();
 
-    // Populate ADT registry from HIR items
-    codegen::populate_adt_registry(&mut ctx, items);
+    // NOTE: ADT registry population is done by the caller after registering
+    // builtin ADTs (Vec, String, HashMap, Box). This ensures builtins are
+    // available during populate_adt_registry so Box<T> resolves to "ptr"
+    // instead of being expanded as { i8, [sizeof(T) x i8] }.
 
     // Build module header
     let mut header = String::new();

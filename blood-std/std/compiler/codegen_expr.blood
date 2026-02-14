@@ -2104,23 +2104,10 @@ fn emit_cast_with_types(
             }
         }
     } else {
-        // Fallback - check for fat pointer to thin pointer case here too
-        let src_bytes = src_llvm.as_bytes();
-        let tgt_bytes = tgt_llvm.as_bytes();
-        let src_is_fat = src_bytes.len() > 0 && src_bytes[0] == 123;  // '{'
-        let tgt_is_thin = tgt_bytes.len() > 0 && tgt_bytes[0] == 112; // 'p' for "ptr"
-        if src_is_fat && tgt_is_thin {
-            // Fat pointer to thin pointer: extract the data pointer (field 0)
-            ctx.write_indent();
-            ctx.write_string(&result);
-            ctx.write(" = extractvalue ");
-            ctx.write_string(&src_llvm);
-            ctx.write(" ");
-            ctx.write_string(val);
-            ctx.write(", 0\n");
-        } else {
-            ctx.emit_cast(result.as_str(), "bitcast", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
-        }
+        // Fallback: delegate to LLVM-type-based cast logic which correctly
+        // handles int-to-int (trunc/sext), fat pointer extraction, etc.
+        // This path is reached when HIR types are Infer/Param (unresolved).
+        return emit_cast_from_llvm_types(ctx, val, src_llvm.as_str(), tgt_llvm.as_str());
     }
 
     result

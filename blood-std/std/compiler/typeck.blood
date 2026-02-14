@@ -458,15 +458,6 @@ impl TypeChecker {
     /// The span_start is the byte offset of the call expression, used as the key.
     /// The def_id_index is the DefId.index of the resolved method.
     pub fn record_method_resolution(self: &mut Self, span_start: usize, def_id_index: u32) {
-        // Debug: print recording for specific body_def_ids of interest
-        if self.current_body_def_id == 1031 || self.current_body_def_id == 1967 {
-            print("[RECORD RESOLUTION] body_def_id=");
-            print_int(self.current_body_def_id as i32);
-            print(" span_start=");
-            print_int(span_start as i32);
-            print(" method_def_id=");
-            println_int(def_id_index as i32);
-        }
         self.method_resolutions.push(common::MethodResEntry::new(self.current_body_def_id, span_start, def_id_index));
     }
 
@@ -499,13 +490,6 @@ impl TypeChecker {
 
     /// Records a deferred method call whose receiver is still an Infer variable.
     pub fn record_pending_method_call(self: &mut Self, span_start: usize, receiver_var: u32, method_symbol: common::Symbol, return_ty_var: u32) {
-        // Debug: print pending for specific body_def_ids of interest
-        if self.current_body_def_id == 1031 || self.current_body_def_id == 1967 {
-            print("[RECORD PENDING] body_def_id=");
-            print_int(self.current_body_def_id as i32);
-            print(" span_start=");
-            println_int(span_start as i32);
-        }
         self.pending_method_calls.push(common::PendingMethodCall::new(self.current_body_def_id, span_start, receiver_var, method_symbol, return_ty_var));
     }
 

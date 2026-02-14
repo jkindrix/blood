@@ -285,17 +285,6 @@ impl Compiler {
                 &Option::None => hir_def::DefId::new(body_id.index),
             };
 
-            // Debug: Print body_idx, body_id, and def_id for comparison with typeck
-            // Only print for external module bodies (body_idx >= 810 based on typeck output)
-            if body_idx >= 810 {
-                print("[MIR LOWER] body_index=");
-                print_int(body_idx as i32);
-                print(" body_id=");
-                print_int(body_id.index as i32);
-                print(" def_id=");
-                println_int(def_id.index as i32);
-            }
-
             // Lower the body to MIR with substitution table for type resolution
             let mir_body = mir_lower::lower_body(
                 def_id,
@@ -328,8 +317,6 @@ impl Compiler {
 
     /// Checks source code with a specified base directory for module resolution.
     pub fn check_with_base_dir(self: &mut Compiler, source: &str, base_dir: String) -> CheckResult {
-        print("[CHECK_WITH_BD] source.len=");
-        println_int(source.len() as i32);
         // Parse
         let parse_result = parser::parse_file(source);
         if parse_result.errors.len() > 0 {
@@ -873,11 +860,7 @@ pub fn check_file(path: &str) -> CheckResult {
         }
     };
 
-    print("[CHECK_FILE] content.len=");
-    println_int(content.len() as i32);
     let source_str = content.as_str();
-    print("[CHECK_FILE] source_str.len=");
-    println_int(source_str.len() as i32);
 
     // Get the base directory for module resolution
     let base_dir = source::parent_dir(path);

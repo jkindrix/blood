@@ -172,22 +172,11 @@ pub fn check_lower_result(result: &hir_lower_ctx::LowerResult) -> TypeCheckResul
 
     // Phase 2: Type check main file bodies (determines success/failure).
     let body_limit = result.main_body_count;
-    print("[TYPECK PHASE 2] body_limit=");
-    println_int(body_limit as i32);
     let mut i: usize = 0;
     while i < body_limit {
         let body_entry = &result.bodies[i];
         let return_ty = find_return_type_for_body(&result.items, body_entry.body_id);
         let found_def_id = find_def_id_for_body(&result.items, body_entry.body_id);
-        // Debug output for specific def_ids of interest (1805, 1811, 1822)
-        if found_def_id == 1805 || found_def_id == 1811 || found_def_id == 1822 {
-            print("[TYPECK PHASE 2] body_index=");
-            print_int(i as i32);
-            print(" body_id=");
-            print_int(body_entry.body_id.index as i32);
-            print(" found_def_id=");
-            println_int(found_def_id as i32);
-        }
         checker.current_body_def_id = found_def_id;
         check_body(&mut checker, &body_entry.body, &return_ty);
         i = i + 1;
@@ -200,21 +189,11 @@ pub fn check_lower_result(result: &hir_lower_ctx::LowerResult) -> TypeCheckResul
     // These bodies are MIR-lowered and code-generated, so their method calls
     // must be resolved. Errors from external bodies are discarded since each
     // module is authoritative only when compiled as the main file.
-    print("[TYPECK PHASE 2B START] body_limit=");
-    print_int(body_limit as i32);
-    print(" total_bodies=");
-    println_int(result.bodies.len() as i32);
     let mut j: usize = body_limit;
     while j < result.bodies.len() {
         let body_entry = &result.bodies[j];
         let return_ty = find_return_type_for_body(&result.items, body_entry.body_id);
         let found_def_id = find_def_id_for_body(&result.items, body_entry.body_id);
-        print("[TYPECK PHASE 2B] body_index=");
-        print_int(j as i32);
-        print(" body_id=");
-        print_int(body_entry.body_id.index as i32);
-        print(" found_def_id=");
-        println_int(found_def_id as i32);
         checker.current_body_def_id = found_def_id;
         check_body(&mut checker, &body_entry.body, &return_ty);
         j = j + 1;
@@ -665,10 +644,6 @@ fn find_def_id_for_body(
     // Default to body_id's index if no matching function found.
     // This must match the fallback in driver.blood's MIR lowering
     // to ensure method resolution lookups use consistent keys.
-    print("[FIND_DEF_ID_FOR_BODY FALLBACK] target_body_id=");
-    print_int(target_body_id.index as i32);
-    print(" items_len=");
-    println_int(items.len() as i32);
     target_body_id.index
 }
 
@@ -737,8 +712,6 @@ fn check_body(checker: &mut typeck::TypeChecker, body: &hir_expr::Body, return_t
 /// Uses a fixpoint loop: resolving one call may produce a return type
 /// that allows another receiver to become concrete.
 fn resolve_pending_methods(checker: &mut typeck::TypeChecker) {
-    print("[PENDING METHODS] count=");
-    println_int(checker.pending_method_calls.len() as i32);
     let mut resolved_count: usize = 1;
     while resolved_count > 0 {
         resolved_count = 0;
@@ -766,17 +739,6 @@ fn resolve_pending_methods(checker: &mut typeck::TypeChecker) {
             match &stripped.kind {
                 &hir_ty::TypeKind::Infer(ref var_id) => {
                     // Still unresolved, skip for now
-                    // Debug: print when specific body_def_ids fail to resolve
-                    if body_def_id == 1031 || body_def_id == 1967 {
-                        print("[PENDING STILL INFER] body_def_id=");
-                        print_int(body_def_id as i32);
-                        print(" span_start=");
-                        print_int(span_start as i32);
-                        print(" orig_receiver_var=");
-                        print_int(receiver_var as i32);
-                        print(" resolved_to_var=");
-                        println_int(var_id.index as i32);
-                    }
                 }
                 _ => {
                     // Receiver is now concrete - look up the method
@@ -809,11 +771,7 @@ fn resolve_pending_methods(checker: &mut typeck::TypeChecker) {
                             resolved_count = resolved_count + 1;
                         }
                         Option::None => {
-                            // Method not found even with concrete receiver
-                            print("[PENDING UNRESOLVED] body_def_id=");
-                            print_int(body_def_id as i32);
-                            print(" span_start=");
-                            println_int(span_start as i32);
+                            // Method not found even with concrete receiver — skip
                         }
                     }
                 }
@@ -832,10 +790,7 @@ fn resolve_pending_methods(checker: &mut typeck::TypeChecker) {
         }
         j = j + 1;
     }
-    print("[PENDING FINAL] unresolved=");
-    print_int(unresolved as i32);
-    print(" total_resolutions=");
-    println_int(checker.method_resolutions.len() as i32);
+    // Pending methods resolved
 }
 
 /// Checks if a method call at the given span_start has already been resolved.
