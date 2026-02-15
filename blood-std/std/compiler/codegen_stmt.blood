@@ -180,28 +180,35 @@ pub fn emit_statement(
         &mir_stmt::StatementKind::Nop => {
             // No operation - do nothing
         }
-        &mir_stmt::StatementKind::PushHandler { handler_id, ref state_place, state_kind: _ } => {
-            // Effect handler push - call runtime function
-            let state_ptr = codegen_expr::emit_place_addr(ctx, state_place);
+        &mir_stmt::StatementKind::PushHandler { handler_id, ref state_place, ref state_kind } => {
+            // Effect handler push - call inline stub
             let handler_id_val = codegen_types::format_u64(handler_id.index as u64);
 
-            // Call @blood_push_handler(handler_id, state_ptr)
+            // Get state pointer (null for stateless handlers)
+            let state_void_ptr = match state_kind {
+                &mir_stmt::HandlerStateKind::Stateless => {
+                    common::make_string("null")
+                }
+                _ => {
+                    codegen_expr::emit_place_addr(ctx, state_place)
+                }
+            };
+
             ctx.write_indent();
             ctx.write("call void @blood_push_handler(i64 ");
             ctx.write_string(&handler_id_val);
             ctx.write(", ptr ");
-            ctx.write_string(&state_ptr);
+            ctx.write_string(&state_void_ptr);
             ctx.write(")\n");
         }
         &mir_stmt::StatementKind::PopHandler => {
-            // Effect handler pop - call runtime function
+            // Effect handler pop - call inline stub
             ctx.write_indent();
             ctx.write("call void @blood_pop_handler()\n");
         }
         &mir_stmt::StatementKind::PushInlineHandler { effect_id, operations: _ } => {
-            // Inline effect handler - call runtime function
+            // Inline effect handler push - call inline stub
             let effect_id_val = codegen_types::format_u64(effect_id.index as u64);
-
             ctx.write_indent();
             ctx.write("call void @blood_push_inline_handler(i64 ");
             ctx.write_string(&effect_id_val);
