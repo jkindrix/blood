@@ -140,6 +140,10 @@ pub struct CodegenCtx {
     output_path: String,
     /// Whether to emit MIR annotations as comments in LLVM IR.
     pub trace_codegen: bool,
+    /// Per-function call remapping for trait default methods.
+    /// When generating a default method body, calls to trait abstract method
+    /// DefIds are redirected to concrete impl method DefIds.
+    pub call_remaps: Vec<common::CallRemapEntry>,
 }
 
 /// Mapping from a MIR local to its LLVM type.
@@ -250,6 +254,7 @@ impl CodegenCtx {
             write_buffer: String::new(),
             output_path: String::new(),
             trace_codegen: false,
+            call_remaps: Vec::new(),
         }
     }
 
@@ -298,6 +303,7 @@ impl CodegenCtx {
             write_buffer: String::new(),
             output_path: String::new(),
             trace_codegen: false,
+            call_remaps: Vec::new(),
         }
     }
 
@@ -413,6 +419,20 @@ impl CodegenCtx {
             Option::Some(_) => true,
             Option::None => false,
         }
+    }
+
+    /// Remaps a DefId through the call_remaps table.
+    /// If the DefId matches a from_def_id in call_remaps, returns the to_def_id.
+    /// Otherwise returns the original def_id unchanged.
+    pub fn remap_def_id(self: &CodegenCtx, def_id: u32) -> u32 {
+        let mut i: usize = 0;
+        while i < self.call_remaps.len() {
+            if self.call_remaps[i].from_def_id == def_id {
+                return self.call_remaps[i].to_def_id;
+            }
+            i = i + 1;
+        }
+        def_id
     }
 
     /// Resets per-function state while keeping global state (def_names).
@@ -1393,6 +1413,7 @@ impl CodegenCtx {
             write_buffer: String::new(),
             output_path: String::new(),
             trace_codegen: self.trace_codegen,
+            call_remaps: Vec::new(),
         };
 
         // Copy function signatures (read-only, needed at call sites)

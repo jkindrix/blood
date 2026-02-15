@@ -62,9 +62,34 @@ pub fn generate_module(
     module_name: &str,
     functions: &Vec<(String, mir_body::MirBody)>,
 ) -> CodegenResult {
-    // Empty items list for backward compatibility
+    // Empty items list and no remaps for backward compatibility
     let empty_items: Vec<hir_lower_ctx::ItemEntry> = Vec::new();
-    generate_module_with_items(module_name, functions, &empty_items)
+    let empty_remaps: Vec<common::DefaultMethodRemap> = Vec::new();
+    generate_module_with_items(module_name, functions, &empty_items, &empty_remaps)
+}
+
+/// Finds call remapping entries for a given default method DefId.
+fn find_call_remaps(
+    remaps: &Vec<common::DefaultMethodRemap>,
+    def_id: u32,
+) -> Vec<common::CallRemapEntry> {
+    let mut result: Vec<common::CallRemapEntry> = Vec::new();
+    let mut i: usize = 0;
+    while i < remaps.len() {
+        if remaps[i].body_def_id == def_id {
+            let mut j: usize = 0;
+            while j < remaps[i].call_remaps.len() {
+                result.push(common::CallRemapEntry::new(
+                    remaps[i].call_remaps[j].from_def_id,
+                    remaps[i].call_remaps[j].to_def_id,
+                ));
+                j = j + 1;
+            }
+            return result;
+        }
+        i = i + 1;
+    }
+    result
 }
 
 /// Generates LLVM IR for a module with multiple functions and ADT item info.
@@ -72,6 +97,7 @@ pub fn generate_module_with_items(
     module_name: &str,
     functions: &Vec<(String, mir_body::MirBody)>,
     items: &Vec<hir_lower_ctx::ItemEntry>,
+    default_method_remaps: &Vec<common::DefaultMethodRemap>,
 ) -> CodegenResult {
     let mut output = String::new();
 
@@ -128,8 +154,11 @@ pub fn generate_module_with_items(
             gi = gi + 1;
         }
         if !already_generated {
+            // Set up call remapping for trait default methods
+            ctx.call_remaps = find_call_remaps(default_method_remaps, body.def_id.index);
             let fn_ir = generate_function_with_ctx(&mut ctx, body, name.as_str());
             output.push_str(fn_ir.as_str());
+            ctx.call_remaps = Vec::new();
             generated_names.push(clone_string(name));
         } else {
             skip_count = skip_count + 1;
@@ -699,25 +728,20 @@ pub fn intrinsic_declarations() -> String {
     output.push_str("declare ptr @box_new(ptr, i64)\n");
     output.push_str("declare ptr @box_as_ref(ptr)\n");
 
-    // Effect runtime stubs
-    // blood_perform is in libblood_runtime.a — declare it
-    // blood_push_handler, blood_pop_handler, blood_push_inline_handler, blood_resume
-    // are NOT in the runtime (blood-rust generates them inline) — define stubs here
-    output.push_str("\n; Effect runtime globals\n");
-    output.push_str("@blood_handler_stack_ptr = private global i64 0\n");
+    // Effect runtime inline stubs
+    // These provide a minimal handler stack implementation. The stubs track
+    // handler push/pop and pass perform args through. Full evidence-based
+    // dispatch requires handler wrapper function generation and registration
+    // which is not yet implemented in the self-hosted compiler.
+    output.push_str("\n@blood_handler_stack_ptr = private global i64 0\n");
     output.push_str("@blood_handler_stack = private global [256 x i64] zeroinitializer\n");
     output.push_str("@blood_continuation_result = private global i64 0\n");
-    // blood_perform: our stub returns arg (tail-resumptive pass-through).
-    // The runtime also defines blood_perform but requires evidence registration.
-    // We override it via -Wl,-z,muldefs in the linker command.
     output.push_str("define i64 @blood_perform(i64 %effect_id, i64 %op_index, i64 %arg) {\n");
     output.push_str("entry:\n");
     output.push_str("  store i64 %arg, ptr @blood_continuation_result\n");
     output.push_str("  ret i64 %arg\n");
     output.push_str("}\n");
     output.push_str("\n; Effect runtime inline stubs\n");
-
-    // blood_push_handler
     output.push_str("define void @blood_push_handler(i64 %handler_id, ptr %state_ptr) {\n");
     output.push_str("entry:\n");
     output.push_str("  %sp = load i64, ptr @blood_handler_stack_ptr\n");
@@ -727,8 +751,6 @@ pub fn intrinsic_declarations() -> String {
     output.push_str("  store i64 %new_sp, ptr @blood_handler_stack_ptr\n");
     output.push_str("  ret void\n");
     output.push_str("}\n");
-
-    // blood_push_inline_handler
     output.push_str("define void @blood_push_inline_handler(i64 %effect_id) {\n");
     output.push_str("entry:\n");
     output.push_str("  %sp = load i64, ptr @blood_handler_stack_ptr\n");
@@ -738,8 +760,6 @@ pub fn intrinsic_declarations() -> String {
     output.push_str("  store i64 %new_sp, ptr @blood_handler_stack_ptr\n");
     output.push_str("  ret void\n");
     output.push_str("}\n");
-
-    // blood_pop_handler
     output.push_str("define void @blood_pop_handler() {\n");
     output.push_str("entry:\n");
     output.push_str("  %sp = load i64, ptr @blood_handler_stack_ptr\n");
@@ -752,8 +772,6 @@ pub fn intrinsic_declarations() -> String {
     output.push_str("done:\n");
     output.push_str("  ret void\n");
     output.push_str("}\n");
-
-    // blood_resume (not in runtime — blood-rust generates inline)
     output.push_str("define void @blood_resume(i64 %value) {\n");
     output.push_str("entry:\n");
     output.push_str("  store i64 %value, ptr @blood_continuation_result\n");

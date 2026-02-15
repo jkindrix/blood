@@ -360,6 +360,40 @@ impl PendingMethodCall {
 }
 
 // ============================================================
+// Trait Default Method Remapping
+// ============================================================
+
+/// A single call-site remap for trait default method dispatch.
+/// When generating a default method body, calls to `from_def_id` (the trait's
+/// abstract method) should be redirected to `to_def_id` (the concrete impl method).
+pub struct CallRemapEntry {
+    pub from_def_id: u32,
+    pub to_def_id: u32,
+}
+
+impl CallRemapEntry {
+    pub fn new(from_def_id: u32, to_def_id: u32) -> CallRemapEntry {
+        CallRemapEntry { from_def_id, to_def_id }
+    }
+}
+
+/// Remapping info for a trait default method used by a specific impl.
+/// The `body_def_id` identifies the default method body. The `call_remaps`
+/// list maps trait abstract method DefIds to concrete impl method DefIds.
+pub struct DefaultMethodRemap {
+    /// DefId of the default method body (the trait method with a body).
+    pub body_def_id: u32,
+    /// List of call remappings to apply when generating this body.
+    pub call_remaps: Vec<CallRemapEntry>,
+}
+
+impl DefaultMethodRemap {
+    pub fn new(body_def_id: u32, call_remaps: Vec<CallRemapEntry>) -> DefaultMethodRemap {
+        DefaultMethodRemap { body_def_id, call_remaps }
+    }
+}
+
+// ============================================================
 // Copy Utilities
 // ============================================================
 

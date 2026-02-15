@@ -101,30 +101,6 @@ impl Compiler {
         self.compile_with_base_dir(source, common::make_string(""))
     }
 
-    // Old compile is now compile_with_base_dir_internal, commented out
-    // pub fn compile_OLD(self: &mut Compiler, source: &str) -> CompileResult {
-    //     // Phase 1: Parse
-    //     let parse_result = parser::parse_file(source);
-    //     if parse_result.errors.len() > 0 {
-    //         let errors = convert_parse_errors(&parse_result.errors);
-    //         return CompileResult::err(errors);
-    //     }
-    //
-    //     let program = match &parse_result.program {
-    //         &Option::Some(ref p) => p,
-    //         &Option::None => {
-    //             let mut errors = Vec::new();
-    //             errors.push(error::CompileError::new(
-    //                 error::CompilePhase::Parse,
-    //                 common::make_string("No program produced by parser"),
-    //             ));
-    //             return CompileResult::err(errors);
-    //         }
-    //     };
-    //
-    //     // Phase 2: Lower to HIR
-    //     ... (orphaned code removed - functionality is in compile_with_base_dir)
-
     /// Parses source code and returns the AST.
     pub fn parse(self: &mut Compiler, source: &str) -> ParseOnlyResult {
         let parse_result = parser::parse_file(source);
@@ -302,7 +278,7 @@ impl Compiler {
         }
 
         // Phase 5: Generate LLVM IR from MIR
-        let codegen_result = codegen::generate_module_with_items("main", &mir_functions, &lower_result.items);
+        let codegen_result = codegen::generate_module_with_items("main", &mir_functions, &lower_result.items, &typeck_result.default_method_remaps);
         if !codegen_result.success {
             let mut errors = Vec::new();
             errors.push(error::CompileError::new(

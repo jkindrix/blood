@@ -506,7 +506,11 @@ fn extract_direct_fn_name(
         &mir_types::Operand::Constant(ref constant) => {
             match &constant.kind {
                 &mir_types::ConstantKind::FnDef(ref def_id) => {
-                    match ctx.lookup_def_name(def_id.index) {
+                    // Apply call remapping for trait default methods.
+                    // If this call targets an abstract trait method DefId,
+                    // redirect to the concrete impl method DefId.
+                    let remapped_id = ctx.remap_def_id(def_id.index);
+                    match ctx.lookup_def_name(remapped_id) {
                         Option::Some(name) => {
                             let mut result = common::make_string("@");
                             result.push_str(name.as_str());
@@ -514,9 +518,9 @@ fn extract_direct_fn_name(
                         }
                         Option::None => {
                             let mut fallback_name = common::make_string("fn_");
-                            fallback_name.push_str(codegen_types::format_u64(def_id.index as u64).as_str());
+                            fallback_name.push_str(codegen_types::format_u64(remapped_id as u64).as_str());
                             // Register the fallback name so stub generation can create a declaration
-                            ctx.register_def_name(def_id.index, clone_string(&fallback_name));
+                            ctx.register_def_name(remapped_id, clone_string(&fallback_name));
                             let mut result = common::make_string("@");
                             result.push_str(fallback_name.as_str());
                             Option::Some(result)

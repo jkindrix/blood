@@ -342,6 +342,11 @@ pub struct TypeChecker {
     pub in_shallow_handler: bool,
     /// Count of resume expressions seen in the current handler op body.
     pub resume_count: u32,
+    /// Trait default method remapping table.
+    /// When a trait default method is used by an impl, calls within the default
+    /// method body that target abstract trait methods must be redirected to the
+    /// concrete impl methods. This table records those remappings.
+    pub default_method_remaps: Vec<common::DefaultMethodRemap>,
 }
 
 impl TypeChecker {
@@ -383,6 +388,7 @@ impl TypeChecker {
             resume_ty: Option::None,
             in_shallow_handler: false,
             resume_count: 0,
+            default_method_remaps: Vec::new(),
         }
     }
 
@@ -425,6 +431,7 @@ impl TypeChecker {
             resume_ty: Option::None,
             in_shallow_handler: false,
             resume_count: 0,
+            default_method_remaps: Vec::new(),
         }
     }
 

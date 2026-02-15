@@ -1482,11 +1482,20 @@ fn codegen_thread_worker(arg: u64) -> u64 {
 
         region_deactivate();
 
-        // Stage B: Codegen
+        // Stage B: Set up call remaps for trait default methods
+        ctx.call_remaps = find_call_remaps_for_def(
+            &typeck.default_method_remaps,
+            work.def_id.index,
+        );
+
+        // Stage C: Codegen
         let fn_ir = codegen::generate_function_with_ctx(ctx, &body, work.fn_name.as_str());
         output.push_str(fn_ir.as_str());
 
-        // Stage C: Destroy MIR region
+        // Clear call remaps
+        ctx.call_remaps = Vec::new();
+
+        // Stage D: Destroy MIR region
         region_destroy(mir_region);
 
         i = i + 1;
@@ -1570,9 +1579,21 @@ fn codegen_pass2(
             }
         }
 
+        // Set up call remapping for trait default methods.
+        // If this function's DefId matches a default_method_remap entry,
+        // set up the remap table so calls to abstract trait methods are
+        // redirected to concrete impl methods.
+        ctx.call_remaps = find_call_remaps_for_def(
+            &typeck_result.default_method_remaps,
+            work.def_id.index,
+        );
+
         // Codegen + write directly to file
         let fn_ir = codegen::generate_function_with_ctx(ctx, &body, work.fn_name.as_str());
         file_append_string(output_path, fn_ir.as_str());
+
+        // Clear call remaps after generating the function
+        ctx.call_remaps = Vec::new();
 
         // Destroy MIR region
         region_destroy(mir_region);
@@ -1581,6 +1602,33 @@ fn codegen_pass2(
     }
 
     true
+}
+
+/// Finds the call remapping entries for a given default method DefId.
+/// Returns a Vec of CallRemapEntry if the def_id matches a default method,
+/// or an empty Vec if not.
+fn find_call_remaps_for_def(
+    remaps: &Vec<common::DefaultMethodRemap>,
+    def_id: u32,
+) -> Vec<common::CallRemapEntry> {
+    let mut result: Vec<common::CallRemapEntry> = Vec::new();
+    let mut i: usize = 0;
+    while i < remaps.len() {
+        if remaps[i].body_def_id == def_id {
+            // Copy the remap entries
+            let mut j: usize = 0;
+            while j < remaps[i].call_remaps.len() {
+                result.push(common::CallRemapEntry::new(
+                    remaps[i].call_remaps[j].from_def_id,
+                    remaps[i].call_remaps[j].to_def_id,
+                ));
+                j = j + 1;
+            }
+            return result;
+        }
+        i = i + 1;
+    }
+    result
 }
 
 // ============================================================
