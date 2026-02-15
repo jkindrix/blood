@@ -762,7 +762,42 @@ pub fn find_fn_for_body(
                 }
             }
             &hir_item::ItemKind::Effect(_) => {}
-            &hir_item::ItemKind::Handler(_) => {}
+            &hir_item::ItemKind::Handler(ref handler_def) => {
+                // Check return clause body
+                match &handler_def.return_clause {
+                    &Option::Some(ref ret_clause) => {
+                        if ret_clause.body_id.index == target_body_id.index {
+                            // Return clause: return type is the computation result type
+                            // We don't have the exact type here, use a placeholder
+                            return Option::Some(FnInfo {
+                                def_id: hir_def::DefId::new(target_body_id.index),
+                                name: ret_clause.param_name.symbol,
+                                name_span: ret_clause.param_name.span,
+                                return_ty: hir_ty::Type::unit(),
+                                span: ret_clause.param_name.span,
+                            });
+                        }
+                    }
+                    &Option::None => {}
+                }
+                // Check operation implementation bodies
+                let mut j: usize = 0;
+                while j < handler_def.op_impls.len() {
+                    let impl_entry = &handler_def.op_impls[j];
+                    if impl_entry.body_id.index == target_body_id.index {
+                        // Find the effect operation return type by searching Effect items
+                        let ret_ty = find_effect_op_return_ty(items, impl_entry.op_def_id);
+                        return Option::Some(FnInfo {
+                            def_id: impl_entry.op_def_id,
+                            name: impl_entry.name.symbol,
+                            name_span: impl_entry.name.span,
+                            return_ty: ret_ty,
+                            span: impl_entry.span,
+                        });
+                    }
+                    j = j + 1;
+                }
+            }
             &hir_item::ItemKind::Module(_) => {}
             &hir_item::ItemKind::Macro(_) => {}
             &hir_item::ItemKind::Foreign(_) => {}
@@ -770,6 +805,32 @@ pub fn find_fn_for_body(
         i = i + 1;
     }
     Option::None
+}
+
+/// Finds the return type of an effect operation by its DefId.
+fn find_effect_op_return_ty(
+    items: &Vec<hir_lower_ctx::ItemEntry>,
+    op_def_id: hir_def::DefId,
+) -> hir_ty::Type {
+    let mut i: usize = 0;
+    while i < items.len() {
+        match &items[i].item.kind {
+            &hir_item::ItemKind::Effect(ref effect_def) => {
+                let mut j: usize = 0;
+                while j < effect_def.operations.len() {
+                    let effect_op = &effect_def.operations[j];
+                    if effect_op.def_id.index == op_def_id.index {
+                        return hir_ty::copy_type(&effect_op.return_ty);
+                    }
+                    j = j + 1;
+                }
+            }
+            _ => {}
+        }
+        i = i + 1;
+    }
+    // Fallback: couldn't find the op definition
+    hir_ty::Type::unit()
 }
 
 /// Resolves a Symbol to a String using the interner.

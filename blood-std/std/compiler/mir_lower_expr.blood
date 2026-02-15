@@ -440,11 +440,13 @@ fn lower_binary_expr(
             match bin_op {
                 common::BinOp::Pipe => {
                     // Evaluate left side first
-                    let left_temp = ctx.new_temp(left.ty.clone(), span);
+                    let resolved_left_ty = ctx.resolve_type(&left.ty);
+                    let left_temp = ctx.new_temp(resolved_left_ty, span);
                     lower_expr(ctx, left, mir_lower_ctx::destination_local(left_temp));
 
                     // Call right with left as argument
-                    let func_temp = ctx.new_temp(right.ty.clone(), span);
+                    let resolved_right_ty = ctx.resolve_type(&right.ty);
+                    let func_temp = ctx.new_temp(resolved_right_ty, span);
                     lower_expr(ctx, right, mir_lower_ctx::destination_local(func_temp));
 
                     match dest.as_place() {

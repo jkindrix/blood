@@ -335,6 +335,13 @@ pub struct TypeChecker {
     pub variant_hash: hashmap::HashMapU64U64,
     /// Hash index for O(1) trait impl existence check: trait_def_id.index → 1
     pub trait_impl_hash: hashmap::HashMapU64U32,
+    /// Expected type for resume() calls in the current handler op body.
+    /// Set before type-checking each handler op body, None when not in a handler op.
+    pub resume_ty: Option<hir_ty::Type>,
+    /// Whether the current handler is shallow (single resume allowed).
+    pub in_shallow_handler: bool,
+    /// Count of resume expressions seen in the current handler op body.
+    pub resume_count: u32,
 }
 
 impl TypeChecker {
@@ -373,6 +380,9 @@ impl TypeChecker {
             in_handler: false,
             variant_hash: hashmap::HashMapU64U64::new(),
             trait_impl_hash: hashmap::HashMapU64U32::new(),
+            resume_ty: Option::None,
+            in_shallow_handler: false,
+            resume_count: 0,
         }
     }
 
@@ -412,6 +422,9 @@ impl TypeChecker {
             in_handler: false,
             variant_hash: hashmap::HashMapU64U64::new(),
             trait_impl_hash: hashmap::HashMapU64U32::new(),
+            resume_ty: Option::None,
+            in_shallow_handler: false,
+            resume_count: 0,
         }
     }
 

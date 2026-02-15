@@ -104,54 +104,57 @@ fn infix_precedence(kind: token::TokenKind) -> u8 {
         token::TokenKind::ShlEq => 1,
         token::TokenKind::ShrEq => 1,
 
-        // Range operators (lower than logical or, higher than assignment)
-        token::TokenKind::DotDot => 2,
-        token::TokenKind::DotDotEq => 2,
+        // Pipe operator (lowest after assignment)
+        token::TokenKind::Pipe => 2,
+
+        // Range operators
+        token::TokenKind::DotDot => 3,
+        token::TokenKind::DotDotEq => 3,
 
         // Logical or
-        token::TokenKind::OrOr => 3,
+        token::TokenKind::OrOr => 4,
 
         // Logical and
-        token::TokenKind::AndAnd => 4,
+        token::TokenKind::AndAnd => 5,
 
         // Comparison
-        token::TokenKind::EqEq => 5,
-        token::TokenKind::NotEq => 5,
-        token::TokenKind::Lt => 5,
-        token::TokenKind::Gt => 5,
-        token::TokenKind::LtEq => 5,
-        token::TokenKind::GtEq => 5,
+        token::TokenKind::EqEq => 6,
+        token::TokenKind::NotEq => 6,
+        token::TokenKind::Lt => 6,
+        token::TokenKind::Gt => 6,
+        token::TokenKind::LtEq => 6,
+        token::TokenKind::GtEq => 6,
 
         // Bitwise or
-        token::TokenKind::Or => 6,
+        token::TokenKind::Or => 7,
 
         // Bitwise xor
-        token::TokenKind::Caret => 7,
+        token::TokenKind::Caret => 8,
 
         // Bitwise and
-        token::TokenKind::And => 8,
+        token::TokenKind::And => 9,
 
         // Shift
-        token::TokenKind::Shl => 9,
-        token::TokenKind::Shr => 9,
+        token::TokenKind::Shl => 10,
+        token::TokenKind::Shr => 10,
 
         // Additive
-        token::TokenKind::Plus => 10,
-        token::TokenKind::Minus => 10,
+        token::TokenKind::Plus => 11,
+        token::TokenKind::Minus => 11,
 
         // Multiplicative
-        token::TokenKind::Star => 11,
-        token::TokenKind::Slash => 11,
-        token::TokenKind::Percent => 11,
+        token::TokenKind::Star => 12,
+        token::TokenKind::Slash => 12,
+        token::TokenKind::Percent => 12,
 
         // Cast (as)
-        token::TokenKind::As => 12,
+        token::TokenKind::As => 13,
 
         // Postfix (call, index, field access)
-        token::TokenKind::LParen => 14,
-        token::TokenKind::LBracket => 14,
-        token::TokenKind::Dot => 14,
-        token::TokenKind::Question => 14,
+        token::TokenKind::LParen => 15,
+        token::TokenKind::LBracket => 15,
+        token::TokenKind::Dot => 15,
+        token::TokenKind::Question => 15,
 
         // Not an infix operator
         _ => 0,
@@ -863,6 +866,20 @@ fn parse_infix_expr(parser: &mut parser_base::Parser, left: ast::Expr, prec: u8)
                     start: Option::Some(Box::new(left)),
                     end_val: end_val,
                     inclusive: true,
+                },
+                span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+            };
+        }
+        // Pipe operator: left |> right becomes Binary { Pipe, left, right }
+        token::TokenKind::Pipe => {
+            parser.advance();
+            let right = parse_expr_with_precedence(parser, prec + 1);
+            let end_span = parser.previous.span;
+            return ast::Expr {
+                kind: ast::ExprKind::Binary {
+                    op: common::BinOp::Pipe,
+                    left: Box::new(left),
+                    right: Box::new(right),
                 },
                 span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
             };
@@ -1742,10 +1759,17 @@ fn parse_call_expr(parser: &mut parser_base::Parser, callee: ast::Expr) -> ast::
 
     while !parser.check(token::TokenKind::RParen) && !parser.is_at_end() {
         let arg_start = parser.current.span;
+        // Check for named argument pattern: ident ':'
+        let mut arg_name: Option<common::SpannedSymbol> = Option::None;
+        if parser.check(token::TokenKind::Ident) && parser.check_next(token::TokenKind::Colon) {
+            let name_ss = parser.parse_spanned_symbol(); // consume identifier
+            parser.advance(); // consume ':'
+            arg_name = Option::Some(name_ss);
+        }
         let arg_expr = parse_expr(parser);
         let arg_end = parser.previous.span;
         let call_arg = ast::CallArg {
-            name: Option::None,
+            name: arg_name,
             val: arg_expr,
             span: common::Span { start: arg_start.start, end: arg_end.end, line: arg_start.line, column: arg_start.column },
         };
@@ -1855,11 +1879,85 @@ fn parse_index_expr(parser: &mut parser_base::Parser, base: ast::Expr) -> ast::E
 // Statement and Block Parsing
 // ============================================================
 
+/// Parse a local function declaration (nested fn inside block).
+/// Handles: fn name(params) -> return_type { body }
+fn parse_local_fn_decl(parser: &mut parser_base::Parser) -> ast::Declaration {
+    let start = parser.current.span;
+    parser.advance(); // consume 'fn'
+
+    let name = parser.parse_spanned_symbol();
+
+    // Local functions don't support generics — skip type params
+    let type_params: Option<ast::TypeParams> = Option::None;
+
+    // Parse parameters
+    parser.expect(token::TokenKind::LParen);
+    let mut params: Vec<ast::Param> = Vec::new();
+    while !parser.check(token::TokenKind::RParen) && !parser.is_at_end() {
+        let param_start = parser.current.span;
+        let param_pattern = parser_pattern::parse_pattern(parser);
+        let param_ty = if parser.try_consume(token::TokenKind::Colon) {
+            parser_type::parse_type(parser)
+        } else {
+            ast::Type { kind: ast::TypeKind::Infer, span: param_start }
+        };
+        let param_end = parser.previous.span;
+        let param = ast::Param {
+            qualifier: Option::None,
+            pattern: param_pattern,
+            ty: param_ty,
+            span: common::Span { start: param_start.start, end: param_end.end, line: param_start.line, column: param_start.column },
+        };
+        params.push(param);
+        if !parser.try_consume(token::TokenKind::Comma) {
+            break;
+        }
+    }
+    parser.expect(token::TokenKind::RParen);
+
+    // Parse return type
+    let return_type: Option<ast::Type> = if parser.try_consume(token::TokenKind::Arrow) {
+        Option::Some(parser_type::parse_type(parser))
+    } else {
+        Option::None
+    };
+
+    // Parse body
+    let body: Option<ast::Block> = if parser.check(token::TokenKind::LBrace) {
+        Option::Some(parse_block(parser))
+    } else {
+        parser.expect(token::TokenKind::Semi);
+        Option::None
+    };
+
+    let end_span = parser.previous.span;
+    let fn_decl = ast::FnDecl {
+        attrs: Vec::new(),
+        vis: common::Visibility::Private,
+        qualifiers: common::FnQualifiers { is_const: false, is_async: false, is_unsafe: false },
+        name: name,
+        type_params: type_params,
+        params: params,
+        return_type: return_type,
+        effects: Option::None,
+        where_clause: Option::None,
+        body: body,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    };
+    ast::Declaration::Function(fn_decl)
+}
+
 /// Parse a statement.
 pub fn parse_statement(parser: &mut parser_base::Parser) -> ast::Statement {
     // Let statement
     if parser.check(token::TokenKind::Let) {
         return parse_let_statement(parser);
+    }
+
+    // Local item declaration (nested fn)
+    if parser.check(token::TokenKind::Fn) {
+        let decl = parse_local_fn_decl(parser);
+        return ast::Statement::Item(decl);
     }
 
     // Expression statement

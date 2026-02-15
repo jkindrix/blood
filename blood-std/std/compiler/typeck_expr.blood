@@ -807,8 +807,11 @@ fn infer_binary(
     let left_ty = infer_expr(checker, left);
     let right_ty = infer_expr(checker, right);
 
-    // Unify operand types for most operators
-    checker.unify(&left_ty, &right_ty, span);
+    // Unify operand types for most operators (except pipe, which has different semantics)
+    match bin_op {
+        common::BinOp::Pipe => {}
+        _ => { checker.unify(&left_ty, &right_ty, span); }
+    }
 
     // Determine result type based on operator
     match bin_op {
@@ -880,9 +883,21 @@ fn infer_binary(
         common::BinOp::Shr => checker.resolve(&left_ty),
         // Pipe operator: left |> right where right is a function
         common::BinOp::Pipe => {
-            // Pipe operator: the result is the return type of the function on the right
-            // For now, return an inference variable since we'd need to resolve the function type
-            checker.fresh_infer()
+            // Resolve right type to get function signature
+            let resolved_right = checker.resolve(&right_ty);
+            match &resolved_right.kind {
+                &hir_ty::TypeKind::Fn { ref params, ref ret, effects: _ } => {
+                    // Unify left with first parameter type
+                    if params.len() > 0 {
+                        checker.unify(&left_ty, &params[0], span);
+                    }
+                    hir_ty::copy_type(ret.as_ref())
+                }
+                _ => {
+                    // Right side isn't a function — return infer and let it fail later
+                    checker.fresh_infer()
+                }
+            }
         }
     }
 }
@@ -2323,7 +2338,21 @@ fn infer_resume(
     val: &hir_expr::Expr,
     span: common::Span,
 ) -> hir_ty::Type {
-    infer_expr(checker, val);
+    let val_ty = infer_expr(checker, val);
+    // Track resume count for shallow handler validation
+    checker.resume_count = checker.resume_count + 1;
+    // Check for multiple resumes in shallow handler
+    if checker.in_shallow_handler && checker.resume_count > 1 {
+        checker.error(typeck_types::TypeErrorKind::InvalidControl, span);
+    }
+    // Check resume value type matches expected op return type
+    match &checker.resume_ty {
+        &Option::Some(ref expected) => {
+            let ok = checker.unify(&val_ty, expected, span);
+            let _ = ok;
+        }
+        &Option::None => {}
+    }
     // Resume's return type depends on context
     checker.fresh_infer()
 }

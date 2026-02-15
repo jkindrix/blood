@@ -259,6 +259,13 @@ fn emit_place_load(
     }
     let result = ctx.fresh_temp();
     ctx.emit_load(result.as_str(), llvm_ty.as_str(), ptr.as_str());
+    // Zero-extend i8 to i32 for &str byte indexing (byte → char promotion)
+    // Only apply when loading from an Index projection on a str-like type
+    if str_eq(llvm_ty.as_str(), "i8") && is_str_index_place(ctx, place) {
+        let extended = ctx.fresh_temp();
+        ctx.emit_cast(extended.as_str(), "zext", "i8", result.as_str(), "i32");
+        return extended;
+    }
     result
 }
 
@@ -295,6 +302,13 @@ fn emit_place_load_with_type(
     }
     let result = ctx.fresh_temp();
     ctx.emit_load(result.as_str(), llvm_ty.as_str(), ptr.as_str());
+    // Zero-extend i8 to i32 for &str byte indexing (byte → char promotion)
+    // Only apply when loading from an Index projection on a str-like type
+    if str_eq(llvm_ty.as_str(), "i8") && is_str_index_place(ctx, place) {
+        let extended = ctx.fresh_temp();
+        ctx.emit_cast(extended.as_str(), "zext", "i8", result.as_str(), "i32");
+        return (extended, common::make_string("i32"));
+    }
     (result, llvm_ty)
 }
 
@@ -1150,7 +1164,41 @@ fn get_element_size_from_hir(ctx: &mut codegen_ctx::CodegenCtx, hir_type: &hir_t
             // Look through pointer
             get_element_size_from_hir(ctx, inner.as_ref())
         }
+        &hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Str) => {
+            // &str indexing accesses individual bytes
+            1
+        }
         _ => 8, // Default to pointer size
+    }
+}
+
+/// Returns true if the given place is an Index projection into a &str type.
+/// Used to determine when byte→char zero-extension is needed after loading.
+fn is_str_index_place(ctx: &mut codegen_ctx::CodegenCtx, place: &mir_types::Place) -> bool {
+    // Check if any projection is an Index
+    let mut has_index = false;
+    let mut pi: usize = 0;
+    while pi < place.projection.len() {
+        match &place.projection[pi] {
+            &mir_types::PlaceElem::Index(_) => { has_index = true; }
+            _ => {}
+        }
+        pi = pi + 1;
+    }
+    if !has_index { return false; }
+    // Check if the local's HIR type is &str or str
+    match ctx.get_local_hir_type(place.local) {
+        Option::Some(hir_type) => is_str_hir_type(hir_type),
+        Option::None => false,
+    }
+}
+
+/// Returns true if the HIR type is &str or str (looking through references).
+fn is_str_hir_type(ty: &hir_ty::Type) -> bool {
+    match &ty.kind {
+        &hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Str) => true,
+        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => is_str_hir_type(inner.as_ref()),
+        _ => false,
     }
 }
 
@@ -1177,6 +1225,10 @@ fn resolve_index_element_type(ctx: &mut codegen_ctx::CodegenCtx, container_ty: &
         }
         &hir_ty::TypeKind::Ptr { ref inner, mutable: _ } => {
             resolve_index_element_type(ctx, inner.as_ref())
+        }
+        &hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Str) => {
+            // &str indexing accesses individual bytes (i8)
+            common::make_string("i8")
         }
         _ => common::make_string("i64"),
     }

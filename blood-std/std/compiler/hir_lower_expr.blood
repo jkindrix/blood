@@ -1080,8 +1080,12 @@ fn lower_local_item(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declaratio
     // Allocate a DefId
     let def_id = ctx.alloc_def_id();
 
+    // Re-intern the name using the HIR interner for consistent lookup
+    let name_str = ctx.span_to_string(name.span);
+    let re_interned_sym = ctx.intern(name_str.as_str());
+
     // Register in current scope (not global)
-    let success = ctx.resolver.define_local_item(name.symbol, def_id);
+    let success = ctx.resolver.define_local_item(re_interned_sym, def_id);
     if !success {
         ctx.error(
             hir::DiagnosticCode::E0102,
@@ -1103,13 +1107,167 @@ fn lower_local_item(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declaratio
         &ast::Declaration::Handler(_) => hir_def::DefKind::Handler,
         _ => hir_def::DefKind::Fn, // Fallback
     };
-    ctx.resolver.register_def_info(def_id, def_kind, name.symbol, span, Option::None);
+    ctx.resolver.register_def_info(def_id, def_kind, re_interned_sym, span, Option::None);
 
-    // Note: Full lowering of local item bodies is deferred.
-    // To fully support local items, we would need to collect them
-    // during body lowering and process them in a separate pass.
+    // For Function declarations, lower inline (params, return type, body)
+    match decl {
+        &ast::Declaration::Function(ref fn_decl) => {
+            lower_local_fn(ctx, fn_decl, def_id);
+        }
+        _ => {}
+    }
 
     def_id
+}
+
+/// Lower a local function declaration fully (params, signature, body).
+fn lower_local_fn(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    f: &ast::FnDecl,
+    def_id: hir_def::DefId,
+) {
+    // Lower generics
+    let generics = hir_lower_type::lower_generics(ctx, &f.type_params, &f.where_clause);
+
+    // Lower parameters inline (simplified version of hir_lower_item::lower_fn_params)
+    let mut hir_params: Vec<hir_item::FnParam> = Vec::new();
+    let mut i: usize = 0;
+    while i < f.params.len() {
+        let param = &f.params[i];
+        let param_ty = hir_lower_type::lower_type(ctx, &param.ty);
+        let param_name = extract_param_name(ctx, &param.pattern);
+        let param_def_id = ctx.alloc_def_id();
+        let hir_param = hir_item::FnParam::new(param_def_id, param_name, hir_ty::copy_type(&param_ty), false, false, param.span);
+        hir_params.push(hir_param);
+        i = i + 1;
+    }
+
+    // Lower return type
+    let return_ty = match &f.return_type {
+        &Option::Some(ref rt) => hir_lower_type::lower_type(ctx, rt),
+        &Option::None => hir_ty::Type::unit(),
+    };
+
+    // Pop the TypeParams scope pushed by lower_generics
+    ctx.resolver.pop_scope();
+
+    // Create function signature
+    let sig = hir_item::FnSig::new(
+        generics,
+        hir_params,
+        hir_ty::copy_type(&return_ty),
+        hir_ty::EffectRow::empty(),
+        f.qualifiers,
+        f.span,
+    );
+
+    // Pre-allocate body_id
+    let body_id_opt = match &f.body {
+        &Option::Some(_) => {
+            let bid = ctx.alloc_body_id();
+            Option::Some(bid)
+        }
+        &Option::None => Option::None,
+    };
+
+    // Create function definition and add as item
+    let fn_def = hir_item::FnDef::new(sig, body_id_opt);
+    let item_kind = hir_item::ItemKind::Fn(fn_def);
+    // Re-intern the function name from AST interner to HIR interner
+    let name_str = ctx.span_to_string(f.name.span);
+    let re_interned_sym = ctx.intern(name_str.as_str());
+    let hir_name = common::SpannedSymbol { symbol: re_interned_sym, span: f.name.span };
+    let item = hir_item::Item::new(
+        def_id,
+        hir_name,
+        item_kind,
+        common::Visibility::Private,
+        f.span,
+    );
+    ctx.add_item(def_id, item);
+
+    // Lower body if present
+    match &f.body {
+        &Option::Some(ref body_block) => {
+            match &body_id_opt {
+                &Option::Some(ref bid) => {
+                    // Push function scope for body
+                    ctx.resolver.push_scope(resolve::ScopeKind::Function);
+
+                    // Register parameters as locals
+                    let mut locals: Vec<hir_expr::Local> = Vec::new();
+                    let mut param_count: u32 = 0;
+
+                    let mut pi: usize = 0;
+                    while pi < f.params.len() {
+                        let param = &f.params[pi];
+                        let local_id = ctx.alloc_local_id();
+                        let param_ty_hir = hir_lower_type::lower_type(ctx, &param.ty);
+                        let pname = extract_param_name(ctx, &param.pattern);
+                        let local = hir_expr::Local::new(
+                            local_id, pname, param_ty_hir, false, param.span,
+                        );
+                        locals.push(local);
+                        // Register param name in scope
+                        let param_name_str = ctx.span_to_string(pname.span);
+                        let param_sym = ctx.intern(param_name_str.as_str());
+                        ctx.resolver.define_local(param_sym, local_id, false, pname.span);
+                        param_count = param_count + 1;
+                        pi = pi + 1;
+                    }
+
+                    // Save and clear body_locals
+                    let mut saved_body_locals: Vec<hir_expr::Local> = Vec::new();
+                    let mut si: usize = 0;
+                    while si < ctx.body_locals.len() {
+                        let saved_local = &ctx.body_locals[si];
+                        saved_body_locals.push(hir_expr::Local::new(
+                            saved_local.id, saved_local.name, hir_ty::copy_type(&saved_local.ty), saved_local.mutable, saved_local.span,
+                        ));
+                        si = si + 1;
+                    }
+                    ctx.body_locals = Vec::new();
+
+                    // Lower body
+                    let body_expr = lower_block_to_expr(ctx, body_block);
+
+                    // Merge accumulated locals
+                    let mut bl_idx: usize = 0;
+                    while bl_idx < ctx.body_locals.len() {
+                        let bl = &ctx.body_locals[bl_idx];
+                        locals.push(hir_expr::Local::new(
+                            bl.id, bl.name, hir_ty::copy_type(&bl.ty), bl.mutable, bl.span,
+                        ));
+                        bl_idx = bl_idx + 1;
+                    }
+                    ctx.body_locals = saved_body_locals;
+
+                    ctx.resolver.pop_scope();
+
+                    let body = hir_expr::Body::new(*bid, locals, param_count, body_expr);
+                    ctx.add_body(*bid, body);
+                }
+                &Option::None => {}
+            }
+        }
+        &Option::None => {}
+    }
+}
+
+/// Extract a parameter name as SpannedSymbol from a pattern.
+fn extract_param_name(ctx: &mut hir_lower_ctx::LoweringCtx, pattern: &ast::Pattern) -> common::SpannedSymbol {
+    match &pattern.kind {
+        &ast::PatternKind::Ident { by_ref: _, is_mut: _, ref name, subpattern: _ } => {
+            let name_str = ctx.span_to_string(name.span);
+            let sym = ctx.intern(name_str.as_str());
+            common::SpannedSymbol { symbol: sym, span: name.span }
+        }
+        _ => {
+            // Fallback: use pattern span
+            let sym = ctx.intern("_");
+            common::SpannedSymbol { symbol: sym, span: pattern.span }
+        }
+    }
 }
 
 // ============================================================

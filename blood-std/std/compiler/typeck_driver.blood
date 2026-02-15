@@ -121,6 +121,8 @@ pub fn check_types(ctx: &hir_lower_ctx::LoweringCtx) -> TypeCheckResult {
         }
         checker.current_body_def_id = find_def_id_for_body(&ctx.items, body_entry.body_id);
         checker.current_effect_row = find_effect_row_for_body(&ctx.items, body_entry.body_id);
+        unify_handler_op_params(&mut checker, &ctx.items, &body_entry.body, body_entry.body_id);
+        setup_handler_op_context(&mut checker, &ctx.items, body_entry.body_id);
         check_body(&mut checker, &body_entry.body, &return_ty);
         i = i + 1;
     }
@@ -187,6 +189,8 @@ pub fn check_lower_result(result: &hir_lower_ctx::LowerResult) -> TypeCheckResul
         let found_def_id = find_def_id_for_body(&result.items, body_entry.body_id);
         checker.current_body_def_id = found_def_id;
         checker.current_effect_row = find_effect_row_for_body(&result.items, body_entry.body_id);
+        unify_handler_op_params(&mut checker, &result.items, &body_entry.body, body_entry.body_id);
+        setup_handler_op_context(&mut checker, &result.items, body_entry.body_id);
         check_body(&mut checker, &body_entry.body, &return_ty);
         i = i + 1;
     }
@@ -208,6 +212,8 @@ pub fn check_lower_result(result: &hir_lower_ctx::LowerResult) -> TypeCheckResul
         let found_def_id = find_def_id_for_body(&result.items, body_entry.body_id);
         checker.current_body_def_id = found_def_id;
         checker.current_effect_row = find_effect_row_for_body(&result.items, body_entry.body_id);
+        unify_handler_op_params(&mut checker, &result.items, &body_entry.body, body_entry.body_id);
+        setup_handler_op_context(&mut checker, &result.items, body_entry.body_id);
         check_body(&mut checker, &body_entry.body, &return_ty);
         j = j + 1;
     }
@@ -739,11 +745,12 @@ fn find_return_type_for_body(
                     }
                     &Option::None => {}
                 }
-                // Check op implementation bodies
+                // Check op implementation bodies — look up effect op return type
                 let mut j: usize = 0;
                 while j < handler_def.op_impls.len() {
                     if handler_def.op_impls[j].body_id.index == target_body_id.index {
-                        return hir_ty::Type::unit();
+                        let op_def_id = handler_def.op_impls[j].op_def_id;
+                        return find_effect_op_return_type(items, op_def_id);
                     }
                     j = j + 1;
                 }
@@ -756,6 +763,132 @@ fn find_return_type_for_body(
     }
     // Default to unit type if no matching function found
     hir_ty::Type::unit()
+}
+
+/// Looks up the return type of an effect operation by its DefId.
+fn find_effect_op_return_type(
+    items: &Vec<hir_lower_ctx::ItemEntry>,
+    op_def_id: hir_def::DefId,
+) -> hir_ty::Type {
+    let mut i: usize = 0;
+    while i < items.len() {
+        match &items[i].item.kind {
+            &hir_item::ItemKind::Effect(ref effect_def) => {
+                let mut j: usize = 0;
+                while j < effect_def.operations.len() {
+                    let effect_op = &effect_def.operations[j];
+                    if effect_op.def_id.index == op_def_id.index {
+                        return hir_ty::copy_type(&effect_op.return_ty);
+                    }
+                    j = j + 1;
+                }
+            }
+            _ => {}
+        }
+        i = i + 1;
+    }
+    hir_ty::Type::unit()
+}
+
+/// Looks up the parameter types of an effect operation for a handler op body.
+/// Returns None if not a handler op body, or Some(Vec of param types).
+fn find_op_param_types_for_body(
+    items: &Vec<hir_lower_ctx::ItemEntry>,
+    target_body_id: hir_def::BodyId,
+) -> Option<Vec<hir_ty::Type>> {
+    let mut i: usize = 0;
+    while i < items.len() {
+        match &items[i].item.kind {
+            &hir_item::ItemKind::Handler(ref handler_def) => {
+                let mut j: usize = 0;
+                while j < handler_def.op_impls.len() {
+                    if handler_def.op_impls[j].body_id.index == target_body_id.index {
+                        let op_def_id = handler_def.op_impls[j].op_def_id;
+                        // Find the effect op param types
+                        let mut ei: usize = 0;
+                        while ei < items.len() {
+                            match &items[ei].item.kind {
+                                &hir_item::ItemKind::Effect(ref effect_def) => {
+                                    let mut k: usize = 0;
+                                    while k < effect_def.operations.len() {
+                                        let effect_op = &effect_def.operations[k];
+                                        if effect_op.def_id.index == op_def_id.index {
+                                            let mut param_tys: Vec<hir_ty::Type> = Vec::new();
+                                            let mut p: usize = 0;
+                                            while p < effect_op.param_tys.len() {
+                                                param_tys.push(hir_ty::copy_type(&effect_op.param_tys[p]));
+                                                p = p + 1;
+                                            }
+                                            return Option::Some(param_tys);
+                                        }
+                                        k = k + 1;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            ei = ei + 1;
+                        }
+                        return Option::None;
+                    }
+                    j = j + 1;
+                }
+            }
+            _ => {}
+        }
+        i = i + 1;
+    }
+    Option::None
+}
+
+/// Returns the number of handler state fields for a handler op body.
+fn find_handler_state_count_for_body(
+    items: &Vec<hir_lower_ctx::ItemEntry>,
+    target_body_id: hir_def::BodyId,
+) -> usize {
+    let mut i: usize = 0;
+    while i < items.len() {
+        match &items[i].item.kind {
+            &hir_item::ItemKind::Handler(ref handler_def) => {
+                let mut j: usize = 0;
+                while j < handler_def.op_impls.len() {
+                    if handler_def.op_impls[j].body_id.index == target_body_id.index {
+                        return handler_def.state.len();
+                    }
+                    j = j + 1;
+                }
+            }
+            _ => {}
+        }
+        i = i + 1;
+    }
+    0
+}
+
+/// Unify handler op parameter types with their effect-declared types.
+/// This resolves the `Type::infer()` variables created in `lower_op_impl`
+/// so that the op body's parameter locals have correct types during type checking.
+fn unify_handler_op_params(
+    checker: &mut typeck::TypeChecker,
+    items: &Vec<hir_lower_ctx::ItemEntry>,
+    body: &hir_expr::Body,
+    body_id: hir_def::BodyId,
+) {
+    match find_op_param_types_for_body(items, body_id) {
+        Option::Some(ref param_tys) => {
+            let state_count = find_handler_state_count_for_body(items, body_id);
+            let mut k: usize = 0;
+            while k < param_tys.len() {
+                let local_idx = state_count + k;
+                if local_idx < body.locals.len() {
+                    let span = body.locals[local_idx].span;
+                    let ok = checker.unify(&body.locals[local_idx].ty, &param_tys[k], span);
+                    let _ = ok;
+                }
+                k = k + 1;
+            }
+        }
+        Option::None => {}
+    }
 }
 
 /// Returns true if the given body belongs to a handler return clause.
@@ -831,6 +964,73 @@ fn find_effect_row_for_body(
         i = i + 1;
     }
     Vec::new()
+}
+
+/// Sets up the type checker's resume context for a handler op body.
+/// For handler op bodies, this sets:
+///   - resume_ty: the effect op's return type (what resume() should produce)
+///   - in_shallow_handler: true if the handler is shallow
+///   - resume_count: 0 (reset for each body)
+/// For non-handler bodies, this resets all three fields.
+fn setup_handler_op_context(
+    checker: &mut typeck::TypeChecker,
+    items: &Vec<hir_lower_ctx::ItemEntry>,
+    target_body_id: hir_def::BodyId,
+) {
+    // Reset to defaults
+    checker.resume_ty = Option::None;
+    checker.in_shallow_handler = false;
+    checker.resume_count = 0;
+
+    // Search for handler that owns this body
+    let mut i: usize = 0;
+    while i < items.len() {
+        match &items[i].item.kind {
+            &hir_item::ItemKind::Handler(ref handler_def) => {
+                let mut j: usize = 0;
+                while j < handler_def.op_impls.len() {
+                    if handler_def.op_impls[j].body_id.index == target_body_id.index {
+                        // Found the handler op body — set shallow flag
+                        match &handler_def.kind {
+                            &common::HandlerKind::Shallow => {
+                                checker.in_shallow_handler = true;
+                            }
+                            &common::HandlerKind::Deep => {
+                                checker.in_shallow_handler = false;
+                            }
+                        }
+
+                        // Find the effect op return type via op_def_id
+                        let op_def_id = handler_def.op_impls[j].op_def_id;
+                        let mut ei: usize = 0;
+                        while ei < items.len() {
+                            match &items[ei].item.kind {
+                                &hir_item::ItemKind::Effect(ref effect_def) => {
+                                    let mut k: usize = 0;
+                                    while k < effect_def.operations.len() {
+                                        let effect_op = &effect_def.operations[k];
+                                        if effect_op.def_id.index == op_def_id.index {
+                                            checker.resume_ty = Option::Some(hir_ty::copy_type(&effect_op.return_ty));
+                                            return;
+                                        }
+                                        k = k + 1;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            ei = ei + 1;
+                        }
+                        // op_def_id not found in any effect — leave resume_ty as None
+                        return;
+                    }
+                    j = j + 1;
+                }
+            }
+            _ => {}
+        }
+        i = i + 1;
+    }
+    // Not a handler op body — defaults already set
 }
 
 /// Helper to extract effect DefIds from an EffectRow.
