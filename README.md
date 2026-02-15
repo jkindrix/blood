@@ -14,20 +14,20 @@ Blood synthesizes five cutting-edge programming language innovations:
 
 ## Status
 
-> **Version: 0.5.3**
+> **Version: 0.2.0**
 
-Core compiler is complete and tested. Programs compile and run with full type checking, effect tracking, and generational memory safety. 2,047 tests passing. See [IMPLEMENTATION_STATUS.md](docs/spec/IMPLEMENTATION_STATUS.md) for detailed component status.
+Core compiler is functional and tested. Programs compile and run with full type checking, effect tracking, and generational memory safety. Bootstrap compiler passes 2,047 unit tests; self-hosted compiler passes 271/317 ground-truth integration tests. See [IMPLEMENTATION_STATUS.md](docs/spec/IMPLEMENTATION_STATUS.md) for detailed component status.
 
 | Component | Status | Details |
 |-----------|--------|---------|
 | Lexer & Parser | ✅ Complete | Production-tested |
 | Type Checker | ✅ Complete | Bidirectional + unification |
 | Code Generation | ✅ Complete | LLVM backend |
-| Effects System | ✅ Integrated | Evidence passing with runtime FFI exports |
+| Effects System | 🔶 Partial | Bootstrap: evidence passing inline; self-hosted: runtime ABI in progress |
 | Memory Model | ✅ Integrated | Generational pointers in codegen (blood_alloc/blood_free) |
 | Runtime | ✅ Integrated | Memory management, FFI exports linked to programs |
 | Multiple Dispatch | 🔶 Partial | Compile-time dispatch complete; runtime dispatch in progress |
-| Closures | ✅ Integrated | Environment capture and codegen |
+| Closures | 🔶 Partial | Bootstrap: environment capture and codegen; self-hosted: parser support pending |
 
 **Legend**: ✅ = Implemented and integrated | 🔶 = Partially integrated
 
