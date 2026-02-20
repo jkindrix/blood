@@ -715,6 +715,33 @@ One-command pipeline that builds an ASan-instrumented second_gen and runs it, re
 
 **When to use:** When self-compilation crashes (SIGSEGV, heap corruption) and you need to identify the exact memory error. The ASan report will show use-after-free, buffer overflow, etc. with precise stack traces.
 
+### FileCheck Test Coverage Audit — `tools/filecheck-audit.sh`
+
+Inventories existing FileCheck tests, scans compiler source for codegen patterns, and reports coverage gaps with prioritized recommendations.
+
+**Usage:**
+```bash
+# Full audit (existing tests + patterns + ground-truth + gaps)
+./tools/filecheck-audit.sh
+
+# Just list existing tests
+./tools/filecheck-audit.sh --tests-only
+
+# Just show coverage gaps and recommendations
+./tools/filecheck-audit.sh --gaps-only
+
+# Just show recommended new tests
+./tools/filecheck-audit.sh --recommend
+```
+
+**Output sections:**
+- Existing FileCheck tests with CHECK directive counts and pattern coverage
+- Codegen patterns in the compiler (IR emission counts, feature usage levels H/M/L)
+- Ground-truth test feature coverage (struct, enum, trait, etc.)
+- Coverage gaps with 15 recommended tests (HIGH/MEDIUM/LOW priority)
+
+**When to use:** Before creating new FileCheck tests, run this audit to see what's already covered and where the biggest gaps are. Focus on HIGH priority recommendations first.
+
 **Task tracker:** See `tools/TASKS.md` for the full infrastructure roadmap.
 
 ---

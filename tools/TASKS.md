@@ -38,10 +38,9 @@
   Full pipeline: build first_gen → self-compile → ASan instrument → run + format report. Modes: `--reuse`, `--ir FILE.ll`, `--run-only`, `--test CMD`. Color-formatted ASan output with highlighted functions and stack traces. Requires LLVM 18 tools.
   - Status: complete
 
-- [ ] **T07: FileCheck Test Coverage Audit** `tools/filecheck-audit.sh`
-  Inventory existing FileCheck tests (`tests/check_*.blood`), identify which codegen patterns they cover, and report gaps — especially patterns exercised by self-compilation that have no FileCheck coverage.
-  - Output: coverage report + list of recommended new FileCheck tests
-  - Status: not started
+- [x] **T07: FileCheck Test Coverage Audit** `tools/filecheck-audit.sh` *(2026-02-20)*
+  Four sections: existing test inventory, codegen pattern scan (20+ IR emission types, 20+ feature categories), ground-truth coverage analysis, and gap report with 15 prioritized recommendations (5 HIGH, 6 MEDIUM, 4 LOW). Baseline: 3 existing tests, 0/15 recommended tests exist.
+  - Status: complete
 
 - [ ] **T08: MIR Validation Gate** `tools/validate-all-mir.sh`
   Run `--validate-mir` on a configurable set of inputs (ground-truth tests or the compiler itself) and report any MIR structural errors. Intended as a pre-codegen gate.
