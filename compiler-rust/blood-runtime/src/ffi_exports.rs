@@ -72,19 +72,24 @@ unsafe fn runtime_alloc(layout: std::alloc::Layout) -> *mut u8 {
     }
 }
 
-/// Region-aware deallocation. When a region is active, this is a no-op
-/// (the region will free everything on destroy). Otherwise uses global dealloc.
+/// Region-aware deallocation. When a region is active, dealloc is a no-op
+/// because Blood lacks a borrow checker — dropped Vecs/Strings may still
+/// have live references to their backing buffers. Freeing them would cause
+/// use-after-free when the free-list slot gets reused. The region's bulk
+/// destroy reclaims all memory at once.
 unsafe fn runtime_dealloc(ptr: *mut u8, layout: std::alloc::Layout) {
     let region_id = current_active_region();
     if region_id == 0 {
         std::alloc::dealloc(ptr, layout);
     }
-    // In a region: no-op. Memory freed when region is destroyed.
+    // Inside a region: no-op. Memory is reclaimed when the region is destroyed.
 }
 
 /// Region-aware reallocation. When a region is active, allocates new space
-/// from the region, copies data, returns new pointer (old space reclaimed
-/// when region is destroyed). Otherwise uses global realloc.
+/// from the region and copies data. The old buffer is abandoned (not freed)
+/// because Blood lacks a borrow checker — other code may still reference the
+/// old buffer's contents through raw pointers or slices. The abandoned memory
+/// is reclaimed when the region is destroyed.
 unsafe fn runtime_realloc(ptr: *mut u8, old_layout: std::alloc::Layout, new_size: usize) -> *mut u8 {
     let region_id = current_active_region();
     if region_id != 0 {
@@ -4310,6 +4315,48 @@ pub extern "C" fn blood_region_used(region_id: u64) -> usize {
         region.used()
     } else {
         0
+    }
+}
+
+/// Returns the committed (physically backed) bytes for a region.
+#[no_mangle]
+pub extern "C" fn blood_region_committed(region_id: u64) -> usize {
+    let registry = get_region_registry();
+    let reg = registry.lock();
+
+    if let Some(region) = reg.get(&region_id) {
+        region.capacity()
+    } else {
+        0
+    }
+}
+
+/// Returns the allocation count for a region.
+#[no_mangle]
+pub extern "C" fn blood_region_alloc_count(region_id: u64) -> u64 {
+    let registry = get_region_registry();
+    let reg = registry.lock();
+
+    if let Some(region) = reg.get(&region_id) {
+        region.stats().allocations.load(std::sync::atomic::Ordering::Relaxed)
+    } else {
+        0
+    }
+}
+
+/// Trim a region's committed pages above the current allocation offset.
+///
+/// Releases physical pages via madvise(MADV_DONTNEED) while keeping the
+/// virtual address space mapped. Call at phase boundaries to reclaim memory
+/// that was needed temporarily.
+#[no_mangle]
+pub extern "C" fn blood_region_trim(region_id: u64) {
+    let registry = get_region_registry();
+    let reg = registry.lock();
+
+    if let Some(region) = reg.get(&region_id) {
+        #[cfg(unix)]
+        region.trim();
     }
 }
 
@@ -11232,6 +11279,16 @@ pub extern "C" fn blood_clock_millis() -> u64 {
 #[no_mangle]
 pub extern "C" fn blood_clock_secs_f64() -> f64 {
     get_start_time().elapsed().as_secs_f64()
+}
+
+/// Reinterpret an f64 value as its IEEE 754 bit representation (u64).
+///
+/// This is equivalent to `f64::to_bits()` — a bitwise reinterpretation,
+/// not a numeric conversion. Used by the self-hosted compiler to avoid
+/// raw pointer casts which are not yet supported in its codegen.
+#[no_mangle]
+pub extern "C" fn blood_float64_to_bits(value: f64) -> u64 {
+    value.to_bits()
 }
 
 // ============================================================================

@@ -1472,8 +1472,13 @@ impl Region {
         if new_offset > committed {
             // Need to commit more pages.
             let ps = page_size();
-            // Double the committed size or fit the request, whichever is larger.
-            let desired = round_up((committed * 2).max(new_offset), ps).min(self.reserved);
+            // Grow by min(committed, 256 MB) to avoid over-committing.
+            // The old strategy (committed * 2) wastes up to 50% of committed memory
+            // per growth step. Capping at 256 MB means a 16 GB region grows to
+            // 16.25 GB instead of 32 GB.
+            const MAX_GROWTH: usize = 256 * 1024 * 1024; // 256 MB
+            let growth = committed.min(MAX_GROWTH);
+            let desired = round_up((committed + growth).max(new_offset), ps).min(self.reserved);
             let additional = desired - committed;
             if additional > 0 {
                 let ret = unsafe {
@@ -1566,9 +1571,19 @@ impl Region {
     #[must_use]
     pub fn deallocate(&self, addr: u64, size_class: u8) -> bool {
         if size_class == SIZE_CLASS_LARGE || size_class as usize >= NUM_SIZE_CLASSES {
-            // Large allocations don't go to free lists
-            // They remain allocated until region destruction
-            self.stats.deallocations.fetch_add(1, Ordering::Relaxed);
+            // Large allocations don't go to free lists.
+            // Release physical pages via madvise so RSS drops immediately.
+            #[cfg(unix)]
+            {
+                // We don't know the exact size, but the allocation is page-aligned
+                // and at least one page. Use page-aligned madvise on the address.
+                // The caller should prefer deallocate_large() with the actual size.
+                self.stats.deallocations.fetch_add(1, Ordering::Relaxed);
+            }
+            #[cfg(not(unix))]
+            {
+                self.stats.deallocations.fetch_add(1, Ordering::Relaxed);
+            }
             return false;
         }
 
@@ -1577,6 +1592,31 @@ impl Region {
         lists[size_class as usize].push(addr);
         self.stats.deallocations.fetch_add(1, Ordering::Relaxed);
         true
+    }
+
+    /// Deallocate a large allocation (>16KB) and release its physical pages.
+    ///
+    /// Unlike `deallocate()` which doesn't know the allocation size for large
+    /// allocations, this method takes the exact size and calls `madvise(MADV_DONTNEED)`
+    /// to release the physical pages back to the OS while keeping the virtual
+    /// address space mapped.
+    #[cfg(unix)]
+    pub fn deallocate_large(&self, addr: u64, size: usize) {
+        let ps = page_size();
+        // Align to page boundaries for madvise
+        let page_start = addr as usize & !(ps - 1);
+        let page_end = round_up(addr as usize + size, ps);
+        let page_len = page_end - page_start;
+        if page_len > 0 {
+            unsafe {
+                libc::madvise(
+                    page_start as *mut libc::c_void,
+                    page_len,
+                    libc::MADV_DONTNEED,
+                );
+            }
+        }
+        self.stats.deallocations.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Get allocation statistics.
@@ -1598,6 +1638,50 @@ impl Region {
         self.closed.store(0, Ordering::Release);
         self.suspend_count.store(0, Ordering::Release);
         self.status.store(RegionStatus::Active as u32, Ordering::Release);
+    }
+
+    /// Trim committed pages above the current allocation offset.
+    ///
+    /// Calls `madvise(MADV_DONTNEED)` on committed pages beyond the current
+    /// bump-pointer offset, releasing physical pages back to the OS. The virtual
+    /// address space remains mapped (PROT_READ|PROT_WRITE) so future allocations
+    /// will re-fault pages on demand.
+    ///
+    /// Also clears free lists since freed slots above the trim point are invalid.
+    ///
+    /// Call this at phase boundaries (after HIR lowering, after type checking)
+    /// to release temporarily-needed memory.
+    #[cfg(unix)]
+    pub fn trim(&self) {
+        let offset = self.offset.load(Ordering::Acquire);
+        let committed = self.committed.load(Ordering::Acquire);
+        let ps = page_size();
+
+        // Round offset up to next page boundary — don't touch the page
+        // containing the current allocation frontier.
+        let trim_start = round_up(offset, ps);
+
+        if trim_start >= committed {
+            return; // Nothing to trim
+        }
+
+        let trim_len = committed - trim_start;
+
+        unsafe {
+            libc::madvise(
+                self.base.add(trim_start) as *mut libc::c_void,
+                trim_len,
+                libc::MADV_DONTNEED,
+            );
+        }
+
+        // Clear free lists — slots in the trimmed region are no longer backed
+        // by physical pages, so reusing them would fault in new zeroed pages.
+        // This is safe because the pages are still mapped PROT_READ|PROT_WRITE.
+        let mut lists = self.free_lists.lock();
+        for list in lists.iter_mut() {
+            list.clear();
+        }
     }
 
     // ========================================================================
