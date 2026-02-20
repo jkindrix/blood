@@ -33,9 +33,9 @@ pub struct MirLowerCtx {
     temp_counter: u32,
     /// Tracks moved places for use-after-move detection.
     pub move_tracker: MoveTracker,
-    /// Substitution table from type inference.
+    /// Address of the substitution table from type inference (borrowed, not owned).
     /// Used to resolve TypeKind::Infer variables to concrete types.
-    pub subst_table: unify::SubstTable,
+    subst_table_addr: u64,
     /// Method resolution side table from type checking.
     /// Maps (body_def_id, span_start) to resolved method DefIds.
     pub method_resolutions: Vec<common::MethodResEntry>,
@@ -65,7 +65,7 @@ impl MirLowerCtx {
         def_id: hir_def::DefId,
         return_ty: hir_ty::Type,
         span: common::Span,
-        subst_table: unify::SubstTable,
+        subst_table_addr: u64,
         method_resolutions: Vec<common::MethodResEntry>,
         field_resolutions: Vec<common::FieldResEntry>,
     ) -> MirLowerCtx {
@@ -98,7 +98,7 @@ impl MirLowerCtx {
             loop_stack: Vec::new(),
             temp_counter: 0,
             move_tracker: MoveTracker::new(),
-            subst_table: subst_table,
+            subst_table_addr: subst_table_addr,
             method_resolutions: method_resolutions,
             field_resolutions: field_resolutions,
             body_def_id: def_id.index,
@@ -129,10 +129,15 @@ impl MirLowerCtx {
         Option::None
     }
 
+    /// Returns a reference to the borrowed substitution table.
+    fn get_subst_table(self: &Self) -> &unify::SubstTable {
+        self.subst_table_addr as &unify::SubstTable
+    }
+
     /// Resolves type inference variables to concrete types using the substitution table.
     /// This must be called on all types from HIR before they are used in MIR construction.
     pub fn resolve_type(self: &Self, ty: &hir_ty::Type) -> hir_ty::Type {
-        unify::apply_substs(&self.subst_table, ty)
+        unify::apply_substs(self.get_subst_table(), ty)
     }
 
     /// Looks up a resolved method DefId by the body's DefId and expression's span start.
@@ -193,7 +198,7 @@ impl MirLowerCtx {
     /// The type is automatically resolved through the substitution table.
     pub fn new_temp(self: &mut MirLowerCtx, ty: hir_ty::Type, span: common::Span) -> mir_def::MirLocalId {
         self.temp_counter = self.temp_counter + 1;
-        let resolved = unify::apply_substs(&self.subst_table, &ty);
+        let resolved = unify::apply_substs(self.get_subst_table(), &ty);
         self.builder.new_temp(resolved, span)
     }
 
@@ -206,7 +211,7 @@ impl MirLowerCtx {
         mutable: bool,
         span: common::Span,
     ) -> mir_def::MirLocalId {
-        let resolved = unify::apply_substs(&self.subst_table, &ty);
+        let resolved = unify::apply_substs(self.get_subst_table(), &ty);
         self.builder.new_var(resolved, name, mutable, span)
     }
 

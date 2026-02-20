@@ -42,8 +42,8 @@ pub fn lower_body(
     // Resolve the return type through the substitution table
     let resolved_return = unify::apply_substs(subst_table, &return_ty);
 
-    // Clone the substitution table for this lowering context
-    let cloned_table = unify::clone_subst_table(subst_table);
+    // Borrow the substitution table by address (read-only during MIR lowering)
+    let subst_table_addr = subst_table as u64;
 
     // Clone method resolutions for this lowering context
     let cloned_resolutions = clone_method_resolutions(method_resolutions);
@@ -51,8 +51,8 @@ pub fn lower_body(
     // Clone field resolutions for this lowering context
     let cloned_field_res = clone_field_resolutions(field_resolutions);
 
-    // Create lowering context with the substitution table, method and field resolutions
-    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_return, span, cloned_table, cloned_resolutions, cloned_field_res);
+    // Create lowering context with the substitution table address, method and field resolutions
+    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_return, span, subst_table_addr, cloned_resolutions, cloned_field_res);
 
     // Lower parameters (first param_count locals are parameters)
     lower_params_from_body(&mut ctx, body, span);
@@ -111,10 +111,10 @@ pub fn lower_closure(
     span: common::Span,
     subst_table: &unify::SubstTable,
 ) -> mir_body::MirBody {
-    // Resolve return type and create lowering context with substitution table
+    // Resolve return type and create lowering context with borrowed substitution table
     let resolved_return = unify::apply_substs(subst_table, &return_ty);
-    let cloned_table = unify::clone_subst_table(subst_table);
-    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_return, span, cloned_table, Vec::new(), Vec::new());
+    let subst_table_addr = subst_table as u64;
+    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_return, span, subst_table_addr, Vec::new(), Vec::new());
 
     // Lower closure parameters
     lower_closure_params(&mut ctx, params, span);
@@ -164,10 +164,10 @@ pub fn lower_static(
     span: common::Span,
     subst_table: &unify::SubstTable,
 ) -> mir_body::MirBody {
-    // Resolve type and create context with substitution table
+    // Resolve type and create context with borrowed substitution table
     let resolved_ty = unify::apply_substs(subst_table, &ty);
-    let cloned_table = unify::clone_subst_table(subst_table);
-    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_ty, span, cloned_table, Vec::new(), Vec::new());
+    let subst_table_addr = subst_table as u64;
+    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_ty, span, subst_table_addr, Vec::new(), Vec::new());
 
     // Lower initializer expression
     mir_lower_expr::lower_expr_to_return(&mut ctx, init);
