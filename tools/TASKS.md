@@ -42,11 +42,9 @@
   Four sections: existing test inventory, codegen pattern scan (20+ IR emission types, 20+ feature categories), ground-truth coverage analysis, and gap report with 15 prioritized recommendations (5 HIGH, 6 MEDIUM, 4 LOW). Baseline: 3 existing tests, 0/15 recommended tests exist.
   - Status: complete
 
-- [ ] **T08: MIR Validation Gate** `tools/validate-all-mir.sh`
-  Run `--validate-mir` on a configurable set of inputs (ground-truth tests or the compiler itself) and report any MIR structural errors. Intended as a pre-codegen gate.
-  - Input: directory of `.blood` files or single file
-  - Output: pass/fail per file with error details
-  - Status: not started
+- [x] **T08: MIR Validation Gate** `tools/validate-all-mir.sh` *(2026-02-20)*
+  Runs `--validate-mir` on configurable inputs (single file, directory, ground-truth, or --self for compiler sources). Reports PASS/FAIL/CRASH/MIR per file. Baseline: 148 pass, 75 fail (compilation failures), 94 skip (COMPILE_FAIL) of 317 ground-truth tests.
+  - Status: complete
 
 ### Lower Priority — Good Practice, Build Later
 

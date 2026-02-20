@@ -742,6 +742,32 @@ Inventories existing FileCheck tests, scans compiler source for codegen patterns
 
 **When to use:** Before creating new FileCheck tests, run this audit to see what's already covered and where the biggest gaps are. Focus on HIGH priority recommendations first.
 
+### MIR Validation Gate — `tools/validate-all-mir.sh`
+
+Runs `--validate-mir` on a set of `.blood` files and reports pass/fail per file with error details. Acts as a pre-codegen quality gate.
+
+**Usage:**
+```bash
+# Validate ground-truth tests (default)
+./tools/validate-all-mir.sh
+
+# Validate single file
+./tools/validate-all-mir.sh path/to/test.blood
+
+# Validate all files in a directory
+./tools/validate-all-mir.sh path/to/dir/
+
+# Validate compiler source files
+./tools/validate-all-mir.sh --self
+
+# Use reference compiler instead of test compiler
+./tools/validate-all-mir.sh --compiler REF
+```
+
+**Output:** Per-file PASS (silent), FAIL (with error excerpt), CRASH (with signal), or MIR (with MIR-specific errors). Summary with pass/fail/skip counts.
+
+**When to use:** After modifying MIR lowering code, run this to verify structural correctness before testing codegen. Catches type mismatches, malformed basic blocks, and other MIR-level issues early.
+
 **Task tracker:** See `tools/TASKS.md` for the full infrastructure roadmap.
 
 ---
