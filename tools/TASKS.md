@@ -53,9 +53,9 @@
   - Baseline run: 210/317 pass (66.2%), 32 fail, 75 compile-fail, 0 crash
   - Status: complete
 
-- [ ] **T10: Agent Convergence Guardrails** `tools/AGENT_PROTOCOL.md`
-  Written protocol for AI agent sessions: time-box rules, mandatory commit/report intervals, "stop and yield" criteria, and failure log update requirements. Not code — a process document referenced from CLAUDE.md.
-  - Status: not started
+- [x] **T10: Agent Convergence Guardrails** `tools/AGENT_PROTOCOL.md` *(2026-02-20)*
+  Written protocol for AI agent sessions: time-box rules, mandatory commit/report intervals, stop-and-yield criteria, failure log update requirements, investigation workflow, and anti-patterns.
+  - Status: complete
 
 ---
 

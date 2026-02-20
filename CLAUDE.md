@@ -796,6 +796,18 @@ Runs all 317 ground-truth tests against the test compiler (first_gen), stores re
 
 **When to use:** After any codegen or MIR change, run `./tools/track-regression.sh` to verify no tests regressed. Save a new baseline after confirming improvements.
 
+### Agent Convergence Guardrails — `tools/AGENT_PROTOCOL.md`
+
+Written protocol for AI agent sessions working on the Blood compiler. Prevents unproductive loops and ensures progress is captured.
+
+**Key rules:**
+- **Time-box proxies:** 3+ failed attempts at same approach = reassess; 5+ tool calls without progress = stop and log
+- **Mandatory commits:** Commit after any test score improvement, before switching subsystems, before speculative changes
+- **Stop-and-yield:** Same error 3 times, score regression, unknown feature required, or yak shaving chain >2 deep
+- **Session protocol:** Start with `track-regression.sh --show`, end with regression check + FAILURE_LOG update
+
+**When to reference:** At the start of any agent session working on the self-hosted compiler. Provides the investigation workflow (phase-compare → difftest → minimize → ASan) and anti-patterns to avoid.
+
 **Task tracker:** See `tools/TASKS.md` for the full infrastructure roadmap.
 
 ---
