@@ -34,11 +34,9 @@
   Structured markdown log with active issues, resolved issues table (20+ entries seeded from bug history), common root cause patterns, and debugging workflow. Machine-readable format with date, category, symptom, root cause, resolution, files.
   - Status: complete
 
-- [ ] **T06: ASan Self-Compilation Wrapper** `tools/asan-selfcompile.sh`
-  One-command wrapper that builds an ASan-instrumented first_gen and runs self-compilation through it, capturing and formatting the sanitizer report.
-  - Depends on: `build_selfhost.sh asan` (already exists, needs wrapping)
-  - Output: formatted ASan report with source locations
-  - Status: not started
+- [x] **T06: ASan Self-Compilation Wrapper** `tools/asan-selfcompile.sh` *(2026-02-20)*
+  Full pipeline: build first_gen → self-compile → ASan instrument → run + format report. Modes: `--reuse`, `--ir FILE.ll`, `--run-only`, `--test CMD`. Color-formatted ASan output with highlighted functions and stack traces. Requires LLVM 18 tools.
+  - Status: complete
 
 - [ ] **T07: FileCheck Test Coverage Audit** `tools/filecheck-audit.sh`
   Inventory existing FileCheck tests (`tests/check_*.blood`), identify which codegen patterns they cover, and report gaps — especially patterns exercised by self-compilation that have no FileCheck coverage.

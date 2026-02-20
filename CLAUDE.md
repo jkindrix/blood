@@ -684,6 +684,37 @@ Structured, machine-readable log of past failures, root causes, and resolutions.
 - **After resolving:** Add a new entry at the top of the resolved table
 - **During onboarding:** Read the "Common Root Causes" section first
 
+### ASan Self-Compilation Wrapper — `tools/asan-selfcompile.sh`
+
+One-command pipeline that builds an ASan-instrumented second_gen and runs it, reporting memory errors with formatted stack traces.
+
+**Usage:**
+```bash
+# Full pipeline: build first_gen → self-compile → ASan instrument → run
+./tools/asan-selfcompile.sh
+
+# Reuse existing first_gen (skip blood-rust rebuild)
+./tools/asan-selfcompile.sh --reuse
+
+# Instrument existing IR directly
+./tools/asan-selfcompile.sh --ir path/to/second_gen.ll
+
+# Just re-run existing ASan binary with different test
+./tools/asan-selfcompile.sh --run-only --test "check common.blood"
+```
+
+**Pipeline steps:**
+1. Build first_gen from blood-rust (or reuse existing)
+2. Self-compile: first_gen → second_gen.ll
+3. Instrument with ASan: llvm-as → opt (asan passes) → llc → clang -fsanitize=address
+4. Run the ASan binary and format the sanitizer report
+
+**Output:** Color-formatted ASan report with highlighted function names, error types, and stack traces. Full log saved to temp file.
+
+**Requirements:** LLVM 18 tools (llvm-as-18, opt-18, llc-18, clang-18).
+
+**When to use:** When self-compilation crashes (SIGSEGV, heap corruption) and you need to identify the exact memory error. The ASan report will show use-after-free, buffer overflow, etc. with precise stack traces.
+
 **Task tracker:** See `tools/TASKS.md` for the full infrastructure roadmap.
 
 ---
