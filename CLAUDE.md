@@ -637,6 +637,37 @@ Runs both compilers on a single `.blood` file and compares at each compilation p
 
 **When to use:** When `difftest.sh` reports DIVERGE or TEST_FAIL, use this tool to narrow down which compilation phase first diverges. Phase 1 divergence = parser/typeck bug. Phase 4 divergence = codegen bug.
 
+### Memory Budget Tracker — `tools/memprofile.sh`
+
+Profiles memory usage of compilation runs with per-phase timing breakdowns.
+
+**Usage:**
+```bash
+# Summary mode (default): peak RSS + phase timings for both compilers
+./tools/memprofile.sh path/to/test.blood
+
+# Side-by-side comparison table
+./tools/memprofile.sh path/to/test.blood --compare
+
+# RSS sampling mode (polls /proc/PID/status every 50ms, shows timeline)
+./tools/memprofile.sh path/to/test.blood --sample
+
+# Valgrind massif heap profiling (slow but detailed)
+./tools/memprofile.sh path/to/test.blood --massif
+
+# Single compiler only
+./tools/memprofile.sh path/to/test.blood --ref-only
+./tools/memprofile.sh path/to/test.blood --test-only
+```
+
+**Modes:**
+- `--summary` (default): Peak RSS via `/usr/bin/time -v`, plus `--timings` phase breakdown
+- `--compare`: Side-by-side table of both compilers' peak RSS, wall time, and phase timings
+- `--sample`: Background RSS polling with ASCII timeline chart
+- `--massif`: Full heap profile via `valgrind --tool=massif`
+
+**When to use:** When self-compilation uses too much memory or when investigating memory growth across compiler phases. The `--compare` mode quickly shows if first_gen uses more memory than blood-rust for the same input.
+
 **Task tracker:** See `tools/TASKS.md` for the full infrastructure roadmap.
 
 ---

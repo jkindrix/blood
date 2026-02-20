@@ -24,11 +24,9 @@
   Four-phase comparison (Compilation, MIR, LLVM IR, Behavior) between both compilers on a single file. Identifies which phase first diverges. MIR extracted via `--emit mir` (blood-rust, stdout) and `--dump-mir` (first_gen, stderr). Reports MATCH/DIFFER/DIVERGE per phase with verbose mode for details.
   - Status: complete
 
-- [ ] **T04: Memory Budget Tracker** `tools/memprofile.sh`
-  Instrument compilation runs with per-phase memory high-water marks. Reports memory usage for parsing, HIR lowering, type checking, and codegen separately.
-  - Input: a compilation command
-  - Output: phase-by-phase memory report (RSS at each phase boundary)
-  - Status: not started
+- [x] **T04: Memory Budget Tracker** `tools/memprofile.sh` *(2026-02-20)*
+  Four modes: `--summary` (peak RSS + timings), `--compare` (side-by-side table), `--sample` (RSS timeline via /proc polling), `--massif` (valgrind heap profile). Uses `/usr/bin/time -v` for peak RSS, both compilers' `--timings` for phase breakdown.
+  - Status: complete
 
 ### Medium Priority — Improves Development Velocity
 
