@@ -90,11 +90,13 @@ pub struct Args {
     pub dump_layouts: bool,
     /// Whether to validate MIR before codegen.
     pub validate_mir: bool,
+    /// Whether to print memory profile at each phase boundary.
+    pub mem_profile: bool,
 }
 
 impl Args {
     /// Creates default arguments.
-    pub fn default() -> Args {
+    pub fn new() -> Args {
         Args {
             command: Command::Help,
             source_file: Option::None,
@@ -109,6 +111,7 @@ impl Args {
             dump_types: false,
             dump_layouts: false,
             validate_mir: false,
+            mem_profile: false,
         }
     }
 
@@ -128,6 +131,7 @@ impl Args {
             dump_types: false,
             dump_layouts: false,
             validate_mir: false,
+            mem_profile: false,
         }
     }
 
@@ -147,6 +151,7 @@ impl Args {
             dump_types: false,
             dump_layouts: false,
             validate_mir: false,
+            mem_profile: false,
         }
     }
 }
@@ -210,17 +215,14 @@ fn run_check(args: &Args) -> i32 {
             // Create region for all check allocations.
             // 16 MB initial, 50 GB max — virtual address reservation via mmap,
             // physical pages committed on demand.
-            // Self-hosting requires ~21 GB for HIR + additional for typeck.
             let check_region = region_create(16777216, 53687091200);
             region_activate(check_region);
 
-            // Run check (all parse/HIR/typeck allocations go to check_region)
             eprint_str("  Checking...");
             let result = driver::check_file(path.as_str());
             let check_elapsed = blood_clock_millis() - check_start;
             eprint_str(" done\n");
 
-            // Print results while region is still alive (strings are in the region)
             let exit_code = if result.success {
                 print_success("Check passed");
                 if args.timings {
@@ -243,7 +245,7 @@ fn run_check(args: &Args) -> i32 {
                 1
             };
 
-            // Deactivate and destroy — bulk-frees all front-end data
+            // Bulk-free all front-end data
             region_deactivate();
             region_destroy(check_region);
 
@@ -551,7 +553,8 @@ fn run_help(_args: &Args) -> i32 {
     help.push_str("    -o <file>    Output file path\n");
     help.push_str("    -v           Verbose output\n");
     help.push_str("    --no-color   Disable colored output\n");
-    help.push_str("    --timings    Print per-phase timing\n");
+    help.push_str("    --timings      Print per-phase timing\n");
+    help.push_str("    --mem-profile  Print per-phase memory diagnostics\n");
     help.push_str("    --no-cache   Skip the build cache\n");
     help.push_str("\n");
     help.push_str("DEBUG OPTIONS:\n");
@@ -655,7 +658,7 @@ fn print_string(s: &String) {
 /// Parses command line arguments into Args structure.
 /// This function structure is ready for when argument access is available.
 pub fn parse_args(argc: i32, argv: &Vec<String>) -> Args {
-    let mut args = Args::default();
+    let mut args = Args::new();
 
     if argc < 2 {
         return args;
@@ -699,6 +702,8 @@ pub fn parse_args(argc: i32, argv: &Vec<String>) -> Args {
                 args.dump_layouts = true;
             } else if str_equals(arg, "--validate-mir") {
                 args.validate_mir = true;
+            } else if str_equals(arg, "--mem-profile") {
+                args.mem_profile = true;
             }
         } else {
             // Positional argument (source file)
@@ -861,6 +866,10 @@ fn is_region_builtin(name: &str) -> bool {
     if str_eq(name, "region_alloc") { return true; }
     if str_eq(name, "region_exit_scope") { return true; }
     if str_eq(name, "region_used") { return true; }
+    if str_eq(name, "region_trim") { return true; }
+    if str_eq(name, "region_committed") { return true; }
+    if str_eq(name, "region_alloc_count") { return true; }
+    if str_eq(name, "system_alloc_live_bytes") { return true; }
     false
 }
 
@@ -2196,14 +2205,19 @@ fn codegen_thread_worker(arg: u64) -> u64 {
     let wl: &CodegenWorkList = targ.worklist_addr as &CodegenWorkList;
     let output: &mut String = targ.output_ir_addr as &mut String;
 
+    // Per-thread codegen region: holds codegen temporaries + ctx growth.
+    // Thread-local since regions use thread-local stacks.
+    let thread_codegen_region = region_create(33554432, 8589934592);
+    region_activate(thread_codegen_region);
+
     let mut i: usize = targ.chunk_start;
     while i < targ.chunk_end {
         let work = &wl.items[i];
         let body_entry = &lower.bodies[work.body_idx];
         let hir_body = &body_entry.body;
 
-        // Stage A: MIR lowering (per-function region)
-        let mir_region = region_create(4194304, 1073741824);  // 4 MB init, 1 GB max
+        // Per-function MIR region sits on top of thread_codegen_region.
+        let mir_region = region_create(4194304, 8589934592);
         region_activate(mir_region);
 
         let body = mir_lower::lower_body(
@@ -2216,24 +2230,28 @@ fn codegen_thread_worker(arg: u64) -> u64 {
             &typeck.field_resolutions,
         );
 
+        // Pop mir_region — thread_codegen_region becomes active.
         region_deactivate();
 
-        // Stage B: Set up call remaps for trait default methods
+        // Set up call remaps for trait default methods
         ctx.call_remaps = find_call_remaps_for_def(
             &typeck.default_method_remaps,
             work.def_id.index,
         );
 
-        // Stage C: Set handler op state flags if needed
+        // Set handler op state flags if needed
         let is_hop = ctx.is_handler_op_body(work.def_id.index);
         if is_hop {
             ctx.handler_op_state_local = 1;
             ctx.is_handler_op = true;
         }
 
-        // Stage D: Codegen
+        // Codegen (thread_codegen_region active — all allocations scoped)
         let fn_ir = codegen::generate_function_with_ctx(ctx, &body, work.fn_name.as_str());
         output.push_str(fn_ir.as_str());
+
+        // Destroy MIR region — frees MIR body data
+        region_destroy(mir_region);
 
         // Clear handler op state flags
         if is_hop {
@@ -2244,11 +2262,11 @@ fn codegen_thread_worker(arg: u64) -> u64 {
         // Clear call remaps
         ctx.call_remaps = Vec::new();
 
-        // Stage E: Destroy MIR region
-        region_destroy(mir_region);
-
         i = i + 1;
     }
+
+    region_deactivate();
+    region_destroy(thread_codegen_region);
     0
 }
 
@@ -2274,11 +2292,24 @@ fn codegen_pass2(
     let mut i: usize = 0;
     while i < total_items {
         let work = &worklist.items[i];
+
+        if i % 100 == 0 {
+            eprint_str("\n  [fn ");
+            eprint_str(int_to_string(i as i32));
+            eprint_str("/");
+            eprint_str(int_to_string(total_items as i32));
+            eprint_str(" ");
+            eprint_str(work.fn_name.as_str());
+            eprint_str("]");
+        }
+
         let body_entry = &lower_result.bodies[work.body_idx];
         let hir_body = &body_entry.body;
 
-        // MIR lowering (per-function region)
-        let mir_region = region_create(4194304, 1073741824);
+        // Per-function MIR region sits ON TOP of the codegen_region stack.
+        // MIR lowering allocations go here, then we pop so codegen uses
+        // the parent codegen_region (persistent across all functions).
+        let mir_region = region_create(4194304, 8589934592);
         region_activate(mir_region);
 
         let body = mir_lower::lower_body(
@@ -2291,6 +2322,8 @@ fn codegen_pass2(
             &typeck_result.field_resolutions,
         );
 
+        // Pop mir_region — codegen_region becomes active again.
+        // MIR data remains valid until region_destroy below.
         region_deactivate();
 
         // Dump MIR if requested
@@ -2329,9 +2362,6 @@ fn codegen_pass2(
         }
 
         // Set up call remapping for trait default methods.
-        // If this function's DefId matches a default_method_remap entry,
-        // set up the remap table so calls to abstract trait methods are
-        // redirected to concrete impl methods.
         ctx.call_remaps = find_call_remaps_for_def(
             &typeck_result.default_method_remaps,
             work.def_id.index,
@@ -2344,9 +2374,12 @@ fn codegen_pass2(
             ctx.is_handler_op = true;
         }
 
-        // Codegen + write directly to file
+        // Codegen (no region active — all allocations in global allocator)
         let fn_ir = codegen::generate_function_with_ctx(ctx, &body, work.fn_name.as_str());
         file_append_string(output_path, fn_ir.as_str());
+
+        // Destroy MIR region — frees MIR body data
+        region_destroy(mir_region);
 
         // Clear handler op state flags
         if is_hop {
@@ -2356,9 +2389,6 @@ fn codegen_pass2(
 
         // Clear call remaps after generating the function
         ctx.call_remaps = Vec::new();
-
-        // Destroy MIR region
-        region_destroy(mir_region);
 
         i = i + 1;
     }
@@ -2391,6 +2421,152 @@ fn find_call_remaps_for_def(
         i = i + 1;
     }
     result
+}
+
+// ============================================================
+// Memory Profiling
+// ============================================================
+
+/// Reads VmRSS from /proc/self/status and returns the value in KB.
+/// Returns 0 if the file cannot be read or parsed.
+fn get_rss_kb() -> u64 {
+    let status: &str = file_read_to_string("/proc/self/status");
+    if status.len() == 0 {
+        return 0 as u64;
+    }
+    // Scan for "VmRSS:" line and parse the number
+    let target: &str = "VmRSS:";
+    let mut i: usize = 0;
+    while i < status.len() {
+        // Check if we're at "VmRSS:"
+        if i + 6 <= status.len() {
+            let ch0 = status.as_bytes()[i];
+            let ch1 = status.as_bytes()[i + 1];
+            let ch2 = status.as_bytes()[i + 2];
+            let ch3 = status.as_bytes()[i + 3];
+            let ch4 = status.as_bytes()[i + 4];
+            let ch5 = status.as_bytes()[i + 5];
+            if ch0 == 86 && ch1 == 109 && ch2 == 82 && ch3 == 83 && ch4 == 83 && ch5 == 58 {
+                // Found "VmRSS:" — skip whitespace and parse number
+                let mut j: usize = i + 6;
+                while j < status.len() {
+                    let c = status.as_bytes()[j];
+                    if c == 32 || c == 9 {
+                        j = j + 1;
+                    } else {
+                        break;
+                    }
+                }
+                // Parse digits
+                let mut value: u64 = 0;
+                while j < status.len() {
+                    let c = status.as_bytes()[j];
+                    if c >= 48 && c <= 57 {
+                        value = value * 10 + (c - 48) as u64;
+                        j = j + 1;
+                    } else {
+                        break;
+                    }
+                }
+                return value;
+            }
+        }
+        // Skip to next line
+        while i < status.len() && status.as_bytes()[i] != 10 {
+            i = i + 1;
+        }
+        i = i + 1;
+    }
+    0 as u64
+}
+
+/// Formats a byte count as human-readable (e.g., "1234 MB" or "5678 KB").
+fn push_bytes_human(s: &mut String, bytes: u64) {
+    if bytes >= 1073741824 {
+        // GB range
+        let gb = bytes / 1073741824;
+        let remainder_mb = (bytes % 1073741824) / 10737418;  // two decimal places
+        push_u64(s, gb);
+        s.push('.');
+        if remainder_mb < 10 {
+            s.push('0');
+        }
+        push_u64(s, remainder_mb);
+        s.push_str(" GB");
+    } else if bytes >= 1048576 {
+        // MB range
+        let mb = bytes / 1048576;
+        let remainder_kb = (bytes % 1048576) / 10485;  // two decimal places
+        push_u64(s, mb);
+        s.push('.');
+        if remainder_kb < 10 {
+            s.push('0');
+        }
+        push_u64(s, remainder_kb);
+        s.push_str(" MB");
+    } else {
+        let kb = bytes / 1024;
+        push_u64(s, kb);
+        s.push_str(" KB");
+    }
+}
+
+/// Prints a memory snapshot for a single phase boundary.
+/// label: phase name (e.g., "After parse")
+/// regions: list of (name, region_id) pairs to report on
+fn print_mem_phase(label: &str, parse_region: u64, hir_region: u64, codegen_region: u64) {
+    let rss_kb = get_rss_kb();
+    let sys_live = system_alloc_live_bytes();
+
+    let mut msg = String::new();
+    msg.push_str("\n  [mem] ");
+    msg.push_str(label);
+    msg.push_str("\n");
+
+    // RSS
+    msg.push_str("    RSS:              ");
+    push_bytes_human(&mut msg, rss_kb * 1024);
+    msg.push('\n');
+
+    // System allocator
+    msg.push_str("    System heap:      ");
+    push_bytes_human(&mut msg, sys_live);
+    msg.push('\n');
+
+    // Parse region
+    if parse_region != 0 {
+        msg.push_str("    parse_region:     used=");
+        push_bytes_human(&mut msg, region_used(parse_region) as u64);
+        msg.push_str("  committed=");
+        push_bytes_human(&mut msg, region_committed(parse_region) as u64);
+        msg.push_str("  allocs=");
+        push_u64(&mut msg, region_alloc_count(parse_region));
+        msg.push('\n');
+    }
+
+    // HIR region
+    if hir_region != 0 {
+        msg.push_str("    hir_region:       used=");
+        push_bytes_human(&mut msg, region_used(hir_region) as u64);
+        msg.push_str("  committed=");
+        push_bytes_human(&mut msg, region_committed(hir_region) as u64);
+        msg.push_str("  allocs=");
+        push_u64(&mut msg, region_alloc_count(hir_region));
+        msg.push('\n');
+    }
+
+    // Codegen region
+    if codegen_region != 0 {
+        msg.push_str("    codegen_region:   used=");
+        push_bytes_human(&mut msg, region_used(codegen_region) as u64);
+        msg.push_str("  committed=");
+        push_bytes_human(&mut msg, region_committed(codegen_region) as u64);
+        msg.push_str("  allocs=");
+        push_u64(&mut msg, region_alloc_count(codegen_region));
+        msg.push('\n');
+    }
+
+    eprint_str(msg.as_str());
 }
 
 // ============================================================
@@ -2485,12 +2661,15 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     };
     eprint_str(" done\n");
 
+    if args.mem_profile {
+        print_mem_phase("After parse", parse_region, 0 as u64, 0 as u64);
+    }
+
     // Deactivate parse_region — AST remains readable for HIR lowering.
     region_deactivate();
 
     // === HIR Lower Phase (hir_region) ===
     // 16 MB initial, 50 GB max — holds HIR items, bodies, types, typeck info.
-    // Self-hosting requires ~21 GB for HIR + additional for typeck.
     eprint_str("  HIR lowering...");
     let hir_start = blood_clock_millis();
 
@@ -2525,11 +2704,26 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     }
     eprint_str(" done\n");
 
+    if args.mem_profile {
+        print_mem_phase("After HIR lowering", parse_region, hir_region, 0 as u64);
+    }
+
+    // Trim hir_region to release pages used during lowering but no longer needed
+    region_trim(hir_region);
+
+    if args.mem_profile {
+        print_mem_phase("After HIR trim", parse_region, hir_region, 0 as u64);
+    }
+
     // Deactivate hir_region temporarily to destroy parse_region
     region_deactivate();
 
     // AST no longer needed — free parse memory early (before type checking)
     region_destroy(parse_region);
+
+    if args.mem_profile {
+        print_mem_phase("After parse_region destroy", 0 as u64, hir_region, 0 as u64);
+    }
 
     // === Type Check Phase (hir_region) ===
     eprint_str("  Type checking...");
@@ -2557,9 +2751,20 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     }
     eprint_str(" done\n");
 
+    if args.mem_profile {
+        print_mem_phase("After type checking", 0 as u64, hir_region, 0 as u64);
+    }
+
     // Dump type resolutions if requested
     if args.dump_types {
         dump_type_resolutions(&typeck_result);
+    }
+
+    // Trim hir_region after type checking — release pages from typeck temporaries
+    region_trim(hir_region);
+
+    if args.mem_profile {
+        print_mem_phase("After typeck trim", 0 as u64, hir_region, 0 as u64);
     }
 
     // Deactivate hir_region — data remains readable for codegen.
@@ -2570,14 +2775,13 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     eprint_str("  Codegen...");
     let codegen_start = blood_clock_millis();
 
+    eprint_str("[begin_streaming]");
     let mut ctx = codegen_streaming::begin_streaming_module("main", output_path, &lower_result.items);
     ctx.trace_codegen = args.trace_codegen;
+    eprint_str("[done]");
 
     // Register builtin ADT types (Vec, String, HashMap, Box) in the ADT registry
-    // BEFORE populating user ADT layouts. This is critical: without builtins,
-    // Box<T> gets expanded as { i8, [sizeof(T) x i8] } instead of "ptr",
-    // causing inflationary size cascades for recursive type structures
-    // (e.g., TypeKind → Box<Type> → Type → TypeKind).
+    eprint_str("[register_adts]");
     codegen::register_builtin_adts(
         &mut ctx,
         &lower_result.builtin_vec_def,
@@ -2585,14 +2789,16 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
         &lower_result.builtin_hashmap_def,
         &lower_result.builtin_box_def,
     );
-    // Now populate user ADT layouts with builtins available.
+    eprint_str("[populate_adt]");
     codegen::populate_adt_registry(&mut ctx, &lower_result.items);
+    eprint_str("[done]");
 
     // Dump ADT layouts if requested (after registry is fully populated)
     if args.dump_layouts {
         dump_adt_layouts(&ctx);
     }
 
+    eprint_str("[statics]");
     // Collect static DefIds first - needed for name registration filtering.
     let mut static_def_ids: Vec<u32> = Vec::new();
     let mut si: usize = 0;
@@ -2611,6 +2817,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     // This must happen before any functions that reference statics.
     // Also registers static names in ctx using the interner.
     codegen_streaming::emit_static_globals_with_names(&mut ctx, &lower_result.interner, &lower_result.items);
+    eprint_str("[pass0_done]");
 
     // Pass 1a: Register def_names for all function bodies (global allocator)
     // SKIP static bodies - their names are already registered by emit_static_globals_with_names
@@ -2646,6 +2853,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     // Pass 1b: Register def_names for ALL function-like items (including those without bodies).
     // This ensures that calls to foreign/builtin functions resolve to the correct name.
     register_all_item_names(&mut ctx, &lower_result.interner, &lower_result.items);
+    eprint_str("[pass1_done]");
 
     // Pass 1c: Register def_names for builtin constructors (String::new, Vec::new, etc.).
     // These DefIds are allocated by the HIR lowering and map to runtime function names.
@@ -2682,10 +2890,30 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     // Build work list: scan bodies once to identify which functions to codegen.
     // Filters out static bodies and duplicates from generic instantiations.
     let worklist = build_codegen_worklist(&lower_result, &static_def_ids);
+    eprint_str("[worklist:");
+    eprint_str(int_to_string(worklist.items.len() as i32));
+    eprint_str("]");
+
+    if args.mem_profile {
+        print_mem_phase("Before codegen pass2", 0 as u64, hir_region, 0 as u64);
+    }
+
+    // Codegen region: holds all codegen temporaries, string_table growth, etc.
+    // Persists across all function compilations. Per-function mir_regions sit
+    // on top for MIR lowering, then pop so codegen uses this region.
+    // 32 MB initial, 8 GB max — codegen produces ~50-100 MB of IR + metadata.
+    let codegen_region = region_create(33554432, 8589934592);
+    region_activate(codegen_region);
 
     // Pass 2: MIR lowering + codegen, writing each function's IR directly to file.
     ctx.flush_write_buffer();
+    eprint_str("[pass2_start]");
     let _pass2_ok = codegen_pass2(&mut ctx, &worklist, &lower_result, &typeck_result, output_path, args);
+    eprint_str("[pass2_done]");
+
+    if args.mem_profile {
+        print_mem_phase("After codegen pass2", 0 as u64, hir_region, codegen_region);
+    }
 
     // Pass 3: Generate stub functions for registered names without bodies.
     // These are enum variant constructors and other synthetic functions that are
@@ -2718,9 +2946,20 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     let codegen_elapsed = blood_clock_millis() - codegen_start;
     eprint_str(" done\n");
 
-    // Destroy HIR region — bulk-frees all HIR and typeck data
-    // (parse_region was already destroyed after HIR lowering)
+    if args.mem_profile {
+        print_mem_phase("After codegen complete", 0 as u64, hir_region, codegen_region);
+    }
+
+    // Free codegen temporaries and ctx growth
+    region_deactivate();
+    region_destroy(codegen_region);
+
+    // HIR/typeck data no longer needed — free hir_region
     region_destroy(hir_region);
+
+    if args.mem_profile {
+        print_mem_phase("After all regions destroyed", 0 as u64, 0 as u64, 0 as u64);
+    }
 
     // === Store in cache ===
     if source_hash != 0 {
