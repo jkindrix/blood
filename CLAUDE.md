@@ -768,6 +768,34 @@ Runs `--validate-mir` on a set of `.blood` files and reports pass/fail per file 
 
 **When to use:** After modifying MIR lowering code, run this to verify structural correctness before testing codegen. Catches type mismatches, malformed basic blocks, and other MIR-level issues early.
 
+### Ground-Truth Regression Tracker — `tools/track-regression.sh`
+
+Runs all 317 ground-truth tests against the test compiler (first_gen), stores results as a baseline, and compares future runs to detect regressions and new passes.
+
+**Usage:**
+```bash
+# Run tests and save as new baseline
+./tools/track-regression.sh --save
+
+# Run tests and compare against saved baseline
+./tools/track-regression.sh
+
+# Show current baseline summary
+./tools/track-regression.sh --show
+
+# Run with reference compiler instead
+./tools/track-regression.sh --ref
+
+# Run ref compiler and save as baseline
+./tools/track-regression.sh --ref --save
+```
+
+**Output:** Summary table (pass/fail/compile_fail/crash), comparison delta vs baseline, and per-test change lists: new passes, new failures/regressions, and new crashes. Exit code 1 if regressions detected.
+
+**Baseline:** Stored at `tools/.baseline_results.txt`. Save a new baseline after implementing features (not before), so future runs detect regressions.
+
+**When to use:** After any codegen or MIR change, run `./tools/track-regression.sh` to verify no tests regressed. Save a new baseline after confirming improvements.
+
 **Task tracker:** See `tools/TASKS.md` for the full infrastructure roadmap.
 
 ---

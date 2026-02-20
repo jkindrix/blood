@@ -48,11 +48,10 @@
 
 ### Lower Priority — Good Practice, Build Later
 
-- [ ] **T09: Ground-Truth Regression Tracker** `tools/track-regression.sh`
-  Run ground-truth tests, compare results against a stored baseline, and report new passes, new failures, and flips. Prevents regressions from going unnoticed.
-  - Input: test runner output
-  - Output: diff against baseline (new PASS, new FAIL, new CRASH)
-  - Status: not started
+- [x] **T09: Ground-Truth Regression Tracker** `tools/track-regression.sh` *(2026-02-20)*
+  Runs all 317 ground-truth tests, stores results as baseline, compares future runs to detect regressions/passes. Modes: `--save`, `--show`, `--ref`. Baseline at `tools/.baseline_results.txt`.
+  - Baseline run: 210/317 pass (66.2%), 32 fail, 75 compile-fail, 0 crash
+  - Status: complete
 
 - [ ] **T10: Agent Convergence Guardrails** `tools/AGENT_PROTOCOL.md`
   Written protocol for AI agent sessions: time-box rules, mandatory commit/report intervals, "stop and yield" criteria, and failure log update requirements. Not code — a process document referenced from CLAUDE.md.
