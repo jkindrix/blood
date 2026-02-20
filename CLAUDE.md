@@ -533,6 +533,50 @@ cd compiler-rust && cargo test --workspace
 
 ---
 
+## Development Tools (`tools/`)
+
+### Differential Testing Harness — `tools/difftest.sh`
+
+Compiles the same `.blood` file with both blood-rust (reference) and first_gen (test), then compares results.
+
+**Modes:**
+- `--behavioral` (default): Compile and run both executables, compare stdout and exit code
+- `--ir`: Extract per-function LLVM IR, match by name, and diff normalized IR
+
+**Usage:**
+```bash
+# Single file — behavioral comparison
+./tools/difftest.sh path/to/test.blood
+
+# Batch — all tests in a directory (skips COMPILE_FAIL tests)
+./tools/difftest.sh compiler-rust/tests/ground-truth/ --summary-only
+
+# IR-level comparison with details
+./tools/difftest.sh path/to/test.blood --ir --verbose
+
+# Stop at first divergent function
+./tools/difftest.sh path/to/test.blood --ir --first-divergence
+```
+
+**Output categories:**
+- `MATCH` — both compilers produce identical output (behavioral) or identical IR (ir mode)
+- `DIVERGE` — both compile and run but output or IR differs
+- `TEST_FAIL` — test compiler fails, reference succeeds
+- `REF_FAIL` — reference compiler fails
+- `BOTH_FAIL` — both fail (consistent behavior)
+
+**Environment variables:**
+- `BLOOD_REF` — path to reference compiler (default: `~/blood/compiler-rust/target/release/blood`)
+- `BLOOD_TEST` — path to test compiler (default: `~/blood/blood-std/std/compiler/first_gen`)
+- `BLOOD_RUNTIME` — path to `runtime.o`
+- `BLOOD_RUST_RUNTIME` — path to `libblood_runtime.a`
+
+**When to use:** Run after any codegen change to verify the self-hosted compiler still produces behaviorally correct binaries. The `DIVERGE` results are the highest-priority bugs — they mean both compilers accept the code but produce different runtime behavior.
+
+**Task tracker:** See `tools/TASKS.md` for the full infrastructure roadmap.
+
+---
+
 ## Reference
 
 - **Blood-rust compiler**: `compiler-rust/` (imported via git subtree from `~/blood-rust/`)
