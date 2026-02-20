@@ -808,8 +808,6 @@ Written protocol for AI agent sessions working on the Blood compiler. Prevents u
 
 **When to reference:** At the start of any agent session working on the self-hosted compiler. Provides the investigation workflow (phase-compare → difftest → minimize → ASan) and anti-patterns to avoid.
 
-**Task tracker:** See `tools/TASKS.md` for the full infrastructure roadmap.
-
 ---
 
 ## Reference

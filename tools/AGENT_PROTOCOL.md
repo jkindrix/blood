@@ -70,7 +70,7 @@ Commit immediately after:
    ```
    If ASan doesn't help within 2 attempts, yield.
 
-4. **Unknown feature required:** If a fix requires implementing a feature that doesn't exist in first_gen (closures, effect handlers, etc.), stop. These are tracked in TASKS.md of the main repo.
+4. **Unknown feature required:** If a fix requires implementing a feature that doesn't exist in first_gen (closures, effect handlers, etc.), stop. These require substantial work in the self-hosted compiler.
 
 ### Soft Stops
 
