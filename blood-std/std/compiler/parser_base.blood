@@ -820,8 +820,9 @@ pub fn parse_float_bits_from_span(parser: &mut Parser, span: common::Span) -> u6
         }
     }
 
-    // Convert f64 to bits
-    @unsafe { *(&result as *const u64) }
+    // Convert f64 to bits via runtime function (avoids raw pointer cast
+    // which the self-hosted compiler's codegen doesn't yet support)
+    blood_float64_to_bits(result)
 }
 
 /// Extract the float suffix from the source text (f32 or f64).

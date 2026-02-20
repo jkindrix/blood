@@ -13,6 +13,7 @@ mod mir_body;
 mod codegen_types;
 mod codegen_ctx;
 mod codegen_expr;
+mod codegen_size;
 mod mir_escape;
 mod dump_mir;
 
@@ -861,16 +862,20 @@ fn adt_size_bytes(ctx: &mut codegen_ctx::CodegenCtx, def_id: u32) -> u64 {
     llvm_type_size(llvm_ty.as_str())
 }
 
-/// Computes size of a struct from its layout.
+/// Computes size of a struct from its layout, using proper field alignment.
 fn compute_struct_size(layout: &codegen_ctx::StructLayout) -> u64 {
     let mut size: u64 = 0;
+    let mut max_align: u64 = 1;
     let mut i: usize = 0;
     while i < layout.fields.len() {
         let field = &layout.fields[i];
-        // Compute field size based on LLVM type
         let field_size = llvm_type_size(field.llvm_type.as_str());
-        // Align to 8 bytes (simplification - assume 8-byte alignment)
-        let padding = (8u64 - (size % 8u64)) % 8u64;
+        let field_align = codegen_size::llvm_type_alignment(field.llvm_type.as_str());
+        if field_align > max_align {
+            max_align = field_align;
+        }
+        // Align current offset to field's natural alignment
+        let padding = (field_align - (size % field_align)) % field_align;
         size = size + padding + field_size;
         i = i + 1;
     }
@@ -883,20 +888,23 @@ fn compute_struct_size(layout: &codegen_ctx::StructLayout) -> u64 {
         }
         return 8;
     }
-    let final_padding = (8u64 - (size % 8u64)) % 8u64;
+    // Final padding to struct alignment (max of all field alignments)
+    let final_padding = (max_align - (size % max_align)) % max_align;
     size + final_padding
 }
 
 /// Computes size of an enum from its layout.
+/// Enum LLVM type is { discriminant_type, [max_payload_size x i8] }.
+/// Alignment is max(discriminant_alignment, 1) = discriminant_alignment.
 fn compute_enum_size(layout: &codegen_ctx::EnumLayout) -> u64 {
-    // Discriminant size
     let discrim_size = llvm_type_size(layout.discriminant_type.as_str());
-    // Max payload size + padding
+    let discrim_align = codegen_size::llvm_type_alignment(layout.discriminant_type.as_str());
     let payload_size = layout.max_payload_size;
-    // Round up to 8-byte alignment
+    // [N x i8] has alignment 1, so no padding between discriminant and payload
     let total = discrim_size + payload_size;
-    let padding = (8u64 - (total % 8u64)) % 8u64;
-    total + padding
+    // Struct alignment = max(discrim_align, 1) = discrim_align
+    let final_padding = (discrim_align - (total % discrim_align)) % discrim_align;
+    total + final_padding
 }
 
 /// Estimates the size of an LLVM type from its string representation.
@@ -953,51 +961,65 @@ fn llvm_type_size(ty: &str) -> u64 {
     8
 }
 
-/// Parses a struct type string and computes its size.
+/// Parses a struct type string and computes its size using proper alignment.
+/// Each field is aligned to its natural alignment, and the struct is padded
+/// to a multiple of the max field alignment.
 fn parse_struct_size(ty: &str) -> u64 {
     let bytes = ty.as_bytes();
-    let mut size: u64 = 0;
+    let mut offset: u64 = 0;
+    let mut max_align: u64 = 1;
     let mut i: usize = 0;
     let mut depth: i32 = 0;
     let mut field_start: usize = 0;
+    let mut field_count: u64 = 0;
 
     while i < bytes.len() {
         let c = bytes[i];
         if c == 123 {
-            // '{'
             depth = depth + 1;
             if depth == 1 {
                 field_start = i + 1;
             }
         } else if c == 125 {
-            // '}'
             if depth == 1 && field_start < i {
-                // End of top-level struct, process last field
                 let field_ty = substring(ty, field_start, i);
                 let trimmed = trim_whitespace(field_ty.as_str());
                 if trimmed.len() > 0 {
-                    size = size + llvm_type_size(trimmed.as_str());
+                    let field_size = llvm_type_size(trimmed.as_str());
+                    let field_align = codegen_size::llvm_type_alignment(trimmed.as_str());
+                    if field_align > max_align {
+                        max_align = field_align;
+                    }
+                    let padding = (field_align - (offset % field_align)) % field_align;
+                    offset = offset + padding + field_size;
+                    field_count = field_count + 1;
                 }
             }
             depth = depth - 1;
         } else if c == 44 && depth == 1 {
-            // ',' at top level
             let field_ty = substring(ty, field_start, i);
             let trimmed = trim_whitespace(field_ty.as_str());
             if trimmed.len() > 0 {
-                size = size + llvm_type_size(trimmed.as_str());
+                let field_size = llvm_type_size(trimmed.as_str());
+                let field_align = codegen_size::llvm_type_alignment(trimmed.as_str());
+                if field_align > max_align {
+                    max_align = field_align;
+                }
+                let padding = (field_align - (offset % field_align)) % field_align;
+                offset = offset + padding + field_size;
+                field_count = field_count + 1;
             }
             field_start = i + 1;
         }
         i = i + 1;
     }
 
-    // Round up to 8-byte alignment
-    if size == 0 {
+    if field_count == 0 {
         return 8;
     }
-    let padding = (8u64 - (size % 8u64)) % 8u64;
-    size + padding
+    // Final padding to struct alignment (max of all field alignments)
+    let final_padding = (max_align - (offset % max_align)) % max_align;
+    offset + final_padding
 }
 
 /// Parses an array type string `[N x T]` and returns N * sizeof(T).

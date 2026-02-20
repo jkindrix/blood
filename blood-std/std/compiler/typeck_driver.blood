@@ -2121,41 +2121,58 @@ fn register_builtin_enums(
                 false
             };
             if !already {
-                let name_sym = interner.find("Option").unwrap();
-                let some_sym = interner.find("Some").unwrap();
-                let none_sym = interner.find("None").unwrap();
-                let mut variant_names: Vec<common::Symbol> = Vec::new();
-                variant_names.push(some_sym);
-                variant_names.push(none_sym);
+                // Guard: skip if "Option"/"Some"/"None" aren't interned
+                // (can happen when compiling programs that don't use Option)
+                let name_opt = interner.find("Option");
+                let some_opt = interner.find("Some");
+                let none_opt = interner.find("None");
+                match &name_opt {
+                    &Option::Some(name_sym) => {
+                        let some_sym = match &some_opt {
+                            &Option::Some(s) => s,
+                            &Option::None => name_sym, // fallback, won't be used
+                        };
+                        let none_sym = match &none_opt {
+                            &Option::Some(s) => s,
+                            &Option::None => name_sym, // fallback, won't be used
+                        };
+                        let mut variant_names: Vec<common::Symbol> = Vec::new();
+                        variant_names.push(some_sym);
+                        variant_names.push(none_sym);
 
-                let mut variants: Vec<typeck::VariantInfo> = Vec::new();
-                // Some(T) - has one field of type Param(0)
-                let mut some_fields: Vec<hir_ty::Type> = Vec::new();
-                some_fields.push(make_param(0));
-                // Use actual DefId for Some variant if available
-                match option_some_def {
-                    &Option::Some(some_def) => {
-                        variants.push(typeck::VariantInfo::with_def_id(some_sym, some_fields, 0, some_def));
+                        let mut variants: Vec<typeck::VariantInfo> = Vec::new();
+                        // Some(T) - has one field of type Param(0)
+                        let mut some_fields: Vec<hir_ty::Type> = Vec::new();
+                        some_fields.push(make_param(0));
+                        // Use actual DefId for Some variant if available
+                        match option_some_def {
+                            &Option::Some(some_def) => {
+                                variants.push(typeck::VariantInfo::with_def_id(some_sym, some_fields, 0, some_def));
+                            }
+                            &Option::None => {
+                                variants.push(typeck::VariantInfo::new(some_sym, some_fields, 0));
+                            }
+                        }
+                        // None - no fields
+                        match option_none_def {
+                            &Option::Some(none_def) => {
+                                variants.push(typeck::VariantInfo::with_def_id(none_sym, Vec::new(), 1, none_def));
+                            }
+                            &Option::None => {
+                                variants.push(typeck::VariantInfo::new(none_sym, Vec::new(), 1));
+                            }
+                        }
+
+                        let info = typeck::EnumInfo::new(option_def, name_sym, 1, variant_names, variants);
+                        while checker.enums.len() <= def_idx {
+                            checker.enums.push(Option::None);
+                        }
+                        checker.enums[def_idx] = Some(info);
                     }
                     &Option::None => {
-                        variants.push(typeck::VariantInfo::new(some_sym, some_fields, 0));
+                        // "Option" not interned — skip builtin enum registration
                     }
                 }
-                // None - no fields
-                match option_none_def {
-                    &Option::Some(none_def) => {
-                        variants.push(typeck::VariantInfo::with_def_id(none_sym, Vec::new(), 1, none_def));
-                    }
-                    &Option::None => {
-                        variants.push(typeck::VariantInfo::new(none_sym, Vec::new(), 1));
-                    }
-                }
-
-                let info = typeck::EnumInfo::new(option_def, name_sym, 1, variant_names, variants);
-                while checker.enums.len() <= def_idx {
-                    checker.enums.push(Option::None);
-                }
-                checker.enums[def_idx] = Some(info);
             }
         }
         Option::None => {}
@@ -2174,9 +2191,21 @@ fn register_builtin_enums(
                 false
             };
             if !already {
-                let name_sym = interner.find("Result").unwrap();
-                let ok_sym = interner.find("Ok").unwrap();
-                let err_sym = interner.find("Err").unwrap();
+                let name_result = interner.find("Result");
+                let ok_result = interner.find("Ok");
+                let err_result = interner.find("Err");
+                let name_sym = match &name_result {
+                    &Option::Some(s) => s,
+                    &Option::None => { return; } // "Result" not interned, skip
+                };
+                let ok_sym = match &ok_result {
+                    &Option::Some(s) => s,
+                    &Option::None => { return; }
+                };
+                let err_sym = match &err_result {
+                    &Option::Some(s) => s,
+                    &Option::None => { return; }
+                };
                 let mut variant_names: Vec<common::Symbol> = Vec::new();
                 variant_names.push(ok_sym);
                 variant_names.push(err_sym);
