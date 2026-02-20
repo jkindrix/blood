@@ -279,7 +279,8 @@ pub fn emit_place_data_ptr(
 ) -> String {
     let ptr = emit_place_addr(ctx, place);
     if place.projection.len() == 0
-        && (ctx.is_region_allocated(place.local) || ctx.is_persistent_allocated(place.local))
+        && (ctx.is_region_allocated(place.local) || ctx.is_persistent_allocated(place.local)
+            || ctx.is_handler_state_ptr(place.local))
     {
         let heap_ptr = ctx.fresh_temp();
         ctx.emit_load(heap_ptr.as_str(), "ptr", ptr.as_str());

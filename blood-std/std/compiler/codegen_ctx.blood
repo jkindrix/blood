@@ -144,6 +144,54 @@ pub struct CodegenCtx {
     /// When generating a default method body, calls to trait abstract method
     /// DefIds are redirected to concrete impl method DefIds.
     pub call_remaps: Vec<common::CallRemapEntry>,
+    /// Mapping from handler DefId to effect DefId for evidence API calls.
+    /// Vec entries allow iteration for cloning; hash for O(1) lookup.
+    pub handler_effect_entries: Vec<HandlerEffectEntry>,
+    handler_effect_hash: hashmap::HashMapU64U32,
+    /// Whether the current function being generated is a handler op body.
+    /// When true, Resume terminators emit `ret i64` instead of blood_resume calls.
+    pub is_handler_op: bool,
+    /// Deferred inline handler stub function definitions.
+    /// Collected during PushInlineHandler codegen, emitted after all bodies.
+    pub inline_stubs: Vec<String>,
+    /// Counter for generating unique inline handler stub names.
+    pub inline_stub_count: u32,
+    /// MIR local index of the handler op state field (passed by pointer).
+    /// Set to 1 when compiling handler op bodies, -1 otherwise.
+    /// When >= 0, the local's alloca is `ptr` and accesses go through the pointer.
+    pub handler_op_state_local: i32,
+    /// Hash set of handler op body DefIds.  Value 1 = is a handler op body.
+    handler_op_body_hash: hashmap::HashMapU64U32,
+    /// Vec of handler op body DefIds (for cloning to worker contexts).
+    pub handler_op_body_ids: Vec<u32>,
+    /// Mapping from op DefId → positional op_index within its effect.
+    /// MIR stores op_def.index as op_index; codegen resolves via this table.
+    op_def_index_hash: hashmap::HashMapU64U32,
+    /// Vec of (op_def_id, positional_index) for cloning to worker contexts.
+    pub op_def_index_entries: Vec<OpDefIndexEntry>,
+    /// Per-handler state shadow alloca names.
+    /// Set during PushHandler codegen, read during CallReturnClause codegen.
+    /// Keyed by handler_def_id to support nested handlers.
+    pub handler_state_shadows: Vec<HandlerStateShadow>,
+}
+
+/// Entry mapping a handler DefId to its effect DefId.
+pub struct HandlerEffectEntry {
+    pub handler_def_id: u32,
+    pub effect_def_id: u32,
+}
+
+/// Entry mapping an op DefId to its positional index within the effect.
+pub struct OpDefIndexEntry {
+    pub effect_def_id: u32,
+    pub op_name_sym: u32,
+    pub positional_index: u32,
+}
+
+/// Mapping from a handler DefId to its state shadow alloca name.
+pub struct HandlerStateShadow {
+    pub handler_def_id: u32,
+    pub shadow_name: String,
 }
 
 /// Mapping from a MIR local to its LLVM type.
@@ -255,6 +303,17 @@ impl CodegenCtx {
             output_path: String::new(),
             trace_codegen: false,
             call_remaps: Vec::new(),
+            handler_effect_entries: Vec::new(),
+            handler_effect_hash: hashmap::HashMapU64U32::new(),
+            is_handler_op: false,
+            inline_stubs: Vec::new(),
+            inline_stub_count: 0,
+            handler_op_state_local: -1,
+            handler_op_body_hash: hashmap::HashMapU64U32::new(),
+            handler_op_body_ids: Vec::new(),
+            op_def_index_hash: hashmap::HashMapU64U32::new(),
+            op_def_index_entries: Vec::new(),
+            handler_state_shadows: Vec::new(),
         }
     }
 
@@ -304,6 +363,17 @@ impl CodegenCtx {
             output_path: String::new(),
             trace_codegen: false,
             call_remaps: Vec::new(),
+            handler_effect_entries: Vec::new(),
+            handler_effect_hash: hashmap::HashMapU64U32::new(),
+            is_handler_op: false,
+            inline_stubs: Vec::new(),
+            inline_stub_count: 0,
+            handler_op_state_local: -1,
+            handler_op_body_hash: hashmap::HashMapU64U32::new(),
+            handler_op_body_ids: Vec::new(),
+            op_def_index_hash: hashmap::HashMapU64U32::new(),
+            op_def_index_entries: Vec::new(),
+            handler_state_shadows: Vec::new(),
         }
     }
 
@@ -433,6 +503,40 @@ impl CodegenCtx {
             i = i + 1;
         }
         def_id
+    }
+
+    /// Registers a handler DefId → effect DefId mapping.
+    pub fn register_handler_effect(self: &mut CodegenCtx, handler_def_id: u32, effect_def_id: u32) {
+        self.handler_effect_entries.push(HandlerEffectEntry { handler_def_id, effect_def_id });
+        self.handler_effect_hash.insert(handler_def_id as u64, effect_def_id);
+    }
+
+    /// Looks up the effect DefId for a handler DefId.
+    pub fn lookup_handler_effect(self: &CodegenCtx, handler_def_id: u32) -> Option<u32> {
+        match self.handler_effect_hash.get(handler_def_id as u64) {
+            Option::Some(v) => Option::Some(v),
+            Option::None => Option::None,
+        }
+    }
+
+    /// Registers a state shadow alloca name for a handler.
+    pub fn set_handler_state_shadow(self: &mut CodegenCtx, handler_def_id: u32, shadow_name: String) {
+        self.handler_state_shadows.push(HandlerStateShadow {
+            handler_def_id,
+            shadow_name,
+        });
+    }
+
+    /// Looks up the state shadow alloca name for a handler.
+    pub fn get_handler_state_shadow(self: &CodegenCtx, handler_def_id: u32) -> Option<&String> {
+        let mut i: usize = 0;
+        while i < self.handler_state_shadows.len() {
+            if self.handler_state_shadows[i].handler_def_id == handler_def_id {
+                return Option::Some(&self.handler_state_shadows[i].shadow_name);
+            }
+            i = i + 1;
+        }
+        Option::None
     }
 
     /// Resets per-function state while keeping global state (def_names).
@@ -653,6 +757,41 @@ impl CodegenCtx {
     /// Returns true if a local is persistent-allocated.
     pub fn is_persistent_allocated(self: &CodegenCtx, local: mir_def::MirLocalId) -> bool {
         self.persistent_locals_hash.contains_key(local.index as u64)
+    }
+
+    /// Returns true if a local is the handler op state pointer.
+    /// When true, the local's alloca holds a `ptr` (not the value directly),
+    /// and all loads/stores must go through the pointer indirection.
+    pub fn is_handler_state_ptr(self: &CodegenCtx, local: mir_def::MirLocalId) -> bool {
+        self.handler_op_state_local >= 0 && local.index == (self.handler_op_state_local as u32)
+    }
+
+    /// Registers a DefId as a handler op body function.
+    pub fn register_handler_op_body(self: &mut CodegenCtx, def_id: u32) {
+        self.handler_op_body_hash.insert(def_id as u64, 1);
+        self.handler_op_body_ids.push(def_id);
+    }
+
+    /// Returns true if the given DefId is a handler op body function.
+    pub fn is_handler_op_body(self: &CodegenCtx, def_id: u32) -> bool {
+        self.handler_op_body_hash.contains_key(def_id as u64)
+    }
+
+    /// Registers an (effect_def_id, op_name_symbol) → positional index mapping.
+    pub fn register_op_def_index(self: &mut CodegenCtx, effect_def_id: u32, op_name_sym: u32, positional_index: u32) {
+        self.op_def_index_entries.push(OpDefIndexEntry { effect_def_id, op_name_sym, positional_index });
+        let key = ((effect_def_id as u64) << 32) | (op_name_sym as u64);
+        self.op_def_index_hash.insert(key, positional_index);
+    }
+
+    /// Looks up the positional op_index for an (effect_def_id, op_name_symbol) pair.
+    /// Returns 0 as fallback if not found.
+    pub fn resolve_op_index(self: &CodegenCtx, effect_def_id: u32, op_name_sym: u32) -> u32 {
+        let key = ((effect_def_id as u64) << 32) | (op_name_sym as u64);
+        match self.op_def_index_hash.get(key) {
+            Option::Some(idx) => idx,
+            Option::None => 0,
+        }
     }
 
     /// Records the generation alloca SSA name for a region-allocated local.
@@ -1414,7 +1553,41 @@ impl CodegenCtx {
             output_path: String::new(),
             trace_codegen: self.trace_codegen,
             call_remaps: Vec::new(),
+            handler_effect_entries: Vec::new(),
+            handler_effect_hash: hashmap::HashMapU64U32::new(),
+            is_handler_op: false,
+            inline_stubs: Vec::new(),
+            inline_stub_count: 0,
+            handler_op_state_local: -1,
+            handler_op_body_hash: hashmap::HashMapU64U32::new(),
+            handler_op_body_ids: Vec::new(),
+            op_def_index_hash: hashmap::HashMapU64U32::new(),
+            op_def_index_entries: Vec::new(),
+            handler_state_shadows: Vec::new(),
         };
+
+        // Copy handler_op_body_ids (read-only, needed to flag handler op bodies)
+        let mut hbi: usize = 0;
+        while hbi < self.handler_op_body_ids.len() {
+            worker.register_handler_op_body(self.handler_op_body_ids[hbi]);
+            hbi = hbi + 1;
+        }
+
+        // Copy handler_effect_entries (read-only, needed during codegen)
+        let mut hei: usize = 0;
+        while hei < self.handler_effect_entries.len() {
+            let he = &self.handler_effect_entries[hei];
+            worker.register_handler_effect(he.handler_def_id, he.effect_def_id);
+            hei = hei + 1;
+        }
+
+        // Copy op_def_index_entries (read-only, needed for Perform op_index resolution)
+        let mut odi: usize = 0;
+        while odi < self.op_def_index_entries.len() {
+            let ode = &self.op_def_index_entries[odi];
+            worker.register_op_def_index(ode.effect_def_id, ode.op_name_sym, ode.positional_index);
+            odi = odi + 1;
+        }
 
         // Copy function signatures (read-only, needed at call sites)
         let mut fi: usize = 0;

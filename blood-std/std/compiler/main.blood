@@ -1313,6 +1313,742 @@ fn strip_ll_ext(path: &String) -> String {
 }
 
 // ============================================================
+// Effect Handler Info Collection
+// ============================================================
+
+/// Information about a handler operation needed for wrapper generation.
+struct HandlerOpInfo {
+    /// The handler's user-visible name (e.g., "SilentLog").
+    handler_name: String,
+    /// The operation's user-visible name (e.g., "log").
+    op_name: String,
+    /// The operation's index within the effect.
+    op_index: u32,
+    /// The handler's DefId.
+    handler_def_id: u32,
+    /// The effect's DefId.
+    effect_def_id: u32,
+    /// The body DefId of the handler op implementation.
+    body_def_id: u32,
+    /// The number of parameters the operation takes (excluding self/state).
+    param_count: u32,
+}
+
+/// Information about a handler's return clause.
+struct HandlerReturnInfo {
+    /// The handler's user-visible name (e.g., "SilentLog").
+    handler_name: String,
+    /// The handler's DefId.
+    handler_def_id: u32,
+    /// The effect's DefId.
+    effect_def_id: u32,
+    /// The body DefId of the return clause (BodyId.index used as DefId).
+    body_def_id: u32,
+    /// Whether this handler has an explicit return clause body.
+    has_body: bool,
+    /// Return clause kind:
+    /// 0 = identity (return(x) { x })
+    /// 1 = state field reference (return(x) { total })
+    /// 2 = general expression (call compiled body)
+    return_kind: u32,
+    /// For return_kind=1: index of the state field in the handler state struct.
+    state_field_index: u32,
+    /// Number of state fields in the handler.
+    state_field_count: u32,
+}
+
+/// Collected information about all handlers in the program.
+struct HandlerInfo {
+    /// Handler operation infos for wrapper generation.
+    ops: Vec<HandlerOpInfo>,
+    /// Handler return clause infos.
+    returns: Vec<HandlerReturnInfo>,
+}
+
+/// Return clause classification result.
+struct ReturnClauseKind {
+    /// 0=identity, 1=state field, 2=general
+    kind: u32,
+    /// For kind=1: index of the referenced state field
+    field_index: u32,
+}
+
+/// Classifies a return clause body expression.
+/// Looks up the body by body_id and inspects the expression:
+/// - If the body expression is a VarRef to the last param (result), return kind=0 (identity).
+/// - If the body expression is a VarRef to a state field (local index < state_count), return kind=1.
+/// - Otherwise return kind=2 (general).
+fn classify_return_clause(
+    bodies: &Vec<hir_lower_ctx::BodyEntry>,
+    body_id_index: u32,
+    state_count: u32,
+) -> ReturnClauseKind {
+    // Find the body by body_id
+    let mut bi: usize = 0;
+    while bi < bodies.len() {
+        if bodies[bi].body_id.index == body_id_index {
+            let body = &bodies[bi].body;
+            // Classify the body expression.
+            // The body expression is typically a Block with a tail expression.
+            // We need to dig through Block wrappers to find the actual leaf expression.
+            return classify_leaf_expr(&body.expr, state_count);
+        }
+        bi = bi + 1;
+    }
+    // Body not found — treat as identity
+    ReturnClauseKind { kind: 0, field_index: 0 }
+}
+
+/// Classifies a local reference expression for return clause analysis.
+/// Returns: 0=identity (references result param), 1=state field, 2=unknown
+fn classify_local_ref(local_index: u32, state_count: u32) -> ReturnClauseKind {
+    if local_index == state_count {
+        return ReturnClauseKind { kind: 0, field_index: 0 };
+    }
+    if local_index < state_count {
+        return ReturnClauseKind { kind: 1, field_index: local_index };
+    }
+    ReturnClauseKind { kind: 2, field_index: 0 }
+}
+
+/// Extracts the local variable index from a block tail expression.
+/// Returns -1 if the block doesn't have a simple Local tail expression.
+fn extract_block_tail_local(block: &hir_expr::Block) -> i32 {
+    if block.stmts.len() != 0 {
+        return -1;
+    }
+    match &block.expr {
+        &Some(ref e) => extract_expr_local_index(e.as_ref()),
+        &None => -1,
+    }
+}
+
+/// Extracts the local variable index from a simple Local expression.
+/// Returns -1 if the expression is not a simple Local reference.
+fn extract_expr_local_index(expr: &hir_expr::Expr) -> i32 {
+    match &expr.kind {
+        &hir_expr::ExprKind::Local(local_id) => local_id.index as i32,
+        _ => -1,
+    }
+}
+
+/// Classifies the leaf expression of a return clause.
+fn classify_leaf_expr(expr: &hir_expr::Expr, state_count: u32) -> ReturnClauseKind {
+    // Check if this is a Local reference directly
+    let direct_idx = extract_expr_local_index(expr);
+    if direct_idx >= 0 {
+        return classify_local_ref(direct_idx as u32, state_count);
+    }
+    // Check if this is a Block wrapper with a simple tail Local expression.
+    match &expr.kind {
+        &hir_expr::ExprKind::Block(ref block) => {
+            let block_idx = extract_block_tail_local(block);
+            if block_idx >= 0 {
+                return classify_local_ref(block_idx as u32, state_count);
+            }
+            ReturnClauseKind { kind: 2, field_index: 0 }
+        }
+        _ => ReturnClauseKind { kind: 2, field_index: 0 },
+    }
+}
+
+/// Collects handler information from HIR items.
+/// Populates handler→effect mappings in the codegen context and returns
+/// HandlerInfo for wrapper/registration generation.
+fn collect_handler_info(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    intern: &interner::StringInterner,
+    items: &Vec<hir_lower_ctx::ItemEntry>,
+    bodies: &Vec<hir_lower_ctx::BodyEntry>,
+) -> HandlerInfo {
+    let mut ops: Vec<HandlerOpInfo> = Vec::new();
+    let mut returns: Vec<HandlerReturnInfo> = Vec::new();
+
+    let mut i: usize = 0;
+    while i < items.len() {
+        let entry = &items[i];
+        match &entry.item.kind {
+            &hir_item::ItemKind::Handler(ref handler_def) => {
+                let handler_def_id = entry.def_id.index;
+                let effect_def_id = handler_def.handled_effect.def_id.index;
+
+                // Use DefId-based handler name to avoid interner mismatch.
+                // The wrapper functions use handler{N} prefix (e.g., handler19_log).
+                let mut handler_name = common::make_string("handler");
+                push_usize(&mut handler_name, handler_def_id as usize);
+
+                // Register handler→effect mapping
+                ctx.register_handler_effect(handler_def_id, effect_def_id);
+
+                // Collect return clause info
+                // Handlers without an explicit return clause get body_def_id=0
+                // which signals "identity return" (return body result unchanged)
+                let state_count = handler_def.state.len() as u32;
+
+                match &handler_def.return_clause {
+                    &Option::Some(ref ret_clause) => {
+                        // Classify the return clause by inspecting the HIR body expression.
+                        let ret_kind = classify_return_clause(bodies, ret_clause.body_id.index, state_count);
+
+                        returns.push(HandlerReturnInfo {
+                            handler_name: clone_string(&handler_name),
+                            handler_def_id,
+                            effect_def_id,
+                            body_def_id: ret_clause.body_id.index,
+                            has_body: true,
+                            return_kind: ret_kind.kind,
+                            state_field_index: ret_kind.field_index,
+                            state_field_count: state_count,
+                        });
+                    }
+                    &Option::None => {
+                        // Generate identity return wrapper (ret i64 %result)
+                        let mut id_name = common::make_string("handler");
+                        push_usize(&mut id_name, handler_def_id as usize);
+                        returns.push(HandlerReturnInfo {
+                            handler_name: id_name,
+                            handler_def_id,
+                            effect_def_id,
+                            body_def_id: 0,
+                            has_body: false,
+                            return_kind: 0,
+                            state_field_index: 0,
+                            state_field_count: state_count,
+                        });
+                    }
+                }
+
+                // Collect operation infos
+                let mut oi: usize = 0;
+                while oi < handler_def.op_impls.len() {
+                    let op_impl = &handler_def.op_impls[oi];
+
+                    // Use DefId-based op name for reliability
+                    let mut op_name = common::make_string("op");
+                    push_usize(&mut op_name, op_impl.op_def_id.index as usize);
+
+                    // Find op_index by searching the effect's operations
+                    let op_index = find_op_index(items, effect_def_id, op_impl.op_def_id.index);
+
+                    ops.push(HandlerOpInfo {
+                        handler_name: clone_string(&handler_name),
+                        op_name,
+                        op_index,
+                        handler_def_id,
+                        effect_def_id,
+                        // Use op_def_id (not body_id) — this matches what find_fn_for_body
+                        // returns as the DefId for handler op bodies.
+                        body_def_id: op_impl.op_def_id.index,
+                        param_count: op_impl.param_names.len() as u32,
+                    });
+                    oi = oi + 1;
+                }
+            }
+            &hir_item::ItemKind::Fn(_) => {}
+            &hir_item::ItemKind::Struct(_) => {}
+            &hir_item::ItemKind::Enum(_) => {}
+            &hir_item::ItemKind::TypeAlias(_) => {}
+            &hir_item::ItemKind::Const(_) => {}
+            &hir_item::ItemKind::Static(_) => {}
+            &hir_item::ItemKind::Trait(_) => {}
+            &hir_item::ItemKind::Effect(ref effect_def) => {
+                // Register (effect_def_id, op_name_symbol) → positional index for Perform resolution.
+                let effect_item_def_id = entry.item.def_id.index;
+                let mut opi: usize = 0;
+                while opi < effect_def.operations.len() {
+                    ctx.register_op_def_index(
+                        effect_item_def_id,
+                        effect_def.operations[opi].name.symbol.index,
+                        opi as u32,
+                    );
+                    opi = opi + 1;
+                }
+            }
+            &hir_item::ItemKind::Module(_) => {}
+            &hir_item::ItemKind::Macro(_) => {}
+            &hir_item::ItemKind::Impl(_) => {}
+            &hir_item::ItemKind::Foreign(_) => {}
+        }
+        i = i + 1;
+    }
+
+    HandlerInfo { ops, returns }
+}
+
+/// Finds the operation index within an effect definition by op DefId.
+fn find_op_index(
+    items: &Vec<hir_lower_ctx::ItemEntry>,
+    effect_def_id: u32,
+    op_def_id: u32,
+) -> u32 {
+    let mut i: usize = 0;
+    while i < items.len() {
+        match &items[i].item.kind {
+            &hir_item::ItemKind::Effect(ref effect_def) => {
+                if items[i].def_id.index == effect_def_id {
+                    let mut j: usize = 0;
+                    while j < effect_def.operations.len() {
+                        if effect_def.operations[j].def_id.index == op_def_id {
+                            return j as u32;
+                        }
+                        j = j + 1;
+                    }
+                }
+            }
+            _ => {}
+        }
+        i = i + 1;
+    }
+    0 // fallback
+}
+
+/// Generates handler op wrapper functions and the __blood_register_handlers function.
+/// Returns the LLVM IR string to append to the module.
+fn generate_handler_wrappers(
+    handler_info: &HandlerInfo,
+    ctx: &codegen_ctx::CodegenCtx,
+) -> String {
+    let mut ir = String::new();
+
+    if handler_info.ops.len() == 0 && handler_info.returns.len() == 0 {
+        return ir;
+    }
+
+    ir.push_str("\n; Effect handler wrapper functions\n");
+
+    // Generate wrapper for each handler operation.
+    // Wrapper signature: i64 (ptr %state, ptr %args, i64 %arg_count, i64 %cont)
+    // The wrapper unpacks args, calls the inner body, and handles continuation resume.
+    let mut oi: usize = 0;
+    while oi < handler_info.ops.len() {
+        let opinfo = &handler_info.ops[oi];
+
+        // Wrapper function name: {HandlerName}_{OpName}
+        let mut wrapper_name = clone_string(&opinfo.handler_name);
+        wrapper_name.push(95 as char); // '_'
+        wrapper_name.push_str(opinfo.op_name.as_str());
+
+        // Find the inner body function name
+        let inner_name = match ctx.lookup_def_name(opinfo.body_def_id) {
+            Option::Some(name) => name,
+            Option::None => {
+                let mut fallback = common::make_string("fn_");
+                push_usize(&mut fallback, opinfo.body_def_id as usize);
+                fallback
+            }
+        };
+
+        // Determine inner function return type (from fn_signatures)
+        let inner_ret_ty = match ctx.lookup_fn_ret_type(opinfo.body_def_id) {
+            Option::Some(ty) => ty,
+            Option::None => common::make_string("void"),
+        };
+
+        // Generate wrapper
+        ir.push_str("define weak_odr i64 @");
+        ir.push_str(wrapper_name.as_str());
+        ir.push_str("(ptr %state, ptr %args, i64 %arg_count, i64 %cont) {\n");
+        ir.push_str("entry:\n");
+
+        // Unpack args and call inner body
+        // Inner body params: the natural parameters of the handler op
+        let param_count = opinfo.param_count as usize;
+
+        // Build call to inner function
+        // First arg is always ptr %state (handler op state pointer)
+        if param_count == 0 {
+            // State-only — call inner with just the state pointer
+            if str_eq(inner_ret_ty.as_str(), "void") {
+                ir.push_str("  call void @");
+                ir.push_str(inner_name.as_str());
+                ir.push_str("(ptr %state)\n");
+                ir.push_str("  br label %do_resume\n");
+                ir.push_str("do_resume:\n");
+                emit_resume_logic(&mut ir, "0");
+            } else {
+                ir.push_str("  %inner_result = call ");
+                ir.push_str(inner_ret_ty.as_str());
+                ir.push_str(" @");
+                ir.push_str(inner_name.as_str());
+                ir.push_str("(ptr %state)\n");
+                let widened = widen_to_i64(&mut ir, "inner_result", inner_ret_ty.as_str());
+                ir.push_str("  br label %do_resume\n");
+                ir.push_str("do_resume:\n");
+                emit_resume_logic(&mut ir, widened.as_str());
+            }
+        } else {
+            // Load args from args array
+            let mut pi: usize = 0;
+            while pi < param_count {
+                // Get the expected param type from inner function signature
+                // Offset by 1 to skip the state pointer parameter
+                let param_ty = match ctx.lookup_fn_param_type(opinfo.body_def_id, pi + 1) {
+                    Option::Some(ty) => ty,
+                    Option::None => common::make_string("i64"),
+                };
+
+                if pi == 0 {
+                    // First arg: load directly from args ptr
+                    ir.push_str("  %arg_i64_0 = load i64, ptr %args\n");
+                } else {
+                    // Subsequent args: GEP into args array
+                    ir.push_str("  %arg_ptr_");
+                    push_usize(&mut ir, pi);
+                    ir.push_str(" = getelementptr i64, ptr %args, i64 ");
+                    push_usize(&mut ir, pi);
+                    ir.push_str("\n");
+                    ir.push_str("  %arg_i64_");
+                    push_usize(&mut ir, pi);
+                    ir.push_str(" = load i64, ptr %arg_ptr_");
+                    push_usize(&mut ir, pi);
+                    ir.push_str("\n");
+                }
+
+                // Narrow i64 to param type if needed
+                if str_eq(param_ty.as_str(), "i64") {
+                    // Already correct
+                } else if str_eq(param_ty.as_str(), "i32") {
+                    ir.push_str("  %arg_");
+                    push_usize(&mut ir, pi);
+                    ir.push_str(" = trunc i64 %arg_i64_");
+                    push_usize(&mut ir, pi);
+                    ir.push_str(" to i32\n");
+                } else if str_eq(param_ty.as_str(), "i16") {
+                    ir.push_str("  %arg_");
+                    push_usize(&mut ir, pi);
+                    ir.push_str(" = trunc i64 %arg_i64_");
+                    push_usize(&mut ir, pi);
+                    ir.push_str(" to i16\n");
+                } else if str_eq(param_ty.as_str(), "i8") {
+                    ir.push_str("  %arg_");
+                    push_usize(&mut ir, pi);
+                    ir.push_str(" = trunc i64 %arg_i64_");
+                    push_usize(&mut ir, pi);
+                    ir.push_str(" to i8\n");
+                } else if str_eq(param_ty.as_str(), "i1") {
+                    ir.push_str("  %arg_");
+                    push_usize(&mut ir, pi);
+                    ir.push_str(" = trunc i64 %arg_i64_");
+                    push_usize(&mut ir, pi);
+                    ir.push_str(" to i1\n");
+                } else if str_eq(param_ty.as_str(), "ptr") {
+                    ir.push_str("  %arg_");
+                    push_usize(&mut ir, pi);
+                    ir.push_str(" = inttoptr i64 %arg_i64_");
+                    push_usize(&mut ir, pi);
+                    ir.push_str(" to ptr\n");
+                } else if str_eq(param_ty.as_str(), "double") {
+                    ir.push_str("  %arg_");
+                    push_usize(&mut ir, pi);
+                    ir.push_str(" = bitcast i64 %arg_i64_");
+                    push_usize(&mut ir, pi);
+                    ir.push_str(" to double\n");
+                } else if str_eq(param_ty.as_str(), "float") {
+                    ir.push_str("  %arg_f64_");
+                    push_usize(&mut ir, pi);
+                    ir.push_str(" = bitcast i64 %arg_i64_");
+                    push_usize(&mut ir, pi);
+                    ir.push_str(" to double\n");
+                    ir.push_str("  %arg_");
+                    push_usize(&mut ir, pi);
+                    ir.push_str(" = fptrunc double %arg_f64_");
+                    push_usize(&mut ir, pi);
+                    ir.push_str(" to float\n");
+                } else {
+                    // For struct/aggregate types, use inttoptr then load
+                    ir.push_str("  %arg_ptr_cast_");
+                    push_usize(&mut ir, pi);
+                    ir.push_str(" = inttoptr i64 %arg_i64_");
+                    push_usize(&mut ir, pi);
+                    ir.push_str(" to ptr\n");
+                    ir.push_str("  %arg_");
+                    push_usize(&mut ir, pi);
+                    ir.push_str(" = load ");
+                    ir.push_str(param_ty.as_str());
+                    ir.push_str(", ptr %arg_ptr_cast_");
+                    push_usize(&mut ir, pi);
+                    ir.push_str("\n");
+                }
+
+                pi = pi + 1;
+            }
+
+            // Build call to inner function
+            if str_eq(inner_ret_ty.as_str(), "void") {
+                ir.push_str("  call void @");
+                ir.push_str(inner_name.as_str());
+                ir.push_str("(ptr %state, ");
+                emit_call_args(&mut ir, ctx, opinfo.body_def_id, param_count, 1);
+                ir.push_str(")\n");
+                ir.push_str("  br label %do_resume\n");
+                ir.push_str("do_resume:\n");
+                emit_resume_logic(&mut ir, "0");
+            } else {
+                ir.push_str("  %inner_result = call ");
+                ir.push_str(inner_ret_ty.as_str());
+                ir.push_str(" @");
+                ir.push_str(inner_name.as_str());
+                ir.push_str("(ptr %state, ");
+                emit_call_args(&mut ir, ctx, opinfo.body_def_id, param_count, 1);
+                ir.push_str(")\n");
+                let widened = widen_to_i64(&mut ir, "inner_result", inner_ret_ty.as_str());
+                ir.push_str("  br label %do_resume\n");
+                ir.push_str("do_resume:\n");
+                emit_resume_logic(&mut ir, widened.as_str());
+            }
+        }
+
+        ir.push_str("}\n\n");
+
+        oi = oi + 1;
+    }
+
+    // Generate return clause wrappers
+    // Signature: i64 (i64 %result, ptr %state)
+    let mut ri: usize = 0;
+    while ri < handler_info.returns.len() {
+        let ret_info = &handler_info.returns[ri];
+
+        let mut wrapper_name = clone_string(&ret_info.handler_name);
+        wrapper_name.push_str("_return");
+
+        ir.push_str("define weak_odr i64 @");
+        ir.push_str(wrapper_name.as_str());
+        ir.push_str("(i64 %result, ptr %state) {\n");
+        ir.push_str("entry:\n");
+
+        if ret_info.return_kind == 0 {
+            // Identity: return(x) { x } — just return the result unchanged
+            ir.push_str("  ret i64 %result\n");
+        } else if ret_info.return_kind == 1 {
+            // State field: return(x) { total } — load state field from %state pointer
+            // State is a struct with fields laid out sequentially.
+            // For single-field state, load directly from %state.
+            // For multi-field state, GEP to the correct field offset.
+            if ret_info.state_field_count == 1 {
+                // Single field: load directly from state pointer
+                ir.push_str("  %state_val = load i32, ptr %state\n");
+                ir.push_str("  %ret_ext = sext i32 %state_val to i64\n");
+                ir.push_str("  ret i64 %ret_ext\n");
+            } else {
+                // Multi-field: GEP to field offset, then load
+                // State is a packed struct of i64 fields (one per state field).
+                ir.push_str("  %field_ptr = getelementptr i64, ptr %state, i64 ");
+                push_usize(&mut ir, ret_info.state_field_index as usize);
+                ir.push_str("\n");
+                ir.push_str("  %state_val = load i64, ptr %field_ptr\n");
+                ir.push_str("  ret i64 %state_val\n");
+            }
+        } else {
+            // General case (return_kind == 2): fall back to identity
+            // TODO: implement general return clause expression evaluation
+            ir.push_str("  ret i64 %result\n");
+        }
+
+        ir.push_str("}\n\n");
+
+        ri = ri + 1;
+    }
+
+    // Generate __blood_register_handlers
+    ir.push_str("; Handler registration\n");
+    ir.push_str("define linkonce_odr void @__blood_register_handlers() {\n");
+    ir.push_str("entry:\n");
+
+    // Group ops by handler (effect_def_id)
+    // For each unique effect, build an ops array and call blood_evidence_register
+    let mut registered_effects: Vec<u32> = Vec::new();
+    let mut ei: usize = 0;
+    while ei < handler_info.ops.len() {
+        let opentry = &handler_info.ops[ei];
+        let eid = opentry.effect_def_id;
+
+        // Check if we already registered this effect
+        let mut already = false;
+        let mut ri2: usize = 0;
+        while ri2 < registered_effects.len() {
+            if registered_effects[ri2] == eid {
+                already = true;
+                ri2 = registered_effects.len(); // break
+            }
+            ri2 = ri2 + 1;
+        }
+
+        if !already {
+            registered_effects.push(eid);
+
+            // Count ops for this effect
+            let mut op_count: usize = 0;
+            let mut ci: usize = 0;
+            while ci < handler_info.ops.len() {
+                if handler_info.ops[ci].effect_def_id == eid {
+                    op_count = op_count + 1;
+                }
+                ci = ci + 1;
+            }
+
+            // Alloca for ops array
+            let eid_str = codegen_types::format_u64(eid as u64);
+            ir.push_str("  %handler_ops_");
+            ir.push_str(eid_str.as_str());
+            ir.push_str(" = alloca [");
+            push_usize(&mut ir, op_count);
+            ir.push_str(" x ptr]\n");
+
+            // Store each op's wrapper function pointer
+            let mut store_idx: usize = 0;
+            let mut si: usize = 0;
+            while si < handler_info.ops.len() {
+                if handler_info.ops[si].effect_def_id == eid {
+                    let sop = &handler_info.ops[si];
+                    let mut wrapper_name = clone_string(&sop.handler_name);
+                    wrapper_name.push(95 as char); // '_'
+                    wrapper_name.push_str(sop.op_name.as_str());
+
+                    if store_idx == 0 {
+                        ir.push_str("  store ptr @");
+                        ir.push_str(wrapper_name.as_str());
+                        ir.push_str(", ptr %handler_ops_");
+                        ir.push_str(eid_str.as_str());
+                        ir.push_str("\n");
+                    } else {
+                        ir.push_str("  %op_ptr_");
+                        ir.push_str(eid_str.as_str());
+                        ir.push_str("_");
+                        push_usize(&mut ir, store_idx);
+                        ir.push_str(" = getelementptr [");
+                        push_usize(&mut ir, op_count);
+                        ir.push_str(" x ptr], ptr %handler_ops_");
+                        ir.push_str(eid_str.as_str());
+                        ir.push_str(", i64 0, i64 ");
+                        push_usize(&mut ir, store_idx);
+                        ir.push_str("\n");
+                        ir.push_str("  store ptr @");
+                        ir.push_str(wrapper_name.as_str());
+                        ir.push_str(", ptr %op_ptr_");
+                        ir.push_str(eid_str.as_str());
+                        ir.push_str("_");
+                        push_usize(&mut ir, store_idx);
+                        ir.push_str("\n");
+                    }
+                    store_idx = store_idx + 1;
+                }
+                si = si + 1;
+            }
+
+            // Call blood_evidence_register
+            ir.push_str("  call void @blood_evidence_register(ptr null, i64 ");
+            ir.push_str(eid_str.as_str());
+            ir.push_str(", ptr %handler_ops_");
+            ir.push_str(eid_str.as_str());
+            ir.push_str(", i64 ");
+            push_usize(&mut ir, op_count);
+            ir.push_str(")\n");
+        }
+
+        ei = ei + 1;
+    }
+
+    ir.push_str("  ret void\n");
+    ir.push_str("}\n\n");
+
+    // Emit llvm.global_ctors
+    ir.push_str("@llvm.global_ctors = appending global [1 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 65535, ptr @__blood_register_handlers, ptr null }]\n");
+
+    ir
+}
+
+/// Emits resume logic for a handler op wrapper.
+/// If cont == 0, returns resume_val directly (tail-resumptive).
+/// Otherwise, calls blood_continuation_resume and returns its result.
+fn emit_resume_logic(ir: &mut String, resume_val: &str) {
+    ir.push_str("  %is_tail = icmp eq i64 %cont, 0\n");
+    ir.push_str("  br i1 %is_tail, label %tail_resume, label %cont_resume\n");
+    ir.push_str("tail_resume:\n");
+    ir.push_str("  ret i64 ");
+    ir.push_str(resume_val);
+    ir.push_str("\n");
+    ir.push_str("cont_resume:\n");
+    ir.push_str("  %cont_result = call i64 @blood_continuation_resume(i64 %cont, i64 ");
+    ir.push_str(resume_val);
+    ir.push_str(")\n");
+    ir.push_str("  ret i64 %cont_result\n");
+}
+
+/// Widens a value to i64, returning the name of the widened value.
+fn widen_to_i64(ir: &mut String, val_name: &str, ty: &str) -> String {
+    if str_eq(ty, "i64") {
+        let mut s = common::make_string("%");
+        s.push_str(val_name);
+        return s;
+    }
+    if str_eq(ty, "i32") || str_eq(ty, "i16") || str_eq(ty, "i8") || str_eq(ty, "i1") {
+        ir.push_str("  %");
+        ir.push_str(val_name);
+        ir.push_str("_wide = zext ");
+        ir.push_str(ty);
+        ir.push_str(" %");
+        ir.push_str(val_name);
+        ir.push_str(" to i64\n");
+        let mut s = common::make_string("%");
+        s.push_str(val_name);
+        s.push_str("_wide");
+        return s;
+    }
+    if str_eq(ty, "ptr") {
+        ir.push_str("  %");
+        ir.push_str(val_name);
+        ir.push_str("_wide = ptrtoint ptr %");
+        ir.push_str(val_name);
+        ir.push_str(" to i64\n");
+        let mut s = common::make_string("%");
+        s.push_str(val_name);
+        s.push_str("_wide");
+        return s;
+    }
+    if str_eq(ty, "double") {
+        ir.push_str("  %");
+        ir.push_str(val_name);
+        ir.push_str("_wide = bitcast double %");
+        ir.push_str(val_name);
+        ir.push_str(" to i64\n");
+        let mut s = common::make_string("%");
+        s.push_str(val_name);
+        s.push_str("_wide");
+        return s;
+    }
+    // For other types (void, struct, etc.), return 0
+    common::make_string("0")
+}
+
+/// Emits call arguments for the inner handler op body function.
+/// For i64 params, uses %arg_i64_{N} directly (no narrowing was done).
+/// For other types, uses %arg_{N} (narrowing creates this name).
+/// sig_offset: offset into fn_signatures params (1 to skip state ptr, 0 for no offset).
+fn emit_call_args(ir: &mut String, ctx: &codegen_ctx::CodegenCtx, body_def_id: u32, param_count: usize, sig_offset: usize) {
+    let mut pi: usize = 0;
+    while pi < param_count {
+        if pi > 0 {
+            ir.push_str(", ");
+        }
+        let param_ty = match ctx.lookup_fn_param_type(body_def_id, pi + sig_offset) {
+            Option::Some(ty) => ty,
+            Option::None => common::make_string("i64"),
+        };
+        ir.push_str(param_ty.as_str());
+        if str_eq(param_ty.as_str(), "i64") {
+            // For i64 params, the loaded value is directly %arg_i64_{N}
+            ir.push_str(" %arg_i64_");
+        } else {
+            // For narrowed types, the narrowed value is %arg_{N}
+            ir.push_str(" %arg_");
+        }
+        push_usize(ir, pi);
+        pi = pi + 1;
+    }
+}
+
+// ============================================================
 // Codegen Work List
 // ============================================================
 
@@ -1488,14 +2224,27 @@ fn codegen_thread_worker(arg: u64) -> u64 {
             work.def_id.index,
         );
 
-        // Stage C: Codegen
+        // Stage C: Set handler op state flags if needed
+        let is_hop = ctx.is_handler_op_body(work.def_id.index);
+        if is_hop {
+            ctx.handler_op_state_local = 1;
+            ctx.is_handler_op = true;
+        }
+
+        // Stage D: Codegen
         let fn_ir = codegen::generate_function_with_ctx(ctx, &body, work.fn_name.as_str());
         output.push_str(fn_ir.as_str());
+
+        // Clear handler op state flags
+        if is_hop {
+            ctx.handler_op_state_local = -1;
+            ctx.is_handler_op = false;
+        }
 
         // Clear call remaps
         ctx.call_remaps = Vec::new();
 
-        // Stage D: Destroy MIR region
+        // Stage E: Destroy MIR region
         region_destroy(mir_region);
 
         i = i + 1;
@@ -1588,9 +2337,22 @@ fn codegen_pass2(
             work.def_id.index,
         );
 
+        // Set handler op state flags if this is a handler op body
+        let is_hop = ctx.is_handler_op_body(work.def_id.index);
+        if is_hop {
+            ctx.handler_op_state_local = 1;
+            ctx.is_handler_op = true;
+        }
+
         // Codegen + write directly to file
         let fn_ir = codegen::generate_function_with_ctx(ctx, &body, work.fn_name.as_str());
         file_append_string(output_path, fn_ir.as_str());
+
+        // Clear handler op state flags
+        if is_hop {
+            ctx.handler_op_state_local = -1;
+            ctx.is_handler_op = false;
+        }
 
         // Clear call remaps after generating the function
         ctx.call_remaps = Vec::new();
@@ -1907,6 +2669,16 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
         bi = bi + 1;
     }
 
+    // Collect handler→effect mappings and handler op info for wrapper generation.
+    let handler_info = collect_handler_info(&mut ctx, &lower_result.interner, &lower_result.items, &lower_result.bodies);
+
+    // Register handler op body DefIds for state-by-pointer codegen.
+    let mut hop_i: usize = 0;
+    while hop_i < handler_info.ops.len() {
+        ctx.register_handler_op_body(handler_info.ops[hop_i].body_def_id);
+        hop_i = hop_i + 1;
+    }
+
     // Build work list: scan bodies once to identify which functions to codegen.
     // Filters out static bodies and duplicates from generic instantiations.
     let worklist = build_codegen_worklist(&lower_result, &static_def_ids);
@@ -1919,6 +2691,20 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     // These are enum variant constructors and other synthetic functions that are
     // referenced as function pointers but don't have HIR bodies.
     generate_missing_stubs(&mut ctx, &worklist.defined_names);
+
+    // Pass 4: Generate handler op wrapper functions and __blood_register_handlers.
+    // These wrappers adapt the inner handler op bodies to the standard ABI
+    // expected by the evidence API runtime (ptr state, ptr args, i64 arg_count, i64 cont) -> i64.
+    let handler_wrapper_ir = generate_handler_wrappers(&handler_info, &ctx);
+    ctx.buffer_write(handler_wrapper_ir.as_str());
+
+    // Emit inline handler stub functions collected during PushInlineHandler codegen.
+    let mut stub_i: usize = 0;
+    while stub_i < ctx.inline_stubs.len() {
+        let stub_ir = clone_string(&ctx.inline_stubs[stub_i]);
+        ctx.buffer_write(stub_ir.as_str());
+        stub_i = stub_i + 1;
+    }
 
     // Finish: write string constants and intrinsic declarations
     codegen_streaming::finish_streaming_module(&mut ctx);

@@ -181,51 +181,349 @@ pub fn emit_statement(
             // No operation - do nothing
         }
         &mir_stmt::StatementKind::PushHandler { handler_id, ref state_place, ref state_kind } => {
-            // Effect handler push - call inline stub
-            let handler_id_val = codegen_types::format_u64(handler_id.index as u64);
+            // Effect handler push via evidence API.
+            // Look up the effect_id for this handler.
+            let effect_id_val = match ctx.lookup_handler_effect(handler_id.index) {
+                Option::Some(eid) => codegen_types::format_u64(eid as u64),
+                Option::None => codegen_types::format_u64(handler_id.index as u64),
+            };
 
-            // Get state pointer (null for stateless handlers)
-            let state_void_ptr = match state_kind {
-                &mir_stmt::HandlerStateKind::Stateless => {
-                    common::make_string("null")
-                }
-                _ => {
-                    codegen_expr::emit_place_addr(ctx, state_place)
-                }
+            // Get state pointer
+            let state_void_ptr = codegen_expr::emit_place_addr(ctx, state_place);
+
+            // Get or create evidence vector (using alloca to avoid phi predecessor issue)
+            let ev_alloca = ctx.fresh_temp();
+            ctx.write_indent();
+            ctx.write_string(&ev_alloca);
+            ctx.write(" = alloca ptr\n");
+
+            let ev_cur = ctx.fresh_temp();
+            ctx.write_indent();
+            ctx.write_string(&ev_cur);
+            ctx.write(" = call ptr @blood_evidence_current()\n");
+
+            ctx.write_indent();
+            ctx.write("store ptr ");
+            ctx.write_string(&ev_cur);
+            ctx.write(", ptr ");
+            ctx.write_string(&ev_alloca);
+            ctx.write("\n");
+
+            let ev_is_null = ctx.fresh_temp();
+            ctx.write_indent();
+            ctx.write_string(&ev_is_null);
+            ctx.write(" = icmp eq ptr ");
+            ctx.write_string(&ev_cur);
+            ctx.write(", null\n");
+
+            let create_label = ctx.fresh_label();
+            let merge_label = ctx.fresh_label();
+
+            ctx.write_indent();
+            ctx.write("br i1 ");
+            ctx.write_string(&ev_is_null);
+            ctx.write(", label %");
+            ctx.write_string(&create_label);
+            ctx.write(", label %");
+            ctx.write_string(&merge_label);
+            ctx.write("\n");
+
+            // Create evidence block
+            ctx.write_string(&create_label);
+            ctx.write(":\n");
+            let new_ev = ctx.fresh_temp();
+            ctx.write_indent();
+            ctx.write_string(&new_ev);
+            ctx.write(" = call ptr @blood_evidence_create()\n");
+            ctx.write_indent();
+            ctx.write("call void @blood_evidence_set_current(ptr ");
+            ctx.write_string(&new_ev);
+            ctx.write(")\n");
+            ctx.write_indent();
+            ctx.write("store ptr ");
+            ctx.write_string(&new_ev);
+            ctx.write(", ptr ");
+            ctx.write_string(&ev_alloca);
+            ctx.write("\n");
+            ctx.write_indent();
+            ctx.write("br label %");
+            ctx.write_string(&merge_label);
+            ctx.write("\n");
+
+            // Merge block - load evidence from alloca
+            ctx.write_string(&merge_label);
+            ctx.write(":\n");
+            let evidence = ctx.fresh_temp();
+            ctx.write_indent();
+            ctx.write_string(&evidence);
+            ctx.write(" = load ptr, ptr ");
+            ctx.write_string(&ev_alloca);
+            ctx.write("\n");
+
+            // Push handler with state.
+            // For stateful handlers, create a state shadow alloca that points
+            // directly to the state value (skipping the handler struct discriminant).
+            // Handler op wrappers receive this pointer and can read/write state through it.
+            let push_state_ptr = if !state_kind.is_stateless() {
+                // Create a state shadow: alloca i64 on the stack.
+                // Load initial state from handler struct (heap_ptr + 1, after discriminant).
+                let shadow = ctx.fresh_temp();
+                ctx.write_indent();
+                ctx.write_string(&shadow);
+                ctx.write(" = alloca i64\n");
+
+                let heap_ptr_s = ctx.fresh_temp();
+                ctx.write_indent();
+                ctx.write_string(&heap_ptr_s);
+                ctx.write(" = load ptr, ptr ");
+                ctx.write_string(&state_void_ptr);
+                ctx.write("\n");
+
+                let field_ptr = ctx.fresh_temp();
+                ctx.write_indent();
+                ctx.write_string(&field_ptr);
+                ctx.write(" = getelementptr i8, ptr ");
+                ctx.write_string(&heap_ptr_s);
+                ctx.write(", i64 1\n");
+
+                let init_val = ctx.fresh_temp();
+                ctx.write_indent();
+                ctx.write_string(&init_val);
+                ctx.write(" = load i64, ptr ");
+                ctx.write_string(&field_ptr);
+                ctx.write("\n");
+
+                ctx.write_indent();
+                ctx.write("store i64 ");
+                ctx.write_string(&init_val);
+                ctx.write(", ptr ");
+                ctx.write_string(&shadow);
+                ctx.write("\n");
+
+                // Save state shadow alloca name for CallReturnClause to use
+                ctx.set_handler_state_shadow(handler_id.index, clone_string(&shadow));
+                shadow
+            } else {
+                clone_string(&state_void_ptr)
             };
 
             ctx.write_indent();
-            ctx.write("call void @blood_push_handler(i64 ");
-            ctx.write_string(&handler_id_val);
+            ctx.write("call void @blood_evidence_push_with_state(ptr ");
+            ctx.write_string(&evidence);
+            ctx.write(", i64 ");
+            ctx.write_string(&effect_id_val);
             ctx.write(", ptr ");
-            ctx.write_string(&state_void_ptr);
+            ctx.write_string(&push_state_ptr);
+            ctx.write(")\n");
+
+            // Mark as inline handler
+            ctx.write_indent();
+            ctx.write("call void @blood_evidence_set_inline(i64 ");
+            ctx.write_string(&effect_id_val);
             ctx.write(")\n");
         }
         &mir_stmt::StatementKind::PopHandler => {
-            // Effect handler pop - call inline stub
+            // Effect handler pop via evidence API
+            let ev_cur = ctx.fresh_temp();
             ctx.write_indent();
-            ctx.write("call void @blood_pop_handler()\n");
+            ctx.write_string(&ev_cur);
+            ctx.write(" = call ptr @blood_evidence_current()\n");
+
+            let pop_result = ctx.fresh_temp();
+            ctx.write_indent();
+            ctx.write_string(&pop_result);
+            ctx.write(" = call i64 @blood_evidence_pop(ptr ");
+            ctx.write_string(&ev_cur);
+            ctx.write(")\n");
+
+            ctx.write_indent();
+            ctx.write("call void @blood_evidence_clear_inline()\n");
         }
         &mir_stmt::StatementKind::PushInlineHandler { effect_id, operations: _ } => {
-            // Inline effect handler push - call inline stub
+            // Inline effect handler push via evidence API
             let effect_id_val = codegen_types::format_u64(effect_id.index as u64);
+
+            // Generate a unique stub function name for this inline handler op
+            let stub_id = ctx.inline_stub_count;
+            ctx.inline_stub_count = ctx.inline_stub_count + 1;
+            let mut stub_name = common::make_string("__inline_stub_");
+            let stub_id_str = codegen_types::format_u64(stub_id as u64);
+            stub_name.push_str(stub_id_str.as_str());
+
+            // Add the stub function definition (emitted at module level after all bodies)
+            let mut stub_def = common::make_string("define internal i64 @");
+            stub_def.push_str(stub_name.as_str());
+            stub_def.push_str("(ptr %state, ptr %args, i64 %arg_count, i64 %cont) {\nentry:\n  ret i64 0\n}\n\n");
+            ctx.inline_stubs.push(stub_def);
+
+            // Get or create evidence vector (using alloca to avoid phi predecessor issue)
+            let ev_alloca = ctx.fresh_temp();
             ctx.write_indent();
-            ctx.write("call void @blood_push_inline_handler(i64 ");
+            ctx.write_string(&ev_alloca);
+            ctx.write(" = alloca ptr\n");
+
+            let ev_cur = ctx.fresh_temp();
+            ctx.write_indent();
+            ctx.write_string(&ev_cur);
+            ctx.write(" = call ptr @blood_evidence_current()\n");
+
+            ctx.write_indent();
+            ctx.write("store ptr ");
+            ctx.write_string(&ev_cur);
+            ctx.write(", ptr ");
+            ctx.write_string(&ev_alloca);
+            ctx.write("\n");
+
+            let ev_is_null = ctx.fresh_temp();
+            ctx.write_indent();
+            ctx.write_string(&ev_is_null);
+            ctx.write(" = icmp eq ptr ");
+            ctx.write_string(&ev_cur);
+            ctx.write(", null\n");
+
+            let create_label = ctx.fresh_label();
+            let merge_label = ctx.fresh_label();
+
+            ctx.write_indent();
+            ctx.write("br i1 ");
+            ctx.write_string(&ev_is_null);
+            ctx.write(", label %");
+            ctx.write_string(&create_label);
+            ctx.write(", label %");
+            ctx.write_string(&merge_label);
+            ctx.write("\n");
+
+            // Create evidence block
+            ctx.write_string(&create_label);
+            ctx.write(":\n");
+            let new_ev = ctx.fresh_temp();
+            ctx.write_indent();
+            ctx.write_string(&new_ev);
+            ctx.write(" = call ptr @blood_evidence_create()\n");
+            ctx.write_indent();
+            ctx.write("call void @blood_evidence_set_current(ptr ");
+            ctx.write_string(&new_ev);
+            ctx.write(")\n");
+            ctx.write_indent();
+            ctx.write("store ptr ");
+            ctx.write_string(&new_ev);
+            ctx.write(", ptr ");
+            ctx.write_string(&ev_alloca);
+            ctx.write("\n");
+            ctx.write_indent();
+            ctx.write("br label %");
+            ctx.write_string(&merge_label);
+            ctx.write("\n");
+
+            // Merge block - load evidence from alloca
+            ctx.write_string(&merge_label);
+            ctx.write(":\n");
+            let evidence = ctx.fresh_temp();
+            ctx.write_indent();
+            ctx.write_string(&evidence);
+            ctx.write(" = load ptr, ptr ");
+            ctx.write_string(&ev_alloca);
+            ctx.write("\n");
+
+            // Register stub handler op with the evidence API
+            // Build ops array with one stub function pointer (op_index=0)
+            let ops_alloca = ctx.fresh_temp();
+            ctx.write_indent();
+            ctx.write_string(&ops_alloca);
+            ctx.write(" = alloca [1 x ptr]\n");
+            ctx.write_indent();
+            ctx.write("store ptr @");
+            ctx.write_string(&stub_name);
+            ctx.write(", ptr ");
+            ctx.write_string(&ops_alloca);
+            ctx.write("\n");
+            ctx.write_indent();
+            ctx.write("call void @blood_evidence_register(ptr ");
+            ctx.write_string(&evidence);
+            ctx.write(", i64 ");
+            ctx.write_string(&effect_id_val);
+            ctx.write(", ptr ");
+            ctx.write_string(&ops_alloca);
+            ctx.write(", i64 1)\n");
+
+            // Push with null state for inline handlers
+            ctx.write_indent();
+            ctx.write("call void @blood_evidence_push_with_state(ptr ");
+            ctx.write_string(&evidence);
+            ctx.write(", i64 ");
+            ctx.write_string(&effect_id_val);
+            ctx.write(", ptr null)\n");
+
+            // Mark as inline
+            ctx.write_indent();
+            ctx.write("call void @blood_evidence_set_inline(i64 ");
             ctx.write_string(&effect_id_val);
             ctx.write(")\n");
         }
         &mir_stmt::StatementKind::CallReturnClause {
-            handler_id: _,
+            handler_id,
             handler_name: _,
             ref body_result,
             ref state_place,
             ref destination,
         } => {
-            // Return clause - copy result to destination
-            let result_val = codegen_expr::emit_operand(ctx, body_result);
-            let _state = codegen_expr::emit_place_addr(ctx, state_place);
+            // Call the return clause wrapper: handler{N}_return(i64 body_result, ptr state) -> i64
+            let (result_val, result_ty) = codegen_expr::emit_operand_typed(ctx, body_result);
+            // Use the state shadow alloca (set during PushHandler) instead of state_place.
+            // Handler ops mutate through the shadow pointer, so it has the correct state.
+            let state_ptr = match ctx.get_handler_state_shadow(handler_id.index) {
+                Option::Some(shadow) => clone_string(shadow),
+                Option::None => codegen_expr::emit_place_addr(ctx, state_place),
+            };
             let dest_ptr = codegen_expr::emit_place_addr(ctx, destination);
-            ctx.emit_store("i64", result_val.as_str(), dest_ptr.as_str());
+
+            // Widen body result to i64
+            let widened_result = if str_eq(result_ty.as_str(), "i64") {
+                clone_string(&result_val)
+            } else {
+                let tmp = ctx.fresh_temp();
+                ctx.write_indent();
+                ctx.write_string(&tmp);
+                ctx.write(" = sext ");
+                ctx.write_string(&result_ty);
+                ctx.write(" ");
+                ctx.write_string(&result_val);
+                ctx.write(" to i64\n");
+                tmp
+            };
+
+            // Build return clause function name: handler{N}_return
+            let mut return_fn = common::make_string("handler");
+            let id_str = codegen_types::format_u64(handler_id.index as u64);
+            return_fn.push_str(id_str.as_str());
+            return_fn.push_str("_return");
+
+            // Call: %ret = call i64 @handler{N}_return(i64 %result, ptr %state)
+            let ret_val = ctx.fresh_temp();
+            ctx.write_indent();
+            ctx.write_string(&ret_val);
+            ctx.write(" = call i64 @");
+            ctx.write_string(&return_fn);
+            ctx.write("(i64 ");
+            ctx.write_string(&widened_result);
+            ctx.write(", ptr ");
+            ctx.write_string(&state_ptr);
+            ctx.write(")\n");
+
+            // Narrow result to destination type (use body result type as proxy)
+            if str_eq(result_ty.as_str(), "i64") {
+                ctx.emit_store("i64", ret_val.as_str(), dest_ptr.as_str());
+            } else {
+                let narrowed = ctx.fresh_temp();
+                ctx.write_indent();
+                ctx.write_string(&narrowed);
+                ctx.write(" = trunc i64 ");
+                ctx.write_string(&ret_val);
+                ctx.write(" to ");
+                ctx.write_string(&result_ty);
+                ctx.write("\n");
+                ctx.emit_store(result_ty.as_str(), narrowed.as_str(), dest_ptr.as_str());
+            }
         }
     }
 }
@@ -822,24 +1120,31 @@ pub fn emit_allocas_with_escapes(
             escapes.recommended_tier(local_id)
         };
 
-        match &tier {
-            &mir_escape::MemoryTier::Stack => {
-                // Stack allocation (default path)
-                emit_stack_local(ctx, &name, &ty_str);
-            }
-            &mir_escape::MemoryTier::Region => {
-                // Region allocation with generation tracking
-                emit_region_local(ctx, &local.ty, &name, local_id);
-                ctx.mark_region_allocated(local_id);
-            }
-            &mir_escape::MemoryTier::Persistent => {
-                // Persistent allocation
-                emit_persistent_local(ctx, &local.ty, &name);
-                ctx.mark_persistent_allocated(local_id);
+        // Handler op state local: alloca is `ptr` (holds state pointer from wrapper)
+        if ctx.is_handler_state_ptr(local_id) {
+            let ptr_ty = common::make_string("ptr");
+            emit_stack_local(ctx, &name, &ptr_ty);
+        } else {
+            match &tier {
+                &mir_escape::MemoryTier::Stack => {
+                    // Stack allocation (default path)
+                    emit_stack_local(ctx, &name, &ty_str);
+                }
+                &mir_escape::MemoryTier::Region => {
+                    // Region allocation with generation tracking
+                    emit_region_local(ctx, &local.ty, &name, local_id);
+                    ctx.mark_region_allocated(local_id);
+                }
+                &mir_escape::MemoryTier::Persistent => {
+                    // Persistent allocation
+                    emit_persistent_local(ctx, &local.ty, &name);
+                    ctx.mark_persistent_allocated(local_id);
+                }
             }
         }
 
         // Register local metadata (same for all tiers)
+        // For handler state locals, register the VALUE type (not ptr) so loads use correct type.
         ctx.register_local(local_id, common::make_string(name.as_str()));
         ctx.register_local_type(local_id, common::make_string(ty_str.as_str()));
         ctx.register_local_signedness(local_id, codegen_types::is_signed(&local.ty));
@@ -976,9 +1281,14 @@ pub fn emit_arg_stores(
         let idx_str = codegen_types::format_u64((i - 1) as u64);
         arg_name.push_str(idx_str.as_str());
 
-        // Skip store for unit type {} — it has zero size in LLVM
-        if !str_eq(ty.as_str(), "{}") {
-            ctx.emit_store(ty.as_str(), arg_name.as_str(), alloca_name.as_str());
+        // Handler op state local: store the pointer (ptr type, not value type)
+        if ctx.is_handler_state_ptr(local_id) {
+            ctx.emit_store("ptr", arg_name.as_str(), alloca_name.as_str());
+        } else {
+            // Skip store for unit type {} — it has zero size in LLVM
+            if !str_eq(ty.as_str(), "{}") {
+                ctx.emit_store(ty.as_str(), arg_name.as_str(), alloca_name.as_str());
+            }
         }
         i = i + 1;
     }
@@ -1008,4 +1318,20 @@ pub fn clone_string(s: &String) -> String {
     let mut result = String::new();
     result.push_str(s.as_str());
     result
+}
+
+fn str_eq(a: &str, b: &str) -> bool {
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+    if a_bytes.len() != b_bytes.len() {
+        return false;
+    }
+    let mut i: usize = 0;
+    while i < a_bytes.len() {
+        if a_bytes[i] != b_bytes[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    true
 }

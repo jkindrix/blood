@@ -224,7 +224,13 @@ pub fn generate_function_with_ctx(
     let param_end: usize = 1usize + (body.param_count as usize);
     while p < param_end && p < body.locals.len() {
         let local = &body.locals[p];
-        let ty = codegen_stmt::type_to_llvm_with_ctx(ctx, &local.ty);
+        let local_id = mir_def::MirLocalId::new(p as u32);
+        // Handler op state local: arg type is ptr (state pointer from wrapper)
+        let ty = if ctx.is_handler_state_ptr(local_id) {
+            common::make_string("ptr")
+        } else {
+            codegen_stmt::type_to_llvm_with_ctx(ctx, &local.ty)
+        };
         let mut arg_name = common::make_string("%arg");
         let idx_str = codegen_types::format_u64((p - 1) as u64);
         arg_name.push_str(idx_str.as_str());
@@ -728,54 +734,23 @@ pub fn intrinsic_declarations() -> String {
     output.push_str("declare ptr @box_new(ptr, i64)\n");
     output.push_str("declare ptr @box_as_ref(ptr)\n");
 
-    // Effect runtime inline stubs
-    // These provide a minimal handler stack implementation. The stubs track
-    // handler push/pop and pass perform args through. Full evidence-based
-    // dispatch requires handler wrapper function generation and registration
-    // which is not yet implemented in the self-hosted compiler.
-    output.push_str("\n@blood_handler_stack_ptr = private global i64 0\n");
-    output.push_str("@blood_handler_stack = private global [256 x i64] zeroinitializer\n");
-    output.push_str("@blood_continuation_result = private global i64 0\n");
-    output.push_str("define i64 @blood_perform(i64 %effect_id, i64 %op_index, i64 %arg) {\n");
+    // Effect handler evidence API declarations (from libblood_runtime.a)
+    output.push_str("\n; Effect handler evidence API declarations\n");
+    output.push_str("declare ptr @blood_evidence_create()\n");
+    output.push_str("declare ptr @blood_evidence_current()\n");
+    output.push_str("declare void @blood_evidence_set_current(ptr)\n");
+    output.push_str("declare void @blood_evidence_push_with_state(ptr, i64, ptr)\n");
+    output.push_str("declare void @blood_evidence_set_inline(i64)\n");
+    output.push_str("declare void @blood_evidence_clear_inline()\n");
+    output.push_str("declare i64 @blood_evidence_pop(ptr)\n");
+    output.push_str("declare void @blood_evidence_register(ptr, i64, ptr, i64)\n");
+    output.push_str("declare i64 @blood_perform(i64, i32, ptr, i64, i64)\n");
+    output.push_str("declare i64 @blood_continuation_create_multishot(ptr, ptr)\n");
+    output.push_str("declare i64 @blood_continuation_resume(i64, i64)\n");
+    output.push_str("\n; Identity continuation for tail-resumptive performs\n");
+    output.push_str("define internal i64 @__blood_identity_continuation(i64 %0, ptr %1) {\n");
     output.push_str("entry:\n");
-    output.push_str("  store i64 %arg, ptr @blood_continuation_result\n");
-    output.push_str("  ret i64 %arg\n");
-    output.push_str("}\n");
-    output.push_str("\n; Effect runtime inline stubs\n");
-    output.push_str("define void @blood_push_handler(i64 %handler_id, ptr %state_ptr) {\n");
-    output.push_str("entry:\n");
-    output.push_str("  %sp = load i64, ptr @blood_handler_stack_ptr\n");
-    output.push_str("  %slot = getelementptr inbounds [256 x i64], ptr @blood_handler_stack, i64 0, i64 %sp\n");
-    output.push_str("  store i64 %handler_id, ptr %slot\n");
-    output.push_str("  %new_sp = add i64 %sp, 1\n");
-    output.push_str("  store i64 %new_sp, ptr @blood_handler_stack_ptr\n");
-    output.push_str("  ret void\n");
-    output.push_str("}\n");
-    output.push_str("define void @blood_push_inline_handler(i64 %effect_id) {\n");
-    output.push_str("entry:\n");
-    output.push_str("  %sp = load i64, ptr @blood_handler_stack_ptr\n");
-    output.push_str("  %slot = getelementptr inbounds [256 x i64], ptr @blood_handler_stack, i64 0, i64 %sp\n");
-    output.push_str("  store i64 %effect_id, ptr %slot\n");
-    output.push_str("  %new_sp = add i64 %sp, 1\n");
-    output.push_str("  store i64 %new_sp, ptr @blood_handler_stack_ptr\n");
-    output.push_str("  ret void\n");
-    output.push_str("}\n");
-    output.push_str("define void @blood_pop_handler() {\n");
-    output.push_str("entry:\n");
-    output.push_str("  %sp = load i64, ptr @blood_handler_stack_ptr\n");
-    output.push_str("  %is_empty = icmp eq i64 %sp, 0\n");
-    output.push_str("  br i1 %is_empty, label %done, label %pop\n");
-    output.push_str("pop:\n");
-    output.push_str("  %new_sp = sub i64 %sp, 1\n");
-    output.push_str("  store i64 %new_sp, ptr @blood_handler_stack_ptr\n");
-    output.push_str("  br label %done\n");
-    output.push_str("done:\n");
-    output.push_str("  ret void\n");
-    output.push_str("}\n");
-    output.push_str("define void @blood_resume(i64 %value) {\n");
-    output.push_str("entry:\n");
-    output.push_str("  store i64 %value, ptr @blood_continuation_result\n");
-    output.push_str("  ret void\n");
+    output.push_str("  ret i64 %0\n");
     output.push_str("}\n");
 
     // Builtin constructor stubs (used as function pointers for match dispatch, not called directly)

@@ -178,8 +178,8 @@ pub fn lower_expr(
                 pi = pi + 1;
             }
         }
-        &hir_expr::ExprKind::Perform { effect_def, op_def, op_name: _, ref args } => {
-            lower_perform_expr(ctx, effect_def, op_def, args, &resolved_ty, dest, expr.span);
+        &hir_expr::ExprKind::Perform { effect_def, op_def: _, op_name, ref args } => {
+            lower_perform_expr(ctx, effect_def, op_name, args, &resolved_ty, dest, expr.span);
         }
         &hir_expr::ExprKind::Resume(ref val) => {
             lower_resume_expr(ctx, val.as_ref(), &resolved_ty, dest, expr.span);
@@ -1809,15 +1809,16 @@ fn lower_with_handle_expr(
     let state_place = mir_types::Place::local(state_temp);
     lower_expr(ctx, handler_expr, mir_lower_ctx::destination_local(state_temp));
 
-    // Step 2: Determine handler state kind based on handler type
-    let state_kind = classify_handler_state(&handler_expr.ty);
+    // Step 2: Resolve handler type (HIR types are Infer during MIR lowering)
+    let resolved_handler_ty = ctx.resolve_type(&handler_expr.ty);
 
-    // Step 3: Extract effect_id from handler type if available
-    // For now, use a dummy DefId - proper implementation would
-    // inspect the handler type to find the effect being handled
-    let handler_id = extract_handler_def_id(&handler_expr.ty);
+    // Step 3: Determine handler state kind based on resolved handler type
+    let state_kind = classify_handler_state(&resolved_handler_ty);
 
-    // Step 4: Emit PushHandler statement
+    // Step 4: Extract handler DefId from resolved type
+    let handler_id = extract_handler_def_id(&resolved_handler_ty);
+
+    // Step 5: Emit PushHandler statement
     ctx.emit_stmt(mir_stmt::Statement::new(
         mir_stmt::StatementKind::PushHandler {
             handler_id: handler_id,
@@ -1848,18 +1849,23 @@ fn lower_with_handle_expr(
             span,
         ));
 
-        // Store body result to destination
+        // Step 8: Emit CallReturnClause to transform body result via return clause
+        let body_operand = mir_lower_util::operand_from_place(
+            mir_types::Place::local(body_result_temp),
+            &body.ty,
+        );
         match dest.as_place() {
             Option::Some(dest_place) => {
-                let body_operand = mir_lower_util::operand_from_place(
-                    mir_types::Place::local(body_result_temp),
-                    &body.ty,
-                );
-                ctx.emit_assign(
-                    dest_place,
-                    mir_types::Rvalue::Use(body_operand),
+                ctx.emit_stmt(mir_stmt::Statement::new(
+                    mir_stmt::StatementKind::CallReturnClause {
+                        handler_id: handler_id,
+                        handler_name: String::new(),
+                        body_result: body_operand,
+                        state_place: copy_place(&state_place),
+                        destination: dest_place,
+                    },
                     span,
-                );
+                ));
             }
             Option::None => {}
         }
@@ -1993,7 +1999,7 @@ fn copy_projection(proj: &mir_types::PlaceElem) -> mir_types::PlaceElem {
 fn lower_perform_expr(
     ctx: &mut mir_lower_ctx::MirLowerCtx,
     effect_def: hir_def::DefId,
-    _op_def: hir_def::DefId,
+    op_name: common::Symbol,
     args: &Vec<hir_expr::Expr>,
     ty: &hir_ty::Type,
     dest: mir_lower_ctx::Destination,
@@ -2021,10 +2027,12 @@ fn lower_perform_expr(
         }
     };
 
+    // Store the op_name symbol index in op_index.
+    // Codegen resolves (effect_def_id, op_name_sym) to positional index.
     let next_block = ctx.new_block();
     ctx.builder.terminate(mir_term::effect_perform(
         effect_def,
-        0,
+        op_name.index,
         arg_operands,
         dest_place,
         next_block,

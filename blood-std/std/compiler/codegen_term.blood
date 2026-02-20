@@ -48,26 +48,91 @@ pub fn emit_terminator(
             emit_assert(ctx, cond, expected, msg, target);
         }
         &mir_term::TerminatorKind::Perform { effect_id, op_index, ref args, ref destination, ref target, is_tail_resumptive: _ } => {
-            // Effect perform - call runtime to look up and dispatch to handler
+            // Effect perform via evidence API 5-arg call:
+            //   blood_perform(i64 effect_id, i32 op_index, ptr args, i64 arg_count, i64 continuation)
             let effect_id_val = codegen_types::format_u64(effect_id.index as u64);
-            let op_index_val = codegen_types::format_u64(op_index as u64);
+            // op_index in MIR is the op_name symbol index; resolve to positional index
+            let resolved_op_index = ctx.resolve_op_index(effect_id.index, op_index);
+            let op_index_val = codegen_types::format_u64(resolved_op_index as u64);
             let dest = codegen_expr::emit_place_data_ptr(ctx, destination);
 
-            // Pack arguments into array for runtime
-            let args_vals: Vec<String> = emit_operand_list(ctx, args);
-            let num_args_val = codegen_types::format_u64(args_vals.len() as u64);
+            // Pack arguments into [N x i64] stack array, widening each arg to i64
+            let num_args = args.len();
+            let num_args_val = codegen_types::format_u64(num_args as u64);
 
-            // Call @blood_perform(effect_id, op_index, num_args, args_ptr, result_ptr)
-            // For now, simplified: store result directly
+            // Allocate args array on stack
+            let args_alloca = ctx.fresh_temp();
+            if num_args > 0 {
+                let arr_ty_str = make_array_type(num_args);
+                ctx.write_indent();
+                ctx.write_string(&args_alloca);
+                ctx.write(" = alloca ");
+                ctx.write_string(&arr_ty_str);
+                ctx.write("\n");
+
+                // Store each argument widened to i64 into the array
+                let mut ai: usize = 0;
+                while ai < num_args {
+                    let (arg_val, arg_ty) = codegen_expr::emit_operand_typed(ctx, &args[ai]);
+
+                    // Widen arg to i64
+                    let widened_val = widen_operand_to_i64(ctx, arg_val.as_str(), arg_ty.as_str());
+
+                    // Get store target
+                    let store_ptr = if ai == 0 {
+                        // First element: alloca is already the pointer
+                        clone_string(&args_alloca)
+                    } else {
+                        // Subsequent elements: GEP to index
+                        let idx_str = codegen_types::format_u64(ai as u64);
+                        let elem_ptr = ctx.fresh_temp();
+                        ctx.write_indent();
+                        ctx.write_string(&elem_ptr);
+                        ctx.write(" = getelementptr ");
+                        ctx.write_string(&arr_ty_str);
+                        ctx.write(", ptr ");
+                        ctx.write_string(&args_alloca);
+                        ctx.write(", i64 0, i64 ");
+                        ctx.write_string(&idx_str);
+                        ctx.write("\n");
+                        elem_ptr
+                    };
+
+                    ctx.write_indent();
+                    ctx.write("store i64 ");
+                    ctx.write_string(&widened_val);
+                    ctx.write(", ptr ");
+                    ctx.write_string(&store_ptr);
+                    ctx.write("\n");
+
+                    ai = ai + 1;
+                }
+            }
+
+            // Create continuation (identity for tail-resumptive)
+            let continuation = ctx.fresh_temp();
+            ctx.write_indent();
+            ctx.write_string(&continuation);
+            ctx.write(" = call i64 @blood_continuation_create_multishot(ptr @__blood_identity_continuation, ptr null)\n");
+
+            // Call blood_perform(i64 effect_id, i32 op_index, ptr args, i64 arg_count, i64 continuation)
             let result = ctx.fresh_temp();
             ctx.write_indent();
             ctx.write_string(&result);
             ctx.write(" = call i64 @blood_perform(i64 ");
             ctx.write_string(&effect_id_val);
-            ctx.write(", i64 ");
+            ctx.write(", i32 ");
             ctx.write_string(&op_index_val);
+            ctx.write(", ptr ");
+            if num_args > 0 {
+                ctx.write_string(&args_alloca);
+            } else {
+                ctx.write("null");
+            }
             ctx.write(", i64 ");
             ctx.write_string(&num_args_val);
+            ctx.write(", i64 ");
+            ctx.write_string(&continuation);
             ctx.write(")\n");
 
             // Store result
@@ -84,49 +149,24 @@ pub fn emit_terminator(
             }
         }
         &mir_term::TerminatorKind::Resume { ref value } => {
-            // Resume from handler - call runtime to transfer control back
+            // Resume from handler op body.
+            // The inner body returns the resume value in its natural return type.
+            // The wrapper function handles widening to i64 and continuation resume.
             match value {
                 &Option::Some(ref v) => {
                     let (val, ty) = codegen_expr::emit_operand_typed(ctx, v);
-                    if str_eq(ty.as_str(), "{}") {
-                        // Unit-typed resume value — pass 0
-                        ctx.write_indent();
-                        ctx.write("call void @blood_resume(i64 0)\n");
-                    } else if str_eq(ty.as_str(), "i64") || str_eq(ty.as_str(), "ptr") {
-                        // Already i64-compatible
-                        ctx.write_indent();
-                        ctx.write("call void @blood_resume(i64 ");
-                        ctx.write_string(&val);
-                        ctx.write(")\n");
+                    if str_eq(ty.as_str(), "{}") || is_void_type(ty.as_str()) {
+                        // Unit-typed resume value → ret void
+                        ctx.emit_ret("void", Option::None);
                     } else {
-                        // Need to widen to i64 (e.g., i32 → zext to i64)
-                        let widened = ctx.fresh_temp();
-                        ctx.write_indent();
-                        ctx.write_string(&widened);
-                        if str_eq(ty.as_str(), "i1") || str_eq(ty.as_str(), "i8") || str_eq(ty.as_str(), "i16") || str_eq(ty.as_str(), "i32") {
-                            ctx.write(" = zext ");
-                        } else {
-                            ctx.write(" = bitcast ");
-                        }
-                        ctx.write_string(&ty);
-                        ctx.write(" ");
-                        ctx.write_string(&val);
-                        ctx.write(" to i64\n");
-                        ctx.write_indent();
-                        ctx.write("call void @blood_resume(i64 ");
-                        ctx.write_string(&widened);
-                        ctx.write(")\n");
+                        ctx.emit_ret(ty.as_str(), Option::Some(val.as_str()));
                     }
                 }
                 &Option::None => {
-                    // Unit-resume: pass 0
-                    ctx.write_indent();
-                    ctx.write("call void @blood_resume(i64 0)\n");
+                    // Unit-resume: ret void
+                    ctx.emit_ret("void", Option::None);
                 }
             }
-
-            // Resume doesn't return, emit unreachable (runtime handles control transfer)
-            ctx.emit_unreachable();
         }
         &mir_term::TerminatorKind::Unreachable => {
             ctx.emit_unreachable();
@@ -950,6 +990,54 @@ fn emit_operand_list(
         i = i + 1;
     }
     result
+}
+
+/// Widens an operand value to i64 if needed.
+/// Returns the SSA name of the widened value (already i64-typed).
+fn widen_operand_to_i64(ctx: &mut codegen_ctx::CodegenCtx, val: &str, ty: &str) -> String {
+    if str_eq(ty, "i64") {
+        return common::make_string(val);
+    }
+    if str_eq(ty, "i32") || str_eq(ty, "i16") || str_eq(ty, "i8") || str_eq(ty, "i1") {
+        let widened = ctx.fresh_temp();
+        ctx.write_indent();
+        ctx.write_string(&widened);
+        ctx.write(" = zext ");
+        ctx.write(ty);
+        ctx.write(" ");
+        ctx.write(val);
+        ctx.write(" to i64\n");
+        return widened;
+    }
+    if str_eq(ty, "ptr") {
+        let widened = ctx.fresh_temp();
+        ctx.write_indent();
+        ctx.write_string(&widened);
+        ctx.write(" = ptrtoint ptr ");
+        ctx.write(val);
+        ctx.write(" to i64\n");
+        return widened;
+    }
+    if str_eq(ty, "double") {
+        let widened = ctx.fresh_temp();
+        ctx.write_indent();
+        ctx.write_string(&widened);
+        ctx.write(" = bitcast double ");
+        ctx.write(val);
+        ctx.write(" to i64\n");
+        return widened;
+    }
+    // For other types (unit {}, etc.), return 0
+    common::make_string("0")
+}
+
+/// Makes an LLVM array type string like "[3 x i64]".
+fn make_array_type(count: usize) -> String {
+    let mut s = common::make_string("[");
+    let count_str = codegen_types::format_u64(count as u64);
+    s.push_str(count_str.as_str());
+    s.push_str(" x i64]");
+    s
 }
 
 /// Compares a &str against a &str for equality.
