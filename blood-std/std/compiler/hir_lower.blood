@@ -75,7 +75,9 @@ pub fn lower_program_with_base_dir(program: &ast::Program, base_dir: String, sou
     // Phase 3a: Lower external module declarations first, so their enum
     // variants and impl methods are registered before the current file's
     // declarations reference them.
-    lower_external_module_declarations(&mut ctx);
+    // The cache stores parsed modules for reuse in Phase 4b.
+    let mut parsed_module_cache: Vec<CachedParsedModule> = Vec::new();
+    lower_external_module_declarations(&mut ctx, &mut parsed_module_cache);
 
     // Phase 3b: Lower current file's declarations to HIR items
     hir_lower_item::lower_declarations(&mut ctx, &program.declarations);
@@ -93,8 +95,8 @@ pub fn lower_program_with_base_dir(program: &ast::Program, base_dir: String, sou
     // unresolved cross-module paths that produce false errors.
     let main_body_count = ctx.bodies.len();
 
-    // Phase 4b: Lower external module function bodies
-    lower_external_module_fn_bodies(&mut ctx);
+    // Phase 4b: Lower external module function bodies (reuses cached parses)
+    lower_external_module_fn_bodies(&mut ctx, &parsed_module_cache);
 
     // Check for errors from body lowering
     if ctx.has_errors() {
@@ -707,6 +709,9 @@ fn register_builtin_functions(ctx: &mut hir_lower_ctx::LoweringCtx) {
     register_builtin_fn(ctx, &mut items, "blood_clock_millis", bi_params_0(), bi_u64());
     register_builtin_fn(ctx, &mut items, "blood_clock_nanos", bi_params_0(), bi_u64());
 
+    // === Bit Reinterpretation ===
+    register_builtin_fn(ctx, &mut items, "blood_float64_to_bits", bi_params_1(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::F64))), bi_u64());
+
     // === Command-line Arguments ===
     register_builtin_fn(ctx, &mut items, "args_count", bi_params_0(), hir_ty::Type::i32_ty());
     register_builtin_fn(ctx, &mut items, "args_get", bi_params_1(hir_ty::Type::i32_ty()), bi_ref_str());
@@ -728,6 +733,10 @@ fn register_builtin_functions(ctx: &mut hir_lower_ctx::LoweringCtx) {
     register_builtin_fn(ctx, &mut items, "region_alloc", bi_params_3(bi_u64(), bi_u64(), bi_u64()), bi_u64());
     register_builtin_fn(ctx, &mut items, "region_exit_scope", bi_params_1(bi_u64()), hir_ty::Type::i32_ty());
     register_builtin_fn(ctx, &mut items, "region_used", bi_params_1(bi_u64()), bi_u64());
+    register_builtin_fn(ctx, &mut items, "region_trim", bi_params_1(bi_u64()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "region_committed", bi_params_1(bi_u64()), bi_u64());
+    register_builtin_fn(ctx, &mut items, "region_alloc_count", bi_params_1(bi_u64()), bi_u64());
+    register_builtin_fn(ctx, &mut items, "system_alloc_live_bytes", bi_params_0(), bi_u64());
 
     // === Parse/char builtins (return unwrapped values, matching blood-rust ABI) ===
     register_builtin_fn(ctx, &mut items, "parse_f64", bi_params_1(bi_ref_str()), bi_f64());
@@ -778,7 +787,7 @@ fn load_external_module(
     // came from the parser's interner, which is separate from the lowering context's
     // interner. Span extraction always works regardless of interner state.
     let module_name = ctx.span_to_string(name_span);
-    let mut file_path = clone_string(ctx.get_base_dir());
+    let mut file_path = common::make_string(ctx.get_base_dir().as_str());
     file_path.push('/');
     append_string(&mut file_path, &module_name);
     file_path.push_str(".blood");
@@ -872,12 +881,12 @@ fn load_external_module(
     );
 
     // Mark path as loading for circular import detection
-    ctx.loading_paths.push(clone_string(&file_path));
+    ctx.loading_paths.push(common::make_string(file_path.as_str()));
 
     // Save current source and switch to the external module's source text
     // so that span_to_string() works correctly during registration
-    let saved_source = clone_string(&ctx.source);
-    ctx.source = clone_string(content);
+    let saved_source = ctx.source;
+    ctx.source = common::make_string(content.as_str());
 
     // Phase 1: Register nested type names from the loaded module
     // This recursively loads sub-modules, which will be added to loaded_modules
@@ -892,17 +901,12 @@ fn load_external_module(
 
     // Add to loaded_modules AFTER sub-modules have been loaded (post-order).
     // This ensures Phase 3a processes dependencies before dependents.
-    ctx.add_loaded_module(re_interned_name, def_id, clone_string(&file_path));
+    ctx.add_loaded_module(re_interned_name, def_id, common::make_string(file_path.as_str()));
 }
 
 /// Resolves a symbol to a string for file path construction.
 fn resolve_symbol_to_string(ctx: &mut hir_lower_ctx::LoweringCtx, symbol: common::Symbol) -> String {
     ctx.resolve_symbol(symbol)
-}
-
-/// Clones a String.
-fn clone_string(s: &String) -> String {
-    common::make_string(s.as_str())
 }
 
 /// Appends a String to another String.
@@ -926,12 +930,20 @@ impl ExternalModuleInfo {
     }
 }
 
+/// Cached parse result for an external module, to avoid double-parsing.
+struct CachedParsedModule {
+    module_index: usize,
+    content: String,
+    parse: parser::ParseResult,
+    def_id: hir_def::DefId,
+}
+
 /// Collects info about all external modules.
 fn collect_external_modules(ctx: &mut hir_lower_ctx::LoweringCtx) -> Vec<ExternalModuleInfo> {
     let mut result: Vec<ExternalModuleInfo> = Vec::new();
     let mut i: usize = 0;
     while i < ctx.loaded_modules.len() {
-        let path = clone_string(&ctx.loaded_modules[i].path);
+        let path = common::make_string(ctx.loaded_modules[i].path.as_str());
         let def_id = hir_def::DefId::new(ctx.loaded_modules[i].def_id.index);
         result.push(ExternalModuleInfo::new(path, def_id));
         i = i + 1;
@@ -940,7 +952,8 @@ fn collect_external_modules(ctx: &mut hir_lower_ctx::LoweringCtx) -> Vec<Externa
 }
 
 /// Phase 3b: Lower declarations from external modules.
-fn lower_external_module_declarations(ctx: &mut hir_lower_ctx::LoweringCtx) {
+/// Populates the cache with parsed modules for reuse in Phase 4b.
+fn lower_external_module_declarations(ctx: &mut hir_lower_ctx::LoweringCtx, cache: &mut Vec<CachedParsedModule>) {
     // Collect module info first to avoid borrow conflicts
     let modules = collect_external_modules(ctx);
 
@@ -949,7 +962,7 @@ fn lower_external_module_declarations(ctx: &mut hir_lower_ctx::LoweringCtx) {
         let path = &modules[i].path;
         let def_id = modules[i].def_id;
 
-        // Re-parse the external module
+        // Parse the external module (cached for Phase 4b reuse)
         let read_result = source::read_file_string(path);
         if !read_result.success {
             // Skip - error should have been reported in Phase 1
@@ -957,9 +970,9 @@ fn lower_external_module_declarations(ctx: &mut hir_lower_ctx::LoweringCtx) {
             continue;
         }
 
-        let content = match &read_result.content {
-            &Option::Some(ref c) => c,
-            &Option::None => {
+        let content = match read_result.content {
+            Option::Some(c) => c,
+            Option::None => {
                 i = i + 1;
                 continue;
             }
@@ -972,17 +985,28 @@ fn lower_external_module_declarations(ctx: &mut hir_lower_ctx::LoweringCtx) {
             continue;
         }
 
+        let has_program = match &parse_result.program {
+            &Option::Some(ref _p) => true,
+            &Option::None => false,
+        };
+
+        if !has_program {
+            i = i + 1;
+            continue;
+        }
+
+        // Save current source (struct copy — no heap allocation) and switch
+        let saved_source = ctx.source;
+        ctx.source = common::make_string(content.as_str());
+
         let program = match &parse_result.program {
             &Option::Some(ref p) => p,
             &Option::None => {
+                ctx.source = saved_source;
                 i = i + 1;
                 continue;
             }
         };
-
-        // Save current source and switch to external module's source
-        let saved_source = clone_string(&ctx.source);
-        ctx.source = clone_string(content);
 
         // Lower the module's declarations as if they're inside the module
         hir_lower_item::lower_module_contents(ctx, def_id, &program.declarations);
@@ -990,41 +1014,26 @@ fn lower_external_module_declarations(ctx: &mut hir_lower_ctx::LoweringCtx) {
         // Restore source
         ctx.source = saved_source;
 
+        // Cache the parsed module for Phase 4b
+        cache.push(CachedParsedModule {
+            module_index: i,
+            content: content,
+            parse: parse_result,
+            def_id: def_id,
+        });
+
         i = i + 1;
     }
 }
 
 /// Phase 4b: Lower function bodies from external modules.
-fn lower_external_module_fn_bodies(ctx: &mut hir_lower_ctx::LoweringCtx) {
-    // Collect module info first to avoid borrow conflicts
-    let modules = collect_external_modules(ctx);
-
+/// Uses cached parse results from Phase 3a to avoid re-reading and re-parsing.
+fn lower_external_module_fn_bodies(ctx: &mut hir_lower_ctx::LoweringCtx, cache: &Vec<CachedParsedModule>) {
     let mut i: usize = 0;
-    while i < modules.len() {
-        let path = &modules[i].path;
+    while i < cache.len() {
+        let cached = &cache[i];
 
-        // Re-parse the external module
-        let read_result = source::read_file_string(path);
-        if !read_result.success {
-            i = i + 1;
-            continue;
-        }
-
-        let content = match &read_result.content {
-            &Option::Some(ref c) => c,
-            &Option::None => {
-                i = i + 1;
-                continue;
-            }
-        };
-
-        let parse_result = parser::parse_file(content.as_str());
-        if parse_result.errors.len() > 0 {
-            i = i + 1;
-            continue;
-        }
-
-        let program = match &parse_result.program {
+        let program = match &cached.parse.program {
             &Option::Some(ref p) => p,
             &Option::None => {
                 i = i + 1;
@@ -1032,13 +1041,13 @@ fn lower_external_module_fn_bodies(ctx: &mut hir_lower_ctx::LoweringCtx) {
             }
         };
 
-        // Save current source and switch to external module's source
-        let saved_source = clone_string(&ctx.source);
-        ctx.source = clone_string(content);
+        // Save current source (struct copy — no heap allocation) and switch
+        let saved_source = ctx.source;
+        ctx.source = common::make_string(cached.content.as_str());
 
         // Push a Module scope so unqualified names within the module
         // (e.g. SubstTable inside unify.blood) resolve correctly.
-        let def_id = modules[i].def_id;
+        let def_id = cached.def_id;
         ctx.resolver.push_scope(resolve::ScopeKind::Module);
         hir_lower_item::add_module_items_to_scope(ctx, def_id, &program.declarations);
 
