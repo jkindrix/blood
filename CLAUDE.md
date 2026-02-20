@@ -604,6 +604,39 @@ Automatically reduces a `.blood` file to the smallest program that still trigger
 
 **When to use:** When a test fails and the file is too large to understand at a glance. Run the minimizer first, then debug the 5-10 line output instead of the 50+ line original.
 
+### Phase-Gated Comparison — `tools/phase-compare.sh`
+
+Runs both compilers on a single `.blood` file and compares at each compilation phase to identify WHERE divergence first appears. Pinpoints whether the bug is in compilation, MIR, LLVM IR, or runtime behavior.
+
+**Usage:**
+```bash
+# Compare a single file across all phases
+./tools/phase-compare.sh path/to/test.blood
+
+# With verbose output (shows MIR summaries, function lists)
+./tools/phase-compare.sh path/to/test.blood --verbose
+```
+
+**Phases compared:**
+1. **Compilation** — Do both compilers accept or reject the input?
+2. **MIR** — Do both produce structurally similar MIR? (function count, basic block count, locals count)
+3. **LLVM IR** — Do both produce similar LLVM IR? (define/declare counts, total lines)
+4. **Behavior** — Do both executables produce identical stdout and exit code?
+
+**Output per phase:**
+- `MATCH` — both compilers agree at this phase
+- `DIFFER` — structural metrics differ (informational for MIR/IR since codegen strategies differ)
+- `DIVERGE` — functional divergence detected (this is a bug)
+- `SKIP` — phase data unavailable from one or both compilers
+
+**Exit codes:**
+- `0` — all phases match (or only informational differences)
+- `1` — functional divergence detected at some phase
+
+**Environment variables:** Same as `difftest.sh` (`BLOOD_REF`, `BLOOD_TEST`, `BLOOD_RUNTIME`, `BLOOD_RUST_RUNTIME`).
+
+**When to use:** When `difftest.sh` reports DIVERGE or TEST_FAIL, use this tool to narrow down which compilation phase first diverges. Phase 1 divergence = parser/typeck bug. Phase 4 divergence = codegen bug.
+
 **Task tracker:** See `tools/TASKS.md` for the full infrastructure roadmap.
 
 ---

@@ -20,12 +20,9 @@
   Auto-detects failure mode, removes top-level items then individual statements. Tested: 42→5 lines (compile-fail), 11→10 lines (wrong-output).
   - Status: complete
 
-- [ ] **T03: Phase-Gated Comparison** `tools/phase-compare.sh`
-  Dump intermediate representations (AST, HIR, MIR, LLVM IR) from both compilers for the same input and diff at each phase to identify where divergence begins.
-  - Depends on: `--dump-mir`, `--dump-types` flags in both compilers
-  - Input: a `.blood` source file
-  - Output: per-phase diff report showing first divergence phase and location
-  - Status: not started
+- [x] **T03: Phase-Gated Comparison** `tools/phase-compare.sh` *(2026-02-20)*
+  Four-phase comparison (Compilation, MIR, LLVM IR, Behavior) between both compilers on a single file. Identifies which phase first diverges. MIR extracted via `--emit mir` (blood-rust, stdout) and `--dump-mir` (first_gen, stderr). Reports MATCH/DIFFER/DIVERGE per phase with verbose mode for details.
+  - Status: complete
 
 - [ ] **T04: Memory Budget Tracker** `tools/memprofile.sh`
   Instrument compilation runs with per-phase memory high-water marks. Reports memory usage for parsing, HIR lowering, type checking, and codegen separately.
