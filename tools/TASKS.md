@@ -16,11 +16,9 @@
   - Baseline run: 223 tests → 166 MATCH, 3 DIVERGE, 54 compile-fail
   - Status: complete
 
-- [ ] **T02: Test Case Minimizer** `tools/minimize.sh`
-  Given a `.blood` file that fails under first_gen but succeeds under blood-rust, automatically reduce it to the smallest failing program by iteratively removing functions, imports, and statements.
-  - Input: a `.blood` file + failure mode (crash, wrong output, compile error)
-  - Output: minimal `.blood` reproduction case
-  - Status: not started
+- [x] **T02: Test Case Minimizer** `tools/minimize.sh` *(2026-02-20)*
+  Auto-detects failure mode, removes top-level items then individual statements. Tested: 42→5 lines (compile-fail), 11→10 lines (wrong-output).
+  - Status: complete
 
 - [ ] **T03: Phase-Gated Comparison** `tools/phase-compare.sh`
   Dump intermediate representations (AST, HIR, MIR, LLVM IR) from both compilers for the same input and diff at each phase to identify where divergence begins.

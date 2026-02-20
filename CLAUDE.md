@@ -573,6 +573,37 @@ Compiles the same `.blood` file with both blood-rust (reference) and first_gen (
 
 **When to use:** Run after any codegen change to verify the self-hosted compiler still produces behaviorally correct binaries. The `DIVERGE` results are the highest-priority bugs — they mean both compilers accept the code but produce different runtime behavior.
 
+### Test Case Minimizer — `tools/minimize.sh`
+
+Automatically reduces a `.blood` file to the smallest program that still triggers a given bug. Supports four failure modes.
+
+**Usage:**
+```bash
+# Auto-detect failure mode and minimize
+./tools/minimize.sh path/to/failing_test.blood
+
+# Explicit failure mode
+./tools/minimize.sh path/to/test.blood --mode compile-fail
+./tools/minimize.sh path/to/test.blood --mode wrong-output
+./tools/minimize.sh path/to/test.blood --mode crash
+./tools/minimize.sh path/to/test.blood --mode compile-crash
+
+# Keep work directory for inspection
+./tools/minimize.sh path/to/test.blood --keep-temps
+```
+
+**Failure modes:**
+- `compile-fail` — test compiler rejects, reference accepts
+- `compile-crash` — test compiler crashes/aborts during compilation
+- `crash` — both compile, but test executable crashes
+- `wrong-output` — both compile+run, but output differs
+
+**Output:** Minimized source printed to stdout and saved as `<name>.min.blood` next to the original. Progress printed to stderr.
+
+**Reduction strategy:** Removes top-level items (structs, fns, enums, impls), then individual statements, re-checking the oracle after each removal. Typically achieves 5-10x reduction.
+
+**When to use:** When a test fails and the file is too large to understand at a glance. Run the minimizer first, then debug the 5-10 line output instead of the 50+ line original.
+
 **Task tracker:** See `tools/TASKS.md` for the full infrastructure roadmap.
 
 ---
