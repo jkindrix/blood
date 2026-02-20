@@ -668,6 +668,22 @@ Profiles memory usage of compilation runs with per-phase timing breakdowns.
 
 **When to use:** When self-compilation uses too much memory or when investigating memory growth across compiler phases. The `--compare` mode quickly shows if first_gen uses more memory than blood-rust for the same input.
 
+### Failure History Log — `tools/FAILURE_LOG.md`
+
+Structured, machine-readable log of past failures, root causes, and resolutions. Prevents future sessions from re-discovering the same issues.
+
+**Format:** Markdown tables with columns: date, category, symptom, root cause, resolution, files.
+
+**Sections:**
+- **Active Issues** — unresolved problems with current status
+- **Resolved Issues** — 20+ entries seeded from the full bug history
+- **Patterns and Anti-Patterns** — common root causes to check first, debugging workflow
+
+**When to use:**
+- **Before debugging:** Search for similar symptoms to avoid rediscovering known issues
+- **After resolving:** Add a new entry at the top of the resolved table
+- **During onboarding:** Read the "Common Root Causes" section first
+
 **Task tracker:** See `tools/TASKS.md` for the full infrastructure roadmap.
 
 ---

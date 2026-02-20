@@ -30,10 +30,9 @@
 
 ### Medium Priority — Improves Development Velocity
 
-- [ ] **T05: Failure History Log** `tools/FAILURE_LOG.md`
-  Structured, machine-readable log of what was attempted, what failed, and why. Prevents future sessions from re-discovering the same issues. Updated by convention after each debugging session.
-  - Format: markdown table with columns: date, attempt, error, root cause, resolution
-  - Status: not started
+- [x] **T05: Failure History Log** `tools/FAILURE_LOG.md` *(2026-02-20)*
+  Structured markdown log with active issues, resolved issues table (20+ entries seeded from bug history), common root cause patterns, and debugging workflow. Machine-readable format with date, category, symptom, root cause, resolution, files.
+  - Status: complete
 
 - [ ] **T06: ASan Self-Compilation Wrapper** `tools/asan-selfcompile.sh`
   One-command wrapper that builds an ASan-instrumented first_gen and runs self-compilation through it, capturing and formatting the sanitizer report.
