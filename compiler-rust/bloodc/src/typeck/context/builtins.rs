@@ -203,6 +203,30 @@ impl<'a> TypeContext<'a> {
             vec![u64_ty.clone()], u64_ty.clone(),
         );
 
+        // region_trim(region_id: u64) -> () - release physical pages above current offset
+        self.register_builtin_fn_aliased(
+            "region_trim", "blood_region_trim",
+            vec![u64_ty.clone()], unit_ty.clone(),
+        );
+
+        // region_committed(region_id: u64) -> u64 - committed bytes in region
+        self.register_builtin_fn_aliased(
+            "region_committed", "blood_region_committed",
+            vec![u64_ty.clone()], u64_ty.clone(),
+        );
+
+        // region_alloc_count(region_id: u64) -> u64 - allocation count
+        self.register_builtin_fn_aliased(
+            "region_alloc_count", "blood_region_alloc_count",
+            vec![u64_ty.clone()], u64_ty.clone(),
+        );
+
+        // system_alloc_live_bytes() -> u64 - non-region live heap bytes
+        self.register_builtin_fn_aliased(
+            "system_alloc_live_bytes", "blood_system_alloc_live_bytes",
+            vec![], u64_ty.clone(),
+        );
+
         // ptr_read_i32(ptr: u64) -> i32 - read i32 from memory address
         self.register_builtin_fn("ptr_read_i32", vec![u64_ty.clone()], i32_ty.clone());
 
@@ -388,6 +412,11 @@ impl<'a> TypeContext<'a> {
 
         // blood_clock_nanos() -> u64 - nanoseconds since program start (monotonic)
         self.register_builtin_fn("blood_clock_nanos", vec![], u64_ty.clone());
+
+        // === Bit Reinterpretation ===
+
+        // blood_float64_to_bits(f64) -> u64 - reinterpret f64 as u64 bits
+        self.register_builtin_fn("blood_float64_to_bits", vec![f64_ty.clone()], u64_ty.clone());
 
         // === Command-Line Argument Functions ===
 

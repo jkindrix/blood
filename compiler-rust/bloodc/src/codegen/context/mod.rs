@@ -3937,6 +3937,23 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let region_used_type = i64_type.fn_type(&[i64_type.into()], false);
         self.module.add_function("blood_region_used", region_used_type, None);
 
+        // blood_region_trim(region_id: i64) -> void
+        // Releases physical pages above the current allocation offset
+        let region_trim_type = void_type.fn_type(&[i64_type.into()], false);
+        self.module.add_function("blood_region_trim", region_trim_type, None);
+
+        // blood_region_committed(region_id: i64) -> i64 (committed bytes)
+        let region_committed_type = i64_type.fn_type(&[i64_type.into()], false);
+        self.module.add_function("blood_region_committed", region_committed_type, None);
+
+        // blood_region_alloc_count(region_id: i64) -> i64 (allocation count)
+        let region_alloc_count_type = i64_type.fn_type(&[i64_type.into()], false);
+        self.module.add_function("blood_region_alloc_count", region_alloc_count_type, None);
+
+        // blood_system_alloc_live_bytes() -> i64 (non-region live bytes)
+        let system_alloc_live_type = i64_type.fn_type(&[], false);
+        self.module.add_function("blood_system_alloc_live_bytes", system_alloc_live_type, None);
+
         // blood_region_activate(region_id: i64) -> void
         // Activates a region for the current thread so String/Vec/Box allocations route to it
         let region_activate_type = void_type.fn_type(&[i64_type.into()], false);
@@ -4389,6 +4406,13 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // blood_clock_nanos() -> i64
         let clock_nanos_type = i64_type.fn_type(&[], false);
         self.module.add_function("blood_clock_nanos", clock_nanos_type, None);
+
+        // === Bit Reinterpretation ===
+
+        // blood_float64_to_bits(f64) -> i64
+        let f64_type = self.context.f64_type();
+        let float_to_bits_type = i64_type.fn_type(&[f64_type.into()], false);
+        self.module.add_function("blood_float64_to_bits", float_to_bits_type, None);
 
         // === Command-Line Arguments ===
 
