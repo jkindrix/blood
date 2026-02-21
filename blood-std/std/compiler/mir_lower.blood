@@ -83,7 +83,7 @@ fn lower_params_from_body(
     while i < body.param_count {
         let local = &body.locals[i as usize];
         // Resolve the parameter type through the substitution table
-        let resolved_ty = ctx.resolve_type(&local.ty);
+        let resolved_ty = ctx.resolve_type_id(local.ty);
         // Create MIR local for the parameter using add_param which
         // correctly increments param_count (new_local does not).
         let mir_local = ctx.builder.add_param(
@@ -142,7 +142,7 @@ fn lower_closure_params(
     while i < params.len() {
         let param = &params[i];
         // Use add_param to correctly increment param_count
-        let resolved_ty = ctx.resolve_type(&param.ty);
+        let resolved_ty = ctx.resolve_type_id(param.ty);
         let mir_local = ctx.builder.add_param(
             type_intern::type_to_ty_id(&resolved_ty),
             String::new(),

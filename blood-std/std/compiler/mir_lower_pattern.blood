@@ -38,7 +38,8 @@ pub fn lower_irrefutable_pattern(
             // Rest: nothing to bind here
         }
         &hir_expr::PatternKind::Binding { local_id, name: _, mode, ref subpattern } => {
-            lower_binding_pattern(ctx, local_id, mode, &source, &pattern.ty, span);
+            let pattern_ty_hir = type_intern::ty_id_to_type(pattern.ty);
+            lower_binding_pattern(ctx, local_id, mode, &source, &pattern_ty_hir, span);
             match subpattern {
                 &Option::Some(ref sub) => {
                     lower_irrefutable_pattern(ctx, sub.as_ref(), source, span);
@@ -301,9 +302,10 @@ pub fn pattern_test(
 
         &hir_expr::PatternKind::Literal(ref lit) => {
             // Compare against literal value
-            let const_val = mir_lower_util::lower_literal(lit, &pattern.ty);
+            let pat_ty_hir = type_intern::ty_id_to_type(pattern.ty);
+            let const_val = mir_lower_util::lower_literal(lit, &pat_ty_hir);
             let expected = extract_constant_value(&const_val.kind);
-            let temp = ctx.new_temp(pattern.ty.clone(), span);
+            let temp = ctx.new_temp_id(pattern.ty, span);
             ctx.emit_assign(
                 mir_types::Place::local(temp),
                 mir_types::Rvalue::Use(mir_types::Operand::Copy(source.clone())),
@@ -359,7 +361,8 @@ pub fn pattern_test(
         &hir_expr::PatternKind::Range { ref start, ref end_val, inclusive } => {
             // Range pattern: scrutinee >= start && scrutinee <= end (or < end if not inclusive)
             // Copy scrutinee value
-            let scrut_temp = ctx.new_temp(pattern.ty.clone(), span);
+            let range_pat_ty_hir = type_intern::ty_id_to_type(pattern.ty);
+            let scrut_temp = ctx.new_temp_id(pattern.ty, span);
             ctx.emit_assign(
                 mir_types::Place::local(scrut_temp),
                 mir_types::Rvalue::Use(mir_types::Operand::Copy(source.clone())),
@@ -371,12 +374,12 @@ pub fn pattern_test(
                     let inner = start_pat.as_ref();
                     match &inner.kind {
                         &hir_expr::PatternKind::Literal(ref lit) => {
-                            mir_lower_util::lower_literal(lit, &pattern.ty)
+                            mir_lower_util::lower_literal(lit, &range_pat_ty_hir)
                         }
-                        _ => mir_types::Constant::new(type_intern::type_to_ty_id(&pattern.ty), mir_types::ConstantKind::Int(0)),
+                        _ => mir_types::Constant::new(pattern.ty, mir_types::ConstantKind::Int(0)),
                     }
                 }
-                &Option::None => mir_types::Constant::new(type_intern::type_to_ty_id(&pattern.ty), mir_types::ConstantKind::Int(0)),
+                &Option::None => mir_types::Constant::new(pattern.ty, mir_types::ConstantKind::Int(0)),
             };
             let start_operand = mir_types::Operand::Constant(start_const);
 
@@ -386,12 +389,12 @@ pub fn pattern_test(
                     let inner = end_pat.as_ref();
                     match &inner.kind {
                         &hir_expr::PatternKind::Literal(ref lit) => {
-                            mir_lower_util::lower_literal(lit, &pattern.ty)
+                            mir_lower_util::lower_literal(lit, &range_pat_ty_hir)
                         }
-                        _ => mir_types::Constant::new(type_intern::type_to_ty_id(&pattern.ty), mir_types::ConstantKind::Int(0)),
+                        _ => mir_types::Constant::new(pattern.ty, mir_types::ConstantKind::Int(0)),
                     }
                 }
-                &Option::None => mir_types::Constant::new(type_intern::type_to_ty_id(&pattern.ty), mir_types::ConstantKind::Int(0)),
+                &Option::None => mir_types::Constant::new(pattern.ty, mir_types::ConstantKind::Int(0)),
             };
             let end_operand = mir_types::Operand::Constant(end_const);
 

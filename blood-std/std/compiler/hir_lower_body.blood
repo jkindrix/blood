@@ -13,6 +13,7 @@ mod hir_lower_ctx;
 mod hir_lower_type;
 mod hir_lower_expr;
 mod resolve;
+mod type_intern;
 
 // ============================================================
 // Body Lowering
@@ -52,7 +53,7 @@ pub fn lower_fn_body(
         let local = hir_expr::Local::new(
             local_id,
             corrected_name,
-            hir_ty::copy_type(&p.ty),
+            p.ty,
             p.mutable,
             p.span,
         );
@@ -86,7 +87,7 @@ pub fn lower_fn_body(
                     // No body - create unit expression
                     hir_expr::Expr::new(
                         hir_expr::ExprKind::Tuple(Vec::new()),
-                        hir_ty::Type::unit(),
+                        type_intern::CommonTypes::unit(),
                         common::Span::dummy(),
                     )
                 }
@@ -110,7 +111,7 @@ pub fn lower_fn_body(
         locals.push(hir_expr::Local::new(
             bl.id,
             bl.name,
-            hir_ty::copy_type(&bl.ty),
+            bl.ty,
             bl.mutable,
             bl.span,
         ));
@@ -163,7 +164,7 @@ fn generate_param_destructures(
             collect_pattern_locals(&pattern_hir, locals);
 
             // Create a reference to the synthetic parameter
-            let param_ty = hir_ty::copy_type(&params[i].ty);
+            let param_ty = params[i].ty;
             let param_ref = hir_expr::Expr::new(
                 hir_expr::ExprKind::Local(param_local_id),
                 param_ty,
@@ -195,7 +196,7 @@ fn collect_pattern_locals(pattern: &hir_expr::Pattern, locals: &mut Vec<hir_expr
             let local = hir_expr::Local::new(
                 local_id,
                 *name,
-                hir_ty::copy_type(&pattern.ty),
+                pattern.ty,
                 false,  // Mutability determined by binding mode
                 pattern.span,
             );
@@ -269,7 +270,7 @@ fn wrap_with_destructures(body: hir_expr::Expr, stmts: Vec<hir_expr::Stmt>) -> h
     let block = hir_expr::Block::new(stmts, Some(Box::new(body)), span);
     hir_expr::Expr::new(
         hir_expr::ExprKind::Block(block),
-        hir_ty::Type::infer(hir_def::TyVarId::new(0)),  // Type will be inferred
+        type_intern::type_interner().mk_infer(hir_def::TyVarId::new(0)),  // Type will be inferred
         span,
     )
 }

@@ -269,11 +269,11 @@ fn collect_item_signatures(
             }
             &hir_item::ItemKind::Const(ref const_def) => {
                 // Register constant definition
-                checker.register_const(entry.def_id, entry.item.name.symbol, type_intern::type_to_ty_id(&const_def.ty));
+                checker.register_const(entry.def_id, entry.item.name.symbol, const_def.ty);
             }
             &hir_item::ItemKind::Static(ref static_def) => {
                 // Register static definition
-                checker.register_static(entry.def_id, entry.item.name.symbol, type_intern::type_to_ty_id(&static_def.ty), static_def.mutable);
+                checker.register_static(entry.def_id, entry.item.name.symbol, static_def.ty, static_def.mutable);
             }
             &hir_item::ItemKind::Impl(ref impl_def) => {
                 // Register impl block for method resolution
@@ -313,13 +313,13 @@ fn register_foreign_fns(
                 let mut param_tys: Vec<type_intern::TyId> = Vec::new();
                 let mut j: usize = 0;
                 while j < foreign_fn.param_tys.len() {
-                    param_tys.push(type_intern::type_to_ty_id(&foreign_fn.param_tys[j]));
+                    param_tys.push(type_intern::TyId::new(foreign_fn.param_tys[j].index));
                     j = j + 1;
                 }
                 checker.register_fn_sig_direct(
                     foreign_fn.def_id,
                     param_tys,
-                    type_intern::type_to_ty_id(&foreign_fn.return_ty),
+                    foreign_fn.return_ty,
                     0,
                 );
             }
@@ -327,7 +327,7 @@ fn register_foreign_fns(
                 checker.register_static(
                     foreign_static.def_id,
                     foreign_static.name.symbol,
-                    type_intern::type_to_ty_id(&foreign_static.ty),
+                    foreign_static.ty,
                     foreign_static.mutable,
                 );
             }
@@ -362,7 +362,7 @@ fn register_trait(
                         takes_self_ref = true;
                         takes_self_mut = assoc_fn.sig.params[j].mutable;
                     } else {
-                        param_tys.push(type_intern::type_to_ty_id(&assoc_fn.sig.params[j].ty));
+                        param_tys.push(assoc_fn.sig.params[j].ty);
                     }
                     j = j + 1;
                 }
@@ -371,7 +371,7 @@ fn register_trait(
                     assoc_fn.def_id,
                     assoc_fn.name.symbol,
                     param_tys,
-                    type_intern::type_to_ty_id(&assoc_fn.sig.return_ty),
+                    assoc_fn.sig.return_ty,
                     takes_self_ref,
                     takes_self_mut,
                     assoc_fn.has_default,
@@ -415,7 +415,7 @@ fn register_trait(
                         takes_sr = true;
                         takes_sm = assoc_fn.sig.params[pj].mutable;
                     } else {
-                        pm_tys.push(type_intern::type_to_ty_id(&assoc_fn.sig.params[pj].ty));
+                        pm_tys.push(assoc_fn.sig.params[pj].ty);
                     }
                     pj = pj + 1;
                 }
@@ -423,7 +423,7 @@ fn register_trait(
                     assoc_fn.def_id,
                     assoc_fn.name.symbol,
                     pm_tys,
-                    type_intern::type_to_ty_id(&assoc_fn.sig.return_ty),
+                    assoc_fn.sig.return_ty,
                     takes_sr,
                     takes_sm,
                 );
@@ -473,7 +473,7 @@ fn register_impl(
                             takes_self_ref = true;
                             takes_self_mut = assoc_fn.sig.params[j].mutable;
                         } else {
-                            param_tys.push(type_intern::type_to_ty_id(&assoc_fn.sig.params[j].ty));
+                            param_tys.push(assoc_fn.sig.params[j].ty);
                         }
                         j = j + 1;
                     }
@@ -483,7 +483,7 @@ fn register_impl(
                     assoc_fn.def_id,
                     assoc_fn.name.symbol,
                     param_tys,
-                    type_intern::type_to_ty_id(&assoc_fn.sig.return_ty),
+                    assoc_fn.sig.return_ty,
                     takes_self_ref,
                     takes_self_mut,
                 );
@@ -517,7 +517,7 @@ fn register_impl(
     let num_generics = count_type_params(&impl_def.generics.params);
     let impl_info = typeck::ImplInfo::new(
         def_id,
-        type_intern::type_to_ty_id(&impl_def.self_ty),
+        impl_def.self_ty,
         num_generics,
         methods,
     );
@@ -641,7 +641,7 @@ fn register_effect(
         let mut param_tys: Vec<type_intern::TyId> = Vec::new();
         let mut j: usize = 0;
         while j < effect_op.param_tys.len() {
-            param_tys.push(type_intern::type_to_ty_id(&effect_op.param_tys[j]));
+            param_tys.push(type_intern::TyId::new(effect_op.param_tys[j].index));
             j = j + 1;
         }
 
@@ -649,7 +649,7 @@ fn register_effect(
             effect_op.def_id,
             effect_op.name.symbol,
             param_tys,
-            type_intern::type_to_ty_id(&effect_op.return_ty),
+            effect_op.return_ty,
         );
         operations.push(op_info);
         i = i + 1;
@@ -709,7 +709,7 @@ fn find_return_type_for_body(
                 match &fn_def.body_id {
                     &Option::Some(ref bid) => {
                         if bid.index == target_body_id.index {
-                            return type_intern::type_to_ty_id(&fn_def.sig.return_ty);
+                            return fn_def.sig.return_ty;
                         }
                     }
                     &Option::None => {}
@@ -724,7 +724,7 @@ fn find_return_type_for_body(
                             match &assoc_fn.body_id {
                                 &Option::Some(ref bid) => {
                                     if bid.index == target_body_id.index {
-                                        return type_intern::type_to_ty_id(&assoc_fn.sig.return_ty);
+                                        return assoc_fn.sig.return_ty;
                                     }
                                 }
                                 &Option::None => {}
@@ -735,7 +735,7 @@ fn find_return_type_for_body(
                             match &assoc_const.body_id {
                                 &Option::Some(ref bid) => {
                                     if bid.index == target_body_id.index {
-                                        return type_intern::type_to_ty_id(&assoc_const.ty);
+                                        return assoc_const.ty;
                                     }
                                 }
                                 &Option::None => {}
@@ -751,12 +751,12 @@ fn find_return_type_for_body(
             &hir_item::ItemKind::TypeAlias(_) => {}
             &hir_item::ItemKind::Const(ref const_def) => {
                 if const_def.body_id.index == target_body_id.index {
-                    return type_intern::type_to_ty_id(&const_def.ty);
+                    return const_def.ty;
                 }
             }
             &hir_item::ItemKind::Static(ref static_def) => {
                 if static_def.body_id.index == target_body_id.index {
-                    return type_intern::type_to_ty_id(&static_def.ty);
+                    return static_def.ty;
                 }
             }
             &hir_item::ItemKind::Trait(ref trait_def) => {
@@ -768,7 +768,7 @@ fn find_return_type_for_body(
                             match &assoc_fn.body_id {
                                 &Option::Some(ref bid) => {
                                     if bid.index == target_body_id.index {
-                                        return type_intern::type_to_ty_id(&assoc_fn.sig.return_ty);
+                                        return assoc_fn.sig.return_ty;
                                     }
                                 }
                                 &Option::None => {}
@@ -824,7 +824,7 @@ fn find_effect_op_return_type(
                 while j < effect_def.operations.len() {
                     let effect_op = &effect_def.operations[j];
                     if effect_op.def_id.index == op_def_id.index {
-                        return type_intern::type_to_ty_id(&effect_op.return_ty);
+                        return effect_op.return_ty;
                     }
                     j = j + 1;
                 }
@@ -862,7 +862,7 @@ fn find_op_param_types_for_body(
                                             let mut param_tys: Vec<type_intern::TyId> = Vec::new();
                                             let mut p: usize = 0;
                                             while p < effect_op.param_tys.len() {
-                                                param_tys.push(type_intern::type_to_ty_id(&effect_op.param_tys[p]));
+                                                param_tys.push(type_intern::TyId::new(effect_op.param_tys[p].index));
                                                 p = p + 1;
                                             }
                                             return Option::Some(param_tys);
@@ -927,8 +927,8 @@ fn unify_handler_op_params(
                 let local_idx = state_count + k;
                 if local_idx < body.locals.len() {
                     let span = body.locals[local_idx].span;
-                    // body.locals[].ty is still hir_ty::Type (until A.4), convert at boundary
-                    let local_ty_id = type_intern::type_to_ty_id(&body.locals[local_idx].ty);
+                    // body.locals[].ty is now TyId
+                    let local_ty_id = body.locals[local_idx].ty;
                     let ok = checker.unify(local_ty_id, type_intern::TyId::new(param_tys[k].index), span);
                     let _ = ok;
                 }
@@ -1058,7 +1058,7 @@ fn setup_handler_op_context(
                                     while k < effect_def.operations.len() {
                                         let effect_op = &effect_def.operations[k];
                                         if effect_op.def_id.index == op_def_id.index {
-                                            checker.resume_ty = Option::Some(type_intern::type_to_ty_id(&effect_op.return_ty));
+                                            checker.resume_ty = Option::Some(effect_op.return_ty);
                                             return;
                                         }
                                         k = k + 1;
@@ -1229,7 +1229,7 @@ fn check_linearity(checker: &mut typeck::TypeChecker, body: &hir_expr::Body) {
     let mut li: usize = 0;
     while li < body.locals.len() {
         let local = &body.locals[li];
-        let local_ty_id = type_intern::type_to_ty_id(&local.ty);
+        let local_ty_id = local.ty;
         let resolved_id = checker.resolve(local_ty_id);
         let resolved_ty = type_intern::ty_id_to_type(resolved_id);
         match &resolved_ty.kind {
@@ -1436,9 +1436,9 @@ fn check_body(checker: &mut typeck::TypeChecker, body: &hir_expr::Body, return_t
                 common::Span::new(0, 0, 1, 1),
             );
         }
-        // Overwrite with the real local's type (convert at HIR boundary)
+        // Overwrite with the real local's type (already TyId)
         checker.locals[target_idx] = typeck::LocalInfo::new(
-            type_intern::type_to_ty_id(&local.ty),
+            local.ty,
             local.mutable,
             local.span,
         );

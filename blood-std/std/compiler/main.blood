@@ -1212,7 +1212,8 @@ fn generate_foreign_declarations(
                                 fi = fi + 1;
                                 continue;
                             }
-                            let ret_ty = codegen_types::return_type_to_llvm(&ff.return_ty);
+                            let ret_hir_ty = type_intern::ty_id_to_type(ff.return_ty);
+                            let ret_ty = codegen_types::return_type_to_llvm(&ret_hir_ty);
                             output.push_str("declare ");
                             output.push_str(ret_ty.as_str());
                             output.push_str(" @");
@@ -1223,7 +1224,8 @@ fn generate_foreign_declarations(
                                 if pi > 0 {
                                     output.push_str(", ");
                                 }
-                                let param_ty = codegen_types::type_to_llvm(&ff.param_tys[pi]);
+                                let param_hir_ty = type_intern::ty_id_to_type(ff.param_tys[pi]);
+                                let param_ty = codegen_types::type_to_llvm(&param_hir_ty);
                                 output.push_str(param_ty.as_str());
                                 pi = pi + 1;
                             }

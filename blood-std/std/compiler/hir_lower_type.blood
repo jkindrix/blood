@@ -291,7 +291,7 @@ fn lower_type_path_id(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath
             if str_eq(&name_str, "Self") || str_eq(&name_str, "self") {
                 match &ctx.current_self_type {
                     &Option::Some(ref self_ty) => {
-                        return type_intern::type_to_ty_id(self_ty);
+                        return *self_ty;
                     }
                     &Option::None => {
                         ctx.error(
@@ -354,7 +354,7 @@ fn lower_type_path_id(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath
                                 &Option::Some(ref entry) => {
                                     match &entry.item.kind {
                                         &hir_item::ItemKind::TypeAlias(ref alias_def) => {
-                                            return type_intern::type_to_ty_id(&alias_def.ty);
+                                            return alias_def.ty;
                                         }
                                         _ => {}
                                     }
@@ -472,7 +472,7 @@ fn lower_type_path(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath) -
             if str_eq(&name_str, "Self") || str_eq(&name_str, "self") {
                 match &ctx.current_self_type {
                     &Option::Some(ref self_ty) => {
-                        return hir_ty::copy_type(self_ty);
+                        return type_intern::ty_id_to_type(*self_ty);
                     }
                     &Option::None => {
                         ctx.error(
@@ -531,7 +531,7 @@ fn lower_type_path(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath) -
                                 &Option::Some(ref entry) => {
                                     match &entry.item.kind {
                                         &hir_item::ItemKind::TypeAlias(ref alias_def) => {
-                                            return hir_ty::copy_type(&alias_def.ty);
+                                            return type_intern::ty_id_to_type(alias_def.ty);
                                         }
                                         _ => {}
                                     }

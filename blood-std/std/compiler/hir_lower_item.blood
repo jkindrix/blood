@@ -20,6 +20,7 @@ mod hir_lower_type;
 mod hir_lower_expr;
 mod hir_lower_body;
 mod resolve;
+mod type_intern;
 
 // ============================================================
 // Function Parameter Lowering
@@ -40,7 +41,7 @@ pub fn lower_fn_params(ctx: &mut hir_lower_ctx::LoweringCtx, params: &Vec<ast::P
 /// Lower a single function parameter.
 /// param_index is used for generating synthetic names for complex patterns.
 fn lower_fn_param(ctx: &mut hir_lower_ctx::LoweringCtx, param: &ast::Param, param_index: u32) -> hir_item::FnParam {
-    let ty = hir_lower_type::lower_type(ctx, &param.ty);
+    let ty = hir_lower_type::lower_type_id(ctx, &param.ty);
 
     // Extract the parameter name from the pattern
     // For complex patterns, this generates a synthetic name
@@ -107,10 +108,10 @@ fn extract_param_name(pattern: &ast::Pattern, param_index: u32) -> (common::Span
 }
 
 /// Lower the return type, defaulting to unit if not specified.
-pub fn lower_return_type(ctx: &mut hir_lower_ctx::LoweringCtx, return_type: &Option<ast::Type>) -> hir_ty::Type {
+pub fn lower_return_type(ctx: &mut hir_lower_ctx::LoweringCtx, return_type: &Option<ast::Type>) -> type_intern::TyId {
     match return_type {
-        &Some(ref ty) => hir_lower_type::lower_type(ctx, ty),
-        &None => hir_ty::Type::unit(),
+        &Some(ref ty) => hir_lower_type::lower_type_id(ctx, ty),
+        &None => type_intern::CommonTypes::unit(),
     }
 }
 
@@ -131,10 +132,10 @@ pub fn lower_struct_body(ctx: &mut hir_lower_ctx::LoweringCtx, body: &ast::Struc
     match body {
         &ast::StructBody::Unit => hir_item::StructBody::Unit,
         &ast::StructBody::Tuple(ref types) => {
-            let mut lowered: Vec<hir_ty::Type> = Vec::new();
+            let mut lowered: Vec<type_intern::TyId> = Vec::new();
             let mut i: usize = 0;
             while i < types.len() {
-                let ty = hir_lower_type::lower_type(ctx, &types[i]);
+                let ty = hir_lower_type::lower_type_id(ctx, &types[i]);
                 lowered.push(ty);
                 i = i + 1;
             }
@@ -178,7 +179,7 @@ pub fn lower_struct_body(ctx: &mut hir_lower_ctx::LoweringCtx, body: &ast::Struc
 /// Lower a struct field to HIR.
 pub fn lower_struct_field(ctx: &mut hir_lower_ctx::LoweringCtx, field: &ast::StructField) -> hir_item::StructField {
     let def_id = ctx.alloc_def_id();
-    let ty = hir_lower_type::lower_type(ctx, &field.ty);
+    let ty = hir_lower_type::lower_type_id(ctx, &field.ty);
     // Re-intern field name for cross-module consistency
     let name_str = ctx.span_to_string(field.name.span);
     let name_sym = ctx.intern(name_str.as_str());
@@ -252,10 +253,10 @@ fn lower_variant_kind(ctx: &mut hir_lower_ctx::LoweringCtx, body: &ast::StructBo
             hir_item::VariantKind::Unit
         }
         &ast::StructBody::Tuple(ref types) => {
-            let mut lowered: Vec<hir_ty::Type> = Vec::new();
+            let mut lowered: Vec<type_intern::TyId> = Vec::new();
             let mut i: usize = 0;
             while i < types.len() {
-                let ty = hir_lower_type::lower_type(ctx, &types[i]);
+                let ty = hir_lower_type::lower_type_id(ctx, &types[i]);
                 lowered.push(ty);
                 i = i + 1;
             }
@@ -444,7 +445,8 @@ fn lower_function_decl(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl) {
 }
 
 /// Checks if a type directly contains the given def_id (not behind Ref/Ptr/Box).
-fn type_directly_contains(ty: &hir_ty::Type, target_def_id: hir_def::DefId) -> bool {
+fn type_directly_contains(ty_id: type_intern::TyId, target_def_id: hir_def::DefId) -> bool {
+    let ty = type_intern::ty_id_to_type(ty_id);
     match &ty.kind {
         &hir_ty::TypeKind::Adt { def_id, args: _ } => {
             def_id.index == target_def_id.index
@@ -465,7 +467,7 @@ fn check_recursive_struct_fields(
         &hir_item::StructBody::Record(ref fields) => {
             let mut i: usize = 0;
             while i < fields.len() {
-                if type_directly_contains(&fields[i].ty, struct_def_id) {
+                if type_directly_contains(fields[i].ty, struct_def_id) {
                     let struct_name = ctx.span_to_string(name.span);
                     let mut msg = String::new();
                     msg.push_str("recursive type `");
@@ -480,7 +482,7 @@ fn check_recursive_struct_fields(
         &hir_item::StructBody::Tuple(ref types) => {
             let mut i: usize = 0;
             while i < types.len() {
-                if type_directly_contains(&types[i], struct_def_id) {
+                if type_directly_contains(types[i], struct_def_id) {
                     let struct_name = ctx.span_to_string(name.span);
                     let mut msg = String::new();
                     msg.push_str("recursive type `");
@@ -510,7 +512,7 @@ fn check_recursive_enum_variants(
             &hir_item::VariantKind::Tuple(ref types) => {
                 let mut j: usize = 0;
                 while j < types.len() {
-                    if type_directly_contains(&types[j], enum_def_id) {
+                    if type_directly_contains(types[j], enum_def_id) {
                         let enum_name = ctx.span_to_string(name.span);
                         let mut msg = String::new();
                         msg.push_str("recursive type `");
@@ -525,7 +527,7 @@ fn check_recursive_enum_variants(
             &hir_item::VariantKind::Record(ref fields) => {
                 let mut j: usize = 0;
                 while j < fields.len() {
-                    if type_directly_contains(&fields[j].ty, enum_def_id) {
+                    if type_directly_contains(fields[j].ty, enum_def_id) {
                         let enum_name = ctx.span_to_string(name.span);
                         let mut msg = String::new();
                         msg.push_str("recursive type `");
@@ -631,7 +633,7 @@ fn lower_type_alias_decl(ctx: &mut hir_lower_ctx::LoweringCtx, ta: &ast::TypeAli
     let generics = hir_lower_type::lower_generics(ctx, &ta.type_params, &no_where);
 
     // Lower the aliased type (may reference generic params)
-    let ty = hir_lower_type::lower_type(ctx, &ta.ty);
+    let ty = hir_lower_type::lower_type_id(ctx, &ta.ty);
 
     // Pop type param scope after lowering all types that reference generics
     ctx.resolver.pop_scope();
@@ -660,7 +662,7 @@ fn lower_const_decl(ctx: &mut hir_lower_ctx::LoweringCtx, c: &ast::ConstDecl) {
     let def_id = binding.def_id;
 
     // Lower the type
-    let ty = hir_lower_type::lower_type(ctx, &c.ty);
+    let ty = hir_lower_type::lower_type_id(ctx, &c.ty);
 
     // Allocate a body for the initializer
     let body_id = ctx.alloc_body_id();
@@ -704,7 +706,7 @@ fn lower_static_decl(ctx: &mut hir_lower_ctx::LoweringCtx, s: &ast::StaticDecl) 
     let def_id = binding.def_id;
 
     // Lower the type
-    let ty = hir_lower_type::lower_type(ctx, &s.ty);
+    let ty = hir_lower_type::lower_type_id(ctx, &s.ty);
 
     // Allocate a body for the initializer
     let body_id = ctx.alloc_body_id();
@@ -769,11 +771,8 @@ fn lower_trait_decl(ctx: &mut hir_lower_ctx::LoweringCtx, t: &ast::TraitDecl) {
     // Set Self type for trait method signatures.
     // In a trait definition, Self refers to the trait's own type, analogous
     // to how impl blocks set Self to the concrete implementing type.
-    let trait_self_ty = hir_ty::Type::new(hir_ty::TypeKind::Adt {
-        def_id: hir_def::DefId::new(def_id.index),
-        args: Vec::new(),
-    });
-    ctx.current_self_type = Option::Some(trait_self_ty);
+    let trait_self_ty_id = type_intern::type_interner().mk_adt(hir_def::DefId::new(def_id.index), type_intern::CommonTyLists::empty());
+    ctx.current_self_type = Option::Some(trait_self_ty_id);
 
     // Lower associated items
     let mut items: Vec<hir_item::AssocItem> = Vec::new();
@@ -888,7 +887,7 @@ fn lower_assoc_type(ctx: &mut hir_lower_ctx::LoweringCtx, ta: &ast::TypeAliasDec
     let def_id = ctx.alloc_def_id();
     let no_where: Option<ast::WhereClause> = Option::None;
     let generics = hir_lower_type::lower_generics(ctx, &ta.type_params, &no_where);
-    let ty = hir_lower_type::lower_type(ctx, &ta.ty);
+    let ty = hir_lower_type::lower_type_id(ctx, &ta.ty);
 
     // Pop type param scope after lowering the aliased type
     ctx.resolver.pop_scope();
@@ -900,7 +899,7 @@ fn lower_assoc_type(ctx: &mut hir_lower_ctx::LoweringCtx, ta: &ast::TypeAliasDec
 /// Lower an associated constant.
 fn lower_assoc_const(ctx: &mut hir_lower_ctx::LoweringCtx, c: &ast::ConstDecl) -> hir_item::AssocConst {
     let def_id = ctx.alloc_def_id();
-    let ty = hir_lower_type::lower_type(ctx, &c.ty);
+    let ty = hir_lower_type::lower_type_id(ctx, &c.ty);
 
     // Lower the initializer body
     let body_id = ctx.alloc_body_id();
@@ -992,15 +991,15 @@ fn lower_effect_op(ctx: &mut hir_lower_ctx::LoweringCtx, oper: &ast::OperationDe
     let generics = hir_lower_type::lower_generics(ctx, &oper.type_params, &no_where);
 
     // Lower parameter types
-    let mut param_tys: Vec<hir_ty::Type> = Vec::new();
+    let mut param_tys: Vec<type_intern::TyId> = Vec::new();
     let mut i: usize = 0;
     while i < oper.params.len() {
-        let ty = hir_lower_type::lower_type(ctx, &oper.params[i].ty);
+        let ty = hir_lower_type::lower_type_id(ctx, &oper.params[i].ty);
         param_tys.push(ty);
         i = i + 1;
     }
 
-    let return_ty = hir_lower_type::lower_type(ctx, &oper.return_type);
+    let return_ty = hir_lower_type::lower_type_id(ctx, &oper.return_type);
 
     // Pop type param scope after lowering all types that reference generics
     ctx.resolver.pop_scope();
@@ -1150,7 +1149,7 @@ fn lower_handler_decl(ctx: &mut hir_lower_ctx::LoweringCtx, h: &ast::HandlerDecl
 /// Lower handler state field.
 fn lower_handler_state(ctx: &mut hir_lower_ctx::LoweringCtx, hs: &ast::HandlerState) -> hir_item::HandlerState {
     let def_id = ctx.alloc_def_id();
-    let ty = hir_lower_type::lower_type(ctx, &hs.ty);
+    let ty = hir_lower_type::lower_type_id(ctx, &hs.ty);
 
     let default_body = match &hs.default_val {
         &Some(ref expr) => {
@@ -1189,7 +1188,7 @@ fn lower_handler_return(
         let s = &state[i];
         let local_id = hir_def::LocalId::new(next_idx);
         let local = hir_expr::Local::new(
-            local_id, s.name, hir_ty::copy_type(&s.ty), s.mutable, s.name.span,
+            local_id, s.name, s.ty, s.mutable, s.name.span,
         );
         locals.push(local);
         // Re-intern state name for consistent symbol
@@ -1204,9 +1203,9 @@ fn lower_handler_return(
     let param_local_id = hir_def::LocalId::new(next_idx);
     let param_name_str = ctx.span_to_string(rc.param.span);
     let param_sym = ctx.intern(param_name_str.as_str());
-    let param_ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    let param_ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
     let param_local = hir_expr::Local::new(
-        param_local_id, rc.param, hir_ty::copy_type(&param_ty), false, rc.param.span,
+        param_local_id, rc.param, param_ty, false, rc.param.span,
     );
     locals.push(param_local);
     ctx.resolver.define_local(param_sym, param_local_id, false, rc.param.span);
@@ -1225,7 +1224,7 @@ fn lower_handler_return(
     while bl_idx < ctx.body_locals.len() {
         let bl = &ctx.body_locals[bl_idx];
         locals.push(hir_expr::Local::new(
-            bl.id, bl.name, hir_ty::copy_type(&bl.ty), bl.mutable, bl.span,
+            bl.id, bl.name, bl.ty, bl.mutable, bl.span,
         ));
         bl_idx = bl_idx + 1;
     }
@@ -1261,7 +1260,7 @@ fn lower_op_impl(
         let s = &state[i];
         let local_id = hir_def::LocalId::new(next_idx);
         let local = hir_expr::Local::new(
-            local_id, s.name, hir_ty::copy_type(&s.ty), s.mutable, s.name.span,
+            local_id, s.name, s.ty, s.mutable, s.name.span,
         );
         locals.push(local);
         let name_str = ctx.span_to_string(s.name.span);
@@ -1283,9 +1282,9 @@ fn lower_op_impl(
             let local_id = hir_def::LocalId::new(next_idx);
             let param_name_str = ctx.span_to_string(pname.span);
             let param_sym = ctx.intern(param_name_str.as_str());
-            let param_ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+            let param_ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
             let param_local = hir_expr::Local::new(
-                local_id, pname, hir_ty::copy_type(&param_ty), false, pname.span,
+                local_id, pname, param_ty, false, pname.span,
             );
             locals.push(param_local);
             ctx.resolver.define_local(param_sym, local_id, false, pname.span);
@@ -1308,7 +1307,7 @@ fn lower_op_impl(
     while bl_idx < ctx.body_locals.len() {
         let bl = &ctx.body_locals[bl_idx];
         locals.push(hir_expr::Local::new(
-            bl.id, bl.name, hir_ty::copy_type(&bl.ty), bl.mutable, bl.span,
+            bl.id, bl.name, bl.ty, bl.mutable, bl.span,
         ));
         bl_idx = bl_idx + 1;
     }
@@ -1364,10 +1363,10 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::ImplBlock) {
     };
 
     // Lower self type
-    let self_ty = hir_lower_type::lower_type(ctx, &imp.self_ty);
+    let self_ty_id = hir_lower_type::lower_type_id(ctx, &imp.self_ty);
 
     // Set the current Self type so that `Self` references resolve correctly
-    ctx.current_self_type = Option::Some(hir_ty::copy_type(&self_ty));
+    ctx.current_self_type = Option::Some(self_ty_id);
 
     // Resolve the impl's target type DefId so we can look up pre-registered
     // method DefIds from phase 2 (register_impl_items). This ensures the
@@ -1530,7 +1529,7 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::ImplBlock) {
     // Pop type param scope after lowering all types that reference generics
     ctx.resolver.pop_scope();
 
-    let impl_def = hir_item::ImplDef::new(generics, trait_ref, self_ty, items);
+    let impl_def = hir_item::ImplDef::new(generics, trait_ref, self_ty_id, items);
     let item_kind = hir_item::ItemKind::Impl(impl_def);
 
     // Impl blocks don't have names - create a placeholder

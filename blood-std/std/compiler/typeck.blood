@@ -612,7 +612,7 @@ impl TypeChecker {
         let mut param_tys: Vec<type_intern::TyId> = Vec::new();
         let mut i: usize = 0;
         while i < sig.params.len() {
-            param_tys.push(type_intern::type_to_ty_id(&sig.params[i].ty));
+            param_tys.push(sig.params[i].ty);
             i = i + 1;
         }
 
@@ -634,7 +634,7 @@ impl TypeChecker {
         // Create the info with actual param IDs, effect row, and where clauses
         let info = typeck_info::FnSigInfo::with_where_clauses(
             param_tys,
-            type_intern::type_to_ty_id(&sig.return_ty),
+            sig.return_ty,
             num_generics,
             type_param_ids,
             effect_def_ids,
@@ -660,7 +660,7 @@ impl TypeChecker {
                 while i < struct_fields.len() {
                     let f = &struct_fields[i];
                     field_names.push(f.name.symbol);
-                    let info = typeck_info::FieldInfo::new(f.name.symbol, type_intern::type_to_ty_id(&f.ty));
+                    let info = typeck_info::FieldInfo::new(f.name.symbol, f.ty);
                     fields.push(info);
                     i = i + 1;
                 }
@@ -708,7 +708,7 @@ impl TypeChecker {
                 &hir_item::VariantKind::Tuple(ref types) => {
                     let mut j: usize = 0;
                     while j < types.len() {
-                        field_tys.push(type_intern::type_to_ty_id(&types[j]));
+                        field_tys.push(types[j]);
                         j = j + 1;
                     }
                 }
@@ -717,7 +717,7 @@ impl TypeChecker {
                     let mut j: usize = 0;
                     while j < struct_fields.len() {
                         field_names.push(struct_fields[j].name.symbol);
-                        field_tys.push(type_intern::type_to_ty_id(&struct_fields[j].ty));
+                        field_tys.push(struct_fields[j].ty);
                         j = j + 1;
                     }
                 }

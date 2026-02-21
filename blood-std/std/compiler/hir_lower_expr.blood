@@ -18,6 +18,7 @@ mod hir;
 mod hir_lower_ctx;
 mod hir_lower_type;
 mod const_eval;
+mod type_intern;
 
 // ============================================================
 // Expression Lowering
@@ -37,7 +38,7 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx::LoweringCtx, expr: &ast::Expr) -> hir
         &ast::ExprKind::Binary { op: bin_op, ref left, ref right } => {
             let left_hir = lower_expr(ctx, left.as_ref());
             let right_hir = lower_expr(ctx, right.as_ref());
-            let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+            let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
             hir_expr::Expr::new(
                 hir_expr::ExprKind::Binary {
                     op: bin_op,
@@ -50,7 +51,7 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx::LoweringCtx, expr: &ast::Expr) -> hir
         }
         &ast::ExprKind::Unary { op: unary_op, ref operand } => {
             let operand_hir = lower_expr(ctx, operand.as_ref());
-            let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+            let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
             hir_expr::Expr::new(
                 hir_expr::ExprKind::Unary {
                     op: unary_op,
@@ -72,7 +73,7 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx::LoweringCtx, expr: &ast::Expr) -> hir
         &ast::ExprKind::Index { ref base, ref idx } => {
             let base_hir = lower_expr(ctx, base.as_ref());
             let idx_hir = lower_expr(ctx, idx.as_ref());
-            let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+            let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
             hir_expr::Expr::new(
                 hir_expr::ExprKind::Index {
                     base: Box::new(base_hir),
@@ -100,7 +101,7 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx::LoweringCtx, expr: &ast::Expr) -> hir
                 &Some(ref e) => Some(Box::new(lower_expr(ctx, e.as_ref()))),
                 &None => Option::None,
             };
-            let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+            let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
             hir_expr::Expr::new(
                 hir_expr::ExprKind::Range {
                     start: start_hir,
@@ -113,13 +114,13 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx::LoweringCtx, expr: &ast::Expr) -> hir
         }
         &ast::ExprKind::Cast { ref expr, ref ty } => {
             let expr_hir = lower_expr(ctx, expr.as_ref());
-            let cast_ty = hir_lower_type::lower_type(ctx, ty);
+            let cast_ty = hir_lower_type::lower_type_id(ctx, ty);
             hir_expr::Expr::new(
                 hir_expr::ExprKind::Cast {
                     expr: Box::new(expr_hir),
                     ty: cast_ty,
                 },
-                hir_ty::Type::infer(ctx.alloc_ty_var()),
+                type_intern::type_interner().mk_infer(ctx.alloc_ty_var()),
                 span,
             )
         }
@@ -131,7 +132,7 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx::LoweringCtx, expr: &ast::Expr) -> hir
                     target: Box::new(target_hir),
                     val: Box::new(val_hir),
                 },
-                hir_ty::Type::unit(),
+                type_intern::CommonTypes::unit(),
                 span,
             )
         }
@@ -144,7 +145,7 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx::LoweringCtx, expr: &ast::Expr) -> hir
                     target: Box::new(target_hir),
                     val: Box::new(val_hir),
                 },
-                hir_ty::Type::unit(),
+                type_intern::CommonTypes::unit(),
                 span,
             )
         }
@@ -179,7 +180,7 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx::LoweringCtx, expr: &ast::Expr) -> hir
             };
             hir_expr::Expr::new(
                 hir_expr::ExprKind::Return(val_hir),
-                hir_ty::Type::never(),
+                type_intern::CommonTypes::never(),
                 span,
             )
         }
@@ -197,7 +198,7 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx::LoweringCtx, expr: &ast::Expr) -> hir
                     label: label_sym,
                     val: val_hir,
                 },
-                hir_ty::Type::never(),
+                type_intern::CommonTypes::never(),
                 span,
             )
         }
@@ -210,7 +211,7 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx::LoweringCtx, expr: &ast::Expr) -> hir
                 hir_expr::ExprKind::Continue {
                     label: label_sym,
                 },
-                hir_ty::Type::never(),
+                type_intern::CommonTypes::never(),
                 span,
             )
         }
@@ -220,7 +221,7 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx::LoweringCtx, expr: &ast::Expr) -> hir
         &ast::ExprKind::WithHandle { handler: ref handler_expr, body: ref body_expr } => {
             let handler_hir = lower_expr(ctx, handler_expr.as_ref());
             let body_hir = lower_expr(ctx, body_expr.as_ref());
-            let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+            let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
             hir_expr::Expr::new(
                 hir_expr::ExprKind::WithHandle {
                     handler: Box::new(handler_hir),
@@ -235,7 +236,7 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx::LoweringCtx, expr: &ast::Expr) -> hir
         }
         &ast::ExprKind::Resume(ref val) => {
             let val_hir = lower_expr(ctx, val.as_ref());
-            let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+            let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
             hir_expr::Expr::new(
                 hir_expr::ExprKind::Resume(Box::new(val_hir)),
                 ty,
@@ -244,7 +245,7 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx::LoweringCtx, expr: &ast::Expr) -> hir
         }
         &ast::ExprKind::Try(ref inner) => {
             let inner_hir = lower_expr(ctx, inner.as_ref());
-            let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+            let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
             hir_expr::Expr::new(
                 hir_expr::ExprKind::Try(Box::new(inner_hir)),
                 ty,
@@ -256,7 +257,7 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx::LoweringCtx, expr: &ast::Expr) -> hir
         }
         &ast::ExprKind::Unsafe(ref block) => {
             let block_hir = lower_block_to_expr(ctx, block);
-            let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+            let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
             hir_expr::Expr::new(
                 hir_expr::ExprKind::Unsafe(Box::new(block_hir)),
                 ty,
@@ -291,7 +292,7 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx::LoweringCtx, expr: &ast::Expr) -> hir
                 &None => Option::None,
             };
 
-            let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+            let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
             hir_expr::Expr::new(
                 hir_expr::ExprKind::Region {
                     name: region_name,
@@ -308,7 +309,7 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx::LoweringCtx, expr: &ast::Expr) -> hir
         }
         &ast::ExprKind::Default => {
             // Default expression - type will be inferred from context during type checking
-            let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+            let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
             hir_expr::Expr::new(hir_expr::ExprKind::Default, ty, span)
         }
         &ast::ExprKind::MacroCall { ref path, ref kind } => {
@@ -321,6 +322,29 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx::LoweringCtx, expr: &ast::Expr) -> hir
 // Literal Lowering
 // ============================================================
 
+/// Convert a PrimitiveTy to a TyId via CommonTypes.
+fn prim_to_ty_id(p: hir_ty::PrimitiveTy) -> type_intern::TyId {
+    match p {
+        hir_ty::PrimitiveTy::Bool => type_intern::CommonTypes::bool_ty(),
+        hir_ty::PrimitiveTy::I8 => type_intern::CommonTypes::i8_ty(),
+        hir_ty::PrimitiveTy::I16 => type_intern::CommonTypes::i16_ty(),
+        hir_ty::PrimitiveTy::I32 => type_intern::CommonTypes::i32_ty(),
+        hir_ty::PrimitiveTy::I64 => type_intern::CommonTypes::i64_ty(),
+        hir_ty::PrimitiveTy::I128 => type_intern::CommonTypes::i128_ty(),
+        hir_ty::PrimitiveTy::Isize => type_intern::CommonTypes::isize_ty(),
+        hir_ty::PrimitiveTy::U8 => type_intern::CommonTypes::u8_ty(),
+        hir_ty::PrimitiveTy::U16 => type_intern::CommonTypes::u16_ty(),
+        hir_ty::PrimitiveTy::U32 => type_intern::CommonTypes::u32_ty(),
+        hir_ty::PrimitiveTy::U64 => type_intern::CommonTypes::u64_ty(),
+        hir_ty::PrimitiveTy::U128 => type_intern::CommonTypes::u128_ty(),
+        hir_ty::PrimitiveTy::Usize => type_intern::CommonTypes::usize_ty(),
+        hir_ty::PrimitiveTy::F32 => type_intern::CommonTypes::f32_ty(),
+        hir_ty::PrimitiveTy::F64 => type_intern::CommonTypes::f64_ty(),
+        hir_ty::PrimitiveTy::Char => type_intern::CommonTypes::char_ty(),
+        hir_ty::PrimitiveTy::Str => type_intern::CommonTypes::str_ty(),
+    }
+}
+
 /// Lower a literal expression.
 fn lower_literal_expr(ctx: &mut hir_lower_ctx::LoweringCtx, lit: &ast::Literal, span: common::Span) -> hir_expr::Expr {
     let (kind, ty) = match &lit.kind {
@@ -332,8 +356,8 @@ fn lower_literal_expr(ctx: &mut hir_lower_ctx::LoweringCtx, lit: &ast::Literal, 
             (
                 hir_expr::LiteralKind::Int { val: val, ty: prim_ty },
                 match prim_ty {
-                    Some(p) => hir_ty::Type::new(hir_ty::TypeKind::Primitive(p)),
-                    Option::None => hir_ty::Type::infer(ctx.alloc_ty_var()),
+                    Some(p) => prim_to_ty_id(p),
+                    Option::None => type_intern::type_interner().mk_infer(ctx.alloc_ty_var()),
                 },
             )
         }
@@ -345,8 +369,8 @@ fn lower_literal_expr(ctx: &mut hir_lower_ctx::LoweringCtx, lit: &ast::Literal, 
             (
                 hir_expr::LiteralKind::Float { bits: bits, ty: prim_ty },
                 match prim_ty {
-                    Some(p) => hir_ty::Type::new(hir_ty::TypeKind::Primitive(p)),
-                    Option::None => hir_ty::Type::infer(ctx.alloc_ty_var()),
+                    Some(p) => prim_to_ty_id(p),
+                    Option::None => type_intern::type_interner().mk_infer(ctx.alloc_ty_var()),
                 },
             )
         }
@@ -356,7 +380,7 @@ fn lower_literal_expr(ctx: &mut hir_lower_ctx::LoweringCtx, lit: &ast::Literal, 
             s_copy.push_str(s.as_str());
             (
                 hir_expr::LiteralKind::Str(s_copy),
-                hir_ty::Type::new(hir_ty::TypeKind::Ref { inner: Box::new(hir_ty::Type::str_ty()), mutable: false }),
+                type_intern::type_interner().mk_ref(type_intern::CommonTypes::str_ty(), false),
             )
         }
         &ast::LiteralKind::ByteStr(ref bytes) => {
@@ -369,19 +393,19 @@ fn lower_literal_expr(ctx: &mut hir_lower_ctx::LoweringCtx, lit: &ast::Literal, 
             }
             (
                 hir_expr::LiteralKind::ByteStr(bytes_copy),
-                hir_ty::Type::infer(ctx.alloc_ty_var()), // &[u8; N]
+                type_intern::type_interner().mk_infer(ctx.alloc_ty_var()), // &[u8; N]
             )
         }
         &ast::LiteralKind::Char(c) => {
             (
                 hir_expr::LiteralKind::Char(c),
-                hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Char)),
+                type_intern::CommonTypes::char_ty(),
             )
         }
         &ast::LiteralKind::Bool(b) => {
             (
                 hir_expr::LiteralKind::Bool(b),
-                hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Bool)),
+                type_intern::CommonTypes::bool_ty(),
             )
         }
     };
@@ -446,7 +470,7 @@ fn lower_path_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprPath, s
             // Local bindings must produce ExprKind::Local, not ExprKind::Path,
             // because their def_id is a dummy value (0xFFFFFFFF).
             if binding.is_local() {
-                let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+                let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
                 return hir_expr::Expr::new(
                     hir_expr::ExprKind::Local(binding.local_id),
                     ty,
@@ -478,7 +502,7 @@ fn lower_path_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprPath, s
                     hir_def::ResolvedPath::new(binding.def_id, type_arg_count, span)
                 }
             };
-            let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+            let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
             return hir_expr::Expr::new(
                 hir_expr::ExprKind::Path(resolved),
                 ty,
@@ -535,7 +559,7 @@ fn lower_path_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprPath, s
                 hir_def::ResolvedPath::new(result.def_id, type_arg_count, span)
             }
         };
-        let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+        let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
         return hir_expr::Expr::new(
             hir_expr::ExprKind::Path(resolved_path),
             ty,
@@ -578,7 +602,7 @@ fn lower_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, callee: &ast::Expr, arg
         i = i + 1;
     }
 
-    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr::Expr::new(
         hir_expr::ExprKind::Call {
             callee: Box::new(callee_hir),
@@ -601,7 +625,7 @@ fn lower_method_call_expr(
     let receiver_hir = lower_expr(ctx, receiver);
 
     let type_args_hir = match type_args {
-        &Some(ref ta) => hir_lower_type::lower_type_args(ctx, ta),
+        &Some(ref ta) => hir_lower_type::lower_type_args_id(ctx, ta),
         &None => Vec::new(),
     };
 
@@ -620,7 +644,7 @@ fn lower_method_call_expr(
     let method_sym = ctx.intern(method_str.as_str());
     let re_method = common::SpannedSymbol { symbol: method_sym, span: method.span };
 
-    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr::Expr::new(
         hir_expr::ExprKind::MethodCall {
             receiver: Box::new(receiver_hir),
@@ -658,7 +682,7 @@ fn lower_field_expr(ctx: &mut hir_lower_ctx::LoweringCtx, base: &ast::Expr, fiel
         }
     };
 
-    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr::Expr::new(
         hir_expr::ExprKind::Field {
             base: Box::new(base_hir),
@@ -679,7 +703,7 @@ fn lower_tuple_expr(ctx: &mut hir_lower_ctx::LoweringCtx, elems: &Vec<ast::Expr>
         i = i + 1;
     }
 
-    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr::Expr::new(
         hir_expr::ExprKind::Tuple(elems_hir),
         ty,
@@ -710,7 +734,7 @@ fn lower_array_expr(ctx: &mut hir_lower_ctx::LoweringCtx, arr: &ast::ArrayExpr, 
         }
     };
 
-    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr::Expr::new(
         hir_expr::ExprKind::Array(arr_hir),
         ty,
@@ -822,7 +846,7 @@ fn lower_record_expr(
                     // Local bindings must produce ExprKind::Local, not ExprKind::Path,
                     // because their def_id is a dummy value (0xFFFFFFFF).
                     if binding.is_local() {
-                        let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+                        let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
                         hir_expr::Expr::new(
                             hir_expr::ExprKind::Local(binding.local_id),
                             ty,
@@ -830,7 +854,7 @@ fn lower_record_expr(
                         )
                     } else {
                         let resolved = hir_def::ResolvedPath::new(binding.def_id, 0, f.name.span);
-                        let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+                        let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
                         hir_expr::Expr::new(
                             hir_expr::ExprKind::Path(resolved),
                             ty,
@@ -867,7 +891,7 @@ fn lower_record_expr(
         &None => Option::None,
     };
 
-    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr::Expr::new(
         hir_expr::ExprKind::Struct {
             path: resolved_path,
@@ -900,7 +924,7 @@ fn lower_anon_record_expr(
                 match local {
                     Option::Some(result) => {
                         let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
-                        let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+                        let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
                         hir_expr::Expr::new(
                             hir_expr::ExprKind::Local(binding.local_id),
                             ty,
@@ -927,7 +951,7 @@ fn lower_anon_record_expr(
         i = i + 1;
     }
 
-    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr::Expr::new(
         hir_expr::ExprKind::AnonRecord { fields: fields_hir },
         ty,
@@ -942,7 +966,7 @@ fn lower_anon_record_expr(
 /// Lower a block expression.
 fn lower_block_expr(ctx: &mut hir_lower_ctx::LoweringCtx, block: &ast::Block, span: common::Span) -> hir_expr::Expr {
     let block_hir = lower_block(ctx, block);
-    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr::Expr::new(
         hir_expr::ExprKind::Block(block_hir),
         ty,
@@ -978,7 +1002,7 @@ pub fn lower_block(ctx: &mut hir_lower_ctx::LoweringCtx, block: &ast::Block) -> 
 /// Lower a block to an expression.
 pub fn lower_block_to_expr(ctx: &mut hir_lower_ctx::LoweringCtx, block: &ast::Block) -> hir_expr::Expr {
     let block_hir = lower_block(ctx, block);
-    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr::Expr::new(
         hir_expr::ExprKind::Block(block_hir),
         ty,
@@ -992,7 +1016,7 @@ fn lower_stmt(ctx: &mut hir_lower_ctx::LoweringCtx, stmt: &ast::Statement) -> hi
         &ast::Statement::Let { ref pattern, ref ty, ref init_val, span } => {
             // Lower the type annotation first (does not introduce bindings)
             let ty_hir = match ty {
-                &Some(ref t) => Some(hir_lower_type::lower_type(ctx, t)),
+                &Some(ref t) => Some(hir_lower_type::lower_type_id(ctx, t)),
                 &None => Option::None,
             };
             // Lower the init expression BEFORE the pattern, so the RHS is
@@ -1134,18 +1158,18 @@ fn lower_local_fn(
     let mut i: usize = 0;
     while i < f.params.len() {
         let param = &f.params[i];
-        let param_ty = hir_lower_type::lower_type(ctx, &param.ty);
+        let param_ty = hir_lower_type::lower_type_id(ctx, &param.ty);
         let param_name = extract_param_name(ctx, &param.pattern);
         let param_def_id = ctx.alloc_def_id();
-        let hir_param = hir_item::FnParam::new(param_def_id, param_name, hir_ty::copy_type(&param_ty), false, false, param.span);
+        let hir_param = hir_item::FnParam::new(param_def_id, param_name, param_ty, false, false, param.span);
         hir_params.push(hir_param);
         i = i + 1;
     }
 
     // Lower return type
     let return_ty = match &f.return_type {
-        &Option::Some(ref rt) => hir_lower_type::lower_type(ctx, rt),
-        &Option::None => hir_ty::Type::unit(),
+        &Option::Some(ref rt) => hir_lower_type::lower_type_id(ctx, rt),
+        &Option::None => type_intern::CommonTypes::unit(),
     };
 
     // Pop the TypeParams scope pushed by lower_generics
@@ -1155,7 +1179,7 @@ fn lower_local_fn(
     let sig = hir_item::FnSig::new(
         generics,
         hir_params,
-        hir_ty::copy_type(&return_ty),
+        return_ty,
         hir_ty::EffectRow::empty(),
         f.qualifiers,
         f.span,
@@ -1202,7 +1226,7 @@ fn lower_local_fn(
                     while pi < f.params.len() {
                         let param = &f.params[pi];
                         let local_id = ctx.alloc_local_id();
-                        let param_ty_hir = hir_lower_type::lower_type(ctx, &param.ty);
+                        let param_ty_hir = hir_lower_type::lower_type_id(ctx, &param.ty);
                         let pname = extract_param_name(ctx, &param.pattern);
                         let local = hir_expr::Local::new(
                             local_id, pname, param_ty_hir, false, param.span,
@@ -1222,7 +1246,7 @@ fn lower_local_fn(
                     while si < ctx.body_locals.len() {
                         let saved_local = &ctx.body_locals[si];
                         saved_body_locals.push(hir_expr::Local::new(
-                            saved_local.id, saved_local.name, hir_ty::copy_type(&saved_local.ty), saved_local.mutable, saved_local.span,
+                            saved_local.id, saved_local.name, saved_local.ty, saved_local.mutable, saved_local.span,
                         ));
                         si = si + 1;
                     }
@@ -1236,7 +1260,7 @@ fn lower_local_fn(
                     while bl_idx < ctx.body_locals.len() {
                         let bl = &ctx.body_locals[bl_idx];
                         locals.push(hir_expr::Local::new(
-                            bl.id, bl.name, hir_ty::copy_type(&bl.ty), bl.mutable, bl.span,
+                            bl.id, bl.name, bl.ty, bl.mutable, bl.span,
                         ));
                         bl_idx = bl_idx + 1;
                     }
@@ -1277,7 +1301,7 @@ fn extract_param_name(ctx: &mut hir_lower_ctx::LoweringCtx, pattern: &ast::Patte
 /// Lower a pattern.
 pub fn lower_pattern(ctx: &mut hir_lower_ctx::LoweringCtx, pattern: &ast::Pattern) -> hir_expr::Pattern {
     let span = pattern.span;
-    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
 
     let kind = match &pattern.kind {
         &ast::PatternKind::Wildcard => {
@@ -1329,19 +1353,9 @@ pub fn lower_pattern(ctx: &mut hir_lower_ctx::LoweringCtx, pattern: &ast::Patter
             // - ByRef: local type = &T (reference to matched value)
             // - ByMutRef: local type = &mut T
             let local_ty = if by_ref {
-                if is_mut {
-                    hir_ty::Type::new(hir_ty::TypeKind::Ref {
-                        inner: Box::new(hir_ty::copy_type(&ty)),
-                        mutable: true,
-                    })
-                } else {
-                    hir_ty::Type::new(hir_ty::TypeKind::Ref {
-                        inner: Box::new(hir_ty::copy_type(&ty)),
-                        mutable: false,
-                    })
-                }
+                type_intern::type_interner().mk_ref(ty, is_mut)
             } else {
-                hir_ty::copy_type(&ty)
+                ty
             };
 
             // Add this binding to the body_locals accumulator so it gets
@@ -1502,7 +1516,7 @@ fn lower_struct_pattern(
             &None => {
                 // Shorthand: field name becomes binding name
                 let local_id = ctx.alloc_local_id();
-                let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+                let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
                 // Re-intern binding name for cross-module consistency
                 let bind_name_str = ctx.span_to_string(f.name.span);
                 let bind_name_sym = ctx.intern(bind_name_str.as_str());
@@ -1652,7 +1666,7 @@ fn lower_if_expr(
         &None => Option::None,
     };
 
-    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr::Expr::new(
         hir_expr::ExprKind::If {
             condition: Box::new(cond_hir),
@@ -1704,13 +1718,13 @@ fn lower_if_let_expr(
             // No else branch, use unit
             hir_expr::Expr::new(
                 hir_expr::ExprKind::Tuple(Vec::new()),
-                hir_ty::Type::unit(),
+                type_intern::CommonTypes::unit(),
                 span,
             )
         }
     };
 
-    let wildcard_ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    let wildcard_ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
     let wildcard_pat = hir_expr::Pattern::wildcard(wildcard_ty, span);
     let else_arm = hir_expr::MatchArm::new(
         wildcard_pat,
@@ -1723,7 +1737,7 @@ fn lower_if_let_expr(
     arms.push(then_arm);
     arms.push(else_arm);
 
-    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr::Expr::new(
         hir_expr::ExprKind::Match {
             scrutinee: Box::new(scrutinee_hir),
@@ -1765,7 +1779,7 @@ fn lower_match_expr(
         i = i + 1;
     }
 
-    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr::Expr::new(
         hir_expr::ExprKind::Match {
             scrutinee: Box::new(scrutinee_hir),
@@ -1788,7 +1802,7 @@ fn lower_loop_expr(
         &None => Option::None,
     };
     let body_hir = lower_block_to_expr(ctx, body);
-    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr::Expr::new(
         hir_expr::ExprKind::Loop {
             label: label_sym,
@@ -1823,7 +1837,7 @@ fn lower_while_expr(
             label: label_sym,
             val: Option::None,
         },
-        hir_ty::Type::never(),
+        type_intern::CommonTypes::never(),
         span,
     );
 
@@ -1833,11 +1847,11 @@ fn lower_while_expr(
             then_branch: Box::new(body_hir),
             else_branch: Some(Box::new(break_expr)),
         },
-        hir_ty::Type::unit(),
+        type_intern::CommonTypes::unit(),
         span,
     );
 
-    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr::Expr::new(
         hir_expr::ExprKind::Loop {
             label: label_sym,
@@ -1881,11 +1895,11 @@ fn lower_while_let_expr(
             label: label_sym,
             val: Option::None,
         },
-        hir_ty::Type::never(),
+        type_intern::CommonTypes::never(),
         span,
     );
 
-    let wildcard_ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    let wildcard_ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
     let wildcard_pat = hir_expr::Pattern::wildcard(wildcard_ty, span);
     let break_arm = hir_expr::MatchArm::new(
         wildcard_pat,
@@ -1903,11 +1917,11 @@ fn lower_while_let_expr(
             scrutinee: Box::new(scrutinee_hir),
             arms: arms,
         },
-        hir_ty::Type::unit(),
+        type_intern::CommonTypes::unit(),
         span,
     );
 
-    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr::Expr::new(
         hir_expr::ExprKind::Loop {
             label: label_sym,
@@ -2001,7 +2015,7 @@ fn lower_for_range(
                     hir_expr::LiteralKind::Int { val: 0, ty: Some(hir_ty::PrimitiveTy::I32) },
                     span,
                 )),
-                hir_ty::Type::i32_ty(),
+                type_intern::CommonTypes::i32_ty(),
                 span,
             )
         }
@@ -2021,12 +2035,12 @@ fn lower_for_range(
     };
 
     // Get the type for the loop variable from start expression
-    let loop_var_ty = hir_ty::copy_type(&start_expr.ty);
+    let loop_var_ty = start_expr.ty;
 
     // Create: let mut pattern = start;
     let init_let = hir_expr::Stmt::Let {
         pattern: pattern_hir,
-        ty: Some(hir_ty::copy_type(&loop_var_ty)),
+        ty: Some(loop_var_ty),
         init: Some(start_expr),
         span: span,
     };
@@ -2034,7 +2048,7 @@ fn lower_for_range(
     // Create condition: pattern < end (or pattern <= end for inclusive)
     let loop_var_ref = hir_expr::Expr::new(
         hir_expr::ExprKind::Local(loop_var_id),
-        hir_ty::copy_type(&loop_var_ty),
+        loop_var_ty,
         span,
     );
 
@@ -2050,7 +2064,7 @@ fn lower_for_range(
             left: Box::new(loop_var_ref),
             right: Box::new(end_expr),
         },
-        hir_ty::Type::bool_ty(),
+        type_intern::CommonTypes::bool_ty(),
         span,
     );
 
@@ -2060,7 +2074,7 @@ fn lower_for_range(
     // Create increment: pattern = pattern + 1
     let loop_var_ref_for_add = hir_expr::Expr::new(
         hir_expr::ExprKind::Local(loop_var_id),
-        hir_ty::copy_type(&loop_var_ty),
+        loop_var_ty,
         span,
     );
 
@@ -2069,7 +2083,7 @@ fn lower_for_range(
             hir_expr::LiteralKind::Int { val: 1, ty: Some(hir_ty::PrimitiveTy::I32) },
             span,
         )),
-        hir_ty::copy_type(&loop_var_ty),
+        loop_var_ty,
         span,
     );
 
@@ -2079,13 +2093,13 @@ fn lower_for_range(
             left: Box::new(loop_var_ref_for_add),
             right: Box::new(one_lit),
         },
-        hir_ty::copy_type(&loop_var_ty),
+        loop_var_ty,
         span,
     );
 
     let loop_var_place = hir_expr::Expr::new(
         hir_expr::ExprKind::Local(loop_var_id),
-        hir_ty::copy_type(&loop_var_ty),
+        loop_var_ty,
         span,
     );
 
@@ -2094,7 +2108,7 @@ fn lower_for_range(
             target: Box::new(loop_var_place),
             val: Box::new(add_expr),
         },
-        hir_ty::Type::unit(),
+        type_intern::CommonTypes::unit(),
         span,
     );
 
@@ -2105,7 +2119,7 @@ fn lower_for_range(
     let body_with_increment_block = hir_expr::Block::new(body_with_increment_stmts, Option::None, span);
     let body_with_increment = hir_expr::Expr::new(
         hir_expr::ExprKind::Block(body_with_increment_block),
-        hir_ty::Type::unit(),
+        type_intern::CommonTypes::unit(),
         span,
     );
 
@@ -2115,7 +2129,7 @@ fn lower_for_range(
             label: label_sym,
             val: Option::None,
         },
-        hir_ty::Type::never(),
+        type_intern::CommonTypes::never(),
         span,
     );
 
@@ -2126,7 +2140,7 @@ fn lower_for_range(
             then_branch: Box::new(body_with_increment),
             else_branch: Some(Box::new(break_expr)),
         },
-        hir_ty::Type::unit(),
+        type_intern::CommonTypes::unit(),
         span,
     );
 
@@ -2136,7 +2150,7 @@ fn lower_for_range(
             label: label_sym,
             body: Box::new(if_expr),
         },
-        hir_ty::Type::infer(ctx.alloc_ty_var()),
+        type_intern::type_interner().mk_infer(ctx.alloc_ty_var()),
         span,
     );
 
@@ -2146,7 +2160,7 @@ fn lower_for_range(
     let outer_block = hir_expr::Block::new(outer_stmts, Some(Box::new(loop_expr)), span);
     hir_expr::Expr::new(
         hir_expr::ExprKind::Block(outer_block),
-        hir_ty::Type::infer(ctx.alloc_ty_var()),
+        type_intern::type_interner().mk_infer(ctx.alloc_ty_var()),
         span,
     )
 }
@@ -2184,8 +2198,8 @@ fn lower_closure_expr(
         let p = &params[i];
         let pattern_hir = lower_pattern(ctx, &p.pattern);
         let ty_hir = match &p.ty {
-            &Some(ref t) => hir_lower_type::lower_type(ctx, t),
-            &None => hir_ty::Type::infer(ctx.alloc_ty_var()),
+            &Some(ref t) => hir_lower_type::lower_type_id(ctx, t),
+            &None => type_intern::type_interner().mk_infer(ctx.alloc_ty_var()),
         };
         let param_hir = hir_expr::ClosureParam::new(pattern_hir, ty_hir);
         params_hir.push(param_hir);
@@ -2194,8 +2208,8 @@ fn lower_closure_expr(
 
     // Lower return type
     let ret_ty = match return_type {
-        &Some(ref t) => hir_lower_type::lower_type(ctx, t),
-        &None => hir_ty::Type::infer(ctx.alloc_ty_var()),
+        &Some(ref t) => hir_lower_type::lower_type_id(ctx, t),
+        &None => type_intern::type_interner().mk_infer(ctx.alloc_ty_var()),
     };
 
     // Lower effects
@@ -2210,7 +2224,7 @@ fn lower_closure_expr(
     // Captures will be determined during type checking
     let captures: Vec<hir_expr::Capture> = Vec::new();
 
-    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr::Expr::new(
         hir_expr::ExprKind::Closure {
             captures: captures,
@@ -2293,7 +2307,7 @@ fn lower_perform_expr(
     let op_name_str = ctx.span_to_string(operation.span);
     let op_name_sym = ctx.intern(op_name_str.as_str());
 
-    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr::Expr::new(
         hir_expr::ExprKind::Perform {
             effect_def: effect_def_id,
@@ -2362,7 +2376,7 @@ fn lower_try_with_expr(
 
         // Allocate locals for handler parameters
         let mut param_ids: Vec<hir_def::LocalId> = Vec::new();
-        let mut param_types: Vec<hir_ty::Type> = Vec::new();
+        let mut param_types: Vec<type_intern::TyId> = Vec::new();
         let mut j: usize = 0;
         while j < hdlr.params.len() {
             let param = &hdlr.params[j];
@@ -2372,13 +2386,13 @@ fn lower_try_with_expr(
             match &_pat_hir.kind {
                 &hir_expr::PatternKind::Binding { local_id, name: _, mode: _, subpattern: _ } => {
                     param_ids.push(local_id);
-                    param_types.push(hir_ty::Type::infer(ctx.alloc_ty_var()));
+                    param_types.push(type_intern::type_interner().mk_infer(ctx.alloc_ty_var()));
                 }
                 _ => {
                     // Non-binding patterns still get a fresh local for positional tracking
                     let fresh_id = ctx.alloc_local_id();
                     param_ids.push(fresh_id);
-                    param_types.push(hir_ty::Type::infer(ctx.alloc_ty_var()));
+                    param_types.push(type_intern::type_interner().mk_infer(ctx.alloc_ty_var()));
                 }
             }
             j = j + 1;
@@ -2391,7 +2405,7 @@ fn lower_try_with_expr(
         ctx.resolver.pop_scope();
 
         // Return type is inferred
-        let return_ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+        let return_ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
 
         let op_handler = hir_expr::InlineOpHandler {
             effect_id: effect_def_id,
@@ -2405,7 +2419,7 @@ fn lower_try_with_expr(
         i = i + 1;
     }
 
-    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr::Expr::new(
         hir_expr::ExprKind::InlineHandle {
             body: Box::new(body_hir),
@@ -2430,7 +2444,7 @@ fn make_str_literal_expr(span: common::Span, s: &str) -> hir_expr::Expr {
     );
     hir_expr::Expr::new(
         hir_expr::ExprKind::Literal(lit),
-        hir_ty::Type::new(hir_ty::TypeKind::Ref { inner: Box::new(hir_ty::Type::str_ty()), mutable: false }),
+        type_intern::type_interner().mk_ref(type_intern::CommonTypes::str_ty(), false),
         span,
     )
 }
@@ -2446,10 +2460,10 @@ fn make_builtin_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, name: &str, args
         let resolved = hir_def::ResolvedPath::new(binding.def_id, 0, span);
         let callee = hir_expr::Expr::new(
             hir_expr::ExprKind::Path(resolved),
-            hir_ty::Type::infer(ctx.alloc_ty_var()),
+            type_intern::type_interner().mk_infer(ctx.alloc_ty_var()),
             span,
         );
-        let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+        let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
         hir_expr::Expr::new(
             hir_expr::ExprKind::Call {
                 callee: Box::new(callee),
@@ -2644,7 +2658,7 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprP
                         i = i + 1;
                     }
                     let arr = hir_expr::ArrayExpr::List(elems_hir);
-                    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+                    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
                     hir_expr::Expr::new(
                         hir_expr::ExprKind::Array(arr),
                         ty,
@@ -2659,7 +2673,7 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprP
                         val: Box::new(val_hir),
                         count: repeat_count,
                     };
-                    let ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+                    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
                     hir_expr::Expr::new(
                         hir_expr::ExprKind::Array(arr),
                         ty,
@@ -2679,7 +2693,7 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprP
                     op: common::UnaryOp::Not,
                     operand: Box::new(cond_hir),
                 },
-                hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Bool)),
+                type_intern::CommonTypes::bool_ty(),
                 span,
             );
 
@@ -2689,19 +2703,19 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprP
                     Vec::new(),
                     Option::Some(Box::new(hir_expr::Expr::new(
                         hir_expr::ExprKind::Error,
-                        hir_ty::Type::new(hir_ty::TypeKind::Never),
+                        type_intern::CommonTypes::never(),
                         span,
                     ))),
                     span,
                 )),
-                hir_ty::Type::new(hir_ty::TypeKind::Never),
+                type_intern::CommonTypes::never(),
                 span,
             );
 
             // Build the unit else branch
             let unit_expr = hir_expr::Expr::new(
                 hir_expr::ExprKind::Tuple(Vec::new()),
-                hir_ty::Type::unit(),
+                type_intern::CommonTypes::unit(),
                 span,
             );
 
@@ -2712,7 +2726,7 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprP
                     then_branch: Box::new(trap_expr),
                     else_branch: Option::Some(Box::new(unit_expr)),
                 },
-                hir_ty::Type::unit(),
+                type_intern::CommonTypes::unit(),
                 span,
             )
         }
@@ -2723,7 +2737,7 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprP
             // a block that evaluates the expression, prints a debug marker,
             // and returns the value.
             let inner_hir = lower_expr(ctx, expr.as_ref());
-            let inner_ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+            let inner_ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
 
             // Create a local for the value
             let local_id = ctx.alloc_local_id();
@@ -2736,7 +2750,7 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprP
             let dbg_local = hir_expr::Local::new(
                 local_id,
                 local_sym,
-                hir_ty::copy_type(&inner_ty),
+                inner_ty,
                 false,
                 span,
             );
@@ -2750,7 +2764,7 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprP
                     mode: hir_expr::BindingMode::ByValue,
                     subpattern: Option::None,
                 },
-                hir_ty::Type::infer(ctx.alloc_ty_var()),
+                type_intern::type_interner().mk_infer(ctx.alloc_ty_var()),
                 span,
             );
             let let_stmt = hir_expr::Stmt::Let {
@@ -2768,7 +2782,7 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprP
             );
             let dbg_str_expr = hir_expr::Expr::new(
                 hir_expr::ExprKind::Literal(dbg_str),
-                hir_ty::Type::new(hir_ty::TypeKind::Ref { inner: Box::new(hir_ty::Type::str_ty()), mutable: false }),
+                type_intern::type_interner().mk_ref(type_intern::CommonTypes::str_ty(), false),
                 span,
             );
             let print_stmt = hir_expr::Stmt::Expr {
@@ -2790,7 +2804,7 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprP
 
             hir_expr::Expr::new(
                 hir_expr::ExprKind::Block(block),
-                hir_ty::Type::infer(ctx.alloc_ty_var()),
+                type_intern::type_interner().mk_infer(ctx.alloc_ty_var()),
                 span,
             )
         }
@@ -2805,7 +2819,7 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprP
             );
             let true_expr = hir_expr::Expr::new(
                 hir_expr::ExprKind::Literal(true_lit),
-                hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Bool)),
+                type_intern::CommonTypes::bool_ty(),
                 span,
             );
 
@@ -2815,7 +2829,7 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprP
             );
             let false_expr = hir_expr::Expr::new(
                 hir_expr::ExprKind::Literal(false_lit),
-                hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Bool)),
+                type_intern::CommonTypes::bool_ty(),
                 span,
             );
 
@@ -2826,7 +2840,7 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprP
                 span,
             );
 
-            let wildcard_ty = hir_ty::Type::infer(ctx.alloc_ty_var());
+            let wildcard_ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
             let wildcard_pat = hir_expr::Pattern::wildcard(wildcard_ty, span);
             let else_arm = hir_expr::MatchArm::new(
                 wildcard_pat,
@@ -2844,7 +2858,7 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprP
                     scrutinee: Box::new(expr_hir),
                     arms: arms,
                 },
-                hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Bool)),
+                type_intern::CommonTypes::bool_ty(),
                 span,
             )
         }

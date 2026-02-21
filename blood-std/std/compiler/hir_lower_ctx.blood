@@ -15,6 +15,7 @@ mod hir_expr;
 mod hir;
 mod resolve;
 mod interner;
+mod type_intern;
 
 // ============================================================
 // Builtin Function Definition Mapping
@@ -260,8 +261,8 @@ pub struct LoweringCtx {
     /// This is populated by lower_pattern when it creates binding patterns,
     /// and drained by lower_fn_body to add them to the Body's locals Vec.
     pub body_locals: Vec<hir_expr::Local>,
-    /// The current Self type when lowering inside an impl block.
-    pub current_self_type: Option<hir_ty::Type>,
+    /// The current Self type when lowering inside an impl block (interned).
+    pub current_self_type: Option<type_intern::TyId>,
     /// DefIds for builtin types (set during register_builtin_types).
     pub builtin_string_def: Option<hir_def::DefId>,
     pub builtin_vec_def: Option<hir_def::DefId>,

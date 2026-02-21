@@ -34,6 +34,7 @@ mod hir_lower_body;
 mod interner;
 mod source;
 mod parser;
+mod type_intern;
 
 // ============================================================
 // Main Lowering Pipeline
@@ -484,58 +485,48 @@ fn register_builtin_variant(
 // ============================================================
 
 /// Constructs &str type for builtin signatures.
-fn bi_ref_str() -> hir_ty::Type {
-    hir_ty::Type::new(hir_ty::TypeKind::Ref {
-        inner: Box::new(hir_ty::Type::str_ty()),
-        mutable: false,
-    })
+fn bi_ref_str() -> type_intern::TyId {
+    type_intern::type_interner().mk_ref(type_intern::CommonTypes::str_ty(), false)
 }
 
-fn bi_i8() -> hir_ty::Type { hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::I8)) }
-fn bi_i16() -> hir_ty::Type { hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::I16)) }
-fn bi_i64() -> hir_ty::Type { hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::I64)) }
-fn bi_i128() -> hir_ty::Type { hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::I128)) }
-fn bi_u16() -> hir_ty::Type { hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::U16)) }
-fn bi_u32() -> hir_ty::Type { hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::U32)) }
-fn bi_u64() -> hir_ty::Type { hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::U64)) }
-fn bi_u128() -> hir_ty::Type { hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::U128)) }
-fn bi_f32() -> hir_ty::Type { hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::F32)) }
-fn bi_f64() -> hir_ty::Type { hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::F64)) }
-fn bi_char() -> hir_ty::Type { hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Char)) }
+fn bi_i8() -> type_intern::TyId { type_intern::CommonTypes::i8_ty() }
+fn bi_i16() -> type_intern::TyId { type_intern::CommonTypes::i16_ty() }
+fn bi_i64() -> type_intern::TyId { type_intern::CommonTypes::i64_ty() }
+fn bi_i128() -> type_intern::TyId { type_intern::CommonTypes::i128_ty() }
+fn bi_u16() -> type_intern::TyId { type_intern::CommonTypes::u16_ty() }
+fn bi_u32() -> type_intern::TyId { type_intern::CommonTypes::u32_ty() }
+fn bi_u64() -> type_intern::TyId { type_intern::CommonTypes::u64_ty() }
+fn bi_u128() -> type_intern::TyId { type_intern::CommonTypes::u128_ty() }
+fn bi_f32() -> type_intern::TyId { type_intern::CommonTypes::f32_ty() }
+fn bi_f64() -> type_intern::TyId { type_intern::CommonTypes::f64_ty() }
+fn bi_char() -> type_intern::TyId { type_intern::CommonTypes::char_ty() }
 
 /// Constructs an ADT type with no type arguments (e.g. String).
-fn bi_adt(def_id: hir_def::DefId) -> hir_ty::Type {
-    hir_ty::Type::new(hir_ty::TypeKind::Adt { def_id: def_id, args: Vec::new() })
-}
-
-/// Constructs Option<T> type.
-fn bi_option_of(option_def: hir_def::DefId, inner: hir_ty::Type) -> hir_ty::Type {
-    let mut args: Vec<hir_ty::Type> = Vec::new();
-    args.push(inner);
-    hir_ty::Type::new(hir_ty::TypeKind::Adt { def_id: option_def, args: args })
+fn bi_adt(def_id: hir_def::DefId) -> type_intern::TyId {
+    type_intern::type_interner().mk_adt(def_id, type_intern::CommonTyLists::empty())
 }
 
 // ============================================================
 // Builtin Parameter List Helpers
 // ============================================================
 
-fn bi_params_0() -> Vec<hir_ty::Type> { Vec::new() }
+fn bi_params_0() -> Vec<type_intern::TyId> { Vec::new() }
 
-fn bi_params_1(a: hir_ty::Type) -> Vec<hir_ty::Type> {
-    let mut v: Vec<hir_ty::Type> = Vec::new();
+fn bi_params_1(a: type_intern::TyId) -> Vec<type_intern::TyId> {
+    let mut v: Vec<type_intern::TyId> = Vec::new();
     v.push(a);
     v
 }
 
-fn bi_params_2(a: hir_ty::Type, b: hir_ty::Type) -> Vec<hir_ty::Type> {
-    let mut v: Vec<hir_ty::Type> = Vec::new();
+fn bi_params_2(a: type_intern::TyId, b: type_intern::TyId) -> Vec<type_intern::TyId> {
+    let mut v: Vec<type_intern::TyId> = Vec::new();
     v.push(a);
     v.push(b);
     v
 }
 
-fn bi_params_3(a: hir_ty::Type, b: hir_ty::Type, c: hir_ty::Type) -> Vec<hir_ty::Type> {
-    let mut v: Vec<hir_ty::Type> = Vec::new();
+fn bi_params_3(a: type_intern::TyId, b: type_intern::TyId, c: type_intern::TyId) -> Vec<type_intern::TyId> {
+    let mut v: Vec<type_intern::TyId> = Vec::new();
     v.push(a);
     v.push(b);
     v.push(c);
@@ -552,8 +543,8 @@ fn register_builtin_fn(
     ctx: &mut hir_lower_ctx::LoweringCtx,
     foreign_items: &mut Vec<hir_item::ForeignItem>,
     name: &str,
-    param_tys: Vec<hir_ty::Type>,
-    return_ty: hir_ty::Type,
+    param_tys: Vec<type_intern::TyId>,
+    return_ty: type_intern::TyId,
 ) {
     let sym = ctx.intern(name);
     let def_id = ctx.alloc_def_id();
@@ -590,42 +581,42 @@ fn register_builtin_functions(ctx: &mut hir_lower_ctx::LoweringCtx) {
     let mut items: Vec<hir_item::ForeignItem> = Vec::new();
 
     // === Console Output ===
-    register_builtin_fn(ctx, &mut items, "print", bi_params_1(bi_ref_str()), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "println", bi_params_1(bi_ref_str()), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "print_str", bi_params_1(bi_ref_str()), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "println_str", bi_params_1(bi_ref_str()), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "eprint", bi_params_1(bi_ref_str()), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "eprintln", bi_params_1(bi_ref_str()), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "eprint_str", bi_params_1(bi_ref_str()), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "eprintln_str", bi_params_1(bi_ref_str()), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "print_int", bi_params_1(hir_ty::Type::i32_ty()), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "println_int", bi_params_1(hir_ty::Type::i32_ty()), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "print_i64", bi_params_1(bi_i64()), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "println_i64", bi_params_1(bi_i64()), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "print_u64", bi_params_1(bi_u64()), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "println_u64", bi_params_1(bi_u64()), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "print_f64", bi_params_1(bi_f64()), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "println_f64", bi_params_1(bi_f64()), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "print_f32", bi_params_1(bi_f32()), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "println_f32", bi_params_1(bi_f32()), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "print_bool", bi_params_1(hir_ty::Type::bool_ty()), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "println_bool", bi_params_1(hir_ty::Type::bool_ty()), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "print_char", bi_params_1(bi_char()), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "println_char", bi_params_1(bi_char()), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "print_newline", bi_params_0(), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "print_f64_prec", bi_params_2(bi_f64(), hir_ty::Type::i32_ty()), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "println_f64_prec", bi_params_2(bi_f64(), hir_ty::Type::i32_ty()), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "print_f32_prec", bi_params_2(bi_f32(), hir_ty::Type::i32_ty()), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "println_f32_prec", bi_params_2(bi_f32(), hir_ty::Type::i32_ty()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "print", bi_params_1(bi_ref_str()), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "println", bi_params_1(bi_ref_str()), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "print_str", bi_params_1(bi_ref_str()), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "println_str", bi_params_1(bi_ref_str()), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "eprint", bi_params_1(bi_ref_str()), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "eprintln", bi_params_1(bi_ref_str()), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "eprint_str", bi_params_1(bi_ref_str()), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "eprintln_str", bi_params_1(bi_ref_str()), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "print_int", bi_params_1(type_intern::CommonTypes::i32_ty()), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "println_int", bi_params_1(type_intern::CommonTypes::i32_ty()), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "print_i64", bi_params_1(bi_i64()), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "println_i64", bi_params_1(bi_i64()), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "print_u64", bi_params_1(bi_u64()), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "println_u64", bi_params_1(bi_u64()), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "print_f64", bi_params_1(bi_f64()), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "println_f64", bi_params_1(bi_f64()), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "print_f32", bi_params_1(bi_f32()), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "println_f32", bi_params_1(bi_f32()), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "print_bool", bi_params_1(type_intern::CommonTypes::bool_ty()), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "println_bool", bi_params_1(type_intern::CommonTypes::bool_ty()), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "print_char", bi_params_1(bi_char()), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "println_char", bi_params_1(bi_char()), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "print_newline", bi_params_0(), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "print_f64_prec", bi_params_2(bi_f64(), type_intern::CommonTypes::i32_ty()), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "println_f64_prec", bi_params_2(bi_f64(), type_intern::CommonTypes::i32_ty()), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "print_f32_prec", bi_params_2(bi_f32(), type_intern::CommonTypes::i32_ty()), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "println_f32_prec", bi_params_2(bi_f32(), type_intern::CommonTypes::i32_ty()), type_intern::CommonTypes::unit());
 
     // === Control Flow / Assertions ===
-    register_builtin_fn(ctx, &mut items, "panic", bi_params_1(bi_ref_str()), hir_ty::Type::never());
-    register_builtin_fn(ctx, &mut items, "assert", bi_params_1(hir_ty::Type::bool_ty()), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "assert_eq_int", bi_params_2(hir_ty::Type::i32_ty(), hir_ty::Type::i32_ty()), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "assert_eq_bool", bi_params_2(hir_ty::Type::bool_ty(), hir_ty::Type::bool_ty()), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "unreachable", bi_params_0(), hir_ty::Type::never());
-    register_builtin_fn(ctx, &mut items, "todo", bi_params_0(), hir_ty::Type::never());
-    register_builtin_fn(ctx, &mut items, "process_exit", bi_params_1(hir_ty::Type::i32_ty()), hir_ty::Type::never());
+    register_builtin_fn(ctx, &mut items, "panic", bi_params_1(bi_ref_str()), type_intern::CommonTypes::never());
+    register_builtin_fn(ctx, &mut items, "assert", bi_params_1(type_intern::CommonTypes::bool_ty()), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "assert_eq_int", bi_params_2(type_intern::CommonTypes::i32_ty(), type_intern::CommonTypes::i32_ty()), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "assert_eq_bool", bi_params_2(type_intern::CommonTypes::bool_ty(), type_intern::CommonTypes::bool_ty()), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "unreachable", bi_params_0(), type_intern::CommonTypes::never());
+    register_builtin_fn(ctx, &mut items, "todo", bi_params_0(), type_intern::CommonTypes::never());
+    register_builtin_fn(ctx, &mut items, "process_exit", bi_params_1(type_intern::CommonTypes::i32_ty()), type_intern::CommonTypes::never());
 
     // === Memory ===
     register_builtin_fn(ctx, &mut items, "size_of_i32", bi_params_0(), bi_i64());
@@ -633,46 +624,46 @@ fn register_builtin_functions(ctx: &mut hir_lower_ctx::LoweringCtx) {
     register_builtin_fn(ctx, &mut items, "size_of_bool", bi_params_0(), bi_i64());
     register_builtin_fn(ctx, &mut items, "alloc", bi_params_1(bi_u64()), bi_u64());
     register_builtin_fn(ctx, &mut items, "realloc", bi_params_2(bi_u64(), bi_u64()), bi_u64());
-    register_builtin_fn(ctx, &mut items, "free", bi_params_1(bi_u64()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "free", bi_params_1(bi_u64()), type_intern::CommonTypes::unit());
     register_builtin_fn(ctx, &mut items, "memcpy", bi_params_3(bi_u64(), bi_u64(), bi_u64()), bi_u64());
 
     // === Pointer Operations ===
-    register_builtin_fn(ctx, &mut items, "ptr_read_i32", bi_params_1(bi_u64()), hir_ty::Type::i32_ty());
-    register_builtin_fn(ctx, &mut items, "ptr_write_i32", bi_params_2(bi_u64(), hir_ty::Type::i32_ty()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "ptr_read_i32", bi_params_1(bi_u64()), type_intern::CommonTypes::i32_ty());
+    register_builtin_fn(ctx, &mut items, "ptr_write_i32", bi_params_2(bi_u64(), type_intern::CommonTypes::i32_ty()), type_intern::CommonTypes::unit());
     register_builtin_fn(ctx, &mut items, "ptr_read_i64", bi_params_1(bi_u64()), bi_i64());
-    register_builtin_fn(ctx, &mut items, "ptr_write_i64", bi_params_2(bi_u64(), bi_i64()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "ptr_write_i64", bi_params_2(bi_u64(), bi_i64()), type_intern::CommonTypes::unit());
     register_builtin_fn(ctx, &mut items, "ptr_read_u64", bi_params_1(bi_u64()), bi_u64());
-    register_builtin_fn(ctx, &mut items, "ptr_write_u64", bi_params_2(bi_u64(), bi_u64()), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "ptr_read_u8", bi_params_1(bi_u64()), hir_ty::Type::u8_ty());
-    register_builtin_fn(ctx, &mut items, "ptr_write_u8", bi_params_2(bi_u64(), hir_ty::Type::u8_ty()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "ptr_write_u64", bi_params_2(bi_u64(), bi_u64()), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "ptr_read_u8", bi_params_1(bi_u64()), type_intern::CommonTypes::u8_ty());
+    register_builtin_fn(ctx, &mut items, "ptr_write_u8", bi_params_2(bi_u64(), type_intern::CommonTypes::u8_ty()), type_intern::CommonTypes::unit());
     register_builtin_fn(ctx, &mut items, "ptr_read_f64", bi_params_1(bi_u64()), bi_f64());
-    register_builtin_fn(ctx, &mut items, "ptr_write_f64", bi_params_2(bi_u64(), bi_f64()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "ptr_write_f64", bi_params_2(bi_u64(), bi_f64()), type_intern::CommonTypes::unit());
 
     // === String Operations ===
     register_builtin_fn(ctx, &mut items, "str_len", bi_params_1(bi_ref_str()), bi_i64());
-    register_builtin_fn(ctx, &mut items, "str_eq", bi_params_2(bi_ref_str(), bi_ref_str()), hir_ty::Type::bool_ty());
+    register_builtin_fn(ctx, &mut items, "str_eq", bi_params_2(bi_ref_str(), bi_ref_str()), type_intern::CommonTypes::bool_ty());
     register_builtin_fn(ctx, &mut items, "str_concat", bi_params_2(bi_ref_str(), bi_ref_str()), bi_ref_str());
 
     // === Input ===
-    register_builtin_fn(ctx, &mut items, "read_int", bi_params_0(), hir_ty::Type::i32_ty());
+    register_builtin_fn(ctx, &mut items, "read_int", bi_params_0(), type_intern::CommonTypes::i32_ty());
 
     // === Conversion ===
     register_builtin_fn(ctx, &mut items, "i8_to_string", bi_params_1(bi_i8()), bi_ref_str());
     register_builtin_fn(ctx, &mut items, "i16_to_string", bi_params_1(bi_i16()), bi_ref_str());
-    register_builtin_fn(ctx, &mut items, "int_to_string", bi_params_1(hir_ty::Type::i32_ty()), bi_ref_str());
+    register_builtin_fn(ctx, &mut items, "int_to_string", bi_params_1(type_intern::CommonTypes::i32_ty()), bi_ref_str());
     register_builtin_fn(ctx, &mut items, "i64_to_string", bi_params_1(bi_i64()), bi_ref_str());
     register_builtin_fn(ctx, &mut items, "i128_to_string", bi_params_1(bi_i128()), bi_ref_str());
-    register_builtin_fn(ctx, &mut items, "u8_to_string", bi_params_1(hir_ty::Type::u8_ty()), bi_ref_str());
+    register_builtin_fn(ctx, &mut items, "u8_to_string", bi_params_1(type_intern::CommonTypes::u8_ty()), bi_ref_str());
     register_builtin_fn(ctx, &mut items, "u16_to_string", bi_params_1(bi_u16()), bi_ref_str());
     register_builtin_fn(ctx, &mut items, "u32_to_string", bi_params_1(bi_u32()), bi_ref_str());
     register_builtin_fn(ctx, &mut items, "u64_to_string", bi_params_1(bi_u64()), bi_ref_str());
     register_builtin_fn(ctx, &mut items, "u128_to_string", bi_params_1(bi_u128()), bi_ref_str());
-    register_builtin_fn(ctx, &mut items, "bool_to_string", bi_params_1(hir_ty::Type::bool_ty()), bi_ref_str());
+    register_builtin_fn(ctx, &mut items, "bool_to_string", bi_params_1(type_intern::CommonTypes::bool_ty()), bi_ref_str());
     register_builtin_fn(ctx, &mut items, "char_to_string", bi_params_1(bi_char()), bi_ref_str());
     register_builtin_fn(ctx, &mut items, "f32_to_string", bi_params_1(bi_f32()), bi_ref_str());
     register_builtin_fn(ctx, &mut items, "f64_to_string", bi_params_1(bi_f64()), bi_ref_str());
-    register_builtin_fn(ctx, &mut items, "i32_to_i64", bi_params_1(hir_ty::Type::i32_ty()), bi_i64());
-    register_builtin_fn(ctx, &mut items, "i64_to_i32", bi_params_1(bi_i64()), hir_ty::Type::i32_ty());
+    register_builtin_fn(ctx, &mut items, "i32_to_i64", bi_params_1(type_intern::CommonTypes::i32_ty()), bi_i64());
+    register_builtin_fn(ctx, &mut items, "i64_to_i32", bi_params_1(bi_i64()), type_intern::CommonTypes::i32_ty());
 
     // === Math (LLVM Intrinsics) ===
     register_builtin_fn(ctx, &mut items, "sqrt", bi_params_1(bi_f64()), bi_f64());
@@ -691,16 +682,16 @@ fn register_builtin_functions(ctx: &mut hir_lower_ctx::LoweringCtx) {
     register_builtin_fn(ctx, &mut items, "file_open", bi_params_2(bi_ref_str(), bi_ref_str()), bi_i64());
     register_builtin_fn(ctx, &mut items, "file_read", bi_params_3(bi_i64(), bi_u64(), bi_u64()), bi_i64());
     register_builtin_fn(ctx, &mut items, "file_write", bi_params_3(bi_i64(), bi_u64(), bi_u64()), bi_i64());
-    register_builtin_fn(ctx, &mut items, "file_close", bi_params_1(bi_i64()), hir_ty::Type::i32_ty());
+    register_builtin_fn(ctx, &mut items, "file_close", bi_params_1(bi_i64()), type_intern::CommonTypes::i32_ty());
     register_builtin_fn(ctx, &mut items, "file_read_to_string", bi_params_1(bi_ref_str()), bi_ref_str());
-    register_builtin_fn(ctx, &mut items, "file_write_string", bi_params_2(bi_ref_str(), bi_ref_str()), hir_ty::Type::bool_ty());
-    register_builtin_fn(ctx, &mut items, "file_append_string", bi_params_2(bi_ref_str(), bi_ref_str()), hir_ty::Type::bool_ty());
-    register_builtin_fn(ctx, &mut items, "file_exists", bi_params_1(bi_ref_str()), hir_ty::Type::bool_ty());
-    register_builtin_fn(ctx, &mut items, "file_delete", bi_params_1(bi_ref_str()), hir_ty::Type::bool_ty());
+    register_builtin_fn(ctx, &mut items, "file_write_string", bi_params_2(bi_ref_str(), bi_ref_str()), type_intern::CommonTypes::bool_ty());
+    register_builtin_fn(ctx, &mut items, "file_append_string", bi_params_2(bi_ref_str(), bi_ref_str()), type_intern::CommonTypes::bool_ty());
+    register_builtin_fn(ctx, &mut items, "file_exists", bi_params_1(bi_ref_str()), type_intern::CommonTypes::bool_ty());
+    register_builtin_fn(ctx, &mut items, "file_delete", bi_params_1(bi_ref_str()), type_intern::CommonTypes::bool_ty());
     register_builtin_fn(ctx, &mut items, "file_size", bi_params_1(bi_ref_str()), bi_i64());
 
     // === System ===
-    register_builtin_fn(ctx, &mut items, "system", bi_params_1(bi_ref_str()), hir_ty::Type::i32_ty());
+    register_builtin_fn(ctx, &mut items, "system", bi_params_1(bi_ref_str()), type_intern::CommonTypes::i32_ty());
 
     // === Environment ===
     register_builtin_fn(ctx, &mut items, "env_get", bi_params_1(bi_ref_str()), bi_ref_str());
@@ -710,11 +701,11 @@ fn register_builtin_functions(ctx: &mut hir_lower_ctx::LoweringCtx) {
     register_builtin_fn(ctx, &mut items, "blood_clock_nanos", bi_params_0(), bi_u64());
 
     // === Bit Reinterpretation ===
-    register_builtin_fn(ctx, &mut items, "blood_float64_to_bits", bi_params_1(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::F64))), bi_u64());
+    register_builtin_fn(ctx, &mut items, "blood_float64_to_bits", bi_params_1(bi_f64()), bi_u64());
 
     // === Command-line Arguments ===
-    register_builtin_fn(ctx, &mut items, "args_count", bi_params_0(), hir_ty::Type::i32_ty());
-    register_builtin_fn(ctx, &mut items, "args_get", bi_params_1(hir_ty::Type::i32_ty()), bi_ref_str());
+    register_builtin_fn(ctx, &mut items, "args_count", bi_params_0(), type_intern::CommonTypes::i32_ty());
+    register_builtin_fn(ctx, &mut items, "args_get", bi_params_1(type_intern::CommonTypes::i32_ty()), bi_ref_str());
     register_builtin_fn(ctx, &mut items, "args_join", bi_params_0(), bi_ref_str());
 
     // === Builtins requiring String type ===
@@ -727,13 +718,13 @@ fn register_builtin_functions(ctx: &mut hir_lower_ctx::LoweringCtx) {
 
     // === Region Memory Management ===
     register_builtin_fn(ctx, &mut items, "region_create", bi_params_2(bi_u64(), bi_u64()), bi_u64());
-    register_builtin_fn(ctx, &mut items, "region_destroy", bi_params_1(bi_u64()), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "region_activate", bi_params_1(bi_u64()), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "region_deactivate", bi_params_0(), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "region_destroy", bi_params_1(bi_u64()), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "region_activate", bi_params_1(bi_u64()), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "region_deactivate", bi_params_0(), type_intern::CommonTypes::unit());
     register_builtin_fn(ctx, &mut items, "region_alloc", bi_params_3(bi_u64(), bi_u64(), bi_u64()), bi_u64());
-    register_builtin_fn(ctx, &mut items, "region_exit_scope", bi_params_1(bi_u64()), hir_ty::Type::i32_ty());
+    register_builtin_fn(ctx, &mut items, "region_exit_scope", bi_params_1(bi_u64()), type_intern::CommonTypes::i32_ty());
     register_builtin_fn(ctx, &mut items, "region_used", bi_params_1(bi_u64()), bi_u64());
-    register_builtin_fn(ctx, &mut items, "region_trim", bi_params_1(bi_u64()), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "region_trim", bi_params_1(bi_u64()), type_intern::CommonTypes::unit());
     register_builtin_fn(ctx, &mut items, "region_committed", bi_params_1(bi_u64()), bi_u64());
     register_builtin_fn(ctx, &mut items, "region_alloc_count", bi_params_1(bi_u64()), bi_u64());
     register_builtin_fn(ctx, &mut items, "system_alloc_live_bytes", bi_params_0(), bi_u64());
@@ -742,14 +733,14 @@ fn register_builtin_functions(ctx: &mut hir_lower_ctx::LoweringCtx) {
     register_builtin_fn(ctx, &mut items, "realloc_diag_inplace", bi_params_0(), bi_u64());
     register_builtin_fn(ctx, &mut items, "realloc_diag_inplace_bytes", bi_params_0(), bi_u64());
     register_builtin_fn(ctx, &mut items, "realloc_diag_offset_delta", bi_params_0(), bi_u64());
-    register_builtin_fn(ctx, &mut items, "realloc_stats_reset", bi_params_0(), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "print_alloc_hist", bi_params_0(), hir_ty::Type::unit());
-    register_builtin_fn(ctx, &mut items, "alloc_hist_reset", bi_params_0(), hir_ty::Type::unit());
+    register_builtin_fn(ctx, &mut items, "realloc_stats_reset", bi_params_0(), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "print_alloc_hist", bi_params_0(), type_intern::CommonTypes::unit());
+    register_builtin_fn(ctx, &mut items, "alloc_hist_reset", bi_params_0(), type_intern::CommonTypes::unit());
 
     // === Parse/char builtins (return unwrapped values, matching blood-rust ABI) ===
     register_builtin_fn(ctx, &mut items, "parse_f64", bi_params_1(bi_ref_str()), bi_f64());
     register_builtin_fn(ctx, &mut items, "parse_i64_radix", bi_params_2(bi_ref_str(), bi_u32()), bi_i64());
-    register_builtin_fn(ctx, &mut items, "parse_u8_radix", bi_params_2(bi_ref_str(), bi_u32()), hir_ty::Type::u8_ty());
+    register_builtin_fn(ctx, &mut items, "parse_u8_radix", bi_params_2(bi_ref_str(), bi_u32()), type_intern::CommonTypes::u8_ty());
     register_builtin_fn(ctx, &mut items, "parse_u32_radix", bi_params_2(bi_ref_str(), bi_u32()), bi_u32());
     register_builtin_fn(ctx, &mut items, "char_from_u32", bi_params_1(bi_u32()), bi_char());
 

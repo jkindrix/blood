@@ -466,12 +466,13 @@ fn build_struct_layout_basic(def_id: u32, struct_def: &hir_item::StructDef) -> c
                 if fi > 0 {
                     llvm_type.push_str(", ");
                 }
-                let field_ty = codegen_types::type_to_llvm(&struct_fields[fi].ty);
+                let field_ty_hir = type_intern::ty_id_to_type(struct_fields[fi].ty);
+                let field_ty = codegen_types::type_to_llvm(&field_ty_hir);
                 llvm_type.push_str(field_ty.as_str());
                 // Store HIR type for indexing element size calculation
                 fields.push(codegen_ctx::AdtFieldInfo {
                     llvm_type: field_ty,
-                    hir_type: Option::Some(type_intern::type_to_ty_id(&struct_fields[fi].ty)),
+                    hir_type: Option::Some(struct_fields[fi].ty),
                 });
                 fi = fi + 1;
             }
@@ -482,12 +483,13 @@ fn build_struct_layout_basic(def_id: u32, struct_def: &hir_item::StructDef) -> c
                 if fi > 0 {
                     llvm_type.push_str(", ");
                 }
-                let field_ty = codegen_types::type_to_llvm(&tuple_fields[fi]);
+                let tuple_field_hir = type_intern::ty_id_to_type(type_intern::TyId::new(tuple_fields[fi].index));
+                let field_ty = codegen_types::type_to_llvm(&tuple_field_hir);
                 llvm_type.push_str(field_ty.as_str());
                 // Store HIR type for indexing element size calculation
                 fields.push(codegen_ctx::AdtFieldInfo {
                     llvm_type: field_ty,
-                    hir_type: Option::Some(type_intern::type_to_ty_id(&tuple_fields[fi])),
+                    hir_type: Option::Some(type_intern::TyId::new(tuple_fields[fi].index)),
                 });
                 fi = fi + 1;
             }
@@ -528,12 +530,13 @@ fn build_struct_layout_with_ctx(
                 if fi > 0 {
                     llvm_type.push_str(", ");
                 }
-                let field_ty = codegen_stmt::type_to_llvm_with_ctx(ctx, &struct_fields[fi].ty);
+                let field_ty_hir = type_intern::ty_id_to_type(struct_fields[fi].ty);
+                let field_ty = codegen_stmt::type_to_llvm_with_ctx(ctx, &field_ty_hir);
                 llvm_type.push_str(field_ty.as_str());
                 // Store HIR type for indexing element size calculation
                 fields.push(codegen_ctx::AdtFieldInfo {
                     llvm_type: field_ty,
-                    hir_type: Option::Some(type_intern::type_to_ty_id(&struct_fields[fi].ty)),
+                    hir_type: Option::Some(struct_fields[fi].ty),
                 });
                 fi = fi + 1;
             }
@@ -544,12 +547,13 @@ fn build_struct_layout_with_ctx(
                 if fi > 0 {
                     llvm_type.push_str(", ");
                 }
-                let field_ty = codegen_stmt::type_to_llvm_with_ctx(ctx, &tuple_fields[fi]);
+                let tuple_field_hir = type_intern::ty_id_to_type(type_intern::TyId::new(tuple_fields[fi].index));
+                let field_ty = codegen_stmt::type_to_llvm_with_ctx(ctx, &tuple_field_hir);
                 llvm_type.push_str(field_ty.as_str());
                 // Store HIR type for indexing element size calculation
                 fields.push(codegen_ctx::AdtFieldInfo {
                     llvm_type: field_ty,
-                    hir_type: Option::Some(type_intern::type_to_ty_id(&tuple_fields[fi])),
+                    hir_type: Option::Some(type_intern::TyId::new(tuple_fields[fi].index)),
                 });
                 fi = fi + 1;
             }
@@ -600,12 +604,13 @@ fn build_enum_layout_with_ctx(
                     if fi > 0 {
                         pt.push_str(", ");
                     }
-                    let field_ty = codegen_stmt::type_to_llvm_with_ctx(ctx, &tuple_fields[fi]);
-                    payload_size = payload_size + codegen_stmt::type_size_with_ctx(ctx, &tuple_fields[fi]);
+                    let tuple_field_hir = type_intern::ty_id_to_type(type_intern::TyId::new(tuple_fields[fi].index));
+                    let field_ty = codegen_stmt::type_to_llvm_with_ctx(ctx, &tuple_field_hir);
+                    payload_size = payload_size + codegen_stmt::type_size_with_ctx(ctx, &tuple_field_hir);
                     pt.push_str(field_ty.as_str());
                     fields.push(codegen_ctx::AdtFieldInfo {
                         llvm_type: field_ty,
-                        hir_type: Option::Some(type_intern::type_to_ty_id(&tuple_fields[fi])),
+                        hir_type: Option::Some(type_intern::TyId::new(tuple_fields[fi].index)),
                     });
                     fi = fi + 1;
                 }
@@ -621,12 +626,13 @@ fn build_enum_layout_with_ctx(
                     if fi > 0 {
                         pt.push_str(", ");
                     }
-                    let field_ty = codegen_stmt::type_to_llvm_with_ctx(ctx, &record_fields[fi].ty);
-                    payload_size = payload_size + codegen_stmt::type_size_with_ctx(ctx, &record_fields[fi].ty);
+                    let record_field_hir = type_intern::ty_id_to_type(record_fields[fi].ty);
+                    let field_ty = codegen_stmt::type_to_llvm_with_ctx(ctx, &record_field_hir);
+                    payload_size = payload_size + codegen_stmt::type_size_with_ctx(ctx, &record_field_hir);
                     pt.push_str(field_ty.as_str());
                     fields.push(codegen_ctx::AdtFieldInfo {
                         llvm_type: field_ty,
-                        hir_type: Option::Some(type_intern::type_to_ty_id(&record_fields[fi].ty)),
+                        hir_type: Option::Some(record_fields[fi].ty),
                     });
                     fi = fi + 1;
                 }

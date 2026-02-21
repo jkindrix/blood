@@ -58,7 +58,7 @@ pub fn infer_expr(checker: &mut typeck::TypeChecker, expr: &hir_expr::Expr) -> t
         &hir_expr::ExprKind::Range { ref start, ref end_val, inclusive } => {
             infer_range(checker, start, end_val, inclusive, expr.span)
         }
-        &hir_expr::ExprKind::Cast { expr: ref inner, ty: ref cast_ty } => {
+        &hir_expr::ExprKind::Cast { expr: ref inner, ty: cast_ty } => {
             infer_cast(checker, inner.as_ref(), cast_ty, expr.span)
         }
         &hir_expr::ExprKind::Assign { ref target, ref val } => {
@@ -87,7 +87,7 @@ pub fn infer_expr(checker: &mut typeck::TypeChecker, expr: &hir_expr::Expr) -> t
         &hir_expr::ExprKind::Continue { ref label } => {
             infer_continue(checker, label, expr.span)
         }
-        &hir_expr::ExprKind::Closure { ref captures, ref params, ref return_ty, ref effects, ref body, body_id } => {
+        &hir_expr::ExprKind::Closure { ref captures, ref params, return_ty, ref effects, ref body, body_id } => {
             infer_closure(checker, captures, params, return_ty, effects, body.as_ref(), body_id, expr.span)
         }
         &hir_expr::ExprKind::WithHandle { handler: ref handler_expr, body: ref body_expr } => {
@@ -131,7 +131,7 @@ pub fn infer_expr(checker: &mut typeck::TypeChecker, expr: &hir_expr::Expr) -> t
         }
         &hir_expr::ExprKind::Default => {
             // Default expression type comes from context; return expression's type variable
-            type_intern::type_to_ty_id(&expr.ty)
+            expr.ty
         }
         &hir_expr::ExprKind::Error => type_intern::CommonTypes::error(),
     };
@@ -140,7 +140,7 @@ pub fn infer_expr(checker: &mut typeck::TypeChecker, expr: &hir_expr::Expr) -> t
     // During HIR lowering, every expression gets a fresh Infer(TyVarId) type.
     // We unify the inferred type with the expression's type variable so that
     // MIR lowering can resolve expression types via apply_substs.
-    let expr_ty_id = type_intern::type_to_ty_id(&expr.ty);
+    let expr_ty_id = expr.ty;
     checker.unify(result, expr_ty_id, expr.span);
 
     result
@@ -1019,7 +1019,7 @@ fn infer_method_call(
     receiver: &hir_expr::Expr,
     method: &common::SpannedSymbol,
     _method_def: &Option<hir_def::DefId>,
-    type_args: &Vec<hir_ty::Type>,
+    type_args: &Vec<type_intern::TyId>,
     args: &Vec<hir_expr::Expr>,
     span: common::Span,
 ) -> type_intern::TyId {
@@ -1070,7 +1070,7 @@ fn infer_method_call(
             if type_args.len() > 0 {
                 let mut i: usize = 0;
                 while i < type_args.len() {
-                    subst.add_id(i as u32, type_intern::type_to_ty_id(&type_args[i]));
+                    subst.add_id(i as u32, type_args[i]);
                     i = i + 1;
                 }
             } else if impl_info.num_generics > 0 {
@@ -1556,14 +1556,14 @@ fn infer_range(
 fn infer_cast(
     checker: &mut typeck::TypeChecker,
     expr: &hir_expr::Expr,
-    ty: &hir_ty::Type,
+    ty: type_intern::TyId,
     span: common::Span,
 ) -> type_intern::TyId {
     // Check the source expression
     let src_ty = infer_expr(checker, expr);
     let resolved_src = checker.resolve(src_ty);
     let resolved_src_hir = type_intern::ty_id_to_type(resolved_src);
-    let dst_ty_id = type_intern::type_to_ty_id(ty);
+    let dst_ty_id = ty;
     let resolved_dst = checker.resolve(dst_ty_id);
     let resolved_dst_hir = type_intern::ty_id_to_type(resolved_dst);
 
@@ -1892,9 +1892,8 @@ fn infer_stmt(checker: &mut typeck::TypeChecker, stmt: &hir_expr::Stmt) -> type_
 
             // Unify with declared type if present
             match ty {
-                &Some(ref declared) => {
-                    let declared_id = type_intern::type_to_ty_id(declared);
-                    checker.unify(init_ty, declared_id, pattern.span);
+                &Some(declared) => {
+                    checker.unify(init_ty, declared, pattern.span);
                 }
                 &None => {}
             }
@@ -2122,7 +2121,7 @@ fn infer_closure(
     checker: &mut typeck::TypeChecker,
     captures: &Vec<hir_expr::Capture>,
     params: &Vec<hir_expr::ClosureParam>,
-    return_ty: &hir_ty::Type,
+    return_ty: type_intern::TyId,
     effects: &hir_ty::EffectRow,
     body: &hir_expr::Expr,
     _body_id: hir_def::BodyId,
@@ -2132,11 +2131,11 @@ fn infer_closure(
     let mut param_ty_ids: Vec<type_intern::TyId> = Vec::new();
     let mut i: usize = 0;
     while i < params.len() {
-        param_ty_ids.push(type_intern::type_to_ty_id(&params[i].ty));
+        param_ty_ids.push(params[i].ty);
         i = i + 1;
     }
 
-    let ret_ty_id = type_intern::type_to_ty_id(return_ty);
+    let ret_ty_id = return_ty;
 
     // Set up closure context
     let prev_return = copy_option_ty_id(&checker.return_ty);
@@ -2550,8 +2549,7 @@ fn propagate_pattern_types_inner(
     };
 
     // Unify this pattern's type with the effective type
-    // pattern.ty is still hir_ty::Type (until A.4), bridge via type_to_ty_id
-    let pattern_ty_id = type_intern::type_to_ty_id(&pattern.ty);
+    let pattern_ty_id = pattern.ty;
     checker.unify(pattern_ty_id, effective_ty, pattern.span);
 
     // Resolve to get the concrete type for sub-pattern propagation

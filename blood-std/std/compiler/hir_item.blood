@@ -11,6 +11,7 @@
 mod common;
 mod hir_def;
 mod hir_ty;
+mod type_intern;
 
 // ============================================================
 // Item
@@ -103,8 +104,8 @@ pub struct FnSig {
     pub generics: hir_ty::Generics,
     /// Function parameters.
     pub params: Vec<FnParam>,
-    /// Return type.
-    pub return_ty: hir_ty::Type,
+    /// Return type (interned).
+    pub return_ty: type_intern::TyId,
     /// Effect row (what effects this function may perform).
     pub effects: hir_ty::EffectRow,
     /// Function qualifiers.
@@ -118,7 +119,7 @@ impl FnSig {
     pub fn new(
         generics: hir_ty::Generics,
         params: Vec<FnParam>,
-        return_ty: hir_ty::Type,
+        return_ty: type_intern::TyId,
         effects: hir_ty::EffectRow,
         qualifiers: common::FnQualifiers,
         span: common::Span,
@@ -133,8 +134,8 @@ pub struct FnParam {
     pub def_id: hir_def::DefId,
     /// The name of the parameter.
     pub name: common::SpannedSymbol,
-    /// The type of the parameter.
-    pub ty: hir_ty::Type,
+    /// The type of the parameter (interned).
+    pub ty: type_intern::TyId,
     /// Whether the parameter is mutable.
     pub mutable: bool,
     /// Whether this is a self parameter.
@@ -148,7 +149,7 @@ impl FnParam {
     pub fn new(
         def_id: hir_def::DefId,
         name: common::SpannedSymbol,
-        ty: hir_ty::Type,
+        ty: type_intern::TyId,
         mutable: bool,
         is_self: bool,
         span: common::Span,
@@ -160,7 +161,7 @@ impl FnParam {
     pub fn regular(
         def_id: hir_def::DefId,
         name: common::SpannedSymbol,
-        ty: hir_ty::Type,
+        ty: type_intern::TyId,
         mutable: bool,
         span: common::Span,
     ) -> FnParam {
@@ -171,7 +172,7 @@ impl FnParam {
     pub fn self_param(
         def_id: hir_def::DefId,
         name: common::SpannedSymbol,
-        ty: hir_ty::Type,
+        ty: type_intern::TyId,
         mutable: bool,
         span: common::Span,
     ) -> FnParam {
@@ -202,8 +203,8 @@ impl StructDef {
 pub enum StructBody {
     /// A record struct with named fields.
     Record(Vec<StructField>),
-    /// A tuple struct with positional fields.
-    Tuple(Vec<hir_ty::Type>),
+    /// A tuple struct with positional fields (interned types).
+    Tuple(Vec<type_intern::TyId>),
     /// A unit struct with no fields.
     Unit,
 }
@@ -214,8 +215,8 @@ pub struct StructField {
     pub def_id: hir_def::DefId,
     /// The name of the field.
     pub name: common::SpannedSymbol,
-    /// The type of the field.
-    pub ty: hir_ty::Type,
+    /// The type of the field (interned).
+    pub ty: type_intern::TyId,
     /// The visibility of the field.
     pub vis: common::Visibility,
     /// Span of the field.
@@ -227,7 +228,7 @@ impl StructField {
     pub fn new(
         def_id: hir_def::DefId,
         name: common::SpannedSymbol,
-        ty: hir_ty::Type,
+        ty: type_intern::TyId,
         vis: common::Visibility,
         span: common::Span,
     ) -> StructField {
@@ -285,8 +286,8 @@ impl Variant {
 pub enum VariantKind {
     /// A unit variant: `Variant`
     Unit,
-    /// A tuple variant: `Variant(T1, T2)`
-    Tuple(Vec<hir_ty::Type>),
+    /// A tuple variant: `Variant(T1, T2)` (interned types)
+    Tuple(Vec<type_intern::TyId>),
     /// A record variant: `Variant { field: T }`
     Record(Vec<StructField>),
 }
@@ -299,13 +300,13 @@ pub enum VariantKind {
 pub struct TypeAliasDef {
     /// Generic parameters.
     pub generics: hir_ty::Generics,
-    /// The aliased type.
-    pub ty: hir_ty::Type,
+    /// The aliased type (interned).
+    pub ty: type_intern::TyId,
 }
 
 impl TypeAliasDef {
     /// Creates a new type alias definition.
-    pub fn new(generics: hir_ty::Generics, ty: hir_ty::Type) -> TypeAliasDef {
+    pub fn new(generics: hir_ty::Generics, ty: type_intern::TyId) -> TypeAliasDef {
         TypeAliasDef { generics, ty }
     }
 }
@@ -316,23 +317,23 @@ impl TypeAliasDef {
 
 /// A constant definition.
 pub struct ConstDef {
-    /// The type of the constant.
-    pub ty: hir_ty::Type,
+    /// The type of the constant (interned).
+    pub ty: type_intern::TyId,
     /// The body containing the initializer expression.
     pub body_id: hir_def::BodyId,
 }
 
 impl ConstDef {
     /// Creates a new constant definition.
-    pub fn new(ty: hir_ty::Type, body_id: hir_def::BodyId) -> ConstDef {
+    pub fn new(ty: type_intern::TyId, body_id: hir_def::BodyId) -> ConstDef {
         ConstDef { ty, body_id }
     }
 }
 
 /// A static variable definition.
 pub struct StaticDef {
-    /// The type of the static.
-    pub ty: hir_ty::Type,
+    /// The type of the static (interned).
+    pub ty: type_intern::TyId,
     /// Whether the static is mutable.
     pub mutable: bool,
     /// The body containing the initializer expression.
@@ -341,7 +342,7 @@ pub struct StaticDef {
 
 impl StaticDef {
     /// Creates a new static definition.
-    pub fn new(ty: hir_ty::Type, mutable: bool, body_id: hir_def::BodyId) -> StaticDef {
+    pub fn new(ty: type_intern::TyId, mutable: bool, body_id: hir_def::BodyId) -> StaticDef {
         StaticDef { ty, mutable, body_id }
     }
 }
@@ -418,8 +419,8 @@ pub struct AssocType {
     pub generics: hir_ty::Generics,
     /// Bounds on the associated type.
     pub bounds: Vec<hir_ty::TraitRef>,
-    /// Default type (if any).
-    pub default_ty: Option<hir_ty::Type>,
+    /// Default type (if any, interned).
+    pub default_ty: Option<type_intern::TyId>,
 }
 
 impl AssocType {
@@ -429,7 +430,7 @@ impl AssocType {
         name: common::SpannedSymbol,
         generics: hir_ty::Generics,
         bounds: Vec<hir_ty::TraitRef>,
-        default_ty: Option<hir_ty::Type>,
+        default_ty: Option<type_intern::TyId>,
     ) -> AssocType {
         AssocType { def_id: def_id, name: name, generics: generics, bounds: bounds, default_ty: default_ty }
     }
@@ -441,8 +442,8 @@ pub struct AssocConst {
     pub def_id: hir_def::DefId,
     /// The name of this constant.
     pub name: common::SpannedSymbol,
-    /// The type of the constant.
-    pub ty: hir_ty::Type,
+    /// The type of the constant (interned).
+    pub ty: type_intern::TyId,
     /// Default value body (if any).
     pub body_id: Option<hir_def::BodyId>,
 }
@@ -452,7 +453,7 @@ impl AssocConst {
     pub fn new(
         def_id: hir_def::DefId,
         name: common::SpannedSymbol,
-        ty: hir_ty::Type,
+        ty: type_intern::TyId,
         body_id: Option<hir_def::BodyId>,
     ) -> AssocConst {
         AssocConst { def_id: def_id, name: name, ty: ty, body_id: body_id }
@@ -492,10 +493,10 @@ pub struct EffectOp {
     pub name: common::SpannedSymbol,
     /// Generic parameters for this operation.
     pub generics: hir_ty::Generics,
-    /// Parameter types.
-    pub param_tys: Vec<hir_ty::Type>,
-    /// Return type.
-    pub return_ty: hir_ty::Type,
+    /// Parameter types (interned).
+    pub param_tys: Vec<type_intern::TyId>,
+    /// Return type (interned).
+    pub return_ty: type_intern::TyId,
     /// Span of the operation.
     pub span: common::Span,
 }
@@ -506,8 +507,8 @@ impl EffectOp {
         def_id: hir_def::DefId,
         name: common::SpannedSymbol,
         generics: hir_ty::Generics,
-        param_tys: Vec<hir_ty::Type>,
-        return_ty: hir_ty::Type,
+        param_tys: Vec<type_intern::TyId>,
+        return_ty: type_intern::TyId,
         span: common::Span,
     ) -> EffectOp {
         EffectOp { def_id, name, generics, param_tys, return_ty, span }
@@ -554,8 +555,8 @@ pub struct HandlerState {
     pub def_id: hir_def::DefId,
     /// The name of this state field.
     pub name: common::SpannedSymbol,
-    /// The type of this state field.
-    pub ty: hir_ty::Type,
+    /// The type of this state field (interned).
+    pub ty: type_intern::TyId,
     /// Whether this state is mutable.
     pub mutable: bool,
     /// Default value body (if any).
@@ -567,7 +568,7 @@ impl HandlerState {
     pub fn new(
         def_id: hir_def::DefId,
         name: common::SpannedSymbol,
-        ty: hir_ty::Type,
+        ty: type_intern::TyId,
         mutable: bool,
         default_body: Option<hir_def::BodyId>,
     ) -> HandlerState {
@@ -669,8 +670,8 @@ pub struct ImplDef {
     pub generics: hir_ty::Generics,
     /// The trait being implemented (None for inherent impls).
     pub trait_ref: Option<hir_ty::TraitRef>,
-    /// The type this impl is for.
-    pub self_ty: hir_ty::Type,
+    /// The type this impl is for (interned).
+    pub self_ty: type_intern::TyId,
     /// Associated items in this impl.
     pub items: Vec<AssocItem>,
 }
@@ -680,7 +681,7 @@ impl ImplDef {
     pub fn new(
         generics: hir_ty::Generics,
         trait_ref: Option<hir_ty::TraitRef>,
-        self_ty: hir_ty::Type,
+        self_ty: type_intern::TyId,
         items: Vec<AssocItem>,
     ) -> ImplDef {
         ImplDef { generics, trait_ref, self_ty, items }
@@ -767,10 +768,10 @@ pub struct ForeignFn {
     pub def_id: hir_def::DefId,
     /// The name of this function.
     pub name: common::SpannedSymbol,
-    /// Parameter types.
-    pub param_tys: Vec<hir_ty::Type>,
-    /// Return type.
-    pub return_ty: hir_ty::Type,
+    /// Parameter types (interned).
+    pub param_tys: Vec<type_intern::TyId>,
+    /// Return type (interned).
+    pub return_ty: type_intern::TyId,
     /// Whether the function is variadic.
     pub is_variadic: bool,
     /// Span of the declaration.
@@ -782,8 +783,8 @@ impl ForeignFn {
     pub fn new(
         def_id: hir_def::DefId,
         name: common::SpannedSymbol,
-        param_tys: Vec<hir_ty::Type>,
-        return_ty: hir_ty::Type,
+        param_tys: Vec<type_intern::TyId>,
+        return_ty: type_intern::TyId,
         is_variadic: bool,
         span: common::Span,
     ) -> ForeignFn {
@@ -797,8 +798,8 @@ pub struct ForeignStatic {
     pub def_id: hir_def::DefId,
     /// The name of this static.
     pub name: common::SpannedSymbol,
-    /// The type of this static.
-    pub ty: hir_ty::Type,
+    /// The type of this static (interned).
+    pub ty: type_intern::TyId,
     /// Whether this static is mutable.
     pub mutable: bool,
     /// Span of the declaration.
@@ -810,7 +811,7 @@ impl ForeignStatic {
     pub fn new(
         def_id: hir_def::DefId,
         name: common::SpannedSymbol,
-        ty: hir_ty::Type,
+        ty: type_intern::TyId,
         mutable: bool,
         span: common::Span,
     ) -> ForeignStatic {

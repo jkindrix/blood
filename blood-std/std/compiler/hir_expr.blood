@@ -11,6 +11,7 @@
 mod common;
 mod hir_def;
 mod hir_ty;
+mod type_intern;
 
 // ============================================================
 // Body
@@ -44,8 +45,8 @@ pub struct Local {
     pub id: hir_def::LocalId,
     /// The name of this local.
     pub name: common::SpannedSymbol,
-    /// The type of this local.
-    pub ty: hir_ty::Type,
+    /// The type of this local (interned).
+    pub ty: type_intern::TyId,
     /// Whether this local is mutable.
     pub mutable: bool,
     /// Span of the declaration.
@@ -57,7 +58,7 @@ impl Local {
     pub fn new(
         id: hir_def::LocalId,
         name: common::SpannedSymbol,
-        ty: hir_ty::Type,
+        ty: type_intern::TyId,
         mutable: bool,
         span: common::Span,
     ) -> Local {
@@ -73,15 +74,15 @@ impl Local {
 pub struct Expr {
     /// The kind of expression.
     pub kind: ExprKind,
-    /// The type of this expression (may be inferred).
-    pub ty: hir_ty::Type,
+    /// The type of this expression (interned, may be inferred).
+    pub ty: type_intern::TyId,
     /// Span of this expression.
     pub span: common::Span,
 }
 
 impl Expr {
     /// Creates a new expression.
-    pub fn new(kind: ExprKind, ty: hir_ty::Type, span: common::Span) -> Expr {
+    pub fn new(kind: ExprKind, ty: type_intern::TyId, span: common::Span) -> Expr {
         Expr { kind: kind, ty: ty, span: span }
     }
 
@@ -89,7 +90,7 @@ impl Expr {
     pub fn error(span: common::Span) -> Expr {
         Expr {
             kind: ExprKind::Error,
-            ty: hir_ty::Type::error(),
+            ty: type_intern::CommonTypes::error(),
             span: span,
         }
     }
@@ -124,7 +125,7 @@ pub enum ExprKind {
         receiver: Box<Expr>,
         method: common::SpannedSymbol,
         method_def: Option<hir_def::DefId>,
-        type_args: Vec<hir_ty::Type>,
+        type_args: Vec<type_intern::TyId>,
         args: Vec<Expr>,
     },
     /// Field access.
@@ -160,7 +161,7 @@ pub enum ExprKind {
     /// A type cast.
     Cast {
         expr: Box<Expr>,
-        ty: hir_ty::Type,
+        ty: type_intern::TyId,
     },
     /// An assignment.
     Assign {
@@ -211,7 +212,7 @@ pub enum ExprKind {
     Closure {
         captures: Vec<Capture>,
         params: Vec<ClosureParam>,
-        return_ty: hir_ty::Type,
+        return_ty: type_intern::TyId,
         effects: hir_ty::EffectRow,
         body: Box<Expr>,
         body_id: hir_def::BodyId,
@@ -400,9 +401,9 @@ pub struct InlineOpHandler {
     /// Parameter local IDs for the operation parameters.
     pub params: Vec<hir_def::LocalId>,
     /// Parameter types for the operation.
-    pub param_types: Vec<hir_ty::Type>,
+    pub param_types: Vec<type_intern::TyId>,
     /// The return type of the operation.
-    pub return_ty: hir_ty::Type,
+    pub return_ty: type_intern::TyId,
     /// The handler body.
     pub body: Expr,
 }
@@ -440,13 +441,13 @@ impl Capture {
 pub struct ClosureParam {
     /// The pattern for this parameter.
     pub pattern: Pattern,
-    /// The type of this parameter.
-    pub ty: hir_ty::Type,
+    /// The type of this parameter (interned).
+    pub ty: type_intern::TyId,
 }
 
 impl ClosureParam {
     /// Creates a new closure parameter.
-    pub fn new(pattern: Pattern, ty: hir_ty::Type) -> ClosureParam {
+    pub fn new(pattern: Pattern, ty: type_intern::TyId) -> ClosureParam {
         ClosureParam { pattern: pattern, ty: ty }
     }
 }
@@ -459,20 +460,20 @@ impl ClosureParam {
 pub struct Pattern {
     /// The kind of pattern.
     pub kind: PatternKind,
-    /// The type of values this pattern matches.
-    pub ty: hir_ty::Type,
+    /// The type of values this pattern matches (interned).
+    pub ty: type_intern::TyId,
     /// Span of this pattern.
     pub span: common::Span,
 }
 
 impl Pattern {
     /// Creates a new pattern.
-    pub fn new(kind: PatternKind, ty: hir_ty::Type, span: common::Span) -> Pattern {
+    pub fn new(kind: PatternKind, ty: type_intern::TyId, span: common::Span) -> Pattern {
         Pattern { kind: kind, ty: ty, span: span }
     }
 
     /// Creates a wildcard pattern.
-    pub fn wildcard(ty: hir_ty::Type, span: common::Span) -> Pattern {
+    pub fn wildcard(ty: type_intern::TyId, span: common::Span) -> Pattern {
         Pattern {
             kind: PatternKind::Wildcard,
             ty: ty,
@@ -599,7 +600,7 @@ pub enum Stmt {
     /// A let statement.
     Let {
         pattern: Pattern,
-        ty: Option<hir_ty::Type>,
+        ty: Option<type_intern::TyId>,
         init: Option<Expr>,
         span: common::Span,
     },

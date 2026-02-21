@@ -142,6 +142,13 @@ impl MirLowerCtx {
         unify::apply_substs(self.get_subst_table(), ty)
     }
 
+    /// Resolves a TyId through the substitution table.
+    /// Converts TyId to Type, applies substitutions, returns resolved Type.
+    pub fn resolve_type_id(self: &Self, ty_id: type_intern::TyId) -> hir_ty::Type {
+        let ty = type_intern::ty_id_to_type(ty_id);
+        unify::apply_substs(self.get_subst_table(), &ty)
+    }
+
     /// Looks up a resolved method DefId by the body's DefId and expression's span start.
     /// Returns the DefId if the type checker recorded a resolution for this body+span.
     ///
@@ -204,6 +211,13 @@ impl MirLowerCtx {
         self.builder.new_temp(type_intern::type_to_ty_id(&resolved), span)
     }
 
+    /// Creates a new temporary from a TyId (HIR interned type).
+    /// Converts TyId to Type, resolves through substitution table, then creates temp.
+    pub fn new_temp_id(self: &mut MirLowerCtx, ty_id: type_intern::TyId, span: common::Span) -> mir_def::MirLocalId {
+        let ty = type_intern::ty_id_to_type(ty_id);
+        self.new_temp(ty, span)
+    }
+
     /// Creates a new user variable and returns its ID.
     /// The type is automatically resolved through the substitution table.
     pub fn new_var(
@@ -215,6 +229,19 @@ impl MirLowerCtx {
     ) -> mir_def::MirLocalId {
         let resolved = unify::apply_substs(self.get_subst_table(), &ty);
         self.builder.new_var(type_intern::type_to_ty_id(&resolved), name, mutable, span)
+    }
+
+    /// Creates a new user variable from a TyId (HIR interned type).
+    /// Converts TyId to Type, resolves through substitution table, then creates var.
+    pub fn new_var_id(
+        self: &mut MirLowerCtx,
+        ty_id: type_intern::TyId,
+        name: String,
+        mutable: bool,
+        span: common::Span,
+    ) -> mir_def::MirLocalId {
+        let ty = type_intern::ty_id_to_type(ty_id);
+        self.new_var(ty, name, mutable, span)
     }
 
     // ======== Block Management ========

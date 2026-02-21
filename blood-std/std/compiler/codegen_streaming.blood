@@ -21,6 +21,7 @@ mod codegen_stmt;
 mod codegen_term;
 mod codegen;
 mod interner;
+mod type_intern;
 
 // ============================================================
 // Streaming Code Generation
@@ -129,7 +130,8 @@ pub fn emit_static_globals_with_names(
                 }
 
                 // Get LLVM type for the static's type (use codegen_stmt for generic arg handling)
-                let llvm_type = codegen_stmt::type_to_llvm_with_ctx(ctx, &static_def.ty);
+                let static_hir_ty = type_intern::ty_id_to_type(static_def.ty);
+                let llvm_type = codegen_stmt::type_to_llvm_with_ctx(ctx, &static_hir_ty);
 
                 // Emit global variable declaration
                 // Format: @name = global <type> zeroinitializer
