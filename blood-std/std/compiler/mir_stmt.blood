@@ -8,6 +8,7 @@ mod hir_def;
 mod hir_ty;
 mod mir_def;
 mod mir_types;
+mod type_intern;
 
 // ============================================================
 // Statement
@@ -190,10 +191,10 @@ pub struct InlineOperation {
     pub op_index: u32,
     /// The name of the operation.
     pub op_name: String,
-    /// Parameter types for this operation.
-    pub param_types: Vec<hir_ty::Type>,
-    /// Return type of this operation.
-    pub return_type: hir_ty::Type,
+    /// Parameter types for this operation (interned).
+    pub param_types: Vec<type_intern::TyId>,
+    /// Return type of this operation (interned).
+    pub return_type: type_intern::TyId,
     /// The body ID for the operation's handler code.
     pub body_id: hir_def::BodyId,
 }
@@ -203,8 +204,8 @@ impl InlineOperation {
     pub fn new(
         op_index: u32,
         op_name: String,
-        param_types: Vec<hir_ty::Type>,
-        return_type: hir_ty::Type,
+        param_types: Vec<type_intern::TyId>,
+        return_type: type_intern::TyId,
         body_id: hir_def::BodyId,
     ) -> InlineOperation {
         InlineOperation {

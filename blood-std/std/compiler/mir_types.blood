@@ -7,6 +7,7 @@ mod common;
 mod hir_def;
 mod hir_ty;
 mod mir_def;
+mod type_intern;
 
 // ============================================================
 // Place - Memory Locations
@@ -183,7 +184,7 @@ pub enum Rvalue {
     /// Type cast.
     Cast {
         operand: Operand,
-        target_ty: hir_ty::Type,
+        target_ty: type_intern::TyId,
     },
     /// Aggregate construction (tuple, struct, array, enum variant).
     Aggregate {
@@ -200,7 +201,7 @@ pub enum Rvalue {
         array_len: u64,
     },
     /// Zero-initialize a value of the given type.
-    ZeroInit(hir_ty::Type),
+    ZeroInit(type_intern::TyId),
 }
 
 // ============================================================
@@ -375,7 +376,7 @@ pub enum AggregateKind {
     /// A tuple.
     Tuple,
     /// An array of the given element type.
-    Array(hir_ty::Type),
+    Array(type_intern::TyId),
     /// An ADT (struct or enum variant).
     Adt {
         /// The DefId of the struct or enum.
@@ -383,7 +384,7 @@ pub enum AggregateKind {
         /// The variant index (0 for structs, variant index for enums).
         variant_idx: u32,
         /// Type arguments for generics.
-        type_args: Vec<hir_ty::Type>,
+        type_args: Vec<type_intern::TyId>,
     },
     /// An extensible record.
     Record,
@@ -395,7 +396,7 @@ pub enum AggregateKind {
     /// A range value.
     Range {
         /// The element type of the range.
-        element: hir_ty::Type,
+        element: type_intern::TyId,
         /// Whether this is an inclusive range.
         inclusive: bool,
     },
@@ -407,22 +408,22 @@ pub enum AggregateKind {
 
 /// A compile-time constant value.
 pub struct Constant {
-    /// The type of this constant.
-    pub ty: hir_ty::Type,
+    /// The type of this constant (interned).
+    pub ty: type_intern::TyId,
     /// The kind of constant.
     pub kind: ConstantKind,
 }
 
 impl Constant {
     /// Creates a new constant.
-    pub fn new(ty: hir_ty::Type, kind: ConstantKind) -> Constant {
+    pub fn new(ty: type_intern::TyId, kind: ConstantKind) -> Constant {
         Constant { ty, kind }
     }
 
     /// Creates a boolean constant.
     pub fn bool_val(b: bool) -> Constant {
         Constant {
-            ty: hir_ty::Type::bool_ty(),
+            ty: type_intern::CommonTypes::bool_ty(),
             kind: ConstantKind::Bool(b),
         }
     }
@@ -430,7 +431,7 @@ impl Constant {
     /// Creates an i32 constant.
     pub fn i32_val(v: i64) -> Constant {
         Constant {
-            ty: hir_ty::Type::i32_ty(),
+            ty: type_intern::CommonTypes::i32_ty(),
             kind: ConstantKind::Int(v as i128),
         }
     }
@@ -438,7 +439,7 @@ impl Constant {
     /// Creates a u64 constant.
     pub fn u64_val(v: u64) -> Constant {
         Constant {
-            ty: hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::U64)),
+            ty: type_intern::CommonTypes::u64_ty(),
             kind: ConstantKind::Uint(v as u128),
         }
     }
@@ -446,7 +447,7 @@ impl Constant {
     /// Creates a usize constant.
     pub fn usize_val(v: u64) -> Constant {
         Constant {
-            ty: hir_ty::Type::usize_ty(),
+            ty: type_intern::CommonTypes::usize_ty(),
             kind: ConstantKind::Uint(v as u128),
         }
     }
@@ -454,18 +455,19 @@ impl Constant {
     /// Creates a unit constant.
     pub fn unit() -> Constant {
         Constant {
-            ty: hir_ty::Type::unit(),
+            ty: type_intern::CommonTypes::unit(),
             kind: ConstantKind::Unit,
         }
     }
 
     /// Creates a string constant.
     pub fn string(s: String) -> Constant {
+        let str_ref_ty = type_intern::type_to_ty_id(&hir_ty::Type::new(hir_ty::TypeKind::Ref {
+            inner: Box::new(hir_ty::Type::str_ty()),
+            mutable: false,
+        }));
         Constant {
-            ty: hir_ty::Type::new(hir_ty::TypeKind::Ref {
-                inner: Box::new(hir_ty::Type::str_ty()),
-                mutable: false,
-            }),
+            ty: str_ref_ty,
             kind: ConstantKind::String(s),
         }
     }

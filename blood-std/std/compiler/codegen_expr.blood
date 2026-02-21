@@ -13,6 +13,7 @@ mod mir_body;
 mod codegen_types;
 mod codegen_ctx;
 mod codegen_size;
+mod type_intern;
 
 // ============================================================
 // Operand Codegen
@@ -50,6 +51,7 @@ pub fn emit_operand_typed(
         }
         &mir_types::Operand::Constant(ref constant) => {
             let val = emit_constant(ctx, constant);
+            let const_hir_ty = type_intern::ty_id_to_type(constant.ty);
             // Check if this FnDef is actually a const or static item
             // (MIR lowering produces FnDef for all path expressions)
             let fn_def_id = match &constant.kind {
@@ -66,7 +68,7 @@ pub fn emit_operand_typed(
             };
             if is_const_item {
                 // Const item: call the const body function to get the value
-                let ret_ty = codegen_size::type_to_llvm_with_ctx(ctx, &constant.ty);
+                let ret_ty = codegen_size::type_to_llvm_with_ctx(ctx, &const_hir_ty);
                 let call_result = ctx.fresh_temp();
                 ctx.write_indent();
                 ctx.write_string(&call_result);
@@ -79,7 +81,7 @@ pub fn emit_operand_typed(
             } else if is_static_item {
                 // Static item: load from the global address
                 // val already has @ prefix from emit_constant's FnDef handler
-                let load_ty = codegen_size::type_to_llvm_with_ctx(ctx, &constant.ty);
+                let load_ty = codegen_size::type_to_llvm_with_ctx(ctx, &const_hir_ty);
                 let load_result = ctx.fresh_temp();
                 ctx.emit_load(load_result.as_str(), load_ty.as_str(), val.as_str());
                 (load_result, load_ty)
@@ -88,7 +90,7 @@ pub fn emit_operand_typed(
                 (val, common::make_string("ptr"))
             } else if match &constant.kind { &mir_types::ConstantKind::Float(_) => true, _ => false } {
                 // Check if f32 or f64 based on the constant's HIR type
-                let float_ty = match &constant.ty.kind {
+                let float_ty = match &const_hir_ty.kind {
                     &hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::F32) => common::make_string("float"),
                     _ => common::make_string("double"),
                 };
@@ -102,14 +104,14 @@ pub fn emit_operand_typed(
                 //
                 // For unsized types (&str, &[T]), the constant is already a
                 // fat pointer { ptr, i64 } and should NOT be wrapped.
-                let is_sized_ref = match &constant.ty.kind {
+                let is_sized_ref = match &const_hir_ty.kind {
                     &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
                         !codegen_types::is_unsized_type(inner.as_ref())
                     }
                     _ => false,
                 };
                 if is_sized_ref {
-                    let inner_ty = match &constant.ty.kind {
+                    let inner_ty = match &const_hir_ty.kind {
                         &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
                             codegen_size::type_to_llvm_with_ctx(ctx, inner.as_ref())
                         }
@@ -125,7 +127,7 @@ pub fn emit_operand_typed(
                     ctx.emit_store(inner_ty.as_str(), val.as_str(), ref_temp.as_str());
                     (ref_temp, common::make_string("ptr"))
                 } else {
-                    let ty = codegen_types::type_to_llvm(&constant.ty);
+                    let ty = codegen_types::type_to_llvm(&const_hir_ty);
                     (val, ty)
                 }
             }
@@ -136,7 +138,7 @@ pub fn emit_operand_typed(
 /// Gets the type of an operand.
 pub fn operand_type(operand: &mir_types::Operand) -> Option<hir_ty::Type> {
     match operand {
-        &mir_types::Operand::Constant(ref constant) => Option::Some(hir_ty::copy_type(&constant.ty)),
+        &mir_types::Operand::Constant(ref constant) => Option::Some(type_intern::ty_id_to_type(constant.ty)),
         &mir_types::Operand::Copy(_) => Option::None,
         &mir_types::Operand::Move(_) => Option::None,
     }
@@ -367,7 +369,10 @@ fn resolve_place_elem_type(
                 resolve_deref_adt_def_id(ctx, place.local, deref_count - 1)
             } else {
                 match ctx.get_local_hir_type(place.local) {
-                    Option::Some(ty) => resolve_adt_def_id_from_hir(ty),
+                    Option::Some(ty_id) => {
+                        let hir_type = type_intern::ty_id_to_type(ty_id);
+                        resolve_adt_def_id_from_hir(&hir_type)
+                    }
                     Option::None => Option::None,
                 }
             };
@@ -401,7 +406,8 @@ fn resolve_place_elem_type(
                                         // Check if this field has an unsubstituted param/infer type.
                                         // If so, resolve the concrete type from the local's type args.
                                         let field_is_param = match &layout.fields[field_idx as usize].hir_type {
-                                            &Option::Some(ref ht) => {
+                                            &Option::Some(ht_id) => {
+                                                let ht = type_intern::ty_id_to_type(ht_id);
                                                 match &ht.kind {
                                                     &hir_ty::TypeKind::Param(_) => true,
                                                     &hir_ty::TypeKind::Infer(_) => true,
@@ -435,14 +441,20 @@ fn resolve_place_elem_type(
         &mir_types::PlaceElem::Index(_) => {
             // After indexing, the type is the container's element type, not the container type
             match ctx.get_local_hir_type(place.local) {
-                Option::Some(hir_type) => resolve_index_element_type(ctx, hir_type),
+                Option::Some(ty_id) => {
+                    let hir_type = type_intern::ty_id_to_type(ty_id);
+                    resolve_index_element_type(ctx, &hir_type)
+                }
                 Option::None => ctx.get_local_type(place.local),
             }
         }
         &mir_types::PlaceElem::ConstantIndex { offset: _, min_length: _, from_end: _ } => {
             // After constant indexing, the type is the container's element type
             match ctx.get_local_hir_type(place.local) {
-                Option::Some(hir_type) => resolve_index_element_type(ctx, hir_type),
+                Option::Some(ty_id) => {
+                    let hir_type = type_intern::ty_id_to_type(ty_id);
+                    resolve_index_element_type(ctx, &hir_type)
+                }
                 Option::None => ctx.get_local_type(place.local),
             }
         }
@@ -470,7 +482,7 @@ fn resolve_place_elem_type(
                             let mut final_ty = inner_ty;
                             let mut applied: usize = 1;
                             while applied < deref_count {
-                                match apply_deref_to_type(&final_ty) {
+                                match apply_deref_to_type(final_ty) {
                                     Option::Some(next) => {
                                         final_ty = next;
                                         applied = applied + 1;
@@ -478,7 +490,8 @@ fn resolve_place_elem_type(
                                     Option::None => { break; }
                                 }
                             }
-                            codegen_size::type_to_llvm_with_ctx(ctx, &final_ty)
+                            let final_hir_ty = type_intern::ty_id_to_type(final_ty);
+                            codegen_size::type_to_llvm_with_ctx(ctx, &final_hir_ty)
                         }
                         Option::None => ctx.get_local_type(place.local),
                     }
@@ -540,10 +553,7 @@ pub fn emit_place_addr(
     let mut current_adt_def_id: Option<u32> = resolve_local_adt_def_id(ctx, place.local);
     // Track the current HIR type for proper indexing element size calculation.
     // Keep the full type including references - projections will unwrap as needed.
-    let mut current_hir_type: Option<hir_ty::Type> = match ctx.get_local_hir_type(place.local) {
-        Option::Some(ty) => Option::Some(hir_ty::copy_type(ty)),
-        Option::None => Option::None,
-    };
+    let mut current_hir_type: Option<type_intern::TyId> = ctx.get_local_hir_type(place.local);
 
     // Region/persistent auto-deref: if the local is heap-allocated via region/persistent
     // and there are projections, load the heap pointer first. The alloca only holds a ptr
@@ -571,7 +581,7 @@ pub fn emit_place_addr(
             current = loaded;
             // Also update HIR type through implicit deref
             current_hir_type = match &current_hir_type {
-                &Option::Some(ref ty) => apply_deref_to_type(ty),
+                &Option::Some(ty_id) => apply_deref_to_type(ty_id),
                 &Option::None => Option::None,
             };
         }
@@ -596,7 +606,7 @@ pub fn emit_place_addr(
                 downcast_variant = Option::None;
                 // Track HIR type through deref
                 current_hir_type = match &current_hir_type {
-                    &Option::Some(ref ty) => apply_deref_to_type(ty),
+                    &Option::Some(ty_id) => apply_deref_to_type(ty_id),
                     &Option::None => Option::None,
                 };
             }
@@ -636,16 +646,10 @@ pub fn emit_place_addr(
 
                 current = result;
                 // After field access, try to preserve the field's HIR type for indexing
-                let new_hir_type: Option<hir_ty::Type> = match &current_adt_def_id {
-                    &Option::Some(def_id) => {
-                        match ctx.lookup_field_hir_type(def_id, idx) {
-                            Option::Some(field_ty) => Option::Some(hir_ty::copy_type(field_ty)),
-                            Option::None => Option::None,
-                        }
-                    }
+                current_hir_type = match &current_adt_def_id {
+                    &Option::Some(def_id) => ctx.lookup_field_hir_type(def_id, idx),
                     &Option::None => Option::None,
                 };
-                current_hir_type = new_hir_type;
                 current_adt_def_id = Option::None;
                 current_base = common::make_string("{ i64 }");
                 // If the field type is an ADT, update current_base and current_adt_def_id
@@ -654,8 +658,9 @@ pub fn emit_place_addr(
                 // is_vec_like_type correctly detects Vec-like types and loads the
                 // data pointer before indexing.
                 match &current_hir_type {
-                    &Option::Some(ref field_ty) => {
-                        match &field_ty.kind {
+                    &Option::Some(ty_id) => {
+                        let field_hir_ty = type_intern::ty_id_to_type(ty_id);
+                        match &field_hir_ty.kind {
                             &hir_ty::TypeKind::Adt { def_id, args: _ } => {
                                 current_base = ctx.adt_llvm_type(def_id.index);
                                 current_adt_def_id = Option::Some(def_id.index);
@@ -691,7 +696,10 @@ pub fn emit_place_addr(
 
                 // Get the element size using tracked HIR type for proper byte-offset calculation
                 let elem_size = match &current_hir_type {
-                    &Option::Some(ref ty) => get_element_size_from_hir(ctx, ty),
+                    &Option::Some(ty_id) => {
+                        let hir_ty = type_intern::ty_id_to_type(ty_id);
+                        get_element_size_from_hir(ctx, &hir_ty)
+                    }
                     &Option::None => get_indexing_element_size(ctx, place.local),
                 };
 
@@ -734,7 +742,10 @@ pub fn emit_place_addr(
 
                 // Get the element size using tracked HIR type for proper byte-offset calculation
                 let elem_size = match &current_hir_type {
-                    &Option::Some(ref ty) => get_element_size_from_hir(ctx, ty),
+                    &Option::Some(ty_id) => {
+                        let hir_ty = type_intern::ty_id_to_type(ty_id);
+                        get_element_size_from_hir(ctx, &hir_ty)
+                    }
                     &Option::None => get_indexing_element_size(ctx, place.local),
                 };
 
@@ -756,7 +767,10 @@ pub fn emit_place_addr(
             &mir_types::PlaceElem::Subslice { from, to: _, from_end: _ } => {
                 // Get the element size using tracked HIR type for proper byte-offset calculation
                 let elem_size = match &current_hir_type {
-                    &Option::Some(ref ty) => get_element_size_from_hir(ctx, ty),
+                    &Option::Some(ty_id) => {
+                        let hir_ty = type_intern::ty_id_to_type(ty_id);
+                        get_element_size_from_hir(ctx, &hir_ty)
+                    }
                     &Option::None => get_indexing_element_size(ctx, place.local),
                 };
 
@@ -872,12 +886,13 @@ fn resolve_generic_field_type(
     field_idx: usize,
 ) -> Option<String> {
     // Get the local's HIR type to find type args
-    let hir_type_ref = match ctx.get_local_hir_type(local) {
-        Option::Some(ty) => ty,
+    let hir_type_id = match ctx.get_local_hir_type(local) {
+        Option::Some(ty_id) => ty_id,
         Option::None => { return Option::None; }
     };
     // Walk through Ref/Ptr to find the ADT
-    let adt_type = unwrap_ref_type(hir_type_ref);
+    let adt_type_id = unwrap_ref_type(hir_type_id);
+    let adt_type = type_intern::ty_id_to_type(adt_type_id);
     let type_args = match &adt_type.kind {
         &hir_ty::TypeKind::Adt { def_id: _, ref args } => args,
         _ => { return Option::None; }
@@ -890,7 +905,8 @@ fn resolve_generic_field_type(
     let mut fi: usize = 0;
     while fi < layout.fields.len() {
         let is_param = match &layout.fields[fi].hir_type {
-            &Option::Some(ref ht) => {
+            &Option::Some(ht_id) => {
+                let ht = type_intern::ty_id_to_type(ht_id);
                 match &ht.kind {
                     &hir_ty::TypeKind::Param(_) => true,
                     &hir_ty::TypeKind::Infer(_) => true,
@@ -920,8 +936,9 @@ fn resolve_local_base_type(
     local: mir_def::MirLocalId,
 ) -> String {
     match ctx.get_local_hir_type(local) {
-        Option::Some(hir_type) => {
-            let result = resolve_base_type_from_hir(ctx, hir_type);
+        Option::Some(ty_id) => {
+            let hir_type = type_intern::ty_id_to_type(ty_id);
+            let result = resolve_base_type_from_hir(ctx, &hir_type);
             // If resolve returned "ptr" (fallback for unknown ADT), the local might
             // be a builtin generic (Option<T>, Result<T,E>) not in the ADT registry.
             // Fall back to the alloca type which was computed correctly.
@@ -989,8 +1006,9 @@ fn resolve_local_adt_def_id(
     local: mir_def::MirLocalId,
 ) -> Option<u32> {
     match ctx.get_local_hir_type(local) {
-        Option::Some(hir_type) => {
-            resolve_adt_def_id_from_hir(hir_type)
+        Option::Some(ty_id) => {
+            let hir_type = type_intern::ty_id_to_type(ty_id);
+            resolve_adt_def_id_from_hir(&hir_type)
         }
         Option::None => Option::None,
     }
@@ -1002,7 +1020,8 @@ fn is_local_ref_type(
     local: mir_def::MirLocalId,
 ) -> bool {
     match ctx.get_local_hir_type(local) {
-        Option::Some(hir_type) => {
+        Option::Some(ty_id) => {
+            let hir_type = type_intern::ty_id_to_type(ty_id);
             match &hir_type.kind {
                 &hir_ty::TypeKind::Ref { inner: _, mutable: _ } => true,
                 &hir_ty::TypeKind::Ptr { inner: _, mutable: _ } => true,
@@ -1029,33 +1048,35 @@ fn resolve_adt_def_id_from_hir(hir_type: &hir_ty::Type) -> Option<u32> {
     }
 }
 
-/// Unwraps a reference type to get the inner type. Returns a copy of the type.
-fn unwrap_ref_type(hir_type: &hir_ty::Type) -> hir_ty::Type {
+/// Unwraps a reference type to get the inner type (TyId version).
+fn unwrap_ref_type(ty_id: type_intern::TyId) -> type_intern::TyId {
+    let hir_type = type_intern::ty_id_to_type(ty_id);
     match &hir_type.kind {
         &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
-            hir_ty::copy_type(inner.as_ref())
+            type_intern::type_to_ty_id(inner.as_ref())
         }
         &hir_ty::TypeKind::Ptr { ref inner, mutable: _ } => {
-            hir_ty::copy_type(inner.as_ref())
+            type_intern::type_to_ty_id(inner.as_ref())
         }
-        _ => hir_ty::copy_type(hir_type),
+        _ => ty_id,
     }
 }
 
-/// Applies a Deref projection to an HIR type, returning the inner type.
-fn apply_deref_to_type(hir_type: &hir_ty::Type) -> Option<hir_ty::Type> {
+/// Applies a Deref projection to an HIR type, returning the inner type (TyId version).
+fn apply_deref_to_type(ty_id: type_intern::TyId) -> Option<type_intern::TyId> {
+    let hir_type = type_intern::ty_id_to_type(ty_id);
     match &hir_type.kind {
         &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
-            Option::Some(hir_ty::copy_type(inner.as_ref()))
+            Option::Some(type_intern::type_to_ty_id(inner.as_ref()))
         }
         &hir_ty::TypeKind::Ptr { ref inner, mutable: _ } => {
-            Option::Some(hir_ty::copy_type(inner.as_ref()))
+            Option::Some(type_intern::type_to_ty_id(inner.as_ref()))
         }
         &hir_ty::TypeKind::Adt { def_id: _, ref args } => {
             // Box<T> deref: *Box<T> -> T
             // Box-like ADTs have exactly 1 type argument and are pointer-sized.
             if args.len() == 1 {
-                Option::Some(hir_ty::copy_type(&args[0]))
+                Option::Some(type_intern::type_to_ty_id(&args[0]))
             } else {
                 Option::None
             }
@@ -1071,9 +1092,10 @@ fn resolve_deref_adt_def_id(
     deref_depth: usize,
 ) -> Option<u32> {
     match ctx.get_local_hir_type(local) {
-        Option::Some(hir_type) => {
+        Option::Some(ty_id) => {
+            let hir_type = type_intern::ty_id_to_type(ty_id);
             // Walk through Ref types
-            let mut ty = hir_type;
+            let mut ty: &hir_ty::Type = &hir_type;
             let mut depth: usize = 0;
             while depth <= deref_depth {
                 match &ty.kind {
@@ -1136,8 +1158,9 @@ fn get_indexing_element_size(
     local: mir_def::MirLocalId,
 ) -> u64 {
     match ctx.get_local_hir_type(local) {
-        Option::Some(hir_type) => {
-            get_element_size_from_hir(ctx, hir_type)
+        Option::Some(ty_id) => {
+            let hir_type = type_intern::ty_id_to_type(ty_id);
+            get_element_size_from_hir(ctx, &hir_type)
         }
         Option::None => 8, // Default to pointer size
     }
@@ -1192,7 +1215,10 @@ fn is_str_index_place(ctx: &mut codegen_ctx::CodegenCtx, place: &mir_types::Plac
     if !has_index { return false; }
     // Check if the local's HIR type is &str or str
     match ctx.get_local_hir_type(place.local) {
-        Option::Some(hir_type) => is_str_hir_type(hir_type),
+        Option::Some(ty_id) => {
+            let hir_type = type_intern::ty_id_to_type(ty_id);
+            is_str_hir_type(&hir_type)
+        }
         Option::None => false,
     }
 }
@@ -1331,7 +1357,8 @@ pub fn emit_rvalue(
         }
         &mir_types::Rvalue::ZeroInit(ref ty) => {
             // Zero-initialize the destination
-            let llvm_ty = ctx.type_to_llvm_with_ctx(ty);
+            let zero_hir_ty = type_intern::ty_id_to_type(*ty);
+            let llvm_ty = ctx.type_to_llvm_with_ctx(&zero_hir_ty);
             // Skip store for unit type {} — it has zero size in LLVM
             if !str_eq(llvm_ty.as_str(), "{}") {
                 let zero = get_zero_value(llvm_ty.as_str());
@@ -1341,27 +1368,28 @@ pub fn emit_rvalue(
         &mir_types::Rvalue::Cast { ref operand, ref target_ty } => {
             // Get source type from operand
             let (val, src_ty) = emit_operand_typed(ctx, operand);
-            let tgt_llvm = ctx.type_to_llvm_with_ctx(target_ty);
+            let target_hir_ty = type_intern::ty_id_to_type(*target_ty);
+            let tgt_llvm = ctx.type_to_llvm_with_ctx(&target_hir_ty);
             // Use the type-aware cast if we have source type info.
             // For Copy/Move operands, look up the local's HIR type so we get
             // correct sign-awareness (zext for unsigned, sext for signed).
             let src_ty_opt = match operand {
-                &mir_types::Operand::Constant(ref constant) => Option::Some(hir_ty::copy_type(&constant.ty)),
+                &mir_types::Operand::Constant(ref constant) => Option::Some(type_intern::ty_id_to_type(constant.ty)),
                 &mir_types::Operand::Copy(ref place) => {
                     match ctx.get_local_hir_type(place.local) {
-                        Option::Some(hir_type) => Option::Some(hir_ty::copy_type(hir_type)),
+                        Option::Some(ty_id) => Option::Some(type_intern::ty_id_to_type(ty_id)),
                         Option::None => Option::None,
                     }
                 }
                 &mir_types::Operand::Move(ref place) => {
                     match ctx.get_local_hir_type(place.local) {
-                        Option::Some(hir_type) => Option::Some(hir_ty::copy_type(hir_type)),
+                        Option::Some(ty_id) => Option::Some(type_intern::ty_id_to_type(ty_id)),
                         Option::None => Option::None,
                     }
                 }
             };
             let result = match src_ty_opt {
-                Option::Some(ref src_type) => emit_cast_with_types(ctx, &val, src_type, target_ty),
+                Option::Some(ref src_type) => emit_cast_with_types(ctx, &val, src_type, &target_hir_ty),
                 Option::None => {
                     // Fallback: construct approximate source type from LLVM type
                     emit_cast_from_llvm_types(ctx, &val, src_ty.as_str(), tgt_llvm.as_str())
@@ -1379,7 +1407,8 @@ pub fn emit_rvalue(
             // to the actual data, not the data itself. Load through the pointer first.
             if place.projection.len() == 0 {
                 match ctx.get_local_hir_type(place.local) {
-                    Option::Some(hir_type) => {
+                    Option::Some(ty_id) => {
+                        let hir_type = type_intern::ty_id_to_type(ty_id);
                         match &hir_type.kind {
                             &hir_ty::TypeKind::Ref { inner: _, mutable: _ } => {
                                 let deref = ctx.fresh_temp();
@@ -1408,7 +1437,8 @@ pub fn emit_rvalue(
             // to the actual enum data, not the enum itself. Load through the pointer first.
             if place.projection.len() == 0 {
                 match ctx.get_local_hir_type(place.local) {
-                    Option::Some(hir_type) => {
+                    Option::Some(ty_id) => {
+                        let hir_type = type_intern::ty_id_to_type(ty_id);
                         match &hir_type.kind {
                             &hir_ty::TypeKind::Ref { inner: _, mutable: _ } => {
                                 let deref = ctx.fresh_temp();
@@ -1428,11 +1458,12 @@ pub fn emit_rvalue(
             let mut found_enum = false;
 
             match ctx.get_local_hir_type(place.local) {
-                Option::Some(hir_type) => {
+                Option::Some(ty_id) => {
+                    let hir_type = type_intern::ty_id_to_type(ty_id);
                     // Extract the enum DefId, unwrapping through Ref/Ptr.
                     // When matching on `&Enum`, the local's type is Ref { inner: Adt },
                     // not Adt directly.
-                    let enum_def = extract_adt_def_id(hir_type);
+                    let enum_def = extract_adt_def_id(&hir_type);
                     match enum_def {
                         Option::Some(def_id) => {
                             match ctx.lookup_enum(def_id.index) {
@@ -2069,7 +2100,8 @@ fn operand_is_signed(
             ctx.is_local_signed(place.local)
         }
         &mir_types::Operand::Constant(ref constant) => {
-            codegen_types::is_signed(&constant.ty)
+            let const_hir_ty = type_intern::ty_id_to_type(constant.ty);
+            codegen_types::is_signed(&const_hir_ty)
         }
     }
 }
@@ -2244,7 +2276,8 @@ fn operand_llvm_type(
             ctx.get_local_type(place.local)
         }
         &mir_types::Operand::Constant(ref constant) => {
-            ctx.type_to_llvm_with_ctx(&constant.ty)
+            let const_hir_ty = type_intern::ty_id_to_type(constant.ty);
+            ctx.type_to_llvm_with_ctx(&const_hir_ty)
         }
     }
 }
@@ -2298,8 +2331,9 @@ fn emit_aggregate_adt(
                 let mut fj: usize = 0;
                 while fj < layout.fields.len() {
                     let is_param = match &layout.fields[fj].hir_type {
-                        &Option::Some(ref hir_ty) => {
-                            match &hir_ty.kind {
+                        &Option::Some(ht_id) => {
+                            let ht = type_intern::ty_id_to_type(ht_id);
+                            match &ht.kind {
                                 &hir_ty::TypeKind::Param(_) => true,
                                 &hir_ty::TypeKind::Infer(_) => true,
                                 _ => false,
@@ -2535,8 +2569,9 @@ fn layout_has_param_fields(layout: &codegen_ctx::StructLayout) -> bool {
     let mut i: usize = 0;
     while i < layout.fields.len() {
         match &layout.fields[i].hir_type {
-            &Option::Some(ref hir_ty) => {
-                match &hir_ty.kind {
+            &Option::Some(ht_id) => {
+                let ht = type_intern::ty_id_to_type(ht_id);
+                match &ht.kind {
                     &hir_ty::TypeKind::Param(_) => { return true; }
                     &hir_ty::TypeKind::Infer(_) => { return true; }
                     _ => {}
@@ -2575,7 +2610,8 @@ fn emit_aggregate(
             }
         }
         &mir_types::AggregateKind::Array(ref elem_ty) => {
-            let mut elem_llvm = ctx.type_to_llvm_with_ctx(elem_ty);
+            let elem_hir_ty = type_intern::ty_id_to_type(*elem_ty);
+            let mut elem_llvm = ctx.type_to_llvm_with_ctx(&elem_hir_ty);
             // If the element type is unresolved (Infer → i64 fallback), use
             // the actual type from the first operand instead.
             if operands.len() > 0 {
@@ -2601,8 +2637,15 @@ fn emit_aggregate(
             }
         }
         &mir_types::AggregateKind::Adt { ref def_id, variant_idx, ref type_args } => {
+            // Convert TyId type_args to hir_ty::Type for emit_aggregate_adt
+            let mut hir_type_args: Vec<hir_ty::Type> = Vec::new();
+            let mut ta: usize = 0;
+            while ta < type_args.len() {
+                hir_type_args.push(type_intern::ty_id_to_type(type_args[ta]));
+                ta = ta + 1;
+            }
             // Look up the ADT in the registry to determine if it's a struct or enum
-            emit_aggregate_adt(ctx, dest, def_id.index, variant_idx, operands, type_args);
+            emit_aggregate_adt(ctx, dest, def_id.index, variant_idx, operands, &hir_type_args);
         }
         &mir_types::AggregateKind::Record => {
             // Extensible records - store fields with actual types
@@ -2640,7 +2683,8 @@ fn emit_aggregate(
         }
         &mir_types::AggregateKind::Range { ref element, inclusive: _ } => {
             // Ranges: store start and end with element type
-            let elem_llvm = ctx.type_to_llvm_with_ctx(element);
+            let elem_hir_ty = type_intern::ty_id_to_type(*element);
+            let elem_llvm = ctx.type_to_llvm_with_ctx(&elem_hir_ty);
             // Range struct is { elem_type, elem_type } (start, end)
             let mut range_llvm = common::make_string("{ ");
             let mut fi: usize = 0;

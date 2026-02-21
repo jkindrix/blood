@@ -14,6 +14,7 @@ mod mir_types;
 mod mir_stmt;
 mod mir_term;
 mod mir_body;
+mod type_intern;
 
 // ============================================================
 // Capture Mode
@@ -242,7 +243,7 @@ pub fn analyze_closure(
             let cap = CaptureInfo::new(
                 mir_def::MirLocalId::new(j as u32),
                 mode,
-                hir_ty::copy_type(&local.ty),
+                type_intern::ty_id_to_type(local.ty),
                 local.span,
             );
             info.add_capture(cap);

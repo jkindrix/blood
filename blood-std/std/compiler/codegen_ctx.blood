@@ -13,6 +13,7 @@ mod mir_term;
 mod mir_body;
 mod codegen_types;
 mod hashmap;
+mod type_intern;
 
 // ============================================================
 // Codegen Name (CgName) — Zero-Allocation Value Names
@@ -42,8 +43,8 @@ pub enum CgName {
 pub struct AdtFieldInfo {
     /// The LLVM type string for this field (e.g., "i32", "ptr", "{ i32, i64 }").
     pub llvm_type: String,
-    /// The HIR type for this field, if known. Used for computing element sizes during indexing.
-    pub hir_type: Option<hir_ty::Type>,
+    /// The HIR type for this field, if known (interned). Used for computing element sizes during indexing.
+    pub hir_type: Option<type_intern::TyId>,
 }
 
 /// Layout of a struct type.
@@ -223,7 +224,7 @@ struct LocalType {
 /// Mapping from a MIR local to its HIR type (for ADT layout lookups).
 struct LocalHirType {
     local_id: u32,
-    hir_type: hir_ty::Type,
+    hir_type: type_intern::TyId,
 }
 
 /// Mapping from a MIR local to its signedness.
@@ -786,15 +787,6 @@ impl CodegenCtx {
     }
 
     /// Generates a new unique label name.
-    pub fn fresh_label(self: &mut CodegenCtx) -> String {
-        let n = self.label_counter;
-        self.label_counter = self.label_counter + 1;
-        let mut name = common::make_string("label");
-        let num_str = codegen_types::format_u64(n as u64);
-        name.push_str(num_str.as_str());
-        name
-    }
-
     /// Generates a new unique temporary CgName. Zero allocation.
     pub fn fresh_temp_cg(self: &mut CodegenCtx) -> CgName {
         let n = self.value_counter;
@@ -820,21 +812,6 @@ impl CodegenCtx {
     }
 
     /// Gets the LLVM name for a MIR local.
-    pub fn local_name(self: &CodegenCtx, local: mir_def::MirLocalId) -> String {
-        // Fast path: hash lookup
-        match self.local_names_hash.get(local.index as u64) {
-            Option::Some(idx) => {
-                return clone_string(&self.local_names[idx as usize].name);
-            }
-            Option::None => {}
-        }
-        // Fallback: generate name from index
-        let mut name = common::make_string("%_");
-        let num_str = codegen_types::format_u64(local.index as u64);
-        name.push_str(num_str.as_str());
-        name
-    }
-
     /// Gets a reference to the local's LLVM name. Zero allocation.
     /// Returns None if the local has no registered name (use local_cg() for %_N fallback).
     pub fn local_name_ref(self: &CodegenCtx, local: mir_def::MirLocalId) -> Option<&String> {
@@ -916,7 +893,7 @@ impl CodegenCtx {
     }
 
     /// Registers a local with its HIR type.
-    pub fn register_local_hir_type(self: &mut CodegenCtx, local: mir_def::MirLocalId, hir_type: hir_ty::Type) {
+    pub fn register_local_hir_type(self: &mut CodegenCtx, local: mir_def::MirLocalId, hir_type: type_intern::TyId) {
         let idx = self.local_hir_types.len() as u32;
         self.local_hir_types.push(LocalHirType {
             local_id: local.index,
@@ -926,11 +903,11 @@ impl CodegenCtx {
     }
 
     /// Gets the HIR type for a MIR local.
-    pub fn get_local_hir_type(self: &CodegenCtx, local: mir_def::MirLocalId) -> Option<&hir_ty::Type> {
+    pub fn get_local_hir_type(self: &CodegenCtx, local: mir_def::MirLocalId) -> Option<type_intern::TyId> {
         // Fast path: hash lookup
         match self.local_hir_types_hash.get(local.index as u64) {
             Option::Some(idx) => {
-                return Option::Some(&self.local_hir_types[idx as usize].hir_type);
+                return Option::Some(self.local_hir_types[idx as usize].hir_type);
             }
             Option::None => {}
         }
@@ -1083,12 +1060,12 @@ impl CodegenCtx {
     }
 
     /// Looks up a struct field's HIR type by struct DefId and field index.
-    pub fn lookup_field_hir_type(self: &CodegenCtx, def_id: u32, field_idx: u32) -> Option<&hir_ty::Type> {
+    pub fn lookup_field_hir_type(self: &CodegenCtx, def_id: u32, field_idx: u32) -> Option<type_intern::TyId> {
         match self.lookup_struct(def_id) {
             Option::Some(layout) => {
                 if (field_idx as usize) < layout.fields.len() {
                     match &layout.fields[field_idx as usize].hir_type {
-                        &Option::Some(ref ty) => Option::Some(ty),
+                        &Option::Some(ty_id) => Option::Some(ty_id),
                         &Option::None => Option::None,
                     }
                 } else {
@@ -1384,70 +1361,8 @@ impl CodegenCtx {
     }
 
     /// Emits a binary operation.
-    pub fn emit_binop(
-        self: &mut CodegenCtx,
-        result: &str,
-        opcode: &str,
-        ty: &str,
-        left: &str,
-        right: &str,
-    ) {
-        self.write_indent();
-        self.write(result);
-        self.write(" = ");
-        self.write(opcode);
-        self.write(" ");
-        self.write(ty);
-        self.write(" ");
-        self.write(left);
-        self.write(", ");
-        self.write(right);
-        self.write("\n");
-    }
 
-    /// Emits an icmp instruction.
-    pub fn emit_icmp(
-        self: &mut CodegenCtx,
-        result: &str,
-        cond: &str,
-        ty: &str,
-        left: &str,
-        right: &str,
-    ) {
-        self.write_indent();
-        self.write(result);
-        self.write(" = icmp ");
-        self.write(cond);
-        self.write(" ");
-        self.write(ty);
-        self.write(" ");
-        self.write(left);
-        self.write(", ");
-        self.write(right);
-        self.write("\n");
-    }
 
-    /// Emits an fcmp instruction.
-    pub fn emit_fcmp(
-        self: &mut CodegenCtx,
-        result: &str,
-        cond: &str,
-        ty: &str,
-        left: &str,
-        right: &str,
-    ) {
-        self.write_indent();
-        self.write(result);
-        self.write(" = fcmp ");
-        self.write(cond);
-        self.write(" ");
-        self.write(ty);
-        self.write(" ");
-        self.write(left);
-        self.write(", ");
-        self.write(right);
-        self.write("\n");
-    }
 
     /// Emits a cast instruction (trunc, zext, sext, fptrunc, fpext, etc).
     pub fn emit_cast(
@@ -1509,44 +1424,7 @@ impl CodegenCtx {
     }
 
     /// Emits a getelementptr instruction.
-    pub fn emit_gep(
-        self: &mut CodegenCtx,
-        result: &str,
-        base_ty: &str,
-        ptr: &str,
-        indices: &Vec<String>,
-    ) {
-        self.write_indent();
-        self.write(result);
-        self.write(" = getelementptr ");
-        self.write(base_ty);
-        self.write(", ptr ");
-        self.write(ptr);
 
-        let mut i: usize = 0;
-        while i < indices.len() {
-            if i == 0 {
-                // First index is always a pointer offset — must be i64
-                self.write(", i64 ");
-            } else {
-                // Subsequent indices: SSA registers (%...) are array indices (i64),
-                // numeric constants are struct field indices (must be i32 per LLVM spec)
-                let ref idx = indices[i];
-                let bytes = idx.as_bytes();
-                if bytes.len() > 0 && bytes[0] == 37 {
-                    // 37 == '%' — SSA register, used for array indexing
-                    self.write(", i64 ");
-                } else {
-                    // Numeric constant — struct field index, must be i32
-                    self.write(", i32 ");
-                }
-            }
-            self.write_string(&indices[i]);
-            i = i + 1;
-        }
-
-        self.write("\n");
-    }
 
     /// Emits a GEP instruction with CgName result and CgName ptr.
     pub fn emit_gep_cg(
@@ -1580,31 +1458,6 @@ impl CodegenCtx {
             i = i + 1;
         }
 
-        self.write("\n");
-    }
-
-    /// Emits a br instruction (unconditional).
-    pub fn emit_br(self: &mut CodegenCtx, label: &str) {
-        self.write_indent();
-        self.write("br label %");
-        self.write(label);
-        self.write("\n");
-    }
-
-    /// Emits a conditional br instruction.
-    pub fn emit_cond_br(
-        self: &mut CodegenCtx,
-        cond: &str,
-        true_label: &str,
-        false_label: &str,
-    ) {
-        self.write_indent();
-        self.write("br i1 ");
-        self.write(cond);
-        self.write(", label %");
-        self.write(true_label);
-        self.write(", label %");
-        self.write(false_label);
         self.write("\n");
     }
 
@@ -2129,13 +1982,9 @@ impl CodegenCtx {
                     let mut fi: usize = 0;
                     while fi < sl.fields.len() {
                         let field = &sl.fields[fi];
-                        let cloned_hir = match &field.hir_type {
-                            &Option::Some(ref ty) => Option::Some(hir_ty::copy_type(ty)),
-                            &Option::None => Option::None,
-                        };
                         cloned_fields.push(AdtFieldInfo {
                             llvm_type: clone_string(&field.llvm_type),
-                            hir_type: cloned_hir,
+                            hir_type: field.hir_type,
                         });
                         fi = fi + 1;
                     }
@@ -2154,13 +2003,9 @@ impl CodegenCtx {
                         let mut vfi: usize = 0;
                         while vfi < variant.fields.len() {
                             let vf = &variant.fields[vfi];
-                            let cloned_hir = match &vf.hir_type {
-                                &Option::Some(ref ty) => Option::Some(hir_ty::copy_type(ty)),
-                                &Option::None => Option::None,
-                            };
                             cloned_vfields.push(AdtFieldInfo {
                                 llvm_type: clone_string(&vf.llvm_type),
-                                hir_type: cloned_hir,
+                                hir_type: vf.hir_type,
                             });
                             vfi = vfi + 1;
                         }

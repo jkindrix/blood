@@ -11,6 +11,7 @@ mod mir_def;
 mod mir_types;
 mod mir_stmt;
 mod mir_term;
+mod type_intern;
 
 // ============================================================
 // MIR Body
@@ -56,8 +57,8 @@ impl MirBody {
     }
 
     /// Returns the type of the return place.
-    pub fn return_ty(self: &MirBody) -> &hir_ty::Type {
-        &self.locals[0].ty
+    pub fn return_ty(self: &MirBody) -> type_intern::TyId {
+        self.locals[0].ty
     }
 
     /// Returns the number of locals (including return place).
@@ -88,7 +89,7 @@ impl MirBody {
     /// Allocates a new local and returns its ID.
     pub fn new_local(
         self: &mut MirBody,
-        ty: hir_ty::Type,
+        ty: type_intern::TyId,
         kind: mir_def::LocalKind,
         name: Option<String>,
         span: common::Span,
@@ -107,14 +108,14 @@ impl MirBody {
     }
 
     /// Allocates a new temporary local.
-    pub fn new_temp(self: &mut MirBody, ty: hir_ty::Type, span: common::Span) -> mir_def::MirLocalId {
+    pub fn new_temp(self: &mut MirBody, ty: type_intern::TyId, span: common::Span) -> mir_def::MirLocalId {
         self.new_local(ty, mir_def::LocalKind::Temp, Option::None, span)
     }
 
     /// Allocates a new user variable local.
     pub fn new_var(
         self: &mut MirBody,
-        ty: hir_ty::Type,
+        ty: type_intern::TyId,
         name: String,
         mutable: bool,
         span: common::Span,
@@ -249,8 +250,8 @@ impl MirBody {
 pub struct MirLocal {
     /// The unique ID of this local.
     pub id: mir_def::MirLocalId,
-    /// The type of this local.
-    pub ty: hir_ty::Type,
+    /// The type of this local (interned).
+    pub ty: type_intern::TyId,
     /// The kind of local (return place, arg, var, temp).
     pub kind: mir_def::LocalKind,
     /// Whether this local is mutable.
@@ -263,7 +264,7 @@ pub struct MirLocal {
 
 impl MirLocal {
     /// Creates a new local with the return place kind.
-    pub fn return_place(ty: hir_ty::Type, span: common::Span) -> MirLocal {
+    pub fn return_place(ty: type_intern::TyId, span: common::Span) -> MirLocal {
         MirLocal {
             id: mir_def::MirLocalId::return_place(),
             ty: ty,
@@ -275,7 +276,7 @@ impl MirLocal {
     }
 
     /// Creates a new argument local.
-    pub fn arg(id: mir_def::MirLocalId, ty: hir_ty::Type, name: String, span: common::Span) -> MirLocal {
+    pub fn arg(id: mir_def::MirLocalId, ty: type_intern::TyId, name: String, span: common::Span) -> MirLocal {
         MirLocal {
             id: id,
             ty: ty,
@@ -287,7 +288,7 @@ impl MirLocal {
     }
 
     /// Creates a new user variable local.
-    pub fn var(id: mir_def::MirLocalId, ty: hir_ty::Type, name: String, mutable: bool, span: common::Span) -> MirLocal {
+    pub fn var(id: mir_def::MirLocalId, ty: type_intern::TyId, name: String, mutable: bool, span: common::Span) -> MirLocal {
         MirLocal {
             id: id,
             ty: ty,
@@ -299,7 +300,7 @@ impl MirLocal {
     }
 
     /// Creates a new temporary local.
-    pub fn temp(id: mir_def::MirLocalId, ty: hir_ty::Type, span: common::Span) -> MirLocal {
+    pub fn temp(id: mir_def::MirLocalId, ty: type_intern::TyId, span: common::Span) -> MirLocal {
         MirLocal {
             id: id,
             ty: ty,
@@ -390,7 +391,7 @@ pub struct MirBodyBuilder {
 
 impl MirBodyBuilder {
     /// Creates a new builder for the given function.
-    pub fn new(def_id: hir_def::DefId, return_ty: hir_ty::Type, span: common::Span) -> MirBodyBuilder {
+    pub fn new(def_id: hir_def::DefId, return_ty: type_intern::TyId, span: common::Span) -> MirBodyBuilder {
         let mut body = MirBody::new(def_id, span);
 
         // Create return place as _0
@@ -407,7 +408,7 @@ impl MirBodyBuilder {
     }
 
     /// Adds a parameter and returns its local ID.
-    pub fn add_param(self: &mut MirBodyBuilder, ty: hir_ty::Type, name: String, span: common::Span) -> mir_def::MirLocalId {
+    pub fn add_param(self: &mut MirBodyBuilder, ty: type_intern::TyId, name: String, span: common::Span) -> mir_def::MirLocalId {
         let id = mir_def::MirLocalId::new(self.body.locals.len() as u32);
         let local = MirLocal::arg(id, ty, name, span);
         self.body.locals.push(local);
@@ -416,12 +417,12 @@ impl MirBodyBuilder {
     }
 
     /// Allocates a new temporary.
-    pub fn new_temp(self: &mut MirBodyBuilder, ty: hir_ty::Type, span: common::Span) -> mir_def::MirLocalId {
+    pub fn new_temp(self: &mut MirBodyBuilder, ty: type_intern::TyId, span: common::Span) -> mir_def::MirLocalId {
         self.body.new_temp(ty, span)
     }
 
     /// Allocates a new user variable.
-    pub fn new_var(self: &mut MirBodyBuilder, ty: hir_ty::Type, name: String, mutable: bool, span: common::Span) -> mir_def::MirLocalId {
+    pub fn new_var(self: &mut MirBodyBuilder, ty: type_intern::TyId, name: String, mutable: bool, span: common::Span) -> mir_def::MirLocalId {
         self.body.new_var(ty, name, mutable, span)
     }
 

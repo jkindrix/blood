@@ -3155,9 +3155,10 @@ fn dump_adt_layouts(ctx: &codegen_ctx::CodegenCtx) {
                     push_u64(&mut fline, field_size);
                     fline.push_str(" bytes)");
                     match &field.hir_type {
-                        &Option::Some(ref ty) => {
+                        &Option::Some(ty_id) => {
+                            let ty = type_intern::ty_id_to_type(ty_id);
                             fline.push_str("  // ");
-                            let type_str = dump_mir::format_type(ty);
+                            let type_str = dump_mir::format_type(&ty);
                             fline.push_str(type_str.as_str());
                         }
                         &Option::None => {}
@@ -3234,9 +3235,10 @@ fn dump_adt_layouts(ctx: &codegen_ctx::CodegenCtx) {
                         push_u64(&mut fline, field_size);
                         fline.push_str(" bytes)");
                         match &field.hir_type {
-                            &Option::Some(ref ty) => {
+                            &Option::Some(ty_id) => {
+                                let ty = type_intern::ty_id_to_type(ty_id);
                                 fline.push_str("  // ");
-                                let type_str = dump_mir::format_type(ty);
+                                let type_str = dump_mir::format_type(&ty);
                                 fline.push_str(type_str.as_str());
                             }
                             &Option::None => {}

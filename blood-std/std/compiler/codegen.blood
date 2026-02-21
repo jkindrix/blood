@@ -21,6 +21,7 @@ mod codegen_stmt;
 mod codegen_term;
 mod mir_escape;
 mod hashmap;
+mod type_intern;
 
 // ============================================================
 // Module Generation
@@ -226,7 +227,8 @@ pub fn generate_function_with_ctx(
         let ty = if ctx.is_handler_state_ptr(local_id) {
             common::make_string("ptr")
         } else {
-            codegen_stmt::type_to_llvm_with_ctx(ctx, &local.ty)
+            let local_hir_ty = type_intern::ty_id_to_type(local.ty);
+            codegen_stmt::type_to_llvm_with_ctx(ctx, &local_hir_ty)
         };
         let mut arg_name = common::make_string("%arg");
         let idx_str = codegen_types::format_u64((p - 1) as u64);
@@ -238,7 +240,8 @@ pub fn generate_function_with_ctx(
     // Get return type (local _0)
     // Normalize {} (empty struct / unit) to void for LLVM function signatures
     let ret_ty_raw = if body.locals.len() > 0 {
-        codegen_stmt::type_to_llvm_with_ctx(ctx, &body.locals[0].ty)
+        let ret_hir_ty = type_intern::ty_id_to_type(body.locals[0].ty);
+        codegen_stmt::type_to_llvm_with_ctx(ctx, &ret_hir_ty)
     } else {
         common::make_string("void")
     };
@@ -274,9 +277,9 @@ pub fn generate_function_with_ctx(
 
     // Jump to first basic block if there are any
     if body.basic_blocks.len() > 0 {
-        let first_label = ctx.block_label(mir_def::BasicBlockId::new(0));
+        let first_label = ctx.block_label_cg(mir_def::BasicBlockId::new(0));
         ctx.indent();
-        ctx.emit_br(first_label.as_str());
+        ctx.emit_br_cg(&first_label);
         ctx.dedent();
     } else {
         ctx.indent();
@@ -468,7 +471,7 @@ fn build_struct_layout_basic(def_id: u32, struct_def: &hir_item::StructDef) -> c
                 // Store HIR type for indexing element size calculation
                 fields.push(codegen_ctx::AdtFieldInfo {
                     llvm_type: field_ty,
-                    hir_type: Option::Some(hir_ty::copy_type(&struct_fields[fi].ty)),
+                    hir_type: Option::Some(type_intern::type_to_ty_id(&struct_fields[fi].ty)),
                 });
                 fi = fi + 1;
             }
@@ -484,7 +487,7 @@ fn build_struct_layout_basic(def_id: u32, struct_def: &hir_item::StructDef) -> c
                 // Store HIR type for indexing element size calculation
                 fields.push(codegen_ctx::AdtFieldInfo {
                     llvm_type: field_ty,
-                    hir_type: Option::Some(hir_ty::copy_type(&tuple_fields[fi])),
+                    hir_type: Option::Some(type_intern::type_to_ty_id(&tuple_fields[fi])),
                 });
                 fi = fi + 1;
             }
@@ -530,7 +533,7 @@ fn build_struct_layout_with_ctx(
                 // Store HIR type for indexing element size calculation
                 fields.push(codegen_ctx::AdtFieldInfo {
                     llvm_type: field_ty,
-                    hir_type: Option::Some(hir_ty::copy_type(&struct_fields[fi].ty)),
+                    hir_type: Option::Some(type_intern::type_to_ty_id(&struct_fields[fi].ty)),
                 });
                 fi = fi + 1;
             }
@@ -546,7 +549,7 @@ fn build_struct_layout_with_ctx(
                 // Store HIR type for indexing element size calculation
                 fields.push(codegen_ctx::AdtFieldInfo {
                     llvm_type: field_ty,
-                    hir_type: Option::Some(hir_ty::copy_type(&tuple_fields[fi])),
+                    hir_type: Option::Some(type_intern::type_to_ty_id(&tuple_fields[fi])),
                 });
                 fi = fi + 1;
             }
@@ -602,7 +605,7 @@ fn build_enum_layout_with_ctx(
                     pt.push_str(field_ty.as_str());
                     fields.push(codegen_ctx::AdtFieldInfo {
                         llvm_type: field_ty,
-                        hir_type: Option::Some(hir_ty::copy_type(&tuple_fields[fi])),
+                        hir_type: Option::Some(type_intern::type_to_ty_id(&tuple_fields[fi])),
                     });
                     fi = fi + 1;
                 }
@@ -623,7 +626,7 @@ fn build_enum_layout_with_ctx(
                     pt.push_str(field_ty.as_str());
                     fields.push(codegen_ctx::AdtFieldInfo {
                         llvm_type: field_ty,
-                        hir_type: Option::Some(hir_ty::copy_type(&record_fields[fi].ty)),
+                        hir_type: Option::Some(type_intern::type_to_ty_id(&record_fields[fi].ty)),
                     });
                     fi = fi + 1;
                 }

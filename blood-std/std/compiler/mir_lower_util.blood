@@ -10,6 +10,7 @@ mod hir_expr;
 mod mir_def;
 mod mir_types;
 mod mir_lower_ctx;
+mod type_intern;
 
 // ============================================================
 // Helper Functions
@@ -122,6 +123,7 @@ pub fn is_place_unop(unary_op: common::UnaryOp) -> bool {
 
 /// Converts an HIR literal to a MIR constant.
 pub fn lower_literal(lit: &hir_expr::Literal, ty: &hir_ty::Type) -> mir_types::Constant {
+    let ty_id = type_intern::type_to_ty_id(ty);
     match &lit.kind {
         &hir_expr::LiteralKind::Int { val, ty: _ } => {
             // Determine if signed or unsigned based on the type
@@ -129,71 +131,71 @@ pub fn lower_literal(lit: &hir_expr::Literal, ty: &hir_ty::Type) -> mir_types::C
                 &hir_ty::TypeKind::Primitive(ref prim) => {
                     match prim {
                         &hir_ty::PrimitiveTy::I8 => mir_types::Constant::new(
-                            ty.clone(),
+                            ty_id,
                             mir_types::ConstantKind::Int(val as i128),
                         ),
                         &hir_ty::PrimitiveTy::I16 => mir_types::Constant::new(
-                            ty.clone(),
+                            ty_id,
                             mir_types::ConstantKind::Int(val as i128),
                         ),
                         &hir_ty::PrimitiveTy::I32 => mir_types::Constant::new(
-                            ty.clone(),
+                            ty_id,
                             mir_types::ConstantKind::Int(val as i128),
                         ),
                         &hir_ty::PrimitiveTy::I64 => mir_types::Constant::new(
-                            ty.clone(),
+                            ty_id,
                             mir_types::ConstantKind::Int(val as i128),
                         ),
                         &hir_ty::PrimitiveTy::I128 => mir_types::Constant::new(
-                            ty.clone(),
+                            ty_id,
                             mir_types::ConstantKind::Int(val as i128),
                         ),
                         &hir_ty::PrimitiveTy::Isize => mir_types::Constant::new(
-                            ty.clone(),
+                            ty_id,
                             mir_types::ConstantKind::Int(val as i128),
                         ),
                         &hir_ty::PrimitiveTy::U8 => mir_types::Constant::new(
-                            ty.clone(),
+                            ty_id,
                             mir_types::ConstantKind::Uint(val),
                         ),
                         &hir_ty::PrimitiveTy::U16 => mir_types::Constant::new(
-                            ty.clone(),
+                            ty_id,
                             mir_types::ConstantKind::Uint(val),
                         ),
                         &hir_ty::PrimitiveTy::U32 => mir_types::Constant::new(
-                            ty.clone(),
+                            ty_id,
                             mir_types::ConstantKind::Uint(val),
                         ),
                         &hir_ty::PrimitiveTy::U64 => mir_types::Constant::new(
-                            ty.clone(),
+                            ty_id,
                             mir_types::ConstantKind::Uint(val),
                         ),
                         &hir_ty::PrimitiveTy::U128 => mir_types::Constant::new(
-                            ty.clone(),
+                            ty_id,
                             mir_types::ConstantKind::Uint(val),
                         ),
                         &hir_ty::PrimitiveTy::Usize => mir_types::Constant::new(
-                            ty.clone(),
+                            ty_id,
                             mir_types::ConstantKind::Uint(val),
                         ),
                         &hir_ty::PrimitiveTy::Bool => mir_types::Constant::new(
-                            ty.clone(),
+                            ty_id,
                             mir_types::ConstantKind::Bool(val != 0),
                         ),
                         &hir_ty::PrimitiveTy::Char => mir_types::Constant::new(
-                            ty.clone(),
+                            ty_id,
                             mir_types::ConstantKind::Uint(val),
                         ),
                         &hir_ty::PrimitiveTy::F32 => mir_types::Constant::new(
-                            ty.clone(),
+                            ty_id,
                             mir_types::ConstantKind::Float(val as u64),
                         ),
                         &hir_ty::PrimitiveTy::F64 => mir_types::Constant::new(
-                            ty.clone(),
+                            ty_id,
                             mir_types::ConstantKind::Float(val as u64),
                         ),
                         &hir_ty::PrimitiveTy::Str => mir_types::Constant::new(
-                            ty.clone(),
+                            ty_id,
                             mir_types::ConstantKind::Int(val as i128),
                         ),
                     }
@@ -201,26 +203,26 @@ pub fn lower_literal(lit: &hir_expr::Literal, ty: &hir_ty::Type) -> mir_types::C
                 _ => {
                     // Default to signed interpretation
                     mir_types::Constant::new(
-                        ty.clone(),
+                        ty_id,
                         mir_types::ConstantKind::Int(val as i128),
                     )
                 }
             }
         }
         &hir_expr::LiteralKind::Float { bits, ty: _ } => {
-            mir_types::Constant::new(ty.clone(), mir_types::ConstantKind::Float(bits))
+            mir_types::Constant::new(ty_id, mir_types::ConstantKind::Float(bits))
         }
         &hir_expr::LiteralKind::Str(ref s) => {
-            mir_types::Constant::new(ty.clone(), mir_types::ConstantKind::String(clone_string(s)))
+            mir_types::Constant::new(ty_id, mir_types::ConstantKind::String(clone_string(s)))
         }
         &hir_expr::LiteralKind::ByteStr(ref bytes) => {
-            mir_types::Constant::new(ty.clone(), mir_types::ConstantKind::ByteString(clone_bytes(bytes)))
+            mir_types::Constant::new(ty_id, mir_types::ConstantKind::ByteString(clone_bytes(bytes)))
         }
         &hir_expr::LiteralKind::Char(c) => {
-            mir_types::Constant::new(ty.clone(), mir_types::ConstantKind::Char(c))
+            mir_types::Constant::new(ty_id, mir_types::ConstantKind::Char(c))
         }
         &hir_expr::LiteralKind::Bool(b) => {
-            mir_types::Constant::new(ty.clone(), mir_types::ConstantKind::Bool(b))
+            mir_types::Constant::new(ty_id, mir_types::ConstantKind::Bool(b))
         }
     }
 }
@@ -393,7 +395,7 @@ fn copy_operand(operand: &mir_types::Operand) -> mir_types::Operand {
 /// Creates a copy of a Constant.
 fn copy_constant(c: &mir_types::Constant) -> mir_types::Constant {
     mir_types::Constant {
-        ty: hir_ty::copy_type(&c.ty),
+        ty: c.ty,
         kind: copy_constant_kind(&c.kind),
     }
 }

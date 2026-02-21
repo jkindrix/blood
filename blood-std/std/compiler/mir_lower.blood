@@ -87,7 +87,7 @@ fn lower_params_from_body(
         // Create MIR local for the parameter using add_param which
         // correctly increments param_count (new_local does not).
         let mir_local = ctx.builder.add_param(
-            resolved_ty,
+            type_intern::type_to_ty_id(&resolved_ty),
             String::new(),
             local.span,
         );
@@ -142,8 +142,9 @@ fn lower_closure_params(
     while i < params.len() {
         let param = &params[i];
         // Use add_param to correctly increment param_count
+        let resolved_ty = ctx.resolve_type(&param.ty);
         let mir_local = ctx.builder.add_param(
-            param.ty.clone(),
+            type_intern::type_to_ty_id(&resolved_ty),
             String::new(),
             span,
         );
@@ -279,7 +280,7 @@ pub fn local_count(body: &mir_body::MirBody) -> usize {
 /// The return type is stored in the first local (_0).
 pub fn get_return_type(body: &mir_body::MirBody) -> hir_ty::Type {
     if body.locals.len() > 0 {
-        body.locals[0].ty.clone()
+        type_intern::ty_id_to_type(body.locals[0].ty)
     } else {
         hir_ty::Type::unit()
     }

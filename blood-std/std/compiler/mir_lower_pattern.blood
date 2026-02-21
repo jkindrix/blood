@@ -14,6 +14,7 @@ mod mir_term;
 mod mir_body;
 mod mir_lower_ctx;
 mod mir_lower_util;
+mod type_intern;
 
 // ============================================================
 // Irrefutable Pattern Lowering
@@ -372,10 +373,10 @@ pub fn pattern_test(
                         &hir_expr::PatternKind::Literal(ref lit) => {
                             mir_lower_util::lower_literal(lit, &pattern.ty)
                         }
-                        _ => mir_types::Constant::new(hir_ty::copy_type(&pattern.ty), mir_types::ConstantKind::Int(0)),
+                        _ => mir_types::Constant::new(type_intern::type_to_ty_id(&pattern.ty), mir_types::ConstantKind::Int(0)),
                     }
                 }
-                &Option::None => mir_types::Constant::new(hir_ty::copy_type(&pattern.ty), mir_types::ConstantKind::Int(0)),
+                &Option::None => mir_types::Constant::new(type_intern::type_to_ty_id(&pattern.ty), mir_types::ConstantKind::Int(0)),
             };
             let start_operand = mir_types::Operand::Constant(start_const);
 
@@ -387,10 +388,10 @@ pub fn pattern_test(
                         &hir_expr::PatternKind::Literal(ref lit) => {
                             mir_lower_util::lower_literal(lit, &pattern.ty)
                         }
-                        _ => mir_types::Constant::new(hir_ty::copy_type(&pattern.ty), mir_types::ConstantKind::Int(0)),
+                        _ => mir_types::Constant::new(type_intern::type_to_ty_id(&pattern.ty), mir_types::ConstantKind::Int(0)),
                     }
                 }
-                &Option::None => mir_types::Constant::new(hir_ty::copy_type(&pattern.ty), mir_types::ConstantKind::Int(0)),
+                &Option::None => mir_types::Constant::new(type_intern::type_to_ty_id(&pattern.ty), mir_types::ConstantKind::Int(0)),
             };
             let end_operand = mir_types::Operand::Constant(end_const);
 

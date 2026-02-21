@@ -15,6 +15,7 @@ mod mir_body;
 mod mir_lower_ctx;
 mod mir_lower_util;
 mod mir_lower_pattern;
+mod type_intern;
 
 // ============================================================
 // Cross-Module Helper Functions
@@ -225,7 +226,7 @@ pub fn lower_expr(
                 Option::Some(place) => {
                     ctx.emit_assign(
                         place,
-                        mir_types::Rvalue::ZeroInit(resolved_ty),
+                        mir_types::Rvalue::ZeroInit(type_intern::type_to_ty_id(&resolved_ty)),
                         expr.span,
                     );
                 }
@@ -236,9 +237,10 @@ pub fn lower_expr(
             // Error expression: produce undefined value
             match dest.as_place() {
                 Option::Some(place) => {
+                    let err_ty = ctx.resolve_type(&expr.ty);
                     ctx.emit_assign(
                         place,
-                        mir_types::Rvalue::ZeroInit(ctx.resolve_type(&expr.ty)),
+                        mir_types::Rvalue::ZeroInit(type_intern::type_to_ty_id(&err_ty)),
                         expr.span,
                     );
                 }
@@ -290,7 +292,7 @@ fn lower_local_expr(
                 }
                 Option::None => {
                     // Local not found - error recovery
-                    ctx.emit_assign(place, mir_types::Rvalue::ZeroInit(ty.clone()), span);
+                    ctx.emit_assign(place, mir_types::Rvalue::ZeroInit(type_intern::type_to_ty_id(ty)), span);
                 }
             }
         }
@@ -339,7 +341,7 @@ fn lower_path_expr(
             } else {
                 // Path is a function, constant, static, or variant constructor
                 let constant = mir_types::Constant::new(
-                    ty.clone(),
+                    type_intern::type_to_ty_id(ty),
                     mir_types::ConstantKind::FnDef(path.def_id),
                 );
                 ctx.emit_assign(
@@ -370,13 +372,13 @@ fn is_adt_type(ty: &hir_ty::Type) -> bool {
 }
 
 /// Extracts type args from an ADT type, returning an empty Vec for non-ADTs.
-fn extract_type_args(ty: &hir_ty::Type) -> Vec<hir_ty::Type> {
+fn extract_type_args(ty: &hir_ty::Type) -> Vec<type_intern::TyId> {
     match &ty.kind {
         &hir_ty::TypeKind::Adt { def_id: _, ref args } => {
-            let mut result: Vec<hir_ty::Type> = Vec::new();
+            let mut result: Vec<type_intern::TyId> = Vec::new();
             let mut i: usize = 0;
             while i < args.len() {
-                result.push(hir_ty::copy_type(&args[i]));
+                result.push(type_intern::type_to_ty_id(&args[i]));
                 i = i + 1;
             }
             result
@@ -710,7 +712,7 @@ fn lower_call_expr(
         &hir_expr::ExprKind::Path(ref path) => {
             // Direct function reference — emit as FnDef constant
             mir_types::Operand::Constant(mir_types::Constant::new(
-                callee.ty.clone(),
+                type_intern::type_to_ty_id(&callee.ty),
                 mir_types::ConstantKind::FnDef(path.def_id),
             ))
         }
@@ -780,7 +782,8 @@ fn lower_method_call_expr(
     // Thin refs store just a ptr in the alloca — we must Deref to avoid &&T.
     // Fat refs (&str, &[T]) store { ptr, i64 } in the alloca — no Deref needed,
     // because &alloca already points to the full fat pointer struct.
-    let local_is_thin_ref = match &ctx.builder.body_ref().get_local(recv_place.local).ty.kind {
+    let local_ty_resolved = type_intern::ty_id_to_type(ctx.builder.body_ref().get_local(recv_place.local).ty);
+    let local_is_thin_ref = match &local_ty_resolved.kind {
         &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
             let inner_type = inner.as_ref();
             match &inner_type.kind {
@@ -833,7 +836,7 @@ fn lower_method_call_expr(
     let func_operand = match method_def {
         Option::Some(def_id) => {
             mir_types::Operand::Constant(mir_types::Constant::new(
-                hir_ty::Type::error(),
+                type_intern::type_to_ty_id(&hir_ty::Type::error()),
                 mir_types::ConstantKind::FnDef(def_id),
             ))
         }
@@ -842,7 +845,7 @@ fn lower_method_call_expr(
             match ctx.lookup_method_def(span.start) {
                 Option::Some(resolved_def) => {
                     mir_types::Operand::Constant(mir_types::Constant::new(
-                        hir_ty::Type::error(),
+                        type_intern::type_to_ty_id(&hir_ty::Type::error()),
                         mir_types::ConstantKind::FnDef(resolved_def),
                     ))
                 }
@@ -850,7 +853,7 @@ fn lower_method_call_expr(
                     // Truly unresolved - create a dummy DefId to produce a linker error
                     // instead of a cryptic runtime crash from calling undef
                     mir_types::Operand::Constant(mir_types::Constant::new(
-                        hir_ty::Type::error(),
+                        type_intern::type_to_ty_id(&hir_ty::Type::error()),
                         mir_types::ConstantKind::FnDef(hir_def::DefId::new(0xFFFFFFFE)),
                     ))
                 }
@@ -1036,7 +1039,7 @@ fn lower_array_expr(
             lower_expr(ctx, val.as_ref(), mir_lower_ctx::destination_local(val_temp));
 
             let mut operands = Vec::new();
-            let elem_ty = val.as_ref().ty.clone();
+            let elem_ty = type_intern::type_to_ty_id(&val.as_ref().ty);
             let mut i: u64 = 0;
             while i < count {
                 operands.push(mir_types::Operand::Copy(mir_types::Place::local(val_temp)));
@@ -1060,10 +1063,10 @@ fn lower_array_expr(
     }
 }
 
-fn get_array_element_type(ty: &hir_ty::Type) -> hir_ty::Type {
+fn get_array_element_type(ty: &hir_ty::Type) -> type_intern::TyId {
     match &ty.kind {
-        &hir_ty::TypeKind::Array { ref element, size: _ } => element.as_ref().clone(),
-        _ => hir_ty::Type::error(),
+        &hir_ty::TypeKind::Array { ref element, size: _ } => type_intern::type_to_ty_id(element.as_ref()),
+        _ => type_intern::type_to_ty_id(&hir_ty::Type::error()),
     }
 }
 
@@ -1136,10 +1139,10 @@ fn lower_struct_expr(
                     let resolved_ty = ctx.resolve_type(ty);
                     let type_args = match &resolved_ty.kind {
                         &hir_ty::TypeKind::Adt { def_id: _, ref args } => {
-                            let mut cloned: Vec<hir_ty::Type> = Vec::new();
+                            let mut cloned: Vec<type_intern::TyId> = Vec::new();
                             let mut ai: usize = 0;
                             while ai < args.len() {
-                                cloned.push(hir_ty::copy_type(&args[ai]));
+                                cloned.push(type_intern::type_to_ty_id(&args[ai]));
                                 ai = ai + 1;
                             }
                             cloned
@@ -1258,10 +1261,10 @@ fn lower_range_expr(
     }
 }
 
-fn get_range_element_type(_ty: &hir_ty::Type) -> hir_ty::Type {
+fn get_range_element_type(_ty: &hir_ty::Type) -> type_intern::TyId {
     // Range types encode their element type in their ADT
     // For simplicity, default to usize
-    hir_ty::Type::usize_ty()
+    type_intern::CommonTypes::usize_ty()
 }
 
 fn lower_cast_expr(
@@ -1284,7 +1287,7 @@ fn lower_cast_expr(
                 place,
                 mir_types::Rvalue::Cast {
                     operand: operand,
-                    target_ty: target_ty.clone(),
+                    target_ty: type_intern::type_to_ty_id(target_ty),
                 },
                 span,
             );

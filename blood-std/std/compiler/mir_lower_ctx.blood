@@ -15,6 +15,7 @@ mod mir_term;
 mod mir_body;
 mod unify;
 mod hashmap;
+mod type_intern;
 
 // ============================================================
 // MIR Lowering Context
@@ -92,8 +93,9 @@ impl MirLowerCtx {
             i = i + 1;
         }
 
+        let return_ty_id = type_intern::type_to_ty_id(&return_ty);
         MirLowerCtx {
-            builder: mir_body::MirBodyBuilder::new(def_id, return_ty, span),
+            builder: mir_body::MirBodyBuilder::new(def_id, return_ty_id, span),
             local_map: Vec::new(),
             loop_stack: Vec::new(),
             temp_counter: 0,
@@ -199,7 +201,7 @@ impl MirLowerCtx {
     pub fn new_temp(self: &mut MirLowerCtx, ty: hir_ty::Type, span: common::Span) -> mir_def::MirLocalId {
         self.temp_counter = self.temp_counter + 1;
         let resolved = unify::apply_substs(self.get_subst_table(), &ty);
-        self.builder.new_temp(resolved, span)
+        self.builder.new_temp(type_intern::type_to_ty_id(&resolved), span)
     }
 
     /// Creates a new user variable and returns its ID.
@@ -212,7 +214,7 @@ impl MirLowerCtx {
         span: common::Span,
     ) -> mir_def::MirLocalId {
         let resolved = unify::apply_substs(self.get_subst_table(), &ty);
-        self.builder.new_var(resolved, name, mutable, span)
+        self.builder.new_var(type_intern::type_to_ty_id(&resolved), name, mutable, span)
     }
 
     // ======== Block Management ========

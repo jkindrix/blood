@@ -14,6 +14,7 @@ mod codegen_types;
 mod codegen_ctx;
 mod codegen_expr;
 mod dump_mir;
+mod type_intern;
 
 // ============================================================
 // Terminator Codegen
@@ -1259,8 +1260,9 @@ fn emit_vec_new_call(
 
     // Get element size from the destination's HIR type (Vec<T>)
     let elem_size: u64 = match ctx.get_local_hir_type(destination.local) {
-        Option::Some(hir_ty) => {
-            match extract_vec_element_type(hir_ty) {
+        Option::Some(ty_id) => {
+            let hir_ty = type_intern::ty_id_to_type(ty_id);
+            match extract_vec_element_type(&hir_ty) {
                 Option::Some(elem_ty) => codegen_stmt::type_size_with_ctx(ctx, &elem_ty),
                 Option::None => 8,
             }
@@ -1323,18 +1325,25 @@ fn emit_vec_push_call(
     let elem_size: u64 = match &args[1] {
         &mir_types::Operand::Copy(ref place) => {
             match ctx.get_local_hir_type(place.local) {
-                Option::Some(hir_ty) => codegen_stmt::type_size_with_ctx(ctx, hir_ty),
+                Option::Some(ty_id) => {
+                    let hir_ty = type_intern::ty_id_to_type(ty_id);
+                    codegen_stmt::type_size_with_ctx(ctx, &hir_ty)
+                }
                 Option::None => 8,
             }
         }
         &mir_types::Operand::Move(ref place) => {
             match ctx.get_local_hir_type(place.local) {
-                Option::Some(hir_ty) => codegen_stmt::type_size_with_ctx(ctx, hir_ty),
+                Option::Some(ty_id) => {
+                    let hir_ty = type_intern::ty_id_to_type(ty_id);
+                    codegen_stmt::type_size_with_ctx(ctx, &hir_ty)
+                }
                 Option::None => 8,
             }
         }
         &mir_types::Operand::Constant(ref c) => {
-            codegen_stmt::type_size_with_ctx(ctx, &c.ty)
+            let c_hir_ty = type_intern::ty_id_to_type(c.ty);
+            codegen_stmt::type_size_with_ctx(ctx, &c_hir_ty)
         }
     };
 
@@ -1420,9 +1429,10 @@ fn emit_vec_pop_call(
     // Get element size from destination's HIR type (Option<T>)
     // pop returns Option<T>, so we need to extract T's size
     let elem_size: u64 = match ctx.get_local_hir_type(destination.local) {
-        Option::Some(hir_ty) => {
+        Option::Some(ty_id) => {
             // Destination is Option<T>, extract T's size
-            match extract_vec_element_type(hir_ty) {
+            let hir_ty = type_intern::ty_id_to_type(ty_id);
+            match extract_vec_element_type(&hir_ty) {
                 Option::Some(elem_ty) => codegen_stmt::type_size_with_ctx(ctx, &elem_ty),
                 Option::None => 8,
             }
@@ -2037,18 +2047,25 @@ fn emit_box_new_call(
     let val_size: u64 = match &args[0] {
         &mir_types::Operand::Copy(ref place) => {
             match ctx.get_local_hir_type(place.local) {
-                Option::Some(hir_ty) => codegen_stmt::type_size_with_ctx(ctx, hir_ty),
+                Option::Some(ty_id) => {
+                    let hir_ty = type_intern::ty_id_to_type(ty_id);
+                    codegen_stmt::type_size_with_ctx(ctx, &hir_ty)
+                }
                 Option::None => 8,
             }
         }
         &mir_types::Operand::Move(ref place) => {
             match ctx.get_local_hir_type(place.local) {
-                Option::Some(hir_ty) => codegen_stmt::type_size_with_ctx(ctx, hir_ty),
+                Option::Some(ty_id) => {
+                    let hir_ty = type_intern::ty_id_to_type(ty_id);
+                    codegen_stmt::type_size_with_ctx(ctx, &hir_ty)
+                }
                 Option::None => 8,
             }
         }
         &mir_types::Operand::Constant(ref c) => {
-            codegen_stmt::type_size_with_ctx(ctx, &c.ty)
+            let c_hir_ty = type_intern::ty_id_to_type(c.ty);
+            codegen_stmt::type_size_with_ctx(ctx, &c_hir_ty)
         }
     };
 
@@ -2181,7 +2198,10 @@ fn emit_option_unwrap_call(
 
     // Get element size from destination type
     let elem_size: u64 = match ctx.get_local_hir_type(destination.local) {
-        Option::Some(hir_ty) => codegen_stmt::type_size_with_ctx(ctx, hir_ty),
+        Option::Some(ty_id) => {
+            let hir_ty = type_intern::ty_id_to_type(ty_id);
+            codegen_stmt::type_size_with_ctx(ctx, &hir_ty)
+        }
         Option::None => 8,
     };
 
@@ -2227,8 +2247,9 @@ fn emit_option_as_ref_call(
 
     // Get element size from destination type (Option<&T>)
     let elem_size: u64 = match ctx.get_local_hir_type(destination.local) {
-        Option::Some(hir_ty) => {
-            match extract_vec_element_type(hir_ty) {
+        Option::Some(ty_id) => {
+            let hir_ty = type_intern::ty_id_to_type(ty_id);
+            match extract_vec_element_type(&hir_ty) {
                 Option::Some(inner) => codegen_stmt::type_size_with_ctx(ctx, &inner),
                 Option::None => 8,
             }
