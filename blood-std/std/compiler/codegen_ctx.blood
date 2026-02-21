@@ -1134,14 +1134,6 @@ impl CodegenCtx {
 
     // ======== Block Labels ========
 
-    /// Gets the LLVM label for a basic block.
-    pub fn block_label(self: &CodegenCtx, block: mir_def::BasicBlockId) -> String {
-        let mut name = common::make_string("bb");
-        let num_str = codegen_types::format_u64(block.index as u64);
-        name.push_str(num_str.as_str());
-        name
-    }
-
     // ======== Function Management ========
 
     /// Begins generating a new function.
@@ -1317,26 +1309,6 @@ impl CodegenCtx {
         self.write("}\n\n");
     }
 
-    /// Emits an alloca instruction.
-    pub fn emit_alloca(self: &mut CodegenCtx, result: &str, ty: &str) {
-        self.write_indent();
-        self.write(result);
-        self.write(" = alloca ");
-        self.write(ty);
-        self.write("\n");
-    }
-
-    /// Emits a load instruction.
-    pub fn emit_load(self: &mut CodegenCtx, result: &str, ty: &str, ptr: &str) {
-        self.write_indent();
-        self.write(result);
-        self.write(" = load ");
-        self.write(ty);
-        self.write(", ptr ");
-        self.write(ptr);
-        self.write("\n");
-    }
-
     /// Emits a store instruction.
     pub fn emit_store(self: &mut CodegenCtx, ty: &str, val: &str, ptr: &str) {
         self.write_indent();
@@ -1347,69 +1319,6 @@ impl CodegenCtx {
         self.write(", ptr ");
         self.write(ptr);
         self.write("\n");
-    }
-
-    /// Emits a binary operation.
-
-
-
-    /// Emits a cast instruction (trunc, zext, sext, fptrunc, fpext, etc).
-    pub fn emit_cast(
-        self: &mut CodegenCtx,
-        result: &str,
-        opcode: &str,
-        src_ty: &str,
-        val: &str,
-        tgt_ty: &str,
-    ) {
-        self.write_indent();
-        self.write(result);
-        self.write(" = ");
-        self.write(opcode);
-        self.write(" ");
-        self.write(src_ty);
-        self.write(" ");
-        self.write(val);
-        self.write(" to ");
-        self.write(tgt_ty);
-        self.write("\n");
-    }
-
-    /// Emits a call instruction.
-    pub fn emit_call(
-        self: &mut CodegenCtx,
-        result: Option<&str>,
-        return_ty: &str,
-        func: &str,
-        args: &Vec<(String, String)>,
-    ) {
-        self.write_indent();
-        match result {
-            Option::Some(r) => {
-                self.write(r);
-                self.write(" = ");
-            }
-            Option::None => {}
-        }
-        self.write("call ");
-        self.write(return_ty);
-        self.write(" ");
-        self.write(func);
-        self.write("(");
-
-        let mut i: usize = 0;
-        while i < args.len() {
-            if i > 0 {
-                self.write(", ");
-            }
-            let arg = &args[i];
-            self.write_string(&arg.0);
-            self.write(" ");
-            self.write_string(&arg.1);
-            i = i + 1;
-        }
-
-        self.write(")\n");
     }
 
     /// Emits a getelementptr instruction.
@@ -1477,41 +1386,6 @@ impl CodegenCtx {
         self.write("unreachable\n");
     }
 
-    /// Emits a switch instruction.
-    pub fn emit_switch(
-        self: &mut CodegenCtx,
-        ty: &str,
-        val: &str,
-        default_label: &str,
-        cases: &Vec<(String, String)>,
-    ) {
-        self.write_indent();
-        self.write("switch ");
-        self.write(ty);
-        self.write(" ");
-        self.write(val);
-        self.write(", label %");
-        self.write(default_label);
-        self.write(" [\n");
-
-        self.indent();
-        let mut i: usize = 0;
-        while i < cases.len() {
-            let case_val = &cases[i];
-            self.write_indent();
-            self.write(ty);
-            self.write(" ");
-            self.write_string(&case_val.0);
-            self.write(", label %");
-            self.write_string(&case_val.1);
-            self.write("\n");
-            i = i + 1;
-        }
-        self.dedent();
-
-        self.write_indent();
-        self.write("]\n");
-    }
     // ======== CgName-Based Emit Methods (Zero Allocation) ========
 
     /// Emits an alloca instruction using CgName for result.
@@ -1908,6 +1782,19 @@ impl CodegenCtx {
         self.write(ty);
         self.write(" ");
         self.write_cgname(val);
+        self.write(", label %");
+        self.write_cgname(default_label);
+        self.write(" [\n");
+        self.indent();
+    }
+
+    /// Begins a switch with &str val and CgName default label.
+    pub fn begin_switch_str(self: &mut CodegenCtx, ty: &str, val: &str, default_label: &CgName) {
+        self.write_indent();
+        self.write("switch ");
+        self.write(ty);
+        self.write(" ");
+        self.write(val);
         self.write(", label %");
         self.write_cgname(default_label);
         self.write(" [\n");
