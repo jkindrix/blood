@@ -870,6 +870,14 @@ fn is_region_builtin(name: &str) -> bool {
     if str_eq(name, "region_committed") { return true; }
     if str_eq(name, "region_alloc_count") { return true; }
     if str_eq(name, "system_alloc_live_bytes") { return true; }
+    if str_eq(name, "realloc_diag_count") { return true; }
+    if str_eq(name, "realloc_diag_wasted") { return true; }
+    if str_eq(name, "realloc_diag_inplace") { return true; }
+    if str_eq(name, "realloc_diag_inplace_bytes") { return true; }
+    if str_eq(name, "realloc_diag_offset_delta") { return true; }
+    if str_eq(name, "realloc_stats_reset") { return true; }
+    if str_eq(name, "print_alloc_hist") { return true; }
+    if str_eq(name, "alloc_hist_reset") { return true; }
     false
 }
 
@@ -2566,7 +2574,27 @@ fn print_mem_phase(label: &str, parse_region: u64, hir_region: u64, codegen_regi
         msg.push('\n');
     }
 
+    // Realloc diagnostics (cumulative since last reset)
+    let ra_count = realloc_diag_count();
+    let ra_wasted = realloc_diag_wasted();
+    let ra_inplace = realloc_diag_inplace();
+    let ra_inplace_bytes = realloc_diag_inplace_bytes();
+    msg.push_str("    realloc:          count=");
+    push_u64(&mut msg, ra_count);
+    msg.push_str("  wasted=");
+    push_bytes_human(&mut msg, ra_wasted);
+    msg.push_str("  inplace_eligible=");
+    push_u64(&mut msg, ra_inplace);
+    msg.push_str("  inplace_savings=");
+    push_bytes_human(&mut msg, ra_inplace_bytes);
+    msg.push('\n');
+    msg.push_str("    realloc_delta:    offset_saved=");
+    push_bytes_human(&mut msg, realloc_diag_offset_delta());
+    msg.push('\n');
+
     eprint_str(msg.as_str());
+    print_alloc_hist();
+    realloc_stats_reset();
 }
 
 // ============================================================
