@@ -69,22 +69,22 @@ pub fn emit_operand_typed(
             if is_const_item {
                 // Const item: call the const body function to get the value
                 let ret_ty = codegen_size::type_to_llvm_with_ctx(ctx, &const_hir_ty);
-                let call_result = ctx.fresh_temp();
+                let call_result = ctx.fresh_temp_cg();
                 ctx.write_indent();
-                ctx.write_string(&call_result);
+                ctx.write_cgname(&call_result);
                 ctx.write(" = call ");
                 ctx.write_string(&ret_ty);
                 ctx.write(" ");
                 ctx.write_string(&val);
                 ctx.write("()\n");
-                (call_result, ret_ty)
+                (cgname_to_string(&call_result), ret_ty)
             } else if is_static_item {
                 // Static item: load from the global address
                 // val already has @ prefix from emit_constant's FnDef handler
                 let load_ty = codegen_size::type_to_llvm_with_ctx(ctx, &const_hir_ty);
-                let load_result = ctx.fresh_temp();
-                ctx.emit_load(load_result.as_str(), load_ty.as_str(), val.as_str());
-                (load_result, load_ty)
+                let load_result = ctx.fresh_temp_cg();
+                ctx.emit_load_cg(&load_result, load_ty.as_str(), val.as_str());
+                (cgname_to_string(&load_result), load_ty)
             } else if match fn_def_id { Option::Some(_) => true, Option::None => false } {
                 // Regular function reference — pointer-typed
                 (val, common::make_string("ptr"))
@@ -118,14 +118,10 @@ pub fn emit_operand_typed(
                         _ => common::make_string("i64"),
                     };
                     // Alloca a temp, store the value, return pointer
-                    let ref_temp = ctx.fresh_temp();
-                    ctx.write_indent();
-                    ctx.write_string(&ref_temp);
-                    ctx.write(" = alloca ");
-                    ctx.write_string(&inner_ty);
-                    ctx.write("\n");
-                    ctx.emit_store(inner_ty.as_str(), val.as_str(), ref_temp.as_str());
-                    (ref_temp, common::make_string("ptr"))
+                    let ref_temp = ctx.fresh_temp_cg();
+                    ctx.emit_alloca_cg(&ref_temp, inner_ty.as_str());
+                    ctx.emit_store_str_cg(inner_ty.as_str(), val.as_str(), &ref_temp);
+                    (cgname_to_string(&ref_temp), common::make_string("ptr"))
                 } else {
                     let ty = codegen_types::type_to_llvm(&const_hir_ty);
                     (val, ty)
@@ -259,16 +255,16 @@ fn emit_place_load(
     if str_eq(llvm_ty.as_str(), "{}") {
         return common::make_string("undef");
     }
-    let result = ctx.fresh_temp();
-    ctx.emit_load(result.as_str(), llvm_ty.as_str(), ptr.as_str());
+    let result = ctx.fresh_temp_cg();
+    ctx.emit_load_cg(&result, llvm_ty.as_str(), ptr.as_str());
     // Zero-extend i8 to i32 for &str byte indexing (byte → char promotion)
     // Only apply when loading from an Index projection on a str-like type
     if str_eq(llvm_ty.as_str(), "i8") && is_str_index_place(ctx, place) {
-        let extended = ctx.fresh_temp();
-        ctx.emit_cast(extended.as_str(), "zext", "i8", result.as_str(), "i32");
-        return extended;
+        let extended = ctx.fresh_temp_cg();
+        ctx.emit_cast_cg2(&extended, "zext", "i8", &result, "i32");
+        return cgname_to_string(&extended);
     }
-    result
+    cgname_to_string(&result)
 }
 
 /// Returns the data pointer for a place, handling region/persistent indirection.
@@ -284,10 +280,9 @@ pub fn emit_place_data_ptr(
         && (ctx.is_region_allocated(place.local) || ctx.is_persistent_allocated(place.local)
             || ctx.is_handler_state_ptr(place.local))
     {
-        let heap_ptr = ctx.fresh_temp();
-        let ptr_str = cgname_to_string(&ptr);
-        ctx.emit_load(heap_ptr.as_str(), "ptr", ptr_str.as_str());
-        return heap_ptr;
+        let heap_ptr = ctx.fresh_temp_cg();
+        ctx.emit_load_cg2(&heap_ptr, "ptr", &ptr);
+        return cgname_to_string(&heap_ptr);
     }
     cgname_to_string(&ptr)
 }
@@ -304,16 +299,16 @@ fn emit_place_load_with_type(
     if str_eq(llvm_ty.as_str(), "{}") {
         return (common::make_string("undef"), llvm_ty);
     }
-    let result = ctx.fresh_temp();
-    ctx.emit_load(result.as_str(), llvm_ty.as_str(), ptr.as_str());
+    let result = ctx.fresh_temp_cg();
+    ctx.emit_load_cg(&result, llvm_ty.as_str(), ptr.as_str());
     // Zero-extend i8 to i32 for &str byte indexing (byte → char promotion)
     // Only apply when loading from an Index projection on a str-like type
     if str_eq(llvm_ty.as_str(), "i8") && is_str_index_place(ctx, place) {
-        let extended = ctx.fresh_temp();
-        ctx.emit_cast(extended.as_str(), "zext", "i8", result.as_str(), "i32");
-        return (extended, common::make_string("i32"));
+        let extended = ctx.fresh_temp_cg();
+        ctx.emit_cast_cg2(&extended, "zext", "i8", &result, "i32");
+        return (cgname_to_string(&extended), common::make_string("i32"));
     }
-    (result, llvm_ty)
+    (cgname_to_string(&result), llvm_ty)
 }
 
 /// Computes the LLVM type for the value at a place after all projections.
@@ -1298,17 +1293,17 @@ pub fn emit_rvalue(
                 let right_w = llvm_int_bit_width(right_ty.as_str());
                 if left_w > 0 && right_w > 0 {
                     // Both are integer types - truncate or extend
-                    let cast = ctx.fresh_temp();
+                    let cast = ctx.fresh_temp_cg();
                     if right_w > left_w {
-                        ctx.emit_cast(cast.as_str(), "trunc", right_ty.as_str(), right_val.as_str(), left_ty.as_str());
+                        ctx.emit_cast_cg(&cast, "trunc", right_ty.as_str(), right_val.as_str(), left_ty.as_str());
                     } else {
                         if is_signed {
-                            ctx.emit_cast(cast.as_str(), "sext", right_ty.as_str(), right_val.as_str(), left_ty.as_str());
+                            ctx.emit_cast_cg(&cast, "sext", right_ty.as_str(), right_val.as_str(), left_ty.as_str());
                         } else {
-                            ctx.emit_cast(cast.as_str(), "zext", right_ty.as_str(), right_val.as_str(), left_ty.as_str());
+                            ctx.emit_cast_cg(&cast, "zext", right_ty.as_str(), right_val.as_str(), left_ty.as_str());
                         }
                     }
-                    cast
+                    cgname_to_string(&cast)
                 } else {
                     right_val
                 }
@@ -1411,9 +1406,9 @@ pub fn emit_rvalue(
                         let hir_type = type_intern::ty_id_to_type(ty_id);
                         match &hir_type.kind {
                             &hir_ty::TypeKind::Ref { inner: _, mutable: _ } => {
-                                let deref = ctx.fresh_temp();
-                                ctx.emit_load(deref.as_str(), "ptr", ptr.as_str());
-                                ptr = deref;
+                                let deref = ctx.fresh_temp_cg();
+                                ctx.emit_load_cg(&deref, "ptr", ptr.as_str());
+                                ptr = cgname_to_string(&deref);
                             }
                             _ => {}
                         }
@@ -1441,9 +1436,9 @@ pub fn emit_rvalue(
                         let hir_type = type_intern::ty_id_to_type(ty_id);
                         match &hir_type.kind {
                             &hir_ty::TypeKind::Ref { inner: _, mutable: _ } => {
-                                let deref = ctx.fresh_temp();
-                                ctx.emit_load(deref.as_str(), "ptr", ptr.as_str());
-                                ptr = deref;
+                                let deref = ctx.fresh_temp_cg();
+                                ctx.emit_load_cg(&deref, "ptr", ptr.as_str());
+                                ptr = cgname_to_string(&deref);
                             }
                             _ => {}
                         }

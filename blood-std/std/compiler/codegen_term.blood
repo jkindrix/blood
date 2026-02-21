@@ -264,20 +264,20 @@ fn emit_call(
                 let is_fat_ptr = func_ty_bytes.len() > 0 && func_ty_bytes[0] == 123; // '{'
                 if is_fat_ptr {
                     // Fat pointer: extract the data pointer (field 0)
-                    let extracted = ctx.fresh_temp();
+                    let extracted = ctx.fresh_temp_cg();
                     ctx.write_indent();
-                    ctx.write_string(&extracted);
+                    ctx.write_cgname(&extracted);
                     ctx.write(" = extractvalue ");
                     ctx.write_string(&func_ty);
                     ctx.write(" ");
                     ctx.write_string(&raw_func);
                     ctx.write(", 0\n");
-                    extracted
+                    cgname_to_string(&extracted)
                 } else {
                     // Integer type: use inttoptr
-                    let cast = ctx.fresh_temp();
-                    ctx.emit_cast(cast.as_str(), "inttoptr", func_ty.as_str(), raw_func.as_str(), "ptr");
-                    cast
+                    let cast = ctx.fresh_temp_cg();
+                    ctx.emit_cast_cg(&cast, "inttoptr", func_ty.as_str(), raw_func.as_str(), "ptr");
+                    cgname_to_string(&cast)
                 }
             } else {
                 raw_func
@@ -391,9 +391,9 @@ fn emit_call(
                     Option::Some(expected_ty) => {
                         if !string_eq_str(expected_ty.as_str(), arg_ty.as_str()) && needs_int_cast(arg_ty.as_str(), expected_ty.as_str()) {
                             // Type mismatch: widen the argument to match the definition
-                            let widened = ctx.fresh_temp();
+                            let widened = ctx.fresh_temp_cg();
                             ctx.write_indent();
-                            ctx.write_string(&widened);
+                            ctx.write_cgname(&widened);
                             if is_smaller_int(arg_ty.as_str(), expected_ty.as_str()) {
                                 ctx.write(" = sext ");
                             } else {
@@ -405,7 +405,7 @@ fn emit_call(
                             ctx.write(" to ");
                             ctx.write_string(&expected_ty);
                             ctx.write("\n");
-                            final_val = widened;
+                            final_val = cgname_to_string(&widened);
                             final_ty = expected_ty;
                         } else if !string_eq_str(expected_ty.as_str(), arg_ty.as_str()) && is_struct_type(arg_ty.as_str()) && is_struct_type(expected_ty.as_str()) {
                             // Struct type mismatch (generic struct with different field sizes)
@@ -416,18 +416,12 @@ fn emit_call(
                         } else if !string_eq_str(expected_ty.as_str(), arg_ty.as_str()) {
                             // General type mismatch (e.g., struct { i32, i32 } vs scalar i64)
                             // Use memory-based bitcast
-                            let cast_alloca = ctx.fresh_temp();
-                            ctx.emit_alloca(cast_alloca.as_str(), expected_ty.as_str());
-                            ctx.emit_store(arg_ty.as_str(), arg_val.as_str(), cast_alloca.as_str());
-                            let cast_result = ctx.fresh_temp();
-                            ctx.write_indent();
-                            ctx.write_string(&cast_result);
-                            ctx.write(" = load ");
-                            ctx.write_string(&expected_ty);
-                            ctx.write(", ptr ");
-                            ctx.write_string(&cast_alloca);
-                            ctx.write("\n");
-                            final_val = cast_result;
+                            let cast_alloca = ctx.fresh_temp_cg();
+                            ctx.emit_alloca_cg(&cast_alloca, expected_ty.as_str());
+                            ctx.emit_store_str_cg(arg_ty.as_str(), arg_val.as_str(), &cast_alloca);
+                            let cast_result = ctx.fresh_temp_cg();
+                            ctx.emit_load_cg2(&cast_result, expected_ty.as_str(), &cast_alloca);
+                            final_val = cgname_to_string(&cast_result);
                             final_ty = expected_ty;
                         } else {
                             final_val = arg_val;
@@ -478,48 +472,45 @@ fn emit_call(
         );
     } else {
         // Non-void function - capture return value
-        let result = ctx.fresh_temp();
-        ctx.emit_call(
-            Option::Some(result.as_str()),
-            def_ret_ty.as_str(),
-            func_val.as_str(),
-            &llvm_args,
-        );
+        let result = ctx.fresh_temp_cg();
+        ctx.begin_call(Option::Some(&result), def_ret_ty.as_str(), func_val.as_str());
+        let mut ai: usize = 0;
+        while ai < llvm_args.len() {
+            let arg = &llvm_args[ai];
+            ctx.call_arg_str(ai == 0, arg.0.as_str(), arg.1.as_str());
+            ai = ai + 1;
+        }
+        ctx.end_call();
 
         // If the definition return type differs from the call site's expected type, narrow
         if !string_eq_str(def_ret_ty.as_str(), call_site_ret_ty.as_str()) && needs_int_cast(def_ret_ty.as_str(), call_site_ret_ty.as_str()) {
-            let truncated = ctx.fresh_temp();
+            let truncated = ctx.fresh_temp_cg();
             ctx.write_indent();
-            ctx.write_string(&truncated);
+            ctx.write_cgname(&truncated);
             ctx.write(" = trunc ");
             ctx.write_string(&def_ret_ty);
             ctx.write(" ");
-            ctx.write_string(&result);
+            ctx.write_cgname(&result);
             ctx.write(" to ");
             ctx.write_string(&call_site_ret_ty);
             ctx.write("\n");
-            ctx.emit_store(call_site_ret_ty.as_str(), truncated.as_str(), dest_ptr.as_str());
+            ctx.emit_store_cg(call_site_ret_ty.as_str(), &truncated, dest_ptr.as_str());
         } else if !string_eq_str(def_ret_ty.as_str(), call_site_ret_ty.as_str()) && is_struct_type(def_ret_ty.as_str()) && is_struct_type(call_site_ret_ty.as_str()) {
             // Struct return type mismatch: narrow field-by-field
-            let narrowed = emit_struct_narrowing(ctx, &result, def_ret_ty.as_str(), call_site_ret_ty.as_str());
+            let result_str = cgname_to_string(&result);
+            let narrowed = emit_struct_narrowing(ctx, &result_str, def_ret_ty.as_str(), call_site_ret_ty.as_str());
             ctx.emit_store_cg(call_site_ret_ty.as_str(), &narrowed, dest_ptr.as_str());
         } else if !string_eq_str(def_ret_ty.as_str(), call_site_ret_ty.as_str()) {
             // General type mismatch: use memory bitcast
-            let cast_alloca = ctx.fresh_temp();
-            ctx.emit_alloca(cast_alloca.as_str(), def_ret_ty.as_str());
-            ctx.emit_store(def_ret_ty.as_str(), result.as_str(), cast_alloca.as_str());
-            let cast_result = ctx.fresh_temp();
-            ctx.write_indent();
-            ctx.write_string(&cast_result);
-            ctx.write(" = load ");
-            ctx.write_string(&call_site_ret_ty);
-            ctx.write(", ptr ");
-            ctx.write_string(&cast_alloca);
-            ctx.write("\n");
-            ctx.emit_store(call_site_ret_ty.as_str(), cast_result.as_str(), dest_ptr.as_str());
+            let cast_alloca = ctx.fresh_temp_cg();
+            ctx.emit_alloca_cg(&cast_alloca, def_ret_ty.as_str());
+            ctx.emit_store_cg2(def_ret_ty.as_str(), &result, &cast_alloca);
+            let cast_result = ctx.fresh_temp_cg();
+            ctx.emit_load_cg2(&cast_result, call_site_ret_ty.as_str(), &cast_alloca);
+            ctx.emit_store_cg(call_site_ret_ty.as_str(), &cast_result, dest_ptr.as_str());
         } else {
             // Store result
-            ctx.emit_store(def_ret_ty.as_str(), result.as_str(), dest_ptr.as_str());
+            ctx.emit_store_cg(def_ret_ty.as_str(), &result, dest_ptr.as_str());
         }
     }
 
@@ -1710,13 +1701,13 @@ fn emit_string_push_call(
 
     // If char type is a struct { i32 }, extract the i32
     let char_i32 = if string_eq_str(char_ty.as_str(), "{ i32 }") {
-        let extracted = ctx.fresh_temp();
+        let extracted = ctx.fresh_temp_cg();
         ctx.write_indent();
-        ctx.write_string(&extracted);
+        ctx.write_cgname(&extracted);
         ctx.write(" = extractvalue { i32 } ");
         ctx.write_string(&char_val);
         ctx.write(", 0\n");
-        extracted
+        cgname_to_string(&extracted)
     } else {
         char_val
     };

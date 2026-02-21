@@ -243,8 +243,8 @@ pub fn emit_statement(
             let push_state_ptr = if !state_kind.is_stateless() {
                 // Create a state shadow: alloca i64 on the stack.
                 // Load initial state from handler struct (heap_ptr + 1, after discriminant).
-                let shadow = ctx.fresh_temp();
-                ctx.emit_alloca(shadow.as_str(), "i64");
+                let shadow = ctx.fresh_temp_cg();
+                ctx.emit_alloca_cg(&shadow, "i64");
 
                 let heap_ptr_s = ctx.fresh_temp_cg();
                 ctx.emit_load_cg2(&heap_ptr_s, "ptr", &state_void_ptr);
@@ -259,16 +259,11 @@ pub fn emit_statement(
                 let init_val = ctx.fresh_temp_cg();
                 ctx.emit_load_cg2(&init_val, "i64", &field_ptr);
 
-                ctx.write_indent();
-                ctx.write("store i64 ");
-                ctx.write_cgname(&init_val);
-                ctx.write(", ptr ");
-                ctx.write_string(&shadow);
-                ctx.write("\n");
+                ctx.emit_store_cg2("i64", &init_val, &shadow);
 
                 // Save state shadow alloca name for CallReturnClause to use
-                ctx.set_handler_state_shadow(handler_id.index, clone_string(&shadow));
-                shadow
+                ctx.set_handler_state_shadow(handler_id.index, cgname_to_string(&shadow));
+                cgname_to_string(&shadow)
             } else {
                 cgname_to_string(&state_void_ptr)
             };
@@ -425,15 +420,15 @@ pub fn emit_statement(
             let widened_result = if strs_equal(result_ty.as_str(), "i64") {
                 clone_string(&result_val)
             } else {
-                let tmp = ctx.fresh_temp();
+                let tmp = ctx.fresh_temp_cg();
                 ctx.write_indent();
-                ctx.write_string(&tmp);
+                ctx.write_cgname(&tmp);
                 ctx.write(" = sext ");
                 ctx.write_string(&result_ty);
                 ctx.write(" ");
                 ctx.write_string(&result_val);
                 ctx.write(" to i64\n");
-                tmp
+                cgname_to_string(&tmp)
             };
 
             // Build return clause function name: handler{N}_return
